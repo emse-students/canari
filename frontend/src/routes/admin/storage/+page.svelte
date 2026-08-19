@@ -62,14 +62,23 @@
    */
   const mls = $derived(usage?.mls ?? null);
 
-  /** Table bars, largest first, sized against the largest - the question is which table dominates. */
+  /**
+   * Table bars, largest first, sized against the largest - the question is which table dominates.
+   *
+   * Each bar carries a SECOND, darker fill for the live data inside it, on the same scale. That is
+   * what makes "73 Mo of file holding 1 Mo of queue" visible rather than arithmetic: the bar is long
+   * because the table costs that much disk, and almost empty because almost none of it is data.
+   * `liveBytes` is an estimate and `bytes` is exact, so the inner fill is clamped - a statistic that
+   * overshoots its container would draw a table as MORE than full.
+   */
   const tableBars = $derived.by(() => {
     if (!mls || mls.tables.length === 0) return [];
     const largest = Math.max(1, ...mls.tables.map((t) => t.bytes));
-    return mls.tables.map((t) => ({
-      ...t,
-      percent: Math.max(t.bytes > 0 ? 2 : 0, Math.round((t.bytes / largest) * 100)),
-    }));
+    return mls.tables.map((t) => {
+      const percent = Math.max(t.bytes > 0 ? 2 : 0, Math.round((t.bytes / largest) * 100));
+      const liveShare = t.bytes > 0 ? Math.min(1, t.liveBytes / t.bytes) : 0;
+      return { ...t, percent, livePercent: Math.round(percent * liveShare) };
+    });
   });
 
   /** The queue's weekly bars, reversed like the media ones so time reads left to right. */
@@ -350,19 +359,32 @@
               <h3 class="text-xs font-bold uppercase tracking-wide text-text-muted">
                 {m.admin_storage_mls_tables_title()}
               </h3>
+              <!-- Why two sizes. "72.9 Mo, 817 lignes" was read here on 2026-08-19 as a 90 kB
+                   average message; the average is under 1 kB, and the gap is the high-water mark of
+                   an incident three weeks past. Both figures are always shown: a number that
+                   appears only when it disagrees is one nobody trusts when it does. -->
+              <p class="text-xs text-text-muted">{m.admin_storage_mls_tables_hint()}</p>
               {#each tableBars as row (row.table)}
                 <div class="space-y-1">
                   <div class="flex items-baseline justify-between gap-3">
                     <span class="text-sm font-semibold text-text-main">{row.table}</span>
                     <span class="text-sm text-text-muted">
                       {formatStorageBytes(row.bytes)} &middot;
+                      {m.admin_storage_mls_table_live({
+                        size: formatStorageBytes(row.liveBytes),
+                      })} &middot;
                       {m.admin_storage_mls_table_rows({ rows: row.rows })}
                     </span>
                   </div>
-                  <div class="h-1.5 w-full rounded-full bg-cn-border/40">
+                  <!-- Pale fill: what the table occupies. Solid fill: what is actually in it. -->
+                  <div class="relative h-1.5 w-full rounded-full bg-cn-border/40">
                     <div
-                      class="h-1.5 rounded-full bg-cn-yellow/70"
+                      class="absolute inset-y-0 left-0 rounded-full bg-cn-yellow/30"
                       style="width: {row.percent}%"
+                    ></div>
+                    <div
+                      class="absolute inset-y-0 left-0 rounded-full bg-cn-yellow/80"
+                      style="width: {row.livePercent}%"
                     ></div>
                   </div>
                 </div>

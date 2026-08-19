@@ -38,8 +38,9 @@ function router(overrides: Partial<Record<string, unknown>> = {}): QueryHandler 
     if (sql.includes('pg_total_relation_size(c.oid) AS bytes')) {
       return (
         overrides.tables ?? [
-          { table: 'queued_message', bytes: '76472320', rows: '820' },
-          { table: 'key_package', bytes: '491520', rows: '260' },
+          // The prod shape of 2026-08-19: 73 MB of file holding a megabyte of queue.
+          { table: 'queued_message', bytes: '76472320', rows: '820', livebytes: '1041675' },
+          { table: 'key_package', bytes: '491520', rows: '260', livebytes: '270400' },
         ]
       );
     }
@@ -96,6 +97,36 @@ describe('the MLS half of the storage panel', () => {
     const usage = await controller.getStorageUsage('true');
 
     expect(usage.mls?.queue?.rowsByWeek).toEqual([241, 401, 166, 12]);
+  });
+
+  it('reports disk occupancy and data volume separately, because on a queue they are 73x apart', async () => {
+    const controller = makeController(router());
+
+    const usage = await controller.getStorageUsage('true');
+
+    // The panel read "72.9 MB, 817 rows" on 2026-08-19 and the honest reading of that pair is that a
+    // message weighs 90 kB. It weighs under one. The 73 MB is the high-water mark of the 28 124-row
+    // incident of 2026-08-10, which VACUUM frees for reuse and never returns to the OS. One number
+    // cannot say both things, so neither number is dropped.
+    expect(usage.mls?.tables?.[0]).toEqual({
+      table: 'queued_message',
+      bytes: 76472320,
+      rows: 820,
+      liveBytes: 1041675,
+    });
+  });
+
+  it('reports zero live bytes rather than NaN when the table has never been analysed', async () => {
+    // `pg_stats` holds nothing for a table autovacuum has not reached yet, and a fresh deployment is
+    // exactly when this panel gets looked at. COALESCE answers 0; a missing column would answer NaN
+    // and render as "NaN B".
+    const controller = makeController(
+      router({ tables: [{ table: 'revoked_device', bytes: '8192', rows: '0', livebytes: '0' }] })
+    );
+
+    const usage = await controller.getStorageUsage('true');
+
+    expect(usage.mls?.tables?.[0].liveBytes).toBe(0);
   });
 
   it('shows the ghost count even when it is zero', async () => {

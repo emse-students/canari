@@ -236,23 +236,32 @@ The first rung that moves an MLS epoch.
 A community is a `Workspace`, and **its membership is not MLS membership**. Every row is read against
 MSG-5's standing assertion: no `masterSecret` in any payload, ever.
 
-**OWED BEFORE ANY ROW BELOW: prove WP-GRAINE-2 on production.** `040983c4` is deployed and CD is
-green, and nothing has been measured against it. The starting state was read before the deploy and
-is what the proof is against:
+**WP-GRAINE-2, CLIENT HALF: PROVEN ON PRODUCTION 2026-08-19.** The starting state was read before the
+deploy, and every column below moved the way the fix says it must. Distribution group
+`d70e8952-bc23-4ee8-bf63-fb829e278273`, community `b9d52032`.
 
-| Fact | Value, before the fix ran anywhere |
-| --- | --- |
-| distribution group | `d70e8952-bc23-4ee8-bf63-fb829e278273` (community `b9d52032`) |
-| `mls_group_info.baseEpoch` | **25**, `updatedAt` `2026-08-19 14:00:02.53775` |
-| `dm_device_group_memberships` | 3 rows - `d82cd226` web + tauri, and `b78568a3` |
-| `b78568a3` | **left the community before the fix**, so the tree disagrees with the roster |
+| Fact | Before the fix ran anywhere | After |
+| --- | --- | --- |
+| `mls_group_info.baseEpoch` | **25**, `updatedAt` `14:00:02.53775`, written by W1's **tauri** | **26**, `15:54:08.520527` |
+| the tree | 3 leaves - `b78568a3` had **left before the fix**, so it disagreed with the roster | **2 leaves**, both `d82cd226` |
+| who committed it | - | W1's **web** device, `[SEND][send-ba0dd330] ... hasProto=true isCommit=true group=d70e8952` at `15:54:08` |
+| a second pass | - | `[GRAINE] community b9d52032 distribution group agrees with its roster - 2 leaf/leaves, nobody to remove`, `baseEpoch` **still 26** |
+| `dm_device_group_memberships` | 3 rows | **still 3** - see below, this is the server half and it is expected |
 
-Reload W1 (which carries the new bundle) and read three things: the reconciliation logs the removal;
-`baseEpoch` passes 25 with a fresh `updatedAt`; W1's next send logs `[GRAINE] new outbound session
-... (roster)`. The SERVER half - the eviction that drops the leaver's routing rows and queued frames
-the instant they stop being a member - cannot be seen on this departure, which predates it: it is
-measured when W2 rejoins and leaves the clean venue, and its evidence is those three rows going to
-two. Mechanism and reasoning: [graine](protocols/channel-encryption.md#10-a-departure-moved-nothing-and-rotation-waited-on-it---fixed-2026-08-19).
+Three separate witnesses agree on one event: the service log names the sending device and the group,
+`mls_group_info` carries the same timestamp to the second, and the client's own reconciliation now
+says out loud that a later pass found nothing to do. That last line did not exist during the first
+attempt at this proof - the converged path was silent, so "no removal needed" and "this device does
+not hold the group" printed identically and the epoch had to be read from the database to tell them
+apart. Fixed in `dc9e2ff9`; a mechanism whose success is indistinguishable from its absence is not
+verifiable, only believable.
+
+**The SERVER half is still owed, and this departure cannot carry it.** W2 is out of the *tree* and
+still has an `active` routing row, so the server would fan a commit out to a device that can no
+longer apply one - which is what the eviction exists to clean, and which fires only on a departure
+that happens AFTER the fix. It is measured when W2 rejoins and leaves the clean venue; its evidence
+is those three rows going to two. Mechanism and reasoning:
+[graine](protocols/channel-encryption.md#10-a-departure-moved-nothing-and-rotation-waited-on-it---fixed-2026-08-19).
 
 **The runners for the rows below are STARTED, not written.** `tools/cross-client-harness/comm.mjs`
 carries the vocabulary all 22 share - create and open a community, create a channel, read a channel

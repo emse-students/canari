@@ -50,6 +50,35 @@ below 0.15.0 remains; there is nothing to delete when it does.
 
 ## The diary
 
+### 2026-11-19 - the pre-MLS send path, and the `content` column it is the only writer of
+
+**Site:** the `else` arm of `MessagingService.sendMessage`
+([`messaging.service.ts`](../../apps/chat-delivery-service/src/services/messaging.service.ts)), taken
+when a caller posts no `proto`; `QueuedMessage.content`
+([`queued-message.entity.ts`](../../apps/chat-delivery-service/src/entities/queued-message.entity.ts));
+and the read side, `queued.proto ?? queued.content ?? ''` in `push.controller.ts`.
+**Shim:** every client since MLS sends `proto`, a base64 MLS ciphertext. This branch takes
+`body.content` with a `type` tag and fans out over `dm_group_members` instead of the device
+membership table. Nothing else writes the column.
+**What the evidence actually says:** on 2026-08-19 `queued_message` held 817 rows back to
+2026-07-28, `proto` non-null on **817**, `content` non-null on **0**. That is strong and it is not a
+census - **the queue records only what was UNDELIVERED**, so a legacy message delivered instantly
+leaves no row, and it is only evidence for the question it was written to answer. The service log
+would settle it, but its window is one container lifetime and a deploy restarts the container: on
+2026-08-19 it held six `[SEND]` lines over three hours.
+**Why a date rather than a deletion now:** the fleet is mixed by construction - A1's APK carries its
+own bundle and a deploy never reaches it - and deleting a send path that one old client still takes
+turns a working install into one that cannot send, silently. Three months is one campaign plus the
+margin for a phone nobody has updated.
+**On removal:** delete the `else` arm, the `content` column (migration), the `?? queued.content`
+arm, and this entry. Both sites now log - `LEGACY_CONTENT_PATH` on write and `LEGACY_CONTENT_ROW` on
+read, both at warn - so the date is checked by reading whether either ever fired, not by arguing
+about it. **If either has fired, the caller is found and fixed before the branch goes**, because
+reaching a fallback means the primary path failed.
+**Cost of keeping it:** a nullable column on the largest MLS table, and a read-side `??` that made
+the column look load-bearing to anyone auditing it - which is how it survived unnoticed until the
+storage panel raised the question.
+
 ### 2027-02-19 - a server-composed `title` / `body` on social and form pushes
 
 **Site:** `PushContent.legacyTitle` / `legacyBody` in

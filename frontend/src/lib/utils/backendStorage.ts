@@ -34,11 +34,20 @@ export interface MediaBucketUsage {
   sweepIntervalMs: number;
 }
 
-/** One MLS table: `pg_total_relation_size` (indexes and TOAST included) and the planner's row estimate. */
+/**
+ * One MLS table: `pg_total_relation_size` (indexes and TOAST included) and the planner's row estimate.
+ *
+ * DISK OCCUPANCY IS NOT DATA VOLUME. `queued_message` read "73 MB, 817 rows" on 2026-08-19, which
+ * says a message weighs 90 kB; it weighs under 1 kB. A queue table wears the high-water mark of its
+ * worst hour for ever - VACUUM frees tuples for reuse and never hands the file back to the OS - so
+ * `bytes` is what it costs and `liveBytes` is what is in it, and the panel shows both.
+ */
 export interface MlsTableUsage {
   table: string;
   bytes: number;
   rows: number;
+  /** Estimated bytes of live data (summed column widths times the live-row estimate). */
+  liveBytes: number;
 }
 
 /**

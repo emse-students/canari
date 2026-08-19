@@ -44,11 +44,48 @@ its own so one bad dependency never blanks the others
 
 | What it shows | What it distinguishes |
 | --- | --- |
-| The eight MLS tables by `pg_total_relation_size`, with `n_live_tup` next to each | Which table is the cost, and whether it grew by more rows or by bigger rows. |
+| The eight MLS tables by `pg_total_relation_size`, with **the live data inside each** and `n_live_tup` | What it costs, what is in it, and whether it grew by more rows or by bigger rows. |
 | The queue's total, its device count, and **the deepest single device queue** | Forty devices with twenty messages from ONE device with eight hundred. Only the second is a defect, and the total cannot tell them apart - which is exactly how the WP-GHOST-1 cohort stayed invisible. |
 | The age of the oldest queued row, and rows created per 7-day window | A queue that is deep *and* old is not a queue, it is a leak. The weekly bars are the slope, read the same way the media ones are. |
 | Devices holding memberships with **no** `key_package`, and the orphan membership count | The WP-GHOST-1 shape itself, section 5.7's monitor, asked continuously instead of by hand after an incident. |
 | Redis keys by prefix | Which prefix dominates. The total is exact (`INFO keyspace`); the breakdown is a **bounded SCAN sample of 5000** and reports `sampled` next to it, so it never implies a census. |
+
+### Disk occupancy is not data volume, and on a queue they are 73x apart
+
+The table row showed one size, and one size is a trap. On 2026-08-19 the panel read
+**`queued_message - 72.9 Mo - 817 lignes`**, whose honest reading is that a message weighs 90 kB. It
+weighs under one. The 73 MB breaks down as heap 2 592 kB, indexes 296 kB, and **TOAST 70 MB**, while
+the payload actually stored is 836 kB of `proto` across those 817 rows - 4 423 B for each of the 36
+Welcomes, 893 B for the other 781.
+
+That 70 MB is not a leak and not message size. It is the high-water mark of the incident migration
+013 was written after: on 2026-08-10 one abandoned device accumulated **28 124 undelivered rows in
+five hours**. The rows were deleted; the file was not shortened, because no `VACUUM` short of `FULL`
+returns space to the operating system. Postgres holds it for reuse, which is the correct behaviour
+and the reason the table will not grow again until it passes that mark.
+
+So the panel reports both, always, and draws the second inside the first - a long pale bar for what
+the table occupies with a short solid bar for what is in it. `liveBytes` is `SUM(pg_stats.avg_width)`
+times `n_live_tup`: free, from the statistics collector that already supplies the row count, no scan
+and no extension. It is an estimate and reads as `~` in the UI; against an exact
+`SUM(pg_column_size(q.*))` on prod it landed 17% low (1 017 kB against 1 224 kB), which is noise next
+to the 73 MB it exists to be distinguished from. `pgstattuple` would be exact and is available but
+uninstalled; it is not worth an extension to sharpen a figure whose whole job is to differ by two
+orders of magnitude.
+
+**A vacuum that runs more often would change none of this.** Autovacuum wakes every minute and had
+run 191 times on this table and 142 on its TOAST relation, holding 150 dead tuples against 817 live -
+it is keeping up, and frequency is not the lever. Reclaiming the 70 MB needs `VACUUM FULL` or
+`pg_repack`, both of which take an exclusive lock on a delivery queue; the space is reusable in place,
+so this is cosmetic until the disk is short. What DOES matter as volume grows is that the file tracks
+the **peak**, not the total - which is the queue-depth report's job, not vacuum's.
+
+Migration
+[`017_queued_message_toast_autovacuum.sql`](../../../apps/chat-delivery-service/src/migrations/017_queued_message_toast_autovacuum.sql)
+closes the gap that measurement exposed: 013's tightened scale factor was set on `queued_message` and
+**a TOAST relation inherits none of its parent's autovacuum settings** - they are spelled
+`toast.autovacuum_*` on the parent. `pg_toast_16615` held empty `reloptions`, so the insurance written
+for this exact churn profile covered 2.5 MB and left 70 MB on the defaults it was replacing.
 
 `n_live_tup` is the planner's estimate rather than a `COUNT(*)`: an exact count would be a sequential
 scan of the largest table in the database on every render, to move a number nobody reads to the unit.

@@ -680,6 +680,18 @@ export class MessagingService {
       }
     } else {
       // ── Legacy path (frontend fallback / group fan-out) ───────────────────
+      //
+      // A FALLBACK IS A SIGNAL, NEVER A PATH. This branch predates MLS and writes `content` instead
+      // of `proto`; the database says nothing has taken it - 817 of 817 queued rows carry `proto`
+      // and `content` is NULL on every one, back to 2026-07-28. That is strong but it is not a
+      // census: the queue holds only what was UNDELIVERED, so a legacy message delivered instantly
+      // leaves no row behind, and the service log window is one container lifetime. So the branch
+      // accuses instead of answering silently, and its removal date is set from what this line does
+      // or does not print (see docs/wiki/legacy-compatibility.md).
+      this.logger.warn(
+        `[SEND][${traceId}] LEGACY_CONTENT_PATH sender=${body.senderId ?? 'unknown'}:${body.senderDeviceId ?? 'unknown'} ` +
+          `group=${body.groupId ?? 'none'} - a client sent no proto; this path is retired and its caller must be found`
+      );
       const senderId = sanitizeQueryValue(body.senderId, 'senderId');
       const senderDeviceId = sanitizeOptionalQueryValue(body.senderDeviceId, 'senderDeviceId');
       const groupId = sanitizeQueryValue(body.groupId, 'groupId');

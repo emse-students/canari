@@ -42,11 +42,27 @@ export interface MediaBucketUsage {
  * `bytes` is `pg_total_relation_size`, so it includes indexes and TOAST - which is the only figure
  * that answers "what is this costing on the disk". A row count next to it is what separates the two
  * ways a table grows: more rows, or rows that got bigger.
+ *
+ * DISK OCCUPANCY IS NOT DATA VOLUME, AND ON A QUEUE THE TWO ARE NOT CLOSE. `queued_message` read
+ * "73 MB, 817 rows" on 2026-08-19, which says a message averages 90 kB; it averages under 1 kB. One
+ * abandoned device had accumulated 28 124 rows on 2026-08-10 (see migration 013), and no VACUUM
+ * short of FULL returns a file to the OS - so the table still wears the high-water mark of that
+ * incident while holding a thousandth of it. A panel that shows only the first number invites
+ * exactly the wrong conclusion about the second, so both are reported, always.
  */
 export interface MlsTableUsage {
   table: string;
   bytes: number;
   rows: number;
+  /**
+   * Bytes of LIVE data, estimated as the summed column widths times the live-row estimate.
+   *
+   * Free, from the same statistics collector that already supplies `rows` - no scan, no extension.
+   * It is an estimate and reads as one in the UI: measured against an exact
+   * `sum(pg_column_size(q.*))` on prod it landed 17% low (1017 kB against 1224 kB), which is
+   * irrelevant next to the 73 MB it is there to distinguish itself from.
+   */
+  liveBytes: number;
 }
 
 /**
@@ -206,18 +222,28 @@ export class AdminStorageController {
       'pin_verifier',
     ];
     try {
-      const rows: { table: string; bytes: string; rows: string }[] = await this.dataSource.query(
-        `SELECT c.relname AS table,
+      const rows: { table: string; bytes: string; rows: string; livebytes: string }[] =
+        await this.dataSource.query(
+          `SELECT c.relname AS table,
                 pg_total_relation_size(c.oid) AS bytes,
-                COALESCE(s.n_live_tup, 0) AS rows
+                COALESCE(s.n_live_tup, 0) AS rows,
+                COALESCE(
+                  (SELECT SUM(st.avg_width) FROM pg_stats st
+                    WHERE st.schemaname = n.nspname AND st.tablename = c.relname), 0
+                ) * COALESCE(s.n_live_tup, 0) AS livebytes
          FROM pg_class c
          JOIN pg_namespace n ON n.oid = c.relnamespace
          LEFT JOIN pg_stat_user_tables s ON s.relid = c.oid
          WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname = ANY($1)
          ORDER BY pg_total_relation_size(c.oid) DESC`,
-        [MLS_TABLES]
-      );
-      return rows.map((r) => ({ table: r.table, bytes: Number(r.bytes), rows: Number(r.rows) }));
+          [MLS_TABLES]
+        );
+      return rows.map((r) => ({
+        table: r.table,
+        bytes: Number(r.bytes),
+        rows: Number(r.rows),
+        liveBytes: Number(r.livebytes),
+      }));
     } catch (err) {
       this.logger.warn(
         `[STORAGE] mls table measurement failed: ${err instanceof Error ? err.message : String(err)}`

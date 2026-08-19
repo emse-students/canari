@@ -130,9 +130,12 @@ lives where the link says and **is not restated**. An item is done when its code
 and its commit are in, and it is then deleted from BOTH files.
 
 **The campaign started 2026-08-19 and has produced SEVEN defects, all fixed.** 1-2 are numbers a
-run has to produce; 3 is owed on a fix already deployed; 4-6 are the work the user decided on
-2026-08-19; 7 is the community phase, stale AND never run, where the rework's remaining risk sits;
-8 is the campaign. Preflight, MSG and SETUP-9 are done and MSG-5 converges on all three clients -
+run has to produce; 3-5 are the work the user decided on 2026-08-19; 6 is the community phase, stale
+AND never run, where the rework's remaining risk sits; 7 is the campaign. **WP-GRAINE-2's client half
+is PROVEN on prod (2026-08-19)** - epoch 25->26, tree down to 2 leaves, a second pass idempotent, all
+three witnesses on [cross-client-testing](docs/wiki/cross-client-testing.md) §9; its SERVER half
+needs a departure that happens after the fix and is therefore a campaign row, not a work package.
+Preflight, MSG and SETUP-9 are done and MSG-5 converges on all three clients -
 read [cross-client-testing](docs/wiki/cross-client-testing.md) rather than re-deriving them. **The
 phone is back (2026-08-17)**; keep `adb devices` answering. **There is NO iPhone and no iOS client
 in the field (user, 2026-08-19)**, so the iOS ladder cannot run and parity is kept BLIND
@@ -147,11 +150,7 @@ in the field (user, 2026-08-19)**, so the iOS ladder cannot run and parity is ke
     comes from a run.** Every accusation in `displayName.ts` now ends `(failed/attempted, X%)`.
     There is no client telemetry, so the rate is read from a run log on each platform. **The
     `FAILURE_BACKOFF_MS` decision is what the number is FOR** ([backlog](docs/wiki/backlog.md)).
-3. **VERIFY WP-GRAINE-2 ON PROD - DEPLOYED AND NOT YET PROVEN, and it is the cheapest item here.**
-    Nothing has been measured against the fix. The starting state, what to read, and why the server
-    half needs a NEW departure are on [cross-client-testing](docs/wiki/cross-client-testing.md) §9.
-    `scratch/verify-graine2.mjs` is BROKEN - `report()` returns no `lines` field; read `watch.mjs`.
-4. **THE PERMISSION MATRIX LIES ON TWO OF ITS EIGHT ROWS - the user's decision, 2026-08-19: DELETE
+3. **THE PERMISSION MATRIX LIES ON TWO OF ITS EIGHT ROWS - the user's decision, 2026-08-19: DELETE
     them, do not wire them.** `channel.access` and `channel.send` are enforced NOWHERE, and the
     reasoning that settles it is the user's: a public salon is visible to every member and a private
     one to the people in it, so `channel.access` decides nothing already decided; and `writePolicy`,
@@ -160,13 +159,13 @@ in the field (user, 2026-08-19)**, so the iOS ladder cannot run and parity is ke
     `messages/*.json`, and stripped from `channel_roles.permissions` by migration. **`allowedRoles`
     goes with them** - a column that never decided anything (invitations are per person). **And the
     panel is WIDENED**: it needs a horizontal scroll today, which is the user's own report.
-5. **A GUARD THAT FAILS OPEN, WITH THE CORRECT MODEL SITTING NEXT TO IT.** `userHasMlsDevices`
+4. **A GUARD THAT FAILS OPEN, WITH THE CORRECT MODEL SITTING NEXT TO IT.** `userHasMlsDevices`
     answers `true` on a transport failure or a non-2xx, so the day its URL was wrong it was a
     constant `true` - written up in `distribution-group.client.ts`'s own header and still there. The
     DM path already does it right: `fetchUserDevices` THROWS on transport failure and returns `[]`
     only for a genuine 200 with no device. Copy that, and give the UI the two messages the states
     deserve - "this person has not installed Canari" is not "cannot check right now".
-6. **ONE DISTRIBUTION GROUP PER PRIVATE SALON - the design, and the whole remaining crypto risk.**
+5. **ONE DISTRIBUTION GROUP PER PRIVATE SALON - the design, and the whole remaining crypto risk.**
     §4.3 gives a community ONE group, so every member holds a private salon's seed; the fan-out is
     scoped but the guarantee is still the server's. Same machinery, gated on `canAccessChannel`,
     `channelAudience` as its roster, the §10 diff pruning it. **The user's decisions of 2026-08-19,
@@ -175,13 +174,13 @@ in the field (user, 2026-08-19)**, so the iOS ladder cannot run and parity is ke
     member list ONLY, with no system message**. The admin must SEE an unjoined private salon or the
     capability is unusable. Forward secrecy is decided AGAINST. Detail on
     [backlog](docs/wiki/backlog.md) and [graine](docs/wiki/protocols/channel-encryption.md) §11.
-7. **REWRITE THE COMM PHASE - it is not incomplete, it is STALE.** Written before Graine and still
+6. **REWRITE THE COMM PHASE - it is not incomplete, it is STALE.** Written before Graine and still
     speaking the old vocabulary: COMM-9 "the key rotates", COMM-13 "manual key rotation" (neither
     exists), COMM-22 times `hydrateChannelHistoryKeys`, **a function that is gone**. Nothing in it
     covers the seven defects found this week. Rewrite the twenty-two rows against Graine, add what
     3-6 change, then write the runners - `checks.mjs` carries the phase and an empty `scripts: []`.
     This is where the rework's remaining risk sits: everything about it is verified by COMPILING.
-8. **THEN, and only then:** recreate the venue clean, rebuild the Android APK once, run the
+7. **THEN, and only then:** recreate the venue clean, rebuild the Android APK once, run the
     campaign. **Everything must end green, so every phase runs.** What it costs, the ladder's order
     and the two decisions it turns on are on
     [cross-client-testing](docs/wiki/cross-client-testing.md), the only copy of any of it.

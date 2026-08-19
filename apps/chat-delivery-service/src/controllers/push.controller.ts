@@ -185,6 +185,16 @@ export class PushController {
       // Already ACKed or non-existent - return empty (no error to avoid retry loops).
       return { proto: '', ratchetTree: '' };
     }
+    // A row with no `proto` was written by the retired legacy send path, which is the only writer of
+    // `content` (`messaging.service.ts`, LEGACY_CONTENT_PATH). Serving it silently is what let the
+    // column outlive its writer unnoticed: measured 2026-08-19, `content` is NULL on all 817 queued
+    // rows back to 2026-07-28. Reading it means that path ran, and the fix belongs there.
+    if (!queued.proto && queued.content) {
+      this.logger.warn(
+        `[PUSH] LEGACY_CONTENT_ROW queuedId=${queued.id} recipient=${userId}:${deviceId} - ` +
+          `row carries no proto; served from the retired content column`
+      );
+    }
     // ratchetTree is only set on Welcome rows; the background receiver needs it to
     // join the group (it is never included in the FCM data payload, only here).
     return {
