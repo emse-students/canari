@@ -113,7 +113,7 @@ escapes.
 | --- | --- | --- |
 | **Canari** (this monorepo) | `emse-students/canari`, **PUBLIC** | active - see below |
 | **Sky** | `../Sky` | COMPLETE, nothing open |
-| **MiGallery** | `../MiGallery` | COMPLETE but for one follow-up: its search is still plain substring. The user's standing requirement is that **every search box across the ecosystem tolerates typos and word inversion and ranks by edit distance** - done in Sky (`personMatchScore`) and in Canari (`applyFuzzyNameSearch`, pg_trgm + unaccent), never started there. |
+| **MiGallery** | `../MiGallery` | COMPLETE. Its search met the standing requirement on 2026-08-19 (`fuzzyScore`/`fuzzySearch`, `docs/wiki/search.md` there): word inversion, transposition-aware edit distance, and ranking on every list that truncates. |
 | **Portail-etu** | `../refonte-portail-etu` | COMPLETE. **No SSH to that box** - the self-hosted CD runner is the only way in; `deploy.yml` has a `workflow_dispatch` (a dispatch can 500 while STILL creating the run - check `gh run list` before re-dispatching). PUBLIC, so every run log must redact and `grep -a` is mandatory. `pm2 flush`, never `rm`. `data-export/` holds PII, never commit. |
 | **Le Cercle** | `../le-cercle`, `gitlab.emse.fr:aurel.dautry/le-cercle` | Aurel's repo, but the rewrite is MERGED and we hold push rights now. See below. |
 
@@ -129,34 +129,36 @@ before the campaign restarts.** Everything actionable is HERE, in order, one lin
 lives where the link says and **is not restated**. An item is done when its code, its tests, its doc
 and its commit are in, and it is then deleted from BOTH files.
 
-**Build first, then measure, then the campaign.** 1 is code, 2-6 measurements and questions that
-need a deploy to have happened, 7 a panel, 8 the campaign. **The phone is back (2026-08-17) -
-nothing is on hold; keep `adb devices` answering. There is NO iPhone (2026-08-18)**, so the iOS half
+**The code items are all in.** 1-5 are measurements and questions that need a deploy to have
+happened, 6 a panel, 7 the campaign. **The phone is back (2026-08-17) - nothing is on hold; keep
+`adb devices` answering. There is NO iPhone (2026-08-18)**, so the iOS half
 of the device ladder cannot be run at all
 ([device-verification](docs/wiki/device-verification.md)).
 
-1. **MiGallery's FUZZY SEARCH** - the last of the four projects on plain substring, against the
-   user's standing requirement. Port Canari's pg_trgm + unaccent or Sky's `personMatchScore`.
-2. **SEO FOR Sky, MiGallery AND Portail-etu** - one method ([seo](docs/wiki/frontend/seo.md)), three
+1. **SEO FOR Sky, MiGallery AND Portail-etu** - one method ([seo](docs/wiki/frontend/seo.md)), three
    separate repos and three deploys.
-3. **CONVERGE THE FIVE PROJECTS ON EACH SHARED SOLUTION** - and it starts with an INVENTORY, not a
+2. **CONVERGE THE FIVE PROJECTS ON EACH SHARED SOLUTION** - and it starts with an INVENTORY, not a
    refactor. A shared package is probably the wrong shape; one written contract, four aligned
-   implementations. Do NOT enumerate the inventory from memory.
-4. **MEASURE EGRESS OVER TIME** - the component probes already answer "fine right now"; what is owed
+   implementations. Do NOT enumerate the inventory from memory. **One divergence is already
+   measured and belongs to this item:** MiGallery's `editDistance` counts a TRANSPOSITION as one
+   edit (Damerau-Levenshtein); Sky's `personMatchScore` and this repo's `applyFuzzyNameSearch` do
+   not, so "jaen" finds Jean in the gallery and nowhere else
+   ([MiGallery `docs/wiki/search.md`](../MiGallery/docs/wiki/search.md)).
+3. **MEASURE EGRESS OVER TIME** - the component probes already answer "fine right now"; what is owed
    is whether the two stalls were CORRELATED, which a one-shot probe cannot answer.
-5. **THE DENOMINATOR ON THE PROFILE-FETCH FAILURES** - the accusing log line exists now; measure how
+4. **THE DENOMINATOR ON THE PROFILE-FETCH FAILURES** - the accusing log line exists now; measure how
     often it fires and against what population, then decide whether the two-minute backoff has a case.
-6. **THE TWO STORAGE-BOUND QUESTIONS, ANSWERED BY FAULT INJECTION** - what a phone out of space
+5. **THE TWO STORAGE-BOUND QUESTIONS, ANSWERED BY FAULT INJECTION** - what a phone out of space
     actually does, and what the web client does when the browser evicts its store. Both are TIME
     bounds today with no SIZE bound; the question is the failure SHAPE. **Injected, never on the
     campaign phone - the user's decision, 2026-08-19**: the appliance the campaign depends on is
     not the place to find out.
-7. **THE MLS HALF OF `/admin/storage`** - the media half shipped 2026-08-18; Postgres and Redis are
+6. **THE MLS HALF OF `/admin/storage`** - the media half shipped 2026-08-18; Postgres and Redis are
     still bare totals with no breakdown and no slope, and the WP-GHOST-1 shapes (a device holding
     memberships with no `key_package`, a queue past a few hundred rows) are measured nowhere. **A
     panel, no alert** - the user's call, 2026-08-17; the slope is what makes that survivable.
     [storage-forecast](docs/wiki/infrastructure/storage-forecast.md)
-8. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign.
+7. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign.
     **Everything must end green, so every phase runs.** What that costs, the ladder's order, and the
     two decisions it turns on - `call-service` logging BEFORE the CALL phase, and the community
     rework never having run against prod - are all on
