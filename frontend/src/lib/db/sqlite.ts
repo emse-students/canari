@@ -820,6 +820,21 @@ export class SqliteStorage implements IStorage {
     return rows.length;
   }
 
+  /** Drop the named sessions and report how many went. See {@link IStorage.deleteGraineSessions}. */
+  async deleteGraineSessions(sessionIds: readonly string[]): Promise<number> {
+    if (sessionIds.length === 0) return 0;
+    const placeholders = sessionIds.map((_, i) => `$${i + 1}`).join(', ');
+    const params = [...sessionIds];
+    // Counted from what is really there, not from the length of the list: an id naming nothing is
+    // an allowed request, and reporting it as a drop would overstate every sweep.
+    const rows: { session_id: string }[] = await this.db.select(
+      `SELECT session_id FROM graine WHERE session_id IN (${placeholders})`,
+      params
+    );
+    await this.db.execute(`DELETE FROM graine WHERE session_id IN (${placeholders})`, params);
+    return rows.length;
+  }
+
   /** Every row, seeds still sealed, for a backup. See {@link IStorage.getAllEncryptedGraineRows}. */
   async getAllEncryptedGraineRows(): Promise<EncryptedGraineRow[]> {
     const rows: any[] = await this.db.select('SELECT * FROM graine');

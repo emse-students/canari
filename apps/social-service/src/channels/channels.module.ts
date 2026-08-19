@@ -3,6 +3,7 @@ import { HttpModule } from '@nestjs/axios';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ChannelsController } from './channels.controller';
 import { ChannelService } from './channel.service';
+import { ChannelRetentionScheduler } from './channel-retention.scheduler';
 import { Channel } from './entities/channel.entity';
 import { ChannelRole } from './entities/channel-role.entity';
 import { ChannelMember } from './entities/channel-member.entity';
@@ -23,7 +24,7 @@ import { WorkspaceInvite } from './entities/workspace-invite.entity';
     HttpModule,
   ],
   controllers: [ChannelsController],
-  providers: [ChannelService],
+  providers: [ChannelService, ChannelRetentionScheduler],
   exports: [ChannelService],
 })
 export class ChannelsModule {}

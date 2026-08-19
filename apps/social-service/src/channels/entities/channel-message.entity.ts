@@ -10,6 +10,15 @@ import {
 /** TypeORM entity storing an encrypted message posted in a channel. */
 @Entity('channel_messages')
 @Index(['channelId'])
+// The two access paths the 365-day retention window needs, both PARTIAL and both named to match
+// migration 043 - `synchronize` is on outside production, so an entity that did not declare them
+// would leave dev without the indexes prod has. The purge only ever targets unpinned rows, and a
+// row with no Graine session answers no device's `liveGraineSessions` question, so in each case the
+// excluded rows are exactly the ones the query can never want.
+@Index('IDX_channel_messages_retention', ['createdAt'], { where: 'pinned = false' })
+@Index('IDX_channel_messages_sender_session', ['senderSessionId'], {
+  where: '"senderSessionId" IS NOT NULL',
+})
 export class ChannelMessage {
   @PrimaryGeneratedColumn('uuid')
   id: string;

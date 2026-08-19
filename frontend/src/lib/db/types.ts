@@ -386,6 +386,15 @@ export interface IStorage {
    * once, and a per-channel purge would leave seeds for salons the device can no longer even list.
    */
   deleteGraineSessionsForWorkspace(workspaceId: string): Promise<number>;
+  /**
+   * Drop the named sessions, returning how many rows actually went.
+   *
+   * The scope here is the SESSION and not the community, because this is what the retention sweep
+   * needs: the messages a seed opens expire one session at a time, in communities the device is
+   * still very much a member of. Ids that name nothing are not an error - the caller is asking for
+   * an end state, and a row already gone is that end state.
+   */
+  deleteGraineSessions(sessionIds: readonly string[]): Promise<number>;
 
   /** Return all Graine rows as-is (seed still encrypted) for backup export. */
   getAllEncryptedGraineRows(): Promise<EncryptedGraineRow[]>;

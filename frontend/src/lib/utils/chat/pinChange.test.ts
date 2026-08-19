@@ -76,6 +76,7 @@ function makeEncryptedStorage(): IStorage & {
     getGraineSession: vi.fn().mockResolvedValue(null),
     getGraineSessionsForWorkspace: vi.fn().mockResolvedValue([]),
     deleteGraineSessionsForWorkspace: vi.fn().mockResolvedValue(0),
+    deleteGraineSessions: vi.fn().mockResolvedValue(0),
     getAllEncryptedGraineRows: vi.fn(async () => graineRows.slice()),
     importEncryptedGraineRow: vi.fn().mockResolvedValue(undefined),
     clear: vi.fn().mockResolvedValue(undefined),

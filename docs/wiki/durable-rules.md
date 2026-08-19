@@ -133,6 +133,21 @@ ones that must be seen without opening one:
   gone**, and the wider rule is the one that made it invisible: an operation that cannot be
   expressed must be REFUSED, never approximated with the neighbouring scope's write. A
   `{ success: true }` that removed nothing is a lie the next refetch exposes.
+- **TWO WINDOWS MEANT TO BE ONE WILL DRIFT: DERIVE THE SECOND FROM THE FIRST, NEVER RE-TIME IT.**
+  Community messages expire at 365 days and the Graine seeds that open them must go with them. A
+  matching client-side timer is the obvious build and is wrong twice over: it is a second copy of a
+  number the server owns, and it cannot know about the EXCEPTIONS - pinned messages are exempt from
+  the purge, so a client clock would delete the seed of a message deliberately kept and turn it into
+  ciphertext nobody holds the key to. The device instead ASKS which of its sessions the server still
+  has messages for (`POST graine/live-sessions`) and forgets the rest; the window travels back with
+  the answer, in DAYS so both sides of the comparison stay on the device's own clock, so no client
+  ever holds a copy of it. See [channel-encryption](protocols/channel-encryption.md).
+- **A DERIVED ANSWER MUST NOT CONFLATE "GONE" WITH "NOT THERE YET", NOR WITH "NO ANSWER".** "No
+  message names this session" is true of an expired session AND of one minted this morning whose
+  first send has not landed - so the sweep also requires the session to be older than the window,
+  which is the only fact separating them. And a request that FAILED reads identically to one
+  answering nothing, so an unanswered chunk sweeps nothing at all: without that, the first API
+  outage deletes every seed on the device. Both are refusals, both fail closed, and each is a test.
 - Never return a `Channel` entity to a client: it carries `masterSecret`. Project fields explicitly.
 - `/c/<groupId>` and `/chat/<groupId>` are NOT routes; a conversation opens by publishing to `notifNav`.
 - "A refresh ran" and "the list is current" are two different facts; a loader that conflates them

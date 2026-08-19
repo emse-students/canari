@@ -57,3 +57,29 @@ export async function forgetGraineChannelMirror(channelId: string): Promise<void
     );
   }
 }
+
+/**
+ * Drops the named seeds from the mirror, wherever they sit. Tauri only; a no-op on web.
+ *
+ * Called by the retention sweep, which works one SESSION at a time in channels the device still
+ * belongs to - {@link forgetGraineChannelMirror} is the wrong scope there, and the mirror's own
+ * per-channel bound is not a substitute: it only trims a channel something is still being written
+ * to, so a quiet salon keeps plaintext seeds for messages the server deleted a year ago.
+ *
+ * Best-effort like the rest of this module: a mirror that refuses to shrink costs stale plaintext
+ * in an app-private file, and the durable rows - the ones deciding what the app can READ - are gone
+ * regardless. The warning is what makes that visible rather than silent.
+ *
+ * @param sessionIds Sessions whose seeds must leave the native file.
+ */
+export async function forgetGraineMirroredSessions(sessionIds: readonly string[]): Promise<void> {
+  if (!isTauriRuntime() || sessionIds.length === 0) return;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('forget_graine_sessions', { sessionIds });
+  } catch (e) {
+    console.warn(
+      `[GRAINE_MIRROR] forget failed for ${sessionIds.length} expired session(s): ${e instanceof Error ? e.message : String(e)}`
+    );
+  }
+}

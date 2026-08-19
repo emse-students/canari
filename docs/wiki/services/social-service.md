@@ -81,14 +81,23 @@ Two facts that decide every capacity question about communities, both verified a
   `/internal/push/notify`, which never touches `queuedMessageRepo`. Measured on prod:
   `queued_message` holds **0** rows for any channel id. This is the opposite of a DM, where a copy of
   the ciphertext is stored per recipient *device* - see [chat-delivery](chat-delivery.md).
-- **Nothing ever GCs `channel_messages`.** There is no cron and no retention window. Deleting a
-  community now drops its rows outright (since 2026-08-18), but that is the only bulk removal;
-  account deletion rewrites `authorId` to `[deleted]` and keeps the row, and the only other removal
-  is an explicit `deleteChannelMessage`. The history of a living community therefore grows
-  monotonically - cheaply (~960 B/row including indexes, `content` averaging 137 B because a channel
-  ciphertext carries no MLS framing), but forever.
+- **`channel_messages` expires after a year** (`ChannelRetentionScheduler`, daily at 03:45, since
+  2026-08-19). `CHANNEL_MESSAGE_RETENTION_DAYS = 365` is the ONLY copy of that number: the client
+  never compiles one in, it asks. **Pinned messages are exempt** - pinning is somebody deliberately
+  saying this one outlives the scroll, and pinned sets are small and bounded per channel. The other
+  removals are unchanged: deleting a community drops its rows outright (since 2026-08-18), account
+  deletion rewrites `authorId` to `[deleted]` and keeps the row, and `deleteChannelMessage` is
+  explicit. A row costs ~960 B including indexes, `content` averaging 137 B because a channel
+  ciphertext carries no MLS framing.
+- **The Graine seeds are swept on the SAME window, derived rather than timed.**
+  `POST /api/channels/graine/live-sessions` answers which of a device's sessions are still named by
+  a stored message; the device forgets the rest. One window, one clock - and it is what makes the
+  pinned exemption safe, since a pinned message keeps its session alive by still naming it. The
+  refusals that carry the design (a young session is never dropped, an unanswered chunk sweeps
+  nothing) are in [channel-encryption](../protocols/channel-encryption.md#8-retention-one-window-and-the-seeds-derived-from-it---shipped-2026-08-19).
 
-Posts have the same shape: no TTL, no cron, removed only by an explicit delete or account deletion.
+Posts still have the OLD shape: no TTL, no cron, removed only by an explicit delete or account
+deletion. The retention above is `channel_messages` only.
 The numbers and what they imply are in
 [storage-forecast](../infrastructure/storage-forecast.md).
 

@@ -200,6 +200,20 @@ export function forgetWorkspaceGraineState(
   historyVisibilityByWorkspace.delete(workspaceId);
 }
 
+/**
+ * Evicts decrypted seeds from the in-process cache, keeping every other map intact.
+ *
+ * The counterpart of {@link forgetWorkspaceGraineState} at the scope the retention sweep works at:
+ * individual sessions, in communities this device is still a member of. Nothing else may be
+ * touched - the channel is still there, the community is still there, and dropping their entries
+ * would cost this tab the workspace of a channel it is about to seal a message for.
+ *
+ * @param sessionIds Sessions whose decrypted seeds must leave the cache.
+ */
+export function forgetGraineSeedCache(sessionIds: readonly string[]): void {
+  for (const sessionId of sessionIds) seedCache.delete(sessionId);
+}
+
 /** Strip the `channel_` conversation prefix: the map is keyed by the raw uuid, everywhere. */
 export function rawChannelId(channelId: string): string {
   return String(channelId).replace(/^channel_/, '');

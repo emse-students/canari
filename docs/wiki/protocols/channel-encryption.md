@@ -852,16 +852,53 @@ seed can withhold it, so the rule is applied by the answering member. A modified
 anyway. This is inherent - the server holds no key and could not enforce it if it wanted to - and it
 is written here so nobody later reads the setting as something it is not.
 
-## 8. Open, and not blocking
+## 8. Retention: one window, and the seeds derived from it - SHIPPED 2026-08-19
 
-**Retention on `channel_messages`** - there is none, and a salon message lives for ever. Either
-channels get a window (ninety days, matching conversations, is the obvious candidate) or they are
-declared permanent and the growth is measured. The current state - no policy, no measurement, no
-statement - is the only unacceptable one. Nothing above is blocked by the answer.
+A salon message used to live for ever, and the durable seed store was unbounded with it: the only
+thing that ever dropped a seed was leaving the community (`forgetCommunityGraine`, WP-60), so a
+device that stayed in an active community held every session ever minted for it.
 
-**The seeds must be swept on whatever window the messages get.** The durable seed store is
-UNBOUNDED - only the native mirror is capped per channel, and its own comment says seeds accumulate
-for ever - so a device that stays in an active community holds every session ever minted for it.
-Today the only thing that ever drops a seed is leaving the community (`forgetCommunityGraine`,
-WP-60). When the retention window above lands, a device otherwise keeps the keys to messages that no
-longer exist.
+**Messages expire after `CHANNEL_MESSAGE_RETENTION_DAYS` = 365** (`channel-retention.scheduler.ts`,
+daily at 03:45), the user's decision of 2026-08-18. **Pinned messages are exempt**, which is not a
+softening of the window: pinning is somebody deliberately saying this one outlives the scroll, and
+deleting it silently at a year would destroy the one kind of message a human explicitly marked as
+durable. Pinned sets are small and bounded per channel.
+
+**The seeds are swept on the SAME window, and the window is asked for rather than copied.** The
+obvious implementation gives the device its own one-year timer, and that is two windows meant to be
+one - the shape that drifts. Instead:
+
+1. `sweepExpiredGraineSeeds` (post-boot, tab-leader only) reads the session ids it holds out of the
+   ENCRYPTED rows - id and date, never the seed, so an undecryptable row is swept like any other.
+2. It posts them, 500 at a time, to `POST /api/channels/graine/live-sessions`, which answers which
+   ids are still named by a stored message, scoped to the caller's communities.
+3. Anything unnamed is dropped from all three stores: the durable rows, the native mirror
+   (`forget_graine_sessions`, per session - the mirror's own per-channel bound only ever trims a
+   channel something is still being WRITTEN to, so a quiet salon kept twenty plaintext seeds for
+   ever), and the in-memory seed cache.
+
+Two refusals carry the design:
+
+- **A session younger than the window is never dropped, whatever the answer says.** "No message
+  names this session" has two causes the answer cannot separate - its messages expired, or it has
+  none yet - and only the first is a reason to delete. The window travels back with the answer
+  (`retentionDays`) so the client still holds no copy of it, and it is sent as DAYS rather than as
+  a cutoff instant so both sides of the comparison stay on the device's own clock. A server
+  answering `retentionDays <= 0` gets nothing swept: with no window every session looks old enough.
+- **A chunk that went unanswered abandons the whole run.** A failed ask reads exactly like "the
+  server names nothing", and acting on it would delete every seed on the device the first time the
+  API is down. The server refuses a list over `MAX_LIVE_SESSION_QUERY` = 500 rather than truncating
+  it, for the same reason: a truncated answer reads as "the rest are dead".
+
+**This is also what makes the pinned exemption safe.** A pinned message keeps naming its session, so
+the session stays live, so its seed is kept. A matching client-side timer would have deleted that
+seed and turned a deliberately preserved message into ciphertext nobody holds the key to.
+
+**The figure at ship time was zero.** `channel_messages` held no rows at all - THE CUT deleted every
+community on 2026-08-18 and none had been recreated - so the window was armed on deploy with no data
+to forecast its cost from. That is stated rather than a figure being invented; the user's decision of
+2026-08-19 was to build and arm directly.
+
+## 9. Open, and not blocking
+
+Nothing here blocks anything above.

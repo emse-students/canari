@@ -858,6 +858,27 @@ export class ChannelService {
       historyVisibility: GraineHistoryVisibility;
     }>;
   }
+
+  /**
+   * Of the Graine sessions this device holds, which ones the server still has messages for.
+   *
+   * The retention sweep's one question. `retentionDays` comes back with the answer so the client
+   * never compiles in a copy of the window - the server owns that number, and the device needs it
+   * only to refuse dropping a session too young to have lost anything.
+   *
+   * @param sessionIds At most 500; the server REFUSES a longer list rather than truncating it,
+   *   because a truncated answer would read as "the rest are dead" and cost live seeds.
+   */
+  async liveGraineSessions(
+    sessionIds: string[]
+  ): Promise<{ live: string[]; retentionDays: number }> {
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/graine/live-sessions`, {
+      method: 'POST',
+      body: JSON.stringify({ sessionIds }),
+    });
+    await this.handleError(res);
+    return res.json() as Promise<{ live: string[]; retentionDays: number }>;
+  }
 }
 
 export const channelService = new ChannelService();

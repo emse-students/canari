@@ -39,6 +39,7 @@ import { isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { setGraineRuntime } from '$lib/utils/graine/runtime';
 import { handleDistributionFrame } from '$lib/utils/graine/frameHandler';
+import { sweepExpiredGraineSeeds } from '$lib/utils/graine/retention';
 import {
   unregisterMlsStatePersister,
   flushActiveMlsStateEncrypted,
@@ -1136,6 +1137,14 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     if (offlineSession) return;
 
     runGroupDiscoveryImpl(ctx, cb, ctx.ensureMls());
+
+    // Graine retention, once per boot and LEADER-ONLY: two tabs sweeping would ask the same
+    // question twice and race each other's deletes. Deliberately after the startup bench is closed
+    // - it is maintenance, not startup, and nothing waits on it. Its own failures are logged and
+    // swallowed inside; the catch here only exists because this call site cannot await it.
+    sweepExpiredGraineSeeds().catch((e: unknown) => {
+      console.warn(`[GRAINE] retention sweep threw: ${e instanceof Error ? e.message : String(e)}`);
+    });
 
     for (const delay of [35_000, 70_000]) {
       setTimeout(() => {

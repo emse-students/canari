@@ -48,6 +48,14 @@ import {
 } from './dto/channel.dto';
 
 /** Manages workspaces, channels, roles, members and encrypted messages. */
+/**
+ * How many session ids one liveness query may carry.
+ *
+ * A bound rather than a page: a device holding more sessions than this asks in several requests,
+ * because a SILENTLY truncated answer would read as "the rest are dead" and delete live seeds.
+ */
+export const MAX_LIVE_SESSION_QUERY = 500;
+
 @Injectable()
 export class ChannelService {
   private readonly logger = new Logger(ChannelService.name);
@@ -604,6 +612,55 @@ export class ChannelService {
   private async getWorkspaceMemberIds(workspaceId: string): Promise<string[]> {
     const members = await this.memberRepo.find({ where: { workspaceId } });
     return members.map((m) => m.userId);
+  }
+
+  /**
+   * Of the Graine sessions a device holds, which ones this server still has messages for.
+   *
+   * THE SEEDS' RETENTION WINDOW IS THIS ONE, DERIVED - never a second clock on the device. A seed
+   * whose messages are gone is the keys to something that no longer exists: unbounded, and pure
+   * liability. But a device cannot know when a message was deleted, and giving it its own one-year
+   * timer would be a second copy of a number that lives here - which is precisely the shape that
+   * drifts, and would strip the seed of a PINNED message the sweep deliberately kept.
+   *
+   * Answers only about ids the caller submitted, and only from the communities it belongs to. A
+   * session id is opaque and unique across senders, so the reply reveals nothing the caller did not
+   * already hold: it learns whether ITS OWN seed is still worth keeping, and nothing about anyone
+   * else's. An id the caller does not belong to is simply absent from the answer, indistinguishable
+   * from one that has expired - there is no membership oracle here.
+   *
+   * @param userId the asking account, from `x-user-id`
+   * @param sessionIds sessions the device holds; anything beyond {@link MAX_LIVE_SESSION_QUERY} is
+   *   refused rather than silently truncated, since a truncated answer reads as "these are dead"
+   * @returns the subset still named by at least one stored message
+   */
+  async liveGraineSessions(userId: string, sessionIds: string[]): Promise<string[]> {
+    if (sessionIds.length === 0) return [];
+    if (sessionIds.length > MAX_LIVE_SESSION_QUERY) {
+      throw new BadRequestException(
+        `At most ${MAX_LIVE_SESSION_QUERY} session ids per request, got ${sessionIds.length}`
+      );
+    }
+
+    const memberships = await this.memberRepo.find({
+      where: { userId },
+      select: { workspaceId: true },
+    });
+    if (memberships.length === 0) return [];
+    const workspaceIds = [...new Set(memberships.map((m) => m.workspaceId))];
+
+    const rows: { senderSessionId: string }[] = await this.messageRepo
+      .createQueryBuilder('m')
+      .select('DISTINCT m."senderSessionId"', 'senderSessionId')
+      .where('m."senderSessionId" IN (:...sessionIds)', { sessionIds })
+      .andWhere('m."workspaceId" IN (:...workspaceIds)', { workspaceIds })
+      .getRawMany();
+
+    const live = rows.map((r) => r.senderSessionId);
+    this.logger.debug(
+      `[GRAINE] liveGraineSessions user=${userId.slice(0, 8)} asked=${sessionIds.length} live=${live.length}`
+    );
+    return live;
   }
 
   // ================= WORKSPACES =================

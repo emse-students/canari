@@ -39,8 +39,8 @@ use crate::commands::mls::{
     skip_send_generations, supprimer_groupe, trailer_welcome,
 };
 use crate::commands::push::{
-    check_push_secret_health, forget_graine_channel, get_fcm_token, get_voip_token,
-    load_push_context, read_and_clear_fcm_cache, read_and_clear_outbox_sent,
+    check_push_secret_health, forget_graine_channel, forget_graine_sessions, get_fcm_token,
+    get_voip_token, load_push_context, read_and_clear_fcm_cache, read_and_clear_outbox_sent,
     read_and_clear_pending_call_accept, read_outbox_mirror, set_push_context_locale,
     store_graine_seed, store_outbox_mirror, store_push_context, store_push_secret,
 };
@@ -890,6 +890,7 @@ pub fn run() {
             get_voip_token,
             store_graine_seed,
             forget_graine_channel,
+            forget_graine_sessions,
             actualiser_cle_keystore_avec_devicekey,
             flush_webview_cookies
         ])

@@ -38,6 +38,8 @@ import {
   CHANNEL_WRITE_POLICIES,
 } from './dto/channel.dto';
 import { type SetRolePermissionsDto } from './dto/channel-permission.dto';
+import { LiveGraineSessionsDto } from './dto/live-graine-sessions.dto';
+import { CHANNEL_MESSAGE_RETENTION_DAYS } from './channel-retention.scheduler';
 
 /** Manages workspace and channel resources including membership and messages. */
 @Controller('channels')
@@ -579,6 +581,32 @@ export class ChannelsController {
   @Get('roles/:roleId/permissions')
   getRolePermissions(@Headers('x-user-id') xUserId: string, @Param('roleId') roleId: string) {
     return this.service.getRoleBasePermissions(roleId, xUserId.trim().toLowerCase());
+  }
+
+  /**
+   * Of the Graine sessions this device holds, which ones still have messages on the server.
+   *
+   * The device forgets the rest. This is what keeps the seeds' retention window IDENTICAL to the
+   * messages' one without a second clock: the answer is derived from the rows that actually exist,
+   * so a pinned message the sweep kept also keeps its seed, and a message deleted for any other
+   * reason releases it. A POST because the id list is the request, not an addressable resource.
+   *
+   * `retentionDays` travels back with the answer so the CLIENT NEVER HOLDS A COPY of the window.
+   * The device needs it for one thing only - refusing to drop a session younger than the window,
+   * which cannot have lost its messages to the purge and may simply have none yet. Serving the
+   * number rather than compiling it in keeps {@link CHANNEL_MESSAGE_RETENTION_DAYS} the single
+   * copy, and sending DAYS rather than a cutoff instant keeps both sides of the comparison on the
+   * device's own clock.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Post('graine/live-sessions')
+  liveGraineSessions(
+    @Headers('x-user-id') xUserId: string,
+    @Body() body: LiveGraineSessionsDto
+  ): Promise<{ live: string[]; retentionDays: number }> {
+    return this.service
+      .liveGraineSessions(xUserId.trim().toLowerCase(), body.sessionIds ?? [])
+      .then((live) => ({ live, retentionDays: CHANNEL_MESSAGE_RETENTION_DAYS }));
   }
 
   /** Updates a role's base permissions (MANAGE_ROLES required). */

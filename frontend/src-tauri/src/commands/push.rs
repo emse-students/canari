@@ -335,6 +335,82 @@ pub(crate) fn forget_graine_channel(
     Ok(())
 }
 
+/// Drops the named Graine sessions from {app_data_dir}/graine_seeds.json, wherever they sit.
+///
+/// Called by the retention sweep, which works one SESSION at a time in channels the device is still
+/// a member of - so `forget_graine_channel` is the wrong shape here, and the per-channel bound that
+/// trims this file is not a substitute: it only ever runs on a channel something is still being
+/// WRITTEN to, so a quiet salon keeps up to twenty plaintext seeds for messages the server deleted
+/// a year ago.
+///
+/// A channel left with no sessions has its entry removed too, so the file shrinks to nothing rather
+/// than to a map of empty objects.
+///
+/// Absent file, absent session: success. The caller asked for an end state and that is the state.
+#[tauri::command]
+pub(crate) fn forget_graine_sessions(
+    app: tauri::AppHandle,
+    session_ids: Vec<String>,
+) -> Result<usize, String> {
+    if session_ids.is_empty() {
+        return Ok(0);
+    }
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let path = data_dir.join("graine_seeds.json");
+
+    let mut root: serde_json::Value = match std::fs::read_to_string(&path) {
+        Ok(c) => serde_json::from_str(&c).unwrap_or_else(|_| serde_json::json!({})),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) => return Err(format!("read graine_seeds.json: {e}")),
+    };
+
+    let map = root
+        .as_object_mut()
+        .ok_or("graine_seeds.json is not an object")?;
+
+    let (removed, emptied) = remove_graine_sessions(map, &session_ids);
+    if removed == 0 && emptied == 0 {
+        return Ok(0);
+    }
+    std::fs::write(&path, root.to_string()).map_err(|e| e.to_string())?;
+    log::debug!(
+        "[GRAINE_MIRROR] forgot {removed} expired session(s), {emptied} channel(s) dropped"
+    );
+    Ok(removed)
+}
+
+/// Removes the named sessions from every channel entry, dropping channels left with none.
+///
+/// Split out of the command because that is the whole decision: the command around it only reads a
+/// file, writes it back, and cannot be reached without a running Tauri app.
+///
+/// @returns how many sessions went, and how many channel entries were dropped for being empty.
+fn remove_graine_sessions(
+    map: &mut serde_json::Map<String, serde_json::Value>,
+    session_ids: &[String],
+) -> (usize, usize) {
+    let doomed: std::collections::HashSet<&str> = session_ids.iter().map(String::as_str).collect();
+    let mut removed = 0usize;
+    let mut emptied: Vec<String> = Vec::new();
+    for (channel_id, entry) in map.iter_mut() {
+        let Some(sessions) = entry.as_object_mut() else {
+            // A malformed entry is left exactly as it is: nothing here can tell whether it holds
+            // seeds, and guessing either way is worse than leaving it for the next writer.
+            continue;
+        };
+        let before = sessions.len();
+        sessions.retain(|session_id, _| !doomed.contains(session_id.as_str()));
+        removed += before - sessions.len();
+        if sessions.is_empty() {
+            emptied.push(channel_id.clone());
+        }
+    }
+    for channel_id in &emptied {
+        map.remove(channel_id);
+    }
+    (removed, emptied.len())
+}
+
 /// Reads {app_data_dir}/outbox_sent.ndjson (one messageId per line, written by the Android service
 /// after a successful background send), clears the file and returns the ids. Called at login to
 /// drop from the outbox the messages already delivered in the background.
@@ -554,4 +630,66 @@ pub(crate) fn store_push_secret(secret: String, app: tauri::AppHandle) -> Result
         let _ = (secret, app);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod graine_mirror_tests {
+    use super::{
+        prune_graine_sessions, remove_graine_sessions, GRAINE_MIRROR_SESSIONS_PER_CHANNEL,
+    };
+
+    fn seed(created_at: i64) -> serde_json::Value {
+        serde_json::json!({ "seed": "c2VlZA==", "createdAt": created_at })
+    }
+
+    #[test]
+    fn forgets_named_sessions_across_channels_and_drops_empty_ones() {
+        let mut root = serde_json::json!({
+            "chan-a": { "s-1": seed(1), "s-2": seed(2) },
+            "chan-b": { "s-3": seed(3) },
+        });
+        let map = root.as_object_mut().unwrap();
+
+        // The sweep names sessions, not channels: they sit wherever they sit.
+        let (removed, emptied) =
+            remove_graine_sessions(map, &["s-1".to_string(), "s-3".to_string()]);
+
+        assert_eq!(removed, 2);
+        assert_eq!(emptied, 1);
+        // chan-b held nothing else, so the entry goes rather than staying as an empty object.
+        assert!(!map.contains_key("chan-b"));
+        assert_eq!(map["chan-a"].as_object().unwrap().len(), 1);
+        assert!(map["chan-a"].get("s-2").is_some());
+    }
+
+    #[test]
+    fn an_id_naming_nothing_changes_nothing() {
+        let mut root = serde_json::json!({ "chan-a": { "s-1": seed(1) } });
+        let map = root.as_object_mut().unwrap();
+
+        let (removed, emptied) = remove_graine_sessions(map, &["ghost".to_string()]);
+
+        assert_eq!((removed, emptied), (0, 0));
+        assert!(map["chan-a"].get("s-1").is_some());
+    }
+
+    #[test]
+    fn keeps_the_newest_and_drops_a_session_with_no_date_first() {
+        let mut sessions = serde_json::Map::new();
+        for i in 0..GRAINE_MIRROR_SESSIONS_PER_CHANNEL {
+            sessions.insert(format!("s-{i}"), seed(1_000 + i as i64));
+        }
+        // Undated, so it sorts oldest: a malformed entry is the first thing to go, never something
+        // that survives a bound it cannot be measured against.
+        sessions.insert(
+            "s-undated".to_string(),
+            serde_json::json!({ "seed": "c2VlZA==" }),
+        );
+
+        let dropped = prune_graine_sessions(&mut sessions);
+
+        assert_eq!(dropped, 1);
+        assert_eq!(sessions.len(), GRAINE_MIRROR_SESSIONS_PER_CHANNEL);
+        assert!(!sessions.contains_key("s-undated"));
+    }
 }

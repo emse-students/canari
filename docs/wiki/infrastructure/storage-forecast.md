@@ -71,7 +71,7 @@ tuples left by the WP-GHOST-1 purge. Cost per live row, total relation size incl
 | `posts` | 5 048 | 99 | posts |
 | `dm_device_group_memberships` | 2 633 | 84 | groups x devices |
 | `key_package` | 1 801 | 232 | devices |
-| `channel_messages` | ~960 | 128 | community messages, **forever** |
+| `channel_messages` | ~960 | 128 | community messages, **365-day window** (pinned exempt) since 2026-08-19 |
 
 `channel_messages.content` averages **137 bytes** (max 480) - a base64 AES-256-GCM ciphertext of a
 short text. Channels are not MLS: they use `HKDF(masterSecret, channelId, keyVersion)`, so the blob
@@ -138,9 +138,16 @@ members or devices exist; online clients get it over Redis pub/sub and offline o
 push. Communities are therefore the *cheapest* surface per message and the model must not treat them
 like groups.
 
-The cost is on the other axis: **nothing ever GCs `channel_messages`.** Deleting a community only
-archives it, and account deletion anonymises the author rather than removing rows. Community history
-grows monotonically, forever - at ~960 B/row.
+The cost used to be on the other axis - nothing ever GC'd `channel_messages`, so community history
+grew monotonically at ~960 B/row. **Since 2026-08-19 a message expires after 365 days**
+(`ChannelRetentionScheduler`, daily at 03:45), pinned messages exempt, which turns that growth into
+a rolling window the same way media's idle retention does. Account deletion still anonymises the
+author rather than removing rows, and deleting a community drops its rows outright.
+
+**The window was armed with the table EMPTY**, so nothing here is a forecast of what it saves: THE
+CUT deleted every community on 2026-08-18 and `channel_messages` held 0 rows when the scheduler
+shipped. The figure is owed once communities have been recreated and a year has passed - and until
+then, the per-year line below is still the un-windowed model.
 
 ### 2.4 Media have a 30-day IDLE retention
 

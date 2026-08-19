@@ -770,6 +770,28 @@ export class IndexedDbStorage implements IStorage {
     });
   }
 
+  async deleteGraineSessions(sessionIds: readonly string[]): Promise<number> {
+    if (sessionIds.length === 0) return 0;
+    const db = this.ensureDb();
+    return new Promise((resolve, reject) => {
+      let deleted = 0;
+      const tx = db.transaction('graine', 'readwrite');
+      const store = tx.objectStore('graine');
+      for (const sessionId of sessionIds) {
+        // Read before delete only to COUNT: `delete` succeeds on an absent key, so without this
+        // the caller would be told it dropped seeds it never held.
+        const existing = store.get(sessionId);
+        existing.onsuccess = () => {
+          if (!existing.result) return;
+          store.delete(sessionId);
+          deleted++;
+        };
+      }
+      tx.oncomplete = () => resolve(deleted);
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
   async getAllEncryptedGraineRows(): Promise<EncryptedGraineRow[]> {
     const db = this.ensureDb();
     const rows: any[] = await new Promise((resolve, reject) => {

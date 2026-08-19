@@ -91,6 +91,29 @@ describe('Graine sessions in IndexedDB', () => {
     expect(await storage.deleteGraineSessionsForWorkspace('w1')).toBe(1);
   });
 
+  it('drops named sessions across communities, counting only what was really there', async () => {
+    const storage = await freshStorage();
+    await storage.saveGraineSession(session({ sessionId: 'a', workspaceId: 'w1' }), KEY);
+    await storage.saveGraineSession(session({ sessionId: 'b', workspaceId: 'w2' }), KEY);
+    await storage.saveGraineSession(session({ sessionId: 'c', workspaceId: 'w1' }), KEY);
+
+    // The retention sweep works one SESSION at a time, in communities the device still belongs to,
+    // so the scope crosses workspaces on purpose. 'ghost' names nothing: an allowed request, but
+    // counting it would overstate every sweep that ran after a partial failure.
+    expect(await storage.deleteGraineSessions(['a', 'b', 'ghost'])).toBe(2);
+    expect(await storage.getGraineSession('a', KEY)).toBeNull();
+    expect(await storage.getGraineSession('b', KEY)).toBeNull();
+    expect(await storage.getGraineSession('c', KEY)).not.toBeNull();
+  });
+
+  it('asks nothing of the store for an empty list', async () => {
+    const storage = await freshStorage();
+    await storage.saveGraineSession(session({ sessionId: 'a' }), KEY);
+
+    expect(await storage.deleteGraineSessions([])).toBe(0);
+    expect(await storage.getGraineSession('a', KEY)).not.toBeNull();
+  });
+
   it('exports rows with the seed still sealed, and imports them back', async () => {
     const source = await freshStorage();
     await source.saveGraineSession(session(), KEY);
