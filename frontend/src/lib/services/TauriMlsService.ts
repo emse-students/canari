@@ -924,6 +924,17 @@ export class TauriMlsService extends BaseMlsService {
     return [...this._knownGroups];
   }
 
+  /**
+   * Tauri-native `invoke` wrapper - every leaf identity (`userId:deviceId`) in the group's tree.
+   *
+   * Read live from Rust rather than cached: unlike the epoch, nothing here mirrors the tree, and a
+   * stale roster is exactly the input a removal decision must never be given. It propagates the
+   * Rust error, which is what an unheld group answers - never an empty tree.
+   */
+  async getGroupMemberIdentities(groupId: string): Promise<string[]> {
+    return invoke<string[]>('lister_identites_membres', { groupId });
+  }
+
   /** Returns the last cached MLS epoch for a group, or 0 if unknown; cache is refreshed by `refreshEpochCache`. */
   getEpoch(groupId: string): number {
     return this._epochByGroupId.get(groupId) ?? 0;

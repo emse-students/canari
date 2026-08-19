@@ -525,6 +525,32 @@ pub(crate) fn recevoir_message(
     }
 }
 
+/// Every leaf identity (`userId:deviceId`) currently in the group's ratchet tree.
+///
+/// The tree is the only authority on who can READ a group. The delivery service's membership rows
+/// answer who it will ROUTE to - a different question, and one a community's key-distribution group
+/// has no rows for at all - so a reconciliation deciding whether a leaf still belongs reads this.
+#[tauri::command]
+pub(crate) fn lister_identites_membres(
+    group_id: String,
+    state: tauri::State<AppState>,
+) -> Result<Vec<String>, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+
+    manager.member_identities(&group_id).map_err(|e| {
+        log::error!(
+            "lister_identites_membres failed: group={} err={}",
+            group_id,
+            e
+        );
+        e.to_string()
+    })
+}
+
 #[tauri::command]
 pub(crate) fn retirer_membres(
     group_id: String,

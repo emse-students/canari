@@ -158,6 +158,35 @@ export async function publishDistributionGroupInfo(
   return { stored: payload?.stored === true };
 }
 
+/**
+ * Cuts one user off the community's key-distribution group, immediately and server-side.
+ *
+ * Called the moment they stop being a member, whichever way that happened. It revokes DELIVERY:
+ * their devices stop being routed the seed frames, and anything already queued for them is
+ * dropped. The MLS half - removing their leaf so future seeds are not even sealed to it - is a
+ * commit, which only a member's device can produce, and lands when one next loads the community.
+ *
+ * Idempotent, so a departure that is retried costs nothing.
+ *
+ * @returns how many routing rows and queued frames were dropped, for the caller's log line.
+ */
+export async function evictFromDistributionGroup(
+  secret: string,
+  workspaceId: string,
+  userId: string
+): Promise<{ memberships: number; queued: number }> {
+  const payload = (await callDelivery(
+    secret,
+    `internal/mls/distribution-groups/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(userId)}`,
+    { method: 'DELETE' }
+  )) as { memberships?: unknown; queued?: unknown } | null;
+
+  return {
+    memberships: typeof payload?.memberships === 'number' ? payload.memberships : 0,
+    queued: typeof payload?.queued === 'number' ? payload.queued : 0,
+  };
+}
+
 /** Tombstones the community's distribution group. Returns false when there was none to delete. */
 export async function deleteDistributionGroup(
   secret: string,

@@ -523,6 +523,18 @@ export interface IMlsService {
   removeMember(groupId: string, userIds: string[]): Promise<void>;
   /** Performs a real MLS remove commit for specific devices by identity ("userId:deviceId") and broadcasts it. */
   removeMemberDevice(groupId: string, deviceIdentities: string[]): Promise<void>;
+  /**
+   * Every leaf identity (`userId:deviceId`) in the group's MLS ratchet tree, read locally.
+   *
+   * THE TREE IS THE ONLY AUTHORITY ON WHO CAN READ A GROUP. {@link getGroupMembers} answers who
+   * the delivery service will ROUTE to, which is a different question: it can be empty for a group
+   * whose tree is full (a device fresh-start clears its rows), and a community's key-distribution
+   * group has no user-level rows at all by construction. A decision to remove a leaf reads THIS.
+   *
+   * Throws when this device does not hold the group - an empty tree and an absent group are
+   * opposite facts, and conflating them would read "nobody is left" off a group never joined.
+   */
+  getGroupMemberIdentities(groupId: string): Promise<string[]>;
   /** Returns the (userId, deviceId) pairs currently in a group. Throws on transport/HTTP failure; `[]` only for a genuinely empty group. */
   getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]>;
   /** Returns user-level membership (dm_group_members) for `groupId`. Throws on transport/HTTP failure; `[]` only for a genuinely empty group. */

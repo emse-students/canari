@@ -268,6 +268,66 @@ export class InternalController {
   }
 
   /**
+   * Cuts one user off a community's key-distribution group, the moment they stop being a member.
+   *
+   * THE HALF OF A DEPARTURE THAT NEEDS NOBODY ONLINE. Removing their leaf from the MLS tree is a
+   * commit, and only a member's device can produce one - so it happens whenever a remaining member
+   * next loads the community. Until then, nothing in the tree stops the delivery service handing
+   * the leaver every seed frame sent on the group, because routing reads these rows and not the
+   * tree. This is what makes the revocation immediate and server-enforced; the commit that follows
+   * is what makes it cryptographic.
+   *
+   * Three stores, all keyed by the group, and none of them can stand in for the others: the
+   * membership rows are what a reconnect reads, the Redis set is what a live fanout reads, and the
+   * queue holds frames already sealed for a device that was offline. Leaving the queue would mean
+   * handing the past over on the leaver's next connection.
+   *
+   * Idempotent by construction - every step is a delete keyed on the pair - so the caller may
+   * repeat it, and a community with no distribution group answers `{ evicted: false }` rather than
+   * failing a departure that has otherwise completed.
+   */
+  @Delete('mls/distribution-groups/:workspaceId/members/:userId')
+  async evictFromDistributionGroup(
+    @Param('workspaceId') workspaceId: string,
+    @Param('userId') userId: string,
+    @Headers('x-internal-secret') headerSecret: string
+  ): Promise<{ evicted: boolean; memberships: number; queued: number; routes: number }> {
+    this.assertInternalSecret(headerSecret);
+
+    const group = await this.groupRepo.findOne({
+      where: { distributionWorkspaceId: workspaceId },
+    });
+    if (!group) {
+      // A community created before Graine, or one whose group was already reaped. Not an error:
+      // there is no key distribution to be cut off from.
+      this.logger.log(
+        `[DISTRIBUTION_GROUP] evict workspace=${workspaceId} user=${userId.slice(0, 8)} - no group`
+      );
+      return { evicted: false, memberships: 0, queued: 0, routes: 0 };
+    }
+
+    const memberships = await this.deviceGroupRepo.delete({ groupId: group.id, userId });
+    const queued = await this.queuedMessageRepo.delete({ groupId: group.id, recipientId: userId });
+
+    const routed = await this.redis.smembers(`group:members:${group.id}`);
+    const toRemove = routed.filter((m) => m.startsWith(`${userId}:`));
+    if (toRemove.length > 0) {
+      await this.redis.srem(`group:members:${group.id}`, ...toRemove);
+    }
+
+    this.logger.log(
+      `[DISTRIBUTION_GROUP] evict workspace=${workspaceId} group=${group.id} user=${userId.slice(0, 8)} ` +
+        `memberships=${memberships.affected ?? 0} queued=${queued.affected ?? 0} routes=${toRemove.length}`
+    );
+    return {
+      evicted: true,
+      memberships: memberships.affected ?? 0,
+      queued: queued.affected ?? 0,
+      routes: toRemove.length,
+    };
+  }
+
+  /**
    * Tombstones the distribution group of a community that is going away. Deliberately the same
    * soft delete every other group dies of, so `cleanupSoftDeletedGroups` reaps it on the same
    * schedule and no second lifecycle exists.

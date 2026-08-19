@@ -370,4 +370,97 @@ describe('ChannelService - the community distribution group', () => {
       expect(repos.workspaceRepo.manager.transaction).toHaveBeenCalled();
     });
   });
+
+  describe('a departure cuts the leaver off the key distribution', () => {
+    /** A workspace with `member` in it and one other member, so no last-member rule fires. */
+    function communityWith(
+      memberRepo: { findOne: jest.Mock; find: jest.Mock },
+      workspaceRepo: { findOne: jest.Mock }
+    ) {
+      workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE, name: WORKSPACE_NAME });
+      memberRepo.findOne.mockResolvedValue({ workspaceId: WORKSPACE, userId: USER, roleIds: [] });
+      memberRepo.find.mockResolvedValue([
+        { workspaceId: WORKSPACE, userId: USER, roleIds: [] },
+        { workspaceId: WORKSPACE, userId: 'u2', roleIds: [] },
+      ]);
+    }
+
+    it('evicts the leaver from the distribution group BEFORE dropping their membership row', async () => {
+      const { service, memberRepo, workspaceRepo } = makeService();
+      communityWith(memberRepo, workspaceRepo);
+      global.fetch = answerWith({ evicted: true, memberships: 2, queued: 5, routes: 2 }) as never;
+
+      await expect(service.leaveWorkspace(WORKSPACE, USER)).resolves.toEqual({ success: true });
+
+      const [url, init] = (global.fetch as unknown as jest.Mock).mock.calls[0];
+      expect(String(url)).toContain(
+        `internal/mls/distribution-groups/${WORKSPACE}/members/${USER}`
+      );
+      expect(init.method).toBe('DELETE');
+      expect(memberRepo.delete).toHaveBeenCalledWith({ workspaceId: WORKSPACE, userId: USER });
+    });
+
+    it('does not remove the member when the eviction could not be completed', async () => {
+      // The two halves of a departure are not symmetric: the MLS commit lands whenever a remaining
+      // member next loads the community, but nothing ever comes back for a routing row left behind.
+      // Failing here leaves them a member and the whole departure retryable.
+      const { service, memberRepo, workspaceRepo, redis } = makeService();
+      communityWith(memberRepo, workspaceRepo);
+      global.fetch = jest.fn(() => Promise.reject(new Error('ECONNREFUSED'))) as unknown as never;
+
+      await expect(service.leaveWorkspace(WORKSPACE, USER)).rejects.toBeInstanceOf(
+        ServiceUnavailableException
+      );
+
+      expect(memberRepo.delete).not.toHaveBeenCalled();
+      expect(redis.publishChannelEvent).not.toHaveBeenCalled();
+    });
+
+    it('cuts a kicked member off through the very same seam', async () => {
+      const { service, memberRepo, workspaceRepo, roleRepo } = makeService();
+      workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE, name: WORKSPACE_NAME });
+      memberRepo.findOne
+        .mockResolvedValueOnce({ workspaceId: WORKSPACE, userId: USER, roleIds: ['r-admin'] })
+        .mockResolvedValueOnce({ workspaceId: WORKSPACE, userId: 'u2', roleIds: [] });
+      memberRepo.find.mockResolvedValue([
+        { workspaceId: WORKSPACE, userId: USER, roleIds: ['r-admin'] },
+        { workspaceId: WORKSPACE, userId: 'u2', roleIds: [] },
+      ]);
+      roleRepo.find.mockResolvedValue([
+        { id: 'r-admin', permissions: [CHANNEL_PERMISSIONS.MANAGE_WORKSPACE], priority: 10 },
+      ]);
+      global.fetch = answerWith({ evicted: true, memberships: 1, queued: 0, routes: 1 }) as never;
+
+      await expect(service.kickFromWorkspace(WORKSPACE, 'u2', USER)).resolves.toEqual({
+        success: true,
+      });
+
+      const [url] = (global.fetch as unknown as jest.Mock).mock.calls[0];
+      expect(String(url)).toContain(`internal/mls/distribution-groups/${WORKSPACE}/members/u2`);
+      expect(memberRepo.delete).toHaveBeenCalledWith({ workspaceId: WORKSPACE, userId: 'u2' });
+    });
+
+    it('refuses the last admin before it cuts anything off', async () => {
+      // Order matters: a removal that is going to be refused must not have already revoked the
+      // key distribution of somebody who stays.
+      const { service, memberRepo, workspaceRepo, roleRepo } = makeService();
+      workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE, name: WORKSPACE_NAME });
+      memberRepo.findOne.mockResolvedValue({
+        workspaceId: WORKSPACE,
+        userId: USER,
+        roleIds: ['r-admin'],
+      });
+      memberRepo.find.mockResolvedValue([
+        { workspaceId: WORKSPACE, userId: USER, roleIds: ['r-admin'] },
+        { workspaceId: WORKSPACE, userId: 'u2', roleIds: [] },
+      ]);
+      roleRepo.find.mockResolvedValue([
+        { id: 'r-admin', permissions: [CHANNEL_PERMISSIONS.MANAGE_WORKSPACE], priority: 10 },
+      ]);
+
+      await expect(service.leaveWorkspace(WORKSPACE, USER)).rejects.toBeDefined();
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(memberRepo.delete).not.toHaveBeenCalled();
+    });
+  });
 });

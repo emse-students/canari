@@ -33,10 +33,10 @@ use crate::commands::mls::{
     creer_groupe, envoyer_message, envoyer_message_bytes, exporter_group_info,
     exporter_ratchet_tree, exporter_secret, generer_key_package, generer_key_packages,
     generer_key_packages_et_persister, initialiser_mls, key_package_a_clef_privee, lister_groupes,
-    obtenir_epoch, oublier_groupe, recevoir_message, recevoir_message_bytes,
-    recevoir_messages_batch, recuperer_cle_session_mls, rejoindre_par_commit_externe,
-    retirer_membres, retirer_membres_par_appareil, sauvegarder_mls, sauvegarder_mls_et_persister,
-    skip_send_generations, supprimer_groupe, trailer_welcome,
+    lister_identites_membres, obtenir_epoch, oublier_groupe, recevoir_message,
+    recevoir_message_bytes, recevoir_messages_batch, recuperer_cle_session_mls,
+    rejoindre_par_commit_externe, retirer_membres, retirer_membres_par_appareil, sauvegarder_mls,
+    sauvegarder_mls_et_persister, skip_send_generations, supprimer_groupe, trailer_welcome,
 };
 use crate::commands::push::{
     check_push_secret_health, forget_graine_channel, forget_graine_sessions, get_fcm_token,
@@ -849,6 +849,7 @@ pub fn run() {
             generer_key_packages_et_persister,
             key_package_a_clef_privee,
             ajouter_membres_bulk,
+            lister_identites_membres,
             retirer_membres,
             retirer_membres_par_appareil,
             confirmer_commit,

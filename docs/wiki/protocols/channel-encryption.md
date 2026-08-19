@@ -1009,11 +1009,86 @@ keeping it, a community left in the morning would still be receiving seeds at mi
 registration together, then a checkpoint, because a forget nothing persists comes back on the next
 load.
 
-**Still open, and it is a server-side question:** nothing removes a departing member's LEAF from the
-distribution group's MLS tree. The local forget stops this device using what it holds; it does not
-stop the tree still counting it. COMM-9, COMM-11 and COMM-12 on the campaign board are what will
-measure it.
+**A departing member's LEAF stayed in the tree** - the last of the three, and the largest. It has
+its own section below.
 
-## 10. Open, and not blocking
+## 10. A departure moved nothing, and rotation waited on it - FIXED 2026-08-19
+
+`graineRotationReason` returns `roster` when a session's `distributionEpoch` no longer matches the
+distribution group's, and its own doc gives the premise: *"every membership change commits to the
+community's distribution group and advances its epoch"*. **Nothing implemented that.** The whole
+forward-secrecy story of a community rested on a sentence.
+
+### What was measured, on production
+
+`d70e8952`, the campaign community's distribution group, at epoch 25. W2 left through the real UI
+(community settings -> *Quitter la communaute* -> confirm), the sidebar dropped it and
+`POST /api/channels/workspaces/.../leave` was sent; `channel_members` went from two rows to one.
+Then:
+
+- `mls_group_info.baseEpoch` was **still 25**, `updatedAt` unchanged. No commit had happened.
+- W1's next send produced the four `[SEND]` lines and **no** `[GRAINE] new outbound session` - the
+  session minted before the departure was reused, so the seed W2 already held opened it.
+- `dm_device_group_memberships` still carried W2's device as `active` on that group, so the delivery
+  service went on fanning every seed frame out to it.
+
+The two facts are independent, and each is sufficient on its own: one lets a departed member READ
+what follows, the other keeps DELIVERING it to them.
+
+### The two halves of a departure, and why they are not symmetric
+
+**Routing is revoked by the server, immediately, and needs nobody online.**
+`DELETE internal/mls/distribution-groups/:workspaceId/members/:userId` drops the leaver's
+`dm_device_group_memberships` rows, their queued frames for that group, and their entries in the
+Redis fanout set - three stores, none standing in for the others: the rows are what a reconnect
+reads, the set is what a live fanout reads, and the queue holds frames already sealed for a device
+that was offline. It is called from `leaveWorkspace` and `kickFromWorkspace` **before** the
+membership row is deleted, and a failure aborts the departure: the MLS half self-heals whenever a
+member next loads the community, but nothing ever comes back for a routing row left behind. Failing
+closed leaves them a member and the whole departure retryable, the same rule `hardDeleteWorkspace`
+already follows.
+
+**The leaf is removed by a member, lazily, because only a member can commit.**
+`reconcileDistributionGroupRoster` diffs the group's ratchet tree against the community roster and
+commits one Remove covering every stray - all their devices, all of them - so a departure costs one
+epoch whatever the fleet behind it. It runs from `ensureCommunityDistributionGroup`, on **both** its
+branches: a device that has just joined can carry a departure as well as one that has been in the
+group a week, and a pass on only one branch would leave a community whose members all reconnect
+fresh with a tree nobody prunes. It is idempotent by construction - a tree that already agrees
+produces no commit and no epoch change - so it is safe to repeat and does not rotate a session for
+nothing.
+
+**A diff, not an event.** A departure notice reaches only the devices online when it fires, and only
+one of them may commit; electing that one is a race, and a durable "somebody left" marker is state
+every device must write and keep. A diff between two lists needs neither: same answer whoever runs
+it, whenever, converging to nothing to do.
+
+**A roster it could not read removes nobody.** A fetch that threw is not an empty community, and
+reading it as one would empty the tree of everybody but this device. Same rule as every other
+destructive sweep here.
+
+### Two primitives were missing, and one was inert
+
+`member_identities` / `get_member_identities` / `lister_identites_membres` (mls-core, wasm, Tauri):
+**the tree is the only authority on who can READ a group.** `GET mls/groups/:id/members` answers who
+the delivery service will ROUTE to - a different question, empty for a group whose tree is full after
+a device fresh-start, and a distribution group has no user-level rows at all by construction. A
+removal decision reads the tree.
+
+`remove_members_for_users` compared a bare user id with the full credential identity, which is
+`userId:deviceId`. **It matched nothing and could only ever answer "No member found"** - the entire
+user-level removal path was inert, in communities and in group conversations alike. It now matches
+the `userId:` prefix, colon included so one user id cannot swallow another's
+(`tests/roster_removal.rs`).
+
+### What this leaves
+
+A member who left before the fix keeps a seed that opens what was sent up to the first send after a
+remaining member reloads the community; from that send on, the session is minted at an epoch their
+leaf is no longer in. Their routing is already cut. The stale leaves from the WP-GRAINE-1 rejoin
+storm are removed by the same pass whenever their user is off the roster; the ones belonging to
+current members are inert and stay.
+
+## 11. Open, and not blocking
 
 Nothing here blocks anything above.

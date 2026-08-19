@@ -4,11 +4,61 @@ use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 use crate::state::MlsManager;
 use crate::{AddMemberResult, AddMembersBulkResult, MlsError};
 
+/// The credential identity carried by one leaf, as the UTF-8 string it was built from.
+///
+/// Identities are minted in exactly one place (`state.rs`, `userId:deviceId`), so this is the
+/// inverse of that and the only place the bytes are turned back into a string.
+fn leaf_identity(member: &Member) -> Result<String, MlsError> {
+    let credential = BasicCredential::try_from(member.credential.clone()).map_err(|_| {
+        MlsError::OpenMls(format!("Invalid credential for member {}", member.index))
+    })?;
+    String::from_utf8(credential.identity().to_vec())
+        .map_err(|_| MlsError::OpenMls(format!("Non-UTF8 credential for member {}", member.index)))
+}
+
+/// Leaf indices whose identity satisfies `matches`.
+///
+/// Factored out of the two removal paths, which differ ONLY in that predicate: one names devices,
+/// the other names users, and the walk over the tree is the same walk.
+fn leaf_indices_where(
+    group: &MlsGroup,
+    matches: impl Fn(&str) -> bool,
+) -> Result<Vec<LeafNodeIndex>, MlsError> {
+    let mut leaf_indices: Vec<LeafNodeIndex> = Vec::new();
+    for member in group.members() {
+        let identity = leaf_identity(&member)?;
+        if matches(&identity) {
+            leaf_indices.push(member.index);
+        }
+    }
+    Ok(leaf_indices)
+}
+
 impl MlsManager {
     // --- C0. SUPPRESSION DE MEMBRE(S) ---
 
+    /// Every leaf's credential identity (`userId:deviceId`) in `group_id`, in leaf order.
+    ///
+    /// THE TREE IS THE ONLY AUTHORITY ON WHO CAN READ IT. Server-side membership rows answer a
+    /// different question - who the delivery service will route to - and can be empty for a group
+    /// whose tree is full (a device fresh-start clears them). A reconciliation deciding whether a
+    /// leaf still belongs must read this, never the routing table.
+    pub fn member_identities(&self, group_id: &str) -> Result<Vec<String>, MlsError> {
+        let group = self
+            .groups
+            .get(group_id)
+            .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
+        group.members().map(|m| leaf_identity(&m)).collect()
+    }
+
     /// Remove all leaf nodes whose credential identity matches any of the provided user IDs.
     /// Returns the serialized commit bytes that must be broadcast to all group members.
+    ///
+    /// A LEAF IS A DEVICE, AND A USER IS ITS PREFIX. Identities are `userId:deviceId`, so an
+    /// exact comparison against a bare user id matched nothing at all and this function could only
+    /// ever answer "No member found" - the whole user-level removal path was inert. Matching the
+    /// `userId:` prefix is what makes "remove this person, wherever they are signed in" mean what
+    /// it says; the colon is part of the prefix so one user id can never swallow another's.
     pub fn remove_members_for_users(
         &mut self,
         group_id: &str,
@@ -19,21 +69,11 @@ impl MlsManager {
             .get_mut(group_id)
             .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
 
-        // Collect the leaf indices of all leaves whose identity matches one of the user IDs.
-        let mut leaf_indices: Vec<LeafNodeIndex> = Vec::new();
-        for member in group.members() {
-            let credential =
-                BasicCredential::try_from(member.credential.clone()).map_err(|_| {
-                    MlsError::OpenMls(format!("Invalid credential for member {}", member.index))
-                })?;
-            let identity = credential.identity().to_vec();
-            if user_ids
+        let leaf_indices = leaf_indices_where(group, |identity| {
+            user_ids
                 .iter()
-                .any(|uid| uid.as_bytes() == identity.as_slice())
-            {
-                leaf_indices.push(member.index);
-            }
-        }
+                .any(|uid| identity == *uid || identity.starts_with(&format!("{}:", uid)))
+        })?;
 
         if leaf_indices.is_empty() {
             return Err(MlsError::OpenMls(format!(
@@ -68,20 +108,8 @@ impl MlsManager {
             .get_mut(group_id)
             .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
 
-        let mut leaf_indices: Vec<LeafNodeIndex> = Vec::new();
-        for member in group.members() {
-            let credential =
-                BasicCredential::try_from(member.credential.clone()).map_err(|_| {
-                    MlsError::OpenMls(format!("Invalid credential for member {}", member.index))
-                })?;
-            let identity = credential.identity().to_vec();
-            if device_identities
-                .iter()
-                .any(|did| did.as_bytes() == identity.as_slice())
-            {
-                leaf_indices.push(member.index);
-            }
-        }
+        let leaf_indices =
+            leaf_indices_where(group, |identity| device_identities.contains(&identity))?;
 
         if leaf_indices.is_empty() {
             return Err(MlsError::OpenMls(format!(

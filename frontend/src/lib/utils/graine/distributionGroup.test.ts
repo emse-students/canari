@@ -1,6 +1,13 @@
 import { ensureCommunityDistributionGroup } from './distributionGroup';
 import { ChannelApiError } from '$lib/services/ChannelService';
 
+const reconcile = vi.fn().mockResolvedValue([]);
+vi.mock('./rosterReconcile', () => ({
+  reconcileDistributionGroupRoster: (...args: unknown[]) => reconcile(...args),
+}));
+
+beforeEach(() => reconcile.mockClear());
+
 /**
  * The seam between the two services, on the client.
  *
@@ -93,5 +100,42 @@ describe('ensureCommunityDistributionGroup', () => {
 
     expect(await run(mls, makeChannels(), log)).toBe(false);
     expect(log.mock.calls.flat().join(' ')).toMatch(/could not join/);
+  });
+});
+
+describe('ensureCommunityDistributionGroup - reconciling the tree with the roster', () => {
+  it('reconciles on the branch that was already in the group', async () => {
+    const mls = makeMls({
+      distributionGroupFor: vi.fn().mockReturnValue('g-1'),
+      getLocalGroups: vi.fn().mockReturnValue(['g-1']),
+    });
+
+    expect(await run(mls, makeChannels())).toBe(true);
+    expect(reconcile).toHaveBeenCalledTimes(1);
+  });
+
+  it('reconciles on the branch that has just joined', async () => {
+    // The device that just joined can carry a departure as well as one that has been in the group
+    // for a week; a pass that only ran on the other branch would leave a community whose members
+    // all reconnect fresh with a tree nobody ever prunes.
+    expect(await run(makeMls(), makeChannels())).toBe(true);
+    expect(reconcile).toHaveBeenCalledTimes(1);
+  });
+
+  it('reconciles nothing when the group could not be joined', async () => {
+    const mls = makeMls({ ensureDistributionGroup: vi.fn().mockResolvedValue(false) });
+
+    expect(await run(mls, makeChannels())).toBe(false);
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+
+  it('still loads the community when the reconciliation fails', async () => {
+    // A tree still holding a departed leaf works for every message from now on, badly. Refusing to
+    // load the community over it would only mean nobody ever prunes it.
+    reconcile.mockRejectedValueOnce(new Error('commit rejected'));
+    const lines: string[] = [];
+
+    expect(await run(makeMls(), makeChannels(), (m) => lines.push(m))).toBe(true);
+    expect(lines.some((l) => l.includes('roster reconciliation failed'))).toBe(true);
   });
 });

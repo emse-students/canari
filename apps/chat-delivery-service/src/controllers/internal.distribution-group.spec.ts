@@ -36,7 +36,9 @@ describe('InternalController - the community distribution group', () => {
     update: jest.Mock;
   };
   let groupMemberRepo: { save: jest.Mock };
-  let deviceGroupRepo: { save: jest.Mock; upsert: jest.Mock };
+  let deviceGroupRepo: { save: jest.Mock; upsert: jest.Mock; delete: jest.Mock };
+  let queuedMessageRepo: { delete: jest.Mock };
+  let redis: { smembers: jest.Mock; srem: jest.Mock };
   let messagingService: { readGroupInfo: jest.Mock; putGroupInfo: jest.Mock };
   let previousSecret: string | undefined;
 
@@ -51,7 +53,13 @@ describe('InternalController - the community distribution group', () => {
       update: jest.fn().mockResolvedValue({ affected: 1 }),
     };
     groupMemberRepo = { save: jest.fn() };
-    deviceGroupRepo = { save: jest.fn(), upsert: jest.fn() };
+    deviceGroupRepo = {
+      save: jest.fn(),
+      upsert: jest.fn(),
+      delete: jest.fn().mockResolvedValue({ affected: 2 }),
+    };
+    queuedMessageRepo = { delete: jest.fn().mockResolvedValue({ affected: 5 }) };
+    redis = { smembers: jest.fn().mockResolvedValue([]), srem: jest.fn().mockResolvedValue(1) };
     messagingService = {
       readGroupInfo: jest.fn().mockResolvedValue(null),
       putGroupInfo: jest.fn().mockResolvedValue({ stored: true }),
@@ -66,11 +74,11 @@ describe('InternalController - the community distribution group', () => {
         { provide: getRepositoryToken(Group), useValue: groupRepo },
         { provide: getRepositoryToken(GroupMember), useValue: groupMemberRepo },
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: deviceGroupRepo },
-        { provide: getRepositoryToken(QueuedMessage), useValue: {} },
+        { provide: getRepositoryToken(QueuedMessage), useValue: queuedMessageRepo },
         { provide: getRepositoryToken(PinVerifier), useValue: {} },
         { provide: getRepositoryToken(RevokedDevice), useValue: {} },
         { provide: getRepositoryToken(GroupInvite), useValue: {} },
-        { provide: 'REDIS_CLIENT', useValue: {} },
+        { provide: 'REDIS_CLIENT', useValue: redis },
         { provide: MessagingService, useValue: messagingService },
       ],
     }).compile();
@@ -238,6 +246,62 @@ describe('InternalController - the community distribution group', () => {
         ForbiddenException
       );
       expect(groupRepo.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('evicting one member', () => {
+    const USER = 'u-departed';
+
+    it('drops their routing rows, their queued frames and their live fanout entries', async () => {
+      // Three stores, all keyed by the group, and none stands in for the others: the rows are what
+      // a reconnect reads, the Redis set is what a live fanout reads, and the queue holds frames
+      // already sealed for a device that was offline.
+      groupRepo.findOne.mockResolvedValue({ id: 'g-1', distributionWorkspaceId: WORKSPACE });
+      redis.smembers.mockResolvedValue([`${USER}:web-1`, `${USER}:tauri-1`, 'u-stays:web-1']);
+
+      const result = await controller.evictFromDistributionGroup(WORKSPACE, USER, SECRET);
+
+      expect(result).toEqual({ evicted: true, memberships: 2, queued: 5, routes: 2 });
+      expect(deviceGroupRepo.delete).toHaveBeenCalledWith({ groupId: 'g-1', userId: USER });
+      expect(queuedMessageRepo.delete).toHaveBeenCalledWith({
+        groupId: 'g-1',
+        recipientId: USER,
+      });
+      expect(redis.srem).toHaveBeenCalledWith(
+        'group:members:g-1',
+        `${USER}:web-1`,
+        `${USER}:tauri-1`
+      );
+    });
+
+    it('touches nobody else in the fanout set', async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g-1', distributionWorkspaceId: WORKSPACE });
+      redis.smembers.mockResolvedValue(['u-stays:web-1']);
+
+      const result = await controller.evictFromDistributionGroup(WORKSPACE, USER, SECRET);
+
+      expect(result.routes).toBe(0);
+      expect(redis.srem).not.toHaveBeenCalled();
+    });
+
+    it('answers plainly for a community that has no distribution group', async () => {
+      // A community created before Graine, or one whose group was already reaped. Not an error:
+      // failing here would fail a departure that has otherwise completed.
+      groupRepo.findOne.mockResolvedValue(null);
+
+      await expect(controller.evictFromDistributionGroup(WORKSPACE, USER, SECRET)).resolves.toEqual(
+        { evicted: false, memberships: 0, queued: 0, routes: 0 }
+      );
+      expect(deviceGroupRepo.delete).not.toHaveBeenCalled();
+    });
+
+    it('refuses a call carrying the wrong internal secret', async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g-1', distributionWorkspaceId: WORKSPACE });
+
+      await expect(
+        controller.evictFromDistributionGroup(WORKSPACE, USER, 'not-the-secret')
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(deviceGroupRepo.delete).not.toHaveBeenCalled();
     });
   });
 });

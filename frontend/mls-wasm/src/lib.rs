@@ -516,6 +516,24 @@ impl WasmMlsClient {
         results
     }
 
+    /// Every leaf identity (`userId:deviceId`) currently in the group's ratchet tree.
+    ///
+    /// The tree is the only authority on who can read a group. The delivery service's membership
+    /// rows answer who it will ROUTE to, which is a different question and can be empty for a group
+    /// whose tree is full - so a reconciliation that decides whether a leaf still belongs reads
+    /// this, and a routing table never stands in for it.
+    #[wasm_bindgen]
+    pub fn get_member_identities(&self, group_id: String) -> Result<js_sys::Array, JsValue> {
+        let identities = self
+            .manager
+            .member_identities(&group_id)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        Ok(identities
+            .into_iter()
+            .map(|id| JsValue::from_str(&id))
+            .collect())
+    }
+
     /// Remove all devices of one or more users from a group.
     /// `user_ids` is a JS Array of strings (usernames/identities).
     /// Returns the serialized commit bytes to broadcast to remaining group members.

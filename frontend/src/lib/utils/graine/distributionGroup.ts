@@ -1,6 +1,7 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import { ChannelApiError, type ChannelService } from '$lib/services/ChannelService';
 import { requestCommunityHistory } from './repair';
+import { reconcileDistributionGroupRoster } from './rosterReconcile';
 
 /**
  * Joining a community's Graine key-distribution group, on first use.
@@ -35,6 +36,7 @@ export async function ensureCommunityDistributionGroup(
     // Already in the group - but not necessarily holding anything. A device that joined while its
     // answerer was offline would never ask again if the ask lived only on the joining branch, and
     // the request is exactly what decides whether it is needed.
+    await reconcileRoster(channelService, workspaceId, log);
     await askForHistory(workspaceId, log);
     return true;
   }
@@ -66,8 +68,34 @@ export async function ensureCommunityDistributionGroup(
     return false;
   }
 
+  await reconcileRoster(channelService, workspaceId, log);
   await askForHistory(workspaceId, log);
   return true;
+}
+
+/**
+ * Makes the group's tree agree with the community's roster, best-effort.
+ *
+ * ON BOTH BRANCHES, and that is the point: the device that just joined is as able to carry a
+ * departure as the one that has been in the group for a week, and a mechanism that only ran on one
+ * of them would leave a community whose members all reconnect fresh with a tree nobody prunes.
+ *
+ * It must never fail the join, for the same reason the history request must not: a community whose
+ * tree still holds a departed leaf works for every message from now on, badly, and refusing to load
+ * it would only mean nobody ever prunes it.
+ */
+async function reconcileRoster(
+  channelService: ChannelService,
+  workspaceId: string,
+  log: (message: string) => void
+): Promise<void> {
+  try {
+    await reconcileDistributionGroupRoster(channelService, workspaceId, log);
+  } catch (e) {
+    log(
+      `[GRAINE] roster reconciliation failed for ${workspaceId.slice(0, 8)}...: ${e instanceof Error ? e.message : String(e)}`
+    );
+  }
 }
 
 /**

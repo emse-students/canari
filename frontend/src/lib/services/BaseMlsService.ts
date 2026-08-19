@@ -2203,6 +2203,7 @@ export abstract class BaseMlsService implements IMlsService {
   ): Promise<Uint8Array>;
   abstract getLocalGroups(): string[];
   abstract getEpoch(groupId: string): number;
+  abstract getGroupMemberIdentities(groupId: string): Promise<string[]>;
   abstract forgetGroup(groupId: string, minEpoch?: number): void;
   abstract dropGroup(groupId: string): void;
 }

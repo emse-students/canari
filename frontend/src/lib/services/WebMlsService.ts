@@ -1091,6 +1091,19 @@ export class WebMlsService extends BaseMlsService {
     return Array.from(this.client.get_groups() as Iterable<string>);
   }
 
+  /**
+   * WASM client wrapper - every leaf identity (`userId:deviceId`) in the group's ratchet tree.
+   *
+   * THROWS rather than answering `[]` when the group is not held: an empty tree and a group this
+   * device does not have are opposite facts, and the caller that reconciles a roster against it
+   * would read the second as "every member has left" and remove them all.
+   */
+  async getGroupMemberIdentities(groupId: string): Promise<string[]> {
+    if (!this.client)
+      throw new Error(`[MLS] WASM client not ready - cannot read ${groupId}'s tree`);
+    return Array.from(this.client.get_member_identities(groupId) as Iterable<string>);
+  }
+
   /** WASM client wrapper - returns the current MLS epoch for a group via `this.client.get_epoch`, or 0 if unavailable. */
   getEpoch(groupId: string): number {
     if (!this.client) return 0;

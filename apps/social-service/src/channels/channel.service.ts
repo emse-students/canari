@@ -19,6 +19,7 @@ import { DELIVERY_TIMEOUT_MS, deliveryUrl } from '../internal/service-urls';
 import {
   createDistributionGroup,
   deleteDistributionGroup,
+  evictFromDistributionGroup,
   publishDistributionGroupInfo,
   readDistributionGroup,
   type DistributionGroupRef,
@@ -254,6 +255,32 @@ export class ChannelService {
       code: 'WORKSPACE_WOULD_HAVE_NO_ADMIN',
       message: 'The community would be left with no administrator.',
     });
+  }
+
+  /**
+   * Stops the community's seeds reaching someone who is about to stop being a member.
+   *
+   * BEFORE THE MEMBERSHIP ROW GOES, AND ALLOWED TO ABORT THE REMOVAL. The two halves of a departure
+   * are not symmetric: this one is immediate and needs nobody online, while removing their MLS leaf
+   * is a commit only a remaining member's device can produce, and lands whenever one next loads the
+   * community. If this call fails and the removal went through anyway, the leaver would go on being
+   * routed every seed frame with no row left anywhere to say they should not be - unfindable and
+   * permanent. Failing here instead leaves them a member and the whole departure retryable, which
+   * is the only outcome that stays reconcilable (same rule as {@link hardDeleteWorkspace}).
+   *
+   * Both ends of a removal come through here, because they are the same removal seen from two
+   * sides - exactly like {@link assertRemovalKeepsAnAdmin}.
+   */
+  private async cutOffKeyDistribution(
+    workspaceId: string,
+    userId: string,
+    reason: 'left' | 'kicked'
+  ): Promise<void> {
+    const cut = await evictFromDistributionGroup(this.internalSecret, workspaceId, userId);
+    this.logger.log(
+      `[WORKSPACE] key distribution cut workspace=${workspaceId} user=${userId.slice(0, 8)} ` +
+        `reason=${reason} routes=${cut.memberships} queued=${cut.queued}`
+    );
   }
 
   /**
@@ -1158,6 +1185,8 @@ export class ChannelService {
 
     await this.assertRemovalKeepsAnAdmin(workspaceId, userId);
 
+    await this.cutOffKeyDistribution(workspaceId, userId, 'left');
+
     await this.memberRepo.delete({ workspaceId, userId });
 
     const remainingMemberIds = await this.getWorkspaceMemberIds(workspaceId);
@@ -1638,6 +1667,8 @@ export class ChannelService {
     // The actor's permission was checked; the TARGET's roles never were, so KICK_MEMBERS alone
     // used to remove the sole Administrateur.
     await this.assertRemovalKeepsAnAdmin(workspaceId, targetUserId);
+
+    await this.cutOffKeyDistribution(workspaceId, targetUserId, 'kicked');
 
     await this.memberRepo.delete({ workspaceId, userId: targetUserId });
 
