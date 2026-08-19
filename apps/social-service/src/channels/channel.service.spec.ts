@@ -136,7 +136,6 @@ describe('ChannelService security hardening', () => {
       id: 'ch1',
       workspaceId: 'ws1',
       isPrivate: false,
-      allowedRoles: [],
       keyVersion: 1,
     });
     memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: [] });
@@ -371,7 +370,7 @@ describe('ChannelService security hardening', () => {
     const { service, workspaceRepo, memberRepo, roleRepo } = makeService();
     workspaceRepo.findOne.mockResolvedValue({ id: 'ws1' });
     memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
-    roleRepo.find.mockResolvedValue([{ id: 'r1', permissions: ['channel.send'] }]);
+    roleRepo.find.mockResolvedValue([{ id: 'r1', permissions: ['member.invite'] }]);
 
     await expect(
       service.updateWorkspaceHistoryVisibility('ws1', 'u1', 'joined')
@@ -588,7 +587,7 @@ describe('ChannelService security hardening', () => {
       roleIds: ['r-member'],
     });
     // Non-admin role: no workspace.manage -> no private-channel bypass.
-    roleRepo.find.mockResolvedValue([{ permissions: ['channel.send'] }]);
+    roleRepo.find.mockResolvedValue([{ permissions: ['member.invite'] }]);
 
     await expect(service.listMessages('ch1', 'u1')).rejects.toBeInstanceOf(ForbiddenException);
   });
@@ -623,7 +622,6 @@ describe('ChannelService security hardening', () => {
         workspaceId: 'ws1',
         name: 'general',
         isPrivate: false,
-        allowedRoles: [],
         allowedUsers: ['u1'],
       },
     ]);
@@ -649,7 +647,6 @@ describe('ChannelService security hardening', () => {
       id: 'ch1',
       workspaceId: 'ws1',
       isPrivate: false,
-      allowedRoles: [],
     });
     memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: [] });
 
@@ -670,7 +667,6 @@ describe('ChannelService security hardening', () => {
       id: 'ch1',
       workspaceId: 'ws1',
       isPrivate: false,
-      allowedRoles: [],
     });
     memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: [] });
 
@@ -691,7 +687,6 @@ describe('ChannelService security hardening', () => {
       id: 'ch1',
       workspaceId: 'ws1',
       isPrivate: false,
-      allowedRoles: [],
     });
     memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: [] });
     messageRepo.create.mockImplementation((row: any) => row);
@@ -730,7 +725,7 @@ describe('ChannelService security hardening', () => {
       userId: 'u1',
       roleIds: ['r-member'],
     });
-    roleRepo.find.mockResolvedValue([{ permissions: ['channel.send'] }]);
+    roleRepo.find.mockResolvedValue([{ permissions: ['member.invite'] }]);
 
     await expect(
       service.sendMessage('ch1', {
@@ -800,7 +795,6 @@ describe('ChannelService security hardening', () => {
         workspaceId: 'ws1',
         name: 'general',
         isPrivate: false,
-        allowedRoles: [] as string[],
         allowedUsers: [] as string[],
         keyVersion: 1,
       };
@@ -906,7 +900,6 @@ describe('ChannelService security hardening', () => {
           workspaceId: 'ws1',
           name: 'general',
           isPrivate: false,
-          allowedRoles: [] as string[],
           allowedUsers: [] as string[],
           keyVersion: 1,
         },
@@ -952,7 +945,6 @@ describe('ChannelService security hardening', () => {
         workspaceId: 'ws1',
         name: 'general',
         isPrivate: false,
-        allowedRoles: [] as string[],
         allowedUsers: [] as string[],
       });
       memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: [] });
@@ -981,7 +973,6 @@ describe('ChannelService security hardening', () => {
       id: 'ch1',
       workspaceId: 'ws1',
       isPrivate: false,
-      allowedRoles: [],
     });
     const member: {
       workspaceId: string;
@@ -1094,7 +1085,7 @@ describe('ChannelService security hardening', () => {
     ]);
     roleRepo.find.mockResolvedValue([
       { id: 'r-admin', permissions: ['workspace.manage'] },
-      { id: 'r-member', permissions: ['channel.send'] },
+      { id: 'r-member', permissions: ['member.invite'] },
     ]);
 
     const result = await service.listWorkspacesForUser('u1');
@@ -1135,7 +1126,6 @@ describe('ChannelService security hardening', () => {
       workspaceId: 'ws1',
       isPrivate: true,
       allowedUsers: ['guest'],
-      allowedRoles: [],
     });
     repos.memberRepo.findOne.mockImplementation(({ where }: { where: { userId: string } }) =>
       Promise.resolve({ workspaceId: 'ws1', userId: where.userId, roleIds: ['r-admin'] })
@@ -1243,7 +1233,6 @@ describe('ChannelService security hardening', () => {
       name: 'general',
       isPrivate,
       allowedUsers: isPrivate ? ['u1', 'boss'] : [],
-      allowedRoles: [],
       keyVersion: 1,
       masterSecret: null as string | null,
     };
@@ -1316,7 +1305,7 @@ describe('ChannelService security hardening', () => {
       priority: 50,
       permissions: ['member.kick', 'role.manage', 'member.invite'],
     },
-    { id: 'r-member', name: 'Membre', priority: 10, permissions: ['channel.send'] },
+    { id: 'r-member', name: 'Membre', priority: 10, permissions: ['member.invite'] },
   ];
 
   /** A community whose roster is a real table, so a write by one call is seen by the next. */

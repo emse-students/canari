@@ -30,6 +30,7 @@ import {
   DEFAULT_ADMIN_PERMISSIONS,
   DEFAULT_MODERATOR_PERMISSIONS,
   DEFAULT_MEMBER_PERMISSIONS,
+  RETIRED_PERMISSIONS,
 } from './permissions';
 
 import {
@@ -1152,7 +1153,6 @@ export class ChannelService {
       workspaceId: input.workspaceId,
       name: channelName,
       isPrivate,
-      allowedRoles: [],
       allowedUsers: isPrivate ? [input.actorUserId.trim().toLowerCase()] : [],
     });
     const savedChannel = await this.channelRepo.save(channel);
@@ -2785,18 +2785,40 @@ export class ChannelService {
     }
     if (!hasPerm) throw new ForbiddenException('Missing MANAGE_ROLES permission');
 
-    // Validate that permissions are valid
+    // A KEY THIS SERVER RETIRED IS DROPPED, NOT REFUSED - and it is the only exception.
+    //
+    // `channel.access` and `channel.send` were removed on 2026-08-19 because nothing enforced them.
+    // The fleet is mixed by construction - A1's APK carries its own bundle and no deploy reaches it
+    // - so an old client still renders the eight-row grid and PUTs all eight on any toggle. Refusing
+    // the whole list would turn every role edit on that client into a 400 over two keys the server
+    // itself put in the grid. Accepting them would resurrect them. Dropping them applies exactly
+    // what the admin asked for and nothing else.
+    //
+    // Loud on purpose: this is the only thing that will ever say an old client is still out there,
+    // and the branch goes the day it stops firing (see legacy-compatibility).
+    const retired = permissions.filter((p) => RETIRED_PERMISSIONS.includes(p));
+    if (retired.length > 0) {
+      this.logger.warn(
+        `[ROLE] RETIRED_PERMISSION_SENT role=${roleId} by=${actorUserId.slice(0, 8)} ` +
+          `keys=${retired.join(',')} - a client built before 2026-08-19 is still in the fleet`
+      );
+    }
+    const requested = permissions.filter((p) => !RETIRED_PERMISSIONS.includes(p));
+
+    // Anything else unknown is a real error and still fails the whole update: a permission the
+    // server cannot name is a client asking for a capability that does not exist, and silently
+    // granting the remainder would report success for a request nobody can read back.
     const validPermissions = Object.values(CHANNEL_PERMISSIONS) as string[];
-    const invalid = permissions.filter((p) => !validPermissions.includes(p));
+    const invalid = requested.filter((p) => !validPermissions.includes(p));
     if (invalid.length > 0) {
       throw new BadRequestException(`Invalid permissions: ${invalid.join(', ')}`);
     }
 
-    role.permissions = permissions;
+    role.permissions = requested;
     await this.roleRepo.save(role);
 
     this.logger.log(
-      `[ROLE] permissions updated role=${roleId} by=${actorUserId.slice(0, 8)} perms=${permissions.length}`
+      `[ROLE] permissions updated role=${roleId} by=${actorUserId.slice(0, 8)} perms=${requested.length}`
     );
 
     return {

@@ -31,9 +31,14 @@ export class ChannelRole {
   createdAt: Date;
 
   /**
-   * Normalizes legacy permissions (MANAGE_WORKSPACE, SEND_MESSAGES, etc.) to the new unified
-   * keys (workspace.manage, channel.send, etc.) when loading from the database. Guarantees that
+   * Normalizes legacy permissions (MANAGE_WORKSPACE, MANAGE_CHANNELS, etc.) to the new unified
+   * keys (workspace.manage, channel.manage, etc.) when loading from the database. Guarantees that
    * all downstream code works with the new keys, even if the database still holds old values.
+   *
+   * A key with no mapping is passed through unchanged, which is deliberate: this normalizes
+   * spelling, it does not decide what exists. Whether a key means anything is settled at the two
+   * places that ask - the write path validates against the registry, and every read is an
+   * `includes` of a key that IS in it, so an unknown value simply never matches.
    */
   @AfterLoad()
   normalizePermissions() {

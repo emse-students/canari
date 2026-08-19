@@ -130,8 +130,8 @@ lives where the link says and **is not restated**. An item is done when its code
 and its commit are in, and it is then deleted from BOTH files.
 
 **The campaign started 2026-08-19 and has produced NINE defects, all fixed.** 1-2 are numbers a
-run has to produce; 3-5 are the work the user decided on 2026-08-19; 6 is the community phase, stale
-AND never run, where the rework's remaining risk sits; 7 is the campaign. **WP-GRAINE-2 is CLOSED,
+run has to produce; 3-4 are the work the user decided on 2026-08-19; 5 is the community phase, stale
+AND never run, where the rework's remaining risk sits; 6 is the campaign. **WP-GRAINE-2 is CLOSED,
 both halves proven on prod (2026-08-19)** - client: epoch 25->26 and the tree down to 2 leaves;
 server: W2 rejoined and left, `evict memberships=1 routes=1`, routing rows 3->2, then the client
 followed to epoch 28. Every figure and the two defects the run itself found are on
@@ -151,22 +151,13 @@ in the field (user, 2026-08-19)**, so the iOS ladder cannot run and parity is ke
     comes from a run.** Every accusation in `displayName.ts` now ends `(failed/attempted, X%)`.
     There is no client telemetry, so the rate is read from a run log on each platform. **The
     `FAILURE_BACKOFF_MS` decision is what the number is FOR** ([backlog](docs/wiki/backlog.md)).
-3. **THE PERMISSION MATRIX LIES ON TWO OF ITS EIGHT ROWS - the user's decision, 2026-08-19: DELETE
-    them, do not wire them.** `channel.access` and `channel.send` are enforced NOWHERE, and the
-    reasoning that settles it is the user's: a public salon is visible to every member and a private
-    one to the people in it, so `channel.access` decides nothing already decided; and `writePolicy`,
-    per salon, is strictly more expressive than one community-wide switch. So: out of the grid, out
-    of `permissions.ts`, out of the three default sets, out of `LEGACY_PERMISSION_MAPPING`, out of
-    `messages/*.json`, and stripped from `channel_roles.permissions` by migration. **`allowedRoles`
-    goes with them** - a column that never decided anything (invitations are per person). **And the
-    panel is WIDENED**: it needs a horizontal scroll today, which is the user's own report.
-4. **A GUARD THAT FAILS OPEN, WITH THE CORRECT MODEL SITTING NEXT TO IT.** `userHasMlsDevices`
+3. **A GUARD THAT FAILS OPEN, WITH THE CORRECT MODEL SITTING NEXT TO IT.** `userHasMlsDevices`
     answers `true` on a transport failure or a non-2xx, so the day its URL was wrong it was a
     constant `true` - written up in `distribution-group.client.ts`'s own header and still there. The
     DM path already does it right: `fetchUserDevices` THROWS on transport failure and returns `[]`
     only for a genuine 200 with no device. Copy that, and give the UI the two messages the states
     deserve - "this person has not installed Canari" is not "cannot check right now".
-5. **ONE DISTRIBUTION GROUP PER PRIVATE SALON - the design, and the whole remaining crypto risk.**
+4. **ONE DISTRIBUTION GROUP PER PRIVATE SALON - the design, and the whole remaining crypto risk.**
     §4.3 gives a community ONE group, so every member holds a private salon's seed; the fan-out is
     scoped but the guarantee is still the server's. Same machinery, gated on `canAccessChannel`,
     `channelAudience` as its roster, the §10 diff pruning it. **The user's decisions of 2026-08-19,
@@ -175,13 +166,13 @@ in the field (user, 2026-08-19)**, so the iOS ladder cannot run and parity is ke
     member list ONLY, with no system message**. The admin must SEE an unjoined private salon or the
     capability is unusable. Forward secrecy is decided AGAINST. Detail on
     [backlog](docs/wiki/backlog.md) and [graine](docs/wiki/protocols/channel-encryption.md) §11.
-6. **REWRITE THE COMM PHASE - it is not incomplete, it is STALE.** Written before Graine and still
+5. **REWRITE THE COMM PHASE - it is not incomplete, it is STALE.** Written before Graine and still
     speaking the old vocabulary: COMM-9 "the key rotates", COMM-13 "manual key rotation" (neither
     exists), COMM-22 times `hydrateChannelHistoryKeys`, **a function that is gone**. Nothing in it
     covers the seven defects found this week. Rewrite the twenty-two rows against Graine, add what
     3-6 change, then write the runners - `checks.mjs` carries the phase and an empty `scripts: []`.
     This is where the rework's remaining risk sits: everything about it is verified by COMPILING.
-7. **THEN, and only then:** recreate the venue clean, rebuild the Android APK once, run the
+6. **THEN, and only then:** recreate the venue clean, rebuild the Android APK once, run the
     campaign. **Everything must end green, so every phase runs.** What it costs, the ladder's order
     and the two decisions it turns on are on
     [cross-client-testing](docs/wiki/cross-client-testing.md), the only copy of any of it.

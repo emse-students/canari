@@ -54,7 +54,7 @@ describe('channel audience', () => {
 
   const roles = [
     { id: 'r-admin', workspaceId: 'ws1', permissions: ['workspace.manage'], priority: 10 },
-    { id: 'r-member', workspaceId: 'ws1', permissions: ['channel.send'], priority: 1 },
+    { id: 'r-member', workspaceId: 'ws1', permissions: ['member.invite'], priority: 1 },
   ];
 
   function makeService(channel: Partial<Channel>) {

@@ -23,9 +23,15 @@ export class Channel {
   @Column({ default: false })
   isPrivate: boolean;
 
-  @Column('simple-array', { default: '' })
-  allowedRoles: string[];
-
+  /**
+   * Who may open this salon when it is private, named PERSON BY PERSON.
+   *
+   * There is deliberately no `allowedRoles` beside it. That column existed, was written as empty at
+   * every creation site and read by nothing, for as long as it existed - dropped 2026-08-19 with
+   * migration 044. Access to a private salon is granted by invitation, and an invitation names a
+   * person; a role-shaped grant would have had to answer what happens when the role changes under
+   * a salon somebody is already reading, and nothing ever needed to ask.
+   */
   @Column('simple-array', { default: '' })
   allowedUsers: string[];
 

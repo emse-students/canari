@@ -186,7 +186,7 @@ All tables share the `auth_db` database host. Full schemas are in the service wi
 | Table | Key columns |
 |---|---|
 | `channel_workspaces` | `id`, `slug` (unique), `name`, `createdBy`, `imageMediaId`, `distributionGroupId`, `historyVisibility` |
-| `channels` | `workspaceId`, `name`, `isPrivate`, `allowedRoles[]`, `allowedUsers[]`, `writePolicy`, `archived` |
+| `channels` | `workspaceId`, `name`, `isPrivate`, `allowedUsers[]`, `writePolicy`, `archived` |
 | `channel_roles` | `workspaceId`, `name`, `priority`, `permissions[]` |
 | `channel_members` | `workspaceId`, `userId`, `roleIds[]`, `notifLevels` (JSONB), `sortOrder` |
 | `channel_messages` | `channelId`, `senderId`, `content` (ciphertext), `nonce`, `senderSessionId`, `messageIndex`, `silent`, `replyTo`, `attachments` |

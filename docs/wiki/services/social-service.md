@@ -153,7 +153,7 @@ Communities use a deliberately simple, two-level model (no per-channel permissio
 
 - **Workspace roles.** Every workspace seeds three roles - `Administrateur` (priority 100, all
   permissions incl. `workspace.manage`), `Modérateur` (50), `Membre` (10) - stored in
-  `channel_roles.permissions` (unified keys, e.g. `channel.send`, `role.manage`). Admins/roles are
+  `channel_roles.permissions` (unified keys, e.g. `channel.moderate`, `role.manage`). Admins/roles are
   managed from the community settings modal: invite + assign a role, change a member's role
   (`PATCH .../members/:userId/role`, replaces all held roles), remove a member
   (`DELETE .../members/:userId`), and edit each role's base permissions

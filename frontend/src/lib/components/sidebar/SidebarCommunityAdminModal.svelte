@@ -153,18 +153,16 @@
   const SHARE_EXPIRY_CHOICES = [0, 1, 7, 30];
   const SHARE_MAX_USES_CHOICES = [0, 1, 5, 25, 100];
 
-  /** All workspace-level permissions, editable per role in the grid. */
+  /**
+   * All workspace-level permissions, editable per role in the grid.
+   *
+   * SIX ROWS, NOT EIGHT. `channel.access` and `channel.send` were shown here and enforced nowhere;
+   * they were deleted on 2026-08-19 rather than wired up, because reading is already decided by
+   * whether a salon is public or private, and writing by the salon's own `writePolicy` - which is
+   * per salon and therefore strictly more expressive than one switch across the community. A row
+   * that cannot change an outcome is worse than a missing one: it reads as a control.
+   */
   const roleGridPermissions: PermissionGridPermission[] = [
-    {
-      key: 'channel.access',
-      label: m.chat_permission_access_channel_label(),
-      tooltip: m.chat_permission_access_channel_tooltip(),
-    },
-    {
-      key: 'channel.send',
-      label: m.chat_permission_send_messages_label(),
-      tooltip: m.chat_permission_send_messages_tooltip(),
-    },
     {
       key: 'channel.manage',
       label: m.chat_permission_manage_channel_label(),
@@ -576,11 +574,23 @@
   });
 </script>
 
-<Modal {open} {onClose} title={m.chat_community_settings_title()} maxWidth="max-w-4xl">
+<!--
+  THE ROLES TAB IS WIDER THAN THE OTHERS, because it is the only one holding a table. At
+  `max-w-4xl` the 256px tab rail left the grid under 600px and its own horizontal scrollbar was
+  doing the work - a matrix you have to drag sideways to read is a matrix nobody audits. The other
+  tabs are forms and read worse when stretched, so the width follows the tab rather than the modal
+  being widened for all of them.
+-->
+<Modal
+  {open}
+  {onClose}
+  title={m.chat_community_settings_title()}
+  maxWidth={activeTab === 'roles' ? 'max-w-6xl' : 'max-w-4xl'}
+>
   <div class="flex flex-col md:flex-row min-h-0 border-t border-cn-border/40">
     <!-- Sidebar tabs -->
     <div
-      class="w-full md:w-64 md:flex-shrink-0 bg-cn-surface border-b md:border-b-0 md:border-r border-cn-border/40 flex flex-row md:flex-col overflow-x-auto md:overflow-x-visible p-2 md:p-4 gap-1 md:space-y-1"
+      class="w-full md:w-64 md:shrink-0 bg-cn-surface border-b md:border-b-0 md:border-r border-cn-border/40 flex flex-row md:flex-col overflow-x-auto md:overflow-x-visible p-2 md:p-4 gap-1 md:space-y-1"
     >
       <h3
         class="hidden md:block text-xs font-bold uppercase tracking-wider text-text-muted mb-2 px-2"
@@ -642,13 +652,13 @@
     </div>
 
     <!-- Main content -->
-    <div class="flex-1 bg-cn-bg p-6 overflow-y-auto min-h-[300px]">
+    <div class="flex-1 bg-cn-bg p-6 overflow-y-auto min-h-75">
       {#if activeTab === 'overview'}
         <div class="space-y-6 max-w-2xl">
           <h2 class="text-xl font-bold text-text-main">{m.chat_community_overview_tab()}</h2>
 
           <div class="flex items-center gap-6">
-            <div class="relative flex-shrink-0">
+            <div class="relative shrink-0">
               <div class="w-24 h-24 rounded-full overflow-hidden shadow-md">
                 <GroupAvatar
                   imageMediaId={selectedWorkspace?.imageMediaId}
@@ -743,7 +753,7 @@
       {/if}
 
       {#if activeTab === 'roles'}
-        <div class="space-y-6 max-w-3xl">
+        <div class="space-y-6">
           <div>
             <h2 class="text-xl font-bold text-text-main mb-1">{m.chat_community_roles_tab()}</h2>
             <p class="text-sm text-text-muted">{m.chat_community_roles_description()}</p>
