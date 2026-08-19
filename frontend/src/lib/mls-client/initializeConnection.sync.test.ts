@@ -96,4 +96,100 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
 
     expect(mls.forgetGroup).not.toHaveBeenCalled();
   });
+  // ── WP-GRAINE-1 (prod, 2026-08-19) ──────────────────────────────────────────
+  // `getUserGroups` answers for CONVERSATIONS and excludes a community's Graine
+  // key-distribution group by construction, so that group is in `getLocalGroups()` and never in
+  // the server list. This sweep used to read the absence as "no longer yours" and forget it on
+  // every single connection, checkpointing the loss - after which nobody could send in any
+  // community, because sealing needs the distribution group in hand.
+  it('keeps a distribution group the server list can never name', async () => {
+    const mls = {
+      generateKeyPackage: vi.fn().mockResolvedValue(undefined),
+      reconcilePublishedKeyPackages: vi.fn().mockResolvedValue(undefined),
+      getUserGroups: vi
+        .fn()
+        .mockResolvedValue([{ groupId: 'g-live', name: 'Equipe', isGroup: true }]),
+      getLocalGroups: vi.fn().mockReturnValue(['g-live', 'd-dist']),
+      isDistributionGroup: vi.fn().mockReturnValue(false),
+      getGroupServerStatus: vi
+        .fn()
+        .mockResolvedValue({ groupId: 'd-dist', distributionWorkspaceId: 'ws-1' }),
+      registerDistributionGroup: vi.fn(),
+      forgetGroup: vi.fn(),
+      saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
+      getDeviceId: vi.fn().mockReturnValue('dev-1'),
+      waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
+    };
+    const log = vi.fn();
+
+    await syncConnectionAfterWsOpen({
+      mlsService: mls as any,
+      userId: 'u1',
+      deviceKeyB64: 'pin1',
+      processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
+      log,
+    });
+
+    expect(mls.forgetGroup).not.toHaveBeenCalled();
+    // The sweep is also how a cold boot learns the mapping, before any community has loaded.
+    expect(mls.registerDistributionGroup).toHaveBeenCalledWith('ws-1', 'd-dist');
+  });
+
+  it('still forgets a conversation whose dm_groups row is confirmed gone', async () => {
+    const mls = {
+      generateKeyPackage: vi.fn().mockResolvedValue(undefined),
+      reconcilePublishedKeyPackages: vi.fn().mockResolvedValue(undefined),
+      getUserGroups: vi
+        .fn()
+        .mockResolvedValue([{ groupId: 'g-live', name: 'Equipe', isGroup: true }]),
+      getLocalGroups: vi.fn().mockReturnValue(['g-live', 'g-orphan']),
+      isDistributionGroup: vi.fn().mockReturnValue(false),
+      getGroupServerStatus: vi.fn().mockResolvedValue('absent'),
+      registerDistributionGroup: vi.fn(),
+      forgetGroup: vi.fn(),
+      saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
+      getDeviceId: vi.fn().mockReturnValue('dev-1'),
+      waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
+    };
+    const log = vi.fn();
+
+    await syncConnectionAfterWsOpen({
+      mlsService: mls as any,
+      userId: 'u1',
+      deviceKeyB64: 'pin1',
+      processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
+      log,
+    });
+
+    expect(mls.forgetGroup).toHaveBeenCalledWith('g-orphan');
+    expect(mls.forgetGroup).not.toHaveBeenCalledWith('g-live');
+  });
+
+  it('keeps an orphan whose status could not be read - doubt is never a licence to destroy', async () => {
+    const mls = {
+      generateKeyPackage: vi.fn().mockResolvedValue(undefined),
+      reconcilePublishedKeyPackages: vi.fn().mockResolvedValue(undefined),
+      getUserGroups: vi
+        .fn()
+        .mockResolvedValue([{ groupId: 'g-live', name: 'Equipe', isGroup: true }]),
+      getLocalGroups: vi.fn().mockReturnValue(['g-live', 'g-orphan']),
+      isDistributionGroup: vi.fn().mockReturnValue(false),
+      getGroupServerStatus: vi.fn().mockResolvedValue('error'),
+      registerDistributionGroup: vi.fn(),
+      forgetGroup: vi.fn(),
+      saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
+      getDeviceId: vi.fn().mockReturnValue('dev-1'),
+      waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await syncConnectionAfterWsOpen({
+      mlsService: mls as any,
+      userId: 'u1',
+      deviceKeyB64: 'pin1',
+      processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
+      log: vi.fn(),
+    });
+
+    expect(mls.forgetGroup).not.toHaveBeenCalled();
+  });
 });

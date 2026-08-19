@@ -215,6 +215,42 @@ describe('routing a frame that arrived on the group', () => {
     expect(await route(ctx, 'g-1', 'peer', new Uint8Array([1]))).toBe(false);
   });
 
+  it('ACKNOWLEDGES a frame that can never be decrypted, whatever made it permanent', async () => {
+    // Measured on prod 2026-08-19: refusing every failure alike meant six frames were re-read on
+    // every connection for ever - including this device's OWN seeds, which OpenMLS refuses by
+    // construction. A redelivery cannot repair any of these; only a peer answering a history
+    // request can, and that is a different mechanism entirely.
+    const permanent = [
+      'Process error: past epoch application frame [msg_epoch=8, group_epoch=20]',
+      'CannotDecryptOwnMessage',
+      'SecretReuseError',
+      'TooDistantInTheFuture',
+    ];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    for (const message of permanent) {
+      const ctx = registered({
+        processIncomingMessage: vi.fn().mockRejectedValue(new Error(message)),
+      });
+      expect(await route(ctx, 'g-1', 'peer', new Uint8Array([1]))).toBe(true);
+      // Acknowledged is not silent: a seed genuinely lost here is worth exactly one line.
+      expect(ctx.distributionFrameHandler).not.toHaveBeenCalled();
+    }
+    expect(warn).toHaveBeenCalledTimes(permanent.length);
+    warn.mockRestore();
+  });
+
+  it('still redelivers what a later epoch may repair', async () => {
+    const recoverable = ['GAP_QUEUED:g-1:missing commit', 'WrongEpoch', 'something new'];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    for (const message of recoverable) {
+      const ctx = registered({
+        processIncomingMessage: vi.fn().mockRejectedValue(new Error(message)),
+      });
+      expect(await route(ctx, 'g-1', 'peer', new Uint8Array([1]))).toBe(false);
+    }
+    warn.mockRestore();
+  });
+
   it('does NOT acknowledge, and says so loudly, when no handler is wired', async () => {
     const ctx = registered({ distributionFrameHandler: null });
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);

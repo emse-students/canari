@@ -37,6 +37,7 @@ import {
   recordPendingMessagesFetched,
 } from '$lib/mls-client/catchupBenchmark';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
+import { classifyIncomingDecryptError } from '$lib/mls-client/mlsDecryptError';
 import {
   reportUnackedFrames,
   takeGroupsAwaiting,
@@ -1806,8 +1807,33 @@ export abstract class BaseMlsService implements IMlsService {
     try {
       plaintext = await this.processIncomingMessage(groupId, ciphertext);
     } catch (e) {
+      // WHY THIS ASKS WHICH FAILURE IT WAS. Refusing to acknowledge is right for a frame that may
+      // still become readable - the join has not landed, a commit is missing - and it is an
+      // INFINITE REDELIVERY LOOP for one that never will. This branch used to refuse them all, so
+      // a device's own seeds (`CannotDecryptOwnMessage`) and every seed overtaken by a commit came
+      // back on every single connection, for ever: 6 frames re-read ten times per boot, measured on
+      // prod 2026-08-19 while WP-GRAINE-1 was moving the epoch under them.
+      //
+      // The permanence is decided at the throw, by `classifyIncomingDecryptError`, and never by
+      // re-reading a sentence here.
+      const kind = classifyIncomingDecryptError(e);
+      const permanent =
+        kind === 'own-message' ||
+        kind === 'secret-reuse' ||
+        kind === 'past-epoch-application' ||
+        kind === 'generation-gap';
+      if (permanent) {
+        // ACKNOWLEDGED, and said once. The seed is gone from THIS device for good; what recovers it
+        // is a peer answering `requestCommunityHistory`, never the server handing the same
+        // undecryptable bytes back. Leaving it queued would cost the line above on every boot and
+        // hide the next real refusal underneath it.
+        console.warn(
+          `[GRAINE] frame on ${groupId.slice(0, 8)}... is unreadable for good (${kind}) - acknowledged; its seed comes back through a history request, not a redelivery`
+        );
+        return true;
+      }
       console.warn(
-        `[GRAINE] undecryptable frame on ${groupId.slice(0, 8)}... - not acknowledged:`,
+        `[GRAINE] undecryptable frame on ${groupId.slice(0, 8)}... - not acknowledged (${kind}):`,
         String(e).slice(0, 120)
       );
       return false;

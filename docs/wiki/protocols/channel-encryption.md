@@ -899,6 +899,95 @@ community on 2026-08-18 and none had been recreated - so the window was armed on
 to forecast its cost from. That is stated rather than a figure being invented; the user's decision of
 2026-08-19 was to build and arm directly.
 
-## 9. Open, and not blocking
+## 9. The distribution group is not a conversation, and two sweeps assumed it was - FIXED 2026-08-19
+
+**The community rework shipped non-functional, and one prod run found it.** MSG-5, the first send
+ever attempted against production, failed on the creator AND on a member who had joined by invite
+link, nine minutes apart:
+
+```
+[SEND] Failed: [GRAINE] community b9d52032 has no distribution group on this device
+       - nothing can be sealed for it until the join lands
+```
+
+Nothing about the join was broken. The client fetched the base, external-joined, republished the
+GroupInfo, and social-service logged all of it. Two seconds later:
+
+```
+[MLS] externalJoin succeeded for d70e8952... (base epoch 19)
+[SYNC] WASM removed (absent from server): d70e8952...
+```
+
+### What the sweep believed
+
+`GET /api/mls/users/:id/groups` is **the one place a client learns which groups exist**, and it
+excludes a community's distribution group on purpose - that group carries seeds, never a message,
+and holds no `dm_group_members` row *by construction*. The exclusion is right, and it is documented
+on the route itself.
+
+Two reconcilers then read that answer as *every group this device may legitimately hold*:
+
+- `syncConnectionAfterWsOpen` step 3 - "purge WASM state for groups no longer known to the server";
+- `discoverMissingGroups` phase 1 - the same comparison, written separately.
+
+A premise scoped to conversations, used to authorise destruction of anything. The distribution group
+is in `getLocalGroups()` and can never be in that list, so it was forgotten on **every connection**,
+and `persistMlsStateAfterMutation` made the loss durable.
+
+### What the user saw
+
+Everything after that follows mechanically:
+
+- each boot re-joined by external commit, so the group's epoch climbed one per connection - **2 to
+  21 in a single afternoon**, one stale leaf per join;
+- every seed ever distributed fell behind the live epoch, so no member could read any of them;
+- whether a user could send at all depended on **which of the join and the sweep finished last**.
+  The whole feature is verified by compiling and by unit tests, and no unit test holds two async
+  paths against each other.
+
+### The fix
+
+**Absence from that list is a reason to ASK, never a reason to destroy.** The `dm_groups` row is the
+only thing that knows which kind of group it is, and it already carries the answer, so
+`GroupMeta` now carries `distributionWorkspaceId` and `groupLifecycle.ts` gains the decision both
+sweeps call:
+
+- `decideAbsentLocalGroupFate` - a pure reducer: a registered or row-confirmed distribution group is
+  KEPT; a network doubt is KEPT; only a `dm_groups` row confirmed absent, or a conversation row this
+  device holds no membership in, is forgotten. The second case is exactly the behaviour the sweeps
+  always had, now taken on a row that was read rather than on a list that never named it.
+- `reconcileAbsentLocalGroup` - the shared I/O around it. It short-circuits on
+  `isDistributionGroup`, and when it does have to ask, it **registers what it learnt**. So the sweep
+  that used to destroy the group is now how a cold boot discovers it, before any community has
+  loaded. One request per community per SESSION, and the ordering between the Graine layer and the
+  reconcilers stops mattering at all - which is what removes the race, rather than an ordering
+  imposed by hand between two async paths.
+
+Both sweeps go through it, for the reason `decideAbsentGroupFate` exists: two copies of this
+decision diverging IS the defect.
+
+### The redelivery loop underneath it
+
+The same probe showed **60 console lines per boot** - the same six frames, re-read on every
+connection for ever. `routeDistributionFrame` refused to acknowledge ANY frame it could not decrypt,
+which is right while a redelivery can still help and is an infinite loop when it cannot. Among those
+frames were this device's own seeds, which OpenMLS refuses by construction
+(`CannotDecryptOwnMessage`), and frames from a past epoch that `mls-core` had already classified in
+its own log as *"unreadable for good"*.
+
+`classifyIncomingDecryptError` describes itself as the single source of that classification, with
+each consumer keeping its own policy; this consumer had never adopted it. It now does:
+`own-message`, `secret-reuse`, `past-epoch-application` and `generation-gap` are **acknowledged**
+with one line, because what recovers a lost seed is a peer answering `requestCommunityHistory`,
+never the server handing the same undecryptable bytes back. Everything else is still redelivered.
+
+### What this leaves
+
+The population that was live while the defect was: session seeds distributed between epochs 8 and
+21 on `d70e8952` are unreadable for good on every device, and are now acknowledged rather than
+looping. New sessions are minted at the live epoch and readable by every member. The stale leaves
+one per external join left in the group are inert - a member that no device will ever speak as.
+
+## 10. Open, and not blocking
 
 Nothing here blocks anything above.

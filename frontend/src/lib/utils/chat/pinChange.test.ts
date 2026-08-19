@@ -12,6 +12,7 @@ import {
   decodeGraineSession,
 } from '$lib/db/graineCodec';
 import { reencryptGraineSessions, reencryptLocalMessages } from './pinChange';
+import { setLocale } from '$lib/paraglide/runtime';
 
 /** In-memory IStorage stub that persists real encrypted rows (no IndexedDB). */
 function makeEncryptedStorage(): IStorage & {
@@ -98,6 +99,11 @@ function makeSession(sessionId: string, seedB64: string): StoredGraineSession {
 }
 
 describe('reencryptLocalMessages', () => {
+  // The expected sentence is French, so the locale is PINNED rather than inherited: the
+  // resolution order ends in `preferredLanguage`, and happy-dom prefers English - which made
+  // this assertion depend on a dependency's default instead of on the code.
+  beforeEach(() => setLocale('fr', { reload: false }));
+
   const oldKey = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
   const newKey = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=';
 

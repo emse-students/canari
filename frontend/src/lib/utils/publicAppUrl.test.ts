@@ -5,8 +5,14 @@ import {
   publicAppLinkLabel,
   publicAppUrl,
 } from './publicAppUrl';
+import { setLocale } from '$lib/paraglide/runtime';
 
 describe('publicAppUrl', () => {
+  // Expected labels are French, so the locale is PINNED rather than inherited: the resolution
+  // order ends in `preferredLanguage`, and happy-dom prefers English - which made these
+  // assertions depend on a dependency's default instead of on the code.
+  beforeEach(() => setLocale('fr', { reload: false }));
+
   it('uses the production origin on the Tauri WebView', () => {
     const prior = window.location;
     Object.defineProperty(window, 'location', {

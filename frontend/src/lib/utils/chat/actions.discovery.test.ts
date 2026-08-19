@@ -21,6 +21,8 @@ function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
     getDismissedGroups: vi.fn().mockResolvedValue([]),
     getGroupServerStatus: vi.fn().mockResolvedValue('absent'),
     getGroupUserMembers: vi.fn().mockResolvedValue([]),
+    isDistributionGroup: vi.fn().mockReturnValue(false),
+    registerDistributionGroup: vi.fn(),
     ...overrides,
   } as unknown as IMlsService;
 }

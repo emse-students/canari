@@ -5,8 +5,14 @@ import {
   parseEnvelope,
   serializeEnvelope,
 } from '$lib/envelope';
+import { setLocale } from '$lib/paraglide/runtime';
 
 describe('formatCallDuration', () => {
+  // The expected strings are French, so the locale is PINNED rather than inherited:
+  // the resolution order ends in `preferredLanguage`, and happy-dom prefers English - which
+  // made these assertions depend on a dependency's default instead of on the code.
+  beforeEach(() => setLocale('fr', { reload: false }));
+
   it('formats sub-minute calls', () => {
     expect(formatCallDuration(30_000)).toBe("moins d'une minute");
   });
@@ -21,6 +27,11 @@ describe('formatCallDuration', () => {
 });
 
 describe('call system envelopes', () => {
+  // The expected strings are French, so the locale is PINNED rather than inherited:
+  // the resolution order ends in `preferredLanguage`, and happy-dom prefers English - which
+  // made these assertions depend on a dependency's default instead of on the code.
+  beforeEach(() => setLocale('fr', { reload: false }));
+
   it('round-trips call metadata', () => {
     const env = mkCallStartedEnvelope('Alice', 'room-1', 'user-1', 1_700_000_000_000);
     const parsed = parseEnvelope(serializeEnvelope(env));

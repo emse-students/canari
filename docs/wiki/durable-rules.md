@@ -66,6 +66,12 @@ Deep links, system events, rosters and the channel/DM asymmetry are on those two
 - **A link nobody can ENUMERATE is not revocable** - one live invite, rotation the only way to mint, and the bounds shown next to the token. [rework](services/community-rework.md#axis-3---an-invite-is-one-link-bounded---shipped-2026-08-18)
 - **An action may only mutate state at its OWN scope** - an operation the model cannot express must be REFUSED, never approximated with the neighbouring scope's write, and `{ success: true }` that removed nothing is a lie. **Unmanageable is worse than gone.** [social-service](services/social-service.md)
 
+**The key-distribution group, which is not a conversation**
+
+- **A LIST IS AUTHORITATIVE ONLY FOR THE POPULATION IT WAS WRITTEN TO ENUMERATE.** `getUserGroups` answers for CONVERSATIONS and excludes a community's distribution group deliberately; two reconcilers read it as "every group this device may hold" and destroyed that group on every connection, checkpointing the loss - so nobody could send in any community. Absence from a list is a reason to ASK, never a reason to destroy. [graine](protocols/channel-encryption.md#the-distribution-group-is-not-a-conversation-and-two-sweeps-assumed-it-was)
+- **The sweep that would have destroyed a thing is where it should LEARN what the thing is** - one row read, the discriminator registered, and every later sweep in the session answers locally. That is what removes the race, not an ordering between two async paths. [graine](protocols/channel-encryption.md#the-distribution-group-is-not-a-conversation-and-two-sweeps-assumed-it-was)
+- **NOT ACKNOWLEDGING IS ONLY RIGHT WHILE REDELIVERY CAN STILL HELP.** A frame the crypto layer already classified as unreadable for good - a past epoch, a spent generation, this device's OWN frame - comes back for ever if the refusal is blanket. Classify at the throw and acknowledge the permanent ones; a lost seed is recovered by ASKING a peer, never by a redelivery. [graine](protocols/channel-encryption.md#the-distribution-group-is-not-a-conversation-and-two-sweeps-assumed-it-was)
+
 **Two clocks, and the answers derived from them**
 
 - **Two windows meant to be one will DRIFT: derive the second from the first, never re-time it** - and a second copy of the number cannot know about the EXCEPTIONS. The device asks which sessions still have messages and forgets the rest. [graine](protocols/channel-encryption.md)

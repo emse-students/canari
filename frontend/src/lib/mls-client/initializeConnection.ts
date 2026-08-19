@@ -1,6 +1,7 @@
 import type { IMlsService, UserGroupRow } from './IMlsService';
 import { getIsTabLeader } from './tabLeader';
 import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
+import { reconcileAbsentLocalGroup } from '$lib/utils/chat/groupLifecycle';
 import {
   connectionSweepDecision,
   groupsOwingAudit,
@@ -198,6 +199,12 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
   // Uses the `localGroups` snapshot captured at the start of the function (same instant
   // as `serverIds`): prevents purging groups joined during the async operations in step 2.
   //
+  // ABSENCE FROM THE LIST IS A REASON TO ASK, NEVER A REASON TO DESTROY. `getUserGroups` answers
+  // for CONVERSATIONS, and a community's Graine key-distribution group is excluded from it by
+  // construction - so this loop forgot it on every connection and checkpointed the loss, leaving
+  // nobody able to send in any community (WP-GRAINE-1, prod 2026-08-19). `reconcileAbsentLocalGroup`
+  // reads the `dm_groups` row, which is the only thing that knows which kind of group this is.
+  //
   // Anti-purge-storm guard: NEVER purge if the server list is unreliable.
   //  - `serverFetchOk` false: getUserGroups failed (server unavailable during
   //    a redeploy) → serverIds is empty, all groups would be forgotten.
@@ -207,11 +214,15 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
   const serverListReliable = serverFetchOk && (groups.length > 0 || localGroups.size === 0);
   if (serverListReliable) {
     for (const localId of localGroups) {
-      if (!serverIds.has(localId)) {
-        mlsService.forgetGroup(localId);
-        stateMutated = true;
-        log(`[SYNC] WASM removed (absent from server): ${localId.slice(0, 8)}…`);
+      if (serverIds.has(localId)) continue;
+      const fate = await reconcileAbsentLocalGroup(mlsService, localId);
+      if (fate.action === 'keep') {
+        log(`[SYNC] WASM kept ${localId.slice(0, 8)}… - ${fate.reason}`);
+        continue;
       }
+      mlsService.forgetGroup(localId);
+      stateMutated = true;
+      log(`[SYNC] WASM removed (${fate.reason}): ${localId.slice(0, 8)}…`);
     }
   } else if (localGroups.size > 0) {
     log(

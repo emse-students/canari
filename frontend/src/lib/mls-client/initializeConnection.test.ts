@@ -81,6 +81,11 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       reconcilePublishedKeyPackages: vi.fn().mockResolvedValue(undefined),
       getLocalGroups: vi.fn().mockReturnValue(['g-in-wasm', 'g-orphan']),
       forgetGroup: vi.fn(),
+      // `g-orphan` is absent from the server list AND from `dm_groups`: a real phantom, which is
+      // the one case the sweep may still destroy. See `reconcileAbsentLocalGroup`.
+      isDistributionGroup: vi.fn().mockReturnValue(false),
+      getGroupServerStatus: vi.fn().mockResolvedValue('absent'),
+      registerDistributionGroup: vi.fn(),
       sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
       getUserGroups: vi.fn().mockResolvedValue([
         { groupId: 'g-in-wasm', name: 'InWasm', isGroup: true },

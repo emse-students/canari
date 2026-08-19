@@ -31,6 +31,7 @@ import { resolveDirectPeerId, retireConversation } from '$lib/utils/chat/convers
 import {
   classifyServerStatus,
   decideAbsentGroupFate,
+  reconcileAbsentLocalGroup,
   type GroupServerStatus,
 } from '$lib/utils/chat/groupLifecycle';
 import { saveBlobAs } from '$lib/utils/fileDownload';
@@ -360,11 +361,19 @@ export async function discoverMissingGroups(params: {
     const dismissedGroupIds = new Set(await mlsService.getDismissedGroups().catch(() => []));
     let mlsMutated = false;
 
+    // Absence from `getUserGroups` is a reason to ASK, never a reason to destroy: that list answers
+    // for conversations, and a community's key-distribution group is excluded from it by
+    // construction. See `reconcileAbsentLocalGroup` - the same decision `initializeConnection`
+    // takes, in one place, because two copies of it diverging is what WP-GRAINE-1 was.
     for (const groupId of mlsService.getLocalGroups()) {
       if (isChannelConversationId(groupId)) continue;
-      if (!serverGroupIds.has(groupId)) {
-        if (forgetMlsGroupIfPresent(mlsService, groupId, log)) mlsMutated = true;
+      if (serverGroupIds.has(groupId)) continue;
+      const fate = await reconcileAbsentLocalGroup(mlsService, groupId);
+      if (fate.action === 'keep') {
+        log(`[DISCOVERY] MLS state kept for ${groupId.slice(0, 8)}… - ${fate.reason}`);
+        continue;
       }
+      if (forgetMlsGroupIfPresent(mlsService, groupId, log)) mlsMutated = true;
     }
     if (mlsMutated) {
       await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);

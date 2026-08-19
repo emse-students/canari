@@ -1,4 +1,4 @@
-import type { GroupMeta } from '$lib/mls-client/IMlsService';
+import type { GroupMeta, IMlsService } from '$lib/mls-client/IMlsService';
 import type { ConversationLifecycle } from '$lib/types';
 
 export type { ConversationLifecycle };
@@ -126,4 +126,99 @@ export function decideAbsentGroupFate(input: AbsentGroupFateInput): Conversation
         ? { action: 'markRemoved', reason: 'exclu (plus membre) du groupe vivant' }
         : { action: 'keep', reason: 'placeholder exclu (pending)' };
   }
+}
+
+/** What a reconciler may do to LOCAL MLS STATE for a group absent from `getUserGroups`. */
+export type LocalGroupFate = {
+  action: 'forget' | 'keep';
+  /** Human-readable cause, for the log line the caller writes. */
+  reason: string;
+};
+
+/** Signals {@link decideAbsentLocalGroupFate} reduces. Both are facts, never guesses. */
+export interface AbsentLocalGroupInput {
+  /** True when this session has ALREADY registered the group as a community's seed carrier. */
+  isKnownDistributionGroup: boolean;
+  /** Resolved server state of the `dm_groups` row (see {@link classifyServerStatus}). */
+  serverStatus: GroupServerStatus;
+}
+
+/**
+ * PURE reducer: may this device destroy the local MLS state of a group the conversation list did
+ * not name?
+ *
+ * WHY THIS IS NOT "ABSENT FROM THE LIST" ANY MORE. `GET /api/mls/users/:id/groups` is the one
+ * place a client learns which CONVERSATIONS exist, and it excludes a community's Graine
+ * key-distribution group on purpose - that group carries seeds, never a message, and holds no
+ * `dm_group_members` row by construction. Two reconcilers read that list as "every group this
+ * device may hold" and forgot the distribution group on every single connection (WP-GRAINE-1,
+ * found on prod 2026-08-19): the checkpoint made the loss durable, the next boot re-joined by
+ * external commit, and whichever of the two won the race decided whether the user could send at
+ * all. Sending was impossible whenever the sweep landed last.
+ *
+ * So absence from that list stopped being a reason to destroy anything. It is only a reason to
+ * ASK, and the answer names the kind of group: a distribution group is kept, a row that is simply
+ * gone is forgotten, a network failure decides nothing.
+ */
+export function decideAbsentLocalGroupFate(input: AbsentLocalGroupInput): LocalGroupFate {
+  if (input.isKnownDistributionGroup) {
+    return { action: 'keep', reason: 'community key-distribution group, not a conversation' };
+  }
+
+  switch (input.serverStatus.kind) {
+    case 'unknown':
+      // Never destroy on doubt - the same rule the conversation reducer above obeys.
+      return { action: 'keep', reason: 'server status uncertain (network)' };
+
+    case 'absent':
+      // No `dm_groups` row at all: nothing this state could ever belong to again.
+      return { action: 'forget', reason: 'absent from dm_groups (confirmed)' };
+
+    case 'active':
+    case 'tombstone':
+      if (input.serverStatus.meta.distributionWorkspaceId) {
+        return { action: 'keep', reason: 'community key-distribution group, not a conversation' };
+      }
+      // A live-or-tombstoned conversation row we hold no membership in: the exclusion or the
+      // deletion is real, and the local tree is what has to go. This is the behaviour the sweeps
+      // always had, now taken on a row that was read rather than on a list that never named it.
+      return { action: 'forget', reason: 'conversation row held with no membership left' };
+  }
+}
+
+/**
+ * Asks the server what a local group absent from the conversation list actually is, and decides.
+ *
+ * Shared by both reconcilers rather than written twice: the divergence between two copies of this
+ * decision IS the defect this function exists to close, exactly as {@link decideAbsentGroupFate}
+ * closed it for conversations.
+ *
+ * ONE REQUEST PER COMMUNITY PER SESSION, not per sweep. Learning that a group is a community's
+ * seed carrier is worth remembering, so the answer is registered on the MLS service - the same
+ * fact `ensureCommunityDistributionGroup` would have registered, whichever runs first. Every later
+ * sweep in the session then answers from `isDistributionGroup` without a round trip, and the
+ * ordering between the Graine layer and the reconcilers stops mattering at all.
+ */
+export async function reconcileAbsentLocalGroup(
+  mlsService: Pick<
+    IMlsService,
+    'isDistributionGroup' | 'getGroupServerStatus' | 'registerDistributionGroup'
+  >,
+  groupId: string
+): Promise<LocalGroupFate> {
+  if (mlsService.isDistributionGroup(groupId)) {
+    return decideAbsentLocalGroupFate({
+      isKnownDistributionGroup: true,
+      serverStatus: { kind: 'unknown' },
+    });
+  }
+
+  const serverStatus = classifyServerStatus(await mlsService.getGroupServerStatus(groupId));
+  const fate = decideAbsentLocalGroupFate({ isKnownDistributionGroup: false, serverStatus });
+
+  if (serverStatus.kind === 'active' || serverStatus.kind === 'tombstone') {
+    const workspaceId = serverStatus.meta.distributionWorkspaceId;
+    if (workspaceId) mlsService.registerDistributionGroup(workspaceId, groupId);
+  }
+  return fate;
 }

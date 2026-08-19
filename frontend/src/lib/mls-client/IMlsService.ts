@@ -122,6 +122,16 @@ export type GroupMeta = {
   name?: string;
   isGroup?: boolean;
   deletedAt?: string | null;
+  /**
+   * The community whose Graine key-distribution group this is, null on a conversation.
+   *
+   * THE DISCRIMINATOR A DESTRUCTIVE SWEEP NEEDS, carried from where it is already known. A
+   * distribution group holds no `dm_group_members` row by construction, so it can never appear in
+   * {@link UserGroupRow} - and a reconciler that reads that list as "every group this device may
+   * legitimately hold" destroys it. The `dm_groups` row is the only thing that can tell the two
+   * kinds apart, and it says so here rather than leaving every reconciler to infer it.
+   */
+  distributionWorkspaceId?: string | null;
 };
 
 /**
