@@ -129,68 +129,61 @@ before the campaign restarts.** Everything actionable is HERE, in order, one lin
 lives where the link says and **is not restated**. An item is done when its code, its tests, its doc
 and its commit are in, and it is then deleted from BOTH files.
 
-**The campaign started 2026-08-19, produced a P1 within the hour, and that P1 is CLOSED.** 1-3 are
-measurements and questions that need a deploy or a run to have happened; 4 is the community phase,
-which has never run and is where the rework's whole remaining risk sits; 5 and 6 are the
-verification owed on the last fix, then the campaign itself.
-MSG-5 now converges on all three clients. Preflight, MSG and SETUP-9 are done - read
-[cross-client-testing](docs/wiki/cross-client-testing.md) rather than re-deriving them. **The phone is back (2026-08-17) - nothing is on hold; keep
-`adb devices` answering. There is NO iPhone (2026-08-18)**, so the iOS half
-of the device ladder cannot be run at all
+**The campaign started 2026-08-19 and has produced SEVEN defects, all fixed.** 1-2 are numbers a
+run has to produce; 3 is owed on a fix already deployed; 4-6 are the work the user decided on
+2026-08-19; 7 is the community phase, stale AND never run, where the rework's remaining risk sits;
+8 is the campaign. Preflight, MSG and SETUP-9 are done and MSG-5 converges on all three clients -
+read [cross-client-testing](docs/wiki/cross-client-testing.md) rather than re-deriving them. **The
+phone is back (2026-08-17)**; keep `adb devices` answering. **There is NO iPhone and no iOS client
+in the field (user, 2026-08-19)**, so the iOS ladder cannot run and parity is kept BLIND
 ([device-verification](docs/wiki/device-verification.md)).
 
-1. **MEASURE EGRESS OVER TIME - ARMED 2026-08-19, and the verdict is not something work produces.**
-   [egress-probe](infrastructure/egress-probe/README.md) samples both stalled upstreams, the tunnel
-   back to ourselves, a control, and the same target from INSIDE `chat-delivery-service`, once a
-   minute, with DNS/connect/TLS kept apart from the total; `report.py` prints every conditional rate
-   next to the base rate it must beat. Installed in the `canari` crontab, `probe.err` empty, ledger
-   growing. **It says nothing until the window contains an incident** - a report over a quiet week
-   says the week was quiet - so read it the next time a stall shows up in a service log, and do NOT
-   re-derive the question here.
-2. **THE DENOMINATOR ON THE PROFILE-FETCH FAILURES - the counter shipped 2026-08-19; the number
-    comes from the campaign.** `displayName.ts` counts only the lookups that reached the network and
-    every accusation now ends `(failed/attempted this session, X%)`, so one line answers both "did a
-    name get lost" and "how often". There is no client telemetry and none was added, so the rate is
-    read from a run log on each platform - which is where the symptom was seen. **The decision about
-    `FAILURE_BACKOFF_MS` is what the number is FOR** and it stays open until a run produces one
-    ([backlog](docs/wiki/backlog.md)).
-3. **THE TWO STORAGE-BOUND QUESTIONS - ANSWERED 2026-08-19, by injection, off the campaign phone.**
-    Two defects fell out of asking and both are fixed: Tauri caught a failed SQLite open and
-    answered with IndexedDB in the same webview, which would have left the group state on disk and
-    the messages in the webview - and a blocked IndexedDB upgrade never settled its promise at all.
-    **Eviction needs no machinery and that is a decision**: it drops the whole origin bucket, so an
-    evicted store and a first run are the same thing to every witness that survives. **No SIZE cap
-    is proposed.** Shapes on
-    [frontend/architecture](docs/wiki/frontend/architecture.md#when-the-local-store-fails), pinned
-    by `storageFaults.test.ts`.
-4. **THE COMMUNITY PHASE HAS NEVER RUN, and the first two hours against prod found five defects.**
-    All five are FIXED and all five are written up in
-    [graine](docs/wiki/protocols/channel-encryption.md) §9 and §10 - **read them, do not re-derive
-    them**: the sweep that deleted every community's key-distribution group two seconds after the
-    join (WP-GRAINE-1, nobody could send anywhere), the live route that dropped an unreadable
-    message without asking for its seed, a leave that never left the distribution group, a departure
-    that moved no epoch so a departed member kept reading AND kept receiving (WP-GRAINE-2), and a
-    user-level MLS removal that compared a bare user id with a `userId:deviceId` credential and so
-    matched nothing at all. **COMM-1 to COMM-22 remain `pending` with NO runner written** -
-    `checks.mjs` carries the phase and an empty `scripts: []`. That is the work, and the rework's
-    remaining risk is concentrated there: everything about it is verified by compiling.
-5. **VERIFY WP-GRAINE-2 ON PROD - THE FIX IS DEPLOYED AND NOT YET PROVEN.** `040983c4` is live and
-    CD is green; nothing has been measured against it. The starting state, what to read, and why the
-    server half needs a NEW departure are on
-    [cross-client-testing](docs/wiki/cross-client-testing.md) §9 - do not re-derive them.
-6. **A PRIVATE SALON IS STILL SERVER-ENFORCED, NOT END-TO-END - designed, decided, NOT written.**
-    The live leak is closed (a private salon's ciphertext, typing, pins and tallies no longer reach
-    the whole community), but one distribution group per COMMUNITY means every member still holds a
-    private salon's seed. The fix is a group per private channel, and **the user decided 2026-08-19
-    that an admin JOINS a private salon explicitly** - the ambient `workspace.manage` access goes,
-    which is what makes the roster finite. **Forward secrecy was decided AGAINST the same day**: it
-    would cost a member their own scrollback, and retention already bounds the exposure. Do not
-    re-open either. The design is on [backlog](docs/wiki/backlog.md), the incident on
-    [graine](docs/wiki/protocols/channel-encryption.md) §11.
-7. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign.
-    **Everything must end green, so every phase runs.** What that costs, the ladder's order, and the
-    two decisions it turns on - `call-service` logging BEFORE the CALL phase, and the community
-    rework never having run against prod - are all on
+1. **EGRESS OVER TIME - ARMED 2026-08-19, and it produces no work.**
+   [egress-probe](infrastructure/egress-probe/README.md) samples once a minute and `report.py`
+   prints every conditional rate next to the base rate it must beat. **It says nothing until the
+   window contains an incident**, so read it the next time a stall shows up in a service log; the
+   question itself is on [backlog](docs/wiki/backlog.md) and is not to be re-derived.
+2. **THE DENOMINATOR ON THE PROFILE-FETCH FAILURES - the counter shipped 2026-08-19, the number
+    comes from a run.** Every accusation in `displayName.ts` now ends `(failed/attempted, X%)`.
+    There is no client telemetry, so the rate is read from a run log on each platform. **The
+    `FAILURE_BACKOFF_MS` decision is what the number is FOR** ([backlog](docs/wiki/backlog.md)).
+3. **VERIFY WP-GRAINE-2 ON PROD - DEPLOYED AND NOT YET PROVEN, and it is the cheapest item here.**
+    Nothing has been measured against the fix. The starting state, what to read, and why the server
+    half needs a NEW departure are on [cross-client-testing](docs/wiki/cross-client-testing.md) §9.
+    `scratch/verify-graine2.mjs` is BROKEN - `report()` returns no `lines` field; read `watch.mjs`.
+4. **THE PERMISSION MATRIX LIES ON TWO OF ITS EIGHT ROWS - the user's decision, 2026-08-19: DELETE
+    them, do not wire them.** `channel.access` and `channel.send` are enforced NOWHERE, and the
+    reasoning that settles it is the user's: a public salon is visible to every member and a private
+    one to the people in it, so `channel.access` decides nothing already decided; and `writePolicy`,
+    per salon, is strictly more expressive than one community-wide switch. So: out of the grid, out
+    of `permissions.ts`, out of the three default sets, out of `LEGACY_PERMISSION_MAPPING`, out of
+    `messages/*.json`, and stripped from `channel_roles.permissions` by migration. **`allowedRoles`
+    goes with them** - a column that never decided anything (invitations are per person). **And the
+    panel is WIDENED**: it needs a horizontal scroll today, which is the user's own report.
+5. **A GUARD THAT FAILS OPEN, WITH THE CORRECT MODEL SITTING NEXT TO IT.** `userHasMlsDevices`
+    answers `true` on a transport failure or a non-2xx, so the day its URL was wrong it was a
+    constant `true` - written up in `distribution-group.client.ts`'s own header and still there. The
+    DM path already does it right: `fetchUserDevices` THROWS on transport failure and returns `[]`
+    only for a genuine 200 with no device. Copy that, and give the UI the two messages the states
+    deserve - "this person has not installed Canari" is not "cannot check right now".
+6. **ONE DISTRIBUTION GROUP PER PRIVATE SALON - the design, and the whole remaining crypto risk.**
+    §4.3 gives a community ONE group, so every member holds a private salon's seed; the fan-out is
+    scoped but the guarantee is still the server's. Same machinery, gated on `canAccessChannel`,
+    `channelAudience` as its roster, the §10 diff pruning it. **The user's decisions of 2026-08-19,
+    both load-bearing:** an admin JOINS explicitly rather than reaching every private salon through
+    `workspace.manage` - which is what makes the roster finite - and that join shows up **in the
+    member list ONLY, with no system message**. The admin must SEE an unjoined private salon or the
+    capability is unusable. Forward secrecy is decided AGAINST. Detail on
+    [backlog](docs/wiki/backlog.md) and [graine](docs/wiki/protocols/channel-encryption.md) §11.
+7. **REWRITE THE COMM PHASE - it is not incomplete, it is STALE.** Written before Graine and still
+    speaking the old vocabulary: COMM-9 "the key rotates", COMM-13 "manual key rotation" (neither
+    exists), COMM-22 times `hydrateChannelHistoryKeys`, **a function that is gone**. Nothing in it
+    covers the seven defects found this week. Rewrite the twenty-two rows against Graine, add what
+    3-6 change, then write the runners - `checks.mjs` carries the phase and an empty `scripts: []`.
+    This is where the rework's remaining risk sits: everything about it is verified by COMPILING.
+8. **THEN, and only then:** recreate the venue clean, rebuild the Android APK once, run the
+    campaign. **Everything must end green, so every phase runs.** What it costs, the ladder's order
+    and the two decisions it turns on are on
     [cross-client-testing](docs/wiki/cross-client-testing.md), the only copy of any of it.
 
 **THE SIX THAT CANNOT BE PULLED FORWARD** - none is waiting on us, and each carries its blocking
