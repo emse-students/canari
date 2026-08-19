@@ -1396,6 +1396,18 @@ that decide whether you believe a run:
   action with one pinned toolchain ([mls-wasm](frontend/mls-wasm.md#why-it-is-not-committed)).
   A build step duplicated per pipeline is the same defect wearing a different hat: two toolchains
   put two cryptos back in the fleet.
+- **"I CANNOT OBSERVE IT" IS A CLAIM ABOUT THE INTERFACES YOU TRIED, AND IT NEEDS THE SAME EVIDENCE
+  AS ANY OTHER CLAIM: enumerate what the mechanism WRITES.** Whether a Le Cercle pipeline had ever
+  run was recorded as blocked on project access because the GitLab project is private and
+  `/api/v4/projects/.../pipelines` answers 404 without a token. Three witnesses were open the whole
+  time: GitLab writes `refs/environments/<env>/deployments/<n>` into the repository, so a plain
+  `git ls-remote` over the SSH remote names every deployed commit; the runner is a SHELL runner on
+  the production host, so `journalctl -u gitlab-runner` carries one line per job with its pipeline
+  id and outcome; and the deployed container is tagged with the commit SHA it was built from. Ask
+  what a mechanism leaves behind - refs, journal lines, a running process - before concluding the
+  one endpoint that refused was the only way to look. **Note also which absence proves nothing:**
+  `refs/pipelines/*` came back empty because the server hides that namespace, so only the FULL
+  `ls-remote` distinguished "no pipelines" from "not shown to you".
 
 ## Carte de la Vie Asso -> [carte-vie-asso](carte-vie-asso.md)
 

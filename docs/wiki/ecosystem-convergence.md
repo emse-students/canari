@@ -175,7 +175,7 @@ exists) was invisible until the type existed to make the distinction.
 | **Sky** | prettier | **yes, since 2026-08-19** | yes | yes |
 | **Portail-etu** | prettier | yes (`test.yml`, `deploy.yml`) + pre-push hook | yes | yes |
 | **MiGallery** | prettier | **yes, since 2026-08-19** (`ci.yml`) | yes | yes |
-| **Le Cercle** | prettier (inside `lint`) | via `lint` | via the pipeline | yes - `.gitlab-ci.yml` runs on the default branch, merge requests and tags |
+| **Le Cercle** | prettier (inside `lint`) | via `lint` | via the pipeline | yes - and **verified running**: 10 pipelines, the last 7 green (2026-08-19) |
 
 Both findings this section carried have closed, one of them before it was written:
 
@@ -183,12 +183,43 @@ Both findings this section carried have closed, one of them before it was writte
   `CERCLE_CI_ENABLED` variable somebody had to set; `db2a530`, on 2026-08-18, deleted that kill
   switch and left the pipeline running on the default branch, merge requests and tags. Two documents
   in that repository still said otherwise until 2026-08-19 and were the source of this row - **a
-  claim about a gate, read out of prose rather than out of the file that defines it.** What is still
-  unverified is whether a runner has actually picked a pipeline up: the GitLab project is private and
-  there is no token on this machine, so `/api/v4/projects/.../pipelines` answers 404.
+  claim about a gate, read out of prose rather than out of the file that defines it.** That a runner
+  actually picks the pipelines up was then verified, and is written up below.
 - **MiGallery's formatting was enforced only by a hook.** Sky had been in exactly that state and
   three files had drifted out of shape with no red run to show for it. `ci.yml` runs `format:check`
   there now.
+
+### Proving a pipeline runs, without the API that would have said so
+
+The GitLab project is private, `/api/v4/projects/.../pipelines` answers `404 Project Not Found`
+without a token, and no token exists on this machine. That closed the obvious route and nothing
+else, because **a pipeline that runs leaves evidence in two places nobody thinks of as a CI
+interface**, and both were reachable with the access already in hand:
+
+- **The repository itself.** GitLab writes `refs/environments/<name>/deployments/<n>` into the
+  project's ref namespace when a deployment job runs. `git ls-remote origin` over the SSH remote -
+  no token, no API - listed seven of them, and resolving each SHA named the commit it deployed. The
+  highest, `deployments/12`, is the tip of `main`. (`refs/pipelines/*` is hidden by the server and
+  returned nothing; that absence is a property of `transfer.hideRefs`, not a fact about pipelines,
+  which is exactly the distinction a full `ls-remote` settled.)
+- **The host, because the runner is the host.** `cercle-prod` is a SHELL runner on the production
+  box, reachable as `ssh cercle`. `journalctl -u gitlab-runner` carries one line per job with its
+  pipeline id and outcome: **28 jobs across 10 pipelines, 25 succeeded**. The three failures are
+  `22096`-`22098`, all between 19:17 and 19:42 on 2026-08-18 - the bring-up hour, when the reserved
+  `image:` job name and the `docker login` against a registry that does not exist were being found.
+  Every pipeline from `22099` onwards is 3/3 green, including `22104` and `22105` today.
+- **And the end state agrees with both.** The running container is `le-cercle:6f7f2d22…`, the tip of
+  `main`, up and healthy; `https://cercle.canari-emse.fr/api/health` answers
+  `{"status":"ok","schema":13}`. Since `deploy` is the last stage and the job fails unless that
+  health check returns 200, a container running that tag is a passed `gates` and a passed
+  `build:image` behind it.
+
+**The lesson is the one this page keeps re-learning in a new costume.** "Blocked on project access"
+was, again, a claim read off the one interface that happened to be closed. The question was never
+"can I call the pipelines endpoint" - it was "did anything run" - and three independent witnesses to
+that were open the whole time. **Enumerate what a mechanism WRITES before concluding you cannot
+observe it**; a CI system that deploys leaves refs in a repository, lines in a journal and a process
+on a host, and any one of them answers.
 
 ## 7. Line endings
 
@@ -215,7 +246,9 @@ substring `LIKE` to a full matcher in somebody else's commit while this page was
 The three that were left closed on 2026-08-19 as well, and how they closed is the argument. Le
 Cercle's CI turned out never to have been off - `db2a530` had removed the kill switch the day
 before, and this page had read the claim out of a `CONTRIBUTING.md` instead of the file that defines
-it. Portail-etu's association filter became a real matcher. And the tolerance ladder, the one thing
+it; it then turned out not to be unobservable either, once the question was asked of what a pipeline
+WRITES rather than of the one API that refused. Portail-etu's association filter became a real
+matcher. And the tolerance ladder, the one thing
 here that WAS a genuine disagreement, was settled by measuring the three ladders against the
 production roster rather than by picking one: the loose ladder offered a wrong person on half of all
 queries and recovered no typo the tight one did not. That is the whole argument against a shared

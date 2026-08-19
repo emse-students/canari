@@ -131,21 +131,6 @@ The shapes are on [frontend/architecture](frontend/architecture.md#when-the-loca
 pinned by `src/lib/db/storageFaults.test.ts`. **No SIZE cap is proposed**: a write that fails now
 reaches its caller on every backend, which is what the cap would have been protecting.
 
-### QUESTION - has a Le Cercle pipeline actually run? BLOCKED ON PROJECT ACCESS
-
-Not blocked on work, and no longer blocked on Aurel setting a variable. `.gitlab-ci.yml` was gated on
-`CERCLE_CI_ENABLED`; commit `db2a530` (Jolan Boudin, 2026-08-18) deleted that gate, and the
-`workflow:rules` now cover merge requests, the default branch and tags. Two documents in that
-repository still claimed the old state until 2026-08-19 and were the source of the inventory's
-"inert" row - **a claim about a gate, read out of prose rather than out of the file that defines it**
-([ecosystem-convergence](ecosystem-convergence.md#6-the-gates-and-whether-anything-runs-them)).
-
-What is NOT established is whether a runner has picked one up. The GitLab project is private and
-there is no token on this machine, so `GET /api/v4/projects/aurel.dautry%2Fle-cercle/pipelines`
-answers `404 Project Not Found` and `glab` is not installed. Anyone with access settles it by opening
-the project's CI page. Until then, "Le Cercle has CI" is a claim about a configuration file, not
-about a run - and the whole point of a gate is that something runs it.
-
 ### Is a MiGallery application worth it?
 
 An open question, deliberately. The Canari formula (SvelteKit + Tauri) transfers, so the cost is
