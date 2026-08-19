@@ -258,10 +258,10 @@ ordering is the guarantee.
 
 ## Related sources
 
-- [`apps/chat-delivery-service/src/app.controller.ts`](../../apps/chat-delivery-service/src/app.controller.ts) — `validateCommit`, `resetGroup`, `resetGroupEpoch`, add-lock, claim-bootstrap.
-- [`frontend/src/lib/services/mlsDesyncPrevention.ts`](../../frontend/src/lib/services/mlsDesyncPrevention.ts) — shared `baseEpoch` helper.
-- [`frontend/mls-core/src/lib.rs`](../../frontend/mls-core/src/lib.rs) — epoch gap detection in `process_incoming_message`.
-- [`frontend/src/lib/utils/chat/actions.ts`](../../frontend/src/lib/utils/chat/actions.ts) — `discoverMissingGroups`, group_reset ordering.
+- [`apps/chat-delivery-service/src/app.controller.ts`](../../../apps/chat-delivery-service/src/app.controller.ts) — `validateCommit`, `resetGroup`, `resetGroupEpoch`, add-lock, claim-bootstrap.
+- [`frontend/src/lib/services/BaseMlsService.ts`](../../../frontend/src/lib/services/BaseMlsService.ts) - `freshEpoch`, which is where a commit's `baseEpoch` is decided before it is published.
+- [`frontend/mls-core/src/lib.rs`](../../../frontend/mls-core/src/lib.rs) — epoch gap detection in `process_incoming_message`.
+- [`frontend/src/lib/utils/chat/actions.ts`](../../../frontend/src/lib/utils/chat/actions.ts) — `discoverMissingGroups`, group_reset ordering.
 
 ## See also
 

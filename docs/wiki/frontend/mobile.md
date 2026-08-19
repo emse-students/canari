@@ -192,6 +192,22 @@ consequences that nothing type-checks:
 Also verified on hardware while chasing it: `XMLHttpRequest` is NOT patched and reads a `blob:` URL
 fine, so a passing XHR next to a failing `fetch` is the fingerprint of this class of bug.
 
+### A relative `/api/` path is dead on mobile, and it fails as a SUCCESS
+
+The WebView's origin is `tauri.localhost`, so Tauri resolves a relative path as an ASSET, misses,
+and falls back to `index.html` - **HTTP 200 with an HTML body**. `res.ok` is therefore `true` and
+only `res.json()` throws, inside whatever `catch` happens to be nearby. Seen on A1 on 2026-08-11 in
+the app's own log: `[tauri::manager] Asset api/mls/security/pin-status/... not found; fallback to
+index.html`.
+
+Three call sites had it and **the third was destructive**: `handlePinReset` read that `res.ok` as
+"the server cleared the verifier" and went on to wipe the device's MLS state, losing the history
+while the verifier stayed registered. That is the WP-DIRECTBOOT-1 shape again - a "cannot read"
+taken for a "not there", with a destructive branch behind it.
+
+Always take a base from `utils/apiUrl.ts` (`coreUrl` / `socialUrl` / `gatewayUrl` / `deliveryUrl`)
+or `historyBaseUrl`. `apiUrl.absolute.test.ts` is the guard.
+
 ## Rules that hold across both platforms
 
 **Push is all-FCM.** One transport for Android and iOS alike: the backend sends every `PushToken`
@@ -1062,7 +1078,7 @@ See [`cicd.md`](../cicd.md) for the full pipeline.
 ## See also
 
 - [`frontend/architecture.md`](../architecture.md) — SvelteKit architecture, stores, routing
-- [`frontend/mls-wasm.md`](../mls-wasm.md) — WASM MLS client (Web counterpart)
+- [`frontend/mls-wasm.md`](mls-wasm.md) — WASM MLS client (Web counterpart)
 - [`frontend/modules/calls.md`](modules/calls.md) — CallKit and call signaling
 - [`services/chat-delivery.md`](../services/chat-delivery.md) — Push notification backend (FCM, APNs VoIP)
 - [`cicd.md`](../cicd.md) — Mobile build workflows

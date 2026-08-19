@@ -64,7 +64,7 @@ The following must be configured in the Authentik admin UI (not automated via CD
 
 ## Database and backup
 
-The PostgreSQL database (volume `miconnect_database`) contains all Authentik configuration: providers, applications, users, OIDC settings. It is backed up daily by [`infrastructure/backup/backup.sh`](../../infrastructure/backup/backup.sh) as `authentik_db.sql.gz`.
+The PostgreSQL database (volume `miconnect_database`) contains all Authentik configuration: providers, applications, users, OIDC settings. It is backed up daily by [`infrastructure/backup/backup.sh`](../../../infrastructure/backup/backup.sh) as `authentik_db.sql.gz`.
 
 Restore: `./infrastructure/backup/restore.sh --latest-from-mitv --yes` (restores `authentik_db` alongside Canari data).
 
@@ -74,4 +74,4 @@ Restore: `./infrastructure/backup/restore.sh --latest-from-mitv --yes` (restores
 - [`architecture.md`](../architecture.md) — Auth flow diagram, per-request auth
 - [`infrastructure/nginx.md`](nginx.md) — `auth_request` configuration
 - [`infrastructure/backup.md`](backup.md) — Backup and restore procedures
-- [`infrastructure/MIGRATION.md`](../../infrastructure/MIGRATION.md) — Server bootstrap and migration
+- [`infrastructure/MIGRATION.md`](../../../infrastructure/MIGRATION.md) — Server bootstrap and migration

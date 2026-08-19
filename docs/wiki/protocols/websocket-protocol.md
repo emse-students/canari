@@ -2,7 +2,7 @@
 
 **Source**: `libs/proto/canari.proto`
 
-All client ↔ gateway WebSocket frames use **Protobuf v3 binary encoding**, not JSON. This page documents the wire format defined in [`canari.proto`](../../libs/proto/canari.proto).
+All client ↔ gateway WebSocket frames use **Protobuf v3 binary encoding**, not JSON. This page documents the wire format defined in [`canari.proto`](../../../libs/proto/canari.proto).
 
 ## Transport envelope
 

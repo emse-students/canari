@@ -446,6 +446,25 @@ The social-service publishes to `chat:channel_events`:
 
 The chat-gateway subscribers fan out these events to all connected devices of the affected users.
 
+### Deleting a community is irreversible, and the gate is a SERVER argument
+
+`deleteWorkspace` used to archive. It now destroys, for the reason on
+[community-rework](community-rework.md#axis-1---the-server-stops-being-able-to-read-the-reason-for-the-rework):
+once Graine seals a channel, the two `UPDATE`s that "restore" an archived community restore
+ciphertext no client holds a seed for - a community with its name, its slug and its storage intact,
+listed by no screen and deletable by no route. **Recoverability that only recovers unreadable rows
+is not recoverability**, and when a soft delete's whole justification is the restore, the soft
+delete has become an orphan with a flag on it.
+
+Turning a reversible control irreversible changes what every ALREADY DEPLOYED client is saying: its
+"are you sure?" was worded for the old meaning. Shipping the server half alone would make those
+clients destroy a community behind a warning that no longer describes what happens. The gate is
+therefore a NEW argument they do not send - `confirmationName`, checked against `workspace.name`
+server-side - so an old client fails closed. It is checked AFTER the permission checks, so a
+non-admin cannot probe whether a name matches, and trimmed on both sides because a copied name
+carries whitespace. **A confirmation only the dialog enforces is not a gate, it is a decoration on
+one client.**
+
 ### Removal events are fan-out, and the payload is the only discriminator
 
 `channel.member.kicked` and `channel.member.removed` go to **every remaining member as well as

@@ -1,1570 +1,491 @@
 # Durable rules - what this codebase has cost to learn
 
-Every line here was written after something broke, and each one names the page that carries the
-reasoning. It is an INDEX of hard-won constraints, not a style guide: nothing is here because it
-sounded sensible, and nothing should be added without an incident behind it.
+Every line here was written after something broke. This is an **index of hard-won constraints**, not
+a style guide: nothing is here because it sounded sensible, and nothing is added without an incident
+behind it.
 
-**How to use it.** Read the section that matches what you are about to touch, then open the page it
+**How to use it.** Read the section matching what you are about to touch, then open the page it
 points at before writing anything. The rules are deliberately blunt one-liners - they exist to make
-you stop, not to explain. The explanation is always one link away.
+you STOP, not to explain. The explanation is always one link away, and the link is the point: this
+page is a map of where the reasoning lives, so a section you can read in twenty seconds is a section
+doing its job.
 
-**Where this came from.** These rules were extracted verbatim out of `CLAUDE.md` on 2026-08-11,
-where they had grown to 560 lines - more than half the file an agent reads at the start of every
-session, and most of it irrelevant to any one task. Nothing was reworded in the move; only the link
-paths were rewritten to be relative to this directory.
+**How to add one.** ONE LINE, plus the page carrying its reasoning. If the rule needs a paragraph,
+the paragraph belongs on that topical page - put it there and leave the one-liner here. If it needs
+no page, it probably needs no rule.
 
-**What still lives in `CLAUDE.md`** is the handful of rules that apply to EVERY task regardless of
-area, plus the pointer to this page. If you find yourself adding a rule there, ask first whether it
-belongs in one of the sections below.
+**How to remove one.** A rule dies when the thing it constrains no longer exists in the code, or
+when another rule already says it. Neither is a loss: the story stays in `CHANGELOG.md` and the
+mechanism on the wiki page. Compressed 2026-08-19 from 1570 lines to this, by moving every surviving
+paragraph onto the page it pointed at and deleting the narratives whose code was already gone.
 
-**How to add one.** One line per rule, naming the page that carries its reasoning. If a rule needs a
-paragraph, the paragraph belongs in the topical page the section points at - put it there and leave
-the one-liner here.
+**What stays in `CLAUDE.md`** is the handful of rules that apply to EVERY task regardless of area,
+plus the pointer here. Adding a rule there means asking first whether it belongs in a section below.
 
 ---
 
 ## MLS state and keys -> [mls-protocol](protocols/mls-protocol.md), [auth](frontend/modules/auth.md)
 
 Everything that touches the device key, the PIN, `mls.bin` or an unlock path is on those two pages.
-The four traps worth seeing without opening one:
+`desync` = [mls-desync-prevention](protocols/mls-desync-prevention.md).
 
-- **NO STATE REPLACEMENT MAY REWIND THIS DEVICE'S OWN SEND RATCHET, AND AN EPOCH CANNOT SEE THAT
-  IT DID.** Every seam that swaps the live MLS client (off-thread catch-up, native resume reload)
-  needs TWO guards: epoch-monotonic, and not-overtaken-by-a-local-send. A send moves a GENERATION
-  INSIDE one epoch, so the epoch guard reports no regression while the ratchet goes back, and the
-  next frame re-issues a spent generation the peer refuses as `SecretReuseError`. Web had the second
-  guard for a month while the native resume had only the first - and the comment saying "keep the
-  two in sync" was itself only about the first. See
-  [mls-desync-prevention](protocols/mls-desync-prevention.md).
-- **WHAT THE DEVICE KEY SEALS, THE DEVICE KEY CHANGE MUST RE-SEAL - AND WHETHER FORGETTING IS
-  SURVIVABLE DEPENDS ENTIRELY ON WHETHER SOMETHING ELSE STILL HOLDS IT.** `performPinChange`
-  enumerates what it re-encrypts, and adding a device-key-sealed store without adding it to that
-  list is silent: nothing fails at change time, and the rows simply stop opening later. It had never
-  cost anything because every such row so far was a MESSAGE, which the server re-serves - so the
-  omission repaired itself. A Graine seed is the first row nothing can re-serve, so the same
-  omission would be permanent, and would surface as "my channel history stopped loading" weeks after
-  the PIN change that caused it. Before adding an encrypted store, answer the question the design
-  owes: **who else holds this, and what happens if this copy dies.**
-- **A MIGRATION BRANCH STAMPS ITS OWN VERSION, NEVER `SCHEMA_VERSION`** - stamping the current
-  version claims every migration written after it, so the next one never runs on the databases that
-  branch touched. `sqlite.ts` carries the comment in the v6 branch and the v7 branch did it anyway;
-  it was invisible until the bump to 8. When bumping the version, READ the previous branch's stamp.
-- **A RULE THAT EACH CALL SITE MUST REMEMBER IS A RULE THE NEXT CALL SITE WILL NOT.** The outbound
-  checkpoint lived at 2 of the 18 call sites that reach a send; the other 16 advanced the ratchet and
-  persisted nothing. It is now in `BaseMlsService.sendMessage`, which is concrete for exactly this
-  reason - a platform supplies only `encryptForSend`, and cannot opt out of the invariants.
+**The send ratchet, and what may replace the client under it**
 
-- **A CALL SITE THAT HAS TO KNOW WHICH PLATFORM IT IS ON IN ORDER TO PERSIST IS A CALL SITE THAT WILL
-  GET IT WRONG.** `saveState` does not mean the same thing on both: on web it returns bytes that
-  still have to be stored, on native it has already written `mls.bin` when it answers. The checkpoint
-  path did both and so wrote the phone's state file TWICE with the same bytes - 2.0 s of a 3.7 s
-  checkpoint, nearly all of it re-marshalling the snapshot through IPC as a `number[]`. The fact was
-  already in the codebase on one method; a second call site had its own copy of the answer. One seam
-  (`IMlsService.persistCheckpoint`), every checkpoint through it.
-- **AN INVARIANT IS NOT ITS FIRST IMPLEMENTATION - RE-READ WHAT IT ACTUALLY DEMANDS BEFORE PAYING FOR
-  IT.** *`mls.bin` is never behind a frame that has already left the device* was read as "the send
-  must wait for the disk", priced at 1.7 s per message on a phone, and nearly abandoned as
-  unaffordable. It never demanded durability AT SEND TIME - only that a state restored behind one be
-  recognised and repaired, which is a counter outside the snapshot plus a burn at load, and costs a
-  `localStorage` write. The expensive reading survived two design rounds because nobody asked what
-  the sentence required as opposed to what the obvious mechanism provided.
-- **WHEN A REPAIR CAN ONLY BE WRONG IN ONE DIRECTION, FIND OUT WHICH AND LEAN ON IT.** The burn's
-  count is read before a checkpoint and committed after, so a send landing during the write is
-  counted twice - deliberately. Over-shooting costs a peer a few unused keys (it ratchets forward and
-  keeps what it skips, up to `maximum_forward_distance`); under-shooting re-issues a spent generation
-  and the frame is refused. Establishing the asymmetry FIRST, in the dependency's source, is what
-  removed the need for any atomicity between the counter and the snapshot - and a test pins it, so
-  the day it stops holding, the design's foundation fails out loud instead of silently.
-- **PRICE BOTH HALVES BEFORE CHOOSING BETWEEN THEM - AN UNPRINTED METRIC IS A GUESS.** The decision
-  "may a send WAIT for durability" turned on the cost of the save alone; the metric existed
-  (`recordMlsSaveStateMs`) and had never been logged, so the number was estimated at ~80 ms and was
-  really 1.7 s. Splitting the log did not just correct the estimate, it exposed the duplicate write
-  above - which no amount of reasoning about the code had found.
-- An at-rest envelope change needs a reader for the previous format in the SAME commit - and that
-  reader only buys the FORWARD direction. Backwards is a separate promise nobody makes by default:
-  once a device has saved in the new format, every build older than that commit is a total loss of
-  identity and groups for it. Say so at the commit, or a routine rollback destroys users. **The
-  frontend must not be rolled back past `01bc0a13`** (`mls.bin` byte-string encoding, WP-ANR-1).
-- **serde HAS NO `Vec<u8>`**: the derived impls take the generic sequence path, so a `Vec<u8>` field
-  is written as an array of integers and read back one CBOR header per byte - x45 slower and x2
-  larger, measured. `mls-core/src/byte_compat.rs` is the fix; any NEW byte field must use it.
-- `isValidPin` (>= 4 chars) guards setup, change, recovery AND unlock - one rule, or a lockout.
-- A status code is an ANSWER, a transport failure is not: only a 401/403 may log a user out, and
-  `navigator.onLine` alone never proves reachability (a captive portal reports `true`).
-- Offline unlock is only ever the paths that ALREADY skip the server check online (biometrics,
-  vault); widening it to the PIN is a security change wearing a UX hat.
+- **No state replacement may rewind this device's own send RATCHET, and an epoch cannot see that it did** - every such seam needs TWO guards, epoch-monotonic AND not-overtaken-by-a-local-send. [desync](protocols/mls-desync-prevention.md#8-client---no-state-replacement-may-rewind-this-devices-own-send-ratchet)
+- **A rule that each call site must remember is a rule the next call site will NOT** - the checkpoint lived at 2 of the 18 call sites reaching a send; it is now inside `BaseMlsService.sendMessage`, which a platform cannot opt out of. [desync](protocols/mls-desync-prevention.md#8-client---no-state-replacement-may-rewind-this-devices-own-send-ratchet)
+- **A call site that has to know WHICH PLATFORM it is on in order to persist will get it wrong** - `saveState` means two different things, and a second call site had its own copy of the answer. One seam, every checkpoint through it. [desync](protocols/mls-desync-prevention.md#8-client---no-state-replacement-may-rewind-this-devices-own-send-ratchet)
+- **An invariant is not its first implementation - re-read what it actually DEMANDS before paying for it.** "`mls.bin` is never behind a frame that has left" never required durability at send time, and the expensive reading survived two design rounds. [desync](protocols/mls-desync-prevention.md#8-client---no-state-replacement-may-rewind-this-devices-own-send-ratchet)
+- **Price both halves before choosing between them - an UNPRINTED metric is a guess.** The estimate was ~80 ms and the truth 1.7 s, and splitting the log exposed a duplicate write no reasoning had found. [desync](protocols/mls-desync-prevention.md#8-client---no-state-replacement-may-rewind-this-devices-own-send-ratchet)
+- **When a repair can only be wrong in ONE direction, find out which and lean on it** - over-shooting the burn costs a peer a few unused keys, under-shooting refuses a frame; establishing the asymmetry in the dependency's source is what removed the need for atomicity. [desync](protocols/mls-desync-prevention.md#8-client---no-state-replacement-may-rewind-this-devices-own-send-ratchet)
+
+**At rest**
+
+- **What the device key SEALS, the device key change must RE-SEAL** - and whether forgetting is survivable depends entirely on whether something else still holds it. Before adding an encrypted store, answer: who else holds this, and what happens if this copy dies. [channel-encryption](protocols/channel-encryption.md)
+- **A migration branch stamps its OWN version, never `SCHEMA_VERSION`** - stamping the current version claims every migration written after it. When bumping, READ the previous branch's stamp. [mob](frontend/mobile.md)
+- **An at-rest envelope change needs a reader for the previous format in the SAME commit - and that only buys the FORWARD direction.** Say so at the commit: **the frontend must not be rolled back past `01bc0a13`.** [mls-protocol](protocols/mls-protocol.md#how-the-state-is-encoded-inside-the-envelope-wp-anr-1-2026-08-11)
+- **serde has no `Vec<u8>`** - the generic sequence path is x45 slower and x2 larger, measured. Any NEW byte field uses `byte_compat.rs`. [mls-protocol](protocols/mls-protocol.md#how-the-state-is-encoded-inside-the-envelope-wp-anr-1-2026-08-11)
+
+**Unlock**
+
+- `isValidPin` (>= 4 chars) guards setup, change, recovery AND unlock - one rule, or a lockout. [auth](frontend/modules/auth.md#pin-and-device-key)
+- **A status code is an ANSWER, a transport failure is not** - only a 401/403 may log a user out, and `navigator.onLine` never proves reachability. [auth](frontend/modules/auth.md#a-status-parsed-back-out-of-a-sentence-is-a-status-that-was-discarded)
+- **Offline unlock is only ever the paths that ALREADY skip the server check online** (biometrics, vault); widening it to the PIN is a security change wearing a UX hat. [auth](frontend/modules/auth.md#offline-unlock)
 
 ## Community channels -> [chat](frontend/modules/chat.md), [social-service](services/social-service.md)
 
-Deep links, system events, rosters and the channel/DM asymmetry are all on those two pages. The
-ones that must be seen without opening one:
+Deep links, system events, rosters and the channel/DM asymmetry are on those two pages;
+`rework` = [community-rework](services/community-rework.md),
+`graine` = [channel-encryption](protocols/channel-encryption.md).
 
-- **EVERY OPERATION CHECKS WHAT THE ACTOR MAY DO; ASK ALSO WHAT THE SYSTEM WOULD BE LEFT AS.** Leave,
-  kick, demote, join-by-link and account-deletion all removed an admin without counting the ones
-  remaining - which is not five bugs but ONE absent postcondition seen from five sides, so guarding
-  any of them alone left the hole open. Enumerate the sides before writing the guard: the fifth was
-  found only by asking what else writes the table (`internal.controller` deletes memberships
-  directly). Enforce it as a REFUSAL wherever refusing is possible, and add no repair route - making
-  the broken state unreachable beats a destructive button that restores it. **Where a refusal is
-  impossible** - the account is going regardless - the repair must be DETERMINISTIC (highest-priority
-  survivor, ties by lowest id), never a heuristic and never a clock. Measured first: 15 of 29
-  communities had exactly one admin. See [community-rework](services/community-rework.md).
-- **RECOVERABILITY THAT ONLY RECOVERS UNREADABLE ROWS IS NOT RECOVERABILITY.** Deleting a community
-  archived it, because a mistake was then "two `UPDATE`s" away. Graine made those two `UPDATE`s
-  restore ciphertext no client holds a seed for - keeping the name, the slug and the storage, listed
-  by no screen, deletable by no route. When a soft delete's justification is a restore, re-ask
-  whether the restore still produces something usable; if it does not, the soft delete is only an
-  orphan with a flag on it.
-- **TURNING A REVERSIBLE CONTROL IRREVERSIBLE CHANGES WHAT EVERY DEPLOYED CLIENT IS SAYING.** Their
-  "are you sure?" was written for the old meaning, and shipping the server half alone makes them
-  destroy things behind a warning that no longer describes what happens. Require a NEW argument the
-  old clients do not send - here the typed community name, checked server-side - so they fail closed.
-  A confirmation that only the dialog enforces is not a gate, it is a decoration on one client.
-- **A LINK NOBODY CAN ENUMERATE IS NOT REVOCABLE.** "Creates (or returns)" only ever created and the
-  UI called it per click, so one member minted 3 live tokens in 59 seconds and revoking the one they
-  shared revoked nothing. One live invite per community, rotation the only way to mint, and the
-  bounds shown next to the token - a token alone cannot say whether it expires.
-- **AN ACTION MAY ONLY MUTATE STATE AT ITS OWN SCOPE.** Membership is stored per COMMUNITY, so a
-  public channel - readable by every member - has no row naming anyone, and "leave this public
-  channel" is not an operation the model can express. `leaveChannel` deleted the community
-  membership row to fake one, which put a user outside a community their client still displayed:
-  the sidebar is local until the next refetch, so every workspace-scoped call then answered
-  `Not a member of this workspace` - "leave the community" included. **Unmanageable is worse than
-  gone**, and the wider rule is the one that made it invisible: an operation that cannot be
-  expressed must be REFUSED, never approximated with the neighbouring scope's write. A
-  `{ success: true }` that removed nothing is a lie the next refetch exposes.
-- **TWO WINDOWS MEANT TO BE ONE WILL DRIFT: DERIVE THE SECOND FROM THE FIRST, NEVER RE-TIME IT.**
-  Community messages expire at 365 days and the Graine seeds that open them must go with them. A
-  matching client-side timer is the obvious build and is wrong twice over: it is a second copy of a
-  number the server owns, and it cannot know about the EXCEPTIONS - pinned messages are exempt from
-  the purge, so a client clock would delete the seed of a message deliberately kept and turn it into
-  ciphertext nobody holds the key to. The device instead ASKS which of its sessions the server still
-  has messages for (`POST graine/live-sessions`) and forgets the rest; the window travels back with
-  the answer, in DAYS so both sides of the comparison stay on the device's own clock, so no client
-  ever holds a copy of it. See [channel-encryption](protocols/channel-encryption.md).
-- **A DERIVED ANSWER MUST NOT CONFLATE "GONE" WITH "NOT THERE YET", NOR WITH "NO ANSWER".** "No
-  message names this session" is true of an expired session AND of one minted this morning whose
-  first send has not landed - so the sweep also requires the session to be older than the window,
-  which is the only fact separating them. And a request that FAILED reads identically to one
-  answering nothing, so an unanswered chunk sweeps nothing at all: without that, the first API
-  outage deletes every seed on the device. Both are refusals, both fail closed, and each is a test.
-- Never return a `Channel` entity to a client: it carries `masterSecret`. Project fields explicitly.
-- `/c/<groupId>` and `/chat/<groupId>` are NOT routes; a conversation opens by publishing to `notifNav`.
-- "A refresh ran" and "the list is current" are two different facts; a loader that conflates them
-  empties the sidebar on one dropped request. Fail loudly in state, never by returning stale truth.
+**Governance, and controls that destroy**
+
+- **Every operation checks what the ACTOR may do; ask also what the SYSTEM would be left as.** Five paths removed the last admin - one absent postcondition seen from five sides, so guarding any one left the hole open. Enumerate the sides by asking what else WRITES the table. [rework](services/community-rework.md#axis-2---a-community-can-never-be-left-ungoverned---shipped-2026-08-18)
+- **Enforce it as a REFUSAL wherever refusing is possible, and add no repair route** - making the broken state unreachable beats a destructive button that restores it. Where refusal is impossible, the repair is DETERMINISTIC, never a heuristic and never a clock. [rework](services/community-rework.md#axis-2---a-community-can-never-be-left-ungoverned---shipped-2026-08-18)
+- **Recoverability that only recovers UNREADABLE rows is not recoverability** - when a soft delete's justification is the restore, re-ask whether the restore still produces something usable. [social-service](services/social-service.md#deleting-a-community-is-irreversible-and-the-gate-is-a-server-argument)
+- **Turning a reversible control irreversible changes what every DEPLOYED client is saying** - require a new argument they do not send, so they fail closed. A confirmation only the dialog enforces is a decoration. [social-service](services/social-service.md#deleting-a-community-is-irreversible-and-the-gate-is-a-server-argument)
+- **A link nobody can ENUMERATE is not revocable** - one live invite, rotation the only way to mint, and the bounds shown next to the token. [rework](services/community-rework.md#axis-3---an-invite-is-one-link-bounded---shipped-2026-08-18)
+- **An action may only mutate state at its OWN scope** - an operation the model cannot express must be REFUSED, never approximated with the neighbouring scope's write, and `{ success: true }` that removed nothing is a lie. **Unmanageable is worse than gone.** [social-service](services/social-service.md)
+
+**Two clocks, and the answers derived from them**
+
+- **Two windows meant to be one will DRIFT: derive the second from the first, never re-time it** - and a second copy of the number cannot know about the EXCEPTIONS. The device asks which sessions still have messages and forgets the rest. [graine](protocols/channel-encryption.md)
+- **A derived answer must not conflate "gone" with "not there YET", nor with "NO ANSWER"** - the age check separates the first pair, failing closed separates the second. Both are tests. [graine](protocols/channel-encryption.md)
+
+**Small ones that keep costing**
+
+- Never return a `Channel` entity to a client: it carries `masterSecret`. Project fields explicitly. [social-service](services/social-service.md)
+- `/c/<groupId>` and `/chat/<groupId>` are NOT routes; a conversation opens by publishing to `notifNav`. [chat](frontend/modules/chat.md#deep-linking-into-a-channel)
+- **"A refresh ran" and "the list is current" are two different facts** - a loader that conflates them empties the sidebar on one dropped request. Fail loudly in state, never by returning stale truth. [chat](frontend/modules/chat.md)
 
 ## MLS membership and routing -> [mls-protocol](protocols/mls-protocol.md), [chat-delivery](services/chat-delivery.md)
 
-- **A permission check that runs where the action is OFFERED is not a check.** `isOwnMessage` hid the
-  edit/delete buttons, and both handlers then applied `delete_message` / `edit_message` by message id
-  alone - so any member could rewrite any other member's message on every device in the group. Where
-  the server cannot read the content it cannot police it either, so the RECEIVER enforces it, against
-  the identity MLS authenticated for the frame: a member can lie about the id, never about who it is.
-  Consume the event and log the refusal; do not re-queue it.
-- **AN ANSWER BROADCAST TO A GROUP IS READ BY EVERY MEMBER, SO IT MUST NAME THE ONE IT ANSWERS.**
-  Every leg of the history exchange is a group frame; `history_pull` had carried a `to` from the
-  start and `history_bundle` had not, so one repair between two peers discharged the
-  awaiting-history marker of every other member - devices that had compared nothing, on evidence
-  that was not theirs. Split the two things a broadcast does: DATA is for everyone (the bundle
-  dedupes by id, over-delivery costs bandwidth), the ANSWER is for the addressee. The empty frame is
-  the dangerous one - it carries no data at all and exists purely to end a wait. Address it at the
-  DEVICE (`digestIdentity`), never the user, or a second device of the same person clears on it. A
-  legacy frame with no addressee resolves towards the marker STAYING UP: an extra diff is free, a
-  marker wrongly cleared is permanent, because the marker is the only thing that makes the device
-  ask again.
-- **DO NOT NARROW AN MLS APPLICATION MESSAGE WITH `recipients` TO ADDRESS IT.** `sender_ratchet_config()`
-  is (2000, 2000): a per-recipient re-encryption burns that budget into a generation gap the other
-  members cannot close (`forgetGroup` + re-Welcome). Addressing belongs in the PAYLOAD; it is not a
-  secrecy boundary and must never be documented as one.
-- **A ROW NOTHING ACKNOWLEDGES IS INVISIBLE FROM BOTH ENDS, SO THE DROP SITE MUST COUNT IT.** Only
-  what reaches `enqueueMessage` can ever be ACKed; a row skipped for an empty or undecodable payload,
-  and a frame the handler returns `false` for, are re-fetched on every reconnect for the whole
-  retention window. The external symptom - a backlog that only grows - is identical for "the pull
-  never runs", "the pull runs and everything fails" and "there is nothing to do". Count at the drop,
-  name the causes apart, and report ONCE PER DRAIN (per frame is hundreds of lines that still never
-  say how many) - and after the queue is idle, since enqueuing is not handling.
-- **A TIMER THAT COMPENSATES FOR TWO TRANSPORTS BEING UNORDERED IS A GUESS; MAKE THE FRAME SAY WHICH
-  CASE IT IS.** The 3 s `HISTORY_DIGEST_GRACE_MS` could not tell "the digest is a moment behind" from
-  "this peer will never send one", so every value was wrong for one of them. One boolean on the
-  election frame (`withDigest`) separates them: no promise = answer now, promise = wait for the
-  EVENT. What is left is a BOUND, and the test of a legitimate bound is that its being reached is
-  not a tuning question - here it means the frame never arrived, and the answer is the same fallback
-  as before. Put the discriminator in the payload, never in the transport's addressing, and keep the
-  DATA (here, which ids a device retains) out of the server's reach.
-- **EVERY COMPATIBILITY SHIM GOES IN [legacy-compatibility](legacy-compatibility.md), WITH THE
-  CONDITION THAT RETIRES IT.** A shim is invisible once it works - nothing fails, nothing warns, and
-  the retiring condition is never re-checked - so it is written down where somebody will read it,
-  with a comment at the site pointing back. The gate is never "the release is out": it is
-  `minClientVersion` raised past it, which is what makes "no old client remains" a fact rather than a
-  hope.
-- MLS membership says who can decrypt; `DeviceGroupMembership` says who is actually sent to.
-- A join is NOT evidence of a gap: the message store and the seen-frame ledger are keyed by USER, so
-  a rotated identity rejoins every group while the browser still holds every message.
-- A durable marker must carry the EVIDENCE that justified it, or nothing can ever revisit the
-  diagnosis; one written without evidence is legacy - drop it, do not replay it.
-- **A MARKER IS DISCHARGED BY ANYTHING THAT FALSIFIES ITS OWN EVIDENCE, NOT ONLY BY THE ANSWER IT
-  WAS WAITING FOR** - and because the evidence differs per reason, the discharges do too. Two peers
-  both awaiting history were each other's only possible responder, and the guard that (rightly)
-  forbids a waiting device from vouching for completeness was implemented as SILENCE, so neither
-  could ever clear: a fixed point the convergence argument never covered, because it reasons about
-  the DATA and assumes someone is entitled to vouch. An empty symmetric difference falsifies
-  `peer-holds-more` outright - the peer demonstrably no longer holds more - so that marker is
-  retired by the measurement itself whatever the responder's own state, while `unreadable-frames`
-  survives it, a frame neither device holds being still lost and answerable only by a third.
-  Verified live on prod 2026-08-11 (WP-HISTBANNER-1). Residual and DELIBERATE: an
-  `unreadable-frames` marker never self-clears, so every state edge re-solicits for the life of the
-  conversation - bounded, zero-message, and the only alternative is a false completeness claim.
-- **A CLAIM THAT A STRING IS STALE MUST NAME THE MECHANISM THAT WOULD HONOUR IT AND SHOW THAT
-  MECHANISM GONE.** "Nouvelle tentative automatique" was written off as a lie left by the deleted
-  retry ladder; the 15-minute `AWAITING_SWEEP_INTERVAL_MS` sweep is a different mechanism and still
-  honours it exactly. One grep would have refuted the claim before it was written.
-- A LIVENESS clock must be written by the thing whose liveness it measures. `updatedAt` answers "when
-  was this row last written" and was asked "when was this device last seen" - so a peer's sync kept
-  nine dead devices alive forever (WP-GHOST-1). Same shape as an epoch verdict answering a generation
-  question: a column is only evidence for the question it was written to answer.
-- **A PREDICATE THAT NAMED THE LAST INCIDENT IS NOT THE PREDICATE THAT NAMES THE NEXT ONE - RE-MEASURE
-  BEFORE REUSING IT.** WP-GHOST-1's "a device with no key package" was carried forward, in this file,
-  as the plan for a 29 499-row prod queue; it matches ZERO of those rows, because all 52 devices with
-  a queue hold a valid key package. The two incidents share a symptom (frames going to a device that
-  will never read them) and nothing else. A predicate is evidence about the population it was
-  measured on; one `GROUP BY` with the predicate as a column refutes or confirms it in seconds.
-- **A CORRECT GC WITH NO REPORT IS FOUND BY HAND, A DAY LATE.** Everything about the storm queue was
-  working as designed - inside the retention window, valid key package, autovacuum running - so
-  nothing complained while one device took 39 MB and thirty times the platform's whole traffic. The
-  missing piece was never a rule, it was a LOOK. And the report must carry the evidence that
-  separates the causes it cannot itself distinguish (here `KeyPackage.createdAt`: a live device
-  falling behind is a client bug, a stale one is debris), or it sends the reader to the wrong fix.
-- A device good enough to be MESSAGED must be at least as valid as one good enough to be INVITED. The
-  invitation path checks the key package, the fan-out does not - and the gap is where the ghosts live.
-- **WHEN A RESOURCE KEEPS REFILLING, DELETING IT IS NOT THE FIX - REVOKE WHATEVER KEEPS NAMING IT AS
-  A DESTINATION.** The 2 073-row debris queue was emptied by REVOKING the dead browser generation, not
-  by a sweep: a DELETE leaves the six routing memberships standing, so the next message re-queues and
-  the count starts over - which the hourly report had already caught happening once. The revoke drops
-  the memberships, the key packages and the queue together and records the fact in `revoked_device`.
-  The GC predicate this seemed to want would have had to tell "a generation the user replaced" from
-  "a device that is merely offline", a judgement the server cannot make and the user already made.
-- An error says what it says: "this generation is consumed" is NOT "I already have this message".
-  Keep the evidence that distinguishes them (the frame's own bytes) - and never let a native layer
-  answer `Ok(None)` where the shared classifier could have decided. **This rule was written here and
-  then broken for months by `mls-core` itself** (2026-08-10): a layer that cannot make a distinction
-  must not make it, and the guard is `same_epoch_ratchet.rs`, not a comment. A test that asserts the
-  swallow will happily protect the bug - this one did.
-- **A device that has not noticed its own gap will vouch for its store.** `announceComplete` is the
-  only claim that clears a proven marker, and the guard against making it wrongly (`actions.ts:1044`,
-  "am I awaiting history myself?") is only as good as the claimant's own detection. A silent failure
-  upstream does not merely lose data on that device - it promotes it to a trusted witness for
-  everyone else's repair.
-- **A responder is elected at RANDOM among all online devices except the requester's own**
-  (`messaging.service.ts:1372-1382`), so any check on a repair must record WHICH device answered.
-  Two runs of one check can exercise two different code paths on two different machines, and the
-  greener verdict is the one that says less.
-- EPOCH and GENERATION are different axes, and so are their repairs: a commit replay heals an epoch
-  gap and can do nothing for a ratchet one (`TooDistantInTheFuture`), which only a new epoch clears.
-  A verdict computed over one axis must never answer a question asked about the other - `epoch >=
-  activeEpoch` after applying ZERO commits is "there was nothing to replay", never "it is healed".
-- A wrapper string carries BOTH markers (`GAP_QUEUED:<group>:<the real OpenMLS error>`), so the order
-  of a substring classifier is a decision, not a formality.
-- **A SHIM THAT DOWNGRADES A LOG'S SEVERITY BY RE-READING ITS TEXT IS A MISSING CLASSIFICATION,
-  ANNOUNCING ITSELF.** `CannotDecryptOwnMessage` - our own frame, handed back by the replay of our
-  own mailbox, refused by RFC 9420 as designed - had no arm in `decrypt_kind`, so it fell through
-  `Process error:` to `SenderRatchetGap` and NATIVE QUEUED IT for three retries it could never pass.
-  Two web-only shims (`mls-wasm`'s logger, then `mlsWasmLoader`) rewrote its `error!` to `debug` by
-  matching the marker in the text, and the harness demoted it a third time - so the platform that
-  was actually doing the damage was the one place with no demotion at all. **Where the demotion is,
-  the classification is not**: the arm belongs at the throw next to `TooDistantInTheFuture` and
-  `past epoch application frame`, before the generic arm, and each shim's list must be re-checked for
-  an entry whose emitter no longer exists. Corollary: **severity is the classification's to report,
-  not the bare fact that a call returned `Err`** - `recevoir_message_bytes` logged `error!` above its
-  whole match, so every benign classified case announced an application error on the phone, where the
-  logs are hardest to read. Only what NOTHING has explained keeps `error!`.
-- **A COMMENT ASSERTING WHERE A LINE COMES FROM IS A CLAIM, AND IT IS CHEAP TO REFUTE.** The harness
-  had `CannotDecryptOwnMessage` written down as logged at DEBUG on every send; both halves were false
-  and the defect above lived under them. The refutation was one probe that sent NOTHING: opening the
-  DM on two peers produced the line once on each, opening a channel produced none. Same shape as the
-  avatar IPv6 diagnosis - **a bad measurement is worse than none, because it gets written down.**
-- **WHEN TWO PATHS BOTH END THE SAME THING, "WHAT IT OWNS" IS ONE LIST OR IT IS NEITHER.** The
-  tombstone reaper and the orphan sweep each carried their own shorter set of tables, and both were
-  short in the same direction: 30% of `mls_group_info` and 65% of `mls_commit_log` on prod named a
-  group that no longer existed, and `mls_group_info` had no collector at all, so those rows were
-  permanent. One exported allowlist, called by every ending, and the owned rows dropped in the SAME
-  transaction as the row they belong to - outside one there is a window in which the parent is gone
-  and its rows are not.
-- **A SWEEP THAT LOOKS FOR ORPHANS WHERE THE REAPER ALREADY DELETED FINDS NONE, AND READS AS PROOF
-  THAT THERE ARE NONE.** `cleanupOrphanedMemberRows` joins FROM the two membership tables the reaper
-  deletes one step before the group, so it was blind to every group that died normally - and those
-  two tables measuring ZERO orphans was the evidence, not the reassurance. **A cleanup job's
-  predicate must be read against what runs BEFORE it**, and the fix is the shared list, never a wider
-  predicate: "rows whose parent is missing", asked on a schedule, races the reaper mid-delete.
+`mls` = [mls-protocol](protocols/mls-protocol.md), `cd` = [chat-delivery](services/chat-delivery.md),
+`hr` = [history-reconciliation](protocols/history-reconciliation.md),
+`chat` = [chat](frontend/modules/chat.md).
 
-## Outbound delivery -> [chat](frontend/modules/chat.md), [mobile](frontend/mobile.md)
+**Who may do what, and who is told**
 
-The queue, its barrier, the token rules and the native mirror are on those two pages. The three to
-carry in the head:
+- **A permission check that runs where the action is OFFERED is not a check** - where the server cannot read the content, the RECEIVER enforces it, against the identity MLS authenticated. [chat](frontend/modules/chat.md)
+- **An answer broadcast to a group is read by every member, so it must NAME the one it answers** - at the DEVICE (`digestIdentity`), never the user. DATA is for everyone, the ANSWER is for the addressee. [mls](protocols/mls-protocol.md)
+- **A legacy frame with no addressee resolves towards the marker STAYING UP**: an extra diff is free, a marker wrongly cleared is permanent. [legacy-compatibility](legacy-compatibility.md)
+- **Do NOT narrow an MLS application message with `recipients` to address it** - `sender_ratchet_config()` is (2000, 2000) and a per-recipient re-encryption burns it into a generation gap. Addressing belongs in the PAYLOAD. [chat](frontend/modules/chat.md)
+- **A timer that compensates for two transports being unordered is a guess; make the FRAME say which case it is** (`withDigest`). What is left is a BOUND, and a legitimate bound's being reached is not a tuning question. [legacy-compatibility](legacy-compatibility.md)
+- **Every compatibility shim goes in [legacy-compatibility](legacy-compatibility.md) with the condition that retires it** - the gate is `minClientVersion` raised past it, never "the release is out".
+- MLS membership says who can DECRYPT; `DeviceGroupMembership` says who is actually SENT to. [mls](protocols/mls-protocol.md)
+- A join is NOT evidence of a gap - the message store and the seen-frame ledger are keyed by USER. [chat](frontend/modules/chat.md)
 
-- The outbox is best-effort at every step, so every swallowed branch logs - that is all a loss leaves.
-- **AN OPERATION ON A QUEUED OBJECT MUST CONSULT THE QUEUE, NEVER QUEUE A SECOND OPERATION BESIDE
-  IT.** Two entries side by side encode an assumption - that the outcome the user asked for is
-  reachable by ORDERING - and for a withdrawal it never is: deleting a message composed offline sent
-  it and then took it back, because the text was still in front of the tombstone whatever order they
-  went in. Ask the queue instead; it is the only thing that knows whether the frame is still here,
-  and it answers before either path is taken rather than letting the caller learn it by watching a
-  send happen. And the answer must be honest about the entry INSIDE its send: claiming a
-  cancellation there loses the delete outright, where admitting it costs one event nobody minds
-  (MUT-19).
-- **A BRANCH THE CALLEE TOOK IS A FACT THE CALLER NEEDS - RETURN IT, OR IT WRITES THE SAME THING
-  BOTH TIMES.** `deleteMessage` asked the queue, learnt whether the frame had left, and returned
-  `void`; the caller therefore tombstoned in both cases, so a WITHDRAWN message left a durable
-  "deleted" row on the sender for something no peer had ever received and nothing could ever
-  reconcile. The consulting is only half the fix - a discriminator that stops one frame above the
-  decision it exists for has been thrown away, not carried. Make it a TYPE (`DeleteOutcome`), not a
-  boolean the next reader has to re-interpret. Found as four phantom losses by `recon.mjs`, and
-  ATTRIBUTED by a causal test - one run of the check, one new row - never by argument from the dates.
-- **A CANCELLATION IS ONLY AS DETERMINISTIC AS THE NARROWEST WINDOW IT CLOSES.** Deleting the
-  durable row stops every FUTURE flush and nothing else - the flush already running walks a snapshot
-  read before the user acted, and another tab walks its own. Three facts, one per window, or the fix
-  works on a quiet client and not on a busy one. The native mirror is a fourth copy of that queue:
-  leave a withdrawn entry in it and Android delivers from the background what was cancelled here.
-- **A PAGE IS A UNIT OF TRANSFER, SO BOUND IT IN THE UNIT THAT DECIDES HOW LONG THE TRANSFER TAKES.**
-  Rows do not: 500 frames carrying media was 12 MB, the client aborted on its own deadline having
-  received nothing, ACKed nothing, and met the same 12 MB every time - a closed loop no retry
-  escapes. Bounding the DEADLINE per page and leaving the page unbounded only moves it. A page
-  always carries at least one row, whatever its size, or one oversized frame blocks its queue for
-  ever.
-- **TERMINATE A PAGED PULL ON AN EMPTY PAGE, NEVER ON A SHORT ONE.** "Fewer rows than I asked for"
-  is an INFERENCE from the row limit being the only bound, and it silently stopped being true the
-  day the server capped a page in bytes: 53 rows for a 500-row ask read as "queue empty" with 870
-  frames still waiting. Only an empty answer is a proof, and it costs one request.
-- **A PAGINATION CURSOR MUST BE A TOTAL ORDER, OR A PAGE BOUNDARY DELETES A ROW.** Resuming at
-  `createdAt > last` is strict, `@CreateDateColumn` writes milliseconds from the application, and
-  rows sharing an instant exist (one pair in the live queue the day this was found). Split such a
-  group and its tail is skipped by every later page - queued for ever, delivered never. Either make
-  the cursor total, or never end a page inside a group sharing the cursor's value; the second is what
-  ships, because it also fixes clients too old to send anything else.
-- **"ONE SMALL FRAME" BOUNDS THE BYTES AND SAYS NOTHING ABOUT THE LATENCY OF ASKING PERMISSION TO
-  SEND IT.** A per-item loop is serialised for a reason; check that the reason still covers what the
-  loop actually spends its time on. The reconciliation pass awaited each group in turn, justified by
-  the MLS encryption mutex - true of the sends, false of the HTTP election in front of each one,
-  which takes no lock at all. Nine groups, ~480 ms each, 4.35 s per reconnect, and the inbound drain
-  that overlapped it inherited the whole duration and looked like the culprit. Concurrency here needs
-  a BOUND, never a bare `Promise.all`: the item count is the user's conversation count, and fifty
-  simultaneous requests on a phone radio at reconnect is a herd you inflicted on yourself.
-  See [history-reconciliation](protocols/history-reconciliation.md).
-- **A COUNT TAKEN BEFORE DECRYPTION CANNOT CLASSIFY WHAT IT COUNTS.** The sync banner was raised from
-  `pendingCount`, a number of ciphertexts, and `MlsQueuedMessage` carries no delivery class while the
-  server's envelope carries neither `silent` nor `durable` - so it announced nine history probes as a
-  synchronisation of messages. Announce from the DECRYPTED buffer, which knows what it holds. And the
-  same flag must not carry both "a drain is running" (what the concurrency guards need) and "there is
-  something to tell the user": two questions, two flags.
-- **A PAGE READ IS EVIDENCE ABOUT A WINDOW OF THE PAST, NEVER A STATEMENT THAT NOTHING ELSE EXISTS -
-  so it is MERGED into what is on screen, never ASSIGNED over it.** Every history load has the shape
-  fetch -> decrypt -> persist -> re-read a page to render, and the read is issued seconds after the
-  load began: anything delivered meanwhile is on screen and is wiped by the assignment. Four sites
-  had it, and it is invisible in a test because a test never delivers mid-load - it took a
-  continuous sample of the receiver (`trace-arrival.mjs`) to see the row appear at +0.5 s and go at
-  +3.4 s. The merge rule needs no timer and holds at any conversation size: the page decides only
-  BETWEEN its oldest and newest row, memory keeps everything outside that window, and an unsent
-  message is kept wherever it sits because no page can ever carry it. Any COUNT derived from the
-  page has the same fault and must be computed over the merged list.
-- A tab is "read-only" only where something CHECKS: leadership gated the socket, not the queue, so
-  the follower encrypted anyway. And gating a writer freezes its state - whoever inherits the role
-  must reload it, or it resumes exactly as far behind as the tab it replaced had moved on.
-- The inbound drain lowers `isDraining` only when the message callback RETURNS, so every await inside
-  it is a potential freeze of all inbound traffic - and the recovery seams re-acquire the MLS mutex
-  the drain already holds, so awaiting one there is a DEADLOCK, not a slow path. A repair whose
-  result nobody reads (a re-add, a Welcome, an external join) must be STARTED, never awaited - and it
-  must log how it settles. `DeferredRecovery` on the Welcome path is the same lesson, learnt earlier.
-- **A MUTUAL-EXCLUSION WINDOW NEEDS ONE ENTRY POINT FOR AWAITING, OR ITS FREEZES ARE INVISIBLE
-  ONE AT A TIME.** Two awaits inside the drain had already frozen all inbound traffic and each was
-  fixed where it stood, so the third was free to do it again - nothing typed "this await is inside
-  the exclusion". `drain()` now has exactly one way to await (`guarded`), which names the phase, the
-  group and the message, and keeps reporting because the ELAPSED time is the diagnosis. It
-  deliberately does NOT cancel: the freeze loses nothing durable, whereas the alternative the WP
-  proposed - moving the flush behind `isDraining = false` - lets a second drain call
-  `beginBulkIngest` across a live `endBulkIngest`, and `bulkIngestPhases` being a STACK that would
-  clear the UI buffer without flushing, i.e. WP-ECHO-1 by construction. Report the freeze, do not
-  trade it for a loss.
-- **A TERMINATION PROOF COVERS THE STRUCTURE IT IS WRITTEN OVER, AND WORK PARKED OUTSIDE THAT
-  STRUCTURE IS INVISIBLE TO IT AND TO THE WATCHDOG BOTH** - nothing is awaiting, so there is nothing
-  to time. The drain's proof is over its buckets; `pendingWelcomeGroups` parks frames beside them
-  while a Welcome is in flight, and THREE paths closed that window by discharging it wrongly - a
-  second Welcome (a re-add: ordinary) replacing the array, a failed Welcome deleting it "because the
-  server will re-deliver" (true only of a frame carrying a `queuedMessageId`), and a throwing
-  non-Welcome releasing a window its Welcome had not opened. **A WINDOW MUST BE CLOSED BY WHAT OPENED
-  IT, THROUGH ONE EXIT WITH ONE BEHAVIOUR** (`releaseWelcomeBuffer`, which always re-queues and always
-  names its reason); delete the paths that close one they did not open, and the leftover case becomes
-  an INVARIANT you can assert - "the buckets are empty and a window survives" is impossible at any
-  speed, so it is an error, not a deadline. Then, and only then, may the parked work count towards
-  `isIdle`: what the barrier claims is "nothing left to apply", and a claim kept true by DROPPING
-  what it counts is not the claim. [chat](frontend/modules/chat.md).
-- `requestAnimationFrame` NEVER fires in a hidden document, so it can never be the only resolver of
-  anything a background path awaits - and a "yield" that can hang is a deadlock, not a delay. Race it
-  with a `MessageChannel` message; a timer fallback is clamped to ~1 Hz in the background.
-- A deadline's SCOPE is part of its meaning: one budget over a paginated catch-up is a budget the
-  devices that most need it can never meet, and an all-or-nothing pull makes each failure bigger than
-  the last. Per page, ingested and ACKed as it lands - partial progress must be kept. Verified on
-  hardware 2026-08-11 (WP-PENDING-1): 1 100 sends into a parked phone, two pages, a `Drain start`
-  between them and two ACK steps server-side. **A verification of a STRUCTURAL fix must not claim
-  the ORIGINAL failure**: the run's backlog was well inside the old 10 s budget, so it establishes
-  partial progress and nothing about the timeout - say which, or the next reader believes more than
-  was measured. [chat-delivery](services/chat-delivery.md).
-- **A DEADLINE OVER A TRANSFER MUST MEASURE SILENCE, NOT ELAPSED TIME.** A total deadline answers
-  "did this take too long", which is a fact about nothing: a big answer on a slow link and a dead
-  connection score identically, so the constant has to cover the largest plausible answer times the
-  slowest plausible link - a product nobody can bound, which is why no such number was ever
-  justifiable. Ask instead whether anything is still coming: arm the timer before the request and
-  RE-ARM it on the response head and on every body chunk (`fetchJsonUnderProgressDeadline`, over
-  `res.body.getReader()`). The number then bounds only the longest quiet stretch the design permits,
-  and stops being a tuning knob. Two things this owes: **race the reader against the abort rather
-  than trusting the stream to honour the signal** - aborting stops the REQUEST, not a `read()`
-  already awaiting a chunk, and a hang-guard that can itself hang is not one; and **carry whether
-  the response head had arrived out with the error as a TYPE** (`StalledRequestError`), because a
-  server that never started answering and a transfer that started and stopped are the two causes a
-  retry policy above treats alike. A detector and a response are not two answers to one question:
-  the deadline decides when to stop waiting, the halving ladder decides what to ask next, and
-  neither can do the other's job. [chat-delivery](services/chat-delivery.md).
-- MLS gives no echo of your OWN message, so the sender's optimistic update is the only writer it
-  gets: apply it in memory AND persist it (`persistLocalMutation`), or it dies at the next load.
-- A UI buffer placed IN FRONT of a persistence call is a persistence bug, not a rendering choice:
-  it returns early, so the write never runs, and a buffer that can be cleared without flushing loses
-  it for good. `addMessageToChat`'s bulk-ingest return did exactly this to the sender's own message
-  (WP-ECHO-1). Buffer AFTER the durable write, and make every discard log what it dropped.
-- The mirror is READ as well as written: a file one side rewrites wholesale silently deletes
-  whatever the other side appended, so every such pair needs an adoption pass, not just a drain.
-- **A PER-ITEM API MAKES THE PER-ITEM COST INVISIBLE, AND THE LOOP IS WRITTEN WHERE NOBODY CAN SEE
-  IT.** The background drain called a single-message entry point once per queued message, and each
-  call re-read and re-wrote the WHOLE 2.7 MB MLS keystore - `O(N x |file|)` inside a 60 s OS
-  deadline (WP-ANR-1). Nothing in either signature said "this is expensive to call twice". When a
-  loop crosses an FFI/JNI boundary, the batch belongs on the SHARED side of it: one load, one save,
-  per-entry results - which also puts the logic somewhere a host `cargo test` can reach.
-- **BOUND THE WORK THAT CONSUMES AN IRREVERSIBLE RESOURCE, NOT THE WORK THAT COSTS TIME.** Capping a
-  drain by how many messages it POSTs is the wrong axis: encrypting consumes a ratchet generation
-  whether the frame is ever sent or not, so a cap on the POSTs still runs the sender past the peer
-  and ends in `TooDistantInTheFuture`, which no retry repairs. The cap goes on the ENCRYPT; the
-  surplus is not touched at all. A wall-clock budget is then only the safety net, never the plan.
-- **THE RECORD OF WHAT IS STILL OWED IS ONLY AS DURABLE AS ITS LAST WRITE.** The outbox mirror was
-  rewritten once, at the end of the drain, so a kill in the middle re-sent everything already
-  delivered. Ask of any "remove it when done" bookkeeping what a kill between two writes costs, and
-  make that a bounded number rather than the whole backlog.
-- **A REPAIR THAT RECORDS ITS OWN OUTPUT AS NEW INPUT HAS NO FIXED POINT.** A replay is not a send:
-  re-noting one into `recentSends` under a fresh id and a fresh timestamp defeated the expiry AND
-  the dedup at once, so a five-minute decaying buffer became a permanent playlist and a bounded
-  repair became a standing broadcast (WP-RETRANSMIT-1, ~430 frames/min for 13 min on prod). Ask of
-  every self-healing loop what makes it STOP, and make that the thing a test pins.
-- **A REPAIR LADDER MUST BE ORDERED BY WHAT EACH RUNG CAN FIX, NEVER BY WHAT EACH COSTS - and a rung
-  that can fix NOTHING is deleted, not demoted.** Cheap-first is only sound when the cheap rung has a
-  real chance, and the way to check is to read its TRIGGER: `signalDecryptFailure` had one call site,
-  the rewound-sender branch, so the peer it asked was by construction the peer that could not answer
-  - it re-encrypts at the same rewound ratchet. Measured twice on prod: 1, then 5, 15 and 25 payloads,
-  none delivered. Its only success mode was the sender burning past our high-water mark on its own,
-  i.e. recovery by exhaustion. **So the whole ladder is gone (2026-08-10)**: `decrypt_failed`,
-  `retransmitRecentSends`, `recentSends` and the `isRetransmission` flag are deleted, and the
-  history diff - which reads the peer's DURABLE store and names messages by id - is the ONE repair.
-  A repair addressed by TIME is a broadcast, because a window cannot name its target, and it can only
-  be as durable as what it reads.
-- **IDEMPOTENCE COMES FROM DURABLE STATE, TERMINATION FROM A PROOF - never from a clock.** One
-  question ("what am I missing, and who has it") was answered by NINE independent durations across
-  three files, two of them retry ladders driving the same request, so the traffic was their product.
-  The rule that replaced them: one request per STATE EDGE, and each diff exchange strictly reduces
-  the symmetric difference, so termination is reached by construction rather than by budget. **The
-  durable marker that first carried the idempotence is itself gone (2026-08-12)** - see the entry
-  below on lifetime, and [history-reconciliation](protocols/history-reconciliation.md). What
-  replaced it is cheaper than the state it was protecting: a state key costs one small frame, so a
-  device may simply ASK on every connection and believe the answer, and the only note kept is an
-  in-memory one collapsing a burst of identical triggers. Two clocks went with it - the 500 ms sleep
-  before comparing became `waitForMessageQueueIdle()`, a real completion signal, and the 15 s retry
-  of an unacknowledged frame became the EVENT that discharges it (the Welcome, or the store restore
-  finishing). Ask of every timer what it would mean if it were wrong; if the answer is "more
-  traffic", it is load-bearing and it should not be.
-- **BUT THE DURABLE STATE IS IDEMPOTENCE ONLY FOR THE QUESTION IT WAS WRITTEN TO ANSWER, AND THE TWO
-  QUESTIONS CAN DIFFER ONLY IN LIFETIME.** The rule above was applied one line too far: the guard
-  became `if (isAwaitingHistory(...)) return` in front of the loss trigger. The marker answers "is
-  this group short of history" (durable, cleared only by an empty diff); it was asked "have I already
-  asked" (30 s). So on any group that had EVER been broken the marker was already standing when the
-  next frame was lost, and the one trigger that fires on the loss itself never fired again - twelve
-  `LOST frame` lines and ZERO solicitations on prod, the 15-minute sweep left pretending to be the
-  mechanism. "Is an attempt outstanding" has exactly one witness, `isSolicitInFlight` (scheduled, or
-  inside the response window). Same family as `updatedAt` and the epoch-verdict rule, with the twist
-  that both answers were TRUE - only the questions differed. `setupMessageHandler.lostFrame.test.ts`.
-  **The whole gate was deleted on 2026-08-12**, and the reason generalises: the marker existed
-  because ASKING was expensive (the answer was a full store dump), so it had to be justified by
-  stored evidence. Make the ask cheap - a 64-bit state key, one frame, silence when it matches - and
-  the evidence, its ranks, its vouching and its give-up horizon all become unnecessary at once.
-  **When durable state is hard to discharge, check whether the thing it is rationing still needs
-  rationing.**
-- **A TRIGGER THAT ARRIVES BEFORE ITS MECHANISM MUST BE HELD, NOT LOGGED AND DROPPED - especially
-  when raising it CONSUMES the evidence.** `reconcileGroup` found no probe sender installed (the
-  session installs it after inbound frames start draining), said so, and returned. The caller was
-  `handleUnreadableFrame`, which ACKs the frame in the same breath - correctly, since no redelivery
-  makes a consumed generation decrypt - so the request and the only thing that could ever raise it
-  again were destroyed together, and a production DM stayed permanently short of its lost messages.
-  **Ask of every "cannot do this right now" branch what will raise it a second time; if the answer is
-  nothing, the branch is a silent data loss.** The fix is a deferral keyed by BLOCKER, discharged by
-  the edge that lifts it (a peer returning, a sender being installed) - never by a clock, and never
-  routed per reason: a group deferred under one blocker and discharged only by another's edge is
-  exactly how the gap stayed open. Two corollaries paid for in the same incident. **An accidental
-  repair hides the fault that needs it**: an unconditional sweep re-asked on the next connection, so
-  making the sweep conditional is what turned this from hidden to permanent - expect a class of
-  latent faults to surface whenever redundant work is removed, and go looking rather than waiting.
-  And **discharge a deferral only on the act itself, never on a step that precedes it** - it used to
-  clear on the election, an HTTP round trip that asks nobody anything, so a group whose probe then
-  failed to encrypt was recorded as attended to.
-  [history-reconciliation](protocols/history-reconciliation.md#a-group-that-could-not-heal).
-- **A FIX THAT HOLDS A RAISED TRIGGER DOES NOT REACH BACKWARDS: STATE DAMAGED BEFORE IT SHIPPED HAS
-  NO WITNESS LEFT, AND NEEDS A REASON TO COMPARE - NOT A CLEANUP.** Measured the moment the rule
-  above shipped: the damaged group still did not heal, because every trigger needs a live witness and
-  this one's had been consumed. **Before designing any destructive repair, trace what is actually
-  PERSISTED by the failure** - here the footprint was zero (no tombstone, no placeholder, no field
-  able to hold a gap, nothing rendered), so a cleanup would have had nothing to target and
-  delete-and-recreate was strictly worse than comparing: it destroys what is still held and ends
-  where the comparison ends anyway. **What remains after a silent loss is an ABSENCE, and an absence
-  is undetectable from one side** - only a peer comparison finds it. The instrument for that already
-  existed; what was missing was a reason to run it. So the shape of the fix is a ONE-SHOT audit
-  gated on a durable generation, discharged **per item and only for items the act really happened
-  for** (recording the pass's INPUT rather than its OUTPUT discharges what was merely deferred - the
-  same failure again), with a constant bump as the only way to re-run it.
-  [history-reconciliation](protocols/history-reconciliation.md#and-the-fix-does-not-reach-backwards---hence-the-audit).
-- **A RETRY MUST TERMINATE ON THE EVENT THAT CHANGES THE ANSWER, NOT ON A CLOCK - AND THE EVENT IS
-  USUALLY ALREADY NAMED SOMEWHERE.** An unacknowledged inbound frame was re-fetched every 15 s. The
-  handler leaves one behind for exactly two reasons and both were already enumerated as a TYPE
-  (`UnackedReason`): an unknown group needs its Welcome, an absent conversation needs the store
-  restore. Neither is discharged by waiting, so every cycle re-fetched the same rows, failed them
-  identically, and re-raised the catch-up overlay - for the whole session, on a device whose group
-  never came back. `refetchFramesLeftBehind` is now fired where each event actually happens. No
-  event, no ask, and no cycle to bound. The type that classified the failure was also the work list;
-  a reason enumerated for a LOG is usually enough to drive the fix.
-- **A LOOKUP INSIDE A PER-ITEM LOOP IS A COST THAT GROWS WITH THE WRONG THING.** `batchAddMessages`
-  asked `convo.messages.find(...)` twice per incoming message, so a catch-up of `m` into a
-  conversation of `n` cost `2·n·m` main-thread comparisons - about sixteen million for a large
-  bundle, measured at ten minutes of frozen list with nothing lost. Fixed by one index built once
-  per batch, and by making `resolveMessageTimestamp` take a LOOKUP rather than the array, so the
-  cost is visible at each call site and no future one can reintroduce the scan silently. An index
-  replacing a `find` must keep FIRST-wins, or making a path faster changes what it renders.
-- A cause is not a label: `pending-offline` meant both "the request never left" and "it left and
-  nobody answered", and the string named the first, so a silent peer was reported as an empty room.
-  Two causes under one label is a WRONG answer, not a vague one - it points the user at the wrong fix.
-- **READ YOUR OWN MAIL BEFORE ASKING ANYONE FOR NEWS - AND BEFORE ANSWERING ANYBODY.** A device may
-  neither ASK for history nor ANSWER a request for it while its own inbound queue is still draining.
-  Asking early compares against a store it is in the middle of completing, so it repairs a
-  difference it was about to close by itself; answering early makes it an unreliable source - it can
-  claim agreement it does not have yet, or send a bundle short of the frames it is about to apply,
-  and either ends the exchange with the two devices still apart and the asker's coalescing window
-  spent. **The barrier belongs at the ONE door every trigger comes through** (`reconcileGroup`), not
-  at the call sites: it sat at the connection edge alone and covered one of four triggers, while the
-  three reactive ones - an unreadable frame, a peer returning, a replay that gave up - fired from
-  inside the very drain they should have waited for (measured on prod 2026-08-13: `asked` logged
-  between a `Drain start` and its `Drain complete`, on a browser and on the phone). Two shapes it
-  must keep: **reserve the coalescing window BEFORE the barrier**, or a burst of forty edges parks
-  forty waiters and asks forty times when the queue empties; and **defer, never await, on the
-  answering side**, because every responder leg runs inside the pipeline and awaiting the queue from
-  there is the drain waiting on itself. It is a BARRIER (`waitUntilIdle` resolves on the drain loop
-  ending) and never a delay.
-  [history-reconciliation](protocols/history-reconciliation.md).
-- **AN ANSWER MUST STATE THE RANGE IT VOUCHES FOR, OR A DEVICE THAT SIMPLY KEEPS LESS IS
-  INDISTINGUISHABLE FROM A CONVERSATION WITH NO PAST.** A browser keeps 90 days and a phone 5 years
-  BY DESIGN, so a clipped answer is the normal case, not a fault - and the asker sees only an
-  absence, which is evidence of nothing. Believing it means losing years silently; re-asking on it
-  never terminates, because the same peer is elected and only a counter or a clock could stop it.
-  The answerer already knows where its own memory begins (`history_coverage.coveredFrom`), so it
-  says so - and only when that is ABOVE the `since` it was asked for, or silence stops meaning "I
-  cover you" and the fast path costs two frames instead of one. **It is sent even when the two state
-  keys MATCH: agreement is not completeness**, two devices can hold the same set over the compared
-  window and both be missing everything below it. **The walk that follows terminates on a delivered
-  fact, never on a count**: each election EXCLUDES the members already heard from, so one member
-  leaves the reachable set per step, and the server answers `no_peer_online` with a positive
-  `excludedOnline` when there is nobody left - the proof. Three things keep it sound: a stated
-  coverage is a FACT for the session (a retention window only slides forward), so no chase lifecycle
-  is needed; an ORDINARY reconciliation must never carry an exclusion, because it is about CONTENT
-  and a short-memoried peer still holds every new message; and a server that re-elects an excluded
-  member must stop the walk LOUDLY, since a step that adds nobody is the one shape that would not
-  terminate.
-  [history-reconciliation](protocols/history-reconciliation.md#the-fourth-trigger-an-answer-that-does-not-reach-far-enough-back).
-- **A FRAME READ BY ONE PATH MUST BE MARKED READ FOR EVERY OTHER PATH, OR EACH DEVICE REPORTS ITS OWN
-  TRAFFIC AS LOSS.** Live delivery and the queue drain decrypt frames the shared archive also holds,
-  and neither moved this device's position in that archive. The replay then walked the same row,
-  found the generation already spent, and hit the branch asserting *"anything arriving HERE is a
-  frame this device has never read - that is real loss"*. The assertion was false: `seenCipherHashes`
-  was written by the replay alone. Every online device therefore reconciled on its ordinary traffic,
-  which is a false alarm on the ONE signal that must never cry wolf - a real loss became
-  indistinguishable from noise. Three shapes the repair must keep. **The key must be the CIPHERTEXT,
-  not an id**: an archive row is addressed by a Redis stream id and a live envelope by a
-  `queued_message` uuid, the two namespaces never intersect, and the server discards the stream id at
-  write time - the bytes are the only thing both paths hold. **The set must be ONE OBJECT, not a
-  re-read**: the replay hydrates it at its start and writes it back at its end, so a mark persisted
-  independently mid-walk is erased by that final write, made from a copy predating it. **The cursor
-  advances by WALKING, never by jumping**: marking a frame lets the replay skip it and move past it
-  in stream order, whereas writing the live frame's position straight into the cursor would carry it
-  over an earlier frame the server queue had already expired - turning a repairable gap into a
-  permanent one. And do NOT mark from the Android background decrypt: it loads a throwaway state and
-  never writes `mls.bin` back, so the foreground really does read that frame again.
-  [history-reconciliation](protocols/history-reconciliation.md).
-- **STATE THAT OUTLIVES THE EVENT THAT CREATED IT MUST TRAVEL AS STATE, NOT ONLY AS THAT EVENT.** A
-  `pin` frame ages out of the server's retention window; the pin does not. So a device replaying
-  every frame it is ENTITLED to could still never learn that a message is pinned, and a DM pin did
-  not survive a fresh device while a channel pin did - because the server re-serves the channel one
-  (MUT-15). The same shape as `editedAt`, which had to be carried beside `isEdited` for exactly this
-  reason. Carry both halves: the events converge a device that is following along, the register
-  covers what predates its window - and neither is redundant.
-  [history-reconciliation](protocols/history-reconciliation.md).
-- **A MUTATION THAT CARRIES NO CLOCK CANNOT BE MERGED, AND EVERY WORKAROUND FOR THAT IS A
-  WORKAROUND.** `pin`/`unpin` carried a message id and nothing else, alone among the mutations here -
-  a reaction dates each `(user, emoji)` pair, an edit dates itself, a deletion is absorbing. The
-  first fix was "adopt a peer's set only into an EMPTY one", which is sound and is still a patch: it
-  buys convergence for a fresh device by refusing it to every other one. **Date the frame instead**,
-  on BOTH legs, and the special case disappears - larger `at` wins, an `unpin` becomes a dated
-  tombstone rather than a removal, and any two devices can merge. Two corollaries that are easy to
-  miss: **a tie needs a rule** (equal `at` resolves to unpinned, because "keep what I had" depends
-  on arrival order and is therefore not a rule), and **the tombstones must TRAVEL** - a snapshot of
-  what is merely pinned omits the answerer's `unpin`, which is exactly the entry a stale peer needs
-  in order to lose. Undated frames from older clients are read at `at: 0` on replay and at receipt
-  time when live; both are in [legacy-compatibility](legacy-compatibility.md).
-- **AN EVENT FALLING THROUGH A HANDLER CHAIN UNHANDLED IS AN ACCIDENT UNTIL IT IS NAMED.** `pin` and
-  `unpin` reached `applyReplaySystemEvent` and matched no branch, silently, for as long as the
-  replay path has existed - beside a `REPLAY_IGNORED_EVENTS` set that exists precisely so that
-  ignoring an event has to be a DECISION. A chain whose last arm is an implicit no-op cannot tell
-  "we thought about this" from "nobody did". List what is deliberately dropped; then a gap is a
-  missing name rather than a missing line.
-- **"EVERY OTHER PATH" MEANS BOTH DIRECTIONS - ENUMERATE THE CONSUMERS, THEN CHECK EACH PAIR.** The
-  rule above was implemented one way round and read as done: live delivery told the replay, the
-  replay told nobody. It recorded its position as a STREAM ID, which is precisely the identifier the
-  other path cannot look itself up by - the same disjoint-namespace fact the rule opens with, missed
-  in the second direction because only the first was ever written down. So a frame the replay had
-  just decrypted arrived live onto a spent generation and was filed as a LOST frame while the message
-  was on screen (WP-FALSELOSS-2, 2026-08-13). **The tell that it was false was in the check's own
-  record**: the row carrying the loss also carried `copiesOnReceiver: 1`. A shared ledger is a
-  RELATION over the paths that write it, not a feature one path has - and a per-session structure
-  cannot answer a durable question, so "which ledger" is settled by the QUESTION'S LIFETIME, never by
-  which one the hot path already had at hand. Corollary paid for in the same incident: **mark on the
-  SUCCESS path only.** A frame that failed to decrypt consumed nothing, and marking it would claim
-  "already read" about a frame nobody has read - which mutes the one alarm that raises a repair. Mark
-  the ROW on a give-up so the walk terminates; never the bytes.
-  [history-reconciliation](protocols/history-reconciliation.md#the-ledger-was-one-way-and-the-false-loss-moved-to-the-head-of-the-stream).
-- **A LEDGER MUST BE WRITTEN WHERE THE THING IT RECORDS ACTUALLY HAPPENS, NOT WHERE IT IS CONVENIENT
-  TO ITERATE.** The rule above was then implemented in the right direction and STILL left the defect,
-  because a batch spends in one place and reports in another: `decryptPage` consumes the ratchet for
-  a whole page in a single call, while the marks were written by the loop that afterwards decodes each
-  frame and awaits. Between the two there was a window in which the generation was gone and the ledger
-  did not say so, and a frame arriving live inside it was filed as LOST. **A window is not a rare
-  race - it is a reproducible one**: `msg1 --cold` then `msg1b` produced it every single time, and the
-  proof was a PAIR from the same page, generation 520 called a loss and generation 521 recognised as a
-  duplicate three seconds later, once the loop had reached it. When an operation is batched, ask where
-  its EFFECT lands, not where its results are read: the record belongs next to the effect.
-- **AND IT MUST BE READ WHERE THE VERDICT IS FORMED, NOT WHERE THE WORK WAS QUEUED.** The same rule
-  has two directions and fixing the write exposed the read. The replay checked each row against the
-  seen set while ASSEMBLING a page, then handed the page to `decryptPage`; live delivery can read one
-  of those frames in between, so a frame that failed the batch may well have been read by the time
-  that failure is judged. The comment on the failure branch even stated the assumption out loud - *"a
-  frame already read is skipped before ever reaching the decrypt, so anything arriving HERE is a frame
-  this device has never read"* - which is only true if the two moments are one. **An answer obtained
-  before an await is about a world that has moved**; re-ask on the failure path, where it costs
-  nothing because that path is already the exceptional one.
-- **A LEDGER THAT RECONCILES AN OVERLAP IS NOT AN ORDER, AND MUST NOT CARRY THE ORDINARY CASE.** The
-  two rules above make the shared ledger correct; they do not make the overlap rare. A barrier before
-  a walk orders the two paths at its START and says nothing about its middle, and the archive holds
-  every frame *including the queued ones* - so an unbounded walk reads exactly the rows live delivery
-  is about to hand over, for as long as the walk lasts. **Bound the walk at the boundary it observed
-  when it started**, and the two sets are disjoint by construction rather than deduplicated
-  afterwards: the rows above the bound are never fetched, so they cost no bytes, no decrypt and no
-  ledger entry. Stopping early is always safe for a cursor that advances by WALKING - it simply
-  resumes there. Two questions separate this from a patch: *what is the bound a fact about* (the
-  server's stream head, read once, not the client's clock), and *what width of seam is left* (here,
-  one round trip instead of one walk - the queue and the stream are written at different moments, so
-  no client-side ordering makes it zero, and the ledger keeps covering that remainder).
-- **A BARRIER MAY NOT BE AWAITED FROM INSIDE THE THING THAT HOLDS WHAT IT WAITS FOR - AND WHERE IT
-  MAY BE TAKEN IS PART OF THE ORDER IT ENFORCES.** The rule above orders the archive walk against the
-  delivery queue as *pin the head, empty the mailbox, then read*; the correction to it moved the
-  barrier one await LATER, past `createDecryptSession`. That opens a catch-up, which holds the global
-  MLS mutex **for its whole life**, while the drain needs the same non-reentrant mutex for every
-  message - so the walk waited for a drain that could not start. Both stopped for good: measured
-  2026-08-15, bulk ingest opened at 14:58:44.612, the frame landed at 14:58:45.001, its drain nested
-  to depth 2, and neither `Drain complete` nor `Bulk ingest done` ever came. The client stayed wedged
-  until reload, and the server saw the same event from the far side - two frames unACKed, then
-  `PUSH_DEFERRED -> FCM fallback` on a browser that has no push token. **The order was right and the
-  placement was wrong**, and both facts can be had with the mutex free: pinning the head is one HTTP
-  read that touches no MLS state, and emptying the mailbox IS letting the drain have the mutex. Three
-  things this must keep. **The codebase already knew the class** - `answerAfterMailboxDrained` names
-  it exactly, for the responder legs, and solves it the other way, by DEFERRING past the drain
-  instead of awaiting it; a hazard already named in one place is the first thing to check when
-  touching another. **The barrier now refuses rather than hangs**: it is the only place that can see
-  `catchUpDepth > 0` at the moment of the call, so it logs an error naming the call site's mistake
-  and returns, converting an unrecoverable hang into a defect report. And **a unit test that stubs
-  the lock cannot see this** - the two tests covering that ordering both passed throughout, because a
-  stub has no mutex; what a stub can still pin is the ORDER, so assert that the session is not open
-  while the barrier is pending.
-- **A BARRIER THAT ALSO ACTS MUST NOT BE REACHABLE BEFORE THE THING THAT ANSWERS FOR ITS ACTION -
-  AND AT BOOT, "BEFORE" IS DECIDED BY A LINE NUMBER.** `waitForMessageQueueIdle` does not only wait,
-  it PULLS when nothing else has (that half is what closed WP-DUPDELIVERY-1). `processQueue` returns
-  immediately while `messageCallback` is unset, so a barrier taken before `setupMessageHandler`
-  fetches frames into a queue with no consumer and then waits on the queue it has just filled -
-  `waitUntilIdle` has nothing that can ever fire it. **Measured on prod 2026-08-15**: the startup
-  archive replay sat above the handler registration in `sessionAuth`, and W2 - holding 2 frames
-  queued since that morning's deadlock - stopped at 1 s on EVERY reload, before
-  `[TAB] Leadership acquired`, so no socket was ever opened; the only trace was one
-  `console.warn` about a callback. **W1 was the control: identical bundle, identical code, empty
-  server-side mailbox, normal boot.** The trigger is therefore the ordinary state of anyone who has
-  been away, and it does not heal - each restart re-runs it. Three things this must keep. **The fix
-  is the ORDER, not the guard**: the consumer is registered before anything can pull, which keeps
-  the pull (and so WP-DUPDELIVERY-1) intact - refusing to pull instead would trade a hang for a
-  duplicate. **The guard is still owed**, because it is the only place that can see the fact at the
-  moment of the call, and skipping beats hanging: a duplicate is caught by the fingerprint ledger, a
-  client that never connects again is caught by nobody. And **`console.warn` was the whole report** -
-  a swallowed branch that ends a device's session for good is an ERROR, and it must name the
-  consequence (`n queued message(s) ... every mailbox barrier now open will never resolve`), not the
-  condition.
-- **`void` IS NOT DEFERRAL - A TRIGGER RAISED FROM INSIDE A REGION RUNS INSIDE IT.** Fire-and-forget
-  hands the call to the microtask queue, which is emptied long before the enclosing `finally`; the
-  region is still open when the callee's first `await` lands. `replayConversationHistory` raised
-  `void reconcileGroup(...)` from inside its walk, under a comment claiming "the store is settled by
-  now" - but `session.finish()` runs in the `finally`, so the catch-up still held the global MLS
-  mutex, and `reconcileGroup` opens on the mailbox barrier, which needs that mutex for the drain. The
-  barrier refused it and the ask went out **against a mailbox that was never emptied** - the one
-  ordering guarantee that barrier exists to carry, and the reason it lives in `reconcileGroup` rather
-  than at the connection edge. Raise the trigger after the region closes; asserting it "was called"
-  passes either way, so **the test has to be an ORDERING against a gated close** (proven: it fails
-  against the old placement, `Number of calls: 1`). Found by one dirty line on prod, W1, MSG pass 1
-  of 5 - the only pass that followed a boot.
-- **A GLOBAL DEPTH CANNOT NAME AN OWNER, SO THE REPORT MUST NAME THE CALLER.** `catchUpDepth > 0`
-  answers "is a session open", never "is it MINE" - async JS has no current-holder notion, which is
-  exactly why the MLS mutex is non-reentrant. A caller nested inside the session deadlocks; a caller
-  merely running beside one would only wait, and is refused all the same. The two are fixed in
-  different places, so `waitForMessageQueueIdle(caller)` takes the label at all seven call sites and
-  both refusals quote it: without it, one `SKIPPED` line cost a read of every call site to attribute.
-- **A RESPONSE HEADER IS INVISIBLE CROSS-ORIGIN UNLESS IT IS EXPOSED.** Carrying new metadata in a
-  header keeps an array-shaped body compatible with every deployed client - the right trade - but the
-  app runs cross-origin under Tauri (`http://tauri.localhost`), so without
-  `Access-Control-Expose-Headers` the header reaches the browser and is hidden from the code. That
-  fails on MOBILE ONLY, compiles, and deploys green: the exact shape of a fault no gate catches.
-- **A NAME THAT LIES MAKES TWO KEY SPACES READ AS ONE.** `cipherFingerprint` held `msg.id`, a Redis
-  stream id - not a fingerprint of anything. Every reader of that function, and the log line it fed,
-  silently treated a row identifier and a ciphertext hash as the same currency, which is precisely the
-  confusion the shared-key design existed to prevent. It surfaced only when both were printed side by
-  side and one of them was obviously the wrong shape. Rename on sight: a variable whose name asserts a
-  type it does not hold is a defect that has not been triggered yet.
-- **A PROSPECTIVE FIX CANNOT BE VERIFIED BY THE FIRST MEASUREMENT AFTER ITS DEPLOY.** A fix that
-  records something as it happens says nothing about what happened before it shipped, so the first
-  run still shows the old damage - and that number fits "it works" and "it does nothing" equally
-  well. Reading it either way is the mistake: a measurement whose outcome is the same under both
-  hypotheses is not a measurement. Build the run that discriminates instead - here, traffic
-  generated AFTER the new build is confirmed running, which the old code could not have marked -
-  and take a control with no traffic at all, so the difference is attributable. Corollary: assert
-  the build id, never the deploy. A green CD proves containers started; a client left open across
-  a deploy keeps running the old bundle and reads exactly like one that was reloaded.
-- **FOUR INVARIANTS OF THE HISTORY EXCHANGE THAT LOOK LIKE COMPLICATIONS AND ARE NOT.** Each one was
-  paid for; the recurring temptation is to "simplify" them back.
-  [history-reconciliation](protocols/history-reconciliation.md) carries the reasoning.
-  - **`historyWindow.ts` is the only place either boundary is decided.** The floor is SHARED,
-    monotone, merged as `max`, and **ships worth zero on purpose**. The window is LOCAL and fixed by
-    platform (`isTauriRuntime()` alone: web 90 d, mobile and desktop 5 y), and `deviceWindowStart`
-    rounds DOWN to the day - unrounded, two devices a second apart compare different ranges and the
-    fast path can never fire.
-  - **`since` is STATED by the asker and never recomputed by the answerer; the digest is NOT clipped;
-    the clip is on the ANSWER, never the COMPARISON; each leg states its OWN window.** All four, or a
-    boundary message goes permanently missing on one side, or every device is capped at the shortest
-    window in the conversation.
-  - **`toConversationMeta` and the in-memory seed in `loadExistingConversations` are MIRRORS and must
-    be edited together.** A fix was silently defeated by exactly this: `readWatermarks` was written
-    and never read back, so read state was correct until the first restart. **A field persisted but
-    never read back is worse than one never stored** - the write succeeds and nothing reports it.
-  - **`DELIVERY` in `frameDelivery.ts` is the ONLY classification** (`visible` / `mutation` /
-    `transport`) and every send site names one; the server gate reads `body.durable`, not `!silent`.
-    Each stream entry records its own `silent`, and `redeliverMissedDuringActivationWindow` filters
-    on it or it rings the user for every reaction.
+**Markers, and what discharges them**
+
+- **A durable marker must carry the EVIDENCE that justified it**, or nothing can revisit the diagnosis; one written without evidence is legacy - drop it, do not replay it. [hr](protocols/history-reconciliation.md)
+- **A marker is discharged by anything that FALSIFIES ITS OWN EVIDENCE, not only by the answer it waited for** - so the discharges differ per reason, and a guard implemented as SILENCE makes a fixed point no convergence argument covers. [hr](protocols/history-reconciliation.md)
+- **A device that has not noticed its own gap will VOUCH for its store**, promoting a silent upstream failure into a trusted witness for everyone else's repair. [hr](protocols/history-reconciliation.md)
+- **A responder is elected at RANDOM among the online devices**, so any check on a repair must record WHICH device answered - the greener verdict is the one that says less. [testing-methodology](testing-methodology.md)
+
+**Ghosts, debris, and the reports that find them**
+
+- **A liveness clock must be WRITTEN BY the thing whose liveness it measures** - `updatedAt` answers "when was this row written", not "when was this device seen" (WP-GHOST-1). [chat](frontend/modules/chat.md)
+- **A predicate that named the last incident is not the predicate that names the next one** - one `GROUP BY` with it as a column settles it in seconds. [storage-forecast](infrastructure/storage-forecast.md)
+- **A correct GC with no REPORT is found by hand, a day late** - and the report must carry the evidence separating the causes it cannot itself distinguish. [cd](services/chat-delivery.md)
+- **A device good enough to be MESSAGED must be at least as valid as one good enough to be INVITED** - the invitation path checks the key package, the fan-out does not. [cd](services/chat-delivery.md)
+- **When a resource keeps refilling, deleting it is not the fix - REVOKE whatever keeps naming it as a destination.** A DELETE leaves the routing memberships standing and the count starts over. [cd](services/chat-delivery.md)
+- **When two paths both END the same thing, "what it owns" is ONE exported list or it is neither** - and the owned rows drop in the SAME transaction as their parent. [cd](services/chat-delivery.md)
+- **A sweep that looks for orphans where the reaper already deleted finds none, and reads as PROOF that there are none.** Read a cleanup's predicate against what runs BEFORE it. [cd](services/chat-delivery.md)
+
+**Classifying a decrypt failure**
+
+- **An error says what it says**: "this generation is consumed" is NOT "I already have this message". A layer that cannot make a distinction must not make it - the guard is `same_epoch_ratchet.rs`, not a comment, and a test asserting the swallow will happily protect the bug. [mls](protocols/mls-protocol.md)
+- **EPOCH and GENERATION are different axes, and so are their repairs** - a verdict computed over one must never answer a question asked about the other. [mls-recovery-ladder](protocols/mls-recovery-ladder.md)
+- A wrapper string carries BOTH markers (`GAP_QUEUED:<group>:<error>`), so the ORDER of a substring classifier is a decision. [mls](protocols/mls-protocol.md)
+- **A shim that downgrades a log's severity by RE-READING ITS TEXT is a missing classification, announcing itself** - where the demotion is, the classification is not, and the platform doing the damage is the one with no demotion at all. [mls](protocols/mls-protocol.md#our-own-frame-was-classified-as-a-retryable-gap-2026-08-15)
+- **Severity is the CLASSIFICATION's to report, not the bare fact that a call returned `Err`.** Only what nothing has explained keeps `error!`. [mls](protocols/mls-protocol.md)
+- **A comment asserting where a line comes from is a CLAIM, and it is cheap to refute** - a bad measurement is worse than none, because it gets written down. [testing-methodology](testing-methodology.md)
+
+## Outbound delivery -> [chat](frontend/modules/chat.md), [history-reconciliation](protocols/history-reconciliation.md), [chat-delivery](services/chat-delivery.md), [mobile](frontend/mobile.md)
+
+The largest area here, and the one that has cost the most. `chat` = [chat](frontend/modules/chat.md),
+`hr` = [history-reconciliation](protocols/history-reconciliation.md),
+`cd` = [chat-delivery](services/chat-delivery.md), `mob` = [mobile](frontend/mobile.md).
+
+**The queue, and cancelling what is in it**
+
+- Every step is best-effort, so **every swallowed branch logs**. [chat](frontend/modules/chat.md#outbox-outbound-delivery)
+- **An operation on a queued object must CONSULT the queue, never queue a second one beside it.** [chat](frontend/modules/chat.md#outbox-outbound-delivery)
+- **A branch the callee took is a fact the caller needs - return it as a TYPE.** [chat](frontend/modules/chat.md#outbox-outbound-delivery)
+- **A cancellation is only as deterministic as the narrowest window it closes.** [chat](frontend/modules/chat.md#outbox-outbound-delivery)
+- **Bound the work that consumes an IRREVERSIBLE resource, not the work that costs time.** [chat](frontend/modules/chat.md)
+- **The record of what is still owed is only as durable as its last write.** [mob](frontend/mobile.md)
+- **The native mirror is READ as well as written**, so a wholesale rewrite needs an adoption pass. [mob](frontend/mobile.md)
+- **A per-item API makes the per-item cost invisible**; across an FFI boundary the batch belongs on the SHARED side. [mob](frontend/mobile.md)
+
+**Paging, and the deadlines over it**
+
+- **A page is a unit of transfer, so bound it in the unit that decides how long the transfer takes** - and never below one row. [cd](services/chat-delivery.md)
+- **Terminate a paged pull on an EMPTY page, never on a short one.** [cd](services/chat-delivery.md)
+- **A pagination cursor must be a total order, or a page boundary deletes a row.** [cd](services/chat-delivery.md)
+- **A deadline's SCOPE is part of its meaning**: per page, ACKed as it lands - partial progress must be kept. [cd](services/chat-delivery.md)
+- **A deadline over a transfer must measure SILENCE, not elapsed time** - and carry "did the head arrive" out as a type. [cd](services/chat-delivery.md)
+- **A lookup inside a per-item loop is a cost that grows with the wrong thing**; an index replacing a `find` keeps FIRST-wins. [hr](protocols/history-reconciliation.md)
+- **Concurrency needs a BOUND, never a bare `Promise.all`.** [hr](protocols/history-reconciliation.md)
+
+**What is on screen, and what wrote it**
+
+- **A page read is evidence about a window of the past, never a statement that nothing else exists - so it is MERGED, never ASSIGNED.** [chat](frontend/modules/chat.md#a-page-read-is-merged-into-the-list-never-assigned-over-it)
+- **MLS gives no echo of your own message**: apply the optimistic update in memory AND persist it. [chat](frontend/modules/chat.md)
+- **A UI buffer placed in FRONT of a persistence call is a persistence bug.** [chat](frontend/modules/chat.md)
+- **A count taken before decryption cannot classify what it counts**; and one flag must not carry two questions. [chat](frontend/modules/chat.md)
+- **A cause is not a label**: two causes under one string is a WRONG answer, not a vague one. [chat](frontend/modules/chat.md)
+
+**The drain, and the barriers around it**
+
+- **A tab is "read-only" only where something CHECKS**, and whoever inherits the role must reload its state. [chat](frontend/modules/chat.md)
+- **A repair whose result nobody reads must be STARTED, never awaited** - an await inside the drain freezes all inbound traffic. [chat](frontend/modules/chat.md)
+- **A mutual-exclusion window needs ONE entry point for awaiting.** Report the freeze, never trade it for a loss. [chat](frontend/modules/chat.md)
+- **A termination proof covers the structure it is written over**, so **a window must be closed by what opened it, through one exit.** [chat](frontend/modules/chat.md)
+- **`requestAnimationFrame` never fires in a hidden document**, so it can never be the only resolver of anything. [chat](frontend/modules/chat.md)
+- **Read your own mail before asking anyone for news - and before answering anybody.** [hr](protocols/history-reconciliation.md)
+- **A barrier may not be awaited from inside the thing that holds what it waits for**; it refuses rather than hangs. [hr](protocols/history-reconciliation.md)
+- **A barrier that also ACTS must not be reachable before the thing that answers for its action.** [hr](protocols/history-reconciliation.md)
+- **`void` is not deferral** - a trigger raised from inside a region runs inside it. [hr](protocols/history-reconciliation.md)
+- **A global depth cannot name an owner, so the report must name the caller.** [hr](protocols/history-reconciliation.md)
+
+**Repair, and what makes it stop**
+
+- **Idempotence comes from durable state, termination from a proof - never from a clock.** [hr](protocols/history-reconciliation.md)
+- **But durable state answers only THE QUESTION IT WAS WRITTEN FOR, and two questions can differ only in lifetime.** [hr](protocols/history-reconciliation.md#the-marker-carried-something-is-missing-and-i-still-owe-an-ask)
+- **When durable state is hard to discharge, check whether the thing it rations still needs rationing.** [hr](protocols/history-reconciliation.md)
+- **A trigger that arrives before its mechanism must be HELD, not logged and dropped** - defer by BLOCKER, discharge on the act. [hr](protocols/history-reconciliation.md#a-group-that-could-not-heal)
+- **An accidental repair hides the fault that needs it.** [hr](protocols/history-reconciliation.md#a-group-that-could-not-heal)
+- **A fix that holds a raised trigger does not reach backwards**: damaged state needs a reason to COMPARE, not a cleanup. [hr](protocols/history-reconciliation.md#and-the-fix-does-not-reach-backwards---hence-the-audit)
+- **A retry must terminate on the EVENT that changes the answer**, and that event is usually already named somewhere. [hr](protocols/history-reconciliation.md)
+- **A repair that records its own output as new input has no fixed point.** [hr](protocols/history-reconciliation.md)
+- **A repair ladder is ordered by what each rung can FIX; a rung that can fix nothing is deleted, not demoted.** [hr](protocols/history-reconciliation.md)
+- **A repair addressed by TIME is a broadcast, because a window cannot name its target.** [hr](protocols/history-reconciliation.md)
+
+**The shared ledger**
+
+- **A frame read by one path must be marked read for every other path**, keyed by the CIPHERTEXT, in one object, advancing by WALKING. [hr](protocols/history-reconciliation.md)
+- **"Every other path" means BOTH directions**; which ledger is settled by the QUESTION'S LIFETIME, and marks go on the SUCCESS path only. [hr](protocols/history-reconciliation.md#the-ledger-was-one-way-and-the-false-loss-moved-to-the-head-of-the-stream)
+- **A ledger must be WRITTEN where the thing it records happens**, not where it is convenient to iterate. [hr](protocols/history-reconciliation.md)
+- **And READ where the verdict is formed** - an answer obtained before an await is about a world that has moved. [hr](protocols/history-reconciliation.md)
+- **A ledger that reconciles an overlap is not an order, and must not carry the ordinary case.** [hr](protocols/history-reconciliation.md)
+- **A name that lies makes two key spaces read as one.** Rename on sight. [hr](protocols/history-reconciliation.md)
+
+**What travels, and what is merely an event**
+
+- **An answer must state the range it vouches for**, and is sent even when the state keys MATCH - agreement is not completeness. [hr](protocols/history-reconciliation.md#the-fourth-trigger-an-answer-that-does-not-reach-far-enough-back)
+- **State that outlives the event that created it must travel AS STATE, not only as that event.** [hr](protocols/history-reconciliation.md)
+- **A mutation that carries no clock cannot be merged** - date both legs, give ties a rule, and make the tombstones travel. [hr](protocols/history-reconciliation.md)
+- **An event falling through a handler chain unhandled is an accident until it is NAMED.** [chat](frontend/modules/chat.md)
+- **A response header is invisible cross-origin unless it is EXPOSED** - mobile only, compiles, deploys green. [mob](frontend/mobile.md)
+
+**Four invariants of the history exchange that look like complications and are not** ([hr](protocols/history-reconciliation.md)):
+
+- `historyWindow.ts` is the **only** place either boundary is decided, and `deviceWindowStart` rounds DOWN to the day.
+- **`since` is stated by the asker, the digest is not clipped, the clip is on the ANSWER, each leg states its own window.**
+- **`toConversationMeta` and the seed in `loadExistingConversations` are MIRRORS, edited together.** [why](protocols/history-reconciliation.md#the-two-hydration-paths-are-mirrors-and-must-be-edited-together)
+- **`DELIVERY` in `frameDelivery.ts` is the only classification**, and the server gate reads `body.durable`.
+
+**And one about believing any of it:** a prospective fix cannot be verified by the first measurement
+after its deploy - build the run that DISCRIMINATES, and assert the build id, never the deploy.
+[testing-methodology](testing-methodology.md)
 
 ## UI and i18n -> [frontend/architecture](frontend/architecture.md), [auth](frontend/modules/auth.md) (native prompts)
 
-Tokens, the one-way-colour sweep, the portalled dropdown, Svelte's whitespace trim and the native
-prompt fields are all on those pages. What must not be forgotten between them:
+`arch` = [frontend/architecture](frontend/architecture.md), `posts` = [posts](frontend/modules/posts.md),
+`chat` = [chat](frontend/modules/chat.md), `mob` = [mobile](frontend/mobile.md).
 
-- **A CLEANUP THAT RELEASES SOMETHING ACQUIRED ASYNCHRONOUSLY MUST WAIT FOR THE ACQUISITION.** An
-  effect that unmounts before its `await` returns runs a release against a reference count that has
-  not been incremented yet: it decrements nothing, the retain lands a moment later, and the resource
-  is then held by NOBODY - never freed, and in the avatar case still served to every later mount of
-  the same face. The `cancelled` flag guards the state assignment, not the resource; release inside
-  the pending promise's `finally`, not beside it.
-- A one-way colour is a dark-mode bug waiting to happen; use the `app.css` tokens - and the 31 the
-  sweep left are DELIBERATE (switch thumbs, colour-picker handles, always-dark call/lightbox chrome,
-  the white plate behind a QR). Do not "fix" them.
-- Nothing types a string as user-visible, so no compiler enforces Paraglide - and no user-facing
-  string names a sensor ("empreinte ou Face ID" is wrong on every device, half the time). Default
-  to Paraglide for ANY new user-visible string without being asked, on the first draft, not as a
-  follow-up fix - a `showConfirm(...)` message and its custom button label were shipped as raw
-  French literals (WP-SAFELINK-1), copying the shape of that store's own ~21 other call sites,
-  none of which are Paraglide either; that existing pattern is not a precedent to extend.
-- **A LANGUAGE SETTING BELONGS TO THE APP, NOT TO THE PHONE - AND THE RECEIVER IS WHAT PICKS IT.**
-  Paraglide covers the bundle and nothing else, so each native surface needs its own table AND its
-  own resolver: `appLocaleContext(context)` on Android, `CanariLocalized` / `localized` on iOS, all
-  three reading `locale` from `push_context.json`. A bare `context.getString(...)` compiles, runs,
-  and answers the OS language - wrong only for the users whose two settings disagree, and invisible
-  to everyone testing on a French phone. Once a table exists, the failure moves: a key added to
-  `values/` and forgotten in `values-en/` falls back SILENTLY to French with a green build, and on
-  iOS the same omission ships the KEY ITSELF as the body. Neither is visible to a compiler, so both
-  are pinned by `nativeStrings.test.ts`. See [mobile](frontend/mobile.md#the-language-a-notification-speaks).
-- **A RULE THAT SAYS "REMEMBER TO RUN X FIRST" IS A MISSING DEPENDENCY, NOT A RULE.** This entry
-  used to say: re-run `bun run paraglide:compile` before `bun run test` after any build - **an
-  Android or iOS build counts**, because `beforeBuildCommand` is `bun run build`, and it leaves
-  Paraglide output resolving to English. It fails as a handful of tests asserting French text and
-  receiving the English message, which reads like an i18n regression in code nobody touched: 7
-  failures across 4 files right after an APK build, 1481/1481 after one recompile with no source
-  change between the two runs. **It cost the same 20 minutes a second time on 2026-08-15**, in a
-  session that had already read this page - which is what a rule relying on memory is worth.
-  `check` had always compiled first and `test` had not, so the fix was one word of
-  `package.json`: `"test": "npm run paraglide:compile && vitest run"`. The symmetry is the point -
-  when two scripts need the same precondition and only one declares it, the other does not have a
-  rule, it has a bug.
-- **AN INDEX INTO AN ARRAY YOU DO NOT OWN IS STATE THAT GOES STALE, AND `slice` PAST THE END IS
-  SILENT.** `ChatArea` renders `messageGroups.slice(windowStart, …)` and recomputed `windowStart`
-  only when the conversation KEY changed - while `loadHistoryForConversation` REPLACES
-  `conversation.messages` with a 60-message page on every click and every reconnect. A long list
-  shrinking under a window computed against it left the start past the end, and `slice` answered
-  `[]`: header, avatar and composer with a void under them, no error, no skeleton, no empty state
-  (WP-EMPTYVIEW-1, seen on prod with 598 messages stored and zero rendered). Same family as the
-  feed-retry defect - a remount "fixed" it, so it read as data loss and was not. The fix is never to
-  make the stored index correct; it is for the READ side to clamp against the current length
-  (`utils/chat/renderWindow.ts`), so the invariant "a non-empty list yields a non-empty window"
-  holds by construction rather than by whoever remembers to recompute. Ask of any cached index what
-  invalidates it, and prefer a derived clamp over a recompute you have to remember.
-- **A promise that has REJECTED stays rejected, so an `{#await}` over one sits in `{:catch}` for the
-  life of the component** - nothing re-enters `{:then}` but a new promise, i.e. a remount. State a
-  RETRY writes must therefore be read from OUTSIDE the thing that failed: the feed read
-  `postsOverride` only inside `{:then}`, so "Reessayer" fetched the posts (200 in 326 ms, measured)
-  and had nowhere to render them, while leaving the page and coming back worked - which reads as a
-  network fault and is not one. A retry whose result is only consulted on the success path of the
-  failed attempt cannot work by construction. Not unit-testable here (the defect is purely WHERE the
-  template reads its state, and there is no component-rendering setup) - `check-feed-retry.mjs`.
-- A synchronous "unknown" PLACEHOLDER is indistinguishable from an answer once it is stored, so
-  anything that later resolves the real value loses to it - and a module-level cache re-renders
-  nothing when it warms, so whether a user ever sees the truth depends on cache timing. Return the
-  absence (`peekUserDisplayName` -> `null`, or an explicit `*Resolved` flag), never the label.
-- **PORTALLING A DROPDOWN BREAKS ITS ACCESSIBLE RELATIONSHIP AS WELL AS ITS POSITIONING, AND
-  NOTHING WARNS.** `aria-expanded` on a trigger whose panel is no longer its descendant announces
-  "expanded" and names nothing - it needs an `id` + `aria-controls`. And the right role is a
-  DISCLOSURE, never `role="menu"`: the menu role promises arrow keys, Home/End and typeahead, so
-  claiming it for a set of navigation links describes an interaction the component does not honour.
-  What a disclosure does owe is Escape, closing AND returning focus to the trigger - the outside
-  click backdrop only serves a pointer. [architecture](frontend/architecture.md).
-- **TWO COPIES OF A DIALOG DO NOT STAY IDENTICAL, THEY STAY PLAUSIBLE.** The lightbox and the PDF
-  reader each looked right alone and disagreed on what no single-file review can see: a raw
-  `aria-label="Fermer"` beside `m.common_close_label()`, plus `"Suivant"` and `"Image {n}"`, and a
-  `z-[300]` beside a `z-300`. `shared/FullScreenViewer.svelte` now owns the portal, backdrop, card,
-  header, close, safe areas, focus trap and Escape (WP-VIEWER-1). It deliberately does NOT own the
-  content area: `lockTouch` (`touch-action: none`) is right for one bitmap and would kill the
-  one-finger scroll a PDF is READ with, and a prop choosing between the two layouts would put the
-  knowledge of both viewers into the component meant to know neither.
-  [posts](frontend/modules/posts.md).
-- A shared GESTURE is shared as arithmetic, not as a component: `pinchZoom.ts` carries both models -
-  the global translate for one bitmap, the anchor for a paged column - and they are NOT
-  interchangeable. `zoomAboutPivot` RESETS rather than clamps at the minimum scale, because a clamp
-  leaves a photo wherever the gesture ended whenever the maths lands inside the bounds, and "unzoom
-  puts it back" is the one thing a user may assume.
-- French inclusive writing and elided forms defeat a TLD-shape heuristic for "this looks like a
-  domain" (`.es`/`.it`/`.re`/`.ne` collide with "auteur.rice"/"cher.e.s"-style endings) - an exact
-  WHITELIST of real hosts sidesteps the ambiguity entirely instead of trying to out-narrow it
-  (WP-LINK-1).
+**Lifetimes, and state that goes stale under you**
 
-- **A FILTER THAT REFUSES IS A GATE, AND THE DIFFERENCE IS WHAT THE CALLER LEARNS.** An announcement's
-  version range answers `null` for "out of range" in exactly the same way as for "none published" and
-  "already seen" - a client outside the range must never learn that something exists and was withheld.
-  Three reasons, one answer, on purpose.
-- **A RANGE WITH NO BOUNDS MUST NOT READ THE VALUE IT WOULD HAVE COMPARED.** Requiring a parsable
-  client version before showing an UNBOUNDED announcement hid it from the entire deployed fleet,
-  none of which sends one. Ask whether the discriminator is needed BEFORE demanding it be valid; a
-  test caught this, a deploy would have shipped a feature addressed at nobody.
-- **"ONCE PER ACCOUNT" IS A SERVER ROW OR IT IS NOTHING** - local state is wiped by a reinstall, and
-  something that reappears after one is worse than never having shown it. And that row answers ONE
-  question: "has this account seen X", never "is this account current".
+- **A cleanup that releases something acquired ASYNCHRONOUSLY must wait for the acquisition** - release inside the pending promise's `finally`, never beside it. [arch](frontend/architecture.md#a-cleanup-that-releases-something-acquired-asynchronously-must-wait-for-the-acquisition)
+- **An index into an array you do not own is state that goes stale, and `slice` past the end is SILENT** - clamp on the READ side, never recompute on the write side (WP-EMPTYVIEW-1). [chat](frontend/modules/chat.md)
+- **A promise that has REJECTED stays rejected**, so state a retry writes must be read from OUTSIDE the thing that failed. [posts](frontend/modules/posts.md#why-the-feed-reads-postsoverride-outside-the-await)
+- **A synchronous "unknown" PLACEHOLDER is indistinguishable from an answer once stored** - return the absence, never the label. [arch](frontend/architecture.md#a-synchronous-unknown-placeholder-is-indistinguishable-from-an-answer)
 
-- **THE LAYER THAT CANNOT KNOW THE READER'S LANGUAGE MUST NOT WRITE THE SENTENCE.** No header
-  carries a locale and no column stores one, so a server-composed body is a DESIGN smell, never an
-  untranslated string - and storing a `locale` column is the wrong repair, because it makes the
-  server authoritative about a preference that lives in the app. Send WHAT the notification is (a
-  key from a closed set, plus only what is untranslatable - a name, an emoji, the text somebody
-  typed) and let the device say it. The symptom is not one-sided: the post notifications were French
-  for everyone and the form reminders English for everyone, in the same service.
-- **A SEAM NO BUILD CHECKS NEEDS A TEST THAT READS BOTH SIDES.** A `contentKey` added server-side
-  with no native resource fails nothing: the phone keeps the compatibility wording and it looks
-  deliberate. `nativeStrings.test.ts` reads the union type out of the service's source and holds it
-  against six string tables and three composers - and was mutation-checked by deleting one string.
-- **A DEV-FACING SENTENCE IS A DECISION TO REPORT NOTHING, AND IT EXPIRES THE DAY A SURFACE
-  APPEARS.** Seventeen refusals in `importBackup` threw English prose into `console.log`, which was
-  correct while nothing showed them - and it meant a refused file and a restored backup looked
-  identical on screen for as long as that lasted. The pair is inseparable: giving a refusal a
-  surface is what makes its string user-visible, so the sentence becomes a Paraglide message in the
-  SAME change, never before it and never after. Classify at the throw (a `code` from a closed set),
-  switch on it exhaustively in one place so an unmapped code fails to compile, and keep the
-  developer's `detail` untranslated and off the screen. The set is what a READER distinguishes, not
-  what the code checks - a dozen field checks are one sentence to somebody holding a file. See
-  [backup](frontend/backup.md).
+**Strings, and who is allowed to write them**
+
+- **Nothing types a string as user-visible, so no compiler enforces Paraglide.** Default to it for ANY new user-visible string on the FIRST draft; a file's existing raw literals are not a precedent to extend. [arch](frontend/architecture.md#i18n-paraglide)
+- **No user-facing string may name a sensor** - "empreinte ou Face ID" is wrong on every device, half the time. [auth](frontend/modules/auth.md)
+- **A language setting belongs to the APP, not to the phone - and the RECEIVER is what picks it.** Paraglide covers the bundle and nothing else, so each native surface needs its own table AND its own resolver. [mob](frontend/mobile.md#the-language-a-notification-speaks)
+- **The layer that cannot know the reader's language must not write the SENTENCE** - send a key from a closed set plus only what is untranslatable; a `locale` column is the wrong repair. [mob](frontend/mobile.md#the-language-a-notification-speaks)
+- **A seam no build checks needs a test that reads BOTH sides** - `nativeStrings.test.ts`, mutation-checked by deleting one string. [mob](frontend/mobile.md)
+- **A dev-facing sentence is a decision to report NOTHING, and it expires the day a surface appears** - giving a refusal a surface is what makes its string user-visible, so both land in the SAME change. Classify at the throw, switch exhaustively, keep `detail` untranslated and off screen. [backup](frontend/backup.md)
+- **A rule that says "remember to run X first" is a MISSING DEPENDENCY, not a rule** - when two scripts need the same precondition and only one declares it, the other has a bug. [arch](frontend/architecture.md#linting-and-checks)
+
+**Widgets**
+
+- **A one-way colour is a dark-mode bug waiting to happen** - use the `app.css` tokens, and do not "fix" the 31 the sweep left deliberately. [arch](frontend/architecture.md#finding-one-way-colours)
+- **Portalling a dropdown breaks its accessible RELATIONSHIP as well as its positioning, and nothing warns** - `aria-controls`, and a DISCLOSURE role, never `role="menu"`. [arch](frontend/architecture.md#an-anchored-dropdown-must-be-portalled-never-absolutely-positioned)
+- **Two copies of a dialog do not stay identical, they stay PLAUSIBLE** - one shell owns chrome, focus and Escape, and deliberately NOT the content area (WP-VIEWER-1). [posts](frontend/modules/posts.md#the-two-viewers-share-one-shell-and-two-zoom-models-wp-viewer-1-2026-08-11)
+- **A shared GESTURE is shared as arithmetic, not as a component** - the two zoom models are not interchangeable, and "unzoom puts it back" is the one thing a user may assume. [posts](frontend/modules/posts.md#the-pinch-and-why-it-needs-a-focal-point)
+- **A TLD-shaped ending cannot decide what is a domain in French** - an exact whitelist sidesteps the ambiguity instead of out-narrowing it (WP-LINK-1). [posts](frontend/modules/posts.md#autolinking-bare-domains-and-why-the-tld-shape-cannot-decide-it-wp-link-1)
+
+**Announcing something once** ([core-service](services/core-service.md#the-admin-announcement-shown-once-per-account))
+
+- **A filter that REFUSES is a gate, and the difference is what the caller learns** - three reasons, one `null`, on purpose.
+- **A range with NO BOUNDS must not read the value it would have compared** - ask whether the discriminator is needed before demanding it be valid.
+- **"Once per account" is a SERVER ROW or it is nothing** - and that row answers one question, "has this account seen X", never "is this account current".
 
 ## The public head, and the two adapters -> [frontend/seo](frontend/seo.md), [nginx](infrastructure/nginx.md)
 
-The whole model - the injected head, the two escapers, the sitemap, the adapter split and the
-fallback shell - is on those two pages, plus `BUILD_WEB` in
-[frontend/architecture](frontend/architecture.md). The four that cost a live outage:
-
-- A crawler on this site sees NO content: Googlebot renders, but as an anonymous visitor, so what
-  it renders is the login screen. The injected `<head>` is the whole indexable surface, and the
-  SITEMAP is the entire link graph.
-- CLOUDFLARE REPLACES the body of an origin 5xx with its own 16-byte page, so an `error_page`
-  without `=` reaches nobody behind the tunnel. Measured 2026-08-05; hence `=200`.
-- nginx does not TRUNCATE an oversized upstream header, it 502s - SvelteKit's
-  `Link: rel=modulepreload` is ~7.5 KB against a 4 KB default `proxy_buffer_size`.
-- A deploy being green proves the containers started, never that the site answers: probe the public
-  URL for each SHAPE of path (root, an app route, a prerendered file, a dynamic endpoint).
+- **A crawler on this site sees NO content** - Googlebot renders as an anonymous visitor, so it renders the login screen. The injected `<head>` is the whole indexable surface, the SITEMAP the entire link graph. [seo](frontend/seo.md)
+- **Cloudflare REPLACES the body of an origin 5xx with its own 16-byte page**, so an `error_page` without `=` reaches nobody behind the tunnel. [nginx](infrastructure/nginx.md)
+- **nginx does not TRUNCATE an oversized upstream header, it 502s** - SvelteKit's `Link: rel=modulepreload` is ~7.5 KB against a 4 KB default. [nginx](infrastructure/nginx.md)
+- **A deploy being green proves the containers started, never that the site ANSWERS** - probe each SHAPE of path. [cicd](cicd.md)
 
 ## The edge -> [cloudflare-edge](infrastructure/cloudflare-edge.md), [nginx](infrastructure/nginx.md)
 
-The tunnel topology, the settings that are deliberate and the incident behind all of this are on that
-page. The six that generalise:
+`edge` = [cloudflare-edge](infrastructure/cloudflare-edge.md), `nginx` = [nginx](infrastructure/nginx.md).
 
-- **NGINX OWNS EVERY RESPONSE HEADER; THE EDGE ADDS NONE.** The edge is production infrastructure
-  with no representation in git, so no review, test or deploy can see it change - a hand-made rule
-  there outranks the whole repository and nothing in CI will ever say so.
-- **A SECOND CSP HEADER CAN ONLY REMOVE PERMISSIONS, NEVER GRANT ONE** - a browser enforces each
-  policy independently and the effect is their INTERSECTION. A rule added to "loosen" a policy is
-  structurally incapable of doing that, so its NAME will assert the opposite of its only possible
-  effect. Corollary: deleting such a rule is provably safe, since the result is a superset.
-- **`*` MATCHES NETWORK SCHEMES ONLY** - never `blob:`, `data:` or `filesystem:`. `connect-src *` is
-  therefore STRICTER than `connect-src 'self' blob:` for the case that matters, and a directive
-  spelt out in full next to it (`img-src * data: blob:`) keeps working, which makes the failure look
-  arbitrary instead of systematic.
-- **A PERMISSION TO DISPLAY IS NOT A PERMISSION TO READ.** `img-src` and `connect-src` govern two
-  different things, and a feature that shows a remote image and then wants its BYTES needs both. The
-  half that is allowed is the visible half, so the feature looks alive and does nothing - which is
-  why the report says "the button is broken" and not "the policy is short a host".
-- **A POLICY THAT MUST BE RESTATED PER BLOCK IS DECLARED ONCE AND INCLUDED** - nginx's `add_header`
-  REPLACES the inherited set, so every block setting a header of its own drops the policy unless it
-  carries it. Verbatim copies do not stay equal: one gets the new host and the others go on refusing
-  it. And an allowlist is a DESCRIPTION OF THE CODE, so it has a test that fails when the code calls
-  a host it does not name - no compiler, linter or deploy can see that gap, only a real browser on
-  the real origin.
-- **THE ACCOUNT IS THE UNIT OF AUDIT, NOT THE ZONE - AND A SECOND HOSTNAME CAN NAME THE SAME
-  DESTINATION.** Two names on two different zones pointed at one origin, so gating one gated
-  nothing; the TUNNEL INGRESS table maps hostname to service and is the only listing that shows it,
-  where a DNS listing shows names alone. Before gating anything, check what already calls it by that
-  PUBLIC name - a consumer using the private address is unaffected, one using the hostname breaks.
-- **A CSP REFUSAL IS INDISTINGUISHABLE FROM AN ORDINARY FAILURE, BY DESIGN**: a blocked `fetch` and
-  a dead network both throw `TypeError: Failed to fetch`, and a refused `<video>` reports the same
-  `MEDIA_ERR_SRC_NOT_SUPPORTED` an unplayable codec does. Only `securitypolicyviolation` names the
-  directive - build the probe on that event, or the probe reports the theory it was written with.
-- **THE SINGLE PUBLIC ENTRY POINT IS ALSO A SINGLE POINT OF DISCONNECTION: A FRONTEND REDEPLOY CUTS
-  EVERY PROXIED WEBSOCKET ON THE PLATFORM AT ONCE.** Measured 2026-08-14 - recreating the `frontend`
-  and `frontend-ssr` containers at 12:45:20.5 produced five `Connection reset without closing
-  handshake` at the gateway within three milliseconds, across four unrelated users. Two things
-  follow. **The reconnect ladder is exercised on the whole fleet by every deploy**, so a defect in it
-  is not an edge case - it is a fleet-wide outage on the next release ([WP-RECONNECT-1](frontend/modules/auth.md#wp-reconnect-1---the-ladder-that-stopped-and-the-two-silences-under-it)).
-  And **any measurement window that straddles a deploy explains its own fallout**, so a run that does
-  not know it was rebuilt under itself will attribute the disconnections to whatever it was testing.
+**Who owns a header**
 
-- **A HEADER TWO LAYERS CAN SET BELONGS TO EXACTLY ONE OF THEM.** nginx added
-  `Access-Control-Allow-Origin: *` on `/api/public/*` while social-service's allowlist echoed the
-  caller's origin back on the same response - two of that header, which every browser rejects as
-  malformed, and so does SvelteKit's universal `fetch`. It fired only for the origins the allowlist
-  RECOGNISES (`localhost`, `127.0.0.1`), so it broke local development and worked in production: the
-  least useful way round, because the environment that would have shown it is the one nobody
-  measures. `proxy_hide_header` before `add_header` is what makes the ownership real rather than a
-  convention two files each believe.
-- **A REFUSAL EXPRESSED AS A THROW IS A 500, NOT A REFUSAL.** `callback(new Error(...))` in a Nest
-  CORS origin function fails the WHOLE request - including a public GET that needs no CORS at all,
-  which is how `GET /api/media/public/:id` came to answer 500 to any caller carrying an unknown
-  `Origin`. `callback(null, false)` omits the headers and lets the response stand, which is the only
-  thing that was ever wanted. The general shape: a policy layer that cannot say "no" without saying
-  "broken" will report a fault the system does not have.
-- **CONFIGURATION ASSEMBLED AS TEXT IS VALIDATED IN THE BUILD, OR IT IS VALIDATED BY THE OUTAGE.**
-  `default.conf` is written by a shell `printf`, so nothing checks it: a misplaced character builds
-  green, deploys green and then refuses to start, and a `frontend` that will not start is the whole
-  site. `RUN nginx -t` after the `printf` costs a red pipeline instead, and production keeps the
-  previous image. Corollary for anything reproducing that file locally: Docker strips `#` lines
-  inside a continued instruction, so strip the comments FIRST and join the continuations SECOND -
-  the other order yields a config the image does not contain, and a bug that does not exist.
+- **nginx owns EVERY response header; the edge adds none** - the edge has no representation in git, so no review, test or deploy can see it change. [edge](infrastructure/cloudflare-edge.md)
+- **A header two layers can set belongs to exactly ONE of them** - two `Access-Control-Allow-Origin` is malformed to every browser, and it fired only for the origins the allowlist RECOGNISES, so it broke local development and worked in production. `proxy_hide_header` before `add_header`. [nginx](infrastructure/nginx.md)
+- **A policy that must be restated per block is declared ONCE and included** - `add_header` REPLACES the inherited set, and verbatim copies do not stay equal. [nginx](infrastructure/nginx.md)
+- **A refusal expressed as a THROW is a 500, not a refusal** - `callback(null, false)`, never `callback(new Error(...))`. A policy layer that cannot say "no" without saying "broken" reports a fault the system does not have. [nginx](infrastructure/nginx.md)
+
+**CSP, and why its failures do not look like CSP**
+
+- **A second CSP header can only REMOVE permissions, never grant one** - the effect is the INTERSECTION, so a rule added to "loosen" a policy asserts the opposite of its only possible effect, and deleting it is provably safe. [edge](infrastructure/cloudflare-edge.md)
+- **`*` matches NETWORK SCHEMES only** - never `blob:`, `data:` or `filesystem:`, so `connect-src *` is stricter than `connect-src 'self' blob:` for the case that matters. [edge](infrastructure/cloudflare-edge.md)
+- **A permission to DISPLAY is not a permission to READ** - the half that is allowed is the visible half, so the feature looks alive and does nothing. [edge](infrastructure/cloudflare-edge.md)
+- **A CSP refusal is indistinguishable from an ordinary failure, BY DESIGN** - only `securitypolicyviolation` names the directive, so build the probe on that event or it reports the theory it was written with. [edge](infrastructure/cloudflare-edge.md)
+- **An allowlist is a DESCRIPTION OF THE CODE**, so it has a test that fails when the code calls a host it does not name. [edge](infrastructure/cloudflare-edge.md)
+
+**Topology**
+
+- **The account is the unit of audit, not the ZONE - and a second hostname can name the same destination.** The tunnel INGRESS table is the only listing that shows it; a DNS listing shows names alone. [edge](infrastructure/cloudflare-edge.md)
+- **The single public entry point is also a single point of DISCONNECTION: a frontend redeploy cuts every proxied WebSocket at once.** So the reconnect ladder is exercised fleet-wide by every deploy, and **any measurement window that straddles a deploy explains its own fallout**. [WP-RECONNECT-1](frontend/modules/auth.md#wp-reconnect-1---the-ladder-that-stopped-and-the-two-silences-under-it)
+- **Configuration assembled as TEXT is validated in the build, or it is validated by the outage** - `RUN nginx -t` costs a red pipeline instead of a site that will not start. [nginx](infrastructure/nginx.md)
 
 ## Server-side fetches -> [chat-delivery](services/chat-delivery.md), [nginx](infrastructure/nginx.md)
 
-The link-preview pipeline, the SSRF guard, the favicon cascade and the undici seam are on that page.
-The three that generalise beyond it:
+The link-preview pipeline, the SSRF guard, the favicon cascade and the undici seam are on
+[chat-delivery](services/chat-delivery.md); the avatar proxy on
+[core-service](services/core-service.md#the-avatar-proxy).
 
-- **A STATED BUDGET THAT IS NOT THE ONE THAT FIRES IS A COMMENT, NOT A RULE.** The link preview armed
-  an `AbortController` at 4 s while its undici dispatcher kept the library's own 10 s defaults, and
-  the error recorded on prod was undici's - so nobody could say which deadline the system actually
-  had. Set every mechanism that can enforce it from ONE constant, and check the layer underneath has
-  no default of its own. The same read found an outbound call carrying no deadline at all, because
-  the signal was simply never passed to it.
-- An `<img src>` at a third party inside an E2E conversation tells that host who read and when.
-  Proxying it is not a nicety - and the proxy is also the only thing checking the bytes are an image.
-- `new URL(href, base)` RESOLVES hostile input rather than throwing - `javascript:` and `data:`
-  survive as absolute URLs - so a try/catch around the parse guards nothing. Check the SCHEME.
-- Serving a file is not serving it correctly: check the header, not the status code (nginx
-  `mime.types` has no `.mjs`, so every ES-module asset went out as octet-stream).
-- A safety check with an unrelated failure mode from the fetch it would ride along with needs its
-  OWN endpoint, not a field bolted onto the existing response: `getLinkSafety` is decoupled from
-  `getLinkPreview` precisely so a page with a broken `<title>` (which makes the preview throw)
-  cannot take the Safe Browsing verdict down with it (WP-SAFELINK-1). And a check with no cache
-  guidance from the upstream API for the COMMON case (Google gives a `cacheDuration` only for a
-  flagged match, never for "clean") still needs an explicit, own TTL - inventing a number rather
-  than caching it forever or not at all.
+**Deadlines**
 
-- **ONLY AN ANSWER MAY BE CACHED.** "The upstream says there is none" and "I could not reach the
-  upstream" reach the same screen and must never reach the same cache: the second is not a fact about
-  the subject, so storing it makes a passing outage stick for a whole TTL, and dressing it as the
-  first (a 404 for a timeout) makes it a lie that outlives the incident. Canari's avatar proxy and
-  the link-preview endpoint are the same defect twice, in opposite directions - one cached a refusal
-  it invented, the other cached nothing at all
-  ([core-service](services/core-service.md#the-avatar-proxy)).
-- **A KEY NAMING A CONTENT MAY BE CACHED FOR EVER; A KEY NAMING AN IDENTITY MAY NOT** - and the
-  store has to be able to express the difference. **Cache Storage ignores `Cache-Control`
-  entirely**: `cache.match()` is a key lookup with no freshness check of any kind, so entries keyed
-  by `/api/users/<id>/avatar` outlived every `max-age` the server sent and froze the first photo
-  each device ever drew - one person, one face per device, for ever, and invisible to anyone who
-  had only drawn them once. **A SECOND STORE OVER THE SAME BYTES NEEDS A SECOND LIFETIME, AND THE
-  ONE NOBODY WROTE IS INFINITY**: the HTTP cache already honours what the server states, so a layer
-  that cannot read it is not a cache but a freeze. The same test acquits the buckets beside it - an
-  encrypted media id and `/api/media/public/<mediaId>?v=<updatedAt>` name CONTENTS, and a new upload
-  is a new key ([core-service](services/core-service.md#the-avatar-proxy)).
-- **AN OPTIONAL DECORATION THAT CANNOT BE FETCHED DEGRADES, IT DOES NOT ERROR** - and the LOG is
-  where the causes are told apart, never the status code. A blip is a `warn`; a credential of ours
-  being refused is an `error`, because only one of them needs a human.
-- **A CACHE THAT ONLY REMEMBERS SUCCESSES AMPLIFIES EVERY FAILURE.** The absent case is usually the
-  common one (40/40 accounts here have no photo), so a miss that is not remembered is a request
-  repeated for ever, per render, per viewer - which is what turns ONE transient network fault into a
-  burst of failures rather than a line. Measured twice: 479 recorded 502s from one outbound failure
-  on the portal, and two requests per faceless avatar per mount on the web client.
-- **OUR CREDENTIALS ARE NOT THE USER'S, SO OUR UPSTREAM'S 401 MUST NOT BECOME THEIRS.** A proxy that
-  forwards an upstream 401 hands the browser the one status the standing rule lets log a user out.
-- **A LOOKUP THAT FAILED RETURNS "I DO NOT KNOW", NEVER THE TEXT IT WOULD HAVE DISPLAYED.** The
-  moment a failure answers with a renderable value, it is TRUTHY, and every caller written as
-  `if (resolved) use it` overwrites what it already had - a name, a fallback, a cached row - with a
-  placeholder. `resolveUserDisplayName` did exactly that to twenty-six call sites, and only on the
-  FIRST failure, the suppression window answering `null` afterwards: one event, two renderings,
-  chosen by how recently it had happened. **Rendering a placeholder is the caller's decision**; the
-  resolver's job ends at the fact.
-- **A CALL WITH NO DEADLINE CANNOT FAIL, WHICH IS WORSE THAN FAILING.** `fetch` has no default
-  timeout anywhere; an upstream that accepts the connection and then says nothing holds it, and the
-  work behind it, for as long as it likes. There is no error to catch and no fallback to reach, so
-  every degradation written for that call - all of which trigger on a THROW - is dead code, and the
-  page simply never finishes. It is the opposite failure from the one that gets measured (an
-  unreachable host fails fast and gets amplified), and the two live on the same call site. **The
-  budget belongs to the repository, not to the call**: one constant, every outbound path, or the
-  next call written is the one that has none. Sky and Portail-etu each had four such calls
-  (2026-08-16).
+- **A call with NO deadline cannot fail, which is worse than failing** - `fetch` has no default timeout anywhere, so every degradation written for that call is dead code and the page never finishes. **The budget belongs to the REPOSITORY, not to the call**: one constant, every outbound path. [chat-delivery](services/chat-delivery.md)
+- **A stated budget that is not the one that FIRES is a comment, not a rule** - set every mechanism that can enforce it from one constant, and check the layer underneath has no default of its own. [chat-delivery](services/chat-delivery.md)
+
+**Caching**
+
+- **Only an ANSWER may be cached** - "the upstream says there is none" and "I could not reach the upstream" must never reach the same cache, and dressing the second as the first is a lie that outlives the incident. [core-service](services/core-service.md#the-avatar-proxy)
+- **A key naming a CONTENT may be cached for ever; a key naming an IDENTITY may not** - and **Cache Storage ignores `Cache-Control` entirely**, so a second store over the same bytes is a freeze, not a cache. [core-service](services/core-service.md#the-avatar-proxy)
+- **A cache that only remembers SUCCESSES amplifies every failure** - the absent case is usually the common one, so a miss that is not remembered is a request repeated for ever, per render, per viewer. [core-service](services/core-service.md#the-avatar-proxy)
+
+**Answering for someone else**
+
+- **Our credentials are not the USER's, so our upstream's 401 must not become theirs.** [core-service](services/core-service.md#the-avatar-proxy)
+- **A lookup that FAILED returns "I do not know", never the text it would have displayed** - rendering a placeholder is the CALLER's decision. [arch](frontend/architecture.md#a-synchronous-unknown-placeholder-is-indistinguishable-from-an-answer)
+- **An optional decoration that cannot be fetched DEGRADES, it does not error** - and the LOG is where the causes are told apart, never the status code. [core-service](services/core-service.md#the-avatar-proxy)
+
+**Fetching a stranger's bytes**
+
+- **`new URL(href, base)` RESOLVES hostile input rather than throwing** - `javascript:` and `data:` survive as absolute URLs, so a try/catch around the parse guards nothing. Check the SCHEME. [chat-delivery](services/chat-delivery.md)
+- **An `<img src>` at a third party inside an E2E conversation tells that host who read and when** - and the proxy is also the only thing checking the bytes are an image. [chat-delivery](services/chat-delivery.md)
+- **Serving a file is not serving it CORRECTLY** - check the header, not the status code (nginx `mime.types` has no `.mjs`). [nginx](infrastructure/nginx.md)
+- **A safety check with an unrelated failure mode needs its OWN endpoint**, not a field bolted onto an existing response - and a check the upstream gives no cache guidance for still needs an explicit TTL of its own (WP-SAFELINK-1). [chat-delivery](services/chat-delivery.md)
 
 ## Service-to-service calls -> [api-surface](protocols/api-surface.md#internal-cross-service-calls)
 
-- **An internal call carries the callee's global prefix, or it is a 404 nobody reads.** Every Nest
-  service here mounts `setGlobalPrefix('api')` while the internal base URLs are configured without
-  it, and six of seven callers omitted it - channel push never delivered, an MLS-device guard reduced
-  to a constant `true`, account deletion never purging chat or social data. **Fix it at the seam:** a
-  `internal/service-urls.ts` per service that inserts the prefix exactly once, so it is not the
-  caller's to write. Putting `/api` in the compose file fixes the deployment and leaves the code's
-  defaults wrong.
-- **A best-effort `.catch(warn)` is designed for a TRANSIENT fault and will hide a PERMANENT one for
-  ever.** A route that has never once worked is indistinguishable, from the caller's side, from a
-  service that is briefly down. If a call is allowed to fail silently, nothing about its own logs
-  will ever tell you it is not merely unlucky - the only instrument that finds this class is the
-  CALLEE's log read over a window in which the path is known to have run.
-- **A SECOND COPY OF A SEND IS A SECOND CONTRACT, AND ONLY ONE OF THEM WILL BE MAINTAINED.**
-  `POST /internal/push/notify` carried its own `getMessaging().send()` loop - the same one as
-  `MessagingService.sendPushToUser` minus the `apns` block - so every push it carried (every salon
-  message, post, form reminder and cross-device read frame) was a data-only FCM message: never
-  surfaced by iOS, never handed to the NSE, dropped by every iPhone while the endpoint answered
-  `sent`. The correct block existed, was documented, and was unit-tested field by field; **none of
-  that reached the caller that did not call it.** A shared payload builder is not a shared path -
-  test the message that actually leaves the process, through the real caller.
-- **A convention applied in two places out of three is the worst state a convention can be in**, and
-  the two correct ones are what make the third invisible: `payment/social-internal-client.ts` and the
-  media call both spelt the prefix, so every reading of "how do we call another service here"
-  returned a correct example.
+- **An internal call carries the callee's GLOBAL PREFIX, or it is a 404 nobody reads** - fix it at the seam (`internal/service-urls.ts`), so it is not the caller's to write. Putting `/api` in the compose file fixes the deployment and leaves the code's defaults wrong. [api-surface](protocols/api-surface.md#internal-cross-service-calls)
+- **A convention applied in two places out of three is the worst state a convention can be in** - the two correct ones are what make the third invisible, because every reading of "how do we call another service here" returns a correct example. [api-surface](protocols/api-surface.md#internal-cross-service-calls)
+- **A best-effort `.catch(warn)` is designed for a TRANSIENT fault and will hide a PERMANENT one for ever.** A route that never once worked is indistinguishable from a service briefly down; the only instrument that finds this class is the CALLEE's log, read over a window in which the path is known to have run. [api-surface](protocols/api-surface.md#internal-cross-service-calls)
+- **A second copy of a send is a second CONTRACT, and only one of them will be maintained** - a shared payload builder is not a shared path. Test the message that actually leaves the process, through the real caller. [chat-delivery](services/chat-delivery.md)
 
 ## Contracts the compiler does not check -> [development](development.md)
 
 Every unchecked seam - Tauri command names, plugin ACLs, `push_context.json`, `mlsWorkerProtocol.ts`,
-`LoginErrorCode` - is enumerated there. Two to keep in the head:
+`LoginErrorCode` - is enumerated on [development](development.md#contracts-the-compiler-does-not-check).
+What must not be forgotten between the pages:
 
-- A cross-process contract is only as good as its test: pin the PATHS as well as the field names,
-  or a writer on one OS fills a directory nothing ever reads.
-- **A PAYLOAD FIELD WITH NO READER-SIDE CHECK DRIFTS IN BOTH DIRECTIONS, SILENTLY.** The channel push
-  sent `workspaceId`, `messageId` and `createdAt` to every device for the whole life of the feature
-  and no client read one of them, while `mentioned` - computed per recipient, and the only field that
-  costs a user something - was read by none either, so an `@` in a salon was indistinguishable from
-  any other message. Nothing could have caught it: the native halves are verified by COMPILING, which
-  says nothing about which keys they read, and the payload never passes through TypeScript. Pin such
-  a seam with a source-reading test in BOTH directions - every key sent is read, every key read is
-  still sent (`channelPushFields.test.ts`, twin of `fcmCacheFields.test.ts`).
-- Never let a capability probe swallow its own failure, and never branch on an error MESSAGE.
-- **MAKING A DEAD CODE PATH REACHABLE RE-OPENS EVERY CHECK THAT PATH NEVER HAD.** The replay handlers
-  for `delete_message` / `edit_message` applied a mutation by id with NO author check, which had
-  cost nothing while no mutation ever entered the shared log; putting them there made the handlers
-  the path every mutation takes, and re-opened one layer down a hole the live path had closed six
-  months earlier (`f0dc3296`, `f924932b`). Before enabling dead code, audit it as NEW code - it has
-  never been subject to any review the reachable paths went through.
-- **CARRY THE EVIDENCE THAT THE WINDOW OPENED, OR A GREEN RESULT CANNOT BE TOLD FROM AN UNEXERCISED
-  ONE.** Re-running MSG-1 after its fix PASSED - vacuously: the store was warm, the probe found
-  nothing, the replay never ran, so the race window the bug lives in never opened. Any check whose
-  bug needs a window must assert the window opened (`msg1b.mjs` refuses to report PASS unless the
-  message pane actually grew), and the same rule is why a source-reading guard needs a vacuity
-  assertion (`historyStateKeyInvalidation.test.ts` fails if it finds fewer write sites than exist).
-- **A DISTRIBUTION IS NOT A DIAGNOSIS: BEFORE BLAMING A CAUSE, CHECK WHETHER THE MECHANISM THAT
-  WOULD HAVE PREVENTED IT IS ALREADY RUNNING.** "p90 4.25 MB, i.e. unmodified phone photos" named a
-  cause from a shape and planned an x5-10 lever on it; `compressImage` was already on every upload
-  path and a 9 MP photo costs 245 KB through it, so the lever was worth nothing and the real bytes
-  (video, and HEIC through `img.onerror`) were never looked for. The measurement that settles it is
-  cheap - run the app's OWN transform over a representative input and compare to what is on disk.
-- **A DISTINCTION CARRIED IN PROSE IS A DISTINCTION EXACTLY ONE CALL SITE WILL MAKE.** `410 Gone`
-  became `new Error('MEDIA_PURGED_BY_RETENTION')`, so telling "expired for ever" from "the download
-  failed" meant `String.includes` at each consumer - and of four media surfaces exactly one did it:
-  one rendered the raw token to the user in red, one drew a generic broken image, one spun for ever.
-  The classification belongs at the THROW, as a type (`MediaPurgedError` + one `isMediaPurgedError`).
-- **WHEN THE THROW IS ON THE OTHER SIDE OF HTTP, THE TYPE IS A `code` IN THE BODY** - the same
-  discipline, one layer out. `shouldRefreshChannelKey` matched five substrings to decide whether to
-  refresh a channel key, two of them thrown locally and three sent by the social-service; the fix
-  types the local pair (`ChannelKeyUnavailableError`) and names the remote pair
-  (`STALE_CHANNEL_KEY_VERSION`, `CHANNEL_KEY_VERSION_REQUIRED`), read through a `ChannelApiError`
-  that carries status and code while leaving `message` untouched. Two things the sweep showed:
-  a list of substrings hides its own duplicates (`'Sync required'` was only the tail of
-  `'Missing key for epoch N. Sync required.'`, so five sentences were four throws), and it hides
-  which of them the client can even produce - `CHANNEL_KEY_VERSION_REQUIRED` was being retried
-  although this client cannot emit it.
-- **A `catch` THAT HAS TO RECOGNISE ITS OWN THROW IS TOO WIDE.** `importBackup` threw the v1 refusal
-  from inside its own `try` and then did `e.message.startsWith('Les sauvegardes v1')` to let it back
-  out. The branch was not a classification problem but a scope one: the version check belongs ABOVE
-  the `try`, where nothing can catch it, and the branch disappears rather than being typed. Look for
-  this shape wherever a `catch` converts everything to one verdict - the exception it makes for
-  itself is the tell.
-- **A STATUS PARSED BACK OUT OF A SENTENCE IS A STATUS THAT WAS DISCARDED.** `+layout.ts` logged a
-  user out on `String(error).includes('(404)')`, matching a number `fetchUserProfile` had formatted
-  into its own message a moment earlier. The status is the answer; carry it as a field
-  (`UserProfileFetchError.status`) rather than printing it and reading it back.
-  Corollary for any audit: **one surface handling a case is not "the case is handled"** - enumerate
-  the consumers of the seam, never just the ones that mention it.
-- **ENUMERATE THE WRITERS OF THE STATE, NOT THE CALLERS OF THE HELPER - AND THEN MAKE THE HELPER THE
-  ONLY WRITER.** WP-HISTGHOST-1 was fixed by wiring the awaiting-history cleanup into
-  `markConversationDeletedRemotely`, whose five call sites were all checked. It shipped and FAILED
-  in production, because `lifecycle: 'removed'` was written INLINE in five OTHER places - a
-  `groupDeleted` system message, being excluded from the group, discovery, a re-add finding the
-  group tombstoned - and a sixth path purged the row outright, orphaning the marker with no row
-  left to reach it. `grep` for the STATE, not for the function; then collapse every writer into one
-  (`retireConversation`) and lock it with a test that greps the source, because no unit test can
-  observe a seventh path that does not exist yet. [chat](frontend/modules/chat.md).
-- **A PASSING CHECK THAT NEVER ARMED ITS PRECONDITION IS A CHECK THAT MEASURES NOTHING.** The first
-  end-to-end run of DEL-1 was green: it created a group, invited the peer, sent messages, deleted
-  it, and found no marker and no banner. There had never been a marker - the messages were sent
-  AFTER the join, so the peer was missing nothing. The assertions would have held with the fix
-  reverted. Every check that clears a state must first PROVE the state was set, and report
-  `VACUOUS` rather than `PASS` when it was not.
-- **A CONNECTION POOL MAKES `BEGIN` AND `COMMIT` TWO DIFFERENT CONVERSATIONS.** `tauri-plugin-sql`
-  opens SQLite through sqlx's `Pool::connect` (default `max_connections = 10`), so each `execute` is
-  its own acquisition and a three-call `BEGIN`/INSERT/`COMMIT` can touch three connections - leaving
-  a transaction open on one of them for good, which then fails every later writer with `database is
-  locked`. Proven on device by issuing two concurrent `BEGIN`s and having both succeed. Serialising
-  in JS orders the sections but cannot bind them to a connection, which is why `runExclusive` looked
-  right and was not. **A statement is the largest unit of atomicity available**: one multi-row
-  `INSERT` (`db/sqliteBatch.ts`), never a loop inside a transaction - and a chunked batch is only
-  safe because the rows are `INSERT OR REPLACE` under a caller-held key, so a re-run converges.
-  [mobile > there is NO multi-statement transaction here](frontend/mobile.md).
-- A plugin in `Cargo.toml` is not a plugin the app may CALL: Tauri v2 gates every plugin COMMAND
-  behind `capabilities/`, and an ungranted one builds, ships and installs, then rejects on a real
-  device. EVENTS are not gated - which is how `deep-link` worked warm and was dead cold for as long
-  as the grant was missing. `tauriCapabilities.test.ts` is the guard.
-- **A mocked repository never parses SQL**, so a query builder's output is unverified until a real
-  Postgres sees it - and TypeORM does NOT preserve the order selects were declared in, so `DISTINCT`
-  written into a `.select()` string lands mid-list once an `.addSelect()` follows (`.distinct(true)`
-  is the only safe spelling). Where a test cannot reach, the DEPLOY LOG is the test.
-- **Two frontend builds writing `build/` at once ship an app that cannot boot, and every gate is
-  green.** SvelteKit's per-build `__sveltekit_<id>` names a global the HTML writes and the chunks
-  read; mixed, `kit.start()` throws `Cannot read properties of undefined (reading 'data')` and a
-  phone sits on the splash forever. `bun run build` now ends with
-  `scripts/check-bundle-consistency.mjs`. Never run an Android/iOS build next to anything else that
-  builds the frontend - `beforeBuildCommand` IS `bun run build`.
-- A batch of maintenance jobs must catch and log PER JOB. Sharing one try/catch means the first
-  failure hides every job after it, and a GC that silently does nothing is indistinguishable from a
-  GC with nothing to do. **The same holds for any observer list, and a COMMENT claiming the
-  subscribers are independent is not independence** - `endBulkIngest` awaited them in one bare loop,
-  so a failing checkpoint would have taken the UI's render buffer down with it (WP-RETRANSMIT-1).
-  Isolation is a `try` per subscriber, or it does not exist.
+**Seams nothing compiles**
+
+- **A cross-process contract is only as good as its test** - pin the PATHS as well as the field names, or a writer on one OS fills a directory nothing reads. [dev](development.md#cross-language-boundaries)
+- **A payload field with no reader-side check drifts in BOTH directions, silently** - pin it with a source-reading test each way (`channelPushFields.test.ts`, twin of `fcmCacheFields.test.ts`). [channel-encryption](protocols/channel-encryption.md)
+- **A plugin in `Cargo.toml` is not a plugin the app may CALL** - Tauri v2 gates COMMANDS behind `capabilities/`, and an ungranted one ships and rejects on a real device. EVENTS are not gated. [mob](frontend/mobile.md)
+- **A query builder's output is unverified until a real Postgres sees it** - and where a test cannot reach, the DEPLOY LOG is the test. [dev](development.md#things-that-look-type-safe-and-are-not)
+- **A connection pool makes `BEGIN` and `COMMIT` two different conversations** - a statement is the largest unit of atomicity available. [mob](frontend/mobile.md)
+- **Two frontend builds writing `build/` at once ship an app that cannot boot, and every gate is green** - `beforeBuildCommand` IS `bun run build`. [dev](development.md#scripts)
+
+**Classify at the throw**
+
+- **A distinction carried in PROSE is a distinction exactly ONE call site will make** - the classification belongs at the throw, as a TYPE. [media-service](services/media-service.md)
+- **When the throw is on the other side of HTTP, the type is a `code` IN THE BODY** - and a list of substrings hides both its own duplicates and which of them this client can even produce. [social-service](services/social-service.md)
+- **A status parsed back out of a SENTENCE is a status that was discarded** - carry it as a field. [auth](frontend/modules/auth.md#a-status-parsed-back-out-of-a-sentence-is-a-status-that-was-discarded)
+- **A `catch` that has to recognise its OWN throw is too wide** - the check belongs above the `try`, and the branch disappears rather than being typed. [backup](frontend/backup.md)
+- **Never let a capability probe swallow its own failure, and never branch on an error MESSAGE.** [dev](development.md#things-that-look-type-safe-and-are-not)
+- **One surface handling a case is not "the case is handled"** - enumerate the CONSUMERS of a seam, never just the ones that mention it. [auth](frontend/modules/auth.md#a-status-parsed-back-out-of-a-sentence-is-a-status-that-was-discarded)
+
+**Finding every writer, and every failure**
+
+- **Enumerate the WRITERS of the state, not the callers of the helper - then make the helper the only writer**, locked by a test that greps the source (WP-HISTGHOST-1). [chat](frontend/modules/chat.md#one-writer-for-a-conversations-retirement-retireconversation-wp-histghost-1)
+- **Making a dead code path REACHABLE re-opens every check that path never had** - audit it as NEW code before enabling it. [chat](frontend/modules/chat.md#a-mutation-event-is-authorised-on-receipt-by-the-mls-sender)
+- **A batch of maintenance jobs catches and logs PER JOB**, and a comment claiming subscribers are independent is not independence - isolation is a `try` per subscriber or it does not exist (WP-RETRANSMIT-1). [chat](frontend/modules/chat.md)
+
+**Checks that measure nothing**
+
+- **Carry the evidence that the WINDOW OPENED**, or a green result cannot be told from an unexercised one - the same rule makes a source-reading guard need a vacuity assertion. [testing-methodology](testing-methodology.md)
+- **A passing check that never armed its PRECONDITION measures nothing** - prove the state was set, and report `VACUOUS` rather than `PASS`. [testing-methodology](testing-methodology.md)
+- **A distribution is not a diagnosis** - before blaming a cause, check whether the mechanism that would have prevented it is already running, by running the app's OWN transform over a representative input. [storage-forecast](infrastructure/storage-forecast.md)
 
 ## Mobile and native -> [frontend/mobile](frontend/mobile.md)
 
 Push transports, the App Group, the NSE, the decrypt ladder and the update target are all on that
-page. The five to carry, plus one status line:
+page. `mob` = [mobile](frontend/mobile.md), `auth` = [auth](frontend/modules/auth.md).
 
-- **A GATE INSIDE A COMPONENT'S OWN `onclick` IS DEAD CODE WHEREVER SOMETHING ELSE ALREADY OWNS THE
-  EVENT.** `AppLink`/`LinkPreviewCard` each gated their external link with a Safe Browsing check
-  inside their bubble-phase `onclick` (WP-SAFELINK-1) - correct on the web, and silently bypassed on
-  every Tauri build (Android, iOS, desktop), because `hooks.client.ts` had already installed a
-  document-level CAPTURE-phase listener for exactly this class of link, months earlier, that calls
-  `event.stopPropagation()` and opens the URL itself before the anchor's own handler ever runs. The
-  fix is not "also gate the interceptor" - it is to gate the ONE function both paths actually call to
-  open the URL (`openExternal`), so no future call site can forget the check by construction. Before
-  adding a click handler to fix or gate something, grep for existing `addEventListener(..., true)` on
-  `document`/`window`: capture fires before bubble, and `stopPropagation` there means your handler
-  never sees the event at all - not silently, but invisibly, since nothing throws.
-- An app extension has its OWN data container: a path that is right in the app process is silently
-  wrong in the NSE, and the App Group is the only shared storage.
-- Background decrypt applies no commit, so a silent commit push leaves the next message unreadable -
-  that is the epoch gap, not a bug to retry through.
-- **WORK GUARDED BY ONE LOCK IS ALREADY SERIAL - GIVING IT A THREAD EACH ONLY ADDS THE FIGHT.** A
-  thread per push looks concurrent and is not: they all queue on the same `MlsStateLock`, at
-  5 s per timeout, each winner re-reading the whole 1.6 MB `mls.bin`. Behind a backlog that reached
-  97 timeouts, 60 retries and 20+ threads, until `ActivityManager` killed the process for
-  `excessive cpu` - and a killed app delivers no notification and drains no outbox, which is the
-  real cost. **Serialising such work adds no latency**, because the lock had already imposed the
-  order; it removes only the contention (WP-PUSHHERD-1).
-- **A LOCK TIMEOUT IS NOT A DOMAIN ANSWER.** `isGroupLocal` returned a plain `Boolean`, so lock
-  unavailable, `mls.bin` unreadable, device key missing and JNI absent all became "the group is not
-  joined on this device" - twenty verdicts from ten epoch queries, about a DM the device had been
-  in for months, each one routed into the Welcome-race retry loop that then re-entered the same
-  contended lock. Any predicate that can FAIL TO LOOK needs a third value, and `UNKNOWN` must reach
-  no recovery at all: a catch-up answers an epoch gap and a race answers a pending join, and
-  nothing has diagnosed either.
-- **WHAT REMOVES A NOTIFICATION MUST KEY ON WHAT THE POSTER WROTE - AND ON IOS THERE ARE TWO
-  POSTERS.** The in-app path posts under `canari-<stableId>`, the NSE under an identifier the system
-  assigned; `CanariCancelConversationNotification` removed only the first, so on a KILLED iPhone -
-  the only state where the NSE posts, and exactly the state a read on another device has to clean up
-  - it matched nothing and the banner stayed. `threadIdentifier` is the conversation on both paths,
-  so enumerate the delivered notifications and remove by thread. Then write the badge from the array
-  already in hand: `removeDeliveredNotificationsWithIdentifiers:` has no completion handler, so
-  re-reading the centre right after it counts what you just deleted, sometimes.
-- A Play-signed install and the GitHub-signed APK cannot update each other, and switching sides
-  needs an uninstall that wipes `mls.bin` - so the update target is a RUNTIME fact, never a constant.
-- `minClientVersion` is the ONLY thing that interrupts a user now; raising it before the store
-  rollout has reached devices locks everyone out behind a button leading to the old version.
-- Only user-VISIBLE native strings stay French; everything read while debugging is English.
-- A path restriction written for iOS has NO effect on Android: the App Link claim lives in a
-  different file per platform and `assetlinks.json` has no notion of a path, so the lists are
-  GENERATED from one source. A host with no path attribute claims the whole host.
-- A CSS custom property consumed at TWO nesting depths applies its correction TWICE if both
-  consumers independently subtract the same inset: `.app-layout` re-pinned itself to
-  `--app-viewport-height` even though its own ancestor chain was already correctly shrunk by that
-  same variable structurally (`padding-top`), leaving a gap the height of the status bar (WP-KBD-1).
-  The fix is not making the second consumer's math right - it is deleting the second consumer.
-- Edge-to-edge on Android is NOT guaranteed by `env(safe-area-inset-*)` alone: whether the OS
-  populates it depends on OS-enforced defaults (`targetSdk` 35+ on Android 15+) that some OEMs
-  (seen on Xiaomi/HyperOS) do not honor consistently for a WebView. Call `enableEdgeToEdge()`
-  explicitly in `onCreate` rather than relying on version-gated enforcement to make the insets this
-  app's CSS already assumes everywhere actually show up.
-- **`fetch` IS NOT `fetch` in the WebView**: `hooks.client.ts` replaces `window.fetch` with the Tauri
-  HTTP plugin's, which is a NETWORK client and rejects every non-`http(s)` scheme with
-  `scheme <x> not supported` - a bare rejection that reads as a dead network. The routing rule must
-  name what the plugin CAN do, never the exceptions: written as an exception list it missed `blob:`,
-  and since saving an attachment reads its object URL back, EVERY download on both platforms failed
-  while the ACL, the save dialog and `fs.writeFile` were all correct. `utils/fetchRouting.ts`, pure
-  and tested. `XMLHttpRequest` is not patched - a passing XHR beside a failing `fetch` is the
-  fingerprint.
-- **A RELATIVE `/api/` PATH IS DEAD ON MOBILE, AND IT FAILS AS A SUCCESS.** The WebView's origin is
-  `tauri.localhost`, so Tauri resolves the path as an ASSET, misses, and falls back to `index.html`
-  - **200 with an HTML body**, so `res.ok` is `true` and only `res.json()` throws, inside whatever
-  `catch` happens to be there. Seen on A1 2026-08-11 in the app's own log (`[tauri::manager] Asset
-  api/mls/security/pin-status/... not found; fallback to index.html`). Three call sites had it and
-  the third was destructive: `handlePinReset` read that `res.ok` as "the server cleared the
-  verifier" and went on to wipe the device's MLS state, losing the history while the verifier stayed
-  registered - the WP-DIRECTBOOT-1 shape again, a "cannot read" taken for a "not there" with a
-  destructive branch behind it. Always a base from `utils/apiUrl.ts` (`coreUrl`/`socialUrl`/
-  `gatewayUrl`/`deliveryUrl`) or `historyBaseUrl`; `apiUrl.absolute.test.ts` is the guard.
-- A WEBVIEW HAS NO DOWNLOAD MANAGER: `<a download>` is a silent no-op on Android and iOS alike
-  (Tauri installs neither a `DownloadListener` nor a `WKDownloadDelegate`), and the click still
-  "succeeds", so there is no exception and no log - eleven buttons shipped dead. Everything saving a
-  file goes through `$lib/utils/fileDownload.ts`. Never ask for a DIRECTORY on mobile (Android's SAF
-  has only a document picker), and remember `fs:default` is READ-ONLY - the plugin being named in
-  the capability file grants no write.
-- A decision reachable from the CLEARTEXT push fields must never sit behind the decrypt ladder: an
-  early return on "could not decrypt" silently swallows every action that never needed the plaintext
-  (WP-NOTIF-1). And parity between the platforms is not parity of declarations - iOS was correct here
-  and Android was not, differing only in WHERE an early return sat.
-- A native thread has NO JAVA FRAMES on its stack, so `FindClass` from a JNI-attached Rust thread
-  only reaches boot-classpath FRAMEWORK classes (`android.webkit.CookieManager`), never an
-  app-bundled class - not `MainActivity`, not an AndroidX library class like
-  `CustomTabsIntent`. Calling one of those reliably needs Tauri's own plugin-invocation path
-  (`@TauriPlugin`/`Plugin(activity)`), which already runs with the right classloader context - not
-  a raw `JNI_OnLoad`-cached `JavaVM` and a hand-rolled `attach_current_thread` (WP-OIDC-TAB-1).
-- **A DEPENDENCY CAN MAKE YOUR PROCESS START IN A STATE YOU NEVER DESIGNED FOR, and the source
-  manifest will not show it.** `tauri-plugin-notification` merges a `directBootAware` receiver on
-  `LOCKED_BOOT_COMPLETED`, so Canari runs before the first unlock after every reboot; read the
-  MERGED manifest. In that window a file `exists()` false, `SharedPreferences` loads empty AND
-  CACHES that for the life of the process, and a Keystore alias is present but unreadable - three
-  ways for "cannot read" to be mistaken for "not there". **A destructive repair must therefore be
-  gated on knowing the state is really broken**, or a temporary condition becomes a permanent loss:
-  `getOrCreateKey` deleted an intact key and regenerated it, orphaning the push secret for good
-  (WP-DIRECTBOOT-1, fixed and VERIFIED on hardware 2026-08-11: same pid across the unlock, zero
-  rejected secrets, and a real authenticated fetch forced by emptying the avatar cache).
-  Only the notification CHANNELS can be created pre-unlock - they live in the
-  system, not in our storage.
-- A plain system-browser launch (`openUrl`) is an ORPHANED activity on Android: it opens in a
-  separate task the calling app has no relationship to, so nothing on either side can dismiss it
-  once the flow that needed it is done. A Chrome Custom Tab launched via `CustomTabsIntent`
-  shares the LAUNCHING APP'S OWN TASK, which is what lets the OS close it automatically the
-  instant that task's activity resumes to the foreground (confirmed via
-  `dumpsys activity activities`: the tab's `ActivityRecord` shared the app's task id before
-  login, and was gone from the task's history entirely after the deep-link return) - the
-  right fix for "a login tab is left behind" is never a dismiss call, it is putting the tab in
-  the right task to begin with.
-- **A PAUSE MUST HAVE A SYMMETRIC RESUME, and a circuit breaker must never cut the wire to its own
-  reset.** `pauseConnection` stopped both watchdogs on every background; nothing re-armed them, so
-  one background/foreground cycle left a phone with no timer able to notice a dead socket. Then the
-  reconnect circuit latched open with only the login paths able to close it - while the watchdog,
-  the one thing whose job was to notice, reached through `scheduleReconnectImpl`, which the latch
-  turns off. Ask of every breaker WHO closes it, and check that party is not itself disabled by it.
-  Corollary that made this invisible: an app can be fully alive on HTTP and dead on its socket, so
-  "the network works" is never evidence the connection does.
-- **A RESUMPTION CONDITION MUST BE ONE EVERY CLIENT CAN EMIT, or the breaker is a permanent kill for
-  whoever cannot.** The reconnect circuit released on "foreground, or a network change"; a desktop
-  tab already in the foreground on an unchanged network produces NEITHER, ever - so it stayed dead
-  for ever after any outage longer than the ~8 minute budget, silently, until a manual reload.
-  Enumerate the client classes and ask, for each, WHICH event actually reaches the release. The fix
-  is almost never a third event: it is deleting the termination. **A REPEATED TRANSPORT FAILURE IS
-  NOT AN ANSWER AND MAY NEVER END A RETRY LOOP** - only a proof may (logged out; 401/403 on the
-  refresh cookie), and both already existed. Justify it by cost, not by nerve: capped at 30 s the
-  loop is two attempts a minute, below what the same client costs while connected. **Unbounded in
-  COUNT still has to be bounded in RATE**, and exactly one rung armed at a time - a leaked timer per
-  attempt turns "never gives up" into a storm. Lifecycle events then buy LATENCY, not recovery.
-  (WP-RECONNECT-1, [auth](frontend/modules/auth.md#wp-reconnect-1---the-ladder-that-stopped-and-the-two-silences-under-it))
-- **A RESCHEDULE ISSUED INSIDE THE GUARD THAT FORBIDS IT IS A NO-OP THAT LOGS SUCCESS.**
-  `attemptReconnect` called `scheduleReconnect` from inside its `try`, where `isReconnecting` is
-  still true - which is exactly one of the two early returns of the thing it was calling. Both
-  failure paths did nothing, after logging `Retrying in Ns...`; the retry that appeared to work was
-  a 60 s watchdog elsewhere. When a function re-enters its own scheduler, check the scheduler's
-  preconditions against the state the caller is holding at that instant - and put the call after the
-  `finally` that clears it.
-- `getCurrent()` answers "the last deep link this PROCESS was handed", never "the app was just
-  started by one" - the Rust plugin holds it for the life of the process, so every re-read must be
-  deduplicated. **And STATE WHOSE JOB IS TO SURVIVE AN EVENT MUST NOT LIVE WHERE THAT EVENT DESTROYS
-  IT**: the guard was a module variable, which a WebView reload wipes, so the reload replayed a
-  15-minute-old launch URL (WP-RELOAD-DL-1). "Module variable" is a LIFETIME, not a detail - pick it
-  against the event, here `sessionStorage`, which matches the plugin's own boundary.
-- **A DESTRUCTIVE CONTROL EXPOSED TO THE USER NEEDS AN ALLOWLIST OF WHAT IT MAY TOUCH, NOT A
-  DENYLIST OF WHAT IT MUST AVOID.** WP-DEVICESTORAGE-1's "clear cache" in Settings (`deviceStorage.ts`)
-  only ever calls `caches.delete()` on the three named Cache Storage buckets (media ciphertext,
-  avatars, association logos) - it has no path to `mls.bin`, the message database, or the outbox
-  mirror, because it never lists the app data directory at all. The measurement side is read-only
-  and separate: `get_local_storage_usage` (Rust) buckets `{app_data_dir}` file sizes for DISPLAY
-  only. A Settings-page button is easier for a user to hit by accident than a native OS "clear app
-  data" dialog already is - same shape of risk as WP-DIRECTBOOT-1's `getOrCreateKey`.
+**Where the platform is not the web**
 
-**Android/iOS parity: CODE audited 2026-08-03 (v0.12.0, file by file), CONFIGURATION audited
-2026-08-07.** Do not re-audit either - the table of every surface, what each is guarded by, and the
-OS-imposed asymmetries that are NOT defects, is
+- **A gate inside a component's own `onclick` is dead code wherever something else already owns the event** - gate the ONE function both paths call. [mob](frontend/mobile.md)
+- **`fetch` is not `fetch` in the WebView**: the routing rule names what the plugin CAN do, never the exceptions. [mob](frontend/mobile.md#fetch-is-not-fetch-inside-the-webview)
+- **A relative `/api/` path is dead on mobile, and it fails as a SUCCESS** - 200 with an HTML body. [mob](frontend/mobile.md#a-relative-api-path-is-dead-on-mobile-and-it-fails-as-a-success)
+- **A WebView has no download manager**: `<a download>` is a silent no-op that still "succeeds". [mob](frontend/mobile.md)
+- **An app extension has its own data container** - the App Group is the only shared storage. [mob](frontend/mobile.md)
+- **A native thread has no Java frames**, so `FindClass` reaches framework classes only. [mob](frontend/mobile.md)
+- **Edge-to-edge is not guaranteed by `env(safe-area-inset-*)` alone** - call `enableEdgeToEdge()` explicitly. [mob](frontend/mobile.md)
+- **A CSS custom property consumed at two nesting depths applies its correction twice**; delete the second consumer. [mob](frontend/mobile.md)
+- **A plain system-browser launch is an ORPHANED activity on Android** - a Custom Tab shares the app's task. [mob](frontend/mobile.md)
+
+**What a lock, a boot or a push can do to a fact**
+
+- **Work guarded by one lock is already serial - giving it a thread each only adds the fight.** Serialising it adds no latency. [mob](frontend/mobile.md)
+- **A lock timeout is not a domain answer.** Any predicate that can FAIL TO LOOK needs a third value, and `UNKNOWN` reaches no recovery. [mob](frontend/mobile.md)
+- **A dependency can make your process start in a state you never designed for** - read the MERGED manifest. [mob](frontend/mobile.md)
+- **A destructive repair must be gated on knowing the state is really broken**, or a temporary condition becomes a permanent loss. [mob](frontend/mobile.md)
+- **A destructive control exposed to the user needs an ALLOWLIST of what it may touch, not a denylist.** [mob](frontend/mobile.md)
+- **Background decrypt applies no commit**, so a silent commit push leaves the next message unreadable - that is the epoch gap. [mob](frontend/mobile.md)
+- **A decision reachable from the CLEARTEXT push fields must never sit behind the decrypt ladder.** [mob](frontend/mobile.md)
+- **What removes a notification must key on what the POSTER wrote - and on iOS there are two posters.** [mob](frontend/mobile.md)
+
+**Connections that stop, and never start again**
+
+- **A pause must have a symmetric resume, and a circuit breaker must never cut the wire to its own reset.** [auth](frontend/modules/auth.md#wp-reconnect-1---the-ladder-that-stopped-and-the-two-silences-under-it)
+- **A resumption condition must be one EVERY client can emit**, or the breaker is a permanent kill for whoever cannot. [auth](frontend/modules/auth.md#wp-reconnect-1---the-ladder-that-stopped-and-the-two-silences-under-it)
+- **A repeated transport failure is not an answer and may never end a retry loop** - only a proof may. Unbounded in COUNT, bounded in RATE, one rung armed at a time. [auth](frontend/modules/auth.md#wp-reconnect-1---the-ladder-that-stopped-and-the-two-silences-under-it)
+- **A reschedule issued inside the guard that forbids it is a no-op that logs success.** [auth](frontend/modules/auth.md#wp-reconnect-1---the-ladder-that-stopped-and-the-two-silences-under-it)
+- **An app can be fully alive on HTTP and dead on its socket**, so "the network works" is never evidence the connection does. [auth](frontend/modules/auth.md)
+- **`getCurrent()` answers "the last deep link this PROCESS was handed"**, so every re-read is deduplicated - and **state whose job is to survive an event must not live where that event destroys it**. [mob](frontend/mobile.md)
+
+**Shipping**
+
+- **A Play-signed install and the GitHub-signed APK cannot update each other**, so the update target is a RUNTIME fact. [mob](frontend/mobile.md#where-an-update-comes-from)
+- **`minClientVersion` is the only thing that interrupts a user now** - raising it before the store rollout has landed locks everyone out. [legacy-compatibility](legacy-compatibility.md)
+- **A path restriction written for iOS has NO effect on Android**, so the claim lists are GENERATED from one source. [mob](frontend/mobile.md)
+- **Only user-VISIBLE native strings stay French**; everything read while debugging is English.
+- **A no-op on one platform must say WHY** - "nothing to do" and "nobody has looked" are different, and only the first is evidence. [mob](frontend/mobile.md#android--ios-parity-and-where-it-is-actually-guaranteed)
+
+**Parity is maintained BY CONSTRUCTION** - one shared file wherever the platforms can share one, a
+test reading both trees wherever they cannot. Every parity defect ever found has been in
+CONFIGURATION, never in code. Code audited 2026-08-03, configuration 2026-08-07; **do not re-audit
+either** - the table is on
 [mobile > parity](frontend/mobile.md#android--ios-parity-and-where-it-is-actually-guaranteed).
-**iOS cannot be tested for a long while (user, 2026-08-07), so parity is maintained BY
-CONSTRUCTION**: one shared file wherever the platforms can share one, a test reading both trees
-wherever they cannot. Every parity defect ever found has been in CONFIGURATION, never in code -
-the `/auth/callback` capture (`56fc6129`), the missing `deep-link` ACL (WP-DEEPLINK-1, which broke
-BOTH platforms), and `applinks:www.canari-emse.fr` claimed on iOS alone though `www` 301s and Apple
-does not follow redirects (fixed 2026-08-07, now asserted by `appSiteAssociation.test.ts`).
-**A no-op on one platform must say WHY**: "nothing to do" and "there is no API and nobody has
-looked" are different, and only the first is evidence - the iOS cookie jar is the second, and is now
-`check P`.
 
 ## Release and CI -> [cicd](cicd.md)
 
-Signing, the bump script, the secrets and every compile-check trick are on that page. The three
-that decide whether you believe a run:
+Signing, the bump script, the secrets and every compile-check trick are on [cicd](cicd.md).
 
-- A manual `workflow_dispatch` run of either release workflow is a pure compile check that ships
-  nothing - and the ONLY way to compile Swift/ObjC/Kotlin from Windows. Run both before believing
-  any native change.
-- A green run is not proof YOUR file compiled: the iOS pbxproj is hand-maintained, so grep the log
-  for `SwiftCompile`/`CompileC` on the file. (iOS only - Gradle cannot skip a source set.)
-- The CD regenerates `infrastructure/.env` from the repo secrets, so a value set over SSH lasts until
-  the next deploy. A credential is only real once it is a GitHub secret AND named in `cd.yml`.
-  **A THIRD place is just as mandatory and easy to forget: the service's own `environment:` block
-  in `infrastructure/docker-compose.prod.yml` (and `.dev.yml` for parity) must also name the var
-  explicitly** (`FOO: ${FOO:-}`) - `.env` having the value proves nothing about whether Compose
-  passes it into the container. `GOOGLE_SAFE_BROWSING_API_KEY` shipped correctly in `cd.yml` and
-  `.env.example` and was still absent from `docker exec ... env` on prod (WP-SAFELINK-1) because
-  this third step was skipped; the endpoint answered 200 with a wrong, silently-fail-open verdict
-  the whole time, not an error - `docker exec <container> env | grep FOO` is the only way to catch it.
-- **A TEST FILE NOBODY EXECUTES READS AS COVERAGE ON EVERY REVIEW.** Sky's `tests/api.test.ts` was
-  neither passing nor failing for months - the vitest `include` only ever looked under `src/` - and
-  it had rotted meanwhile: a mock missing an export the route calls, and an env assignment placed
-  after a hoisted import, so every case would have answered 500 had it ever run. Nothing announces
-  this; a green suite says only that the files it FOUND passed. When a suite lives outside the
-  pattern's roots, or a runner's `include`/`testMatch` is edited, check the file COUNT, not the
-  colour.
-- A generated file the repo COMMITS needs both halves or neither: the bump must patch it, and
-  `.gitignore` must really keep it - a later `*.lock` silently overrode the `!` written above it,
-  and a lock nothing bumps is corrected by whatever unrelated commit next runs cargo.
-  **Worse than either half is a generated file that the FORMATTER also owns**: the Tauri plugin ACL
-  outputs (`plugins/*/permissions/{autogenerated,schemas}/`) were written expanded by `build.rs` and
-  folded back by the pre-commit formatter, so every Android build dirtied the tree and every commit
-  undid it. They are gitignored now, like `gen/schemas/` already was; the SOURCE (`default.toml` and
-  the `COMMANDS` list in `build.rs`) stays tracked. Before ignoring any generated file, delete it and
-  rebuild - that is the only proof the generator really owns it.
-- **A GENERATED FILE IN GIT IS A COPY OF THE TRUTH, AND A COPY GOES STALE IN SILENCE.** The
-  question to ask is never "is it up to date" - it is **which pipelines rebuild it, and which ship
-  the committed one**. `frontend/src/lib/wasm/` was committed and rebuilt by `cd.yml` alone, so the
-  web ran the current `mls-core` while the Android, iOS and AppImage releases shipped the binary
-  from the last commit that thought to regenerate it: **two different cryptos in one fleet, and
-  nothing anywhere comparing them**. Rebuilding the untouched sources produced a different binary,
-  which is how it was proven rather than argued. The fix is not a habit or a reminder in `CLAUDE.md`
-  - it is that **every pipeline shipping a client builds the artefact itself**, from one composite
-  action with one pinned toolchain ([mls-wasm](frontend/mls-wasm.md#why-it-is-not-committed)).
-  A build step duplicated per pipeline is the same defect wearing a different hat: two toolchains
-  put two cryptos back in the fleet.
-- **"I CANNOT OBSERVE IT" IS A CLAIM ABOUT THE INTERFACES YOU TRIED, AND IT NEEDS THE SAME EVIDENCE
-  AS ANY OTHER CLAIM: enumerate what the mechanism WRITES.** Whether a Le Cercle pipeline had ever
-  run was recorded as blocked on project access because the GitLab project is private and
-  `/api/v4/projects/.../pipelines` answers 404 without a token. Three witnesses were open the whole
-  time: GitLab writes `refs/environments/<env>/deployments/<n>` into the repository, so a plain
-  `git ls-remote` over the SSH remote names every deployed commit; the runner is a SHELL runner on
-  the production host, so `journalctl -u gitlab-runner` carries one line per job with its pipeline
-  id and outcome; and the deployed container is tagged with the commit SHA it was built from. Ask
-  what a mechanism leaves behind - refs, journal lines, a running process - before concluding the
-  one endpoint that refused was the only way to look. **Note also which absence proves nothing:**
-  `refs/pipelines/*` came back empty because the server hides that namespace, so only the FULL
-  `ls-remote` distinguished "no pipelines" from "not shown to you".
+- **A manual `workflow_dispatch` run of either release workflow is a pure compile check that ships nothing** - and the ONLY way to compile Swift/ObjC/Kotlin from Windows. Run both before believing any native change. [cicd](cicd.md#a-manual-workflow-run-is-the-only-native-compiler-available-off-macos)
+- **A green run is not proof YOUR file compiled** - the iOS pbxproj is hand-maintained, so grep the log for `SwiftCompile` / `CompileC` on the file. [cicd](cicd.md#a-green-run-is-not-proof-that-your-file-compiled)
+- **A credential is real in THREE places, not two** - a GitHub secret, `cd.yml`, AND the service's own `environment:` block in `docker-compose.prod.yml`. `.env` holding the value proves nothing about what Compose passes into the container (WP-SAFELINK-1). [cicd](cicd.md#github-secrets)
+- **A generated file the repo COMMITS needs both halves or neither** - and worse than either half is one the FORMATTER also owns. Before ignoring any generated file, delete it and rebuild. [cicd](cicd.md#version-bump)
+- **A generated file in git is a COPY of the truth, and a copy goes stale in silence** - ask which pipelines REBUILD it and which ship the committed one. Every pipeline shipping a client builds the artefact itself. [mls-wasm](frontend/mls-wasm.md#why-it-is-not-committed)
+- **A test file nobody EXECUTES reads as coverage on every review** - a green suite says only that the files it FOUND passed. Check the file COUNT, not the colour. [testing-methodology](testing-methodology.md)
+- **"I cannot observe it" is a claim about the INTERFACES YOU TRIED** - enumerate what the mechanism WRITES (refs, journal lines, a running process) before concluding the one endpoint that refused was the only way to look. And note which absence proves nothing: a hidden ref namespace answers empty. [ecosystem-convergence](ecosystem-convergence.md#proving-a-pipeline-runs-without-the-api-that-would-have-said-so)
 
 ## Carte de la Vie Asso -> [carte-vie-asso](carte-vie-asso.md)
 
-The contract with the Portail, and every rendering trap (text sizing, the PDF anchor, the split
-watermark, Preflight), are on that page. The three that decide the contract:
-
-- A published carte is the poster RESOLVED (poster px + `stage`), never fractions and never a layout.
-  The showcase decides nothing: what it is not told, it cannot copy.
-- Association identity joins live; the displayed members are a snapshot, so a roster edit republishes.
-- The two repos must agree on the FONTS, or every measured box is wrong.
+- **A published carte is the poster RESOLVED** (poster px + `stage`), never fractions and never a layout - the showcase decides nothing, so what it is not told it cannot copy.
+- **Association identity joins LIVE; the displayed members are a SNAPSHOT**, so a roster edit republishes.
+- **The two repos must agree on the FONTS**, or every measured box is wrong.
 
 ## Associations and agenda -> [social-service](services/social-service.md)
 
-- A second surface for an existing action mirrors the SERVER's rule, not the first surface's:
-  the association page gates on `PROPOSE_EVENT` there, the server also lets any BDE
-  `VALIDATE_EVENTS` holder edit any event - so that holder had the right and nowhere to use it.
-- What a modal hides because it is redundant is a decision of the PAGE, never of `canEdit`.
+- **A second surface for an existing action mirrors the SERVER's rule, not the first surface's** - a `VALIDATE_EVENTS` holder had the right and nowhere to use it.
+- **What a modal hides because it is redundant is a decision of the PAGE, never of `canEdit`.**
 
 ## Cotisations (Cercle) -> [cotisations](cotisations.md)
 
-The page carries the tier model, the webhook ladder and everything debugging the live link cost.
-The two that are security, not plumbing:
+- **The tier XOR has ONE implementation** (`UserTagService.revokeSiblingTierTags`), and a tag revoke MUST be scoped to `issuingAssocId` or it is a cross-tenant IDOR.
+- **A product entity carries `webhookSecret` and `/products/all` answers every logged-in user** - same lesson as `Channel.masterSecret`. `toSafeProduct` is the one seam, and a guard is a decorator nothing type-checks, so assert the metadata.
 
-- The tier XOR has ONE implementation, `UserTagService.revokeSiblingTierTags`, and a tag revoke MUST
-  be scoped to `issuingAssocId` or it is a cross-tenant IDOR.
-- A product entity carries `webhookSecret` and `/products/all` answers every logged-in user - same
-  lesson as `Channel.masterSecret`. `toSafeProduct` is the one seam, and a guard is a decorator
-  nothing type-checks, so assert the metadata.
-
-## Working in the Cercle repo -> `../le-cercle/AGENTS.md` (that repo's own contract), and the VEILLE loop in `CLAUDE.md`
+## Working in the Cercle repo -> `../le-cercle/AGENTS.md`
 
 That file is the contract for THAT repo - the per-action guard, the 403 rather than a redirect, the
 empty signing key, the rollback that throws a success value, the date model, the `bun:sqlite` and
 migration traps, the run-time config rule. Read it there; re-copying it here only makes the two
-drift. One thing it cannot say from inside: a duplicate migration NUMBER is loud, not silent
+drift. One thing it cannot say from inside: **a duplicate migration NUMBER is loud, not silent**
 (`exit(1)` before applying anything) - but only once both branches have merged, so check the highest
-number on `main` before naming a file.
+number on `main` before naming a file. Its CI is verified running:
+[ecosystem-convergence](ecosystem-convergence.md#proving-a-pipeline-runs-without-the-api-that-would-have-said-so).
 
 ## Calls, and their record -> [call-service](services/call-service.md#the-call-record)
 
-Written 2026-08-19 while giving `call-service` the logging the CALL phase stands on.
-
-- **A failure seen in halves is attributed by the one witness that sees both, or not at all.** Two
-  clients each hold half of a call and neither can see the other, so no amount of client logging
-  settles which half broke. The SFU is that witness; its record must therefore carry what separates
-  the causes it cannot itself distinguish - WHICH side sent, which side never arrived, and the
-  duration - and one line per socket, not a level to turn up afterwards.
-- **`duration_ms` alone cannot say whether a call happened.** It is read next to `connected_ms`, and
-  `connected_ms=-` is a statement, not a missing value: render it as a dash, never as a zero, or a
-  call that never connected reads as a very short one.
-- **A disposition is set ONCE and the first cause wins.** An evicted device sends its `Close` frame
-  moments later and a reaped room's socket errors out afterwards - recording the last event reports
-  the consequence and hides the cause.
-- **Counts at the end of negotiation, never a line per candidate.** A call gathers dozens; the count
-  is the figure that answers a question and the trickle is what buries the lines that do. Build the
-  terminal ICE line out of the same helper as the record so the two cannot drift.
-- **A per-device guard on a fan-out reports a fleet fault when the fault is ours.** Check the one
-  thing every device depends on ONCE, before the loop - inside it, `rang=0/N` reads as "nobody was
-  reachable" when the truth is that this server never asked, and a `break` there also truncates the
-  fan-out while returning a count that looks like a partial delivery.
-- **Dropping an `RTCPeerConnection` is not closing it.** webrtc-rs holds the ICE agent and its TURN
-  allocation until told to let go, and a relay allocation left running is billed against the very
-  budget the ICE endpoint refuses credentials to protect. Every path that removes a peer closes it -
-  and a "session end" line emitted while the allocation is live states an end that has not happened.
-
----
+- **A failure seen in HALVES is attributed by the one witness that sees both, or not at all** - the SFU is that witness, so its record carries what separates the causes it cannot itself distinguish, one line per socket.
+- **`duration_ms` alone cannot say whether a call happened** - it is read next to `connected_ms`, and `connected_ms=-` is a STATEMENT, never a missing value.
+- **A disposition is set ONCE and the first cause wins** - recording the last event reports the consequence and hides the cause.
+- **Counts at the END of negotiation, never a line per candidate** - and build the terminal ICE line out of the same helper as the record so the two cannot drift.
+- **A per-device guard on a FAN-OUT reports a fleet fault when the fault is ours** - check the one thing every device depends on ONCE, before the loop, and never `break` out of a fan-out that returns a count.
+- **Dropping an `RTCPeerConnection` is not CLOSING it** - webrtc-rs holds the TURN allocation until told to let go, and a "session end" line emitted while it is live states an end that has not happened.
 
 ## Presence, in the gateway -> [chat-gateway](services/chat-gateway.md#presence)
 
-- **The presence key is per DEVICE and every event that removes it is per CONNECTION.** Two tabs are
-  one device. Any path deleting `user:online:{userId}:{deviceId}` must discount the connection it
-  acts for and check for survivors - `AppState::remove_session` / `has_other_sessions` are the only
-  two forms of that question, and a third call site writing its own is the bug this section exists
-  for. Fixed 2026-08-16: the explicit `{"type":"disconnect"}` frame deleted unconditionally while
-  `ConnectionGuard::drop`, running a moment later, correctly declined to - so the guard written to
-  protect the key was what stopped it being restored.
-- **A connection is identified by its `conn_id`, never by `is_closed()`.** An aborted send task still
-  reports `false` until the runtime drops its receiver. `is_closed()` is only good enough for pruning
-  senders alongside an authoritative removal by id.
+- **The presence key is per DEVICE and every event that removes it is per CONNECTION** - two tabs are one device, so any deleter must discount its own connection and check for survivors. `AppState::remove_session` / `has_other_sessions` are the only two forms of that question; a third call site writing its own is the bug.
+- **A connection is identified by its `conn_id`, never by `is_closed()`** - an aborted send task still reports `false` until the runtime drops its receiver.
 
 ## Sessions, in every app -> [sessions](sessions.md)
 
-Settled 2026-08-04 by WP-SESS-1 and WP-SESS-2, SHIPPED in all four apps. The whole model and every
-rule it cost is on that page - read it before touching any login, cookie or rotation.
+Settled 2026-08-04 (WP-SESS-1, WP-SESS-2), SHIPPED in all four apps. Read [sessions](sessions.md)
+before touching any login, cookie or rotation.
 
-- A cookie whose content IS the identity it claims is not a credential, it is a form field.
-- A replayed rotating token is TWO holders of one cookie: revoke the session - but only with a grace
-  window, and settle the race in ONE conditional `UPDATE`, never read-then-write.
-- An empty key can fail OPEN or CLOSED and you cannot guess which. Decide explicitly.
-- Rotation makes DURABILITY part of the protocol: a client that loses the new token does not just
-  fail to refresh, it gets revoked. Force the write where the rotation happens, and AWAIT it - on
-  Android the cookie jar reaches disk only on `CookieManager.flush()`, and a kill with no lifecycle
-  callback rewinds it one generation.
-- A dead session is an ANSWER: never retry the request anonymously, or "you are logged out" renders
-  as "there is nothing here". Reach the verdict in one place and announce it from there - every
-  caller that re-decides is a path that can forget.
-- A one-shot announcement and a late subscriber are a RACE: replay the verdict to whoever registers
-  after it. A fallback only covers the race if it does everything the real handler does, which it
-  never does - ours redirected without closing the PIN modal, so `/login` arrived unusable.
-
----
+- **A cookie whose content IS the identity it claims is not a credential, it is a form field.**
+- **A replayed rotating token is TWO holders of one cookie** - revoke the session, with a grace window, and settle the race in ONE conditional `UPDATE`.
+- **An empty key can fail OPEN or CLOSED and you cannot guess which.** Decide explicitly.
+- **Rotation makes DURABILITY part of the protocol** - force the write where the rotation happens and AWAIT it; on Android the cookie jar reaches disk only on `CookieManager.flush()`.
+- **A dead session is an ANSWER** - never retry the request anonymously, or "you are logged out" renders as "there is nothing here". Reach the verdict in ONE place.
+- **A one-shot announcement and a late subscriber are a RACE** - replay the verdict to whoever registers after it, because a fallback never does everything the real handler does.
 
 ## Object storage, and deleting infrastructure -> [docker](infrastructure/docker.md)
 
-- **A COUNT IS NOT A COMPARISON.** "The new store holds more objects than the old one" passes while
-  the new store is missing objects the old one had. Compare the KEY SETS, both directions. Ours held
-  306 against 200 and was still missing five.
-- **A ROLLBACK WINDOW ON AN OBJECT STORE IS A WINDOW DURING WHICH DELETED USER CONTENT STAYS
-  READABLE.** A frozen store keeps serving what the platform has told the user is gone. Weigh that
-  against what the window buys before choosing its length - it is not free time.
-- **THE DATABASE CANNOT TELL YOU WHAT REFERENCES A MEDIA OBJECT.** There is no media table, and an
-  attachment's id travels inside the ciphertext (`channel_messages.attachments` is NULL in every
-  row). Any question of the form "is this blob still needed" has to be answered from the migration
-  record, never from a query.
-- **Before deleting a volume, mount it and ask it.** A container removed by a deploy takes its own
-  answer with it; a throwaway `mongod`/`alpine` over the volume costs 30 seconds and is the only
-  measurement that postdates the decision to delete.
-- **A volume outlives the compose file that named it.** Dropping a service stops its container and
-  leaves its storage; every deleted service owes an explicit `docker volume rm`, and there is usually
-  more than one (`mongo_data`, `mongo_config`, and a `local_`-prefixed twin from a stack run by hand).
-
----
-
-## Editing files from a script, on this box -> [development](development.md)
-
-- **A PYTHON WRITE IN TEXT MODE REWRITES EVERY LINE ENDING ON WINDOWS**, and the diff hides it: git
-  normalises on the way in, so `git diff` shows only the lines you added while the WORKING TREE has
-  become CRLF. It cost two test suites that slice a native source between multi-line anchors - a
-  pattern matching a newline followed by indentation cannot match one followed by a carriage return,
-  so both files threw at import and reported "0 test" rather than a failure anyone would read as
-  one. Always pass `newline='\n'` to `io.open(..., 'w')`, or write bytes.
-- **A SUITE THAT CANNOT LOAD REPORTS ZERO TESTS, NOT A FAILING ONE.** Read the FILE count in a
-  vitest summary, never only the test count: "2 failed | 197 passed" beside "1743 passed" is two
-  files that never ran. The exit code is 1, so CI does catch it - a human skimming the tail does not.
+- **A COUNT is not a COMPARISON** - compare the KEY SETS, both directions. Ours held 306 against 200 and was still missing five.
+- **A rollback window on an object store is a window during which DELETED user content stays readable** - weigh that against what the window buys; it is not free time.
+- **The database cannot tell you what REFERENCES a media object** - an attachment id travels inside the ciphertext, so "is this blob still needed" is answered from the migration record, never from a query.
+- **Before deleting a volume, MOUNT it and ask it** - a throwaway container over the volume costs 30 seconds and is the only measurement that postdates the decision.
+- **A volume outlives the compose file that named it** - every deleted service owes an explicit `docker volume rm`, and there is usually more than one.
 
 ## Shared gotchas -> [development](development.md), [cicd](cicd.md)
 
-Environment and tooling traps that are not about any one subsystem. Each one cost a run.
+Environment and tooling traps that belong to no one subsystem. Each cost a run.
 
-- Bash-tool commit messages: use a heredoc or `git commit -F file`, NOT PowerShell `@'...'@`.
-- **Postgres stores UTC and the prod host is `Europe/Paris` (CEST, +0200)**, so a DB timestamp is two
-  hours behind the wall clock a test just wrote down - `18:09:47` in `queued_message` IS the
-  `20:09:47` send. Both are CORRECT (`timedatectl` = CEST, `SHOW timezone` = UTC); do not "fix" the
-  server clock, it would move the 03:30 backup cron and break every log correlation. Convert.
-- MiConnect 2FA remembers the device for 8 h, so a later login only needs the code. If the CAS page
-  stalls after Esup Auth accepts, go BACK to the browser tab and reload; ask the user rather than
-  looping.
-- A live credential is not a debugging input: reading the phone's cookie jar is refused, and the
-  answer came from a probe that never touched the token. Reach for the observable, not the secret.
-- Android Rust compiles from Windows: `NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125`, put
-  `toolchains/llvm/prebuilt/windows-x86_64/bin` on PATH, `CC_aarch64_linux_android=aarch64-linux-android24-clang.cmd`,
-  then `cargo check --target aarch64-linux-android`. It is the only local check of `#[cfg(android)]`
-  code - and it proves compilation, never that a JNI `FindClass` resolves at runtime.
-- Backend lint needs `npm install` in the app dir (bare `oxlint`/`oxfmt` + repo-level configs).
-- The pre-commit hook sweeps the WHOLE frontend and re-stages - isolate unrelated dirty files.
+- **Postgres stores UTC and the prod host is `Europe/Paris`**, so a DB timestamp is two hours behind the wall clock a test wrote down. Both are correct - convert, never "fix" the server clock. [testing-methodology](testing-methodology.md#environment-traps-that-read-as-application-bugs)
+- **A Python write in TEXT MODE rewrites every line ending on Windows, and the diff hides it.** [dev](development.md#editing-files-from-a-script-on-windows)
+- **Android Rust compiles from Windows** - the only local check of `#[cfg(android)]` code, and it proves compilation only. [dev](development.md#compiling-android-rust-from-windows)
+- **A live credential is not a debugging input** - reach for the observable, not the secret.
+- Bash-tool commit messages: a heredoc or `git commit -F file`, NOT a PowerShell here-string.
+- Backend lint needs `npm install` in the app dir (bare `oxlint` / `oxfmt` + repo-level configs).
+- The pre-commit hook sweeps the WHOLE frontend and re-stages - isolate unrelated dirty files first.
 - Before push: `rm -rf apps/*/dist`, then `git pull --rebase --autostash origin main`.
 - Commit signing is ON globally over SSH - all commits Verified, do NOT disable.
-- Never assert a wall clock in a test; two isolated browser contexts = two devices.
-- Portail: SPA (`ssr = false`); `data-export/` holds PII, never commit.
-- Sky UI French must keep accents + straight apostrophes.
+- **Never assert a wall clock in a test**; two isolated browser contexts = two devices.
+- MiConnect 2FA remembers the device for 8 h; if the CAS page stalls after Esup Auth accepts, go BACK and reload rather than looping.
+- Portail: SPA (`ssr = false`); `data-export/` holds PII, never commit. Sky UI French keeps accents and straight apostrophes.

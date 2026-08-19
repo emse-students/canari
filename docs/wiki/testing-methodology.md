@@ -1001,6 +1001,19 @@ The fix is not a fourth comment. `goto` now **refuses** A1 unless the caller pas
 itself in a word that can be grepped. A rule that can be enforced at a seam belongs at that seam;
 prose is what you write when it cannot be.
 
+#### 22. A TEST FILE NOBODY EXECUTES READS AS COVERAGE ON EVERY REVIEW - check the file COUNT, not the colour
+
+Sky's `tests/api.test.ts` was neither passing nor failing for months: the vitest `include` only ever
+looked under `src/`, so the runner never found it. It had rotted meanwhile - a mock missing an export
+the route calls, and an env assignment placed after a hoisted import - so every case would have
+answered 500 had it ever run. Nothing announces this. **A green suite says only that the files it
+FOUND passed**, and a reviewer reading the tree sees a covered surface.
+
+So whenever a suite lives outside the pattern's roots, or a runner's `include` / `testMatch` is
+edited, read the reported file and case COUNT and compare it to what is on disk. The same instrument
+answers the general form of the question: a check that never ran and a check that passed are the same
+colour, and only the count separates them.
+
 ## Observation is part of the check, not a debugging step
 
 Decided 2026-08-06, after two shipped bugs came out of the logs of **passing** checks.

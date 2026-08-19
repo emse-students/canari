@@ -199,7 +199,7 @@ Three files, three jobs, no overlap: **[cross-client-testing](docs/wiki/cross-cl
 the board (state only - every check, its verdict, the commit it ran on);
 **[cross-client-campaign](docs/wiki/cross-client-campaign.md)** is the design (the ladder, the scope,
 the standing rules, the preflight, the negative rows, the debris cleanup);
-**[testing-methodology](docs/wiki/testing-methodology.md)** is how a result earns belief (nineteen
+**[testing-methodology](docs/wiki/testing-methodology.md)** is how a result earns belief (twenty-two
 rules distilled from harness faults); **[`tools/cross-client-harness/README.md`](tools/cross-client-harness/README.md)**
 is the operating manual. **Read them rather than re-deriving the state here, and keep no second
 copy.**

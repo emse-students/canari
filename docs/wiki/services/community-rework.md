@@ -168,7 +168,7 @@ and the `.proto` comment.
 2. ~~**WP-1** - axes 2 and 3, server-side, with tests.~~ Shipped 2026-08-18: twelve cases in
    `channel.service.spec.ts` pin the postcondition from each side it can be reached from.
 3. **WP-2..WP-8** - axis 1, as broken down in
-   [channel-encryption](../protocols/channel-encryption.md#the-work-packages-in-order).
+   [channel-encryption](../protocols/channel-encryption.md#6-the-work-packages).
 4. **Axis 4** once the user has answered it; **axis 5** opportunistically, inside whichever package
    already touches the table.
 5. The campaign restarts only after all of it, on one rebuilt Android APK.

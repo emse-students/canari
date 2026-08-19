@@ -300,6 +300,16 @@ index + fraction) before the gesture and re-locates it after, and it was validat
 control against the unfixed build first: drift (395, 1370) px there, (-17, -49) with the ratio
 correction, and the anchor correction closes the rest — measured (-0.8, -0.5) on device.
 
+## Autolinking bare domains, and why the TLD shape cannot decide it (WP-LINK-1)
+
+`postMarkdown.ts` and `messageDisplay.ts` both turn bare hostnames in user text into links. A
+heuristic that asks "does this token END in something TLD-shaped" is wrong in French: inclusive
+writing and elided forms produce endings that collide with real TLDs - `.es`, `.it`, `.re` and `.ne`
+against `auteur.rice`, `cher.e.s` and the like - and no amount of narrowing separates them, because
+the two really are the same string. An exact WHITELIST of the hosts worth autolinking sidesteps the
+ambiguity instead of trying to out-narrow it: a token is a link because it is on the list, not
+because it looks like one. `postMarkdown.test.ts` and `messageDisplay.test.ts` pin both directions.
+
 ## Comment media (image + GIF)
 
 A comment can carry one image or GIF (encrypted + uploaded via `MediaService.encryptAndUpload`,

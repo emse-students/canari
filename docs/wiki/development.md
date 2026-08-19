@@ -199,6 +199,12 @@ wrong, and each one has already shipped a bug.
   `sqlite_master` **before** the `CREATE TABLE`s, since `user_version` is 0 for a pre-migration DB
   too), and column-inspecting statements are built from `PRAGMA table_info`.
 
+- **A query builder's output is unverified until a real Postgres sees it.** A mocked repository never
+  parses SQL, and TypeORM does NOT preserve the order selects were declared in - `DISTINCT` written
+  into a `.select()` string lands mid-list as soon as an `.addSelect()` follows, which is a syntax
+  error the mock happily accepts. `.distinct(true)` is the only safe spelling. Where a test cannot
+  reach, **the deploy log is the test**.
+
 ## Working in this repo
 
 - Backend apps call bare `oxlint`/`oxfmt` from their local `node_modules/.bin` with repo-level
@@ -223,6 +229,27 @@ wrong, and each one has already shipped a bug.
 | `scripts/bump-app-version.sh` | Bump mobile app version (Android + iOS) |
 | `scripts/check-oidc.sh` | Test OIDC configuration against Authentik |
 | `scripts/install-oxvelte.sh` | Install oxvelte (Svelte linter) |
+
+### Editing files from a script, on Windows
+
+**A Python write in TEXT MODE rewrites every line ending**, and the diff hides it: git normalises on
+the way in, so `git diff` shows only the lines you added while the WORKING TREE has become CRLF. It
+cost two test suites that slice a native source between multi-line anchors - a pattern matching a
+newline followed by indentation cannot match one followed by a carriage return, so both files threw
+at import. Always pass `newline='\n'` to `io.open(..., 'w')`, or write bytes.
+
+**A suite that cannot LOAD reports zero tests, not a failing one.** Read the FILE count in a vitest
+summary, never only the test count: "2 failed | 197 passed" beside "1743 passed" is two files that
+never ran. The exit code is 1, so CI does catch it - a human skimming the tail does not. Same
+instrument as [testing-methodology rule 22](testing-methodology.md).
+
+### Compiling Android Rust from Windows
+
+`NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125`, put
+`toolchains/llvm/prebuilt/windows-x86_64/bin` on PATH, set
+`CC_aarch64_linux_android=aarch64-linux-android24-clang.cmd`, then
+`cargo check --target aarch64-linux-android`. It is the only local check of `#[cfg(android)]` code -
+and it proves COMPILATION, never that a JNI `FindClass` resolves at runtime.
 
 ## Local services (Docker Compose)
 

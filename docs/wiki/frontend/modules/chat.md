@@ -55,7 +55,7 @@ connection.ts handler:
   - unknown group -> buffer until Welcome arrives
 ```
 
-See [`protocols/mls-protocol.md`](../protocols/mls-protocol.md) for full flow details.
+See [`protocols/mls-protocol.md`](../../protocols/mls-protocol.md) for full flow details.
 
 ### The drain is a single point of failure for ALL inbound traffic (WP-HIDDEN-1, WP-DRAIN-1)
 
@@ -957,6 +957,21 @@ negative: two devices that each lost a different message agree perfectly on the 
 carries the sorted ids below 1000 messages, and above that one line per slice of the id space with a
 count AND a truncated SHA-256 of that slice's ids. The hash is exactly what catches "same count,
 different messages", and `historyManifest.test.ts` pins that case.
+
+### One writer for a conversation's retirement (`retireConversation`, WP-HISTGHOST-1)
+
+The awaiting-history marker must be cleared whenever a conversation ends, and the first fix wired
+that cleanup into `markConversationDeletedRemotely`, whose five call sites were all checked. It
+shipped and FAILED on production, because `lifecycle: 'removed'` was also written INLINE in five
+OTHER places - a `groupDeleted` system message, being excluded from the group, discovery, and a
+re-add finding the group tombstoned - while a sixth path purged the row outright, orphaning the
+marker with no row left to reach it.
+
+The lesson generalises: **grep for the STATE, not for the function that is supposed to own it.**
+Then collapse every writer into one - `retireConversation` in `utils/chat/conversations.ts` is now
+the only thing that may write that lifecycle - and lock it with a test that reads the SOURCE
+(`conversations.retire.test.ts`), because no unit test can observe a seventh path that does not
+exist yet.
 
 ## The render window is a pointer into an array the component does not own (WP-EMPTYVIEW-1)
 

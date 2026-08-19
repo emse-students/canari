@@ -42,8 +42,8 @@ Routes that take a **user id** in the path or body are checked against the **`x-
 
 ## Related sources
 
-- Nginx routing: [`infrastructure/local/Dockerfile.frontend`](../../infrastructure/local/Dockerfile.frontend) (`/api/mls/*` → chat-delivery).
-- Full MLS API surface: [`apps/chat-delivery-service/src/app.controller.ts`](../../apps/chat-delivery-service/src/app.controller.ts).
+- Nginx routing: [`infrastructure/local/Dockerfile.frontend`](../../../infrastructure/local/Dockerfile.frontend) (`/api/mls/*` → chat-delivery).
+- Full MLS API surface: [`apps/chat-delivery-service/src/app.controller.ts`](../../../apps/chat-delivery-service/src/app.controller.ts).
 
 ## See also
 

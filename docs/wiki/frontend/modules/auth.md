@@ -47,6 +47,17 @@ export async function logout(): Promise<void>;
 
 `apiFetch.ts` intercepts 401 responses: it calls `refreshAccessToken()` once and retries. If refresh fails, it clears the session and redirects to `/login`.
 
+### A status parsed back out of a sentence is a status that was discarded
+
+`+layout.ts` logged a user out on `String(error).includes('(404)')` - matching a number
+`fetchUserProfile` had formatted into its own message a moment earlier. The status is the ANSWER;
+carry it as a field (`UserProfileFetchError.status` in `stores/user.ts`) rather than printing it and
+reading it back. Only a 401 or a 403 may end a session, so the branch that needs the status is
+exactly the branch that must not guess it.
+
+Corollary for any audit of a seam like this: **one surface handling a case is not "the case is
+handled"**. Enumerate the CONSUMERS of the seam, never just the ones whose source mentions it.
+
 ## PIN and device key
 
 The PIN itself never encrypts anything and never leaves the device. It is the input to two

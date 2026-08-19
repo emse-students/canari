@@ -118,6 +118,31 @@ const { message, onReply }: Props = $props();
 - Composables with reactive state use the `.svelte.ts` extension.
 - Locale-reactive derived values: `const label = $derived(m.some_key())` — reassigned automatically on locale change.
 
+### A cleanup that releases something acquired asynchronously must wait for the acquisition
+
+An effect that unmounts before its `await` returns runs its release against a reference count that
+has not been incremented yet: the release decrements nothing, the retain lands a moment later, and
+the resource is then held by NOBODY - never freed, and in the avatar case still served to every
+later mount of the same face. The `cancelled` flag guards the STATE ASSIGNMENT, not the resource.
+Release inside the pending promise's `finally`, never beside it.
+
+### A synchronous "unknown" placeholder is indistinguishable from an answer
+
+Once a placeholder label is stored, anything that later resolves the real value LOSES to it - and a
+module-level cache re-renders nothing when it warms, so whether a user ever sees the truth depends
+on cache timing. Return the ABSENCE, never the label: `peekUserDisplayName` answers `null`, and a
+caller that needs to distinguish "not yet known" from "known to be empty" takes an explicit
+`*Resolved` flag. Same shape as the `displayName.ts` failure counter - a value and the fact that it
+was measured are two different pieces of information.
+
+The asynchronous twin of the same rule: **a lookup that FAILED returns "I do not know", never the
+text it would have displayed.** The moment a failure answers with a renderable value it is TRUTHY,
+and every caller written as `if (resolved) use it` overwrites what it already had - a name, a
+fallback, a cached row - with a placeholder. `resolveUserDisplayName` did exactly that to twenty-six
+call sites, and only on the FIRST failure: the suppression window answered `null` afterwards, so one
+event had two renderings chosen by how recently it had happened. **Rendering a placeholder is the
+CALLER's decision**; the resolver's job ends at the fact.
+
 ### Svelte trims whitespace at a block boundary
 
 `{label}{#if x}<span>...</span>{/if}` renders `labelSuffix` with no space: the compiler treats the

@@ -555,7 +555,7 @@ freeze was the per-message reload in the outbox drain, fixed separately - see
 **The compatibility contract, and the one-way step.** The reader for the legacy encoding ships in the
 same commit, so any existing `mls.bin` or IndexedDB blob loads unchanged and is rewritten in the new
 encoding at its next save. The reverse does not hold: **a device that has already migrated cannot be
-read by a build older than that commit.** The frontend must not be rolled back past it, or every
+read by a build older than that commit (`01bc0a13`, WP-ANR-1).** The frontend must not be rolled back past it, or every
 migrated user loses their identity and every group. Decision taken deliberately 2026-08-11
 (one-step: read both, write new now).
 

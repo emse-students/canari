@@ -597,6 +597,16 @@ never agree to move back; and the pre-watermark `read_receipt` frame is still DE
 into an instant using the messages the device holds - see
 [legacy-compatibility](../legacy-compatibility.md).
 
+#### The two hydration paths are MIRRORS and must be edited together
+
+`toConversationMeta` and the in-memory seed in `loadExistingConversations` build the same object from
+two directions, and a field added to one is silently absent from the other. A fix to read state was
+defeated by exactly that: `readWatermarks` was written and never read back, so read state was correct
+until the first restart and wrong afterwards - which reads as a persistence bug and is a hydration
+one. **A field persisted but never read back is worse than one never stored**: the write succeeds,
+nothing reports it, and every test that stays inside one session passes. When adding a field to the
+conversation, change both, and assert it across a reload rather than within one.
+
 ### Scrollback below the window
 
 To reach past its own window a device asks a peer for a **bounded range** rather than everything,

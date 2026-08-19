@@ -9,8 +9,8 @@
 - WebRTC audio/video calls within MLS groups (E2E encrypted).
 - CallKit integration on iOS (native incoming call UI, app killed).
 - Full-screen intent + ringing on Android.
-- Room token management via [`chat-delivery-service`](../services/chat-delivery.md#calls).
-- SFU relay via [`call-service`](../services/call-service.md) (WebSocket signaling + media forwarding).
+- Room token management via [`chat-delivery-service`](../../services/chat-delivery.md#calls).
+- SFU relay via [`call-service`](../../services/call-service.md) (WebSocket signaling + media forwarding).
 - Sibling device detection (call on another device → hide incoming UI).
 
 ## Architecture
@@ -135,6 +135,6 @@ Ordering: `call_ring_end` must be processed **before** the foreground guard — 
 
 ## See also
 
-- [`services/call-service.md`](../services/call-service.md) — SFU WebRTC relay
-- [`services/chat-delivery.md#calls`](../services/chat-delivery.md#calls) — Backend call endpoints
-- [`protocols/mls-protocol.md`](../protocols/mls-protocol.md) — E2E encryption for call signaling
+- [`services/call-service.md`](../../services/call-service.md) — SFU WebRTC relay
+- [`services/chat-delivery.md#calls`](../../services/chat-delivery.md#calls) — Backend call endpoints
+- [`protocols/mls-protocol.md`](../../protocols/mls-protocol.md) — E2E encryption for call signaling
