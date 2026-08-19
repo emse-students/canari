@@ -543,10 +543,13 @@ any device holding memberships with **no** `key_package` row, and the deepest si
 | Devices with memberships and no `key_package` | **0 of 52** |
 | Redis | 24 keys, 8 with a TTL - so the prefix breakdown is a census in practice, well under the 5000 sample cap |
 
-**Postgres returns the weekly buckets unordered and with gaps** - this measurement came back as weeks
-3, 1, 2, 0 - so the panel places them BY INDEX rather than by arrival. Reading them in order would
-have drawn a slope that is not there, which is the one thing these bars exist to show; it is pinned
-in `admin-storage.controller.mls.spec.ts`.
+**Postgres returned the four weekly buckets in the order 3, 1, 2, 0** - and all four were present.
+This run has no quiet week, so it demonstrates the buckets arriving UNORDERED and says nothing about
+gaps. The gap is a separate property, and it is proved from the query rather than from this
+measurement: `GROUP BY` emits no row for a week that has none. Either shape alone breaks a chart read
+by arrival, so the panel places the buckets BY INDEX. Reading them in order would have drawn a slope
+that is not there, which is the one thing these bars exist to show. Both shapes are pinned in
+`admin-storage.controller.mls.spec.ts`, the unordered-and-complete one being the shape prod produced.
 
 The zero is displayed rather than hidden, and that is deliberate: a counter that only appears when it
 is non-zero is a counter nobody believes the first time it does appear. The deepest queue at 189 is

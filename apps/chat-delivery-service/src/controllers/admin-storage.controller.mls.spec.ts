@@ -78,6 +78,26 @@ describe('the MLS half of the storage panel', () => {
     });
   });
 
+  it('places a complete but UNORDERED set of weeks by index, which is the shape prod returned', async () => {
+    // Production, 2026-08-19: `GROUP BY 1` handed the four weeks back as 3, 1, 2, 0, with none
+    // missing. The gapped fixture above cannot catch this - reading these by arrival gives
+    // [12, 401, 166, 241], a queue that looks like it is draining while it is filling.
+    const controller = makeController(
+      router({
+        weeks: [
+          { week: '3', c: '12' },
+          { week: '1', c: '401' },
+          { week: '2', c: '166' },
+          { week: '0', c: '241' },
+        ],
+      })
+    );
+
+    const usage = await controller.getStorageUsage('true');
+
+    expect(usage.mls?.queue?.rowsByWeek).toEqual([241, 401, 166, 12]);
+  });
+
   it('shows the ghost count even when it is zero', async () => {
     const controller = makeController(router());
 
