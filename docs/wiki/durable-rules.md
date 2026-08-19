@@ -954,6 +954,28 @@ page. The six that generalise:
   And **any measurement window that straddles a deploy explains its own fallout**, so a run that does
   not know it was rebuilt under itself will attribute the disconnections to whatever it was testing.
 
+- **A HEADER TWO LAYERS CAN SET BELONGS TO EXACTLY ONE OF THEM.** nginx added
+  `Access-Control-Allow-Origin: *` on `/api/public/*` while social-service's allowlist echoed the
+  caller's origin back on the same response - two of that header, which every browser rejects as
+  malformed, and so does SvelteKit's universal `fetch`. It fired only for the origins the allowlist
+  RECOGNISES (`localhost`, `127.0.0.1`), so it broke local development and worked in production: the
+  least useful way round, because the environment that would have shown it is the one nobody
+  measures. `proxy_hide_header` before `add_header` is what makes the ownership real rather than a
+  convention two files each believe.
+- **A REFUSAL EXPRESSED AS A THROW IS A 500, NOT A REFUSAL.** `callback(new Error(...))` in a Nest
+  CORS origin function fails the WHOLE request - including a public GET that needs no CORS at all,
+  which is how `GET /api/media/public/:id` came to answer 500 to any caller carrying an unknown
+  `Origin`. `callback(null, false)` omits the headers and lets the response stand, which is the only
+  thing that was ever wanted. The general shape: a policy layer that cannot say "no" without saying
+  "broken" will report a fault the system does not have.
+- **CONFIGURATION ASSEMBLED AS TEXT IS VALIDATED IN THE BUILD, OR IT IS VALIDATED BY THE OUTAGE.**
+  `default.conf` is written by a shell `printf`, so nothing checks it: a misplaced character builds
+  green, deploys green and then refuses to start, and a `frontend` that will not start is the whole
+  site. `RUN nginx -t` after the `printf` costs a red pipeline instead, and production keeps the
+  previous image. Corollary for anything reproducing that file locally: Docker strips `#` lines
+  inside a continued instruction, so strip the comments FIRST and join the continuations SECOND -
+  the other order yields a config the image does not contain, and a bug that does not exist.
+
 ## Server-side fetches -> [chat-delivery](services/chat-delivery.md), [nginx](infrastructure/nginx.md)
 
 The link-preview pipeline, the SSRF guard, the favicon cascade and the undici seam are on that page.

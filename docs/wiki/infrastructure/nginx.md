@@ -55,6 +55,59 @@ locally to reason about it has to strip the comments **first** and join the cont
 **second**; doing it the other way round produces a config that does not match what the image
 contains, and the bug you then diagnose does not exist.
 
+## CORS: one layer answers, and it is this one
+
+`/api/public/*` is the only location that speaks CORS. It adds
+`Access-Control-Allow-Origin: *` and answers `OPTIONS` itself with a 204, and it
+**hides whatever the upstream sent**:
+
+```
+proxy_hide_header Access-Control-Allow-Origin;
+proxy_hide_header Access-Control-Allow-Credentials;
+add_header Access-Control-Allow-Origin "*" always;
+```
+
+Without those two lines the response carried **two** `Access-Control-Allow-Origin`
+headers whenever the caller's origin was one social-service's own allowlist
+recognises - it allows `localhost` and `127.0.0.1` on any port and echoes them
+back with `Allow-Credentials: true`, and nginx added `*` on top. Two of that
+header is invalid: a browser blocks the response outright, and so does
+SvelteKit's universal `fetch`, which is how it was found - every detail page of
+portail-etu 503ing in local development while production, whose origin the
+allowlist does *not* recognise, worked fine. Measured on prod 2026-08-19:
+
+```
+curl -D- -o/dev/null -H 'Origin: http://localhost:4319'   https://canari-emse.fr/api/public/associations/slug/bde
+  -> access-control-allow-origin: http://localhost:4319
+     access-control-allow-origin: *
+```
+
+The rule this leaves: **a header two layers can set belongs to exactly one of
+them.** The service-level allowlist is for the credentialed routes, which do not
+pass through this location.
+
+The same measurement found the sharper half of it, which is fixed in the
+services rather than here: three of the four Nest services answered an
+unrecognised origin with `callback(new Error(...))`. That is not a refusal, it is
+a throw - Nest turns it into a **500 for the whole request**, including public
+GETs that need no CORS at all. `GET /api/media/public/:id` answered 500 to any
+request carrying an unknown `Origin`. `callback(null, false)` omits the headers
+instead, which is what actually blocks a credentialed browser call while leaving
+the response correct for everything else. social-service already had it, with the
+comment that explains why; core, media and chat-delivery now match.
+
+## The generated config is validated at build time
+
+The `RUN printf` that writes `default.conf` is a shell string: nothing checks it.
+A stray quote, an unbalanced brace or a directive in the wrong context builds a
+perfectly green image that then fails to start - and a `frontend` that will not
+start is the whole site, found by a human looking at a 502.
+
+`RUN nginx -t` immediately after the `printf` moves that failure to the build,
+where it costs a red pipeline and production keeps serving the previous image.
+It runs after the layer that writes `/etc/nginx/snippets`, so every `include`
+resolves.
+
 ## HTML navigations go to `frontend-ssr`
 
 `location /` is `try_files $uri $uri/ @ssr`: anything that exists on disk is served by Nginx with

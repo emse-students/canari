@@ -40,7 +40,14 @@ async function bootstrap() {
         callback(null, true);
         return;
       }
-      callback(new Error(`CORS: origin not allowed: ${origin}`));
+      // Deny CORS for unknown origins WITHOUT erroring. An Error here is not a
+      // refusal, it is a THROW: Nest turns it into a 500 for the whole request,
+      // even a public GET that needs no CORS at all - measured on prod
+      // 2026-08-19, where GET /api/media/public/:id answered 500 to any request
+      // carrying an Origin the allowlist did not know. `false` omits the CORS
+      // headers instead, which is what actually blocks a credentialed browser
+      // call while leaving the response itself correct for everything else.
+      callback(null, false);
     },
     credentials: true,
   });
