@@ -166,7 +166,7 @@ of the device ladder cannot be run at all
     rework never having run against prod - are all on
     [cross-client-testing](docs/wiki/cross-client-testing.md), the only copy of any of it.
 
-**THE SIX THAT CANNOT BE PULLED FORWARD**, each for a reason that is not scheduling - none is
+**THE SEVEN THAT CANNOT BE PULLED FORWARD**, each for a reason that is not scheduling - none is
 waiting on us, and each is marked as such in [backlog](docs/wiki/backlog.md):
 
 - **The `libcrux-chacha20poly1305` panic** - closing it means shipping `openmls_rust_crypto 0.6.0`,
@@ -179,6 +179,11 @@ waiting on us, and each is marked as such in [backlog](docs/wiki/backlog.md):
   already taken, since the boot path is what half of them measure. The user's decision, 2026-08-17.
 - **`dev.canari-emse.fr` as a real second environment, and the SECOND campaign** - both are
   post-campaign by the user's own decision; the second campaign cannot precede the first.
+- **Has a Le Cercle pipeline ACTUALLY run?** Its CI is armed - `db2a530` deleted the
+  `CERCLE_CI_ENABLED` kill switch on 2026-08-18 and the workflow rules cover the default branch,
+  merge requests and tags - but whether a runner picks a pipeline up cannot be checked from here:
+  the GitLab project is private and `/api/v4/projects/.../pipelines` answers 404 without a token.
+  Ten seconds in the GitLab UI settles it; nothing in the code is waiting.
 
 **One question is owed to the user, not to the code:** is a MiGallery application worth building? The
 Canari formula transfers, so the cost is knowable - what an app adds over a gallery a browser already
