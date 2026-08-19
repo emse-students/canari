@@ -135,7 +135,7 @@ export class ChannelsController {
    * its own, on purpose, and pretending otherwise would hide the distinction from the client.
    */
   @UseGuards(NginxAuthGuard)
-  @Get('channels/:channelId/distribution-group')
+  @Get(':channelId/distribution-group')
   getChannelDistributionGroup(
     @Headers('x-user-id') xUserId: string,
     @Param('channelId') channelId: string
@@ -148,7 +148,7 @@ export class ChannelsController {
 
   /** Publishes the GroupInfo a reader just committed on a private salon's distribution group. */
   @UseGuards(NginxAuthGuard)
-  @Post('channels/:channelId/distribution-group/group-info')
+  @Post(':channelId/distribution-group/group-info')
   publishChannelDistributionGroupInfo(
     @Headers('x-user-id') xUserId: string,
     @Param('channelId') channelId: string,
@@ -177,7 +177,7 @@ export class ChannelsController {
    * silent in the transcript - see the service method for why.
    */
   @UseGuards(NginxAuthGuard)
-  @Post('channels/:channelId/join-as-admin')
+  @Post(':channelId/join-as-admin')
   joinPrivateChannelAsAdmin(
     @Headers('x-user-id') xUserId: string,
     @Param('channelId') channelId: string

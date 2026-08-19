@@ -1295,6 +1295,28 @@ orphan sweep was having been registered earlier in the same session - a sweep th
 it, and the seeds stopped arriving until the next boot re-registered it. Both fields are carried
 now, and the sweep keeps a group named by either.
 
+### Found on production, and only there: the three routes were registered one segment too deep
+
+`@Controller('channels')` already contributes the first segment, so `@Get('channels/:channelId/distribution-group')`
+registers **`/channels/channels/:channelId/distribution-group`**. All three of the routes added for
+this design carried the doubled prefix, so the client's `GET /api/channels/:id/distribution-group`
+met Nest's own 404 - `Cannot GET` - and `ensureDistributionGroupFor` reported the salon as having
+no group while the group sat on the server, correctly minted, addressed by nothing.
+
+**Nothing in the repository could have caught it.** The path is composed at bootstrap from two
+decorators written in different places; it is not a type error, not a lint error, and every unit
+test of `getChannelDistributionGroupForMember` passed because the method was right. It took
+creating a private salon on production and watching a real client ask - which is the campaign's own
+rule, stated in CLAUDE.md: a green gate is not a working system, and everything verified by
+COMPILING proves nothing about running.
+
+`channels.controller.spec.ts` now reads Nest's `PATH_METADATA`/`METHOD_METADATA` off every
+handler, composes the full path, and asserts three things: that no handler repeats the controller's
+own prefix (**the defect class**, not this instance of it), that the five Graine routes exist at the
+exact strings the frontend's `distributionGroupUrl` builds, and that the salon route is declared
+before the catch-all `:channelId` routes that could shadow it. Re-introducing the doubled prefix
+fails two of them.
+
 ### Migration: there was nothing to migrate
 
 Measured on production 2026-08-19 before writing any of it: **zero private salons existed.** So no
