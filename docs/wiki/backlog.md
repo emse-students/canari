@@ -64,10 +64,26 @@ caller already had, and `displayName.spec.ts` pins all of it.
 
 **What is owed is the DENOMINATOR, and it is a measurement rather than a change.** The log line that
 makes it countable did not exist when the symptom was seen - twice on 2026-08-16, on both platforms,
-nine of ten sidebar rows carrying "Utilisateur inconnu" for twenty seconds. With it in place, measure
-how often that `catch` actually fires and against what population, and only then decide whether the
-two-minute backoff has any case left to serve. Do not assume it is the same fault as the avatar
-endpoint, and do not assume it is not.
+nine of ten sidebar rows carrying "Utilisateur inconnu" for twenty seconds. Do not assume it is the
+same fault as the avatar endpoint, and do not assume it is not.
+
+**The denominator now rides ON the accusation (2026-08-19).** `displayName.ts` counts the lookups
+that actually reached the network - a cache hit, the current user, the `system` sender and a lookup
+already suppressed by the backoff are all excluded, because counting them would drive the rate
+towards zero exactly as the cache warmed and measure the cache rather than the fault - and every
+warn now ends `(failed/attempted lookups failed this session, X%)`. One line answers both "did a name
+get lost" and "how often does that happen here", which is the question the backoff turns on.
+`displayNameLookupStats()` exposes the same numbers to a test or a debug surface.
+
+**Where the number will come from:** the campaign run logs, on both platforms. Nothing here is sent
+anywhere - there is no client telemetry and this did not add any - so the rate is read from a device
+or a browser console during a run, which is exactly where the symptom was seen. Server-side is not
+an option: `GET /api/users/:id` is not request-logged, and a client that never reached the network
+would not appear there anyway.
+
+**Then decide about `FAILURE_BACKOFF_MS`.** A high rate argues the two-minute suppression is doing
+real work against a refusing server; a rate near zero argues it is a clock hiding a name for two
+minutes over a blip that the reconnection listener already handles.
 
 ### QUESTION - does an iOS attachment CONSUME the avatar cache file it is handed?
 
@@ -166,6 +182,16 @@ second time this shape has been mistaken for one - the IPv6 reading was refuted 
 components, which all came back healthy. **Measure EGRESS over time rather than the endpoints again**:
 the component probes already say each is fine at the moment it is asked, so what is left to establish
 is whether these stalls are CORRELATED, which a one-shot probe cannot answer by construction.
+
+**ARMED 2026-08-19.** [`infrastructure/egress-probe/`](../../infrastructure/egress-probe/README.md)
+takes a sample a minute - both stalled upstreams, the tunnel back to ourselves, a control at 1.1.1.1,
+and the same target from inside `chat-delivery-service` through Node's own fetch - with DNS, connect
+and TLS recorded apart from the total. `report.py` prints each conditional rate beside the base rate
+it has to beat. Installed in the `canari` crontab, verified writing, `probe.err` empty.
+
+**This item cannot be closed by working on it.** A report over a quiet week says the week was quiet.
+Read the ledger the next time a stall appears in a service log; that is the moment the two
+hypotheses differ, and the stall will already have been measured.
 
 ---
 

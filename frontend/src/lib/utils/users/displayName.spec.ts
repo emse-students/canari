@@ -321,6 +321,56 @@ describe('formatProfileDisplayName (indirect)', () => {
     expect(warn).toHaveBeenCalled();
   });
 
+  it('counts the DENOMINATOR, so a lost name is a rate rather than an anecdote', async () => {
+    // A count of failures decides nothing: one lookup in three failing and one in three hundred
+    // argue for opposite things about a two-minute suppression with no retry, and the log that
+    // recorded "9 of 10 rows unknown" could not tell them apart. The rate rides on the accusation
+    // itself so one line answers both questions.
+    //
+    // A lookup that never reached the network is not in the denominator - the seeded name below is
+    // answered from cache, and counting it would drive the rate towards zero as the cache warmed,
+    // which measures the cache and not the fault.
+    // A fresh module, because the counters are what is under test and every earlier case in this
+    // file has already moved them.
+    vi.resetModules();
+    const userModule = await import('$lib/stores/user');
+    const mod = await import('./displayName');
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    mod.seedUserDisplayName('usr_cached', 'Deja Connu');
+    await mod.resolveUserDisplayName('usr_cached');
+    expect(mod.displayNameLookupStats().attempted).toBe(0);
+
+    vi.mocked(userModule.fetchUserProfile).mockResolvedValueOnce({
+      id: 'usr_ok',
+      displayName: 'Ada Lovelace',
+      firstName: null,
+      lastName: null,
+    } as never);
+    await mod.resolveUserDisplayName('usr_ok');
+
+    vi.mocked(userModule.fetchUserProfile).mockRejectedValueOnce(new Error('network down'));
+    await mod.resolveUserDisplayName('usr_lost');
+
+    const stats = mod.displayNameLookupStats();
+    expect(stats).toEqual({ attempted: 2, failed: 1, failureRate: 0.5 });
+  });
+
+  it('puts that rate in the line that accuses, not in a second one nobody reads', async () => {
+    vi.resetModules();
+    const userModule = await import('$lib/stores/user');
+    vi.mocked(userModule.fetchUserProfile).mockRejectedValueOnce(new Error('network down'));
+    // `spyOn` hands back the SAME spy when the method is already spied, history included - so the
+    // history is cleared here rather than trusting call zero to belong to this test.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+
+    const mod = await import('./displayName');
+    await mod.resolveUserDisplayName('usr_rate');
+
+    expect(warn.mock.calls.at(-1)?.[0]).toContain('1/1 lookups failed this session, 100.0%');
+  });
+
   it('keeps the caller fallback while a lookup is suppressed by the backoff', async () => {
     // The synchronous read used to answer the label during the backoff window, discarding the
     // fallback the caller had passed - so a row that knew whose it was went anonymous for two

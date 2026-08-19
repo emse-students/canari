@@ -8,6 +8,45 @@ const failedAt = new Map<string, number>();
 const FAILURE_BACKOFF_MS = 2 * 60 * 1000;
 
 /**
+ * THE DENOMINATOR. A count of failures is not a rate, and only a rate can decide anything.
+ *
+ * The accusing `catch` below was added on 2026-08-16 because the symptom - nine of ten sidebar rows
+ * reading "Utilisateur inconnu" for twenty seconds, twice, on both platforms - had reached a run log
+ * with no line anywhere to explain it. It made the failures VISIBLE, and visible was still not
+ * countable: one warn per lost name says nothing about whether that was one lookup in three or one
+ * in three hundred, and those two answers argue for opposite things about `FAILURE_BACKOFF_MS`.
+ *
+ * A lookup that never reaches the network - a cache hit, the current user, the `system` sender, a
+ * lookup already suppressed by the backoff - is NOT in the denominator. The question is how often a
+ * fetch that was actually attempted came back a failure; folding cache hits in would drive the rate
+ * towards zero exactly as the cache warmed, which is a measure of the cache rather than of the
+ * fault.
+ *
+ * These live in the module rather than in a store because they are read at exactly one place: the
+ * accusation itself. Nothing branches on them, so nothing can go wrong when they are wrong.
+ */
+let lookupsAttempted = 0;
+let lookupsFailed = 0;
+
+/**
+ * What the counters say right now, as a sentence.
+ *
+ * Exported so a test can read it and a debug surface can print it without either one reaching into
+ * module state - and so the one place that formats this is the same in both.
+ */
+export function displayNameLookupStats(): {
+  attempted: number;
+  failed: number;
+  failureRate: number;
+} {
+  return {
+    attempted: lookupsAttempted,
+    failed: lookupsFailed,
+    failureRate: lookupsAttempted === 0 ? 0 : lookupsFailed / lookupsAttempted,
+  };
+}
+
+/**
  * A FAILURE RECORDED WHILE THE NETWORK WAS DOWN IS EVIDENCE ABOUT THE NETWORK, NOT ABOUT THE USER.
  *
  * `failedAt` answers "did this lookup fail", and `shouldSkipRetry` reads it as "will this lookup
@@ -149,6 +188,10 @@ export async function resolveUserDisplayName(userId: string): Promise<string | n
     return inFlight.get(normalized)!;
   }
 
+  // Counted HERE rather than at the top of the function: everything above this line returned
+  // without asking the network, and a lookup that never left is not a lookup that could fail.
+  lookupsAttempted += 1;
+
   const promise = fetchUserProfile(normalized)
     .then((profile) => {
       const value = formatProfileDisplayName(profile);
@@ -172,10 +215,17 @@ export async function resolveUserDisplayName(userId: string): Promise<string | n
       // platforms). It ACCUSES because it is a fallback, not a path: one failure here hides this
       // user's name everywhere for FAILURE_BACKOFF_MS, without a single retry, and the previous
       // instance of this symptom survived for months because reloading hid it.
+      lookupsFailed += 1;
+      // The rate rides ON the accusation, so one line answers both "did a name get lost" and "how
+      // often does that happen here" - the second is what decides whether a two-minute suppression
+      // with no retry has a case, and it is unanswerable from a log of bare events.
+      const stats = displayNameLookupStats();
       console.warn(
         `[DISPLAYNAME] profile fetch failed - this user renders as "unknown" for the next ${
           FAILURE_BACKOFF_MS / 1000
-        }s with no retry`,
+        }s with no retry (${stats.failed}/${stats.attempted} lookups failed this session, ${(
+          stats.failureRate * 100
+        ).toFixed(1)}%)`,
         { userId: normalized, error: e }
       );
       failedAt.set(normalized, Date.now());

@@ -149,10 +149,21 @@ of the device ladder cannot be run at all
    matchers disagree on how many edits a short token may be wrong by - Sky and MiGallery allow 1 up
    to 4 characters, Le Cercle 0 up to 3 and 1 up to 6. Nobody can say which the ecosystem promises,
    which is exactly what a written contract settles and a shared package would not.
-2. **MEASURE EGRESS OVER TIME** - the component probes already answer "fine right now"; what is owed
-   is whether the two stalls were CORRELATED, which a one-shot probe cannot answer.
-3. **THE DENOMINATOR ON THE PROFILE-FETCH FAILURES** - the accusing log line exists now; measure how
-    often it fires and against what population, then decide whether the two-minute backoff has a case.
+2. **MEASURE EGRESS OVER TIME - ARMED 2026-08-19, and the verdict is not something work produces.**
+   [egress-probe](infrastructure/egress-probe/README.md) samples both stalled upstreams, the tunnel
+   back to ourselves, a control, and the same target from INSIDE `chat-delivery-service`, once a
+   minute, with DNS/connect/TLS kept apart from the total; `report.py` prints every conditional rate
+   next to the base rate it must beat. Installed in the `canari` crontab, `probe.err` empty, ledger
+   growing. **It says nothing until the window contains an incident** - a report over a quiet week
+   says the week was quiet - so read it the next time a stall shows up in a service log, and do NOT
+   re-derive the question here.
+3. **THE DENOMINATOR ON THE PROFILE-FETCH FAILURES - the counter shipped 2026-08-19; the number
+    comes from the campaign.** `displayName.ts` counts only the lookups that reached the network and
+    every accusation now ends `(failed/attempted this session, X%)`, so one line answers both "did a
+    name get lost" and "how often". There is no client telemetry and none was added, so the rate is
+    read from a run log on each platform - which is where the symptom was seen. **The decision about
+    `FAILURE_BACKOFF_MS` is what the number is FOR** and it stays open until a run produces one
+    ([backlog](docs/wiki/backlog.md)).
 4. **THE TWO STORAGE-BOUND QUESTIONS, ANSWERED BY FAULT INJECTION** - what a phone out of space
     actually does, and what the web client does when the browser evicts its store. Both are TIME
     bounds today with no SIZE bound; the question is the failure SHAPE. **Injected, never on the
