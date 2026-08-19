@@ -262,6 +262,47 @@ Rules, each written after the thing it prevents:
   MLS mailbox drain, past `OVERLAY_MIN_MESSAGES`. History recovery runs in `PERSIST_ONLY_PHASE` and
   stays silent by design.
 
+## When the local store fails
+
+**Source**: `src/lib/db.ts`, `src/lib/db/indexeddb.ts`, `src/lib/db/storageFaults.test.ts`
+
+Both retention windows are TIME bounds - five years on a device, ninety days on the web - so nothing
+caps the store by SIZE, and what a full disk or an evicted store actually DOES was unknown rather
+than designed. It was settled on 2026-08-19 by INJECTION, never on a real device: the campaign phone
+is an appliance the campaign depends on, not a place to find out. `storageFaults.test.ts` is the
+answer and pins every line of it.
+
+| Fault | What happens | Is that right? |
+|---|---|---|
+| Tauri, SQLite open fails (no space left) | `getStorage` throws | **Now.** It used to catch and answer with IndexedDB in the same webview |
+| Web, IndexedDB open fails | rejects with `StorageOpenError`, `cause` = the DOMException | **Now.** It used to reject with the string `'IndexedDB open error'` |
+| Web, upgrade blocked by another tab | rejects, and says which tabs to close | **Now.** `onblocked` had no handler, so `init()` never settled at all |
+| Web, a write hits the quota | the rejection reaches the caller | Yes - a message that was never persisted must not be reported as sent |
+| Web, the browser evicted the store | opens clean, reads empty | Yes, and it cannot be otherwise - see below |
+
+### The fallback that was worse than no storage
+
+A failed SQLite open on Tauri was caught and answered with IndexedDB. That is not a degraded version
+of the same device, it is a different one: the MLS state persister writes `mls.bin` to the
+FILESYSTEM on Tauri and does not follow that choice, so the group state would have stayed on disk
+while conversations and messages moved into the webview's store - a client that opens, looks
+healthy, and carries a history that does not match its own ratchet.
+
+And the cause the fallback existed for is the one it cannot survive: the second store is on the same
+full disk.
+
+### Eviction is indistinguishable from a first run, by construction
+
+Quota eviction drops the whole origin bucket. The next open finds no database, runs the upgrade path
+from version 0, and hands back an empty store - byte for byte what a browser that has never seen
+Canari does. **Nothing local survives to tell the two apart**, because everything that could have
+(localStorage, the caches) is inside the bucket the browser just emptied.
+
+No machinery is proposed for it, and that is a decision rather than an omission: an empty store IS a
+new device, the new-device path already exists and already re-joins, local history is replayable
+from the server, and the MLS state is re-established by enrolling again. A client that claimed to
+know it had been evicted would be claiming knowledge it does not have.
+
 ## Auth / token management
 
 - **Access token**: JWT HS256 (15 min), stored in memory only — never localStorage.

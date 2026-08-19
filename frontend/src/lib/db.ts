@@ -32,14 +32,21 @@ import { isTauriRuntime } from '$lib/utils/openExternal';
  */
 export async function getStorage(userId: string): Promise<IStorage> {
   if (isTauriRuntime()) {
-    try {
-      const s = new SqliteStorage(userId);
-      await s.init();
-      console.log('[DB] Using SQLite storage (Tauri)');
-      return s;
-    } catch (e) {
-      console.warn('[DB] SQLite failed, falling back to IndexedDB:', e);
-    }
+    // NO FALLBACK, AND THE FALLBACK THAT WAS HERE WAS WORSE THAN NO STORAGE AT ALL.
+    //
+    // A failed SQLite open used to be caught and answered with IndexedDB inside the same webview.
+    // That is not the same device: on Tauri the MLS state persister writes `mls.bin` to the
+    // FILESYSTEM and does not follow this choice, so the two halves would have landed in two
+    // different places - group state on disk, conversations and messages in the webview's store -
+    // and a reader would have seen a client that opened, looked healthy, and had a history that did
+    // not match its ratchet.
+    //
+    // The realistic cause is also the one a fallback cannot help: a device with no space left. The
+    // second store is on the same full disk.
+    const s = new SqliteStorage(userId);
+    await s.init();
+    console.log('[DB] Using SQLite storage (Tauri)');
+    return s;
   }
   const s = new IndexedDbStorage(userId);
   await s.init();

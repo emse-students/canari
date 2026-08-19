@@ -164,11 +164,15 @@ of the device ladder cannot be run at all
     read from a run log on each platform - which is where the symptom was seen. **The decision about
     `FAILURE_BACKOFF_MS` is what the number is FOR** and it stays open until a run produces one
     ([backlog](docs/wiki/backlog.md)).
-4. **THE TWO STORAGE-BOUND QUESTIONS, ANSWERED BY FAULT INJECTION** - what a phone out of space
-    actually does, and what the web client does when the browser evicts its store. Both are TIME
-    bounds today with no SIZE bound; the question is the failure SHAPE. **Injected, never on the
-    campaign phone - the user's decision, 2026-08-19**: the appliance the campaign depends on is
-    not the place to find out.
+4. **THE TWO STORAGE-BOUND QUESTIONS - ANSWERED 2026-08-19, by injection, off the campaign phone.**
+    Two defects fell out of asking and both are fixed: Tauri caught a failed SQLite open and
+    answered with IndexedDB in the same webview, which would have left the group state on disk and
+    the messages in the webview - and a blocked IndexedDB upgrade never settled its promise at all.
+    **Eviction needs no machinery and that is a decision**: it drops the whole origin bucket, so an
+    evicted store and a first run are the same thing to every witness that survives. **No SIZE cap
+    is proposed.** Shapes on
+    [frontend/architecture](docs/wiki/frontend/architecture.md#when-the-local-store-fails), pinned
+    by `storageFaults.test.ts`.
 5. **THE MLS HALF OF `/admin/storage`** - the media half shipped 2026-08-18; Postgres and Redis are
     still bare totals with no breakdown and no slope, and the WP-GHOST-1 shapes (a device holding
     memberships with no `key_package`, a queue past a few hundred rows) are measured nowhere. **A

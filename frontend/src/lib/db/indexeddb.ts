@@ -37,6 +37,31 @@ import { fromMessagePayload, mergeStoredMessage, toMessagePayload } from './mess
 // ---------------------------------------------------------------------------
 
 /**
+ * The local store could not be opened, with the browser's own reason attached.
+ *
+ * A TYPE rather than a string, and the string it replaced said `'IndexedDB open error'` and threw
+ * `request.error` away - so the one caller who might have wanted to know WHY (a quota that is full,
+ * a store the browser refuses in a private window, a corrupt database) got a sentence it could only
+ * have branched on by reading it. `cause` carries the DOMException; `blocked` separates the one
+ * failure that is not an error at all.
+ */
+export class StorageOpenError extends Error {
+  constructor(
+    readonly dbName: string,
+    readonly blocked: boolean,
+    options?: { cause?: unknown }
+  ) {
+    super(
+      blocked
+        ? `IndexedDB open blocked for ${dbName} - another tab holds an older version open`
+        : `IndexedDB open failed for ${dbName}`,
+      options
+    );
+    this.name = 'StorageOpenError';
+  }
+}
+
+/**
  * IStorage implementation backed by the browser's IndexedDB API.
  * Used in the web / PWA build; falls back from SqliteStorage when Tauri is not available.
  * Database name is scoped per user: `CanariDB_<userId>`.
@@ -74,7 +99,28 @@ export class IndexedDbStorage implements IStorage {
       // Version 7: adds the `graine` store (community-channel session seeds).
       const request = indexedDB.open(this.dbName, 7);
 
-      request.onerror = () => reject('IndexedDB open error');
+      request.onerror = () =>
+        reject(new StorageOpenError(this.dbName, false, { cause: request.error }));
+
+      /**
+       * A BLOCKED OPEN IS THE ONE OUTCOME THAT NEVER ARRIVES ON ITS OWN.
+       *
+       * `onblocked` fires when this open needs a version change and another tab still holds the old
+       * version. It is not an error and it is not a success: neither of the two handlers above ever
+       * runs, so before this the promise simply never settled and `init()` hung for as long as the
+       * other tab stayed open - a start-up with no bound, and nothing logged to say why.
+       *
+       * It rejects rather than waiting, because waiting is the caller's decision and there is
+       * something for a person to DO about it. The message says what to do.
+       */
+      request.onblocked = () => {
+        console.error(
+          `[DB] IndexedDB upgrade blocked for ${this.dbName} - another tab is holding an older ` +
+            'version of this database open. Close the other tabs and reload.'
+        );
+        reject(new StorageOpenError(this.dbName, true));
+      };
+
       request.onsuccess = () => {
         this.db = request.result;
         resolve();

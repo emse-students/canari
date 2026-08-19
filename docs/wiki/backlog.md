@@ -101,18 +101,35 @@ observation**: notify twice for the same person with the app alive, then look fo
 in the app container. If it is gone, the app path copies too, exactly as the extension does. The
 initials disc is unaffected either way - it writes to `NSTemporaryDirectory()` on both.
 
-### Mobile - what happens when the device runs out of space?
+### ANSWERED 2026-08-19 - what a full disk and an evicted store actually do
 
-Unanswered today. The device window on mobile is five years, which is a TIME bound and not a SIZE
-bound, so nothing caps the store. Worth knowing what the failure actually looks like before deciding
-whether a cap is needed - a write that throws is a different problem from a device that silently
-stops persisting.
+Both questions were the same shape: five years on a device and ninety days on the web are TIME
+bounds, so nothing caps the store by SIZE, and the failure was undesigned rather than designed. Both
+were settled by INJECTION and never on the campaign phone (the user's decision, 2026-08-19): the
+appliance the campaign depends on is not the place to find out.
 
-### Browser - is 90 days bounded in bytes?
+**Two defects fell out of asking**, and both are fixed:
 
-Same shape as mobile, and the same gap: the web window is a time bound. IndexedDB is also subject to
-the browser's own quota eviction, which can drop the store without asking - the question is what the
-client does when it finds its store gone, not whether it can prevent it.
+- **Tauri caught a failed SQLite open and answered with IndexedDB in the same webview.** The MLS
+  state persister writes `mls.bin` to the filesystem and does not follow that choice, so the group
+  state would have stayed on disk while conversations and messages moved into the webview's store -
+  a client that opens, looks healthy, and whose history does not match its own ratchet. And the
+  cause it existed for is the one it cannot survive: the second store is on the same full disk.
+- **A blocked IndexedDB upgrade never settled the promise.** `onblocked` fires when another tab
+  holds an older version open - neither `onsuccess` nor `onerror` - so `init()` simply stopped, with
+  no bound and nothing logged. It now rejects and says which tabs to close. The open failure also
+  carries the browser's DOMException as `cause` instead of the string `'IndexedDB open error'`.
+
+**Eviction needs no machinery, and that is a decision.** It drops the whole origin bucket, so the
+next open finds no database and hands back an empty store - byte for byte what a browser that has
+never seen Canari does, because everything that could have told them apart was in the bucket too. An
+empty store IS a new device, the new-device path already exists, history replays from the server and
+the MLS state is re-established by enrolling. A client that claimed to know it had been evicted
+would be claiming knowledge it does not have.
+
+The shapes are on [frontend/architecture](frontend/architecture.md#when-the-local-store-fails) and
+pinned by `src/lib/db/storageFaults.test.ts`. **No SIZE cap is proposed**: a write that fails now
+reaches its caller on every backend, which is what the cap would have been protecting.
 
 ### Is a MiGallery application worth it?
 
