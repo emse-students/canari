@@ -38,6 +38,7 @@
 - [Frontend architecture](frontend/architecture.md) — SvelteKit 5, stores, routing, Paraglide i18n
 - [Mobile architecture](frontend/mobile.md) — Tauri 2, iOS NSE, Android push, native FFI
 - [MLS WASM client](frontend/mls-wasm.md) — openmls compiled to WASM, key management, sync engine
+- [Backup and restore](frontend/backup.md) — the `.canari` file, and why a refusal is a code rather than a sentence
 - [Auth module](frontend/modules/auth.md) — Login flow, PIN, biometrics, device registration
 - [Chat module](frontend/modules/chat.md) — Conversations, groups, channels, communities
 - [Calls module](frontend/modules/calls.md) — WebRTC audio/video calls, CallKit, SFU relay

@@ -169,23 +169,6 @@ is whether these stalls are CORRELATED, which a one-shot probe cannot answer by 
 
 ---
 
-## Protocol and delivery
-
-### P3 - a backup that fails to export or import tells the user nothing
-
-Found 2026-08-16. `sessionBackup.ts` catches both failures and hands them to `log`, which is
-`appendLog`, which is `console.log`. The spinner stops and nothing else happens: a file the importer
-refused and a backup fully restored look identical on screen, and seven distinct refusals in
-`importBackup` are equally invisible.
-
-**This is also why those seven sentences were made ENGLISH rather than Paraglide messages** - nothing
-user-visible carries them today, and the rule is that a dev-facing string is English. Inventing a
-surface for them is a UI decision, not a translation one: whoever picks this up decides what the user
-actually sees (a toast naming the refusal, or a panel), and the sentences become Paraglide messages in
-the same change, never before it.
-
----
-
 ## Communities and permissions
 
 Six entries came out of ONE audit on 2026-08-17, prompted by a user question rather than by a

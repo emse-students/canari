@@ -95,6 +95,49 @@ export interface BackupData {
   mlsState?: string;
 }
 
+/**
+ * Why a backup could not be read, as a TYPE rather than as a sentence.
+ *
+ * Every refusal below used to be an `Error` carrying English prose, which reached only
+ * `console.log` - so an import that refused the file looked exactly like one that worked. Telling
+ * the user costs a translated sentence, and the layer that throws cannot know which language they
+ * read in, so it does not write one: it names WHICH refusal happened, from a closed set, and the
+ * surface picks the sentence.
+ *
+ * The set is what a READER distinguishes, not what the code checks. A dozen field-level checks all
+ * mean one thing to somebody holding a file - "this is not a readable backup" - and splitting them
+ * further would be a dozen sentences nobody can act on differently. What the developer needs
+ * instead travels in `detail`, untranslated, straight to the log.
+ */
+export type BackupErrorCode =
+  /** The file is not a Canari backup at all - the magic header is wrong or absent. */
+  | 'not_a_backup'
+  /** A v1 file, encrypted with the PIN rather than the device key. Nothing here can open it. */
+  | 'too_old'
+  /** The envelope did not open: a different device key, or damaged bytes. */
+  | 'wrong_key'
+  /** It opened, and what came out is not a backup this build can read. */
+  | 'corrupted'
+  /** Structurally fine and past a size this client refuses to load into memory. */
+  | 'too_large';
+
+/**
+ * A refusal to read a backup, classified at the throw.
+ *
+ * `detail` is developer-facing and stays English: the offending id, the version number, the count
+ * that was too big. It is what the log line needs and is never shown to a user - the sentence they
+ * see comes from `code`.
+ */
+export class BackupError extends Error {
+  constructor(
+    readonly code: BackupErrorCode,
+    readonly detail: string
+  ) {
+    super(`[BACKUP] ${code}: ${detail}`);
+    this.name = 'BackupError';
+  }
+}
+
 // Magic header: bytes for 'C', 'A', 'N', version=2
 const MAGIC = new Uint8Array([0x43, 0x41, 0x4e, 0x02]);
 
@@ -200,7 +243,7 @@ export async function importBackup(
     fileData[1] !== MAGIC[1] ||
     fileData[2] !== MAGIC[2]
   ) {
-    throw new Error('Invalid or corrupted backup file.');
+    throw new BackupError('not_a_backup', `magic header mismatch (${fileData.length} bytes)`);
   }
 
   const backupVersion = fileData[3];
@@ -211,9 +254,7 @@ export async function importBackup(
   // meant the catch below swallowed it, and the only way back out was to recognise the sentence it
   // had just thrown - a branch on prose that any rewording would have broken silently.
   if (backupVersion < 2) {
-    throw new Error(
-      'Version 1 backups are no longer supported. Export again with a current build.'
-    );
+    throw new BackupError('too_old', `file version ${backupVersion}, this build reads 2+`);
   }
 
   // Decrypt outer envelope
@@ -223,36 +264,45 @@ export async function importBackup(
     decrypted = wasm.decrypt_with_key(deviceKeyB64, encrypted);
   } catch (err) {
     // The underlying cause is replaced by a single verdict here, so it is logged before it is lost.
+    // The underlying cause does not survive the classification, so it is logged before it is lost.
     console.warn(`[BACKUP] Outer envelope decrypt failed: ${String(err)}`);
-    throw new Error('Wrong encryption key, or corrupted data.');
+    throw new BackupError('wrong_key', String(err));
   }
 
-  const backup: BackupData = JSON.parse(new TextDecoder().decode(decrypted));
+  // The envelope opened, so the bytes are ours and the key was right - but a truncated file
+  // decrypts to truncated JSON, and this was the one refusal with no classification at all: it
+  // escaped as a raw SyntaxError that no caller could tell from a bug.
+  let backup: BackupData;
+  try {
+    backup = JSON.parse(new TextDecoder().decode(decrypted)) as BackupData;
+  } catch (err) {
+    throw new BackupError('corrupted', `payload is not JSON: ${String(err)}`);
+  }
 
   if (backup.version < 1) {
-    throw new Error(`Unsupported backup version: ${backup.version}`);
+    throw new BackupError('corrupted', `payload version ${backup.version}`);
   }
 
   // Validate backup structure
   if (!Array.isArray(backup.conversations)) {
-    throw new Error('Invalid backup format: conversations are missing.');
+    throw new BackupError('corrupted', 'conversations is not an array');
   }
   if (!Array.isArray(backup.messages)) {
-    throw new Error('Invalid backup format: messages are missing.');
+    throw new BackupError('corrupted', 'messages is not an array');
   }
   if (backup.conversations.length > 10_000) {
-    throw new Error('Backup too large: too many conversations.');
+    throw new BackupError('too_large', `${backup.conversations.length} conversations, max 10000`);
   }
   if (backup.messages.length > 500_000) {
-    throw new Error('Backup too large: too many messages.');
+    throw new BackupError('too_large', `${backup.messages.length} messages, max 500000`);
   }
   // M3: Validate string field sizes to prevent OOM on malformed backups.
   for (const conv of backup.conversations) {
     if (typeof conv.id !== 'string' || !conv.id.trim()) {
-      throw new Error('Invalid conversation id in the backup.');
+      throw new BackupError('corrupted', 'a conversation has no usable id');
     }
     if (typeof conv.name === 'string' && conv.name.length > 500) {
-      throw new Error(`Conversation name too long (max 500 characters): ${conv.id}`);
+      throw new BackupError('corrupted', `conversation ${conv.id}: name over 500 characters`);
     }
   }
 
@@ -273,13 +323,13 @@ export async function importBackup(
   // This prevents partial imports where conversations are inserted but messages fail.
   for (const msg of backup.messages) {
     if (typeof msg.id !== 'string' || !msg.id.trim()) {
-      throw new Error('Invalid message id in the backup.');
+      throw new BackupError('corrupted', 'a message has no usable id');
     }
     if (typeof msg.conversationId !== 'string') {
-      throw new Error(`Message without a conversationId: ${msg.id}`);
+      throw new BackupError('corrupted', `message ${msg.id}: no conversationId`);
     }
     if (!Array.isArray(msg.iv) || !Array.isArray(msg.cipherText)) {
-      throw new Error(`Message with invalid ciphertext fields: ${msg.id}`);
+      throw new BackupError('corrupted', `message ${msg.id}: iv/cipherText are not arrays`);
     }
   }
 
@@ -287,17 +337,17 @@ export async function importBackup(
   // row cannot leave half a community restored.
   const graineRows = Array.isArray(backup.graine) ? backup.graine : [];
   if (graineRows.length > 100_000) {
-    throw new Error('Backup too large: too many channel sessions.');
+    throw new BackupError('too_large', `${graineRows.length} channel sessions, max 100000`);
   }
   for (const row of graineRows) {
     if (typeof row.sessionId !== 'string' || !row.sessionId.trim()) {
-      throw new Error('Invalid channel session id in the backup.');
+      throw new BackupError('corrupted', 'a channel session has no usable id');
     }
     if (typeof row.channelId !== 'string' || typeof row.workspaceId !== 'string') {
-      throw new Error(`Channel session without a channel or community: ${row.sessionId}`);
+      throw new BackupError('corrupted', `session ${row.sessionId}: no channel or community`);
     }
     if (!Array.isArray(row.iv) || !Array.isArray(row.cipherText)) {
-      throw new Error(`Channel session with invalid ciphertext fields: ${row.sessionId}`);
+      throw new BackupError('corrupted', `session ${row.sessionId}: iv/cipherText are not arrays`);
     }
   }
 

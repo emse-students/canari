@@ -129,37 +129,34 @@ before the campaign restarts.** Everything actionable is HERE, in order, one lin
 lives where the link says and **is not restated**. An item is done when its code, its tests, its doc
 and its commit are in, and it is then deleted from BOTH files.
 
-**Build first, then measure, then the campaign.** 1-2 are code, 3-7 measurements and questions that
-need a deploy to have happened, 8 a panel, 9 the campaign. **The phone is back (2026-08-17) -
+**Build first, then measure, then the campaign.** 1 is code, 2-6 measurements and questions that
+need a deploy to have happened, 7 a panel, 8 the campaign. **The phone is back (2026-08-17) -
 nothing is on hold; keep `adb devices` answering. There is NO iPhone (2026-08-18)**, so the iOS half
 of the device ladder cannot be run at all
 ([device-verification](docs/wiki/device-verification.md)).
 
-1. **A BACKUP THAT FAILS TELLS THE USER NOTHING** - seven refusals in `importBackup` reach only
-   `console.log`. Whoever picks it up decides the surface; the sentences become Paraglide messages in
-   the SAME change.
-2. **MiGallery's FUZZY SEARCH** - the last of the four projects on plain substring, against the
+1. **MiGallery's FUZZY SEARCH** - the last of the four projects on plain substring, against the
    user's standing requirement. Port Canari's pg_trgm + unaccent or Sky's `personMatchScore`.
-3. **SEO FOR Sky, MiGallery AND Portail-etu** - one method ([seo](docs/wiki/frontend/seo.md)), three
+2. **SEO FOR Sky, MiGallery AND Portail-etu** - one method ([seo](docs/wiki/frontend/seo.md)), three
    separate repos and three deploys.
-4. **CONVERGE THE FIVE PROJECTS ON EACH SHARED SOLUTION** - and it starts with an INVENTORY, not a
+3. **CONVERGE THE FIVE PROJECTS ON EACH SHARED SOLUTION** - and it starts with an INVENTORY, not a
    refactor. A shared package is probably the wrong shape; one written contract, four aligned
    implementations. Do NOT enumerate the inventory from memory.
-5. **MEASURE EGRESS OVER TIME** - the component probes already answer "fine right now"; what is owed
+4. **MEASURE EGRESS OVER TIME** - the component probes already answer "fine right now"; what is owed
    is whether the two stalls were CORRELATED, which a one-shot probe cannot answer.
-6. **THE DENOMINATOR ON THE PROFILE-FETCH FAILURES** - the accusing log line exists now; measure how
+5. **THE DENOMINATOR ON THE PROFILE-FETCH FAILURES** - the accusing log line exists now; measure how
     often it fires and against what population, then decide whether the two-minute backoff has a case.
-7. **THE TWO STORAGE-BOUND QUESTIONS, ANSWERED BY FAULT INJECTION** - what a phone out of space
+6. **THE TWO STORAGE-BOUND QUESTIONS, ANSWERED BY FAULT INJECTION** - what a phone out of space
     actually does, and what the web client does when the browser evicts its store. Both are TIME
     bounds today with no SIZE bound; the question is the failure SHAPE. **Injected, never on the
     campaign phone - the user's decision, 2026-08-19**: the appliance the campaign depends on is
     not the place to find out.
-8. **THE MLS HALF OF `/admin/storage`** - the media half shipped 2026-08-18; Postgres and Redis are
+7. **THE MLS HALF OF `/admin/storage`** - the media half shipped 2026-08-18; Postgres and Redis are
     still bare totals with no breakdown and no slope, and the WP-GHOST-1 shapes (a device holding
     memberships with no `key_package`, a queue past a few hundred rows) are measured nowhere. **A
     panel, no alert** - the user's call, 2026-08-17; the slope is what makes that survivable.
     [storage-forecast](docs/wiki/infrastructure/storage-forecast.md)
-9. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign.
+8. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign.
     **Everything must end green, so every phase runs.** What that costs, the ladder's order, and the
     two decisions it turns on - `call-service` logging BEFORE the CALL phase, and the community
     rework never having run against prod - are all on

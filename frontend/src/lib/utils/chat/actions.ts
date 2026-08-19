@@ -582,7 +582,7 @@ export async function importUserBackup(params: {
   log: (msg: string) => void;
   reloadConversations: () => Promise<void>;
   clearConversations: () => void;
-}) {
+}): Promise<{ conversations: number; messages: number; isSameDevice: boolean }> {
   const {
     file,
     deviceKeyB64,
@@ -624,6 +624,14 @@ export async function importUserBackup(params: {
     `[OK] Backup imported: ${backup.conversations.length} conversation(s), ` +
       `${backup.messages.length} message(s).`
   );
+
+  // Returned rather than only logged: the caller has to be able to TELL the user what happened,
+  // and the counts and the device verdict are the only facts the sentence needs.
+  return {
+    conversations: backup.conversations.length,
+    messages: backup.messages.length,
+    isSameDevice,
+  };
 }
 
 /** Dev helper: generates a new MLS KeyPackage for this device and returns it as a hex string. */

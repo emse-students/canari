@@ -1,19 +1,33 @@
 /**
  * Backup functions extracted from useChatSession: exportBackupImpl, importBackupImpl.
+ *
+ * Both RETURN their outcome rather than only logging it. The log sink here is the browser console,
+ * so for as long as that was the only report, a backup that refused the file was indistinguishable
+ * from one that worked - the button went grey, went back, and said nothing either way.
  */
 import { exportUserBackup, importUserBackup } from '$lib/utils/chat/actions';
+import {
+  backupErrorOutcome,
+  backupExportFailure,
+  backupExportOutcome,
+  backupImportOutcome,
+  type BackupOutcome,
+} from '$lib/utils/backupOutcome';
 import type { SessionContext } from './sessionTypes';
 
 /**
  * Exports an encrypted backup of all conversations and MLS state for the current user
  * (triggers browser download). Sets isExporting flag during the operation.
+ *
+ * @returns What to tell the user. `null` when there is no store to export - the surface has no
+ *   business showing a banner for a button that was never armed.
  */
 export async function exportBackupImpl(
   ctx: SessionContext,
   log: (msg: string) => void,
   setIsExporting: (v: boolean) => void
-): Promise<void> {
-  if (!ctx.getStorage()) return;
+): Promise<BackupOutcome | null> {
+  if (!ctx.getStorage()) return null;
   setIsExporting(true);
   try {
     await exportUserBackup({
@@ -23,10 +37,10 @@ export async function exportBackupImpl(
       myDeviceId: ctx.getMyDeviceId(),
       log,
     });
+    return backupExportOutcome();
   } catch (e) {
-    // Nothing else reports this: the caller's log sink is the browser console, so a failed export
-    // leaves the user with a button that did nothing and this line as its only trace.
     log(`[BACKUP] Export failed: ${e}`);
+    return backupExportFailure(e);
   } finally {
     setIsExporting(false);
   }
@@ -36,6 +50,9 @@ export async function exportBackupImpl(
  * Imports a previously exported backup file, decrypts it with the current PIN,
  * replaces IndexedDB, and reloads conversations.
  * Sets isImporting flag during the operation.
+ *
+ * @returns What to tell the user - which refusal, or how much was restored and onto what. `null`
+ *   when there is no store to import into.
  */
 export async function importBackupImpl(
   ctx: SessionContext,
@@ -44,11 +61,11 @@ export async function importBackupImpl(
   setIsImporting: (v: boolean) => void,
   clearConversations: () => void,
   reloadConversations: () => Promise<void>
-): Promise<void> {
-  if (!ctx.getStorage()) return;
+): Promise<BackupOutcome | null> {
+  if (!ctx.getStorage()) return null;
   setIsImporting(true);
   try {
-    await importUserBackup({
+    const result = await importUserBackup({
       file,
       deviceKeyB64: ctx.getDeviceKey(),
       storage: ctx.getStorage()!,
@@ -58,10 +75,10 @@ export async function importBackupImpl(
       clearConversations,
       reloadConversations,
     });
+    return backupImportOutcome(result);
   } catch (e) {
-    // Same gap as the export above, and worse: an import that refuses the file looks identical to
-    // one that succeeded. See the backlog entry on reporting a backup failure to the user.
     log(`[BACKUP] Import failed: ${e}`);
+    return backupErrorOutcome(e);
   } finally {
     setIsImporting(false);
   }

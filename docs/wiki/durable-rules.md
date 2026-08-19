@@ -883,6 +883,16 @@ prompt fields are all on those pages. What must not be forgotten between them:
   with no native resource fails nothing: the phone keeps the compatibility wording and it looks
   deliberate. `nativeStrings.test.ts` reads the union type out of the service's source and holds it
   against six string tables and three composers - and was mutation-checked by deleting one string.
+- **A DEV-FACING SENTENCE IS A DECISION TO REPORT NOTHING, AND IT EXPIRES THE DAY A SURFACE
+  APPEARS.** Seventeen refusals in `importBackup` threw English prose into `console.log`, which was
+  correct while nothing showed them - and it meant a refused file and a restored backup looked
+  identical on screen for as long as that lasted. The pair is inseparable: giving a refusal a
+  surface is what makes its string user-visible, so the sentence becomes a Paraglide message in the
+  SAME change, never before it and never after. Classify at the throw (a `code` from a closed set),
+  switch on it exhaustively in one place so an unmapped code fails to compile, and keep the
+  developer's `detail` untranslated and off the screen. The set is what a READER distinguishes, not
+  what the code checks - a dozen field checks are one sentence to somebody holding a file. See
+  [backup](frontend/backup.md).
 
 ## The public head, and the two adapters -> [frontend/seo](frontend/seo.md), [nginx](infrastructure/nginx.md)
 

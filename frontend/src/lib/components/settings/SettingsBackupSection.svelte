@@ -6,28 +6,41 @@
     appendLog,
   } from '$lib/stores/globalChatSingleton.svelte';
   import { m } from '$lib/paraglide/messages';
+  import type { BackupOutcome } from '$lib/utils/backupOutcome';
 
   // Encrypted .canari file backup and restore. Cross-device history is pooled automatically as a
   // manifest diff between the account's own devices (see the chat wiki), so there is nothing here
   // for the user to drive.
   let fileInput: HTMLInputElement | undefined = $state();
 
+  // The one report either operation gets. Until this existed the log sink was the browser console,
+  // so a refused file and a restored one looked exactly the same from here: the button went grey,
+  // came back, and said nothing.
+  let outcome: BackupOutcome | null = $state(null);
+
   function triggerImport() {
     fileInput?.click();
   }
 
-  function handleFileChange(e: Event) {
+  async function handleFileChange(e: Event) {
     const input = e.target as HTMLInputElement;
     const file = input.files?.[0];
-    if (file) {
-      session.handleImport(
-        file,
-        appendLog,
-        () => convs.conversations.clear(),
-        async () => {}
-      );
-      input.value = '';
-    }
+    if (!file) return;
+    // Cleared before the attempt, not after it: leaving the previous verdict on screen while a new
+    // import runs is how a failure gets read as belonging to the file just chosen.
+    outcome = null;
+    input.value = '';
+    outcome = await session.handleImport(
+      file,
+      appendLog,
+      () => convs.conversations.clear(),
+      async () => {}
+    );
+  }
+
+  async function handleExport() {
+    outcome = null;
+    outcome = await session.handleExport(appendLog);
   }
 </script>
 
@@ -60,7 +73,7 @@
 
       <button
         type="button"
-        onclick={() => session.handleExport(appendLog)}
+        onclick={handleExport}
         disabled={session.isExporting}
         class="flex flex-col items-center text-center gap-2 p-4 rounded-2xl border border-cn-border bg-white/50 dark:bg-white/5 hover:border-cn-yellow/40 transition-all active:scale-95 disabled:opacity-50"
       >
@@ -69,6 +82,18 @@
         <span class="text-[0.7rem] text-text-muted">{m.profile_backup_export_sub()}</span>
       </button>
     </div>
+
+    {#if outcome}
+      <p
+        class="mt-4 rounded-xl border px-4 py-3 text-sm font-medium leading-relaxed {outcome.ok
+          ? 'border-cn-border text-text-main'
+          : 'border-red-err/30 bg-red-err/10 text-red-err'}"
+        role="status"
+        aria-live="polite"
+      >
+        {outcome.text}
+      </p>
+    {/if}
   {:else}
     <p class="text-sm text-text-muted leading-relaxed">
       {m.profile_backup_locked()}
