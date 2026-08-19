@@ -22,8 +22,10 @@ import { CHANNEL_PERMISSIONS } from './permissions';
  *
  * So what these tests are really pinning down is that no path reaches chat-delivery without the
  * membership check having run first, and that a call this service cannot complete is reported as a
- * failure rather than as an empty answer. The service already carries one guard that fails OPEN
- * (`userHasMlsDevices`), and the day its URL was wrong that turned it into a constant `true`.
+ * failure rather than as an empty answer. That rule used to hold HERE and nowhere else -
+ * `userHasMlsDevices` failed open, and the day its URL was wrong it was a constant `true` - which
+ * is why the mechanism was extracted to `internal/delivery.client.ts` on 2026-08-19 and both now
+ * share it.
  */
 describe('ChannelService - the community distribution group', () => {
   const SECRET = 'internal-secret-for-tests';

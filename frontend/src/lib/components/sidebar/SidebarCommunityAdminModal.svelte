@@ -400,7 +400,13 @@
       setTimeout(() => (inviteStatus = ''), 4000);
       void loadCommunityMembers();
     } catch (e) {
-      inviteStatus = e instanceof Error ? e.message : m.chat_community_key_distribution_error();
+      // CLASSIFIED BY CODE FIRST. `ChannelApiError.message` is the RAW response body, so the two
+      // refusals that matter here - the invitee has never installed Canari, and the key service
+      // could not be asked - used to reach the admin as an English backend sentence or a JSON
+      // blob. They are different situations with different remedies and now say so.
+      const coded = e instanceof ChannelApiError ? describeCommunityRefusal(e.code) : null;
+      inviteStatus =
+        coded ?? (e instanceof Error ? e.message : m.chat_community_key_distribution_error());
       inviteUserId = savedId;
       inviteRole = savedRole;
     } finally {

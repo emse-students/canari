@@ -348,6 +348,8 @@
   "chat_community_invite_bounds_uses_unlimited": "{uses} utilisations, sans limite",
   "chat_community_no_admin_left_error": "Cette communauté se retrouverait sans administrateur. Donnez le rôle à un autre membre d'abord.",
   "chat_community_gone_error": "Cette communauté n'existe plus.",
+  "chat_invite_user_has_no_device_error": "Cette personne n'a pas encore installé Canari. Elle doit ouvrir l'application au moins une fois pour pouvoir être invitée.",
+  "chat_key_distribution_unavailable_error": "Impossible de vérifier pour l'instant : le service de clés ne répond pas. Réessayez dans un moment.",
   "common_generating_label": "Génération…",
   "chat_search_user_label": "Rechercher un utilisateur",
   "chat_search_user_name_or_id_placeholder": "Nom ou identifiant…",

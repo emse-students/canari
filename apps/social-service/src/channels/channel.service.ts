@@ -16,6 +16,7 @@ import { ChannelMessage } from './entities/channel-message.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import { RedisService } from '../common/redis';
 import { DELIVERY_TIMEOUT_MS, deliveryUrl } from '../internal/service-urls';
+import { fetchUserDeviceCount } from '../internal/delivery.client';
 import {
   createDistributionGroup,
   deleteDistributionGroup,
@@ -1569,22 +1570,17 @@ export class ChannelService {
   }
 
   /**
-   * Returns false when the user has no active MLS device registered in chat-delivery.
-   * Fails open (returns true) on network error so a misconfigured secret never blocks invitations.
+   * Whether the user has an active MLS device registered in chat-delivery.
+   *
+   * FAILS CLOSED, since 2026-08-19. It used to answer `true` on a non-2xx AND on any thrown error
+   * AND on an unset secret, so the day its URL was missing the `/api` prefix it was a constant
+   * `true` - a guard nobody had, for as long as nobody looked. Now it answers only what a genuine
+   * 200 said, and anything else throws out of `fetchUserDeviceCount`.
+   *
+   * @throws ServiceUnavailableException when the question could not be asked
    */
   private async userHasMlsDevices(userId: string): Promise<boolean> {
-    if (!this.internalSecret) return true;
-    try {
-      const res = await fetch(deliveryUrl(`mls/devices/${encodeURIComponent(userId)}`), {
-        headers: { 'X-Internal-Secret': this.internalSecret },
-        signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
-      });
-      if (!res.ok) return true;
-      const devices: unknown[] = await res.json();
-      return devices.length > 0;
-    } catch {
-      return true;
-    }
+    return (await fetchUserDeviceCount(this.internalSecret, userId)) > 0;
   }
 
   /**
@@ -1620,11 +1616,18 @@ export class ChannelService {
     if (!hasPerm) throw new ForbiddenException('Missing INVITE_USERS permission');
 
     // Reject early if the invitee has no MLS device - the key DM could never be delivered.
+    //
+    // TWO OUTCOMES, TWO ANSWERS. This throws `ServiceUnavailableException` when it could not ask,
+    // which is deliberately NOT this branch: "this person has not installed Canari" is advice about
+    // them, and "the key service cannot be reached" is a retry about us. Rounding the second into
+    // the first is what the old fail-open version did in reverse, and it told the inviter their
+    // invitation had gone through.
     const hasDevices = await this.userHasMlsDevices(input.targetUserId);
     if (!hasDevices) {
-      throw new BadRequestException(
-        `User ${input.targetUserId} has not yet set up Canari on any device.`
-      );
+      throw new BadRequestException({
+        code: 'USER_HAS_NO_DEVICE',
+        message: `User ${input.targetUserId} has not yet set up Canari on any device.`,
+      });
     }
 
     // Add target user as member if not already

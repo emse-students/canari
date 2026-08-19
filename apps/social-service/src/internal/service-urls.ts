@@ -11,9 +11,12 @@
  *   - `POST /internal/push/notify` from `channel.service.ts` answered 404 on EVERY channel message,
  *     so channel push notifications had never once been delivered. It logged `WARN` and returned;
  *   - the same call from `push.service.ts`, same result;
- *   - `GET /mls/devices/<user>` answered 404, and `userHasMlsDevices` returns `true` on `!res.ok` -
+ *   - `GET /mls/devices/<user>` answered 404, and `userHasMlsDevices` returned `true` on `!res.ok` -
  *     so a guard meant to stop inviting a user with no MLS device was a constant `true`. Not a
- *     degraded check: no check at all.
+ *     degraded check: no check at all. **The prefix was fixed here; the fail-open half survived it
+ *     until 2026-08-19**, and that is the lesson worth keeping - correcting the URL made the guard
+ *     work again without making it capable of reporting that it had not. It now goes through
+ *     [delivery.client](delivery.client.ts), which throws on anything but a 2xx.
  *
  * Measured on production 2026-08-14 from the delivery service's own logs, during the MSG phase of
  * the cross-client campaign - which is what a server-side observer buys.

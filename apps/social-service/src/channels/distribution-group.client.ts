@@ -1,5 +1,5 @@
 import { Logger, ServiceUnavailableException } from '@nestjs/common';
-import { DELIVERY_TIMEOUT_MS, deliveryUrl } from '../internal/service-urls';
+import { callDelivery } from '../internal/delivery.client';
 
 /**
  * THE ONE PLACE THIS SERVICE TALKS TO CHAT-DELIVERY ABOUT A COMMUNITY'S GRAINE DISTRIBUTION GROUP.
@@ -15,10 +15,10 @@ import { DELIVERY_TIMEOUT_MS, deliveryUrl } from '../internal/service-urls';
  * join, so handing it out is exactly the authorization decision, and it is made in `channel.service`
  * against `channel_workspace_members` before any function here is called.
  *
- * EVERY FUNCTION HERE THROWS ON FAILURE, AND THAT IS THE POINT. `userHasMlsDevices` in
- * `channel.service` fails open, and the day its URL was wrong that turned a guard into a constant
- * `true` - a check nobody had. A transport failure is not an answer: a community whose seeds cannot
- * be reached must say so, not quietly behave as though it had none.
+ * EVERY FUNCTION HERE THROWS ON FAILURE, AND THAT IS THE POINT. A transport failure is not an
+ * answer: a community whose seeds cannot be reached must say so, not quietly behave as though it
+ * had none. The mechanism is [delivery.client](../internal/delivery.client.ts), shared since
+ * 2026-08-19 with the device lookup that used to fail OPEN and be the counter-example here.
  */
 
 const logger = new Logger('DistributionGroup');
@@ -45,51 +45,6 @@ interface DeliveryGroupPayload {
 }
 
 /**
- * Performs one internal call and refuses to interpret anything but a status code.
- *
- * @throws ServiceUnavailableException when the call could not be completed, or answered non-2xx.
- */
-async function callDelivery(
-  secret: string,
-  path: string,
-  init: { method: 'GET' | 'POST' | 'DELETE'; body?: unknown }
-): Promise<unknown> {
-  if (!secret) {
-    // Fails closed, like every other internal-secret check in the monorepo: an unset secret means
-    // the deployment is misconfigured, and pretending the community has no seeds would hide it.
-    logger.error(`[DISTRIBUTION_GROUP] INTERNAL_SECRET unset - refusing ${init.method} ${path}`);
-    throw new ServiceUnavailableException('Key distribution is unavailable.');
-  }
-
-  let res: Response;
-  try {
-    res = await fetch(deliveryUrl(path), {
-      method: init.method,
-      headers: {
-        'X-Internal-Secret': secret,
-        ...(init.body === undefined ? {} : { 'Content-Type': 'application/json' }),
-      },
-      body: init.body === undefined ? undefined : JSON.stringify(init.body),
-      signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
-    });
-  } catch (e) {
-    logger.error(
-      `[DISTRIBUTION_GROUP] ${init.method} ${path} unreachable: ${e instanceof Error ? e.message : String(e)}`
-    );
-    throw new ServiceUnavailableException('Key distribution is unavailable.');
-  }
-
-  if (!res.ok) {
-    logger.error(`[DISTRIBUTION_GROUP] ${init.method} ${path} answered ${res.status}`);
-    throw new ServiceUnavailableException('Key distribution is unavailable.');
-  }
-
-  // 204 and an empty body are legitimate answers on the DELETE route.
-  const text = await res.text();
-  return text.length === 0 ? null : (JSON.parse(text) as unknown);
-}
-
-/**
  * Creates the community's distribution group, or returns the one it already has.
  *
  * Idempotent on the delivery side through a partial unique index, so calling it twice for the same
@@ -103,10 +58,15 @@ export async function createDistributionGroup(
   secret: string,
   workspaceId: string
 ): Promise<string> {
-  const payload = (await callDelivery(secret, 'internal/mls/distribution-groups', {
-    method: 'POST',
-    body: { workspaceId },
-  })) as DeliveryGroupPayload | null;
+  const payload = (await callDelivery(
+    secret,
+    'DISTRIBUTION_GROUP',
+    'internal/mls/distribution-groups',
+    {
+      method: 'POST',
+      body: { workspaceId },
+    }
+  )) as DeliveryGroupPayload | null;
 
   const groupId = typeof payload?.groupId === 'string' ? payload.groupId : '';
   if (!groupId) {
@@ -128,6 +88,7 @@ export async function readDistributionGroup(
 ): Promise<DistributionGroupRef | null> {
   const payload = (await callDelivery(
     secret,
+    'DISTRIBUTION_GROUP',
     `internal/mls/distribution-groups/${encodeURIComponent(workspaceId)}`,
     { method: 'GET' }
   )) as DeliveryGroupPayload | null;
@@ -151,6 +112,7 @@ export async function publishDistributionGroupInfo(
 ): Promise<{ stored: boolean }> {
   const payload = (await callDelivery(
     secret,
+    'DISTRIBUTION_GROUP',
     `internal/mls/distribution-groups/${encodeURIComponent(workspaceId)}/group-info`,
     { method: 'POST', body: { groupInfo, baseEpoch } }
   )) as { stored?: unknown } | null;
@@ -184,6 +146,7 @@ export async function evictFromDistributionGroup(
 ): Promise<{ evicted: boolean; memberships: number; queued: number; routes: number }> {
   const payload = (await callDelivery(
     secret,
+    'DISTRIBUTION_GROUP',
     `internal/mls/distribution-groups/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(userId)}`,
     { method: 'DELETE' }
   )) as { evicted?: unknown; memberships?: unknown; queued?: unknown; routes?: unknown } | null;
@@ -203,6 +166,7 @@ export async function deleteDistributionGroup(
 ): Promise<boolean> {
   const payload = (await callDelivery(
     secret,
+    'DISTRIBUTION_GROUP',
     `internal/mls/distribution-groups/${encodeURIComponent(workspaceId)}`,
     { method: 'DELETE' }
   )) as { deleted?: unknown } | null;
