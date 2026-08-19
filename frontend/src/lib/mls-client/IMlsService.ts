@@ -429,6 +429,13 @@ export interface IMlsService {
   registerDistributionGroup(workspaceId: string, groupId: string): void;
   /** True when `groupId` carries channel seeds and must never reach the conversation pipeline. */
   isDistributionGroup(groupId: string): boolean;
+  /**
+   * Leaves a community's key-distribution group - the MLS tree and the registration together - and
+   * returns the group left, or null when this device held none. The counterpart of
+   * {@link ensureDistributionGroup}: without it, a community that leaves this device keeps
+   * delivering seeds to it.
+   */
+  forgetDistributionGroup(workspaceId: string): string | null;
   /** The distribution group registered for `workspaceId`, or null when none is. */
   distributionGroupFor(workspaceId: string): string | null;
   /**

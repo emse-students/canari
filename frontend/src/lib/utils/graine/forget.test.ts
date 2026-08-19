@@ -48,6 +48,7 @@ function mkSession(over: Partial<StoredGraineSession> = {}): StoredGraineSession
 let held: StoredGraineSession[];
 let deleted: string[];
 let sendMessage: ReturnType<typeof vi.fn>;
+let forgetDistributionGroup: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   resetGraineRepairState();
@@ -56,6 +57,7 @@ beforeEach(() => {
   held = [mkSession(), mkSession({ sessionId: 's-2', channelId: 'chan-2' })];
   deleted = [];
   sendMessage = vi.fn().mockResolvedValue(undefined);
+  forgetDistributionGroup = vi.fn().mockReturnValue('dist-group');
   setGraineRuntime({
     storage: {
       getGraineSessionsForWorkspace: async () => held,
@@ -68,7 +70,13 @@ beforeEach(() => {
     } as never,
     deviceKeyB64: 'device-key',
     userId: 'alice',
-    mlsService: { sendMessage, distributionGroupFor: () => 'dist-group' } as never,
+    mlsService: {
+      sendMessage,
+      distributionGroupFor: () => 'dist-group',
+      forgetDistributionGroup,
+      saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
+      persistCheckpoint: vi.fn().mockResolvedValue(undefined),
+    } as never,
   });
 });
 
@@ -130,7 +138,13 @@ describe('forgetCommunityGraine', () => {
       } as never,
       deviceKeyB64: 'device-key',
       userId: 'alice',
-      mlsService: { sendMessage, distributionGroupFor: () => 'dist-group' } as never,
+      mlsService: {
+        sendMessage,
+        distributionGroupFor: () => 'dist-group',
+        forgetDistributionGroup,
+        saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
+        persistCheckpoint: vi.fn().mockResolvedValue(undefined),
+      } as never,
     });
 
     // The delete is keyed by workspaceId, a clear column - it needs no device key. An unreadable
@@ -147,5 +161,26 @@ describe('forgetCommunityGraine', () => {
 
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('its seeds stay on this device'));
     warn.mockRestore();
+  });
+});
+
+describe('the distribution group', () => {
+  it('is LEFT with the seeds, or the community goes on delivering to a device that left it', async () => {
+    // The counterpart of joining, and it did not exist: seeds, maps and the mirror are what the
+    // device HELD, while the distribution group is what keeps feeding it. A reconciliation sweep
+    // used to destroy the group on the next connection for an unrelated - and wrong - reason, which
+    // is the only thing that ever ended it.
+    await forgetCommunityGraine('ws-1');
+    expect(forgetDistributionGroup).toHaveBeenCalledWith('ws-1');
+  });
+
+  it('is not claimed to have been left when this device held none', async () => {
+    forgetDistributionGroup.mockReturnValue(null);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await forgetCommunityGraine('ws-1');
+
+    expect(info.mock.calls.flat().join(' ')).not.toContain('left the distribution group');
+    info.mockRestore();
   });
 });

@@ -1,4 +1,5 @@
 import { isGraineReady, requireGraineRuntime, forgetWorkspaceGraineState } from './runtime';
+import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
 import { forgetWorkspaceRepairState } from './repair';
 import { forgetGraineChannelMirror } from './graineMirror';
 
@@ -33,7 +34,25 @@ export async function forgetCommunityGraine(workspaceId: string): Promise<number
     return 0;
   }
 
-  const { storage, deviceKeyB64 } = requireGraineRuntime('forgetCommunityGraine');
+  const { storage, deviceKeyB64, userId, mlsService } =
+    requireGraineRuntime('forgetCommunityGraine');
+
+  // THE MLS GROUP GOES FIRST, and it is the one thing this function used to leave behind. Seeds,
+  // maps and the mirror are what this device HELD; the distribution group is what keeps FEEDING it
+  // - a community left with the group still joined goes on receiving every seed sent in it. It was
+  // invisible while a reconciliation sweep destroyed the group on the next connection for an
+  // unrelated (and wrong) reason; that sweep now correctly keeps it, so this is what has to end it.
+  const leftGroup = mlsService.forgetDistributionGroup(workspaceId);
+  if (leftGroup) {
+    // Not persisted here and forgotten: the next load would restore the group from the checkpoint
+    // and this device would be back in a community it left.
+    await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, (message) =>
+      console.info(message)
+    );
+    console.info(
+      `[GRAINE] left the distribution group ${leftGroup.slice(0, 8)} of community ${workspaceId.slice(0, 8)}`
+    );
+  }
 
   // Read BEFORE the delete: the session and channel ids are the keys the in-memory maps and the
   // native mirror are indexed by, and after the delete there is nothing left to derive them from.

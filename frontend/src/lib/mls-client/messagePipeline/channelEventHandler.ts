@@ -1,4 +1,5 @@
 import { openChannelMessage } from '$lib/utils/graine/channelSeal';
+import { reportUnreadableChannelMessage } from '$lib/utils/chat/channelCrypto';
 import { decodeAppMessage } from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope } from '$lib/envelope';
 import { appMsgToEnvelope, appMsgToChannelSystemEnvelope } from '$lib/utils/chat/messageUtils';
@@ -239,7 +240,16 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
           content = serializeEnvelope(mkTextEnvelope(data.plaintext));
         }
       } catch (e) {
-        console.error('Failed to parse channel message:', e);
+        // The SAME decision the history path takes, and for the same reason a live bubble is opened
+        // here at all: a message whose seed has not landed yet must ASK for it, not wait for a
+        // history reload to notice. `content` stays undefined, so the row is not rendered until the
+        // repair announces it - which is the behaviour the comment below already described.
+        reportUnreadableChannelMessage(
+          data.channelId,
+          String(data.messageId || data.id),
+          String(sender || ''),
+          e
+        );
       }
 
       // Only persist if decryption succeeded - a missing key means loadChannelHistory

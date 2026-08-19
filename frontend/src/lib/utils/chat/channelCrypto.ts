@@ -53,6 +53,46 @@ export interface DecodedChannelReaction {
 }
 
 /**
+ * Says why a channel message could not be read, and asks for its seed when asking can help.
+ *
+ * SHARED BY THE HISTORY PATH AND THE LIVE PATH, because they had drifted and only one of them was
+ * right. The live route (`channelEventHandler`) caught every failure into a single
+ * `console.error('Failed to parse channel message')` and asked for NOTHING - so a message arriving
+ * before its seed, which is the ordinary race between a salon message and the key that opens it,
+ * was dropped anonymously and recovered only if a history reload happened to run the other path
+ * later. Measured on A1, 2026-08-19: six seconds, one ERROR line, and a repair triggered by the
+ * wrong code path.
+ *
+ * The row is dropped from the render with nothing else to show for it, so the reason is all the
+ * loss leaves behind - and the three reasons need three different responses. A MISSING SEED is
+ * repairable and is the only one worth asking a peer about; a message below the handover floor is
+ * the protocol working, and asking would loop for ever since the answer is the same seed; anything
+ * else is a real fault. Decided from the CLASS, never from the sentence.
+ */
+export function reportUnreadableChannelMessage(
+  channelId: string,
+  rowId: string,
+  senderId: string,
+  err: unknown
+): void {
+  const channel = rawChannelId(channelId);
+  console.warn(
+    `[CHANNEL] Message ${rowId} of ${channel.slice(0, 8)} is unreadable and is not rendered - ` +
+      (err instanceof GraineSessionUnavailableError
+        ? `no seed for session ${err.sessionId} (repairable)`
+        : err instanceof GraineBelowFirstIndexError
+          ? `sent before this device was given the seed (index ${err.index} < ${err.firstIndex})`
+          : String(err))
+  );
+  // A missing seed is the ONE unreadability a peer can fix, so it is the one that asks. The
+  // request is deduplicated per session, so a page of fifty rows naming three sessions asks
+  // three times and not fifty - and a live frame asking costs nothing when history already did.
+  if (err instanceof GraineSessionUnavailableError) {
+    noteMissingSeed(channel, err.sessionId, senderId);
+  }
+}
+
+/**
  * Decrypts and decodes a single channel message row, or returns null when the payload is unreadable
  * or carries no displayable content. Shared by channel history loading and full-text search so both
  * decode rows identically.
@@ -95,25 +135,7 @@ export async function decodeChannelMessageRow(
       }
     }
   } catch (err) {
-    // The row is dropped from the rendered history with nothing else to show for it, so the reason
-    // it was unreadable is all the loss leaves behind - and the three reasons need three different
-    // responses. A MISSING SEED is repairable and is the only one worth asking a peer about; a
-    // message below the handover floor is the protocol working, and asking would loop for ever
-    // since the answer is the same seed; anything else is a real fault.
-    console.warn(
-      `[CHANNEL] Message ${String(row.id)} of ${channel.slice(0, 8)} is unreadable and is not rendered - ` +
-        (err instanceof GraineSessionUnavailableError
-          ? `no seed for session ${err.sessionId} (repairable)`
-          : err instanceof GraineBelowFirstIndexError
-            ? `sent before this device was given the seed (index ${err.index} < ${err.firstIndex})`
-            : String(err))
-    );
-    // A missing seed is the ONE unreadability a peer can fix, so it is the one that asks. The
-    // request is deduplicated per session, so a page of fifty rows naming three sessions asks
-    // three times and not fifty.
-    if (err instanceof GraineSessionUnavailableError) {
-      noteMissingSeed(channel, err.sessionId, String(row.senderId || ''));
-    }
+    reportUnreadableChannelMessage(channel, String(row.id), String(row.senderId || ''), err);
     return null;
   }
   if (content === undefined) return null;

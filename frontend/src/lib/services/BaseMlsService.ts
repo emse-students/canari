@@ -1756,6 +1756,30 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /**
+   * Leaves `workspaceId`'s key-distribution group: the MLS tree AND the registration, together.
+   *
+   * THE COUNTERPART OF {@link ensureDistributionGroup}, and it did not exist. Nothing removed this
+   * group when a community left the device, because the reconciliation sweep destroyed it on the
+   * next connection anyway - by accident, and for the wrong reason. Once the sweep correctly keeps
+   * it (WP-GRAINE-1), a community left in the morning would still have its seed carrier held at
+   * midnight, and every seed sent in it would still arrive.
+   *
+   * Both halves or neither: forgetting the tree while leaving the registration would leave
+   * `distributionGroupFor` naming a group this device no longer holds, which is the exact state
+   * `distributionEpochFor` exists to refuse. The MLS state still has to be checkpointed by the
+   * caller, which knows the device key.
+   *
+   * @returns the group that was left, or null when this device held none for that community.
+   */
+  forgetDistributionGroup(workspaceId: string): string | null {
+    const groupId = this.distributionGroupFor(workspaceId);
+    if (!groupId) return null;
+    this.forgetGroup(groupId);
+    this.distributionWorkspaceByGroup.delete(groupId);
+    return groupId;
+  }
+
+  /**
    * The distribution group registered for `workspaceId`, or null.
    *
    * Scanned rather than kept in a second map on purpose: a reverse index is a second copy of the

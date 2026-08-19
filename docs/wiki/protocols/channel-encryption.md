@@ -988,6 +988,32 @@ The population that was live while the defect was: session seeds distributed bet
 looping. New sessions are minted at the live epoch and readable by every member. The stale leaves
 one per external join left in the group are inert - a member that no device will ever speak as.
 
+### Two more the same run found
+
+**The live route dropped an unreadable message anonymously and asked for nothing.** A salon message
+and the seed that opens it travel on two different transports, so a receiver can get the message
+first - the ordinary case for the first message of a new session. The HISTORY path had always
+handled it correctly: it names which of the three unreadabilities it was, and calls `noteMissingSeed`
+for the one a peer can fix. The LIVE path (`channelEventHandler`) caught everything into one
+`console.error('Failed to parse channel message')` and asked for nothing, so recovery happened only
+if a history reload later ran the other path. Measured on A1 during the MSG-5 re-run: six seconds,
+one ERROR line, and the repair triggered by the wrong code path. Both now call
+`reportUnreadableChannelMessage`, one function, because the two had drifted and only one was right.
+
+**Leaving a community did not leave its distribution group.** `forgetCommunityGraine` erased the
+seeds, the in-memory maps and the native mirror - everything this device HELD - and never the MLS
+group, which is what keeps FEEDING it. The gap was invisible while the reconciliation sweep above
+destroyed that group on every connection: an accident was doing the work. With the sweep correctly
+keeping it, a community left in the morning would still be receiving seeds at midnight.
+`forgetDistributionGroup` is the counterpart of `ensureDistributionGroup` - the tree and the
+registration together, then a checkpoint, because a forget nothing persists comes back on the next
+load.
+
+**Still open, and it is a server-side question:** nothing removes a departing member's LEAF from the
+distribution group's MLS tree. The local forget stops this device using what it holds; it does not
+stop the tree still counting it. COMM-9, COMM-11 and COMM-12 on the campaign board are what will
+measure it.
+
 ## 10. Open, and not blocking
 
 Nothing here blocks anything above.
