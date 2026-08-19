@@ -3,7 +3,7 @@
   import { flip } from 'svelte/animate';
   import { SvelteMap } from 'svelte/reactivity';
   import { dndzone, type DndEvent } from 'svelte-dnd-action';
-  import { Hash, Lock, MessageSquarePlus, Plus } from '@lucide/svelte';
+  import { Hash, Lock, MessageSquarePlus, Plus, Settings, X } from '@lucide/svelte';
   import { showToast } from '$lib/stores/toast.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
   import ConversationTile from '../chat/ConversationTile.svelte';
@@ -392,18 +392,9 @@
         }}
         class="w-12 h-12 flex-shrink-0 rounded-2xl border border-dashed border-text-muted/50 text-text-muted flex items-center justify-center hover:text-text-main hover:border-text-main hover:bg-white/10 transition-all hover:rounded-[10px]"
         title={m.sidebar_add_community_title()}
+        aria-label={m.sidebar_add_community_title()}
       >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="24"
-          height="24"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"><path d="M5 12h14" /><path d="M12 5v14" /></svg
-        >
+        <Plus size={24} />
       </button>
     </div>
   {/if}
@@ -436,21 +427,9 @@
                 showCommunityAdminModal = true;
               }}
               title={m.sidebar_community_settings_title()}
+              aria-label={m.sidebar_community_settings_title()}
             >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                ><path
-                  d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
-                /><circle cx="12" cy="12" r="3" /></svg
-              >
+              <Settings size={18} />
             </button>
           {/if}
 
@@ -459,19 +438,9 @@
               type="button"
               onclick={() => onCloseDrawer?.()}
               class="w-8 h-8 rounded-full flex items-center justify-center text-text-muted hover:bg-white/65 dark:hover:bg-black/30 bg-transparent transition-colors"
-              aria-label="Fermer"
+              aria-label={m.common_close_label()}
             >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg
-              >
+              <X size={18} />
             </button>
           {/if}
         </div>
