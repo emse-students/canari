@@ -26,7 +26,13 @@ import {
 } from './entities/association-calendar-event.entity';
 import { AssociationCalendarEventCoOwner } from './entities/association-calendar-event-co-owner.entity';
 import { deriveCotisationTag } from './cotisation-tag.util';
-import { isDelegating, resolvePaymentTarget, type PaymentTarget } from './payment-delegation.util';
+import {
+  isDelegating,
+  resolvePaymentTarget,
+  fetchActivePaymentProvider,
+  type PaymentTarget,
+  type PaymentProviderId,
+} from './payment-delegation.util';
 import { Post } from '../posts/entities/post.entity';
 import { Form } from '../forms/entities/form.entity';
 import {
@@ -75,6 +81,9 @@ export class AssociationsService {
   private readonly logger = new Logger(AssociationsService.name);
   private readonly mediaBaseUrl = (
     process.env.MEDIA_SERVICE_URL ?? 'http://media-service:3011'
+  ).replace(/\/+$/, '');
+  private readonly paymentBaseUrl = (
+    process.env.PAYMENT_SERVICE_URL ?? 'http://core-service:3012'
   ).replace(/\/+$/, '');
 
   constructor(
@@ -1978,29 +1987,43 @@ export class AssociationsService {
   }
 
   /**
-   * Resolves where an association's payments route, honoring an approved parent delegation.
-   * Loads the parent only when the association delegates (approved). Central resolver used by
-   * every payment path so delegation is applied uniformly.
+   * Reads the platform's currently active payment provider from core-service. Exposed for callers
+   * (e.g. FormsService) that need it outside of resolvePaymentTarget - such as deciding whether to
+   * pass Lydia's order_ref-shaped idempotency key on a form with no associated club.
    */
-  async resolvePaymentTarget(asso: Association): Promise<PaymentTarget> {
-    const parent = isDelegating(asso)
-      ? await this.assoRepo.findOne({ where: { id: asso.paymentParentAssociationId } })
-      : null;
-    return resolvePaymentTarget(asso, parent);
+  async getActivePaymentProvider(): Promise<PaymentProviderId> {
+    return fetchActivePaymentProvider(this.httpService, this.paymentBaseUrl);
   }
 
   /**
-   * Returns the Stripe connected-account ID an association's payments route to, or null if none.
-   * Follows an approved parent delegation to the parent's account.
+   * Resolves where an association's payments route, honoring an approved parent delegation AND
+   * the platform's currently active provider (Stripe/Lydia keep independent account ids - see
+   * payment-delegation.util.ts). Loads the parent only when the association delegates (approved).
+   * Central resolver used by every payment path so delegation and provider selection are applied
+   * uniformly. Lets a failure to reach core-service propagate - never guesses the active provider.
    */
-  async getStripeAccountId(id: string): Promise<string | null> {
+  async resolvePaymentTarget(asso: Association): Promise<PaymentTarget> {
+    const [provider, parent] = await Promise.all([
+      this.getActivePaymentProvider(),
+      isDelegating(asso)
+        ? this.assoRepo.findOne({ where: { id: asso.paymentParentAssociationId } })
+        : Promise.resolve(null),
+    ]);
+    return resolvePaymentTarget(asso, parent, provider);
+  }
+
+  /**
+   * Returns the connect-style account id (Stripe or Lydia, whichever is active) an association's
+   * payments route to, or null if none. Follows an approved parent delegation to the parent's account.
+   */
+  async getPaymentAccountId(id: string): Promise<string | null> {
     const asso = await this.assoRepo.findOne({ where: { id } });
     if (!asso) return null;
-    return (await this.resolvePaymentTarget(asso)).stripeAccountId;
+    return (await this.resolvePaymentTarget(asso)).connectAccountId;
   }
 
   /** True when the association can receive online payments (via its own account or an approved parent). */
-  async isStripePaymentsReady(associationId: string): Promise<boolean> {
+  async isPaymentsReady(associationId: string): Promise<boolean> {
     const asso = await this.assoRepo.findOne({ where: { id: associationId } });
     if (!asso) return false;
     return (await this.resolvePaymentTarget(asso)).ready;
@@ -2011,7 +2034,7 @@ export class AssociationsService {
    * before accepting paid forms/purchases.
    * @throws BadRequestException when neither the association nor its approved parent can receive payments
    */
-  async assertStripePaymentsReady(associationId: string): Promise<void> {
+  async assertPaymentsReady(associationId: string): Promise<void> {
     const asso = await this.assoRepo.findOne({ where: { id: associationId } });
     if (!asso) {
       throw new NotFoundException('Association not found');
@@ -2020,15 +2043,15 @@ export class AssociationsService {
     if (target.ready) return;
     if (target.delegated) {
       throw new BadRequestException(
-        'The parent association this club delegates payments to has not finished Stripe Connect onboarding.'
+        'The parent association this club delegates payments to has not completed onboarding to receive payments.'
       );
     }
-    if (!asso.stripeOnboardingComplete) {
-      throw new BadRequestException(
-        'This association has not yet enabled Stripe Connect to receive payments.'
-      );
+    if (!target.connectAccountId) {
+      throw new BadRequestException('No payment account linked to this association.');
     }
-    throw new BadRequestException('No Stripe Connect account linked to this association.');
+    throw new BadRequestException(
+      'This association has not yet completed onboarding to receive payments.'
+    );
   }
 
   // ── Payment delegation (parent-association Stripe routing) ─────────────────

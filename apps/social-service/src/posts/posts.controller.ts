@@ -175,8 +175,8 @@ export class PostsController {
     }
     if (body.paymentAssociationId) {
       // Honors approved parent-payment delegation: a club with no own account but a ready parent passes.
-      if (!(await this.associationsService.isStripePaymentsReady(body.paymentAssociationId))) {
-        throw new BadRequestException('This association has not completed Stripe onboarding');
+      if (!(await this.associationsService.isPaymentsReady(body.paymentAssociationId))) {
+        throw new BadRequestException('This association has not completed payment onboarding');
       }
     }
     return this.service.createPost({ ...body, authorId: xUserId });

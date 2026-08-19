@@ -1,6 +1,7 @@
 import { BadRequestException, Logger } from '@nestjs/common';
 import axios from 'axios';
 import { signLydiaParams } from './lydia-signature';
+import { parseLydiaOrderRef, orderRefToMetadata } from './lydia-order-ref';
 import type { StripeConnectStatusResponse } from './stripeConnectStatus';
 import type {
   ChargeResult,
@@ -19,10 +20,10 @@ const HOMOLOGATION_BASE_URL = 'https://homologation.lydia-app.com';
 const PRODUCTION_BASE_URL = 'https://lydia-app.com';
 
 /**
- * Lydia API implementation of PaymentProvider (WP-LYDIA-1). NOT wired in yet - PaymentService
- * still defaults PAYMENT_PROVIDER to 'stripe'. Covers only the two flows that map cleanly onto the
- * current PaymentProvider interface without a design change: one-off checkout (`request/do`) and
- * session lookup (`request/state`).
+ * Lydia API implementation of PaymentProvider (WP-LYDIA-1). Platform config still defaults
+ * `paymentProvider` to `stripe` - flipping it live is gated on the two gaps below, not on code.
+ * Covers checkout (`request/do`, confirmed server-side via its signed per-request callback - see
+ * `webhook.controller.ts`'s `lydia-request-callback` route) and session lookup (`request/state`).
  *
  * Everything else throws deliberately instead of faking a result - each throw below documents a
  * real gap found while implementing this, not a missing feature to silently stub:
@@ -31,8 +32,12 @@ const PRODUCTION_BASE_URL = 'https://lydia-app.com';
  *   webhook event once, it does not expose a "retrieve current status" call. The PaymentProvider
  *   interface assumes a Stripe-style live poll; serving this correctly needs the interface extended
  *   to read Canari's own DB-tracked state (written by the webhook) instead of calling Lydia live.
+ *   That webhook receiver is deliberately not built either (2026-08-19): it has no documented
+ *   signature and `vendor_token` is PUBLIC, so building it as-is would be forgeable.
  * - Saved payment method methods: retired per the WP-LYDIA-1 decision (see plan) - every purchase
  *   becomes its own `request/do` with payer interaction, there is no server-side vaulted instrument.
+ * - `createCheckoutSession` still requires `payerRecipient`, which no caller in social-service
+ *   resolves yet (2026-08-19) - a Lydia checkout throws until that's wired.
  */
 export class LydiaPaymentProvider implements PaymentProvider {
   readonly id = 'lydia' as const;
@@ -53,6 +58,17 @@ export class LydiaPaymentProvider implements PaymentProvider {
     this.providerToken = env.LYDIA_PROVIDER_TOKEN;
     this.providerPrivateToken = env.LYDIA_PROVIDER_PRIVATE_TOKEN;
     this.logger.log(`Lydia configured: ${this.isConfigured() ? 'yes' : 'no'} (${this.baseUrl})`);
+  }
+
+  /**
+   * URL Lydia calls back on a `request/do` outcome (`webhook.controller.ts`'s
+   * `lydia-request-callback` route). Built from `FRONTEND_URL` because nginx is the single public
+   * entry point - `/api/...` under it already reaches core-service, exactly like every
+   * success/cancel URL this controller already hands to Stripe and Lydia.
+   */
+  private callbackUrl(outcome: 'confirm' | 'cancel' | 'expire'): string {
+    const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost').replace(/\/$/, '');
+    return `${frontendUrl}/api/payments/lydia-request-callback?outcome=${outcome}`;
   }
 
   isConfigured(): boolean {
@@ -110,6 +126,9 @@ export class LydiaPaymentProvider implements PaymentProvider {
       payment_method: 'auto',
       browser_success_url: params.successUrl,
       browser_fail_url: params.cancelUrl,
+      confirm_url: this.callbackUrl('confirm'),
+      cancel_url: this.callbackUrl('cancel'),
+      expire_url: this.callbackUrl('expire'),
     };
     if (params.idempotencyKey) fields.order_ref = params.idempotencyKey;
 
@@ -126,10 +145,17 @@ export class LydiaPaymentProvider implements PaymentProvider {
    */
   async retrieveSession(sessionId: string): Promise<CheckoutSessionInfo> {
     if (!this.providerToken) throw new BadRequestException('Lydia not configured');
-    const data = await this.postForm<{ state: string }>('/api/request/state', {
+    const data = await this.postForm<{ state: string; order_ref?: string }>('/api/request/state', {
       request_uuid: sessionId,
     });
-    return { id: sessionId, paid: data.state === '1', metadata: {} };
+    return {
+      id: sessionId,
+      paid: data.state === '1',
+      // Best-effort: only populated if request/state actually echoes order_ref back. The
+      // authoritative confirmation path is the signed request/do callback (webhook.controller.ts),
+      // not this synchronous poll.
+      metadata: orderRefToMetadata(parseLydiaOrderRef(data.order_ref)),
+    };
   }
 
   /**

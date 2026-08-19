@@ -136,21 +136,27 @@ listés dans la carte d'impact ci-dessus ; ils sont déjà inventoriés, pas bes
   n'est délibérément PAS persisté : les appels signés côté provider (`business/addcashier`, etc.)
   utilisent le private_token du PROVIDER (Canari), jamais celui de la Business ciblée - confirmé par
   le champ "Provider private token" dans la spec de signature de `business/addcashier`.
-- **Deux véritables lacunes restent** (trouvées en implémentant, pas des suppositions) :
-  1. Aucune lecture "statut en direct" côté Lydia (`getAccountStatus`/`getConnectAccountStatus`
-     /`getConnectBalance`/`createConnectDashboardLink`) : Lydia pousse UNE fois l'évènement
-     `BUSINESS_VALIDATED` par webhook, il n'existe pas d'appel "retrieve" comme `accounts.retrieve`.
-     L'interface `PaymentProvider` suppose un modèle "poll en direct" hérité de Stripe ; pour Lydia il
-     faudrait qu'elle lise plutôt un état stocké en DB (écrit par le webhook) - **changement de
-     conception de l'interface, pas juste une implémentation** ; ces méthodes lèvent une erreur
-     explicite pour l'instant plutôt que de mentir sur le statut.
-  2. Qui signe le callback `confirm_url`/`cancel_url`/`expire_url` de `request/do` (le `sig` reçu) ?
-     La doc ne précise pas si c'est le `private_token` du provider (Canari) ou celui de la Business
-     ciblée. Le code assume le token du provider (`verifyRequestCallback`, cohérent avec le fait que
-     c'est Canari qui appelle en tant que provider) mais **c'est une hypothèse, pas une confirmation**
-     - à valider avant la mise en prod (ajouté au Livrable A).
+- **2026-08-19 : le callback `request/do` est maintenant reçu, sur l'hypothèse du point (2).**
+  `createCheckoutSession` enregistre désormais `confirm_url`/`cancel_url`/`expire_url` par requête, et
+  `POST /api/payments/lydia-request-callback` (`webhook.controller.ts`) vérifie `sig` via
+  `verifyRequestCallback` (donc avec le `private_token` du PROVIDER) et fait suivre vers le même
+  fulfillment que le webhook Stripe, via un `order_ref` que Canari encode lui-même
+  (`form:<submissionId>` / `product:<productId>:<userId>`, décodé par `lydia-order-ref.ts`). Reste
+  une vraie lacune trouvée pendant ce câblage : **`payerRecipient` n'est jamais fourni** par
+  `products.service.ts`/`forms.service.ts` - `request/do` le rend obligatoire, donc un paiement Lydia
+  échoue systématiquement tant que rien ne résout l'email/tél du payeur (voir
+  [backlog](../docs/wiki/backlog.md#flipping-payment_provider-from-stripe-to-lydia-wp-lydia-1)).
+- **Une véritable lacune reste, non résolue par choix** : aucune lecture "statut en direct" côté
+  Lydia (`getAccountStatus`/`getConnectAccountStatus`/`getConnectBalance`/`createConnectDashboardLink`)
+  : Lydia pousse UNE fois l'évènement `BUSINESS_VALIDATED` par webhook, il n'existe pas d'appel
+  "retrieve" comme `accounts.retrieve`. L'interface `PaymentProvider` suppose un modèle "poll en
+  direct" hérité de Stripe ; pour Lydia il faudrait qu'elle lise plutôt un état stocké en DB (écrit
+  par le webhook) - **changement de conception de l'interface, pas juste une implémentation** ; ces
+  méthodes lèvent une erreur explicite pour l'instant plutôt que de mentir sur le statut. Le récepteur
+  de ce webhook n'a délibérément pas été construit (2026-08-19, décision utilisateur) : il n'a aucune
+  signature documentée et `vendor_token` est PUBLIC - voir la question ajoutée au Livrable A.
 - Reste à faire pour clore Phase 2 : `business/addcashier` + permissions (peut se faire dès maintenant,
-  ne dépend d'aucune réponse Lydia), puis trancher (1) et (2) ci-dessus.
+  ne dépend d'aucune réponse Lydia), le `payerRecipient` ci-dessus, et la lacune du statut en direct.
 - **Décision utilisateur actée sur le débit "carte enregistrée"** : plutôt qu'un plafond partagé
   (`author_amount`) réutilisé sans interaction sur plusieurs achats, chaque achat déclenche sa propre
   autorisation dimensionnée exactement à son montant (`author/do` ou `request/do` avec le montant de
@@ -225,6 +231,11 @@ ci-dessus. Ce qui reste réellement à demander au contact Lydia (pas trouvable 
   `accounts.retrieve`) plutôt que de dépendre uniquement du webhook `BUSINESS_VALIDATED` envoyé une
   fois ? Sans ça, un webhook manqué (redémarrage, panne réseau) laisse Canari sans moyen de rattraper
   l'état - à demander explicitly, avec la fréquence de renvoi éventuelle du webhook en cas d'échec.
+- **Le webhook `business/create` (`{vendor_token, event: BUSINESS_VALIDATED|BUSINESS_UNVALIDATED}`)
+  a-t-il un schéma de signature**, comme celui de `request/do` ? Absent de tout ce qui a été lu
+  jusqu'ici, et `vendor_token` étant documenté PUBLIC, un récepteur sans signature serait forgeable
+  par quiconque connaît le `vendor_token` d'une autre association - c'est pourquoi ce récepteur n'a
+  volontairement pas été construit (2026-08-19, voir [backlog](../docs/wiki/backlog.md#flipping-payment_provider-from-stripe-to-lydia-wp-lydia-1)).
 
 ## Livrable B — Ce que l'association doit organiser
 

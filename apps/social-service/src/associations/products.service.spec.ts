@@ -64,7 +64,12 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       findOne: jest.fn(),
       find: jest.fn(() => Promise.resolve([])),
     };
-    const httpService = { post: jest.fn(() => of({ data: {} })) } as unknown as HttpService;
+    const httpService = {
+      post: jest.fn(() => of({ data: {} })),
+      // Active payment provider, polled via fetchActivePaymentProvider() - stripe by default,
+      // matching the `asso()` factory below (stripeAccountId/stripeOnboardingComplete).
+      get: jest.fn(() => of({ data: { provider: 'stripe' } })),
+    } as unknown as HttpService;
     const config = { get: jest.fn() } as unknown as ConfigService;
     const userTagService = {
       hasActiveTag: jest.fn(),
@@ -214,7 +219,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       userTagService.hasActiveTag.mockResolvedValue(false);
 
       const result = await (service as any).resolvePurchase('club1', 'prod1', 'user1');
-      expect(result.paymentTarget.stripeAccountId).toBe('acct_parent');
+      expect(result.paymentTarget.connectAccountId).toBe('acct_parent');
       expect(result.paymentTarget.delegated).toBe(true);
     });
 
@@ -256,7 +261,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       userTagService.hasActiveTag.mockResolvedValue(false);
 
       const result = await (service as any).resolvePurchase('club1', 'prod1', 'user1');
-      expect(result.paymentTarget.stripeAccountId).toBe('acct_club');
+      expect(result.paymentTarget.connectAccountId).toBe('acct_club');
       expect(result.paymentTarget.delegated).toBe(false);
     });
   });

@@ -1,4 +1,5 @@
 import { PaymentService } from './payment.service';
+import { signLydiaParams } from './lydia-signature';
 import type { PlatformService, PlatformConfigPublic } from '../platform/platform.service';
 
 function makeService(paymentProvider: 'stripe' | 'lydia') {
@@ -40,5 +41,27 @@ describe('PaymentService provider selection', () => {
     await expect(service.getActiveProviderId()).resolves.toBe('stripe');
     config.paymentProvider = 'lydia';
     await expect(service.getActiveProviderId()).resolves.toBe('lydia');
+  });
+});
+
+describe('PaymentService.verifyLydiaRequestCallback', () => {
+  const prevToken = process.env.LYDIA_PROVIDER_PRIVATE_TOKEN;
+
+  beforeEach(() => {
+    process.env.LYDIA_PROVIDER_PRIVATE_TOKEN = 'provider-private-token';
+  });
+
+  afterEach(() => {
+    process.env.LYDIA_PROVIDER_PRIVATE_TOKEN = prevToken;
+  });
+
+  it('verifies against the Lydia provider regardless of which provider is currently active', () => {
+    // Active provider is 'stripe' here on purpose - a Lydia payment already in flight must still
+    // verify even if the admin flipped the platform switch back before it resolved.
+    const service = makeService('stripe');
+    const fields = { request_id: 'req-1', amount: '12.00', currency: 'EUR', order_ref: 'form:s1' };
+    const sig = signLydiaParams(fields, 'provider-private-token');
+    expect(service.verifyLydiaRequestCallback(fields, sig)).toBe(true);
+    expect(service.verifyLydiaRequestCallback(fields, 'wrong')).toBe(false);
   });
 });

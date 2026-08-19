@@ -52,6 +52,13 @@ describe('LydiaPaymentProvider.createCheckoutSession', () => {
     expect(sent.get('recipient')).toBe('user@example.com');
     expect(sent.get('type')).toBe('email');
     expect(sent.get('order_ref')).toBe('submission-42');
+    // The receiver for these lives in webhook.controller.ts (lydia-request-callback) - registered
+    // per-request since Lydia has no global webhook config like Stripe's dashboard-configured one.
+    expect(sent.get('confirm_url')).toContain(
+      '/api/payments/lydia-request-callback?outcome=confirm'
+    );
+    expect(sent.get('cancel_url')).toContain('/api/payments/lydia-request-callback?outcome=cancel');
+    expect(sent.get('expire_url')).toContain('/api/payments/lydia-request-callback?outcome=expire');
   });
 
   it('throws when no target vendor_token is given', async () => {
@@ -172,6 +179,52 @@ describe('LydiaPaymentProvider retired/unimplemented methods', () => {
     await expect(provider.getConnectAccountStatus('vendor-token')).rejects.toThrow(
       /live account-status poll/
     );
+  });
+});
+
+describe('LydiaPaymentProvider.retrieveSession', () => {
+  afterEach(() => jest.clearAllMocks());
+
+  it('reports paid=true on state 1, with empty metadata when request/state echoes no order_ref', async () => {
+    mockedAxios.post.mockResolvedValue({ data: { error: '0', state: '1' } });
+    const provider = makeProvider();
+    await expect(provider.retrieveSession('req-uuid-1')).resolves.toEqual({
+      id: 'req-uuid-1',
+      paid: true,
+      metadata: {},
+    });
+  });
+
+  it('reports paid=false on a non-1 state', async () => {
+    mockedAxios.post.mockResolvedValue({ data: { error: '0', state: '0' } });
+    const provider = makeProvider();
+    await expect(provider.retrieveSession('req-uuid-1')).resolves.toMatchObject({ paid: false });
+  });
+
+  it('decodes a form order_ref into metadata.submissionId, mirroring Stripe session metadata', async () => {
+    mockedAxios.post.mockResolvedValue({
+      data: { error: '0', state: '1', order_ref: 'form:submission-42' },
+    });
+    const provider = makeProvider();
+    await expect(provider.retrieveSession('req-uuid-1')).resolves.toEqual({
+      id: 'req-uuid-1',
+      paid: true,
+      metadata: { submissionId: 'submission-42' },
+    });
+  });
+
+  it('decodes a product order_ref into metadata.productId/userId', async () => {
+    const productId = '11111111-1111-1111-1111-111111111111';
+    const userId = '22222222-2222-2222-2222-222222222222';
+    mockedAxios.post.mockResolvedValue({
+      data: { error: '0', state: '1', order_ref: `product:${productId}:${userId}` },
+    });
+    const provider = makeProvider();
+    await expect(provider.retrieveSession('req-uuid-1')).resolves.toEqual({
+      id: 'req-uuid-1',
+      paid: true,
+      metadata: { productId, userId },
+    });
   });
 });
 

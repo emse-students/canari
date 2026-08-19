@@ -1,14 +1,28 @@
-import { Controller, Post, Req, Res, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Post,
+  Query,
+  Req,
+  Res,
+  Logger,
+} from '@nestjs/common';
 import type { Request, Response } from 'express';
 import Stripe from 'stripe';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import { UsersService } from '../users/users.service';
+import { PaymentService } from './payment.service';
+import { parseLydiaOrderRef } from './lydia-order-ref';
 import {
   getSocialServiceBase,
   internalSocialRequestConfig,
   internalSubmissionPath,
+  productPurchaseCompletedPath,
 } from './social-internal-client';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Parse a service base URL for server-to-server calls: http(s) only, no userinfo, path must be empty or "/". */
 function parseSafeServiceOrigin(raw: string, envName: string): URL {
@@ -41,7 +55,8 @@ export class PaymentWebhookController {
 
   constructor(
     private readonly config: ConfigService,
-    private readonly usersService: UsersService
+    private readonly usersService: UsersService,
+    private readonly paymentService: PaymentService
   ) {
     const key = this.config.get<string>('STRIPE_SECRET_KEY');
     this.stripe = key
@@ -68,6 +83,35 @@ export class PaymentWebhookController {
         validateStatus: (s) => s >= 200 && s < 300,
       }
     );
+  }
+
+  /**
+   * Fulfills a boutique product purchase via the internal social-service route - shared by the
+   * Stripe `checkout.session.completed` branch and the Lydia `request/do` confirm callback below.
+   */
+  private async notifyProductPurchaseCompleted(
+    productId: string,
+    userId: string,
+    amountCents: number,
+    paymentReference: string
+  ): Promise<void> {
+    if (!UUID_RE.test(productId)) {
+      throw new Error(`Invalid productId: ${productId}`);
+    }
+    const socialBase =
+      this.config.get<string>('SOCIAL_SERVICE_URL') || 'http://social-service:3014';
+    const parsedBase = parseSafeServiceOrigin(socialBase, 'SOCIAL_SERVICE_URL');
+    const url = new URL(productPurchaseCompletedPath(productId), `${parsedBase.origin}/`).href;
+    await axios.post(
+      url,
+      { userId, amountCents, paymentIntentId: paymentReference },
+      {
+        ...internalSocialRequestConfig(),
+        timeout: 15_000,
+        validateStatus: (s) => s >= 200 && s < 300,
+      }
+    );
+    this.logger.log(`Product purchase completed: productId=${productId} userId=${userId}`);
   }
 
   /** Cancels a pending form submission via the internal social-service route. */
@@ -165,33 +209,17 @@ export class PaymentWebhookController {
         }
       } else if (productId && userId) {
         // Boutique product purchase - notify social-service
-        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(productId)) {
+        if (!UUID_RE.test(productId)) {
           this.logger.error(`Invalid productId in webhook metadata: ${productId}`);
           return res.status(400).send('Invalid productId');
         }
         try {
-          const socialBase =
-            this.config.get<string>('SOCIAL_SERVICE_URL') || 'http://social-service:3014';
-          const parsedBase = parseSafeServiceOrigin(socialBase, 'SOCIAL_SERVICE_URL');
-          const url = new URL(
-            `/api/associations/products/${encodeURIComponent(productId)}/purchase-completed`,
-            `${parsedBase.origin}/`
-          ).href;
-          await axios.post(
-            url,
-            {
-              userId,
-              amountCents: session.amount_total ?? 0,
-              paymentIntentId:
-                typeof session.payment_intent === 'string' ? session.payment_intent : '',
-            },
-            {
-              ...internalSocialRequestConfig(),
-              timeout: 15_000,
-              validateStatus: (s) => s >= 200 && s < 300,
-            }
+          await this.notifyProductPurchaseCompleted(
+            productId,
+            userId,
+            session.amount_total ?? 0,
+            typeof session.payment_intent === 'string' ? session.payment_intent : ''
           );
-          this.logger.log(`Product purchase completed: productId=${productId} userId=${userId}`);
         } catch (err: unknown) {
           const error = err as Error & { response?: { data?: unknown } };
           this.logger.error(
@@ -281,5 +309,85 @@ export class PaymentWebhookController {
     }
 
     return res.json({ received: true });
+  }
+
+  /**
+   * Receives a `confirm_url`/`cancel_url`/`expire_url` callback from Lydia's `request/do`
+   * (registered per-request by `LydiaPaymentProvider.createCheckoutSession`, via the `outcome`
+   * query param WE set - Lydia just POSTs to whichever URL it was given). This is the
+   * AUTHORITATIVE confirmation path for a Lydia payment: unlike Stripe's hosted Checkout, the
+   * buyer returning to `browser_success_url` is not guaranteed (Lydia is app-driven), so
+   * fulfillment cannot depend on it alone.
+   *
+   * No guard: the signature check below plays the same role NginxAuthGuard/Stripe's webhook
+   * secret play elsewhere in this controller.
+   */
+  @Post('lydia-request-callback')
+  async handleLydiaRequestCallback(
+    @Query('outcome') outcome: string,
+    @Body() body: Record<string, unknown>
+  ) {
+    if (outcome !== 'confirm' && outcome !== 'cancel' && outcome !== 'expire') {
+      throw new BadRequestException('Invalid outcome');
+    }
+
+    const requestId = String(body?.request_id ?? '');
+    const amount = String(body?.amount ?? '');
+    const currency = String(body?.currency ?? '');
+    const orderRef = String(body?.order_ref ?? '');
+    const vendorToken = String(body?.vendor_token ?? '');
+    const signature = String(body?.sig ?? '');
+
+    if (!requestId || !signature) {
+      throw new BadRequestException('Missing request_id or sig');
+    }
+
+    const verified = this.paymentService.verifyLydiaRequestCallback(
+      { request_id: requestId, amount, currency, order_ref: orderRef, vendor_token: vendorToken },
+      signature
+    );
+    if (!verified) {
+      this.logger.error(
+        `Lydia request-callback: signature verification failed (outcome=${outcome})`
+      );
+      throw new BadRequestException('Invalid signature');
+    }
+
+    const ref = parseLydiaOrderRef(orderRef);
+    if (!ref) {
+      this.logger.warn(`Lydia request-callback: unrecognized order_ref (outcome=${outcome})`);
+      return { received: true };
+    }
+
+    try {
+      if (outcome === 'confirm') {
+        if (ref.kind === 'form') {
+          await this.markSubmissionPaidInternal(ref.submissionId, requestId);
+          this.logger.log(`Marked submission ${ref.submissionId} as paid via Lydia request/do`);
+        } else {
+          const amountCents = Math.round(Number(amount) * 100);
+          await this.notifyProductPurchaseCompleted(
+            ref.productId,
+            ref.userId,
+            Number.isFinite(amountCents) ? amountCents : 0,
+            requestId
+          );
+        }
+      } else if (ref.kind === 'form') {
+        // No pending row exists for a boutique purchase (unlike a form submission), so a
+        // cancelled/expired Lydia request for one is simply never fulfilled - nothing to undo.
+        await this.cancelPendingSubmissionInternal(ref.submissionId);
+        this.logger.log(`Cancelled pending submission ${ref.submissionId} after Lydia ${outcome}`);
+      }
+    } catch (err: unknown) {
+      const error = err as Error & { response?: { data?: unknown } };
+      this.logger.error(
+        `Lydia request-callback: fan-out failed (outcome=${outcome})`,
+        error?.response?.data || error?.message || error
+      );
+      throw new BadRequestException('Failed to process callback');
+    }
+
+    return { received: true };
   }
 }

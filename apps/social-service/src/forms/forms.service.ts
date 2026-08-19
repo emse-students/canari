@@ -63,7 +63,7 @@ export class FormsService {
     requiresPayment?: boolean;
   }): Promise<void> {
     if (!formRequiresStripeReadyAssociation(input)) return;
-    await this.associationsService.assertStripePaymentsReady(input.associationId!.trim());
+    await this.associationsService.assertPaymentsReady(input.associationId!.trim());
   }
 
   /** Creates a form and assigns stable IDs to all items and options that lack them. */
@@ -451,13 +451,19 @@ export class FormsService {
       const checkoutUrl = `${paymentServiceBase.replace(/\/$/, '')}/api/payments/create-checkout-session`;
 
       try {
-        // If the form belongs to an association, route payment via Stripe Connect
+        // If the form belongs to an association, route payment via its connected account
         let stripeConnectAccountId: string | undefined;
         if (form.associationId) {
-          await this.associationsService.assertStripePaymentsReady(form.associationId);
-          const acctId = await this.associationsService.getStripeAccountId(form.associationId);
+          await this.associationsService.assertPaymentsReady(form.associationId);
+          const acctId = await this.associationsService.getPaymentAccountId(form.associationId);
           if (acctId) stripeConnectAccountId = acctId;
         }
+
+        // order_ref for Lydia's request/do callback (see webhook.controller.ts) - never sent for
+        // Stripe, which would otherwise read it as its own idempotency key.
+        const activeProvider = await this.associationsService.getActivePaymentProvider();
+        const idempotencyKey =
+          activeProvider === 'lydia' ? `form:${savedSubmission.id}` : undefined;
 
         // Resolve the Stripe customer ID for the user so the card gets saved after checkout
         let customerId: string | undefined;
@@ -489,6 +495,7 @@ export class FormsService {
           ),
           metadata: { submissionId: savedSubmission.id, formId: id, userId: input.userId ?? '' },
           stripeConnectAccountId,
+          idempotencyKey,
           // saveForFuture is incompatible with destination charges (Stripe Connect)
           ...(customerId ? { customerId, saveForFuture: !stripeConnectAccountId } : {}),
         });
@@ -551,7 +558,7 @@ export class FormsService {
       currency: form?.currency ?? 'eur',
       paymentStatus: submission.paymentStatus,
       stripeAccountId: form?.associationId
-        ? await this.associationsService.getStripeAccountId(form.associationId)
+        ? await this.associationsService.getPaymentAccountId(form.associationId)
         : null,
     };
   }

@@ -21,7 +21,12 @@ import { PurchaseRecord } from '../users/entities/purchase-record.entity';
 import { resolveStripeCallbackUrl } from '../common/stripe-callback-url';
 import { CreateProductDto, GrantProductPurchaseDto, UpdateProductDto } from './dto/association.dto';
 import { deriveCotisationTag, tierVariantKeys } from './cotisation-tag.util';
-import { isDelegating, resolvePaymentTarget, type PaymentTarget } from './payment-delegation.util';
+import {
+  isDelegating,
+  resolvePaymentTarget,
+  fetchActivePaymentProvider,
+  type PaymentTarget,
+} from './payment-delegation.util';
 
 /** Delays used between Cercle webhook delivery attempts (ms). The first one is not waited. */
 const CERCLE_RETRY_DELAYS = [1_000, 5_000, 15_000];
@@ -119,15 +124,28 @@ export class ProductsService {
     return { ...product, webhookSecret: null, webhookConfigured: !!product.webhookSecret };
   }
 
+  /** Base URL for calls to core-service (payments), same fallback used by createCheckoutSession below. */
+  private get paymentBase(): string {
+    return (this.config.get<string>('PAYMENT_SERVICE_URL') ?? 'http://core-service:3012').replace(
+      /\/+$/,
+      ''
+    );
+  }
+
   /**
-   * Resolves the Stripe target for an association, following an approved parent-payment delegation
-   * to the parent's account. Loads the parent only when the association actually delegates.
+   * Resolves the payment target for an association, following an approved parent-payment
+   * delegation to the parent's account, against the platform's currently active provider
+   * (Stripe/Lydia keep independent account ids). Loads the parent only when the association
+   * actually delegates.
    */
   private async resolvePaymentTargetFor(asso: Association): Promise<PaymentTarget> {
-    const parent = isDelegating(asso)
-      ? await this.assoRepo.findOne({ where: { id: asso.paymentParentAssociationId } })
-      : null;
-    return resolvePaymentTarget(asso, parent);
+    const [provider, parent] = await Promise.all([
+      fetchActivePaymentProvider(this.httpService, this.paymentBase),
+      isDelegating(asso)
+        ? this.assoRepo.findOne({ where: { id: asso.paymentParentAssociationId } })
+        : Promise.resolve(null),
+    ]);
+    return resolvePaymentTarget(asso, parent, provider);
   }
 
   // ── CRUD ──────────────────────────────────────────────────────────────────
@@ -551,9 +569,7 @@ export class ProductsService {
       customAmountCents
     );
 
-    const paymentBase = (
-      this.config.get<string>('PAYMENT_SERVICE_URL') ?? 'http://core-service:3012'
-    ).replace(/\/$/, '');
+    const paymentBase = this.paymentBase;
     const frontendUrl = this.config.get<string>('FRONTEND_URL') ?? 'http://localhost';
 
     // Resolve the Stripe customer ID so the card gets saved after checkout
@@ -582,6 +598,12 @@ export class ProductsService {
       frontendUrl
     );
 
+    // order_ref for Lydia's request/do callback (see webhook.controller.ts) - never sent for
+    // Stripe, which would otherwise read it as its own idempotency key and could wrongly collapse
+    // two genuine same-day purchases of the same product into one cached session.
+    const idempotencyKey =
+      paymentTarget.provider === 'lydia' ? `product:${product.id}:${userId}` : undefined;
+
     const resp = await firstValueFrom(
       this.httpService.post<{ ok: boolean; url: string; id: string }>(
         `${paymentBase}/api/payments/create-checkout-session`,
@@ -599,8 +621,9 @@ export class ProductsService {
           successUrl,
           cancelUrl,
           metadata: { productId: product.id, userId },
-          stripeConnectAccountId: paymentTarget.stripeAccountId,
+          stripeConnectAccountId: paymentTarget.connectAccountId,
           customerId,
+          idempotencyKey,
         },
         { maxRedirects: 0 }
       )
@@ -646,8 +669,8 @@ export class ProductsService {
       userId,
       amountCents,
       currency: product.currency,
-      // resolvePurchase guarantees paymentTarget.ready + non-null stripeAccountId.
-      stripeAccountId: paymentTarget.stripeAccountId,
+      // resolvePurchase guarantees paymentTarget.ready + non-null connectAccountId.
+      stripeAccountId: paymentTarget.connectAccountId,
     };
   }
 
@@ -684,11 +707,11 @@ export class ProductsService {
 
     // Route to the association's own account, or an approved parent's when delegating.
     const paymentTarget = await this.resolvePaymentTargetFor(asso);
-    if (!opts.skipPaymentReadiness && (!paymentTarget.ready || !paymentTarget.stripeAccountId)) {
+    if (!opts.skipPaymentReadiness && (!paymentTarget.ready || !paymentTarget.connectAccountId)) {
       throw new BadRequestException(
         paymentTarget.delegated
-          ? 'The parent association this club delegates payments to has not completed Stripe Connect onboarding'
-          : 'Association has not completed Stripe Connect onboarding'
+          ? 'The parent association this club delegates payments to has not completed onboarding to receive payments'
+          : 'Association has not completed onboarding to receive payments'
       );
     }
 

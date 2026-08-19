@@ -35,7 +35,7 @@ export type { ChargeResult, CheckoutSessionInfo, ConnectBalanceSummary };
 @Injectable()
 export class PaymentService {
   private readonly stripeProvider: PaymentProvider;
-  private readonly lydiaProvider: PaymentProvider;
+  private readonly lydiaProvider: LydiaPaymentProvider;
   private readonly logger = new Logger(PaymentService.name);
 
   constructor(private readonly platformService: PlatformService) {
@@ -61,6 +61,16 @@ export class PaymentService {
   /** Identifies the active provider so callers (e.g. the association edit UI) can render the right onboarding flow. */
   async getActiveProviderId(): Promise<PaymentProviderId> {
     return (await this.getProvider()).id;
+  }
+
+  /**
+   * Verifies a `confirm_url`/`cancel_url`/`expire_url` callback signature from Lydia's
+   * `request/do` (webhook.controller.ts). Independent of which provider is currently ACTIVE - a
+   * Lydia payment in flight must still be verifiable against the Lydia provider's own private
+   * token even if the admin flips the switch back to Stripe before it resolves.
+   */
+  verifyLydiaRequestCallback(fields: Record<string, string>, signature: string): boolean {
+    return this.lydiaProvider.verifyRequestCallback(fields, signature);
   }
 
   /** Creates or resumes a Connect-style onboarding link for the given association. */

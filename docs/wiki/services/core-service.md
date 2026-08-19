@@ -229,13 +229,19 @@ migration 037) - onboarding with one provider never overwrites or clears the oth
 `/api/payments/onboarding` writes to whichever pair matches the platform's currently active
 provider (`PaymentService.getActiveProviderId()`), read at persist time right after the same call
 created the account, so the two always agree on which provider actually issued the id.
-**Known gap, not yet fixed:** checkout routing for boutique/form purchases
-(`products.service.ts`, `forms.service.ts`, `payment-delegation.util.ts` in social-service) still
-reads only `stripeAccountId`/`stripeOnboardingComplete` - it has no notion of the active provider
-at all. This is currently harmless because Lydia is not live in prod (`payment_provider` defaults
-to `stripe`, see [backlog](../backlog.md#flipping-payment_provider-from-stripe-to-lydia-wp-lydia-1)),
-but flipping the switch before that read side is made provider-aware would make every purchase
-route through the wrong (or a stale) account.
+**2026-08-19: checkout routing is now provider-aware too.** `resolvePaymentTarget`
+(social-service's `payment-delegation.util.ts`) takes the active provider as a parameter and reads
+whichever column pair matches it; `AssociationsService`/`ProductsService` fetch it from
+`GET /api/payments/provider` before resolving and let a failure propagate rather than guess. A
+Lydia `request/do` payment is also confirmed server-side: `POST /api/payments/lydia-request-callback`
+verifies the signed `confirm_url`/`cancel_url`/`expire_url` callback and fans out to the same
+fulfillment Stripe's webhook uses, via an `order_ref` Canari encodes itself
+(`lydia-order-ref.ts`). **Still blocking an actual switch to Lydia** (tracked in
+[backlog](../backlog.md#flipping-payment_provider-from-stripe-to-lydia-wp-lydia-1), harmless today
+since `payment_provider` defaults to `stripe`): nothing resolves the `payerRecipient` `request/do`
+requires, and the `business/create` `BUSINESS_VALIDATED` webhook (would flip
+`lydiaOnboardingComplete` automatically) is deliberately unbuilt - no documented signature, and
+`vendor_token` is PUBLIC.
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
@@ -255,6 +261,7 @@ route through the wrong (or a stale) account.
 | POST | `/api/payments/charge-product-saved-method` | JWT | Charge saved card for boutique product |
 | POST | `/api/payments/internal/customer-id` | InternalSecret | Get/create Stripe customer (called by social-service) |
 | POST | `/api/payments/webhook` | Stripe signature | Stripe webhook handler (`checkout.session.*`, `payment_intent.*`, `account.updated`) |
+| POST | `/api/payments/lydia-request-callback?outcome=confirm\|cancel\|expire` | Lydia signature (`sig`) | `request/do` payment confirmation - the authoritative fulfillment path for Lydia, since the buyer returning to the success redirect is not guaranteed |
 
 ### Health
 

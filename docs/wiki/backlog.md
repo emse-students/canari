@@ -244,21 +244,30 @@ The full provider mapping, the remaining open questions and the credentials stil
 [`plans/stripe-to-lydia-migration.md`](../../plans/stripe-to-lydia-migration.md), which the wiki page
 [payments](frontend/modules/payments.md) already points at.
 
-**2026-08-19: onboarding storage now coexists, checkout routing does not yet.** `stripeAccountId`/
-`stripeOnboardingComplete` used to be the only pair of columns, shared by both providers - switching
-the active provider back and forth silently overwrote whichever one had onboarded first. Migration
-037 gives Lydia its own `lydiaAccountId`/`lydiaOnboardingComplete`, and the association edit page now
-manages both onboarding links (and their disconnect) independently of which provider is active - see
-[core-service#payments](services/core-service.md#payments-stripe--lydia). **Still owed before the
-switch can actually flip**: `resolvePaymentTarget` (`associations.service.ts`), `payment-delegation.util.ts`,
-`products.service.ts` and `forms.service.ts` all read only the Stripe pair when deciding whether an
-association can receive money and which account a checkout session should target - they have no
-notion of an active provider at all. Flipping `payment_provider` to `lydia` today would route
-checkout at whatever the Stripe pair happens to hold (usually nothing, since Lydia now writes
-elsewhere), not at the Lydia account. Fix belongs in core-service, where the active provider is
-already known (`PaymentService.getActiveProviderId()`): have `create-checkout-session` (and the two
-saved-method charge routes) pick `stripeAccountId` or `lydiaAccountId` itself from both ids handed up
-by social-service, rather than teaching social-service about the active provider too.
+**2026-08-19: onboarding storage coexists (see [core-service#payments](services/core-service.md#payments-stripe--lydia)),
+and checkout routing now does too.** `resolvePaymentTarget` (`payment-delegation.util.ts`) takes the
+active provider as a parameter and resolves against the matching column pair; `AssociationsService`/
+`ProductsService` fetch it from the public `GET /api/payments/provider` before resolving, and let a
+failure to reach core-service propagate rather than guess. `PaymentTarget.connectAccountId` (renamed
+from `stripeAccountId`) now genuinely holds whichever provider's account is active. A Lydia
+`request/do` payment is also confirmed server-side now: `confirm_url`/`cancel_url`/`expire_url` are
+registered per-request, and `POST /api/payments/lydia-request-callback`
+(`webhook.controller.ts`) verifies the signature and fans out to the same submission/purchase
+fulfillment Stripe's webhook already used, via a shared `order_ref` encoding
+(`form:<submissionId>` / `product:<productId>:<userId>`, parsed by `lydia-order-ref.ts`).
+
+**Two things still block actually flipping the switch, both found while wiring this:**
+1. **`payerRecipient` is never supplied.** `LydiaPaymentProvider.createCheckoutSession` throws
+   without it (`request/do` needs the payer's email/phone), and nothing in `products.service.ts`/
+   `forms.service.ts` resolves one - the interface field has existed since Phase 2 but no caller was
+   ever wired to it. Needs a design decision on where the payer's email comes from for a boutique
+   purchase (a logged-in user's account has no email stored in social-service today; only forms with
+   a guest `input.email` field have one at all).
+2. **The `business/create` `BUSINESS_VALIDATED`/`BUSINESS_UNVALIDATED` webhook is deliberately not
+   built.** It has no documented signature and `vendor_token` is PUBLIC - building it as-is would let
+   anyone knowing another association's vendor_token forge or break its `lydiaOnboardingComplete`,
+   with no resync since Lydia sends the event once. Add "does `business/create`'s `webhook` param
+   have a signature scheme?" to Livrable A below before building this.
 
 ---
 

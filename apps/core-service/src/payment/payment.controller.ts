@@ -32,6 +32,9 @@ import {
 } from './social-internal-client';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** A Stripe Checkout session id (`cs_...`) or a Lydia `request_uuid` - retrieveSession() routes to whichever provider issued it. */
+export const SESSION_ID_RE =
+  /^(cs_[a-zA-Z0-9_]+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 
 /** Controller handling Stripe Connect onboarding, checkout sessions, and saved payment methods. */
 @Controller('payments')
@@ -417,6 +420,8 @@ export class PaymentController {
       stripeConnectAccountId?: string;
       customerId?: string;
       saveForFuture?: boolean;
+      /** order_ref for Lydia's request/do callback (webhook.controller.ts) - ignored by Stripe's provider unless set. */
+      idempotencyKey?: string;
     }
   ) {
     if (!body || !body.lineItems || !Array.isArray(body.lineItems)) {
@@ -437,6 +442,7 @@ export class PaymentController {
         customerId: body.customerId,
         // setup_future_usage is incompatible with destination charges (Connect)
         saveForFuture: body.saveForFuture && !body.stripeConnectAccountId,
+        idempotencyKey: body.idempotencyKey,
       });
       this.logger.debug(`[Stripe] Checkout session created: ${session.id}`);
       return { ok: true, url: session.url, id: session.id };
@@ -452,7 +458,7 @@ export class PaymentController {
   @Post('verify-session')
   @HttpCode(200)
   async verifySession(@Body() body: { sessionId: string }) {
-    if (!body?.sessionId || !/^cs_[a-zA-Z0-9_]+$/.test(body.sessionId)) {
+    if (!body?.sessionId || !SESSION_ID_RE.test(body.sessionId)) {
       throw new BadRequestException('Invalid sessionId');
     }
     if (!(await this.paymentService.isConfigured())) {
@@ -491,7 +497,7 @@ export class PaymentController {
   @Post('cancel-session')
   @HttpCode(200)
   async cancelSession(@Body() body: { sessionId: string }) {
-    if (!body?.sessionId || !/^cs_[a-zA-Z0-9_]+$/.test(body.sessionId)) {
+    if (!body?.sessionId || !SESSION_ID_RE.test(body.sessionId)) {
       throw new BadRequestException('Invalid sessionId');
     }
     if (!(await this.paymentService.isConfigured())) {
