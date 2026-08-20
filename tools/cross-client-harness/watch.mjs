@@ -77,6 +77,27 @@ const BENIGN = [
   // ordinary case in this phase, where the community was created seconds earlier and holds no seed
   // yet - the count is what makes the line worth keeping rather than silencing.
   /^\[GRAINE\] sending \d+ of \d+ held seed\(s\) as history to \S+$/,
+  // THE SEED-REPAIR EXCHANGE, BOTH ENDS (WP-33). A device that was offline when a seed went out,
+  // or that joined a salon later, meets messages it cannot open and asks ONE named member for those
+  // sessions by id. It is the ordinary repair, not a fault - a fault would be the request going out
+  // and nothing coming back, which is `no reachable holder` in NOTABLE, or the ask never happening
+  // at all, which is a permanently blank salon and has no line of its own.
+  //
+  // KEPT WITH THEIR COUNTS on purpose. These two lines were `unexplained` on 2026-08-20 and that is
+  // how COMM-12 found the twentieth defect: a community set to `joined` refused the history bundle
+  // in one line and answered the same past, seed by seed, in the next.
+  /^\[GRAINE\] asked \S+ for \d+ seed\(s\) in community [0-9a-f]+$/,
+  /^\[GRAINE\] answered \S+ with \d+ seed\(s\)(, declining \d+)?$/,
+  // ...AND THE TWO REFUSALS THAT FIX PUT THERE. Both are the history rule working, and both are
+  // silence on the wire, so the line IS the evidence: nothing else would ever say that a seed was
+  // deliberately not handed over. They appear only under `historyVisibility: 'joined'`, so in every
+  // other check their absence is the expected state.
+  /^\[GRAINE\] withholding \d+ seed\(s\) from \S+: community [0-9a-f]+ is set to 'joined'/,
+  /^\[GRAINE\] not asking for \d+ seed\(s\) of channel [0-9a-f]+: community [0-9a-f]+ is set to 'joined'/,
+  // The bundle refused whole, which is the same rule read at join time. Its sibling - the bundle
+  // being SENT - is two entries up, and the pair is what separates "the rule applied" from "history
+  // never works here".
+  /^\[GRAINE\] not sending history to \S+: community [0-9a-f]+ is set to 'joined'$/,
   /^\[notifNav\] routing to \S+ for pending conversation \S+$/,
   // The landing refetching ONCE before it selects. A just-accepted invitation is never in the
   // conversation list the client already holds, which is what this branch exists for; the two
@@ -352,6 +373,13 @@ const NOTABLE = [
   // success, and in a delivery check its presence means something was already missing before the
   // check started.
   /message\(s\) caught up/i,
+  // A LIVE MESSAGE ARRIVING FOR A CHANNEL THIS DEVICE HAS NOT LOADED. `channelEventHandler` only
+  // opens a bubble for a channel already in `conversations`, so the row is dropped from the LIVE
+  // path and appears on the next history load instead. That is the design, and it is why this is
+  // not a failure - but it is also exactly what a lost message looks like from the outside, so it
+  // is never silent: a check that asserts a live arrival and prints this instead has its answer.
+  // Seen on W2 during COMM-12, for the arm's other community, while its channel was not selected.
+  /Message received for an unknown channel/i,
   /forget|revoke|reset|corrupt/i,
   // THE SWEEP ACTUALLY DESTROYING SOMETHING. `[SYNC] WASM kept ...` is routine and sits in
   // `BENIGN`; this is its opposite branch, and the two must never share a rule. It fires when the

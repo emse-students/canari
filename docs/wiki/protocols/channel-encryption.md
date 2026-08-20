@@ -709,6 +709,17 @@ read: every membership change commits to the distribution group and advances its
 `graineRotationReason` rotates on any epoch it does not recognise (an ADD included, deliberately), so
 no session ever spans an arrival.
 
+**The one thing this comparison rests on that nothing else here does: a clock.** `joinedAt` is
+server-stamped, `StoredGraineSession.createdAt` is stamped by the device that MINTED the session, and
+there is no server-anchored mint time anywhere - the server never sees a seed. So the boundary is
+sharp to within the minter's clock skew, in both directions: a clock running fast can leak seeds
+minted in the skew window before an arrival, one running slow can withhold a seed the member was
+entitled to. **Named rather than papered over, and deliberately not widened by a margin** - a fudge
+factor would trade the privacy half for the functional half without saying so. The alternative that
+would remove the clock is an epoch-anchored boundary, which needs a per-member "entered at epoch N"
+record written by every device and silently wrong the once it is missed: exactly the durable marker
+`distributionEpoch` exists to avoid. Revisit it only if a real skew is ever measured in the field.
+
 **A withheld seed is absent from BOTH lists in the answer.** Reporting it as `missing` would be a lie
 with a cost - `missing` means *"elect somebody else"*, and every other member applies the same rule,
 so the requester would walk the whole roster to arrive at the answer it was handed first.

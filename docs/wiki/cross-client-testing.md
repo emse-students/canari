@@ -407,15 +407,15 @@ phase now carries 25.
 | COMM-24 | Private -> public: the salon's group is tombstoned and the community's carries it again | `W1 W2` | `pending` |
 | COMM-25 | An admin's SECOND device receives the salon's seeds after the join, without a second join | `W1 W2` | `pending` |
 
-**TWO RUNNERS EXIST, and every row is still `pending` on purpose.** `comm1.mjs` and `comm8.mjs` are
-written and registered in `checks.mjs`; the other twenty-three are not. **COMM-8 produced a clean,
+**TWELVE RUNNERS EXIST, and every row above is still `pending` on purpose** - except the three that
+have a build against them, which ran after the phase was rewritten. A runner that PASSes while it is
+still proving the instrument is not a campaign verdict: the campaign is paused until every work
+package lands, and nothing measured before the last one counts. **COMM-8 produced a clean,
 ARMED PASS against production on 2026-08-20** - salon roster empty while the peer was excluded, the
 peer present on the community's roster in the same read, `GET /api/channels/:id/messages` answering
 403 to an AUTHENTICATED request from the peer's own page, and the same roster query answering YES
-the moment the peer was granted access. That result is **not a campaign verdict and the row stays
-`pending`**: the campaign is paused until every work package lands, and nothing measured before the
-last one is a campaign result. What it is, is proof that the instrument discriminates - it found
-four defects in the per-salon design on the way to saying PASS.
+the moment the peer was granted access. What that result is, is proof that the instrument
+discriminates - it found four defects in the per-salon design on the way to saying PASS.
 
 
 **What each rewritten row now asks, where the old one named a mechanism that is gone.** COMM-9 and
