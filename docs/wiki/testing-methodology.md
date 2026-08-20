@@ -937,6 +937,31 @@ than one that quietly implies it has none.**
 
 Ordered by how expensive it is to break them.
 
+#### 18b. A VERDICT IS EVIDENCE ONLY FOR THE ASSERTIONS THAT PRODUCED IT - tightening a check retires its previous verdict
+
+Rule 18 is about a check that rots against a moving product. This is its twin, and it bit on
+2026-08-20: the check moved and the BOARD did not.
+
+**COMM-5 was recorded `PASS`, and its own row says `liveWithoutReload: false`.** At the moment of
+that run the row asked only that a promoted member gain the capability eventually, so a reload was
+allowed to be what delivered it and the record kept the live figure beside the verdict without
+asserting on it. `capabilityIsLive` was added to its expectations afterwards, the runner was never
+re-run, and the board went on showing a green row earned under a weaker question.
+
+The cost was not theoretical. That recorded `false` WAS the defect found fifteen hours later - four
+`workspace.*` events dropped by both socket clients - sitting in the results file, under a `PASS`,
+where nothing would ever look at it again.
+
+**So a row now names the check it ran as** (`check`, `checkSha` in `results.mjs`), exactly as it
+already names the build it ran against, and "this verdict predates the current runner" is computed
+rather than remembered. The hash covers the ENTRY script, where a check's own assertions live; a
+change to a shared gesture in `comm.mjs` is not covered, and that limit is written down in the code
+rather than assumed away.
+
+**Reading it is the discipline the field only enables:** before believing a green row, compare its
+`checkSha` with the runner on disk. A verdict whose check has changed is not a weaker verdict - it is
+a verdict about a different question.
+
 #### 19. A SCRIPT OWNS A FEW CHECKS, AND EVERY CHECK IS INDEPENDENT - the two halves of one rule
 
 Standing instruction from the user, and it governs every phase: *"C'est bien de faire des scripts pour

@@ -7,7 +7,8 @@
  */
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, readFileSync, existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SITE, STATE_DIR } from './names.mjs';
 import { gate, report } from './watch.mjs';
@@ -58,6 +59,35 @@ async function deployedBuild() {
 
 const BUILD = await deployedBuild();
 
+/**
+ * THE CHECK A VERDICT RAN AS, hashed from the runner's own source.
+ *
+ * A verdict is only evidence for the assertions that produced it, and a check gets tightened. COMM-5
+ * is the case that made this necessary: it was recorded `PASS` on 2026-08-20, and its own row says
+ * `liveWithoutReload: false` - because at that moment the row asked only that the capability arrive
+ * eventually. `capabilityIsLive` was added to its expectations afterwards, and the board went on
+ * showing a `PASS` earned under the older, weaker question. The evidence for the defect found later
+ * that day was sitting in that recorded `false`, under a green verdict, for fifteen hours.
+ *
+ * So a row now names the check it ran as, exactly as it already names the build it ran against, and
+ * "this verdict predates the current runner" is computed rather than remembered.
+ *
+ * ITS LIMIT IS STATED RATHER THAN PAPERED OVER: this hashes the ENTRY script, where a check's own
+ * assertions live. A change to a shared gesture in `comm.mjs` or `chat.mjs` can change what a check
+ * measures and will NOT move this hash. Hashing the whole harness instead would retire every verdict
+ * on every edit, which is a different way of saying nothing.
+ */
+const CHECK = (() => {
+  const entry = process.argv[1];
+  if (!entry || !existsSync(entry)) {
+    throw new Error(`results.mjs cannot identify the running check (argv[1]=${entry ?? 'unset'})`);
+  }
+  return {
+    file: basename(entry),
+    sha: createHash('sha256').update(readFileSync(entry)).digest('hex').slice(0, 12),
+  };
+})();
+
 /** Every verdict THIS process has recorded, so the exit code can be derived rather than remembered. */
 const recorded = [];
 
@@ -94,6 +124,8 @@ export function record(id, verdict, detail) {
     at: new Date().toISOString(),
     build: BUILD.commit,
     builtAt: BUILD.builtAt,
+    check: CHECK.file,
+    checkSha: CHECK.sha,
     ...detail,
     ...(owedObservation
       ? { claimedVerdict: verdict, unobserved: 'no report was gated into this verdict - see gate() in watch.mjs' }

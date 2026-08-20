@@ -346,7 +346,7 @@ instrument has produced so far - latest verdict per check, all against productio
 | COMM-2 | 2026-08-20 | `PASS` clean | - |
 | COMM-3 | 2026-08-20 | `PASS` clean | - |
 | COMM-4 | 2026-08-20 | `FAIL` clean | the invitee is shown no card - OPEN, in `CLAUDE.md` |
-| COMM-5 | 2026-08-20 | `PASS` clean | - |
+| COMM-5 | 2026-08-20 | `PASS` clean - **STALE, the check has been tightened since** | recorded `liveWithoutReload: false` under weaker expectations; `capabilityIsLive` was added afterwards and no run has happened since. That `false` was the first evidence of the dropped `workspace.*` events |
 | COMM-6 | 2026-08-20 | `PASS` clean, `62f8a650` | - |
 | COMM-7 | 2026-08-20 | `PASS-DIRTY` `939078aa` | two defects, both fixed; the dirt was one unclassified Graine line, now benign |
 | COMM-8 | 2026-08-20 | `PASS` clean | - |
