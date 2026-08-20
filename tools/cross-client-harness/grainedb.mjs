@@ -153,6 +153,36 @@ export function messageCount(channelId) {
 }
 
 /**
+ * The Graine SESSIONS a salon's transcript was sealed under, and how many rows each one holds.
+ *
+ * A SESSION IS THE UNIT THAT ROTATES, AND A MESSAGE COUNT CANNOT SEE IT. `messageCount` answers how
+ * much was said; this answers how many separate seeds a reader has to hold to read it, which is the
+ * quantity COMM-22 is about: rotation is per (channel, sender) on departure, 100 messages or 7 days,
+ * so a salon whose roster has churned holds many sessions over very few messages. A check that
+ * counted messages would report a busy salon as a hard one and a churned one as easy - the exact
+ * inversion of what costs a device work.
+ *
+ * Read from the SERVER because it is the only complete list: a device holds the sessions it was
+ * given, which is the very thing under test, so asking a client would be asking the subject.
+ *
+ * @returns `[{ sessionId, messages, authorId }]`, busiest first, or `[]` for an empty salon.
+ */
+export function channelSessions(channelId) {
+  return rows(
+    psql(
+      `SELECT "senderSessionId", count(*), max("authorId") ` +
+        `FROM channel_messages WHERE "channelId" = '${channelId}' ` +
+        `AND "senderSessionId" IS NOT NULL ` +
+        `GROUP BY "senderSessionId" ORDER BY count(*) DESC`
+    )
+  ).map(([sessionId, messages, authorId]) => ({
+    sessionId,
+    messages: Number(messages),
+    authorId,
+  }));
+}
+
+/**
  * A group looked up BY ID, so a check can follow one the salon has stopped pointing at.
  *
  * COMM-24 needs it and nothing else can give it: retirement clears `channels.distributionGroupId`,
