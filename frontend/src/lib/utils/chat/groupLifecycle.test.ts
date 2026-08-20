@@ -136,7 +136,7 @@ describe('decideAbsentLocalGroupFate', () => {
       })
     ).toEqual({
       action: 'keep',
-      reason: 'community key-distribution group, not a conversation',
+      reason: 'key-distribution group registered on this device',
     });
   });
 

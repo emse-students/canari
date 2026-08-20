@@ -164,7 +164,11 @@ export interface AbsentLocalGroupInput {
  */
 export function decideAbsentLocalGroupFate(input: AbsentLocalGroupInput): LocalGroupFate {
   if (input.isKnownDistributionGroup) {
-    return { action: 'keep', reason: 'community key-distribution group, not a conversation' };
+    // NAMED BY THE SOURCE, not by the scope. This branch fires for a community's group AND a
+    // private salon's - anything this device has registered a scope for - so calling it "community"
+    // sent anyone chasing a salon's group looking at the wrong scope. What actually distinguishes
+    // it from the branch below is WHO said so: this one is local knowledge, that one is the server.
+    return { action: 'keep', reason: 'key-distribution group registered on this device' };
   }
 
   switch (input.serverStatus.kind) {

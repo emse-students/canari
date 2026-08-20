@@ -23,6 +23,27 @@ const BENIGN = [
   // It stays visible in the capture: only the `unexplained` bucket is what this list empties.
   /^\[QUEUE\] mailbox barrier for ".*" waited \d+ms behind/,
   /^\[OUTBOX\] (Queued|Flushing|[0-9a-f]{8}… sent)/,
+  // GRAINE, ON EVERY COMMUNITY AND EVERY PRIVATE SALON THE CLIENT OPENS (2026-08-20). Three
+  // routine lines, all of which fire on a perfectly healthy client and all of which landed in
+  // `unexplained`, so the first COMM check to touch a private salon reported dirt on a run where
+  // nothing was wrong.
+  //
+  // The reconciliation reporting NOTHING TO REMOVE is the whole mechanism working: it compares the
+  // group's tree against the scope's roster on every open and says so. Its SIBLING - the line that
+  // says members are being removed - is deliberately NOT matched here: that one means a departure
+  // is being enforced, which is a finding in any check that was not about a departure, and it is
+  // caught by the `re-?add|epoch` rule in NOTABLE.
+  /^\[GRAINE\] .+ distribution group agrees with its roster - \d+ leaf\/leaves, nobody to remove$/,
+  // The FIRST device into a salon's group initialises it - exactly once per salon, by construction,
+  // and every COMM check that creates a private salon produces it.
+  /^\[GRAINE\] no base published for .+ - creating group [0-9a-f]{8}\.\.\.$/,
+  // The app narrating a community or channel the CHECK itself just created. Routine, and it is
+  // the COMM phase's own vocabulary - every check in it creates something.
+  /^(Channel|Community) created: /,
+  // THE SWEEP SPARING A KEY-DISTRIBUTION GROUP, which is the fix WP-GRAINE-1 and the 2026-08-20
+  // discriminator repair both landed. Its ABSENCE is what would be the signal: a boot where these
+  // do not appear is a boot where the sweep deleted the group and sending stops working.
+  /^\[(SYNC|DISCOVERY)\] (WASM kept|MLS state kept for) [0-9a-f]{8}… - .*key-distribution group/,
   // A DELETE THAT CAUGHT ITS MESSAGE STILL IN THE QUEUE (2026-08-16, MUT-19's fix). This is the
   // cancellation succeeding: the frame never left, so no peer has it and no `delete_message` event
   // is owed. Deliberately NOT written as a `^\[OUTBOX\] \S+ withdrawn` prefix - the sibling branch
@@ -277,6 +298,14 @@ const NOTABLE = [
   // check started.
   /message\(s\) caught up/i,
   /forget|revoke|reset|corrupt/i,
+  // THE SWEEP ACTUALLY DESTROYING SOMETHING. `[SYNC] WASM kept ...` is routine and sits in
+  // `BENIGN`; this is its opposite branch, and the two must never share a rule. It fires when the
+  // server confirms a group is a conversation row this device holds no membership in - correct
+  // after a real exclusion or a retired salon group, and the single loudest symptom of
+  // WP-GRAINE-1, where the same line deleted the key-distribution group on every connection.
+  // Never `clean`-breaking, because a legitimate one must not fail an unrelated check - but
+  // never silent: in a check that excluded nobody, its presence IS the finding.
+  /^\[(SYNC|DISCOVERY)\] (WASM|MLS state) removed/,
   /decrypt(ion)? (error|failed)/i,
   // AN OUTBOX THAT DID NOT EMPTY. `[OUTBOX] Queued` and `Flushing` are routine and sit in `BENIGN`;
   // this line is the flush REPORTING LEFTOVERS, and the two are not the same claim. It fired once in
@@ -1153,6 +1182,63 @@ export function gate(verdict, reports) {
   // `{}` for a clean client, so the record shows WHO was dirty without five empty objects around it.
   for (const [label, r] of dirty) detail[`dirt_${label}`] = dirtOf(r);
   return { verdict: verdict === 'PASS' && dirty.length ? 'PASS-DIRTY' : verdict, detail };
+}
+
+/**
+ * The same report with a refusal the check DELIBERATELY PROVOKED removed, and `clean` recomputed.
+ *
+ * THE SIBLING OF {@link ignoringOfflineCut}, and forgiven for the same reason: `report` sees a 403
+ * and cannot tell a rule refusing a real reader from an endpoint that is broken, so it must be told.
+ * A check that asks "does this refuse me?" MUST make a request that is refused - COMM-3 on a dead
+ * invite link, COMM-7 on a salon it may not write to, COMM-8 on a private salon it is not in - and
+ * the refusal is the measurement, not noise. Left in, every such check is permanently dirty, and
+ * dirt that is always there is dirt nobody reads.
+ *
+ * NARROW ON PURPOSE: a pair, not a path and not a status. Forgiving the path alone would swallow a
+ * 500 from the endpoint under test, and forgiving the status alone would swallow a 403 from anywhere
+ * else on the page - both of which are exactly what this check would otherwise be the one to catch.
+ *
+ * `unexplained`, `severe`, `exceptions` and `notable` are NOT touched. A provoked refusal explains
+ * one status on one path and nothing else; a line nobody classified is no more explained beside it.
+ *
+ * @param rep the `report()` of the client that made the request
+ * @param expected `[{ path: RegExp, status: number[] }]` - what this check went and asked for
+ */
+export function ignoringExpectedRefusal(rep, expected) {
+  // Matched against the RENDERED bucket line, which is `METHOD /path -> status`: that is the only
+  // form the report keeps, and re-deriving it here would be a second spelling of one format.
+  const forgiven = (line) =>
+    expected.some(({ path, status }) => {
+      const m = /^(\S+)\s+(\S+)\s+->\s+(\S+)$/.exec(line);
+      return !!m && path.test(m[2]) && status.includes(Number(m[3]));
+    });
+  // The console line Chrome writes ALONGSIDE the failed request - "Failed to load resource: the
+  // server responded with a status of 403" - carries no url of its own in the text, so it is
+  // matched on the status only, and only for statuses this check actually expected. Without it the
+  // request is forgiven and its echo is not, which forgives nothing at all.
+  const statuses = new Set(expected.flatMap((e) => e.status));
+  const echo = (line) =>
+    statuses.size > 0 &&
+    /Failed to load resource: the server responded with a status of (\d+)/.test(line) &&
+    statuses.has(Number(/status of (\d+)/.exec(line)[1]));
+
+  const badHttp = rep.badHttp.filter((l) => !forgiven(l));
+  const errors = rep.errors.filter((l) => !echo(l));
+  return {
+    ...rep,
+    badHttp,
+    errors,
+    clean:
+      errors.length === 0 &&
+      badHttp.length === 0 &&
+      rep.exceptions.length === 0 &&
+      rep.severe.length === 0 &&
+      rep.unexplained.length === 0,
+    ignoredAsExpectedRefusal: {
+      badHttp: rep.badHttp.length - badHttp.length,
+      errors: rep.errors.length - errors.length,
+    },
+  };
 }
 
 /**

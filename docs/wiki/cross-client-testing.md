@@ -286,13 +286,23 @@ which is why it read as correct for as long as it could not be wrong - this very
 distribution group" into "there was nothing to cut". Both fixed with the counts carried whole.
 
 **The runners for the rows below are STARTED, not written.** `tools/cross-client-harness/comm.mjs`
-carries the vocabulary all 22 share - create and open a community, create a channel, read a channel
+carries the vocabulary all 25 share - create and open a community, create a channel, read a channel
 row, the settings modal, the invite link - with every caption READ from
 `frontend/messages/<locale>.json` rather than spelt, so a renamed string fails in the harness instead
 of turning runners red a week later. Two of its selectors are deliberately structural: the rail is
 anchored on the "add a community" button, and a channel is asked for BY NAME because the only anchor
 in its container is a button a non-manager never sees - which is exactly the case COMM-8 measures.
 Nothing in it has been run against a client yet, and `checks.mjs` still carries `scripts: []`.
+
+**THE TWENTY-FIVE ROWS WERE REWRITTEN 2026-08-20, and the reason was not that they were incomplete.**
+They were written before Graine and still spoke the vocabulary it replaced: COMM-9 asked that "the
+key rotates", COMM-13 asked for "manual key rotation" - **neither mechanism exists** - and COMM-22
+timed `hydrateChannelHistoryKeys`, **a function that is gone**. COMM-16 asked that a deleted
+community's slug stay reserved, which stopped being true when deletion became a real delete
+(2026-08-18), and COMM-19 said "nothing in the inventory says what happens", which the governance
+work answered the same week. A row that names a mechanism the code does not have cannot fail: it
+cannot run. Three rows were added for what the per-salon distribution groups introduced, so the
+phase now carries 25.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
@@ -301,23 +311,57 @@ Nothing in it has been run against a client yet, and `checks.mjs` still carries 
 | COMM-3 | An expired link, a `maxUses`-exhausted link, a link to a deleted community | `W1 W2` | `pending` |
 | COMM-4 | Direct invite: the `channel_invitation` card appears in the DM on both sides, deduped | `W1 W2` | `pending` |
 | COMM-5 | Roles: promote to moderator, then admin; the grid takes effect immediately | `W1 W2` | `pending` |
-| COMM-6 | A custom role with a hand-picked permission set | `W1 W2` | `pending` |
+| COMM-6 | A custom role over the SIX enforced permissions - the grid offers no seventh | `W1 W2` | `pending` |
 | COMM-7 | `writePolicy` = admins only: refused server-side as well as in the UI | `W1 W2` | `pending` |
-| COMM-8 | Private channel: a non-allowed member cannot see it - **or fetch it by id** | `W1 W2` | `pending` |
-| COMM-9 | Kick from a channel: the key rotates, the kicked device cannot decrypt NEW messages | `W1 W2` | `pending` |
-| COMM-10 | Kick from a channel: it can still decrypt the OLD ones it holds | `W1 W2` | `pending` |
-| COMM-11 | Kick from the COMMUNITY, which carries no channel id: the client purges the workspace | `W1 W2` | `pending` |
-| COMM-12 | Re-invite a kicked user: they get the new epoch and not the old one | `W1 W2` | `pending` |
-| COMM-13 | Manual key rotation with both sides online, and with one side offline | `W1 W2` | `pending` |
+| COMM-8 | A private salon: a non-member cannot see it, **cannot fetch it by id, and is never sent its seed** | `W1 W2` | `pending` |
+| COMM-9 | Removed from a private salon: the server drops their routing rows, and the next message is sealed under a session they do not hold | `W1 W2` | `pending` |
+| COMM-10 | Removed from a private salon: the messages they ALREADY hold stay readable - Graine retains seeds on purpose | `W1 W2` | `pending` |
+| COMM-11 | Kicked from the COMMUNITY: the client purges the workspace AND leaves every private salon group it held | `W1 W2` | `pending` |
+| COMM-12 | Re-invited after a removal: they receive the sessions minted from now on, and the past only as `history_visibility` allows | `W1 W2` | `pending` |
+| COMM-13 | An admin JOINS a private salon: they see it unjoined, enter it in one click, appear in the member list, and NO system message is written | `W1 W2` | `pending` |
 | COMM-14 | Channel notification levels enforced server-side | `+push` | `pending` |
 | COMM-15 | Polls: create, vote, close; auto-pinned | `W1 W2` | `pending` |
-| COMM-16 | Delete a channel, then a community; the slug stays reserved | `W1 W2` | `pending` |
+| COMM-16 | Delete a channel, then a community by typing its name: the rows are really gone and the slug is free again | `W1 W2` | `pending` |
 | COMM-17 | Reorder communities by drag and drop; survives a reload, reaches the other device | `+A1` | `pending` |
 | COMM-18 | Deep link into a channel from a cold start | `+A1` | `pending` |
-| COMM-19 | The last admin leaves a community | `W1 W2` | `pending` - nothing in the inventory says what happens |
+| COMM-19 | The last admin tries to leave: refused, unless they are the last MEMBER, which deletes the community | `W1 W2` | `pending` |
 | COMM-20 | Two admins change the same role at the same moment | `W1 W2` | `pending` |
-| COMM-21 | A member is kicked while composing a message in that channel | `W1 W2` | `pending` |
-| COMM-22 | `hydrateChannelHistoryKeys` on a channel with many epochs - time it | `W1 W2` | `pending` |
+| COMM-21 | A member is removed while composing a message in that salon | `W1 W2` | `pending` |
+| COMM-22 | A salon carrying many Graine sessions: time the first render, and the repair when one seed is missing | `W1 W2` | `pending` |
+| COMM-23 | Public -> private: a group is minted, and a reader outside `allowedUsers` stops being routed | `W1 W2` | `pending` |
+| COMM-24 | Private -> public: the salon's group is tombstoned and the community's carries it again | `W1 W2` | `pending` |
+| COMM-25 | An admin's SECOND device receives the salon's seeds after the join, without a second join | `W1 W2` | `pending` |
+
+**TWO RUNNERS EXIST, and every row is still `pending` on purpose.** `comm1.mjs` and `comm8.mjs` are
+written and registered in `checks.mjs`; the other twenty-three are not. **COMM-8 produced a clean,
+ARMED PASS against production on 2026-08-20** - salon roster empty while the peer was excluded, the
+peer present on the community's roster in the same read, `GET /api/channels/:id/messages` answering
+403 to an AUTHENTICATED request from the peer's own page, and the same roster query answering YES
+the moment the peer was granted access. That result is **not a campaign verdict and the row stays
+`pending`**: the campaign is paused until every work package lands, and nothing measured before the
+last one is a campaign result. What it is, is proof that the instrument discriminates - it found
+four defects in the per-salon design on the way to saying PASS.
+
+
+**What each rewritten row now asks, where the old one named a mechanism that is gone.** COMM-9 and
+COMM-13 are the two that changed meaning rather than wording, and both are verified against the
+DATABASE as well as the screen, because their whole point is what a device is no longer SENT - which
+a screen cannot show:
+
+- **COMM-9** - the removal evicts them from the salon's own distribution group. The witness is
+  `dm_device_group_memberships` for that group losing their rows, `[CHANNEL_GRAINE] key distribution
+  cut ... evicted=true` in social-service, and then the removed client failing to open the NEXT
+  message while still opening the previous one. A screen alone cannot separate "cannot read it" from
+  "was never shown it".
+- **COMM-13** - the admin sees the salon in the sidebar with a join affordance and no content
+  behind it; `GET /channels/:id/distribution-group` answers 403 BEFORE the join and 200 after; the
+  member list gains their name; and the salon's transcript gains NOTHING. That last one is an
+  assertion of absence and is checked by message count, not by looking.
+
+**COMM-8 gained the half that matters.** It used to ask that a non-member cannot see or fetch a
+private salon - both server-enforcement questions. It now also asks that their device is never sent
+the seed: `dm_device_group_memberships` for the salon's group must name only the salon's members, so
+the guarantee is checked where it now lives rather than where it used to be enforced.
 
 ## 10 - DEL - deleting a conversation, crossed
 

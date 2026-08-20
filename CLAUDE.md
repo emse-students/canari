@@ -129,12 +129,18 @@ before the campaign restarts.** Everything actionable is HERE, in order, one lin
 lives where the link says and **is not restated**. An item is done when its code, its tests, its doc
 and its commit are in, and it is then deleted from BOTH files.
 
-**The campaign started 2026-08-19 and has produced TEN defects, all fixed** - the tenth found while
-writing up the per-salon distribution groups (`mlsDeliveryApi` dropped the very discriminator that
-keeps a distribution group out of the orphan sweep). 1-2 are numbers a run has to produce; 3 is the
-community phase, stale AND never run, where the rework's remaining risk sits; 4 is the campaign.
-**ONE DISTRIBUTION GROUP PER PRIVATE SALON SHIPPED 2026-08-20** - the guarantee is cryptographic
-now, not the server's, and the admin joins explicitly
+**The campaign started 2026-08-19 and has produced FOURTEEN defects, all fixed.** Four of them came
+from ONE private salon driven through create -> public -> private on prod on 2026-08-20, and not one
+was reachable from the repository: the three new routes were registered a segment too deep and
+answered 404 to everybody, a public salon could NEVER be made private, re-privatising handed the
+salon back the group it had just retired, and the exclusion that keeps a distribution group out of
+the conversation list knew only the community scope. **That is the whole lesson of the week, and it
+is now a rule: a lifecycle is a SEQUENCE, and a unit test arranges the state it asserts on.**
+1-2 are numbers a run has to produce; 3 is the community phase, stale AND never run, where the
+rework's remaining risk sits; 4 is the campaign.
+**ONE DISTRIBUTION GROUP PER PRIVATE SALON SHIPPED 2026-08-20 and is PROVEN ON PROD** - a salon's
+seed frame goes out on the salon's own group, a community member outside `allowedUsers` holds no
+routing row on it, and turning the salon public tombstones that group and releases its scope
 ([graine](docs/wiki/protocols/channel-encryption.md) §13, the only copy). **WP-GRAINE-2 is CLOSED,
 both halves proven on prod (2026-08-19)** - client: epoch 25->26 and the tree down to 2 leaves;
 server: W2 rejoined and left, `evict memberships=1 routes=1`, routing rows 3->2, then the client
@@ -155,12 +161,15 @@ in the field (user, 2026-08-19)**, so the iOS ladder cannot run and parity is ke
     comes from a run.** Every accusation in `displayName.ts` now ends `(failed/attempted, X%)`.
     There is no client telemetry, so the rate is read from a run log on each platform. **The
     `FAILURE_BACKOFF_MS` decision is what the number is FOR** ([backlog](docs/wiki/backlog.md)).
-3. **REWRITE THE COMM PHASE - it is not incomplete, it is STALE.** Written before Graine and still
-    speaking the old vocabulary: COMM-9 "the key rotates", COMM-13 "manual key rotation" (neither
-    exists), COMM-22 times `hydrateChannelHistoryKeys`, **a function that is gone**. Nothing in it
-    covers the eight defects found this week. Rewrite the twenty-two rows against Graine, add what the
-    per-salon distribution groups change, then write the runners - `checks.mjs` carries the phase and an empty `scripts: []`.
-    This is where the rework's remaining risk sits: everything about it is verified by COMPILING.
+3. **THE COMM RUNNERS - the rows were rewritten 2026-08-20, nothing runs them yet.** The stale
+    vocabulary is gone (COMM-9 and COMM-13 named mechanisms that do not exist, COMM-22 timed a
+    deleted function) and three rows were added for the per-salon groups, so the phase carries
+    TWENTY-FIVE; the table on
+    [cross-client-testing](docs/wiki/cross-client-testing.md) is the only copy. What is left is the
+    runners: `comm.mjs` holds the shared vocabulary, `checks.mjs` still carries `scripts: []`.
+    **This is where the rework's remaining risk sits** - everything about it is verified by
+    COMPILING, and COMM-8/9/13 must be checked against the DATABASE, since what they assert is what
+    a device is no longer SENT.
 4. **THEN, and only then:** recreate the venue clean, rebuild the Android APK once, run the
     campaign. **Everything must end green, so every phase runs.** What it costs, the ladder's order
     and the two decisions it turns on are on

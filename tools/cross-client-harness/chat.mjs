@@ -1552,3 +1552,44 @@ export async function attachFiles(cx, files) {
 }
 
 export { IS_MOVING_FN, activate, clickAtPoint, evaluate, pressKey, realClick, stablePoint, until };
+
+/**
+ * One authenticated GET, made from a client's OWN page, as that client's account.
+ *
+ * WHY IT CANNOT BE A PLAIN `fetch(..., { credentials: 'include' })`. Canari keeps the access token
+ * in memory and NEVER in `localStorage`; the only thing a cookie carries is the HttpOnly refresh
+ * token. So a bare credentialed fetch is unauthenticated and answers **401** - which is not an
+ * answer to any question a check is asking. A check that reads 401 as "you may not read this" would
+ * report a perfect access rule for an endpoint that had never looked at the account, and would go on
+ * reporting it after the rule was deleted.
+ *
+ * So this does exactly what the app does: `POST /api/auth/refresh` with the cookie to mint an access
+ * token, then the real request with `Authorization: Bearer`. The refresh ROTATES the cookie, which
+ * is harmless here because it rotates inside the very browser context the app is running in - the
+ * app's next refresh picks up the new value like any other.
+ *
+ * @returns `{ status, body }` - `status` null ONLY on a transport failure, which is not an answer
+ *   either and is reported as itself rather than folded into a status.
+ */
+export async function apiGet(cx, path) {
+  const base = await origin(cx);
+  const raw = await evaluate(
+    cx,
+    `(async function () {
+       try {
+         var r = await fetch(${JSON.stringify(`${base}/api/auth/refresh`)}, { method: 'POST', credentials: 'include' });
+         if (!r.ok) return JSON.stringify({ status: null, threw: 'refresh answered ' + r.status });
+         var token = (await r.json()).access_token;
+         var g = await fetch(${JSON.stringify(base)} + ${JSON.stringify(path)}, {
+           headers: { Authorization: 'Bearer ' + token },
+         });
+         var text = await g.text();
+         return JSON.stringify({ status: g.status, body: text.slice(0, 400) });
+       } catch (e) {
+         return JSON.stringify({ status: null, threw: String(e) });
+       }
+     })()`,
+    { awaitPromise: true }
+  );
+  return JSON.parse(raw);
+}
