@@ -1201,6 +1201,43 @@ And in the check: **the step that establishes the subject of every later step mu
 already returned early when it could not read its community's id; it now does the same when it could
 not open it. A swallowed failure is only safe when nothing after it depends on the thing that failed.
 
+#### 28. A DEVICE'S BUILD IS PART OF ITS ANSWER, AND A CLASSIFIER MUST NOT EAT THE EVIDENCE IT CLASSIFIES
+
+Two faults, one run, and the run was COMM-25's first.
+
+**The verdict was FAIL and the device could not have passed.** The check asks whether an account's
+SECOND device is carried into a private salon by the first one's access. The phone's roster stayed at
+one device for the full 90 s, which is exactly the defect the row was written for - except that the
+phone serves the bundle inside its APK (`frontendDist` is `../build`, so no deploy reaches it) and the
+build it was running, `a232c070`, predates `b9ed05f7` - the commit that gave a private salon a
+distribution group of its own. The device has no notion of the group it was being asked to join. The
+FAIL was a statement about an APK, wearing the costume of a statement about the product.
+
+This is the standing rule *never learn by failing what a fact could have told you*, applied to a
+build. The phone's own `/_app/version.json` is one fetch away and dates it through the same
+stamp-to-commit derivation the deployment already used. So `clientBuild(cx)` reads it, COMM-25 arms
+only when the phone clears the threshold, and `a1Build` is recorded on **every** row rather than only
+on a failure - this is the one check in the phase whose two devices can legitimately be on different
+builds, and a reader has to be able to see which. **The threshold is a COMMIT, not a date**: the check
+names what introduced the mechanism it measures, and the date is derived from the repository, so it
+cannot go on being true after the fact stops being true.
+
+It is read while ARMING, before the salon exists. That is what keeps it compatible with a row whose
+whole claim is that no gesture was needed: nothing can be repaired that has not yet been created.
+
+**And the same run printed `0 console lines` for a run that had driven W1 through four navigations.**
+`report()` ends by clearing `cx.events`. That is deliberate and correct - a second `report` must cover
+only what happened since the first - but it destroyed the RAW log along with the classified one, so
+`consoleLines` answered nothing to anybody who asked *after* gating. Every other runner happens to ask
+before, which is why this survived twenty runners. `consoleLines` documents itself as "every console
+line the page emitted since `watch()`"; it now is that, because `report` archives what it drains.
+
+The general form is worth more than either instance: **a classifier may not consume its input.** The
+file already carried the sibling rule - a verdict must never be computed over a projection of its own
+evidence - and this is the same sentence one step further on. A projection that destroys the original
+makes every later question unanswerable, and the symptom is an empty log rather than a wrong one,
+which reads like a quiet run instead of a broken instrument.
+
 ## Observation is part of the check, not a debugging step
 
 Decided 2026-08-06, after two shipped bugs came out of the logs of **passing** checks.

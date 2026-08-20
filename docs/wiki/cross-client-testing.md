@@ -334,7 +334,7 @@ MSG-5's standing assertion: no `masterSecret` in any payload, ever.
 | COMM-22 | A salon carrying many Graine sessions: time the first render, and the repair when one seed is missing | `W1 W2` | `pending` |
 | COMM-23 | Public -> private: a group is minted, and a reader outside `allowedUsers` stops being routed | `W1 W2` | `pending` |
 | COMM-24 | Private -> public: the salon's group is tombstoned and the community's carries it again | `W1 W2` | `pending` |
-| COMM-25 | An admin's SECOND device receives the salon's seeds after the join, without a second join | `W1 W2` | `pending` |
+| COMM-25 | An admin's SECOND device receives the salon's seeds after the join, without a second join | `W1 A1` | `pending` |
 
 **Every row above is `pending` on purpose.** The campaign is paused until the last work package lands,
 and a runner that PASSes while it is still proving itself is not a campaign verdict. What the
@@ -357,6 +357,7 @@ instrument has produced so far - latest verdict per check, all against productio
 | COMM-15 | 2026-08-20 | `PASS` clean `939078aa` | first run; needed the native-dialog capability |
 | COMM-16 | 2026-08-20 | `PASS` clean | - |
 | COMM-19 | 2026-08-20 | `PASS` clean | - |
+| COMM-25 | 2026-08-20 | `VACUOUS` | three runs, none attributable, and each named a different reason - which is the row working. (1) `FAIL` against an APK NINE DAYS older than per-salon distribution groups: the phone had no notion of the group it was asked to join. (2) Rebuilt and installed, `a1Build: 02ae609b`, `phoneHasTheMechanism: true` - and still `salonPlatforms: ["web"]` after 90 s AND after a full app restart. (3) The phone then said why: `[PIN] No device key in vault - auto-login impossible`. `adb install -r` kept its IndexedDB and lost its vault entry, so the device is logged in over HTTP and cannot do MLS at all. **Owed: the PIN re-entered ON the phone - a human action no tool here can answer - then a fourth run.** Until then nothing this row prints is a statement about the product |
 | COMM-20 | 2026-08-20 | `PASS` clean `ce6ef963` | five runs, four defects, each only visible once the one before it was fixed: the wire sent the whole list, the server read-modify-wrote the row, the announcement that would have corrected the loser was dropped, and the click applied its own answer. `outcome: "both edits applied"` and both grids agree with the column |
 | COMM-21 | 2026-08-20 | `PASS` clean `939078aa` | first run; the draft is lost, recorded and not asserted |
 | COMM-23/24 | 2026-08-20 | `PASS` clean | - |
