@@ -36,21 +36,6 @@ Updated after every run.
 
 **Run order is the numbered ladder above, top to bottom.** It is the only copy of that order.
 
-**What the ladder actually costs, read off the table above:** MSG is the ONLY phase standing on a
-current build; TYPE, READ, MUT and FWD all owe re-runs on an older one; and **twelve of the eighteen
-have never run at all**. CALL is 20 checks with **zero scripts written**. Its
-prerequisite is **IN as of 2026-08-19**: `call-service` writes one `[call] session end` line per
-socket carrying the disposition, the duration, whether media ever flowed, and the per-direction
-frame counts, and `chat-delivery-service` names the invite and the join token on the same room id
-- the record and how to read it are on
-[`call-service`](services/call-service.md#the-call-record), which is the only copy. **Every CALL row
-must quote that line**: a call failure two clients each see half of is attributed from it or not at
-all, which is exactly what caught the silent channel-push 404s.
-
-**The whole community rework is verified by COMPILING and by unit tests only.** Nothing has run
-against prod: no client has joined a distribution group on a real deploy, and no notification has
-been decrypted from a Graine seed on hardware. Those are WP-62's rows and they run here.
-
 | State | Meaning |
 | --- | --- |
 | `PASS` / `passed` | ran, assertions held, run was clean - and the row names the build |
@@ -59,31 +44,12 @@ been decrypted from a Graine seed on hardware. Those are WP-62's rows and they r
 | `SKIPPED` | cannot be armed with two accounts, or needs `--destructive` |
 | `BLOCKED` | cannot run until something outside the campaign happens |
 
-## The reconciled fleet this campaign starts from - established 2026-08-19
+## The baseline `recon.mjs` starts from - established 2026-08-19
 
-`recon.mjs` answers `LOSS` on the W1/W2 pair and **that verdict is expected until the number
-changes**. Five message ids exist on W1 and on neither W2 nor A1, all created 2026-08-16 between
-09:45 and 16:27 UTC.
-
-They were never received by anyone because **they never left the sender**, which two independent
-witnesses settle: W1 holds 6272 in the shared conversation, W2 holds 6267, A1 holds 6267 - the two
-receivers agree at the message id, so nothing was dropped in reception. The server holds nothing for
-them either (zero `queued_message` rows created that day) and W2's device has not been rotated since
-2026-08-06, so this is not a fresh device without history. W1's `outbox` is EMPTY, so no retry will
-ever be attempted: the optimistic row is the only trace, which is WP-ECHO-1's shape - the sender's
-own render is its own message's only writer, since the fanout excludes the sender's devices and
-OpenMLS refuses to decrypt its own frame.
-
-**A failed send is also invisible after the fact**, and that is a live property of the current
-build: the status indicator renders only for `isLastOwn` (`MessageMetadata.svelte`), so any message
-sent after a failed one hides it for good.
-
-**The send path itself is healthy on the current build** - MSG-10 exercised exactly this: queued
-while offline, `Flush skipped - offline`, then `Flushing 2 queued entries` and both sent on
-reconnect.
-
-So the baseline is: **five, and only five.** A run whose recon reports a sixth has found something
-new; a run reporting five has found nothing. Do not clear them - the divergence is the evidence.
+`LOSS` on the W1/W2 pair is the EXPECTED verdict until the number changes. **Five** message ids, all
+on W1 only, all created 2026-08-16 between 09:45 and 16:27 UTC. A run reporting five has found
+nothing; a sixth is new. Do not clear them - the divergence is the evidence. Why they are believed to
+have never left the sender is WP-ECHO-1's, in [backlog](backlog.md).
 
 ## 0 - SETUP
 
@@ -97,57 +63,12 @@ new; a run reporting five has found nothing. Do not clear them - the divergence 
 | SETUP-6 | A1: log in as owner, decline biometrics | `+A1` `+user` | `passed` 2026-08-14 |
 | SETUP-7 | Discovery pass over the real at-rest artefacts | `+A1` | `pending` - owed before CORRUPT and PIN |
 | SETUP-8 | Baseline snapshot of intact Android app data | `+A1` | `pending` - owed before CORRUPT and PIN |
-| SETUP-9 | The dedicated venue for channel traffic | `W1 W2` | `passed` 2026-08-19 - **recreated**: `channel_workspaces` was EMPTY on prod, the venue included, after the delete-community rework and the 2026-08-17 purge. Creating it is the first exercise of that path against a real deploy: create -> distribution group row -> invite link -> join all worked through the UI |
+| SETUP-9 | The dedicated venue for channel traffic | `W1 W2` | `passed` 2026-08-19 - recreated through the UI after the 2026-08-17 purge |
 
 ## 1 - MSG - the plain path
 
 `226fe755`, 2026-08-16: 12 verdicts, 12 `PASS`, every client clean, server clean over the run's own
 window. Earlier x5 series on `8a3edbdd`, `e62c21f1` and `25376b86` all read 13/13.
-
-**COMM-2 and COMM-16 have run on prod (2026-08-20, `bf2815c2`), both PASS and both clean.** COMM-2
-proves the whole invite path end to end: one live link, stable across two reads, previewing the
-community by name before joining, and a peer who becomes a member with the `member` role and no
-other row. COMM-16 proves a salon and a community are really deleted, with no orphan in any table
-and the slug free enough to be taken again by a second community.
-
-**One observation from COMM-2 that is NOT a defect, recorded so it is not re-investigated.** Its
-first clean run carried two 404s on W2 - `GET /api/channels/<id>/members` and `/pins` - for a channel
-belonging to the PREVIOUS run's community, which the check itself had deleted while W2 was inside it.
-Nothing was persisted (localStorage and every IndexedDB store were read: no row named it), the
-landing's own abandon path exists, and a re-run came back clean on both clients. It is a live page
-briefly outliving a community deleted underneath it, not a leak.
-
-**COMM-3 added a fourth case the row did not name, and a positive control.** Revocation is not in
-the row because there is no revoke control to name: regenerating IS the revocation, one live link at
-a time being what makes a link enumerable. And every other case is a REFUSAL - a check made only of
-refusals passes perfectly against a preview that is simply broken - so the rotated case previews both
-tokens on the same client in the same run: the old one refused, the new one accepted.
-
-**It also found a hole in the classifier, which is the second one this phase has produced.** The
-`BENIGN` entry forgiving Graine's quiet reconciliation line stated that its loud sibling - a
-departure being ENFORCED, leaves committed out of the tree - was "caught by the `re-?add|epoch` rule
-in NOTABLE". It was not: the line reads *"N member(s) left but still hold a leaf - removing"*, which
-contains none of those words, so the single loudest signal Graine emits went to `unexplained` and
-nowhere else. It has its own NOTABLE entry now. **A rule that claims another rule covers something
-must be checked against the TEXT, not against the intent.**
-
-**COMM-19 asserts the refusal on the TABLE and on the SCREEN, and needed both.** A membership row
-that survived proves the server refused; it says nothing about whether the person was told, and a
-refusal nobody explains is a button that does nothing. Its first run recorded exactly that failure
-about a working client - it read the console the instant the click returned, and the sentence lands
-after the round trip that produces it. `awaitLine` now bounds the wait, on the campaign's own rule
-that an absence is only a finding against a window a reader can argue with.
-
-**COMM-11 confirms on prod that a community-level removal reaches a private salon's OWN group** -
-membership row, routing rows on both groups, and `allowedUsers`, which is the one that matters most:
-the roster reconciliation diffs the MLS tree against exactly that list, so a surviving name is a leaf
-re-authorised at every pass, and the removal would be undone by its own enforcement.
-
-**And it caught the classifier rule added one commit earlier being wrong in the same way.** That rule
-was written `\S+ [0-9a-f]+:`, which matches `community <id>:` and NOT `salon <id> of <id>:` - the two
-forms `scopeLabel` produces. A real member losing a real salon put the line straight back in
-`unexplained`. The rule is now written against the FUNCTION, not against the sighting that prompted
-it; its quiet sibling in BENIGN had used `.+` all along.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
@@ -157,7 +78,7 @@ it; its quiet sibling in BENIGN had used `.+` all along.
 | MSG-2 | W2 -> A1 with the app foreground: no duplicate against the push | `+A1` | `PASS` - 274 ms |
 | MSG-3 | Reply renders with its quoted parent on both sides | `W1 W2` | `PASS` - 196 ms |
 | MSG-4 | Image then PDF: ciphertext upload, both render, receiver decodes | `W1 W2` | `PASS` |
-| MSG-5 | Channel message converges on all three; no `masterSecret` in any payload | `+A1` | **`PASS-DIRTY` 2026-08-19 on `a232c070`** - 1 copy on each of W1/W2/A1, no `masterSecret`. Was `FAIL` on `231cee62`: nobody could send in a community at all, WP-GRAINE-1 - the sweep deleted the distribution group two seconds after the join, on every connection ([graine](../wiki/protocols/channel-encryption.md#the-distribution-group-is-not-a-conversation-and-two-sweeps-assumed-it-was)). The dirt is A1 rendering at 5 989 ms behind an ERROR line - its seed had not landed and the live route asked nobody, fixed in `89368eb0`. Re-run owed on that build |
+| MSG-5 | Channel message converges on all three; no `masterSecret` in any payload | `+A1` | **`PASS-DIRTY` 2026-08-19 on `a232c070`** - 1 copy on each of W1/W2/A1, no `masterSecret`; the dirt (A1 at 5 989 ms behind an ERROR line) is fixed in `89368eb0` - **re-run owed on that build** |
 | MSG-6 | Link preview served through the proxy, never a third-party `<img src>` | `W1 W2` | `PASS` |
 | MSG-7 | 30 rapid sends: order preserved, no gap, no duplicate | `W1 W2` | `PASS` - 1 944 ms |
 | MSG-8 | Send to a BACKGROUNDED tab | `W1 W2` `+A1` | `PASS` |
@@ -281,27 +202,9 @@ The first rung that moves an MLS epoch.
 A community is a `Workspace`, and **its membership is not MLS membership**. Every row is read against
 MSG-5's standing assertion: no `masterSecret` in any payload, ever.
 
-**WP-GRAINE-2: CLOSED - both halves proven on production 2026-08-19.** Distribution group
-`d70e8952-bc23-4ee8-bf63-fb829e278273`, community `b9d52032`. Mechanism and reasoning:
+**WP-GRAINE-2 is closed**, both halves proven on production 2026-08-19 (distribution group
+`d70e8952`, community `b9d52032`); the figures are on
 [graine](protocols/channel-encryption.md#10-a-departure-moved-nothing-and-rotation-waited-on-it---fixed-2026-08-19).
-
-| Client half | Before | After |
-| --- | --- | --- |
-| `mls_group_info.baseEpoch` | **25**, `14:00:02.53775`, written by W1's **tauri** | **26**, `15:54:08.520527` |
-| the tree | 3 leaves - `b78568a3` had left before the fix | **2 leaves**, both `d82cd226` |
-| who committed it | - | W1's **web** device, `isCommit=true group=d70e8952` at `15:54:08` |
-| a second pass | - | `distribution group agrees with its roster - 2 leaf/leaves`, `baseEpoch` still **26** |
-| `dm_device_group_memberships` | 3 rows | **still 3** - the server half is below |
-
-| Server half | What was read | Value |
-| --- | --- | --- |
-| W2 rejoins | roster / `mls_group_info.baseEpoch` | 1 -> **2** members, epoch 27 at `19:30:48` |
-| the tree agrees again | W1's reconciliation | `agrees with its roster - 3 leaf/leaves` |
-| W2 leaves | social-service | `[WORKSPACE] key distribution cut workspace=b9d52032 user=b78568a3 reason=left` |
-| the server cut it | chat-delivery | `[DISTRIBUTION_GROUP] evict ... memberships=1 queued=0 routes=1` at `19:34:30` |
-| `dm_device_group_memberships` | rows on the group | 3 -> **2**, both `d82cd226` |
-| the client followed | W1's reconciliation | `1 member(s) left but still hold a leaf - removing (2 leaves stay)` |
-| `mls_group_info.baseEpoch` | the server | 27 -> **28** at `19:35:26` |
 
 **Twenty-five rows, nineteen runners** (`comm1` `comm2` `comm3` `comm4` `comm5` `comm6` `comm7`
 `comm8` `comm910` `comm11` `comm12` `comm13` `comm15` `comm16` `comm19` `comm20` `comm21`
@@ -335,38 +238,6 @@ MSG-5's standing assertion: no `masterSecret` in any payload, ever.
 | COMM-23 | Public -> private: a group is minted, and a reader outside `allowedUsers` stops being routed | `W1 W2` | `pending` |
 | COMM-24 | Private -> public: the salon's group is tombstoned and the community's carries it again | `W1 W2` | `pending` |
 | COMM-25 | An admin's SECOND device receives the salon's seeds after the join, without a second join | `W1 A1` | `pending` |
-
-**Every row above is `pending` on purpose.** The campaign is paused until the last work package lands,
-and a runner that PASSes while it is still proving itself is not a campaign verdict. What the
-instrument has produced so far - latest verdict per check, all against production:
-
-| Check | Date | Verdict | What it left |
-| --- | --- | --- | --- |
-| COMM-1 | 2026-08-20 | `PASS` clean `402fb2d9` | first completed run, and it found the campaign's 29th defect: `ensureWorkspaceByName` created a community, listed its salons and selected one without ever preparing the community's Graine distribution group, so the creator's first message was refused. Re-run after the fix: `latencyMs: 268`, `copies: {w1: 1, w2: 1}` |
-| COMM-2 | 2026-08-20 | `PASS` clean | - |
-| COMM-3 | 2026-08-20 | `PASS` clean | - |
-| COMM-4 | 2026-08-20 | `PASS` clean `247803ff` | one card per side, each worded for its own side, the Join button on the invitee's only, and all four counts unchanged across a reload. The three earlier `FAIL`s were the instrument: `ensureConversation` threw on every call, the count was taken by the expected WORDING (rebuilt from a first name the app never renders), and an ancestor carrying the community name was counted as a second card. Store rows: one per invitation on both devices, deterministic id, no twin |
-| COMM-5 | 2026-08-20 | `PASS` clean `ce6ef963` | re-run under the tightened expectations: `liveWithoutReload` and `capabilityIsLive` are both true for the first time, so a role change now reaches an open client without a reload |
-| COMM-6 | 2026-08-20 | `PASS` clean `ce6ef963` | re-run once the grid was derived from the announcement alone; the six offered are the six enforced, the administrator column is locked, a toggle reaches the column and comes back |
-| COMM-7 | 2026-08-20 | `PASS` clean `d3cff54c` | two defects, both fixed, all five assertions hold and the window is clean: the server refuses the member (`403`), the composer is absent rather than disabled, nothing the member sent landed, the administrator still writes. The earlier `PASS-DIRTY` was one mis-tagged log line, now deployed correct |
-| COMM-8 | 2026-08-20 | `PASS` clean `fa317916` | re-run once both halves of its console reading could speak. Peer on the community roster, on none of the salon's, announced no seed; sidebar absent; the API refuses them `403`. Armed both ways: after the grant the peer's row appears (roster 1 -> 2) and its device says `seedAfterTheGrant: repaired` - the repair line the same run's FAIL put into the product |
-| COMM-9/10 | 2026-08-20 | `PASS` clean `245f7895` | armed at last, once the row stopped asserting on a SCREEN. A member removed from a private salon loses it from the sidebar, so counting messages in a pane measured the purge; `grainestore.mjs` reads the client's own IndexedDB instead, and the seed it was GIVEN is still there afterwards (`received` 1 -> 1) while the message minted after the removal never arrives, its routing row is gone, and the salon keeps its group. The reader itself had to be fixed first - it measured a field only the decoded object has, so every row read as 0 bytes |
-| COMM-11 | 2026-08-20 | `PASS` clean | - |
-| COMM-12 | 2026-08-20 | `PASS` clean `245f7895` | five runs to arm once, and each failure was a different fault. The product one is the campaign's 30th defect: a community left the sidebar 1.5 s after it was created and the app moved the client into an unrelated one, so the arm's gestures went elsewhere. Two instrument faults came first - `setHistoryVisibility` returned before the save landed, and a swallowed `openCommunity` let a Graine history rule be written onto a community the check had never heard of. Armed, all ten hold: `joined` refuses the past on both joins and loses what it could read before, `shared` gives all four back including the window it missed. The run that proved it also logged the prune sparing a community created while a listing was in flight - the fix firing on the race it was written for |
-| COMM-13 | 2026-08-20 | `PASS` clean | - |
-| COMM-15 | 2026-08-20 | `PASS` clean `939078aa` | first run; needed the native-dialog capability |
-| COMM-16 | 2026-08-20 | `PASS` clean | - |
-| COMM-19 | 2026-08-20 | `PASS` clean | - |
-| COMM-25 | 2026-08-21 | `FAIL` `02ae609b` (A1) / `245f7895` (W1) | **armed and attributable at last, and the claim it refutes is the row's own.** The phone was unlocked by `pin.mjs`, did a full workspace load at `00:03:56` and joined the distribution group of every private salon that existed at that instant - three of them, 2 leaf/leaves each, its own leaf among them. The salon under test was created **nine seconds later**, at `00:04:05`, and the phone said nothing: `salonPlatforms: ["web"]`, `salonOwnerDeviceCount: 1` after 90 s, `phoneSaid: []`. So the device's capability is proven by construction in the same minute, and what is absent is the PROPAGATION - `loadChannelWorkspacesFromBackend` has exactly three callers (post-login, the `online` event, a deep link to an unknown channel) and the server emits nothing on channel creation, so a running device cannot learn a salon exists. The three earlier runs were unattributable and each named a different reason: (1) an APK nine days older than per-salon groups, (2) rebuilt but the vault empty, (3) the vault empty and me calling that a human blocker |
-| COMM-20 | 2026-08-20 | `PASS` clean `ce6ef963` | five runs, four defects, each only visible once the one before it was fixed: the wire sent the whole list, the server read-modify-wrote the row, the announcement that would have corrected the loser was dropped, and the click applied its own answer. `outcome: "both edits applied"` and both grids agree with the column |
-| COMM-21 | 2026-08-20 | `PASS` clean `939078aa` | first run; the draft is lost, recorded and not asserted |
-| COMM-23/24 | 2026-08-20 | `PASS` clean | - |
-
-**The build a verdict ran on is recorded from `60c33b92` onward and not before.** Nothing the web
-client prints names its build, so `results.mjs` reads `/_app/version.json` from the deployment and
-resolves it to the newest commit on `origin/main` at or before that stamp; every row now carries
-`build` and `builtAt`. The two verdicts above that name a commit were dated by hand from the same
-stamp.
 
 ## 10 - DEL - deleting a conversation, crossed
 
@@ -449,13 +320,8 @@ Sweeps every `+push` row left behind above it.
 | NOTIF-11 | Three messages into one salon: ONE notification carrying three stacked lines, not three notifications | `+push` | `pending` |
 | NOTIF-12 | Who each stacked line is attributed to inside a salon | `+push` | `pending` - RECORDED, not asserted; see below |
 
-**NOTIF-12 records rather than asserts, because the product has not decided.** A salon's stacked
-lines are attributed to the salon, not to whoever wrote each one: `handleChannelMessage` passes the
-salon title as the `Person`, and the server sends only `senderId` - enough for the avatar, not for a
-name. Naming the author would need either the name on the wire, which puts it through FCM and APNs,
-or a `push/display-name/:userId` lookup beside the avatar one, which puts nothing new through
-anybody. The second is the shape the avatar already proved; the choice is the user's and is in
-[backlog](backlog.md).
+**NOTIF-12 records rather than asserts**: attribution of a stacked line inside a salon is an open
+product decision, in [backlog](backlog.md).
 
 ## 15 - CALL - audio and video
 

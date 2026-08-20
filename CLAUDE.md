@@ -124,106 +124,37 @@ queue below in its place, and its substance into `backlog`.
 
 ### CANARI - THE QUEUE, IN ORDER
 
-The user's decision of 2026-08-16, restated 2026-08-18: **the backlog and this file are emptied
-before the campaign restarts.** Everything actionable is HERE, in order, one line each; the detail
-lives where the link says and **is not restated**. An item is done when its code, its tests, its doc
-and its commit are in, and it is then deleted from BOTH files.
+Everything actionable is HERE, one line each; the detail lives where the link says and **is not
+restated**. An item is done when its code, its tests, its doc and its commit are in, and it is then
+deleted from BOTH this file and [backlog](docs/wiki/backlog.md). **Every defect story is in
+`CHANGELOG.md`, every rule one left is in [durable-rules](docs/wiki/durable-rules.md), every verdict
+is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the three is restated here.**
 
-**The campaign started 2026-08-19 and has produced THIRTY defects, ALL FIXED.** One candidate was
-withdrawn on 2026-08-20: COMM-4's was the INSTRUMENT, three faults deep, and the
-product was right throughout ([testing-methodology](docs/wiki/testing-methodology.md) rules 23 and
-24 are what it left). **Every story is in `CHANGELOG.md` and every rule one left is in
-[durable-rules](docs/wiki/durable-rules.md); neither is restated here.** The thirtieth is COMM-12's,
-and it is the one to know because it moved every run it broke: a community left the sidebar 1.5 s
-after it was created and the app dropped the client into an unrelated one, so the workspace list
-was deleting what did not exist when it asked. The twenty-ninth is COMM-1's, on its FIRST completed
-run: creating a community prepared no Graine group, so the creator could not post in it. The twenty-sixth is COMM-20's, on its FIRST run: a
-permission-grid cell IS a delta and was being sent as the role's whole list, so two administrators
-toggling two DIFFERENT keys of one role erased each other's work and the loser's grid kept drawing a
-state the server had never held. The twenty-fourth and twenty-fifth are both COMM-7's - a salon
-reserved for administrators handed every member a composer, and the fix for it (`viewerCanWrite` in
-the workspace listing) served only whoever loaded the community AFTERWARDS, so the same check failed
-identically a second time until the change was ANNOUNCED, split by the answer. Seven came from ONE private salon driven on prod through create ->
-public -> private -> a SECOND MEMBER, and not one was reachable from the repository. **A check that
-fails is a claim to CHECK, never a check to soften** - the reflex was to relax the assertion to match
-the server, and it was the assertion that was right. **That is the whole lesson of the week, and it
-is now a rule: a lifecycle is a SEQUENCE, and a unit test arranges the state it asserts on.**
-1-2 are numbers a run has to produce; 3 is the community phase, stale AND never run, where the
-rework's remaining risk sits; 4 is the campaign.
-**ONE DISTRIBUTION GROUP PER PRIVATE SALON SHIPPED 2026-08-20 and is PROVEN ON PROD** - a salon's
-seed frame goes out on the salon's own group, a community member outside `allowedUsers` holds no
-routing row on it, and turning the salon public tombstones that group and releases its scope
-([graine](docs/wiki/protocols/channel-encryption.md) §13, the only copy). **WP-GRAINE-2 is CLOSED,
-both halves proven on prod (2026-08-19)** - client: epoch 25->26 and the tree down to 2 leaves;
-server: W2 rejoined and left, `evict memberships=1 routes=1`, routing rows 3->2, then the client
-followed to epoch 28. Every figure and the two defects the run itself found are on
-[cross-client-testing](docs/wiki/cross-client-testing.md) §9.
-Preflight, MSG and SETUP-9 are done and MSG-5 converges on all three clients -
-read [cross-client-testing](docs/wiki/cross-client-testing.md) rather than re-deriving them. **The
-phone is back (2026-08-17)**; keep `adb devices` answering. **There is NO iPhone and no iOS client
-in the field (user, 2026-08-19)**, so the iOS ladder cannot run and parity is kept BLIND
-([device-verification](docs/wiki/device-verification.md)).
+1. **THE COMM RUNNERS - TWENTY of the twenty-five written, each RUN ON PROD as it was written** (the
+    user's decision, 2026-08-20: writing all twenty then running once is verification by COMPILING).
+    **Remaining: 14, 17/18, 22**, and each needs a capability the harness does not have - real push
+    (COMM-14), the phone through `adb` (COMM-17/18), many Graine sessions at once (COMM-22). A
+    capability is unproven until a check using it produces a result it could not have produced by
+    accident. **The phone shows a GENERIC notification body** (user, 2026-08-20, on an app that is
+    not up to date): that is COMM-14's row, an observation and not a defect until the runner says so.
+2. **`cleanup.mjs` before the campaign** - venues from the COMM runs, each `C<n> COMM<n>-<mark>`,
+    deleted THROUGH the product so its Graine group goes with it; `--dry` to look first.
+3. **THE CAMPAIGN ITSELF - RUNNING, by the user's decision of 2026-08-21** (*"C'est parti pour la
+    campagne"*, in autonomy). Recreate the venue clean, rebuild the Android APK once, then the ladder
+    top to bottom. **Everything must end green, so every phase runs.** The ladder's order, its cost
+    and the decisions it turns on are on [cross-client-testing](docs/wiki/cross-client-testing.md)
+    and [cross-client-campaign](docs/wiki/cross-client-campaign.md), the only copies.
 
-1. **EGRESS OVER TIME - ARMED 2026-08-19, and it produces no work.**
-   [egress-probe](infrastructure/egress-probe/README.md) samples once a minute and `report.py`
-   prints every conditional rate next to the base rate it must beat. **It says nothing until the
-   window contains an incident**, so read it the next time a stall shows up in a service log; the
-   question itself is on [backlog](docs/wiki/backlog.md) and is not to be re-derived.
-2. **THE DENOMINATOR ON THE PROFILE-FETCH FAILURES - the counter shipped 2026-08-19, the number
-    comes from a run.** Every accusation in `displayName.ts` now ends `(failed/attempted, X%)`.
-    There is no client telemetry, so the rate is read from a run log on each platform. **The
-    `FAILURE_BACKOFF_MS` decision is what the number is FOR** ([backlog](docs/wiki/backlog.md)).
-3. **THE COMM RUNNERS - NINETEEN of the twenty-five written, and every one of them RUN ON PROD as it
-    was written** (the user's decision, 2026-08-20: writing all twenty then running once is
-    verification by COMPILING, which is what produced five of this week's defects). Written: 1, 2, 3,
-    4, 5, 6, 7, 8, 9/10, 11, 12, 13, 15, 16, 19, 20, 21, 23/24, sharing `comm.mjs`. **Remaining: 14,
-    17/18, 22, 25**, and every one of them needs a capability the harness does not have - real push
-    (COMM-14), the phone through `adb` (COMM-17/18), many Graine sessions at once (COMM-22), a second
-    device for one account (COMM-25). Each
-    capability is itself unproven until a check using it produces a result it could not have produced
-    by accident. Why the rows were rewritten is on
-    [cross-client-campaign](docs/wiki/cross-client-campaign.md#rows-that-named-a-mechanism-the-product-does-not-have);
-    every verdict the instrument has produced is on
-    [cross-client-testing](docs/wiki/cross-client-testing.md) §9, the only copy. **Board rows stay
-    `pending` on purpose** - a runner that PASSes while still proving itself is not a campaign verdict.
-    **Owed before the campaign, and each is a run, not a decision:**
-    - **COMM-25 IS ARMED AND ATTRIBUTABLE, and it says the product has no live propagation of a new
-      salon** - see the board for the run. Four runs; the first three were unattributable and the
-      third cost a rule: I read `[PIN] No device key in vault` as "a human action no tool here can
-      answer" and wrote it here, when `pin.mjs` has always entered that PIN, including on the phone,
-      and `state.mjs` already documents `unknown` as *run `pin.mjs`*. **A precondition the harness
-      restores is not a blocker; asserting it is one without asking the harness is a claim made from
-      a log line instead of from the code** ([testing-methodology](docs/wiki/testing-methodology.md)
-      rule 29). `install -r` re-locks the PIN, which rule 7 already listed.
-    - **The phone shows a GENERIC notification body** (user, 2026-08-20, on an app that is not up to
-      date). That is COMM-14's row; it is an observation, not a defect, until that runner says so.
-    - **`cleanup.mjs` before the campaign** - five venues waiting as of 2026-08-20T20:30Z:
-      `C6 COMM6-mt1gh7hx4it`, three `C1 COMM1-*` and one `C12 shared COMM12-*`, plus anything a
-      crashed runner leaves after. **Two of them carry `historyVisibility = joined` that COMM-12 wrote
-      onto them by accident**, which is harmless only because they are debris - no verdict rests on
-      them and deleting them is the repair. Every venue is `C<n> COMM<n>-<mark>`, deleted THROUGH
-      the product so its Graine group goes with it; `--dry` to look first.
-    **A verdict now names the build it ran on**, from `60c33b92` onward: nothing the web client prints
-    names its build, so `results.mjs` reads `/_app/version.json` off the deployment and resolves the
-    stamp to the newest commit on `origin/main` at or before it. It THROWS rather than degrade - a
-    check that cannot date its build produces a verdict nobody can attribute.
-4. **THEN, and only then:** recreate the venue clean, rebuild the Android APK once, run the
-    campaign. **Everything must end green, so every phase runs.** What it costs, the ladder's order
-    and the two decisions it turns on are on
-    [cross-client-testing](docs/wiki/cross-client-testing.md), the only copy of any of it.
-
-**OWED TO THE USER, NOT TO THE CODE: the MLS + Graine explanation.** Its audience was the blocking
-question and the user settled it 2026-08-20 - **for THEM**, prose and diagrams, no code. Post-campaign;
-scope, contents and the two audiences declined are on [backlog](docs/wiki/backlog.md).
+**OWED TO THE USER, NOT TO THE CODE: the MLS + Graine explanation.** For THEM, prose and diagrams, no
+code (user, 2026-08-20). Post-campaign; scope and the two audiences declined are on
+[backlog](docs/wiki/backlog.md).
 
 **THE SIX THAT CANNOT BE PULLED FORWARD** - none is waiting on us, and each carries its blocking
-condition in [backlog](docs/wiki/backlog.md), which is the only copy: the
-`libcrux-chacha20poly1305` panic (needs a stable `openmls_rust_crypto 0.6.0`), the iOS avatar-cache
-question (needs an iPhone), the Lydia flip WP-LYDIA-1 (needs credentials Lydia owes), one MLS client
-in a SharedWorker, and `dev.canari-emse.fr` plus the SECOND campaign (both post-campaign by the
-user's decision). **The sixth is owed to the user, not to the code:** is a MiGallery application
-worth building? The Canari formula transfers, so the cost is knowable - what an app adds over a
-gallery a browser already renders well is the part only the user can answer.
+condition in [backlog](docs/wiki/backlog.md), the only copy: the `libcrux-chacha20poly1305` panic
+(needs a stable `openmls_rust_crypto 0.6.0`), the iOS avatar-cache question (needs an iPhone), the
+Lydia flip WP-LYDIA-1 (needs credentials Lydia owes), one MLS client in a SharedWorker, and
+`dev.canari-emse.fr` plus the SECOND campaign (both post-campaign by the user's decision). **The
+sixth is owed to the user, not to the code:** is a MiGallery application worth building?
 
 ### CANARI - what is open
 
@@ -239,7 +170,7 @@ Three files, three jobs, no overlap: **[cross-client-testing](docs/wiki/cross-cl
 the board (state only - every check, its verdict, the commit it ran on);
 **[cross-client-campaign](docs/wiki/cross-client-campaign.md)** is the design (the ladder, the scope,
 the standing rules, the preflight, the negative rows, the debris cleanup);
-**[testing-methodology](docs/wiki/testing-methodology.md)** is how a result earns belief (twenty-two
+**[testing-methodology](docs/wiki/testing-methodology.md)** is how a result earns belief (twenty-nine
 rules distilled from harness faults); **[`tools/cross-client-harness/README.md`](tools/cross-client-harness/README.md)**
 is the operating manual. **Read them rather than re-deriving the state here, and keep no second
 copy.**
@@ -250,29 +181,20 @@ copy.**
 SETUP-4's 2FA, the one step no tool here can answer. Outside the work tree a credential CANNOT be
 committed and `git clean -xdf` cannot reach a profile.
 
-**THE CAMPAIGN IS PAUSED ON PURPOSE UNTIL EVERY WORK PACKAGE IS CLOSED** - the user's decision of
-2026-08-16: *"On peut faire tous les WP en attente avant de relancer la campagne de test. Je veux une
-campagne clean, et s'il est necessaire de realiser l'integralite des WP de claude.md, du backlog et
-tout le reste pour ca, faisons le."* A MUT x5 was stopped mid-run at 45/105 for this reason: every
-fix below redeploys prod, and a run straddling a deploy has to be re-attributed. **Nothing measured
-before the last WP lands is a campaign result.** The one thing the stopped run left worth keeping:
-MUT-20 is unarmable until a campaign message reaches 90 days (earliest 2026-11-09).
+**A1's APK predates the deployment on purpose** - `frontendDist` is `../build`, so the phone serves
+what is inside its APK and a deploy never reaches it. That is a real mixed-fleet state; every A1 row
+says which build it read, and `results.mjs` records `a1Build` next to `build`.
 
-**Owed once the WPs are closed:** `recon.mjs` on both pairs (`--rightUrl tauri.localhost` for the
-phone), then MUT, TYPE, READ and FWD several clean passes on the final build, then the phases that
-have never run. **A1's APK predates the current bundle** - `frontendDist` is `../build`, so the phone
-serves what is inside its APK and a deploy never reaches it. That is a real mixed-fleet state, not an
-oversight; say which branch each A1 row read.
+**MUT-20 is unarmable until a campaign message reaches 90 days** (earliest 2026-11-09).
 
 **Prod IS the test server** and commit+push are authorised so it picks changes up.
 `dev.canari-emse.fr` is a proxied CNAME to the same tunnel, NOT a second environment. **Decided
-2026-08-17: it BECOMES a real second environment, after the campaign** - the user wants the trials
-off prod. Scope it in [backlog](docs/wiki/backlog.md); do not start it before the queue is empty.
+2026-08-17: it BECOMES a real second environment, after the campaign.** Scope it in
+[backlog](docs/wiki/backlog.md).
 
 **LEON PUSHES TO CANARI's `main` TOO.** `git fetch` at the START of a session and again before any
-measurement. His commits are usually style/UI and land in files the campaign measures, so each owes a
-WEB and a MOBILE pass logged next to our own checks
-([cross-client-campaign](docs/wiki/cross-client-campaign.md)).
+measurement, and `git pull` his work in. **It does not concern ours and owes no pass** (user,
+2026-08-21).
 
 **Standing architectural directives from the user, verbatim:** *"le probleme doit etre
 architecturalement regle, pas mettre des pansements avec des timeouts ou autre, je veux que tout soit
