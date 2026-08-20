@@ -1554,7 +1554,7 @@ export async function attachFiles(cx, files) {
 export { IS_MOVING_FN, activate, clickAtPoint, evaluate, pressKey, realClick, stablePoint, until };
 
 /**
- * One authenticated GET, made from a client's OWN page, as that client's account.
+ * One authenticated request, made from a client's OWN page, as that client's account.
  *
  * WHY IT CANNOT BE A PLAIN `fetch(..., { credentials: 'include' })`. Canari keeps the access token
  * in memory and NEVER in `localStorage`; the only thing a cookie carries is the HttpOnly refresh
@@ -1568,10 +1568,11 @@ export { IS_MOVING_FN, activate, clickAtPoint, evaluate, pressKey, realClick, st
  * is harmless here because it rotates inside the very browser context the app is running in - the
  * app's next refresh picks up the new value like any other.
  *
+ * @param method the verb; a body is sent as JSON and omitted entirely when there is none
  * @returns `{ status, body }` - `status` null ONLY on a transport failure, which is not an answer
  *   either and is reported as itself rather than folded into a status.
  */
-export async function apiGet(cx, path) {
+async function apiCall(cx, method, path, body) {
   const base = await origin(cx);
   const raw = await evaluate(
     cx,
@@ -1580,9 +1581,13 @@ export async function apiGet(cx, path) {
          var r = await fetch(${JSON.stringify(`${base}/api/auth/refresh`)}, { method: 'POST', credentials: 'include' });
          if (!r.ok) return JSON.stringify({ status: null, threw: 'refresh answered ' + r.status });
          var token = (await r.json()).access_token;
-         var g = await fetch(${JSON.stringify(base)} + ${JSON.stringify(path)}, {
-           headers: { Authorization: 'Bearer ' + token },
-         });
+         var init = { method: ${JSON.stringify(method)}, headers: { Authorization: 'Bearer ' + token } };
+         var payload = ${JSON.stringify(body === undefined ? null : JSON.stringify(body))};
+         if (payload !== null) {
+           init.headers['Content-Type'] = 'application/json';
+           init.body = payload;
+         }
+         var g = await fetch(${JSON.stringify(base)} + ${JSON.stringify(path)}, init);
          var text = await g.text();
          return JSON.stringify({ status: g.status, body: text.slice(0, 400) });
        } catch (e) {
@@ -1592,4 +1597,21 @@ export async function apiGet(cx, path) {
     { awaitPromise: true }
   );
   return JSON.parse(raw);
+}
+
+/** One authenticated GET - see {@link apiCall}. */
+export async function apiGet(cx, path) {
+  return apiCall(cx, 'GET', path);
+}
+
+/**
+ * One authenticated POST - see {@link apiCall}.
+ *
+ * WHAT IT IS FOR, AND WHAT IT IS NOT. A check uses this to ask the SERVER a question the screen
+ * cannot answer: whether a refusal is really the server's. It is not a way to make the product do
+ * something without the product - a state a check reaches by POSTing is a state no user can reach,
+ * and everything measured after it describes a system nobody runs.
+ */
+export async function apiPost(cx, path, body) {
+  return apiCall(cx, 'POST', path, body ?? {});
 }

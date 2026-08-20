@@ -165,6 +165,8 @@ The largest area here, and the one that has cost the most. `chat` = [chat](front
 **The queue, and cancelling what is in it**
 
 - Every step is best-effort, so **every swallowed branch logs**. [chat](frontend/modules/chat.md#outbox-outbound-delivery)
+- **EVERY MESSAGE KIND LOGS ITS ARRIVAL, INCLUDING THE ONE THAT RENDERS NOTHING.** Text, media, reactions and calls each announced themselves; a SYSTEM event announced nothing, so a frame that decrypted and produced no visible change left no trace on any machine and could not be told from one that never arrived. A branch may still decline what it was sent - most system events are addressed - but the DISPATCH is a fact, and a fact nobody records is one the next reader has to reproduce on a live browser. [chat](frontend/modules/chat.md)
+- **A `catch { /* noop */ }` around a PARSE turns malformed into absent.** An event whose payload did not parse was handled as an event with no data, which every addressed branch reads as "not for me" and answers by succeeding. [chat](frontend/modules/chat.md)
 - **An operation on a queued object must CONSULT the queue, never queue a second one beside it.** [chat](frontend/modules/chat.md#outbox-outbound-delivery)
 - **A branch the callee took is a fact the caller needs - return it as a TYPE.** [chat](frontend/modules/chat.md#outbox-outbound-delivery)
 - **A cancellation is only as deterministic as the narrowest window it closes.** [chat](frontend/modules/chat.md#outbox-outbound-delivery)

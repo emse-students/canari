@@ -387,7 +387,15 @@ export async function handleSystemEvent(
       ? String(data.workspaceImageMediaId)
       : undefined;
 
-    if (!channelId) return true;
+    if (!channelId) {
+      // An invitation naming no salon cannot be rendered and cannot be deduplicated either - the
+      // stable id is derived from it. Refusing is right; refusing in silence is what made an
+      // invitation that reached a device and produced nothing unattributable from any log.
+      log(
+        `[CHANNEL_INVITE] refusing an invitation from ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… - it names no channel`
+      );
+      return true;
+    }
 
     const inviteeId = String(data.inviteeId || '');
     const inviteMessageId = channelInviteMessageId(channelId, inviteeId);
@@ -411,6 +419,9 @@ export async function handleSystemEvent(
         convoKey,
         { isSystem: true, messageId: inviteMessageId }
       );
+      log(
+        `[CHANNEL_INVITE] our own invitation of ${inviteeId.slice(0, 8)} to ${channelId.slice(0, 8)}, seen from another device - card ${inviteMessageId} into ${convoKey.slice(0, 8)}…`
+      );
     } else {
       // The invitee receives the invitation card
       const inviterDisplayName = String(data.inviterName || '');
@@ -427,6 +438,13 @@ export async function handleSystemEvent(
         isSystem: true,
         messageId: inviteMessageId,
       });
+      // THE ONLY THING THE INVITEE IS EVER TOLD. A direct invitation makes them a member with no
+      // gesture of their own, so this card is the whole notification - and one line saying it was
+      // written, naming the conversation it went into, is what separates "never delivered" from
+      // "delivered into a conversation nobody is looking at".
+      log(
+        `[CHANNEL_INVITE] invited to ${channelId.slice(0, 8)} by ${senderNorm.slice(0, 8)} - card ${inviteMessageId} into ${convoKey.slice(0, 8)}…`
+      );
     }
 
     return true;

@@ -416,6 +416,36 @@ export async function setChannelPrivate(cx, wanted) {
 }
 
 /**
+ * Sets who may WRITE in the open salon, and reports whether it had to move the control.
+ *
+ * IDEMPOTENT BY READING FIRST, for the reason {@link setChannelPrivate} is: a check that sets a
+ * value unconditionally is silent about the one case it was written for, which is the control
+ * already holding something else.
+ *
+ * IT DOES NOT SAVE. `writePolicy` shares the access panel's one Save with the visibility toggle and
+ * the allowlist, so a gesture that saved here would make a caller unable to change two things in
+ * one round trip - and would hide which of them the server refused. {@link saveChannelAccess} stays
+ * the caller's to invoke, once, deliberately.
+ *
+ * @param cx the client with the access panel open (see {@link openChannelAccess})
+ * @param policy `everyone` | `admins_moderators` | `admins` - the option VALUES, not their labels
+ */
+export async function setChannelWritePolicy(cx, policy) {
+  const before = await channelAccessState(cx);
+  if (before.writePolicy === policy) return false;
+  await chooseOption(cx, 'select', policy);
+  await until(
+    cx,
+    `(function () {
+       var sel = document.querySelector('select');
+       return !!sel && sel.value === ${JSON.stringify(policy)};
+     })()`,
+    5000
+  );
+  return true;
+}
+
+/**
  * Grants a user access to the open private salon, by typing enough of their name to pick them.
  *
  * TYPED AND THEN PICKED, never assigned: the field is an autocomplete whose value is an id the

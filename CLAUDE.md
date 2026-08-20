@@ -188,7 +188,11 @@ in the field (user, 2026-08-19)**, so the iOS ladder cannot run and parity is ke
     instrument, so the board rows stay `pending` - they are campaign verdicts only on the final
     build). **COMM-12 FAILED twice, COMM-13 once and COMM-4 came back VACUOUS, all four correctly** -
     COMM-12's second failure refuted the fix for its first, COMM-13's re-run is a clean PASS, and
-    COMM-4 is owed a re-run once its fix deploys.
+    COMM-4's second run found the NEXT defect: the invitee is shown no card at all. The frame
+    reaches their DM and is acknowledged, and **a system event was the one message kind that logged
+    nothing**, so no log could say which of the three readings of that zero was true. Both lines now
+    exist and `inviteeSaid` carries them into the record; the defect is OPEN and is the next thing
+    to close.
     **The user's decision, 2026-08-20: ALL TWENTY-FIVE ARE AUTOMATED, including the four that need
     more than two Chromes** - COMM-14 drives real push, COMM-17/18 drive the phone through `adb`,
     COMM-25 needs a second device for one account. The harness therefore grows three capabilities it

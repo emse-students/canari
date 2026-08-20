@@ -314,3 +314,19 @@ export function historyVisibilityOf(workspaceId) {
   );
   return found.length ? found[0][0] : null;
 }
+
+/**
+ * Who the server believes may WRITE in a salon - `'everyone'`, `'admins_moderators'` or `'admins'`.
+ *
+ * READ FROM THE TABLE BECAUSE THE PANEL IS THE THING BEING TESTED. A check that saves the setting
+ * and then reads it back off the screen it just used is asking the same component twice; the column
+ * is the only witness that the save left the browser. And it is the SERVER's copy that decides:
+ * `canWriteToChannel` reads this row on every message, so a screen agreeing with it proves nothing
+ * a screen disagreeing with it would not have hidden.
+ */
+export function channelWritePolicy(channelId) {
+  const found = rows(
+    psql(`SELECT "writePolicy" FROM channels WHERE id = '${channelId}'`)
+  );
+  return found.length ? found[0][0] : null;
+}

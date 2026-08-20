@@ -236,6 +236,18 @@ const verdict = !armed
 
 const linesW1 = consoleLines(wa.cx);
 const linesW2 = consoleLines(wb.cx);
+
+/**
+ * What the INVITEE's device said about the invitation, kept in the record.
+ *
+ * A COUNT OF ZERO CARDS HAS THREE READINGS and the first run of this check could separate none of
+ * them: the frame never arrived, it arrived and was refused, or it was written into a conversation
+ * this check was not looking at. The dispatch line and the `[CHANNEL_INVITE]` line answer all three
+ * between them, and they only exist because that run went looking for them and found the seam
+ * silent. Recorded whatever the verdict is - on a PASS they are the proof the path really ran.
+ */
+const inviteeSaid = linesW2.filter((l) => /System event|CHANNEL_INVITE/.test(l));
+
 const gated = gate(verdict, { W1: await report(wa), W2: await report(wb) });
 
 record('COMM-4', gated.verdict, {
@@ -246,6 +258,7 @@ record('COMM-4', gated.verdict, {
   peerJoined,
   inviterSide,
   inviteeSide,
+  inviteeSaid,
   afterReload,
   ...expectations,
   failures,

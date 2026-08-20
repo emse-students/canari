@@ -766,9 +766,22 @@ async function handleKnownGroup({
       let data: any = {};
       try {
         data = msg.system.data ? JSON.parse(msg.system.data) : {};
-      } catch {
-        /* noop */
+      } catch (e) {
+        // NEVER SILENT. This used to be `catch { /* noop */ }`, so a system event whose payload did
+        // not parse was handled as an event with NO data - which every branch below reads as "not
+        // for me" and answers by returning true. An unparseable payload and an event nobody wanted
+        // are opposite findings and were indistinguishable.
+        log(
+          `[MLS] System event '${event}' from ${sender.slice(0, 8)} in ${convoKey.slice(0, 8)}… carries unparseable data - handling it with none: ${String(e).slice(0, 120)}`
+        );
       }
+      // EVERY OTHER MESSAGE KIND LOGS ITS ARRIVAL AND THIS ONE DID NOT, which is how a delivered
+      // frame came to leave no trace at all: COMM-4 watched an invitation reach the invitee's
+      // device, decrypt, and produce nothing, and no log on any machine could say whether the event
+      // had been dispatched, refused, or addressed to somebody else. A branch reached through this
+      // dispatch may still decline the event - most of them are addressed - but the dispatch itself
+      // is a fact, and a fact nobody records is one the next reader has to reproduce.
+      log(`[MLS] System event '${event}' from ${sender.slice(0, 8)} in ${convoKey.slice(0, 8)}…`);
       await handleSystemEvent(event, data, {
         ...deps,
         convo: conversations.get(convoKey) ?? convo,

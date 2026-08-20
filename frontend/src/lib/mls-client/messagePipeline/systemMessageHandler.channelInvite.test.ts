@@ -108,10 +108,33 @@ describe('handleSystemEvent - channel_invitation', () => {
     expect(insertedEnvelope(ctx).channelInvite?.workspaceImageMediaId).toBeUndefined();
   });
 
-  it('ignores an invitation with no channelId (nothing to join)', async () => {
+  it('ignores an invitation with no channelId (nothing to join), and SAYS so', async () => {
     const ctx = makeCtx({ userId: 'bob', senderNorm: 'alice' });
     await handleSystemEvent('channel_invitation', { ...INVITE_DATA, channelId: '' }, ctx as any);
 
     expect(ctx.addMessageToChat).not.toHaveBeenCalled();
+    // A refusal that writes nothing and says nothing is indistinguishable from an invitation that
+    // never arrived, which is exactly the ambiguity COMM-4 spent a run on.
+    expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('names no channel'));
+  });
+
+  /**
+   * THE CARD IS THE WHOLE NOTIFICATION, so the line saying it was written is what a later reader
+   * has instead of the device. It names the conversation on purpose: "never delivered" and
+   * "delivered into a conversation nobody is looking at" are different faults with one symptom.
+   */
+  it('says which conversation each card was written into', async () => {
+    const invitee = makeCtx({ userId: 'bob', senderNorm: 'alice' });
+    await handleSystemEvent('channel_invitation', INVITE_DATA, invitee as any);
+    expect(invitee.log).toHaveBeenCalledWith(
+      expect.stringContaining('[CHANNEL_INVITE] invited to chan-1')
+    );
+    expect(invitee.log).toHaveBeenCalledWith(expect.stringContaining('into dm1'));
+
+    const otherDevice = makeCtx({ userId: 'alice', senderNorm: 'alice' });
+    await handleSystemEvent('channel_invitation', INVITE_DATA, otherDevice as any);
+    expect(otherDevice.log).toHaveBeenCalledWith(
+      expect.stringContaining('[CHANNEL_INVITE] our own invitation')
+    );
   });
 });

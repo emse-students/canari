@@ -102,6 +102,16 @@ const BENIGN = [
   // measures anything. It carries the value the server ACCEPTED rather than the one that was
   // clicked, which is why it is worth a line: the two differ whenever the save failed.
   /^\[CHANNEL\] history visibility set to (shared|joined)$/,
+  // THE ONE SEAM THAT USED TO BE SILENT. Every other message kind logs its arrival; a system event
+  // logged nothing, so an invitation that reached the invitee's device and produced nothing left no
+  // trace on any machine (COMM-4, 2026-08-20). The dispatch line is expected on both sides of every
+  // system event, and the `[CHANNEL_INVITE]` pair is the invitation actually being written - so an
+  // arrival with no card is now a dispatch line with no card line, which is a location.
+  /^\[MLS\] System event '\S*' from [0-9a-f]+ in [0-9a-f]+…$/,
+  /^\[CHANNEL_INVITE\] invited to [0-9a-f]+ by [0-9a-f]+ - card channel-invite:\S+ into [0-9a-f]+…$/,
+  /^\[CHANNEL_INVITE\] our own invitation of [0-9a-f]+ to [0-9a-f]+, seen from another device - card /,
+  // The inviter's own confirmation of an action they just took, from the community panel.
+  /^Member invited to channel \((member|moderator|admin)\): /,
   /^\[notifNav\] routing to \S+ for pending conversation \S+$/,
   // The landing refetching ONCE before it selects. A just-accepted invitation is never in the
   // conversation list the client already holds, which is what this branch exists for; the two

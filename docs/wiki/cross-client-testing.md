@@ -410,6 +410,18 @@ guard that starts reporting looks like a regression and is a measurement.** Fixe
 chat-delivery an `internal/mls/devices/:userId/count` route addressed to services, which answers a
 count and nothing else.
 
+**AND ITS SECOND RUN, ON THE FIX, FOUND THE NEXT ONE (2026-08-20).** The invitation now lands -
+`armed: true`, the membership row written - and the INVITEE is shown nothing: `inviterSide` is one
+card that survives its reload, `inviteeSide` is zero, live and after a replay. The frame is not lost:
+production's `dm_groups` says the group it travelled on is W1 and W2's own DM, W2's log shows it
+drained and acknowledged (`messageCallback -> true`), and no `[ADD_MSG]` of any kind followed. What
+could NOT be established from any log is which of the three readings of that zero is true - never
+dispatched, dispatched and refused, or written into a conversation nobody was looking at - because
+**a system event was the one message kind that logged nothing**. Text, media, reactions and calls all
+announce themselves; this seam announced neither the dispatch nor the card. Both lines now exist,
+`comm4.mjs` records whatever the invitee's device said under `inviteeSaid`, and the next run is a
+location rather than another absence. The defect itself is open.
+
 **COMM-16 FOUND A DEFECT ON ITS FIRST RUN, and nearly lost it.** `channelRowGone` came back false,
 which reads exactly like a check written against a behaviour the product does not have - the row
 survives, archiving is a design decision, soften the assertion. It was the assertion that was right:
