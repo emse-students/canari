@@ -53,6 +53,37 @@ export function caption(key) {
   return value;
 }
 
+/**
+ * A PARAMETERISED message, rendered with the values the app would render it with.
+ *
+ * {@link caption} refuses these, correctly: `{count} max` cannot be matched literally and a check
+ * that tried would fail fifteen seconds later as "the control is missing". But some controls have
+ * no other stable name - an unjoined private salon's row is named entirely by
+ * `chat_channel_join_as_admin_aria`, placeholder and all - and spelling the French out in the check
+ * would mean a reworded string turns the assertion into a silent no-op.
+ *
+ * So the message is still READ FROM THE APP'S OWN FILE and the placeholders are filled here. A
+ * placeholder left over is a throw, not a selector nothing matches: `{name}` surviving into a
+ * selector is the exact failure `caption` exists to prevent.
+ *
+ * @param key Paraglide key.
+ * @param values Placeholder name to value, e.g. `{ name: 'c13-abc' }`.
+ */
+export function captionWith(key, values) {
+  const value = MESSAGES[key];
+  if (typeof value !== 'string') {
+    throw new Error(`captionWith: no message '${key}' in ${LOCALE}.json - renamed or a typo`);
+  }
+  const filled = Object.entries(values).reduce(
+    (text, [name, v]) => text.split(`{${name}}`).join(String(v)),
+    value
+  );
+  if (filled.includes('{')) {
+    throw new Error(`captionWith: '${key}' still has a placeholder after filling: "${filled}"`);
+  }
+  return filled;
+}
+
 /** `text=` selector for a control named by a Paraglide key. */
 export const control = (key) => `text=${caption(key)}`;
 
