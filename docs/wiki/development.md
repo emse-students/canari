@@ -129,6 +129,14 @@ wrong, and each one has already shipped a bug.
   Kotlin read it. Nothing checks it: the v0.11.0 `pin` → `deviceKeyB64` rename killed iOS background
   decrypt for three releases. `src/lib/mobile/pushContextFields.test.ts` is the only guard; change
   the fields and change it too.
+- **`Log.d` takes a TAG and a payload, and a one-argument call makes the whole message the tag.**
+  `Log.d(tag, payload?)` renders `[<iso>] [<tag>]`, so `Log.d('[CHANNEL_READ] signalled abc12345 to
+  ...')` compiles, type-checks, prints, and comes out as `[[CHANNEL_READ] signalled abc12345 to ...]`
+  - a shape no reader and no log rule expects. Nothing in the language distinguishes a tag from a
+  sentence: both are `string`. Written 2026-08-20, when the read receipt shipped that way and only
+  the cross-client watcher's exact-match classifier noticed, turning a COMM-7 run whose five
+  assertions all held into `PASS-DIRTY`. Pass a short tag first, the sentence second, always.
+
 - **A `postMessage` payload is typed by whoever writes the literal — i.e. by nobody.** All three MLS
   worker contracts live in `src/lib/mls-client/mlsWorkerProtocol.ts` and are imported by both ends.
   Add new worker messages there, never as a local interface.

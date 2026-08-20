@@ -131,6 +131,10 @@ const BENIGN = [
   // The salon's own row changed under this client: a rename, or the server's verdict on whether it
   // may still post here. Both are a sidebar update and neither is a fault.
   /^\[CHANNEL\] #\S+ updated - canWrite=(true|false|unchanged)$/,
+  // THE READ RECEIPT LEAVING THIS DEVICE, added 2026-08-20. It fires whenever a salon with a foreign
+  // message is opened, which every check that reads one does - COMM-7, COMM-11, COMM-21. Its ABSENCE
+  // is the finding it exists for: a notification still lit on a phone has no other witness.
+  /^\[CHANNEL_READ\] signalled [0-9a-f]{8} to this account's other devices$/,
   // A role's permissions changed somewhere in the community, and every open grid is told. Routine:
   // COMM-6 and COMM-20 both produce it deliberately, and so does any administrator using the panel.
   /^\[ROLE\] [0-9a-f]+ now grants \d+ permission\(s\)$/,

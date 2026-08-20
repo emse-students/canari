@@ -368,6 +368,7 @@ What must not be forgotten between the pages:
 **Seams nothing compiles**
 
 - **A cross-process contract is only as good as its test** - pin the PATHS as well as the field names, or a writer on one OS fills a directory nothing reads. [dev](development.md#cross-language-boundaries)
+- **`Log.d` takes a TAG then a payload, and one argument makes the sentence the tag** - it prints `[[TAG] ...]`, which no reader and no log rule expects, and only an exact-match classifier ever notices. [dev](development.md#cross-language-boundaries)
 - **A payload field with no reader-side check drifts in BOTH directions, silently** - pin it with a source-reading test each way (`channelPushFields.test.ts`, twin of `fcmCacheFields.test.ts`). [channel-encryption](protocols/channel-encryption.md)
 - **A plugin in `Cargo.toml` is not a plugin the app may CALL** - Tauri v2 gates COMMANDS behind `capabilities/`, and an ungranted one ships and rejects on a real device. EVENTS are not gated. [mob](frontend/mobile.md)
 - **A query builder's output is unverified until a real Postgres sees it** - and where a test cannot reach, the DEPLOY LOG is the test. [dev](development.md#things-that-look-type-safe-and-are-not)

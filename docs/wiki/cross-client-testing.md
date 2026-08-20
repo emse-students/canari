@@ -346,9 +346,9 @@ instrument has produced so far - latest verdict per check, all against productio
 | COMM-2 | 2026-08-20 | `PASS` clean | - |
 | COMM-3 | 2026-08-20 | `PASS` clean | - |
 | COMM-4 | 2026-08-20 | `FAIL` clean | the invitee is shown no card - OPEN, in `CLAUDE.md` |
-| COMM-5 | 2026-08-20 | `PASS` clean - **STALE, the check has been tightened since** | recorded `liveWithoutReload: false` under weaker expectations; `capabilityIsLive` was added afterwards and no run has happened since. That `false` was the first evidence of the dropped `workspace.*` events |
-| COMM-6 | 2026-08-20 | `PASS` clean, `62f8a650` | - |
-| COMM-7 | 2026-08-20 | `PASS-DIRTY` `939078aa` | two defects, both fixed; the dirt was one unclassified Graine line, now benign |
+| COMM-5 | 2026-08-20 | `PASS` clean `ce6ef963` | re-run under the tightened expectations: `liveWithoutReload` and `capabilityIsLive` are both true for the first time, so a role change now reaches an open client without a reload |
+| COMM-6 | 2026-08-20 | `PASS` clean `ce6ef963` | re-run once the grid was derived from the announcement alone; the six offered are the six enforced, the administrator column is locked, a toggle reaches the column and comes back |
+| COMM-7 | 2026-08-20 | `PASS-DIRTY` `ce6ef963` | two defects, both fixed, and all five assertions now hold. The dirt is one line: `Log.d` takes a TAG and a payload, and the read receipt passed its whole message as the tag, so it rendered `[[CHANNEL_READ] ...]` and matched no rule. Re-run owed on the deployed shape |
 | COMM-8 | 2026-08-20 | `PASS` clean | - |
 | COMM-9/10 | 2026-08-20 | `VACUOUS` | never re-run since the per-salon groups landed |
 | COMM-11 | 2026-08-20 | `PASS` clean | - |
@@ -357,7 +357,7 @@ instrument has produced so far - latest verdict per check, all against productio
 | COMM-15 | 2026-08-20 | `PASS` clean `939078aa` | first run; needed the native-dialog capability |
 | COMM-16 | 2026-08-20 | `PASS` clean | - |
 | COMM-19 | 2026-08-20 | `PASS` clean | - |
-| COMM-20 | 2026-08-20 | `FAIL` clean `939078aa` | the lost update, fixed in `614bddbd`; re-run owed on the deployed fix |
+| COMM-20 | 2026-08-20 | `PASS` clean `ce6ef963` | five runs, four defects, each only visible once the one before it was fixed: the wire sent the whole list, the server read-modify-wrote the row, the announcement that would have corrected the loser was dropped, and the click applied its own answer. `outcome: "both edits applied"` and both grids agree with the column |
 | COMM-21 | 2026-08-20 | `PASS` clean `939078aa` | first run; the draft is lost, recorded and not asserted |
 | COMM-23/24 | 2026-08-20 | `PASS` clean | - |
 
