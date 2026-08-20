@@ -638,6 +638,27 @@ export function useChannelWorkspaces() {
     const sidebarWorkspace = upsertWorkspaceFromDto(workspace);
     const workspaceId = sidebarWorkspace.workspaceDbId;
 
+    // THE CREATOR PREPARES ITS OWN COMMUNITY, and until 2026-08-20 nothing did. Creating a community
+    // selects its default salon and leaves the composer ready, and a public salon seals its seeds to
+    // the COMMUNITY's group - which this device did not hold, because the only two places that
+    // ensured it were the workspace LOAD and the creation of a PRIVATE salon. So the first message
+    // anyone sends in a community they just made was refused outright, with "community <id> has no
+    // distribution group on this device": create, type, fail.
+    //
+    // It healed, which is what kept it hidden. A reload runs the load path, and a second member
+    // joining publishes the base the creator then joins - so the defect only survives in the window
+    // where the creator is alone and has not reloaded, which is precisely the minute after they
+    // press the button. COMM-1's first completed run is what caught it.
+    //
+    // Awaited and placed BEFORE the channels are listed, for the reason the load path gives at its
+    // own call: a seed frame arriving on a group this device has not registered is answered as an
+    // unknown conversation. Never fatal - a community that fails to prepare must still appear in the
+    // sidebar, and `ensureCommunityDistributionGroup` logs the cause.
+    if (workspaceId && ctx.ensureMls) {
+      const mls = await ctx.ensureMls();
+      await ensureCommunityDistributionGroup(mls, service, workspaceId, ctx.log);
+    }
+
     // Immediately load the channels the backend created (e.g. the default "general" channel)
     // so the sidebar populates without requiring a page reload.
     if (workspaceId) {

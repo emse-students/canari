@@ -1114,6 +1114,56 @@ container artefact that had been there all along. A count that disagrees with th
 about the instrument first - the store had one row per invitation on both devices, with the
 deterministic id and no twin, before any of this was believed.
 
+
+#### 25. A PREDICATE THAT SAMPLES A MOVING VALUE REPORTS A FRAME, NOT A STATE - ask whether it has settled
+
+`clearOverlays` is the rig's only isolation guarantee, and `enterCommunities` calls it at the START
+of every runner. It decided what counted as an overlay by reading `getComputedStyle(el).opacity` and
+skipping anything at `0`. A dialog renders at opacity 0 for the first frames of its entry
+transition - so a caller arriving inside that window was told **the screen is clean** while a
+894x631 modal was opening on top of it. Measured directly: `op:"0"` on one sample, `op:"1"` 300ms
+later, same dialog, nothing else changed.
+
+The cost is never paid where it happens. The runner proceeds, and dies several gestures later on
+`no stable element` for a composer that is plainly in the DOM, correctly sized and not disabled.
+Two checks failed that way on 2026-08-20 and neither error mentioned a dialog.
+
+**The repair is not a wait.** A sleep only makes the sample likelier to land after the fade, which
+is the same race with better odds - and it would be a clock standing in for a proof. What was wrong
+is that a value still travelling was read as a value that had arrived, so the question asked is now
+whether it has settled: an element at opacity 0 counts as present while its OWN transition is still
+running. Narrowed to its own animation deliberately - the shared `IS_MOVING_FN` walks ancestors
+because its question is "can this be clicked yet", and borrowing it here would let any motion
+anywhere above a genuinely hidden element present it as debris to be cleared.
+
+Armed both ways before it was believed: six opens, six caught mid-fade, and an idle page still
+reads clean.
+
+#### 26. A PANEL'S LIFETIME BELONGS TO WHOEVER OPENED IT - and a fix aimed at the gesture that failed leaves the class standing
+
+A settings panel is a `position: fixed` backdrop over the whole page. The gestures that act INSIDE
+one - `revokeChannelAccess`, `setMemberRole`, `cyclePermissionCell` - deliberately leave it up,
+because their callers usually have more to do in there; only `Save` genuinely ends the interaction,
+which is why `saveChannelAccess` is the one that clears. That is correct, and it means the
+obligation to close lands on the check.
+
+Five of the twelve call sites had quietly dropped it. The comment on `saveChannelAccess` records
+this exact aftermath being paid for once already - "COMM-9/10 saved the roster, tried to post, and
+died on `no stable element` for a composer that was plainly in the DOM" - and the fix went to the
+single gesture that had failed. Its sibling `revokeChannelAccess` needs no save, ends inside the
+same panel, and reproduced the same failure in the same check five days later.
+
+**Enumerate the class, not the instance.** The twelve sites were listed and split: seven end in a
+save that clears, five did not close at all. `inPanel(cx, open, body)` now opens, runs, and closes in
+a `finally`, so a check cannot open a panel without closing it, and a body that throws still hands
+the screen back - a check failing inside a panel has a safe verdict, while leaving the panel up takes
+the rest of the run down with it.
+
+The other half of the lesson is the report. `whyNotStable` named the blocker
+`DIV.fixed z-[280] flex justify-center bg-black/40` - a tag and a truncated class list that identify
+nothing - and finding the panel behind it took a hand-driven DOM dig. It now names the covering
+dialog by its label, and separately the dialogs open anywhere: "the dialog is over me" and "a dialog
+is open somewhere" are two claims, and the second must not be read as the first.
 ## Observation is part of the check, not a debugging step
 
 Decided 2026-08-06, after two shipped bugs came out of the logs of **passing** checks.
