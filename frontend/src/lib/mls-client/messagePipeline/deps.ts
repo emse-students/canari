@@ -57,6 +57,7 @@ export interface MessageHandlerDeps {
     /** Channel removals only: a public channel stays readable, so nothing is lost. */
     channelIsPrivate?: boolean;
   }) => void;
+  onRolePermissionsChanged?: (event: { roleId: string; permissions: string[] }) => void;
   onChannelUpdated?: (event: {
     channelId: string;
     name?: string;

@@ -36,10 +36,22 @@ export const SEND_ENABLED = `(function () {
  *
  * Counting on `document.body` double-counts EVERY message: the sidebar renders the last one as a
  * preview, so a single delivered message reads as two copies and the duplicate assertion - the
- * whole point of MSG-1 - is meaningless. The pane is the composer's nearest <section>; the sidebar
- * is a sibling of it.
+ * whole point of MSG-1 - is meaningless. The pane is a <section>, and the sidebar is a sibling of it.
+ *
+ * ANCHORED ON THE MESSAGE LIST, NOT ON THE COMPOSER, since 2026-08-20. It was the composer's nearest
+ * <section> for a year, which was true of every conversation there had ever been - until a salon
+ * reserved for administrators started replacing the composer with the reason. The pane then read
+ * `null` for a member who could still READ perfectly well, and COMM-7 reported `hasPane: false`:
+ * the harness saying "this client has no conversation open" about a client watching one, and
+ * failing the row on the ADMINISTRATOR's message. **A conversation is a place where messages are
+ * DISPLAYED; being able to write in it is a permission.** `.chat-messages-scroll` is the app's own
+ * class on that list, exactly as `.chat-composer-footer` was - no attribute was added for the
+ * harness.
  */
-export const PANE = `(document.querySelector('${'.chat-composer-footer .chat-composer-editor'}') || {}).closest ? document.querySelector('.chat-composer-footer .chat-composer-editor').closest('section') : null`;
+export const PANE = `(function () {
+  var list = document.querySelector('.chat-messages-scroll');
+  return list ? list.closest('section') : null;
+})()`;
 
 /**
  * The pane's text WITHOUT the composer's - the composer is inside the pane.
@@ -52,11 +64,14 @@ export const PANE = `(document.querySelector('${'.chat-composer-footer .chat-com
  * the virtualised-list reconciliation depends on.
  */
 const PANE_TEXT = `(function () {
-  var c = document.querySelector('.chat-composer-footer .chat-composer-editor');
-  var pane = c ? c.closest('section') : null;
+  var list = document.querySelector('.chat-messages-scroll');
+  var pane = list ? list.closest('section') : null;
   if (!pane) return '';
   var text = pane.innerText;
-  var draft = (c.innerText || '').trim();
+  // THERE MAY BE NO COMPOSER AT ALL - a salon this account may not write in replaces it with the
+  // reason. Nothing to subtract then, and the pane's text is already the transcript's.
+  var c = document.querySelector('.chat-composer-footer .chat-composer-editor');
+  var draft = c ? (c.innerText || '').trim() : '';
   return draft ? text.split(draft).join('') : text;
 })()`;
 
@@ -907,10 +922,9 @@ export async function openConversation(cx, name) {
  * so the answer cannot drift between a sample and a precondition.
  */
 export const HEADER_NAME = `(function () {
-  var c = document.querySelector('${COMPOSER}');
-  var pane = c ? c.closest('section') : null;
+  var pane = ${PANE};
   var h = pane ? pane.querySelector('header') : null;
-  return h ? h.innerText.replace(/[\\r\\n]+/g, ' ').trim().slice(0, 80) : '';
+  return h ? h.innerText.replace(/[\r\n]+/g, ' ').trim().slice(0, 80) : '';
 })()`;
 
 /**

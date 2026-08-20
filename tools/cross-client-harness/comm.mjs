@@ -1324,3 +1324,115 @@ export async function closePollCard(cx) {
   );
   return dialogs;
 }
+
+/*
+ * THE PERMISSION GRID - two gestures, shared because two checks now drive it.
+ *
+ * They were COMM-6's until COMM-20 needed the same table for a different question (what two
+ * administrators editing one role at the same moment leave behind). Copying them would have been the
+ * fourth time a gesture in this phase drifted between its callers.
+ */
+/**
+ * The grid as the panel draws it: `{ permissions, roles, adminLocked }`.
+ *
+ * READ AS A TABLE, WHICH IS WHAT IT IS. Each `tbody` row is one permission and its first cell is
+ * the label; each header cell after the first is a role. Nothing here depends on a class name -
+ * the structure IS the meaning, and a restyling that changed the colours would not move a cell.
+ *
+ * `adminLocked` is the top role's column being disabled, which is the panel's own statement that
+ * the administrator cannot be stripped of anything. Read from `disabled` rather than from opacity.
+ */
+export async function permissionGrid(cx) {
+  return JSON.parse(
+    await evaluate(
+      cx,
+      `JSON.stringify((function () {
+         var table = document.querySelector('table');
+         if (!table) return { permissions: null, roles: null, adminLocked: null };
+         var head = [].slice.call(table.querySelectorAll('thead th'));
+         var roles = head.slice(1).map(function (th) { return (th.innerText || '').trim(); });
+         var body = [].slice.call(table.querySelectorAll('tbody tr'));
+         var permissions = body.map(function (tr) {
+           var cells = [].slice.call(tr.children);
+           return (cells[0] ? cells[0].innerText || '' : '').trim();
+         });
+         // The administrator is the FIRST column: the grid sorts roles by descending priority.
+         var lockedColumn = body.every(function (tr) {
+           var cell = tr.children[1];
+           var button = cell ? cell.querySelector('button') : null;
+           return !!button && button.disabled === true;
+         });
+         // EACH CELL'S STATE, READ FROM ITS ICON. The grid draws allow / deny / neutral as three
+         // lucide glyphs, and the icon is the only structural carrier: the colour lives in a class
+         // and the wording in a parameterised tooltip, neither of which a check may depend on.
+         // cells[row][col] is aligned with permissions[row] and roles[col].
+         var cells = body.map(function (tr) {
+           return [].slice.call(tr.children).slice(1).map(function (td) {
+             var svg = td.querySelector('button svg');
+             var cls = svg ? String(svg.getAttribute('class') || '') : '';
+             if (cls.indexOf('lucide-check') !== -1) return 'allow';
+             if (cls.indexOf('lucide-x') !== -1) return 'deny';
+             if (cls.indexOf('lucide-minus') !== -1) return 'neutral';
+             return null;
+           });
+         });
+         return { permissions: permissions, roles: roles, adminLocked: lockedColumn, cells: cells };
+       })())`
+    )
+  );
+}
+
+/**
+ * Clicks the cell at (permission label, role column index), which CYCLES it.
+ *
+ * The grid has no per-cell hook, so the cell is reached the same way it is read: by the row whose
+ * first cell carries the label, then by column. The button is marked and clicked through the DOM
+ * rather than hit-tested, because a table cell inside a horizontally scrolling container can sit
+ * outside the viewport - and a `realClick` that scrolls the container first is a gesture about
+ * scrolling.
+ */
+export async function cyclePermissionCell(cx, label, column) {
+  const outcome = await evaluate(
+    cx,
+    `(function () {
+       var body = [].slice.call(document.querySelectorAll('table tbody tr'));
+       var row = body.filter(function (tr) {
+         var first = tr.children[0];
+         return first && (first.innerText || '').trim() === ${JSON.stringify(label)};
+       })[0];
+       if (!row) return 'no-row';
+       var cell = row.children[${column}];
+       var button = cell ? cell.querySelector('button') : null;
+       if (!button) return 'no-button';
+       if (button.disabled) return 'disabled';
+       button.click();
+       return 'clicked';
+     })()`
+  );
+  if (outcome !== 'clicked') throw new Error(`cyclePermissionCell(${label}, ${column}): ${outcome}`);
+}
+
+/**
+ * The six permissions something enforces, each with the label the grid renders it as.
+ *
+ * ONE COPY, because two checks now need to cross the same seam in opposite directions: COMM-6 asks
+ * whether the grid offers exactly these six, and COMM-20 has to compare what a grid SHOWS (labels)
+ * against what the column HOLDS (keys). A second mapping in a runner would be a third statement of
+ * the same fact, and the one that silently goes stale.
+ *
+ * The order is the order the panel lists them in - `roleGridPermissions` in
+ * `SidebarCommunityAdminModal.svelte` - so a positional read of the grid lines up with it.
+ */
+export const PERMISSION_LABELS = {
+  'channel.manage': caption('chat_permission_manage_channel_label'),
+  'channel.moderate': caption('chat_permission_moderate_label'),
+  'member.invite': caption('chat_permission_invite_label'),
+  'member.kick': caption('chat_permission_kick_label'),
+  'role.manage': caption('chat_permission_manage_roles_label'),
+  'workspace.manage': caption('chat_permission_manage_workspace_label'),
+};
+
+/** The key a grid label stands for, or null - the inverse of {@link PERMISSION_LABELS}. */
+export function permissionKeyOf(label) {
+  return Object.keys(PERMISSION_LABELS).find((k) => PERMISSION_LABELS[k] === label) ?? null;
+}

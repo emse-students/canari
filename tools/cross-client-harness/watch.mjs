@@ -43,6 +43,16 @@ const BENIGN = [
   // The FIRST device into a salon's group initialises it - exactly once per salon, by construction,
   // and every COMM check that creates a private salon produces it.
   /^\[GRAINE\] no base published for .+ - creating group [0-9a-f]{8}\.\.\.$/,
+  // A SEED ARRIVING, which is what every salon with two people in it does on every message. It was
+  // landing in `unexplained` on runs where nothing was wrong, and a verdict that is PASS-DIRTY for a
+  // healthy salon is a verdict nobody reads twice.
+  //
+  // IT IS CLASSIFIED HERE AND STILL ASSERTED THERE. This line arriving on a device that should NOT
+  // be in a salon is the loudest possible statement of the defect COMM-8/9 exist for - so those
+  // rows must assert its ABSENCE on the excluded client by name, rather than lean on `clean` to
+  // notice it. A global classification cannot make that distinction: the same text is routine on a
+  // member and damning on a non-member, and only the check knows which one it is looking at.
+  /^\[GRAINE\] seed \S+ from \S+ for channel [0-9a-f]{8}$/,
   // The app narrating a community or channel the CHECK itself just created. Routine, and it is
   // the COMM phase's own vocabulary - every check in it creates something.
   /^(Channel|Community) created: /,
@@ -121,6 +131,9 @@ const BENIGN = [
   // The salon's own row changed under this client: a rename, or the server's verdict on whether it
   // may still post here. Both are a sidebar update and neither is a fault.
   /^\[CHANNEL\] #\S+ updated - canWrite=(true|false|unchanged)$/,
+  // A role's permissions changed somewhere in the community, and every open grid is told. Routine:
+  // COMM-6 and COMM-20 both produce it deliberately, and so does any administrator using the panel.
+  /^\[ROLE\] [0-9a-f]+ now grants \d+ permission\(s\)$/,
   // The permission grid saying a cell was cycled, and the panel saying it is saving that cell.
   // `Log.d` renders its payload as `Object` in a console tail, so these two say WHICH gesture ran
   // and nothing about what it carried - which is all a check needs from them: they appear only when

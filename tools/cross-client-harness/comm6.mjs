@@ -30,14 +30,17 @@
  * THE TOGGLE IS PUT BACK, and the community is deleted anyway: this check builds its own so that a
  * half-applied permission can never outlive it.
  */
-import { client, evaluate, until } from './chat.mjs';
+import { client, until } from './chat.mjs';
 import {
   caption,
   communityTab,
+  PERMISSION_LABELS,
   createCommunity,
+  cyclePermissionCell,
   deleteCommunity,
   enterCommunities,
   openCommunity,
+  permissionGrid,
 } from './comm.mjs';
 import { communityRoles, workspaceIdOf } from './grainedb.mjs';
 import { PORTS } from './names.mjs';
@@ -60,25 +63,11 @@ const step = async (name, fn) => {
   }
 };
 
-/** The six the registry enforces, in the order the panel lists them, by the app's own labels. */
-const SIX = [
-  'chat_permission_manage_channel_label',
-  'chat_permission_moderate_label',
-  'chat_permission_invite_label',
-  'chat_permission_kick_label',
-  'chat_permission_manage_roles_label',
-  'chat_permission_manage_workspace_label',
-].map(caption);
-
-/** The keys those labels stand for - what a decision actually reads. */
-const ENFORCED = [
-  'channel.manage',
-  'channel.moderate',
-  'member.invite',
-  'member.kick',
-  'role.manage',
-  'workspace.manage',
-];
+// THE SIX, AND THE LABELS THEY RENDER AS - one copy, in `comm.mjs`, since COMM-20 needed the same
+// mapping to compare a grid against a column. `ENFORCED` is what a decision actually reads; `SIX` is
+// what the panel says, and this check exists precisely because those two can drift.
+const ENFORCED = Object.keys(PERMISSION_LABELS);
+const SIX = Object.values(PERMISSION_LABELS);
 
 /**
  * The two that were removed, named here so their return is a failure rather than a bigger number.
@@ -88,72 +77,6 @@ const ENFORCED = [
  * migration `044` cleared them from.
  */
 const RETIRED = ['channel.access', 'channel.send'];
-
-/**
- * The grid as the panel draws it: `{ permissions, roles, adminLocked }`.
- *
- * READ AS A TABLE, WHICH IS WHAT IT IS. Each `tbody` row is one permission and its first cell is
- * the label; each header cell after the first is a role. Nothing here depends on a class name -
- * the structure IS the meaning, and a restyling that changed the colours would not move a cell.
- *
- * `adminLocked` is the top role's column being disabled, which is the panel's own statement that
- * the administrator cannot be stripped of anything. Read from `disabled` rather than from opacity.
- */
-async function grid(cx) {
-  return JSON.parse(
-    await evaluate(
-      cx,
-      `JSON.stringify((function () {
-         var table = document.querySelector('table');
-         if (!table) return { permissions: null, roles: null, adminLocked: null };
-         var head = [].slice.call(table.querySelectorAll('thead th'));
-         var roles = head.slice(1).map(function (th) { return (th.innerText || '').trim(); });
-         var body = [].slice.call(table.querySelectorAll('tbody tr'));
-         var permissions = body.map(function (tr) {
-           var cells = [].slice.call(tr.children);
-           return (cells[0] ? cells[0].innerText || '' : '').trim();
-         });
-         // The administrator is the FIRST column: the grid sorts roles by descending priority.
-         var lockedColumn = body.every(function (tr) {
-           var cell = tr.children[1];
-           var button = cell ? cell.querySelector('button') : null;
-           return !!button && button.disabled === true;
-         });
-         return { permissions: permissions, roles: roles, adminLocked: lockedColumn };
-       })())`
-    )
-  );
-}
-
-/**
- * Clicks the cell at (permission label, role column index), which CYCLES it.
- *
- * The grid has no per-cell hook, so the cell is reached the same way it is read: by the row whose
- * first cell carries the label, then by column. The button is marked and clicked through the DOM
- * rather than hit-tested, because a table cell inside a horizontally scrolling container can sit
- * outside the viewport - and a `realClick` that scrolls the container first is a gesture about
- * scrolling.
- */
-async function cycleCell(cx, label, column) {
-  const outcome = await evaluate(
-    cx,
-    `(function () {
-       var body = [].slice.call(document.querySelectorAll('table tbody tr'));
-       var row = body.filter(function (tr) {
-         var first = tr.children[0];
-         return first && (first.innerText || '').trim() === ${JSON.stringify(label)};
-       })[0];
-       if (!row) return 'no-row';
-       var cell = row.children[${column}];
-       var button = cell ? cell.querySelector('button') : null;
-       if (!button) return 'no-button';
-       if (button.disabled) return 'disabled';
-       button.click();
-       return 'clicked';
-     })()`
-  );
-  if (outcome !== 'clicked') throw new Error(`cycleCell(${label}, ${column}): ${outcome}`);
-}
 
 /** Waits for the stored permissions of one role to satisfy `predicate`, and reports what it saw. */
 async function roleSettles(workspaceId, roleName, predicate, timeoutMs = 20_000) {
@@ -181,7 +104,7 @@ const shown = await step('read the permission grid', async () => {
   // "the grid offers nothing", which is an instrument describing itself. The first run of this
   // check did exactly that.
   await until(w1, `!!document.querySelector('table tbody tr')`, 20000);
-  return grid(w1);
+  return permissionGrid(w1);
 });
 
 const stored = workspaceId ? communityRoles(workspaceId) : [];
@@ -201,7 +124,7 @@ const armed = !!workspaceId && Array.isArray(shown?.permissions) && stored.lengt
 const REVOKED = caption('chat_permission_moderate_label');
 const afterRevoke = armed
   ? await step('revoke one permission from the moderator', async () => {
-      await cycleCell(w1, REVOKED, 2);
+      await cyclePermissionCell(w1, REVOKED, 2);
       return roleSettles(workspaceId, moderator.name, (p) => !p.includes('channel.moderate'));
     })
   : null;
@@ -215,7 +138,7 @@ const afterRestore =
         for (let i = 0; i < 3; i++) {
           const now = communityRoles(workspaceId).find((r) => r.name === moderator.name);
           if (now?.permissions.includes('channel.moderate')) break;
-          await cycleCell(w1, REVOKED, 2);
+          await cyclePermissionCell(w1, REVOKED, 2);
           await roleSettles(workspaceId, moderator.name, (p) => p.includes('channel.moderate'), 8000);
         }
         return communityRoles(workspaceId).find((r) => r.name === moderator.name)?.permissions ?? null;

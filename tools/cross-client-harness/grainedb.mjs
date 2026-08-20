@@ -357,3 +357,31 @@ export function communityRoles(workspaceId) {
     permissions: permissions ? permissions.split(',').filter(Boolean) : [],
   }));
 }
+
+/**
+ * The poll messages of a salon, as the SERVER holds them: `[{ id, pinned, poll, content }]`.
+ *
+ * THE SERVER IS SUPPOSED TO HOLD A POLL WITHOUT HOLDING ITS WORDS, and that is a claim only this
+ * side can settle. `metadata.poll` is the tally - option IDS, who voted for which, the deadline -
+ * and the question and the labels live in the encrypted body next to it. So the row is returned
+ * whole, `content` included, and the check asserts what is NOT in it: a label found anywhere in
+ * either column would mean the poll's wording had been handed to the server in clear.
+ *
+ * `pinned` comes back because auto-pinning is part of what a poll IS here (`pinned: pollMeta !==
+ * null` on creation, cleared on close), and it is a column no screen states plainly.
+ *
+ * Ordered oldest first, and every poll of the salon is returned rather than "the" poll: a check
+ * that asked for one would have no way to notice a second one appearing.
+ */
+export function channelPolls(channelId) {
+  const out = psql(
+    `SELECT row_to_json(t) FROM (` +
+      `SELECT id, pinned, metadata->'poll' AS poll, content ` +
+      `FROM channel_messages WHERE "channelId" = '${channelId}' ` +
+      `AND metadata ? 'poll' ORDER BY "createdAt"` +
+      `) t`
+  );
+  // ONE COLUMN, SO THE ROW SPLITTER IS UNDONE: `rows` cuts on '|', which is a character JSON is
+  // perfectly entitled to contain inside a string. Rejoined here rather than parsed field by field.
+  return rows(out).map((r) => JSON.parse(r.join('|')));
+}

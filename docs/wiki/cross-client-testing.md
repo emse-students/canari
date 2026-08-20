@@ -303,9 +303,9 @@ MSG-5's standing assertion: no `masterSecret` in any payload, ever.
 | the client followed | W1's reconciliation | `1 member(s) left but still hold a leaf - removing (2 leaves stay)` |
 | `mls_group_info.baseEpoch` | the server | 27 -> **28** at `19:35:26` |
 
-**Twenty-five rows, sixteen runners** (`comm1` `comm2` `comm3` `comm4` `comm5` `comm6` `comm7`
-`comm8` `comm910` `comm11` `comm12` `comm13` `comm16` `comm19` `comm2324`), sharing `comm.mjs`. Why
-the rows were rewritten on 2026-08-20 is in
+**Twenty-five rows, nineteen runners** (`comm1` `comm2` `comm3` `comm4` `comm5` `comm6` `comm7`
+`comm8` `comm910` `comm11` `comm12` `comm13` `comm15` `comm16` `comm19` `comm20` `comm21`
+`comm2324`), sharing `comm.mjs`. Why the rows were rewritten on 2026-08-20 is in
 [cross-client-campaign](cross-client-campaign.md#rows-that-named-a-mechanism-the-product-does-not-have).
 
 | Id | What it asks | Needs | State |
@@ -348,12 +348,13 @@ instrument has produced so far - latest verdict per check, all against productio
 | COMM-4 | 2026-08-20 | `FAIL` clean | the invitee is shown no card - OPEN, in `CLAUDE.md` |
 | COMM-5 | 2026-08-20 | `PASS` clean | - |
 | COMM-6 | 2026-08-20 | `PASS` clean, `62f8a650` | - |
-| COMM-7 | 2026-08-20 | `FAIL` `62f8a650` | the server refuses correctly and the composer is still offered - OPEN |
+| COMM-7 | 2026-08-20 | `PASS-DIRTY` `939078aa` | two defects, both fixed; the dirt was one unclassified Graine line, now benign |
 | COMM-8 | 2026-08-20 | `PASS` clean | - |
 | COMM-9/10 | 2026-08-20 | `VACUOUS` | never re-run since the per-salon groups landed |
 | COMM-11 | 2026-08-20 | `PASS` clean | - |
 | COMM-12 | 2026-08-20 | `PASS-DIRTY` | re-run owed on a build where the watcher classifies its lines |
 | COMM-13 | 2026-08-20 | `PASS` clean | - |
+| COMM-15 | 2026-08-20 | `PASS` clean `939078aa` | first run; needed the native-dialog capability |
 | COMM-16 | 2026-08-20 | `PASS` clean | - |
 | COMM-19 | 2026-08-20 | `PASS` clean | - |
 | COMM-23/24 | 2026-08-20 | `PASS` clean | - |

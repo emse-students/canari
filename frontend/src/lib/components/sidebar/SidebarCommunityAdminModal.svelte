@@ -12,6 +12,7 @@
     History,
   } from '@lucide/svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
+  import { globalChannels } from '$lib/stores/globalChatSingleton.svelte';
   import Modal from '../shared/Modal.svelte';
   import UserAutocomplete from '../shared/UserAutocomplete.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
@@ -133,8 +134,19 @@
   let rolesLoading = $state(false);
   let rolesError = $state('');
   let workspaceRoles = $state<PermissionGridRole[]>([]);
-  let roleOverrides = $state<PermissionGridOverride[]>([]);
-  let roleBasePermissions = $state<Record<string, string[]>>({});
+  /**
+   * What each role grants, and the grid's view of it - both DERIVED from the shared store.
+   *
+   * The panel used to own this state, so a role edited by another administrator while this grid was
+   * open went on being drawn as it had been at load time - which is exactly what COMM-20 measured on
+   * production. Held in `globalChannels`, an announcement reaches the table with nothing to refetch.
+   */
+  const roleBasePermissions = $derived(globalChannels.rolePermissions);
+  const roleOverrides = $derived<PermissionGridOverride[]>(
+    Object.entries(globalChannels.rolePermissions).flatMap(([roleId, perms]) =>
+      perms.map((permission) => ({ roleId, permission, value: 'allow' as const }))
+    )
+  );
   let roleSaving = $state<Record<string, boolean>>({});
 
   // ── Shareable invite link ─────────────────────────────────────────────────
@@ -267,7 +279,6 @@
       workspaceRoles = roles;
 
       const perms: Record<string, string[]> = {};
-      const overrides: PermissionGridOverride[] = [];
       for (const role of roles) {
         try {
           const data = await channelService.getRolePermissions(role.id);
@@ -275,12 +286,8 @@
         } catch {
           perms[role.id] = [];
         }
-        for (const perm of perms[role.id]) {
-          overrides.push({ roleId: role.id, permission: perm, value: 'allow' });
-        }
       }
-      roleBasePermissions = perms;
-      roleOverrides = overrides;
+      globalChannels.setRolePermissions(perms);
     } catch (e) {
       rolesError = e instanceof Error ? e.message : m.chat_community_load_members_error();
     } finally {
@@ -301,20 +308,18 @@
     Log.d('handleRolePermissionToggle', { roleId, permissionKey, value });
     roleSaving = { ...roleSaving, [roleId]: true };
     try {
-      const current = roleBasePermissions[roleId] ?? [];
-      // A base permission is either granted or not: only `allow` adds it; neutral removes it.
-      const next =
+      // SENT AS ONE CELL, AND THE ANSWER IS THE TRUTH. Sending the list this browser holds made two
+      // administrators editing one role at the same moment erase each other's work, and left the
+      // loser's grid showing a state the server had never had (COMM-20, production, 2026-08-20).
+      // A base permission is either granted or not: only `allow` grants it, neutral revokes it.
+      const saved = await channelService.setRolePermission(
+        roleId,
+        permissionKey,
         value === 'allow'
-          ? [...new Set([...current, permissionKey])]
-          : current.filter((p) => p !== permissionKey);
-      await channelService.setRolePermissions(roleId, next);
-      roleBasePermissions = { ...roleBasePermissions, [roleId]: next };
-      roleOverrides = [
-        ...roleOverrides.filter((o) => !(o.roleId === roleId && o.permission === permissionKey)),
-        ...(value === 'allow'
-          ? [{ roleId, permission: permissionKey, value: 'allow' as const }]
-          : []),
-      ];
+      );
+      // APPLIED FROM THE RESPONSE, not from what was asked for: it carries anything somebody else
+      // changed while this click was in flight, which is the whole point of sending a delta.
+      globalChannels.handleRolePermissionsChanged({ roleId, permissions: saved.permissions });
     } catch (e) {
       rolesError = e instanceof Error ? e.message : m.common_save_error();
     } finally {

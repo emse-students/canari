@@ -135,6 +135,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       onChannelMemberJoined: deps.onChannelMemberJoined,
       onChannelMemberKicked: deps.onChannelMemberKicked,
       onChannelUpdated: deps.onChannelUpdated,
+      onRolePermissionsChanged: deps.onRolePermissionsChanged,
       onChannelDeleted: deps.onChannelDeleted,
       onWorkspaceUpdated: deps.onWorkspaceUpdated,
       onWorkspaceRoleChanged: deps.onWorkspaceRoleChanged,

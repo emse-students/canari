@@ -3413,11 +3413,13 @@ export class ChannelService {
   }
 
   /** Updates a role's base permissions at the workspace level. */
-  async setRoleBasePermissions(roleId: string, actorUserId: string, permissions: string[]) {
-    const role = await this.roleRepo.findOne({ where: { id: roleId } });
-    if (!role) throw new NotFoundException('Role not found');
-
-    // Verify the actor has MANAGE_ROLES or MANAGE_WORKSPACE
+  /**
+   * The actor's right to edit this workspace's roles - refused here, never returned.
+   *
+   * Shared by the whole-list write and the single-key one so the two can never disagree about who
+   * may edit a role, which is the drift `writePolicyAllows` was extracted to end one feature over.
+   */
+  private async assertCanManageRoles(role: ChannelRole, actorUserId: string): Promise<void> {
     const actorMember = await this.memberRepo.findOne({
       where: { workspaceId: role.workspaceId, userId: actorUserId },
     });
@@ -3433,6 +3435,67 @@ export class ChannelService {
       );
     }
     if (!hasPerm) throw new ForbiddenException('Missing MANAGE_ROLES permission');
+  }
+
+  /**
+   * Tells the community what a role now grants, so no open grid keeps showing what it used to.
+   *
+   * A ROLE'S PERMISSIONS ARE NOT PRIVATE WITHIN THE COMMUNITY - the workspace listing already hands
+   * every member the full `roles` array - so the audience is the membership rather than the
+   * administrators, and this discloses nothing a member could not already read.
+   */
+  private async announceRolePermissions(role: ChannelRole): Promise<void> {
+    const members = await this.memberRepo.find({ where: { workspaceId: role.workspaceId } });
+    await this.redis.publishChannelEvent(
+      'workspace.role.permissions',
+      { workspaceId: role.workspaceId, roleId: role.id, permissions: role.permissions },
+      members.map((m) => m.userId)
+    );
+  }
+
+  /**
+   * Grants or revokes ONE permission on a role, applied to the row as it stands.
+   *
+   * WHY THIS EXISTS BESIDE THE WHOLE-LIST WRITE. Clicking a cell in the permission grid IS a delta -
+   * "grant this one key" - and it was being sent as the role's entire list, computed from whatever
+   * the browser happened to be holding. Two administrators toggling two DIFFERENT permissions of one
+   * role at the same moment therefore did not race: the second write carried a list built before the
+   * first one landed and simply erased it. COMM-20 measured it on production on 2026-08-20 - the
+   * second administrator's grid went on showing a permission the server had dropped AND one it had
+   * never stored, indefinitely, with nothing to say so.
+   *
+   * **TWO EDITS THAT COMMUTE MUST BE SENT AS THE OPERATIONS THEY ARE.** Expressed as a delta there
+   * is nothing to merge and nothing to lose: each write reads the current row and changes one key.
+   * A whole-list write with optimistic concurrency would have been the other answer, and a worse
+   * one - it turns two compatible edits into a conflict somebody has to resolve by hand.
+   */
+  async setRoleBasePermission(roleId: string, actorUserId: string, key: string, granted: boolean) {
+    const role = await this.roleRepo.findOne({ where: { id: roleId } });
+    if (!role) throw new NotFoundException('Role not found');
+    await this.assertCanManageRoles(role, actorUserId);
+
+    const validPermissions = Object.values(CHANNEL_PERMISSIONS) as string[];
+    if (!validPermissions.includes(key)) {
+      throw new BadRequestException(`Invalid permission: ${key}`);
+    }
+
+    const current = role.permissions ?? [];
+    role.permissions = granted ? [...new Set([...current, key])] : current.filter((p) => p !== key);
+    await this.roleRepo.save(role);
+
+    this.logger.log(
+      `[ROLE] ${granted ? 'granted' : 'revoked'} ${key} role=${roleId} ` +
+        `by=${actorUserId.slice(0, 8)} perms=${role.permissions.length}`
+    );
+    await this.announceRolePermissions(role);
+
+    return { roleId: role.id, roleName: role.name, permissions: role.permissions };
+  }
+
+  async setRoleBasePermissions(roleId: string, actorUserId: string, permissions: string[]) {
+    const role = await this.roleRepo.findOne({ where: { id: roleId } });
+    if (!role) throw new NotFoundException('Role not found');
+    await this.assertCanManageRoles(role, actorUserId);
 
     // A KEY THIS SERVER RETIRED IS DROPPED, NOT REFUSED - and it is the only exception.
     //
@@ -3469,6 +3532,7 @@ export class ChannelService {
     this.logger.log(
       `[ROLE] permissions updated role=${roleId} by=${actorUserId.slice(0, 8)} perms=${requested.length}`
     );
+    await this.announceRolePermissions(role);
 
     return {
       roleId: role.id,

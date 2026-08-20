@@ -698,6 +698,12 @@
         appendLog(`Removed from channel #${event.channelName || event.channelId}`);
         showToast(m.channel_removed_from_channel({ channel: event.channelName || '' }), 'info');
       },
+      onRolePermissionsChanged: (event: { roleId: string; permissions: string[] }) => {
+        globalChannels.handleRolePermissionsChanged(event);
+        appendLog(
+          `[ROLE] ${event.roleId.slice(0, 8)} now grants ${event.permissions.length} permission(s)`
+        );
+      },
       onChannelUpdated: (event: { channelId: string; name?: string; viewerCanWrite?: boolean }) => {
         if (!event.channelId) return;
         const channelConversationId = `channel_${event.channelId}`;

@@ -140,7 +140,7 @@ The numbers and what they imply are in
 | DELETE | `/api/channels/workspaces/:workspaceId/members/:userId` | Remove a member from the whole workspace (MANAGE_WORKSPACE / MANAGE_CHANNEL / KICK_MEMBERS) |
 | PATCH | `/api/channels/workspaces/:workspaceId/members/:userId/role` | Set a member's workspace role, replacing existing roles (MANAGE_WORKSPACE / MANAGE_ROLES) |
 | GET \| PATCH | `/api/channels/:channelId/access` | Get/set channel visibility (`isPrivate`), `allowedUsers`, and `writePolicy` (MANAGE_CHANNEL to write) |
-| GET \| PUT | `/api/channels/roles/:roleId/permissions` | Get/set a workspace role's base permissions (MANAGE_WORKSPACE / MANAGE_ROLES) |
+| GET \| PATCH \| PUT | `/api/channels/roles/:roleId/permissions` | Read a role's base permissions; **PATCH** grants/revokes ONE key (`{key, granted}`) and is what every client sends; **PUT** replaces the whole list and is kept only for clients built before 2026-08-20 ([legacy](../legacy-compatibility.md)). MANAGE_WORKSPACE / MANAGE_ROLES |
 | DELETE | `/api/channels/:channelId/messages/:messageId` | Delete a channel message: own always, someone else's with `channel.moderate` |
 | POST | `/api/channels/:channelId/messages/:messageId/pin` | Pin message (own always, someone else's with `channel.moderate`) |
 | POST | `/api/channels/:channelId/messages/:messageId/poll/vote` | Vote on a poll (empty = retract) |
@@ -158,7 +158,12 @@ Communities use a deliberately simple, two-level model (no per-channel permissio
   managed from the community settings modal: invite + assign a role, change a member's role
   (`PATCH .../members/:userId/role`, replaces all held roles), remove a member
   (`DELETE .../members/:userId`), and edit each role's base permissions
-  (`PUT roles/:roleId/permissions`). `workspace.manage` implicitly grants every permission.
+  (`PATCH roles/:roleId/permissions`, one key at a time). `workspace.manage` implicitly grants
+  every permission. **The write is a DELTA on purpose**: a grid cell IS one key, and sending the
+  role's whole list made two administrators' compatible edits erase one another - COMM-20 measured
+  it on production, with the loser's grid left showing a permission the server had dropped and one
+  it had never stored. Every change is announced on `workspace.role.permissions`, so no open grid
+  keeps drawing what a role used to grant.
 - **Channel access.** `canAccessChannel`: a **public** channel is readable by every workspace
   member; a **private** channel is readable only by users listed in `channels.allowedUsers` **plus**
   any admin (`workspace.manage`) - admins reach every channel without being explicitly added.
@@ -489,6 +494,7 @@ The social-service publishes to `chat:channel_events`:
 | `channel.message.created` / `.deleted` | send, delete |
 | `channel.updated` / `.deleted` | rename, **access change** (carries `viewerCanWrite`, one publish per verdict), delete |
 | `workspace.updated` / `.deleted` | cover image change, soft delete |
+| `workspace.role.permissions` | a role's permission set changed - addressed to the MEMBERSHIP, since every open grid draws it |
 | `channel.typing`, `channel.pin`, `channel.poll.vote` | live UI signals |
 
 The chat-gateway subscribers fan out these events to all connected devices of the affected users.

@@ -22,6 +22,7 @@ export interface ChannelEventContext extends Pick<
   | 'onChannelMemberJoined'
   | 'onChannelMemberKicked'
   | 'onChannelUpdated'
+  | 'onRolePermissionsChanged'
   | 'onChannelDeleted'
   | 'onWorkspaceUpdated'
   | 'onWorkspaceRoleChanged'
@@ -48,6 +49,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     onChannelMemberJoined,
     onChannelMemberKicked,
     onChannelUpdated,
+    onRolePermissionsChanged,
     onChannelDeleted,
     onWorkspaceUpdated,
     onWorkspaceRoleChanged,
@@ -153,6 +155,20 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
         typeof data.canManage === 'boolean'
           ? data.canManage
           : Array.isArray(data.permissions) && data.permissions.includes('workspace.manage'),
+      permissions: Array.isArray(data.permissions) ? data.permissions.map(String) : [],
+    });
+    return;
+  }
+
+  // WHAT A ROLE GRANTS CHANGED, and it is addressed to the whole community rather than to one
+  // member: this is not "your role changed", it is "this role now grants X", which every open
+  // permission grid in the community is drawing.
+  if (event.type === 'workspace.role.permissions') {
+    const data = event.data || {};
+    const roleId = String(data.roleId || '');
+    if (!roleId) return;
+    onRolePermissionsChanged?.({
+      roleId,
       permissions: Array.isArray(data.permissions) ? data.permissions.map(String) : [],
     });
     return;

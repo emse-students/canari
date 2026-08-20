@@ -37,7 +37,10 @@ import {
   CHANNEL_NOTIFICATION_LEVELS,
   CHANNEL_WRITE_POLICIES,
 } from './dto/channel.dto';
-import { type SetRolePermissionsDto } from './dto/channel-permission.dto';
+import {
+  type SetRolePermissionDto,
+  type SetRolePermissionsDto,
+} from './dto/channel-permission.dto';
 import { LiveGraineSessionsDto } from './dto/live-graine-sessions.dto';
 import { CHANNEL_MESSAGE_RETENTION_DAYS } from './channel-retention.scheduler';
 
@@ -724,7 +727,34 @@ export class ChannelsController {
       .then((live) => ({ live, retentionDays: CHANNEL_MESSAGE_RETENTION_DAYS }));
   }
 
-  /** Updates a role's base permissions (MANAGE_ROLES required). */
+  /**
+   * Grants or revokes ONE of a role's base permissions (MANAGE_ROLES required).
+   *
+   * What every client should send for a grid cell: the whole-list PUT below turns two
+   * administrators' compatible edits into a lost update, and this one cannot.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Patch('roles/:roleId/permissions')
+  setRolePermission(
+    @Headers('x-user-id') xUserId: string,
+    @Param('roleId') roleId: string,
+    @Body() body: SetRolePermissionDto
+  ) {
+    return this.service.setRoleBasePermission(
+      roleId,
+      xUserId.trim().toLowerCase(),
+      body.key,
+      body.granted === true
+    );
+  }
+
+  /**
+   * Replaces a role's base permissions wholesale (MANAGE_ROLES required).
+   *
+   * KEPT FOR CLIENTS BUILT BEFORE 2026-08-20, which is every APK in the field: A1 serves the bundle
+   * inside itself and no deploy reaches it. Its removal date is in
+   * `docs/wiki/legacy-compatibility.md`.
+   */
   @UseGuards(NginxAuthGuard)
   @Put('roles/:roleId/permissions')
   setRolePermissions(

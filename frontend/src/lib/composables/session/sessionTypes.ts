@@ -35,6 +35,7 @@ export interface ChatSessionCallbacks {
   selectConversation: (name: string) => void;
   onChannelMemberJoined?: (event: any) => void;
   onChannelMemberKicked?: (event: any) => void;
+  onRolePermissionsChanged?: (event: { roleId: string; permissions: string[] }) => void;
   onChannelUpdated?: (event: {
     channelId: string;
     name?: string;

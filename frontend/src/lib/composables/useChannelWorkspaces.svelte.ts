@@ -1265,6 +1265,34 @@ export function useChannelWorkspaces() {
     );
   }
 
+  /**
+   * What each workspace role currently grants, keyed by role id.
+   *
+   * HELD HERE RATHER THAN IN THE PANEL because a role's permissions change under an open grid: two
+   * administrators can be looking at the same table, and until 2026-08-20 the one whose edit was not
+   * the last one kept a grid showing a state the server had never had (COMM-20). The panel fills
+   * this when it loads and reads it back, so an announcement from the server reaches the screen with
+   * no round trip and no second copy of the state.
+   *
+   * Keyed by role id and NOT scoped by workspace: role ids are uuids, and the panel replaces the map
+   * wholesale when it opens a different community.
+   */
+  let rolePermissions = $state<Record<string, string[]>>({});
+
+  /** Replaces everything known about roles - what the panel does when it loads a community. */
+  function setRolePermissions(all: Record<string, string[]>) {
+    rolePermissions = { ...all };
+  }
+
+  /**
+   * Applies what a role grants NOW, from the server: either its own answer to an edit, or the
+   * announcement of somebody else's.
+   */
+  function handleRolePermissionsChanged(event: { roleId: string; permissions: string[] }) {
+    if (!event.roleId) return;
+    rolePermissions = { ...rolePermissions, [event.roleId]: [...event.permissions] };
+  }
+
   function handleWorkspaceUpdated(event: {
     workspaceId: string;
     imageMediaId?: string;
@@ -1346,6 +1374,13 @@ export function useChannelWorkspaces() {
     reorderWorkspaces,
     /** Applies an incoming real-time workspace-updated event (cover image change). */
     handleWorkspaceRoleChanged,
+    /** What each workspace role grants right now, keyed by role id - see the state's own note. */
+    get rolePermissions() {
+      return rolePermissions;
+    },
+    setRolePermissions,
+    /** Applies an incoming real-time change to what a role grants (this device's or anybody's). */
+    handleRolePermissionsChanged,
 
     handleWorkspaceUpdated,
     /** Applies an incoming real-time workspace-deleted event (an admin deleted the community). */

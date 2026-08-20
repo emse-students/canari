@@ -736,6 +736,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       onChannelMemberJoined: cb.onChannelMemberJoined,
       onChannelMemberKicked: cb.onChannelMemberKicked,
       onChannelUpdated: cb.onChannelUpdated,
+      onRolePermissionsChanged: cb.onRolePermissionsChanged,
       onChannelDeleted: cb.onChannelDeleted,
       onWorkspaceUpdated: cb.onWorkspaceUpdated,
       onWorkspaceRoleChanged: cb.onWorkspaceRoleChanged,

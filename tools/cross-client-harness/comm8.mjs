@@ -113,6 +113,22 @@ const peerFetch = await step('fetch it by id from W2', async () => {
   return apiGet(w2, `/api/channels/${channelId}/messages`);
 });
 
+// ── The CONSOLE: the peer's own device never announced a seed for this salon ──
+// TAKEN BEFORE THE GRANT, and it is the one reading that is about the DEVICE rather than about the
+// server's intent. `dm_device_group_memberships` says who the server would fan a seed frame out to;
+// this says what the peer's client actually received and stored - `[GRAINE] seed ... for channel
+// <id>` is printed only after `storeIncomingSeed` returns true. The two together are the guarantee:
+// the server did not address it, and the device did not get it by any other route.
+//
+// It is asserted HERE rather than left to `clean`, because the same line is perfectly routine on a
+// MEMBER's console and is classified benign for exactly that reason. Only this check knows that the
+// client it is reading has no business holding a seed for this salon.
+const seedLineForSalon = channelId
+  ? new RegExp(`\[GRAINE\] seed \S+ from \S+ for channel ${channelId.slice(0, 8)}`)
+  : null;
+const peerAnnouncedASeed =
+  !!seedLineForSalon && consoleLines(wb.cx).some((l) => seedLineForSalon.test(l));
+
 // ── ARMING THE INSTRUMENT: prove the query can say YES ────────────────────────
 // WITHOUT THIS THE CHECK IS VACUOUS AND WOULD NEVER SAY SO. "The peer holds no routing row on the
 // salon's group" is trivially true of a group with no rows at all - which is exactly what a salon
@@ -153,6 +169,7 @@ const verdict = !armed?.onSalonRoster
   !peerUserId ||
   !peerOnCommunity ||
   peerOnSalon ||
+  peerAnnouncedASeed ||
   onPeer?.present !== false ||
   ![403, 404].includes(peerFetch?.status)
     ? 'FAIL'
@@ -187,6 +204,9 @@ record('COMM-8', gated.verdict, {
   peer: peerUserId ? peerUserId.slice(0, 8) : null,
   peerOnCommunity,
   peerOnSalon,
+  // What the peer's DEVICE said, next to what the server's table says - the two halves of "never
+  // sent its seed", and the record has to carry both or a reader cannot tell which one held.
+  peerAnnouncedASeed,
   // The arming, recorded whatever it said: a VACUOUS verdict has to name WHY, and a PASS has to
   // carry the proof that its absence was an absence rather than an empty table.
   armed,

@@ -237,6 +237,17 @@ when it is already open) rather than assume the client stayed where the last ste
 single-pane fact breaks the writer: `openConversation` hunts a sidebar that no longer exists once a
 conversation is open, so it fails on the phone precisely when the target is already correct.
 
+**AN ANCHOR IS A CLAIM ABOUT THE PRODUCT, AND IT EXPIRES.** `PANE` located the open conversation as
+the composer's nearest `<section>` - true of every conversation the product had ever had, until a
+salon reserved for administrators started replacing the composer with the reason. The pane then read
+`null` for a member who could still READ perfectly well, so `awaitMessage` reported `hasPane: false`
+and COMM-7 failed on the ADMINISTRATOR's message: the harness saying "this client has no conversation
+open" about a client watching one. **A conversation is a place where messages are DISPLAYED; being
+able to write in it is a permission, and an anchor must not confuse the two.** Anchored on
+`.chat-messages-scroll` since 2026-08-20. The general form: when a check locates X through Y, it has
+asserted that Y is present whenever X is - so write that assertion down, and re-read it whenever the
+product grows a state where it is false.
+
 **A CLICK IS PROVEN BY THE EVENT, NEVER BY THE GEOMETRY AROUND IT**
 
 TYPE-5 failed roughly one run in ten with the create-channel modal on screen, at coordinates
