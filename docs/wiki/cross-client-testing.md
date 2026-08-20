@@ -104,6 +104,19 @@ new; a run reporting five has found nothing. Do not clear them - the divergence 
 `226fe755`, 2026-08-16: 12 verdicts, 12 `PASS`, every client clean, server clean over the run's own
 window. Earlier x5 series on `8a3edbdd`, `e62c21f1` and `25376b86` all read 13/13.
 
+**COMM-2 and COMM-16 have run on prod (2026-08-20, `bf2815c2`), both PASS and both clean.** COMM-2
+proves the whole invite path end to end: one live link, stable across two reads, previewing the
+community by name before joining, and a peer who becomes a member with the `member` role and no
+other row. COMM-16 proves a salon and a community are really deleted, with no orphan in any table
+and the slug free enough to be taken again by a second community.
+
+**One observation from COMM-2 that is NOT a defect, recorded so it is not re-investigated.** Its
+first clean run carried two 404s on W2 - `GET /api/channels/<id>/members` and `/pins` - for a channel
+belonging to the PREVIOUS run's community, which the check itself had deleted while W2 was inside it.
+Nothing was persisted (localStorage and every IndexedDB store were read: no row named it), the
+landing's own abandon path exists, and a re-run came back clean on both clients. It is a live page
+briefly outliving a community deleted underneath it, not a leak.
+
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | MSG-1 | W1 -> W2 plain DM: under 2 s, one copy, correct author | `W1 W2` | `PASS` - 261 ms |
@@ -292,14 +305,26 @@ row, the settings modal, the invite link - with every caption READ from
 of turning runners red a week later. Two of its selectors are deliberately structural: the rail is
 anchored on the "add a community" button, and a channel is asked for BY NAME because the only anchor
 in its container is a button a non-manager never sees - which is exactly the case COMM-8 measures.
-Nothing in it has been run against a client yet, and `checks.mjs` still carries `scripts: []`.
+
+**EIGHT OF THE TWENTY-FIVE ARE WRITTEN AND REGISTERED** (1, 2, 5, 8, 9/10, 16, 23, 24). `comm2.mjs`
+is the primitive the rest wait on: the invite link is the only gesture in the product that puts a
+SECOND member into a community a check built itself, so COMM-11, COMM-12 and COMM-19 all inherit
+what it proves.
+
+**COMM-16 FOUND A DEFECT ON ITS FIRST RUN, and nearly lost it.** `channelRowGone` came back false,
+which reads exactly like a check written against a behaviour the product does not have - the row
+survives, archiving is a design decision, soften the assertion. It was the assertion that was right:
+`DELETE /channels/:id` set `archived = true` while destroying the salon's key group, so a private
+salon ended as ciphertext nothing could open, hidden, and removable only by deleting its community.
+Fixed in `bf2815c2`. **A check that fails is a claim to CHECK, never a check to soften.**
 
 **THE TWENTY-FIVE ROWS WERE REWRITTEN 2026-08-20, and the reason was not that they were incomplete.**
 They were written before Graine and still spoke the vocabulary it replaced: COMM-9 asked that "the
 key rotates", COMM-13 asked for "manual key rotation" - **neither mechanism exists** - and COMM-22
 timed `hydrateChannelHistoryKeys`, **a function that is gone**. COMM-16 asked that a deleted
 community's slug stay reserved, which stopped being true when deletion became a real delete
-(2026-08-18), and COMM-19 said "nothing in the inventory says what happens", which the governance
+(2026-08-18) - and its rewritten form then found that a SALON's deletion had never made the same
+move - and COMM-19 said "nothing in the inventory says what happens", which the governance
 work answered the same week. A row that names a mechanism the code does not have cannot fail: it
 cannot run. Three rows were added for what the per-salon distribution groups introduced, so the
 phase now carries 25.
@@ -307,7 +332,7 @@ phase now carries 25.
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | COMM-1 | Create a community, create a channel, post, both peers converge | `W1 W2` | `pending` |
-| COMM-2 | Invite link: create, preview, accept from the other account | `W1 W2` | `pending` |
+| COMM-2 | Invite link: create, preview, accept from the other account | `W1 W2` | **PASS** `bf2815c2` |
 | COMM-3 | An expired link, a `maxUses`-exhausted link, a link to a deleted community | `W1 W2` | `pending` |
 | COMM-4 | Direct invite: the `channel_invitation` card appears in the DM on both sides, deduped | `W1 W2` | `pending` |
 | COMM-5 | Roles: promote to moderator, then admin; the grid takes effect immediately | `W1 W2` | `pending` |
@@ -321,7 +346,7 @@ phase now carries 25.
 | COMM-13 | An admin JOINS a private salon: they see it unjoined, enter it in one click, appear in the member list, and NO system message is written | `W1 W2` | `pending` |
 | COMM-14 | Channel notification levels enforced server-side | `+push` | `pending` |
 | COMM-15 | Polls: create, vote, close; auto-pinned | `W1 W2` | `pending` |
-| COMM-16 | Delete a channel, then a community by typing its name: the rows are really gone and the slug is free again | `W1 W2` | `pending` |
+| COMM-16 | Delete a channel, then a community by typing its name: the rows are really gone and the slug is free again | `W1 W2` | **PASS** `bf2815c2`, after FAILING correctly on `d3690a88` |
 | COMM-17 | Reorder communities by drag and drop; survives a reload, reaches the other device | `+A1` | `pending` |
 | COMM-18 | Deep link into a channel from a cold start | `+A1` | `pending` |
 | COMM-19 | The last admin tries to leave: refused, unless they are the last MEMBER, which deletes the community | `W1 W2` | `pending` |

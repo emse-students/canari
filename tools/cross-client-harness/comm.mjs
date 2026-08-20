@@ -240,7 +240,15 @@ export async function createChannel(cx, name, { visibility = 'public' } = {}) {
 
 /** Opens the community settings modal (the gear beside the community's name). */
 export async function openCommunitySettings(cx) {
-  await realClick(cx, `[aria-label=${JSON.stringify(caption('sidebar_community_settings_title'))}]`);
+  // IDEMPOTENT, because the gear is COVERED once the modal is up: clicking it a second time lands
+  // on the overlay and the wait then times out on a modal that was already open. Detected by
+  // "Quitter la communaute", which only this modal draws - the three tab captions are ordinary
+  // words that appear elsewhere in the page, which is the whole subject of `communityTab` below.
+  const marker = JSON.stringify(caption('chat_community_leave_button'));
+  const alreadyOpen = await evaluate(cx, `document.body.innerText.indexOf(${marker}) >= 0`);
+  if (alreadyOpen !== 'true' && alreadyOpen !== true) {
+    await realClick(cx, `[aria-label=${JSON.stringify(caption('sidebar_community_settings_title'))}]`);
+  }
   await until(
     cx,
     `document.body.innerText.indexOf(${JSON.stringify(caption('chat_community_overview_tab'))}) >= 0`,
@@ -248,10 +256,23 @@ export async function openCommunitySettings(cx) {
   );
 }
 
-/** Switches the open community-settings modal to one of its three tabs. */
+/**
+ * Switches the community-settings modal to one of its three tabs, OPENING IT FIRST.
+ *
+ * IT USED TO ASSUME THE MODAL WAS ALREADY UP, and that is not a precondition a caller can be
+ * trusted with - `inviteLink` did not know it and COMM-2 came back VACUOUS for it. The tab captions
+ * are "Vue d'ensemble", "Roles & permissions" and "Membres", and a click by caption searches the
+ * WHOLE document: with the modal closed, "Membres" matched the channel member list behind it, which
+ * opened cleanly and looked like a working gesture. Nothing threw. The check then waited twenty
+ * seconds for an invite field on a panel that has never had one.
+ *
+ * So the precondition is established here rather than asserted, which is what makes the gesture
+ * safe to call from anywhere - the same shape `openCommunityMembers` was given for the same reason.
+ */
 export async function communityTab(cx, tab) {
   const key = { overview: 'chat_community_overview_tab', roles: 'chat_community_roles_tab', members: 'common_members_label' }[tab];
   if (!key) throw new Error(`communityTab: unknown tab '${tab}' - overview, roles or members`);
+  await openCommunitySettings(cx);
   await realClick(cx, control(key));
 }
 
@@ -863,4 +884,67 @@ export async function deleteChannel(cx) {
   await realClick(cx, control('chat_delete_channel_button'));
   await confirmDialog(cx, 'common_delete_button');
   return clearOverlays(cx);
+}
+
+/**
+ * Opens an invite link on a client and reports what the landing page SAYS, without joining.
+ *
+ * THE PREVIEW IS THE HALF THAT MATTERS AND THE HALF NOBODY WOULD CHECK. Accepting a link is easy to
+ * assert - a membership row appears. What a link is FOR is telling you what you are about to join
+ * before you join it, and a preview that renders an empty name, or renders "invalid" for a perfectly
+ * good link, is invisible from the database. So this returns the community's name as drawn, and
+ * whether the page decided the link is usable, and joins nothing.
+ *
+ * `goto` takes a PATH, and an invite link is an absolute URL - the path is taken from it rather than
+ * rebuilt, so a link whose shape changes is followed rather than silently mis-navigated.
+ *
+ * @param {string} url the absolute invite URL, as {@link inviteLink} returns it
+ * @returns `{ valid, name }` - `name` is null when the page refused the link
+ */
+export async function openInviteLink(cx, url) {
+  const path = new URL(url).pathname;
+  await goto(cx, path);
+  const refused = JSON.stringify(caption('invite_invalid_or_expired'));
+  const joinable = JSON.stringify(caption('community_join_btn'));
+  await until(
+    cx,
+    `document.body.innerText.indexOf(${refused}) >= 0 || document.body.innerText.indexOf(${joinable}) >= 0`,
+    25000
+  );
+  const valid = await evaluate(cx, `document.body.innerText.indexOf(${joinable}) >= 0`);
+  if (valid !== 'true' && valid !== true) return { valid: false, name: null };
+
+  // ANCHORED ON THE APP'S OWN SENTENCE, not on "the first line that is not a caption I know". That
+  // was the first spelling and it read "Aller au contenu principal" - the skip-to-content link,
+  // which is line one of `document.body.innerText` on every page in this application. A reader
+  // defined by what it EXCLUDES is only ever as right as its exclusion list; this one is defined by
+  // what it FOLLOWS, and "Vous avez ete invite(e) a rejoindre" is drawn immediately above the name
+  // by the same component.
+  const invited = JSON.stringify(caption('community_join_invited_text'));
+  const NL = 'String.fromCharCode(10)';
+  const name = await evaluate(
+    cx,
+    `(function () {
+      var lines = (document.body.innerText || '').split(${NL})
+        .map(function (l) { return l.trim(); })
+        .filter(Boolean);
+      var at = lines.indexOf(${invited});
+      return at >= 0 && at + 1 < lines.length ? lines[at + 1] : '';
+    })()`
+  );
+  return { valid: true, name: String(name || '').trim() };
+}
+
+/**
+ * Accepts the invite currently previewed on this client, and waits until it has LEFT the join page.
+ *
+ * The button is not the end of the gesture: accepting navigates into the community's first channel,
+ * and a check that asserted right after the click would be reading the join page's DOM. Waiting on
+ * the URL rather than on any rendered text is deliberate - the destination depends on whether the
+ * community has a channel at all, and both destinations are a success.
+ */
+export async function acceptInviteLink(cx) {
+  await realClick(cx, `text=${caption('community_join_btn')}`);
+  await until(cx, `location.pathname.indexOf('/c/join/') < 0`, 30000);
+  return awaitAppSettled(cx);
 }

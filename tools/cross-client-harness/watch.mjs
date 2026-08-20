@@ -54,6 +54,20 @@ const BENIGN = [
   /^\[GRAINE\] left \d+ distribution group\(s\) of community /,
   /^\[GRAINE\] community \S+ forgotten - \d+ seed\(s\)/,
   /^\[GRAINE\] community \S+ has no other member to ask for history/,
+  // AND WHAT A JOIN CORRECTLY SAYS, which COMM-2 needed. Three lines, one per layer, all on the
+  // path of somebody accepting an invitation:
+  //
+  //  - the app naming the channel the joiner landed in;
+  //  - Graine asking an existing member for the community's past. This is the ONLY way a newcomer
+  //    can read anything written before they arrived - the server holds no seed - so its absence
+  //    would mean `historyVisibility: shared` silently delivers nothing. The SIBLING line, where
+  //    there is nobody to ask, is two entries up;
+  //  - the deep-link landing announcing where it is sending them. Not a fallback: `/communities` is
+  //    the only route that can display a channel, and `openInvitedChannel` publishes the target
+  //    precisely so this effect routes to it once the router is up.
+  /^Joined channel #\S+$/,
+  /^\[GRAINE\] asked \S+ for the history of community [0-9a-f]+$/,
+  /^\[notifNav\] routing to \S+ for pending conversation \S+$/,
   // THE SWEEP SPARING A KEY-DISTRIBUTION GROUP, which is the fix WP-GRAINE-1 and the 2026-08-20
   // discriminator repair both landed. Its ABSENCE is what would be the signal: a boot where these
   // do not appear is a boot where the sweep deleted the group and sending stops working.

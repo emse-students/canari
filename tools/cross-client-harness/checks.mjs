@@ -89,16 +89,23 @@ export const PHASES = {
   // Named so `run.mjs --list` reports them as ZERO COVERAGE rather than leaving them out. A phase
   // that is absent from a listing reads as "done"; a phase listed with no script reads as what it
   // is. The dashboard carries 25 COMM checks, 6 MULTI, 20 CALL and 10 CORRUPT; COMM is the one
-  // being written now and carries TWO of its twenty-five, which is why it is listed with the two
+  // being written now and carries EIGHT of its twenty-five, which is why it is listed with the eight
   // rather than with all of them - a manifest naming a script that does not exist would fail the
   // phase, and one naming none would read as a phase with nothing to run.
+  //
+  // ORDERED SO THE PRIMITIVES RUN FIRST. `comm2.mjs` proves the invite link, which is the only
+  // gesture in the product that puts a SECOND member into a community a check built itself - so
+  // COMM-11, COMM-12 and COMM-19 all inherit whatever it proves, and a failure there is worth
+  // seeing before the rows that depend on it.
   COMM: {
     title: 'communities, channels, roles',
     scripts: [
       'comm1.mjs',
+      'comm2.mjs',
       'comm5.mjs',
       'comm8.mjs',
       'comm910.mjs',
+      'comm16.mjs',
       'comm2324.mjs 23',
       'comm2324.mjs 24',
     ],
