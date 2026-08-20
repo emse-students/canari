@@ -129,11 +129,15 @@ before the campaign restarts.** Everything actionable is HERE, in order, one lin
 lives where the link says and **is not restated**. An item is done when its code, its tests, its doc
 and its commit are in, and it is then deleted from BOTH files.
 
-**The campaign started 2026-08-19 and has produced TWENTY-EIGHT defects, ALL FIXED.** The
-twenty-ninth was withdrawn on 2026-08-20: COMM-4's was the INSTRUMENT, three faults deep, and the
+**The campaign started 2026-08-19 and has produced THIRTY defects, ALL FIXED.** One candidate was
+withdrawn on 2026-08-20: COMM-4's was the INSTRUMENT, three faults deep, and the
 product was right throughout ([testing-methodology](docs/wiki/testing-methodology.md) rules 23 and
 24 are what it left). **Every story is in `CHANGELOG.md` and every rule one left is in
-[durable-rules](docs/wiki/durable-rules.md); neither is restated here.** The twenty-sixth is COMM-20's, on its FIRST run: a
+[durable-rules](docs/wiki/durable-rules.md); neither is restated here.** The thirtieth is COMM-12's,
+and it is the one to know because it moved every run it broke: a community left the sidebar 1.5 s
+after it was created and the app dropped the client into an unrelated one, so the workspace list
+was deleting what did not exist when it asked. The twenty-ninth is COMM-1's, on its FIRST completed
+run: creating a community prepared no Graine group, so the creator could not post in it. The twenty-sixth is COMM-20's, on its FIRST run: a
 permission-grid cell IS a delta and was being sent as the role's whole list, so two administrators
 toggling two DIFFERENT keys of one role erased each other's work and the loser's grid kept drawing a
 state the server had never held. The twenty-fourth and twenty-fifth are both COMM-7's - a salon
@@ -183,17 +187,18 @@ in the field (user, 2026-08-19)**, so the iOS ladder cannot run and parity is ke
     [cross-client-testing](docs/wiki/cross-client-testing.md) §9, the only copy. **Board rows stay
     `pending` on purpose** - a runner that PASSes while still proving itself is not a campaign verdict.
     **Owed before the campaign, and each is a run, not a decision:**
-    - **COMM-8 re-run - its recorded `PASS` is STALE by rule 18b.** It was earned 2026-08-20T00:30Z,
-      before `614bddbd` gave the runner its console reading ("the peer's own device never announced a
-      seed for this salon"); that assertion then reached `RegExp` with its backslashes eaten, so it
-      could not say yes until it was fixed the same evening. Nothing has run it since either change.
-    - **COMM-12 re-run** (`PASS-DIRTY`) and **COMM-9/10 re-run** (`VACUOUS` since the per-salon
-      groups landed). **COMM-1 has never recorded a verdict at all** - the runner exists, no run of it
-      has ever completed.
+    - **COMM-12 re-run on the build carrying `174a24be`** - the prune fix its third run named. It is
+      `VACUOUS` and has never been armed; the arm it exercises is the one the defect broke.
+    - **COMM-9/10 re-run** (`VACUOUS` since the per-salon groups landed), now that `grainestore.mjs`
+      measures the sealed column that is actually on disk rather than a field only the decoded object
+      has - which is what made every row read as 0 bytes.
     - **The phone shows a GENERIC notification body** (user, 2026-08-20, on an app that is not up to
       date). That is COMM-14's row; it is an observation, not a defect, until that runner says so.
-    - **`cleanup.mjs` before the campaign** - `d6292672 | C6 COMM6-mt1gh7hx4it` is waiting, plus
-      anything a crashed runner has left since. Every venue is `C<n> COMM<n>-<mark>`, deleted THROUGH
+    - **`cleanup.mjs` before the campaign** - five venues waiting as of 2026-08-20T20:30Z:
+      `C6 COMM6-mt1gh7hx4it`, three `C1 COMM1-*` and one `C12 shared COMM12-*`, plus anything a
+      crashed runner leaves after. **Two of them carry `historyVisibility = joined` that COMM-12 wrote
+      onto them by accident**, which is harmless only because they are debris - no verdict rests on
+      them and deleting them is the repair. Every venue is `C<n> COMM<n>-<mark>`, deleted THROUGH
       the product so its Graine group goes with it; `--dry` to look first.
     **A verdict now names the build it ran on**, from `60c33b92` onward: nothing the web client prints
     names its build, so `results.mjs` reads `/_app/version.json` off the deployment and resolves the

@@ -342,7 +342,7 @@ instrument has produced so far - latest verdict per check, all against productio
 
 | Check | Date | Verdict | What it left |
 | --- | --- | --- | --- |
-| COMM-1 | - | no row recorded | the runner exists and has never completed a run |
+| COMM-1 | 2026-08-20 | `PASS` clean `402fb2d9` | first completed run, and it found the campaign's 29th defect: `ensureWorkspaceByName` created a community, listed its salons and selected one without ever preparing the community's Graine distribution group, so the creator's first message was refused. Re-run after the fix: `latencyMs: 268`, `copies: {w1: 1, w2: 1}` |
 | COMM-2 | 2026-08-20 | `PASS` clean | - |
 | COMM-3 | 2026-08-20 | `PASS` clean | - |
 | COMM-4 | 2026-08-20 | `PASS` clean `247803ff` | one card per side, each worded for its own side, the Join button on the invitee's only, and all four counts unchanged across a reload. The three earlier `FAIL`s were the instrument: `ensureConversation` threw on every call, the count was taken by the expected WORDING (rebuilt from a first name the app never renders), and an ancestor carrying the community name was counted as a second card. Store rows: one per invitation on both devices, deterministic id, no twin |
@@ -352,7 +352,7 @@ instrument has produced so far - latest verdict per check, all against productio
 | COMM-8 | 2026-08-20 | `PASS` clean `fa317916` | re-run once both halves of its console reading could speak. Peer on the community roster, on none of the salon's, announced no seed; sidebar absent; the API refuses them `403`. Armed both ways: after the grant the peer's row appears (roster 1 -> 2) and its device says `seedAfterTheGrant: repaired` - the repair line the same run's FAIL put into the product |
 | COMM-9/10 | 2026-08-20 | `VACUOUS` | never re-run since the per-salon groups landed |
 | COMM-11 | 2026-08-20 | `PASS` clean | - |
-| COMM-12 | 2026-08-20 | `PASS-DIRTY` | re-run owed on a build where the watcher classifies its lines |
+| COMM-12 | 2026-08-20 | `VACUOUS` | three runs, and the third is what named the campaign's 30th defect - a community left the sidebar 1.5 s after it was created and the app moved the client into an unrelated one, so the arm's gestures went elsewhere. Two instrument faults came first: `setHistoryVisibility` returned before the save landed, and a swallowed `openCommunity` let a Graine history rule be written onto a community the check had never heard of (two COMM-1 debris communities on prod still carry it; `cleanup.mjs` takes them). **Re-run owed on the build carrying the prune fix** |
 | COMM-13 | 2026-08-20 | `PASS` clean | - |
 | COMM-15 | 2026-08-20 | `PASS` clean `939078aa` | first run; needed the native-dialog capability |
 | COMM-16 | 2026-08-20 | `PASS` clean | - |
