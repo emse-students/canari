@@ -583,6 +583,66 @@ export async function pressKey(cx, key) {
   await cx.send('Input.dispatchKeyEvent', { type: 'keyUp', ...k });
 }
 
+/**
+ * Runs `fn` with a listener that ANSWERS a native `window.confirm` / `alert` / `prompt`.
+ *
+ * WHY THE HARNESS NEEDED THIS AT ALL. Almost every confirmation in this product is a styled modal
+ * `confirmDialog` drives, and exactly one is not: closing a community poll calls `window.confirm`.
+ * A native dialog BLOCKS THE RENDERER - so the click that opens it never returns, because
+ * `clickAtPoint` parks the pointer with an `evaluate` and `lastClick` reads the recorder, and both
+ * are page evaluations that cannot be answered while a dialog is up. Without this the check does not
+ * fail, it HANGS for the CDP timeout and then reports a click that missed.
+ *
+ * IT ANSWERS THE REAL DIALOG, IT DOES NOT REMOVE IT. Overriding `window.confirm` from the page would
+ * have been one line, and would have measured a client the product does not ship: the gesture under
+ * test is a person reading a confirmation and accepting it. `Page.handleJavaScriptDialog` is what a
+ * person's click on "OK" is, and the browser accepts it while the renderer is blocked - the command
+ * is handled outside the page.
+ *
+ * IT RETURNS WHAT IT ANSWERED, and that is the point: `dialogs` carries every dialog's type and its
+ * MESSAGE, so a check can assert the app asked what it was supposed to ask. A helper that silently
+ * accepted everything would make "the confirmation was never shown" and "the confirmation was shown
+ * and accepted" the same observation.
+ *
+ * @param {object} cx CDP connection
+ * @param {() => Promise<any>} fn the gesture that provokes the dialog
+ * @param {{accept?: boolean, promptText?: string}} [opts] `accept:false` DISMISSES, which is how a
+ *   check proves the cancel path
+ * @returns {Promise<{value: any, dialogs: {type: string, message: string}[]}>}
+ */
+export async function answeringDialogs(cx, fn, { accept = true, promptText } = {}) {
+  await cx.send('Page.enable');
+  const dialogs = [];
+  let cursor = cx.events.length;
+  let running = true;
+
+  // A POLLED PUMP RATHER THAN A `ws` LISTENER, because the connection collects its events into an
+  // array and hands out no subscription - and `watch.mjs` empties that array between windows, so the
+  // cursor is re-based rather than trusted.
+  const pump = (async () => {
+    while (running) {
+      if (cursor > cx.events.length) cursor = 0;
+      while (cursor < cx.events.length) {
+        const ev = cx.events[cursor++];
+        if (ev.method !== 'Page.javascriptDialogOpening') continue;
+        dialogs.push({ type: ev.params?.type ?? null, message: ev.params?.message ?? '' });
+        await cx.send('Page.handleJavaScriptDialog', {
+          accept,
+          ...(promptText === undefined ? {} : { promptText }),
+        });
+      }
+      await new Promise((r) => setTimeout(r, 40));
+    }
+  })();
+
+  try {
+    return { value: await fn(), dialogs };
+  } finally {
+    running = false;
+    await pump;
+  }
+}
+
 /** Compact inventory of what a user could act on - the text substitute for a screenshot. */
 export const SNAPSHOT = `(function () {
   function vis(e) { var r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; }

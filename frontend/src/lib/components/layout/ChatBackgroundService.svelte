@@ -698,16 +698,31 @@
         appendLog(`Removed from channel #${event.channelName || event.channelId}`);
         showToast(m.channel_removed_from_channel({ channel: event.channelName || '' }), 'info');
       },
-      onChannelUpdated: (event: { channelId: string; name?: string }) => {
+      onChannelUpdated: (event: { channelId: string; name?: string; viewerCanWrite?: boolean }) => {
         if (!event.channelId) return;
         const channelConversationId = `channel_${event.channelId}`;
-        if (event.name) {
+        // ONE PASS FOR BOTH FACTS, and each applied only when the event carried it: a rename sends
+        // no verdict about writing and an access change sends no name. `canWrite` is what the chat
+        // view reads to decide whether to offer a composer at all, so this is the whole difference
+        // between learning of a new rule now and learning of it on the next full load.
+        if (event.name || typeof event.viewerCanWrite === 'boolean') {
           globalChannels.channelWorkspaces = globalChannels.channelWorkspaces.map((ws) => ({
             ...ws,
             channels: ws.channels.map((ch) =>
-              ch.id === channelConversationId ? { ...ch, name: event.name! } : ch
+              ch.id === channelConversationId
+                ? {
+                    ...ch,
+                    ...(event.name ? { name: event.name } : {}),
+                    ...(typeof event.viewerCanWrite === 'boolean'
+                      ? { canWrite: event.viewerCanWrite }
+                      : {}),
+                  }
+                : ch
             ),
           }));
+          appendLog(
+            `[CHANNEL] #${event.name ?? event.channelId} updated - canWrite=${String(event.viewerCanWrite ?? 'unchanged')}`
+          );
         }
         const convo = globalConvs.conversations.get(channelConversationId);
         if (convo && event.name) {

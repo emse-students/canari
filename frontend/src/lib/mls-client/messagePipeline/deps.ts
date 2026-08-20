@@ -57,7 +57,13 @@ export interface MessageHandlerDeps {
     /** Channel removals only: a public channel stays readable, so nothing is lost. */
     channelIsPrivate?: boolean;
   }) => void;
-  onChannelUpdated?: (event: { channelId: string; name?: string; workspaceId?: string }) => void;
+  onChannelUpdated?: (event: {
+    channelId: string;
+    name?: string;
+    workspaceId?: string;
+    /** The server's verdict on whether THIS device may post here. Absent = unchanged. */
+    viewerCanWrite?: boolean;
+  }) => void;
   onChannelDeleted?: (event: { channelId: string; workspaceId?: string }) => void;
   onWorkspaceUpdated?: (event: { workspaceId: string; imageMediaId?: string }) => void;
   /** This device's own role in a community changed - see `sessionTypes.onWorkspaceRoleChanged`. */

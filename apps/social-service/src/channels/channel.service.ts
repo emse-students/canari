@@ -230,6 +230,53 @@ export class ChannelService {
   }
 
   /**
+   * Who, among `userIds`, may write in `channel` - the same decision {@link canWriteToChannel}
+   * enforces and the workspace listing answers, computed for a whole audience at once.
+   *
+   * TWO QUERIES WHATEVER THE AUDIENCE'S SIZE, because the roles are a property of the workspace and
+   * not of the reader: resolving them per user would be one round trip per member of a community
+   * every time an administrator saves the access panel.
+   *
+   * A user the workspace has no member row for gets `false` under a restricted policy - they hold
+   * no roles, which is what the policy asks about. Under `everyone` nobody is asked at all.
+   */
+  private async writeDecisionsFor(
+    channel: Channel,
+    userIds: string[]
+  ): Promise<Map<string, boolean>> {
+    const policy: ChannelWritePolicy = channel.writePolicy ?? 'everyone';
+    const decisions = new Map<string, boolean>();
+    if (policy === 'everyone') {
+      for (const id of userIds) decisions.set(id, true);
+      return decisions;
+    }
+
+    const members = await this.memberRepo.find({ where: { workspaceId: channel.workspaceId } });
+    const roles = await this.roleRepo.find({ where: { workspaceId: channel.workspaceId } });
+    const manageRoleIds = new Set(
+      roles
+        .filter((r) => r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE))
+        .map((r) => r.id)
+    );
+    const moderateRoleIds = new Set(
+      roles.filter((r) => this.roleGrantsModeration(r.permissions)).map((r) => r.id)
+    );
+    const byUser = new Map(members.map((m) => [m.userId.trim().toLowerCase(), m]));
+
+    for (const id of userIds) {
+      const roleIds = byUser.get(id.trim().toLowerCase())?.roleIds ?? [];
+      decisions.set(
+        id,
+        writePolicyAllows(policy, {
+          canManage: roleIds.some((r) => manageRoleIds.has(r)),
+          canModerate: roleIds.some((r) => moderateRoleIds.has(r)),
+        })
+      );
+    }
+    return decisions;
+  }
+
+  /**
    * Whether `member` may act on OTHER members' messages in their workspace - the concrete
    * meaning of the `channel.moderate` permission advertised in the role matrix ("pin or delete
    * other members' messages"). MANAGE_CHANNEL and MANAGE_WORKSPACE subsume it.
@@ -1906,6 +1953,36 @@ export class ChannelService {
     // roster nothing consults - inert if it survives, and refusing the change over it would be
     // worse. The community's group takes over from here.
     if (!isPrivate && wasPrivate) await this.retireChannelDistributionGroup(channel, 'made_public');
+
+    // THE RULE CHANGED FOR PEOPLE WHO ARE ALREADY LOOKING AT THE SALON, and until 2026-08-20 they
+    // learned of it only on their next full load: COMM-7 found a member still holding a composer in
+    // a salon that had just been reserved for administrators, typing into it and collecting a 403.
+    // The server refusing correctly is half a rule - the other half is the person being told.
+    //
+    // THE DECISION TRAVELS, NEVER THE POLICY, so the audience is SPLIT BY THE ANSWER and each half
+    // is sent its own: one payload cannot carry a per-viewer verdict, and a client holds none of the
+    // roles it would need to derive one. Two publishes at most, whatever the community's size.
+    const audience = await this.channelAudience(channel);
+    const decisions = await this.writeDecisionsFor(channel, audience);
+    for (const mayWrite of [true, false]) {
+      const half = audience.filter((u) => (decisions.get(u) ?? true) === mayWrite);
+      if (half.length === 0) continue;
+      await this.redis.publishChannelEvent(
+        'channel.updated',
+        {
+          channelId,
+          workspaceId: channel.workspaceId,
+          isPrivate: channel.isPrivate,
+          viewerCanWrite: mayWrite,
+        },
+        half
+      );
+    }
+    this.logger.log(
+      `[CHANNEL] access updated channel=${channelId} private=${channel.isPrivate} ` +
+        `writePolicy=${channel.writePolicy ?? 'everyone'} audience=${audience.length} ` +
+        `mayWrite=${[...decisions.values()].filter(Boolean).length}`
+    );
 
     return {
       ok: true,

@@ -173,6 +173,21 @@ Communities use a deliberately simple, two-level model (no per-channel permissio
   posting: `everyone` (default), `admins_moderators` (roles with `channel.moderate` or
   `workspace.manage`), or `admins` (`workspace.manage` only). Enforced in `sendMessage` via
   `canWriteToChannel`; used for announcement-style channels. Set from the channel settings "Accès" tab.
+  **`writePolicyAllows` in `permissions.ts` is the only definition of the rule**, and three callers
+  read it: `canWriteToChannel` per message, `getWorkspaceBySlug` for the `viewerCanWrite` it projects
+  on every channel, and `writeDecisionsFor` when the policy changes. The client is sent the DECISION
+  and never the policy - it holds no roles to apply one - and `ChatArea` replaces the composer with
+  `chat_channel_read_only` when the answer is no. Absent means YES, deliberately: a client too old to
+  be sent the field fails open onto the server's refusal, which is the guarantee.
+- **A change is ANNOUNCED, split by the answer.** A listing is fetched once, so `viewerCanWrite`
+  alone left everyone already in the salon holding a stale composer until their next full load -
+  COMM-7 failed twice for this, the second time on the fix for the first. `updateChannelAccess` now
+  publishes `channel.updated` carrying `viewerCanWrite`, **once per distinct verdict**: one payload
+  cannot carry a per-viewer answer, so the audience is partitioned and each half addressed with its
+  own. Two publishes at most. `writeDecisionsFor` costs two queries whatever the community's size.
+  The audience is read AFTER the save, so a salon that has just become private announces to its new
+  roster only. On the client, an ABSENT `viewerCanWrite` means unchanged - `renameChannel` reuses the
+  same event and must not silence anybody's composer.
 
 #### Message moderation (`channel.moderate`)
 
@@ -472,7 +487,7 @@ The social-service publishes to `chat:channel_events`:
 | `channel.member.kicked` | `kickFromWorkspace`, `leaveWorkspace` |
 | `channel.member.removed` | `removeMemberFromChannel` |
 | `channel.message.created` / `.deleted` | send, delete |
-| `channel.updated` / `.deleted` | rename, delete |
+| `channel.updated` / `.deleted` | rename, **access change** (carries `viewerCanWrite`, one publish per verdict), delete |
 | `workspace.updated` / `.deleted` | cover image change, soft delete |
 | `channel.typing`, `channel.pin`, `channel.poll.vote` | live UI signals |
 

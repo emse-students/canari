@@ -164,6 +164,10 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
       channelId: String(data.channelId || ''),
       name: data.name,
       workspaceId: data.workspaceId,
+      // ONLY WHEN THE SERVER ACTUALLY DECIDED. A rename carries no verdict about writing, and
+      // reading an absent field as `false` would silence the composer of everyone in a salon
+      // somebody renamed. Absent means unchanged, and the handler must treat it that way.
+      viewerCanWrite: typeof data.viewerCanWrite === 'boolean' ? data.viewerCanWrite : undefined,
     });
     return;
   }

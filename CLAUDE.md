@@ -129,30 +129,17 @@ before the campaign restarts.** Everything actionable is HERE, in order, one lin
 lives where the link says and **is not restated**. An item is done when its code, its tests, its doc
 and its commit are in, and it is then deleted from BOTH files.
 
-**The campaign started 2026-08-19 and has produced TWENTY-TWO defects, all fixed.** The
-twenty-second came from COMM-4 reporting **VACUOUS**, not FAIL, and left three rules in
-[durable-rules](docs/wiki/durable-rules.md): a URL is not an address until the credential fits it, a
-stub that answers any URL tests everything except what a client call gets wrong, and a guard that
-stops failing open looks like a regression and is a measurement. The twenty-first is COMM-13's, on its FIRST run, and its four OTHER assertions are what made it
-readable - an administrator's join was complete in the database, in the key service and in the
-member list, and absent only from the screen of the person who performed it, because a sidebar
-add-if-absent was reused by the reload path. The twentieth is the first PRIVACY one and left THREE
-rules: **A RULE READ AT TWO MOMENTS MUST BE GATED AT BOTH**;
-**AN INVARIANT THAT HOLDS "EVENTUALLY" DOES NOT HOLD AT THE INSTANT A GUARD READS IT** - the first
-fix was refused by the same check, because rotation is decided by the SENDER from the epoch it has
-PROCESSED and a join is an EXTERNAL commit; and **WHEN TWO DEVICES MUST AGREE ON A NUMBER, HAVE THE
-SERVER COMPUTE IT** ([durable-rules](docs/wiki/durable-rules.md),
-[cross-client-testing](docs/wiki/cross-client-testing.md),
-[graine](docs/wiki/protocols/channel-encryption.md) §WP-34/35, the only copies). SEVEN came from
-ONE private salon driven on prod through create -> public -> private -> a SECOND MEMBER, and not
-one was reachable from the repository: a private salon with two people in it did not work AT ALL,
-TWO came from reading a single log line the harness had left unclassified
-([graine](docs/wiki/protocols/channel-encryption.md) §13, the only copy), and the LAST TWO came from
-COMM-16 failing and being believed: deleting a salon ARCHIVED it after destroying its key, the same
-defect the community's own deletion had closed two days earlier one scope up
-([backlog](docs/wiki/backlog.md), [social-service](docs/wiki/services/social-service.md#deleting-a-channel)).
-**A check that fails is a claim to CHECK, never a check to soften** - the reflex was to relax the
-assertion to match the server, and it was the assertion that was right. **That is the whole lesson of the week, and it
+**The campaign started 2026-08-19 and has produced TWENTY-FOUR defects, twenty-three fixed and ONE
+OPEN** - COMM-4's, in item 3 below. **Every story is in `CHANGELOG.md` and every rule one left is in
+[durable-rules](docs/wiki/durable-rules.md); neither is restated here.** The twenty-fourth is COMM-7's,
+fixed 2026-08-20: a salon reserved for administrators still handed every member a composer, because
+`writePolicy` reached the settings modal and nothing else. The server now answers the DECISION
+(`viewerCanWrite`) rather than the policy, and `writePolicyAllows` is its only definition - which is
+what exposed a latent second fault, `canWriteToChannel` counting a moderator differently from every
+other reader. Seven of the twenty-four came from ONE private salon driven on prod through create ->
+public -> private -> a SECOND MEMBER, and not one was reachable from the repository. **A check that
+fails is a claim to CHECK, never a check to soften** - the reflex was to relax the assertion to match
+the server, and it was the assertion that was right. **That is the whole lesson of the week, and it
 is now a rule: a lifecycle is a SEQUENCE, and a unit test arranges the state it asserts on.**
 1-2 are numbers a run has to produce; 3 is the community phase, stale AND never run, where the
 rework's remaining risk sits; 4 is the campaign.
@@ -179,34 +166,40 @@ in the field (user, 2026-08-19)**, so the iOS ladder cannot run and parity is ke
     comes from a run.** Every accusation in `displayName.ts` now ends `(failed/attempted, X%)`.
     There is no client telemetry, so the rate is read from a run log on each platform. **The
     `FAILURE_BACKOFF_MS` decision is what the number is FOR** ([backlog](docs/wiki/backlog.md)).
-3. **THE COMM RUNNERS - the rows were rewritten 2026-08-20, THIRTEEN written, six run.** The stale
-    vocabulary is gone (COMM-9 and COMM-13 named mechanisms that do not exist, COMM-22 timed a
-    deleted function) and three rows were added for the per-salon groups, so the phase carries
-    TWENTY-FIVE; the table on
-    [cross-client-testing](docs/wiki/cross-client-testing.md) is the only copy. `comm.mjs` holds the
-    shared vocabulary, and COMM-1, 8, 9/10, 12, 23 and 24 run (each PASSed while proving the
-    instrument, so the board rows stay `pending` - they are campaign verdicts only on the final
-    build). **COMM-12 FAILED twice, COMM-13 once and COMM-4 came back VACUOUS, all four correctly** -
-    COMM-12's second failure refuted the fix for its first, COMM-13's re-run is a clean PASS, and
-    COMM-4's second run found the NEXT defect: the invitee is shown no card at all. The frame
-    reaches their DM and is acknowledged, and **a system event was the one message kind that logged
-    nothing**, so no log could say which of the three readings of that zero was true. Both lines now
-    exist and `inviteeSaid` carries them into the record; the defect is OPEN and is the next thing
-    to close.
-    **The user's decision, 2026-08-20: ALL TWENTY-FIVE ARE AUTOMATED, including the four that need
-    more than two Chromes** - COMM-14 drives real push, COMM-17/18 drive the phone through `adb`,
-    COMM-25 needs a second device for one account. The harness therefore grows three capabilities it
-    does not have, and each is itself unproven until a check that uses it produces a result it could
-    not have produced by accident.
-    **And each runner is RUN ON PROD as it is written** (the user's decision, same day): writing all
-    twenty then running once is verification by COMPILING, which is what produced five of this
-    week's fifteen defects. Every runner deletes its own venue, so debris only appears when one
-    CRASHES; `cleanup.mjs` was a one-off for a MiTV channel and is now the real sweeper - every
-    community named `C<n> COMM<n>-<mark>`, deleted THROUGH the product so its Graine group goes with
-    it, `--dry` to look first. **Owed: run it before the campaign** (`d6292672` is waiting).
-    **This is where the rework's remaining risk sits** - everything about it is verified by
-    COMPILING, and COMM-8/9/13 must be checked against the DATABASE, since what they assert is what
-    a device is no longer SENT.
+3. **THE COMM RUNNERS - SIXTEEN of the twenty-five written, and every one of them RUN ON PROD as it
+    was written** (the user's decision, 2026-08-20: writing all twenty then running once is
+    verification by COMPILING, which is what produced five of this week's defects). Written: 1, 2, 3,
+    4, 5, 6, 7, 8, 9/10, 11, 12, 13, 16, 19, 23/24, sharing `comm.mjs`. **Remaining: 14, 15, 17/18,
+    20, 21, 22, 25**, and three of them need a capability the harness does not have - real push
+    (COMM-14), the phone through `adb` (COMM-17/18), a second device for one account (COMM-25). Each
+    capability is itself unproven until a check using it produces a result it could not have produced
+    by accident. Why the rows were rewritten is on
+    [cross-client-campaign](docs/wiki/cross-client-campaign.md#rows-that-named-a-mechanism-the-product-does-not-have);
+    every verdict the instrument has produced is on
+    [cross-client-testing](docs/wiki/cross-client-testing.md) §9, the only copy. **Board rows stay
+    `pending` on purpose** - a runner that PASSes while still proving itself is not a campaign verdict.
+    **Owed before the campaign, and each is a run, not a decision:**
+    - **COMM-4's defect, the only one still OPEN.** The invitee is shown NO card and the inviter is
+      shown TWO. Localised as far as a log could take it: the invitee's device dispatches and handles
+      the event, and the duplicate-conversation reading is dead (`rows: {onTheInviter: 1,
+      onTheInvitee: 1}`); the inviter's second card carries a random id, so one producer bypasses
+      `channelInviteMessageId`. The invitee's card took the BULK-INGEST path and `batchAddMessages`
+      logged nothing on success - **the one inbound path with no success line**, now audible on both
+      outcomes and classified in `watch.mjs`. Re-run COMM-4 on the deployed lines before touching the
+      code: the next log says which of the three readings of that zero is true.
+    - **COMM-7 re-run** on the deployed fix (it FAILED, the defect is fixed, a clean PASS is owed).
+    - **COMM-12 re-run** (`PASS-DIRTY`) and **COMM-9/10 re-run** (`VACUOUS` since the per-salon
+      groups landed). **COMM-1 has never recorded a verdict at all** - the runner exists, no run of it
+      has ever completed.
+    - **The phone shows a GENERIC notification body** (user, 2026-08-20, on an app that is not up to
+      date). That is COMM-14's row; it is an observation, not a defect, until that runner says so.
+    - **`cleanup.mjs` before the campaign** - `d6292672 | C6 COMM6-mt1gh7hx4it` is waiting, plus
+      anything a crashed runner has left since. Every venue is `C<n> COMM<n>-<mark>`, deleted THROUGH
+      the product so its Graine group goes with it; `--dry` to look first.
+    **A verdict now names the build it ran on**, from `60c33b92` onward: nothing the web client prints
+    names its build, so `results.mjs` reads `/_app/version.json` off the deployment and resolves the
+    stamp to the newest commit on `origin/main` at or before it. It THROWS rather than degrade - a
+    check that cannot date its build produces a verdict nobody can attribute.
 4. **THEN, and only then:** recreate the venue clean, rebuild the Android APK once, run the
     campaign. **Everything must end green, so every phase runs.** What it costs, the ladder's order
     and the two decisions it turns on are on

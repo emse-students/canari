@@ -35,7 +35,13 @@ export interface ChatSessionCallbacks {
   selectConversation: (name: string) => void;
   onChannelMemberJoined?: (event: any) => void;
   onChannelMemberKicked?: (event: any) => void;
-  onChannelUpdated?: (event: { channelId: string; name?: string; workspaceId?: string }) => void;
+  onChannelUpdated?: (event: {
+    channelId: string;
+    name?: string;
+    workspaceId?: string;
+    /** The server's verdict on whether THIS device may post here. Absent = unchanged. */
+    viewerCanWrite?: boolean;
+  }) => void;
   onChannelDeleted?: (event: { channelId: string; workspaceId?: string }) => void;
   onWorkspaceUpdated?: (event: { workspaceId: string; imageMediaId?: string }) => void;
   /**

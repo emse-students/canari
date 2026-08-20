@@ -21,7 +21,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { awaitAppSettled, awaitListed, clearOverlays, evaluate, goto, realClick, until } from './chat.mjs';
-import { RESOLVE } from './cdp.mjs';
+import { answeringDialogs, RESOLVE } from './cdp.mjs';
 
 const LOCALE = process.argv.includes('--locale')
   ? process.argv[process.argv.indexOf('--locale') + 1]
@@ -1158,4 +1158,169 @@ export async function rotateInvite(cx) {
     20000
   );
   return evaluate(cx, `(document.querySelector('input[readonly]') || {}).value || ''`);
+}
+
+/**
+ * Marks the `index`-th match of a CSS selector so a real click can reach it.
+ *
+ * `document.querySelector` returns the first match and nothing in this app gives its repeated
+ * fields an id, so the second option field of a poll cannot be named at all. Marked here and then
+ * CLICKED for real, rather than focused from script: a click is the gesture, and `el.focus()` skips
+ * whatever the component does on pointerdown - which is exactly the kind of shortcut that makes a
+ * harness agree with a product that no longer works.
+ */
+async function markNth(cx, css, index, tag) {
+  const outcome = await evaluate(
+    cx,
+    `(function () {
+       var all = [].slice.call(document.querySelectorAll(${JSON.stringify(css)}));
+       var el = all[${index}];
+       if (!el) return 'no-element';
+       el.setAttribute('data-harness', ${JSON.stringify(tag)});
+       return 'marked';
+     })()`
+  );
+  if (outcome !== 'marked') throw new Error(`markNth(${css}, ${index}): ${outcome}`);
+  return `[data-harness=${JSON.stringify(tag)}]`;
+}
+
+/** Opens the poll composer from the message composer. Channels only - a DM has no such button. */
+export async function openPollComposer(cx) {
+  const label = caption('chat_create_poll_label');
+  await realClick(cx, `[aria-label=${JSON.stringify(label)}]`);
+  await until(cx, `!!document.querySelector('#poll-question')`, 10000);
+}
+
+/**
+ * Fills the poll composer and sends it. Returns nothing - what the poll BECAME is read from the
+ * card and from the database, never from the form that was just used to type it.
+ *
+ * The modal ships exactly two option fields and grows one per "Ajouter une option", so a poll of
+ * three options needs one click before the third field exists. Written as a loop over the wanted
+ * options rather than as a special case, because a check asking for two must exercise the same code
+ * as one asking for four.
+ */
+export async function composePoll(cx, { question, options, multiple = false }) {
+  if (!Array.isArray(options) || options.length < 2) {
+    throw new Error('composePoll: a poll needs at least two options');
+  }
+  await realClick(cx, '#poll-question');
+  await cx.send('Input.insertText', { text: question });
+
+  const field = `input[placeholder=${JSON.stringify(caption('channel_poll_option_placeholder'))}]`;
+  for (let i = 0; i < options.length; i++) {
+    if (i >= 2) {
+      await realClick(cx, control('channel_poll_add_option'));
+      await until(cx, `document.querySelectorAll(${JSON.stringify(field)}).length > ${i}`, 8000);
+    }
+    await realClick(cx, await markNth(cx, field, i, `poll-option-${i}`));
+    await cx.send('Input.insertText', { text: options[i] });
+  }
+
+  if (multiple) await realClick(cx, control('post_poll_allow_multiple_label'));
+
+  const submit = caption('channel_poll_submit_button');
+  await until(
+    cx,
+    `(function () {
+       var b = [].slice.call(document.querySelectorAll('button')).filter(function (x) {
+         return (x.innerText || '').indexOf(${JSON.stringify(submit)}) >= 0;
+       })[0];
+       return !!b && !b.disabled;
+     })()`,
+    8000
+  );
+  await realClick(cx, `text=${submit}`);
+  // The modal closes only once the send RESOLVED, so its disappearance is the send's own receipt.
+  await until(cx, `!document.querySelector('#poll-question')`, 30000);
+}
+
+/**
+ * The poll card as this client renders it, or `{ present: false }`.
+ *
+ * READ BY QUESTION, because a salon may carry several polls and a check that read "the card" would
+ * silently follow whichever rendered first. Every figure a check could want comes from the card
+ * itself - the option labels, each option's tally, whether THIS client shows it selected
+ * (`aria-pressed`), and whether the poll is over - so a runner never has to re-derive a percentage.
+ *
+ * `closable` is the author's / moderator's "Cloturer le sondage" being offered, which is a
+ * permission statement rather than a styling one. It sits OUTSIDE the card, beside it, so it is
+ * looked for in the parent.
+ */
+export async function pollCard(cx, question) {
+  return JSON.parse(
+    await evaluate(
+      cx,
+      `JSON.stringify((function () {
+         var heads = [].slice.call(document.querySelectorAll('h4')).filter(function (h) {
+           return (h.innerText || '').trim() === ${JSON.stringify(question)};
+         });
+         if (heads.length === 0) return { present: false, cards: 0 };
+         // The card is the nearest ancestor holding the option buttons - found by walking up rather
+         // than by class, so a restyling moves nothing here.
+         var card = heads[0];
+         while (card && card.querySelectorAll('button[aria-pressed]').length === 0) card = card.parentElement;
+         if (!card) return { present: true, cards: heads.length, options: [], ended: null, closable: null };
+         var buttons = [].slice.call(card.querySelectorAll('button[aria-pressed]'));
+         var options = buttons.map(function (b) {
+           var label = b.querySelector('span.truncate');
+           var badge = b.querySelector('[role="button"]');
+           return {
+             label: label ? (label.innerText || '').trim() : '',
+             votes: badge ? Number((badge.innerText || '').trim()) : null,
+             selected: b.getAttribute('aria-pressed') === 'true',
+           };
+         });
+         var text = card.innerText || '';
+         var around = card.parentElement ? card.parentElement.innerText || '' : text;
+         return {
+           present: true,
+           cards: heads.length,
+           options: options,
+           ended: text.indexOf(${JSON.stringify(caption('post_poll_ended_full_label'))}) >= 0,
+           closable: around.indexOf(${JSON.stringify(caption('channel_poll_close_button'))}) >= 0,
+         };
+       })())`
+    )
+  );
+}
+
+/**
+ * Clicks one option of a poll. A single-choice poll SENDS on the click; a multiple-choice one only
+ * toggles, and the caller then sends with `submitPollVote`.
+ *
+ * The option is looked up on the card first so an absent label fails as "that is not an option",
+ * naming the ones there are, rather than as a click that found nothing fifteen seconds later.
+ */
+export async function votePollOption(cx, question, label) {
+  const card = await pollCard(cx, question);
+  if (!card.present) throw new Error(`votePollOption: no poll card for ${JSON.stringify(question)}`);
+  if (!card.options.some((o) => o.label === label)) {
+    throw new Error(
+      `votePollOption: ${JSON.stringify(label)} is not an option - ` +
+        JSON.stringify(card.options.map((o) => o.label))
+    );
+  }
+  await realClick(cx, `text=${label}`);
+}
+
+/** Sends a multiple-choice selection ("Voter"). Single-choice polls never draw this button. */
+export async function submitPollVote(cx) {
+  await realClick(cx, control('post_sondage_voter'));
+}
+
+/**
+ * Closes a poll early, ANSWERING THE NATIVE CONFIRMATION and returning what it said.
+ *
+ * This is the one confirmation in the product that is a `window.confirm` rather than the styled
+ * dialog every other destructive action uses - so it blocks the renderer, and every gesture in this
+ * module would hang behind it. `answeringDialogs` accepts the real dialog rather than replacing it;
+ * the returned message is the evidence that the app asked before closing, which is the whole
+ * difference between a confirmed close and a click that closed a poll silently.
+ */
+export async function closePollCard(cx) {
+  const { dialogs } = await answeringDialogs(cx, () =>
+    realClick(cx, control('channel_poll_close_button'))
+  );
+  return dialogs;
 }

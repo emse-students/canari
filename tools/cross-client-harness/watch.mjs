@@ -118,6 +118,9 @@ const BENIGN = [
   // nothing at all, which is what made an invitation card that never appeared unreadable in a log.
   /^\[ADD_MSG\] Batch into "[^"]*": \d+ added, \d+ upgraded/,
   /^\[ADD_MSG\] Batch into "[^"]*": \d+ message\(s\), all already held$/,
+  // The salon's own row changed under this client: a rename, or the server's verdict on whether it
+  // may still post here. Both are a sidebar update and neither is a fault.
+  /^\[CHANNEL\] #\S+ updated - canWrite=(true|false|unchanged)$/,
   // The permission grid saying a cell was cycled, and the panel saying it is saving that cell.
   // `Log.d` renders its payload as `Object` in a console tail, so these two say WHICH gesture ran
   // and nothing about what it carried - which is all a check needs from them: they appear only when
