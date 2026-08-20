@@ -129,8 +129,10 @@ before the campaign restarts.** Everything actionable is HERE, in order, one lin
 lives where the link says and **is not restated**. An item is done when its code, its tests, its doc
 and its commit are in, and it is then deleted from BOTH files.
 
-**The campaign started 2026-08-19 and has produced TWENTY-NINE defects, twenty-eight fixed and ONE
-OPEN** - COMM-4's, in item 3 below. **Every story is in `CHANGELOG.md` and every rule one left is in
+**The campaign started 2026-08-19 and has produced TWENTY-EIGHT defects, ALL FIXED.** The
+twenty-ninth was withdrawn on 2026-08-20: COMM-4's was the INSTRUMENT, three faults deep, and the
+product was right throughout ([testing-methodology](docs/wiki/testing-methodology.md) rules 23 and
+24 are what it left). **Every story is in `CHANGELOG.md` and every rule one left is in
 [durable-rules](docs/wiki/durable-rules.md); neither is restated here.** The twenty-sixth is COMM-20's, on its FIRST run: a
 permission-grid cell IS a delta and was being sent as the role's whole list, so two administrators
 toggling two DIFFERENT keys of one role erased each other's work and the loser's grid kept drawing a
@@ -180,27 +182,11 @@ in the field (user, 2026-08-19)**, so the iOS ladder cannot run and parity is ke
     [cross-client-testing](docs/wiki/cross-client-testing.md) §9, the only copy. **Board rows stay
     `pending` on purpose** - a runner that PASSes while still proving itself is not a campaign verdict.
     **Owed before the campaign, and each is a run, not a decision:**
-    - **COMM-4's defect, the only one still OPEN.** The invitee is shown NO card and the inviter is
-      shown TWO. Localised as far as a log could take it: the invitee's device dispatches and handles
-      the event, and the duplicate-conversation reading is dead (`rows: {onTheInviter: 1,
-      onTheInvitee: 1}`); the inviter's second card carries a random id, so one producer bypasses
-      `channelInviteMessageId`. The invitee's card took the BULK-INGEST path and `batchAddMessages`
-      logged nothing on success - **the one inbound path with no success line**, now audible on both
-      outcomes and classified in `watch.mjs`. Re-run COMM-4 on the deployed lines before touching the
-      code: the next log says which of the three readings of that zero is true.
-    - **COMM-20 re-run, a FIFTH time.** Four runs, three defects, each only visible once the one before
-      it was fixed: the browser sent the role's whole list; the server then read-modify-wrote the row
-      in memory; then the announcement that would have corrected the loser's grid turned out to be
-      dropped by BOTH socket clients along with every other `workspace.*` event. The fourth run has
-      `outcome: "both edits applied"` and ONE grid still stale - the writer was applying its own HTTP
-      response as state, racing the announcement, so whichever response landed second won. The
-      announcement is now the only writer. **The fifth run is what closes it, and nothing else has.**
-    - **COMM-5 re-run - its recorded `PASS` is STALE**, earned before `capabilityIsLive` was added to
-      its expectations, and its own row says `liveWithoutReload: false`. That `false` was the
-      dropped-`workspace.*` defect sitting unread under a green verdict for fifteen hours; rule 18b in
-      [testing-methodology](docs/wiki/testing-methodology.md) is what makes the next one computable,
-      and every row now carries `check` + `checkSha`.
     - **COMM-7 re-run** on the deployed fix (it FAILED, the defect is fixed, a clean PASS is owed).
+    - **COMM-8 re-run - its recorded `PASS` is STALE by rule 18b.** It was earned 2026-08-20T00:30Z,
+      before `614bddbd` gave the runner its console reading ("the peer's own device never announced a
+      seed for this salon"); that assertion then reached `RegExp` with its backslashes eaten, so it
+      could not say yes until it was fixed the same evening. Nothing has run it since either change.
     - **COMM-12 re-run** (`PASS-DIRTY`) and **COMM-9/10 re-run** (`VACUOUS` since the per-salon
       groups landed). **COMM-1 has never recorded a verdict at all** - the runner exists, no run of it
       has ever completed.

@@ -921,7 +921,7 @@ export async function openConversation(cx, name) {
  * The single source of truth for "which conversation am I looking at" - {@link SAMPLE} reads it too,
  * so the answer cannot drift between a sample and a precondition.
  */
-export const HEADER_NAME = `(function () {
+export const HEADER_NAME = String.raw`(function () {
   var pane = ${PANE};
   var h = pane ? pane.querySelector('header') : null;
   return h ? h.innerText.replace(/[\r\n]+/g, ' ').trim().slice(0, 80) : '';

@@ -345,11 +345,11 @@ instrument has produced so far - latest verdict per check, all against productio
 | COMM-1 | - | no row recorded | the runner exists and has never completed a run |
 | COMM-2 | 2026-08-20 | `PASS` clean | - |
 | COMM-3 | 2026-08-20 | `PASS` clean | - |
-| COMM-4 | 2026-08-20 | `FAIL` clean | the invitee is shown no card - OPEN, in `CLAUDE.md` |
+| COMM-4 | 2026-08-20 | `PASS` clean `247803ff` | one card per side, each worded for its own side, the Join button on the invitee's only, and all four counts unchanged across a reload. The three earlier `FAIL`s were the instrument: `ensureConversation` threw on every call, the count was taken by the expected WORDING (rebuilt from a first name the app never renders), and an ancestor carrying the community name was counted as a second card. Store rows: one per invitation on both devices, deterministic id, no twin |
 | COMM-5 | 2026-08-20 | `PASS` clean `ce6ef963` | re-run under the tightened expectations: `liveWithoutReload` and `capabilityIsLive` are both true for the first time, so a role change now reaches an open client without a reload |
 | COMM-6 | 2026-08-20 | `PASS` clean `ce6ef963` | re-run once the grid was derived from the announcement alone; the six offered are the six enforced, the administrator column is locked, a toggle reaches the column and comes back |
 | COMM-7 | 2026-08-20 | `PASS-DIRTY` `ce6ef963` | two defects, both fixed, and all five assertions now hold. The dirt is one line: `Log.d` takes a TAG and a payload, and the read receipt passed its whole message as the tag, so it rendered `[[CHANNEL_READ] ...]` and matched no rule. Re-run owed on the deployed shape |
-| COMM-8 | 2026-08-20 | `PASS` clean | - |
+| COMM-8 | 2026-08-20 | `PASS` clean | STALE by rule 18b: earned 00:30Z, before `614bddbd` added the console reading, whose pattern then reached `RegExp` with its backslashes eaten and could not say yes. Re-run owed |
 | COMM-9/10 | 2026-08-20 | `VACUOUS` | never re-run since the per-salon groups landed |
 | COMM-11 | 2026-08-20 | `PASS` clean | - |
 | COMM-12 | 2026-08-20 | `PASS-DIRTY` | re-run owed on a build where the watcher classifies its lines |

@@ -17,7 +17,7 @@ const marks = [];
 let stop = false;
 const t0 = Date.now();
 
-const PROBE = `(function () {
+const PROBE = String.raw`(function () {
   var b = null, all = document.querySelectorAll('div');
   for (var i = 0; i < all.length; i++) {
     var t = (all[i].innerText || '').trim();

@@ -42,12 +42,13 @@
 import { client, ensureConversation, evaluate, goto } from './chat.mjs';
 import {
   caption,
-  captionWith,
+  commonTail,
   createCommunity,
   deleteCommunity,
   enterCommunities,
   inviteToCommunity,
   openCommunity,
+  saysMessage,
 } from './comm.mjs';
 import { communityRole, userIdOf, workspaceIdOf } from './grainedb.mjs';
 import { OWNER_NAME, PEER_NAME, PORTS } from './names.mjs';
@@ -75,10 +76,33 @@ const step = async (name, fn) => {
 
 const peerId = await step('resolve the peer user id', () => userIdOf(PEER_NAME));
 
-/** The wording each side is supposed to be looking at, taken from the app's own message file. */
-const SENT_TEXT = captionWith('msg_channel_invite_sent_description', { member: PEER_NAME });
-const GOT_TEXT = captionWith('msg_channel_invite_description_by', { inviter: OWNER_NAME });
+/**
+ * The wording each side is supposed to be looking at, judged by its LITERAL parts.
+ *
+ * Never rebuilt with a name from `names.mjs`: those are what the sidebar is searched by, and a card
+ * is worded with what the profile resolves to. See `saysMessage`.
+ */
+const SENT_KEY = 'msg_channel_invite_sent_description';
+const GOT_KEY = 'msg_channel_invite_description_by';
 const JOIN_TEXT = caption('msg_channel_invite_join_button');
+
+/**
+ * The tail all THREE invitation wordings share, so a card is FOUND before it is judged.
+ *
+ * COUNTING BY THE EXPECTED WORDING CANNOT TELL AN ABSENT CARD FROM AN UNEXPECTED ONE, and on
+ * 2026-08-20 that is exactly what it produced: the invitee's card was written (`1 added` in the
+ * batch) and counted zero, which reads as a delivery loss. `MessageBubble` has a third branch -
+ * `msg_channel_invite_description`, the wording when the envelope carries no `inviterName` - and a
+ * card rendered that way matches neither side's expected text.
+ *
+ * So the card is found by what every variant ends with, and what it actually SAYS is reported next
+ * to the count. The zero then names its own cause instead of leaving three readings open.
+ */
+const DESC_TAIL = commonTail(
+  'msg_channel_invite_sent_description',
+  'msg_channel_invite_description_by',
+  'msg_channel_invite_description'
+);
 
 /**
  * The invitation cards for ONE community in the open conversation, and whether each offers a Join.
@@ -86,35 +110,47 @@ const JOIN_TEXT = caption('msg_channel_invite_join_button');
  * NO SELECTOR, BECAUSE THERE IS NO HOOK. The card carries no test id and its only distinguishing
  * markup is Tailwind colour classes, which are exactly the thing a style commit rewrites - so it is
  * found by its own text instead: the innermost element carrying the description, then the nearest
- * ancestor that also carries the community name, which is the card root by construction (the header
- * line and the description are siblings inside it).
+ * ancestor that carries the community name AND holds that one description alone - the header line
+ * and the description are siblings inside the card, and nothing smaller than the card holds both.
  *
- * @returns `{ cards, withJoin }` - how many cards for this community, and how many carry the button.
- *   `cards: null` means there was no conversation pane to read, which is a different finding from
- *   zero and must not be rounded into one.
+ * @returns `{ cards, withJoin, said }` - how many cards for this community, how many carry the
+ *   button, and what each one actually says. `cards: null` means there was no conversation pane to
+ *   read, which is a different finding from zero and must not be rounded into one.
  */
-async function inviteCards(cx, communityName, descText) {
+async function inviteCards(cx, communityName) {
   const raw = await evaluate(
     cx,
     `JSON.stringify((function () {
-       var desc = ${JSON.stringify(descText)};
+       var desc = ${JSON.stringify(DESC_TAIL)};
        var name = ${JSON.stringify(communityName)};
        var join = ${JSON.stringify(JOIN_TEXT)};
        var composer = document.querySelector('.chat-composer-footer .chat-composer-editor');
        var pane = composer ? composer.closest('section') : null;
-       if (!pane) return { cards: null, withJoin: null };
+       if (!pane) return { cards: null, withJoin: null, said: null };
        var holders = [].slice.call(pane.querySelectorAll('*')).filter(function (el) {
          if ((el.innerText || '').indexOf(desc) === -1) return false;
          return ![].slice.call(el.children).some(function (kid) {
            return (kid.innerText || '').indexOf(desc) !== -1;
          });
        });
+       // AN ANCESTOR CARRYING THE NAME IS NOT A CARD. Every past run of this check leaves a card in
+       // this same conversation, so a foreign card finds THIS run's name three levels up, in the
+       // container that holds all of them - and that container was then counted as a second card.
+       // Measured on 2026-08-20: six descriptions in the pane, five of them landing on one shared
+       // ancestor holding all six. A root must therefore contain exactly ONE description, which is
+       // what makes it a card rather than a list of them. What each card SAYS is collected here for
+       // the same reason: evidence gathered wider than the count would describe another invitation.
        var roots = [];
+       var said = [];
        holders.forEach(function (el) {
          var up = el;
          for (var i = 0; i < 5 && up; i++) {
            if ((up.innerText || '').indexOf(name) !== -1) {
-             if (roots.indexOf(up) === -1) roots.push(up);
+             var alone = holders.filter(function (h) { return up.contains(h); }).length === 1;
+             if (alone && roots.indexOf(up) === -1) {
+               roots.push(up);
+               said.push((el.innerText || '').trim());
+             }
              return;
            }
            up = up.parentElement;
@@ -127,6 +163,7 @@ async function inviteCards(cx, communityName, descText) {
              return (b.innerText || '').indexOf(join) !== -1;
            });
          }).length,
+         said: said,
        };
      })())`
   );
@@ -162,10 +199,10 @@ async function peerRows(cx, name) {
 }
 
 /** Polls the open conversation until the community's card is there, or gives up and reports what is. */
-async function awaitCard(cx, descText, timeoutMs = 40_000) {
+async function awaitCard(cx, timeoutMs = 40_000) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    const seen = await inviteCards(cx, community, descText);
+    const seen = await inviteCards(cx, community);
     if (seen.cards > 0) return seen;
     if (Date.now() > deadline) return seen;
     await new Promise((r) => setTimeout(r, 2000));
@@ -207,14 +244,14 @@ const armed = !!workspaceId && !!peerId && peerJoined === true;
 const inviterSide = armed
   ? await step('read the inviter conversation', async () => {
       await ensureConversation(w1, PEER_NAME);
-      return awaitCard(w1, SENT_TEXT);
+      return awaitCard(w1);
     })
   : null;
 
 const inviteeSide = armed
   ? await step('read the invitee conversation', async () => {
       await ensureConversation(w2, OWNER_NAME);
-      return awaitCard(w2, GOT_TEXT);
+      return awaitCard(w2);
     })
   : null;
 
@@ -237,8 +274,8 @@ const afterReload = armed
       await ensureConversation(w1, PEER_NAME);
       await ensureConversation(w2, OWNER_NAME);
       return {
-        inviter: await awaitCard(w1, SENT_TEXT),
-        invitee: await awaitCard(w2, GOT_TEXT),
+        inviter: await awaitCard(w1),
+        invitee: await awaitCard(w2),
       };
     })
   : null;
@@ -252,9 +289,14 @@ await step('delete the community', async () => {
 });
 
 const expectations = {
-  // Both sides were told, in their own words.
+  // Both sides were told, IN THEIR OWN WORDS - the card is found by the tail every wording shares,
+  // so "one card" and "the right card" are two assertions and a wrong one cannot read as none.
   inviterSeesTheCard: inviterSide?.cards === 1,
   inviteeSeesTheCard: inviteeSide?.cards === 1,
+  inviterCardNamesTheInvitee:
+    inviterSide?.said?.length === 1 && saysMessage(SENT_KEY, inviterSide.said[0]),
+  inviteeCardNamesTheInviter:
+    inviteeSide?.said?.length === 1 && saysMessage(GOT_KEY, inviteeSide.said[0]),
   // The only thing distinguishing the two envelopes: the person who sent it is already inside, and
   // is therefore offered nothing to join.
   onlyTheInviteeIsOfferedTheJoin: inviterSide?.withJoin === 0 && inviteeSide?.withJoin === 1,

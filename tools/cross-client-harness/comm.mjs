@@ -84,6 +84,85 @@ export function captionWith(key, values) {
   return filled;
 }
 
+/**
+ * The longest ending several messages SHARE, as the app itself spells it.
+ *
+ * For finding a thing before judging what it says. Several controls have one shape and a wording
+ * that varies with the data - an invitation card is worded three ways depending on whether it names
+ * the inviter, the invitee, or neither - and a check that looks for the wording it EXPECTS cannot
+ * tell an absent card from a card carrying one of the others. Both answer zero, and only one of them
+ * is a delivery loss.
+ *
+ * Derived from the message file rather than spelt here, so a reworded string moves the anchor with
+ * it. It THROWS on a tail too short to be a selector: three messages that share only a full stop
+ * would otherwise hand back an anchor matching every bubble on screen, which is the vacuous count
+ * this exists to prevent.
+ *
+ * @param keys Paraglide keys, parameterised or not.
+ * @returns The shared tail, at least 8 characters.
+ */
+export function commonTail(...keys) {
+  const values = keys.map((k) => {
+    const value = MESSAGES[k];
+    if (typeof value !== 'string') {
+      throw new Error(`commonTail: no message '${k}' in ${LOCALE}.json - renamed or a typo`);
+    }
+    return value;
+  });
+
+  let tail = '';
+  for (let i = 1; i <= Math.min(...values.map((v) => v.length)); i++) {
+    const candidate = values[0].slice(-i);
+    if (!values.every((v) => v.endsWith(candidate))) break;
+    tail = candidate;
+  }
+
+  if (tail.trim().length < 8) {
+    throw new Error(
+      `commonTail: ${keys.join(', ')} share only ${JSON.stringify(tail)} - too short to anchor on`
+    );
+  }
+  return tail;
+}
+
+/**
+ * Whether `text` is `key` AS RENDERED - its literal parts, in order, anything at its placeholders.
+ *
+ * {@link captionWith} answers the other question and needs the value the app will interpolate. That
+ * is fine for a marker this rig invented and wrong for a DISPLAY NAME: `names.mjs` holds what the
+ * sidebar is searched by, a first name, while a card is worded with the name the profile resolves
+ * to. Filling the placeholder with the first one builds a sentence the app never renders, and the
+ * assertion then reports the card as missing - which is what COMM-4 did on 2026-08-20, twice.
+ *
+ * Anchored at both ends when the message is: `msg_channel_invite_description_by` and
+ * `msg_channel_invite_description` differ only in their opening words, so a check that merely looked
+ * for the shared ending would call one the other.
+ *
+ * @param key Paraglide key.
+ * @param text What is on screen.
+ */
+export function saysMessage(key, text) {
+  const value = MESSAGES[key];
+  if (typeof value !== 'string') {
+    throw new Error(`saysMessage: no message '${key}' in ${LOCALE}.json - renamed or a typo`);
+  }
+  const parts = value.split(/\{[A-Za-z0-9_]+\}/);
+  const said = String(text ?? '').trim();
+
+  if (parts.length === 1) return said === value;
+  if (parts[0] && !said.startsWith(parts[0])) return false;
+  if (parts[parts.length - 1] && !said.endsWith(parts[parts.length - 1])) return false;
+
+  let at = 0;
+  for (const part of parts) {
+    if (!part) continue;
+    const found = said.indexOf(part, at);
+    if (found === -1) return false;
+    at = found + part.length;
+  }
+  return true;
+}
+
 /** `text=` selector for a control named by a Paraglide key. */
 export const control = (key) => `text=${caption(key)}`;
 

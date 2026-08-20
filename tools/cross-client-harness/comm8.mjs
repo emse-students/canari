@@ -124,7 +124,7 @@ const peerFetch = await step('fetch it by id from W2', async () => {
 // MEMBER's console and is classified benign for exactly that reason. Only this check knows that the
 // client it is reading has no business holding a seed for this salon.
 const seedLineForSalon = channelId
-  ? new RegExp(`\[GRAINE\] seed \S+ from \S+ for channel ${channelId.slice(0, 8)}`)
+  ? new RegExp(String.raw`\[GRAINE\] seed \S+ from \S+ for channel ${channelId.slice(0, 8)}`)
   : null;
 const peerAnnouncedASeed =
   !!seedLineForSalon && consoleLines(wb.cx).some((l) => seedLineForSalon.test(l));

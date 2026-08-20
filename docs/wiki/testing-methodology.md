@@ -1050,6 +1050,70 @@ edited, read the reported file and case COUNT and compare it to what is on disk.
 answers the general form of the question: a check that never ran and a check that passed are the same
 colour, and only the count separates them.
 
+#### 23. CODE THAT LEAVES THIS PROCESS IS DATA WHILE IT IS HERE - and its escapes are read on the way out
+
+Every expression this rig runs in a browser is built as a template literal and handed to CDP as a
+string. Node reads the escapes before CDP ever sees it: `\r` leaves as a carriage return, `\s` leaves
+as the bare letter `s`. The same is true of a pattern handed to `new RegExp`. **The backslash belongs
+to whoever parses the string LAST, and a template literal is not that parser.**
+
+Four sites had it on 2026-08-20, and the pair of failure modes is the whole lesson:
+
+- `chat.mjs`'s `HEADER_NAME` carried `/[\r\n]+/`, which reached the page as a regex literal cut in
+  half by a real newline. `evaluate` threw `SyntaxError: Invalid regular expression: missing /` on
+  **every** call, so `ensureConversation` - the single thing that names which conversation is open -
+  did not run at all. **It was written correctly and halved by an edit AROUND it**: doubled since
+  `29ee5d8c`, single from `614bddbd` three hours before it was found, a commit that rewrote `PANE`
+  and re-typed the lines beside it. A doubled backslash reads like a typo to whoever touches the
+  region next, which is why the rule cannot live in the escaping and has to live in `String.raw`.
+- `nav.mjs`, `synopen.mjs` and `comm8.mjs` carried `/\s+/` and `` `\[GRAINE\] seed \S+ ...` ``, which
+  reach their parser as `/s+/` and `[GRAINE] seed S+ ...` - valid, sane-looking, and asking a
+  different question. SILENT. `comm8`'s reading of "the peer's own device never announced a seed for
+  this salon" **could not say yes**, and said no under a recorded verdict.
+
+The silent half is the dangerous one and it is the argument for the fix: `String.raw` forwards the
+literal parts verbatim, interpolates `${...}` exactly as before, and makes the shape immune by
+construction instead of by vigilance. `rawcheck.mjs` keeps it that way, exits non-zero, and was
+validated as a negative control against all four sites before its clean verdict was believed - see
+rule 12. It reports only templates that are page-side expressions or go straight into `RegExp`,
+because a check that also flags a `\n` in a console banner is a check whose reader learns to skip it.
+
+**The general form outlives this rig:** whenever a string is authored in one language to be parsed by
+another - a page-side expression, a regex built from a template, a shell command assembled in Node,
+an SQL statement assembled in a shell - name which parser reads it last, and confirm the escapes
+survive the trip. Confirm by RUNNING it, not by reading it: all four sites read correctly to four
+separate reviews.
+
+#### 24. A SEARCH THAT WALKS OUTWARD FINDS A CONTAINER - bound what it may land on, or it counts the list as an item
+
+COMM-4 counts invitation cards, and a card has no test id: it is found by its description, then by
+walking up to the nearest ancestor that also carries THIS run's community name. That ancestor is the
+card - for the card the run just produced. For the five cards **previous runs** left in the same
+conversation, the nearest ancestor carrying this run's name is the container holding all six, and it
+was counted as a second card. Measured on the live screen: six descriptions in the pane, five of them
+landing on one shared ancestor, one landing on a real card one level up.
+
+So COMM-4 reported two cards where the store holds one row, on both devices, and had done so on every
+run. **The check's own residue is what fed it** - rule 20's other edge: residue does not only make a
+check flaky, it can make a check's WAY OF LOOKING wrong in a way an empty venue would never reveal.
+
+The fix is a bound the search can assert: an ancestor is a card only if it holds exactly ONE
+description. A container holds six, and says so.
+
+That run's other half is worth the same sentence. The invitee's card counted ZERO because the check
+looked for its expected wording, rebuilt by filling `msg_channel_invite_description_by` with the name
+in `names.mjs` - which is what the SIDEBAR is searched by, a first name, while the card is worded with
+what the profile resolves to. Two different questions, one string, and the answer was "no card". A
+rendered message is now matched by its LITERAL parts with anything at the placeholders
+(`saysMessage`), which also tells the three invitation wordings apart, and no display name is spelt
+in the repository to do it.
+
+**Both faults pointed at the product and neither was in it**, and they hid each other: fixing the
+wording turned the invitee's 0 into a 2, which read as a NEW duplication defect rather than as the
+container artefact that had been there all along. A count that disagrees with the store is a question
+about the instrument first - the store had one row per invitation on both devices, with the
+deterministic id and no twin, before any of this was believed.
+
 ## Observation is part of the check, not a debugging step
 
 Decided 2026-08-06, after two shipped bugs came out of the logs of **passing** checks.

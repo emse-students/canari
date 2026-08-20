@@ -44,7 +44,7 @@ export async function gotoRoute(cx, route) {
 export async function ensureConversation(cx, name, openConversation) {
   const header = await evaluate(
     cx,
-    `(function () {
+    String.raw`(function () {
       var c = document.querySelector('.chat-composer-footer .chat-composer-editor');
       var pane = c ? c.closest('section') : null;
       return pane ? pane.innerText.replace(/\s+/g, ' ').trim().slice(0, 60) : '';

@@ -140,7 +140,7 @@ rig; `purge-devices.mjs` drives the real device panel (not the database); `ladde
 `navclose.mjs` `synboot.mjs` `synopen.mjs` `synwatch.mjs` `ckpt.mjs` `burn.mjs` are the probes that
 took a specific measurement and were kept because the measurement is repeatable.
 
-Two exist because a run once measured something other than what it claimed to, and each closes that
+Three exist because a run once measured something other than what it claimed to, and each closes that
 hole with an assertion rather than a habit:
 
 - **`bundle-id.mjs` - run it before believing any verdict about a fix.** "Reload the browsers onto the
@@ -152,6 +152,14 @@ hole with an assertion rather than a habit:
 - **`ssh.mjs` - the single door to production.** `ssh` resolves to **Git's** binary under Bash, which
   mangles the backslashes in the cloudflared `ProxyCommand`, so the same gateway probe answered
   differently depending on which shell launched the run. It picks Windows OpenSSH explicitly.
+- **`rawcheck.mjs` - the escapes in a page-side expression belong to the PAGE, not to Node.** Every
+  expression this rig evaluates in a browser is a template literal, and Node reads its escapes on the
+  way out: `/[\r\n]+/` arrives cut in half by a real newline and `evaluate` throws, `/\s+/` arrives as
+  `/s+/` and quietly matches the letter `s`. Four sites had it on 2026-08-20, including `HEADER_NAME` -
+  written doubled, halved hours earlier by a commit that rewrote the lines around it, so
+  `ensureConversation` threw on every call - and `comm8`'s pattern for "the peer announced a seed",
+  which could not say yes. Write them `String.raw`; this exits non-zero when one is not, and it was
+  validated as a negative control against all four before its clean verdict was believed.
 
 `scratch/` is gitignored and is where one-shot probes go. Before it existed they accumulated beside
 the real checks until **285 of 362 files were residue** and nobody could tell an instrument from a
