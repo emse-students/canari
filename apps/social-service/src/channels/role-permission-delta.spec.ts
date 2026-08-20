@@ -11,19 +11,21 @@ import { RedisService } from '../common/redis';
 import { CHANNEL_PERMISSIONS } from './permissions';
 
 /**
- * Two administrators editing one role, and the write that made that safe.
+ * Two administrators editing one role, and the two lost updates it took to make that safe.
  *
- * MEASURED ON PRODUCTION 2026-08-20 (COMM-20). Clicking a cell in the permission grid IS a delta -
- * "grant this one key" - and it was sent as the role's ENTIRE list, computed from whatever the
- * browser happened to be holding. Two administrators toggling two DIFFERENT permissions of one role
- * at the same moment therefore did not race: the second write carried a list built before the first
- * one landed and erased it. The loser's grid then showed a permission the server had dropped AND one
- * it had never stored, indefinitely, with nothing anywhere to say so.
+ * MEASURED ON PRODUCTION TWICE, both times by COMM-20 on 2026-08-20.
  *
- * TWO EDITS THAT COMMUTE MUST BE SENT AS THE OPERATIONS THEY ARE - which is what the test below is:
- * the two writes are interleaved deliberately, and both survive. Optimistic concurrency would have
- * been the other answer and a worse one, since it turns two compatible edits into a conflict a
- * person has to resolve.
+ * The first time, on the WIRE: clicking a cell in the permission grid IS a delta - "grant this one
+ * key" - and it was sent as the role's ENTIRE list, computed from whatever the browser happened to
+ * be holding. The second time, in MEMORY: the wire carried one key, and the server still did
+ * read-modify-write in this process, so two requests arriving together each read the same row,
+ * each computed their own next list from it, and each wrote the whole row back.
+ *
+ * THE SECOND ONE SURVIVED A GREEN TEST, and the reason is the point of this file. The first version
+ * of the check below awaited one call and then the other: it arranged a SEQUENCE and asserted on it
+ * as though it were a race. A sequence is the case that already worked. What follows interleaves
+ * them, and models the database faithfully enough for the difference to show - a read hands out a
+ * SNAPSHOT and a write stores it back, which is what a row actually does.
  */
 describe('ChannelService.setRoleBasePermission - one key at a time', () => {
   const WORKSPACE = 'ws-1';
@@ -38,8 +40,15 @@ describe('ChannelService.setRoleBasePermission - one key at a time', () => {
     permissions: [CHANNEL_PERMISSIONS.MANAGE_WORKSPACE, CHANNEL_PERMISSIONS.MANAGE_ROLES],
   };
 
+  /**
+   * A stand-in for the row, not for the repository.
+   *
+   * `stored` is the only copy anything is allowed to keep. Every read returns a COPY of it and every
+   * write replaces it - so an edit computed from a stale snapshot loses, here as in Postgres. A
+   * double that handed out the same object twice would make every version of this code pass.
+   */
   function makeService() {
-    const role = {
+    const stored = {
       id: ROLE,
       workspaceId: WORKSPACE,
       name: 'Moderateur',
@@ -50,12 +59,51 @@ describe('ChannelService.setRoleBasePermission - one key at a time', () => {
         CHANNEL_PERMISSIONS.KICK_MEMBERS,
       ] as string[],
     };
+    const snapshot = () => ({ ...stored, permissions: [...stored.permissions] });
+    const write = (row: { permissions: string[] }) => {
+      stored.permissions = [...row.permissions];
+      return snapshot();
+    };
+
+    /**
+     * The row lock, modelled as the only thing that can serialise two callbacks.
+     *
+     * `em.findOne` REFUSES an unlocked read, so the serialisation below is the service asking for
+     * `pessimistic_write` and not this double being helpful. Without that refusal the test would
+     * pass against a version that never took the lock, and would be measuring itself.
+     */
+    let queue: Promise<unknown> = Promise.resolve();
+    const em = {
+      findOne: jest.fn(
+        (_entity: unknown, opts: { where: { id: string }; lock?: { mode?: string } }) => {
+          if (opts.lock?.mode !== 'pessimistic_write') {
+            throw new Error('read inside the transaction without a row lock');
+          }
+          return Promise.resolve(opts.where.id === ROLE ? snapshot() : null);
+        }
+      ),
+      save: jest.fn((_entity: unknown, row: { permissions: string[] }) =>
+        Promise.resolve(write(row))
+      ),
+    };
+    const manager = {
+      transaction: jest.fn((fn: (m: typeof em) => Promise<unknown>) => {
+        const run = queue.then(() => fn(em));
+        queue = run.then(
+          () => undefined,
+          () => undefined
+        );
+        return run;
+      }),
+    };
+
     const roleRepo = {
+      manager,
       findOne: jest.fn((opts: { where: { id: string } }) =>
-        Promise.resolve(opts.where.id === ROLE ? role : ADMIN_ROLE)
+        Promise.resolve(opts.where.id === ROLE ? snapshot() : ADMIN_ROLE)
       ),
       find: jest.fn().mockResolvedValue([ADMIN_ROLE]),
-      save: jest.fn((r: Record<string, unknown>) => Promise.resolve(r)),
+      save: jest.fn((r: { permissions: string[] }) => Promise.resolve(write(r))),
     };
     const memberRepo = {
       findOne: jest.fn((opts: { where: { userId: string } }) =>
@@ -85,7 +133,7 @@ describe('ChannelService.setRoleBasePermission - one key at a time', () => {
     );
     jest.spyOn(service['logger'], 'log').mockImplementation(() => undefined);
     jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
-    return { service, redis, role };
+    return { service, redis, stored, em };
   }
 
   beforeEach(() => {
@@ -95,43 +143,46 @@ describe('ChannelService.setRoleBasePermission - one key at a time', () => {
   afterEach(() => jest.restoreAllMocks());
 
   /**
-   * THE CASE THE WHOLE-LIST WRITE LOST. Both administrators act; one revokes, the other grants, and
-   * the row afterwards carries BOTH decisions. Under the old shape the second write's list - built
-   * before the first one landed - would have put `channel.moderate` back.
+   * THE CASE BOTH LOST UPDATES LOST, and it is a race or it is nothing.
+   *
+   * The two calls are STARTED and only then awaited, so both authorisations complete before either
+   * write - which is exactly what two HTTP requests do. One administrator revokes, the other grants,
+   * and the row afterwards carries both decisions.
    */
   it('keeps both edits when two administrators change one role at once', async () => {
-    const { service, role } = makeService();
+    const { service, stored } = makeService();
 
-    const first = await service.setRoleBasePermission(
-      ROLE,
-      ADMIN,
-      CHANNEL_PERMISSIONS.MANAGE_MESSAGES,
-      false
-    );
-    const second = await service.setRoleBasePermission(
-      ROLE,
-      OTHER_ADMIN,
-      CHANNEL_PERMISSIONS.MANAGE_ROLES,
-      true
-    );
+    const [first, second] = await Promise.all([
+      service.setRoleBasePermission(ROLE, ADMIN, CHANNEL_PERMISSIONS.MANAGE_MESSAGES, false),
+      service.setRoleBasePermission(ROLE, OTHER_ADMIN, CHANNEL_PERMISSIONS.MANAGE_ROLES, true),
+    ]);
 
-    expect(first.permissions).not.toContain(CHANNEL_PERMISSIONS.MANAGE_MESSAGES);
-    expect(second.permissions).toEqual(
-      expect.arrayContaining([
-        CHANNEL_PERMISSIONS.INVITE_MEMBERS,
-        CHANNEL_PERMISSIONS.KICK_MEMBERS,
-        CHANNEL_PERMISSIONS.MANAGE_ROLES,
-      ])
-    );
-    expect(second.permissions).not.toContain(CHANNEL_PERMISSIONS.MANAGE_MESSAGES);
-    // And the row itself, not merely what was answered.
-    expect(role.permissions.sort()).toEqual(
+    // The row itself, which is the only thing either administrator will ever read back.
+    expect([...stored.permissions].sort()).toEqual(
       [
         CHANNEL_PERMISSIONS.INVITE_MEMBERS,
         CHANNEL_PERMISSIONS.KICK_MEMBERS,
         CHANNEL_PERMISSIONS.MANAGE_ROLES,
       ].sort()
     );
+    // And what each caller was ANSWERED: whoever went second must be told the settled state, since
+    // that answer is what their grid draws.
+    expect(first.permissions).not.toContain(CHANNEL_PERMISSIONS.MANAGE_MESSAGES);
+    expect(second.permissions).not.toContain(CHANNEL_PERMISSIONS.MANAGE_MESSAGES);
+    expect(second.permissions).toContain(CHANNEL_PERMISSIONS.MANAGE_ROLES);
+  });
+
+  /** The lock is the mechanism, so it is asserted rather than inferred from the outcome. */
+  it('reads the row for update, never for information', async () => {
+    const { service, em } = makeService();
+
+    await service.setRoleBasePermission(ROLE, ADMIN, CHANNEL_PERMISSIONS.MANAGE_ROLES, true);
+
+    expect(em.findOne).toHaveBeenCalledTimes(1);
+    expect(em.findOne.mock.calls[0][1]).toMatchObject({
+      where: { id: ROLE },
+      lock: { mode: 'pessimistic_write' },
+    });
   });
 
   /** Granting twice is granting once - a click that arrives twice must not double the key. */
@@ -161,8 +212,11 @@ describe('ChannelService.setRoleBasePermission - one key at a time', () => {
    * EVERY OPEN GRID IN THE COMMUNITY IS DRAWING THIS ROW, so the change is announced to the
    * membership - not to the editor, and not only to administrators: the workspace listing already
    * hands every member the full `roles` array, so this discloses nothing new.
+   *
+   * Announced from what the transaction SAVED, never from the copy this process started with: the
+   * whole point of the lock is that those two can differ.
    */
-  it('tells the community what the role now grants', async () => {
+  it('tells the community what the role now grants, as the row now stands', async () => {
     const { service, redis } = makeService();
 
     await service.setRoleBasePermission(ROLE, ADMIN, CHANNEL_PERMISSIONS.MANAGE_ROLES, true);
@@ -176,11 +230,15 @@ describe('ChannelService.setRoleBasePermission - one key at a time', () => {
     expect(sent[0][2]).toEqual([ADMIN, OTHER_ADMIN]);
   });
 
-  /** A key the server cannot name is a client asking for a capability that does not exist. */
+  /**
+   * A key the server cannot name is a client asking for a capability that does not exist - and it is
+   * refused BEFORE the transaction, so a bad request never takes a lock on the row.
+   */
   it('refuses a permission that is not one of the six', async () => {
-    const { service } = makeService();
+    const { service, em } = makeService();
     await expect(
       service.setRoleBasePermission(ROLE, ADMIN, 'channel.access', true)
     ).rejects.toThrow(/Invalid permission/);
+    expect(em.findOne).not.toHaveBeenCalled();
   });
 });

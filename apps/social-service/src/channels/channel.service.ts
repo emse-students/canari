@@ -3468,6 +3468,11 @@ export class ChannelService {
    * is nothing to merge and nothing to lose: each write reads the current row and changes one key.
    * A whole-list write with optimistic concurrency would have been the other answer, and a worse
    * one - it turns two compatible edits into a conflict somebody has to resolve by hand.
+   *
+   * **AND THE DELTA IS APPLIED UNDER A ROW LOCK, because a delta computed in application memory is
+   * the same lost update one layer down.** COMM-20 measured that too, on 2026-08-20, against the
+   * first fix: the wire carried one key, both requests still read the same row before either wrote,
+   * and the second still erased the first. See the transaction below.
    */
   async setRoleBasePermission(roleId: string, actorUserId: string, key: string, granted: boolean) {
     const role = await this.roleRepo.findOne({ where: { id: roleId } });
@@ -3479,17 +3484,39 @@ export class ChannelService {
       throw new BadRequestException(`Invalid permission: ${key}`);
     }
 
-    const current = role.permissions ?? [];
-    role.permissions = granted ? [...new Set([...current, key])] : current.filter((p) => p !== key);
-    await this.roleRepo.save(role);
+    // THE DELTA IS APPLIED WHERE THE ROW LIVES, NOT WHERE THIS PROCESS HAPPENS TO HOLD A COPY.
+    //
+    // Sending one key instead of the whole list moved the lost update off the wire; it did not
+    // remove it. Read-modify-write in application memory is the same defect one layer down: two
+    // requests arriving together each read `["channel.moderate", ...]`, each compute their own next
+    // list from it, and each write the whole row - so the second erases the first exactly as the
+    // browser used to. MEASURED ON PRODUCTION 2026-08-20, by COMM-20, against the fix for COMM-20.
+    //
+    // The lock is what serialises them, and it is taken by the DATABASE on the row itself: nothing
+    // here waits, retries or compares versions, and two nodes behind the load balancer are as safe
+    // as two requests on one. The critical section holds one SELECT and one UPDATE of a single row;
+    // the authorisation above and the announcement below are deliberately outside it.
+    const saved = await this.roleRepo.manager.transaction(async (em) => {
+      const locked = await em.findOne(ChannelRole, {
+        where: { id: roleId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!locked) throw new NotFoundException('Role not found');
+
+      const current = locked.permissions ?? [];
+      locked.permissions = granted
+        ? [...new Set([...current, key])]
+        : current.filter((p) => p !== key);
+      return em.save(ChannelRole, locked);
+    });
 
     this.logger.log(
       `[ROLE] ${granted ? 'granted' : 'revoked'} ${key} role=${roleId} ` +
-        `by=${actorUserId.slice(0, 8)} perms=${role.permissions.length}`
+        `by=${actorUserId.slice(0, 8)} perms=${saved.permissions.length}`
     );
-    await this.announceRolePermissions(role);
+    await this.announceRolePermissions(saved);
 
-    return { roleId: role.id, roleName: role.name, permissions: role.permissions };
+    return { roleId: saved.id, roleName: saved.name, permissions: saved.permissions };
   }
 
   async setRoleBasePermissions(roleId: string, actorUserId: string, permissions: string[]) {
