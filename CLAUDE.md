@@ -129,8 +129,15 @@ before the campaign restarts.** Everything actionable is HERE, in order, one lin
 lives where the link says and **is not restated**. An item is done when its code, its tests, its doc
 and its commit are in, and it is then deleted from BOTH files.
 
-**The campaign started 2026-08-19 and has produced TWENTY defects, all fixed.** The twentieth is the
-first PRIVACY one and left THREE rules: **A RULE READ AT TWO MOMENTS MUST BE GATED AT BOTH**;
+**The campaign started 2026-08-19 and has produced TWENTY-TWO defects, all fixed.** The
+twenty-second came from COMM-4 reporting **VACUOUS**, not FAIL, and left three rules in
+[durable-rules](docs/wiki/durable-rules.md): a URL is not an address until the credential fits it, a
+stub that answers any URL tests everything except what a client call gets wrong, and a guard that
+stops failing open looks like a regression and is a measurement. The twenty-first is COMM-13's, on its FIRST run, and its four OTHER assertions are what made it
+readable - an administrator's join was complete in the database, in the key service and in the
+member list, and absent only from the screen of the person who performed it, because a sidebar
+add-if-absent was reused by the reload path. The twentieth is the first PRIVACY one and left THREE
+rules: **A RULE READ AT TWO MOMENTS MUST BE GATED AT BOTH**;
 **AN INVARIANT THAT HOLDS "EVENTUALLY" DOES NOT HOLD AT THE INSTANT A GUARD READS IT** - the first
 fix was refused by the same check, because rotation is decided by the SENDER from the epoch it has
 PROCESSED and a join is an EXTERNAL commit; and **WHEN TWO DEVICES MUST AGREE ON A NUMBER, HAVE THE
@@ -179,8 +186,9 @@ in the field (user, 2026-08-19)**, so the iOS ladder cannot run and parity is ke
     [cross-client-testing](docs/wiki/cross-client-testing.md) is the only copy. `comm.mjs` holds the
     shared vocabulary, and COMM-1, 8, 9/10, 12, 23 and 24 run (each PASSed while proving the
     instrument, so the board rows stay `pending` - they are campaign verdicts only on the final
-    build). **COMM-12 is the one that FAILED twice, and correctly both times** - the second failure
-    refuted the fix for the first. COMM-13 is written and awaiting its first run.
+    build). **COMM-12 FAILED twice, COMM-13 once and COMM-4 came back VACUOUS, all four correctly** -
+    COMM-12's second failure refuted the fix for its first, COMM-13's re-run is a clean PASS, and
+    COMM-4 is owed a re-run once its fix deploys.
     **The user's decision, 2026-08-20: ALL TWENTY-FIVE ARE AUTOMATED, including the four that need
     more than two Chromes** - COMM-14 drives real push, COMM-17/18 drive the phone through `adb`,
     COMM-25 needs a second device for one account. The harness therefore grows three capabilities it

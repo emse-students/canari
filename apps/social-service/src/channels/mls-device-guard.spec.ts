@@ -23,6 +23,12 @@ import { fetchUserDeviceCount } from '../internal/delivery.client';
  * The two outcomes are kept apart on purpose. "This person has not installed Canari" is advice
  * about them; "the key service is not answering" is a retry about us, and the user is owed the
  * difference.
+ *
+ * AND IT THEN FAILED CLOSED AGAINST THE WRONG ROUTE, which this suite could not see: `fetch` was
+ * stubbed to answer whatever it was asked, so it answered a route chat-delivery serves behind
+ * `HeaderAuthGuard` exactly as happily as one it serves to services. Production answered 401 to
+ * every direct invitation for a day. **A stub that answers any URL tests everything except the
+ * one thing a client call gets wrong**, so the URL is now asserted here, and it is not decoration.
  */
 describe('the MLS device guard on an invitation', () => {
   const CHANNEL = 'ch-1';
@@ -81,6 +87,9 @@ describe('the MLS device guard on an invitation', () => {
     );
   }
 
+  /** The one URL chat-delivery serves to another service - see the note above the suite. */
+  const COUNT_ROUTE = `/api/internal/mls/devices/${TARGET}/count`;
+
   let previousSecret: string | undefined;
 
   beforeEach(() => {
@@ -97,14 +106,23 @@ describe('the MLS device guard on an invitation', () => {
   });
 
   describe('fetchUserDeviceCount', () => {
-    it('counts the devices a genuine 200 listed', async () => {
-      global.fetch = delivery(200, [{ deviceId: 'd1' }, { deviceId: 'd2' }]) as never;
+    it('counts the devices a genuine 200 reported', async () => {
+      global.fetch = delivery(200, { count: 2 }) as never;
       await expect(fetchUserDeviceCount('s', TARGET)).resolves.toBe(2);
     });
 
-    it('answers zero for a real empty list, which is a fact about the person', async () => {
-      global.fetch = delivery(200, []) as never;
+    it('answers zero for a real zero, which is a fact about the person', async () => {
+      global.fetch = delivery(200, { count: 0 }) as never;
       await expect(fetchUserDeviceCount('s', TARGET)).resolves.toBe(0);
+    });
+
+    it('asks the route addressed to a service, not the one behind the user guard', async () => {
+      // THE ASSERTION THIS SUITE DID NOT HAVE. `mls/devices/:userId` answers the same question
+      // behind `HeaderAuthGuard`, which wants headers only Nginx mints - so calling it from a
+      // container is a permanent 401, and a stub that answers every URL says nothing about it.
+      global.fetch = delivery(200, { count: 1 }) as never;
+      await fetchUserDeviceCount('s', TARGET);
+      expect(String((global.fetch as jest.Mock).mock.calls[0][0])).toContain(COUNT_ROUTE);
     });
 
     it('throws on a non-2xx rather than reporting a device count it was never given', async () => {
@@ -122,15 +140,22 @@ describe('the MLS device guard on an invitation', () => {
     });
 
     it('throws on an unset secret instead of treating a misconfiguration as an answer', async () => {
-      global.fetch = delivery(200, []) as never;
+      global.fetch = delivery(200, { count: 0 }) as never;
       await expect(fetchUserDeviceCount('', TARGET)).rejects.toBeInstanceOf(
         ServiceUnavailableException
       );
       expect(global.fetch).not.toHaveBeenCalled();
     });
 
-    it('throws when a 200 carries something that is not a list, rather than rounding it to zero', async () => {
+    it('throws when a 200 carries no count, rather than rounding it to zero', async () => {
       global.fetch = delivery(200, { devices: 3 }) as never;
+      await expect(fetchUserDeviceCount('s', TARGET)).rejects.toBeInstanceOf(
+        ServiceUnavailableException
+      );
+    });
+
+    it('throws on the list body the OLD user route returned, which a misdirected call still gets', async () => {
+      global.fetch = delivery(200, [{ deviceId: 'd1' }]) as never;
       await expect(fetchUserDeviceCount('s', TARGET)).rejects.toBeInstanceOf(
         ServiceUnavailableException
       );
@@ -140,7 +165,7 @@ describe('the MLS device guard on an invitation', () => {
   describe('inviteToChannel', () => {
     it('refuses with USER_HAS_NO_DEVICE when the person has genuinely never installed Canari', async () => {
       const { service, memberRepo } = makeService();
-      global.fetch = delivery(200, []) as never;
+      global.fetch = delivery(200, { count: 0 }) as never;
 
       const err = await service
         .inviteToChannel(CHANNEL, { targetUserId: TARGET, actorUserId: ACTOR })
@@ -172,7 +197,7 @@ describe('the MLS device guard on an invitation', () => {
 
     it('lets the invitation through when the person has a device', async () => {
       const { service, memberRepo } = makeService();
-      global.fetch = delivery(200, [{ deviceId: 'd1' }]) as never;
+      global.fetch = delivery(200, { count: 1 }) as never;
 
       await expect(
         service.inviteToChannel(CHANNEL, { targetUserId: TARGET, actorUserId: ACTOR })

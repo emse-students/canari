@@ -12,7 +12,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { In, MoreThanOrEqual, Repository } from 'typeorm';
 import * as crypto from 'crypto';
 import Redis from 'ioredis';
 import { PushToken } from '../entities/push-token.entity';
@@ -27,6 +27,7 @@ import { RevokedDevice } from '../entities/revoked-device.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
 import { resolveGroupInvitePreview } from '../utils/group-invite';
 import { MessagingService } from '../services/messaging.service';
+import { RETENTION_WINDOW_MS } from '../retention.constants';
 
 /**
  * Internal-only endpoints - called by other services via Docker-internal networking.
@@ -138,6 +139,41 @@ export class InternalController {
       `[INTERNAL_PUSH] type=${data.type ?? 'none'} user=${userId} sent=${result.sent} failed=${result.failed}`
     );
     return result;
+  }
+
+  /**
+   * How many usable MLS devices a user has, for a service deciding whether a key DM could ever
+   * reach them.
+   *
+   * THIS EXISTS BECAUSE A SERVICE MAY NOT CALL A USER ROUTE. `GET mls/devices/:userId` answers the
+   * same question and sits behind `HeaderAuthGuard`, which wants `x-user-logged-in` and a
+   * per-minute HMAC that only Nginx mints - headers a Docker-network call between two containers
+   * does not have and must not forge. Social-service asked it anyway with nothing but
+   * `X-Internal-Secret`, so the route answered 401 to every direct invitation, and the caller
+   * turned that into a 503 the inviter read as "the key service is down". Which credential a route
+   * accepts is part of its contract; a call that carries the wrong one is not a permission problem
+   * to widen but a route that was never addressed to this caller.
+   *
+   * A COUNT, NOT THE DEVICES. The caller only ever compares against zero, and the user route hands
+   * back every key package - material an internal caller has no use for and should not receive to
+   * answer a yes-or-no question.
+   *
+   * THE SAME RETENTION WINDOW AS THE USER ROUTE, and it is not a detail: a device outside it is
+   * dropped from new-group invites, so counting it would say a key DM can be delivered to someone
+   * no group will ever add.
+   */
+  @Get('mls/devices/:userId/count')
+  async userDeviceCount(
+    @Headers('x-internal-secret') headerSecret: string,
+    @Param('userId') userId: string
+  ): Promise<{ count: number }> {
+    this.assertInternalSecret(headerSecret);
+    const cutoff = new Date(Date.now() - RETENTION_WINDOW_MS);
+    const count = await this.keyPackageRepo.count({
+      where: { userId, createdAt: MoreThanOrEqual(cutoff) },
+    });
+    this.logger.log(`[INTERNAL_MLS_DEVICES] user=${userId.slice(0, 8)} count=${count}`);
+    return { count };
   }
 
   /**

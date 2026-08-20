@@ -338,7 +338,7 @@ of turning runners red a week later. Two of its selectors are deliberately struc
 anchored on the "add a community" button, and a channel is asked for BY NAME because the only anchor
 in its container is a button a non-manager never sees - which is exactly the case COMM-8 measures.
 
-**THIRTEEN OF THE TWENTY-FIVE ARE WRITTEN AND REGISTERED** (1, 2, 3, 5, 8, 9/10, 11, 12, 13, 16, 19, 23, 24). `comm2.mjs`
+**FOURTEEN OF THE TWENTY-FIVE ARE WRITTEN AND REGISTERED** (1, 2, 3, 4, 5, 8, 9/10, 11, 12, 13, 16, 19, 23, 24). `comm2.mjs`
 is the primitive the rest wait on: the invite link is the only gesture in the product that puts a
 SECOND member into a community a check built itself, so COMM-11, COMM-12 and COMM-19 all inherit
 what it proves.
@@ -388,7 +388,27 @@ screen of the person who performed it. `oneClickJoined` stayed false for the ful
 `addChannelToWorkspace` skipped any channel already on screen, so the deliberate re-read that follows
 the join was discarded and the row went on offering "Rejoindre" for the rest of the session. **A
 single failing assertion among five passing ones is a location, not a doubt** - with only the
-sidebar read, this would have been indistinguishable from a join that never happened.
+sidebar read, this would have been indistinguishable from a join that never happened. Fixed in
+`9fb49a2f`, where the add became an upsert that MERGES rather than replaces, because `unreadCount`
+belongs to the live event path and is in no reload. **The re-run on prod came back PASS and clean,
+all eight assertions green** (403 -> 200, `allowedUsers` 1 -> 2, transcript 0 -> 0).
+
+**COMM-4 FOUND THE TWENTY-SECOND DEFECT ON ITS FIRST RUN, and reported VACUOUS rather than FAIL -
+which is the finding (2026-08-20).** `POST /api/channels/:id/members/invite` answered **503**, the
+screen said `le service de cles ne repond pas`, and the check refused to grade six assertions about
+a card behind an invitation that never happened. The social-service log named it in one line:
+`[MLS_DEVICES] GET mls/devices/<user> answered 401`. That route is chat-delivery's USER route,
+behind `HeaderAuthGuard`, which wants `x-user-logged-in` and a per-minute HMAC only Nginx mints -
+and `callDelivery` goes container to container with `X-Internal-Secret` alone. So every direct
+invitation on production had been failing since 2026-08-19, the day `userHasMlsDevices` stopped
+failing open; before that the same 401 was silently read as "yes, they have a device".
+**THREE THINGS THIS ROW IS WORTH KEEPING FOR.** A VACUOUS verdict located a P1 that a FAIL would
+have blamed on the check. The unit suite around that call had SIX tests and all six were green,
+because `fetch` was stubbed by status and body and never by ADDRESS - it now asserts the URL. And
+the fault was only visible at all because a guard had stopped failing open the day before: **a
+guard that starts reporting looks like a regression and is a measurement.** Fixed by giving
+chat-delivery an `internal/mls/devices/:userId/count` route addressed to services, which answers a
+count and nothing else.
 
 **COMM-16 FOUND A DEFECT ON ITS FIRST RUN, and nearly lost it.** `channelRowGone` came back false,
 which reads exactly like a check written against a behaviour the product does not have - the row
@@ -436,7 +456,7 @@ phase now carries 25.
 | COMM-24 | Private -> public: the salon's group is tombstoned and the community's carries it again | `W1 W2` | `pending` |
 | COMM-25 | An admin's SECOND device receives the salon's seeds after the join, without a second join | `W1 W2` | `pending` |
 
-**THIRTEEN RUNNERS EXIST, and every row above is still `pending` on purpose** - except the three that
+**FOURTEEN RUNNERS EXIST, and every row above is still `pending` on purpose** - except the three that
 have a build against them, which ran after the phase was rewritten. A runner that PASSes while it is
 still proving the instrument is not a campaign verdict: the campaign is paused until every work
 package lands, and nothing measured before the last one counts. **COMM-8 produced a clean,

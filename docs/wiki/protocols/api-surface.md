@@ -17,6 +17,16 @@ Fixed at the seam rather than at the call sites: one `internal/service-urls.ts` 
 failure mode is the lesson - a `.catch(warn)` written for a transient fault met a permanent one and
 turned it into silence. Found by reading the server logs (`srvlog.mjs`), invisible to every client.
 
+**AND A PREFIX IS ONLY HALF OF AN ADDRESS: THE GUARD IS THE OTHER HALF.** With the prefix corrected,
+`fetchUserDeviceCount` still called `GET /api/mls/devices/:userId`, which is a USER route behind
+`HeaderAuthGuard` - it wants `x-user-logged-in` and a per-minute HMAC that only Nginx mints, and a
+container-to-container call carries `X-Internal-Secret` and nothing else. The route answered 401 to
+every one of them. It went unseen while `userHasMlsDevices` failed open, and became a 503 on every
+DIRECT community invitation the day it stopped (2026-08-19); COMM-4 asked for one on 2026-08-20 and
+the check reported VACUOUS, which is what located it. The internal counterpart below is now the one
+called. **A route addressed to users is not an internal API with a longer path**, and a caller that
+guesses a callee's route guesses its guard with it.
+
 ---
 
 ## chat-gateway (port 3000)
@@ -154,6 +164,7 @@ WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
+| GET | `/api/internal/mls/devices/:userId/count` | InternalSecret | How many devices a user has, inside the retention window - the service-facing counterpart of `GET /api/mls/devices/:userId` |
 | POST | `/api/internal/push/notify` | InternalSecret | Send push via internal secret |
 | DELETE | `/api/internal/users/:userId` | InternalSecret | Delete all user MLS/device data |
 | GET | `/api/health` | none | Liveness probe |

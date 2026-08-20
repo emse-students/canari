@@ -21,6 +21,14 @@
  * Measured on production 2026-08-14 from the delivery service's own logs, during the MSG phase of
  * the cross-client campaign - which is what a server-side observer buys.
  *
+ * AND THE PREFIX WAS ONLY HALF OF THAT THIRD ONE. `mls/devices/<user>` is served behind
+ * `HeaderAuthGuard`, so once the URL was right the route answered 401 rather than 404 - a service
+ * calling a route addressed to users, with the only credential it has. It fails closed since
+ * 2026-08-19, which turned every direct invitation on production into a 503 until COMM-4 asked for
+ * one on 2026-08-20. `fetchUserDeviceCount` now calls `internal/mls/devices/<user>/count`. **A
+ * URL is not an address until the credential fits it**, and a caller that guesses a callee's
+ * route is guessing its guard too.
+ *
  * WHY A FUNCTION AND NOT A LONGER ENV VAR. Putting `/api` in the compose file fixes the deployment
  * and leaves the code's defaults wrong, so a service started without the variable still 404s, and
  * nothing stops the next call site from omitting it again. Here the prefix is not the caller's to

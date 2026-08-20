@@ -83,26 +83,35 @@ export async function callDelivery(
  * How many MLS devices a user has registered, as chat-delivery knows it.
  *
  * ZERO IS A FACT, AND IT IS NOT THE SAME FACT AS "I COULD NOT ASK". This returns 0 only for a
- * genuine 200 carrying an empty list - the person exists and has never opened Canari on anything -
- * and throws for every other outcome. The caller owes its user two different sentences, because
- * "this person has not installed Canari" is advice and "the key service is down" is a retry.
+ * genuine 200 carrying a number - the person exists and has never opened Canari on anything - and
+ * throws for every other outcome. The caller owes its user two different sentences, because "this
+ * person has not installed Canari" is advice and "the key service is down" is a retry.
  *
  * Same rule the client side already follows in `fetchUserDevices`, which throws on a non-2xx and
  * returns `[]` only for a real empty answer.
+ *
+ * IT ASKS THE INTERNAL ROUTE, AND THAT IS NOT INTERCHANGEABLE WITH THE USER ONE.
+ * `GET mls/devices/:userId` answers the same question behind `HeaderAuthGuard`, which wants
+ * `x-user-logged-in` and a per-minute HMAC that only Nginx mints. This call goes container to
+ * container over the Docker network with nothing but `X-Internal-Secret`, so that route answered
+ * 401 - every one of them, deterministically - and every direct invitation on production came back
+ * 503 from 2026-08-19, the day this stopped failing open, until 2026-08-20 when COMM-4 asked for
+ * one. **A credential is part of a route's contract**: this now calls the route addressed to it.
  */
 export async function fetchUserDeviceCount(secret: string, userId: string): Promise<number> {
   const payload = await callDelivery(
     secret,
     'MLS_DEVICES',
-    `mls/devices/${encodeURIComponent(userId)}`,
+    `internal/mls/devices/${encodeURIComponent(userId)}/count`,
     { method: 'GET' }
   );
-  // A 200 whose body is not a list is chat-delivery answering something this function cannot read.
-  // That is a failure of the call, not a user with no device, and it is not going to be rounded to
-  // zero - which is the whole point of this function.
-  if (!Array.isArray(payload)) {
-    logger.error(`[MLS_DEVICES] user=${userId.slice(0, 8)} answered a non-list body`);
+  // A 200 whose body carries no count is chat-delivery answering something this function cannot
+  // read. That is a failure of the call, not a user with no device, and it is not going to be
+  // rounded to zero - which is the whole point of this function.
+  const count = (payload as { count?: unknown } | null)?.count;
+  if (typeof count !== 'number' || !Number.isFinite(count)) {
+    logger.error(`[MLS_DEVICES] user=${userId.slice(0, 8)} answered a body with no count`);
     throw unavailable();
   }
-  return payload.length;
+  return count;
 }
