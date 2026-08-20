@@ -59,6 +59,7 @@ Deep links, system events, rosters and the channel/DM asymmetry are on those two
 
 **Governance, and controls that destroy**
 
+- **A RULE THE SERVER ENFORCES AND THE CLIENT HAS NEVER HEARD OF IS HALF A FEATURE** - the refusal is correct and the product still offers the control, so the person reads a 403 as a broken app. Send the DECISION, never the policy: a client holds none of the inputs (roles, permissions) the rule needs, so handing it the policy buys a second copy of the rule with half its arguments missing. `writePolicyAllows` is the only definition, read by `canWriteToChannel` and by the workspace listing. [social-service](services/social-service.md)
 - **Every operation checks what the ACTOR may do; ask also what the SYSTEM would be left as.** Five paths removed the last admin - one absent postcondition seen from five sides, so guarding any one left the hole open. Enumerate the sides by asking what else WRITES the table. [rework](services/community-rework.md#axis-2---a-community-can-never-be-left-ungoverned---shipped-2026-08-18)
 - **Enforce it as a REFUSAL wherever refusing is possible, and add no repair route** - making the broken state unreachable beats a destructive button that restores it. Where refusal is impossible, the repair is DETERMINISTIC, never a heuristic and never a clock. [rework](services/community-rework.md#axis-2---a-community-can-never-be-left-ungoverned---shipped-2026-08-18)
 - **Recoverability that only recovers UNREADABLE rows is not recoverability** - when a soft delete's justification is the restore, re-ask whether the restore still produces something usable. **A SOFT DELETE THAT DESTROYS THE KEY IN THE SAME CALL IS A HARD DELETE THAT LIES**: it keeps the rows and throws away the only thing that made keeping them worth anything. [social-service](services/social-service.md#deleting-a-community-is-irreversible-and-the-gate-is-a-server-argument)
@@ -395,6 +396,7 @@ What must not be forgotten between the pages:
 **Checks that measure nothing**
 
 - **Carry the evidence that the WINDOW OPENED**, or a green result cannot be told from an unexercised one - the same rule makes a source-reading guard need a vacuity assertion. [testing-methodology](testing-methodology.md)
+- **A CHECK THAT FAILS IS A CLAIM TO CHECK, NEVER A CHECK TO SOFTEN.** COMM-16 came back `false` on a row it expected gone, which reads exactly like a check written against a behaviour the product does not have - and the product was wrong: deleting a salon archived it after destroying its key. Relax an assertion only once the mechanism, not the verdict, has been read. [testing-methodology](testing-methodology.md)
 - **A passing check that never armed its PRECONDITION measures nothing** - prove the state was set, and report `VACUOUS` rather than `PASS`. [testing-methodology](testing-methodology.md)
 - **A distribution is not a diagnosis** - before blaming a cause, check whether the mechanism that would have prevented it is already running, by running the app's OWN transform over a representative input. [storage-forecast](infrastructure/storage-forecast.md)
 

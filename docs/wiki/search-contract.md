@@ -16,7 +16,7 @@ are the whole contract:
 
 1. **A typo still finds the person.** Case and accents are folded away before anything else; a
    single wrong keystroke - a swap, a missing letter, a wrong letter - still reaches the name.
-2. **Word order is irrelevant.** "boudin jolan" and "jolan boudin" are the same query. This comes
+2. **Word order is irrelevant.** "dupont marie" and "marie dupont" are the same query. This comes
    for free from matching token to token instead of query to string, and it is why nobody should
    implement it any other way.
 3. **The answers are RANKED, not filtered.** Closest first. Any surface that truncates - a dropdown

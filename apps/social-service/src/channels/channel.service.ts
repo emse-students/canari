@@ -34,6 +34,7 @@ import {
   DEFAULT_MODERATOR_PERMISSIONS,
   DEFAULT_MEMBER_PERMISSIONS,
   RETIRED_PERMISSIONS,
+  writePolicyAllows,
 } from './permissions';
 
 import {
@@ -214,15 +215,18 @@ export class ChannelService {
     });
     if (!member?.roleIds?.length) return false;
     const roles = await this.roleRepo.find({ where: { id: In(member.roleIds) } });
-    if (policy === 'admins') {
-      return roles.some((r) => r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE));
-    }
-    // admins_moderators
-    return roles.some(
-      (r) =>
-        r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_MESSAGES) ||
-        r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE)
-    );
+    // THE RULE IS IN `writePolicyAllows` AND NOWHERE ELSE - the listing decides the same thing for
+    // the same viewer and must reach the same answer. What is resolved here is only who the viewer
+    // IS, which is the part that costs a query.
+    //
+    // `roleGrantsModeration` rather than a second list of keys: this branch used to check
+    // `channel.moderate` and `workspace.manage` and to omit `channel.manage`, which the listing's
+    // own `viewerCanModerate` has always counted - so a role holding only `channel.manage` was a
+    // moderator everywhere except here.
+    return writePolicyAllows(policy, {
+      canManage: roles.some((r) => r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE)),
+      canModerate: roles.some((r) => this.roleGrantsModeration(r.permissions)),
+    });
   }
 
   /**
@@ -1382,6 +1386,7 @@ export class ChannelService {
       visibility: 'public' | 'private';
       writePolicy: ChannelWritePolicy;
       viewerHasAccess: boolean;
+      viewerCanWrite: boolean;
     }> = [];
     for (const ch of allChannels) {
       const hasAccess = this.canAccessChannel(ch, viewerMember, normalizedUserId);
@@ -1400,6 +1405,14 @@ export class ChannelService {
         visibility: ch.isPrivate ? 'private' : 'public',
         writePolicy: ch.writePolicy ?? 'everyone',
         viewerHasAccess: hasAccess,
+        // ANSWERED HERE BECAUSE IT IS ALREADY KNOWN HERE. `writePolicy` alone does not tell a
+        // client whether IT may write - that needs the viewer's roles, which this listing has just
+        // resolved for the workspace. Sending the policy and letting each client re-derive the rest
+        // would be a second copy of the rule, and the client holds no roles to derive it from.
+        viewerCanWrite: writePolicyAllows(ch.writePolicy ?? 'everyone', {
+          canManage: viewerCanManage,
+          canModerate: viewerCanModerate,
+        }),
       });
     }
 

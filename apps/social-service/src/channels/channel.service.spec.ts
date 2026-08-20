@@ -1082,6 +1082,9 @@ describe('ChannelService security hardening', () => {
         // Carried since 2026-08-19, because the list now includes private salons an admin can SEE
         // but has not joined - and the client must be able to tell "open it" from "join it first".
         viewerHasAccess: true,
+        // Carried since 2026-08-20: the write policy is enforced per message on the server, and a
+        // client that never learned of it offered a composer every post from was refused.
+        viewerCanWrite: true,
       },
     ]);
   });

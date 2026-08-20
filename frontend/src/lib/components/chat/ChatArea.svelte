@@ -121,6 +121,14 @@
     onJoinChannel?: (channelId: string) => void;
     /** When set, only users whose IDs are in this list appear in @mention suggestions. */
     allowedUserIds?: string[];
+    /**
+     * Whether the viewer may POST in the open channel, per its `writePolicy` and the viewer's roles.
+     *
+     * Server-decided; false replaces the composer with the reason rather than disabling it in place,
+     * because a greyed-out control still reads as "try again later". Defaults to true - a DM has no
+     * write policy, and a channel row that has not been refreshed must not silence anybody.
+     */
+    canWrite?: boolean;
     /** Callback fired when the user selects or drops files to attach. */
     onFilesSelected?: (files: File[]) => void;
     /** Files staged for sending but not yet uploaded. */
@@ -191,6 +199,7 @@
     groupMembers = [],
     pendingInvites = [],
     allowedUserIds,
+    canWrite = true,
     sendError = '',
     onGroupRename,
     onGroupSetImage,
@@ -1119,6 +1128,20 @@
         >
           {m.chat_delete_locally_button()}
         </button>
+      </div>
+    {:else if !canWrite}
+      <!-- THE PRODUCT SAYS WHY INSTEAD OF OFFERING A CONTROL IT WILL REFUSE. `canWriteToChannel`
+           refuses the post server-side, correctly, and until 2026-08-20 that was the whole feature:
+           the composer stayed editable, the person typed, and the 403 came back as a red toast
+           reading as a broken app rather than as a rule. Same shape as the deleted-conversation
+           branch above, and deliberately not a disabled composer - a greyed-out field says "later",
+           and this is not later. -->
+      <div
+        class="absolute inset-x-0 bottom-0 z-20 flex flex-col items-center gap-2 px-4 py-3 bg-[var(--color-surface)] border-t border-black/8 dark:border-white/10"
+      >
+        <p class="text-sm text-[var(--color-text-muted)] text-center">
+          {m.chat_channel_read_only()}
+        </p>
       </div>
     {:else}
       <div class="absolute inset-x-0 bottom-0 z-20 pointer-events-none">

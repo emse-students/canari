@@ -199,6 +199,7 @@
   "chat_mls_sync_in_progress": "Receiving pending messages…",
   "chat_scrollback_loading": "Looking for older messages...",
   "chat_scrollback_no_peer": "No device is online to supply older messages. Try again later.",
+  "chat_channel_read_only": "You do not have permission to post in this channel.",
   "chat_conversation_deleted_message": "This conversation has been deleted.",
   "chat_delete_locally_button": "Delete locally",
   "chat_typing_one_person": "{names} is typing…",

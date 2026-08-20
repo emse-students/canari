@@ -86,3 +86,36 @@ export const LEGACY_PERMISSION_MAPPING: Record<string, ChannelPermission> = {
   MODERATE_MESSAGES: CHANNEL_PERMISSIONS.MANAGE_MESSAGES,
   INVITE_USERS: CHANNEL_PERMISSIONS.INVITE_MEMBERS,
 };
+
+/**
+ * What the viewer's ROLES grant them in a workspace, reduced to the two facts a write decision
+ * needs. Both are already computed wherever a decision is made - this type is what stops them
+ * being re-derived a third time.
+ */
+export interface ViewerRoleStanding {
+  /** Holds `workspace.manage` through at least one role. */
+  canManage: boolean;
+  /** Holds a role that grants message moderation (`channel.moderate`, or a permission subsuming it). */
+  canModerate: boolean;
+}
+
+/**
+ * Whether a salon's `writePolicy` lets this viewer post - THE ONLY definition, read by both sides.
+ *
+ * WHY IT IS A PURE FUNCTION AND NOT A METHOD. The server enforces the policy per message, in
+ * `canWriteToChannel`, which loads the viewer's roles; the workspace listing already holds the same
+ * two booleans for the viewer and hands them to the client. Those are the same decision asked in two
+ * places, and until 2026-08-20 only the first one existed: the client never learned the policy at
+ * all, so it offered a composer in a salon the server refused every message from, and the person
+ * typing read the refusal as the app being broken.
+ *
+ * The two callers must not be able to disagree, so neither carries the rule.
+ */
+export function writePolicyAllows(
+  policy: 'everyone' | 'admins_moderators' | 'admins',
+  viewer: ViewerRoleStanding
+): boolean {
+  if (policy === 'everyone') return true;
+  if (policy === 'admins') return viewer.canManage;
+  return viewer.canModerate || viewer.canManage;
+}

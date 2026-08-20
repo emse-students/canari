@@ -114,6 +114,17 @@ const BENIGN = [
   // conversation that VANISHED between buffering and flush is not, and it is NOTABLE rather than
   // benign - see the rules below.
   /^\[ADD_MSG\] Duplicate ignored during a bulk ingest id=/,
+  // The buffered path's success line, added 2026-08-20 - it was the only inbound path that said
+  // nothing at all, which is what made an invitation card that never appeared unreadable in a log.
+  /^\[ADD_MSG\] Batch into "[^"]*": \d+ added, \d+ upgraded/,
+  /^\[ADD_MSG\] Batch into "[^"]*": \d+ message\(s\), all already held$/,
+  // The permission grid saying a cell was cycled, and the panel saying it is saving that cell.
+  // `Log.d` renders its payload as `Object` in a console tail, so these two say WHICH gesture ran
+  // and nothing about what it carried - which is all a check needs from them: they appear only when
+  // something toggled a permission, so their presence outside a check that toggled one is the
+  // finding, not their content.
+  /^\[PermissionGrid\.cycleCell\]/,
+  /^\[handleRolePermissionToggle\]/,
   // The inviter's own confirmation of an action they just took, from the community panel.
   /^Member invited to channel \((member|moderator|admin)\): /,
   /^\[notifNav\] routing to \S+ for pending conversation \S+$/,

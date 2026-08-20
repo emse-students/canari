@@ -81,6 +81,23 @@
         false)
   );
 
+  /**
+   * Whether the viewer may POST in the open channel - the salon's `writePolicy` applied to their own
+   * roles, as the server decided it (`viewerCanWrite`).
+   *
+   * Fails OPEN, unlike {@link canModerateSelectedChannel}, and the asymmetry is deliberate: a
+   * moderation affordance offered by mistake costs a refused request, while a composer withheld by
+   * mistake costs the person the ability to speak. The server refuses a forbidden post either way -
+   * this only decides whether the product offers a control it would refuse.
+   */
+  const canWriteToSelectedChannel = $derived(
+    !isSelectedChannel ||
+      (channels.channelWorkspaces
+        .flatMap((ws) => ws.channels)
+        .find((ch) => ch.id === convs.selectedContact)?.canWrite ??
+        true)
+  );
+
   /** Member user IDs of the currently selected channel, for scoping @mention suggestions. */
   let selectedChannelMemberIds = $state<string[]>([]);
 
@@ -869,6 +886,7 @@
           groupMembers={convs.groupMembers}
           pendingInvites={convs.pendingGroupInvites}
           allowedUserIds={composerAllowedUserIds}
+          canWrite={canWriteToSelectedChannel}
           sendError={convs.sendError}
           onGroupRename={(name) => void convs.handleRenameGroup(name, convCtx())}
           onGroupSetImage={(mediaId) => void convs.handleSetGroupImage(mediaId, convCtx())}

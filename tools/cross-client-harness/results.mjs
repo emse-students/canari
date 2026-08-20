@@ -5,9 +5,11 @@
  * fails earns a Work Package with its captured log. Both need the raw record to have survived the
  * session, so every runner writes here rather than only to stdout.
  */
+import { execFileSync } from 'node:child_process';
 import { appendFileSync, readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { STATE_DIR } from './names.mjs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { SITE, STATE_DIR } from './names.mjs';
 import { gate, report } from './watch.mjs';
 
 /**
@@ -15,6 +17,46 @@ import { gate, report } from './watch.mjs';
  * condensed dirt of the run, which quotes captured console lines, and those name real conversations.
  */
 const FILE = join(STATE_DIR, 'results.ndjson');
+
+/**
+ * THE BUILD EVERY ROW OF THIS PROCESS RAN AGAINST - read from the DEPLOYMENT, never from git alone.
+ *
+ * The board's own convention is "the verdict with the commit it ran on", and until 2026-08-20 no
+ * runner could satisfy it: nothing the web client prints names its build, so every COMM verdict was
+ * dated by hand from commit timestamps afterwards. `versionName` and `platform_config.version` are
+ * both constants somebody edits at release time and read `0.14.0` across a week of deploys, so
+ * neither separates two builds of the same release.
+ *
+ * `/_app/version.json` is the one stamp the running deployment hands over for free: SvelteKit writes
+ * the build's own millisecond timestamp into it, and it changes with every build. That is the
+ * evidence, in the sense of rule 17 - a property of the code that is actually serving.
+ *
+ * THE COMMIT IS DERIVED FROM IT, and the derivation is stated rather than assumed: the newest commit
+ * on `origin/main` at or before the build's timestamp. CD builds a pushed commit and finishes minutes
+ * later, so this is exact unless a SECOND commit lands inside that window - in which case it names
+ * the later one, which is why `builtAt` is recorded beside it and is the figure to trust.
+ *
+ * IT THROWS RATHER THAN DEGRADING. A check that cannot date its build produces a verdict nobody can
+ * attribute, which is the fault this exists to close; failing at import costs a run that had not
+ * started and leaves no debris.
+ */
+async function deployedBuild() {
+  const answer = await fetch(`${SITE}/_app/version.json`);
+  if (!answer.ok) throw new Error(`${SITE}/_app/version.json answered ${answer.status}`);
+  const stamp = Number((await answer.json())?.version);
+  if (!Number.isFinite(stamp)) throw new Error(`${SITE}/_app/version.json carries no build stamp`);
+  const builtAt = new Date(stamp).toISOString();
+  const repo = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const commit = execFileSync(
+    'git',
+    ['-C', repo, 'log', '-1', '--format=%h', `--before=${builtAt}`, 'origin/main'],
+    { encoding: 'utf8' }
+  ).trim();
+  if (!commit) throw new Error(`no commit on origin/main at or before ${builtAt} - fetch first`);
+  return { builtAt, commit };
+}
+
+const BUILD = await deployedBuild();
 
 /** Every verdict THIS process has recorded, so the exit code can be derived rather than remembered. */
 const recorded = [];
@@ -50,6 +92,8 @@ export function record(id, verdict, detail) {
     id,
     verdict: stated,
     at: new Date().toISOString(),
+    build: BUILD.commit,
+    builtAt: BUILD.builtAt,
     ...detail,
     ...(owedObservation
       ? { claimedVerdict: verdict, unobserved: 'no report was gated into this verdict - see gate() in watch.mjs' }

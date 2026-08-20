@@ -199,6 +199,30 @@ never answered gets no missed record at all (CALL-18). Neither is a Work Package
 captures it. A third - a DM pin never reaching a device that was offline - is **fixed** since
 2026-08-16, and MUT-15 asserts the recovery instead of the hole.
 
+## Rows that named a mechanism the product does not have
+
+The COMM rows were rewritten on 2026-08-20, and the reason is a class of fault the negative rows above
+do not catch: a row can name a mechanism that never existed, or one that has since been deleted, and
+still read as a perfectly good check until somebody sits down to automate it. **A row written from
+what the product was believed to do is a claim about the product, and it expires.**
+
+Four rows were rewritten, each for the same reason:
+
+| Row | What it named | What is there |
+| --- | --- | --- |
+| COMM-6 | a CUSTOM role, created through the panel | `POST /api/channels/roles` is served and **no client calls it**. The panel renders the three roles a community is created with and a grid over them, and offers no way to make a fourth. The row now asserts the grid, the three defaults and a toggle that reaches the column; the unreachable endpoint is RECORDED by the runner, not asserted - a check cannot demand a feature, and only its owner can say whether an endpoint no client reaches is dead weight or an unbuilt one. |
+| COMM-9 | a per-member key the server "revokes" | there is no such object. What the server does is drop the member's **routing rows** on the salon's distribution group, so the next Graine session never reaches them; the row asks for that, plus the previous session still opening. |
+| COMM-13 | an admin being "granted" a private salon | joining one is an action the admin performs, not a grant. The row asks what a join changes - `distribution-group` 403 before and 200 after, the member list, the transcript unchanged, the row ceasing to offer the join. |
+| COMM-22 | a function that had been deleted | it timed a code path that no longer exists. The row now times the FIRST RENDER of a salon carrying many Graine sessions, and the repair when one seed is missing - both observable from outside. |
+
+Three rows were ADDED at the same time, for the per-salon distribution groups that shipped 2026-08-20
+(COMM-23, COMM-24, COMM-25), which is what takes the phase to twenty-five.
+
+**The rule this leaves.** A row is written against a mechanism that can be pointed at in the code or
+in a log line, and a row that cannot be is rewritten before it is run - never automated as written and
+never "checked by hand". The cost of not doing this is not a failed run: it is a PASS on a check that
+was measuring nothing, which is the one outcome the campaign has no defence against.
+
 ## The at-rest artefacts
 
 Enumerated for real at SETUP-7, not guessed - a corruption test written against a guessed key name

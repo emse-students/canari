@@ -30,7 +30,7 @@
  * THE TOGGLE IS PUT BACK, and the community is deleted anyway: this check builds its own so that a
  * half-applied permission can never outlive it.
  */
-import { client, evaluate } from './chat.mjs';
+import { client, evaluate, until } from './chat.mjs';
 import {
   caption,
   communityTab,
@@ -176,6 +176,11 @@ const workspaceId = await step('read the community id', () => workspaceIdOf(comm
 
 const shown = await step('read the permission grid', async () => {
   await communityTab(w1, 'roles');
+  // THE TAB FETCHES ITS ROLES. `communityTab` returns on the click, and the panel renders a spinner
+  // until `GET roles` answers - so a read taken straight after finds no table at all and reports
+  // "the grid offers nothing", which is an instrument describing itself. The first run of this
+  // check did exactly that.
+  await until(w1, `!!document.querySelector('table tbody tr')`, 20000);
   return grid(w1);
 });
 

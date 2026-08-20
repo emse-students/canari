@@ -57,6 +57,16 @@ export interface ChannelSidebarItem {
    * tri-state would make every consumer handle a case that cannot happen.
    */
   hasAccess?: boolean;
+  /**
+   * Whether the viewer may POST here - the salon's `writePolicy` applied to their own roles, decided
+   * by the server (`viewerCanWrite`).
+   *
+   * Absent means yes, which is both the server's default policy and the only safe reading of a row
+   * that has not been refreshed: a composer withheld on missing data would lock every salon whose
+   * listing has not answered yet, and the server refuses a forbidden post regardless. This decides
+   * whether the product OFFERS the control, never whether the message is accepted.
+   */
+  canWrite?: boolean;
 }
 
 /** One workspace (community) shown in the sidebar, containing its channels. */
@@ -229,6 +239,7 @@ export function useChannelWorkspaces() {
           name: channel.name,
           isPrivate,
           hasAccess: channel.viewerHasAccess !== false,
+          canWrite: channel.viewerCanWrite !== false,
         });
 
         // AN UNJOINED SALON GETS NO CONVERSATION, and that is the point: a conversation row is what

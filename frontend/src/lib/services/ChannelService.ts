@@ -87,6 +87,16 @@ export interface ChannelDto {
    * just wrote, where the question does not arise: absent means "yes", never "unknown".
    */
   viewerHasAccess?: boolean;
+  /**
+   * Whether the viewer may POST here, as the server decided it - `writePolicy` applied to the
+   * viewer's own roles in this community.
+   *
+   * The policy itself is deliberately NOT carried: a client holds no roles to apply it to, so it
+   * would need a second copy of the rule and half of its inputs. Optional for the same reason as
+   * `viewerHasAccess` - the create routes answer with the row they just wrote - and absent means
+   * "yes", which is also the server's default policy.
+   */
+  viewerCanWrite?: boolean;
 }
 
 export type CreateChannelResultDto = ChannelDto;

@@ -601,7 +601,14 @@ export function useMessaging() {
       }
     }
 
-    if (upgradedById.size === 0 && brandNew.length === 0) return;
+    if (upgradedById.size === 0 && brandNew.length === 0) {
+      // Ordinary - a re-drain of frames this device already holds - and still not silent: it is the
+      // difference between "the batch arrived and we had it all" and "the batch never arrived".
+      console.log(
+        `[ADD_MSG] Batch into "${normalized}": ${messages.length} message(s), all already held`
+      );
+      return;
+    }
 
     const isConversationOpen = ctx.selectedContact === normalized;
     const addedFromOthers = brandNew.filter((m) => !m.isOwn && !m.isSystem).length;
@@ -617,6 +624,18 @@ export function useMessaging() {
       messages: merged,
       lastMessageAt: Math.max(convo.lastMessageAt ?? 0, batchMaxTs),
     });
+
+    // THE ONLY INBOUND PATH WITH NO SUCCESS LINE, until 2026-08-20. The live path says
+    // `Message added` per message; this one said nothing at all, so a message that took the buffered
+    // path was invisible whether it landed or not - which is exactly the state an invitation card
+    // that never appeared left the log in. One line per FLUSH rather than per message: a catch-up
+    // carries thousands, and the question a reader has is which conversation received how many.
+    // System messages are named individually because they are few, and because a card is one.
+    const systemIds = brandNew.filter((m) => m.isSystem).map((m) => m.id);
+    console.log(
+      `[ADD_MSG] Batch into "${normalized}": ${brandNew.length} added, ${upgradedById.size} upgraded` +
+        (systemIds.length > 0 ? ` - system: ${systemIds.join(', ')}` : '')
+    );
 
     publishTabMessageUpdate({
       type: 'messages_batch',
