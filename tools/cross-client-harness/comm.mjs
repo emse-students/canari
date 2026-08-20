@@ -560,7 +560,10 @@ async function markMemberRow(cx, displayName) {
        var all = [].slice.call(document.querySelectorAll('div, li, tr'));
        var rows = all.filter(function (el) {
          if ((el.innerText || '').indexOf(name) < 0) return false;
-         return el.querySelectorAll('select').length === 1;
+         if (el.querySelectorAll('select').length !== 1) return false;
+         // Never the invite row, which shows the name of whoever the autocomplete has selected and
+         // would hand a caller the invitation control where it asked for a member's.
+         return !el.querySelector('input');
        });
        if (rows.length === 0) return 'no-row';
        rows.sort(function (a, b) { return a.innerText.length - b.innerText.length; });
@@ -589,31 +592,39 @@ export async function communityMembers(cx) {
   const raw = await evaluate(
     cx,
     `(function () {
+       var NL = String.fromCharCode(10);
        var byRole = {};
        byRole[${JSON.stringify(caption('chat_role_admin'))}] = 'admin';
        byRole[${JSON.stringify(caption('chat_role_moderator'))}] = 'moderator';
        byRole[${JSON.stringify(caption('chat_role_member'))}] = 'member';
-       var firstLine = function (el) {
-         return ((el && el.innerText) || '').split(String.fromCharCode(10))[0].trim();
-       };
 
-       var rows = [].slice.call(document.querySelectorAll('div, li, tr')).filter(function (el) {
-         if (el.querySelectorAll('select').length !== 1) return false;
-         var opts = [].slice.call(el.querySelector('select').options).map(function (o) { return o.value; });
-         return opts.indexOf('moderator') >= 0 && opts.indexOf('admin') >= 0;
-       });
-       // Smallest first, then drop any candidate CONTAINING one already taken: every ancestor of a
-       // row satisfies the same predicate and would otherwise be counted as a second member.
-       rows.sort(function (a, b) { return a.innerText.length - b.innerText.length; });
-       var taken = [];
+       // THE ROW IS THE FIRST ANCESTOR THAT SAYS MORE THAN THE CONTROL DOES. A native select's
+       // innerText is ALL of its options ("Membre/Moderateur/Administrateur"), and the two wrappers
+       // above it repeat exactly that - which is why "the smallest element holding one select" found
+       // a wrapper and reported every member as being called "Membre". Walking up until the text
+       // CHANGES lands on the row, whatever it is styled as, and what changed is the name.
        var out = [];
-       rows.forEach(function (el) {
-         if (taken.some(function (t) { return el.contains(t); })) return;
-         taken.push(el);
-         out.push({ name: firstLine(el), role: el.querySelector('select').value, readFrom: 'select' });
+       [].slice.call(document.querySelectorAll('select')).forEach(function (sel) {
+         var opts = [].slice.call(sel.options).map(function (o) { return o.value; });
+         if (opts.indexOf('moderator') < 0 || opts.indexOf('admin') < 0) return;
+
+         var selText = (sel.innerText || '').trim();
+         var row = sel.parentElement;
+         while (row && (row.innerText || '').trim() === selText) row = row.parentElement;
+         if (!row) return;
+
+         // THE INVITE ROW CARRIES THE SAME THREE OPTIONS and is not a member. It is told apart by
+         // the autocomplete beside it: a member row contains no <input> at all, and that is a fact
+         // about what the two rows DO rather than about how either is styled.
+         if (row.querySelector('input')) return;
+
+         var name = (row.innerText || '').replace(selText, '').trim().split(NL)[0].trim();
+         if (!name) return;
+         out.push({ name: name, role: sel.value, readFrom: 'select' });
        });
        if (out.length) return JSON.stringify(out);
 
+       // The view of somebody who may not manage: no selects at all, one badge per row.
        var badges = [].slice.call(document.querySelectorAll('span')).filter(function (sp) {
          return byRole[(sp.innerText || '').trim()] !== undefined;
        });
@@ -621,16 +632,41 @@ export async function communityMembers(cx) {
          var label = (sp.innerText || '').trim();
          var row = sp.parentElement;
          while (row && (row.innerText || '').trim() === label) row = row.parentElement;
-         return { name: firstLine(row), role: byRole[label], readFrom: 'badge' };
-       }));
+         return {
+           name: ((row && row.innerText) || '').replace(label, '').trim().split(NL)[0].trim(),
+           role: byRole[label],
+           readFrom: 'badge',
+         };
+       }).filter(function (m) { return m.name.length > 0; }));
      })()`
   );
   return JSON.parse(raw);
 }
 
-/** Opens the community settings on the members tab, and waits for the roster to have LOADED. */
+/**
+ * Puts the client on the community settings' members tab, and waits for the roster to have LOADED.
+ *
+ * IDEMPOTENT ABOUT WHAT IT FINDS, and that is the whole point of it existing. The gear that opens
+ * the settings is COVERED once the settings are open, so a second call would wait fifteen seconds
+ * for a button that is plainly in the DOM - the failure `openChannel` already carries scar tissue
+ * for. So the modal is opened only when it is not already up, and the tab is asked for either way.
+ *
+ * IT IS ALSO WHY THE ROLE GESTURES BELOW CALL IT THEMSELVES. COMM-5's first run read an empty
+ * roster three times running and passed anyway, because its assertions happened not to depend on
+ * the reading: the panel had drifted off the members tab between the setup and the promotion, and
+ * nothing noticed. A gesture that needs a screen must ESTABLISH it, never assume the caller left it
+ * that way - an assumption that is right nine times out of ten is how a check reports an empty list
+ * as a fact about the community.
+ */
 export async function openCommunityMembers(cx) {
-  await openCommunitySettings(cx);
+  const count = caption('chat_community_member_count_label');
+  const alreadyOpen = await evaluate(
+    cx,
+    `document.body.innerText.indexOf(${JSON.stringify(count)}) >= 0`
+  );
+  if (alreadyOpen !== 'true' && alreadyOpen !== true) {
+    await openCommunitySettings(cx);
+  }
   await communityTab(cx, 'members');
   // THE LOADING LINE IS WAITED OUT, not the heading: the heading renders before the request returns,
   // so a check that reads the roster immediately reads an EMPTY list and calls it a community with
@@ -640,6 +676,19 @@ export async function openCommunityMembers(cx) {
     `document.body.innerText.indexOf(${JSON.stringify(caption('chat_community_loading_members'))}) < 0`,
     20000
   );
+  // AND THE ROSTER IS WAITED FOR, not merely the absence of the spinner: the member-count header
+  // renders at zero while the list is still arriving, so "no loading line" is not "the members are
+  // here". The count is the app's own statement about how many it has.
+  await until(
+    cx,
+    `(function () {
+       var t = document.body.innerText || '';
+       var i = t.indexOf(${JSON.stringify(count)});
+       if (i < 0) return false;
+       return document.querySelectorAll('select').length > 1;
+     })()`,
+    20000
+  ).catch(() => {});
   return communityMembers(cx);
 }
 
@@ -654,11 +703,37 @@ export async function setMemberRole(cx, displayName, role) {
   if (!['member', 'moderator', 'admin'].includes(role)) {
     throw new Error(`setMemberRole: unknown role '${role}'`);
   }
-  const before = await communityMembers(cx);
+  const before = await openCommunityMembers(cx);
   const row = await markMemberRow(cx, displayName);
   await chooseOption(cx, `${row} select`, role);
-  await until(cx, `!(document.querySelector('${row} select') || {}).disabled`, 20000);
-  return { before, after: await communityMembers(cx) };
+
+  // WAITED FOR ON THE ROSTER, NEVER ON THE CONTROL. The first version waited for
+  // `!(document.querySelector(row + ' select') || {}).disabled` - which is TRUE the moment the row
+  // DISAPPEARS, because `(undefined || {}).disabled` is undefined and `!undefined` is true. The list
+  // re-renders while the update lands, so the wait was satisfied by the row going away rather than
+  // by the save completing, and the read that followed returned an empty roster three times in a
+  // row while COMM-5 passed on assertions that happened not to look at it.
+  //
+  // The condition is now the answer itself: this person, present, carrying the new role.
+  return { before, after: await awaitMemberRole(cx, displayName, role) };
+}
+
+/**
+ * Polls the roster until `displayName` carries `role`, and returns the roster either way.
+ *
+ * RETURNS RATHER THAN THROWS on the timeout, because "the panel never showed the new role" is a
+ * result the check must be free to record and reason about - throwing here would turn a finding
+ * about the application into a failed gesture, which reads as a broken harness.
+ */
+async function awaitMemberRole(cx, displayName, role, timeoutMs = 20000) {
+  const deadline = Date.now() + timeoutMs;
+  let last = [];
+  for (;;) {
+    last = await communityMembers(cx).catch(() => []);
+    if (last.some((m) => m.name.includes(displayName) && m.role === role)) return last;
+    if (Date.now() > deadline) return last;
+    await new Promise((r) => setTimeout(r, 700));
+  }
 }
 
 /**
@@ -668,19 +743,24 @@ export async function setMemberRole(cx, displayName, role) {
  * makes addressing it structurally safe: there is nothing else in the row to click by accident.
  */
 export async function removeCommunityMember(cx, displayName) {
-  const before = await communityMembers(cx);
+  const before = await openCommunityMembers(cx);
   const row = await markMemberRow(cx, displayName);
   await realClick(cx, `${row} button`);
   await confirmDialog(cx, 'common_remove_label');
-  await until(
-    cx,
-    `(function () {
-       var el = document.querySelector('[data-harness-member]');
-       return !el || (el.innerText || '').indexOf(${JSON.stringify(displayName)}) < 0;
-     })()`,
-    20000
-  );
-  return { before, after: await communityMembers(cx) };
+
+  // GONE FROM A ROSTER THAT STILL HAS PEOPLE IN IT. "The marked row no longer names them" is also
+  // true of a list that has emptied itself mid-render, and a removal check must not accept that:
+  // it is the same mistake as waiting on a control that has been unmounted. The community always
+  // retains at least the admin doing the removing, so a non-empty roster is a fair precondition.
+  const deadline = Date.now() + 20000;
+  let after = [];
+  for (;;) {
+    after = await communityMembers(cx).catch(() => []);
+    if (after.length > 0 && !after.some((m) => m.name.includes(displayName))) break;
+    if (Date.now() > deadline) break;
+    await new Promise((r) => setTimeout(r, 700));
+  }
+  return { before, after };
 }
 
 /**

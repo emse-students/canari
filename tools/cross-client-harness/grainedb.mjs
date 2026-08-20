@@ -125,8 +125,20 @@ export function communityDistribution(workspaceId) {
 
 /** The user id behind a display name, or null. Used to name a device roster's rows. */
 export function userIdOf(displayName) {
-  const found = rows(psql(`SELECT id FROM users WHERE "displayName" = '${displayName}'`));
-  return found.length === 1 ? found[0][0] : null;
+  const exact = rows(psql(`SELECT id FROM users WHERE "displayName" = '${displayName}'`));
+  if (exact.length === 1) return exact[0][0];
+
+  // THE NAMES THE HARNESS HOLDS ARE THE ONES THE UI IS MATCHED WITH, and the UI is matched on a
+  // SUBSTRING (`[aria-label*=...]`) - so a first name alone is a perfectly good handle there and
+  // matched nothing at all here. It returned null silently, and the query built from it asked the
+  // database about the user literally named "null", which is a diagnosis of the app for a lookup
+  // that never happened.
+  //
+  // Widened to a prefix, and AMBIGUITY STILL ANSWERS NULL: two accounts sharing a first name must
+  // not be resolved by whichever row the planner returns first. That is the same rule the exact
+  // branch obeys, applied to a wider net rather than relaxed.
+  const prefixed = rows(psql(`SELECT id FROM users WHERE "displayName" LIKE '${displayName}%'`));
+  return prefixed.length === 1 ? prefixed[0][0] : null;
 }
 
 /**
@@ -163,4 +175,68 @@ export function groupState(groupId) {
   if (found.length !== 1) return null;
   const [life, ws, chan] = found[0];
   return { retired: life === 'retired', scope: ws || chan || null };
+}
+
+/**
+ * A member's community role AS THE SERVER HOLDS IT: `admin`, `moderator`, `member`, or null.
+ *
+ * WHY NOT READ THE SCREEN. The modal shows an admin a `<select>` whose value is the role and shows
+ * everybody else a translated badge - so a check asserting on the screen alone is asserting on
+ * `fr.json` and on which client happened to be looking. This is the row the permission checks
+ * actually consult, so it is the only thing that can say a promotion TOOK EFFECT rather than merely
+ * having been displayed.
+ *
+ * THE STORED NAMES ARE FRENCH, and that is not an oversight to work around: `channel_roles.name`
+ * holds `Administrateur` / `Moderateur` / `Membre`, and social-service's own
+ * `normalizeRoleLabelToCanonical` folds them to the three canonical values. The same fold is done
+ * here, accent-insensitively, so this answers in the vocabulary every check is written in.
+ *
+ * `roleIds` is a TypeORM `simple-array`, i.e. one comma-separated text column, so the join is a
+ * substring test rather than an array containment - `array_to_string` on it is a type error, which
+ * is how this was learned. Ordered by priority, and the HIGHEST is returned: holding both `Membre`
+ * and `Administrateur` is administrator, exactly as the permission check reads it.
+ */
+export function communityRole(workspaceId, userId) {
+  const out = psql(
+    `SELECT r.name, r.priority FROM channel_members m ` +
+      `JOIN channel_roles r ON r."workspaceId" = m."workspaceId" ` +
+      `WHERE m."workspaceId" = '${workspaceId}' AND m."userId" = '${userId}' ` +
+      `AND position(r.id::text in m."roleIds") > 0 ORDER BY r.priority DESC`
+  );
+  const found = rows(out);
+  if (found.length === 0) return null;
+
+  const canonical = (name) => {
+    const n = String(name)
+      .trim()
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '');
+    if (n === 'administrateur' || n === 'administrator' || n === 'admin') return 'admin';
+    if (n === 'moderateur' || n === 'moderator') return 'moderator';
+    return 'member';
+  };
+  // Highest priority first, and the first canonical value that is not the default wins: a member
+  // row that still carries `Membre` alongside a promotion must not read as a demotion.
+  for (const [name] of found) {
+    const role = canonical(name);
+    if (role !== 'member') return role;
+  }
+  return 'member';
+}
+
+/**
+ * Whether a user is a member of a community at all - `channel_members` alone, no role.
+ *
+ * SEPARATE FROM {@link communityRole} because "no row" and "a row with no recognised role" are two
+ * different states and a check about removal must not accept the second for the first. A removal
+ * that left the row behind with its roles stripped would read as `member` here and as gone there.
+ */
+export function isCommunityMember(workspaceId, userId) {
+  const found = rows(
+    psql(
+      `SELECT 1 FROM channel_members WHERE "workspaceId" = '${workspaceId}' AND "userId" = '${userId}'`
+    )
+  );
+  return found.length > 0;
 }

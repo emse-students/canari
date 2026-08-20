@@ -286,6 +286,53 @@ fulfillment Stripe's webhook already used, via a shared `order_ref` encoding
 
 ---
 
+### MEASURED 2026-08-20 - a role change does not reach the person it is about
+
+**COMM-5 passes and records `liveWithoutReload: false`.** The promotion itself is immediate and
+correct - `member` -> `moderator` -> `admin` -> `member` on the server, each step landing before the
+next was asked for, and the owner's own panel showing each one. What does not happen is the OTHER
+device learning about it: the peer gained the manage controls only after a full reload, and the wait
+that says so is bounded at 20 s and reported next to the answer.
+
+**Which direction matters is the demotion, not the promotion.** A promoted moderator who cannot
+moderate until they reload is an annoyance. A DEMOTED administrator goes on being offered every
+control they have just lost, for as long as their tab stays open. That is not a security hole - the
+server re-checks every one of them, and the components say so in their own comments ("hiding the
+button is convenience, not the gate") - but it is a person clicking things that will now fail, with
+no explanation on screen.
+
+**DECIDED 2026-08-20, by the user: PUSH IT.** A role change is delivered to the member it concerns,
+the way a channel's membership already is, and their client re-fetches its own permissions. The row
+keeps its word "immediately" and COMM-5 becomes strict on `liveWithoutReload` once it holds - until
+then the check measures both halves separately and fails only on the capability never arriving, so
+the record says which of the two is being waited on.
+
+### FOUND 2026-08-20 - a custom role can be created by the API and by nothing else
+
+`POST /channels/roles` exists, `ChannelService.createRole` on the client exists, and **no component
+in the application calls it**. The roles tab renders a permission grid over whichever roles the
+workspace already has - the three defaults - and offers no way to add a fourth. Enumerated, not
+assumed: `createRole` has exactly two non-test references in the frontend tree, its declaration and
+nothing else.
+
+**DECIDED 2026-08-20, by the user: THREE ROLES IS THE PRODUCT.** `ChannelService.createRole` is dead
+client code and is deleted; COMM-6 is rewritten to ask what the grid actually does - that it offers
+exactly the six enforced permissions and no seventh, and that a toggle on it is enforced.
+
+**The server route is KEPT, and this is the reasoning rather than a shrug.** `POST /channels/roles`
+is the only way a custom role can exist at all, and the grid renders whatever roles a workspace has
+- so a role made through the API is visible and editable, just not creatable, and the interface
+degrades into read-and-edit rather than breaking. Deleting the route would also delete the tested
+service method behind it and the migration history that shaped it, for no gain: nothing calls it, so
+nothing costs anything. **The one wart worth writing down:** `normalizeRoleLabelToCanonical` folds
+any unrecognised role name to `member`, so a custom role shows in the member list as "Membre" while
+holding whatever permissions it was given. That is a display fault waiting for the day somebody uses
+the route, not today's problem.
+
+**What is NOT in doubt** is the six: `channel.access` and `channel.send` are out of the registry, out
+of the grid and out of `channel_roles.permissions` by migration, and `RETIRED_PERMISSIONS` keeps
+their names only so an old client's write can be told from a wrong one.
+
 ## Post-campaign projects - decided, not scheduled
 
 ### The MLS + Graine explanation, written FOR THE USER - audience settled 2026-08-20
