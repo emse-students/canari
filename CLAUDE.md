@@ -129,12 +129,14 @@ before the campaign restarts.** Everything actionable is HERE, in order, one lin
 lives where the link says and **is not restated**. An item is done when its code, its tests, its doc
 and its commit are in, and it is then deleted from BOTH files.
 
-**The campaign started 2026-08-19 and has produced FOURTEEN defects, all fixed.** Four of them came
-from ONE private salon driven through create -> public -> private on prod on 2026-08-20, and not one
-was reachable from the repository: the three new routes were registered a segment too deep and
-answered 404 to everybody, a public salon could NEVER be made private, re-privatising handed the
-salon back the group it had just retired, and the exclusion that keeps a distribution group out of
-the conversation list knew only the community scope. **That is the whole lesson of the week, and it
+**The campaign started 2026-08-19 and has produced FIFTEEN defects, all fixed.** Five of them came
+from ONE private salon driven through create -> public -> private -> a SECOND MEMBER on prod on
+2026-08-20, and not one was reachable from the repository: the three new routes were registered a
+segment too deep and answered 404 to everybody, a public salon could NEVER be made private,
+re-privatising handed the salon back the group it had just retired, the exclusion that keeps a
+distribution group out of the conversation list knew only the community scope, and - the worst -
+the device that CREATED a salon's group was on no delivery roster, so a private salon with two
+people in it did not work AT ALL (graine §13, the only copy). **That is the whole lesson of the week, and it
 is now a rule: a lifecycle is a SEQUENCE, and a unit test arranges the state it asserts on.**
 1-2 are numbers a run has to produce; 3 is the community phase, stale AND never run, where the
 rework's remaining risk sits; 4 is the campaign.
@@ -166,7 +168,9 @@ in the field (user, 2026-08-19)**, so the iOS ladder cannot run and parity is ke
     deleted function) and three rows were added for the per-salon groups, so the phase carries
     TWENTY-FIVE; the table on
     [cross-client-testing](docs/wiki/cross-client-testing.md) is the only copy. What is left is the
-    runners: `comm.mjs` holds the shared vocabulary, `checks.mjs` still carries `scripts: []`.
+    runners: `comm.mjs` holds the shared vocabulary, and FIVE of the twenty-five run
+    (COMM-1, 8, 9/10, 23, 24 - each PASSed while proving the instrument, so the board rows stay
+    `pending`; they are campaign verdicts only on the final build).
     **This is where the rework's remaining risk sits** - everything about it is verified by
     COMPILING, and COMM-8/9/13 must be checked against the DATABASE, since what they assert is what
     a device is no longer SENT.
