@@ -1238,6 +1238,34 @@ evidence - and this is the same sentence one step further on. A projection that 
 makes every later question unanswerable, and the symptom is an empty log rather than a wrong one,
 which reads like a quiet run instead of a broken instrument.
 
+#### 29. A BLOCKER IS PROVEN AGAINST THE HARNESS, NEVER INFERRED FROM A LOG LINE
+
+COMM-25's third run left the phone saying `[PIN] No device key in vault - auto-login impossible`. I
+read that as the end of the road, wrote **"the PIN re-entered ON the phone - a human action no tool
+here can answer"** into `CLAUDE.md` and into the board, and committed it. The user's answer was one
+sentence: *"Tu as toujours entre le pin, regarde tes scripts."*
+
+`pin.mjs` has entered that PIN since the beginning, on the phone as well as the browsers - it carries
+a whole mobile branch for the keypad shape, because `#encryption-pin` does not exist there. Two
+paragraphs of this file already said so. Rule 7 lists `install -r` among the transitions that re-lock
+the PIN, precisely so the shared layer restores it. `state.mjs` documents its third answer as
+*`unknown` means run `pin.mjs`, which is idempotent*, and records the identical incident: A1 read
+`unlocked` on `/posts` and `pin.mjs` then found the keypad and typed four digits into it. The claim
+was refuted by the repository before it was written.
+
+**The log line was true and the conclusion drawn from it was not.** `No device key in vault` names
+what failed - the *auto*-login path - and says nothing whatever about the interactive one the modal
+was at that moment offering. Reading a capability as absent because one path to it reported empty is
+the same shape as branching on an error message: a fact stated for one purpose, spent on a question it
+was never written to answer.
+
+The rule is cheap to apply and there is no excuse for skipping it: **before recording that something
+cannot be automated, name the tool that would do it and show it missing.** One `ls` over the harness
+answers it. A blocker written without that costs more than a failed run - it retires a capability the
+rig has, and every check downstream of it is then owed to a person who was never actually needed. The
+same evening it was written, `node pin.mjs --device A1 --stay` unlocked the phone in 4.2 s and the
+run that had been declared impossible produced the phase's first attributable verdict.
+
 ## Observation is part of the check, not a debugging step
 
 Decided 2026-08-06, after two shipped bugs came out of the logs of **passing** checks.

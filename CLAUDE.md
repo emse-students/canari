@@ -187,14 +187,14 @@ in the field (user, 2026-08-19)**, so the iOS ladder cannot run and parity is ke
     [cross-client-testing](docs/wiki/cross-client-testing.md) §9, the only copy. **Board rows stay
     `pending` on purpose** - a runner that PASSes while still proving itself is not a campaign verdict.
     **Owed before the campaign, and each is a run, not a decision:**
-    - **THE PHONE OWES ITS PIN, AND THAT IS A HUMAN ACTION.** `adb install -r` of the rebuilt APK
-      (2026-08-20, owed anyway - the old one predated the mechanism under test by nine days) kept the
-      phone logged in over HTTP and kept its IndexedDB, but lost the device key in the vault:
-      `[PIN] No device key in vault - auto-login impossible`. **A1 can do no MLS until somebody
-      enters the PIN on the device.** Nothing about the phone is measurable before that, and COMM-25
-      is the check that says so first.
-    - **COMM-25, then.** Three runs, none attributable, each for a different reason - see the board.
-      Its arming still owes one condition it does not have: the phone holding a usable device key.
+    - **COMM-25 IS ARMED AND ATTRIBUTABLE, and it says the product has no live propagation of a new
+      salon** - see the board for the run. Four runs; the first three were unattributable and the
+      third cost a rule: I read `[PIN] No device key in vault` as "a human action no tool here can
+      answer" and wrote it here, when `pin.mjs` has always entered that PIN, including on the phone,
+      and `state.mjs` already documents `unknown` as *run `pin.mjs`*. **A precondition the harness
+      restores is not a blocker; asserting it is one without asking the harness is a claim made from
+      a log line instead of from the code** ([testing-methodology](docs/wiki/testing-methodology.md)
+      rule 29). `install -r` re-locks the PIN, which rule 7 already listed.
     - **The phone shows a GENERIC notification body** (user, 2026-08-20, on an app that is not up to
       date). That is COMM-14's row; it is an observation, not a defect, until that runner says so.
     - **`cleanup.mjs` before the campaign** - five venues waiting as of 2026-08-20T20:30Z:
