@@ -134,6 +134,12 @@ const BENIGN = [
   // A role's permissions changed somewhere in the community, and every open grid is told. Routine:
   // COMM-6 and COMM-20 both produce it deliberately, and so does any administrator using the panel.
   /^\[ROLE\] [0-9a-f]+ now grants \d+ permission\(s\)$/,
+  // THIS CLIENT WAS REMOVED FROM A SALON, narrated by the app as it purges it. It is the CORRECT
+  // outcome of a removal and every check that performs one produces it - COMM-9, COMM-11, COMM-21.
+  // A removal nobody asked for would be a finding, and it is the CHECK that knows which it is
+  // looking at: COMM-21 asserts this line's consequences (the row gone, the conversation closed, a
+  // 403 on the next write), so its presence proves the purge ran rather than hiding that it did not.
+  /^Removed from channel #\S+$/,
   // The permission grid saying a cell was cycled, and the panel saying it is saving that cell.
   // `Log.d` renders its payload as `Object` in a console tail, so these two say WHICH gesture ran
   // and nothing about what it carried - which is all a check needs from them: they appear only when

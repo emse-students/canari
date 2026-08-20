@@ -129,14 +129,15 @@ before the campaign restarts.** Everything actionable is HERE, in order, one lin
 lives where the link says and **is not restated**. An item is done when its code, its tests, its doc
 and its commit are in, and it is then deleted from BOTH files.
 
-**The campaign started 2026-08-19 and has produced TWENTY-FOUR defects, twenty-three fixed and ONE
+**The campaign started 2026-08-19 and has produced TWENTY-SIX defects, twenty-five fixed and ONE
 OPEN** - COMM-4's, in item 3 below. **Every story is in `CHANGELOG.md` and every rule one left is in
-[durable-rules](docs/wiki/durable-rules.md); neither is restated here.** The twenty-fourth is COMM-7's,
-fixed 2026-08-20: a salon reserved for administrators still handed every member a composer, because
-`writePolicy` reached the settings modal and nothing else. The server now answers the DECISION
-(`viewerCanWrite`) rather than the policy, and `writePolicyAllows` is its only definition - which is
-what exposed a latent second fault, `canWriteToChannel` counting a moderator differently from every
-other reader. Seven of the twenty-four came from ONE private salon driven on prod through create ->
+[durable-rules](docs/wiki/durable-rules.md); neither is restated here.** The twenty-sixth is COMM-20's, on its FIRST run: a
+permission-grid cell IS a delta and was being sent as the role's whole list, so two administrators
+toggling two DIFFERENT keys of one role erased each other's work and the loser's grid kept drawing a
+state the server had never held. The twenty-fourth and twenty-fifth are both COMM-7's - a salon
+reserved for administrators handed every member a composer, and the fix for it (`viewerCanWrite` in
+the workspace listing) served only whoever loaded the community AFTERWARDS, so the same check failed
+identically a second time until the change was ANNOUNCED, split by the answer. Seven came from ONE private salon driven on prod through create ->
 public -> private -> a SECOND MEMBER, and not one was reachable from the repository. **A check that
 fails is a claim to CHECK, never a check to soften** - the reflex was to relax the assertion to match
 the server, and it was the assertion that was right. **That is the whole lesson of the week, and it
