@@ -948,3 +948,88 @@ export async function acceptInviteLink(cx) {
   await until(cx, `location.pathname.indexOf('/c/join/') < 0`, 30000);
   return awaitAppSettled(cx);
 }
+
+/**
+ * Sets the bounds the NEXT minted link will carry - expiry in days, uses in count.
+ *
+ * THEY APPLY AT MINT, NOT TO THE LIVE LINK. Both are read when the link is created or regenerated,
+ * so setting them and then reading the existing link changes nothing: call this, then
+ * {@link rotateInvite}. A check that set a cap and asserted on the link already on screen would be
+ * asserting about a token minted before the cap existed.
+ *
+ * THE SELECTS ARE FOUND BY THEIR LABEL, and marked for one call. They carry no id, no name and no
+ * test hook, and there are two of them side by side - so an index would silently swap expiry for
+ * uses the day a third bound is added, which is a check that passes while measuring the wrong
+ * control. The marker attribute is set and removed inside this gesture; nothing outside it ever
+ * sees the DOM changed.
+ *
+ * @param opts `{ expiryDays, maxUses }` - `0` is the app's own value for "never" / "unlimited",
+ *   and omitting a key leaves that control alone
+ */
+export async function setInviteBounds(cx, { expiryDays = null, maxUses = null } = {}) {
+  await communityTab(cx, 'members');
+  const pick = async (labelText, value) => {
+    const found = await evaluate(
+      cx,
+      `(function () {
+         var labels = [].slice.call(document.querySelectorAll('label'));
+         for (var i = 0; i < labels.length; i++) {
+           if ((labels[i].innerText || '').trim().indexOf(${JSON.stringify(labelText)}) !== 0) continue;
+           var s = labels[i].querySelector('select');
+           if (s) { s.setAttribute('data-harness-pick', ''); return 'ok'; }
+         }
+         return 'not-found';
+       })()`
+    );
+    if (found !== 'ok') throw new Error(`setInviteBounds: no select under "${labelText}"`);
+    try {
+      await chooseOption(cx, 'select[data-harness-pick]', String(value));
+    } finally {
+      await evaluate(
+        cx,
+        `(function () {
+           var s = document.querySelector('select[data-harness-pick]');
+           if (s) s.removeAttribute('data-harness-pick');
+           return 'ok';
+         })()`
+      );
+    }
+  };
+  if (expiryDays !== null) await pick(caption('chat_community_invite_expiry_label'), expiryDays);
+  if (maxUses !== null) await pick(caption('chat_community_invite_max_uses_label'), maxUses);
+}
+
+/**
+ * Regenerates the community's invite link and returns the NEW one.
+ *
+ * REGENERATING REVOKES THE PREVIOUS TOKEN, which the panel says in so many words and which is the
+ * only way to revoke one at all - there is no separate revoke control, by design: one live link at
+ * a time is what makes it enumerable, and a link nobody can enumerate is not revocable.
+ *
+ * The returned value is asserted to have CHANGED, because the failure this gesture can have is
+ * silent: a click that missed leaves the old token in the field and every assertion downstream then
+ * describes the link the check believed it had replaced.
+ */
+export async function rotateInvite(cx) {
+  await communityTab(cx, 'members');
+  const before = await evaluate(cx, `(document.querySelector('input[readonly]') || {}).value || ''`);
+  // THERE IS NOTHING TO ROTATE ON A COMMUNITY WITH NO LINK, and the control is not even the same
+  // one - the panel draws "Generer un lien d'invitation" until a link exists and "Regenerer"
+  // afterwards. Refused here rather than absorbed: a caller wanting the FIRST mint wants
+  // `inviteLink`, which creates with whatever bounds are set, and silently doing that instead
+  // would make this gesture report a rotation that never happened. COMM-3 met exactly this and
+  // spent twenty seconds waiting on a field that was never going to change.
+  if (!before) {
+    throw new Error('rotateInvite: no live link to rotate - use inviteLink() for the first mint');
+  }
+  await realClick(cx, control('chat_regenerate_link_button'));
+  await until(
+    cx,
+    `(function () {
+       var el = document.querySelector('input[readonly]');
+       return !!el && !!el.value && el.value !== ${JSON.stringify(before)};
+     })()`,
+    20000
+  );
+  return evaluate(cx, `(document.querySelector('input[readonly]') || {}).value || ''`);
+}

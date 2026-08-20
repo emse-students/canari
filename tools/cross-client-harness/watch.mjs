@@ -31,8 +31,14 @@ const BENIGN = [
   // The reconciliation reporting NOTHING TO REMOVE is the whole mechanism working: it compares the
   // group's tree against the scope's roster on every open and says so. Its SIBLING - the line that
   // says members are being removed - is deliberately NOT matched here: that one means a departure
-  // is being enforced, which is a finding in any check that was not about a departure, and it is
-  // caught by the `re-?add|epoch` rule in NOTABLE.
+  // is being enforced, which is a finding in any check that was not about a departure.
+  //
+  // THIS COMMENT USED TO SAY THE SIBLING WAS CAUGHT BY THE `re-?add|epoch` RULE IN NOTABLE. It was
+  // not, and COMM-3 proved it on 2026-08-20 by making a real member leave: the line reads
+  // "N member(s) left but still hold a leaf - removing", which contains none of those words, so the
+  // single loudest signal Graine emits was landing in `unexplained`. A rule that claims another rule
+  // covers something has to be checked against the text, not against the intent - the sibling now
+  // has its own entry in NOTABLE, named.
   /^\[GRAINE\] .+ distribution group agrees with its roster - \d+ leaf\/leaves, nobody to remove$/,
   // The FIRST device into a salon's group initialises it - exactly once per salon, by construction,
   // and every COMM check that creates a private salon produces it.
@@ -68,6 +74,17 @@ const BENIGN = [
   /^Joined channel #\S+$/,
   /^\[GRAINE\] asked \S+ for the history of community [0-9a-f]+$/,
   /^\[notifNav\] routing to \S+ for pending conversation \S+$/,
+  // The landing refetching ONCE before it selects. A just-accepted invitation is never in the
+  // conversation list the client already holds, which is what this branch exists for; the two
+  // sentences that mean it gave up - "not on this device" and "still unknown after refresh" - are
+  // not matched here, and land in `unexplained` where a landing that never arrived belongs.
+  /^\[notifNav\] channel \S+ unknown - refreshing communities before selecting$/,
+  // LEAVING, from the leaver's own side. The client purges a community it left and a community it
+  // was removed from through the same path, so it says "removed from" for both - the discriminator
+  // is the payload, not the sentence (see `memberRemoval.ts`). Both lines are the departure the
+  // check asked for; their absence would mean a leaver kept the community on screen.
+  /^\[Channel Event\] removed from community [0-9a-f]+$/,
+  /^You have left the community\.$/,
   // THE SWEEP SPARING A KEY-DISTRIBUTION GROUP, which is the fix WP-GRAINE-1 and the 2026-08-20
   // discriminator repair both landed. Its ABSENCE is what would be the signal: a boot where these
   // do not appear is a boot where the sweep deleted the group and sending stops working.
@@ -340,6 +357,13 @@ const NOTABLE = [
   // Never `clean`-breaking, because a legitimate one must not fail an unrelated check - but
   // never silent: in a check that excluded nobody, its presence IS the finding.
   /^\[(SYNC|DISCOVERY)\] (WASM|MLS state) removed/,
+  // THE CRYPTOGRAPHIC HALF OF A REVOCATION ACTUALLY FIRING - a remaining member's device finding
+  // leaves in the tree that the roster no longer names, and committing them out. It is the whole of
+  // WP-GRAINE-2 working, so it never breaks `clean`; but in a check that removed NOBODY its presence
+  // means somebody was removed anyway, which is as serious as this campaign gets. It sat in
+  // `unexplained` until COMM-3 made a real member leave, because the `BENIGN` entry for its quiet
+  // sibling claimed another rule already covered it and no rule did.
+  /^\[GRAINE\] \S+ [0-9a-f]+: \d+ member\(s\) left but still hold a leaf - removing/,
   /decrypt(ion)? (error|failed)/i,
   // AN OUTBOX THAT DID NOT EMPTY. `[OUTBOX] Queued` and `Flushing` are routine and sit in `BENIGN`;
   // this line is the flush REPORTING LEFTOVERS, and the two are not the same claim. It fired once in

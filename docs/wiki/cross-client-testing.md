@@ -117,6 +117,20 @@ Nothing was persisted (localStorage and every IndexedDB store were read: no row 
 landing's own abandon path exists, and a re-run came back clean on both clients. It is a live page
 briefly outliving a community deleted underneath it, not a leak.
 
+**COMM-3 added a fourth case the row did not name, and a positive control.** Revocation is not in
+the row because there is no revoke control to name: regenerating IS the revocation, one live link at
+a time being what makes a link enumerable. And every other case is a REFUSAL - a check made only of
+refusals passes perfectly against a preview that is simply broken - so the rotated case previews both
+tokens on the same client in the same run: the old one refused, the new one accepted.
+
+**It also found a hole in the classifier, which is the second one this phase has produced.** The
+`BENIGN` entry forgiving Graine's quiet reconciliation line stated that its loud sibling - a
+departure being ENFORCED, leaves committed out of the tree - was "caught by the `re-?add|epoch` rule
+in NOTABLE". It was not: the line reads *"N member(s) left but still hold a leaf - removing"*, which
+contains none of those words, so the single loudest signal Graine emits went to `unexplained` and
+nowhere else. It has its own NOTABLE entry now. **A rule that claims another rule covers something
+must be checked against the TEXT, not against the intent.**
+
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | MSG-1 | W1 -> W2 plain DM: under 2 s, one copy, correct author | `W1 W2` | `PASS` - 261 ms |
@@ -306,7 +320,7 @@ of turning runners red a week later. Two of its selectors are deliberately struc
 anchored on the "add a community" button, and a channel is asked for BY NAME because the only anchor
 in its container is a button a non-manager never sees - which is exactly the case COMM-8 measures.
 
-**EIGHT OF THE TWENTY-FIVE ARE WRITTEN AND REGISTERED** (1, 2, 5, 8, 9/10, 16, 23, 24). `comm2.mjs`
+**NINE OF THE TWENTY-FIVE ARE WRITTEN AND REGISTERED** (1, 2, 3, 5, 8, 9/10, 16, 23, 24). `comm2.mjs`
 is the primitive the rest wait on: the invite link is the only gesture in the product that puts a
 SECOND member into a community a check built itself, so COMM-11, COMM-12 and COMM-19 all inherit
 what it proves.
@@ -333,7 +347,7 @@ phase now carries 25.
 | --- | --- | --- | --- |
 | COMM-1 | Create a community, create a channel, post, both peers converge | `W1 W2` | `pending` |
 | COMM-2 | Invite link: create, preview, accept from the other account | `W1 W2` | **PASS** `bf2815c2` |
-| COMM-3 | An expired link, a `maxUses`-exhausted link, a link to a deleted community | `W1 W2` | `pending` |
+| COMM-3 | An expired link, a `maxUses`-exhausted link, a REVOKED link, a link to a deleted community - and the rotation's new link accepted, as the positive control | `W1 W2` | **PASS** `bf2815c2` |
 | COMM-4 | Direct invite: the `channel_invitation` card appears in the DM on both sides, deduped | `W1 W2` | `pending` |
 | COMM-5 | Roles: promote to moderator, then admin; the grid takes effect immediately | `W1 W2` | `pending` |
 | COMM-6 | A custom role over the SIX enforced permissions - the grid offers no seventh | `W1 W2` | `pending` |

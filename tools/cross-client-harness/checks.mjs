@@ -89,7 +89,7 @@ export const PHASES = {
   // Named so `run.mjs --list` reports them as ZERO COVERAGE rather than leaving them out. A phase
   // that is absent from a listing reads as "done"; a phase listed with no script reads as what it
   // is. The dashboard carries 25 COMM checks, 6 MULTI, 20 CALL and 10 CORRUPT; COMM is the one
-  // being written now and carries EIGHT of its twenty-five, which is why it is listed with the eight
+  // being written now and carries NINE of its twenty-five, which is why it is listed with the nine
   // rather than with all of them - a manifest naming a script that does not exist would fail the
   // phase, and one naming none would read as a phase with nothing to run.
   //
@@ -102,6 +102,7 @@ export const PHASES = {
     scripts: [
       'comm1.mjs',
       'comm2.mjs',
+      'comm3.mjs',
       'comm5.mjs',
       'comm8.mjs',
       'comm910.mjs',
