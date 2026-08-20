@@ -338,7 +338,7 @@ of turning runners red a week later. Two of its selectors are deliberately struc
 anchored on the "add a community" button, and a channel is asked for BY NAME because the only anchor
 in its container is a button a non-manager never sees - which is exactly the case COMM-8 measures.
 
-**FOURTEEN OF THE TWENTY-FIVE ARE WRITTEN AND REGISTERED** (1, 2, 3, 4, 5, 8, 9/10, 11, 12, 13, 16, 19, 23, 24). `comm2.mjs`
+**SIXTEEN OF THE TWENTY-FIVE ARE WRITTEN AND REGISTERED** (1, 2, 3, 4, 5, 6, 7, 8, 9/10, 11, 12, 13, 16, 19, 23, 24). `comm2.mjs`
 is the primitive the rest wait on: the invite link is the only gesture in the product that puts a
 SECOND member into a community a check built itself, so COMM-11, COMM-12 and COMM-19 all inherit
 what it proves.
@@ -429,6 +429,18 @@ survives, archiving is a design decision, soften the assertion. It was the asser
 salon ended as ciphertext nothing could open, hidden, and removable only by deleting its community.
 Fixed in `bf2815c2`. **A check that fails is a claim to CHECK, never a check to soften.**
 
+**COMM-6 IS THE FOURTH ROW TO NAME A MECHANISM THE PRODUCT DOES NOT HAVE, and it was rewritten on
+2026-08-20 like the other three.** It asked for "a custom role", and there is no way to make one:
+`POST /api/channels/roles` is served and **no client in the repository calls it**, so a community
+has the three roles it is created with and a grid over them. The row now asks what the panel really
+offers - SIX permissions and no seventh, read from the screen; the three documented permission sets,
+read from `channel_roles.permissions`; and one toggle sent through the grid and looked for in that
+same column, which is the only thing separating a panel that writes from one that draws. The two
+retired keys are asserted absent in the STORE rather than on the screen, because their captions are
+gone from `fr.json` and `caption()` would throw on them. **That an endpoint no client can reach
+exists at all is recorded, not asserted** - a check cannot demand a feature, and whether it is dead
+weight or an unbuilt one is its owner's call.
+
 **THE TWENTY-FIVE ROWS WERE REWRITTEN 2026-08-20, and the reason was not that they were incomplete.**
 They were written before Graine and still spoke the vocabulary it replaced: COMM-9 asked that "the
 key rotates", COMM-13 asked for "manual key rotation" - **neither mechanism exists** - and COMM-22
@@ -447,7 +459,7 @@ phase now carries 25.
 | COMM-3 | An expired link, a `maxUses`-exhausted link, a REVOKED link, a link to a deleted community - and the rotation's new link accepted, as the positive control | `W1 W2` | **PASS** `bf2815c2` |
 | COMM-4 | Direct invite: the `channel_invitation` card appears in the DM on both sides, deduped | `W1 W2` | `pending` |
 | COMM-5 | Roles: promote to moderator, then admin; the grid takes effect immediately | `W1 W2` | `pending` |
-| COMM-6 | A custom role over the SIX enforced permissions - the grid offers no seventh | `W1 W2` | `pending` |
+| COMM-6 | The permission grid offers the SIX enforced permissions and no seventh, the three default roles carry exactly what is documented, and a toggle reaches the column a decision reads | `W1` | `pending` |
 | COMM-7 | `writePolicy` = admins only: refused server-side as well as in the UI | `W1 W2` | `pending` |
 | COMM-8 | A private salon: a non-member cannot see it, **cannot fetch it by id, and is never sent its seed** | `W1 W2` | `pending` |
 | COMM-9 | Removed from a private salon: the server drops their routing rows, and the next message is sealed under a session they do not hold | `W1 W2` | `pending` |
@@ -468,7 +480,7 @@ phase now carries 25.
 | COMM-24 | Private -> public: the salon's group is tombstoned and the community's carries it again | `W1 W2` | `pending` |
 | COMM-25 | An admin's SECOND device receives the salon's seeds after the join, without a second join | `W1 W2` | `pending` |
 
-**FOURTEEN RUNNERS EXIST, and every row above is still `pending` on purpose** - except the three that
+**SIXTEEN RUNNERS EXIST, and every row above is still `pending` on purpose** - except the three that
 have a build against them, which ran after the phase was rewritten. A runner that PASSes while it is
 still proving the instrument is not a campaign verdict: the campaign is paused until every work
 package lands, and nothing measured before the last one counts. **COMM-8 produced a clean,

@@ -107,6 +107,49 @@ describe('addMessageToChat during a bulk-ingest window', () => {
   });
 
   /**
+   * THE TWO SILENT RETURNS ON THE INBOUND PATH, and they are only findable because they now speak.
+   *
+   * COMM-4 watched an invitation card be written - the handler logged the conversation it went into
+   * - and never appear on screen or survive a reload. Between the buffer and the flush there were
+   * exactly two places a message could be absorbed without leaving anything behind, and neither of
+   * them said so, which made a delivered message and a lost one look identical from every log there
+   * is. Discarding may well be right; being silent about it never is.
+   */
+  it('says so when it drops a buffered message because the conversation went away', async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, 'their message', CONVO, ctx, { messageId: 'theirs-1' });
+    // The conversation was in the map when the message arrived, and is not any more - which is why
+    // this is not the orphan buffer: nothing will ever come back for it.
+    conversations.delete(CONVO);
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+
+    expect(saveMessage).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('vanished between buffering and flush')
+    );
+  });
+
+  it('says so when it ignores a buffered message it already holds', async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations } = makeContext();
+    const logged = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, 'their message', CONVO, ctx, { messageId: 'theirs-1' });
+    await messaging.addMessageToChat(PEER, 'their message', CONVO, ctx, { messageId: 'theirs-1' });
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+
+    expect(idsIn(conversations)).toEqual(['theirs-1']);
+    expect(logged).toHaveBeenCalledWith(
+      expect.stringContaining('Duplicate ignored during a bulk ingest')
+    );
+  });
+
+  /**
    * The loss itself, and the reason a flush-based test would not catch it: a second drain starting
    * before the first ended clears the buffer WITHOUT flushing (`beginBulkMessageIngest` clears
    * unconditionally), so anything in it is gone for good. The own message must not be in there.

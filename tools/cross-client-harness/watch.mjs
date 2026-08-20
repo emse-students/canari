@@ -110,6 +110,10 @@ const BENIGN = [
   /^\[MLS\] System event '\S*' from [0-9a-f]+ in [0-9a-f]+…$/,
   /^\[CHANNEL_INVITE\] invited to [0-9a-f]+ by [0-9a-f]+ - card channel-invite:\S+ into [0-9a-f]+…$/,
   /^\[CHANNEL_INVITE\] our own invitation of [0-9a-f]+ to [0-9a-f]+, seen from another device - card /,
+  // The two silent returns on the inbound path, now audible. A duplicate is ordinary; a
+  // conversation that VANISHED between buffering and flush is not, and it is NOTABLE rather than
+  // benign - see the rules below.
+  /^\[ADD_MSG\] Duplicate ignored during a bulk ingest id=/,
   // The inviter's own confirmation of an action they just took, from the community panel.
   /^Member invited to channel \((member|moderator|admin)\): /,
   /^\[notifNav\] routing to \S+ for pending conversation \S+$/,
@@ -387,6 +391,11 @@ const NOTABLE = [
   // success, and in a delivery check its presence means something was already missing before the
   // check started.
   /message\(s\) caught up/i,
+  // A CONVERSATION THAT DISAPPEARED BETWEEN A MESSAGE BEING BUFFERED AND THE BUFFER BEING FLUSHED.
+  // The messages were accepted - the conversation was in the map when they arrived - and are then
+  // dropped without being rendered or persisted, so nothing else will ever mention them. Notable and
+  // not benign: whatever else a run is measuring, this line means it lost something.
+  /vanished between buffering and flush/i,
   // A LIVE MESSAGE ARRIVING FOR A CHANNEL THIS DEVICE HAS NOT LOADED. `channelEventHandler` only
   // opens a bubble for a channel already in `conversations`, so the row is dropped from the LIVE
   // path and appears on the next history load instead. That is the design, and it is why this is

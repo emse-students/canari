@@ -322,6 +322,11 @@ export function useMessaging() {
       const id = normalizeMessageId(options.messageId) ?? crypto.randomUUID();
       const existing = bulkIngestBuffer.get(normalized) ?? [];
       if (existing.some((m) => m.messageId === id) || convo.messages.some((m) => m.id === id)) {
+        // A duplicate is ordinary and this is not an accusation - but it is the FIRST of two silent
+        // returns on the only path an inbound message can take, and between them they can absorb a
+        // message without leaving anything behind. A card that never appeared has to be explainable
+        // from a log, and "we already had it" is one of the explanations.
+        console.log(`[ADD_MSG] Duplicate ignored during a bulk ingest id=${id}…`);
         return;
       }
       existing.push({
@@ -510,7 +515,17 @@ export function useMessaging() {
     if (messages.length === 0) return;
     const normalized = contactName.toLowerCase();
     const convo = ctx.conversations.get(normalized);
-    if (!convo) return;
+    if (!convo) {
+      // THE SECOND SILENT RETURN, and the more dangerous one: these messages were ACCEPTED into the
+      // bulk buffer, which means the conversation was in the map when they arrived and is not any
+      // more. They are dropped here without being rendered or persisted, and nothing else in the
+      // system would ever mention them again. Same rule as `warnIfDiscardingBuffered`: discarding
+      // may be right, being silent about it never is.
+      console.warn(
+        `[ADD_MSG] conversation "${normalized}" vanished between buffering and flush - dropping ${messages.length} message(s), never rendered nor persisted`
+      );
+      return;
+    }
 
     // ONE index, built once, for the two questions this loop asks of every incoming message: "do we
     // already hold it" and "what timestamp did we give it". Both used to be a linear scan of the

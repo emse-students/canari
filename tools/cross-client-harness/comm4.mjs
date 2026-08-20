@@ -133,6 +133,34 @@ async function inviteCards(cx, communityName, descText) {
   return JSON.parse(raw);
 }
 
+/**
+ * How many DIRECT-CONVERSATION rows the sidebar offers for one person.
+ *
+ * ASKED BECAUSE A CARD CAN BE WRITTEN AND STILL NOT BE ON SCREEN. The handler names the conversation
+ * it wrote into; if a device holds TWO conversation rows for the same peer - which
+ * `mergeDirectConversationDuplicates` exists because it happens - then one of them is the one a
+ * person opens and the other is where the card went, and every count taken through the first is a
+ * truthful zero about the wrong conversation. Two rows here is the finding; one row makes the zero
+ * mean what it looks like.
+ */
+async function peerRows(cx, name) {
+  return Number(
+    await evaluate(
+      cx,
+      `(function () {
+         var panel = document.querySelector('.sidebar-panel');
+         if (!panel) return -1;
+         var rows = [].slice.call(panel.querySelectorAll('button, [role=button], a, li'));
+         var wanted = ${JSON.stringify(name)}.toLowerCase();
+         return rows.filter(function (e) {
+           var t = (e.innerText || '').trim().toLowerCase();
+           return t.indexOf(wanted) === 0 && e.getBoundingClientRect().width > 0;
+         }).length;
+       })()`
+    )
+  );
+}
+
 /** Polls the open conversation until the community's card is there, or gives up and reports what is. */
 async function awaitCard(cx, descText, timeoutMs = 40_000) {
   const deadline = Date.now() + timeoutMs;
@@ -188,6 +216,14 @@ const inviteeSide = armed
       await ensureConversation(w2, OWNER_NAME);
       return awaitCard(w2, GOT_TEXT);
     })
+  : null;
+
+// Taken with the conversation already open, so the sidebar is in the state the counts were read in.
+const rows = armed
+  ? {
+      onTheInviter: await step('count the peer rows on the inviter', () => peerRows(w1, PEER_NAME)),
+      onTheInvitee: await step('count the peer rows on the invitee', () => peerRows(w2, OWNER_NAME)),
+    }
   : null;
 
 // -- And what a second producer does to it --------------------------------------------
@@ -246,7 +282,9 @@ const linesW2 = consoleLines(wb.cx);
  * between them, and they only exist because that run went looking for them and found the seam
  * silent. Recorded whatever the verdict is - on a PASS they are the proof the path really ran.
  */
-const inviteeSaid = linesW2.filter((l) => /System event|CHANNEL_INVITE/.test(l));
+const said = (lines) => lines.filter((l) => /System event|CHANNEL_INVITE|ADD_MSG/.test(l));
+const inviteeSaid = said(linesW2);
+const inviterSaid = said(linesW1);
 
 const gated = gate(verdict, { W1: await report(wa), W2: await report(wb) });
 
@@ -258,6 +296,8 @@ record('COMM-4', gated.verdict, {
   peerJoined,
   inviterSide,
   inviteeSide,
+  rows,
+  inviterSaid,
   inviteeSaid,
   afterReload,
   ...expectations,

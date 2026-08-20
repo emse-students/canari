@@ -39,6 +39,7 @@ import {
 } from './chat.mjs';
 import {
   acceptInviteLink,
+  channelRow,
   createChannel,
   createCommunity,
   deleteCommunity,
@@ -103,8 +104,21 @@ async function composerState(cx) {
   );
 }
 
-/** Opens the salon on a client that is already inside the community. */
+/**
+ * Opens the salon on a client that is already inside the community.
+ *
+ * WAITS FOR THE ROW FIRST. A salon created on one device reaches the other over the socket, so a
+ * click issued the moment the community opens finds nothing - and `realClick`'s failure would read
+ * as "the salon is not offered to this member", which is a permission finding this row does not
+ * make. The wait turns that into what it is: a delay, or a real absence after a bounded window.
+ */
 async function openSalon(cx) {
+  const deadline = Date.now() + 30_000;
+  for (;;) {
+    if ((await channelRow(cx, salon)).present) break;
+    if (Date.now() > deadline) throw new Error(`the salon never appeared in the sidebar`);
+    await new Promise((r) => setTimeout(r, 1500));
+  }
   await realClick(cx, `[aria-label*=${JSON.stringify(salon)}]`);
   const open = await selectedChannel(cx);
   if (open !== salon) throw new Error(`wrong salon open: ${JSON.stringify(open)}`);

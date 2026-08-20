@@ -200,7 +200,10 @@ in the field (user, 2026-08-19)**, so the iOS ladder cannot run and parity is ke
     not have produced by accident.
     **And each runner is RUN ON PROD as it is written** (the user's decision, same day): writing all
     twenty then running once is verification by COMPILING, which is what produced five of this
-    week's fifteen defects. Test debris stays behind; `cleanup.mjs` sweeps it before the campaign.
+    week's fifteen defects. Every runner deletes its own venue, so debris only appears when one
+    CRASHES; `cleanup.mjs` was a one-off for a MiTV channel and is now the real sweeper - every
+    community named `C<n> COMM<n>-<mark>`, deleted THROUGH the product so its Graine group goes with
+    it, `--dry` to look first. **Owed: run it before the campaign** (`d6292672` is waiting).
     **This is where the rework's remaining risk sits** - everything about it is verified by
     COMPILING, and COMM-8/9/13 must be checked against the DATABASE, since what they assert is what
     a device is no longer SENT.

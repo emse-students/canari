@@ -330,3 +330,30 @@ export function channelWritePolicy(channelId) {
   );
   return found.length ? found[0][0] : null;
 }
+
+/**
+ * Every role the community holds, as the server stores it: `[{ name, priority, permissions }]`.
+ *
+ * THE PERMISSION LIST IS THE THING, and it can only be read here. The grid shows LABELS - localized
+ * prose - so a check reading the screen is asserting on `fr.json` and would go on passing if the
+ * key behind a label changed to one nothing enforces. That is precisely the failure the two retired
+ * permissions were: two rows in a matrix of eight that decided nothing, visible and convincing for
+ * a year. What a role GRANTS is `channel_roles.permissions`, which is what `memberHasWorkspacePermission`
+ * reads on every decision, and nothing else is evidence.
+ *
+ * Ordered by priority descending, so the administrator is first whatever it is named.
+ */
+export function communityRoles(workspaceId) {
+  return rows(
+    psql(
+      // `permissions` is a TypeORM `simple-array`, i.e. ONE text column holding the keys separated
+      // by commas - not a Postgres array, so it is selected as it is stored and split here.
+      `SELECT name, priority, permissions FROM channel_roles ` +
+        `WHERE "workspaceId" = '${workspaceId}' ORDER BY priority DESC`
+    )
+  ).map(([name, priority, permissions]) => ({
+    name,
+    priority: Number(priority),
+    permissions: permissions ? permissions.split(',').filter(Boolean) : [],
+  }));
+}
