@@ -735,6 +735,17 @@
       onWorkspaceUpdated: (event: { workspaceId: string; imageMediaId?: string }) => {
         globalChannels.handleWorkspaceUpdated(event);
       },
+      onWorkspaceRoleChanged: (event: {
+        workspaceId: string;
+        roleName: string;
+        canManage: boolean;
+        permissions: string[];
+      }) => {
+        globalChannels.handleWorkspaceRoleChanged(event);
+        appendLog(
+          `[WORKSPACE] my role in ${event.workspaceId.slice(0, 8)} is now "${event.roleName}" (canManage=${event.canManage})`
+        );
+      },
       onWorkspaceDeleted: (event: { workspaceId: string }) => {
         if (!event.workspaceId) return;
         void dropCommunityLocally(event.workspaceId, (ctx) =>

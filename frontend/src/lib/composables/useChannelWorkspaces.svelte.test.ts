@@ -247,4 +247,82 @@ describe('useChannelWorkspaces - online/foreground refresh', () => {
     expect(store.workspacesLoadError).toBeNull();
     expect(store.channelWorkspaces[0].id).toBe('community');
   });
+  // A ROLE CHANGE PUSHED TO THE PERSON IT IS ABOUT, applied without a round trip.
+  //
+  // Measured on prod 2026-08-20 (COMM-5) before the push existed: the answer arrived on the next
+  // full load and not before, so a DEMOTED administrator kept every control they had just lost for
+  // as long as their tab stayed open. The value is applied from the event rather than refetched
+  // because a refetch can fail, can be declined while a load is in flight, and lands whenever the
+  // network allows - and what it would return is exactly what the event already carries.
+  it('applies a pushed role change to the community it names, and to no other', async () => {
+    listUserWorkspaces.mockResolvedValue([
+      makeWorkspaceDto('ws1', 'One', 'one'),
+      makeWorkspaceDto('ws2', 'Two', 'two'),
+    ]);
+    listChannels.mockResolvedValue([]);
+
+    const store = useChannelWorkspaces();
+    const promise = store.loadChannelWorkspacesFromBackend(makeContext());
+    await tick();
+    await promise;
+
+    store.handleWorkspaceRoleChanged({
+      workspaceId: 'ws1',
+      roleName: 'Administrateur',
+      canManage: true,
+      permissions: ['workspace.manage'],
+    });
+
+    const byId = (id: string) => store.channelWorkspaces.find((w) => w.workspaceDbId === id);
+    expect(byId('ws1')?.viewerCanManage).toBe(true);
+    expect(byId('ws2')?.viewerCanManage).toBe(false);
+  });
+
+  it('takes the capability AWAY on a demotion, which is the direction that matters', async () => {
+    listUserWorkspaces.mockResolvedValue([makeWorkspaceDto('ws1', 'One', 'one')]);
+    listChannels.mockResolvedValue([]);
+
+    const store = useChannelWorkspaces();
+    const promise = store.loadChannelWorkspacesFromBackend(makeContext());
+    await tick();
+    await promise;
+
+    store.handleWorkspaceRoleChanged({
+      workspaceId: 'ws1',
+      roleName: 'Administrateur',
+      canManage: true,
+      permissions: ['workspace.manage'],
+    });
+    expect(store.channelWorkspaces[0].viewerCanManage).toBe(true);
+
+    store.handleWorkspaceRoleChanged({
+      workspaceId: 'ws1',
+      roleName: 'Membre',
+      canManage: false,
+      permissions: [],
+    });
+    expect(store.channelWorkspaces[0].viewerCanManage).toBe(false);
+  });
+
+  // An event for a community this device does not hold must change nothing at all - not throw, and
+  // not create a phantom entry in the sidebar.
+  it('ignores a role change for a community it does not have', async () => {
+    listUserWorkspaces.mockResolvedValue([makeWorkspaceDto('ws1', 'One', 'one')]);
+    listChannels.mockResolvedValue([]);
+
+    const store = useChannelWorkspaces();
+    const promise = store.loadChannelWorkspacesFromBackend(makeContext());
+    await tick();
+    await promise;
+
+    store.handleWorkspaceRoleChanged({
+      workspaceId: 'ws-elsewhere',
+      roleName: 'Administrateur',
+      canManage: true,
+      permissions: ['workspace.manage'],
+    });
+
+    expect(store.channelWorkspaces).toHaveLength(1);
+    expect(store.channelWorkspaces[0].viewerCanManage).toBe(false);
+  });
 });

@@ -111,6 +111,8 @@ Deep links, system events, rosters and the channel/DM asymmetry are on those two
 
 **Who may do what, and who is told**
 
+- **A CAPABILITY REMOVED IS URGENT IN A WAY A CAPABILITY GRANTED IS NOT** - a promotion arriving late is an annoyance, a demotion arriving late leaves somebody clicking controls the server now refuses. Push the change to the subject, carrying what the role GRANTS, not its name. [backlog](backlog.md)
+
 - **A permission check that runs where the action is OFFERED is not a check** - where the server cannot read the content, the RECEIVER enforces it, against the identity MLS authenticated. [chat](frontend/modules/chat.md)
 - **An answer broadcast to a group is read by every member, so it must NAME the one it answers** - at the DEVICE (`digestIdentity`), never the user. DATA is for everyone, the ANSWER is for the addressee. [mls](protocols/mls-protocol.md)
 - **A legacy frame with no addressee resolves towards the marker STAYING UP**: an extra diff is free, a marker wrongly cleared is permanent. [legacy-compatibility](legacy-compatibility.md)

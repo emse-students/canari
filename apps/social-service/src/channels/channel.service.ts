@@ -2256,6 +2256,44 @@ export class ChannelService {
     this.logger.log(
       `[WORKSPACE] role set workspace=${workspaceId} target=${targetUserId.slice(0, 8)} role="${role.name}" by=${actorUserId.slice(0, 8)}`
     );
+
+    // TOLD TO THE PERSON IT IS ABOUT, and only to them.
+    //
+    // Measured on production 2026-08-20 (COMM-5): a role change reached the other device NEVER -
+    // the promoted member could not moderate, and, the direction that matters, a DEMOTED
+    // administrator went on being offered every control they had just lost for as long as their tab
+    // stayed open. Nothing was breakable, because the server re-checks each of those actions; what
+    // the person got was a screen full of buttons that now fail with no explanation.
+    //
+    // THE PERMISSIONS TRAVEL WITH THE EVENT rather than being fetched back. The client caches
+    // exactly one permission-derived flag today (`viewerCanManage`), and it is DERIVED FROM THIS
+    // ROLE, which is known here - so handing it over is the discriminator carried to where the
+    // decision is made, instead of a round trip that can fail, race a load already in flight, or
+    // arrive after the user has clicked. The whole permission list is sent, not just the one flag,
+    // so the day the client caches a second one there is nothing to change on this side.
+    //
+    // Best-effort and logged: a member who misses this is exactly where they were before it
+    // existed - correct on their next load - so a failed publish must not undo a role change that
+    // has already been written.
+    try {
+      await this.redis.publishChannelEvent(
+        'workspace.role.changed',
+        {
+          workspaceId,
+          userId: targetUserId,
+          roleName: role.name,
+          permissions: role.permissions,
+          canManage: role.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE),
+          changedBy: actorUserId,
+        },
+        [targetUserId]
+      );
+    } catch (e) {
+      this.logger.warn(
+        `[WORKSPACE] role set but not announced workspace=${workspaceId} target=${targetUserId.slice(0, 8)}: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+
     return { success: true };
   }
 

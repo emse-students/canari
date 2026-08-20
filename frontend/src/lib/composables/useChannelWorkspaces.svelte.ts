@@ -1206,6 +1206,33 @@ export function useChannelWorkspaces() {
    * still holding `shared` in memory would keep handing the past to joiners after an admin had
    * closed it, until their next relaunch.
    */
+  /**
+   * Applies this device's own new role in a community, pushed by the server.
+   *
+   * ONE FLAG IS ALL THE CLIENT CACHES, and it is stated rather than re-derived: `viewerCanManage`
+   * comes from `listWorkspacesForUser`, which reads the permission set of the roles a member holds.
+   * The event carries the same answer computed by the same service, so applying it here cannot
+   * disagree with what the next load will say.
+   *
+   * WHY IT IS NOT A REFETCH. A refetch can fail, can be declined because a load is already in
+   * flight, and lands whenever the network allows - and what it would return is precisely the value
+   * that is already in the event. The demoted administrator this exists for must lose the controls
+   * at the moment they lose the role, not at the moment a round trip completes.
+   *
+   * The whole permission list is accepted and deliberately unused: the day a second permission is
+   * cached on this side, the data is already here and only this function changes.
+   */
+  function handleWorkspaceRoleChanged(event: {
+    workspaceId: string;
+    roleName: string;
+    canManage: boolean;
+    permissions: string[];
+  }) {
+    channelWorkspaces = channelWorkspaces.map((ws) =>
+      ws.workspaceDbId === event.workspaceId ? { ...ws, viewerCanManage: event.canManage } : ws
+    );
+  }
+
   function handleWorkspaceUpdated(event: {
     workspaceId: string;
     imageMediaId?: string;
@@ -1286,6 +1313,8 @@ export function useChannelWorkspaces() {
     /** Applies a drag-and-drop reorder of the sidebar communities and persists it server-side. */
     reorderWorkspaces,
     /** Applies an incoming real-time workspace-updated event (cover image change). */
+    handleWorkspaceRoleChanged,
+
     handleWorkspaceUpdated,
     /** Applies an incoming real-time workspace-deleted event (an admin deleted the community). */
     handleWorkspaceDeleted,

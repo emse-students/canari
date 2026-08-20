@@ -137,6 +137,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       onChannelUpdated: deps.onChannelUpdated,
       onChannelDeleted: deps.onChannelDeleted,
       onWorkspaceUpdated: deps.onWorkspaceUpdated,
+      onWorkspaceRoleChanged: deps.onWorkspaceRoleChanged,
       onWorkspaceDeleted: deps.onWorkspaceDeleted,
       onChannelMessageDeleted: deps.onChannelMessageDeleted,
       log,

@@ -24,6 +24,7 @@ export interface ChannelEventContext extends Pick<
   | 'onChannelUpdated'
   | 'onChannelDeleted'
   | 'onWorkspaceUpdated'
+  | 'onWorkspaceRoleChanged'
   | 'onWorkspaceDeleted'
   | 'onChannelMessageDeleted'
   | 'log'
@@ -49,6 +50,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     onChannelUpdated,
     onChannelDeleted,
     onWorkspaceUpdated,
+    onWorkspaceRoleChanged,
     onWorkspaceDeleted,
     onChannelMessageDeleted,
     log,
@@ -128,6 +130,30 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
       kickedUserId: String(data.kickedUserId ?? data.removedUserId ?? ''),
       kickedBy: data.kickedBy ?? data.removedBy,
       channelIsPrivate: data.isPrivate === true,
+    });
+    return;
+  }
+
+  // THIS DEVICE'S OWN ROLE CHANGED, and the server addressed the event to it alone. Until this
+  // existed the answer arrived on the next full load and not before: a demoted administrator kept
+  // every control they had just lost until they reloaded. The permissions travel with the event, so
+  // nothing has to be fetched back and there is no window in which the screen and the server
+  // disagree.
+  if (event.type === 'workspace.role.changed') {
+    const data = event.data || {};
+    const workspaceId = String(data.workspaceId || '');
+    if (!workspaceId) return;
+    onWorkspaceRoleChanged?.({
+      workspaceId,
+      roleName: String(data.roleName || ''),
+      // Read from the flag the server computed, and only from the list when it is absent - an older
+      // server sends one or the other, and re-deriving it here would be a second copy of a rule
+      // that already exists on the side that owns it.
+      canManage:
+        typeof data.canManage === 'boolean'
+          ? data.canManage
+          : Array.isArray(data.permissions) && data.permissions.includes('workspace.manage'),
+      permissions: Array.isArray(data.permissions) ? data.permissions.map(String) : [],
     });
     return;
   }

@@ -91,13 +91,6 @@ export interface ChannelDto {
 
 export type CreateChannelResultDto = ChannelDto;
 
-export interface CreateRoleDto {
-  workspaceId: string;
-  name: string;
-  priority: number;
-  permissions: string[];
-}
-
 export interface ChannelJoinDto {
   roleName?: string;
 }
@@ -452,15 +445,6 @@ export class ChannelService {
     });
     await this.handleError(res);
     return res.json() as Promise<CreateChannelResultDto>;
-  }
-
-  async createRole(dto: CreateRoleDto) {
-    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/roles/`, {
-      method: 'POST',
-      body: JSON.stringify(dto),
-    });
-    await this.handleError(res);
-    return res.json();
   }
 
   async listChannels(workspaceId: string) {

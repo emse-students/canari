@@ -301,11 +301,18 @@ server re-checks every one of them, and the components say so in their own comme
 button is convenience, not the gate") - but it is a person clicking things that will now fail, with
 no explanation on screen.
 
-**DECIDED 2026-08-20, by the user: PUSH IT.** A role change is delivered to the member it concerns,
-the way a channel's membership already is, and their client re-fetches its own permissions. The row
-keeps its word "immediately" and COMM-5 becomes strict on `liveWithoutReload` once it holds - until
-then the check measures both halves separately and fails only on the capability never arriving, so
-the record says which of the two is being waited on.
+**DECIDED 2026-08-20 by the user, and SHIPPED the same day: PUSH IT.** `workspace.role.changed`
+carries the new role's whole permission set to the member it concerns and to nobody else, and their
+client applies `viewerCanManage` from the event - it does not refetch, because a refetch can fail,
+can be declined while a load is already in flight, and would return exactly what the event already
+carries. Best-effort and logged: the role is written before the announcement is attempted, so a
+failed publish leaves the member where they were before any of this existed. COMM-5 is now STRICT on
+`liveWithoutReload` and keeps the reload path only to separate "the push did not arrive" from "the
+grant never happened".
+
+**The invariant this rests on, written down because nothing enforces it:** `viewerCanManage` is the
+only permission-derived value the client caches. The event carries the full list so that the day a
+second one is cached, only the client handler changes.
 
 ### FOUND 2026-08-20 - a custom role can be created by the API and by nothing else
 

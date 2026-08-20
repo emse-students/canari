@@ -60,6 +60,13 @@ export interface MessageHandlerDeps {
   onChannelUpdated?: (event: { channelId: string; name?: string; workspaceId?: string }) => void;
   onChannelDeleted?: (event: { channelId: string; workspaceId?: string }) => void;
   onWorkspaceUpdated?: (event: { workspaceId: string; imageMediaId?: string }) => void;
+  /** This device's own role in a community changed - see `sessionTypes.onWorkspaceRoleChanged`. */
+  onWorkspaceRoleChanged?: (event: {
+    workspaceId: string;
+    roleName: string;
+    canManage: boolean;
+    permissions: string[];
+  }) => void;
   onWorkspaceDeleted?: (event: { workspaceId: string; deletedBy?: string }) => void;
   onChannelMessageDeleted?: (event: {
     channelId: string;

@@ -38,6 +38,19 @@ export interface ChatSessionCallbacks {
   onChannelUpdated?: (event: { channelId: string; name?: string; workspaceId?: string }) => void;
   onChannelDeleted?: (event: { channelId: string; workspaceId?: string }) => void;
   onWorkspaceUpdated?: (event: { workspaceId: string; imageMediaId?: string }) => void;
+  /**
+   * This device's own role in a community changed, pushed by the server to the member it concerns.
+   *
+   * Carries what the role GRANTS rather than only its name: the client caches `viewerCanManage`,
+   * which is derived from the permission set, and deriving it here from a label would be a second
+   * copy of a rule social-service already owns.
+   */
+  onWorkspaceRoleChanged?: (event: {
+    workspaceId: string;
+    roleName: string;
+    canManage: boolean;
+    permissions: string[];
+  }) => void;
   onWorkspaceDeleted?: (event: { workspaceId: string; deletedBy?: string }) => void;
   onChannelMessageDeleted?: (event: {
     channelId: string;

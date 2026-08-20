@@ -9,12 +9,15 @@
  * gain what the role grants, and gaining it a minute later after a reload is a different answer from
  * gaining it at once - not a worse one necessarily, but not the same one.
  *
- * SO BOTH ARE MEASURED, AND THE VERDICT TURNS ON THE WEAKER. `liveWithoutReload` is recorded as a
- * fact and does not by itself fail the run; what fails it is the capability never arriving at all,
- * because that is the part no reading of the row makes optional. Deciding the stricter rule before
- * knowing the answer would be choosing a verdict and then measuring - and if the capability turns
- * out to need a reload, that is a finding to take to the app or to the row, not a red line in a
- * results file.
+ * SO BOTH ARE MEASURED, and the first run measured them before deciding what to fail on. That run
+ * (2026-08-20) recorded `liveWithoutReload: false`: the change reached the other device NEVER, and
+ * the direction that mattered was the demotion - an administrator went on being offered every
+ * control they had just lost until they reloaded. The user's decision was to PUSH the change to the
+ * member it concerns, so `workspace.role.changed` now exists and the expectation is STRICT.
+ *
+ * The reload path stays in the check, and is not dead weight: `capabilityAfterReload` separates
+ * "the push did not arrive" from "the grant never happened at all", and those are two different
+ * bugs with two different owners.
  *
  * THE CAPABILITY IS READ AS A SHAPE, NOT AS A LABEL. The members tab renders a `<select>` per member
  * to somebody who may manage the community and a translated badge to everybody else, so
@@ -140,7 +143,9 @@ const expectations = {
   // The server's half: each step landed, and landed as the step asked.
   moderatorTookEffect: roleAfterModerator === 'moderator',
   adminTookEffect: roleAfterAdmin === 'admin',
-  // The other device's half: the capability arrived, by whichever route.
+  // The other device's half, and it is strict since the push shipped: the capability must arrive
+  // WITHOUT a reload. `capabilityReached` stays beside it so a failure says which of the two broke.
+  capabilityIsLive: liveWithoutReload === true,
   capabilityReached: afterReload === true,
   // And the venue is as it was found.
   venueRestored: roleAtEnd === 'member',
