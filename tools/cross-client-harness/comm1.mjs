@@ -25,6 +25,7 @@ import {
   createChannel,
   createCommunity,
   enterCommunities,
+  inPanel,
   inviteLink,
   openCommunity,
   openCommunitySettings,
@@ -62,10 +63,9 @@ const step = async (name, fn) => {
 };
 
 await step('createCommunity', () => createCommunity(w1, community));
-const link = await step('inviteLink', async () => {
-  await openCommunitySettings(w1);
-  return inviteLink(w1);
-});
+const link = await step('inviteLink', () =>
+  inPanel(w1, openCommunitySettings, () => inviteLink(w1))
+);
 
 // W2 JOINS THROUGH THE LINK, which is the only path a second account has into a community it did
 // not create. The join page carries no app shell, so nothing here may wait on one - a settle that

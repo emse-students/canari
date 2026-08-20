@@ -30,6 +30,7 @@ import {
   createChannel,
   enterCommunities,
   grantChannelAccess,
+  inPanel,
   openChannelAccess,
   openCommunity,
   revokeChannelAccess,
@@ -107,8 +108,10 @@ const keptTrace = keptSent
 // -- The removal --------------------------------------------------------------
 const revoked = await step('revoke the peer', async () => {
   await realClick(w1, `[aria-label*=${JSON.stringify(salon)}]`);
-  await openChannelAccess(w1);
-  return revokeChannelAccess(w1, PEER_NAME);
+  // THE PANEL IS CLOSED AGAIN BEFORE ANYTHING ELSE IS ASKED OF W1. `revokeChannelAccess` ends inside
+  // it on purpose, and the very next step here posts a message - which on 2026-08-20 died on `no
+  // stable element` for a composer the backdrop was covering.
+  return inPanel(w1, openChannelAccess, () => revokeChannelAccess(w1, PEER_NAME));
 });
 
 const rosterAfter = await step('read the salon roster after the removal', () =>

@@ -46,6 +46,7 @@ import {
   deleteCommunity,
   enterCommunities,
   grantChannelAccess,
+  inPanel,
   inviteLink,
   openChannelAccess,
   openCommunity,
@@ -199,8 +200,10 @@ const armed =
 const revoked = armed
   ? await step('remove the peer from the salon', async () => {
       await openSalon(w1);
-      await openChannelAccess(w1);
-      return revokeChannelAccess(w1, PEER_NAME);
+      // Scoped, so the backdrop is gone before W1 is read again below - `countMessage` would still
+      // have found the pane's text under it, which is exactly how this class of fault survives a run
+      // and fails the next check that needs to CLICK something.
+      return inPanel(w1, openChannelAccess, () => revokeChannelAccess(w1, PEER_NAME));
     })
   : null;
 

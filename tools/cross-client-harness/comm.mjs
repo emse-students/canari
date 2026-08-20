@@ -418,6 +418,41 @@ export async function inviteLink(cx) {
  * harness; `chat_channel_access_tab` exists because this needed it and the English app needed it
  * more.
  */
+/**
+ * Opens a settings panel, runs the body INSIDE it, and always closes it again.
+ *
+ * THE PANEL'S LIFETIME BELONGS TO WHOEVER OPENED IT, and nothing used to force the close. The
+ * gestures that act inside a panel - `revokeChannelAccess`, `setMemberRole`, `cyclePermissionCell` -
+ * deliberately leave it up, because their callers usually have more to do in there; only `Save`
+ * genuinely ends the interaction, which is why `saveChannelAccess` is the one that clears. So the
+ * obligation lands on the check, and five checks out of twelve had quietly dropped it.
+ *
+ * What that costs is not a warning. The panel is a `position: fixed` backdrop over the whole page,
+ * so the NEXT gesture - a click on the composer, a click on a sidebar row - finds its element
+ * present, visible, correctly sized and NOT ON TOP, and dies with `no stable element`. COMM-9/10 and
+ * COMM-1 both failed that way on 2026-08-20, several steps downstream of the panel that was covering
+ * them, and the same aftermath had already been paid for once at `saveChannelAccess` - where the fix
+ * was applied to the single gesture that failed instead of to the class.
+ *
+ * `finally`, so a body that throws still hands the screen back. A check that fails inside a panel is
+ * a check whose own verdict is safe; leaving the panel up would take the rest of the RUN down with
+ * it, and the next runner after that.
+ *
+ * @param {object} cx the client
+ * @param {(cx: object) => Promise<unknown>} open the `open*` gesture that puts the panel up
+ * @param {() => Promise<T>} body what to do while it is open
+ * @returns {Promise<T>} whatever `body` returned
+ * @template T
+ */
+export async function inPanel(cx, open, body) {
+  await open(cx);
+  try {
+    return await body();
+  } finally {
+    await clearOverlays(cx);
+  }
+}
+
 export async function openChannelAccess(cx) {
   await awaitAppSettled(cx);
   await realClick(cx, `[aria-label=${JSON.stringify(caption('chat_channel_settings_label'))}]`);

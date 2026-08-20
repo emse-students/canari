@@ -175,6 +175,12 @@ const BENIGN = [
   // check asked for; their absence would mean a leaver kept the community on screen.
   /^\[Channel Event\] removed from community [0-9a-f]+$/,
   /^You have left the community\.$/,
+  // THE SAME EVENT FROM THE OTHER CAUSE. `handleWorkspaceDeleted` and `handleRemovedFromWorkspace`
+  // both purge the workspace locally, and only the first was classified - so COMM-12, which deletes
+  // the two communities it created, came back `PASS-DIRTY` on a broadcast it had asked for itself.
+  // Kept as its own line rather than widened into the rule above: the two sentences name two
+  // different server decisions, and a reader of the dirt has to be able to tell them apart.
+  /^\[Channel Event\] community [0-9a-f]{8} deleted by an admin$/,
   // THE SWEEP SPARING A KEY-DISTRIBUTION GROUP, which is the fix WP-GRAINE-1 and the 2026-08-20
   // discriminator repair both landed. Its ABSENCE is what would be the signal: a boot where these
   // do not appear is a boot where the sweep deleted the group and sending stops working.

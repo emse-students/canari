@@ -414,11 +414,40 @@ export async function settledCount(cx, marker, { quietMs = 700, timeoutMs = 8000
  */
 export const OVERLAYS = `(function () {
   var out = [];
+  // ITS OWN transition, not an ancestor's. IS_MOVING_FN walks up the tree because its question is
+  // "can this be clicked yet", which any moving ancestor answers; the question HERE is narrower -
+  // whether THIS element's own opacity is still travelling - and widening it would let any animation
+  // anywhere above a genuinely hidden dialog present it as debris to be cleared. Measured on the
+  // real dialog: the fade is on the element itself, and an idle page holds no mounted dialog at all.
+  var moving = function (e) {
+    if (!e || typeof e.getAnimations !== 'function') return false;
+    var as = e.getAnimations();
+    for (var i = 0; i < as.length; i++) {
+      if (as[i].playState === 'running' || as[i].playState === 'pending') return true;
+    }
+    return false;
+  };
   var vis = function (e) {
     var r = e.getBoundingClientRect();
     if (r.width <= 0 || r.height <= 0) return null;
     var s = getComputedStyle(e);
-    if (s.visibility === 'hidden' || s.display === 'none' || s.opacity === '0') return null;
+    if (s.visibility === 'hidden' || s.display === 'none') return null;
+    // OPACITY IS A MOVING QUANTITY DURING A FADE, AND THIS USED TO READ IT AS A STATE. A dialog
+    // renders at opacity 0 for the first frames of its entry transition, so a caller that arrived
+    // inside that window was told the screen was CLEAN while a 894x631 modal was opening on top of
+    // it - measured on 2026-08-20: op "0" on one sample, "1" on the next, 300ms apart.
+    //
+    // That is not a cosmetic miss. clearOverlays is the rig's only isolation guarantee and
+    // enterCommunities calls it at the START of every runner, so the false negative hands the next
+    // check a covered screen; it then dies several steps downstream on "no stable element" for an
+    // element that is plainly in the DOM, which is a whole evening of diagnosis away from the cause.
+    //
+    // Not fixed with a wait: a sleep would only make the sample likelier to land after the fade,
+    // which is the same race with better odds. The overlap is that a transitioning value was read as
+    // a settled one, so the question asked is whether it has settled. An element that is fading OUT
+    // also counts as present here, deliberately - pressing Escape at a dialog already closing is a
+    // no-op, while missing one that is opening is the fault above.
+    if (s.opacity === '0' && !moving(e)) return null;
     return r;
   };
   [].slice.call(document.querySelectorAll('[role=dialog][aria-modal=true]')).forEach(function (d) {

@@ -39,12 +39,21 @@ vi.mock('$lib/utils/chat/channelCrypto', () => ({
 
 const listUserWorkspaces = vi.fn();
 const listChannels = vi.fn();
+const createWorkspace = vi.fn();
 
 vi.mock('$lib/services/ChannelService', () => ({
   ChannelService: class MockChannelService {
     listUserWorkspaces = listUserWorkspaces;
     listChannels = listChannels;
+    createWorkspace = createWorkspace;
   },
+}));
+
+const ensureCommunityDistributionGroup = vi.fn().mockResolvedValue(true);
+vi.mock('$lib/utils/graine/distributionGroup', () => ({
+  ensureCommunityDistributionGroup: (...args: unknown[]) =>
+    ensureCommunityDistributionGroup(...args),
+  ensureDistributionGroupFor: vi.fn().mockResolvedValue(true),
 }));
 
 import { useChannelWorkspaces, type ChannelWorkspaceContext } from './useChannelWorkspaces.svelte';
@@ -353,5 +362,72 @@ describe('useChannelWorkspaces - online/foreground refresh', () => {
 
     expect(store.channelWorkspaces).toHaveLength(1);
     expect(store.channelWorkspaces[0].viewerCanManage).toBe(false);
+  });
+});
+
+describe('useChannelWorkspaces - createNewCommunity', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    ensureCommunityDistributionGroup.mockResolvedValue(true);
+  });
+
+  /**
+   * The creator posts in the community it just made, BEFORE anything reloads - so the group has to
+   * exist by then. Until 2026-08-20 only the workspace LOAD and the creation of a PRIVATE salon
+   * ensured it, and the first message in a brand-new community was refused with "community <id> has
+   * no distribution group on this device". COMM-1 caught it; this keeps it caught.
+   */
+  it('prepares the community distribution group as part of creating the community', async () => {
+    createWorkspace.mockResolvedValue(makeWorkspaceDto('ws-new', 'Nouvelle', 'nouvelle'));
+    listChannels.mockResolvedValue([makeChannelDto('chan-general', 'general')]);
+
+    const mls = { marker: 'the-mls-service' };
+    const ctx = makeContext({ ensureMls: vi.fn().mockResolvedValue(mls) } as never);
+    const api = useChannelWorkspaces();
+
+    await api.createNewCommunity('Nouvelle', ctx);
+
+    expect(ensureCommunityDistributionGroup).toHaveBeenCalledTimes(1);
+    expect(ensureCommunityDistributionGroup.mock.calls[0][0]).toBe(mls);
+    expect(ensureCommunityDistributionGroup.mock.calls[0][2]).toBe('ws-new');
+  });
+
+  /**
+   * BEFORE THE CHANNELS ARE LISTED, for the reason the load path gives: a seed frame arriving on a
+   * group this device has not registered is answered as an unknown conversation. Order is the whole
+   * point of where the call sits, so it is asserted rather than left to the diff.
+   */
+  it('registers the group before it lists the channels', async () => {
+    const order: string[] = [];
+    createWorkspace.mockResolvedValue(makeWorkspaceDto('ws-order', 'Ordre', 'ordre'));
+    ensureCommunityDistributionGroup.mockImplementation(async () => {
+      order.push('ensure');
+      return true;
+    });
+    listChannels.mockImplementation(async () => {
+      order.push('listChannels');
+      return [];
+    });
+
+    const ctx = makeContext({ ensureMls: vi.fn().mockResolvedValue({}) } as never);
+    await useChannelWorkspaces().createNewCommunity('Ordre', ctx);
+
+    expect(order).toEqual(['ensure', 'listChannels']);
+  });
+
+  /**
+   * NEVER FATAL. A community that fails to prepare must still reach the sidebar - the salons then
+   * refuse to send with a named cause, instead of the community itself vanishing.
+   */
+  it('still creates the community when the group cannot be prepared', async () => {
+    createWorkspace.mockResolvedValue(makeWorkspaceDto('ws-soft', 'Souple', 'souple'));
+    listChannels.mockResolvedValue([]);
+    ensureCommunityDistributionGroup.mockResolvedValue(false);
+
+    const ctx = makeContext({ ensureMls: vi.fn().mockResolvedValue({}) } as never);
+    const api = useChannelWorkspaces();
+    await api.createNewCommunity('Souple', ctx);
+
+    expect(api.channelWorkspaces.some((w) => w.workspaceDbId === 'ws-soft')).toBe(true);
   });
 });

@@ -371,11 +371,31 @@ export async function whyNotStable(cx, selector) {
             break;
           }
         }
+        // THE FOURTH CAUSE, and the one whatIsOnTop states worst: a modal panel someone left open.
+        // It reads as DIV.fixed z-[280] ... bg-black/40 - a tag and a class list that name nothing
+        // a reader can act on, and identifying the panel behind it cost a hand-driven DOM dig on
+        // 2026-08-20 for two checks that failed several steps downstream of the gesture that opened
+        // it. The dialog carries its own aria-label, so the answer is one walk up from the blocker.
+        var covering = null;
+        for (var m = hit; m; m = m.parentElement) {
+          if (m.getAttribute && m.getAttribute('role') === 'dialog') {
+            covering = (m.getAttribute('aria-label') || '(unlabelled dialog)').slice(0, 60);
+            break;
+          }
+        }
+        // A full-screen backdrop is usually a SIBLING of the dialog rather than its ancestor, so the
+        // walk above misses it and the panel is named from the document instead. Reported under a
+        // different key: "the dialog is over me" and "a dialog is open somewhere" are not the same
+        // claim, and the second one must not be read as the first.
+        var openDialogs = [].slice.call(document.querySelectorAll('[role=dialog][aria-modal=true]'))
+          .map(function (d) { return (d.getAttribute('aria-label') || '(unlabelled dialog)').slice(0, 60); });
         return {
           found: true,
           rect: [Math.round(r.left), Math.round(r.top), Math.round(r.right), Math.round(r.bottom)],
           onTopAtOwnCentre: !!(hit && (hit === el || el.contains(hit))),
           whatIsOnTop: hit ? hit.tagName + '.' + String(hit.className || '').slice(0, 60) : null,
+          coveredByDialog: covering,
+          dialogsOpen: openDialogs.length ? openDialogs : null,
           blocking: blocking
         };
       })())`
