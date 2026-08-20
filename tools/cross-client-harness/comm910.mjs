@@ -38,6 +38,7 @@ import {
   selectedChannel,
 } from './comm.mjs';
 import { channelIdOf, salonDistribution, userIdOf, workspaceIdOf } from './grainedb.mjs';
+import { seedsForChannel } from './grainestore.mjs';
 import { PEER_NAME, PORTS, VENUE } from './names.mjs';
 import { mark, record } from './results.mjs';
 import { consoleLines, gate, report, watch } from './watch.mjs';
@@ -105,6 +106,13 @@ const keptTrace = keptSent
   ? await traceArrival(w2, kept, { timeoutMs: 25000, settleMs: 3000 })
   : { firstSeen: null, lost: null };
 
+// WHAT THE PEER'S DEVICE HOLDS, BEFORE ANYTHING IS TAKEN AWAY. This is the arming for COMM-10: a
+// retention claim is empty unless there was something to retain, and "they hold a seed for this
+// salon" is trivially true of a device that MINTED one, which is why only the received ones count.
+const seedsBefore = await step('read the peer seed store before the removal', () =>
+  channelId ? seedsForChannel(w2, channelId) : null
+);
+
 // -- The removal --------------------------------------------------------------
 const revoked = await step('revoke the peer', async () => {
   await realClick(w1, `[aria-label*=${JSON.stringify(salon)}]`);
@@ -128,11 +136,29 @@ const deniedTrace = deniedSent
   ? await traceArrival(w2, denied, { timeoutMs: 25000, settleMs: 3000 })
   : { firstSeen: null, lost: null };
 
-// THE ONE THEY ALREADY HAD, READ AGAIN AFTER THE REMOVAL. This is COMM-10's real question: not "did
-// it arrive" - that was answered before the removal - but "is it still there now".
+// THE ONE THEY ALREADY HAD, READ AGAIN AFTER THE REMOVAL - AND READ FROM THE STORE, NOT THE SCREEN.
+//
+// This counted copies in the peer's chat pane until 2026-08-20, and every run answered 0, because
+// the product does something else entirely on `channel.member.removed`: it PURGES the salon. The
+// salon leaves the sidebar, the pane shows something else, and a count taken there measures the
+// purge - which is deliberate behaviour - while reporting it as lost history. The check failed for
+// five runs on a noun it had never been about.
+//
+// COMM-10's claim is that GRAINE RETAINS SEEDS, and a seed is not a thing a screen can show. So the
+// device's own store answers it: the rows survive a removal, keyed by the salon, seed bytes intact.
+// The pane count stays in the record below as evidence of the purge, and asserts nothing.
+const seedsAfter = await step('read the peer seed store after the removal', () =>
+  channelId ? seedsForChannel(w2, channelId) : null
+);
 const keptStillThere = keptSent ? await countMessage(w2, kept) : null;
 
-const armed = onRosterBefore === true && keptTrace.firstSeen !== null && offRosterAfter;
+// `seedsBefore.received` is the arming: without a seed the peer was GIVEN, "still held" is a claim
+// about an empty set and would pass on a salon nobody ever wrote to them in.
+const armed =
+  onRosterBefore === true &&
+  keptTrace.firstSeen !== null &&
+  offRosterAfter &&
+  (seedsBefore?.received ?? 0) > 0;
 
 const expectations = {
   // COMM-9
@@ -140,7 +166,11 @@ const expectations = {
   deniedNeverArrived: deniedTrace.firstSeen === null,
   // COMM-10
   keptArrivedBefore: keptTrace.firstSeen !== null,
-  keptStillReadable: Number(keptStillThere) === 1,
+  // NOT ONE FEWER. "At least one survived" would pass while the removal quietly dropped every other
+  // session in the salon, so the two counts are compared: what was given is what is still there.
+  keptSeedsRetained:
+    (seedsAfter?.received ?? -1) === (seedsBefore?.received ?? -2) &&
+    (seedsAfter?.received ?? 0) > 0,
   // The salon itself is unchanged - a removal is not a retirement.
   salonStillPrivate: rosterAfter?.isPrivate === true,
   salonKeptItsGroup: !!rosterAfter?.groupId && rosterAfter?.retired === false,
@@ -168,7 +198,12 @@ record('COMM-9/10', gated.verdict, {
   armed: { onRosterBefore, keptArrived: keptTrace.firstSeen !== null, offRosterAfter },
   keptMarker: kept,
   keptLatencyMs: keptTrace.firstSeen,
+  // THE PURGE, RECORDED AND NOT ASSERTED: the salon leaves the peer's sidebar on removal, so this is
+  // 0 by design. It is kept because a reader comparing it with the seed counts below can see the two
+  // facts that make up the row - the messages are unreachable, and the key material was not taken.
   keptCopiesAfterRemoval: keptStillThere,
+  seedsBefore,
+  seedsAfter,
   deniedMarker: denied,
   deniedLatencyMs: deniedTrace.firstSeen,
   revokedPanel: revoked,

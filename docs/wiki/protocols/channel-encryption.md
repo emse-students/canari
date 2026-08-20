@@ -1526,3 +1526,42 @@ malformed seed, which warns on its own line.
 **Found by COMM-8**, which asserts that a member granted access to a salon is SEEN to receive its
 seed. That assertion could not hold on any wording, because the only line it could match belongs to
 the path a mid-salon grant never takes.
+
+### The creator prepared nothing, so the first message in a new community was refused - FIXED 2026-08-20
+
+Creating a community selects its default salon and leaves the composer ready. A public salon seals
+its seeds to the **community's** distribution group, and only two paths ever ensured that group
+existed on the device asking for it:
+
+- `executeWorkspaceLoadAttempt` - the workspace LOAD, i.e. a start or a refetch;
+- `createNewChannel`, and only for a **private** salon, which has its own group.
+
+`ensureWorkspaceByName` created the community, listed its channels, selected one, and prepared
+nothing. So the very first message its creator sent was refused outright, by
+`seedDistribution.ts`:
+
+```
+[SEND] Failed: [GRAINE] community 9c973114 has no distribution group on this device -
+       nothing can be sealed for it until the join lands
+```
+
+**It healed, which is why it survived.** A reload runs the load path. A second member joining finds
+no base published, creates the group, and the creator joins it afterwards - which is exactly what the
+run that caught this recorded: W2, the *joiner*, printed `no base published for community 9c973114 -
+creating group 899da5c1...` while W1, the *creator*, was refusing the send one second later. The
+defect lives only in the window where the creator is alone and has not reloaded, which is the minute
+after they press the button.
+
+That window is also why no check had ever seen it: every other COMM runner navigates - and
+`enterCommunities` does a real `goto('/communities')`, which runs the load path and prepares the
+group on the way past. COMM-1 posts without an intervening navigation, and COMM-1 had never once
+completed a run.
+
+The group is now ensured as part of creating the community, awaited, and placed **before** the
+channels are listed - the reason the load path gives at its own call site: a seed frame arriving on a
+group this device has not registered is answered as an unknown conversation, with a welcome request
+nobody will ever send. It is never fatal: a community whose preparation fails still reaches the
+sidebar, and its salons then refuse to send with a named cause rather than the community vanishing.
+
+Three tests hold it: that the group is ensured, that it is ensured *before* the listing, and that a
+failure to prepare still leaves the community on screen.

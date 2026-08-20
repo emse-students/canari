@@ -97,7 +97,7 @@ export const PHASES = {
   // every one of them written and RUN by hand, and none of them reachable from `run.mjs COMM`. That
   // is rule 22 exactly: the files existed, the phase looked covered, and the campaign would have run
   // thirteen checks while the board showed nineteen. Add the script in the SAME commit that writes
-  // it; the count in this comment is what makes the omission visible.
+  // it; the count in this comment is what makes the omission visible. TWENTY scripts now.
   //
   // ORDERED SO THE PRIMITIVES RUN FIRST. `comm2.mjs` proves the invite link, which is the only
   // gesture in the product that puts a SECOND member into a community a check built itself - so
@@ -125,8 +125,12 @@ export const PHASES = {
       'comm21.mjs',
       'comm2324.mjs 23',
       'comm2324.mjs 24',
+      // NEEDS THE PHONE, and says so through the phase's `needs` below rather than by skipping
+      // itself: A1 is one account's SECOND device, which is the whole subject of COMM-25, and a
+      // runner that quietly passed with the phone absent would be describing a set of one.
+      'comm25.mjs',
     ],
-    needs: ['W1', 'W2'],
+    needs: ['W1', 'W2', 'A1'],
   },
   MULTI: { title: 'one user, two devices', scripts: [], needs: ['W1', 'W2', 'A1'] },
   CALL: { title: 'audio and video', scripts: [], needs: ['W1', 'W2', 'A1'] },
