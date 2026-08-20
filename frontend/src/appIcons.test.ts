@@ -110,6 +110,30 @@ describe('static/favicon.svg', () => {
     };
   }
 
+  /**
+   * Distance from the canvas centre to the furthest opaque pixel, as a fraction
+   * of the inscribed circle's radius. Above 1 the drawing crosses the circle.
+   */
+  async function circleReach() {
+    const S = 600;
+    const { data, info } = await sharp(SVG, { density: 1200 })
+      .resize(S, S, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const cx = info.width / 2;
+    const cy = info.height / 2;
+    const radius = Math.min(cx, cy);
+    let furthest = 0;
+    for (let y = 0; y < info.height; y++) {
+      for (let x = 0; x < info.width; x++) {
+        if (data[(y * info.width + x) * info.channels + 3] < 128) continue;
+        furthest = Math.max(furthest, Math.hypot(x + 0.5 - cx, y + 0.5 - cy));
+      }
+    }
+    return furthest / radius;
+  }
+
   it('keeps the bird off its own edge on all four sides', async () => {
     // The defect this pins is not visible in any diff and not visible on any
     // surface that pads the logo itself: it only shows where a consumer masks the
@@ -117,6 +141,15 @@ describe('static/favicon.svg', () => {
     // extremities come out clipped or flush against the border.
     const { left, top, right, bottom } = await birdBox();
     for (const margin of [left, top, right, bottom]) expect(margin).toBeGreaterThan(0.04);
+  });
+
+  it('fits INSIDE the circle inscribed in its canvas, which the square does not imply', async () => {
+    // The four margins above are necessary and not sufficient, and the gap between
+    // the two is the whole reason this vector was rescaled: the tail and the beak
+    // sit on opposite diagonals, so they cleared the square edge at 1.347 times the
+    // circle's radius. A future redraw that keeps the bird off the four sides can
+    // still be cropped by every circular mask in the fleet.
+    expect(await circleReach()).toBeLessThan(1);
   });
 
   it('fills the fraction of its canvas the icon generators are told it does', async () => {
