@@ -364,6 +364,7 @@ async function absorbSeedBundle(
   bundle: canari.GraineBundleMsg.$Properties
 ): Promise<void> {
   const repaired = new Set<string>();
+  let absorbed = 0;
   for (const seed of bundle.seeds ?? []) {
     const stored = await storeIncomingSeed(frame.workspaceId, frame.sender, {
       channelId: String(seed.channelId ?? ''),
@@ -372,8 +373,23 @@ async function absorbSeedBundle(
       firstIndex: Number(seed.firstIndex) || 0,
       createdAt: Number(seed.createdAt) || 0,
     });
-    if (stored && seed.channelId) repaired.add(String(seed.channelId));
+    if (stored) {
+      absorbed++;
+      if (seed.channelId) repaired.add(String(seed.channelId));
+    }
   }
+
+  // THE REPAIR PATH IS THE ONE THAT MUST SPEAK, and until 2026-08-20 it was the only inbound seed
+  // path that did not. The single-seed branch above announces what it stored; this one absorbed a
+  // whole answer in silence, so a member granted access to a salon started reading it with nothing
+  // in any log saying the seed had landed - and a repair that FAILED looked exactly the same. It
+  // only ever runs because something was already missing, which is precisely why it is worth a line.
+  //
+  // Counted per SEED and the salons named: "answered with N seed(s)" upstream against "absorbed 0"
+  // here is the shape of an answer whose seeds were all refused, and nothing else would show it.
+  console.debug(
+    `[GRAINE] absorbed ${absorbed}/${(bundle.seeds ?? []).length} seed(s) from ${frame.sender} in community ${frame.workspaceId.slice(0, 8)} - salon(s) ${[...repaired].map((id) => id.slice(0, 8)).join(', ') || 'none'}`
+  );
 
   if (bundle.truncated) {
     console.warn(

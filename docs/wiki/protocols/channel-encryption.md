@@ -1506,3 +1506,23 @@ Measured on production 2026-08-19 before writing any of it: **zero private salon
 backfill is written, no history is re-encrypted, and every private salon that will ever exist is born
 after the switch with its own group. The user's decision, taken before that measurement, was that
 private history could be erased if a migration were needed; the measurement made the question moot.
+
+### The repair that worked said nothing - FIXED 2026-08-20
+
+A seed reaches a device two ways, and only one of them was audible. The distribution frame announces
+what it stored (`[GRAINE] seed <session> from <sender> for channel <id8>`); the REPAIR - a device
+that met a message it could not read, asked, and was answered - absorbed the whole bundle in
+silence. So the exchange logged its two halves and not its result: `asked <peer> for N seed(s)` on
+one side, `answered <peer> with N seed(s)` on the other, and nothing at all about whether those
+seeds landed. **A repair that worked and a repair whose seeds were every one refused produced
+identical logs**, and the only symptom of the second is a salon that stays unreadable.
+
+`absorbSeedBundle` now ends with `[GRAINE] absorbed <n>/<total> seed(s) from <sender> in community
+<id8> - salon(s) <ids>`. Read it against the `answered` line: the counts agreeing is the repair, and
+`absorbed 0/N` under `answered N` is an answer that repaired nothing. `storeIncomingSeed` returns
+true whenever the seed is now held - including when it already was - so a shortfall means a
+malformed seed, which warns on its own line.
+
+**Found by COMM-8**, which asserts that a member granted access to a salon is SEEN to receive its
+seed. That assertion could not hold on any wording, because the only line it could match belongs to
+the path a mid-salon grant never takes.

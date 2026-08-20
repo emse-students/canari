@@ -89,9 +89,15 @@ export const PHASES = {
   // Named so `run.mjs --list` reports them as ZERO COVERAGE rather than leaving them out. A phase
   // that is absent from a listing reads as "done"; a phase listed with no script reads as what it
   // is. The dashboard carries 25 COMM checks, 6 MULTI, 20 CALL and 10 CORRUPT; COMM is the one
-  // being written now and carries THIRTEEN of its twenty-five, which is why it is listed with the
-  // thirteen rather than with all of them - a manifest naming a script that does not exist would fail
+  // being written now and carries NINETEEN of its twenty-five, which is why it is listed with the
+  // nineteen rather than with all of them - a manifest naming a script that does not exist would fail
   // the phase, and one naming none would read as a phase with nothing to run.
+  //
+  // SIX OF THEM WERE MISSING HERE until 2026-08-20 - comm4, comm6, comm7, comm15, comm20, comm21,
+  // every one of them written and RUN by hand, and none of them reachable from `run.mjs COMM`. That
+  // is rule 22 exactly: the files existed, the phase looked covered, and the campaign would have run
+  // thirteen checks while the board showed nineteen. Add the script in the SAME commit that writes
+  // it; the count in this comment is what makes the omission visible.
   //
   // ORDERED SO THE PRIMITIVES RUN FIRST. `comm2.mjs` proves the invite link, which is the only
   // gesture in the product that puts a SECOND member into a community a check built itself - so
@@ -103,14 +109,20 @@ export const PHASES = {
       'comm1.mjs',
       'comm2.mjs',
       'comm3.mjs',
+      'comm4.mjs',
       'comm5.mjs',
+      'comm6.mjs',
+      'comm7.mjs',
       'comm8.mjs',
       'comm910.mjs',
       'comm11.mjs',
       'comm12.mjs',
       'comm13.mjs',
+      'comm15.mjs',
       'comm16.mjs',
       'comm19.mjs',
+      'comm20.mjs',
+      'comm21.mjs',
       'comm2324.mjs 23',
       'comm2324.mjs 24',
     ],

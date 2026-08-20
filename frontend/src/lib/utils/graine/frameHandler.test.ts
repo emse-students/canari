@@ -585,6 +585,38 @@ describe('a bundle answering our own request (WP-33)', () => {
     expect(repaired).toEqual([['chan-1', 'chan-2']]);
   });
 
+  it('says out loud what it absorbed, because a repair that worked left no trace at all', async () => {
+    const { storage } = fakeStorage();
+    wire(storage);
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+
+    await handleDistributionFrame({
+      scope: workspaceScope('ws-1'),
+      workspaceId: 'ws-1',
+      groupId: 'g-1',
+      sender: 'bob',
+      plaintext: encodeAppMessage(
+        mkGraineBundle({
+          workspaceId: 'ws-1',
+          requestId: 'r-1',
+          seeds: [
+            { channelId: 'chan-1', sessionId: 's-a', seed: SEED, firstIndex: 0, createdAt: 1 },
+            { channelId: 'chan-2', sessionId: 's-b', seed: SEED, firstIndex: 3, createdAt: 1 },
+          ],
+        })
+      ),
+    });
+
+    // The ask and the answer were both audible and this was not, so a member who was granted access
+    // to a salon started reading it with nothing anywhere saying the seed had landed - and a bundle
+    // whose seeds were ALL refused looked exactly the same. The counts are what separate them.
+    const said = debug.mock.calls.flat().join(' ');
+    expect(said).toContain('absorbed 2/2 seed(s)');
+    expect(said).toContain('chan-1');
+    expect(said).toContain('chan-2');
+    debug.mockRestore();
+  });
+
   it('says out loud that a bundle was truncated, because a short list means nothing on its own', async () => {
     const { storage } = fakeStorage();
     wire(storage);

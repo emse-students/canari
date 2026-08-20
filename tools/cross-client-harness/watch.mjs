@@ -98,6 +98,12 @@ const BENIGN = [
   // in one line and answered the same past, seed by seed, in the next.
   /^\[GRAINE\] asked \S+ for \d+ seed\(s\) in community [0-9a-f]+$/,
   /^\[GRAINE\] answered \S+ with \d+ seed\(s\)(, declining \d+)?$/,
+  // THE THIRD SIDE OF THAT EXCHANGE, added 2026-08-20 because it was missing from the product.
+  // `asked` and `answered` were both audible and the ABSORB was not, so a repair that worked and a
+  // repair whose seeds were all refused produced identical logs - COMM-8 found it by asserting a
+  // line that only the single-seed path prints. Read the two counts together: `answered N` upstream
+  // against `absorbed 0/N` here is an answer that repaired nothing.
+  /^\[GRAINE\] absorbed \d+\/\d+ seed\(s\) from \S+ in community [0-9a-f]{8} - salon\(s\) .+$/,
   // ...AND THE TWO REFUSALS THAT FIX PUT THERE. Both are the history rule working, and both are
   // silence on the wire, so the line IS the evidence: nothing else would ever say that a seed was
   // deliberately not handed over. They appear only under `historyVisibility: 'joined'`, so in every

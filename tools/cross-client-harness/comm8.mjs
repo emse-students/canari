@@ -157,9 +157,38 @@ const armed = await step('grant the peer access, then look again', async () => {
   }
 });
 
+// THE CONSOLE READING'S OWN ARMING, and the roster's does not cover it. `armed` proves the DATABASE
+// query can say yes; nothing proved that `seedLineForSalon` can, and on 2026-08-20 it could not - its
+// pattern was built in a template literal, so `\[GRAINE\]` reached `RegExp` as a character class and
+// `\S` as the letter `S`. It matched nothing, answered `false` for the right verdict by accident, and
+// a `PASS` was recorded on it.
+//
+// It is asserted rather than merely reported, because there is no benign reading of its absence: the
+// peer is on the salon's roster and has the salon open, so a seed that never arrives is a member who
+// cannot read the salon they were just granted.
+//
+// TWO LINES, BECAUSE A SEED REACHES A DEVICE TWO WAYS and only one of them was audible. A member
+// granted access mid-salon does not receive the seed as a frame - it meets a message it cannot read,
+// ASKS, and absorbs an answer - and `absorbSeedBundle` stored that answer without a word until this
+// check asserted otherwise. `seedLineForSalon` covers the distribution frame, `ABSORBED` the repair.
+const ABSORBED = /\[GRAINE\] absorbed [1-9]\d*\/\d+ seed\(s\)/;
+const seedAfterTheGrant = armed?.onSalonRoster
+  ? await step('watch the peer store the salon seed once granted', async () => {
+      const deadline = Date.now() + 30_000;
+      for (;;) {
+        const said = consoleLines(wb.cx);
+        if (seedLineForSalon && said.some((l) => seedLineForSalon.test(l))) return 'distributed';
+        if (said.some((l) => ABSORBED.test(l))) return 'repaired';
+        if (Date.now() > deadline) return false;
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    })
+  : null;
+
 const verdict = !armed?.onSalonRoster
   ? 'VACUOUS'
   : failures.length > 0 ||
+  !seedAfterTheGrant ||
   openedOnW1?.selected !== salon ||
   !openedOnW1?.sentAt ||
   salonRoster?.isPrivate !== true ||
@@ -210,6 +239,9 @@ record('COMM-8', gated.verdict, {
   // The arming, recorded whatever it said: a VACUOUS verdict has to name WHY, and a PASS has to
   // carry the proof that its absence was an absence rather than an empty table.
   armed,
+  // The console reading's own arming. `false` under a granted, opened salon is a member who cannot
+  // read it - and it is also the only thing that would catch that pattern going dead again.
+  seedAfterTheGrant,
   salonEpoch: salonRoster?.epoch ?? null,
   sidebarOnPeer: onPeer,
   peerFetchStatus: peerFetch?.status ?? null,

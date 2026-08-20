@@ -169,12 +169,13 @@ in the field (user, 2026-08-19)**, so the iOS ladder cannot run and parity is ke
     comes from a run.** Every accusation in `displayName.ts` now ends `(failed/attempted, X%)`.
     There is no client telemetry, so the rate is read from a run log on each platform. **The
     `FAILURE_BACKOFF_MS` decision is what the number is FOR** ([backlog](docs/wiki/backlog.md)).
-3. **THE COMM RUNNERS - SIXTEEN of the twenty-five written, and every one of them RUN ON PROD as it
+3. **THE COMM RUNNERS - NINETEEN of the twenty-five written, and every one of them RUN ON PROD as it
     was written** (the user's decision, 2026-08-20: writing all twenty then running once is
     verification by COMPILING, which is what produced five of this week's defects). Written: 1, 2, 3,
-    4, 5, 6, 7, 8, 9/10, 11, 12, 13, 16, 19, 23/24, sharing `comm.mjs`. **Remaining: 14, 15, 17/18,
-    20, 21, 22, 25**, and three of them need a capability the harness does not have - real push
-    (COMM-14), the phone through `adb` (COMM-17/18), a second device for one account (COMM-25). Each
+    4, 5, 6, 7, 8, 9/10, 11, 12, 13, 15, 16, 19, 20, 21, 23/24, sharing `comm.mjs`. **Remaining: 14,
+    17/18, 22, 25**, and every one of them needs a capability the harness does not have - real push
+    (COMM-14), the phone through `adb` (COMM-17/18), many Graine sessions at once (COMM-22), a second
+    device for one account (COMM-25). Each
     capability is itself unproven until a check using it produces a result it could not have produced
     by accident. Why the rows were rewritten is on
     [cross-client-campaign](docs/wiki/cross-client-campaign.md#rows-that-named-a-mechanism-the-product-does-not-have);
@@ -182,7 +183,6 @@ in the field (user, 2026-08-19)**, so the iOS ladder cannot run and parity is ke
     [cross-client-testing](docs/wiki/cross-client-testing.md) §9, the only copy. **Board rows stay
     `pending` on purpose** - a runner that PASSes while still proving itself is not a campaign verdict.
     **Owed before the campaign, and each is a run, not a decision:**
-    - **COMM-7 re-run** on the deployed fix (it FAILED, the defect is fixed, a clean PASS is owed).
     - **COMM-8 re-run - its recorded `PASS` is STALE by rule 18b.** It was earned 2026-08-20T00:30Z,
       before `614bddbd` gave the runner its console reading ("the peer's own device never announced a
       seed for this salon"); that assertion then reached `RegExp` with its backslashes eaten, so it
