@@ -18,13 +18,13 @@
   class="border-cn-border relative overflow-hidden rounded-2xl border bg-(--cn-surface) {className}"
 >
   <div
-    class="pointer-events-none absolute -top-2 -right-2 h-24 w-24 opacity-15"
-    style="mask-image: radial-gradient(circle at top right, black 0%, black 40%, transparent 100%); -webkit-mask-image: radial-gradient(circle at top right, black 0%, black 40%, transparent 100%);"
+    class="pointer-events-none absolute top-3 right-3 h-16 w-16 opacity-20"
+    style="mask-image: radial-gradient(circle at top right, black 10%, transparent 90%); -webkit-mask-image: radial-gradient(circle at top right, black 10%, transparent 90%);"
   >
     {#if iconUrl}
       <img src={iconUrl} alt="" class="h-full w-full object-contain" />
     {:else}
-      <FallbackIcon size={96} class="h-full w-full" />
+      <FallbackIcon size={64} class="h-full w-full" />
     {/if}
   </div>
   <div class="relative">
