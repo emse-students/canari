@@ -131,6 +131,13 @@ contains none of those words, so the single loudest signal Graine emits went to 
 nowhere else. It has its own NOTABLE entry now. **A rule that claims another rule covers something
 must be checked against the TEXT, not against the intent.**
 
+**COMM-19 asserts the refusal on the TABLE and on the SCREEN, and needed both.** A membership row
+that survived proves the server refused; it says nothing about whether the person was told, and a
+refusal nobody explains is a button that does nothing. Its first run recorded exactly that failure
+about a working client - it read the console the instant the click returned, and the sentence lands
+after the round trip that produces it. `awaitLine` now bounds the wait, on the campaign's own rule
+that an absence is only a finding against a window a reader can argue with.
+
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | MSG-1 | W1 -> W2 plain DM: under 2 s, one copy, correct author | `W1 W2` | `PASS` - 261 ms |
@@ -320,7 +327,7 @@ of turning runners red a week later. Two of its selectors are deliberately struc
 anchored on the "add a community" button, and a channel is asked for BY NAME because the only anchor
 in its container is a button a non-manager never sees - which is exactly the case COMM-8 measures.
 
-**NINE OF THE TWENTY-FIVE ARE WRITTEN AND REGISTERED** (1, 2, 3, 5, 8, 9/10, 16, 23, 24). `comm2.mjs`
+**TEN OF THE TWENTY-FIVE ARE WRITTEN AND REGISTERED** (1, 2, 3, 5, 8, 9/10, 16, 19, 23, 24). `comm2.mjs`
 is the primitive the rest wait on: the invite link is the only gesture in the product that puts a
 SECOND member into a community a check built itself, so COMM-11, COMM-12 and COMM-19 all inherit
 what it proves.
@@ -363,7 +370,7 @@ phase now carries 25.
 | COMM-16 | Delete a channel, then a community by typing its name: the rows are really gone and the slug is free again | `W1 W2` | **PASS** `bf2815c2`, after FAILING correctly on `d3690a88` |
 | COMM-17 | Reorder communities by drag and drop; survives a reload, reaches the other device | `+A1` | `pending` |
 | COMM-18 | Deep link into a channel from a cold start | `+A1` | `pending` |
-| COMM-19 | The last admin tries to leave: refused, unless they are the last MEMBER, which deletes the community | `W1 W2` | `pending` |
+| COMM-19 | The last admin tries to leave: refused, unless they are the last MEMBER, which deletes the community | `W1 W2` | **PASS** `bf2815c2` |
 | COMM-20 | Two admins change the same role at the same moment | `W1 W2` | `pending` |
 | COMM-21 | A member is removed while composing a message in that salon | `W1 W2` | `pending` |
 | COMM-22 | A salon carrying many Graine sessions: time the first render, and the repair when one seed is missing | `W1 W2` | `pending` |

@@ -73,6 +73,10 @@ const BENIGN = [
   //    precisely so this effect routes to it once the router is up.
   /^Joined channel #\S+$/,
   /^\[GRAINE\] asked \S+ for the history of community [0-9a-f]+$/,
+  // ...and the other end of that exchange: an existing member ANSWERING it. Zero of zero is the
+  // ordinary case in this phase, where the community was created seconds earlier and holds no seed
+  // yet - the count is what makes the line worth keeping rather than silencing.
+  /^\[GRAINE\] sending \d+ of \d+ held seed\(s\) as history to \S+$/,
   /^\[notifNav\] routing to \S+ for pending conversation \S+$/,
   // The landing refetching ONCE before it selects. A just-accepted invitation is never in the
   // conversation list the client already holds, which is what this branch exists for; the two
@@ -364,6 +368,11 @@ const NOTABLE = [
   // `unexplained` until COMM-3 made a real member leave, because the `BENIGN` entry for its quiet
   // sibling claimed another rule already covered it and no rule did.
   /^\[GRAINE\] \S+ [0-9a-f]+: \d+ member\(s\) left but still hold a leaf - removing/,
+  // A COMMIT BEING APPLIED - the group's membership moved, which is the one thing this campaign
+  // watches hardest. `[QUEUE] Processing message` is routine and sits in BENIGN; a Commit is not the
+  // same claim and must never share its rule. Never `clean`-breaking, because a join or a departure
+  // legitimately produces one - but in a check that moved nobody, its presence IS the finding.
+  /^\[QUEUE\] Processing Commit group=/,
   /decrypt(ion)? (error|failed)/i,
   // AN OUTBOX THAT DID NOT EMPTY. `[OUTBOX] Queued` and `Flushing` are routine and sit in `BENIGN`;
   // this line is the flush REPORTING LEFTOVERS, and the two are not the same claim. It fired once in
@@ -436,6 +445,14 @@ const NOTABLE = [
   // while believing otherwise. The two spellings are one line apart in the log and a world apart in
   // meaning, which is the whole reason it prints both answers (WP-RECONNECT-2).
   /^\[LIFECYCLE\] Resume: already connected \(flag=true, socket=(false|null)\)/,
+  // A GOVERNANCE REFUSAL, in the app's own words - the community would be left with no
+  // administrator. NOTABLE rather than BENIGN and rather than an error: it is the rule working, so
+  // it must not break `clean` in the check that provokes it (COMM-19), and it must never be silent
+  // anywhere else, because an unprovoked one means somebody tried to leave and could not.
+  //
+  // Matched on the distinctive half of the sentence rather than the whole, which is prose the
+  // product may reword; the CODE behind it (`WORKSPACE_WOULD_HAVE_NO_ADMIN`) never reaches the log.
+  /se retrouverait sans administrateur|would be left with no administrator/i,
 ];
 
 /**
@@ -477,6 +494,30 @@ export function consoleLines(cx) {
         : e.params.args.map((a) => a.value ?? a.description ?? '').join(' ')
       ).slice(0, 260)
     );
+}
+
+/**
+ * Waits, within a bound, for the client to SAY something.
+ *
+ * READING `consoleLines` THE INSTANT A GESTURE RETURNS IS A RACE, and COMM-19 lost it: a refusal
+ * travels to the server and back AFTER the click that provoked it, so the sentence explaining it
+ * lands a few hundred milliseconds later. The check read once, found nothing, and recorded "the
+ * refusal was never explained" about a client whose log carried the explanation - and the record
+ * proved it, because `badHttp` held the 400 the sentence was about.
+ *
+ * The bound is the point. An ABSENCE is only a finding against a window a reader can argue with,
+ * which is the same rule the campaign applies to a message that did not arrive.
+ *
+ * @returns the first matching line, or null once the window closes - both are assertable
+ */
+export async function awaitLine(cx, needle, timeoutMs = 15000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const hit = consoleLines(cx).find((l) => l.includes(needle));
+    if (hit) return hit;
+    if (Date.now() > deadline) return null;
+    await new Promise((r) => setTimeout(r, 500));
+  }
 }
 
 /** Drains what was observed and classifies it. */
