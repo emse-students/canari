@@ -12,24 +12,23 @@
 import sharp from 'sharp';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { renderBird } from './logo-render.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
-const SVG = path.join(ROOT, 'static', 'favicon.svg');
 const RES = path.join(ROOT, 'src-tauri', 'gen', 'android', 'app', 'src', 'main', 'res');
 
 const NAVY = '#151B2C';
+
+/**
+ * Fraction of the launcher canvas the bird occupies, well inside the ~62% safe
+ * zone the adaptive-icon mask leaves. It is a BIRD size, so `renderBird` adds
+ * the vector's own margin around it and this stays the bird's real size.
+ */
 const BIRD_SCALE = 0.5;
 
 const FOREGROUND = { mdpi: 108, hdpi: 162, xhdpi: 216, xxhdpi: 324, xxxhdpi: 432 };
 const LEGACY = { mdpi: 48, hdpi: 72, xhdpi: 96, xxhdpi: 144, xxxhdpi: 192 };
-
-function renderBird(box) {
-  return sharp(SVG, { density: 1200 })
-    .resize(box, box, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
-    .png()
-    .toBuffer();
-}
 
 function roundedRectSvg(size) {
   const r = Math.round(size * 0.2);

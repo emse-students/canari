@@ -62,6 +62,7 @@ import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 import { beginBulkUiFlushBench, finishBulkUiFlushBench } from '$lib/mls-client/catchupBenchmark';
 import { shouldUpgradeMessage, mergeMessageUpgrade } from '$lib/utils/chat/messageMerge';
 import { publishTabMessageUpdate } from '$lib/mls-client/tabMessageSync';
+import { claimChannelReadSignal } from '$lib/utils/chat/channelReadSignal';
 
 /** Runtime dependencies injected into all messaging operations. */
 export interface MessagingContext {
@@ -86,6 +87,12 @@ export interface MessagingContext {
   playReceiveTone?: () => void;
   playReadTone?: () => void;
   sendSystemNotification: (title: string, body: string, conversationId?: string) => Promise<void>;
+  /**
+   * Tells this user's OTHER devices that a salon has been read, so any of them still showing its
+   * notification drops it. Optional: only the layer holding a channel client can provide it, and
+   * a context without one simply never signals rather than failing.
+   */
+  signalChannelRead?: (channelId: string) => void;
 }
 
 /**
@@ -452,6 +459,19 @@ export function useMessaging() {
       lastMessageAt: Math.max(convo.lastMessageAt ?? 0, newMsg.timestamp.getTime()),
       unreadCount: nextUnreadCount,
     });
+
+    // READ ON ARRIVAL IS STILL READ. This is the case the unread counter cannot see: the salon is
+    // already open, so the message is read the instant it lands and `nextUnreadCount` stays 0 - and
+    // a sibling device holding its banner has been told nothing. See `channelReadSignal`.
+    if (
+      isConversationOpen &&
+      !isOwn &&
+      !options.isSystem &&
+      isChannelConversationId(normalized) &&
+      claimChannelReadSignal(normalized, newMsg.timestamp.getTime())
+    ) {
+      ctx.signalChannelRead?.(normalized);
+    }
 
     if (!isOwn && !options.isSystem && !isStaleInboundMessage(resolvedTimestamp)) {
       (ctx.playReceiveTone ?? ctx.playNotificationTone)();

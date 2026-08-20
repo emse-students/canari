@@ -26,6 +26,10 @@
     type ChannelPollDraft,
   } from '$lib/utils/chat/channelCrypto';
   import { channelService } from '$lib/services/ChannelService';
+  import {
+    claimChannelReadSignal,
+    newestForeignMessageAt,
+  } from '$lib/utils/chat/channelReadSignal';
   import { applyLocalVote, setPollMeta } from '$lib/stores/pollStore.svelte';
   import { channelReactionMap } from '$lib/stores/reactionStore.svelte';
   import { aggregateSharedContent, type SharedContent } from '$lib/utils/chat/sharedContent';
@@ -230,6 +234,7 @@
       playReceiveTone: notifs.playReceiveTone,
       playReadTone: notifs.playReadTone,
       sendSystemNotification: notifs.sendSystemNotification,
+      signalChannelRead: (channelId: string) => void channelService.markChannelRead(channelId),
     };
   }
 
@@ -356,13 +361,19 @@
         void channels.joinPrivateChannelAsAdmin(channelId, channelName, channelsCtx());
       },
       onSelectChannelConversation: (channelId: string) => {
-        // Capture unread BEFORE selectConversation resets it: only signal a cross-device read
-        // when there was actually something unread, to avoid a self-push on every channel open.
-        const hadUnread = (convs.conversations.get(channelId)?.unreadCount ?? 0) > 0;
+        // THE RECEIPT IS OWED FOR WHAT WAS THERE TO READ, not for what this device had counted as
+        // unread. Read BEFORE selectConversation, which resets the conversation's state; the marker
+        // in `channelReadSignal` is what keeps an idle re-open from pushing to ourselves again.
+        const readUpTo = newestForeignMessageAt(
+          convs.conversations.get(channelId)?.messages ?? [],
+          session.userId
+        );
         channels.selectedChannelConversationId = channelId;
         convs.selectConversation(channelId);
         void convs.loadHistoryForConversation(channelId, channelId, convCtx());
-        if (hadUnread) void channelService.markChannelRead(channelId);
+        if (claimChannelReadSignal(channelId, readUpTo)) {
+          void channelService.markChannelRead(channelId);
+        }
       },
       onSelectCommunity: () => {
         // Switching community must not keep the previous channel open: clear the selection

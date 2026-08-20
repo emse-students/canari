@@ -207,6 +207,7 @@ export interface ChannelMessageRow {
 }
 
 import { apiFetch } from '$lib/utils/apiFetch';
+import { Log } from '$lib/utils/Log';
 
 /**
  * A refusal answered by the channels API.
@@ -727,8 +728,15 @@ export class ChannelService {
     const cid = this.normalizeChannelId(channelId);
     try {
       await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/read`, { method: 'POST' });
-    } catch {
-      /* best-effort: a failed read signal only means a stale notification lingers elsewhere */
+      Log.d(`[CHANNEL_READ] signalled ${cid.slice(0, 8)} to this account's other devices`);
+    } catch (e) {
+      // Best-effort, and said out loud anyway - at a level that ACCUSES. The only symptom of a loss
+      // here is a notification still sitting on a phone in somebody's pocket, and nothing else in
+      // the system will ever report that.
+      console.warn(
+        `[CHANNEL_READ] could not signal ${cid.slice(0, 8)} - a stale notification may linger on ` +
+          `another device: ${e instanceof Error ? e.message : String(e)}`
+      );
     }
   }
 

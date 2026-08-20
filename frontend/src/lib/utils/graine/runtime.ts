@@ -1,6 +1,7 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { IStorage, StoredGraineSession } from '$lib/db/types';
 import type { GraineHistoryVisibility } from '$lib/crypto/graineConstants';
+import { resetChannelReadSignals } from '$lib/utils/chat/channelReadSignal';
 import {
   channelScope,
   workspaceScope,
@@ -63,6 +64,9 @@ export function setGraineRuntime(next: GraineRuntime | null): void {
     historyVisibilityByWorkspace.clear();
     seedCache.clear();
     repairListener = null;
+    // Same reason: the markers name salons of this account, and "already told my other devices" is
+    // a claim about THIS account's devices. The next one inherits none of it.
+    resetChannelReadSignals();
   }
 }
 

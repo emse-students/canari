@@ -81,6 +81,7 @@
   } from '$lib/utils/chat/notificationRouting';
   import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
   import { setGraineRepairListener } from '$lib/utils/graine/runtime';
+  import { channelService } from '$lib/services/ChannelService';
   import { drainNativePendingCallAccept } from '$lib/stores/pendingCallAccept';
   import { warnIfSiblingDeviceInCall } from '$lib/utils/callPresence';
   import { mergeFcmMessagesIntoConversations } from '$lib/utils/chat/fcmMemoryMerge';
@@ -489,6 +490,7 @@
       playReceiveTone: globalNotifs.playReceiveTone,
       playReadTone: globalNotifs.playReadTone,
       sendSystemNotification: globalNotifs.sendSystemNotification,
+      signalChannelRead: (channelId: string) => void channelService.markChannelRead(channelId),
     };
   }
 

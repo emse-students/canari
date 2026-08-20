@@ -24,10 +24,10 @@ import sharp from 'sharp';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { renderBird, renderCanvas } from './logo-render.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
-const SVG = path.join(ROOT, 'static', 'favicon.svg');
 const STATIC = path.join(ROOT, 'static');
 
 /** `--color-canvas` in `app.css`, and the `theme-color` in `app.html`. */
@@ -41,19 +41,12 @@ const TOUCH_ICON_SIZE = 180;
  *
  * iOS rounds the corners itself and applies no safe zone, so this is margin
  * rather than crop protection: at 1.0 the bird would touch the rounded edge.
+ * It is a BIRD size, so `renderBird` adds the vector's own margin around it.
  */
 const TOUCH_ICON_BIRD_SCALE = 0.76;
 
 /** Sizes packed into `favicon.ico`, smallest first. */
 const ICO_SIZES = [16, 32, 48];
-
-/** Renders the logo to a transparent square of `box` pixels a side. */
-function renderBird(box) {
-  return sharp(SVG, { density: 1200 })
-    .resize(box, box, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
-    .png()
-    .toBuffer();
-}
 
 async function makeTouchIcon() {
   const bird = await renderBird(Math.round(TOUCH_ICON_SIZE * TOUCH_ICON_BIRD_SCALE));
@@ -109,7 +102,7 @@ function packIco(images) {
 async function makeFaviconIco() {
   const images = [];
   for (const size of ICO_SIZES) {
-    images.push({ size, data: await renderBird(size) });
+    images.push({ size, data: await renderCanvas(size) });
   }
   const out = path.join(STATIC, 'favicon.ico');
   await fs.writeFile(out, packIco(images));

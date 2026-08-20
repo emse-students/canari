@@ -357,6 +357,8 @@ instrument has produced so far - latest verdict per check, all against productio
 | COMM-15 | 2026-08-20 | `PASS` clean `939078aa` | first run; needed the native-dialog capability |
 | COMM-16 | 2026-08-20 | `PASS` clean | - |
 | COMM-19 | 2026-08-20 | `PASS` clean | - |
+| COMM-20 | 2026-08-20 | `FAIL` clean `939078aa` | the lost update, fixed in `614bddbd`; re-run owed on the deployed fix |
+| COMM-21 | 2026-08-20 | `PASS` clean `939078aa` | first run; the draft is lost, recorded and not asserted |
 | COMM-23/24 | 2026-08-20 | `PASS` clean | - |
 
 **The build a verdict ran on is recorded from `60c33b92` onward and not before.** Nothing the web
