@@ -129,7 +129,11 @@ before the campaign restarts.** Everything actionable is HERE, in order, one lin
 lives where the link says and **is not restated**. An item is done when its code, its tests, its doc
 and its commit are in, and it is then deleted from BOTH files.
 
-**The campaign started 2026-08-19 and has produced NINETEEN defects, all fixed.** SEVEN came from
+**The campaign started 2026-08-19 and has produced TWENTY defects, all fixed.** The twentieth is the
+first PRIVACY one and is now a rule: **A RULE READ AT TWO MOMENTS MUST BE GATED AT BOTH** -
+`historyVisibility` refused the join bundle and the repair path handed the same past back one
+session id at a time ([cross-client-testing](docs/wiki/cross-client-testing.md),
+[graine](docs/wiki/protocols/channel-encryption.md) §WP-34/35, the only copies). SEVEN came from
 ONE private salon driven on prod through create -> public -> private -> a SECOND MEMBER, and not
 one was reachable from the repository: a private salon with two people in it did not work AT ALL,
 TWO came from reading a single log line the harness had left unclassified
@@ -165,13 +169,14 @@ in the field (user, 2026-08-19)**, so the iOS ladder cannot run and parity is ke
     comes from a run.** Every accusation in `displayName.ts` now ends `(failed/attempted, X%)`.
     There is no client telemetry, so the rate is read from a run log on each platform. **The
     `FAILURE_BACKOFF_MS` decision is what the number is FOR** ([backlog](docs/wiki/backlog.md)).
-3. **THE COMM RUNNERS - the rows were rewritten 2026-08-20, five of twenty-five run.** The stale
+3. **THE COMM RUNNERS - the rows were rewritten 2026-08-20, six of twenty-five run.** The stale
     vocabulary is gone (COMM-9 and COMM-13 named mechanisms that do not exist, COMM-22 timed a
     deleted function) and three rows were added for the per-salon groups, so the phase carries
     TWENTY-FIVE; the table on
     [cross-client-testing](docs/wiki/cross-client-testing.md) is the only copy. `comm.mjs` holds the
-    shared vocabulary, and COMM-1, 8, 9/10, 23 and 24 run (each PASSed while proving the instrument,
-    so the board rows stay `pending` - they are campaign verdicts only on the final build).
+    shared vocabulary, and COMM-1, 8, 9/10, 12, 23 and 24 run (each PASSed while proving the
+    instrument, so the board rows stay `pending` - they are campaign verdicts only on the final
+    build). COMM-12 is the one that FAILED first, and correctly.
     **The user's decision, 2026-08-20: ALL TWENTY-FIVE ARE AUTOMATED, including the four that need
     more than two Chromes** - COMM-14 drives real push, COMM-17/18 drive the phone through `adb`,
     COMM-25 needs a second device for one account. The harness therefore grows three capabilities it

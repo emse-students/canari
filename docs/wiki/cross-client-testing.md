@@ -338,10 +338,28 @@ of turning runners red a week later. Two of its selectors are deliberately struc
 anchored on the "add a community" button, and a channel is asked for BY NAME because the only anchor
 in its container is a button a non-manager never sees - which is exactly the case COMM-8 measures.
 
-**ELEVEN OF THE TWENTY-FIVE ARE WRITTEN AND REGISTERED** (1, 2, 3, 5, 8, 9/10, 11, 16, 19, 23, 24). `comm2.mjs`
+**TWELVE OF THE TWENTY-FIVE ARE WRITTEN AND REGISTERED** (1, 2, 3, 5, 8, 9/10, 11, 12, 16, 19, 23, 24). `comm2.mjs`
 is the primitive the rest wait on: the invite link is the only gesture in the product that puts a
 SECOND member into a community a check built itself, so COMM-11, COMM-12 and COMM-19 all inherit
 what it proves.
+
+**COMM-12 FOUND THE TWENTIETH DEFECT ON ITS FIRST RUN, and it is a privacy one (2026-08-20).** The
+runner drives ONE community twice - once `joined`, once `shared` - and in each arm puts W2 through
+join, removal and re-invitation, sampling four markers: what was said before they first arrived,
+while they were a member, while they were out, and after they came back. The run was clean and armed
+(`failures: []`), and the split was total: `livePostReachedTheMember` and
+`reInvitedReadsWhatComesNext` held, all four `shared` controls held - and all four `joined` refusals
+failed. W2 read the past on its first join and again after being re-invited, with `composer=true`,
+the right channel header and `waitedMs` of 1-19 ms: real renders, not an instrument fault.
+
+**The two arms are what made it readable.** Without the `shared` arm a refusal that did not happen
+could not be told apart from history transfer that never works at all, and the finding would have
+been arguable. With it, the logs finished the story on their own - W1 said
+`[GRAINE] not sending history ... is set to 'joined'` and then, three lines later,
+`[GRAINE] answered ... with 2 seed(s)`. `gatherCommunityHistory` was gated and `gatherNamedSessions`
+was not, so the setting refused the bundle and then handed the same past back one session id at a
+time. Fixed at both places a seed leaves a device, plus the requester side, and the rule now lives in
+one module: [channel-encryption](protocols/channel-encryption.md) §WP-34/35 is the only copy.
 
 **COMM-16 FOUND A DEFECT ON ITS FIRST RUN, and nearly lost it.** `channelRowGone` came back false,
 which reads exactly like a check written against a behaviour the product does not have - the row

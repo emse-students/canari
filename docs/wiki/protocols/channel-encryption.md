@@ -686,10 +686,40 @@ and the second time in this protocol that a correct mechanism shipped unwired.
 **`channel_workspaces."historyVisibility"` (migration `039`) is stored server-side and applied
 client-side, and that split is the whole design.** The server holds no seed, so it could not enforce
 the rule if it wanted to; what it can do is give every device the same answer and tell them when it
-changes. The enforcement point is the ONE place a seed is about to leave a device -
-`gatherCommunityHistory` in the frame handler. `NOT NULL DEFAULT 'shared'`, unlike 037's nullable
-pointer: there is no such thing as a community with no answer to this question, and a null would be
-a third state every reader would have to interpret.
+changes. `NOT NULL DEFAULT 'shared'`, unlike 037's nullable pointer: there is no such thing as a
+community with no answer to this question, and a null would be a third state every reader would have
+to interpret.
+
+**THE ENFORCEMENT POINT IS EVERY PLACE A SEED LEAVES A DEVICE, AND FOR A YEAR ONLY ONE OF THE TWO WAS
+GATED.** `gatherCommunityHistory` refused the join-time bundle under `joined`, correctly and out
+loud - and `gatherNamedSessions`, the WP-33 repair path, consulted nothing at all and handed the same
+past back one session id at a time. That is not an exotic path: a newcomer renders a salon, meets
+ciphertext it cannot open, and `noteMissingSeed` names those exact sessions. The setting was stored,
+broadcast, narrowed fail-closed, enforced on one path and bypassed entirely on the other, so a
+community that had chosen *"rien de plus ancien"* got the opposite. **Found on prod by COMM-12 on
+2026-08-20, not by the repository**, and it is the twentieth defect of the campaign. The rule now
+lives in `historyBoundary.ts` and both callers read it from there, which is what stops the two
+readings drifting apart again.
+
+**The boundary is a member's arrival, and it is unambiguous by construction.** `historyFloorFor`
+reads `joinedAt` off the community roster - fresh every time, never cached, because a member removed
+and invited back starts again LATER and a cached start is the earlier, more permissive one. A seed
+minted before that instant is withheld, and that costs the member nothing they could otherwise have
+read: every membership change commits to the distribution group and advances its epoch,
+`graineRotationReason` rotates on any epoch it does not recognise (an ADD included, deliberately), so
+no session ever spans an arrival.
+
+**A withheld seed is absent from BOTH lists in the answer.** Reporting it as `missing` would be a lie
+with a cost - `missing` means *"elect somebody else"*, and every other member applies the same rule,
+so the requester would walk the whole roster to arrive at the answer it was handed first.
+
+**And the requester applies the same rule before it asks.** It knows the community's setting (it was
+broadcast) and its own arrival (one roster fetch), and each unreadable row carries a SERVER
+timestamp - so the two sides of that comparison come from one clock. Without it a newcomer to a
+closed community would spend one frame per pre-arrival session, on the whole group, at every start,
+to be told what it already knew. `withheldFromUs` fails OPEN, unlike its counterpart: it is a
+bandwidth decision, not the enforcement, and refusing to ask because a roster fetch failed would
+strand seeds the member is entitled to.
 
 **Broadcast, not just stored.** `workspace.updated` carries the new value to every member, because a
 device still holding `shared` in memory would keep handing the past over after an admin had closed

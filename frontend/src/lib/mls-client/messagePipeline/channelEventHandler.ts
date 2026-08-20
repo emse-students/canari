@@ -274,6 +274,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
           data.channelId,
           String(data.messageId || data.id),
           String(sender || ''),
+          channelServerMs,
           e
         );
       }

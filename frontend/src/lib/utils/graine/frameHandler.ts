@@ -12,6 +12,7 @@ import {
   historyVisibilityFor,
   requireGraineRuntime,
 } from './runtime';
+import { historyFloorFor, withinHistoryFloor } from './historyBoundary';
 import { mirrorGraineSeed } from './graineMirror';
 import { forgetAskedSession, noteSeedUnavailable } from './repair';
 
@@ -182,10 +183,10 @@ async function answerSeedRequest(
     request.kind === kinds.GRAINE_REQUEST_KIND_HISTORY
       ? await gatherCommunityHistory(frame, storage, deviceKeyB64)
       : await gatherNamedSessions(frame, request, storage, deviceKeyB64);
-  // A refusal (`null`, history withheld) is the only case answered by silence, and it is the one the
-  // requester can already derive: the visibility rule is broadcast by the server, so both sides know
-  // it. Everything else answers, INCLUDING an empty hand - "I hold none of these" is the fact that
-  // sends the requester to the next member, and withholding it strands the session for good.
+  // A refusal (`null`, the past withheld) is the only case answered by silence, and it is the one
+  // the requester can already derive: the visibility rule is broadcast by the server, so both sides
+  // know it. Everything else answers, INCLUDING an empty hand - "I hold none of these" is the fact
+  // that sends the requester to the next member, and withholding it strands the session for good.
   if (!gathered) return;
   if (gathered.seeds.length === 0 && gathered.missing.length === 0) return;
 
@@ -229,25 +230,68 @@ function toWireSeed(held: StoredGraineSession): canari.GraineMsg.$Properties {
   };
 }
 
-/** The seeds named by a SESSIONS request, and what this device turned out not to hold. */
+/**
+ * The seeds named by a SESSIONS request, and what this device turned out not to hold.
+ *
+ * **Gated by the community's history rule, exactly like the join-time bundle** ({@link
+ * historyFloorFor}). A repair request names sessions by id and asks for nothing else, so without
+ * this a community set to `joined` refused the bundle and then handed the same past over one id at
+ * a time - which is what a newcomer's device asks for the moment it renders a salon it cannot read.
+ *
+ * A seed withheld here is absent from BOTH lists, and that is deliberate. Reporting it as `missing`
+ * would be a lie with a cost: `missing` means "elect somebody else", and every other member applies
+ * the same rule, so the requester would walk the whole roster to arrive at the answer it was given
+ * first. Silence on those ids is the honest shape - the requester already knows the rule.
+ *
+ * @returns `null` when nothing may be handed over at all, which the caller answers with silence.
+ */
 async function gatherNamedSessions(
   frame: DistributionFrame,
   request: canari.GraineRequestMsg.$Properties,
   storage: IStorage,
   deviceKeyB64: string
-): Promise<GatheredSeeds> {
+): Promise<GatheredSeeds | null> {
+  let floor: number | null;
+  try {
+    floor = await historyFloorFor(frame.workspaceId, frame.sender);
+  } catch (e) {
+    // Fail-closed, and said out loud: this device cannot place the boundary, so it hands over
+    // nothing. The other symptom is a member whose repairs silently stop working, which no log
+    // would ever name.
+    console.warn(
+      `[GRAINE] refusing ${frame.sender} the seed(s) they asked for in community ` +
+        `${frame.workspaceId.slice(0, 8)} - cannot place their history boundary: ` +
+        (e instanceof Error ? e.message : String(e))
+    );
+    return null;
+  }
+
   const wanted = (request.sessionIds ?? []).map(String).filter(Boolean);
   const seeds: canari.GraineMsg.$Properties[] = [];
   const missing: string[] = [];
+  const withheld: string[] = [];
   for (const sessionId of wanted.slice(0, GRAINE_HISTORY_BUNDLE_MAX_SEEDS)) {
     const held = await storage.getGraineSession(sessionId, deviceKeyB64);
     if (!held) {
       missing.push(sessionId);
       continue;
     }
+    if (!withinHistoryFloor(floor, held.createdAt)) {
+      withheld.push(sessionId);
+      continue;
+    }
     seeds.push(toWireSeed(held));
   }
 
+  if (withheld.length > 0) {
+    // A decision rather than a loss, so it is logged like the bundle's refusal is. An honest client
+    // never asks for these - it applies the same rule before sending the request - so a line here
+    // names either a client that has not learned the rule yet or one that is not applying it.
+    console.info(
+      `[GRAINE] withholding ${withheld.length} seed(s) from ${frame.sender}: community ` +
+        `${frame.workspaceId.slice(0, 8)} is set to 'joined' and they predate that member's arrival`
+    );
+  }
   if (missing.length > 0) {
     // Named rather than counted: this device was chosen as the holder and turned out not to be,
     // which is either a roster that moved under the requester or a seed lost on this side. The list
@@ -264,9 +308,11 @@ async function gatherNamedSessions(
  * Everything this device holds for the community - a joiner's catch-up, gated by the community's
  * history rule (WP-34).
  *
- * **The rule is enforced HERE and nowhere else**, because here is the only place a seed is about to
- * leave a device. The server stores the setting and broadcasts it; it holds no key and could not
- * enforce it if it wanted to.
+ * **The rule is enforced by the MEMBERS**, because a device about to hand a seed over is the only
+ * place it can be: the server stores the setting and broadcasts it, holds no key, and could not
+ * enforce it if it wanted to. This is one of the two places a seed leaves - {@link
+ * gatherNamedSessions} is the other, and for a year it was not gated, which handed back one id at a
+ * time exactly the past refused here.
  *
  * Refusing is not a silence: `joined` means the joiner reads from their arrival onwards, which is
  * the setting working, so it is logged as a decision rather than left to look like a lost frame.

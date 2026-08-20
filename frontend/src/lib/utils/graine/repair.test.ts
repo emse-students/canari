@@ -9,7 +9,14 @@ import {
   resolveAnswerer,
   forgetAskedSession,
 } from './repair';
-import { registerChannelWorkspace, setGraineRuntime } from './runtime';
+import {
+  registerChannelWorkspace,
+  registerCommunityHistoryVisibility,
+  setGraineRuntime,
+} from './runtime';
+
+/** When the rows that named a missing session were sent, on the server clock. */
+const SENT_AT = Date.parse('2026-08-20T12:00:00Z');
 
 /**
  * Asking for a seed this device does not hold (WP-33).
@@ -55,6 +62,10 @@ beforeEach(() => {
     } as never,
   });
   registerChannelWorkspace('chan-1', 'ws-1', false);
+  // The community shares its past unless a test says otherwise, so nothing here measures the
+  // history boundary by accident - and an unregistered community would fail closed and quietly
+  // change what every one of these tests is asking about.
+  registerCommunityHistoryVisibility('ws-1', 'shared');
 });
 
 afterEach(() => {
@@ -69,7 +80,7 @@ async function settle() {
 
 describe('noteMissingSeed', () => {
   it('asks the session sender, once, on the distribution group', async () => {
-    noteMissingSeed('chan-1', 'sess-1', 'Bob');
+    noteMissingSeed('chan-1', 'sess-1', 'Bob', SENT_AT);
     await settle();
 
     expect(sendMessage).toHaveBeenCalledTimes(1);
@@ -82,9 +93,9 @@ describe('noteMissingSeed', () => {
   });
 
   it('never asks for the same session twice', async () => {
-    noteMissingSeed('chan-1', 'sess-1', 'bob');
+    noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
     await settle();
-    noteMissingSeed('chan-1', 'sess-1', 'bob');
+    noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
     await settle();
 
     // A page of fifty unreadable rows names a handful of sessions between them: without this it
@@ -93,18 +104,18 @@ describe('noteMissingSeed', () => {
   });
 
   it('asks again once the session is explicitly forgotten', async () => {
-    noteMissingSeed('chan-1', 'sess-1', 'bob');
+    noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
     await settle();
     forgetAskedSession('sess-1');
-    noteMissingSeed('chan-1', 'sess-1', 'bob');
+    noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
     await settle();
 
     expect(sendMessage).toHaveBeenCalledTimes(2);
   });
 
   it('coalesces sessions of one sender into a single request', async () => {
-    noteMissingSeed('chan-1', 'sess-1', 'bob');
-    noteMissingSeed('chan-1', 'sess-2', 'bob');
+    noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
+    noteMissingSeed('chan-1', 'sess-2', 'bob', SENT_AT);
     await settle();
 
     expect(sendMessage).toHaveBeenCalledTimes(1);
@@ -113,8 +124,8 @@ describe('noteMissingSeed', () => {
   });
 
   it('sends one request PER answerer, never one broadcast', async () => {
-    noteMissingSeed('chan-1', 'sess-1', 'bob');
-    noteMissingSeed('chan-1', 'sess-2', 'carol');
+    noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
+    noteMissingSeed('chan-1', 'sess-2', 'carol', SENT_AT);
     await settle();
 
     expect(sendMessage).toHaveBeenCalledTimes(2);
@@ -126,7 +137,7 @@ describe('noteMissingSeed', () => {
 
   it('says out loud that it could not ask, rather than leaving a blank salon unexplained', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    noteMissingSeed('chan-unknown', 'sess-1', 'bob');
+    noteMissingSeed('chan-unknown', 'sess-1', 'bob', SENT_AT);
     await settle();
 
     // The only other symptom is older messages staying unreadable with nothing naming the reason.
@@ -138,13 +149,13 @@ describe('noteMissingSeed', () => {
   it('leaves the session askable again when the request could not be sent', async () => {
     listMembers.mockRejectedValueOnce(new Error('offline'));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    noteMissingSeed('chan-1', 'sess-1', 'bob');
+    noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
     await settle();
     expect(sendMessage).not.toHaveBeenCalled();
 
     // A failed ask that marked the session as asked would be permanent: nothing else ever revisits
     // a session id, so the salon would stay unreadable for the whole app session.
-    noteMissingSeed('chan-1', 'sess-1', 'bob');
+    noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
     await settle();
     expect(sendMessage).toHaveBeenCalledTimes(1);
     warn.mockRestore();
@@ -220,6 +231,66 @@ describe('resolveAnswerer', () => {
   });
 });
 
+describe('a community that closes its past (WP-34)', () => {
+  /**
+   * ASKING FOR WHAT WE MAY NOT BE GIVEN COSTS THE WHOLE GROUP. The rule was broadcast to this
+   * device and our own arrival is one roster fetch away, so a request for a session whose every
+   * message predates us is a frame every member decrypts to learn what we already knew - and the
+   * answer is silence, so it would go out again at the next start.
+   *
+   * This is NOT where the rule is enforced: the answerer places the boundary itself and refuses.
+   * This is only what keeps an honest client off the group.
+   */
+  const ARRIVED = Date.parse('2026-08-20T12:00:00Z');
+
+  beforeEach(() => {
+    registerCommunityHistoryVisibility('ws-1', 'joined');
+    listWorkspaceMembers.mockResolvedValue([
+      { userId: 'Bob', joinedAt: '2026-01-01T00:00:00Z' },
+      { userId: 'alice', joinedAt: '2026-08-20T12:00:00Z' },
+    ]);
+  });
+
+  it('does not ask for a session whose messages all predate our arrival', async () => {
+    noteMissingSeed('chan-1', 'sess-old', 'bob', ARRIVED - 60_000);
+    await settle();
+
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('still asks for a session seen after our arrival', async () => {
+    noteMissingSeed('chan-1', 'sess-new', 'bob', ARRIVED + 60_000);
+    await settle();
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const request = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineRequest;
+    expect(request?.sessionIds).toEqual(['sess-new']);
+  });
+
+  it('keeps a session whose NEWEST row is on our side of the arrival', async () => {
+    // Rotation makes the test exact rather than approximate - a join advances the distribution
+    // group's epoch and every sender rotates on the next send, so no session spans an arrival.
+    // Taking the newest row is what makes a mixed pair resolve the safe way for the member.
+    noteMissingSeed('chan-1', 'sess-1', 'bob', ARRIVED - 60_000);
+    noteMissingSeed('chan-1', 'sess-1', 'bob', ARRIVED + 60_000);
+    await settle();
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks anyway when our own arrival cannot be read', async () => {
+    // Fail-OPEN here, and only here: refusing to ask because a roster fetch failed would strand
+    // seeds we are entitled to, for the saving of one frame - and the answerer refuses regardless.
+    listWorkspaceMembers.mockRejectedValue(new Error('offline'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    noteMissingSeed('chan-1', 'sess-old', 'bob', ARRIVED - 60_000);
+    await settle();
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+});
+
 describe('noteSeedUnavailable', () => {
   /** Reads the user id a request frame was addressed to. */
   function answererOf(call: unknown[]): string {
@@ -228,7 +299,7 @@ describe('noteSeedUnavailable', () => {
 
   it('elects the next member when the chosen answerer does not hold the seed', async () => {
     // Sender 'dave' has left, so the roster decides: bob is the lowest id that is not us.
-    noteMissingSeed('chan-1', 'sess-1', 'dave');
+    noteMissingSeed('chan-1', 'sess-1', 'dave', SENT_AT);
     await settle();
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(answererOf(sendMessage.mock.calls[0])).toBe('bob');
@@ -243,7 +314,7 @@ describe('noteSeedUnavailable', () => {
 
   it('stops on the roster being exhausted, and says so', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    noteMissingSeed('chan-1', 'sess-1', 'dave');
+    noteMissingSeed('chan-1', 'sess-1', 'dave', SENT_AT);
     await settle();
 
     noteSeedUnavailable('sess-1', 'bob');
@@ -261,7 +332,7 @@ describe('noteSeedUnavailable', () => {
   it('asks nobody on behalf of a session that is no longer wanted', async () => {
     // The seed landed by the durable log between the ask and this answer. Re-electing here would
     // spend a round trip on a session this device already holds.
-    noteMissingSeed('chan-1', 'sess-1', 'dave');
+    noteMissingSeed('chan-1', 'sess-1', 'dave', SENT_AT);
     await settle();
     forgetAskedSession('sess-1');
 
@@ -271,15 +342,15 @@ describe('noteSeedUnavailable', () => {
   });
 
   it('lets a later miss ask again once the seed has been forgotten', async () => {
-    noteMissingSeed('chan-1', 'sess-1', 'dave');
+    noteMissingSeed('chan-1', 'sess-1', 'dave', SENT_AT);
     await settle();
     // Still armed: a second unreadable row naming the same session must not become a second ask.
-    noteMissingSeed('chan-1', 'sess-1', 'dave');
+    noteMissingSeed('chan-1', 'sess-1', 'dave', SENT_AT);
     await settle();
     expect(sendMessage).toHaveBeenCalledTimes(1);
 
     forgetAskedSession('sess-1');
-    noteMissingSeed('chan-1', 'sess-1', 'dave');
+    noteMissingSeed('chan-1', 'sess-1', 'dave', SENT_AT);
     await settle();
     expect(sendMessage).toHaveBeenCalledTimes(2);
   });

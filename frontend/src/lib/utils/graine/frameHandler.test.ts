@@ -27,6 +27,16 @@ import {
 
 vi.mock('./graineMirror', () => ({ mirrorGraineSeed: vi.fn().mockResolvedValue(undefined) }));
 
+/** The roster the history boundary is read from, when a community closes its past. */
+const listWorkspaceMembers = vi.fn();
+vi.mock('$lib/services/ChannelService', () => ({
+  ChannelService: class {
+    listWorkspaceMembers(...args: unknown[]) {
+      return listWorkspaceMembers(...args);
+    }
+  },
+}));
+
 const SEED = new Uint8Array(32).fill(3);
 
 function fakeStorage(seed: StoredGraineSession[] = []) {
@@ -243,6 +253,14 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
     return sendMessage;
   }
 
+  beforeEach(() => {
+    // These rows are about WHAT IS HELD, not about who may read the past, so the community shares
+    // it. Left unregistered it would fail closed, and every one of them would measure the boundary
+    // instead of the thing it is named after.
+    registerCommunityHistoryVisibility('ws-1', 'shared');
+    listWorkspaceMembers.mockReset();
+  });
+
   it('ignores a request addressed to somebody else', async () => {
     const { storage } = fakeStorage([heldSeed('sess-1')]);
     const sendMessage = wireWithMls(storage);
@@ -314,6 +332,87 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
     const answer = decodeAppMessage(sendMessage.mock.calls[0][1]);
     expect(answer?.graineBundle?.seeds ?? []).toHaveLength(0);
     expect(answer?.graineBundle?.missingSessionIds).toEqual(['sess-9']);
+    warn.mockRestore();
+  });
+
+  it('withholds the seeds of a session minted before the asker arrived (WP-34)', async () => {
+    // THE DEFECT THIS ROW EXISTS FOR. `joined` refused the join-time bundle and nothing refused
+    // this, so a newcomer read the past one session id at a time - which is exactly what a device
+    // asks for the moment it renders a salon it cannot open. Found on prod by COMM-12, 2026-08-20.
+    registerCommunityHistoryVisibility('ws-1', 'joined');
+    listWorkspaceMembers.mockResolvedValue([
+      { userId: 'Bob', joinedAt: '2026-08-20T12:00:00Z' },
+      { userId: 'alice', joinedAt: '2026-01-01T00:00:00Z' },
+    ]);
+    const before = { ...heldSeed('sess-old'), createdAt: Date.parse('2026-08-20T11:00:00Z') };
+    const after = { ...heldSeed('sess-new'), createdAt: Date.parse('2026-08-20T13:00:00Z') };
+    const { storage } = fakeStorage([before, after]);
+    const sendMessage = wireWithMls(storage);
+
+    await handleDistributionFrame(
+      requestFrame({
+        workspaceId: 'ws-1',
+        kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS,
+        sessionIds: ['sess-old', 'sess-new'],
+        answererUserId: 'alice',
+        requestId: 'r-1',
+      })
+    );
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const answer = decodeAppMessage(sendMessage.mock.calls[0][1]);
+    expect(answer?.graineBundle?.seeds?.map((x) => x.sessionId)).toEqual(['sess-new']);
+    // ABSENT FROM BOTH LISTS, and that is the assertion. Reported as missing it would mean "elect
+    // somebody else", and every other member applies the same rule - so the requester would walk
+    // the whole roster to arrive at the answer it was handed first.
+    expect(answer?.graineBundle?.missingSessionIds ?? []).toEqual([]);
+  });
+
+  it('hands the same seeds over when the community shares its past', async () => {
+    // The positive control the row above needs: without it, a refusal cannot be told apart from a
+    // repair path that answers nothing at all.
+    registerCommunityHistoryVisibility('ws-1', 'shared');
+    const before = { ...heldSeed('sess-old'), createdAt: Date.parse('2026-08-20T11:00:00Z') };
+    const { storage } = fakeStorage([before]);
+    const sendMessage = wireWithMls(storage);
+
+    await handleDistributionFrame(
+      requestFrame({
+        workspaceId: 'ws-1',
+        kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS,
+        sessionIds: ['sess-old'],
+        answererUserId: 'alice',
+        requestId: 'r-1',
+      })
+    );
+
+    const answer = decodeAppMessage(sendMessage.mock.calls[0][1]);
+    expect(answer?.graineBundle?.seeds?.map((x) => x.sessionId)).toEqual(['sess-old']);
+    expect(listWorkspaceMembers).not.toHaveBeenCalled();
+  });
+
+  it('hands over nothing when it cannot place the asker on the roster', async () => {
+    // Fail-closed, like every other reading of this rule: a boundary nobody can place is not a
+    // boundary, and guessing it wide is the expensive half of the asymmetry.
+    registerCommunityHistoryVisibility('ws-1', 'joined');
+    listWorkspaceMembers.mockResolvedValue([{ userId: 'alice', joinedAt: '2026-01-01T00:00:00Z' }]);
+    const { storage } = fakeStorage([heldSeed('sess-1')]);
+    const sendMessage = wireWithMls(storage);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(
+      requestFrame({
+        workspaceId: 'ws-1',
+        kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS,
+        sessionIds: ['sess-1'],
+        answererUserId: 'alice',
+        requestId: 'r-1',
+      })
+    );
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    // A member whose repairs silently stop working has no other symptom.
+    expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });
 

@@ -4,6 +4,7 @@ import { DELIVERY } from '$lib/mls-client/frameDelivery';
 import { workspaceScope } from '$lib/mls-client/distributionScope';
 import { ChannelService } from '$lib/services/ChannelService';
 import { requireGraineRuntime, scopeForChannel } from './runtime';
+import { historyFloorFor, withinHistoryFloor } from './historyBoundary';
 import { GraineDistributionUnavailableError } from './seedDistribution';
 
 /**
@@ -52,7 +53,7 @@ const asked = new Set<string>();
  * the two facts {@link resolveAnswerer} needs - are held here for as long as the session is wanted,
  * and dropped the moment it stops being ({@link forgetAskedSession}, or a roster with nobody left).
  */
-const wants = new Map<string, { channelId: string; senderId: string }>();
+const wants = new Map<string, { channelId: string; senderId: string; sentAt: number }>();
 
 /**
  * Per session, the members who have answered that they do NOT hold it.
@@ -65,7 +66,23 @@ const wants = new Map<string, { channelId: string; senderId: string }>();
 const declined = new Map<string, Set<string>>();
 
 /** Missing sessions collected but not yet asked about, keyed by channel. */
-const outstanding = new Map<string, Map<string, string>>();
+const outstanding = new Map<string, Map<string, MissingSeed>>();
+
+/** Who minted a wanted session, and the LATEST message seen naming it. */
+interface MissingSeed {
+  senderId: string;
+  /**
+   * Server timestamp of the newest message this device met that names the session, or `Infinity`
+   * when no dated row has named it yet.
+   *
+   * The NEWEST rather than the first, and both sides of the comparison come from the SERVER clock:
+   * it is what decides whether the whole session predates our own arrival, and taking the newest
+   * means the session is dropped only when EVERY message on it does. `Infinity` for an undated row
+   * lands on the same side: a row that cannot place itself against the boundary never suppresses
+   * the ask, and the answerer decides.
+   */
+  sentAt: number;
+}
 
 /** Communities whose history has been asked for in this app session. Same lifetime, same reason. */
 const historyAsked = new Set<string>();
@@ -81,14 +98,22 @@ let flushing = false;
  * work a debounce timer would otherwise do, and unlike a timer it cannot be wrong: the worst case
  * is one extra request, never a silence.
  */
-export function noteMissingSeed(channelId: string, sessionId: string, senderId: string): void {
+export function noteMissingSeed(
+  channelId: string,
+  sessionId: string,
+  senderId: string,
+  sentAt: number | undefined
+): void {
   if (!sessionId || asked.has(sessionId)) return;
-  const perChannel = outstanding.get(channelId) ?? new Map<string, string>();
-  perChannel.set(sessionId, senderId.toLowerCase());
+  const perChannel = outstanding.get(channelId) ?? new Map<string, MissingSeed>();
+  const sender = senderId.toLowerCase();
+  const dated = typeof sentAt === 'number' && Number.isFinite(sentAt) ? sentAt : Infinity;
+  const seen = Math.max(dated, perChannel.get(sessionId)?.sentAt ?? 0);
+  perChannel.set(sessionId, { senderId: sender, sentAt: seen });
   outstanding.set(channelId, perChannel);
   // Kept for the re-ask: the row that named this session has already been dropped from the render,
-  // so nothing would come back to supply the channel and the sender a second time.
-  wants.set(sessionId, { channelId, senderId: senderId.toLowerCase() });
+  // so nothing would come back to supply the channel, the sender and the date a second time.
+  wants.set(sessionId, { channelId, senderId: sender, sentAt: seen });
   if (!flushing) void flushRepairs();
 }
 
@@ -112,7 +137,7 @@ async function flushRepairs(): Promise<void> {
         );
         continue;
       }
-      const sessions = outstanding.get(channelId) ?? new Map<string, string>();
+      const sessions = outstanding.get(channelId) ?? new Map<string, MissingSeed>();
       outstanding.delete(channelId);
       try {
         await requestSeedsForChannel(channelId, sessions, targets);
@@ -160,16 +185,34 @@ async function resolveRepairTargets(channelId: string): Promise<RepairTargets> {
 /** Sends one request per answerer for `sessions` of `channelId`. */
 async function requestSeedsForChannel(
   channelId: string,
-  sessions: Map<string, string>,
+  sessions: Map<string, MissingSeed>,
   { workspaceId, groupId, roster }: RepairTargets
 ): Promise<void> {
   const { mlsService, userId } = requireGraineRuntime('cannot ask for a missing seed');
+
+  // WHAT WE MAY NOT BE GIVEN, WE DO NOT ASK FOR. The community's rule was broadcast to this device
+  // and our own arrival is one roster fetch away, so a request for a session whose every message
+  // predates us is a frame the whole group decrypts to learn what we already knew - and the answer
+  // is silence, so it would be re-sent at every start. The answerer applies the same rule, which is
+  // where the rule is ENFORCED; this is only what stops us wasting the group's bandwidth on it.
+  const beyondReach = await withheldFromUs(workspaceId, userId, sessions);
+  for (const sessionId of beyondReach) {
+    sessions.delete(sessionId);
+    wants.delete(sessionId);
+    declined.delete(sessionId);
+  }
+  if (beyondReach.length > 0) {
+    console.info(
+      `[GRAINE] not asking for ${beyondReach.length} seed(s) of channel ${channelId.slice(0, 8)}: ` +
+        `community ${workspaceId.slice(0, 8)} is set to 'joined' and they predate our arrival`
+    );
+  }
 
   // ONE named answerer per request, never a broadcast: every member holding the seed would
   // otherwise answer at once, so a salon of three hundred would pay three hundred bundles for one
   // missing session.
   const byAnswerer = new Map<string, string[]>();
-  for (const [sessionId, senderId] of sessions) {
+  for (const [sessionId, { senderId }] of sessions) {
     const answerer = resolveAnswerer(senderId, roster, userId, declined.get(sessionId));
     if (!answerer) {
       // The roster is exhausted: everyone who could have held it has been asked and has said no.
@@ -206,6 +249,44 @@ async function requestSeedsForChannel(
       `[GRAINE] asked ${answerer} for ${sessionIds.length} seed(s) in community ${workspaceId.slice(0, 8)}`
     );
   }
+}
+
+/**
+ * Of the sessions wanted, the ones the community's history rule puts out of OUR reach.
+ *
+ * Under `shared` there is no boundary and this is always empty; under `joined` it is every session
+ * whose newest known message still predates our own arrival. Rotation makes that test exact rather
+ * than approximate: a join advances the distribution group's epoch and every sender rotates on the
+ * next send, so no session spans an arrival and one whose latest message is older than ours was
+ * minted entirely before we were there.
+ *
+ * **Fail-OPEN, unlike its counterpart on the answering side, and deliberately so.** This is a
+ * bandwidth decision, not the enforcement: the answerer places the boundary itself and refuses what
+ * we may not have. Refusing to ask because our own roster fetch failed would strand seeds we are
+ * entitled to, for a saving of one frame.
+ */
+async function withheldFromUs(
+  workspaceId: string,
+  userId: string,
+  sessions: Map<string, MissingSeed>
+): Promise<string[]> {
+  let floor: number | null;
+  try {
+    floor = await historyFloorFor(workspaceId, userId);
+  } catch (e) {
+    console.warn(
+      `[GRAINE] asking for seed(s) of community ${workspaceId.slice(0, 8)} without placing our own ` +
+        `history boundary: ` +
+        (e instanceof Error ? e.message : String(e))
+    );
+    return [];
+  }
+  if (floor === null) return [];
+
+  const bound = floor;
+  return [...sessions]
+    .filter(([, seed]) => !withinHistoryFloor(bound, seed.sentAt))
+    .map(([sessionId]) => sessionId);
 }
 
 /**
@@ -356,7 +437,7 @@ export function noteSeedUnavailable(sessionId: string, answerer: string): void {
   // Re-armed BEFORE re-noting: `noteMissingSeed` declines anything already in `asked`, which is
   // exactly where this session still is.
   asked.delete(sessionId);
-  noteMissingSeed(want.channelId, sessionId, want.senderId);
+  noteMissingSeed(want.channelId, sessionId, want.senderId, want.sentAt);
 }
 
 /**

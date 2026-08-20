@@ -68,11 +68,17 @@ export interface DecodedChannelReaction {
  * repairable and is the only one worth asking a peer about; a message below the handover floor is
  * the protocol working, and asking would loop for ever since the answer is the same seed; anything
  * else is a real fault. Decided from the CLASS, never from the sentence.
+ *
+ * @param sentAt Server timestamp of the row, passed straight to the repair: under a community that
+ *   closes its past it is what says whether this device may ask for the seed at all, and both sides
+ *   of that comparison have to come from the server clock. Undefined for an undated row, which then
+ *   asks and lets the answerer decide.
  */
 export function reportUnreadableChannelMessage(
   channelId: string,
   rowId: string,
   senderId: string,
+  sentAt: number | undefined,
   err: unknown
 ): void {
   const channel = rawChannelId(channelId);
@@ -88,7 +94,7 @@ export function reportUnreadableChannelMessage(
   // request is deduplicated per session, so a page of fifty rows naming three sessions asks
   // three times and not fifty - and a live frame asking costs nothing when history already did.
   if (err instanceof GraineSessionUnavailableError) {
-    noteMissingSeed(channel, err.sessionId, senderId);
+    noteMissingSeed(channel, err.sessionId, senderId, sentAt);
   }
 }
 
@@ -135,7 +141,13 @@ export async function decodeChannelMessageRow(
       }
     }
   } catch (err) {
-    reportUnreadableChannelMessage(channel, String(row.id), String(row.senderId || ''), err);
+    reportUnreadableChannelMessage(
+      channel,
+      String(row.id),
+      String(row.senderId || ''),
+      serverMs,
+      err
+    );
     return null;
   }
   if (content === undefined) return null;
