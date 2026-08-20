@@ -31,8 +31,15 @@ import { deleteCommunity, enterCommunities, openCommunity } from './comm.mjs';
 import { psql } from './ssh.mjs';
 import { PORTS } from './names.mjs';
 
-/** The one shape a check's venue can have. Anything else is somebody's real community. */
-const DEBRIS = /^C\d+ COMM\d+-[0-9a-z]+$/;
+/**
+ * AN ALLOWLIST, and it is only as good as its enumeration. COMM-12 builds TWO venues per run and
+ * names the arm in between - "C12 shared COMM12-<mark>" - which the single shape did not match, so
+ * every run of it left a community behind that no sweep would ever take. Found 2026-08-20 with four
+ * of seven communities matching and a fifth sitting there in plain sight. Widen this by ENUMERATING
+ * what the runners mint, never by relaxing it: the price of a loose pattern here is a real
+ * community, typed name and all, and there is no undo.
+ */
+const DEBRIS = /^C\d+( [a-z]+)? COMM\d+-[0-9a-z]+$/;
 
 const dry = process.argv.includes('--dry');
 
