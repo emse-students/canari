@@ -966,37 +966,102 @@ export async function acceptInviteLink(cx) {
  * @param opts `{ expiryDays, maxUses }` - `0` is the app's own value for "never" / "unlimited",
  *   and omitting a key leaves that control alone
  */
-export async function setInviteBounds(cx, { expiryDays = null, maxUses = null } = {}) {
-  await communityTab(cx, 'members');
-  const pick = async (labelText, value) => {
-    const found = await evaluate(
+/**
+ * Chooses a value in whichever `<select>` a search expression finds, and leaves the DOM as it was.
+ *
+ * THE SELECTS IN THE COMMUNITY PANEL CARRY NO ID, NO NAME AND NO TEST HOOK, and there are several of
+ * them - invite expiry, invite uses, history visibility - so each has to be identified by something.
+ * WHAT that something is differs per control and is the caller's business; the marking, the choosing
+ * and the unmarking do not differ at all, and are here.
+ *
+ * `find` is a JS expression evaluated in the page, returning the element or a falsy value. The marker
+ * attribute exists only for the duration of this call, so nothing outside it ever observes the DOM
+ * changed - and it is removed in a `finally`, or a failed choice would poison every later pick.
+ *
+ * @param who the caller's name, so a failure says which control was not found
+ */
+async function pickSelect(cx, find, value, who) {
+  const found = await evaluate(
+    cx,
+    `(function () {
+       var el = ${find};
+       if (!el) return 'not-found';
+       el.setAttribute('data-harness-pick', '');
+       return 'ok';
+     })()`
+  );
+  if (found !== 'ok') throw new Error(`${who}: no select matched`);
+  try {
+    await chooseOption(cx, 'select[data-harness-pick]', String(value));
+  } finally {
+    await evaluate(
       cx,
       `(function () {
-         var labels = [].slice.call(document.querySelectorAll('label'));
-         for (var i = 0; i < labels.length; i++) {
-           if ((labels[i].innerText || '').trim().indexOf(${JSON.stringify(labelText)}) !== 0) continue;
-           var s = labels[i].querySelector('select');
-           if (s) { s.setAttribute('data-harness-pick', ''); return 'ok'; }
-         }
-         return 'not-found';
+         var s = document.querySelector('select[data-harness-pick]');
+         if (s) s.removeAttribute('data-harness-pick');
+         return 'ok';
        })()`
     );
-    if (found !== 'ok') throw new Error(`setInviteBounds: no select under "${labelText}"`);
-    try {
-      await chooseOption(cx, 'select[data-harness-pick]', String(value));
-    } finally {
-      await evaluate(
-        cx,
-        `(function () {
-           var s = document.querySelector('select[data-harness-pick]');
-           if (s) s.removeAttribute('data-harness-pick');
-           return 'ok';
-         })()`
-      );
-    }
-  };
-  if (expiryDays !== null) await pick(caption('chat_community_invite_expiry_label'), expiryDays);
-  if (maxUses !== null) await pick(caption('chat_community_invite_max_uses_label'), maxUses);
+  }
+}
+
+/** The `<select>` inside the `<label>` whose text opens with `labelText`. */
+const selectUnderLabel = (labelText) =>
+  `(function () {
+     var labels = [].slice.call(document.querySelectorAll('label'));
+     for (var i = 0; i < labels.length; i++) {
+       if ((labels[i].innerText || '').trim().indexOf(${JSON.stringify(labelText)}) !== 0) continue;
+       var s = labels[i].querySelector('select');
+       if (s) return s;
+     }
+     return null;
+   })()`;
+
+/**
+ * The one `<select>` offering exactly this set of option VALUES.
+ *
+ * STRONGER THAN ANY LABEL, where it applies. An option's value is the token sent to the server and
+ * stored in the column - it is the contract, and changing it is a migration. The captions beside it
+ * are prose the product rewords freely, and the history control's caption is not even inside its
+ * `<label>`: it sits in a sibling paragraph, so the label-based search finds nothing at all there.
+ */
+const selectOffering = (values) =>
+  `[].slice.call(document.querySelectorAll('select')).filter(function (s) {
+     var v = [].slice.call(s.options).map(function (o) { return o.value; });
+     return ${JSON.stringify(values)}.every(function (w) { return v.indexOf(w) >= 0; });
+   })[0]`;
+
+export async function setInviteBounds(cx, { expiryDays = null, maxUses = null } = {}) {
+  await communityTab(cx, 'members');
+  const pick = (key, value) =>
+    pickSelect(cx, selectUnderLabel(caption(key)), value, 'setInviteBounds');
+  if (expiryDays !== null) await pick('chat_community_invite_expiry_label', expiryDays);
+  if (maxUses !== null) await pick('chat_community_invite_max_uses_label', maxUses);
+}
+
+/**
+ * Sets what a NEWCOMER may read of what was said before they arrived.
+ *
+ * THE SERVER STORES THIS AND CANNOT ENFORCE IT. It holds no seed, so the rule is applied by the
+ * MEMBER whose device answers a newcomer's history request - `gatherCommunityHistory` refuses
+ * outright under `joined` and sends every seed it holds under `shared`. There is no middle: `joined`
+ * is not "seeds from your arrival onwards", it is NO history bundle at all, and the newcomer reads
+ * what comes after them only because those seeds are distributed live, to everyone, as they are
+ * minted.
+ *
+ * SET IT BEFORE ANYBODY JOINS. The value travels to the other members as a workspace update, and a
+ * newcomer's request is answered with whatever the ANSWERING device believes at that moment - so a
+ * change made while a join is in flight has no defined outcome, and no check may assert one.
+ *
+ * @param visibility `'shared'` or `'joined'` - the stored values, never the drawn captions
+ */
+export async function setHistoryVisibility(cx, visibility) {
+  if (visibility !== 'shared' && visibility !== 'joined') {
+    throw new Error(`setHistoryVisibility: '${visibility}' is neither 'shared' nor 'joined'`);
+  }
+  await communityTab(cx, 'overview');
+  await pickSelect(cx, selectOffering(['shared', 'joined']), visibility, 'setHistoryVisibility');
+  return clearOverlays(cx);
 }
 
 /**

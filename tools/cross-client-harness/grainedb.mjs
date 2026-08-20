@@ -298,3 +298,19 @@ export function channelMessageCount(channelId) {
   );
   return found.length ? Number(found[0][0]) : 0;
 }
+
+/**
+ * What the community stores as its history rule for newcomers - `'shared'` or `'joined'`.
+ *
+ * READ FROM THE TABLE BECAUSE THE SETTING IS NOT WHERE IT IS APPLIED. The server stores this column
+ * and can do nothing with it: it holds no seed, so the rule is carried out by whichever MEMBER's
+ * device answers a newcomer's history request. That split is the reason a check has to read both
+ * ends - the column proves the intent was recorded, and only the newcomer's screen proves it was
+ * honoured. Asserting either one alone measures half a mechanism.
+ */
+export function historyVisibilityOf(workspaceId) {
+  const found = rows(
+    psql(`SELECT "historyVisibility" FROM channel_workspaces WHERE id = '${workspaceId}'`)
+  );
+  return found.length ? found[0][0] : null;
+}
