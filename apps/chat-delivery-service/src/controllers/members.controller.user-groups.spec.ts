@@ -43,6 +43,22 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
     updatedAt: new Date(3_000),
   };
 
+  /**
+   * A PRIVATE SALON'S distribution group, which is the same object under the other scope column.
+   * The partition tested `distributionWorkspaceId` alone until 2026-08-20, so this one was hidden by
+   * nothing at all - and this list is, by the audit's own invariant 2, the single place it could be.
+   */
+  const SALON_DISTRIBUTION = {
+    id: 'g-salon-distribution',
+    name: null,
+    isGroup: true,
+    imageMediaId: null,
+    deletedAt: null,
+    distributionWorkspaceId: null,
+    distributionChannelId: 'c-1',
+    updatedAt: new Date(4_000),
+  };
+
   beforeEach(async () => {
     groupMemberRepo = { find: jest.fn() };
     groupRepo = { find: jest.fn() };
@@ -80,6 +96,22 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
     const got = await controller.getUserGroups('u1', 'u1', undefined);
 
     expect(got.map((g) => g.groupId)).toEqual(['g-ordinary']);
+  });
+
+  it('omits the distribution group of a PRIVATE SALON too, which is the other scope', async () => {
+    groupMemberRepo.find.mockResolvedValue([
+      { groupId: 'g-ordinary', userId: 'u1' },
+      { groupId: 'g-salon-distribution', userId: 'u1' },
+    ]);
+    groupRepo.find.mockResolvedValue([ORDINARY, SALON_DISTRIBUTION]);
+
+    const got = await controller.getUserGroups('u1', 'u1', undefined);
+
+    expect(got.map((g) => g.groupId)).toEqual(['g-ordinary']);
+    // And it is REPORTED, for the same reason the community one is: a membership row on a group
+    // joined by external commit means something wrote one, and hiding it would be all the notice
+    // anybody ever got.
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('g-salon-distribution'));
   });
 
   it('says out loud that a membership row existed on one, rather than only hiding it', async () => {

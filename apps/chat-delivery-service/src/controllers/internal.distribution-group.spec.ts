@@ -242,7 +242,26 @@ describe('InternalController - the community distribution group', () => {
       expect(await controller.deleteDistributionGroup('workspace', WORKSPACE, SECRET)).toEqual({
         deleted: true,
       });
-      expect(groupRepo.update).toHaveBeenCalledWith({ id: 'g-1' }, { deletedAt: expect.any(Date) });
+      expect(groupRepo.update).toHaveBeenCalledWith(
+        { id: 'g-1' },
+        { deletedAt: expect.any(Date), distributionWorkspaceId: null, distributionChannelId: null }
+      );
+    });
+
+    it('releases the scope in the same write, so the scope can be occupied again', async () => {
+      // WITHOUT THIS THE ROW STAYS THE SCOPE'S GROUP AFTER IT DIES. `deletedAt` is a plain column,
+      // not a `@DeleteDateColumn`, so the reuse read in `createDistributionGroup` still finds a
+      // tombstone - and the scope's partial unique index does not exclude one either. Turning a
+      // private salon public and private again therefore handed it back the very group it had just
+      // retired, tombstone and old MLS tree included. Found on production 2026-08-20.
+      groupRepo.findOne.mockResolvedValue({ id: 'g-chan', distributionChannelId: 'c-1' });
+
+      await controller.deleteDistributionGroup('channel', 'c-1', SECRET);
+
+      const calls = groupRepo.update.mock.calls;
+      const [, patch] = calls[calls.length - 1];
+      expect(patch.distributionChannelId).toBeNull();
+      expect(patch.distributionWorkspaceId).toBeNull();
     });
 
     it('reports nothing to delete rather than failing', async () => {

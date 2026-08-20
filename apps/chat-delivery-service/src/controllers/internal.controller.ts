@@ -354,8 +354,20 @@ export class InternalController {
       return { deleted: false };
     }
 
-    await this.groupRepo.update({ id: group.id }, { deletedAt: new Date() });
-    this.logger.log(`[DISTRIBUTION_GROUP] deleted scope=${label} group=${group.id}`);
+    // THE SCOPE IS RELEASED WITH THE SAME WRITE, and that is what makes a salon re-privatisable.
+    // The scope columns carry a partial unique index that does NOT exclude tombstones, and
+    // `deletedAt` is a plain column rather than a `@DeleteDateColumn`, so a tombstone left holding
+    // its scope is found by the reuse read above: turning a salon public and private again handed
+    // it back the group it had just retired, tombstone and all - a group `cleanupSoftDeletedGroups`
+    // is counting down to reap. Clearing the scope makes the row an ordinary dead group, reaped on
+    // the same schedule, and leaves the scope genuinely unoccupied.
+    await this.groupRepo.update(
+      { id: group.id },
+      { deletedAt: new Date(), distributionWorkspaceId: null, distributionChannelId: null }
+    );
+    this.logger.log(
+      `[DISTRIBUTION_GROUP] deleted scope=${label} group=${group.id} - scope released`
+    );
     return { deleted: true };
   }
 

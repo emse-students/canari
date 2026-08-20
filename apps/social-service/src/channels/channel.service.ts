@@ -364,10 +364,19 @@ export class ChannelService {
    * end. Failing here leaves the salon as it was, which is the only state that stays reconcilable
    * (the same rule `createWorkspace` and `hardDeleteWorkspace` already follow).
    *
+   * THE PRECONDITION IS THE CALLER'S INTENT, NEVER THE ROW. `channel.isPrivate` is what the salon
+   * still IS, and on the public -> private path that is `false` right up to the save this mint has
+   * to happen before - so a guard reading the row refused every salon that was becoming private,
+   * which is one of the two paths that reaches here. The fact was known at the call site all along;
+   * it is passed rather than re-derived from a row that answers a different question.
+   *
    * Idempotent on the delivery side through a partial unique index, so a retry costs nothing.
    */
-  private async ensureChannelDistributionGroup(channel: Channel): Promise<string> {
-    if (!channel.isPrivate) {
+  private async ensureChannelDistributionGroup(
+    channel: Channel,
+    willBePrivate: boolean
+  ): Promise<string> {
+    if (!willBePrivate) {
       throw new Error(`ensureChannelDistributionGroup called for public channel ${channel.id}`);
     }
     const groupId = await createDistributionGroup(this.internalSecret, channelScope(channel.id));
@@ -1463,7 +1472,7 @@ export class ChannelService {
       // group could not be minted. A salon marked private with no group of its own is a salon whose
       // seeds have nowhere to go, and the row would sit there looking usable.
       try {
-        await this.ensureChannelDistributionGroup(savedChannel);
+        await this.ensureChannelDistributionGroup(savedChannel, true);
       } catch (e) {
         await this.channelRepo.delete({ id: savedChannel.id });
         this.logger.error(
@@ -1781,7 +1790,7 @@ export class ChannelService {
     // BEFORE THE SAVE, and allowed to abort it - the same asymmetry as a community departure. Going
     // private without a group would leave the salon's seeds nowhere to go; cutting someone off
     // after the row already says they are out is a routing row nothing comes back for.
-    if (isPrivate && !wasPrivate) await this.ensureChannelDistributionGroup(channel);
+    if (isPrivate && !wasPrivate) await this.ensureChannelDistributionGroup(channel, isPrivate);
     for (const userId of dropped) {
       await this.cutOffChannelKeyDistribution(channel, userId, 'access_updated');
     }

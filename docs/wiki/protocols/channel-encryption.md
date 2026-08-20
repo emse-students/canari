@@ -1317,6 +1317,42 @@ exact strings the frontend's `distributionGroupUrl` builds, and that the salon r
 before the catch-all `:channelId` routes that could shadow it. Re-introducing the doubled prefix
 fails two of them.
 
+### Three more, from driving a real salon through its whole lifecycle
+
+Creating one private salon on production found the routes above. Flipping that salon public and back
+found the rest, and none of the three was reachable by any test in the repository - each is a fact
+about a SEQUENCE of operations, and every unit test arranges the state it asserts on.
+
+**1. A public salon could never be made private.** `ensureChannelDistributionGroup` guarded on
+`channel.isPrivate`, and on this path the row is still public: the mint happens BEFORE the save, on
+purpose, because that is what lets a salon whose group cannot be created stay public rather than
+become a private salon with nowhere to put its seeds. The guard therefore refused the exact path its
+own doc comment describes ("BEFORE THE ROW IS CALLED PRIVATE"), and `updateChannelAccess` answered
+500. The intent is known at the call site, so it is passed - `ensureChannelDistributionGroup(channel,
+willBePrivate)` - rather than re-derived from a row that answers a different question.
+
+**2. Turning a salon public and private again handed it back the group it had just retired.**
+`deletedAt` on `dm_groups` is a plain column, not a TypeORM `@DeleteDateColumn`, so an ordinary
+`findOne` still returns a tombstone; the scope's partial unique index does not exclude one either.
+So the reuse read in `createDistributionGroup` found the dead row and returned it - a group
+`cleanupSoftDeletedGroups` is counting down to reap, whose MLS tree still held the previous roster.
+Retirement now **releases the scope in the same write** as the tombstone, which makes the row an
+ordinary dead group and leaves the scope genuinely unoccupied. Migration 019 frees the scopes of
+rows tombstoned before that change (one row on production).
+
+**3. `getUserGroups` hid a community's distribution group and not a salon's.** The partition that
+keeps a distribution group out of every conversation surface tested `distributionWorkspaceId` alone
+and was never extended to `distributionChannelId` - so invariant 2 of the WP-20 audit, which says
+this list is the ONE place the exclusion lives, held for one scope out of two. Both are tested now,
+and both are reported by the same warning: a membership row on a group joined by external commit
+means something wrote one, and hiding it would be all the notice anybody ever got.
+
+**And two user-visible strings that the design falsified.** `chat_channel_admins_access_all_hint`
+told every reader of the access panel that "administrators always have access to every channel, even
+private ones", which is precisely what this work removed; it is now
+`chat_channel_admins_join_hint` and says what is true. The panel's own "Access" tab was a raw
+French literal in the markup - the last one in this component - and is `chat_channel_access_tab`.
+
 ### Migration: there was nothing to migrate
 
 Measured on production 2026-08-19 before writing any of it: **zero private salons existed.** So no

@@ -127,9 +127,12 @@ export class MembersController {
    * **This is the ONE place a client learns which groups exist**, and therefore the one place a
    * group can be hidden from every conversation surface at once: discovery, lifecycle
    * classification, sync eligibility, the sidebar, badges and `initializeConnection` are all fed
-   * from this single answer. A community's Graine key-distribution group is excluded here and
-   * nowhere else - it carries seeds, never a message, and the client reaches it deliberately
-   * through the Graine layer rather than by finding it in a list of conversations.
+   * from this single answer. A Graine key-distribution group - a community's OR a private
+   * salon's - is excluded here and nowhere else: it carries seeds, never a message, and the client
+   * reaches it deliberately through the Graine layer rather than by finding it in a list of
+   * conversations. BOTH scope columns are tested. Testing only the community one left a private
+   * salon's group able to appear as a conversation the day anything wrote it a membership row,
+   * which is precisely the day the warning below is supposed to fire instead.
    *
    * Excluding it at each consumer instead would be a rule every future consumer has to remember,
    * which is the shape of rule the next call site does not (see `docs/wiki/durable-rules.md`).
@@ -159,9 +162,10 @@ export class MembersController {
     // distributionWorkspaceId IS NULL` would make the number of hidden rows a subtraction, and a
     // subtraction cannot tell a distribution group from a membership pointing at a row that is
     // simply gone - two situations needing opposite responses.
-    const distribution = groups.filter((g) => g.distributionWorkspaceId);
+    const isDistribution = (g: Group) => !!g.distributionWorkspaceId || !!g.distributionChannelId;
+    const distribution = groups.filter(isDistribution);
     const activeGroups = groups
-      .filter((g) => !g.distributionWorkspaceId && !g.deletedAt)
+      .filter((g) => !isDistribution(g) && !g.deletedAt)
       .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
     if (distribution.length > 0) {
       // Not expected: the distribution group is joined by external commit and holds no membership

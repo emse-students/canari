@@ -333,7 +333,7 @@
           : 'text-text-main hover:bg-black/5 dark:hover:bg-white/5'}"
       >
         <Lock size={18} strokeWidth={2.5} />
-        Accès
+        {m.chat_channel_access_tab()}
       </button>
 
       <!-- Boutons de danger (Desktop uniquement, placés en bas) -->
@@ -561,7 +561,7 @@
                   <option value="admins_moderators">{m.chat_channel_write_admins_mods()}</option>
                   <option value="admins">{m.chat_channel_write_admins()}</option>
                 </select>
-                <p class="text-xs text-text-muted">{m.chat_channel_admins_access_all_hint()}</p>
+                <p class="text-xs text-text-muted">{m.chat_channel_admins_join_hint()}</p>
               </div>
 
               <!-- ═══ Member allowlist (only when private) ═══ -->

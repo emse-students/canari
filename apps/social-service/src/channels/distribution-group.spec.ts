@@ -717,5 +717,33 @@ describe('ChannelService - the community distribution group', () => {
       expect(String(deletes[0][0])).toContain('distribution-groups/channel/' + CHANNEL);
       expect(channel.distributionGroupId).toBeNull();
     });
+
+    it('mints a group when a PUBLIC salon becomes private, which the row cannot yet say', async () => {
+      // THE GUARD USED TO READ THE ROW AND REFUSED EVERY SALON ON THIS PATH. The mint has to happen
+      // BEFORE the save - that is what lets a salon whose group cannot be created stay public
+      // rather than become a private salon with nowhere to put its seeds - so `channel.isPrivate`
+      // is still false when it runs, and a guard consulting it threw
+      // "called for public channel" for the only two callers there are. Found on production
+      // 2026-08-20 by flipping a real salon; every unit test passed throughout.
+      const repos = makeService();
+      const channel = arrangePrivateSalon(repos, {
+        isPrivate: false,
+        allowedUsers: [],
+        distributionGroupId: null,
+      });
+      arrangeActorRole(repos, [CHANNEL_PERMISSIONS.MANAGE_CHANNEL]);
+      global.fetch = answerWith({ groupId: 'g-new', created: true }) as unknown as typeof fetch;
+
+      await repos.service.updateChannelAccess(CHANNEL, USER, true, [USER]);
+
+      const posts = (global.fetch as jest.Mock).mock.calls.filter(
+        ([url, init]: [unknown, RequestInit]) =>
+          init?.method === 'POST' && String(url).includes('distribution-groups')
+      );
+      expect(posts.length).toBe(1);
+      expect(JSON.parse(String(posts[0][1].body))).toEqual({ scope: 'channel', scopeId: CHANNEL });
+      expect(channel.distributionGroupId).toBe('g-new');
+      expect(channel.isPrivate).toBe(true);
+    });
   });
 });

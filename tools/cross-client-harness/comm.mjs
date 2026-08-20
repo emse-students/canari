@@ -1,7 +1,7 @@
 /**
  * The vocabulary the COMM phase is written in: communities, channels, invitations, roles.
  *
- * WHY A MODULE AND NOT TWENTY-TWO SCRIPTS THAT EACH KNOW THE UI. The dashboard carries 22 COMM
+ * WHY A MODULE AND NOT TWENTY-FIVE SCRIPTS THAT EACH KNOW THE UI. The dashboard carries 25 COMM
  * checks and every one of them starts by creating or entering a community, so the same six or seven
  * gestures are about to be written 22 times. Written 22 times they drift, and a drifted gesture
  * fails as a defect: `openChannel` already carries the scar tissue for exactly one of them (settle
@@ -273,4 +273,165 @@ export async function inviteLink(cx) {
   if (present === 'true' || present === true) await realClick(cx, `text=${generate}`);
   await until(cx, `!!document.querySelector('input[readonly]')`, 20000);
   return evaluate(cx, `(document.querySelector('input[readonly]') || {}).value || ''`);
+}
+
+/**
+ * Opens the open channel's settings modal, on its ACCESS tab.
+ *
+ * The gear in the channel header, not the community's: they carry different `aria-label`s for
+ * exactly this reason, and clicking the wrong one lands on a modal whose "private" toggle does not
+ * exist - a fifteen-second wait that reads as "the app has no visibility control".
+ *
+ * The tab is reached by its own caption rather than by position. It was a French literal in the
+ * markup until 2026-08-20, which is what would have made this gesture the last French string in the
+ * harness; `chat_channel_access_tab` exists because this needed it and the English app needed it
+ * more.
+ */
+export async function openChannelAccess(cx) {
+  await awaitAppSettled(cx);
+  await realClick(cx, `[aria-label=${JSON.stringify(caption('chat_channel_settings_label'))}]`);
+  await until(
+    cx,
+    `document.body.innerText.indexOf(${JSON.stringify(caption('chat_channel_settings_title'))}) >= 0`,
+    10000
+  );
+  await realClick(cx, control('chat_channel_access_tab'));
+  await until(
+    cx,
+    `document.body.innerText.indexOf(${JSON.stringify(caption('chat_channel_access_title'))}) >= 0`,
+    10000
+  );
+  // THE TOGGLE, not the heading: the panel renders its title above a spinner while the access
+  // state is still being fetched, so a read taken on the heading answers `isPrivate: null` for a
+  // salon that is plainly private - an instrument reporting about itself.
+  await until(cx, `!!document.querySelector('button[role=switch][aria-checked]')`, 15000);
+}
+
+/**
+ * The access panel as the screen currently states it: `{ isPrivate, allowed, writePolicy }`.
+ *
+ * `isPrivate` is read from the toggle's `aria-checked` rather than from which of the two
+ * descriptions is on screen - the descriptions are prose that can be reworded, `aria-checked` is
+ * the control's own answer and is what a screen reader is told.
+ *
+ * `allowed` is the DISPLAYED members of the allowlist, which are display names and not ids: the
+ * panel renders `<UserName>` and never shows an id. A check that needs ids reads them from the
+ * database - which is where COMM-8 reads them anyway, since what it asks is what a device was sent.
+ */
+export async function channelAccessState(cx) {
+  return JSON.parse(
+    await evaluate(
+      cx,
+      `(function () {
+         var sw = document.querySelector('button[role=switch][aria-checked]');
+         var list = document.querySelector('ul');
+         var allowed = list
+           ? [].slice.call(list.querySelectorAll('li')).map(function (li) {
+               return (li.innerText || '').split(String.fromCharCode(10))[0].trim();
+             })
+           : [];
+         var sel = document.querySelector('select');
+         return JSON.stringify({
+           isPrivate: sw ? sw.getAttribute('aria-checked') === 'true' : null,
+           allowed: allowed,
+           writePolicy: sel ? sel.value : null,
+         });
+       })()`
+    )
+  );
+}
+
+/**
+ * Sets the open channel's visibility toggle to `wanted` and returns whether it had to move it.
+ *
+ * IDEMPOTENT BY READING FIRST, because the control is a toggle and not a pair of radio buttons: a
+ * check that clicks it unconditionally sets the state it wanted exactly when the state was already
+ * wrong, which is the one case it was not testing.
+ */
+export async function setChannelPrivate(cx, wanted) {
+  const before = await channelAccessState(cx);
+  if (before.isPrivate === wanted) return false;
+  await realClick(cx, 'button[role=switch][aria-checked]');
+  await until(
+    cx,
+    `(function () {
+       var sw = document.querySelector('button[role=switch][aria-checked]');
+       return !!sw && sw.getAttribute('aria-checked') === ${JSON.stringify(String(wanted))};
+     })()`,
+    5000
+  );
+  return true;
+}
+
+/**
+ * Grants a user access to the open private salon, by typing enough of their name to pick them.
+ *
+ * TYPED AND THEN PICKED, never assigned: the field is an autocomplete whose value is an id the
+ * screen never shows, so the only path to a valid id is the one a person takes. The suggestion is
+ * clicked by its rendered name, and the "add" button is asserted enabled first - it stays disabled
+ * until a suggestion has actually been chosen, so a click before that is discarded in silence.
+ */
+export async function grantChannelAccess(cx, displayName) {
+  const placeholder = caption('chat_search_user_placeholder');
+  await realClick(cx, `input[placeholder=${JSON.stringify(placeholder)}]`);
+  await cx.send('Input.insertText', { text: displayName });
+  await until(cx, `!!${RESOLVE}('text=${displayName}')`, 8000);
+  await realClick(cx, `text=${displayName}`);
+
+  const add = caption('common_add_button');
+  await until(
+    cx,
+    `(function () {
+       var b = [].slice.call(document.querySelectorAll('button')).filter(function (x) {
+         return (x.innerText || '').indexOf(${JSON.stringify(add)}) >= 0;
+       })[0];
+       return !!b && !b.disabled;
+     })()`,
+    8000
+  );
+  await realClick(cx, `text=${add}`);
+  return channelAccessState(cx);
+}
+
+/**
+ * Revokes a user's access to the open private salon, confirming the dialog that guards it.
+ *
+ * THE REMOVAL IS IMMEDIATE - it does not wait for the save button, which is why it has a
+ * confirmation of its own. A check that clicks the trash and then reads the panel without dealing
+ * with the dialog reads the state BEFORE the removal and calls it a failure to remove.
+ */
+export async function revokeChannelAccess(cx, displayName) {
+  const removed = await evaluate(
+    cx,
+    `(function () {
+       var li = [].slice.call(document.querySelectorAll('li')).filter(function (x) {
+         return (x.innerText || '').indexOf(${JSON.stringify(displayName)}) >= 0;
+       })[0];
+       if (!li) return 'no-row';
+       var b = li.querySelector('button[title]');
+       if (!b) return 'no-button';
+       b.setAttribute('data-harness-revoke', '1');
+       return 'marked';
+     })()`
+  );
+  if (removed !== 'marked') throw new Error(`revokeChannelAccess: ${removed} for "${displayName}"`);
+  await realClick(cx, '[data-harness-revoke]');
+  await clearOverlays(cx);
+  return channelAccessState(cx);
+}
+
+/**
+ * Saves the access panel and waits for the app's own confirmation that it landed.
+ *
+ * `common_saved_label` IS THE WITNESS, not the click: the save is a request, and a check that
+ * returns as soon as the button was pressed is timing the harness rather than the app. The label is
+ * transient, so it is waited for rather than asserted afterwards.
+ */
+export async function saveChannelAccess(cx) {
+  await realClick(cx, control('common_save_button'));
+  await until(
+    cx,
+    `document.body.innerText.indexOf(${JSON.stringify(caption('common_saved_label'))}) >= 0`,
+    15000
+  );
 }
