@@ -139,3 +139,28 @@ export function messageCount(channelId) {
   const found = rows(psql(`SELECT count(*) FROM channel_messages WHERE "channelId" = '${channelId}'`));
   return found.length === 1 ? Number(found[0][0]) : null;
 }
+
+/**
+ * A group looked up BY ID, so a check can follow one the salon has stopped pointing at.
+ *
+ * COMM-24 needs it and nothing else can give it: retirement clears `channels.distributionGroupId`,
+ * so a join from the salon finds nothing and the group's death becomes unobservable from the salon's
+ * side. The three facts retirement produces have to be asserted separately - the salon lets go, the
+ * group dies, the scope is released - because merging any two of them is what hid a defect until
+ * 2026-08-20: a tombstone still holding its scope was handed straight back the next time the salon
+ * went private.
+ *
+ * @returns `{ retired, scope }` where `scope` is `null` once released - or null if there is no row.
+ */
+export function groupState(groupId) {
+  const found = rows(
+    psql(
+      `SELECT CASE WHEN "deletedAt" IS NULL THEN 'live' ELSE 'retired' END, ` +
+        `coalesce("distributionWorkspaceId"::text,''), coalesce("distributionChannelId"::text,'') ` +
+        `FROM dm_groups WHERE id = '${groupId}'`
+    )
+  );
+  if (found.length !== 1) return null;
+  const [life, ws, chan] = found[0];
+  return { retired: life === 'retired', scope: ws || chan || null };
+}

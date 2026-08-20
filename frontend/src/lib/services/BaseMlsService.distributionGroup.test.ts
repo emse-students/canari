@@ -140,7 +140,10 @@ describe('where a group-info base is read and written', () => {
     // Never chat-delivery: it gates on a `dm_group_members` row this group has none of.
     expect(ctx.delivery.fetchGroupInfo).not.toHaveBeenCalled();
     expect(ctx.delivery.storeGroupInfo).not.toHaveBeenCalled();
-    expect(ctx.distributionGroupInfo.publish).toHaveBeenCalledWith(WS, 'QUFB', 9);
+    // The publishing DEVICE travels with the base: it is the only way the device that created
+    // the group gets onto the group's delivery roster, which the commit fan-out never writes
+    // for a creator because a creator sends no commit.
+    expect(ctx.distributionGroupInfo.publish).toHaveBeenCalledWith(WS, 'QUFB', 9, 'd');
   });
 
   it('sends a private salon to the SALON route, not its community one', async () => {
@@ -151,7 +154,7 @@ describe('where a group-info base is read and written', () => {
 
     // The scope travels to social-service, which turns it into the route authorized by
     // `canAccessChannel` rather than by community membership.
-    expect(ctx.distributionGroupInfo.publish).toHaveBeenCalledWith(SALON, 'QUFB', 2);
+    expect(ctx.distributionGroupInfo.publish).toHaveBeenCalledWith(SALON, 'QUFB', 2, 'd');
   });
 
   it('throws rather than falling back to chat-delivery when no transport is wired', () => {
@@ -192,7 +195,7 @@ describe('joining on first use', () => {
 
     expect(await ensure(ctx, WS, REF_FRESH)).toBe(true);
     expect(ctx.createGroup).toHaveBeenCalledWith('g-1');
-    expect(ctx.distributionGroupInfo.publish).toHaveBeenCalledWith(WS, expect.any(String), 0);
+    expect(ctx.distributionGroupInfo.publish).toHaveBeenCalledWith(WS, expect.any(String), 0, 'd');
     expect(ctx.externalJoin).not.toHaveBeenCalled();
     expect(ctx.forgetGroup).not.toHaveBeenCalled();
   });

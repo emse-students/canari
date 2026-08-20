@@ -1069,7 +1069,8 @@ export class ChannelService {
     workspaceId: string,
     userId: string,
     groupInfo: string,
-    baseEpoch: number
+    baseEpoch: number,
+    deviceId: string
   ): Promise<{ stored: boolean }> {
     await this.assertWorkspaceMember(workspaceId, userId);
 
@@ -1077,7 +1078,8 @@ export class ChannelService {
       this.internalSecret,
       workspaceScope(workspaceId),
       groupInfo,
-      baseEpoch
+      baseEpoch,
+      { userId, deviceId }
     );
     this.logger.log(
       `[DISTRIBUTION_GROUP] published workspace=${workspaceId} user=${userId.slice(0, 8)} epoch=${baseEpoch} stored=${result.stored}`
@@ -1157,7 +1159,8 @@ export class ChannelService {
     channelId: string,
     userId: string,
     groupInfo: string,
-    baseEpoch: number
+    baseEpoch: number,
+    deviceId: string
   ): Promise<{ stored: boolean }> {
     await this.assertPrivateChannelReader(channelId, userId);
 
@@ -1165,7 +1168,8 @@ export class ChannelService {
       this.internalSecret,
       channelScope(channelId),
       groupInfo,
-      baseEpoch
+      baseEpoch,
+      { userId, deviceId }
     );
     this.logger.log(
       `[CHANNEL_GRAINE] published channel=${channelId} user=${userId.slice(0, 8)} epoch=${baseEpoch} stored=${result.stored}`

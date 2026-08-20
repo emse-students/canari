@@ -18,6 +18,18 @@ export interface PublishDistributionGroupInfoDto {
   groupInfo: string;
   /** The epoch it was exported at. Monotonic server-side: a lower one is ignored, never an error. */
   baseEpoch: number;
+  /**
+   * The device publishing it, which is ALSO how the device that CREATED the MLS group enters the
+   * group's delivery roster.
+   *
+   * That roster is written by the commit fan-out, where the activating device is the commit SENDER
+   * - and a creator sends no commit, so it was never written into the group it had just made. It
+   * therefore received nothing on it: not the next member's external-join commit, so its epoch
+   * never moved and every seed it sealed was unreadable to them, and not their request for the
+   * missing seed either, so nothing repaired it. A private salon with two members did not work.
+   * Found on production 2026-08-20.
+   */
+  deviceId: string;
 }
 
 /**

@@ -23,10 +23,17 @@ import { MessagingService } from '../services/messaging.service';
  * rests on: creating one writes NO `dm_group_members` and NO `DeviceGroupMembership` row. Every
  * conclusion in that audit - that account deletion, device registration and the sidebar can never
  * reach a distribution group - is void the day this stops holding, and nothing else would notice.
+ *
+ * CREATION is not PUBLISHING, and only the first of the two is empty. Publishing writes exactly one
+ * device row, for the publisher itself, because the roster is otherwise written only by the commit
+ * fan-out and the device that creates a group sends no commit. The audit is unaffected: that row
+ * names a device that already holds the group, and `dm_group_members` is still never touched.
  */
 describe('InternalController - the community distribution group', () => {
   const SECRET = 'internal-secret-for-tests';
   const WORKSPACE = 'ws-1';
+  // The device that published, which is the device that created the MLS group.
+  const PUBLISHER = { userId: 'alice@example.test', deviceId: 'web-alice-1' };
 
   let controller: InternalController;
   let groupRepo: {
@@ -39,7 +46,11 @@ describe('InternalController - the community distribution group', () => {
   let deviceGroupRepo: { save: jest.Mock; upsert: jest.Mock; delete: jest.Mock };
   let queuedMessageRepo: { delete: jest.Mock };
   let redis: { smembers: jest.Mock; srem: jest.Mock };
-  let messagingService: { readGroupInfo: jest.Mock; putGroupInfo: jest.Mock };
+  let messagingService: {
+    readGroupInfo: jest.Mock;
+    putGroupInfo: jest.Mock;
+    activateDeviceMembership: jest.Mock;
+  };
   let previousSecret: string | undefined;
 
   beforeEach(async () => {
@@ -63,6 +74,7 @@ describe('InternalController - the community distribution group', () => {
     messagingService = {
       readGroupInfo: jest.fn().mockResolvedValue(null),
       putGroupInfo: jest.fn().mockResolvedValue({ stored: true }),
+      activateDeviceMembership: jest.fn().mockResolvedValue(undefined),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -205,10 +217,38 @@ describe('InternalController - the community distribution group', () => {
       const got = await controller.publishDistributionGroupInfo('workspace', WORKSPACE, SECRET, {
         groupInfo: 'Z2k=',
         baseEpoch: 7,
+        userId: PUBLISHER.userId,
+        deviceId: PUBLISHER.deviceId,
       });
 
       expect(got).toEqual({ stored: true });
       expect(messagingService.putGroupInfo).toHaveBeenCalledWith('g-1', 'Z2k=', 7);
+    });
+
+    // THE REGRESSION THIS FILE EXISTS TO HOLD. The roster is written by the commit fan-out, whose
+    // activating device is the commit SENDER - so the device that CREATED the group sent no commit,
+    // held no row, and was sent nothing on its own group: not the next member's external-join
+    // commit, and not their request for the seed it alone could answer. Publishing is the only
+    // moment the server learns which device that was, so it is the only place the row can be
+    // written. Found on production 2026-08-20.
+    it('puts the publishing device on the delivery roster, since nothing else ever will', async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g-1' });
+
+      await controller.publishDistributionGroupInfo('workspace', WORKSPACE, SECRET, {
+        groupInfo: 'Z2k=',
+        baseEpoch: 7,
+        userId: PUBLISHER.userId,
+        deviceId: PUBLISHER.deviceId,
+      });
+
+      // `redeliverMissed: false` for the reason the external-join path passes it: the device holds
+      // the group at the CURRENT epoch, so a replay of what came before is undecryptable frames.
+      expect(messagingService.activateDeviceMembership).toHaveBeenCalledWith(
+        PUBLISHER.userId,
+        PUBLISHER.deviceId,
+        'g-1',
+        { redeliverMissed: false }
+      );
     });
 
     it('refuses a body missing either field', async () => {
@@ -217,12 +257,40 @@ describe('InternalController - the community distribution group', () => {
       await expect(
         controller.publishDistributionGroupInfo('workspace', WORKSPACE, SECRET, {
           groupInfo: 'Z2k=',
+          ...PUBLISHER,
         })
       ).rejects.toBeInstanceOf(BadRequestException);
       await expect(
-        controller.publishDistributionGroupInfo('workspace', WORKSPACE, SECRET, { baseEpoch: 1 })
+        controller.publishDistributionGroupInfo('workspace', WORKSPACE, SECRET, {
+          baseEpoch: 1,
+          ...PUBLISHER,
+        })
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(messagingService.putGroupInfo).not.toHaveBeenCalled();
+    });
+
+    // A publish that does not say WHO published is a group whose creator is on no roster - the
+    // defect above, silently. It is refused rather than stored, because storing it would leave the
+    // group looking healthy while nobody can be sent anything on it.
+    it('refuses a publish that does not name the publishing device', async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g-1' });
+
+      await expect(
+        controller.publishDistributionGroupInfo('workspace', WORKSPACE, SECRET, {
+          groupInfo: 'Z2k=',
+          baseEpoch: 1,
+          userId: PUBLISHER.userId,
+        })
+      ).rejects.toBeInstanceOf(BadRequestException);
+      await expect(
+        controller.publishDistributionGroupInfo('workspace', WORKSPACE, SECRET, {
+          groupInfo: 'Z2k=',
+          baseEpoch: 1,
+          deviceId: PUBLISHER.deviceId,
+        })
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(messagingService.putGroupInfo).not.toHaveBeenCalled();
+      expect(messagingService.activateDeviceMembership).not.toHaveBeenCalled();
     });
 
     it('refuses to publish for a community with no group', async () => {
@@ -230,6 +298,7 @@ describe('InternalController - the community distribution group', () => {
         controller.publishDistributionGroupInfo('workspace', WORKSPACE, SECRET, {
           groupInfo: 'Z2k=',
           baseEpoch: 1,
+          ...PUBLISHER,
         })
       ).rejects.toBeInstanceOf(BadRequestException);
     });

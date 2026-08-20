@@ -1942,7 +1942,7 @@ export abstract class BaseMlsService implements IMlsService {
     }
     return {
       fetch: () => transport.fetch(scope),
-      publish: (gi, epoch) => transport.publish(scope, gi, epoch),
+      publish: (gi, epoch) => transport.publish(scope, gi, epoch, this.deviceId),
     };
   }
 

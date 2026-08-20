@@ -94,7 +94,7 @@ export const PHASES = {
   // phase, and one naming none would read as a phase with nothing to run.
   COMM: {
     title: 'communities, channels, roles',
-    scripts: ['comm1.mjs', 'comm8.mjs'],
+    scripts: ['comm1.mjs', 'comm8.mjs', 'comm2324.mjs 23', 'comm2324.mjs 24'],
     needs: ['W1', 'W2'],
   },
   MULTI: { title: 'one user, two devices', scripts: [], needs: ['W1', 'W2', 'A1'] },

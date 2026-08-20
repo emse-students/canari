@@ -134,13 +134,14 @@ export async function publishDistributionGroupInfo(
   secret: string,
   scope: DistributionScope,
   groupInfo: string,
-  baseEpoch: number
+  baseEpoch: number,
+  publisher: { userId: string; deviceId: string }
 ): Promise<{ stored: boolean }> {
   const payload = (await callDelivery(
     secret,
     'DISTRIBUTION_GROUP',
     `internal/mls/distribution-groups/${seg(scope)}/group-info`,
-    { method: 'POST', body: { groupInfo, baseEpoch } }
+    { method: 'POST', body: { groupInfo, baseEpoch, ...publisher } }
   )) as { stored?: unknown } | null;
 
   return { stored: payload?.stored === true };

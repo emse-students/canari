@@ -118,6 +118,7 @@ Deep links, system events, rosters and the channel/DM asymmetry are on those two
 - **A timer that compensates for two transports being unordered is a guess; make the FRAME say which case it is** (`withDigest`). What is left is a BOUND, and a legitimate bound's being reached is not a tuning question. [legacy-compatibility](legacy-compatibility.md)
 - **Every compatibility shim goes in [legacy-compatibility](legacy-compatibility.md) with the condition that retires it** - the gate is `minClientVersion` raised past it, never "the release is out".
 - MLS membership says who can DECRYPT; `DeviceGroupMembership` says who is actually SENT to. [mls](protocols/mls-protocol.md)
+- **A ROSTER WRITTEN ONLY BY THE ACTORS OF A CHANGE HAS NO ROW FOR WHOEVER CREATED THE THING** - `DeviceGroupMembership` is written by the commit fan-out, whose activating device is the SENDER, and a group's creator sends no commit. Ask of every derived set which act writes it, then name the act it cannot see. [graine](protocols/channel-encryption.md#the-fourth-and-the-worst-the-device-that-created-a-group-was-on-no-roster)
 - A join is NOT evidence of a gap - the message store and the seen-frame ledger are keyed by USER. [chat](frontend/modules/chat.md)
 
 **Markers, and what discharges them**

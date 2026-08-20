@@ -25,7 +25,18 @@ export interface DistributionGroupInfoTransport {
   publish(
     scope: DistributionScope,
     groupInfoBase64: string,
-    baseEpoch: number
+    baseEpoch: number,
+    /**
+     * The device doing the publishing, which is ALSO how it gets into the group's delivery roster.
+     *
+     * A distribution group's roster is written by the commit fan-out, where the activating device
+     * is the commit SENDER - so the device that CREATES the MLS group, which sends no commit, was
+     * never written into it and therefore received nothing on the group it had just made: not the
+     * next member's external-join commit, so its epoch never moved and every seed it sealed was
+     * unreadable to them, and not their request for the missing seed either, so the repair could
+     * not answer. A private salon with two members did not work. Found on prod 2026-08-20.
+     */
+    deviceId: string
   ): Promise<{ stored: boolean }>;
 }
 

@@ -115,11 +115,15 @@ export class ChannelsController {
     if (!Number.isInteger(body?.baseEpoch) || body.baseEpoch < 0) {
       throw new HttpException('baseEpoch must be a non-negative integer', HttpStatus.BAD_REQUEST);
     }
+    if (typeof body?.deviceId !== 'string' || body.deviceId.length === 0) {
+      throw new HttpException('deviceId is required', HttpStatus.BAD_REQUEST);
+    }
     return this.service.publishDistributionGroupInfoForMember(
       workspaceId,
       xUserId.trim().toLowerCase(),
       body.groupInfo,
-      body.baseEpoch
+      body.baseEpoch,
+      body.deviceId
     );
   }
 
@@ -160,11 +164,15 @@ export class ChannelsController {
     if (!Number.isInteger(body?.baseEpoch) || body.baseEpoch < 0) {
       throw new HttpException('baseEpoch must be a non-negative integer', HttpStatus.BAD_REQUEST);
     }
+    if (typeof body?.deviceId !== 'string' || body.deviceId.length === 0) {
+      throw new HttpException('deviceId is required', HttpStatus.BAD_REQUEST);
+    }
     return this.service.publishChannelDistributionGroupInfoForMember(
       channelId,
       xUserId.trim().toLowerCase(),
       body.groupInfo,
-      body.baseEpoch
+      body.baseEpoch,
+      body.deviceId
     );
   }
 

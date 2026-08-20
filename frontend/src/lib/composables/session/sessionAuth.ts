@@ -682,8 +682,8 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
           ? { groupInfo: ref.groupInfo, baseEpoch: ref.baseEpoch }
           : null;
       },
-      publish: (scope, groupInfo, baseEpoch) =>
-        distributionChannels.publishDistributionGroupInfo(scope, groupInfo, baseEpoch),
+      publish: (scope, groupInfo, baseEpoch, deviceId) =>
+        distributionChannels.publishDistributionGroupInfo(scope, groupInfo, baseEpoch, deviceId),
     });
 
     // Sealing a salon message needs the device key, the local store, the MLS client and who this

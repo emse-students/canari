@@ -269,7 +269,7 @@ describe('ChannelService - the community distribution group', () => {
       memberRepo.findOne.mockResolvedValue(null);
 
       await expect(
-        service.publishDistributionGroupInfoForMember(WORKSPACE, USER, 'Z2k=', 2)
+        service.publishDistributionGroupInfoForMember(WORKSPACE, USER, 'Z2k=', 2, 'web-1')
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(fetchMock).not.toHaveBeenCalled();
     });
@@ -284,11 +284,20 @@ describe('ChannelService - the community distribution group', () => {
       // `stored: false` is the monotonic rule refusing to regress the base epoch - a legitimate
       // outcome the caller must see rather than a failure.
       expect(
-        await service.publishDistributionGroupInfoForMember(WORKSPACE, USER, 'Z2k=', 2)
+        await service.publishDistributionGroupInfoForMember(WORKSPACE, USER, 'Z2k=', 2, 'web-1')
       ).toEqual({ stored: false });
       expect(String(fetchSpy.mock.calls[0][0])).toContain(
         `/api/internal/mls/distribution-groups/workspace/${WORKSPACE}/group-info`
       );
+      // THE PUBLISHER TRAVELS WITH THE BASE, because publishing is how the device that created the
+      // MLS group gets into the group's delivery roster - nothing else ever writes it one, and
+      // without a row it receives nothing on the group it just made.
+      expect(JSON.parse(String(fetchSpy.mock.calls[0][1].body))).toEqual({
+        groupInfo: 'Z2k=',
+        baseEpoch: 2,
+        userId: USER,
+        deviceId: 'web-1',
+      });
     });
   });
 

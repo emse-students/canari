@@ -1353,6 +1353,39 @@ private ones", which is precisely what this work removed; it is now
 `chat_channel_admins_join_hint` and says what is true. The panel's own "Access" tab was a raw
 French literal in the markup - the last one in this component - and is `chat_channel_access_tab`.
 
+### The fourth, and the worst: the device that CREATED a group was on no roster
+
+Found on production 2026-08-20, by putting a real second member into a private salon and watching
+both consoles. **A private salon with two people in it did not work at all**, and no test in the
+repository could have said so: every unit test arranges a roster, and this is a fact about who
+writes one.
+
+`dm_device_group_memberships` is the delivery recipient set - what the server consults to decide
+which devices a frame on a group goes to. It is written in exactly one place, the commit fan-out,
+where the device activated is the commit **sender**. A device that CREATES an MLS group sends no
+commit. So the creator held no row on the group it had just made, and the server sent it nothing on
+that group:
+
+- not the next member's external-join commit, so the creator's copy of the group stayed at epoch 0
+  while the group was at 1, and every seed it sealed after that was a past-epoch frame the new
+  member could never decrypt (`Past-epoch application frame, unreadable for good: msg_epoch=0
+  group_epoch=1`);
+- and not that member's request for the missing seed either, so the repair path had nobody to answer
+  it - the request was sent, logged, and delivered to an empty set.
+
+The fix threads the publishing device through the four layers between the client and the delivery
+service - `ChannelService` -> the social-service route -> `publishDistributionGroupInfo` -> the
+internal route - so that **publishing the base is what puts the publisher on the roster**. That is
+the only moment the server learns which device created the group; before it, the group has a
+creator nobody can name. The call is unconditional and idempotent (a device that external-joined
+already has its row, and the write underneath is an upsert), and passes `redeliverMissed: false` for
+the same reason the external-join path does: the device holds the group at the CURRENT epoch, so a
+replay of what came before is a stream of frames it cannot decrypt.
+
+`deviceId` is **required**, not optional, at both routes. A publish that does not name its device is
+a group whose creator is on no roster - this defect, silently - and storing it would leave the group
+looking healthy while nothing can be delivered on it.
+
 ### Migration: there was nothing to migrate
 
 Measured on production 2026-08-19 before writing any of it: **zero private salons existed.** So no

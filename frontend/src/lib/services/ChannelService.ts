@@ -347,16 +347,22 @@ export class ChannelService {
    *
    * Monotonic server-side: `{ stored: false }` means a newer base epoch is already published and
    * this one was declined, which is the mechanism working, not a failure.
+   *
+   * `deviceId` is not bookkeeping: publishing is how the device that CREATED the MLS group gets
+   * into the group's delivery roster. Nothing else ever would - the roster is written by the commit
+   * fan-out and a creator sends no commit - so without it the creator receives nothing on its own
+   * distribution group. See the transport contract in `IMlsService.ts`.
    */
   async publishDistributionGroupInfo(
     scope: DistributionScope,
     groupInfoBase64: string,
-    baseEpoch: number
+    baseEpoch: number,
+    deviceId: string
   ): Promise<{ stored: boolean }> {
     const res = await this.fetchWithAuth(`${this.distributionGroupUrl(scope)}/group-info`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ groupInfo: groupInfoBase64, baseEpoch }),
+      body: JSON.stringify({ groupInfo: groupInfoBase64, baseEpoch, deviceId }),
     });
     await this.handleError(res);
     return res.json() as Promise<{ stored: boolean }>;

@@ -245,11 +245,14 @@ export class InternalController {
     @Param('scope') scope: string,
     @Param('scopeId') scopeId: string,
     @Headers('x-internal-secret') headerSecret: string,
-    @Body() body: { groupInfo?: string; baseEpoch?: number }
+    @Body() body: { groupInfo?: string; baseEpoch?: number; userId?: string; deviceId?: string }
   ): Promise<{ stored: boolean }> {
     this.assertInternalSecret(headerSecret);
     if (typeof body?.groupInfo !== 'string' || !Number.isFinite(body?.baseEpoch)) {
       throw new BadRequestException('groupInfo (base64) and baseEpoch are required');
+    }
+    if (!body?.userId || !body?.deviceId) {
+      throw new BadRequestException('userId and deviceId are required');
     }
     const where = this.distributionWhere(this.assertDistributionScope(scope), scopeId);
     const label = `${scope}:${scopeId}`;
@@ -264,8 +267,28 @@ export class InternalController {
       body.groupInfo,
       body.baseEpoch as number
     );
+
+    // THE PUBLISHER JOINS THE DELIVERY ROSTER HERE, and this is the only place it can.
+    //
+    // A distribution group's roster is written by the commit fan-out, where the activating device
+    // is the commit SENDER - so the device that CREATES the MLS group, which sends no commit, was
+    // in no group's roster and received NOTHING on the group it had just made: not the next
+    // member's external-join commit (so its epoch never moved, and every seed it sealed after that
+    // was a past-epoch frame the new member could not read), and not their request for the missing
+    // seed either (so the repair had nobody to answer it). A private salon with two members did not
+    // work at all. Found on production 2026-08-20 by watching a real second member join one.
+    //
+    // Unconditional and idempotent: a device that external-joined already has its row, and the
+    // upsert underneath makes a repeat free. `redeliverMissed: false` for the same reason the
+    // external-join path passes it - the device holds the group at the CURRENT epoch, so there is
+    // nothing earlier it could decrypt and a replay would be undecryptable frames and blank pushes.
+    await this.messagingService.activateDeviceMembership(body.userId, body.deviceId, group.id, {
+      redeliverMissed: false,
+    });
+
     this.logger.log(
-      `[DISTRIBUTION_GROUP] group-info scope=${label} group=${group.id} epoch=${body.baseEpoch} stored=${result.stored}`
+      `[DISTRIBUTION_GROUP] group-info scope=${label} group=${group.id} epoch=${body.baseEpoch} ` +
+        `stored=${result.stored} publisher=${body.userId.slice(0, 8)}:${body.deviceId.slice(0, 12)}`
     );
     return result;
   }

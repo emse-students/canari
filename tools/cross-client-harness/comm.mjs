@@ -401,6 +401,7 @@ export async function grantChannelAccess(cx, displayName) {
  * with the dialog reads the state BEFORE the removal and calls it a failure to remove.
  */
 export async function revokeChannelAccess(cx, displayName) {
+  const before = await channelAccessState(cx);
   const removed = await evaluate(
     cx,
     `(function () {
@@ -416,8 +417,49 @@ export async function revokeChannelAccess(cx, displayName) {
   );
   if (removed !== 'marked') throw new Error(`revokeChannelAccess: ${removed} for "${displayName}"`);
   await realClick(cx, '[data-harness-revoke]');
-  await clearOverlays(cx);
-  return channelAccessState(cx);
+  // CONFIRMED, NEVER CLEARED. The first version called `clearOverlays` here, which presses Escape -
+  // i.e. it CANCELLED the removal and then read a panel that had not changed, and reported the
+  // absence of a removal as the app failing to remove. A dialog a check meant to answer is not
+  // debris.
+  await confirmDialog(cx, 'common_remove_label');
+  // The row goes when the request lands, so the panel is waited for rather than read: reading it
+  // immediately returns the list as it was and makes a slow server look like a refusal.
+  await until(
+    cx,
+    `(function () {
+       var rows = [].slice.call(document.querySelectorAll('li'));
+       return rows.filter(function (x) {
+         return (x.innerText || '').indexOf(${JSON.stringify(displayName)}) >= 0;
+       }).length === 0;
+     })()`,
+    15000
+  );
+  return { before, after: await channelAccessState(cx) };
+}
+
+/**
+ * Answers the app's ONE global confirmation dialog, by the caption of its confirming button.
+ *
+ * BY CAPTION AND NOT BY POSITION, because the dialog renders whatever label the caller passed -
+ * "Retirer", "Supprimer", "Confirmer" - and the cancel button sits beside it. Clicking the wrong one
+ * answers "no" to a question the check asked on purpose, which is indistinguishable from the app
+ * refusing: that is exactly how COMM-9 first reported a removal that had never been requested.
+ *
+ * The dialog is `showConfirm` in `stores/confirm.svelte.ts`, rendered once in `+layout.svelte`, so
+ * this one gesture serves every destructive control in the app.
+ */
+export async function confirmDialog(cx, confirmKey) {
+  const label = caption(confirmKey);
+  await until(
+    cx,
+    `(function () {
+       return [].slice.call(document.querySelectorAll('button')).some(function (b) {
+         return (b.innerText || '').trim() === ${JSON.stringify(label)};
+       });
+     })()`,
+    10000
+  );
+  await realClick(cx, `text=${label}`);
 }
 
 /**
@@ -434,4 +476,10 @@ export async function saveChannelAccess(cx) {
     `document.body.innerText.indexOf(${JSON.stringify(caption('common_saved_label'))}) >= 0`,
     15000
   );
+  // THE GESTURE ENDS WITH THE SCREEN CLEAR, and that is not tidiness. The settings modal stays up
+  // after a save, so the composer underneath it is covered: COMM-9/10 saved the roster, tried to
+  // post, and died on `no stable element` for a composer that was plainly in the DOM - which is the
+  // exact aftermath `clearOverlays` was written for. A gesture that leaves a modal behind is a fault
+  // in the gesture, not in the check that comes next.
+  return clearOverlays(cx);
 }
