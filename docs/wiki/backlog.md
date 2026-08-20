@@ -288,6 +288,36 @@ fulfillment Stripe's webhook already used, via a shared `order_ref` encoding
 
 ## Post-campaign projects - decided, not scheduled
 
+### The MLS + Graine explanation, written FOR THE USER - audience settled 2026-08-20
+
+**Asked for earlier, deferred on one question: who reads it.** Three audiences were offered and the
+user chose the first outright.
+
+**Who it is for: the user.** What is guaranteed, against whom, and - as loudly - what is NOT.
+Prose and diagrams. **No file names, no function names, no code**, because those are what a
+maintainer needs and this is not for a maintainer. Readable end to end in one sitting, which is a
+length constraint and therefore a selection constraint: everything that does not change what the
+reader can conclude is cut.
+
+**What it must contain, since the whole point is the boundary.** What the server sees (ciphertext,
+sizes, timings, who talks to whom) and what it cannot see. What a community's shared key means: every
+member of a community holds the key to every PUBLIC salon in it, by design, and until 2026-08-20 to
+every private one too. What a private salon's own group changed, and what it did not - an admin now
+JOINS and is visible in the member list; forward secrecy was decided AGAINST, deliberately, and the
+document says so rather than omitting it. What leaving, being removed, and being re-invited actually
+do to the keys. What a stolen device gets, and what the PIN does and does not protect.
+
+**The two audiences declined, recorded so the choice is not re-litigated.** A maintainer's page (file
+names, invariants, where each is held) would be a wiki page more, long, needing to stay synchronised
+- the wiki already carries that, split across
+[mls-protocol](protocols/mls-protocol.md) and [graine](protocols/channel-encryption.md). A security
+assessor's document (explicit threat model, what an excluded member can do) is the most demanding of
+the three and nobody has asked for one.
+
+**Written AFTER the campaign**, because the campaign is what turns the design into something
+measured, and a document that says "this is guaranteed" before anything has run is a claim about a
+file rather than about a system.
+
 ### One MLS client in a SharedWorker - decided 2026-08-17
 
 **It would remove the multi-tab class outright**, and that class is not theoretical: W2 was measured

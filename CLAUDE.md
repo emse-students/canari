@@ -129,14 +129,10 @@ before the campaign restarts.** Everything actionable is HERE, in order, one lin
 lives where the link says and **is not restated**. An item is done when its code, its tests, its doc
 and its commit are in, and it is then deleted from BOTH files.
 
-**The campaign started 2026-08-19 and has produced FIFTEEN defects, all fixed.** Five of them came
-from ONE private salon driven through create -> public -> private -> a SECOND MEMBER on prod on
-2026-08-20, and not one was reachable from the repository: the three new routes were registered a
-segment too deep and answered 404 to everybody, a public salon could NEVER be made private,
-re-privatising handed the salon back the group it had just retired, the exclusion that keeps a
-distribution group out of the conversation list knew only the community scope, and - the worst -
-the device that CREATED a salon's group was on no delivery roster, so a private salon with two
-people in it did not work AT ALL (graine §13, the only copy). **That is the whole lesson of the week, and it
+**The campaign started 2026-08-19 and has produced FIFTEEN defects, all fixed.** FIVE came from ONE
+private salon driven on prod through create -> public -> private -> a SECOND MEMBER, and not one was
+reachable from the repository - the last of them meant a private salon with two people in it did not
+work AT ALL ([graine](docs/wiki/protocols/channel-encryption.md) §13, the only copy). **That is the whole lesson of the week, and it
 is now a rule: a lifecycle is a SEQUENCE, and a unit test arranges the state it asserts on.**
 1-2 are numbers a run has to produce; 3 is the community phase, stale AND never run, where the
 rework's remaining risk sits; 4 is the campaign.
@@ -163,14 +159,21 @@ in the field (user, 2026-08-19)**, so the iOS ladder cannot run and parity is ke
     comes from a run.** Every accusation in `displayName.ts` now ends `(failed/attempted, X%)`.
     There is no client telemetry, so the rate is read from a run log on each platform. **The
     `FAILURE_BACKOFF_MS` decision is what the number is FOR** ([backlog](docs/wiki/backlog.md)).
-3. **THE COMM RUNNERS - the rows were rewritten 2026-08-20, nothing runs them yet.** The stale
+3. **THE COMM RUNNERS - the rows were rewritten 2026-08-20, five of twenty-five run.** The stale
     vocabulary is gone (COMM-9 and COMM-13 named mechanisms that do not exist, COMM-22 timed a
     deleted function) and three rows were added for the per-salon groups, so the phase carries
     TWENTY-FIVE; the table on
-    [cross-client-testing](docs/wiki/cross-client-testing.md) is the only copy. What is left is the
-    runners: `comm.mjs` holds the shared vocabulary, and FIVE of the twenty-five run
-    (COMM-1, 8, 9/10, 23, 24 - each PASSed while proving the instrument, so the board rows stay
-    `pending`; they are campaign verdicts only on the final build).
+    [cross-client-testing](docs/wiki/cross-client-testing.md) is the only copy. `comm.mjs` holds the
+    shared vocabulary, and COMM-1, 8, 9/10, 23 and 24 run (each PASSed while proving the instrument,
+    so the board rows stay `pending` - they are campaign verdicts only on the final build).
+    **The user's decision, 2026-08-20: ALL TWENTY-FIVE ARE AUTOMATED, including the four that need
+    more than two Chromes** - COMM-14 drives real push, COMM-17/18 drive the phone through `adb`,
+    COMM-25 needs a second device for one account. The harness therefore grows three capabilities it
+    does not have, and each is itself unproven until a check that uses it produces a result it could
+    not have produced by accident.
+    **And each runner is RUN ON PROD as it is written** (the user's decision, same day): writing all
+    twenty then running once is verification by COMPILING, which is what produced five of this
+    week's fifteen defects. Test debris stays behind; `cleanup.mjs` sweeps it before the campaign.
     **This is where the rework's remaining risk sits** - everything about it is verified by
     COMPILING, and COMM-8/9/13 must be checked against the DATABASE, since what they assert is what
     a device is no longer SENT.
@@ -178,6 +181,10 @@ in the field (user, 2026-08-19)**, so the iOS ladder cannot run and parity is ke
     campaign. **Everything must end green, so every phase runs.** What it costs, the ladder's order
     and the two decisions it turns on are on
     [cross-client-testing](docs/wiki/cross-client-testing.md), the only copy of any of it.
+
+**OWED TO THE USER, NOT TO THE CODE: the MLS + Graine explanation.** Its audience was the blocking
+question and the user settled it 2026-08-20 - **for THEM**, prose and diagrams, no code. Post-campaign;
+scope, contents and the two audiences declined are on [backlog](docs/wiki/backlog.md).
 
 **THE SIX THAT CANNOT BE PULLED FORWARD** - none is waiting on us, and each carries its blocking
 condition in [backlog](docs/wiki/backlog.md), which is the only copy: the
@@ -191,12 +198,10 @@ gallery a browser already renders well is the part only the user can answer.
 ### CANARI - what is open
 
 **Release status:** v0.14.0 cut 2026-08-17; prod VERIFIED answering
-`{"version":"0.14.0","minClientVersion":"0.14.0"}`, both CD runs and the AppImage green.
-`minClientVersion` was raised to 0.14.0 by hand from `/admin/platform` - it lives in
-`platform_config`, never in the code, so no deploy touches it. **The App Store half was never
-verified, so that raise locks out any iOS user it has not reached**; the shipping order it violated
-(publish -> VERIFY the store serves it -> only THEN raise) is on
-[legacy-compatibility](docs/wiki/legacy-compatibility.md).
+`{"version":"0.14.0","minClientVersion":"0.14.0"}`. `minClientVersion` lives in `platform_config`
+and was raised by hand from `/admin/platform`, so no deploy touches it - and **the App Store half
+was never verified, so that raise locks out any iOS user it has not reached**
+([legacy-compatibility](docs/wiki/legacy-compatibility.md) carries the shipping order it violated).
 
 ### CANARI - the test campaign
 
