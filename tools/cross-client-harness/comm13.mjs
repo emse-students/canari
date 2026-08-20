@@ -306,6 +306,7 @@ record('COMM-13', gated.verdict, {
   salon,
   workspaceId,
   channelId,
+  armed,
   peerIsAdmin,
   before,
   after,

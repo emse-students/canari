@@ -98,6 +98,10 @@ const BENIGN = [
   // being SENT - is two entries up, and the pair is what separates "the rule applied" from "history
   // never works here".
   /^\[GRAINE\] not sending history to \S+: community [0-9a-f]+ is set to 'joined'$/,
+  // THE ADMIN SETTING THE RULE, from the community panel - the gesture COMM-12 performs before it
+  // measures anything. It carries the value the server ACCEPTED rather than the one that was
+  // clicked, which is why it is worth a line: the two differ whenever the save failed.
+  /^\[CHANNEL\] history visibility set to (shared|joined)$/,
   /^\[notifNav\] routing to \S+ for pending conversation \S+$/,
   // The landing refetching ONCE before it selects. A just-accepted invitation is never in the
   // conversation list the client already holds, which is what this branch exists for; the two
@@ -664,7 +668,20 @@ export async function report(w) {
     return true;
   });
 
-  const strip = (t) => t.replace(/^\[\d\d:\d\d:\d\d\]\s*/, '');
+  /**
+   * The clock a line was stamped with, removed - so an `^`-anchored pattern matches the SENTENCE.
+   *
+   * TWO STAMPS, AND ONLY ONE WAS REMOVED. The app writes both: `[HH:MM:SS]` from the in-app log
+   * panel and a full ISO instant from `Log.d`. Every `^`-anchored rule silently failed against the
+   * second kind, which is the same class of silence the comment on `t` was written about - one list
+   * matched a different text than the others. Found on 2026-08-20, when
+   * `[CHANNEL] history visibility set to joined` stayed `unexplained` with a rule in `BENIGN` that
+   * named it exactly, and turned a COMM-12 run where all ten assertions held into PASS-DIRTY.
+   */
+  const strip = (t) =>
+    t
+      .replace(/^\[\d\d:\d\d:\d\d\]\s*/, '')
+      .replace(/^\[\d{4}-\d\d-\d\dT[\d:.]+Z\]\s*/, '');
   /**
    * A console line about a request whose failure is understood - path AND status both.
    *

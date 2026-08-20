@@ -418,16 +418,37 @@ export function useChannelWorkspaces() {
     return created;
   }
 
-  /** Appends a channel to the sidebar entry for the given workspace slug, silently ignoring duplicates. */
+  /**
+   * Puts a channel into the sidebar entry for `workspaceSlug`, REFRESHING one already there.
+   *
+   * **It used to ignore a channel it already had, and that silently discarded every reload.** The
+   * full re-read from the server calls this for each channel it just fetched, so an entry already
+   * on screen kept whatever it was created with for the rest of the session. What that hid was the
+   * administrator join: `joinPrivateChannelAsAdmin` re-reads deliberately - "joining changes what
+   * four different routes will answer for this salon" - the server answered `viewerHasAccess: true`,
+   * and the row went on offering "Rejoindre" for ever, because it was already in the list. Found on
+   * prod by COMM-13, whose four other assertions all passed: the join was complete everywhere
+   * except on the screen of the person who performed it.
+   *
+   * **Merged rather than replaced.** The caller's fields win and the ones it does not mention are
+   * kept - `unreadCount` is owned by the live event path and is not part of any reload, so a blind
+   * overwrite would clear every unread badge each time the workspaces were re-read.
+   *
+   * The entry keeps its POSITION, so a refresh never reorders the sidebar under the reader.
+   */
   function addChannelToWorkspace(workspaceSlug: string, channel: ChannelSidebarItem) {
     const idx = channelWorkspaces.findIndex((item) => item.id === workspaceSlug);
     if (idx === -1) return;
     const workspace = channelWorkspaces[idx];
-    if (workspace.channels.some((item) => item.id === channel.id)) return;
+    const at = workspace.channels.findIndex((item) => item.id === channel.id);
+    const channels =
+      at === -1
+        ? [...workspace.channels, channel]
+        : workspace.channels.map((item, i) => (i === at ? { ...item, ...channel } : item));
 
     channelWorkspaces = [
       ...channelWorkspaces.slice(0, idx),
-      { ...workspace, channels: [...workspace.channels, channel] },
+      { ...workspace, channels },
       ...channelWorkspaces.slice(idx + 1),
     ];
   }

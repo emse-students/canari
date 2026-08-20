@@ -372,8 +372,23 @@ shows. The boundary is therefore a FLOOR carried in `firstIndex`, computed by th
 two columns so no device clock takes part.
 
 **Two runs, two defects, and the second could only be found by the first being fixed.** Both times
-the reflex would have been to relax the assertion; both times the assertion was right.
+the reflex would have been to relax the assertion; both times the assertion was right. **The third
+run, on the floor fix, came back with all TEN assertions holding** - `livePostReachedTheMember` and
+`reInvitedReadsWhatComesNext`, the four `joined` refusals, and the four `shared` controls
+(2026-08-20T10:31Z, `PASS-DIRTY` on one unclassified line, which was the watcher's fault and is
+fixed: `strip` removed an `[HH:MM:SS]` stamp and not the ISO one `Log.d` writes, so every
+`^`-anchored rule silently failed against half the app's own lines).
 [channel-encryption](protocols/channel-encryption.md) §WP-34/35 is the only copy of the mechanism.
+
+**COMM-13 FOUND A DEFECT ON ITS FIRST RUN TOO (2026-08-20), and its four OTHER assertions are what
+made it readable.** The admin saw the salon unjoined, `distribution-group` answered 403 before the
+join and 200 after, `allowedUsers` gained their name, and the transcript gained nothing - so the join
+was complete in the database, in the key service and in the member list, and absent only from the
+screen of the person who performed it. `oneClickJoined` stayed false for the full 30-second window:
+`addChannelToWorkspace` skipped any channel already on screen, so the deliberate re-read that follows
+the join was discarded and the row went on offering "Rejoindre" for the rest of the session. **A
+single failing assertion among five passing ones is a location, not a doubt** - with only the
+sidebar read, this would have been indistinguishable from a join that never happened.
 
 **COMM-16 FOUND A DEFECT ON ITS FIRST RUN, and nearly lost it.** `channelRowGone` came back false,
 which reads exactly like a check written against a behaviour the product does not have - the row

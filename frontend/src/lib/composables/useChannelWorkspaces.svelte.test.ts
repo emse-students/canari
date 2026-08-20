@@ -118,6 +118,35 @@ describe('useChannelWorkspaces - loadChannelWorkspacesFromBackend', () => {
     expect(store.channelWorkspaces[0].channels[0].id).toBe('channel_ch1');
   });
 
+  it('refreshes a channel already in the sidebar rather than ignoring it (COMM-13)', async () => {
+    // THE ADMINISTRATOR JOIN, WHICH THE SERVER COMPLETED AND THE SCREEN NEVER SHOWED. The re-read
+    // after `joinPrivateChannelAsAdmin` calls into the sidebar for every channel it just fetched,
+    // and an entry already on screen used to be skipped as a duplicate - so the row went on
+    // offering "Rejoindre" for the rest of the session while every server route said otherwise.
+    listUserWorkspaces.mockResolvedValue([makeWorkspaceDto('ws1', 'Community', 'community')]);
+    listChannels.mockResolvedValue([
+      { ...makeChannelDto('ch1', 'salon', 'private'), viewerHasAccess: false } as ChannelDto,
+    ]);
+
+    const store = useChannelWorkspaces();
+    const ctx = makeContext();
+    await store.loadChannelWorkspacesFromBackend(ctx);
+    expect(store.channelWorkspaces[0].channels[0].hasAccess).toBe(false);
+
+    // The badge is owned by the live event path and is not part of any reload, so the refresh must
+    // not clear it - a blind overwrite would empty every unread count on each re-read.
+    store.channelWorkspaces[0].channels[0].unreadCount = 3;
+
+    listChannels.mockResolvedValue([
+      { ...makeChannelDto('ch1', 'salon', 'private'), viewerHasAccess: true } as ChannelDto,
+    ]);
+    await store.loadChannelWorkspacesFromBackend(ctx);
+
+    expect(store.channelWorkspaces[0].channels).toHaveLength(1);
+    expect(store.channelWorkspaces[0].channels[0].hasAccess).toBe(true);
+    expect(store.channelWorkspaces[0].channels[0].unreadCount).toBe(3);
+  });
+
   it('retries on transient failure and succeeds on second attempt, preserving existing data', async () => {
     listUserWorkspaces
       .mockRejectedValueOnce(new TypeError('Failed to fetch'))

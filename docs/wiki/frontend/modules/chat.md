@@ -372,6 +372,16 @@ nulls it, which is what made *every* deep link land in the right tab with nothin
   abandon (releasing the target) when a real refresh still does not know it, or when a DM is absent
   from an already-restored map. Abandoning matters as much as holding - it is what lets the
   watchdog clear a channel whose access was revoked.
+- **`addChannelToWorkspace` is an UPSERT, and it used to be an add-if-absent.** The full re-read
+  calls it once per fetched channel, so an entry already on screen kept whatever it was created
+  with for the rest of the session - every reload silently discarded. That hid the administrator
+  join (`joinPrivateChannelAsAdmin`, which re-reads on purpose rather than flipping a local flag):
+  the server answered `viewerHasAccess: true` and the row went on offering "Rejoindre". It now
+  MERGES the fetched fields over the entry in place - merged, not replaced, because `unreadCount` is
+  owned by the live event path and is not part of any reload, and the entry keeps its position so a
+  refresh never reorders the sidebar under the reader. Found on prod by COMM-13 (2026-08-20), whose
+  four other assertions all passed: the join was complete in the database, in the key service and in
+  the member list, and absent only from the screen.
 - `loadChannelWorkspacesFromBackend` retries transient failures internally: up to 3 attempts with
   backoffs of 1 s, 3 s and 7 s. It keeps the existing sidebar list on every failure and exposes the
   final error in `globalChannels.workspacesLoadError`. Auth failures (401/403) are not retried.
