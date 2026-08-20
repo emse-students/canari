@@ -138,6 +138,17 @@ about a working client - it read the console the instant the click returned, and
 after the round trip that produces it. `awaitLine` now bounds the wait, on the campaign's own rule
 that an absence is only a finding against a window a reader can argue with.
 
+**COMM-11 confirms on prod that a community-level removal reaches a private salon's OWN group** -
+membership row, routing rows on both groups, and `allowedUsers`, which is the one that matters most:
+the roster reconciliation diffs the MLS tree against exactly that list, so a surviving name is a leaf
+re-authorised at every pass, and the removal would be undone by its own enforcement.
+
+**And it caught the classifier rule added one commit earlier being wrong in the same way.** That rule
+was written `\S+ [0-9a-f]+:`, which matches `community <id>:` and NOT `salon <id> of <id>:` - the two
+forms `scopeLabel` produces. A real member losing a real salon put the line straight back in
+`unexplained`. The rule is now written against the FUNCTION, not against the sighting that prompted
+it; its quiet sibling in BENIGN had used `.+` all along.
+
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | MSG-1 | W1 -> W2 plain DM: under 2 s, one copy, correct author | `W1 W2` | `PASS` - 261 ms |
@@ -327,7 +338,7 @@ of turning runners red a week later. Two of its selectors are deliberately struc
 anchored on the "add a community" button, and a channel is asked for BY NAME because the only anchor
 in its container is a button a non-manager never sees - which is exactly the case COMM-8 measures.
 
-**TEN OF THE TWENTY-FIVE ARE WRITTEN AND REGISTERED** (1, 2, 3, 5, 8, 9/10, 16, 19, 23, 24). `comm2.mjs`
+**ELEVEN OF THE TWENTY-FIVE ARE WRITTEN AND REGISTERED** (1, 2, 3, 5, 8, 9/10, 11, 16, 19, 23, 24). `comm2.mjs`
 is the primitive the rest wait on: the invite link is the only gesture in the product that puts a
 SECOND member into a community a check built itself, so COMM-11, COMM-12 and COMM-19 all inherit
 what it proves.
@@ -362,7 +373,7 @@ phase now carries 25.
 | COMM-8 | A private salon: a non-member cannot see it, **cannot fetch it by id, and is never sent its seed** | `W1 W2` | `pending` |
 | COMM-9 | Removed from a private salon: the server drops their routing rows, and the next message is sealed under a session they do not hold | `W1 W2` | `pending` |
 | COMM-10 | Removed from a private salon: the messages they ALREADY hold stay readable - Graine retains seeds on purpose | `W1 W2` | `pending` |
-| COMM-11 | Kicked from the COMMUNITY: the client purges the workspace AND leaves every private salon group it held | `W1 W2` | `pending` |
+| COMM-11 | Kicked from the COMMUNITY: the client purges the workspace AND leaves every private salon group it held | `W1 W2` | **PASS** `bf2815c2` |
 | COMM-12 | Re-invited after a removal: they receive the sessions minted from now on, and the past only as `history_visibility` allows | `W1 W2` | `pending` |
 | COMM-13 | An admin JOINS a private salon: they see it unjoined, enter it in one click, appear in the member list, and NO system message is written | `W1 W2` | `pending` |
 | COMM-14 | Channel notification levels enforced server-side | `+push` | `pending` |

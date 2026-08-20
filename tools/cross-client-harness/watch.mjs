@@ -367,7 +367,13 @@ const NOTABLE = [
   // means somebody was removed anyway, which is as serious as this campaign gets. It sat in
   // `unexplained` until COMM-3 made a real member leave, because the `BENIGN` entry for its quiet
   // sibling claimed another rule already covered it and no rule did.
-  /^\[GRAINE\] \S+ [0-9a-f]+: \d+ member\(s\) left but still hold a leaf - removing/,
+  //
+  // WRITTEN AGAINST `scopeLabel`, NOT AGAINST ONE SIGHTING. It produces exactly two forms -
+  // `community <id>` and `salon <id> of <id>` - and the first spelling of this rule was
+  // `\S+ [0-9a-f]+:`, which matches the community one and not the salon one. COMM-11 made a real
+  // member lose a real salon and the line went straight back to `unexplained`, one commit after
+  // this entry was added to stop exactly that. The quiet sibling in BENIGN has used `.+` all along.
+  /^\[GRAINE\] (community|salon) .+: \d+ member\(s\) left but still hold a leaf - removing/,
   // A COMMIT BEING APPLIED - the group's membership moved, which is the one thing this campaign
   // watches hardest. `[QUEUE] Processing message` is routine and sits in BENIGN; a Commit is not the
   // same claim and must never share its rule. Never `clean`-breaking, because a join or a departure
