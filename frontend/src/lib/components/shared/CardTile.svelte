@@ -18,8 +18,8 @@
   class="border-cn-border relative overflow-hidden rounded-2xl border bg-(--cn-surface) {className}"
 >
   <div
-    class="pointer-events-none absolute top-0 right-0 h-24 w-24 opacity-15"
-    style="mask-image: radial-gradient(circle at top right, black 0%, transparent 75%); -webkit-mask-image: radial-gradient(circle at top right, black 0%, transparent 75%);"
+    class="pointer-events-none absolute -top-2 -right-2 h-24 w-24 opacity-15"
+    style="mask-image: radial-gradient(circle at top right, black 0%, black 40%, transparent 100%); -webkit-mask-image: radial-gradient(circle at top right, black 0%, black 40%, transparent 100%);"
   >
     {#if iconUrl}
       <img src={iconUrl} alt="" class="h-full w-full object-contain" />

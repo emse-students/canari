@@ -73,32 +73,36 @@
             {/if}
           </div>
 
-          {#if locked}
-            <p class="text-text-muted text-xs">{m.shop_partnership_members_only_hint()}</p>
-          {:else if result}
-            <div class="bg-cn-accent/10 border-cn-accent/30 rounded-lg border px-3 py-2">
-              {#if result.mode === 'text'}
-                <p class="text-text-main text-sm">{result.staticText}</p>
-              {:else}
-                <p class="text-text-muted text-xs">{m.shop_partnership_your_code_label()}</p>
-                <p class="text-text-main font-mono text-sm font-bold">{result.code}</p>
+          <!-- Reserves the tallest of button/result/hint so claiming never resizes the card -
+               a row's cards would otherwise visibly jump when only one of them grows. -->
+          <div class="flex min-h-16 flex-col justify-end">
+            {#if locked}
+              <p class="text-text-muted text-xs">{m.shop_partnership_members_only_hint()}</p>
+            {:else if result}
+              <div class="bg-cn-accent/10 border-cn-accent/30 rounded-lg border px-3 py-2">
+                {#if result.mode === 'text'}
+                  <p class="text-text-main text-sm">{result.staticText}</p>
+                {:else}
+                  <p class="text-text-muted text-xs">{m.shop_partnership_your_code_label()}</p>
+                  <p class="text-text-main font-mono text-sm font-bold">{result.code}</p>
+                {/if}
+              </div>
+            {:else}
+              {#if claimErrors[card.id]}
+                <p class="text-red-err mb-1 text-xs">{claimErrors[card.id]}</p>
               {/if}
-            </div>
-          {:else}
-            {#if claimErrors[card.id]}
-              <p class="text-red-err text-xs">{claimErrors[card.id]}</p>
+              <button
+                type="button"
+                onclick={() => handleClaim(card)}
+                disabled={claiming === card.id}
+                class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover w-full rounded-lg px-3 py-1.5 text-xs font-bold transition-colors disabled:opacity-50"
+              >
+                {claiming === card.id
+                  ? m.shop_partnership_claiming()
+                  : m.shop_partnership_claim_button()}
+              </button>
             {/if}
-            <button
-              type="button"
-              onclick={() => handleClaim(card)}
-              disabled={claiming === card.id}
-              class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover w-full rounded-lg px-3 py-1.5 text-xs font-bold transition-colors disabled:opacity-50"
-            >
-              {claiming === card.id
-                ? m.shop_partnership_claiming()
-                : m.shop_partnership_claim_button()}
-            </button>
-          {/if}
+          </div>
         </div>
       </CardTile>
     {/each}
