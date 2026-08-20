@@ -312,14 +312,16 @@
       // administrators editing one role at the same moment erase each other's work, and left the
       // loser's grid showing a state the server had never had (COMM-20, production, 2026-08-20).
       // A base permission is either granted or not: only `allow` grants it, neutral revokes it.
-      const saved = await channelService.setRolePermission(
-        roleId,
-        permissionKey,
-        value === 'allow'
-      );
-      // APPLIED FROM THE RESPONSE, not from what was asked for: it carries anything somebody else
-      // changed while this click was in flight, which is the whole point of sending a delta.
-      globalChannels.handleRolePermissionsChanged({ roleId, permissions: saved.permissions });
+      await channelService.setRolePermission(roleId, permissionKey, value === 'allow');
+      // AND THE RESPONSE IS AN ACKNOWLEDGEMENT, NOT A STATE. Applying it here put this browser on a
+      // second, unordered path into the same store: an announcement caused by somebody else's click
+      // could land BEFORE our own response, which then overwrote it with a snapshot taken before
+      // their change existed. Measured on production 2026-08-20, third run of COMM-20 - the stale
+      // grid simply moved from one administrator to the other.
+      //
+      // The announcement is the only writer, for everyone including whoever clicked, so there is one
+      // ordered path and nothing left to reconcile. A ledger merging the two would have been a
+      // witness to the race, not a fix.
     } catch (e) {
       rolesError = e instanceof Error ? e.message : m.common_save_error();
     } finally {

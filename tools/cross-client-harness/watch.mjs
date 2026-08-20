@@ -134,6 +134,10 @@ const BENIGN = [
   // A role's permissions changed somewhere in the community, and every open grid is told. Routine:
   // COMM-6 and COMM-20 both produce it deliberately, and so does any administrator using the panel.
   /^\[ROLE\] [0-9a-f]+ now grants \d+ permission\(s\)$/,
+  // A ROLE CHANGE ARRIVING LIVE, which is what this line means and what it did not do until
+  // 2026-08-20: `workspace.role.changed` was dropped by both socket clients. COMM-5 asserts
+  // its ARRIVAL itself (`capabilityIsLive`), so classifying it here loses nothing.
+  /^\[WORKSPACE\] my role in [0-9a-f]{8} is now "[^"]+" \(canManage=(true|false)\)$/,
   // THIS CLIENT WAS REMOVED FROM A SALON, narrated by the app as it purges it. It is the CORRECT
   // outcome of a removal and every check that performs one produces it - COMM-9, COMM-11, COMM-21.
   // A removal nobody asked for would be a finding, and it is the CHECK that knows which it is
