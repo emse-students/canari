@@ -370,6 +370,43 @@ same server refuses to serve them over REST, and it was closed this week. The sh
 is a separate, contentless `channel.gone` addressed to the community - worth doing only if the stale
 row is ever seen to matter, since a reload clears it and nothing is wrong underneath.
 
+### DECISION OWED - naming the author of each line inside a salon's stacked notification
+
+Asked for by the user on 2026-08-20: salon notifications should read like a DM's - successive
+messages stacking one under another in a single banner. **The stacking already exists**;
+`handleChannelMessage` goes through `showNotification`, so a salon gets the stable per-conversation
+id, the `MessagingStyle` history rebuild, the badge, the clear-on-open sweep and the cross-device
+dismissal. NOTIF-11 is what will say so on a current APK.
+
+What is genuinely missing is the ATTRIBUTION. `senderName = title` and `groupName = ""`, so every
+line in a salon's stack is attributed to `<Communaute> - #<salon>` and a reader cannot tell who said
+what. The comment there is honest about why: the server sends only `senderId`, for the avatar.
+
+Two shapes, and the choice is the user's:
+
+1. **The name on the wire.** One field beside `channelName` and `workspaceName`, which already
+   travel in cleartext. Cheapest, and it puts one more piece of who-talks-to-whom through Google and
+   Apple - which is the exact cost the reaction push was rewritten in 2026 to stop paying.
+2. **A `push/display-name/:userId` lookup, beside `push/avatar/:userId`.** The phone already
+   authenticates to that route with the push secret and caches the answer for 24 h; a name would
+   ride the same shape and put NOTHING new through a third party. Costs one request per unknown
+   sender on a cold notification, cached thereafter.
+
+**Recommended: (2)**, because the avatar proved the shape and it keeps the wire where it was. Not
+started - it is a real work package, and NOTIF-12 records the current behaviour rather than failing
+on it, so nothing here blocks the campaign.
+
+### REPORTED 2026-08-20 - quick reply from the shade does not work, and mark-as-read is unknown
+
+From the user, on the phone, unprompted. **The APK on that device predates the current bundle**, so
+neither observation is attributable to the code as it stands - which is exactly why they are rows
+(NOTIF-6, NOTIF-6b) and not fixes. `CanariNotificationActionReceiver` implements both actions and
+both call `cancelConversationNotification`; device check K recorded the reply path as sending, with
+K2 covering the undelivered case ([device-verification](device-verification.md)).
+
+**Owed in this order:** rebuild the APK, install it, then run NOTIF-6 and NOTIF-6b. A failure on the
+current bundle is a defect; a failure on the old one is the mixed fleet doing what it is.
+
 ## Post-campaign projects - decided, not scheduled
 
 ### The MLS + Graine explanation, written FOR THE USER - audience settled 2026-08-20

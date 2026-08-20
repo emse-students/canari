@@ -11,6 +11,7 @@ import {
   type MlsInitOptions,
 } from '$lib/mls-client';
 import type { MlsKeyPackageRequest } from '$lib/mls-client/mlsWorkerProtocol';
+import { isChannelEventFrame } from '$lib/mls-client/channelEventTypes';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
 import {
@@ -443,7 +444,7 @@ export class WebMlsService extends BaseMlsService {
           console.log(
             `[WS RCV] JSON frame: senderId=${msg.senderId}, groupId=${msg.groupId}, isWelcome=${msg.isWelcome}, protoLen=${(msg.proto as string)?.length}`
           );
-          if (frameType && (frameType.startsWith('channel.') || frameType === 'post_created')) {
+          if (isChannelEventFrame(frameType)) {
             if (this.onChannelEvent) {
               console.log(`[WS RCV] Triggering onChannelEvent for ${msg.type}`);
               this.onChannelEvent({ type: msg.type, data: msg.data });
@@ -530,8 +531,16 @@ export class WebMlsService extends BaseMlsService {
             console.warn(
               `[WS RCV] proto reçu mais messageCallback non initialisé. Message ignoré.`
             );
+          } else if (frameType) {
+            // A TYPED FRAME THAT REACHED NO BRANCH IS THE ONE FAILURE THIS LAYER CANNOT OTHERWISE
+            // SHOW. The `workspace.*` family was published, forwarded and delivered here for months
+            // and died on this line under a comment saying it was silently ignored; nothing anywhere
+            // could have said so. It accuses now, and names the type, which is the whole diagnosis.
+            console.warn(
+              `[WS RCV] frame type "${frameType}" reached no handler - the server is sending ` +
+                `something this client does not route (see channelEventTypes)`
+            );
           }
-          // No proto → non-MLS event (post, channel), silently ignored.
         } catch (e) {
           console.error('[WS RCV] Failed to process WebSocket message:', e);
         }

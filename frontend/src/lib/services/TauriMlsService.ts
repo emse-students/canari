@@ -1,3 +1,4 @@
+import { isChannelEventFrame } from '$lib/mls-client/channelEventTypes';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { fetch } from '@tauri-apps/plugin-http';
@@ -247,9 +248,9 @@ export class TauriMlsService extends BaseMlsService {
       void (async () => {
         try {
           const parsed = JSON.parse(msg.data as string) as Record<string, unknown>;
-          const msgType = parsed.type as string | undefined;
+          const msgType = typeof parsed.type === 'string' ? parsed.type : '';
 
-          if (msgType && (msgType.startsWith('channel.') || msgType === 'post_created')) {
+          if (isChannelEventFrame(msgType)) {
             if (this.onChannelEvent) {
               console.log(`[WS RCV] Triggering onChannelEvent for ${msgType}`);
               this.onChannelEvent({ type: msgType, data: parsed.data });
@@ -331,8 +332,14 @@ export class TauriMlsService extends BaseMlsService {
             console.warn(
               `[WS RCV] proto reçu mais messageCallback non initialisé. Message ignoré.`
             );
+          } else if (msgType) {
+            // See the same branch in `WebMlsService`: a typed frame that reached no handler is the
+            // one failure this layer cannot otherwise show, and it stayed invisible for months.
+            console.warn(
+              `[WS RCV] frame type "${msgType}" reached no handler - the server is sending ` +
+                `something this client does not route (see channelEventTypes)`
+            );
           }
-          // No proto → non-MLS event (post, channel), silently ignored.
         } catch (e) {
           console.error('[WS RCV] Failed to process WebSocket message:', e);
         }

@@ -1,0 +1,68 @@
+import { describe, it, expect } from 'vitest';
+import { isChannelEventFrame } from './channelEventTypes';
+
+/**
+ * The routing table both socket clients ask, and the four frames it used to drop.
+ *
+ * Every type asserted below is one the social service really publishes through
+ * `publishChannelEvent`; the `workspace.*` four were published, forwarded by the gateway, delivered
+ * to the socket and discarded by a `startsWith('channel.')` written before they existed. This file
+ * is what makes adding a family to the server without adding it here a failing test rather than a
+ * feature that quietly does nothing.
+ */
+describe('isChannelEventFrame', () => {
+  it('routes every channel frame the server publishes', () => {
+    for (const type of [
+      'channel.message.created',
+      'channel.message.deleted',
+      'channel.member.joined',
+      'channel.member.kicked',
+      'channel.member.removed',
+      'channel.updated',
+      'channel.deleted',
+      'channel.pin',
+      'channel.poll.vote',
+      'channel.typing',
+    ]) {
+      expect(isChannelEventFrame(type)).toBe(true);
+    }
+  });
+
+  /** THE FOUR THAT WERE DROPPED. COMM-20 measured the last one on production on 2026-08-20. */
+  it('routes every workspace frame the server publishes', () => {
+    for (const type of [
+      'workspace.updated',
+      'workspace.deleted',
+      'workspace.role.changed',
+      'workspace.role.permissions',
+    ]) {
+      expect(isChannelEventFrame(type)).toBe(true);
+    }
+  });
+
+  it('routes the one frame whose name carries no family', () => {
+    expect(isChannelEventFrame('post_created')).toBe(true);
+  });
+
+  /** Frames owned by other branches of the socket handler must NOT be swallowed by this one. */
+  it('leaves the socket layer its own frames', () => {
+    for (const type of [
+      'typing',
+      'device_revoked',
+      'welcome_request',
+      'history_request',
+      'epoch_rejected',
+      'ping',
+      'pong',
+      '',
+    ]) {
+      expect(isChannelEventFrame(type)).toBe(false);
+    }
+  });
+
+  /** A prefix is a family, not a substring: a type must START with one to belong to it. */
+  it('does not match a family named in the middle of a type', () => {
+    expect(isChannelEventFrame('mls.channel.updated')).toBe(false);
+    expect(isChannelEventFrame('channel')).toBe(false);
+  });
+});

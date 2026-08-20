@@ -28,7 +28,7 @@ Updated after every run.
 | 11 TAB | 8 | - | `pending` |
 | 12 MULTI | 6 | - | `pending` |
 | 13 LIFE | 8 | - | `pending` |
-| 14 NOTIF | 11 | - | `pending` |
+| 14 NOTIF | 15 | - | `pending` |
 | 15 CALL | 20 | - | `pending` - no script exists yet |
 | 16 HEAL | 5 | - | `pending` |
 | 17 PIN | 10 | - | `pending` |
@@ -435,14 +435,26 @@ Sweeps every `+push` row left behind above it.
 | NOTIF-1 | App killed, DM arrives: decrypted notification with real content | `+push` | `pending` |
 | NOTIF-2 | App killed, a **commit** pushed, then a message | `+push` | `pending` - a generic fallback is CORRECT; opening the app must recover |
 | NOTIF-3 | The same, message several epochs later | `+push` | `pending` |
-| NOTIF-4 | Read on W1 while A1 is killed: notification dismissed on A1 | `+push` | `pending` |
+| NOTIF-4 | Read on W1 while A1 is killed, W1 arriving at the salon AFTERWARDS: notification dismissed on A1 | `+push` | `pending` |
+| NOTIF-4b | The same, W1 holding the salon ALREADY OPEN when the message lands - the case an unread counter cannot see | `+push` | `pending` |
 | NOTIF-5 | Per-channel level muted on W1: A1 does not notify, message still arrives | `+push` | `pending` |
-| NOTIF-6 | Quick reply from the shade (= device check K) | `+push` | `pending` |
+| NOTIF-6 | Quick reply from the shade (= device check K) | `+push` | `pending` - reported not working from a real phone 2026-08-20, on an APK predating the current bundle |
+| NOTIF-6b | "Marquer comme lu" from the shade: the banner goes AND the salon is read on the other devices | `+push` | `pending` - never verified either way |
 | NOTIF-7 | Tap -> deep link into the conversation, **backgrounded** | `+push` | `pending` |
 | NOTIF-7b | The same with the app **KILLED** | `+push` | `pending` |
 | NOTIF-8 | Doze + message: delivered, or on wake - record which | `+push` | `pending` |
 | NOTIF-9 | Two devices of one user: exactly one notification surface behaves | `+push` | `pending` |
 | NOTIF-10 | Airplane mode 10 min, 5 messages, then reconnect | `+push` | `pending` - all five survive |
+| NOTIF-11 | Three messages into one salon: ONE notification carrying three stacked lines, not three notifications | `+push` | `pending` |
+| NOTIF-12 | Who each stacked line is attributed to inside a salon | `+push` | `pending` - RECORDED, not asserted; see below |
+
+**NOTIF-12 records rather than asserts, because the product has not decided.** A salon's stacked
+lines are attributed to the salon, not to whoever wrote each one: `handleChannelMessage` passes the
+salon title as the `Person`, and the server sends only `senderId` - enough for the avatar, not for a
+name. Naming the author would need either the name on the wire, which puts it through FCM and APNs,
+or a `push/display-name/:userId` lookup beside the avatar one, which puts nothing new through
+anybody. The second is the shape the avatar already proved; the choice is the user's and is in
+[backlog](backlog.md).
 
 ## 15 - CALL - audio and video
 
