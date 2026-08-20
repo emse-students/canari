@@ -338,7 +338,7 @@ of turning runners red a week later. Two of its selectors are deliberately struc
 anchored on the "add a community" button, and a channel is asked for BY NAME because the only anchor
 in its container is a button a non-manager never sees - which is exactly the case COMM-8 measures.
 
-**TWELVE OF THE TWENTY-FIVE ARE WRITTEN AND REGISTERED** (1, 2, 3, 5, 8, 9/10, 11, 12, 16, 19, 23, 24). `comm2.mjs`
+**THIRTEEN OF THE TWENTY-FIVE ARE WRITTEN AND REGISTERED** (1, 2, 3, 5, 8, 9/10, 11, 12, 13, 16, 19, 23, 24). `comm2.mjs`
 is the primitive the rest wait on: the invite link is the only gesture in the product that puts a
 SECOND member into a community a check built itself, so COMM-11, COMM-12 and COMM-19 all inherit
 what it proves.
@@ -358,8 +358,22 @@ been arguable. With it, the logs finished the story on their own - W1 said
 `[GRAINE] not sending history ... is set to 'joined'` and then, three lines later,
 `[GRAINE] answered ... with 2 seed(s)`. `gatherCommunityHistory` was gated and `gatherNamedSessions`
 was not, so the setting refused the bundle and then handed the same past back one session id at a
-time. Fixed at both places a seed leaves a device, plus the requester side, and the rule now lives in
-one module: [channel-encryption](protocols/channel-encryption.md) §WP-34/35 is the only copy.
+time.
+
+**AND THEN IT REFUSED THE FIRST FIX, WHICH IS THE MORE USEFUL HALF OF THE STORY.** That fix withheld
+any seed minted before the member arrived, on the reasoning that a join advances the distribution
+group's epoch and rotation follows, so no session could span an arrival. The re-run came back FAIL
+again, differently: under `joined` W2 now read NOTHING - including `IN1`, posted while it WAS a
+member. The evidence was already in the passing `shared` arm's log, four markers sealed under TWO
+sessions (`PAST`+`IN1`, then `OUT`+`IN2`): rotation is decided by the SENDER from the epoch it has
+PROCESSED, and a join is an EXTERNAL commit it learns of late. A removal is committed by a remaining
+member, which is why that direction rotates at once - and that asymmetry is exactly what the pairing
+shows. The boundary is therefore a FLOOR carried in `firstIndex`, computed by the SERVER from its own
+two columns so no device clock takes part.
+
+**Two runs, two defects, and the second could only be found by the first being fixed.** Both times
+the reflex would have been to relax the assertion; both times the assertion was right.
+[channel-encryption](protocols/channel-encryption.md) §WP-34/35 is the only copy of the mechanism.
 
 **COMM-16 FOUND A DEFECT ON ITS FIRST RUN, and nearly lost it.** `channelRowGone` came back false,
 which reads exactly like a check written against a behaviour the product does not have - the row
@@ -407,7 +421,7 @@ phase now carries 25.
 | COMM-24 | Private -> public: the salon's group is tombstoned and the community's carries it again | `W1 W2` | `pending` |
 | COMM-25 | An admin's SECOND device receives the salon's seeds after the join, without a second join | `W1 W2` | `pending` |
 
-**TWELVE RUNNERS EXIST, and every row above is still `pending` on purpose** - except the three that
+**THIRTEEN RUNNERS EXIST, and every row above is still `pending` on purpose** - except the three that
 have a build against them, which ran after the phase was rewritten. A runner that PASSes while it is
 still proving the instrument is not a campaign verdict: the campaign is paused until every work
 package lands, and nothing measured before the last one counts. **COMM-8 produced a clean,
