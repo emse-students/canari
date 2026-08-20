@@ -21,6 +21,7 @@ export enum AssociationPermissionFlag {
   MODERATE = 1 << 7,
   MANAGE_PRODUCTS = 1 << 8,
   MANAGE_STRIPE_CONNECT = 1 << 9,
+  MANAGE_PARTNERSHIPS = 1 << 10,
 }
 
 /**
@@ -33,7 +34,8 @@ export const ALL_CORE_FLAGS =
   AssociationPermissionFlag.MANAGE_MEMBERS |
   AssociationPermissionFlag.MANAGE_DOCUMENTS |
   AssociationPermissionFlag.MANAGE_FORMS |
-  AssociationPermissionFlag.MANAGE_PRODUCTS;
+  AssociationPermissionFlag.MANAGE_PRODUCTS |
+  AssociationPermissionFlag.MANAGE_PARTNERSHIPS;
 
 /** Default admin preset when adding a member (core flags + Stripe Connect). */
 export const ASSOCIATION_ADMIN_PRESET =
@@ -1093,6 +1095,8 @@ export interface AssociationProduct {
    */
   webhookConfigured: boolean;
   isActive: boolean;
+  /** Decorative icon shown on the product's card (e.g. a partner brand's logo); null = type-based fallback. */
+  iconUrl: string | null;
   sortOrder: number;
   allowRepeatPurchase: boolean;
   maxPurchasesPerUser: number | null;
@@ -1382,6 +1386,40 @@ export async function updateProduct(
 export async function deleteProduct(associationId: string, productId: string): Promise<void> {
   await request<unknown>(
     `/api/associations/${encodeURIComponent(associationId)}/products/${encodeURIComponent(productId)}`,
+    { method: 'DELETE' }
+  );
+}
+
+/** Uploads a decorative icon for a product (e.g. a partner brand's logo). Requires MANAGE_PRODUCTS. */
+export async function uploadProductIcon(
+  associationId: string,
+  productId: string,
+  file: File
+): Promise<AssociationProduct> {
+  const base = socialUrl();
+  const token = await getToken().catch(() => '');
+  const fd = new FormData();
+  fd.append('file', file);
+  const headers: Record<string, string> = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(
+    `${base}/api/associations/${encodeURIComponent(associationId)}/products/${encodeURIComponent(productId)}/icon`,
+    { method: 'POST', headers, body: fd }
+  );
+  if (!res.ok) {
+    const details = await res.text().catch(() => '');
+    throw new Error(`associations ${res.status}: ${details || res.statusText}`);
+  }
+  return (await res.json()) as AssociationProduct;
+}
+
+/** Removes a product's decorative icon (requires MANAGE_PRODUCTS). */
+export async function deleteProductIcon(
+  associationId: string,
+  productId: string
+): Promise<AssociationProduct> {
+  return request<AssociationProduct>(
+    `/api/associations/${encodeURIComponent(associationId)}/products/${encodeURIComponent(productId)}/icon`,
     { method: 'DELETE' }
   );
 }
@@ -1869,4 +1907,189 @@ export async function unpublishPosterProject(id: string): Promise<PosterProject>
   return request<PosterProject>(`/api/associations/poster/${encodeURIComponent(id)}/unpublish`, {
     method: 'POST',
   });
+}
+
+// ── Partnerships ──────────────────────────────────────────────────────────
+
+/** How a student obtains proof of eligibility for a partnership (mirrors the backend enum). */
+export type PartnershipClaimMode = 'code_pool' | 'shared_code' | 'text';
+
+export interface PartnershipCard {
+  id: string;
+  associationId: string;
+  title: string;
+  description: string | null;
+  link: string | null;
+  claimMode: PartnershipClaimMode;
+  /** Populated only when `claimMode === 'shared_code'`. Never sent to students on the list endpoints. */
+  sharedCode: string | null;
+  /** Populated only when `claimMode === 'text'`. */
+  staticText: string | null;
+  /** Reserved to holders of the association's active cotisation tag. */
+  membersOnly: boolean;
+  isActive: boolean;
+  /** Decorative icon shown on the card (e.g. the partner brand's logo); null = Handshake fallback. */
+  iconUrl: string | null;
+  /** True when the requesting user holds an active cotisation tag for this card's association. */
+  viewerIsCotisant?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** A partnership card as the manage view sees it: claim-pool stock alongside the card itself. */
+export interface ManagedPartnershipCard extends PartnershipCard {
+  claimedCount: number;
+  totalCodes: number;
+}
+
+/** A claimed code as the admin claims view sees it, with the claimant's display name. */
+export interface PartnershipClaimRow {
+  userId: string;
+  firstName: string | null;
+  lastName: string | null;
+  code: string;
+  claimedAt: string;
+}
+
+/** What a student receives on a successful claim - shape depends on `mode`. */
+export interface PartnershipClaimResult {
+  mode: PartnershipClaimMode;
+  code?: string;
+  staticText?: string;
+}
+
+export interface CreatePartnershipCardPayload {
+  title: string;
+  description?: string;
+  link?: string;
+  claimMode: PartnershipClaimMode;
+  sharedCode?: string;
+  staticText?: string;
+  membersOnly?: boolean;
+}
+
+/** `claimMode` cannot be changed after creation - delete and recreate instead. */
+export type UpdatePartnershipCardPayload = Partial<
+  Omit<CreatePartnershipCardPayload, 'claimMode'>
+> & { isActive?: boolean };
+
+/** Returns active partnership cards across every association (shown on the shop page). */
+export async function listAllPartnerships(): Promise<PartnershipCard[]> {
+  return request<PartnershipCard[]>('/api/associations/partnerships/all');
+}
+
+/** Returns active partnership cards for a single association (public). */
+export async function listAssociationPartnerships(
+  associationId: string
+): Promise<PartnershipCard[]> {
+  return request<PartnershipCard[]>(
+    `/api/associations/${encodeURIComponent(associationId)}/partnerships`
+  );
+}
+
+/** Returns all partnership cards including inactive ones, with claim-pool stock counts. Requires MANAGE_PARTNERSHIPS. */
+export async function listAssociationPartnershipsForManage(
+  associationId: string
+): Promise<ManagedPartnershipCard[]> {
+  return request<ManagedPartnershipCard[]>(
+    `/api/associations/${encodeURIComponent(associationId)}/partnerships/manage`
+  );
+}
+
+/** Creates a partnership card (requires MANAGE_PARTNERSHIPS). */
+export async function createPartnershipCard(
+  associationId: string,
+  payload: CreatePartnershipCardPayload
+): Promise<PartnershipCard> {
+  return request<PartnershipCard>(
+    `/api/associations/${encodeURIComponent(associationId)}/partnerships`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  );
+}
+
+/** Updates a partnership card (requires MANAGE_PARTNERSHIPS). */
+export async function updatePartnershipCard(
+  associationId: string,
+  cardId: string,
+  payload: UpdatePartnershipCardPayload
+): Promise<PartnershipCard> {
+  return request<PartnershipCard>(
+    `/api/associations/${encodeURIComponent(associationId)}/partnerships/${encodeURIComponent(cardId)}`,
+    { method: 'PATCH', body: JSON.stringify(payload) }
+  );
+}
+
+/** Deletes a partnership card (requires MANAGE_PARTNERSHIPS). */
+export async function deletePartnershipCard(associationId: string, cardId: string): Promise<void> {
+  await request<unknown>(
+    `/api/associations/${encodeURIComponent(associationId)}/partnerships/${encodeURIComponent(cardId)}`,
+    { method: 'DELETE' }
+  );
+}
+
+/** Bulk-adds codes to a code_pool card's stock; already-stored codes are silently skipped. Requires MANAGE_PARTNERSHIPS. */
+export async function addPartnershipCodes(
+  associationId: string,
+  cardId: string,
+  codes: string[]
+): Promise<{ added: number; totalCodes: number }> {
+  return request<{ added: number; totalCodes: number }>(
+    `/api/associations/${encodeURIComponent(associationId)}/partnerships/${encodeURIComponent(cardId)}/codes`,
+    { method: 'POST', body: JSON.stringify({ codes }) }
+  );
+}
+
+/** Lists claimed codes for a partnership card with claimant names (requires MANAGE_PARTNERSHIPS). */
+export async function listPartnershipClaims(
+  associationId: string,
+  cardId: string
+): Promise<PartnershipClaimRow[]> {
+  return request<PartnershipClaimRow[]>(
+    `/api/associations/${encodeURIComponent(associationId)}/partnerships/${encodeURIComponent(cardId)}/claims`
+  );
+}
+
+/** Claims a partnership card (login required; `membersOnly` cards are gated server-side). */
+export async function claimPartnership(
+  associationId: string,
+  cardId: string
+): Promise<PartnershipClaimResult> {
+  return request<PartnershipClaimResult>(
+    `/api/associations/${encodeURIComponent(associationId)}/partnerships/${encodeURIComponent(cardId)}/claim`,
+    { method: 'POST' }
+  );
+}
+
+/** Uploads a decorative icon for a partnership card (e.g. the partner brand's logo). Requires MANAGE_PARTNERSHIPS. */
+export async function uploadPartnershipIcon(
+  associationId: string,
+  cardId: string,
+  file: File
+): Promise<PartnershipCard> {
+  const base = socialUrl();
+  const token = await getToken().catch(() => '');
+  const fd = new FormData();
+  fd.append('file', file);
+  const headers: Record<string, string> = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(
+    `${base}/api/associations/${encodeURIComponent(associationId)}/partnerships/${encodeURIComponent(cardId)}/icon`,
+    { method: 'POST', headers, body: fd }
+  );
+  if (!res.ok) {
+    const details = await res.text().catch(() => '');
+    throw new Error(`associations ${res.status}: ${details || res.statusText}`);
+  }
+  return (await res.json()) as PartnershipCard;
+}
+
+/** Removes a partnership card's decorative icon (requires MANAGE_PARTNERSHIPS). */
+export async function deletePartnershipIcon(
+  associationId: string,
+  cardId: string
+): Promise<PartnershipCard> {
+  return request<PartnershipCard>(
+    `/api/associations/${encodeURIComponent(associationId)}/partnerships/${encodeURIComponent(cardId)}/icon`,
+    { method: 'DELETE' }
+  );
 }

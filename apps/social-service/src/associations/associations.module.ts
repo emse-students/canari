@@ -13,12 +13,15 @@ import { PosterProject } from './entities/poster-project.entity';
 import { AssociationProduct } from './entities/association-product.entity';
 import { WebhookDelivery } from './entities/webhook-delivery.entity';
 import { AssociationRoleHistory } from './entities/association-role-history.entity';
+import { PartnershipCard } from './entities/partnership-card.entity';
+import { PartnershipCode } from './entities/partnership-code.entity';
 import { Post } from '../posts/entities/post.entity';
 import { Form } from '../forms/entities/form.entity';
 import { PostNotification } from '../posts/entities/post-notification.entity';
 import { AssociationsService } from './associations.service';
 import { UserProfileService } from './user-profile.service';
 import { ProductsService } from './products.service';
+import { PartnershipsService } from './partnerships.service';
 import { CercleDeliveryScheduler } from './cercle-delivery.scheduler';
 import { AssociationCategoriesService } from './association-categories.service';
 import { PosterService } from './poster.service';
@@ -50,6 +53,8 @@ import { PurchaseRecordModule } from '../users/purchase-record.module';
       AssociationProduct,
       WebhookDelivery,
       AssociationRoleHistory,
+      PartnershipCard,
+      PartnershipCode,
       Post,
       Form,
       PostNotification,
@@ -62,6 +67,7 @@ import { PurchaseRecordModule } from '../users/purchase-record.module';
     AssociationsService,
     UserProfileService,
     ProductsService,
+    PartnershipsService,
     CercleDeliveryScheduler,
     AssociationCategoriesService,
     PosterService,
@@ -74,6 +80,12 @@ import { PurchaseRecordModule } from '../users/purchase-record.module';
   // Category/poster controllers are listed FIRST so their literal `associations/categories`
   // and `associations/poster` routes register before the `associations/:id` matcher.
   controllers: [AssociationCategoriesController, PosterController, AssociationsController],
-  exports: [AssociationsService, ProductsService, UserProfileService, PosterService],
+  exports: [
+    AssociationsService,
+    ProductsService,
+    PartnershipsService,
+    UserProfileService,
+    PosterService,
+  ],
 })
 export class AssociationsModule {}

@@ -30,12 +30,15 @@ export enum AssociationPermissionFlag {
   MANAGE_PRODUCTS = 1 << 8,
   /** Start or resume Stripe Connect onboarding for the association. */
   MANAGE_STRIPE_CONNECT = 1 << 9,
+  /** Create, edit and delete partnership cards, and view/add their codes. */
+  MANAGE_PARTNERSHIPS = 1 << 10,
 }
 
 /**
  * Base admin flags granted to association admins.
- * = POST_AS_ASSO | PROPOSE_EVENT | MANAGE_MEMBERS | MANAGE_DOCUMENTS | MANAGE_FORMS | MANAGE_PRODUCTS
- * = 287
+ * = POST_AS_ASSO | PROPOSE_EVENT | MANAGE_MEMBERS | MANAGE_DOCUMENTS | MANAGE_FORMS |
+ *   MANAGE_PRODUCTS | MANAGE_PARTNERSHIPS
+ * = 1311
  *
  * Intentionally excludes:
  * - MANAGE_STRIPE_CONNECT (1 << 9): sensitive financial flag, granted separately via
@@ -50,7 +53,8 @@ export const ALL_CORE_FLAGS =
   AssociationPermissionFlag.MANAGE_MEMBERS |
   AssociationPermissionFlag.MANAGE_DOCUMENTS |
   AssociationPermissionFlag.MANAGE_FORMS |
-  AssociationPermissionFlag.MANAGE_PRODUCTS; // = 287
+  AssociationPermissionFlag.MANAGE_PRODUCTS |
+  AssociationPermissionFlag.MANAGE_PARTNERSHIPS; // = 1311
 
 /** TypeORM entity representing a user's membership in an association. */
 @Entity('association_members')

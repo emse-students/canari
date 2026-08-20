@@ -4,6 +4,7 @@ import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { AssociationsController } from './associations.controller';
 import { AssociationsService } from './associations.service';
 import { ProductsService } from './products.service';
+import { PartnershipsService } from './partnerships.service';
 import { FollowsService } from '../follows/follows.service';
 import { UserTagService } from '../users/user-tag.service';
 import { UserProfileService } from './user-profile.service';
@@ -20,6 +21,7 @@ describe('AssociationsController cotisation config gating (D5)', () => {
     const productsService = {
       provisionCotisationProduct: jest.fn(() => Promise.resolve({ id: 'prod1' })),
     };
+    const partnershipsService = {};
     const followsService = {};
     const userTagService = {};
     const userProfileService = {};
@@ -27,6 +29,7 @@ describe('AssociationsController cotisation config gating (D5)', () => {
     const controller = new AssociationsController(
       service as unknown as AssociationsService,
       productsService as unknown as ProductsService,
+      partnershipsService as PartnershipsService,
       followsService as FollowsService,
       userTagService as UserTagService,
       userProfileService as UserProfileService
@@ -109,6 +112,7 @@ describe('AssociationsController secret stripping', () => {
     return new AssociationsController(
       service as unknown as AssociationsService,
       {} as ProductsService,
+      {} as PartnershipsService,
       {} as FollowsService,
       {} as UserTagService,
       {} as UserProfileService

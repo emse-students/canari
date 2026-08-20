@@ -38,6 +38,7 @@
     Users as UsersIcon,
     HandCoins,
     Share2,
+    Handshake,
   } from '@lucide/svelte';
   import AssociationDocumentManager from '$lib/components/associations/AssociationDocumentManager.svelte';
   import EditProfileTab from '$lib/components/associations/edit/EditProfileTab.svelte';
@@ -48,6 +49,7 @@
   import EditFormsTab from '$lib/components/associations/edit/EditFormsTab.svelte';
   import EditCotisationsTab from '$lib/components/associations/edit/EditCotisationsTab.svelte';
   import EditDelegationTab from '$lib/components/associations/edit/EditDelegationTab.svelte';
+  import EditPartnershipsTab from '$lib/components/associations/edit/EditPartnershipsTab.svelte';
   import LydiaBusinessOnboardingForm from '$lib/components/associations/edit/LydiaBusinessOnboardingForm.svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -84,6 +86,7 @@
     | 'payments'
     | 'delegation'
     | 'formulaires'
+    | 'partnerships'
     | 'danger'
   >('profile');
 
@@ -116,6 +119,16 @@
       isSuperAdminUser ||
       (!!myMembership &&
         hasPermissionFlag(myMembership.permissions ?? 0, AssociationPermissionFlag.MANAGE_FORMS))
+  );
+
+  let canManagePartnerships = $derived(
+    isGlobalAdminUser ||
+      isSuperAdminUser ||
+      (!!myMembership &&
+        hasPermissionFlag(
+          myMembership.permissions ?? 0,
+          AssociationPermissionFlag.MANAGE_PARTNERSHIPS
+        ))
   );
 
   let canManageStripeConnect = $derived(
@@ -355,7 +368,7 @@
     <!-- Section tabs -->
     <nav
       data-swipe-nav-ignore
-      class="border-cn-border/80 sticky top-0 z-30 -mx-4 border-y bg-[var(--cn-bg)]/95 px-4 py-3 backdrop-blur-md sm:mx-0 sm:rounded-2xl sm:border"
+      class="border-cn-border/80 sticky top-0 z-30 -mx-4 border-y bg-(--cn-bg)/95 px-4 py-3 backdrop-blur-md sm:mx-0 sm:rounded-2xl sm:border"
       aria-label="Edit sections"
     >
       <div class="flex flex-wrap gap-2">
@@ -365,7 +378,7 @@
           class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
           {editSection === 'profile'
             ? 'bg-cn-yellow text-cn-ink shadow-sm'
-            : 'border-cn-border text-text-muted hover:text-text-main border bg-[var(--cn-surface)]'}"
+            : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
         >
           <Building2 size={17} />
           {m.asso_edit_tab_profile()}
@@ -377,7 +390,7 @@
             class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'members'
               ? 'bg-cn-yellow text-cn-ink shadow-sm'
-              : 'border-cn-border text-text-muted hover:text-text-main border bg-[var(--cn-surface)]'}"
+              : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
           >
             <Users size={17} />
             {m.common_members_label()}
@@ -394,7 +407,7 @@
             class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'payments'
               ? 'bg-cn-yellow text-cn-ink shadow-sm'
-              : 'border-cn-border text-text-muted hover:text-text-main border bg-[var(--cn-surface)]'}"
+              : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
           >
             <CreditCard size={17} />
             {m.asso_edit_tab_payments()}
@@ -407,7 +420,7 @@
             class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'documents'
               ? 'bg-cn-yellow text-cn-ink shadow-sm'
-              : 'border-cn-border text-text-muted hover:text-text-main border bg-[var(--cn-surface)]'}"
+              : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
           >
             <FolderLock size={17} />
             {m.asso_edit_tab_documents()}
@@ -420,7 +433,7 @@
             class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'achats'
               ? 'bg-cn-yellow text-cn-ink shadow-sm'
-              : 'border-cn-border text-text-muted hover:text-text-main border bg-[var(--cn-surface)]'}"
+              : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
           >
             <UsersIcon size={17} />
             {m.asso_edit_tab_achats()}
@@ -433,7 +446,7 @@
             class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'cotisations'
               ? 'bg-cn-yellow text-cn-ink shadow-sm'
-              : 'border-cn-border text-text-muted hover:text-text-main border bg-[var(--cn-surface)]'}"
+              : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
           >
             <HandCoins size={17} />
             {m.asso_edit_tab_cotisations()}
@@ -446,7 +459,7 @@
             class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'delegation'
               ? 'bg-cn-yellow text-cn-ink shadow-sm'
-              : 'border-cn-border text-text-muted hover:text-text-main border bg-[var(--cn-surface)]'}"
+              : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
           >
             <Share2 size={17} />
             {m.asso_edit_tab_delegation()}
@@ -459,10 +472,23 @@
             class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'formulaires'
               ? 'bg-cn-yellow text-cn-ink shadow-sm'
-              : 'border-cn-border text-text-muted hover:text-text-main border bg-[var(--cn-surface)]'}"
+              : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
           >
             <ClipboardList size={17} />
             {m.asso_edit_tab_formulaires()}
+          </button>
+        {/if}
+        {#if canManagePartnerships}
+          <button
+            type="button"
+            onclick={() => (editSection = 'partnerships')}
+            class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+            {editSection === 'partnerships'
+              ? 'bg-cn-yellow text-cn-ink shadow-sm'
+              : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
+          >
+            <Handshake size={17} />
+            {m.asso_edit_tab_partenariats()}
           </button>
         {/if}
         {#if isGlobalAdminUser}
@@ -472,7 +498,7 @@
             class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'danger'
               ? 'bg-red-err/20 text-red-err border-red-err/30 border'
-              : 'border-cn-border text-text-muted hover:text-red-err border bg-[var(--cn-surface)]'}"
+              : 'border-cn-border text-text-muted hover:text-red-err border bg-(--cn-surface)'}"
           >
             <AlertTriangle size={17} />
             {m.asso_edit_tab_danger()}
@@ -499,7 +525,7 @@
           />
         {:else if canManageStripeConnect}
           <div
-            class="border-cn-border space-y-4 rounded-2xl border bg-[var(--cn-surface)]/95 p-6 shadow-sm"
+            class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm"
           >
             <div class="flex flex-wrap items-start justify-between gap-3">
               <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
@@ -662,9 +688,7 @@
     {/if}
 
     {#if editSection === 'documents' && canManageDocuments && asso}
-      <div
-        class="border-cn-border space-y-5 rounded-2xl border bg-[var(--cn-surface)]/95 p-6 shadow-sm"
-      >
+      <div class="border-cn-border space-y-5 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm">
         <div>
           <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
             <FolderLock size={20} />
@@ -706,6 +730,10 @@
         {canManageStripeConnect}
         onGoToPayments={() => (editSection = 'payments')}
       />
+    {/if}
+
+    {#if editSection === 'partnerships' && canManagePartnerships && asso}
+      <EditPartnershipsTab {asso} />
     {/if}
 
     {#if editSection === 'danger' && isGlobalAdminUser}

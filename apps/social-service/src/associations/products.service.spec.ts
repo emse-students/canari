@@ -8,6 +8,7 @@ import { ProductsService } from './products.service';
 import { AssociationProduct } from './entities/association-product.entity';
 import { WebhookDelivery } from './entities/webhook-delivery.entity';
 import { Association } from './entities/association.entity';
+import { AssociationsService } from './associations.service';
 import { UserTagService } from '../users/user-tag.service';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 
@@ -88,6 +89,10 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       create: jest.fn((x: unknown) => Promise.resolve(x)),
       findByPaymentIntent: jest.fn(() => Promise.resolve(null)),
     };
+    const associationsService = {
+      uploadPublicImage: jest.fn(() => Promise.resolve('media1')),
+      deleteMediaBestEffort: jest.fn(() => Promise.resolve()),
+    };
 
     const service = new ProductsService(
       productRepo as unknown as Repository<AssociationProduct>,
@@ -96,7 +101,8 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       httpService,
       config,
       userTagService as unknown as UserTagService,
-      purchaseRecordService as unknown as PurchaseRecordService
+      purchaseRecordService as unknown as PurchaseRecordService,
+      associationsService as unknown as AssociationsService
     );
 
     return {
@@ -107,6 +113,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       httpService,
       userTagService,
       purchaseRecordService,
+      associationsService,
       manager,
     };
   }
@@ -1170,6 +1177,67 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
 
       const status = await service.getCotisantStatusBySlug('bde', 'user1');
       expect(status).toEqual({ isCotisant: true, tier: null, expiresAt: null });
+    });
+  });
+
+  describe('setProductIcon / clearProductIcon', () => {
+    const file = { buffer: Buffer.from('x'), mimetype: 'image/png', size: 1024 };
+
+    it('uploads the icon, sets iconMediaId/iconUrl, and deletes the previous media object', async () => {
+      const { service, productRepo, associationsService } = makeService();
+      productRepo.findOne.mockResolvedValue(product({ iconMediaId: 'old-media' }));
+      associationsService.uploadPublicImage.mockResolvedValue('new-media');
+
+      const result = await service.setProductIcon('asso1', 'prod1', file, 'Bearer token');
+
+      expect(associationsService.uploadPublicImage).toHaveBeenCalledWith(file, 'Bearer token');
+      expect(result.iconMediaId).toBe('new-media');
+      expect(result.iconUrl).toContain('/api/media/public/new-media');
+      expect(associationsService.deleteMediaBestEffort).toHaveBeenCalledWith(
+        'old-media',
+        'Bearer token'
+      );
+    });
+
+    it('rejects a file over the size limit', async () => {
+      const { service, productRepo } = makeService();
+      productRepo.findOne.mockResolvedValue(product());
+
+      await expect(
+        service.setProductIcon('asso1', 'prod1', { ...file, size: 3 * 1024 * 1024 }, 'Bearer token')
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects a disallowed mime type', async () => {
+      const { service, productRepo } = makeService();
+      productRepo.findOne.mockResolvedValue(product());
+
+      await expect(
+        service.setProductIcon('asso1', 'prod1', { ...file, mimetype: 'image/gif' }, 'Bearer token')
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects a missing bearer token', async () => {
+      const { service, productRepo } = makeService();
+      productRepo.findOne.mockResolvedValue(product());
+
+      await expect(service.setProductIcon('asso1', 'prod1', file, undefined)).rejects.toThrow(
+        BadRequestException
+      );
+    });
+
+    it('clears the icon and best-effort deletes the old media object', async () => {
+      const { service, productRepo, associationsService } = makeService();
+      productRepo.findOne.mockResolvedValue(product({ iconMediaId: 'old-media' }));
+
+      const result = await service.clearProductIcon('asso1', 'prod1', 'Bearer token');
+
+      expect(result.iconMediaId).toBeNull();
+      expect(result.iconUrl).toBeNull();
+      expect(associationsService.deleteMediaBestEffort).toHaveBeenCalledWith(
+        'old-media',
+        'Bearer token'
+      );
     });
   });
 });

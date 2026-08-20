@@ -11,11 +11,16 @@
     ensureAssociationSuperAdmin,
     AssociationPermissionFlag,
     listAssociationProducts,
+    listAssociationPartnerships,
     type Association,
     type AssociationMember,
     type AssociationProduct,
+    type PartnershipCard,
   } from '$lib/associations/api';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
+  import PartnershipCardList from '$lib/components/shop/PartnershipCardList.svelte';
+  import CardTile from '$lib/components/shared/CardTile.svelte';
+  import { productFallbackIcon } from '$lib/utils/cardIcons';
   import { currentUserId, isGlobalAdmin, isAssociationSuperAdmin } from '$lib/stores/user';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import {
@@ -26,6 +31,7 @@
     CalendarDays,
     Users,
     ShoppingBag,
+    Handshake,
     Download,
     Mail,
     ArrowLeft,
@@ -72,8 +78,9 @@
 
   let following = $state(false);
   let followLoading = $state(false);
-  let activeSection = $state<'about' | 'calendar' | 'members' | 'shop'>('about');
+  let activeSection = $state<'about' | 'calendar' | 'members' | 'shop' | 'partnerships'>('about');
   let products = $state<AssociationProduct[]>([]);
+  let partnerships = $state<PartnershipCard[]>([]);
   let shopCustomAmounts = $state<Record<string, number>>({});
 
   onMount(loadData);
@@ -96,9 +103,10 @@
         return;
       }
       asso = loaded;
-      [members, products] = await Promise.all([
+      [members, products, partnerships] = await Promise.all([
         listMembers(asso.id),
         listAssociationProducts(asso.id).catch(() => []),
+        listAssociationPartnerships(asso.id).catch(() => []),
       ]);
       const names: Record<string, string> = {};
       for (const m of members) {
@@ -299,6 +307,19 @@
             {m.asso_tab_shop()}
           </button>
         {/if}
+        {#if partnerships.length > 0}
+          <button
+            type="button"
+            onclick={() => (activeSection = 'partnerships')}
+            class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+            {activeSection === 'partnerships'
+              ? 'bg-cn-yellow text-cn-ink shadow-sm'
+              : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
+          >
+            <Handshake size={17} />
+            {m.asso_tab_partnerships()}
+          </button>
+        {/if}
       </div>
     </nav>
 
@@ -391,57 +412,67 @@
         </div>
         <div class="space-y-3">
           {#each products as product (product.id)}
-            <div class="border-cn-border flex items-start gap-4 rounded-xl border p-4">
-              <div class="min-w-0 flex-1">
-                <p class="text-text-main text-sm font-semibold">{product.name}</p>
-                {#if product.description}
-                  <p class="text-text-muted mt-0.5 text-xs">{product.description}</p>
-                {/if}
-                <p class="text-text-muted mt-1 text-xs">
-                  {#if product.amountCents}
-                    {(product.amountCents / 100).toFixed(2)} {product.currency.toUpperCase()}
-                  {:else if product.allowCustomAmount}
-                    {m.asso_product_custom_price()}
-                  {:else}
-                    {m.asso_product_free_price()}
+            <CardTile iconUrl={product.iconUrl} fallbackIcon={productFallbackIcon(product.type)}>
+              <div class="flex items-start gap-4 p-4">
+                <div class="min-w-0 flex-1">
+                  <p class="text-text-main text-sm font-semibold">{product.name}</p>
+                  {#if product.description}
+                    <p class="text-text-muted mt-0.5 text-xs">{product.description}</p>
                   {/if}
-                  <span
-                    class="bg-cn-border/40 ml-2 rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase"
-                  >
-                    {product.type === 'membership'
-                      ? m.asso_product_membership_type()
-                      : product.type === 'balance_topup'
-                        ? m.asso_product_topup_type()
-                        : m.asso_product_other_type()}
-                  </span>
-                </p>
-                {#if product.allowCustomAmount && product.amountCents === null}
-                  <div class="mt-2 flex max-w-xs items-center gap-2">
-                    <input
-                      type="number"
-                      min={product.customAmountMinCents != null
-                        ? product.customAmountMinCents / 100
-                        : 0}
-                      max={product.customAmountMaxCents != null
-                        ? product.customAmountMaxCents / 100
-                        : undefined}
-                      step="0.01"
-                      placeholder={m.asso_product_amount_placeholder()}
-                      class="border-cn-border text-text-main focus:ring-cn-accent flex-1 rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
-                      bind:value={shopCustomAmounts[product.id]}
-                    />
-                  </div>
-                {/if}
+                  <p class="text-text-muted mt-1 text-xs">
+                    {#if product.amountCents}
+                      {(product.amountCents / 100).toFixed(2)} {product.currency.toUpperCase()}
+                    {:else if product.allowCustomAmount}
+                      {m.asso_product_custom_price()}
+                    {:else}
+                      {m.asso_product_free_price()}
+                    {/if}
+                    <span
+                      class="bg-cn-border/40 ml-2 rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase"
+                    >
+                      {product.type === 'membership'
+                        ? m.asso_product_membership_type()
+                        : product.type === 'balance_topup'
+                          ? m.asso_product_topup_type()
+                          : m.asso_product_other_type()}
+                    </span>
+                  </p>
+                  {#if product.allowCustomAmount && product.amountCents === null}
+                    <div class="mt-2 flex max-w-xs items-center gap-2">
+                      <input
+                        type="number"
+                        min={product.customAmountMinCents != null
+                          ? product.customAmountMinCents / 100
+                          : 0}
+                        max={product.customAmountMaxCents != null
+                          ? product.customAmountMaxCents / 100
+                          : undefined}
+                        step="0.01"
+                        placeholder={m.asso_product_amount_placeholder()}
+                        class="border-cn-border text-text-main focus:ring-cn-accent flex-1 rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
+                        bind:value={shopCustomAmounts[product.id]}
+                      />
+                    </div>
+                  {/if}
+                </div>
+                <ProductPurchaseButton
+                  {product}
+                  customAmountEuros={shopCustomAmounts[product.id]}
+                  variant="yellow"
+                  class="shrink-0 px-3 py-2 text-xs"
+                />
               </div>
-              <ProductPurchaseButton
-                {product}
-                customAmountEuros={shopCustomAmounts[product.id]}
-                variant="yellow"
-                class="shrink-0 px-3 py-2 text-xs"
-              />
-            </div>
+            </CardTile>
           {/each}
         </div>
+      </div>
+    {:else if activeSection === 'partnerships'}
+      <div class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface)/90 p-6 shadow-sm">
+        <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+          <Handshake size={20} />
+          {m.asso_tab_partnerships()}
+        </h2>
+        <PartnershipCardList cards={partnerships} />
       </div>
     {/if}
   {/if}

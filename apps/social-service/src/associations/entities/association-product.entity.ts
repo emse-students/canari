@@ -126,6 +126,13 @@ export class AssociationProduct {
   @Column({ type: 'int', nullable: true })
   maxPurchasesTotal: number | null;
 
+  @Column({ type: 'varchar', nullable: true })
+  iconUrl: string | null;
+
+  /** Media-service UUID for GET /api/media/public/:id (opaque blob in Garage). */
+  @Column({ type: 'uuid', nullable: true })
+  iconMediaId: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

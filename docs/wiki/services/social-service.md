@@ -10,7 +10,8 @@ The social-service manages all community features:
 
 - **Posts**: news feed with Markdown, polls, reactions, comments, reports, pinning.
 - **Channels**: encrypted workspaces with role-based access, HKDF-derived per-channel keys, server-assisted key distribution.
-- **Associations**: club management, members, documents, calendar events, boutique products.
+- **Associations**: club management, members, documents, calendar events, boutique products,
+  partnership cards (partner discounts, claimed by code, shared code, or a static instruction).
 - **Forms**: dynamic form builder with optional Stripe payment, cash payment validation.
 - **Cotisations**: membership dues as time-bounded `user_tags`, granted via boutique products, manual grants, or paid forms - see [Cotisations](../cotisations.md).
 
@@ -18,7 +19,7 @@ The social-service manages all community features:
 
 | Store | Purpose |
 |---|---|
-| PostgreSQL | Channels, workspaces, memberships, Graine sessions, forms, submissions, associations, products, **and posts, comments and reactions** |
+| PostgreSQL | Channels, workspaces, memberships, Graine sessions, forms, submissions, associations, products, partnership cards and codes, **and posts, comments and reactions** |
 | Redis | `chat:channel_events` pub/sub (publishes to chat-gateway) |
 
 This table said "MongoDB - posts, comments, reactions" until 2026-08-18. It was never true: the
@@ -430,6 +431,8 @@ then writes the badge from what remains — computed from the array already in h
 | DELETE | `/api/associations/:id/events/:eventId` | Delete calendar event |
 | POST | `/api/associations/:id/products` | Create boutique product |
 | POST | `/api/associations/:id/products/:productId/checkout` | Start Stripe checkout for product |
+| POST | `/api/associations/:id/partnerships` | Create a partnership card (`MANAGE_PARTNERSHIPS`) |
+| POST | `/api/associations/:id/partnerships/:cardId/claim` | Claim a partnership (any logged-in member; `membersOnly` gated server-side) |
 
 ### An association row carries two secrets, and three reads spread it whole
 

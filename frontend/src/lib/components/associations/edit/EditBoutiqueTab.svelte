@@ -5,6 +5,8 @@
     createProduct,
     updateProduct,
     deleteProduct,
+    uploadProductIcon,
+    deleteProductIcon,
     type Association,
     type AssociationProduct,
   } from '$lib/associations/api';
@@ -12,6 +14,9 @@
   import { Plus, Trash2, ChevronDown, ShoppingBag } from '@lucide/svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
   import StripeNetPayoutHint from '$lib/components/payments/StripeNetPayoutHint.svelte';
+  import CardTile from '$lib/components/shared/CardTile.svelte';
+  import CardIconEditor from '$lib/components/shared/CardIconEditor.svelte';
+  import { productFallbackIcon } from '$lib/utils/cardIcons';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -166,6 +171,16 @@
     } catch (e) {
       productsError = e instanceof Error ? e.message : 'Error';
     }
+  }
+
+  async function handleUploadProductIcon(product: AssociationProduct, file: File) {
+    const updated = await uploadProductIcon(asso.id, product.id, file);
+    products = products.map((p) => (p.id === product.id ? updated : p));
+  }
+
+  async function handleRemoveProductIcon(product: AssociationProduct) {
+    const updated = await deleteProductIcon(asso.id, product.id);
+    products = products.map((p) => (p.id === product.id ? updated : p));
   }
 </script>
 
@@ -410,166 +425,178 @@
   {:else}
     <ul class="space-y-3">
       {#each otherProducts as product (product.id)}
-        <li class="border-cn-border/70 bg-cn-bg/40 overflow-hidden rounded-xl border">
-          <div class="flex items-center gap-3 px-4 py-3">
-            <div class="min-w-0 flex-1">
-              <div class="flex flex-wrap items-center gap-2">
-                <p class="text-text-main text-sm font-semibold">{product.name}</p>
-                <span
-                  class="rounded-full px-2 py-0.5 text-xs font-semibold {product.isActive
-                    ? 'bg-green-ok/15 text-green-ok'
-                    : 'bg-cn-surface-alt text-text-muted'}"
+        <li>
+          <CardTile iconUrl={product.iconUrl} fallbackIcon={productFallbackIcon(product.type)}>
+            <div class="flex items-center gap-3 px-4 py-3">
+              <div class="min-w-0 flex-1">
+                <div class="flex flex-wrap items-center gap-2">
+                  <p class="text-text-main text-sm font-semibold">{product.name}</p>
+                  <span
+                    class="rounded-full px-2 py-0.5 text-xs font-semibold {product.isActive
+                      ? 'bg-green-ok/15 text-green-ok'
+                      : 'bg-cn-surface-alt text-text-muted'}"
+                  >
+                    {product.isActive
+                      ? m.asso_boutique_product_active()
+                      : m.asso_boutique_product_inactive()}
+                  </span>
+                  {#if product.membersOnly}
+                    <span
+                      class="bg-amber-warn/15 text-amber-warn rounded-full px-2 py-0.5 text-xs font-semibold"
+                    >
+                      {m.asso_boutique_members_only_label()}
+                    </span>
+                  {/if}
+                </div>
+                <p class="text-text-muted mt-0.5 text-xs">
+                  {product.amountCents != null
+                    ? `${(product.amountCents / 100).toFixed(2)} €`
+                    : m.asso_boutique_product_free()}
+                  {product.grantedTagName
+                    ? ` · ${m.asso_boutique_product_tag_label({ tag: product.grantedTagName })}`
+                    : ''}
+                  {#if product.amountCentsMember != null}
+                    · {m.asso_boutique_product_member_price_label({
+                      price: (product.amountCentsMember / 100).toFixed(2),
+                    })}
+                  {/if}
+                  {#if product.allowRepeatPurchase}
+                    · {m.asso_boutique_product_repeat_label()}
+                  {/if}
+                  {#if product.maxPurchasesTotal != null}
+                    · {m.asso_boutique_product_stock_label({ count: product.maxPurchasesTotal })}
+                  {/if}
+                </p>
+              </div>
+              <div class="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  onclick={() => toggleProductSettings(product)}
+                  class="border-cn-border inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-(--cn-surface)"
+                >
+                  {m.asso_boutique_limits_button()}
+                  <ChevronDown
+                    size={12}
+                    class="transition-transform {expandedProductSettingsId === product.id
+                      ? 'rotate-180'
+                      : ''}"
+                  />
+                </button>
+                <button
+                  type="button"
+                  onclick={() => handleToggleProduct(product)}
+                  class="border-cn-border rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-(--cn-surface)"
                 >
                   {product.isActive
-                    ? m.asso_boutique_product_active()
-                    : m.asso_boutique_product_inactive()}
-                </span>
-                {#if product.membersOnly}
-                  <span
-                    class="bg-amber-warn/15 text-amber-warn rounded-full px-2 py-0.5 text-xs font-semibold"
-                  >
-                    {m.asso_boutique_members_only_label()}
-                  </span>
-                {/if}
-              </div>
-              <p class="text-text-muted mt-0.5 text-xs">
-                {product.amountCents != null
-                  ? `${(product.amountCents / 100).toFixed(2)} €`
-                  : m.asso_boutique_product_free()}
-                {product.grantedTagName
-                  ? ` · ${m.asso_boutique_product_tag_label({ tag: product.grantedTagName })}`
-                  : ''}
-                {#if product.amountCentsMember != null}
-                  · {m.asso_boutique_product_member_price_label({
-                    price: (product.amountCentsMember / 100).toFixed(2),
-                  })}
-                {/if}
-                {#if product.allowRepeatPurchase}
-                  · {m.asso_boutique_product_repeat_label()}
-                {/if}
-                {#if product.maxPurchasesTotal != null}
-                  · {m.asso_boutique_product_stock_label({ count: product.maxPurchasesTotal })}
-                {/if}
-              </p>
-            </div>
-            <div class="flex shrink-0 items-center gap-2">
-              <button
-                type="button"
-                onclick={() => toggleProductSettings(product)}
-                class="border-cn-border inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-(--cn-surface)"
-              >
-                {m.asso_boutique_limits_button()}
-                <ChevronDown
-                  size={12}
-                  class="transition-transform {expandedProductSettingsId === product.id
-                    ? 'rotate-180'
-                    : ''}"
-                />
-              </button>
-              <button
-                type="button"
-                onclick={() => handleToggleProduct(product)}
-                class="border-cn-border rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-(--cn-surface)"
-              >
-                {product.isActive
-                  ? m.asso_boutique_deactivate_button()
-                  : m.asso_boutique_activate_button()}
-              </button>
-              <button
-                type="button"
-                onclick={() => handleDeleteProduct(product)}
-                title={m.common_delete_button()}
-                class="border-red-err/30 bg-red-err/10 text-red-err hover:bg-red-err/20 inline-flex items-center justify-center rounded-xl border p-2 transition-colors"
-              >
-                <Trash2 size={14} />
-              </button>
-            </div>
-          </div>
-
-          {#if expandedProductSettingsId === product.id}
-            <div class="border-cn-border/60 bg-cn-bg/20 border-t px-4 py-3">
-              <form
-                class="grid gap-3 sm:grid-cols-2"
-                onsubmit={(e) => {
-                  e.preventDefault();
-                  void handleSaveProductSettings(product, e.currentTarget);
-                }}
-              >
-                <label class="flex cursor-pointer items-center gap-2 text-sm sm:col-span-2">
-                  <input
-                    type="checkbox"
-                    name="membersOnly"
-                    checked={product.membersOnly}
-                    class="rounded"
-                  />
-                  {m.asso_boutique_members_only_label()}
-                </label>
-                <div class="space-y-1 sm:col-span-2">
-                  <label
-                    for="member-price-{product.id}"
-                    class="text-text-muted text-xs font-semibold"
-                    >{m.asso_boutique_member_price_label()}</label
-                  >
-                  <input
-                    id="member-price-{product.id}"
-                    name="memberPriceEuros"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={product.amountCentsMember != null ? product.amountCentsMember / 100 : ''}
-                    placeholder={m.asso_boutique_member_price_placeholder()}
-                    class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
-                  />
-                </div>
-                <label class="flex cursor-pointer items-center gap-2 text-sm sm:col-span-2">
-                  <input
-                    type="checkbox"
-                    name="allowRepeat"
-                    checked={product.allowRepeatPurchase}
-                    class="rounded"
-                  />
-                  {m.asso_boutique_allow_repeat_label()}
-                </label>
-                <div class="space-y-1">
-                  <label for="max-user-{product.id}" class="text-text-muted text-xs font-semibold"
-                    >{m.asso_boutique_max_per_user_field_label()}</label
-                  >
-                  <input
-                    id="max-user-{product.id}"
-                    name="maxPerUser"
-                    type="number"
-                    min="1"
-                    value={product.maxPurchasesPerUser ?? ''}
-                    placeholder={m.asso_boutique_unlimited_placeholder()}
-                    class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
-                  />
-                </div>
-                <div class="space-y-1">
-                  <label for="max-total-{product.id}" class="text-text-muted text-xs font-semibold"
-                    >{m.asso_boutique_max_total_field_label()}</label
-                  >
-                  <input
-                    id="max-total-{product.id}"
-                    name="maxTotal"
-                    type="number"
-                    min="1"
-                    value={product.maxPurchasesTotal ?? ''}
-                    placeholder={m.asso_boutique_unlimited_placeholder()}
-                    class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
-                  />
-                </div>
-                <button
-                  type="submit"
-                  disabled={savingProductSettings === product.id}
-                  class="bg-cn-yellow text-cn-dark w-fit rounded-lg px-4 py-2 text-xs font-bold disabled:opacity-50 sm:col-span-2"
-                >
-                  {savingProductSettings === product.id
-                    ? m.asso_boutique_saving_limits_label()
-                    : m.asso_boutique_save_limits_button()}
+                    ? m.asso_boutique_deactivate_button()
+                    : m.asso_boutique_activate_button()}
                 </button>
-              </form>
+                <button
+                  type="button"
+                  onclick={() => handleDeleteProduct(product)}
+                  title={m.common_delete_button()}
+                  class="border-red-err/30 bg-red-err/10 text-red-err hover:bg-red-err/20 inline-flex items-center justify-center rounded-xl border p-2 transition-colors"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
             </div>
-          {/if}
+
+            {#if expandedProductSettingsId === product.id}
+              <div class="border-cn-border/60 bg-cn-bg/20 space-y-4 border-t px-4 py-3">
+                <CardIconEditor
+                  iconUrl={product.iconUrl}
+                  fallbackIcon={productFallbackIcon(product.type)}
+                  onUpload={(file) => handleUploadProductIcon(product, file)}
+                  onRemove={() => handleRemoveProductIcon(product)}
+                />
+                <form
+                  class="grid gap-3 sm:grid-cols-2"
+                  onsubmit={(e) => {
+                    e.preventDefault();
+                    void handleSaveProductSettings(product, e.currentTarget);
+                  }}
+                >
+                  <label class="flex cursor-pointer items-center gap-2 text-sm sm:col-span-2">
+                    <input
+                      type="checkbox"
+                      name="membersOnly"
+                      checked={product.membersOnly}
+                      class="rounded"
+                    />
+                    {m.asso_boutique_members_only_label()}
+                  </label>
+                  <div class="space-y-1 sm:col-span-2">
+                    <label
+                      for="member-price-{product.id}"
+                      class="text-text-muted text-xs font-semibold"
+                      >{m.asso_boutique_member_price_label()}</label
+                    >
+                    <input
+                      id="member-price-{product.id}"
+                      name="memberPriceEuros"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={product.amountCentsMember != null
+                        ? product.amountCentsMember / 100
+                        : ''}
+                      placeholder={m.asso_boutique_member_price_placeholder()}
+                      class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <label class="flex cursor-pointer items-center gap-2 text-sm sm:col-span-2">
+                    <input
+                      type="checkbox"
+                      name="allowRepeat"
+                      checked={product.allowRepeatPurchase}
+                      class="rounded"
+                    />
+                    {m.asso_boutique_allow_repeat_label()}
+                  </label>
+                  <div class="space-y-1">
+                    <label for="max-user-{product.id}" class="text-text-muted text-xs font-semibold"
+                      >{m.asso_boutique_max_per_user_field_label()}</label
+                    >
+                    <input
+                      id="max-user-{product.id}"
+                      name="maxPerUser"
+                      type="number"
+                      min="1"
+                      value={product.maxPurchasesPerUser ?? ''}
+                      placeholder={m.asso_boutique_unlimited_placeholder()}
+                      class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <div class="space-y-1">
+                    <label
+                      for="max-total-{product.id}"
+                      class="text-text-muted text-xs font-semibold"
+                      >{m.asso_boutique_max_total_field_label()}</label
+                    >
+                    <input
+                      id="max-total-{product.id}"
+                      name="maxTotal"
+                      type="number"
+                      min="1"
+                      value={product.maxPurchasesTotal ?? ''}
+                      placeholder={m.asso_boutique_unlimited_placeholder()}
+                      class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={savingProductSettings === product.id}
+                    class="bg-cn-yellow text-cn-dark w-fit rounded-lg px-4 py-2 text-xs font-bold disabled:opacity-50 sm:col-span-2"
+                  >
+                    {savingProductSettings === product.id
+                      ? m.asso_boutique_saving_limits_label()
+                      : m.asso_boutique_save_limits_button()}
+                  </button>
+                </form>
+              </div>
+            {/if}
+          </CardTile>
         </li>
       {/each}
     </ul>

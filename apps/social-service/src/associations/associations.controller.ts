@@ -29,6 +29,7 @@ import { AssociationPermissionFlag } from './entities/association-member.entity'
 import { toSafeAssociation } from './association.projection';
 import { AssociationsService } from './associations.service';
 import { ProductsService } from './products.service';
+import { PartnershipsService } from './partnerships.service';
 import { assertInternalSecret } from '../internal/internal-secret.util';
 import { FollowsService } from '../follows/follows.service';
 import {
@@ -53,6 +54,11 @@ import {
   UpdateMemberRoleDto,
   UpdateProductDto,
 } from './dto/association.dto';
+import {
+  AddPartnershipCodesDto,
+  CreatePartnershipCardDto,
+  UpdatePartnershipCardDto,
+} from './dto/partnership.dto';
 import { UserTagService } from '../users/user-tag.service';
 import { UserProfileService } from './user-profile.service';
 import { CreateRoleHistoryDto, UpdateRoleHistoryDto } from './dto/user-profile.dto';
@@ -66,6 +72,7 @@ export class AssociationsController {
   constructor(
     private readonly service: AssociationsService,
     private readonly productsService: ProductsService,
+    private readonly partnershipsService: PartnershipsService,
     private readonly followsService: FollowsService,
     private readonly userTagService: UserTagService,
     private readonly userProfileService: UserProfileService
@@ -1059,6 +1066,40 @@ export class AssociationsController {
     return this.productsService.delete(id, productId);
   }
 
+  /** Uploads a decorative icon for a product (e.g. a partner brand's logo). Requires MANAGE_PRODUCTS. */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: LOGO_UPLOAD_MB * 1024 * 1024 } }))
+  @Post(':id/products/:productId/icon')
+  uploadProductIcon(
+    @Param('id') id: string,
+    @Param('productId') productId: string,
+    @Headers('authorization') authorization: string | undefined,
+    @UploadedFile() file: { buffer: Buffer; mimetype: string; size: number } | undefined
+  ) {
+    if (!file?.buffer) {
+      throw new BadRequestException('Missing file');
+    }
+    return this.productsService.setProductIcon(
+      id,
+      productId,
+      { buffer: file.buffer, mimetype: file.mimetype, size: file.size },
+      authorization
+    );
+  }
+
+  /** Removes a product's decorative icon. Requires MANAGE_PRODUCTS. */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Delete(':id/products/:productId/icon')
+  deleteProductIcon(
+    @Param('id') id: string,
+    @Param('productId') productId: string,
+    @Headers('authorization') authorization: string | undefined
+  ) {
+    return this.productsService.clearProductIcon(id, productId, authorization);
+  }
+
   /**
    * Creates a Stripe Checkout session for a product purchase (login required).
    * Optional body: `{ customAmountCents: number }` for products allowing custom amounts.
@@ -1102,6 +1143,125 @@ export class AssociationsController {
     @Body() dto: SimulateCercleTopupDto
   ) {
     return this.productsService.simulateCercleTopup(id, productId, userId, dto.amountCents);
+  }
+
+  // ── Partnerships ──────────────────────────────────────────────────────────
+  // `partnerships/all` is declared before `:id/partnerships` for the same reason `products/all`
+  // precedes `:id/products` above.
+
+  /** Returns active partnership cards across every association (shown on the shop page). */
+  @UseGuards(NginxAuthGuard)
+  @Get('partnerships/all')
+  listAllPartnerships(@Headers('x-user-id') userId: string) {
+    return this.partnershipsService.listAllActive(userId);
+  }
+
+  /** Returns active partnership cards for this association (shown on its public page). */
+  @UseGuards(NginxAuthGuard)
+  @Get(':id/partnerships')
+  listAssociationPartnerships(@Param('id') id: string, @Headers('x-user-id') userId: string) {
+    return this.partnershipsService.listActiveByAssoc(id, userId);
+  }
+
+  /** Returns all partnership cards including inactive ones, with claim-pool stock counts. Requires MANAGE_PARTNERSHIPS. */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PARTNERSHIPS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Get(':id/partnerships/manage')
+  listAssociationPartnershipsForManage(@Param('id') id: string) {
+    return this.partnershipsService.listAllForManage(id);
+  }
+
+  /** Creates a partnership card. Requires MANAGE_PARTNERSHIPS. */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PARTNERSHIPS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Post(':id/partnerships')
+  createPartnershipCard(@Param('id') id: string, @Body() dto: CreatePartnershipCardDto) {
+    return this.partnershipsService.create(id, dto);
+  }
+
+  /** Updates a partnership card. Requires MANAGE_PARTNERSHIPS. */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PARTNERSHIPS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Patch(':id/partnerships/:cardId')
+  updatePartnershipCard(
+    @Param('id') id: string,
+    @Param('cardId') cardId: string,
+    @Body() dto: UpdatePartnershipCardDto
+  ) {
+    return this.partnershipsService.update(id, cardId, dto);
+  }
+
+  /** Deletes a partnership card. Requires MANAGE_PARTNERSHIPS. */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PARTNERSHIPS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Delete(':id/partnerships/:cardId')
+  deletePartnershipCard(@Param('id') id: string, @Param('cardId') cardId: string) {
+    return this.partnershipsService.delete(id, cardId);
+  }
+
+  /** Uploads a decorative icon for a partnership card (e.g. the partner brand's logo). Requires MANAGE_PARTNERSHIPS. */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PARTNERSHIPS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: LOGO_UPLOAD_MB * 1024 * 1024 } }))
+  @Post(':id/partnerships/:cardId/icon')
+  uploadPartnershipIcon(
+    @Param('id') id: string,
+    @Param('cardId') cardId: string,
+    @Headers('authorization') authorization: string | undefined,
+    @UploadedFile() file: { buffer: Buffer; mimetype: string; size: number } | undefined
+  ) {
+    if (!file?.buffer) {
+      throw new BadRequestException('Missing file');
+    }
+    return this.partnershipsService.setCardIcon(
+      id,
+      cardId,
+      { buffer: file.buffer, mimetype: file.mimetype, size: file.size },
+      authorization
+    );
+  }
+
+  /** Removes a partnership card's decorative icon. Requires MANAGE_PARTNERSHIPS. */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PARTNERSHIPS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Delete(':id/partnerships/:cardId/icon')
+  deletePartnershipIcon(
+    @Param('id') id: string,
+    @Param('cardId') cardId: string,
+    @Headers('authorization') authorization: string | undefined
+  ) {
+    return this.partnershipsService.clearCardIcon(id, cardId, authorization);
+  }
+
+  /** Bulk-adds codes to a code_pool partnership card's stock. Requires MANAGE_PARTNERSHIPS. */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PARTNERSHIPS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Post(':id/partnerships/:cardId/codes')
+  addPartnershipCodes(
+    @Param('id') id: string,
+    @Param('cardId') cardId: string,
+    @Body() dto: AddPartnershipCodesDto
+  ) {
+    return this.partnershipsService.addCodes(id, cardId, dto);
+  }
+
+  /** Lists claimed codes for a partnership card with claimant names. Requires MANAGE_PARTNERSHIPS. */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PARTNERSHIPS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Get(':id/partnerships/:cardId/claims')
+  listPartnershipClaims(@Param('id') id: string, @Param('cardId') cardId: string) {
+    return this.partnershipsService.listClaims(id, cardId);
+  }
+
+  /** Claims a partnership card (login required, any member - gated on `membersOnly` inside the service). */
+  @UseGuards(NginxAuthGuard)
+  @Post(':id/partnerships/:cardId/claim')
+  claimPartnership(
+    @Param('id') id: string,
+    @Param('cardId') cardId: string,
+    @Headers('x-user-id') userId: string
+  ) {
+    return this.partnershipsService.claimCard(cardId, userId);
   }
 
   /** Retries a failed Cercle webhook delivery. Requires MANAGE_PRODUCTS flag. */

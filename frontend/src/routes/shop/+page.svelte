@@ -5,20 +5,27 @@
   import {
     listAllProducts,
     listAssociations,
+    listAllPartnerships,
     type AssociationProduct,
     type Association,
+    type PartnershipCard,
   } from '$lib/associations/api';
   import { currentUserId } from '$lib/stores/user';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import ProductPurchaseButton from '$lib/components/shop/ProductPurchaseButton.svelte';
-  import { ShoppingBag } from '@lucide/svelte';
+  import PartnershipCardList from '$lib/components/shop/PartnershipCardList.svelte';
+  import CardTile from '$lib/components/shared/CardTile.svelte';
+  import { productFallbackIcon } from '$lib/utils/cardIcons';
+  import { ShoppingBag, Handshake } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
   let products = $state<AssociationProduct[]>([]);
+  let partnerships = $state<PartnershipCard[]>([]);
   let associations = new SvelteMap<string, Association>();
   let loading = $state(true);
   let error = $state('');
   let customAmounts = $state<Record<string, number>>({});
+  let shopTab = $state<'products' | 'partnerships'>('products');
 
   const isLoggedIn = $derived(!!currentUserId());
 
@@ -46,14 +53,30 @@
     return map;
   });
 
+  /** Partnership cards grouped by associationId, same shape as `grouped` for the products tab. */
+  const partnershipsGrouped = $derived.by(() => {
+    const map = new SvelteMap<string, PartnershipCard[]>();
+    for (const p of partnerships) {
+      const list = map.get(p.associationId) ?? [];
+      list.push(p);
+      map.set(p.associationId, list);
+    }
+    return map;
+  });
+
   onMount(async () => {
     if (!isLoggedIn) {
       loading = false;
       return;
     }
     try {
-      const [prods, assos] = await Promise.all([listAllProducts(), listAssociations()]);
+      const [prods, assos, partners] = await Promise.all([
+        listAllProducts(),
+        listAssociations(),
+        listAllPartnerships(),
+      ]);
       products = prods;
+      partnerships = partners;
       assos.forEach((a) => associations.set(a.id, a));
     } catch (err) {
       error = err instanceof Error ? err.message : m.shop_load_error_fallback();
@@ -150,129 +173,195 @@
     </div>
   {:else if error}
     <p class="text-sm text-red-500">{error}</p>
-  {:else if grouped.size === 0}
-    <div class="border-cn-border rounded-2xl border bg-(--cn-surface) p-10 text-center">
-      <p class="text-text-muted text-sm">{m.shop_empty()}</p>
-    </div>
   {:else}
-    {#each [...grouped.entries()] as [assocId, assocProducts] (assocId)}
-      {@const asso = associations.get(assocId)}
-      {#if asso}
-        <section class="space-y-4">
-          <!-- Association header -->
-          <div class="flex items-center gap-3">
-            <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="md" />
-            <div>
-              <a
-                href="/associations/{asso.slug}"
-                class="text-text-main hover:text-cn-accent font-bold transition-colors"
-              >
-                {asso.name}
-              </a>
-              {#if asso.description}
-                <p class="text-text-muted text-xs">{asso.description}</p>
-              {/if}
-            </div>
-          </div>
+    <div class="flex gap-2">
+      <button
+        type="button"
+        onclick={() => (shopTab = 'products')}
+        class="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+        {shopTab === 'products'
+          ? 'bg-cn-yellow text-cn-ink shadow-sm'
+          : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
+      >
+        <ShoppingBag size={17} />
+        {m.shop_tab_products()}
+      </button>
+      <button
+        type="button"
+        onclick={() => (shopTab = 'partnerships')}
+        class="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+        {shopTab === 'partnerships'
+          ? 'bg-cn-yellow text-cn-ink shadow-sm'
+          : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
+      >
+        <Handshake size={17} />
+        {m.shop_tab_partnerships()}
+      </button>
+    </div>
 
-          <!-- Products grid -->
-          <div class="grid gap-4 sm:grid-cols-2">
-            {#each assocProducts as product (product.id)}
-              {@const sibling = upgradeSibling(product, assocProducts)}
-              {@const memberEligible = qualifiesForMemberPrice(product, assocProducts)}
-              <div
-                class="border-cn-border flex flex-col gap-3 rounded-2xl border bg-(--cn-surface) p-5"
-              >
-                <!-- Type badge -->
-                <div class="flex flex-wrap items-center justify-between gap-2">
-                  <div class="flex flex-wrap items-center gap-1.5">
-                    <span
-                      class="rounded-full px-2.5 py-0.5 text-xs font-semibold {product.type ===
-                      'membership'
-                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
-                        : product.type === 'balance_topup'
-                          ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
-                          : 'bg-cn-surface-alt text-text-muted'}"
-                    >
-                      {typeLabel(product.type)}
-                    </span>
-                    {#if product.membersOnly}
-                      <span
-                        class="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
-                      >
-                        {m.shop_members_only_badge()}
-                      </span>
-                    {/if}
-                    {#if product.type === 'membership' && product.variantKey !== null && product.viewerActiveTier === product.variantKey}
-                      <span
-                        class="bg-cn-accent/15 text-cn-accent rounded-full px-2.5 py-0.5 text-xs font-semibold"
-                      >
-                        {m.shop_current_tier_badge()}
-                      </span>
-                    {/if}
-                  </div>
-                  {#if memberEligible && memberPriceLabel(product)}
-                    <span class="text-right text-sm font-bold">
-                      <span class="text-text-muted font-normal line-through"
-                        >{priceLabel(product)}</span
-                      >
-                      <span class="text-emerald-600 dark:text-emerald-400"
-                        >{memberPriceLabel(product)}</span
-                      >
-                      <span class="text-text-muted block text-xs font-normal sm:inline"
-                        >{sibling
-                          ? m.shop_tier_upgrade_price_suffix({ tier: sibling.name })
-                          : m.shop_member_price_suffix()}</span
-                      >
-                    </span>
-                  {:else}
-                    <span class="text-cn-accent text-sm font-bold">{priceLabel(product)}</span>
-                  {/if}
-                </div>
-
+    {#if shopTab === 'products'}
+      {#if grouped.size === 0}
+        <div class="border-cn-border rounded-2xl border bg-(--cn-surface) p-10 text-center">
+          <p class="text-text-muted text-sm">{m.shop_empty()}</p>
+        </div>
+      {:else}
+        {#each [...grouped.entries()] as [assocId, assocProducts] (assocId)}
+          {@const asso = associations.get(assocId)}
+          {#if asso}
+            <section class="space-y-4">
+              <!-- Association header -->
+              <div class="flex items-center gap-3">
+                <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="md" />
                 <div>
-                  <p class="text-text-main font-semibold">{product.name}</p>
-                  {#if product.description}
-                    <p class="text-text-muted mt-1 line-clamp-2 text-xs">{product.description}</p>
+                  <a
+                    href="/associations/{asso.slug}"
+                    class="text-text-main hover:text-cn-accent font-bold transition-colors"
+                  >
+                    {asso.name}
+                  </a>
+                  {#if asso.description}
+                    <p class="text-text-muted text-xs">{asso.description}</p>
                   {/if}
                 </div>
+              </div>
 
-                <!-- Custom amount input -->
-                {#if product.allowCustomAmount && product.amountCents === null}
-                  <div class="flex items-center gap-2">
-                    <input
-                      type="number"
-                      min={product.customAmountMinCents != null
-                        ? product.customAmountMinCents / 100
-                        : 0}
-                      max={product.customAmountMaxCents != null
-                        ? product.customAmountMaxCents / 100
-                        : undefined}
-                      step="0.01"
-                      placeholder={m.shop_amount_placeholder()}
-                      class="border-cn-border text-text-main focus:ring-cn-accent flex-1 rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
-                      bind:value={customAmounts[product.id]}
-                    />
-                    <span class="text-text-muted text-xs">{product.currency.toUpperCase()}</span>
-                  </div>
-                {/if}
+              <!-- Products grid -->
+              <div class="grid gap-4 sm:grid-cols-2">
+                {#each assocProducts as product (product.id)}
+                  {@const sibling = upgradeSibling(product, assocProducts)}
+                  {@const memberEligible = qualifiesForMemberPrice(product, assocProducts)}
+                  <CardTile
+                    iconUrl={product.iconUrl}
+                    fallbackIcon={productFallbackIcon(product.type)}
+                  >
+                    <div class="flex flex-col gap-3 p-5">
+                      <!-- Type badge -->
+                      <div class="flex flex-wrap items-center justify-between gap-2">
+                        <div class="flex flex-wrap items-center gap-1.5">
+                          <span
+                            class="rounded-full px-2.5 py-0.5 text-xs font-semibold {product.type ===
+                            'membership'
+                              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+                              : product.type === 'balance_topup'
+                                ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+                                : 'bg-cn-surface-alt text-text-muted'}"
+                          >
+                            {typeLabel(product.type)}
+                          </span>
+                          {#if product.membersOnly}
+                            <span
+                              class="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
+                            >
+                              {m.shop_members_only_badge()}
+                            </span>
+                          {/if}
+                          {#if product.type === 'membership' && product.variantKey !== null && product.viewerActiveTier === product.variantKey}
+                            <span
+                              class="bg-cn-accent/15 text-cn-accent rounded-full px-2.5 py-0.5 text-xs font-semibold"
+                            >
+                              {m.shop_current_tier_badge()}
+                            </span>
+                          {/if}
+                        </div>
+                        {#if memberEligible && memberPriceLabel(product)}
+                          <span class="text-right text-sm font-bold">
+                            <span class="text-text-muted font-normal line-through"
+                              >{priceLabel(product)}</span
+                            >
+                            <span class="text-emerald-600 dark:text-emerald-400"
+                              >{memberPriceLabel(product)}</span
+                            >
+                            <span class="text-text-muted block text-xs font-normal sm:inline"
+                              >{sibling
+                                ? m.shop_tier_upgrade_price_suffix({ tier: sibling.name })
+                                : m.shop_member_price_suffix()}</span
+                            >
+                          </span>
+                        {:else}
+                          <span class="text-cn-accent text-sm font-bold">{priceLabel(product)}</span
+                          >
+                        {/if}
+                      </div>
 
-                <ProductPurchaseButton
-                  {product}
-                  customAmountEuros={customAmounts[product.id]}
-                  disabled={product.membersOnly && !product.viewerIsCotisant}
-                  class="w-full"
-                />
-                {#if product.membersOnly && !product.viewerIsCotisant}
-                  <p class="text-xs text-amber-700 dark:text-amber-400">
-                    {m.shop_members_only_hint()}
-                  </p>
+                      <div>
+                        <p class="text-text-main font-semibold">{product.name}</p>
+                        {#if product.description}
+                          <p class="text-text-muted mt-1 line-clamp-2 text-xs">
+                            {product.description}
+                          </p>
+                        {/if}
+                      </div>
+
+                      <!-- Custom amount input -->
+                      {#if product.allowCustomAmount && product.amountCents === null}
+                        <div class="flex items-center gap-2">
+                          <input
+                            type="number"
+                            min={product.customAmountMinCents != null
+                              ? product.customAmountMinCents / 100
+                              : 0}
+                            max={product.customAmountMaxCents != null
+                              ? product.customAmountMaxCents / 100
+                              : undefined}
+                            step="0.01"
+                            placeholder={m.shop_amount_placeholder()}
+                            class="border-cn-border text-text-main focus:ring-cn-accent flex-1 rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
+                            bind:value={customAmounts[product.id]}
+                          />
+                          <span class="text-text-muted text-xs"
+                            >{product.currency.toUpperCase()}</span
+                          >
+                        </div>
+                      {/if}
+
+                      <ProductPurchaseButton
+                        {product}
+                        customAmountEuros={customAmounts[product.id]}
+                        disabled={product.membersOnly && !product.viewerIsCotisant}
+                        class="w-full"
+                      />
+                      {#if product.membersOnly && !product.viewerIsCotisant}
+                        <p class="text-xs text-amber-700 dark:text-amber-400">
+                          {m.shop_members_only_hint()}
+                        </p>
+                      {/if}
+                    </div>
+                  </CardTile>
+                {/each}
+              </div>
+            </section>
+          {/if}
+        {/each}
+      {/if}
+    {:else if partnershipsGrouped.size === 0}
+      <div class="border-cn-border rounded-2xl border bg-(--cn-surface) p-10 text-center">
+        <p class="text-text-muted text-sm">{m.shop_partnership_none()}</p>
+      </div>
+    {:else}
+      {#each [...partnershipsGrouped.entries()] as [assocId, assocPartnerships] (assocId)}
+        {@const asso = associations.get(assocId)}
+        {#if asso}
+          <section class="space-y-4">
+            <!-- Association header -->
+            <div class="flex items-center gap-3">
+              <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="md" />
+              <div>
+                <a
+                  href="/associations/{asso.slug}"
+                  class="text-text-main hover:text-cn-accent font-bold transition-colors"
+                >
+                  {asso.name}
+                </a>
+                {#if asso.description}
+                  <p class="text-text-muted text-xs">{asso.description}</p>
                 {/if}
               </div>
-            {/each}
-          </div>
-        </section>
-      {/if}
-    {/each}
+            </div>
+
+            <PartnershipCardList cards={assocPartnerships} />
+          </section>
+        {/if}
+      {/each}
+    {/if}
   {/if}
 </div>

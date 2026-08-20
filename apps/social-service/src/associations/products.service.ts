@@ -15,6 +15,7 @@ import * as ExcelJS from 'exceljs';
 import { AssociationProduct } from './entities/association-product.entity';
 import { WebhookDelivery } from './entities/webhook-delivery.entity';
 import { Association } from './entities/association.entity';
+import { AssociationsService } from './associations.service';
 import { UserTagService } from '../users/user-tag.service';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { PurchaseRecord } from '../users/entities/purchase-record.entity';
@@ -48,6 +49,10 @@ const CERCLE_AUTO_RETRY_BACKOFF = [
 
 /** How many due deliveries one scheduler tick takes, so a backlog cannot stall the service. */
 const CERCLE_AUTO_RETRY_BATCH = 20;
+
+/** Same limits as the association logo upload (`AssociationsService.setLogoFromUpload`). */
+const ICON_MAX_BYTES = 2 * 1024 * 1024;
+const ALLOWED_ICON_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
 /**
  * A shop product annotated with the requesting user's cotisation status for its association:
@@ -109,7 +114,8 @@ export class ProductsService {
     private readonly httpService: HttpService,
     private readonly config: ConfigService,
     private readonly userTagService: UserTagService,
-    private readonly purchaseRecordService: PurchaseRecordService
+    private readonly purchaseRecordService: PurchaseRecordService,
+    private readonly associationsService: AssociationsService
   ) {}
 
   /**
@@ -482,6 +488,59 @@ export class ProductsService {
       }
     }
     await this.productRepo.remove(product);
+  }
+
+  /**
+   * Uploads a decorative icon for a product (e.g. a partner brand's logo), replacing any existing
+   * one. Same validation and media-service delegation as `AssociationsService.setLogoFromUpload`.
+   */
+  async setProductIcon(
+    associationId: string,
+    productId: string,
+    file: { buffer: Buffer; mimetype: string; size: number },
+    authorization: string | undefined
+  ): Promise<SafeProduct> {
+    const product = await this.productRepo.findOne({ where: { id: productId, associationId } });
+    if (!product) throw new NotFoundException('Product not found');
+    if (!authorization?.startsWith('Bearer ')) {
+      throw new BadRequestException('Missing authorization header');
+    }
+    if (file.size > ICON_MAX_BYTES) {
+      throw new BadRequestException(`Icon must be at most ${ICON_MAX_BYTES} bytes`);
+    }
+    if (!ALLOWED_ICON_MIMES.has(file.mimetype?.toLowerCase() ?? '')) {
+      throw new BadRequestException('Icon must be JPEG, PNG, or WebP');
+    }
+
+    const oldMediaId = product.iconMediaId;
+    const mediaId = await this.associationsService.uploadPublicImage(file, authorization);
+    product.iconMediaId = mediaId;
+    product.iconUrl = `/api/media/public/${mediaId}?v=${Date.now()}`;
+    const saved = await this.productRepo.save(product);
+
+    if (oldMediaId && oldMediaId !== mediaId) {
+      await this.associationsService.deleteMediaBestEffort(oldMediaId, authorization);
+    }
+    return this.toSafeProduct(saved);
+  }
+
+  /** Removes a product's decorative icon, reverting it to the type-based fallback. */
+  async clearProductIcon(
+    associationId: string,
+    productId: string,
+    authorization: string | undefined
+  ): Promise<SafeProduct> {
+    const product = await this.productRepo.findOne({ where: { id: productId, associationId } });
+    if (!product) throw new NotFoundException('Product not found');
+    const oldMediaId = product.iconMediaId;
+    product.iconMediaId = null;
+    product.iconUrl = null;
+    const saved = await this.productRepo.save(product);
+
+    if (oldMediaId && authorization?.startsWith('Bearer ')) {
+      await this.associationsService.deleteMediaBestEffort(oldMediaId, authorization);
+    }
+    return this.toSafeProduct(saved);
   }
 
   // ── Cotisation config ─────────────────────────────────────────────────────
@@ -925,8 +984,11 @@ export class ProductsService {
    * `balance_topup` recharge stay open to every forfait, per-tier gating being what `requiredTags`
    * is for. Always false when the association has no cotisation mode configured (`cotisationMode`
    * null), regardless of `cotisationEnabled`.
+   *
+   * Public: also reused by `PartnershipsService` to gate `membersOnly` partnership cards on the
+   * exact same cotisant definition, rather than duplicating the tier-enumeration logic.
    */
-  private async isBuyerCotisant(asso: Association, userId: string): Promise<boolean> {
+  async isBuyerCotisant(asso: Association, userId: string): Promise<boolean> {
     if (!asso.cotisationMode) return false;
     // All tiers, sellable or not - holding a withdrawn tier's tag still makes you a cotisant.
     const tiers = await this.productRepo.find({
