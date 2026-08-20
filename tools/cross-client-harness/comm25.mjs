@@ -33,7 +33,7 @@ import {
 import { channelIdOf, communityDistribution, salonDistribution, userIdOf, workspaceIdOf } from './grainedb.mjs';
 import { OWNER_NAME, PORTS, VENUE } from './names.mjs';
 import { console_ as phoneConsole, pid as phonePid } from './phone.mjs';
-import { mark, record } from './results.mjs';
+import { clientBuild, commitDate, mark, record } from './results.mjs';
 import { consoleLines, gate, report, watch } from './watch.mjs';
 
 const w1 = await client(PORTS.W1);
@@ -73,7 +73,35 @@ const platforms = [...new Set(ownerDevicesOnCommunity.map((d) => platformOf(d.de
 // throwing when the phone is absent, so a missing phone costs this check and no other.
 const phoneUp = await step('is the phone running', () => phonePid());
 
-const armed = ownerDevicesOnCommunity.length >= 2 && platforms.length >= 2 && !!phoneUp;
+// ── AND IT HAS TO BE RUNNING A BUILD THAT HAS THE MECHANISM ───────────────────
+// THE PHONE IS NOT ON THE DEPLOYMENT. `frontendDist` is `../build`, so it serves the bundle inside
+// its APK and no deploy ever reaches it. The first run of this check, 2026-08-20, came back FAIL
+// against an APK built on 2026-08-11 - nine days before per-salon distribution groups existed at
+// all. The device could not have joined a group its code has no notion of, and the verdict said
+// nothing whatever about the product. That is not a failure to report, it is a question that was
+// never asked: a fact the harness could read beforehand instead of learning by failing.
+//
+// THE THRESHOLD IS A COMMIT, NOT A DATE. This row measures the mechanism b9ed05f7 introduced, so
+// that is what is named, and its date is derived from the repository.
+const PER_SALON_GROUPS = 'b9ed05f7';
+const a1 = await step('read the build the phone is running', async () => {
+  const cx = await client(PORTS.A1);
+  try {
+    return await clientBuild(cx);
+  } finally {
+    cx.close();
+  }
+});
+// Read while ARMING, before the salon exists - so this reads a fact rather than being the gesture
+// that repairs the thing under test. Nothing can be carried into a salon that has not been made.
+const phoneHasTheMechanism =
+  !!a1 && Date.parse(a1.builtAt) >= Date.parse(commitDate(PER_SALON_GROUPS));
+
+const armed =
+  ownerDevicesOnCommunity.length >= 2 &&
+  platforms.length >= 2 &&
+  !!phoneUp &&
+  phoneHasTheMechanism;
 
 // ── W1 creates a private salon, and touches nothing else ──────────────────────
 const created = armed
@@ -145,6 +173,11 @@ record('COMM-25', gated.verdict, {
   // has to carry the proof that "both devices" was a set of two rather than a set of one.
   armed,
   phoneRunning: !!phoneUp,
+  // WHICH BUILD THE PHONE READ, on every row and not only on a failure: this is the one check in
+  // the phase whose two devices can be on different builds, and a reader has to be able to see it.
+  a1Build: a1?.commit ?? null,
+  a1BuiltAt: a1?.builtAt ?? null,
+  phoneHasTheMechanism,
   ownerDevicesOnCommunity: ownerDevicesOnCommunity.map((d) => `${platformOf(d.deviceId)}:${d.status}`),
   communityPlatforms: platforms,
   // THE EVIDENCE. Platforms rather than device ids: an id is 64 hex characters of account identity

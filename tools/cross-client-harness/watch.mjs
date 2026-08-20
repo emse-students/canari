@@ -586,6 +586,12 @@ export async function watch(cx, label) {
   await cx.send('Network.enable');
   await cx.send('Page.enable');
   cx.events.length = 0;
+  // THE ARCHIVE `report` FILLS AS IT DRAINS. Classifying consumes `cx.events` on purpose - a
+  // second report must cover only what happened since the first - but the RAW log has to survive
+  // it, or `consoleLines` answers nothing to whoever asks after the verdict. COMM-25 printed
+  // "0 console lines" for a run that had driven W1 through four navigations, because it prints
+  // the log after gating and every other runner happens to print it before.
+  cx.consumed = [];
   return { cx, label, since: Date.now() };
 }
 
@@ -603,7 +609,7 @@ export async function watch(cx, label) {
  * be computed over a projection of its own evidence.
  */
 export function consoleLines(cx) {
-  return cx.events
+  return (cx.consumed ?? []).concat(cx.events)
     .filter((e) => e.method === 'Runtime.consoleAPICalled' || e.method === 'Log.entryAdded')
     .map((e) =>
       (e.method === 'Log.entryAdded'
@@ -727,6 +733,10 @@ export async function report(w) {
         break;
     }
   }
+  // Archived rather than discarded, so the raw log outlives its own classification. Concatenated
+  // rather than spread: a long run holds tens of thousands of events and `push(...events)` is an
+  // argument list, which is a stack overflow waiting for the busiest run of the campaign.
+  cx.consumed = (cx.consumed ?? []).concat(cx.events);
   cx.events.length = 0;
 
   // MONOTONIC -> WALL, so a socket event can be dated at all. Network events carry CDP's

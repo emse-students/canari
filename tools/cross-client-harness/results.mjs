@@ -41,20 +41,77 @@ const FILE = join(STATE_DIR, 'results.ndjson');
  * attribute, which is the fault this exists to close; failing at import costs a run that had not
  * started and leaves no debris.
  */
-async function deployedBuild() {
-  const answer = await fetch(`${SITE}/_app/version.json`);
-  if (!answer.ok) throw new Error(`${SITE}/_app/version.json answered ${answer.status}`);
-  const stamp = Number((await answer.json())?.version);
-  if (!Number.isFinite(stamp)) throw new Error(`${SITE}/_app/version.json carries no build stamp`);
+/** The repository this harness lives in - the only place a build stamp can be dated against. */
+const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+/**
+ * A SvelteKit build stamp turned into the commit that produced it.
+ *
+ * Shared by the deployment and by any CLIENT that serves its own bundle - the phone does, which is
+ * the whole reason this is not inlined in `deployedBuild` any more.
+ */
+export function resolveStamp(stamp, where) {
+  if (!Number.isFinite(stamp)) throw new Error(`${where} carries no build stamp`);
   const builtAt = new Date(stamp).toISOString();
-  const repo = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
   const commit = execFileSync(
     'git',
-    ['-C', repo, 'log', '-1', '--format=%h', `--before=${builtAt}`, 'origin/main'],
+    ['-C', REPO, 'log', '-1', '--format=%h', `--before=${builtAt}`, 'origin/main'],
     { encoding: 'utf8' }
   ).trim();
   if (!commit) throw new Error(`no commit on origin/main at or before ${builtAt} - fetch first`);
   return { builtAt, commit };
+}
+
+/**
+ * The commit date of a named commit, as the threshold a build has to clear.
+ *
+ * DERIVED FROM THE REPOSITORY, never written as a literal date: a check that needs a mechanism
+ * names the COMMIT that introduced it, and the date follows. A literal would go on being true
+ * after a rebase or a re-dating and nobody would ever look at it again.
+ */
+export function commitDate(commit) {
+  const iso = execFileSync(
+    'git',
+    ['-C', REPO, 'log', '-1', '--format=%cI', commit],
+    { encoding: 'utf8' }
+  ).trim();
+  if (!iso) throw new Error(`no such commit: ${commit}`);
+  return iso;
+}
+
+async function deployedBuild() {
+  const answer = await fetch(`${SITE}/_app/version.json`);
+  if (!answer.ok) throw new Error(`${SITE}/_app/version.json answered ${answer.status}`);
+  return resolveStamp(Number((await answer.json())?.version), `${SITE}/_app/version.json`);
+}
+
+/**
+ * The build a CLIENT is actually running, read from ITS OWN bundle.
+ *
+ * THE PHONE IS NOT ON THE DEPLOYMENT AND NEVER WILL BE. `frontendDist` is `../build`, so the app
+ * serves what was packaged into its APK and a deploy does not reach it - which is a real
+ * mixed-fleet state rather than an oversight, and a verdict that does not say which side it read
+ * is unattributable. COMM-25 came back `FAIL` on 2026-08-20 against a phone whose APK was NINE
+ * DAYS older than the mechanism under test: the device could not have exhibited it, and the
+ * failure said nothing about the product.
+ *
+ * A same-origin fetch of a static asset, and callers do it while ARMING - before the object under
+ * test exists. That is what keeps it compatible with a check whose claim is that no gesture was
+ * needed: nothing can be repaired that has not been created.
+ */
+export async function clientBuild(cx) {
+  const { evaluate } = await import('./cdp.mjs');
+  const raw = await evaluate(
+    cx,
+    `fetch('/_app/version.json').then(function (r) { return r.text(); })`
+  );
+  let stamp = NaN;
+  try {
+    stamp = Number(JSON.parse(String(raw))?.version);
+  } catch {
+    throw new Error(`this client's /_app/version.json is not JSON: ${String(raw).slice(0, 80)}`);
+  }
+  return resolveStamp(stamp, "the client's own /_app/version.json");
 }
 
 const BUILD = await deployedBuild();
