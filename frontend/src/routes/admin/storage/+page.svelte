@@ -109,12 +109,12 @@
 
 <div class="space-y-4">
   <div class="flex items-center justify-between">
-    <p class="text-sm text-text-muted">{m.admin_storage_desc()}</p>
+    <p class="text-text-muted text-sm">{m.admin_storage_desc()}</p>
     <button
       type="button"
       onclick={() => void load()}
       disabled={loading}
-      class="inline-flex items-center gap-1.5 rounded-xl border border-cn-border px-3 py-1.5 text-sm font-bold text-text-main hover:border-cn-yellow/40 transition-all disabled:opacity-50"
+      class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-sm font-bold transition-all disabled:opacity-50"
     >
       <RefreshCw size={14} class={loading ? 'animate-spin' : ''} />
       {m.common_refresh_button()}
@@ -124,7 +124,7 @@
   {#if loading && !usage}
     <div class="flex justify-center py-16">
       <div
-        class="h-8 w-8 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+        class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if error}
@@ -135,21 +135,21 @@
       {error}
     </div>
   {:else if usage}
-    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-5 space-y-3">
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <div class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface) p-5">
         <div class="flex items-center gap-2.5">
           <span
-            class="flex h-9 w-9 items-center justify-center rounded-xl bg-cn-yellow/10 text-cn-dark"
+            class="bg-cn-yellow/10 text-cn-dark flex h-9 w-9 items-center justify-center rounded-xl"
           >
             <HardDrive size={18} />
           </span>
-          <h2 class="font-bold text-text-main">{m.admin_storage_disk_label()}</h2>
+          <h2 class="text-text-main font-bold">{m.admin_storage_disk_label()}</h2>
         </div>
         {#if usage.diskTotalBytes !== null && usage.diskUsedBytes !== null}
-          <div class="h-2 rounded-full bg-cn-border overflow-hidden">
-            <div class="h-full bg-cn-yellow" style="width: {diskUsedPercent}%"></div>
+          <div class="bg-cn-border h-2 overflow-hidden rounded-full">
+            <div class="bg-cn-yellow h-full" style="width: {diskUsedPercent}%"></div>
           </div>
-          <p class="text-sm text-text-muted">
+          <p class="text-text-muted text-sm">
             {m.admin_storage_disk_used({
               used: formatStorageBytes(usage.diskUsedBytes),
               total: formatStorageBytes(usage.diskTotalBytes),
@@ -157,85 +157,85 @@
             })}
           </p>
         {:else}
-          <p class="text-sm text-text-muted">{m.admin_storage_unavailable()}</p>
+          <p class="text-text-muted text-sm">{m.admin_storage_unavailable()}</p>
         {/if}
       </div>
 
-      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-5 space-y-3">
+      <div class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface) p-5">
         <div class="flex items-center gap-2.5">
           <span
-            class="flex h-9 w-9 items-center justify-center rounded-xl bg-cn-yellow/10 text-cn-dark"
+            class="bg-cn-yellow/10 text-cn-dark flex h-9 w-9 items-center justify-center rounded-xl"
           >
             <Database size={18} />
           </span>
-          <h2 class="font-bold text-text-main">{m.admin_storage_postgres_label()}</h2>
+          <h2 class="text-text-main font-bold">{m.admin_storage_postgres_label()}</h2>
         </div>
         {#if usage.postgresBytes !== null}
-          <p class="text-2xl font-extrabold text-text-main">
+          <p class="text-text-main text-2xl font-extrabold">
             {formatStorageBytes(usage.postgresBytes)}
           </p>
         {:else}
-          <p class="text-sm text-text-muted">{m.admin_storage_unavailable()}</p>
+          <p class="text-text-muted text-sm">{m.admin_storage_unavailable()}</p>
         {/if}
       </div>
 
-      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-5 space-y-3">
+      <div class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface) p-5">
         <div class="flex items-center gap-2.5">
           <span
-            class="flex h-9 w-9 items-center justify-center rounded-xl bg-cn-yellow/10 text-cn-dark"
+            class="bg-cn-yellow/10 text-cn-dark flex h-9 w-9 items-center justify-center rounded-xl"
           >
             <HardDrive size={18} />
           </span>
-          <h2 class="font-bold text-text-main">{m.admin_storage_redis_label()}</h2>
+          <h2 class="text-text-main font-bold">{m.admin_storage_redis_label()}</h2>
         </div>
         {#if usage.redisBytes !== null}
-          <p class="text-2xl font-extrabold text-text-main">
+          <p class="text-text-main text-2xl font-extrabold">
             {formatStorageBytes(usage.redisBytes)}
           </p>
         {:else}
-          <p class="text-sm text-text-muted">{m.admin_storage_unavailable()}</p>
+          <p class="text-text-muted text-sm">{m.admin_storage_unavailable()}</p>
         {/if}
       </div>
 
       <!-- The media bucket answers WHY it is that size, not only how much: the growth bars and the
            retention verdict have opposite fixes and a single total cannot tell them apart. -->
       <div
-        class="sm:col-span-2 rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-5 space-y-5"
+        class="border-cn-border space-y-5 rounded-2xl border bg-(--cn-surface) p-5 sm:col-span-2"
       >
         <div class="flex items-center gap-2.5">
           <span
-            class="flex h-9 w-9 items-center justify-center rounded-xl bg-cn-yellow/10 text-cn-dark"
+            class="bg-cn-yellow/10 text-cn-dark flex h-9 w-9 items-center justify-center rounded-xl"
           >
             <Server size={18} />
           </span>
-          <h2 class="font-bold text-text-main">{m.admin_storage_garage_label()}</h2>
+          <h2 class="text-text-main font-bold">{m.admin_storage_garage_label()}</h2>
         </div>
 
         {#if media}
           <div>
-            <p class="text-2xl font-extrabold text-text-main">
+            <p class="text-text-main text-2xl font-extrabold">
               {formatStorageBytes(media.totalBytes)}
             </p>
-            <p class="text-sm text-text-muted">
+            <p class="text-text-muted text-sm">
               {m.admin_storage_garage_object_count({ count: media.objectCount })}
             </p>
           </div>
 
           <div class="space-y-2">
-            <h3 class="text-xs font-bold uppercase tracking-wide text-text-muted">
+            <h3 class="text-text-muted text-xs font-bold tracking-wide uppercase">
               {m.admin_storage_media_growth_title()}
             </h3>
-            <div class="flex items-end gap-2 h-24">
+            <div class="flex h-24 items-end gap-2">
               {#each weekBars as bar (bar.index)}
-                <div class="flex-1 flex flex-col items-center justify-end gap-1.5 h-full">
-                  <span class="text-[0.65rem] font-bold text-text-main">
+                <div class="flex h-full flex-1 flex-col items-center justify-end gap-1.5">
+                  <span class="text-text-main text-[0.65rem] font-bold">
                     {formatStorageBytes(bar.bytes)}
                   </span>
                   <div
-                    class="w-full rounded-t-lg bg-cn-yellow/70"
+                    class="bg-cn-yellow/70 w-full rounded-t-lg"
                     style="height: {bar.percent}%"
                   ></div>
-                  <span class="text-[0.65rem] text-text-muted text-center">
+                  <span class="text-text-muted text-center text-[0.65rem]">
                     {bar.index === 0
                       ? m.admin_storage_media_week_current()
                       : m.admin_storage_media_week_range({
@@ -246,26 +246,26 @@
                 </div>
               {/each}
             </div>
-            <p class="text-sm text-text-muted">
+            <p class="text-text-muted text-sm">
               {m.admin_storage_media_older({
                 days: barsSpanDays,
                 size: formatStorageBytes(media.olderBytes),
               })}
             </p>
             {#if media.undatedCount > 0}
-              <p class="text-sm text-text-muted">
+              <p class="text-text-muted text-sm">
                 {m.admin_storage_media_undated({ count: media.undatedCount })}
               </p>
             {/if}
           </div>
 
           <div class="space-y-1">
-            <h3 class="text-xs font-bold uppercase tracking-wide text-text-muted">
+            <h3 class="text-text-muted text-xs font-bold tracking-wide uppercase">
               {m.admin_storage_media_retention_title()}
             </h3>
             {#if retention?.kind === 'stalled'}
               <p class="flex items-start gap-2 text-sm font-semibold text-red-500">
-                <TriangleAlert size={16} class="shrink-0 mt-0.5" />
+                <TriangleAlert size={16} class="mt-0.5 shrink-0" />
                 {m.admin_storage_media_retention_stalled({
                   count: retention.count,
                   size: formatStorageBytes(retention.bytes),
@@ -274,7 +274,7 @@
                 })}
               </p>
             {:else if retention?.kind === 'pending'}
-              <p class="text-sm text-text-muted">
+              <p class="text-text-muted text-sm">
                 {m.admin_storage_media_retention_pending({
                   count: retention.count,
                   size: formatStorageBytes(retention.bytes),
@@ -282,7 +282,7 @@
                 })}
               </p>
             {:else}
-              <p class="text-sm text-text-muted">
+              <p class="text-text-muted text-sm">
                 {m.admin_storage_media_retention_healthy({
                   days: retentionDays,
                   hours: sweepHours,
@@ -292,20 +292,20 @@
           </div>
 
           <div class="space-y-1">
-            <h3 class="text-xs font-bold uppercase tracking-wide text-text-muted">
+            <h3 class="text-text-muted text-xs font-bold tracking-wide uppercase">
               {m.admin_storage_media_unreachable_title()}
             </h3>
             {#if unreachableCount === 0}
-              <p class="text-sm text-text-muted">{m.admin_storage_media_unreachable_none()}</p>
+              <p class="text-text-muted text-sm">{m.admin_storage_media_unreachable_none()}</p>
             {:else}
-              <p class="text-sm font-semibold text-text-main">
+              <p class="text-text-main text-sm font-semibold">
                 {m.admin_storage_media_unreachable_some({
                   count: unreachableCount,
                   size: formatStorageBytes(unreachable),
                 })}
               </p>
               {#if media.untrackedCount > 0}
-                <p class="text-sm text-text-muted">
+                <p class="text-text-muted text-sm">
                   {m.admin_storage_media_untracked({
                     count: media.untrackedCount,
                     size: formatStorageBytes(media.untrackedBytes),
@@ -313,7 +313,7 @@
                 </p>
               {/if}
               {#if media.tombstonedCount > 0}
-                <p class="text-sm text-text-muted">
+                <p class="text-text-muted text-sm">
                   {m.admin_storage_media_tombstoned({
                     count: media.tombstonedCount,
                     size: formatStorageBytes(media.tombstonedBytes),
@@ -324,7 +324,7 @@
           </div>
 
           {#if media.publicAssetCount > 0}
-            <p class="text-sm text-text-muted">
+            <p class="text-text-muted text-sm">
               {m.admin_storage_media_public({
                 count: media.publicAssetCount,
                 size: formatStorageBytes(media.publicAssetBytes),
@@ -332,7 +332,7 @@
             </p>
           {/if}
         {:else}
-          <p class="text-sm text-text-muted">{m.admin_storage_unavailable()}</p>
+          <p class="text-text-muted text-sm">{m.admin_storage_unavailable()}</p>
         {/if}
       </div>
 
@@ -341,34 +341,34 @@
            here classifies: a threshold nobody has measured against the population would be a line
            its reader learns to skip. -->
       <div
-        class="sm:col-span-2 rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-5 space-y-5"
+        class="border-cn-border space-y-5 rounded-2xl border bg-(--cn-surface) p-5 sm:col-span-2"
       >
         <div class="flex items-center gap-2.5">
           <span
-            class="flex h-9 w-9 items-center justify-center rounded-xl bg-cn-yellow/10 text-cn-dark"
+            class="bg-cn-yellow/10 text-cn-dark flex h-9 w-9 items-center justify-center rounded-xl"
           >
             <Database size={18} />
           </span>
-          <h2 class="font-bold text-text-main">{m.admin_storage_mls_title()}</h2>
+          <h2 class="text-text-main font-bold">{m.admin_storage_mls_title()}</h2>
         </div>
-        <p class="text-sm text-text-muted">{m.admin_storage_mls_desc()}</p>
+        <p class="text-text-muted text-sm">{m.admin_storage_mls_desc()}</p>
 
         {#if mls}
           {#if mls.tables.length > 0}
             <div class="space-y-2">
-              <h3 class="text-xs font-bold uppercase tracking-wide text-text-muted">
+              <h3 class="text-text-muted text-xs font-bold tracking-wide uppercase">
                 {m.admin_storage_mls_tables_title()}
               </h3>
               <!-- Why two sizes. "72.9 Mo, 817 lignes" was read here on 2026-08-19 as a 90 kB
                    average message; the average is under 1 kB, and the gap is the high-water mark of
                    an incident three weeks past. Both figures are always shown: a number that
                    appears only when it disagrees is one nobody trusts when it does. -->
-              <p class="text-xs text-text-muted">{m.admin_storage_mls_tables_hint()}</p>
+              <p class="text-text-muted text-xs">{m.admin_storage_mls_tables_hint()}</p>
               {#each tableBars as row (row.table)}
                 <div class="space-y-1">
                   <div class="flex items-baseline justify-between gap-3">
-                    <span class="text-sm font-semibold text-text-main">{row.table}</span>
-                    <span class="text-sm text-text-muted">
+                    <span class="text-text-main text-sm font-semibold">{row.table}</span>
+                    <span class="text-text-muted text-sm">
                       {formatStorageBytes(row.bytes)} &middot;
                       {m.admin_storage_mls_table_live({
                         size: formatStorageBytes(row.liveBytes),
@@ -377,13 +377,13 @@
                     </span>
                   </div>
                   <!-- Pale fill: what the table occupies. Solid fill: what is actually in it. -->
-                  <div class="relative h-1.5 w-full rounded-full bg-cn-border/40">
+                  <div class="bg-cn-border/40 relative h-1.5 w-full rounded-full">
                     <div
-                      class="absolute inset-y-0 left-0 rounded-full bg-cn-yellow/30"
+                      class="bg-cn-yellow/30 absolute inset-y-0 left-0 rounded-full"
                       style="width: {row.percent}%"
                     ></div>
                     <div
-                      class="absolute inset-y-0 left-0 rounded-full bg-cn-yellow/80"
+                      class="bg-cn-yellow/80 absolute inset-y-0 left-0 rounded-full"
                       style="width: {row.livePercent}%"
                     ></div>
                   </div>
@@ -393,15 +393,15 @@
           {/if}
 
           <div class="space-y-2">
-            <h3 class="text-xs font-bold uppercase tracking-wide text-text-muted">
+            <h3 class="text-text-muted text-xs font-bold tracking-wide uppercase">
               {m.admin_storage_mls_queue_title()}
             </h3>
             {#if !mls.queue}
-              <p class="text-sm text-text-muted">{m.admin_storage_unavailable()}</p>
+              <p class="text-text-muted text-sm">{m.admin_storage_unavailable()}</p>
             {:else if mls.queue.rows === 0}
-              <p class="text-sm text-text-muted">{m.admin_storage_mls_queue_empty()}</p>
+              <p class="text-text-muted text-sm">{m.admin_storage_mls_queue_empty()}</p>
             {:else}
-              <p class="text-sm text-text-main">
+              <p class="text-text-main text-sm">
                 {m.admin_storage_mls_queue_summary({
                   rows: mls.queue.rows,
                   devices: mls.queue.devices,
@@ -409,28 +409,28 @@
               </p>
               <!-- The number a total cannot show: forty devices with twenty messages and one device
                    with eight hundred read the same until this line. -->
-              <p class="text-sm text-text-muted">
+              <p class="text-text-muted text-sm">
                 {m.admin_storage_mls_queue_deepest({ count: mls.queue.deepest })}
               </p>
               {#if mls.queue.oldestMs !== null}
-                <p class="text-sm text-text-muted">
+                <p class="text-text-muted text-sm">
                   {m.admin_storage_mls_queue_oldest({
                     days: Math.round(mls.queue.oldestMs / DAY_MS),
                   })}
                 </p>
               {/if}
-              <h4 class="pt-2 text-xs font-bold uppercase tracking-wide text-text-muted">
+              <h4 class="text-text-muted pt-2 text-xs font-bold tracking-wide uppercase">
                 {m.admin_storage_mls_queue_growth()}
               </h4>
-              <div class="flex items-end gap-2 h-20">
+              <div class="flex h-20 items-end gap-2">
                 {#each queueBars as bar (bar.index)}
-                  <div class="flex-1 flex flex-col items-center justify-end gap-1.5 h-full">
-                    <span class="text-[0.65rem] font-bold text-text-main">{bar.rows}</span>
+                  <div class="flex h-full flex-1 flex-col items-center justify-end gap-1.5">
+                    <span class="text-text-main text-[0.65rem] font-bold">{bar.rows}</span>
                     <div
-                      class="w-full rounded-t-lg bg-cn-yellow/70"
+                      class="bg-cn-yellow/70 w-full rounded-t-lg"
                       style="height: {bar.percent}%"
                     ></div>
-                    <span class="text-[0.65rem] text-text-muted text-center">
+                    <span class="text-text-muted text-center text-[0.65rem]">
                       {bar.index === 0
                         ? m.admin_storage_media_week_current()
                         : m.admin_storage_media_week_range({
@@ -445,19 +445,19 @@
           </div>
 
           <div class="space-y-1">
-            <h3 class="text-xs font-bold uppercase tracking-wide text-text-muted">
+            <h3 class="text-text-muted text-xs font-bold tracking-wide uppercase">
               {m.admin_storage_mls_ghosts_title()}
             </h3>
             {#if !mls.ghosts}
-              <p class="text-sm text-text-muted">{m.admin_storage_unavailable()}</p>
+              <p class="text-text-muted text-sm">{m.admin_storage_unavailable()}</p>
             {:else if mls.ghosts.devicesWithoutKeyPackage === 0}
               <!-- The zero is shown on purpose: a counter that only appears when it is non-zero is
                    a counter nobody believes the first time it does. -->
-              <p class="text-sm text-text-muted">
+              <p class="text-text-muted text-sm">
                 {m.admin_storage_mls_ghosts_none({ devices: mls.ghosts.devicesWithMemberships })}
               </p>
             {:else}
-              <p class="text-sm font-semibold text-text-main">
+              <p class="text-text-main text-sm font-semibold">
                 {m.admin_storage_mls_ghosts_some({
                   count: mls.ghosts.devicesWithoutKeyPackage,
                   devices: mls.ghosts.devicesWithMemberships,
@@ -468,13 +468,13 @@
           </div>
 
           <div class="space-y-1">
-            <h3 class="text-xs font-bold uppercase tracking-wide text-text-muted">
+            <h3 class="text-text-muted text-xs font-bold tracking-wide uppercase">
               {m.admin_storage_mls_redis_title()}
             </h3>
             {#if !mls.redisKeyspace}
-              <p class="text-sm text-text-muted">{m.admin_storage_unavailable()}</p>
+              <p class="text-text-muted text-sm">{m.admin_storage_unavailable()}</p>
             {:else}
-              <p class="text-sm text-text-main">
+              <p class="text-text-main text-sm">
                 {m.admin_storage_mls_redis_summary({
                   keys: mls.redisKeyspace.keys,
                   sampled: mls.redisKeyspace.sampled,
@@ -482,7 +482,7 @@
               </p>
               <ul class="flex flex-wrap gap-x-4 gap-y-1">
                 {#each mls.redisKeyspace.byPrefix as entry (entry.prefix)}
-                  <li class="text-sm text-text-muted">
+                  <li class="text-text-muted text-sm">
                     {m.admin_storage_mls_redis_prefix({
                       prefix: entry.prefix,
                       keys: entry.keys,
@@ -493,7 +493,7 @@
             {/if}
           </div>
         {:else}
-          <p class="text-sm text-text-muted">{m.admin_storage_unavailable()}</p>
+          <p class="text-text-muted text-sm">{m.admin_storage_unavailable()}</p>
         {/if}
       </div>
     </div>

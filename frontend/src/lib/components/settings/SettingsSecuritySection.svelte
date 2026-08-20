@@ -124,20 +124,20 @@
 </script>
 
 <div
-  class="rounded-2xl border border-cn-border bg-(--cn-surface) p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200"
+  class="border-cn-border animate-in fade-in slide-in-from-bottom-4 rounded-2xl border bg-(--cn-surface) p-6 shadow-sm delay-200 duration-500 md:p-8"
   style="animation-fill-mode: backwards;"
 >
-  <div class="flex items-center gap-3 mb-6">
-    <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
+  <div class="mb-6 flex items-center gap-3">
+    <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
       <Shield size={22} strokeWidth={2.5} />
     </div>
-    <h2 class="text-lg font-extrabold text-text-main">{m.profile_security_heading()}</h2>
+    <h2 class="text-text-main text-lg font-extrabold">{m.profile_security_heading()}</h2>
   </div>
 
   {#if changePinSuccess}
     <div
       transition:slide={{ duration: 200 }}
-      class="flex items-center gap-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400 p-4 text-sm font-bold mb-5 shadow-inner"
+      class="mb-5 flex items-center gap-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-sm font-bold text-emerald-700 shadow-inner dark:text-emerald-400"
     >
       <CheckCircle2 size={20} class="shrink-0" />
       {changePinSuccess}
@@ -147,15 +147,15 @@
   {#if session.isLoggedIn}
     <div class="space-y-4">
       <div
-        class="flex items-center justify-between gap-4 p-4 rounded-2xl bg-white/50 dark:bg-white/5 border border-black/5 dark:border-white/5 shadow-sm"
+        class="flex items-center justify-between gap-4 rounded-2xl border border-black/5 bg-white/50 p-4 shadow-sm dark:border-white/5 dark:bg-white/5"
       >
-        <div class="flex items-center gap-3.5 min-w-0">
-          <div class="p-2.5 rounded-xl bg-black/5 dark:bg-black/40 text-text-muted shrink-0">
+        <div class="flex min-w-0 items-center gap-3.5">
+          <div class="text-text-muted shrink-0 rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
             <KeyRound size={20} strokeWidth={2.5} />
           </div>
           <div class="min-w-0">
-            <p class="text-sm font-bold text-text-main">{m.profile_pin_heading()}</p>
-            <p class="text-xs font-medium text-text-muted mt-0.5">
+            <p class="text-text-main text-sm font-bold">{m.profile_pin_heading()}</p>
+            <p class="text-text-muted mt-0.5 text-xs font-medium">
               {m.profile_pin_desc()}
             </p>
           </div>
@@ -165,7 +165,7 @@
             changePinError = '';
             showChangePinModal = true;
           }}
-          class="shrink-0 inline-flex items-center gap-2 rounded-xl bg-black/5 dark:bg-white/10 px-4 py-2 text-sm font-bold text-text-main hover:bg-black/10 dark:hover:bg-white/20 transition-all active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
+          class="text-text-main focus-visible:ring-text-muted inline-flex shrink-0 items-center gap-2 rounded-xl bg-black/5 px-4 py-2 text-sm font-bold transition-all outline-none hover:bg-black/10 focus-visible:ring-2 active:scale-95 dark:bg-white/10 dark:hover:bg-white/20"
         >
           <KeyRound size={16} strokeWidth={2.5} />
           <span class="hidden sm:inline">{m.profile_pin_change_btn()}</span>
@@ -174,15 +174,15 @@
 
       {#if biometricAvailable}
         <div
-          class="flex items-center justify-between gap-4 p-4 rounded-2xl bg-white/50 dark:bg-white/5 border border-black/5 dark:border-white/5 shadow-sm"
+          class="flex items-center justify-between gap-4 rounded-2xl border border-black/5 bg-white/50 p-4 shadow-sm dark:border-white/5 dark:bg-white/5"
         >
-          <div class="flex items-center gap-3.5 min-w-0">
-            <div class="p-2.5 rounded-xl bg-black/5 dark:bg-black/40 text-text-muted shrink-0">
+          <div class="flex min-w-0 items-center gap-3.5">
+            <div class="text-text-muted shrink-0 rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
               <Fingerprint size={20} strokeWidth={2.5} />
             </div>
             <div class="min-w-0">
-              <p class="text-sm font-bold text-text-main">{m.profile_biometric_heading()}</p>
-              <p class="text-xs font-medium text-text-muted mt-0.5">
+              <p class="text-text-main text-sm font-bold">{m.profile_biometric_heading()}</p>
+              <p class="text-text-muted mt-0.5 text-xs font-medium">
                 {m.profile_biometric_desc()}
               </p>
             </div>
@@ -193,11 +193,11 @@
             aria-label={m.profile_biometric_heading()}
             disabled={biometricBusy}
             onclick={toggleBiometric}
-            class="relative shrink-0 w-12 h-6 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow focus-visible:ring-offset-2 disabled:opacity-50
+            class="focus-visible:ring-cn-yellow relative h-6 w-12 shrink-0 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-50
               {biometricEnabled ? 'bg-cn-yellow' : 'bg-black/20 dark:bg-white/15'}"
           >
             <span
-              class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-transform duration-200
+              class="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-transform duration-200
                 {biometricEnabled ? 'translate-x-6' : 'translate-x-0'}"
             ></span>
           </button>
@@ -206,15 +206,15 @@
 
       {#if showStaySignedIn}
         <div
-          class="flex items-center justify-between gap-4 p-4 rounded-2xl bg-white/50 dark:bg-white/5 border border-black/5 dark:border-white/5 shadow-sm"
+          class="flex items-center justify-between gap-4 rounded-2xl border border-black/5 bg-white/50 p-4 shadow-sm dark:border-white/5 dark:bg-white/5"
         >
-          <div class="flex items-center gap-3.5 min-w-0">
-            <div class="p-2.5 rounded-xl bg-black/5 dark:bg-black/40 text-text-muted shrink-0">
+          <div class="flex min-w-0 items-center gap-3.5">
+            <div class="text-text-muted shrink-0 rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
               <LogIn size={20} strokeWidth={2.5} />
             </div>
             <div class="min-w-0">
-              <p class="text-sm font-bold text-text-main">{m.profile_stay_signed_in_heading()}</p>
-              <p class="text-xs font-medium text-text-muted mt-0.5">
+              <p class="text-text-main text-sm font-bold">{m.profile_stay_signed_in_heading()}</p>
+              <p class="text-text-muted mt-0.5 text-xs font-medium">
                 {m.profile_stay_signed_in_desc()}
               </p>
             </div>
@@ -224,11 +224,11 @@
             aria-checked={staySignedIn}
             aria-label={m.profile_stay_signed_in_heading()}
             onclick={toggleStaySignedIn}
-            class="relative shrink-0 w-12 h-6 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow focus-visible:ring-offset-2
+            class="focus-visible:ring-cn-yellow relative h-6 w-12 shrink-0 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2
               {staySignedIn ? 'bg-cn-yellow' : 'bg-black/20 dark:bg-white/15'}"
           >
             <span
-              class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-transform duration-200
+              class="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-transform duration-200
                 {staySignedIn ? 'translate-x-6' : 'translate-x-0'}"
             ></span>
           </button>
@@ -236,28 +236,28 @@
       {/if}
 
       <div
-        class="flex items-center justify-between gap-4 p-4 rounded-2xl bg-white/50 dark:bg-white/5 border border-black/5 dark:border-white/5 shadow-sm"
+        class="flex items-center justify-between gap-4 rounded-2xl border border-black/5 bg-white/50 p-4 shadow-sm dark:border-white/5 dark:bg-white/5"
       >
-        <div class="flex items-center gap-3.5 min-w-0">
-          <div class="p-2.5 rounded-xl bg-black/5 dark:bg-black/40 text-text-muted shrink-0">
+        <div class="flex min-w-0 items-center gap-3.5">
+          <div class="text-text-muted shrink-0 rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
             <Monitor size={20} strokeWidth={2.5} />
           </div>
           <div class="min-w-0">
-            <p class="text-sm font-bold text-text-main">{m.profile_devices_heading()}</p>
-            <p class="text-xs font-medium text-text-muted mt-0.5">
+            <p class="text-text-main text-sm font-bold">{m.profile_devices_heading()}</p>
+            <p class="text-text-muted mt-0.5 text-xs font-medium">
               {m.profile_devices_desc()}
             </p>
           </div>
         </div>
         <button
           onclick={() => (showDevicePanel = true)}
-          class="relative shrink-0 inline-flex items-center gap-2 rounded-xl bg-black/5 dark:bg-white/10 px-4 py-2 text-sm font-bold text-text-main hover:bg-black/10 dark:hover:bg-white/20 transition-all active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
+          class="text-text-main focus-visible:ring-text-muted relative inline-flex shrink-0 items-center gap-2 rounded-xl bg-black/5 px-4 py-2 text-sm font-bold transition-all outline-none hover:bg-black/10 focus-visible:ring-2 active:scale-95 dark:bg-white/10 dark:hover:bg-white/20"
         >
           <Monitor size={16} strokeWidth={2.5} />
           <span class="hidden sm:inline">{m.profile_devices_manage_btn()}</span>
           {#if deviceCount > 1}
             <span
-              class="absolute -top-1.5 -right-1.5 min-w-4.5 h-4.5 rounded-full bg-orange-500 text-white text-[10px] font-bold flex items-center justify-center px-1 shadow"
+              class="absolute -top-1.5 -right-1.5 flex h-4.5 min-w-4.5 items-center justify-center rounded-full bg-orange-500 px-1 text-[10px] font-bold text-white shadow"
             >
               {deviceCount > 99 ? '99+' : deviceCount}
             </span>
@@ -266,7 +266,7 @@
       </div>
     </div>
   {:else}
-    <p class="text-sm text-text-muted leading-relaxed">
+    <p class="text-text-muted text-sm leading-relaxed">
       {m.profile_security_locked()}
     </p>
   {/if}

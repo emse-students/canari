@@ -358,10 +358,10 @@
   });
 </script>
 
-<div class="px-4 py-6 sm:px-6 max-w-3xl mx-auto space-y-6">
+<div class="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-6">
   <a
     href="/associations"
-    class="inline-flex items-center gap-2 text-sm text-text-muted hover:text-text-main transition-colors"
+    class="text-text-muted hover:text-text-main inline-flex items-center gap-2 text-sm transition-colors"
   >
     <ArrowLeft size={16} />
     {m.calendar_back_associations()}
@@ -369,11 +369,11 @@
 
   <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
     <div>
-      <h1 class="text-2xl font-extrabold text-text-main tracking-tight flex items-center gap-2">
+      <h1 class="text-text-main flex items-center gap-2 text-2xl font-extrabold tracking-tight">
         <CalendarDays size={28} class="text-cn-dark shrink-0" />
         {m.calendar_heading()}
       </h1>
-      <p class="text-sm text-text-muted mt-1">
+      <p class="text-text-muted mt-1 text-sm">
         {m.calendar_subtitle()}
       </p>
     </div>
@@ -381,7 +381,7 @@
       <button
         type="button"
         onclick={openDeposit}
-        class="inline-flex items-center justify-center gap-2 shrink-0 rounded-xl bg-cn-yellow px-4 py-2.5 text-sm font-bold text-cn-dark shadow-sm hover:bg-cn-yellow-hover transition-colors"
+        class="bg-cn-yellow text-cn-dark hover:bg-cn-yellow-hover inline-flex shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors"
       >
         <CalendarPlus size={18} />
         {m.calendar_deposit_button()}
@@ -392,7 +392,7 @@
   {#if canModerateAgenda}
     <a
       href="/admin/agenda"
-      class="flex items-center justify-between gap-3 rounded-2xl border border-amber-warn/30 bg-amber-warn/10 px-4 py-3 hover:border-amber-warn/40 transition-colors"
+      class="border-amber-warn/30 bg-amber-warn/10 hover:border-amber-warn/40 flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 transition-colors"
     >
       <span
         class="flex items-center gap-2 text-sm font-semibold text-amber-900 dark:text-amber-100"
@@ -411,34 +411,34 @@
     </a>
   {/if}
 
-  <Card class="p-4 sm:p-5 space-y-4">
+  <Card class="space-y-4 p-4 sm:p-5">
     <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <div class="flex items-center gap-2">
         <button
           type="button"
           onclick={prevMonth}
-          class="rounded-xl border border-cn-border p-2 text-text-main hover:bg-[var(--cn-surface)] transition-colors"
+          class="border-cn-border text-text-main rounded-xl border p-2 transition-colors hover:bg-(--cn-surface)"
           aria-label={m.calendar_prev_month()}
         >
           <ChevronLeft size={20} />
         </button>
-        <span class="min-w-[10rem] text-center text-sm font-bold text-text-main capitalize">
+        <span class="text-text-main min-w-[10rem] text-center text-sm font-bold capitalize">
           {titleMonth}
         </span>
         <button
           type="button"
           onclick={nextMonth}
-          class="rounded-xl border border-cn-border p-2 text-text-main hover:bg-[var(--cn-surface)] transition-colors"
+          class="border-cn-border text-text-main rounded-xl border p-2 transition-colors hover:bg-(--cn-surface)"
           aria-label={m.calendar_next_month()}
         >
           <ChevronRight size={20} />
         </button>
       </div>
 
-      <label class="flex flex-col gap-1 text-xs font-semibold text-text-muted sm:min-w-[14rem]">
+      <label class="text-text-muted flex flex-col gap-1 text-xs font-semibold sm:min-w-[14rem]">
         {m.calendar_filter_label()}
         <select
-          class="rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm font-medium text-text-main"
+          class="border-cn-border text-text-main rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm font-medium"
           bind:value={filterAssociationId}
           onchange={onFilterSelectChange}
         >
@@ -450,17 +450,17 @@
       </label>
     </div>
 
-    <div class="flex flex-wrap justify-end gap-2 border-t border-cn-border/60 pt-4">
+    <div class="border-cn-border/60 flex flex-wrap justify-end gap-2 border-t pt-4">
       <a
         href={exportHref}
-        class="inline-flex items-center justify-center gap-2 shrink-0 rounded-xl border border-cn-border bg-[var(--cn-surface)] px-4 py-2.5 text-sm font-bold text-text-main hover:bg-cn-bg transition-colors"
+        class="border-cn-border text-text-main hover:bg-cn-bg inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border bg-(--cn-surface) px-4 py-2.5 text-sm font-bold transition-colors"
       >
         <FileDown size={18} />
         {m.calendar_export_pdf()}
       </a>
       <a
         href={calendarSubscribeUrl()}
-        class="hidden sm:inline-flex items-center justify-center gap-2 shrink-0 rounded-xl bg-cn-yellow px-4 py-2.5 text-sm font-bold text-cn-dark shadow-sm hover:bg-cn-yellow-hover transition-colors"
+        class="bg-cn-yellow text-cn-dark hover:bg-cn-yellow-hover hidden shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors sm:inline-flex"
       >
         <CalendarCheck size={18} />
         {m.calendar_subscribe()}
@@ -471,11 +471,11 @@
   <MonthCalendarGridRich {focusDate} events={sortedEvents} {loading} bind:selectedDay />
 
   {#if loadError}
-    <div class="rounded-xl bg-red-err/10 border border-red-err/30 text-red-err p-4 text-sm">
+    <div class="bg-red-err/10 border-red-err/30 text-red-err rounded-xl border p-4 text-sm">
       {loadError}
     </div>
   {:else if !loading && sortedEvents.length === 0}
-    <Card class="p-8 text-center text-text-muted text-sm">{m.calendar_empty()}</Card>
+    <Card class="text-text-muted p-8 text-center text-sm">{m.calendar_empty()}</Card>
   {:else}
     <CalendarDayEventsPanel
       {focusDate}
@@ -503,37 +503,37 @@
   <div use:portal>
     <div
       data-keyboard-aware-overlay
-      class="z-[280] flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm"
+      class="z-[280] flex items-end justify-center bg-black/40 backdrop-blur-sm sm:items-center"
       role="presentation"
       onclick={(e) => e.target === e.currentTarget && (depositModalOpen = false)}
     >
       <div
-        class="keyboard-aware-modal-panel w-full max-w-lg rounded-t-3xl sm:rounded-2xl border border-cn-border bg-[var(--cn-surface)] shadow-xl p-6 space-y-4 max-h-[90vh] overflow-y-auto"
+        class="keyboard-aware-modal-panel border-cn-border max-h-[90vh] w-full max-w-lg space-y-4 overflow-y-auto rounded-t-3xl border bg-(--cn-surface) p-6 shadow-xl sm:rounded-2xl"
         role="dialog"
         aria-modal="true"
         aria-labelledby="deposit-modal-title"
       >
-        <h3 id="deposit-modal-title" class="text-lg font-bold text-text-main">
+        <h3 id="deposit-modal-title" class="text-text-main text-lg font-bold">
           {editingEventId ? m.asso_calendar_modal_edit_title() : m.calendar_deposit_modal_title()}
         </h3>
 
         {#if editingEventId}
-          <p class="text-xs text-text-muted">
+          <p class="text-text-muted text-xs">
             {m.calendar_edit_owner_note({ association: editingOwnerName })}
           </p>
         {:else}
-          <p class="text-xs text-text-muted">
+          <p class="text-text-muted text-xs">
             {m.calendar_deposit_immediate_note()}
           </p>
 
           <div>
-            <label class="block text-sm font-bold text-text-main mb-1 ml-1" for="deposit-asso"
+            <label class="text-text-main mb-1 ml-1 block text-sm font-bold" for="deposit-asso"
               >{m.calendar_deposit_on_behalf()}</label
             >
             <select
               id="deposit-asso"
               bind:value={depositTargetAssocId}
-              class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm text-text-main"
+              class="border-cn-border text-text-main w-full rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm"
             >
               {#each associations as a (a.id)}
                 <option value={a.id}>{a.name}</option>
@@ -546,31 +546,31 @@
 
         <div class="grid gap-4 sm:grid-cols-2">
           <div>
-            <label class="block text-sm font-bold text-text-main mb-1 ml-1" for="deposit-start"
+            <label class="text-text-main mb-1 ml-1 block text-sm font-bold" for="deposit-start"
               >{m.calendar_deposit_start_label()}</label
             >
             <input
               id="deposit-start"
               type="datetime-local"
               bind:value={depositStart}
-              class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm text-text-main"
+              class="border-cn-border text-text-main w-full rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm"
             />
           </div>
           <div>
-            <label class="block text-sm font-bold text-text-main mb-1 ml-1" for="deposit-end"
+            <label class="text-text-main mb-1 ml-1 block text-sm font-bold" for="deposit-end"
               >{m.calendar_deposit_end_label()}</label
             >
             <input
               id="deposit-end"
               type="datetime-local"
               bind:value={depositEnd}
-              class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm text-text-main"
+              class="border-cn-border text-text-main w-full rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm"
             />
           </div>
         </div>
 
         <div>
-          <p class="block text-sm font-bold text-text-main mb-1 ml-1">
+          <p class="text-text-main mb-1 ml-1 block text-sm font-bold">
             {m.calendar_deposit_desc_label()}
           </p>
           <MarkdownComposerField
@@ -583,14 +583,14 @@
         <CoOwnerPicker bind:selectedIds={depositCoOwnerIds} excludeId={depositTargetAssocId} />
 
         {#if depositError}
-          <p class="text-sm text-red-err">{depositError}</p>
+          <p class="text-red-err text-sm">{depositError}</p>
         {/if}
 
-        <div class="flex flex-wrap gap-2 justify-end pt-2">
+        <div class="flex flex-wrap justify-end gap-2 pt-2">
           <button
             type="button"
             onclick={() => (depositModalOpen = false)}
-            class="rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold hover:bg-cn-bg"
+            class="border-cn-border hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold"
           >
             {m.common_cancel_button()}
           </button>
@@ -598,7 +598,7 @@
             type="button"
             onclick={submitDeposit}
             disabled={depositSaving}
-            class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
+            class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
           >
             {#if depositSaving}
               {editingEventId ? m.asso_calendar_saving_label() : m.calendar_deposit_publishing()}

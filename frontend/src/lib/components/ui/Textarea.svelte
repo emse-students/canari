@@ -48,7 +48,7 @@
 
 <div class={className}>
   {#if label}
-    <label for={uniqueId} class="block text-sm font-bold text-text-main mb-2 ml-1">
+    <label for={uniqueId} class="text-text-main mb-2 ml-1 block text-sm font-bold">
       {label}
       {#if required}<span class="text-red-500">*</span>{/if}
     </label>
@@ -66,7 +66,7 @@
     {oninput}
     {...rest}></textarea>
   {#if error}
-    <p id="{uniqueId}-error" role="alert" class="mt-1.5 ml-1 text-xs font-medium text-red-err">
+    <p id="{uniqueId}-error" role="alert" class="text-red-err mt-1.5 ml-1 text-xs font-medium">
       {error}
     </p>
   {/if}

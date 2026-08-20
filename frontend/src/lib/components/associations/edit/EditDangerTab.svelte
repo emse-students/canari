@@ -61,15 +61,13 @@
 
 <div class="space-y-6">
   {#if error}
-    <div class="rounded-xl bg-red-err/10 border border-red-err/30 text-red-err p-4 text-sm">
+    <div class="bg-red-err/10 border-red-err/30 text-red-err rounded-xl border p-4 text-sm">
       {error}
     </div>
   {/if}
 
-  <div
-    class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-3 shadow-sm"
-  >
-    <h2 class="text-base font-bold text-text-main flex items-center gap-2">
+  <div class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm">
+    <h2 class="text-text-main flex items-center gap-2 text-base font-bold">
       <Building2 size={18} />
       {asso.archived
         ? kind === 'list'
@@ -79,7 +77,7 @@
           ? m.asso_danger_archive_title_list()
           : m.asso_danger_archive_title_asso()}
     </h2>
-    <p class="text-sm text-text-muted">
+    <p class="text-text-muted text-sm">
       {asso.archived
         ? kind === 'list'
           ? m.asso_danger_archived_desc_list()
@@ -92,7 +90,7 @@
       type="button"
       onclick={handleToggleArchive}
       disabled={archiving}
-      class="rounded-xl border border-cn-border px-4 py-2.5 text-sm font-bold text-text-main hover:bg-cn-bg disabled:opacity-50"
+      class="border-cn-border text-text-main hover:bg-cn-bg rounded-xl border px-4 py-2.5 text-sm font-bold disabled:opacity-50"
     >
       {archiving
         ? '…'
@@ -106,18 +104,18 @@
     </button>
   </div>
 
-  <div class="rounded-2xl border border-red-err/30 bg-red-err/10 p-6 space-y-3">
-    <h2 class="text-base font-bold text-red-err flex items-center gap-2">
+  <div class="border-red-err/30 bg-red-err/10 space-y-3 rounded-2xl border p-6">
+    <h2 class="text-red-err flex items-center gap-2 text-base font-bold">
       <Trash2 size={18} />
       {m.asso_danger_title()}
     </h2>
-    <p class="text-sm text-red-err">
+    <p class="text-red-err text-sm">
       {kind === 'list' ? m.asso_danger_delete_desc_list() : m.asso_danger_delete_desc_asso()}
     </p>
     <button
       type="button"
       onclick={handleDelete}
-      class="rounded-xl bg-cn-surface border border-red-err/30 px-4 py-2.5 text-sm font-bold text-red-err hover:bg-red-err/20"
+      class="bg-cn-surface border-red-err/30 text-red-err hover:bg-red-err/20 rounded-xl border px-4 py-2.5 text-sm font-bold"
     >
       {kind === 'list' ? m.asso_danger_delete_list() : m.asso_danger_delete_asso()}
     </button>

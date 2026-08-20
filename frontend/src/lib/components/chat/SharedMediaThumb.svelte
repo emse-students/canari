@@ -57,13 +57,13 @@
 <button
   type="button"
   onclick={onClick}
-  class="relative aspect-square w-full overflow-hidden rounded-lg bg-black/5 dark:bg-white/10 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 hover:opacity-90 transition-opacity"
+  class="relative aspect-square w-full overflow-hidden rounded-lg bg-black/5 transition-opacity outline-none hover:opacity-90 focus-visible:ring-2 focus-visible:ring-amber-500 dark:bg-white/10"
   aria-label={expired ? m.msg_media_expired_label() : m.chat_open_media_label()}
   title={expired ? m.msg_media_expired_label() : undefined}
 >
   {#if failed}
     <div
-      class="flex h-full w-full flex-col items-center justify-center gap-1 px-1 text-text-muted text-center"
+      class="text-text-muted flex h-full w-full flex-col items-center justify-center gap-1 px-1 text-center"
     >
       <ImageOff size={18} />
       {#if expired}
@@ -76,7 +76,7 @@
       <video src={blobUrl} class="h-full w-full object-cover" muted playsinline preload="metadata"
       ></video>
       <span
-        class="absolute inset-0 flex items-center justify-center bg-black/20 text-white pointer-events-none"
+        class="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/20 text-white"
       >
         <Play size={20} fill="currentColor" />
       </span>

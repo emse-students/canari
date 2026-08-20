@@ -52,7 +52,7 @@
   <button
     type="button"
     onclick={handleMentionClick}
-    class="inline-flex items-center rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[0.88em] font-semibold text-amber-700 dark:text-amber-400 hover:bg-amber-500/20 transition-colors cursor-pointer leading-none"
+    class="inline-flex cursor-pointer items-center rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[0.88em] leading-none font-semibold text-amber-700 transition-colors hover:bg-amber-500/20 dark:text-amber-400"
   >
     @{mentionLabel || mentionUserId}
   </button>
@@ -68,7 +68,7 @@
     {title}
     target="_blank"
     rel="noopener noreferrer"
-    class="text-amber-700 dark:text-amber-400 underline underline-offset-2 hover:text-amber-500 transition-colors"
+    class="text-amber-700 underline underline-offset-2 transition-colors hover:text-amber-500 dark:text-amber-400"
   >
     {@render children?.()}
   </a>

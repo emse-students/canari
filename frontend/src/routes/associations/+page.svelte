@@ -55,33 +55,33 @@
   }
 </script>
 
-<div class="px-4 py-6 sm:px-6 max-w-4xl mx-auto space-y-8">
+<div class="mx-auto max-w-4xl space-y-8 px-4 py-6 sm:px-6">
   <!-- Header -->
-  <div class="flex items-center justify-between gap-3 flex-wrap">
+  <div class="flex flex-wrap items-center justify-between gap-3">
     <div>
-      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">
+      <h1 class="text-text-main text-2xl font-extrabold tracking-tight">
         {m.assoc_list_heading()}
       </h1>
-      <p class="text-sm text-text-muted mt-1">{m.assoc_list_subtitle()}</p>
+      <p class="text-text-muted mt-1 text-sm">{m.assoc_list_subtitle()}</p>
     </div>
     <div class="flex items-center gap-2">
       <a
         href="/lists"
-        class="inline-flex items-center gap-2 rounded-xl border border-cn-border px-4 py-2 text-sm font-bold text-text-main hover:bg-[var(--cn-surface)] transition-colors"
+        class="border-cn-border text-text-main inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold transition-colors hover:bg-(--cn-surface)"
       >
         <ListChecks size={16} />
         {m.assoc_list_lists_btn()}
       </a>
       <a
         href="/calendar"
-        class="inline-flex items-center gap-2 rounded-xl border border-cn-border px-4 py-2 text-sm font-bold text-text-main hover:bg-[var(--cn-surface)] transition-colors"
+        class="border-cn-border text-text-main inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold transition-colors hover:bg-(--cn-surface)"
       >
         {m.assoc_list_global_calendar()}
       </a>
       {#if canCreate}
         <a
           href="/associations/new"
-          class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-5 py-2 text-sm font-bold text-cn-dark shadow-sm transition-all hover:bg-cn-yellow-hover"
+          class="bg-cn-yellow text-cn-dark hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-5 py-2 text-sm font-bold shadow-sm transition-all"
         >
           {m.assoc_new_create_btn()}
         </a>
@@ -92,38 +92,38 @@
   {#if loading}
     <div class="flex items-center justify-center py-20">
       <div
-        class="h-8 w-8 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+        class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if error}
-    <div class="rounded-xl bg-red-err/10 border border-red-err/30 text-red-err p-4 text-sm">
+    <div class="bg-red-err/10 border-red-err/30 text-red-err rounded-xl border p-4 text-sm">
       {error}
     </div>
   {:else}
     <!-- My associations -->
     {#if myAssociations.length > 0}
       <section>
-        <h2 class="text-base font-bold text-text-main mb-3">{m.assoc_list_mine_heading()}</h2>
+        <h2 class="text-text-main mb-3 text-base font-bold">{m.assoc_list_mine_heading()}</h2>
         <div class="grid gap-4 sm:grid-cols-2">
           {#each myAssociations as asso (asso.id)}
             <a
               href={memberHref(asso)}
-              class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-5 hover:shadow-md transition-shadow block"
+              class="border-cn-border block rounded-2xl border bg-(--cn-surface) p-5 transition-shadow hover:shadow-md"
             >
               <div class="flex items-start gap-3">
                 <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="lg" />
                 <div class="min-w-0 flex-1">
-                  <h3 class="font-bold text-text-main truncate">{asso.name}</h3>
+                  <h3 class="text-text-main truncate font-bold">{asso.name}</h3>
                   {#if asso.type === 'list'}
                     <span
-                      class="text-xs font-semibold text-cn-dark bg-cn-dark/10 px-2 py-0.5 rounded-full"
+                      class="text-cn-dark bg-cn-dark/10 rounded-full px-2 py-0.5 text-xs font-semibold"
                     >
                       Liste{asso.promo ? ` ${asso.promo}` : ''}
                     </span>
                   {/if}
                   {#if asso.role}
                     <span
-                      class="text-xs font-semibold text-cn-dark bg-cn-yellow/20 px-2 py-0.5 rounded-full"
+                      class="text-cn-dark bg-cn-yellow/20 rounded-full px-2 py-0.5 text-xs font-semibold"
                     >
                       {asso.role}
                     </span>
@@ -138,39 +138,39 @@
 
     <!-- All associations -->
     <section>
-      <h2 class="text-base font-bold text-text-main mb-3">{m.assoc_list_all_heading()}</h2>
+      <h2 class="text-text-main mb-3 text-base font-bold">{m.assoc_list_all_heading()}</h2>
       {#if activeAssociations.length === 0}
         <div
-          class="text-center py-16 bg-[var(--cn-surface)]/60 rounded-2xl border-2 border-dashed border-cn-border"
+          class="border-cn-border rounded-2xl border-2 border-dashed bg-(--cn-surface)/60 py-16 text-center"
         >
-          <div class="text-5xl mb-3">🏠</div>
-          <h3 class="text-lg font-bold text-text-main mb-1">{m.assoc_list_empty_title()}</h3>
-          <p class="text-sm text-text-muted">{m.assoc_list_empty_desc()}</p>
+          <div class="mb-3 text-5xl">🏠</div>
+          <h3 class="text-text-main mb-1 text-lg font-bold">{m.assoc_list_empty_title()}</h3>
+          <p class="text-text-muted text-sm">{m.assoc_list_empty_desc()}</p>
         </div>
       {:else}
         <div class="grid gap-4 sm:grid-cols-2">
           {#each activeAssociations as asso (asso.id)}
             <a
               href="/associations/{asso.slug}"
-              class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-5 hover:shadow-md transition-shadow block"
+              class="border-cn-border block rounded-2xl border bg-(--cn-surface) p-5 transition-shadow hover:shadow-md"
             >
               <div class="flex items-start gap-3">
                 <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="lg" />
                 <div class="min-w-0 flex-1">
-                  <h3 class="font-bold text-text-main truncate">{asso.name}</h3>
+                  <h3 class="text-text-main truncate font-bold">{asso.name}</h3>
                   {#if asso.description?.trim()}
                     <div
-                      class="mt-0.5 max-h-[2.75rem] overflow-hidden text-text-muted [&_.post-markdown]:text-sm [&_.post-markdown]:leading-snug [&_.post-markdown_p]:m-0 [&_.post-markdown_p+p]:mt-0"
+                      class="text-text-muted mt-0.5 max-h-[2.75rem] overflow-hidden [&_.post-markdown]:text-sm [&_.post-markdown]:leading-snug [&_.post-markdown_p]:m-0 [&_.post-markdown_p+p]:mt-0"
                     >
                       <ProfileBioMarkdown source={asso.description} />
                     </div>
                   {/if}
-                  <p class="text-xs text-text-muted mt-1">
+                  <p class="text-text-muted mt-1 text-xs">
                     {(asso.memberCount ?? 0) !== 1
                       ? m.assoc_member_count_many({ count: asso.memberCount ?? 0 })
                       : m.assoc_member_count_one({ count: asso.memberCount ?? 0 })}
                     {#if myIds.has(asso.id)}
-                      <span class="ml-1 text-cn-dark font-semibold"
+                      <span class="text-cn-dark ml-1 font-semibold"
                         >&#183; {m.assoc_list_member_badge()}</span
                       >
                     {/if}
@@ -189,24 +189,24 @@
         <button
           type="button"
           onclick={() => (showArchived = !showArchived)}
-          class="flex w-full items-center gap-2 text-base font-bold text-text-muted hover:text-text-main transition-colors"
+          class="text-text-muted hover:text-text-main flex w-full items-center gap-2 text-base font-bold transition-colors"
           aria-expanded={showArchived}
         >
           <ChevronDown size={18} class="transition-transform {showArchived ? 'rotate-180' : ''}" />
           {m.assoc_list_archived_heading({ count: archivedAssociations.length })}
         </button>
         {#if showArchived}
-          <div class="grid gap-4 sm:grid-cols-2 mt-3">
+          <div class="mt-3 grid gap-4 sm:grid-cols-2">
             {#each archivedAssociations as asso (asso.id)}
               <a
                 href="/associations/{asso.slug}"
-                class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/60 p-5 opacity-75 hover:opacity-100 hover:shadow-md transition-all block"
+                class="border-cn-border block rounded-2xl border bg-(--cn-surface)/60 p-5 opacity-75 transition-all hover:opacity-100 hover:shadow-md"
               >
                 <div class="flex items-start gap-3">
                   <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="lg" />
                   <div class="min-w-0 flex-1">
-                    <h3 class="font-bold text-text-main truncate">{asso.name}</h3>
-                    <p class="text-xs text-text-muted mt-1">
+                    <h3 class="text-text-main truncate font-bold">{asso.name}</h3>
+                    <p class="text-text-muted mt-1 text-xs">
                       {(asso.memberCount ?? 0) !== 1
                         ? m.assoc_member_count_many({ count: asso.memberCount ?? 0 })
                         : m.assoc_member_count_one({ count: asso.memberCount ?? 0 })}

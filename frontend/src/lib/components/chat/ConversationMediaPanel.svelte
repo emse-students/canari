@@ -173,18 +173,18 @@
     ></button>
 
     <aside
-      class="relative flex h-full w-full max-w-md flex-col bg-[var(--cn-surface)] shadow-2xl"
+      class="relative flex h-full w-full max-w-md flex-col bg-(--cn-surface) shadow-2xl"
       transition:fly={{ x: 320, duration: 220 }}
     >
       <!-- Header -->
-      <div class="flex items-center justify-between gap-2 border-b border-cn-border px-4 py-3">
-        <h2 class="text-base font-bold text-text-main">{m.chat_media_links_files_title()}</h2>
+      <div class="border-cn-border flex items-center justify-between gap-2 border-b px-4 py-3">
+        <h2 class="text-text-main text-base font-bold">{m.chat_media_links_files_title()}</h2>
         <div class="flex items-center gap-1">
           {#if onOpenSearch}
             <button
               type="button"
               onclick={triggerSearch}
-              class="rounded-xl p-2 text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main transition-colors"
+              class="text-text-muted hover:text-text-main rounded-xl p-2 transition-colors hover:bg-black/5 dark:hover:bg-white/10"
               title={m.chat_search_in_conversation_title()}
               aria-label={m.chat_search_in_conversation_label()}
             >
@@ -194,7 +194,7 @@
           <button
             type="button"
             onclick={onClose}
-            class="rounded-xl p-2 text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main transition-colors"
+            class="text-text-muted hover:text-text-main rounded-xl p-2 transition-colors hover:bg-black/5 dark:hover:bg-white/10"
             aria-label={m.common_close_label()}
           >
             <X size={18} />
@@ -203,7 +203,7 @@
       </div>
 
       <!-- Tabs -->
-      <div class="flex gap-1 border-b border-cn-border px-2 py-2">
+      <div class="border-cn-border flex gap-1 border-b px-2 py-2">
         {#each tabs as tab (tab.id)}
           <button
             type="button"
@@ -227,12 +227,12 @@
         {#if loading}
           <div class="flex justify-center py-16">
             <div
-              class="h-7 w-7 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+              class="border-cn-yellow h-7 w-7 animate-spin rounded-full border-4 border-t-transparent"
             ></div>
           </div>
         {:else if activeTab === 'media'}
           {#if content.media.length === 0}
-            <p class="py-12 text-center text-sm text-text-muted">{m.chat_no_shared_media()}</p>
+            <p class="text-text-muted py-12 text-center text-sm">{m.chat_no_shared_media()}</p>
           {:else}
             <div class="grid grid-cols-3 gap-1.5">
               {#each content.media.slice(0, mediaWindow) as item (item.messageId + item.media.mediaId)}
@@ -247,7 +247,7 @@
               <button
                 type="button"
                 onclick={() => (mediaWindow += 60)}
-                class="mt-3 w-full rounded-xl border border-cn-border py-2 text-sm font-semibold text-text-muted hover:bg-black/5 dark:hover:bg-white/10"
+                class="border-cn-border text-text-muted mt-3 w-full rounded-xl border py-2 text-sm font-semibold hover:bg-black/5 dark:hover:bg-white/10"
               >
                 {m.chat_see_more_media_button({ content: content.media.length - mediaWindow })}
               </button>
@@ -255,21 +255,21 @@
           {/if}
         {:else if activeTab === 'links'}
           {#if content.links.length === 0}
-            <p class="py-12 text-center text-sm text-text-muted">{m.chat_no_shared_links()}</p>
+            <p class="text-text-muted py-12 text-center text-sm">{m.chat_no_shared_links()}</p>
           {:else}
             <div class="flex flex-col gap-1">
               {#each content.links as link (link.messageId + link.url)}
                 <button
                   type="button"
                   onclick={() => openLink(link.url)}
-                  class="flex flex-col items-start gap-0.5 rounded-xl px-3 py-2 text-left hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+                  class="flex flex-col items-start gap-0.5 rounded-xl px-3 py-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/10"
                 >
                   <span
-                    class="truncate text-sm font-semibold text-amber-600 dark:text-amber-400 w-full"
+                    class="w-full truncate text-sm font-semibold text-amber-600 dark:text-amber-400"
                     >{hostOf(link.url)}</span
                   >
-                  <span class="truncate text-xs text-text-muted w-full">{link.url}</span>
-                  <span class="text-[0.7rem] text-text-muted/80"
+                  <span class="text-text-muted w-full truncate text-xs">{link.url}</span>
+                  <span class="text-text-muted/80 text-[0.7rem]"
                     >{senderName(link.senderId)} · {dateFmt.format(link.timestamp)}</span
                   >
                 </button>
@@ -277,31 +277,31 @@
             </div>
           {/if}
         {:else if content.files.length === 0}
-          <p class="py-12 text-center text-sm text-text-muted">{m.chat_no_shared_files()}</p>
+          <p class="text-text-muted py-12 text-center text-sm">{m.chat_no_shared_files()}</p>
         {:else}
           <div class="flex flex-col gap-1">
             {#each content.files as file (file.messageId + file.media.mediaId)}
               <button
                 type="button"
                 onclick={() => downloadFile(file.media)}
-                class="flex items-center gap-3 rounded-xl px-3 py-2 text-left hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+                class="flex items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/10"
               >
                 <span
-                  class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-cn-yellow/15 text-cn-ink"
+                  class="bg-cn-yellow/15 text-cn-ink flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
                 >
                   <FileText size={18} />
                 </span>
                 <span class="min-w-0 flex-1">
-                  <span class="block truncate text-sm font-medium text-text-main"
+                  <span class="text-text-main block truncate text-sm font-medium"
                     >{file.media.fileName ?? m.chat_file_label()}</span
                   >
-                  <span class="block text-xs text-text-muted"
+                  <span class="text-text-muted block text-xs"
                     >{formatFileSize(file.media.size)} · {senderName(file.senderId)} · {dateFmt.format(
                       file.timestamp
                     )}</span
                   >
                 </span>
-                <Download size={16} class="shrink-0 text-text-muted" />
+                <Download size={16} class="text-text-muted shrink-0" />
               </button>
             {/each}
           </div>

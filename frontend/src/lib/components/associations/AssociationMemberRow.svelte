@@ -75,13 +75,13 @@
 </script>
 
 <div
-  class="flex flex-col gap-3 rounded-2xl border border-cn-border/70 bg-cn-bg/40 px-4 py-3 transition-colors hover:bg-cn-bg/60"
+  class="border-cn-border/70 bg-cn-bg/40 hover:bg-cn-bg/60 flex flex-col gap-3 rounded-2xl border px-4 py-3 transition-colors"
 >
-  <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-    <div class="flex items-center gap-3 min-w-0 flex-1">
+  <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <div class="flex min-w-0 flex-1 items-center gap-3">
       <a
         href="/profile/{encodeURIComponent(member.userId)}"
-        class="shrink-0 ring-2 ring-transparent hover:ring-cn-yellow/40 rounded-full transition-shadow"
+        class="hover:ring-cn-yellow/40 shrink-0 rounded-full ring-2 ring-transparent transition-shadow"
         title={m.asso_member_view_profile_title()}
       >
         <Avatar userId={member.userId} size="lg" shape="circle" fallbackLabel={displayName} />
@@ -89,13 +89,13 @@
       <div class="min-w-0">
         <a
           href="/profile/{encodeURIComponent(member.userId)}"
-          class="font-semibold text-text-main truncate hover:underline block"
+          class="text-text-main block truncate font-semibold hover:underline"
         >
           {displayName}
         </a>
-        <div class="flex flex-wrap items-center gap-2 mt-1">
+        <div class="mt-1 flex flex-wrap items-center gap-2">
           <span
-            class="text-xs font-semibold px-2.5 py-0.5 rounded-full
+            class="rounded-full px-2.5 py-0.5 text-xs font-semibold
             {member.isAdmin
               ? 'bg-cn-yellow/25 text-cn-dark dark:text-cn-yellow'
               : 'bg-cn-border/50 text-text-muted'}"
@@ -103,7 +103,7 @@
             {member.role}
           </span>
           {#if member.isAdmin}
-            <span class="text-[11px] uppercase tracking-wide text-text-muted font-medium"
+            <span class="text-text-muted text-[11px] font-medium tracking-wide uppercase"
               >Admin</span
             >
           {/if}
@@ -112,19 +112,19 @@
     </div>
 
     {#if manage && onRoleChange && onRemove}
-      <div class="flex flex-wrap items-center gap-2 sm:justify-end shrink-0">
+      <div class="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
         <input
           type="text"
           value={member.role}
           aria-label={m.asso_member_role_label()}
           onchange={(e) =>
             onRoleChange(member.userId, (e.target as HTMLInputElement).value, effectivePermissions)}
-          class="text-sm rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 w-full sm:w-36"
+          class="border-cn-border w-full rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm sm:w-36"
         />
         <button
           type="button"
           onclick={() => (showPermissions = !showPermissions)}
-          class="inline-flex items-center gap-1.5 text-sm rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-text-main hover:border-cn-yellow/60 transition-colors {showPermissions
+          class="border-cn-border text-text-main hover:border-cn-yellow/60 inline-flex items-center gap-1.5 rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm transition-colors {showPermissions
             ? 'border-cn-yellow/60 bg-cn-yellow/5'
             : ''}"
           aria-expanded={showPermissions}
@@ -138,7 +138,7 @@
         <button
           type="button"
           onclick={() => onRemove(member.userId)}
-          class="inline-flex items-center justify-center rounded-xl border border-red-err/30 bg-red-err/10 p-2 text-red-err hover:bg-red-err/20 transition-colors"
+          class="border-red-err/30 bg-red-err/10 text-red-err hover:bg-red-err/20 inline-flex items-center justify-center rounded-xl border p-2 transition-colors"
           title={m.asso_member_remove_title()}
         >
           <Trash2 size={16} />
@@ -149,17 +149,17 @@
 
   {#if manage && showPermissions}
     <div
-      class="border-t border-cn-border/40 pt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-2.5"
+      class="border-cn-border/40 grid grid-cols-1 gap-x-4 gap-y-2.5 border-t pt-3 sm:grid-cols-2 lg:grid-cols-3"
     >
       {#each FLAG_LABELS as { flag, label } (flag)}
-        <label class="flex items-center gap-2 cursor-pointer group">
+        <label class="group flex cursor-pointer items-center gap-2">
           <input
             type="checkbox"
             checked={hasPermissionFlag(effectivePermissions, flag)}
             onchange={() => toggleFlag(flag)}
-            class="w-4 h-4 rounded border-cn-border accent-cn-yellow cursor-pointer"
+            class="border-cn-border accent-cn-yellow h-4 w-4 cursor-pointer rounded"
           />
-          <span class="text-sm text-text-main group-hover:text-cn-dark transition-colors"
+          <span class="text-text-main group-hover:text-cn-dark text-sm transition-colors"
             >{label}</span
           >
         </label>

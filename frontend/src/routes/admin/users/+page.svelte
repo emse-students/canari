@@ -92,15 +92,15 @@
   });
 </script>
 
-<div class="max-w-3xl mx-auto px-4 py-8 space-y-6">
+<div class="mx-auto max-w-3xl space-y-6 px-4 py-8">
   <div class="flex items-center justify-between gap-4">
     <div class="flex items-center gap-3">
-      <div class="p-2.5 rounded-xl bg-amber-500/10 text-amber-warn">
+      <div class="text-amber-warn rounded-xl bg-amber-500/10 p-2.5">
         <Users size={22} strokeWidth={2.5} />
       </div>
       <div>
-        <h1 class="text-2xl font-extrabold text-text-main">{m.admin_card_manage_admins_label()}</h1>
-        <p class="text-sm text-text-muted">
+        <h1 class="text-text-main text-2xl font-extrabold">{m.admin_card_manage_admins_label()}</h1>
+        <p class="text-text-muted text-sm">
           {m.admin_users_subtitle()}
         </p>
       </div>
@@ -109,7 +109,7 @@
       type="button"
       onclick={load}
       disabled={loading}
-      class="p-2 rounded-xl text-text-muted hover:bg-black/5 dark:hover:bg-white/5 transition-colors disabled:opacity-50"
+      class="text-text-muted rounded-xl p-2 transition-colors hover:bg-black/5 disabled:opacity-50 dark:hover:bg-white/5"
       title={m.moderation_refresh()}
     >
       <RefreshCw size={18} class={loading ? 'animate-spin' : ''} />
@@ -117,7 +117,7 @@
   </div>
 
   {#if error}
-    <div class="p-4 rounded-xl bg-red-err/10 text-red-err text-sm border border-red-err/30">
+    <div class="bg-red-err/10 text-red-err border-red-err/30 rounded-xl border p-4 text-sm">
       {error}
     </div>
   {/if}
@@ -126,36 +126,36 @@
     type="search"
     bind:value={searchQuery}
     placeholder={m.admin_users_search_placeholder()}
-    class="w-full bg-white/80 dark:bg-black/40 border border-black/10 dark:border-white/10 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-amber-500/50"
+    class="w-full rounded-xl border border-black/10 bg-white/80 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-amber-500/50 dark:border-white/10 dark:bg-black/40"
   />
 
   {#if loading}
-    <div class="text-sm text-text-muted">{m.common_loading_label()}</div>
+    <div class="text-text-muted text-sm">{m.common_loading_label()}</div>
   {:else if filtered.length === 0}
-    <div class="text-sm text-text-muted">{m.admin_users_empty()}</div>
+    <div class="text-text-muted text-sm">{m.admin_users_empty()}</div>
   {:else}
     <ul class="space-y-2">
       {#each filtered as user (user.id)}
         <li
-          class="flex items-center justify-between gap-3 bg-white/60 dark:bg-black/20 border border-black/5 dark:border-white/10 rounded-2xl px-4 py-3 shadow-sm"
+          class="flex items-center justify-between gap-3 rounded-2xl border border-black/5 bg-white/60 px-4 py-3 shadow-sm dark:border-white/10 dark:bg-black/20"
         >
-          <div class="flex items-center gap-3 min-w-0">
+          <div class="flex min-w-0 items-center gap-3">
             {#if user.admin}
-              <Shield size={16} class="text-amber-500 flex-shrink-0" strokeWidth={2.5} />
+              <Shield size={16} class="flex-shrink-0 text-amber-500" strokeWidth={2.5} />
             {:else}
-              <Shield size={16} class="text-text-muted opacity-30 flex-shrink-0" strokeWidth={2} />
+              <Shield size={16} class="text-text-muted flex-shrink-0 opacity-30" strokeWidth={2} />
             {/if}
             <div class="min-w-0">
-              <p class="font-semibold text-sm text-text-main truncate">
+              <p class="text-text-main truncate text-sm font-semibold">
                 {user.displayName ?? user.id}
               </p>
-              <p class="text-xs text-text-muted font-mono truncate">{user.id}</p>
+              <p class="text-text-muted truncate font-mono text-xs">{user.id}</p>
             </div>
           </div>
 
-          <div class="flex items-center gap-3 flex-shrink-0">
+          <div class="flex flex-shrink-0 items-center gap-3">
             {#if feedback[user.id]}
-              <span class="text-xs text-green-ok font-medium">{feedback[user.id]}</span>
+              <span class="text-green-ok text-xs font-medium">{feedback[user.id]}</span>
             {/if}
             <button
               type="button"

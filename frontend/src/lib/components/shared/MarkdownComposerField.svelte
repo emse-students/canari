@@ -75,7 +75,7 @@
   }
 </script>
 
-<div class="flex flex-col min-w-0 {className}">
+<div class="flex min-w-0 flex-col {className}">
   {#if showToolbar}
     <MarkdownComposerToolbar onFormat={handleFormat} class={toolbarClass} />
   {/if}

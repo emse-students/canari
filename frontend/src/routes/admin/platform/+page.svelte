@@ -205,13 +205,13 @@
 <div class="space-y-6">
   <header class="flex items-start gap-3">
     <span
-      class="flex h-10 w-10 items-center justify-center rounded-xl bg-cn-yellow/15 text-cn-dark"
+      class="bg-cn-yellow/15 text-cn-dark flex h-10 w-10 items-center justify-center rounded-xl"
     >
       <Wrench size={20} />
     </span>
     <div>
-      <h2 class="text-lg font-extrabold text-text-main">{m.admin_platform_label()}</h2>
-      <p class="text-sm text-text-muted mt-0.5">
+      <h2 class="text-text-main text-lg font-extrabold">{m.admin_platform_label()}</h2>
+      <p class="text-text-muted mt-0.5 text-sm">
         {m.admin_platform_subtitle()}
       </p>
     </div>
@@ -220,35 +220,35 @@
   {#if loading}
     <div class="flex justify-center py-16">
       <div
-        class="h-8 w-8 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+        class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else}
     <form
-      class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-5 space-y-5"
+      class="border-cn-border space-y-5 rounded-2xl border bg-(--cn-surface) p-5"
       onsubmit={(e) => {
         e.preventDefault();
         void saveConfig();
       }}
     >
-      <label class="flex items-start gap-3 cursor-pointer">
+      <label class="flex cursor-pointer items-start gap-3">
         <input
           type="checkbox"
           bind:checked={maintenanceEnabled}
-          class="mt-1 h-4 w-4 rounded border-cn-border text-cn-yellow focus:ring-cn-yellow"
+          class="border-cn-border text-cn-yellow focus:ring-cn-yellow mt-1 h-4 w-4 rounded"
         />
         <span>
-          <span class="block text-sm font-bold text-text-main"
+          <span class="text-text-main block text-sm font-bold"
             >{m.admin_platform_maintenance_toggle_label()}</span
           >
-          <span class="block text-xs text-text-muted mt-0.5">
+          <span class="text-text-muted mt-0.5 block text-xs">
             {m.admin_platform_maintenance_toggle_desc()}
           </span>
         </span>
       </label>
 
       <div class="space-y-1.5">
-        <label for="maintenance-message" class="text-sm font-bold text-text-main">
+        <label for="maintenance-message" class="text-text-main text-sm font-bold">
           {m.admin_platform_message_label()}
         </label>
         <textarea
@@ -257,12 +257,12 @@
           rows="3"
           maxlength="2000"
           placeholder={m.admin_platform_message_placeholder()}
-          class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm text-text-main placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-cn-yellow/40"
+          class="border-cn-border text-text-main placeholder:text-text-muted focus:ring-cn-yellow/40 w-full rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
         ></textarea>
       </div>
 
       <div class="space-y-1.5">
-        <label for="min-client-version" class="text-sm font-bold text-text-main">
+        <label for="min-client-version" class="text-text-main text-sm font-bold">
           {m.admin_platform_min_version_label()}
         </label>
         <input
@@ -271,27 +271,27 @@
           bind:value={minClientVersion}
           pattern="^\d+\.\d+\.\d+$"
           required
-          class="w-full max-w-xs rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm font-mono text-text-main focus:outline-none focus:ring-2 focus:ring-cn-yellow/40"
+          class="border-cn-border text-text-main focus:ring-cn-yellow/40 w-full max-w-xs rounded-xl border bg-transparent px-3 py-2 font-mono text-sm focus:ring-2 focus:outline-none"
         />
-        <p class="text-xs text-text-muted">
+        <p class="text-text-muted text-xs">
           {m.admin_platform_min_version_hint_prefix()} <code>major.minor.patch</code>
           {m.admin_platform_min_version_hint_suffix()}
         </p>
       </div>
 
       <div class="space-y-1.5">
-        <label for="payment-provider" class="text-sm font-bold text-text-main">
+        <label for="payment-provider" class="text-text-main text-sm font-bold">
           {m.admin_platform_payment_provider_label()}
         </label>
         <select
           id="payment-provider"
           bind:value={paymentProvider}
-          class="w-full max-w-xs rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-cn-yellow/40"
+          class="border-cn-border text-text-main focus:ring-cn-yellow/40 w-full max-w-xs rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
         >
           <option value="stripe">Stripe</option>
           <option value="lydia">Lydia</option>
         </select>
-        <p class="text-xs text-text-muted">
+        <p class="text-text-muted text-xs">
           {m.admin_platform_payment_provider_hint()}
         </p>
       </div>
@@ -300,14 +300,14 @@
         <p class="text-sm text-red-500" role="alert">{error}</p>
       {/if}
       {#if savedMessage}
-        <p class="text-sm text-green-ok" role="status">{savedMessage}</p>
+        <p class="text-green-ok text-sm" role="status">{savedMessage}</p>
       {/if}
 
       <div class="flex flex-wrap gap-2">
         <button
           type="submit"
           disabled={saving}
-          class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
+          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
         >
           <Save size={16} />
           {saving ? m.common_saving_label() : m.common_save_button()}
@@ -316,7 +316,7 @@
           type="button"
           disabled={loading || saving}
           onclick={() => void loadConfig()}
-          class="inline-flex items-center gap-2 rounded-xl border border-cn-border px-4 py-2 text-sm font-bold text-text-muted hover:text-text-main disabled:opacity-50"
+          class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold disabled:opacity-50"
         >
           <RefreshCw size={16} />
           {m.common_reload_button()}
@@ -325,7 +325,7 @@
     </form>
 
     <form
-      class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-5 space-y-5"
+      class="border-cn-border space-y-5 rounded-2xl border bg-(--cn-surface) p-5"
       onsubmit={(e) => {
         e.preventDefault();
         void publishAnnouncement();
@@ -333,19 +333,19 @@
     >
       <header class="flex items-start gap-3">
         <span
-          class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-cn-yellow/15 text-cn-dark"
+          class="bg-cn-yellow/15 text-cn-dark flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
         >
           <Megaphone size={18} />
         </span>
         <div>
-          <h3 class="text-sm font-bold text-text-main">{m.admin_announcement_section_title()}</h3>
-          <p class="text-xs text-text-muted mt-0.5">{m.admin_announcement_section_desc()}</p>
+          <h3 class="text-text-main text-sm font-bold">{m.admin_announcement_section_title()}</h3>
+          <p class="text-text-muted mt-0.5 text-xs">{m.admin_announcement_section_desc()}</p>
         </div>
       </header>
 
-      <p class="text-xs text-text-muted">
+      <p class="text-text-muted text-xs">
         {#if announcement}
-          <span class="font-bold text-text-main">{m.admin_announcement_active_label()}</span>
+          <span class="text-text-main font-bold">{m.admin_announcement_active_label()}</span>
           - {m.admin_announcement_seen_count({ count: announcement.seenCount })}
         {:else}
           {m.admin_announcement_none_label()}
@@ -354,7 +354,7 @@
 
       <div class="grid gap-4 sm:grid-cols-2">
         <div class="space-y-1.5">
-          <label for="ann-title-fr" class="text-sm font-bold text-text-main">
+          <label for="ann-title-fr" class="text-text-main text-sm font-bold">
             {m.admin_announcement_title_fr_label()}
           </label>
           <input
@@ -362,11 +362,11 @@
             type="text"
             bind:value={titleFr}
             maxlength="200"
-            class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-cn-yellow/40"
+            class="border-cn-border text-text-main focus:ring-cn-yellow/40 w-full rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
           />
         </div>
         <div class="space-y-1.5">
-          <label for="ann-title-en" class="text-sm font-bold text-text-main">
+          <label for="ann-title-en" class="text-text-main text-sm font-bold">
             {m.admin_announcement_title_en_label()}
           </label>
           <input
@@ -374,11 +374,11 @@
             type="text"
             bind:value={titleEn}
             maxlength="200"
-            class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-cn-yellow/40"
+            class="border-cn-border text-text-main focus:ring-cn-yellow/40 w-full rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
           />
         </div>
         <div class="space-y-1.5">
-          <label for="ann-body-fr" class="text-sm font-bold text-text-main">
+          <label for="ann-body-fr" class="text-text-main text-sm font-bold">
             {m.admin_announcement_body_fr_label()}
           </label>
           <textarea
@@ -386,11 +386,11 @@
             bind:value={bodyFr}
             rows="5"
             maxlength="4000"
-            class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-cn-yellow/40"
+            class="border-cn-border text-text-main focus:ring-cn-yellow/40 w-full rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
           ></textarea>
         </div>
         <div class="space-y-1.5">
-          <label for="ann-body-en" class="text-sm font-bold text-text-main">
+          <label for="ann-body-en" class="text-text-main text-sm font-bold">
             {m.admin_announcement_body_en_label()}
           </label>
           <textarea
@@ -398,15 +398,15 @@
             bind:value={bodyEn}
             rows="5"
             maxlength="4000"
-            class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-cn-yellow/40"
+            class="border-cn-border text-text-main focus:ring-cn-yellow/40 w-full rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
           ></textarea>
         </div>
       </div>
-      <p class="text-xs text-text-muted">{m.admin_announcement_both_languages_hint()}</p>
+      <p class="text-text-muted text-xs">{m.admin_announcement_both_languages_hint()}</p>
 
       <div class="grid gap-4 sm:grid-cols-2">
         <div class="space-y-1.5">
-          <label for="ann-min-version" class="text-sm font-bold text-text-main">
+          <label for="ann-min-version" class="text-text-main text-sm font-bold">
             {m.admin_announcement_min_version_label()}
           </label>
           <input
@@ -415,11 +415,11 @@
             bind:value={annMinVersion}
             pattern="^(\d+\.\d+\.\d+)?$"
             placeholder="0.15.0"
-            class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm font-mono text-text-main focus:outline-none focus:ring-2 focus:ring-cn-yellow/40"
+            class="border-cn-border text-text-main focus:ring-cn-yellow/40 w-full rounded-xl border bg-transparent px-3 py-2 font-mono text-sm focus:ring-2 focus:outline-none"
           />
         </div>
         <div class="space-y-1.5">
-          <label for="ann-max-version" class="text-sm font-bold text-text-main">
+          <label for="ann-max-version" class="text-text-main text-sm font-bold">
             {m.admin_announcement_max_version_label()}
           </label>
           <input
@@ -428,24 +428,24 @@
             bind:value={annMaxVersion}
             pattern="^(\d+\.\d+\.\d+)?$"
             placeholder="0.15.9"
-            class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm font-mono text-text-main focus:outline-none focus:ring-2 focus:ring-cn-yellow/40"
+            class="border-cn-border text-text-main focus:ring-cn-yellow/40 w-full rounded-xl border bg-transparent px-3 py-2 font-mono text-sm focus:ring-2 focus:outline-none"
           />
         </div>
       </div>
-      <p class="text-xs text-text-muted">{m.admin_announcement_version_hint()}</p>
+      <p class="text-text-muted text-xs">{m.admin_announcement_version_hint()}</p>
 
       {#if announcementError}
         <p class="text-sm text-red-500" role="alert">{announcementError}</p>
       {/if}
       {#if announcementSaved}
-        <p class="text-sm text-green-ok" role="status">{announcementSaved}</p>
+        <p class="text-green-ok text-sm" role="status">{announcementSaved}</p>
       {/if}
 
       <div class="flex flex-wrap gap-2">
         <button
           type="submit"
           disabled={announcementSaving || !announcementComplete}
-          class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
+          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
         >
           <Save size={16} />
           {announcementSaving ? m.common_saving_label() : m.admin_announcement_publish_button()}
@@ -455,7 +455,7 @@
             type="button"
             disabled={announcementSaving}
             onclick={() => void retireAnnouncement()}
-            class="inline-flex items-center gap-2 rounded-xl border border-cn-border px-4 py-2 text-sm font-bold text-red-500 hover:bg-red-500/10 disabled:opacity-50"
+            class="border-cn-border inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold text-red-500 hover:bg-red-500/10 disabled:opacity-50"
           >
             <Trash2 size={16} />
             {m.admin_announcement_retire_button()}

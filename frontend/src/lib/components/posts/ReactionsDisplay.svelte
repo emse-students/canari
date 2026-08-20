@@ -62,7 +62,7 @@
 </script>
 
 {#if Object.keys(reactionCounts).length > 0}
-  <div class="px-5 py-2 border-b border-cn-border/40 flex flex-wrap gap-2">
+  <div class="border-cn-border/40 flex flex-wrap gap-2 border-b px-5 py-2">
     {#each Object.entries(reactionCounts) as [reactionType, count] (reactionType)}
       {@const reaction = reactionList.find((r) => r.type === reactionType)}
       <button
@@ -70,14 +70,14 @@
         onclick={() => onReactionClick(reactionType)}
         onmouseenter={(e) => onBadgeEnter(reactionType, e.currentTarget as HTMLElement)}
         onmouseleave={scheduleHide}
-        class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full transition-all {userReaction ===
+        class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 transition-all {userReaction ===
         reactionType
-          ? 'bg-cn-yellow/20 ring-1 ring-cn-yellow'
-          : 'bg-[var(--cn-surface)] hover:bg-cn-yellow/10'}"
+          ? 'bg-cn-yellow/20 ring-cn-yellow ring-1'
+          : 'hover:bg-cn-yellow/10 bg-(--cn-surface)'}"
         title={reaction?.type}
       >
         <span class="text-lg">{reaction?.emoji ?? '😊'}</span>
-        <span class="text-sm font-bold text-text-main">{count}</span>
+        <span class="text-text-main text-sm font-bold">{count}</span>
       </button>
     {/each}
   </div>
@@ -87,13 +87,13 @@
 {#if popupReactionType && popupPos}
   <div
     use:portal
-    class="fixed z-[9999] min-w-[10rem] max-w-[14rem] rounded-xl bg-cn-tooltip text-white text-[0.75rem] font-medium shadow-xl px-3 py-2.5 pointer-events-auto"
+    class="bg-cn-tooltip pointer-events-auto fixed z-[9999] max-w-[14rem] min-w-[10rem] rounded-xl px-3 py-2.5 text-[0.75rem] font-medium text-white shadow-xl"
     style="top: {popupPos.top}px; left: {popupPos.left}px;"
     role="tooltip"
     onmouseenter={cancelHide}
     onmouseleave={scheduleHide}
   >
-    <p class="font-bold text-white/60 uppercase tracking-wide text-[0.6rem] mb-1.5">
+    <p class="mb-1.5 text-[0.6rem] font-bold tracking-wide text-white/60 uppercase">
       {reactionList.find((r) => r.type === popupReactionType)?.emoji ?? '😊'}
       {popupReactionType}
     </p>
@@ -104,7 +104,7 @@
         {/each}
       </ul>
     {:else}
-      <p class="opacity-60 italic">{m.common_loading_label()}</p>
+      <p class="italic opacity-60">{m.common_loading_label()}</p>
     {/if}
   </div>
 {/if}

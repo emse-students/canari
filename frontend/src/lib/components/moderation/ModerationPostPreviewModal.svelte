@@ -63,23 +63,23 @@
   maxWidth="max-w-xl"
   dismissible={!loading}
 >
-  <div class="overflow-y-auto min-h-0 flex-1 px-1 pb-2">
+  <div class="min-h-0 flex-1 overflow-y-auto px-1 pb-2">
     {#if loading}
-      <div class="flex flex-col items-center justify-center gap-3 py-16 text-text-muted">
+      <div class="text-text-muted flex flex-col items-center justify-center gap-3 py-16">
         <Loader2 size={32} class="animate-spin opacity-60" />
         <p class="text-sm">{m.common_loading_label()}</p>
       </div>
     {:else if error}
-      <div class="py-12 text-center px-4">
-        <FileX size={40} class="mx-auto mb-3 text-text-muted opacity-40" />
-        <p class="text-sm text-red-err">{error}</p>
+      <div class="px-4 py-12 text-center">
+        <FileX size={40} class="text-text-muted mx-auto mb-3 opacity-40" />
+        <p class="text-red-err text-sm">{error}</p>
       </div>
     {:else if post}
-      <Card class="overflow-hidden border-cn-border/80 shadow-sm">
+      <Card class="border-cn-border/80 overflow-hidden shadow-sm">
         <PostHeader {post} />
         <PostContent {post} {authToken} fullContent />
       </Card>
-      <p class="mt-3 text-[10px] font-mono text-text-muted/50 truncate px-1" title={post.id}>
+      <p class="text-text-muted/50 mt-3 truncate px-1 font-mono text-[10px]" title={post.id}>
         {post.id}
       </p>
     {/if}

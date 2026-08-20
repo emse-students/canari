@@ -395,14 +395,14 @@
 <div class="relative mb-6">
   {#if localPost.pinned}
     <span
-      class="absolute -top-2 left-4 z-10 text-[0.6rem] font-extrabold uppercase tracking-widest bg-amber-500 text-cn-ink px-2 py-0.5 rounded-full shadow-md shadow-amber-500/30 inline-flex items-center gap-1 pointer-events-none"
+      class="text-cn-ink pointer-events-none absolute -top-2 left-4 z-10 inline-flex items-center gap-1 rounded-full bg-amber-500 px-2 py-0.5 text-[0.6rem] font-extrabold tracking-widest uppercase shadow-md shadow-amber-500/30"
     >
       <Pin size={10} strokeWidth={3} />
       {m.post_pinned()}
     </span>
   {/if}
   <Card
-    class="group/card !p-0 transition-all duration-300 hover:shadow-xl hover:-translate-y-0.5 border border-black/5 dark:border-white/10 bg-white/70 dark:bg-cn-ink/70 backdrop-blur-xl"
+    class="group/card dark:bg-cn-ink/70 border border-black/5 bg-white/70 !p-0 backdrop-blur-xl transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl dark:border-white/10"
   >
     <div class="relative">
       <PostHeader post={localPost} />
@@ -435,7 +435,7 @@
       <div class="px-5 pb-3">
         <a
           href="/associations/{encodeURIComponent(ev.associationSlug)}?section=agenda"
-          class="inline-flex items-center gap-2 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs font-bold text-amber-800 dark:text-amber-300 hover:bg-amber-500/20 transition-colors"
+          class="inline-flex items-center gap-2 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs font-bold text-amber-800 transition-colors hover:bg-amber-500/20 dark:text-amber-300"
         >
           <CalendarCheck size={14} strokeWidth={2.5} />
           <span>
@@ -492,10 +492,10 @@
     />
 
     {#if pendingAttachedFormIds.length > 0}
-      <div class="px-5 py-3 space-y-3" aria-hidden="true">
+      <div class="space-y-3 px-5 py-3" aria-hidden="true">
         {#each pendingAttachedFormIds as formId (formId)}
           <div
-            class="rounded-2xl border border-black/5 dark:border-white/10 bg-black/5 dark:bg-white/5 animate-pulse"
+            class="animate-pulse rounded-2xl border border-black/5 bg-black/5 dark:border-white/10 dark:bg-white/5"
             style="min-height: {FORM_CARD_PLACEHOLDER_MIN_HEIGHT}"
           ></div>
         {/each}

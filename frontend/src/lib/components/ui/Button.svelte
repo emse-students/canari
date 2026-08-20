@@ -49,7 +49,7 @@
 >
   {#if loading}
     <span
-      class="inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"
+      class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent"
     ></span>
   {/if}
   {@render children?.()}

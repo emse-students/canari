@@ -16,7 +16,7 @@
 </script>
 
 <div
-  class="flex items-center gap-0.5 px-2 pt-1.5 pb-1.5 flex-wrap border-b border-black/5 dark:border-white/5 {className}"
+  class="flex flex-wrap items-center gap-0.5 border-b border-black/5 px-2 pt-1.5 pb-1.5 dark:border-white/5 {className}"
   role="toolbar"
   aria-label={m.md_toolbar_aria_label()}
 >
@@ -44,7 +44,7 @@
   >
     <Strikethrough size={15} strokeWidth={2} />
   </button>
-  <div class="h-4 w-px bg-black/10 dark:bg-white/10 mx-1 shrink-0" aria-hidden="true"></div>
+  <div class="mx-1 h-4 w-px shrink-0 bg-black/10 dark:bg-white/10" aria-hidden="true"></div>
   <button
     type="button"
     title={m.md_toolbar_heading()}
@@ -69,7 +69,7 @@
   >
     <Code size={15} strokeWidth={2} />
   </button>
-  <div class="h-4 w-px bg-black/10 dark:bg-white/10 mx-1 shrink-0" aria-hidden="true"></div>
+  <div class="mx-1 h-4 w-px shrink-0 bg-black/10 dark:bg-white/10" aria-hidden="true"></div>
   <button
     type="button"
     title={m.md_toolbar_list()}

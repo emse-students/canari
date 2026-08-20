@@ -13,9 +13,6 @@
     Moon,
     Sun,
     LogOut,
-    ShieldAlert,
-    Activity,
-    UserCog,
     Shield,
     FolderOpen,
   } from '@lucide/svelte';
@@ -96,9 +93,9 @@
   }
 </script>
 
-<div class="p-6 max-w-4xl mx-auto">
+<div class="mx-auto max-w-4xl p-6">
   <div class="mb-8">
-    <h1 class="text-2xl font-bold text-text-main flex items-center gap-3">
+    <h1 class="text-text-main flex items-center gap-3 text-2xl font-bold">
       <LayoutDashboard size={28} class="text-cn-yellow" />
       {m.nav_dashboard_label()}
     </h1>
@@ -108,10 +105,10 @@
   {#snippet card(s: Section)}
     <a
       href={s.href}
-      class="group flex items-start gap-4 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-cn-yellow hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))] transition-colors"
+      class="group border-cn-border hover:border-cn-yellow flex items-start gap-4 rounded-2xl border bg-(--cn-surface) p-4 transition-colors hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))]"
     >
       <span
-        class="flex-shrink-0 p-2.5 rounded-xl border border-cn-border bg-[var(--surface-elevated)] group-hover:border-cn-yellow transition-colors"
+        class="border-cn-border group-hover:border-cn-yellow shrink-0 rounded-xl border bg-(--surface-elevated) p-2.5 transition-colors"
       >
         {#if s.icon === 'users'}
           <Users size={20} class="text-text-muted" />
@@ -130,8 +127,8 @@
         {/if}
       </span>
       <span>
-        <span class="block font-semibold text-text-main">{s.label}</span>
-        <span class="block text-sm text-text-muted mt-0.5">{s.description}</span>
+        <span class="text-text-main block font-semibold">{s.label}</span>
+        <span class="text-text-muted mt-0.5 block text-sm">{s.description}</span>
       </span>
     </a>
   {/snippet}
@@ -139,34 +136,34 @@
   <!-- Account quick actions. Shown on every viewport: desktop also has the sidebar gear, but the
        dashboard is a discoverable hub where users expect profile / settings / theme / logout too. -->
   <section class="mb-8">
-    <h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted mb-3">
+    <h2 class="text-text-muted mb-3 text-xs font-semibold tracking-widest uppercase">
       {m.dashboard_account_heading()}
     </h2>
-    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+    <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
       <button
         type="button"
         onclick={() => goto('/profile')}
-        class="flex flex-col items-center gap-2 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-cn-yellow hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))] transition-colors"
+        class="border-cn-border hover:border-cn-yellow flex flex-col items-center gap-2 rounded-2xl border bg-(--cn-surface) p-4 transition-colors hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))]"
         title={m.dashboard_profile_title()}
       >
         <User size={22} class="text-text-muted" />
-        <span class="text-sm font-medium text-text-main">{m.dashboard_profile_btn()}</span>
+        <span class="text-text-main text-sm font-medium">{m.dashboard_profile_btn()}</span>
       </button>
 
       <button
         type="button"
         onclick={() => goto('/settings')}
-        class="flex flex-col items-center gap-2 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-cn-yellow hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))] transition-colors"
+        class="border-cn-border hover:border-cn-yellow flex flex-col items-center gap-2 rounded-2xl border bg-(--cn-surface) p-4 transition-colors hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))]"
         title={m.dashboard_settings_title()}
       >
         <SlidersHorizontal size={22} class="text-text-muted" />
-        <span class="text-sm font-medium text-text-main">{m.dashboard_settings_btn()}</span>
+        <span class="text-text-main text-sm font-medium">{m.dashboard_settings_btn()}</span>
       </button>
 
       <button
         type="button"
         onclick={() => themeStore.toggle()}
-        class="flex flex-col items-center gap-2 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-cn-yellow hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))] transition-colors"
+        class="border-cn-border hover:border-cn-yellow flex flex-col items-center gap-2 rounded-2xl border bg-(--cn-surface) p-4 transition-colors hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))]"
         title={m.dashboard_theme_title()}
       >
         {#if themeStore.isDark}
@@ -174,13 +171,13 @@
         {:else}
           <Moon size={22} class="text-text-muted" />
         {/if}
-        <span class="text-sm font-medium text-text-main">{m.dashboard_theme_btn()}</span>
+        <span class="text-text-main text-sm font-medium">{m.dashboard_theme_btn()}</span>
       </button>
 
       <button
         type="button"
         onclick={handleLogout}
-        class="flex flex-col items-center gap-2 p-4 rounded-2xl border border-red-400/40 bg-red-500/5 text-red-err hover:bg-red-500/10 transition-colors"
+        class="text-red-err flex flex-col items-center gap-2 rounded-2xl border border-red-400/40 bg-red-500/5 p-4 transition-colors hover:bg-red-500/10"
         title={m.dashboard_logout_title()}
       >
         <LogOut size={22} />
@@ -191,10 +188,10 @@
 
   <!-- Explorer (Agenda, Boutique, Associations, Formulaires) -->
   <section class="mb-8">
-    <h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted mb-3">
+    <h2 class="text-text-muted mb-3 text-xs font-semibold tracking-widest uppercase">
       {m.dashboard_explore_heading()}
     </h2>
-    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
       {#each exploreItems as s (s.href)}
         {@render card(s)}
       {/each}
@@ -204,22 +201,22 @@
   <!-- Reviewer des documents administratifs (personnel Ecole/MDE, admins, BDE) -->
   {#if hasReviewerAccess}
     <section class="mb-8">
-      <h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted mb-3">
+      <h2 class="text-text-muted mb-3 text-xs font-semibold tracking-widest uppercase">
         {m.reviewer_docs_dashboard_heading()}
       </h2>
       <a
         href="/documents"
-        class="flex items-start gap-4 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-cn-yellow hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))] transition-colors"
+        class="border-cn-border hover:border-cn-yellow flex items-start gap-4 rounded-2xl border bg-(--cn-surface) p-4 transition-colors hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))]"
         title={m.reviewer_docs_dashboard_label()}
       >
         <span
-          class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-cn-yellow/15 text-cn-dark"
+          class="bg-cn-yellow/15 text-cn-dark flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
         >
           <FolderOpen size={20} />
         </span>
         <span class="min-w-0 flex-1">
-          <span class="block font-bold text-text-main">{m.reviewer_docs_dashboard_label()}</span>
-          <span class="block text-sm text-text-muted mt-0.5">
+          <span class="text-text-main block font-bold">{m.reviewer_docs_dashboard_label()}</span>
+          <span class="text-text-muted mt-0.5 block text-sm">
             {m.reviewer_docs_dashboard_desc()}
           </span>
         </span>
@@ -230,65 +227,21 @@
   <!-- Administration (admins d'association et admins globaux) -->
   {#if showAdminSection || isAdmin}
     <section class="mb-8">
-      <h2 class="text-xs font-semibold uppercase tracking-widest text-text-muted mb-3">
+      <h2 class="text-text-muted mb-3 text-xs font-semibold tracking-widest uppercase">
         {m.dashboard_admin_heading()}
       </h2>
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {#if showAdminSection && !isAdmin}
-          <a
-            href="/admin"
-            class="flex flex-col items-center gap-2 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-cn-yellow hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))] transition-colors"
-            title={m.dashboard_admin_generic_label()}
+      <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <a
+          href="/admin"
+          class="border-cn-border hover:border-cn-yellow flex flex-col items-center gap-2 rounded-2xl border bg-(--cn-surface) p-4 transition-colors hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))]"
+          title={m.dashboard_admin_generic_label()}
+        >
+          <Shield size={22} class="text-text-muted" />
+          <span class="text-text-main text-sm font-medium">{m.dashboard_admin_generic_label()}</span
           >
-            <Shield size={22} class="text-text-muted" />
-            <span class="text-sm font-medium text-text-main"
-              >{m.dashboard_admin_generic_label()}</span
-            >
-            <span class="text-xs text-text-muted text-center"
-              >{m.dashboard_admin_generic_desc()}</span
-            >
-          </a>
-        {/if}
-
-        {#if isAdmin}
-          <a
-            href="/admin/moderation"
-            class="flex flex-col items-center gap-2 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-red-400 hover:bg-red-err/10 transition-colors"
-            title={m.dashboard_admin_moderation_label()}
+          <span class="text-text-muted text-center text-xs">{m.dashboard_admin_generic_desc()}</span
           >
-            <ShieldAlert size={22} class="text-red-500" />
-            <span class="text-sm font-medium text-text-main"
-              >{m.dashboard_admin_moderation_label()}</span
-            >
-            <span class="text-xs text-text-muted text-center"
-              >{m.dashboard_admin_moderation_desc()}</span
-            >
-          </a>
-          <a
-            href="/admin/status"
-            class="flex flex-col items-center gap-2 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-cn-yellow hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))] transition-colors"
-            title={m.dashboard_admin_status_label()}
-          >
-            <Activity size={22} class="text-text-muted" />
-            <span class="text-sm font-medium text-text-main"
-              >{m.dashboard_admin_status_label()}</span
-            >
-            <span class="text-xs text-text-muted text-center"
-              >{m.dashboard_admin_status_desc()}</span
-            >
-          </a>
-          <a
-            href="/admin/users"
-            class="flex flex-col items-center gap-2 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-amber-400 hover:bg-amber-50/40 dark:hover:bg-amber-900/10 transition-colors"
-            title={m.dashboard_admin_users_label()}
-          >
-            <UserCog size={22} class="text-amber-500" />
-            <span class="text-sm font-medium text-text-main">{m.dashboard_admin_users_label()}</span
-            >
-            <span class="text-xs text-text-muted text-center">{m.dashboard_admin_users_desc()}</span
-            >
-          </a>
-        {/if}
+        </a>
       </div>
     </section>
   {/if}

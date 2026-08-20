@@ -156,8 +156,8 @@
 {#if galleryMode}
   <!-- Inside parent gallery lightbox - just render the content -->
   {#if loading}
-    <div class="flex items-center justify-center w-full min-h-[12rem]">
-      <ImageIcon size={32} class="opacity-20 text-white animate-pulse" strokeWidth={1.5} />
+    <div class="flex min-h-[12rem] w-full items-center justify-center">
+      <ImageIcon size={32} class="animate-pulse text-white opacity-20" strokeWidth={1.5} />
     </div>
   {:else if loadError}
     <div class="flex flex-col items-center justify-center gap-2 p-4 text-center text-white/60">
@@ -181,7 +181,7 @@
         src={blobUrl}
         controls
         autoplay
-        class="max-h-full max-w-full object-contain bg-black rounded-xl"
+        class="max-h-full max-w-full rounded-xl bg-black object-contain"
       ></video>
     {:else}
       <div class="flex flex-col items-center gap-3 text-white/80">
@@ -195,45 +195,45 @@
   {#if loading}
     {#if mediaType === 'image'}
       <div
-        class="absolute inset-0 flex items-center justify-center bg-black/5 dark:bg-white/5 animate-pulse"
+        class="absolute inset-0 flex animate-pulse items-center justify-center bg-black/5 dark:bg-white/5"
       >
-        <ImageIcon size={32} class="opacity-20 text-text-muted" strokeWidth={1.5} />
+        <ImageIcon size={32} class="text-text-muted opacity-20" strokeWidth={1.5} />
       </div>
     {:else if mediaType === 'video'}
       <div
-        class="w-full aspect-video max-w-md rounded-[1.1rem] bg-black/5 dark:bg-white/10 animate-pulse flex items-center justify-center"
+        class="flex aspect-video w-full max-w-md animate-pulse items-center justify-center rounded-[1.1rem] bg-black/5 dark:bg-white/10"
       >
-        <VideoIcon size={32} class="opacity-20 text-text-muted" />
+        <VideoIcon size={32} class="text-text-muted opacity-20" />
       </div>
     {:else if mediaType === 'audio'}
       <div
-        class="w-full sm:w-56 h-14 rounded-xl bg-black/5 dark:bg-white/10 animate-pulse flex items-center justify-center px-4"
+        class="flex h-14 w-full animate-pulse items-center justify-center rounded-xl bg-black/5 px-4 sm:w-56 dark:bg-white/10"
       >
-        <Mic size={20} class="opacity-20 text-text-muted" />
-        <div class="flex-1 ml-3 h-2 bg-current opacity-10 rounded-full"></div>
+        <Mic size={20} class="text-text-muted opacity-20" />
+        <div class="ml-3 h-2 flex-1 rounded-full bg-current opacity-10"></div>
       </div>
     {:else}
       <!-- Same footprint as the loaded file card, so nothing jumps on arrival. -->
       <div
-        class="flex items-center gap-3.5 px-3.5 py-3 w-full rounded-[1rem] bg-black/5 dark:bg-white/10 animate-pulse"
+        class="flex w-full animate-pulse items-center gap-3.5 rounded-[1rem] bg-black/5 px-3.5 py-3 dark:bg-white/10"
       >
         <div
-          class="w-11 h-11 rounded-xl bg-black/10 dark:bg-white/10 flex items-center justify-center shrink-0"
+          class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-black/10 dark:bg-white/10"
         >
-          <FileText size={22} class="opacity-20 text-text-muted" strokeWidth={1.5} />
+          <FileText size={22} class="text-text-muted opacity-20" strokeWidth={1.5} />
         </div>
-        <div class="flex-1 h-2.5 rounded-full bg-black/10 dark:bg-white/10"></div>
+        <div class="h-2.5 flex-1 rounded-full bg-black/10 dark:bg-white/10"></div>
       </div>
     {/if}
   {:else if loadError}
     <div
       class="{fillsReservedBox ? 'absolute inset-0' : 'w-full rounded-2xl'} {mediaExpired
-        ? 'bg-black/5 dark:bg-white/5 border-black/10 dark:border-white/10'
-        : 'bg-red-500/5 dark:bg-red-500/10 border-red-500/20'} flex flex-col items-center justify-center gap-2 p-4 text-center border border-dashed"
+        ? 'border-black/10 bg-black/5 dark:border-white/10 dark:bg-white/5'
+        : 'border-red-500/20 bg-red-500/5 dark:bg-red-500/10'} flex flex-col items-center justify-center gap-2 border border-dashed p-4 text-center"
     >
       {#if mediaExpired}
         <ImageOff size={24} class="text-text-muted opacity-70" strokeWidth={2} />
-        <span class="text-xs font-medium text-text-muted">{loadError}</span>
+        <span class="text-text-muted text-xs font-medium">{loadError}</span>
       {:else}
         <CircleAlert size={24} class="text-red-500 opacity-70" strokeWidth={2} />
         <span class="text-xs font-semibold text-red-600 dark:text-red-400">{loadError}</span>
@@ -245,28 +245,28 @@
       <button
         type="button"
         onclick={handleClick}
-        class="block w-full h-full outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50 focus-visible:z-10 group/img cursor-zoom-in"
+        class="group/img block h-full w-full cursor-zoom-in outline-none focus-visible:z-10 focus-visible:ring-4 focus-visible:ring-amber-500/50"
         aria-label={m.post_zoom_image_label()}
       >
         <img
           src={blobUrl}
           alt={media.fileName ?? m.post_image_alt()}
-          class="w-full h-full object-cover transition-transform duration-700 group-hover/img:scale-105"
+          class="h-full w-full object-cover transition-transform duration-700 group-hover/img:scale-105"
           loading="lazy"
         />
       </button>
     {:else if mediaType === 'video'}
       <!-- ========== VIDEO ========== -->
       <div
-        class="relative w-full aspect-video max-w-md rounded-[1.1rem] overflow-hidden bg-black/10 dark:bg-black/40 shadow-sm group/media"
+        class="group/media relative aspect-video w-full max-w-md overflow-hidden rounded-[1.1rem] bg-black/10 shadow-sm dark:bg-black/40"
       >
         <!-- svelte-ignore a11y_media_has_caption -->
-        <video src={blobUrl} controls preload="metadata" class="w-full h-full object-contain"
+        <video src={blobUrl} controls preload="metadata" class="h-full w-full object-contain"
         ></video>
         <button
           type="button"
           onclick={handleClick}
-          class="absolute left-2.5 bottom-2.5 px-2.5 h-8 rounded-full bg-black/50 backdrop-blur-md text-white inline-flex items-center justify-center shadow-lg transition-all duration-300 hover:bg-black/70 text-xs font-bold"
+          class="absolute bottom-2.5 left-2.5 inline-flex h-8 items-center justify-center rounded-full bg-black/50 px-2.5 text-xs font-bold text-white shadow-lg backdrop-blur-md transition-all duration-300 hover:bg-black/70"
           aria-label={m.post_fullscreen_label()}
         >
           {m.post_fullscreen_label()}
@@ -277,7 +277,7 @@
             e.stopPropagation();
             downloadBlob(blobUrl!, media.fileName ?? 'video.mp4');
           }}
-          class="absolute right-2.5 top-2.5 w-9 h-9 rounded-full bg-black/50 backdrop-blur-md text-white inline-flex items-center justify-center shadow-lg transition-all duration-300 md:opacity-0 md:group-hover/media:opacity-100 hover:bg-black/70 hover:scale-110 focus:opacity-100 outline-none z-10"
+          class="absolute top-2.5 right-2.5 z-10 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white shadow-lg backdrop-blur-md transition-all duration-300 outline-none hover:scale-110 hover:bg-black/70 focus:opacity-100 md:opacity-0 md:group-hover/media:opacity-100"
           aria-label={m.post_download_label()}
         >
           <Download size={16} strokeWidth={2.5} />
@@ -285,31 +285,31 @@
       </div>
     {:else if mediaType === 'audio'}
       <!-- ========== AUDIO ========== -->
-      <div class="w-full max-w-md rounded-[1.1rem] overflow-hidden bg-black/5 dark:bg-white/5">
+      <div class="w-full max-w-md overflow-hidden rounded-[1.1rem] bg-black/5 dark:bg-white/5">
         <!-- svelte-ignore a11y_media_has_caption -->
-        <audio src={blobUrl} controls preload="metadata" class="w-full h-12"></audio>
+        <audio src={blobUrl} controls preload="metadata" class="h-12 w-full"></audio>
       </div>
     {:else}
       <!-- ========== GENERIC FILE ========== -->
       {#snippet fileRowContent()}
         <div
-          class="w-11 h-11 rounded-xl bg-black/10 dark:bg-white/10 flex items-center justify-center shrink-0"
+          class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-black/10 dark:bg-white/10"
         >
           <FileText size={22} strokeWidth={2} class="text-text-muted" />
         </div>
-        <div class="flex-1 min-w-0 overflow-hidden text-left">
-          <p class="text-[0.85rem] font-bold truncate leading-tight mb-0.5">
+        <div class="min-w-0 flex-1 overflow-hidden text-left">
+          <p class="mb-0.5 truncate text-[0.85rem] leading-tight font-bold">
             {media.fileName ?? m.post_media_file_label()}
           </p>
           <!-- No `uppercase` here: it would render the "Ko" unit as "KO". -->
-          <p class="text-[0.65rem] tracking-wider font-semibold text-text-muted">
+          <p class="text-text-muted text-[0.65rem] font-semibold tracking-wider">
             {formatFileSize(media.size)}
           </p>
         </div>
       {/snippet}
 
       <div
-        class="w-full max-w-full rounded-2xl border border-black/5 dark:border-white/10 bg-black/5 dark:bg-white/10 backdrop-blur-md overflow-hidden transition-colors group/file"
+        class="group/file w-full max-w-full overflow-hidden rounded-2xl border border-black/5 bg-black/5 backdrop-blur-md transition-colors dark:border-white/10 dark:bg-white/10"
       >
         <div class="flex items-center gap-3.5 px-3.5 py-3">
           {#if isPdf}
@@ -318,7 +318,7 @@
             <button
               type="button"
               onclick={openPdfViewer}
-              class="flex flex-1 min-w-0 items-center gap-3.5 cursor-pointer outline-none rounded-xl focus-visible:ring-2 focus-visible:ring-amber-500"
+              class="flex min-w-0 flex-1 cursor-pointer items-center gap-3.5 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
               aria-label={m.pdf_open_document_label()}
             >
               {@render fileRowContent()}
@@ -332,13 +332,13 @@
               e.stopPropagation();
               downloadBlob(blobUrl!, media.fileName ?? 'file');
             }}
-            class="p-2.5 rounded-xl hover:bg-black/10 dark:hover:bg-white/10 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 shrink-0"
+            class="shrink-0 rounded-xl p-2.5 transition-all outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-amber-500 dark:hover:bg-white/10"
             aria-label={m.post_download_label()}
           >
             <Download
               size={18}
               strokeWidth={2.5}
-              class="opacity-70 group-hover/file:opacity-100 transition-opacity"
+              class="opacity-70 transition-opacity group-hover/file:opacity-100"
             />
           </button>
         </div>
@@ -399,7 +399,7 @@
           src={blobUrl}
           controls
           autoplay
-          class="max-h-full max-w-full object-contain bg-black rounded-xl"
+          class="max-h-full max-w-full rounded-xl bg-black object-contain"
         ></video>
       {/if}
     </MediaLightbox>

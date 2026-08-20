@@ -27,24 +27,24 @@
   }
 </script>
 
-<div class="mb-5 overflow-hidden rounded-2xl border border-cn-border bg-[var(--cn-surface)]/40">
+<div class="border-cn-border mb-5 overflow-hidden rounded-2xl border bg-(--cn-surface)/40">
   <!-- Panel header -->
-  <div class="flex items-center gap-2 border-b border-cn-border bg-amber-500/5 px-4 py-2.5">
+  <div class="border-cn-border flex items-center gap-2 border-b bg-amber-500/5 px-4 py-2.5">
     <Clock size={14} class="shrink-0 text-amber-500" />
-    <span class="text-xs font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
+    <span class="text-xs font-bold tracking-wider text-amber-600 uppercase dark:text-amber-400">
       {m.post_scheduled_panel_title({ count: posts.length })}
     </span>
   </div>
 
-  <ul class="divide-y divide-cn-border">
+  <ul class="divide-cn-border divide-y">
     {#each posts as sp (sp.id)}
       <li class="flex items-center gap-3 px-4 py-3">
         <!-- Markdown preview (truncated) -->
         <div class="min-w-0 flex-1">
-          <p class="truncate text-sm text-text-main">
+          <p class="text-text-main truncate text-sm">
             {sp.markdown.slice(0, 80)}{sp.markdown.length > 80 ? '…' : ''}
           </p>
-          <p class="mt-0.5 text-xs text-text-muted">
+          <p class="text-text-muted mt-0.5 text-xs">
             {m.post_scheduled_published_on_label({ date: formatScheduled(sp.scheduledAt) })}
           </p>
         </div>
@@ -52,7 +52,7 @@
         <button
           type="button"
           onclick={() => onDelete(sp.id)}
-          class="shrink-0 rounded-lg p-1.5 text-text-muted transition-colors hover:bg-red-500/10 hover:text-red-500"
+          class="text-text-muted shrink-0 rounded-lg p-1.5 transition-colors hover:bg-red-500/10 hover:text-red-500"
           title={m.common_delete_button()}
           aria-label={m.common_delete_button()}
         >

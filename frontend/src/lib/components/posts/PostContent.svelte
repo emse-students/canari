@@ -81,9 +81,9 @@
 
 {#if post.markdown}
   <div class="px-5 pb-3">
-    <div class="text-[0.95rem] text-text-main leading-relaxed break-words">
+    <div class="text-text-main text-[0.95rem] leading-relaxed break-words">
       <div
-        class="post-markdown max-w-none opacity-90 [&_br]:block [&_p+p]:mt-3 [&_p:first-child]:mt-0 [&_h1]:text-[1.45rem] [&_h1]:font-extrabold [&_h1]:leading-tight [&_h1]:tracking-tight [&_h1]:mt-1 [&_h1]:mb-0.5 [&_h2]:text-[1.25rem] [&_h2]:font-bold [&_h2]:leading-snug [&_h2]:mt-1 [&_h2]:mb-0.5 [&_h3]:text-[1.1rem] [&_h3]:font-bold [&_h3]:leading-snug [&_h3]:mt-0.5 [&_h3]:mb-0 [&_h1+_p]:mt-2 [&_h2+_p]:mt-2 [&_h3+_p]:mt-1.5"
+        class="post-markdown max-w-none opacity-90 [&_br]:block [&_h1]:mt-1 [&_h1]:mb-0.5 [&_h1]:text-[1.45rem] [&_h1]:leading-tight [&_h1]:font-extrabold [&_h1]:tracking-tight [&_h1+_p]:mt-2 [&_h2]:mt-1 [&_h2]:mb-0.5 [&_h2]:text-[1.25rem] [&_h2]:leading-snug [&_h2]:font-bold [&_h2+_p]:mt-2 [&_h3]:mt-0.5 [&_h3]:mb-0 [&_h3]:text-[1.1rem] [&_h3]:leading-snug [&_h3]:font-bold [&_h3+_p]:mt-1.5 [&_p+p]:mt-3 [&_p:first-child]:mt-0"
       >
         <SvelteMarkdown
           source={displayedMarkdown}
@@ -95,7 +95,7 @@
         <button
           type="button"
           onclick={() => (expanded = !expanded)}
-          class="mt-1 text-[0.82rem] font-bold text-amber-600 dark:text-amber-400 hover:underline outline-none focus-visible:underline"
+          class="mt-1 text-[0.82rem] font-bold text-amber-600 outline-none hover:underline focus-visible:underline dark:text-amber-400"
         >
           {expanded ? m.post_voir_moins() : m.post_voir_plus()}
         </button>
@@ -108,7 +108,7 @@
 {/if}
 
 {#if postMedia.length > 0 && authToken}
-  <div class="w-full mt-1">
+  <div class="mt-1 w-full">
     {#if postMedia.length === 1}
       {@const media = postMedia[0]}
       {@const reserved = reservesAspectRatio(resolveMediaType(media))}
@@ -125,12 +125,12 @@
           <PostMedia {media} {authToken} />
         </div>
         {#if media.caption}
-          <p class="px-4 pt-2 pb-1 text-xs text-text-muted italic">{media.caption}</p>
+          <p class="text-text-muted px-4 pt-2 pb-1 text-xs italic">{media.caption}</p>
         {/if}
       </div>
     {:else}
       <!-- Multi-media gallery: centralized lightbox with navigation for image/video -->
-      <div class="grid grid-cols-2 gap-0.5 sm:gap-1 bg-white/20 dark:bg-black/20">
+      <div class="grid grid-cols-2 gap-0.5 bg-white/20 sm:gap-1 dark:bg-black/20">
         {#each postMedia as media (media.mediaId)}
           {@const lightboxIdx = lightboxMedia.indexOf(media)}
           <div
@@ -148,7 +148,7 @@
             />
             {#if media.caption}
               <p
-                class="absolute bottom-0 left-0 right-0 bg-black/50 px-2 py-1 text-[0.65rem] text-white/90 truncate pointer-events-none"
+                class="pointer-events-none absolute right-0 bottom-0 left-0 truncate bg-black/50 px-2 py-1 text-[0.65rem] text-white/90"
               >
                 {media.caption}
               </p>

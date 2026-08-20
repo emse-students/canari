@@ -15,10 +15,10 @@
   let { icon: Icon, iconSize = 64, title, description }: Props = $props();
 </script>
 
-<div class="flex-1 flex flex-col items-center justify-center text-center p-8 text-text-muted">
+<div class="text-text-muted flex flex-1 flex-col items-center justify-center p-8 text-center">
   <div class="mb-4 opacity-20">
     <Icon size={iconSize} />
   </div>
-  <h2 class="text-cn-dark text-xl font-semibold mb-2">{title}</h2>
+  <h2 class="text-cn-dark mb-2 text-xl font-semibold">{title}</h2>
   <p class="max-w-md">{description}</p>
 </div>

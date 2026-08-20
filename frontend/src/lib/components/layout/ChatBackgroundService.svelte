@@ -1457,14 +1457,14 @@
   {@const callerName = getUserDisplayNameSync(globalSession.callService?.incomingCallerId ?? '')}
   {@const isVideoCall = globalSession.callService?.incomingHasVideo ?? true}
   <div
-    class="fixed top-4 left-1/2 -translate-x-1/2 z-[310] max-w-sm w-[calc(100%-2rem)] bg-cn-scrim/95 backdrop-blur-2xl rounded-2xl shadow-2xl ring-1 ring-white/10 px-4 py-3 flex items-center gap-3 animate-[slideDown_0.3s_ease-out]"
+    class="bg-cn-scrim/95 fixed top-4 left-1/2 z-310 flex w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 animate-[slideDown_0.3s_ease-out] items-center gap-3 rounded-2xl px-4 py-3 shadow-2xl ring-1 ring-white/10 backdrop-blur-2xl"
     transition:fly={{ y: -20, duration: 250 }}
   >
     <div class="relative h-10 w-10 shrink-0">
       <span
-        class="absolute -right-0.5 -top-0.5 z-10 h-3 w-3 rounded-full bg-amber-400 animate-pulse ring-2 ring-cn-scrim"
+        class="ring-cn-scrim absolute -top-0.5 -right-0.5 z-10 h-3 w-3 animate-pulse rounded-full bg-amber-400 ring-2"
       ></span>
-      <div class="h-full w-full overflow-hidden rounded-full ring-1 ring-white/20 bg-black/30">
+      <div class="h-full w-full overflow-hidden rounded-full bg-black/30 ring-1 ring-white/20">
         <Avatar
           userId={globalSession.callService?.incomingCallerId ?? ''}
           fill
@@ -1474,8 +1474,8 @@
       </div>
     </div>
     <div class="min-w-0 flex-1">
-      <p class="text-sm font-bold text-white truncate">{callerName || m.call_incoming_label()}</p>
-      <p class="text-xs text-white/55 flex items-center gap-1">
+      <p class="truncate text-sm font-bold text-white">{callerName || m.call_incoming_label()}</p>
+      <p class="flex items-center gap-1 text-xs text-white/55">
         {#if isVideoCall}
           <Video size={12} strokeWidth={2.5} />
         {:else}
@@ -1484,10 +1484,10 @@
         {isVideoCall ? m.chat_video_call_label() : m.chat_audio_call_label()}
       </p>
     </div>
-    <div class="flex items-center gap-2 shrink-0">
+    <div class="flex shrink-0 items-center gap-2">
       <div class="flex flex-col items-center gap-0.5">
         <button
-          class="p-2 rounded-full bg-emerald-500 hover:bg-emerald-400 text-white transition-all active:scale-95"
+          class="rounded-full bg-emerald-500 p-2 text-white transition-all hover:bg-emerald-400 active:scale-95"
           onclick={() =>
             globalSession.callService?.acceptCall(
               globalSession.callService.currentGroupId ?? '',
@@ -1497,19 +1497,19 @@
         >
           <Phone size={18} class="fill-current" />
         </button>
-        <span class="text-[9px] font-bold text-emerald-400 uppercase tracking-wider"
+        <span class="text-[9px] font-bold tracking-wider text-emerald-400 uppercase"
           >{m.call_accept_label()}</span
         >
       </div>
       <div class="flex flex-col items-center gap-0.5">
         <button
-          class="p-2 rounded-full bg-red-500 hover:bg-red-400 text-white transition-all active:scale-95"
+          class="rounded-full bg-red-500 p-2 text-white transition-all hover:bg-red-400 active:scale-95"
           onclick={() => globalSession.callService?.endCall()}
           aria-label={m.call_decline_label()}
         >
           <PhoneOff size={18} />
         </button>
-        <span class="text-[9px] font-bold text-red-400 uppercase tracking-wider"
+        <span class="text-[9px] font-bold tracking-wider text-red-400 uppercase"
           >{m.call_decline_label()}</span
         >
       </div>

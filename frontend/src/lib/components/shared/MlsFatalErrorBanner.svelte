@@ -43,7 +43,7 @@
     {#snippet action()}
       <button
         type="button"
-        class="shrink-0 rounded-md bg-white/20 px-3 py-1 text-xs font-semibold hover:bg-white/30 transition-colors"
+        class="shrink-0 rounded-md bg-white/20 px-3 py-1 text-xs font-semibold transition-colors hover:bg-white/30"
         onclick={config.onAction}
       >
         {config.action}

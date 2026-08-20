@@ -125,14 +125,14 @@
 
 <div class="space-y-4">
   <div>
-    <h2 class="text-lg font-bold text-text-main">{m.admin_agenda_title()}</h2>
-    <p class="text-sm text-text-muted mt-1">
+    <h2 class="text-text-main text-lg font-bold">{m.admin_agenda_title()}</h2>
+    <p class="text-text-muted mt-1 text-sm">
       {m.admin_agenda_subtitle()}
     </p>
   </div>
 
   {#if error}
-    <div class="rounded-xl border border-red-err/30 bg-red-err/10 text-red-err px-4 py-3 text-sm">
+    <div class="border-red-err/30 bg-red-err/10 text-red-err rounded-xl border px-4 py-3 text-sm">
       {error}
     </div>
   {/if}
@@ -140,12 +140,12 @@
   {#if loading}
     <div class="flex justify-center py-16">
       <div
-        class="h-8 w-8 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+        class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if events.length === 0}
     <div
-      class="rounded-2xl border border-dashed border-cn-border px-6 py-12 text-center text-sm text-text-muted"
+      class="border-cn-border text-text-muted rounded-2xl border border-dashed px-6 py-12 text-center text-sm"
     >
       {m.admin_agenda_empty()}
     </div>
@@ -156,11 +156,11 @@
         {@const fg = contrastColor(color)}
         {@const logoSrc = associationLogoSrc(ev.associationLogoUrl)}
         <li
-          class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] px-4 py-4 flex flex-col sm:flex-row sm:items-start gap-4"
+          class="border-cn-border flex flex-col gap-4 rounded-2xl border bg-(--cn-surface) px-4 py-4 sm:flex-row sm:items-start"
           style="border-left:4px solid {color};"
         >
           <div
-            class="relative flex h-12 w-12 shrink-0 flex-col items-center justify-center rounded-xl font-bold text-sm overflow-hidden"
+            class="relative flex h-12 w-12 shrink-0 flex-col items-center justify-center overflow-hidden rounded-xl text-sm font-bold"
             style="background:{color};color:{fg};"
           >
             {#if logoSrc}
@@ -174,7 +174,7 @@
             <span class="relative z-10 leading-none">{new Date(ev.startsAt).getDate()}</span>
           </div>
           <div class="min-w-0 flex-1 space-y-1">
-            <p class="text-xs font-semibold uppercase tracking-wide text-cn-dark/80">
+            <p class="text-cn-dark/80 text-xs font-semibold tracking-wide uppercase">
               <a
                 href="/associations/{encodeURIComponent(ev.associationSlug)}"
                 class="hover:underline"
@@ -191,24 +191,24 @@
             <button
               type="button"
               onclick={() => (previewEvent = ev)}
-              class="block text-left font-bold text-text-main hover:text-cn-yellow transition-colors"
+              class="text-text-main hover:text-cn-yellow block text-left font-bold transition-colors"
             >
               {ev.title}
             </button>
-            <p class="text-xs text-text-muted">{formatRange(ev)}</p>
+            <p class="text-text-muted text-xs">{formatRange(ev)}</p>
             {#if ev.description?.trim()}
-              <p class="text-sm text-text-muted whitespace-pre-wrap line-clamp-2">
+              <p class="text-text-muted line-clamp-2 text-sm whitespace-pre-wrap">
                 {ev.description}
               </p>
             {/if}
           </div>
-          <div class="flex flex-wrap gap-2 shrink-0">
+          <div class="flex shrink-0 flex-wrap gap-2">
             {#if canValidate}
               <button
                 type="button"
                 onclick={() => validate(ev)}
                 disabled={actingId === ev.id}
-                class="inline-flex items-center gap-1.5 rounded-xl bg-cn-yellow px-3 py-2 text-xs font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
+                class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold disabled:opacity-50"
               >
                 <Check size={14} />
                 {m.common_validate_button()}
@@ -217,7 +217,7 @@
                 type="button"
                 onclick={() => openRejectModal(ev)}
                 disabled={actingId === ev.id}
-                class="inline-flex items-center gap-1.5 rounded-xl border border-amber-warn/40 px-3 py-2 text-xs font-semibold text-amber-warn hover:bg-amber-warn/10 disabled:opacity-50"
+                class="border-amber-warn/40 text-amber-warn hover:bg-amber-warn/10 inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold disabled:opacity-50"
               >
                 <X size={14} />
                 {m.admin_agenda_reject_button()}
@@ -225,7 +225,7 @@
             {/if}
             <a
               href="/associations/{encodeURIComponent(ev.associationSlug)}"
-              class="inline-flex items-center gap-1 rounded-xl border border-cn-border px-3 py-2 text-xs font-semibold hover:bg-cn-bg"
+              class="border-cn-border hover:bg-cn-bg inline-flex items-center gap-1 rounded-xl border px-3 py-2 text-xs font-semibold"
             >
               <ExternalLink size={14} />
               {m.admin_agenda_association_link_label()}
@@ -234,7 +234,7 @@
               type="button"
               onclick={() => remove(ev)}
               disabled={actingId === ev.id}
-              class="inline-flex items-center gap-1 rounded-xl border border-red-err/30 px-3 py-2 text-xs font-semibold text-red-err hover:bg-red-err/10 disabled:opacity-50"
+              class="border-red-err/30 text-red-err hover:bg-red-err/10 inline-flex items-center gap-1 rounded-xl border px-3 py-2 text-xs font-semibold disabled:opacity-50"
             >
               <Trash2 size={14} />
               {m.common_delete_button()}
@@ -260,15 +260,15 @@
     role="dialog"
     aria-modal="true"
   >
-    <div class="w-full max-w-md rounded-2xl bg-white dark:bg-cn-surface shadow-xl p-6 space-y-4">
-      <h3 class="text-base font-bold text-text-main">
+    <div class="dark:bg-cn-surface w-full max-w-md space-y-4 rounded-2xl bg-white p-6 shadow-xl">
+      <h3 class="text-text-main text-base font-bold">
         {m.admin_agenda_reject_modal_title({ title: rejectTarget.title })}
       </h3>
-      <p class="text-sm text-text-muted">
+      <p class="text-text-muted text-sm">
         {m.admin_agenda_reject_modal_desc()}
       </p>
       <div class="space-y-1.5">
-        <span class="text-xs font-semibold text-text-muted uppercase tracking-wide"
+        <span class="text-text-muted text-xs font-semibold tracking-wide uppercase"
           >{m.admin_agenda_reject_reason_label()}</span
         >
         <Textarea
@@ -278,13 +278,13 @@
           placeholder={m.admin_agenda_reject_reason_placeholder()}
         />
       </div>
-      <div class="flex gap-2 justify-end">
+      <div class="flex justify-end gap-2">
         <button
           type="button"
           onclick={() => {
             rejectTarget = null;
           }}
-          class="rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold hover:bg-cn-bg"
+          class="border-cn-border hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold"
         >
           {m.common_cancel_button()}
         </button>
@@ -292,7 +292,7 @@
           type="button"
           onclick={confirmReject}
           disabled={rejecting}
-          class="inline-flex items-center gap-1.5 rounded-xl border border-amber-warn/40 px-4 py-2 text-sm font-bold text-amber-warn hover:bg-amber-warn/10 disabled:opacity-50"
+          class="border-amber-warn/40 text-amber-warn hover:bg-amber-warn/10 inline-flex items-center gap-1.5 rounded-xl border px-4 py-2 text-sm font-bold disabled:opacity-50"
         >
           <X size={14} />
           {rejecting

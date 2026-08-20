@@ -33,18 +33,18 @@
 
 {#if !isLinkOnly}
   <p
-    class="select-text text-[0.95rem] leading-relaxed whitespace-pre-wrap wrap-anywhere {isDeleted
+    class="text-[0.95rem] leading-relaxed wrap-anywhere whitespace-pre-wrap select-text {isDeleted
       ? 'italic opacity-60'
       : ''}"
   >
     {#each textSegments as segment, index (`${segment.type}-${segment.value}-${index}`)}
       {#if segment.type === 'link'}
         {#if !segment.noEmbed && isGifUrl(segment.value)}
-          <span class="block my-1.5">
+          <span class="my-1.5 block">
             <img
               src={getGifEmbedUrl(segment.value)}
               alt="GIF"
-              class="rounded-xl max-h-64 max-w-full object-contain shadow-sm"
+              class="max-h-64 max-w-full rounded-xl object-contain shadow-sm"
               onerror={(e) => {
                 const img = e.currentTarget;
                 if (img instanceof HTMLImageElement) {
@@ -67,7 +67,7 @@
       {:else}
         {#each splitWithHighlight(segment.value, normalizedSearchTerm) as part, pIndex (`${pIndex}-${part.text}`)}
           {#if part.hit}
-            <mark class="rounded px-0.5 bg-amber-300/60 text-inherit">{part.text}</mark>
+            <mark class="rounded bg-amber-300/60 px-0.5 text-inherit">{part.text}</mark>
           {:else}
             {#each splitTextWithMentions(part.text) as mp (`${mp.type}-${'userId' in mp ? mp.userId : ''}-${'value' in mp ? mp.value : ''}`)}
               {#if mp.type === 'mention'}

@@ -198,7 +198,7 @@
   <button
     type="button"
     onclick={() => (open = !open)}
-    class="h-7 w-12 rounded-lg border-2 border-cn-border shadow-sm transition-all hover:scale-105 active:scale-95 hover:border-cn-dark focus:outline-none focus:ring-2 focus:ring-cn-yellow/60"
+    class="border-cn-border hover:border-cn-dark focus:ring-cn-yellow/60 h-7 w-12 rounded-lg border-2 shadow-sm transition-all hover:scale-105 focus:ring-2 focus:outline-none active:scale-95"
     style="background:{value};"
     aria-label={label ?? m.color_picker_default_aria()}
     title={label}
@@ -206,13 +206,13 @@
 
   {#if open}
     <div
-      class="absolute right-0 top-full mt-1.5 z-50 w-56 rounded-2xl border border-cn-border bg-[var(--cn-surface)] shadow-2xl p-3 space-y-3"
+      class="border-cn-border absolute top-full right-0 z-50 mt-1.5 w-56 space-y-3 rounded-2xl border bg-(--cn-surface) p-3 shadow-2xl"
     >
       <!-- 2-D saturation / value area -->
       <div
         bind:this={pickerEl}
         role="presentation"
-        class="relative w-full rounded-xl overflow-hidden select-none"
+        class="relative w-full overflow-hidden rounded-xl select-none"
         style="height:120px; background: linear-gradient(to bottom, transparent, #000), linear-gradient(to right, #fff, hsl({h}deg 100% 50%)); cursor:crosshair;"
         onmousedown={startSvDrag}
         ontouchstart={(e) => {
@@ -222,7 +222,7 @@
       >
         <!-- Cursor ring -->
         <div
-          class="absolute w-3.5 h-3.5 rounded-full border-2 border-white shadow pointer-events-none"
+          class="pointer-events-none absolute h-3.5 w-3.5 rounded-full border-2 border-white shadow"
           style="left:{s * 100}%; top:{(1 - v) *
             100}%; transform:translate(-50%,-50%); box-shadow:0 0 0 1.5px rgba(0,0,0,0.3), 0 1px 4px rgba(0,0,0,0.4);"
         ></div>
@@ -242,7 +242,7 @@
       >
         <!-- Hue thumb -->
         <div
-          class="absolute top-1/2 w-4 h-4 rounded-full border-2 border-white pointer-events-none"
+          class="pointer-events-none absolute top-1/2 h-4 w-4 rounded-full border-2 border-white"
           style="left:{(h / 360) *
             100}%; transform:translate(-50%,-50%); box-shadow:0 0 0 1.5px rgba(0,0,0,0.3), 0 1px 3px rgba(0,0,0,0.4);"
         ></div>
@@ -251,10 +251,10 @@
       <!-- Preview + hex input -->
       <div class="flex items-center gap-2">
         <span
-          class="w-7 h-7 rounded-lg shrink-0 border border-cn-border/60"
+          class="border-cn-border/60 h-7 w-7 shrink-0 rounded-lg border"
           style="background:{value};"
         ></span>
-        <span class="text-xs text-text-muted font-mono select-none">#</span>
+        <span class="text-text-muted font-mono text-xs select-none">#</span>
         <input
           type="text"
           value={hexInput.replace(/^#/, '')}
@@ -266,7 +266,7 @@
             onHexInput({ target: { value: '#' + raw } } as unknown as Event);
           }}
           maxlength={6}
-          class="flex-1 min-w-0 rounded-lg border border-cn-border bg-cn-bg px-2 py-1 text-xs font-mono text-text-main focus:outline-none focus:ring-1 focus:ring-cn-yellow"
+          class="border-cn-border bg-cn-bg text-text-main focus:ring-cn-yellow min-w-0 flex-1 rounded-lg border px-2 py-1 font-mono text-xs focus:ring-1 focus:outline-none"
           placeholder="rrggbb"
           spellcheck="false"
         />
@@ -287,7 +287,7 @@
               hexInput = preset;
               onChange?.(preset);
             }}
-            class="w-full aspect-square rounded-lg border-2 transition-transform hover:scale-110 active:scale-95"
+            class="aspect-square w-full rounded-lg border-2 transition-transform hover:scale-110 active:scale-95"
             style="background:{preset}; border-color:{value === preset
               ? 'var(--cn-dark)'
               : 'transparent'};"

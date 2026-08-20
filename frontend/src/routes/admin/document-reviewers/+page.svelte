@@ -12,7 +12,7 @@
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
-  import { FileCheck2, Trash2, UserPlus } from '@lucide/svelte';
+  import { FileCheckCorner, Trash2, UserPlus } from '@lucide/svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { m } from '$lib/paraglide/messages';
 
@@ -104,13 +104,13 @@
   <div class="space-y-6">
     <header class="flex items-start gap-3">
       <span
-        class="flex h-10 w-10 items-center justify-center rounded-xl bg-cn-yellow/15 text-cn-dark"
+        class="bg-cn-yellow/15 text-cn-dark flex h-10 w-10 items-center justify-center rounded-xl"
       >
-        <FileCheck2 size={20} />
+        <FileCheckCorner size={20} />
       </span>
       <div>
-        <h2 class="text-lg font-extrabold text-text-main">{m.docreview_title()}</h2>
-        <p class="text-sm text-text-muted mt-0.5">{m.docreview_subtitle()}</p>
+        <h2 class="text-text-main text-lg font-extrabold">{m.docreview_title()}</h2>
+        <p class="text-text-muted mt-0.5 text-sm">{m.docreview_subtitle()}</p>
       </div>
     </header>
 
@@ -122,7 +122,7 @@
         void handleAdd();
       }}
     >
-      <div class="flex-1 min-w-0">
+      <div class="min-w-0 flex-1">
         <UserAutocomplete
           value={newUserId}
           onValueChange={(v) => (newUserId = v)}
@@ -134,7 +134,7 @@
       <button
         type="submit"
         disabled={adding || !newUserId.trim()}
-        class="inline-flex items-center justify-center gap-2 rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
       >
         <UserPlus size={16} />
         {adding ? m.common_saving_label() : m.docreview_add_button()}
@@ -148,23 +148,23 @@
     {#if loading}
       <div class="flex justify-center py-16">
         <div
-          class="h-8 w-8 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+          class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
         ></div>
       </div>
     {:else}
       <div
-        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] divide-y divide-cn-border/70 overflow-hidden"
+        class="border-cn-border divide-cn-border/70 divide-y overflow-hidden rounded-2xl border bg-(--cn-surface)"
       >
         {#if reviewers.length === 0}
-          <p class="px-4 py-8 text-center text-sm text-text-muted">{m.docreview_empty()}</p>
+          <p class="text-text-muted px-4 py-8 text-center text-sm">{m.docreview_empty()}</p>
         {:else}
           {#each reviewers as grant (grant.userId)}
             <div class="flex items-center justify-between gap-3 px-4 py-3">
               <div class="min-w-0">
-                <span class="block truncate text-sm font-semibold text-text-main">
+                <span class="text-text-main block truncate text-sm font-semibold">
                   {resolvedNames[grant.userId] ?? grant.userId}
                 </span>
-                <span class="block truncate text-xs text-text-muted">
+                <span class="text-text-muted block truncate text-xs">
                   {m.docreview_granted_on({ date: new Date(grant.createdAt).toLocaleDateString() })}
                 </span>
               </div>
@@ -173,7 +173,7 @@
                 onclick={() => handleRemove(grant)}
                 disabled={removingIds.has(grant.userId)}
                 title={m.docreview_revoke_button()}
-                class="inline-flex items-center justify-center rounded-xl border border-red-err/30 bg-red-err/10 p-2 text-red-err hover:bg-red-err/20 disabled:opacity-50 transition-colors"
+                class="border-red-err/30 bg-red-err/10 text-red-err hover:bg-red-err/20 inline-flex items-center justify-center rounded-xl border p-2 transition-colors disabled:opacity-50"
               >
                 <Trash2 size={15} />
               </button>

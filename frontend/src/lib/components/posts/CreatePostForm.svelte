@@ -377,14 +377,14 @@
 </script>
 
 <article
-  class="relative mb-6 overflow-hidden rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/70 dark:bg-cn-ink/70 shadow-sm backdrop-blur-2xl transition-all duration-300 focus-within:shadow-lg focus-within:border-amber-500/30"
+  class="dark:bg-cn-ink/70 relative mb-6 overflow-hidden rounded-[2rem] border border-black/5 bg-white/70 shadow-sm backdrop-blur-2xl transition-all duration-300 focus-within:border-amber-500/30 focus-within:shadow-lg dark:border-white/10"
 >
   <!-- En-tête du Formulaire -->
-  <div class="border-b border-black/5 dark:border-white/10 bg-white/40 dark:bg-black/20 px-5 py-4">
-    <p class="text-[0.65rem] font-extrabold uppercase tracking-widest text-amber-500 mb-0.5">
+  <div class="border-b border-black/5 bg-white/40 px-5 py-4 dark:border-white/10 dark:bg-black/20">
+    <p class="mb-0.5 text-[0.65rem] font-extrabold tracking-widest text-amber-500 uppercase">
       {m.post_create_title()}
     </p>
-    <p class="text-sm font-semibold text-text-main opacity-90">
+    <p class="text-text-main text-sm font-semibold opacity-90">
       {m.post_create_subtitle()}
     </p>
   </div>
@@ -397,13 +397,13 @@
         <div>
           <label
             for="post-association-select"
-            class="mb-1.5 flex items-center gap-1.5 text-[0.65rem] font-extrabold uppercase tracking-wider text-text-muted ml-1"
+            class="text-text-muted mb-1.5 ml-1 flex items-center gap-1.5 text-[0.65rem] font-extrabold tracking-wider uppercase"
           >
             {m.post_create_post_as_label()}
           </label>
-          <div class="relative group">
+          <div class="group relative">
             <span
-              class="pointer-events-none absolute left-3.5 top-1/2 z-[1] -translate-y-1/2 text-text-muted group-focus-within:text-amber-500 transition-colors"
+              class="text-text-muted pointer-events-none absolute top-1/2 left-3.5 z-[1] -translate-y-1/2 transition-colors group-focus-within:text-amber-500"
               aria-hidden="true"
             >
               {#if selectedAssociationId}<Building2 size={16} strokeWidth={2.5} />{:else}<User
@@ -414,15 +414,15 @@
             <select
               id="post-association-select"
               bind:value={selectedAssociationId}
-              class="w-full appearance-none rounded-xl border border-black/5 dark:border-white/10 bg-black/5 dark:bg-white/5 pl-10 pr-10 py-3 text-sm font-bold text-text-main shadow-inner transition-all outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer"
+              class="text-text-main w-full cursor-pointer appearance-none rounded-xl border border-black/5 bg-black/5 py-3 pr-10 pl-10 text-sm font-bold shadow-inner transition-all outline-none hover:bg-black/10 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
             >
-              <option value="" class="bg-white dark:bg-zinc-900 font-medium"
+              <option value="" class="bg-white font-medium dark:bg-zinc-900"
                 >{m.post_create_personal_profile_label()}</option
               >
               {#if postAsGroups.assos.length > 0}
                 <optgroup label={m.post_create_associations_group_label()}>
                   {#each postAsGroups.assos as a (a.id)}
-                    <option value={a.id} class="bg-white dark:bg-zinc-900 font-medium"
+                    <option value={a.id} class="bg-white font-medium dark:bg-zinc-900"
                       >{a.name}</option
                     >
                   {/each}
@@ -431,7 +431,7 @@
               {#if postAsGroups.lists.length > 0}
                 <optgroup label={m.post_create_lists_group_label()}>
                   {#each postAsGroups.lists as a (a.id)}
-                    <option value={a.id} class="bg-white dark:bg-zinc-900 font-medium"
+                    <option value={a.id} class="bg-white font-medium dark:bg-zinc-900"
                       >{listOptionLabel(a)}</option
                     >
                   {/each}
@@ -439,7 +439,7 @@
               {/if}
             </select>
             <div
-              class="pointer-events-none absolute inset-y-0 right-3.5 flex items-center text-text-muted group-focus-within:text-amber-500 transition-colors"
+              class="text-text-muted pointer-events-none absolute inset-y-0 right-3.5 flex items-center transition-colors group-focus-within:text-amber-500"
             >
               <ChevronDown size={16} strokeWidth={2.5} />
             </div>
@@ -451,13 +451,13 @@
           <div transition:fade={{ duration: 200 }}>
             <label
               for="post-payment-association-select"
-              class="mb-1.5 flex items-center gap-1.5 text-[0.65rem] font-extrabold uppercase tracking-wider text-text-muted ml-1"
+              class="text-text-muted mb-1.5 ml-1 flex items-center gap-1.5 text-[0.65rem] font-extrabold tracking-wider uppercase"
             >
               {m.post_create_payment_account_label()}
             </label>
-            <div class="relative group">
+            <div class="group relative">
               <span
-                class="pointer-events-none absolute left-3.5 top-1/2 z-[1] -translate-y-1/2 text-amber-500"
+                class="pointer-events-none absolute top-1/2 left-3.5 z-[1] -translate-y-1/2 text-amber-500"
                 aria-hidden="true"
               >
                 <Building2 size={16} strokeWidth={2.5} />
@@ -465,19 +465,19 @@
               <select
                 id="post-payment-association-select"
                 bind:value={selectedPaymentAssociationId}
-                class="w-full appearance-none rounded-xl border border-black/5 dark:border-white/10 bg-black/5 dark:bg-white/5 pl-10 pr-10 py-3 text-sm font-bold text-text-main shadow-inner transition-all outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer"
+                class="text-text-main w-full cursor-pointer appearance-none rounded-xl border border-black/5 bg-black/5 py-3 pr-10 pl-10 text-sm font-bold shadow-inner transition-all outline-none hover:bg-black/10 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
               >
-                <option value="" class="bg-white dark:bg-zinc-900 font-medium"
+                <option value="" class="bg-white font-medium dark:bg-zinc-900"
                   >{m.post_create_no_linked_account_label()}</option
                 >
                 {#each payableAssociations as a (a.id)}
-                  <option value={a.id} class="bg-white dark:bg-zinc-900 font-medium"
+                  <option value={a.id} class="bg-white font-medium dark:bg-zinc-900"
                     >{a.name}</option
                   >
                 {/each}
               </select>
               <div
-                class="pointer-events-none absolute inset-y-0 right-3.5 flex items-center text-text-muted group-focus-within:text-amber-500 transition-colors"
+                class="text-text-muted pointer-events-none absolute inset-y-0 right-3.5 flex items-center transition-colors group-focus-within:text-amber-500"
               >
                 <ChevronDown size={16} strokeWidth={2.5} />
               </div>
@@ -489,7 +489,7 @@
           <div class="sm:col-span-2" transition:fade={{ duration: 200 }}>
             <label
               for="post-linked-calendar-event"
-              class="mb-1.5 flex items-center gap-1.5 text-[0.65rem] font-extrabold uppercase tracking-wider text-text-muted ml-1"
+              class="text-text-muted mb-1.5 ml-1 flex items-center gap-1.5 text-[0.65rem] font-extrabold tracking-wider uppercase"
             >
               <CalendarCheck size={14} strokeWidth={2.5} class="text-amber-500" />
               {m.post_create_link_event_label()}
@@ -498,18 +498,18 @@
               id="post-linked-calendar-event"
               bind:value={selectedLinkedCalendarEventId}
               disabled={loadingLinkableEvents}
-              class="w-full appearance-none rounded-xl border border-black/5 dark:border-white/10 bg-black/5 dark:bg-white/5 px-4 py-3 text-sm font-bold text-text-main shadow-inner transition-all outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer disabled:opacity-60"
+              class="text-text-main w-full cursor-pointer appearance-none rounded-xl border border-black/5 bg-black/5 px-4 py-3 text-sm font-bold shadow-inner transition-all outline-none hover:bg-black/10 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 disabled:opacity-60 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
             >
-              <option value="" class="bg-white dark:bg-zinc-900 font-medium">
+              <option value="" class="bg-white font-medium dark:bg-zinc-900">
                 {loadingLinkableEvents ? m.common_loading_label() : m.post_create_no_event_label()}
               </option>
               {#each linkableCalendarEvents as ev (ev.id)}
-                <option value={ev.id} class="bg-white dark:bg-zinc-900 font-medium">
+                <option value={ev.id} class="bg-white font-medium dark:bg-zinc-900">
                   {formatLinkableEventLabel(ev)}
                 </option>
               {/each}
             </select>
-            <p class="mt-1.5 text-[0.7rem] text-text-muted ml-1">
+            <p class="text-text-muted mt-1.5 ml-1 text-[0.7rem]">
               {m.post_create_validated_events_hint()}
             </p>
           </div>
@@ -524,7 +524,7 @@
         transition:slide={{ duration: 200 }}
       >
         <span
-          class="text-[0.75rem] font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1.5"
+          class="flex items-center gap-1.5 text-[0.75rem] font-bold text-amber-700 dark:text-amber-400"
         >
           {m.post_create_draft_restored_label()}
           <span class="font-medium text-amber-700/70 dark:text-amber-400/70"
@@ -538,7 +538,7 @@
             clearPostComposerDraft();
             draftRestored = false;
           }}
-          class="text-xs font-bold text-amber-700/60 dark:text-amber-400/60 hover:text-amber-700 dark:hover:text-amber-400 transition-colors outline-none focus-visible:underline"
+          class="text-xs font-bold text-amber-700/60 transition-colors outline-none hover:text-amber-700 focus-visible:underline dark:text-amber-400/60 dark:hover:text-amber-400"
         >
           {m.post_create_clear_draft_label()}
         </button>
@@ -547,12 +547,12 @@
 
     <!-- Zone de Texte & Aperçu Médias (Inner Shadow Container) -->
     <div
-      class="relative rounded-[1.5rem] border border-black/5 dark:border-white/10 bg-black/5 dark:bg-black/40 shadow-inner p-2 mb-2 transition-colors focus-within:bg-white/50 dark:focus-within:bg-black/60"
+      class="relative mb-2 rounded-[1.5rem] border border-black/5 bg-black/5 p-2 shadow-inner transition-colors focus-within:bg-white/50 dark:border-white/10 dark:bg-black/40 dark:focus-within:bg-black/60"
     >
       <!-- Feedback de Sauvegarde auto -->
       {#if draftSaved}
         <span
-          class="pointer-events-none absolute right-4 top-3 text-[0.65rem] font-bold uppercase tracking-wider text-text-muted opacity-60"
+          class="text-text-muted pointer-events-none absolute top-3 right-4 text-[0.65rem] font-bold tracking-wider uppercase opacity-60"
           transition:fade={{ duration: 200 }}
         >
           {m.post_create_draft_saved_label()}
@@ -570,7 +570,7 @@
       <!-- Aperçu des médias & Légendes -->
       {#if selectedFiles.length > 0}
         <div
-          class="flex snap-x snap-mandatory gap-2.5 overflow-x-auto px-3 pb-3 pt-2 custom-scrollbar"
+          class="custom-scrollbar flex snap-x snap-mandatory gap-2.5 overflow-x-auto px-3 pt-2 pb-3"
           transition:slide={{ duration: 200 }}
           role="list"
         >
@@ -582,15 +582,15 @@
             >
               <!-- Miniature -->
               <div
-                class="relative aspect-square w-full overflow-hidden rounded-2xl border border-black/10 dark:border-white/10 shadow-sm group"
+                class="group relative aspect-square w-full overflow-hidden rounded-2xl border border-black/10 shadow-sm dark:border-white/10"
               >
                 {#if fileThumbIcons[i]}
                   <div
-                    class="h-full w-full flex flex-col items-center justify-center bg-black/5 dark:bg-white/5 text-text-muted gap-1.5"
+                    class="text-text-muted flex h-full w-full flex-col items-center justify-center gap-1.5 bg-black/5 dark:bg-white/5"
                   >
                     <Icon size={28} strokeWidth={1.5} />
                     <span
-                      class="text-[0.55rem] uppercase tracking-wider font-bold px-2 truncate w-full text-center"
+                      class="w-full truncate px-2 text-center text-[0.55rem] font-bold tracking-wider uppercase"
                     >
                       {file.type.split('/')[1] ?? 'file'}
                     </span>
@@ -607,7 +607,7 @@
                 <button
                   type="button"
                   onclick={() => removeFile(i)}
-                  class="absolute right-1.5 top-1.5 rounded-full bg-black/60 p-1.5 text-white shadow-sm backdrop-blur-md transition-all hover:bg-red-500 hover:scale-110 active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-red-400 opacity-0 group-hover:opacity-100 focus:opacity-100"
+                  class="absolute top-1.5 right-1.5 rounded-full bg-black/60 p-1.5 text-white opacity-0 shadow-sm backdrop-blur-md transition-all outline-none group-hover:opacity-100 hover:scale-110 hover:bg-red-500 focus:opacity-100 focus-visible:ring-2 focus-visible:ring-red-400 active:scale-95"
                   aria-label={m.post_create_remove_image_label()}
                   title={m.common_delete_button()}
                 >
@@ -620,7 +620,7 @@
                 bind:value={mediaCaptions[i]}
                 placeholder={m.post_create_caption_placeholder()}
                 maxlength="120"
-                class="w-full rounded-lg border border-black/10 dark:border-white/10 bg-white/70 dark:bg-black/40 px-2.5 py-1.5 text-[0.7rem] font-semibold text-text-main placeholder:text-text-muted/60 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 transition-all shadow-inner"
+                class="text-text-main placeholder:text-text-muted/60 w-full rounded-lg border border-black/10 bg-white/70 px-2.5 py-1.5 text-[0.7rem] font-semibold shadow-inner transition-all outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 dark:border-white/10 dark:bg-black/40"
               />
             </div>
           {/each}
@@ -630,7 +630,7 @@
   </div>
 
   <!-- Sections Optionnelles & Footer -->
-  <div class="space-y-4 border-t border-black/5 dark:border-white/10 px-4 pb-5 pt-5 sm:px-5">
+  <div class="space-y-4 border-t border-black/5 px-4 pt-5 pb-5 sm:px-5 dark:border-white/10">
     <!-- Sondage -->
     {#if includePoll}
       <div transition:slide={{ duration: 300, easing: (t) => t * (2 - t) }}>
@@ -660,10 +660,10 @@
     {#if errorMessage}
       <div
         transition:slide={{ duration: 200 }}
-        class="flex items-start gap-3 rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-red-600 dark:text-red-400 shadow-inner"
+        class="flex items-start gap-3 rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-red-600 shadow-inner dark:text-red-400"
       >
         <CircleAlert size={18} strokeWidth={2.5} class="mt-0.5 shrink-0" />
-        <span class="text-sm font-bold leading-snug">{errorMessage}</span>
+        <span class="text-sm leading-snug font-bold">{errorMessage}</span>
       </div>
     {/if}
 
@@ -671,16 +671,16 @@
     <div class="flex flex-col-reverse gap-4 pt-1 sm:flex-row sm:items-center sm:justify-between">
       <!-- Boutons d'ajouts (Toolbar) -->
       <div
-        class="custom-scrollbar flex flex-wrap items-center gap-2 overflow-x-auto rounded-[1.25rem] bg-white/50 dark:bg-black/20 p-1.5 shadow-inner border border-black/5 dark:border-white/5 w-full sm:w-auto"
+        class="custom-scrollbar flex w-full flex-wrap items-center gap-2 overflow-x-auto rounded-[1.25rem] border border-black/5 bg-white/50 p-1.5 shadow-inner sm:w-auto dark:border-white/5 dark:bg-black/20"
       >
         <!-- Ajouter des médias -->
         <label
           for={mediaInputId}
           title={m.post_create_photos_label()}
-          class="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-text-muted transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 shrink-0
+          class="text-text-muted flex shrink-0 cursor-pointer items-center gap-2 rounded-xl px-3 py-2 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95
           {selectedFiles.length > 0
-            ? 'bg-amber-500/15 font-bold text-amber-600 dark:text-amber-400 shadow-sm'
-            : 'hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main'}"
+            ? 'bg-amber-500/15 font-bold text-amber-600 shadow-sm dark:text-amber-400'
+            : 'hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
         >
           {#if selectedFiles.length > 0 && selectedFiles.every((f) => f.type.startsWith('image/'))}
             <Image size={18} strokeWidth={2.5} />
@@ -707,10 +707,10 @@
           type="button"
           title={m.post_poll_section_title()}
           onclick={() => (includePoll = !includePoll)}
-          class="flex items-center gap-2 rounded-xl px-3 py-2 text-text-muted transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 shrink-0
+          class="text-text-muted flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95
           {includePoll
-            ? 'bg-amber-500/15 font-bold text-amber-600 dark:text-amber-400 shadow-sm'
-            : 'hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main'}"
+            ? 'bg-amber-500/15 font-bold text-amber-600 shadow-sm dark:text-amber-400'
+            : 'hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
         >
           <ChartColumn size={18} strokeWidth={includePoll ? 2.5 : 2} />
           <span class="hidden text-xs sm:inline">{m.post_poll_section_title()}</span>
@@ -721,43 +721,43 @@
           type="button"
           title={m.post_form_fallback_title()}
           onclick={() => (includeForm = !includeForm)}
-          class="flex items-center gap-2 rounded-xl px-3 py-2 text-text-muted transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 shrink-0
+          class="text-text-muted flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95
           {includeForm
-            ? 'bg-amber-500/15 font-bold text-amber-600 dark:text-amber-400 shadow-sm'
-            : 'hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main'}"
+            ? 'bg-amber-500/15 font-bold text-amber-600 shadow-sm dark:text-amber-400'
+            : 'hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
         >
           <ClipboardList size={18} strokeWidth={includeForm ? 2.5 : 2} />
           <span class="hidden text-xs sm:inline">{m.post_form_fallback_title()}</span>
         </button>
 
         <!-- Séparateur vertical visuel -->
-        <div class="h-6 w-px bg-black/10 dark:bg-white/10 mx-0.5 shrink-0 hidden sm:block"></div>
+        <div class="mx-0.5 hidden h-6 w-px shrink-0 bg-black/10 sm:block dark:bg-white/10"></div>
 
         <!-- Programmation (Date Picker intégré) -->
         <div
-          class="relative flex items-center bg-black/5 dark:bg-white/5 rounded-xl px-2 py-1.5 focus-within:ring-2 focus-within:ring-amber-500/50 transition-all shrink-0 {scheduledAt
-            ? 'bg-amber-500/10 border border-amber-500/20'
+          class="relative flex shrink-0 items-center rounded-xl bg-black/5 px-2 py-1.5 transition-all focus-within:ring-2 focus-within:ring-amber-500/50 dark:bg-white/5 {scheduledAt
+            ? 'border border-amber-500/20 bg-amber-500/10'
             : ''}"
         >
           <Clock
             size={16}
             strokeWidth={2.5}
-            class="ml-1 text-text-muted {scheduledAt ? 'text-amber-600 dark:text-amber-400' : ''}"
+            class="text-text-muted ml-1 {scheduledAt ? 'text-amber-600 dark:text-amber-400' : ''}"
           />
           <input
             type="datetime-local"
             bind:value={scheduledAt}
             min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
             title={m.post_create_schedule_publication_label()}
-            class="bg-transparent pl-2 pr-1 text-[0.7rem] font-bold text-text-main outline-none cursor-pointer {scheduledAt
+            class="text-text-main cursor-pointer bg-transparent pr-1 pl-2 text-[0.7rem] font-bold outline-none {scheduledAt
               ? 'w-36 text-amber-700 dark:text-amber-400'
-              : 'w-5 sm:w-28 text-transparent sm:text-text-main'} transition-all"
+              : 'sm:text-text-main w-5 text-transparent sm:w-28'} transition-all"
           />
           {#if scheduledAt}
             <button
               type="button"
               onclick={() => (scheduledAt = '')}
-              class="rounded-full p-1 text-text-muted transition-colors hover:text-red-500 hover:bg-red-500/10 outline-none"
+              class="text-text-muted rounded-full p-1 transition-colors outline-none hover:bg-red-500/10 hover:text-red-500"
               title={m.post_create_cancel_schedule_label()}
             >
               <X size={14} strokeWidth={2.5} />
@@ -769,7 +769,7 @@
       <!-- Bouton Publier / Programmer -->
       <Button
         type="button"
-        class="min-w-[10rem] shrink-0 px-8 py-3 text-sm !font-extrabold sm:w-auto shadow-md shadow-amber-500/20 active:translate-y-0"
+        class="min-w-[10rem] shrink-0 px-8 py-3 text-sm !font-extrabold shadow-md shadow-amber-500/20 active:translate-y-0 sm:w-auto"
         disabled={publishing || (!markdown.trim() && selectedFiles.length === 0)}
         loading={publishing}
         onclick={publishPost}

@@ -85,26 +85,26 @@
 
 <svelte:head><title>{m.community_join_page_title()}</title></svelte:head>
 
-<div class="px-4 py-10 max-w-md mx-auto">
+<div class="mx-auto max-w-md px-4 py-10">
   <div
-    class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-8 shadow-sm text-center space-y-5"
+    class="border-cn-border space-y-5 rounded-2xl border bg-(--cn-surface) p-8 text-center shadow-sm"
   >
     {#if loading}
       <div class="flex justify-center py-6">
-        <Loader2 size={28} class="animate-spin text-cn-yellow" />
+        <Loader2 size={28} class="text-cn-yellow animate-spin" />
       </div>
     {:else if error || !preview?.valid}
       <div class="flex flex-col items-center gap-3 py-4">
         <AlertCircle size={36} class="text-red-500" />
-        <p class="text-sm font-semibold text-text-main">{m.invite_invalid_or_expired()}</p>
-        {#if error}<p class="text-xs text-text-muted">{error}</p>{/if}
-        <a href="/communities" class="text-sm font-semibold text-cn-dark hover:underline">
+        <p class="text-text-main text-sm font-semibold">{m.invite_invalid_or_expired()}</p>
+        {#if error}<p class="text-text-muted text-xs">{error}</p>{/if}
+        <a href="/communities" class="text-cn-dark text-sm font-semibold hover:underline">
           {m.community_join_back()}
         </a>
       </div>
     {:else}
       <div
-        class="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-cn-yellow/10 text-cn-dark overflow-hidden"
+        class="bg-cn-yellow/10 text-cn-dark mx-auto flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl"
       >
         {#if preview.imageMediaId}
           <img
@@ -117,18 +117,18 @@
         {/if}
       </div>
       <div>
-        <p class="text-sm text-text-muted">{m.community_join_invited_text()}</p>
-        <h1 class="text-xl font-extrabold text-text-main mt-1">{preview.workspaceName}</h1>
+        <p class="text-text-muted text-sm">{m.community_join_invited_text()}</p>
+        <h1 class="text-text-main mt-1 text-xl font-extrabold">{preview.workspaceName}</h1>
       </div>
       <button
         type="button"
         onclick={join}
         disabled={joining}
-        class="w-full rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50 transition-colors"
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover w-full rounded-xl px-5 py-2.5 text-sm font-bold transition-colors disabled:opacity-50"
       >
         {joining ? m.common_connecting_label() : m.community_join_btn()}
       </button>
-      <a href="/communities" class="block text-xs text-text-muted hover:text-text-main"
+      <a href="/communities" class="text-text-muted hover:text-text-main block text-xs"
         >{m.common_cancel_button()}</a
       >
     {/if}

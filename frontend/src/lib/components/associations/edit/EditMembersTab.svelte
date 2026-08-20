@@ -131,11 +131,11 @@
   }
 </script>
 
-<div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-5 shadow-sm">
-  <div class="flex items-start justify-between gap-3 flex-wrap">
+<div class="border-cn-border space-y-5 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm">
+  <div class="flex flex-wrap items-start justify-between gap-3">
     <div>
-      <h2 class="text-lg font-bold text-text-main tracking-tight">{m.common_members_label()}</h2>
-      <p class="text-sm text-text-muted mt-1">
+      <h2 class="text-text-main text-lg font-bold tracking-tight">{m.common_members_label()}</h2>
+      <p class="text-text-muted mt-1 text-sm">
         {m.asso_members_subtitle()}
       </p>
     </div>
@@ -143,7 +143,7 @@
       type="button"
       onclick={handleExportTrombinoscope}
       disabled={exportingPdf}
-      class="inline-flex items-center gap-2 rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold text-text-muted hover:text-text-main hover:bg-cn-bg transition-colors shrink-0 disabled:opacity-50"
+      class="border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg inline-flex shrink-0 items-center gap-2 rounded-xl border px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-50"
     >
       <Download size={15} />
       {exportingPdf ? m.common_generating_label() : m.asso_members_pdf_button()}
@@ -160,16 +160,16 @@
         ondragend={onDragEnd}
         class="flex items-start gap-2 rounded-2xl transition-opacity {draggedIdx === idx
           ? 'opacity-40'
-          : ''} {dragOverIdx === idx && draggedIdx !== idx ? 'ring-2 ring-cn-yellow/60' : ''}"
+          : ''} {dragOverIdx === idx && draggedIdx !== idx ? 'ring-cn-yellow/60 ring-2' : ''}"
       >
         <button
           type="button"
           aria-label={m.asso_members_drag_label()}
-          class="mt-3.5 cursor-grab touch-none text-text-muted hover:text-text-main transition-colors shrink-0"
+          class="text-text-muted hover:text-text-main mt-3.5 shrink-0 cursor-grab touch-none transition-colors"
         >
           <GripVertical size={18} />
         </button>
-        <div class="flex-1 min-w-0">
+        <div class="min-w-0 flex-1">
           <AssociationMemberRow
             {member}
             displayName={resolvedMemberNames[member.userId] ??
@@ -185,19 +185,19 @@
     {/each}
   </div>
 
-  <div class="border-t border-cn-border pt-5">
-    <h3 class="text-sm font-bold text-text-main mb-3 flex items-center gap-2">
+  <div class="border-cn-border border-t pt-5">
+    <h3 class="text-text-main mb-3 flex items-center gap-2 text-sm font-bold">
       <UserPlus size={17} />
       {m.asso_members_add_title()}
     </h3>
     <form
-      class="flex flex-col lg:flex-row gap-3"
+      class="flex flex-col gap-3 lg:flex-row"
       onsubmit={(e) => {
         e.preventDefault();
         handleAddMember();
       }}
     >
-      <div class="flex-1 min-w-0">
+      <div class="min-w-0 flex-1">
         <UserAutocomplete
           value={newMemberUserId}
           onValueChange={(v) => (newMemberUserId = v)}
@@ -210,11 +210,11 @@
         type="text"
         bind:value={newMemberRole}
         placeholder={m.asso_members_role_placeholder()}
-        class="w-full lg:w-36 rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2.5 text-sm"
+        class="border-cn-border w-full rounded-xl border bg-(--cn-surface) px-3 py-2.5 text-sm lg:w-36"
       />
       <select
         bind:value={newMemberPermissions}
-        class="rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2.5 text-sm w-full lg:w-auto"
+        class="border-cn-border w-full rounded-xl border bg-(--cn-surface) px-3 py-2.5 text-sm lg:w-auto"
       >
         <option value={0}>{m.asso_members_role_member()}</option>
         <option value={ASSOCIATION_ADMIN_PRESET}>{m.asso_members_role_admin()}</option>
@@ -222,13 +222,13 @@
       <button
         type="submit"
         disabled={addingMember || !newMemberUserId.trim()}
-        class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
       >
         {addingMember ? '…' : m.common_add_button()}
       </button>
     </form>
     {#if memberError}
-      <p class="text-sm text-red-err mt-3">{memberError}</p>
+      <p class="text-red-err mt-3 text-sm">{memberError}</p>
     {/if}
   </div>
 </div>

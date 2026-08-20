@@ -101,30 +101,30 @@
   }
 </script>
 
-<div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/60 p-4 space-y-4">
-  <div class="flex flex-wrap gap-3 items-center">
+<div class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface)/60 p-4">
+  <div class="flex flex-wrap items-center gap-3">
     <input
       type="file"
       accept="image/jpeg,image/png,image/webp"
       onchange={onPickFile}
-      class="text-sm text-text-main file:mr-2 file:rounded-lg file:border-0 file:bg-cn-yellow file:px-3 file:py-1.5 file:text-sm file:font-bold file:text-cn-dark"
+      class="text-text-main file:bg-cn-yellow file:text-cn-dark text-sm file:mr-2 file:rounded-lg file:border-0 file:px-3 file:py-1.5 file:text-sm file:font-bold"
     />
     {#if pickedName}
-      <span class="text-xs text-text-muted truncate max-w-[200px]">{pickedName}</span>
+      <span class="text-text-muted max-w-[200px] truncate text-xs">{pickedName}</span>
     {/if}
   </div>
 
   {#if imgEl}
-    <div class="flex flex-wrap gap-4 items-start">
+    <div class="flex flex-wrap items-start gap-4">
       <div class="space-y-2">
-        <p class="text-xs font-bold uppercase tracking-wide text-text-muted">
+        <p class="text-text-muted text-xs font-bold tracking-wide uppercase">
           {m.asso_logo_mode_label()}
         </p>
         <div class="flex gap-2">
           <button
             type="button"
             onclick={() => (mode = 'cover')}
-            class="rounded-xl px-3 py-1.5 text-sm font-semibold border transition-colors {mode ===
+            class="rounded-xl border px-3 py-1.5 text-sm font-semibold transition-colors {mode ===
             'cover'
               ? 'border-cn-yellow bg-cn-yellow/15 text-text-main'
               : 'border-cn-border text-text-muted hover:text-text-main'}"
@@ -134,7 +134,7 @@
           <button
             type="button"
             onclick={() => (mode = 'pad')}
-            class="rounded-xl px-3 py-1.5 text-sm font-semibold border transition-colors {mode ===
+            class="rounded-xl border px-3 py-1.5 text-sm font-semibold transition-colors {mode ===
             'pad'
               ? 'border-cn-yellow bg-cn-yellow/15 text-text-main'
               : 'border-cn-border text-text-muted hover:text-text-main'}"
@@ -144,10 +144,10 @@
         </div>
       </div>
       {#if mode === 'cover'}
-        <div class="flex-1 min-w-[180px] space-y-1">
+        <div class="min-w-[180px] flex-1 space-y-1">
           <label
             for="assoc-logo-zoom"
-            class="text-xs font-bold uppercase tracking-wide text-text-muted"
+            class="text-text-muted text-xs font-bold tracking-wide uppercase"
             >{m.asso_logo_zoom_label()}</label
           >
           <input
@@ -158,7 +158,7 @@
             step="0.05"
             value={zoom}
             oninput={(e) => (zoom = Number((e.target as HTMLInputElement).value))}
-            class="w-full accent-cn-yellow"
+            class="accent-cn-yellow w-full"
           />
         </div>
       {/if}
@@ -169,12 +169,12 @@
         bind:this={previewCanvas}
         width={240}
         height={240}
-        class="rounded-2xl border border-cn-border bg-white shadow-inner max-w-full"
+        class="border-cn-border max-w-full rounded-2xl border bg-white shadow-inner"
         aria-label={m.asso_logo_preview_aria()}
       ></canvas>
     </div>
 
-    <div class="flex flex-wrap gap-2 justify-end">
+    <div class="flex flex-wrap justify-end gap-2">
       {#if onCancel}
         <button
           type="button"
@@ -182,7 +182,7 @@
             revoke();
             onCancel();
           }}
-          class="rounded-xl px-4 py-2 text-sm font-semibold text-text-muted hover:text-text-main"
+          class="text-text-muted hover:text-text-main rounded-xl px-4 py-2 text-sm font-semibold"
         >
           {m.common_cancel_button()}
         </button>
@@ -190,12 +190,12 @@
       <button
         type="button"
         onclick={exportBlob}
-        class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover"
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold"
       >
         {m.asso_logo_use_image_button()}
       </button>
     </div>
   {:else}
-    <p class="text-sm text-text-muted">{m.asso_logo_pick_hint()}</p>
+    <p class="text-text-muted text-sm">{m.asso_logo_pick_hint()}</p>
   {/if}
 </div>

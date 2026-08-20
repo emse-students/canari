@@ -10,13 +10,13 @@
   class="min-h-dvh overflow-y-auto bg-transparent px-4 py-10 pt-[max(2.5rem,env(safe-area-inset-top))] pb-[max(2.5rem,env(safe-area-inset-bottom))]"
 >
   <div
-    class="mx-auto w-full max-w-2xl rounded-3xl border border-white/40 bg-white/20 p-8 shadow-2xl backdrop-blur-2xl dark:border-white/10 dark:bg-black/40 md:p-12"
+    class="mx-auto w-full max-w-2xl rounded-3xl border border-white/40 bg-white/20 p-8 shadow-2xl backdrop-blur-2xl md:p-12 dark:border-white/10 dark:bg-black/40"
   >
     <!-- En-tête -->
     <div class="mb-10 text-center">
       <button
         onclick={() => history.back()}
-        class="mb-6 inline-flex items-center gap-1.5 text-sm text-text-muted hover:text-text-main transition-colors"
+        class="text-text-muted hover:text-text-main mb-6 inline-flex items-center gap-1.5 text-sm transition-colors"
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
@@ -33,16 +33,16 @@
         {m.common_back()}
       </button>
       <div
-        class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-cn-ink shadow-lg"
+        class="bg-cn-ink mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl shadow-lg"
       >
         <img src="/favicon.png" alt="Canari" class="h-8 w-8 object-contain" />
       </div>
-      <h1 class="text-3xl font-bold text-text-main">{m.legal_child_safety_title()}</h1>
-      <p class="mt-2 text-sm text-text-muted">{m.legal_child_safety_subtitle()}</p>
-      <p class="mt-1 text-xs text-text-muted">Dernière mise à jour : 21/05/2026</p>
+      <h1 class="text-text-main text-3xl font-bold">{m.legal_child_safety_title()}</h1>
+      <p class="text-text-muted mt-2 text-sm">{m.legal_child_safety_subtitle()}</p>
+      <p class="text-text-muted mt-1 text-xs">Dernière mise à jour : 21/05/2026</p>
     </div>
 
-    <div class="space-y-8 text-sm leading-relaxed text-text-main">
+    <div class="text-text-main space-y-8 text-sm leading-relaxed">
       <!-- Engagement principal -->
       <section>
         <div class="rounded-xl border border-red-500/30 bg-red-500/5 p-5">
@@ -52,7 +52,7 @@
             interdit strictement et sans exception toute forme d'abus et d'exploitation sexuels
             d'enfants (CSAE - Child Sexual Abuse and Exploitation), y compris :
           </p>
-          <ul class="mt-3 ml-4 list-disc space-y-1 text-text-muted">
+          <ul class="text-text-muted mt-3 ml-4 list-disc space-y-1">
             <li>
               La production, le partage, la distribution ou la possession de matériel d'abus sexuel
               sur mineurs (CSAM)
@@ -66,7 +66,7 @@
 
       <!-- Contexte -->
       <section>
-        <h2 class="mb-3 text-lg font-bold text-text-main">Contexte et audience</h2>
+        <h2 class="text-text-main mb-3 text-lg font-bold">Contexte et audience</h2>
         <p class="text-text-muted mb-3">
           Canari est une application de messagerie sécurisée réservée exclusivement aux membres de
           la communauté de l'École des Mines de Saint-Étienne (EMSE). L'accès est contrôlé par le
@@ -83,11 +83,11 @@
 
       <!-- Mesures techniques -->
       <section>
-        <h2 class="mb-3 text-lg font-bold text-text-main">Mesures de protection</h2>
+        <h2 class="text-text-main mb-3 text-lg font-bold">Mesures de protection</h2>
         <ul class="space-y-2">
           {#each [["Contrôle d'accès", "L'accès à Canari est limité aux comptes authentifiés via le portail OIDC de l'EMSE. Aucun compte public ou anonyme n'est possible."], ['Chiffrement de bout en bout', 'Toutes les communications privées sont chiffrées via le protocole MLS (RFC 9420). Le serveur ne peut pas lire le contenu des messages.'], ['Modération', "L'association Rootz se réserve le droit de suspendre immédiatement tout compte et de supprimer tout contenu enfreignant ces normes."], ['Signalement aux autorités', 'Tout contenu CSAE détecté ou signalé sera immédiatement transmis aux autorités compétentes, conformément à la loi française.']] as [titre, desc], i (i)}
             <li class="rounded-xl border border-white/20 bg-white/10 p-3 dark:bg-white/5">
-              <span class="font-semibold text-cn-yellow">{titre} - </span><span
+              <span class="text-cn-yellow font-semibold">{titre} - </span><span
                 class="text-text-muted">{desc}</span
               >
             </li>
@@ -97,15 +97,15 @@
 
       <!-- Signalement -->
       <section>
-        <h2 class="mb-3 text-lg font-bold text-text-main">Signalement d'abus</h2>
+        <h2 class="text-text-main mb-3 text-lg font-bold">Signalement d'abus</h2>
         <p class="text-text-muted mb-3">
           Si vous observez ou suspectez la présence de contenu CSAE sur Canari, vous êtes fortement
           encouragé(e) à le signaler immédiatement :
         </p>
-        <div class="rounded-xl border border-white/20 bg-white/10 p-4 dark:bg-white/5 space-y-2">
+        <div class="space-y-2 rounded-xl border border-white/20 bg-white/10 p-4 dark:bg-white/5">
           <p>
             <strong>Email :</strong>
-            <a href="mailto:bureau@rootz-emse.fr" class="text-cn-yellow hover:underline ml-1"
+            <a href="mailto:bureau@rootz-emse.fr" class="text-cn-yellow ml-1 hover:underline"
               >bureau@rootz-emse.fr</a
             >
           </p>
@@ -115,7 +115,7 @@
             Nous traiterons le signalement dans les meilleurs délais.
           </p>
         </div>
-        <p class="mt-3 text-text-muted">
+        <p class="text-text-muted mt-3">
           Vous pouvez également signaler directement aux autorités françaises via le portail
           <a
             href="https://www.internet-signalement.gouv.fr"
@@ -129,7 +129,7 @@
 
       <!-- Conséquences -->
       <section>
-        <h2 class="mb-3 text-lg font-bold text-text-main">Conséquences des violations</h2>
+        <h2 class="text-text-main mb-3 text-lg font-bold">Conséquences des violations</h2>
         <p class="text-text-muted">
           Tout utilisateur dont le compte est associé à du contenu CSAE ou à une exploitation
           sexuelle d'enfants verra son compte suspendu immédiatement et définitivement. Les faits
@@ -140,7 +140,7 @@
     </div>
 
     <!-- Footer -->
-    <div class="mt-10 border-t border-white/20 pt-6 text-center text-xs text-text-muted">
+    <div class="text-text-muted mt-10 border-t border-white/20 pt-6 text-center text-xs">
       <p>{m.legal_footer_credits()}</p>
       <div class="mt-2 flex justify-center gap-4">
         <a href="/legal/cgu" class="text-cn-yellow hover:underline">{m.legal_cgu_link()}</a>

@@ -300,15 +300,15 @@
 </script>
 
 <Modal {open} {onClose} title={m.chat_channel_settings_title()} maxWidth="max-w-4xl">
-  <div class="-mx-6 -my-4 flex flex-col md:flex-row h-full md:h-[65vh] max-h-[800px]">
+  <div class="-mx-6 -my-4 flex h-full max-h-[800px] flex-col md:h-[65vh] md:flex-row">
     <!-- Barre de menu latérale (Onglets sur mobile) -->
     <div
-      class="w-full md:w-64 shrink-0 bg-white/40 dark:bg-black/20 border-b md:border-b-0 md:border-r border-black/5 dark:border-white/10 flex flex-row md:flex-col overflow-x-auto md:overflow-x-visible p-3 md:p-5 gap-2 md:gap-1 custom-scrollbar"
+      class="custom-scrollbar flex w-full shrink-0 flex-row gap-2 overflow-x-auto border-b border-black/5 bg-white/40 p-3 md:w-64 md:flex-col md:gap-1 md:overflow-x-visible md:border-r md:border-b-0 md:p-5 dark:border-white/10 dark:bg-black/20"
     >
       <h3
-        class="hidden md:flex text-[0.7rem] font-extrabold uppercase tracking-widest text-text-muted mb-3 px-2 items-center gap-2"
+        class="text-text-muted mb-3 hidden items-center gap-2 px-2 text-[0.7rem] font-extrabold tracking-widest uppercase md:flex"
       >
-        <span class="text-amber-500 text-lg leading-none">{m.chat_channel_prefix()}</span>
+        <span class="text-lg leading-none text-amber-500">{m.chat_channel_prefix()}</span>
         <span class="truncate"
           >{selectedChannel ? selectedChannel.name : m.chat_channel_label()}</span
         >
@@ -316,9 +316,9 @@
 
       <button
         onclick={() => (activeTab = 'general')}
-        class="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-bold transition-all whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {activeTab ===
+        class="flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-bold whitespace-nowrap transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {activeTab ===
         'general'
-          ? 'bg-amber-500/15 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 shadow-sm'
+          ? 'bg-amber-500/15 text-amber-700 shadow-sm dark:bg-amber-500/20 dark:text-amber-400'
           : 'text-text-main hover:bg-black/5 dark:hover:bg-white/5'}"
       >
         <Settings size={18} strokeWidth={2.5} />
@@ -327,9 +327,9 @@
 
       <button
         onclick={() => (activeTab = 'access')}
-        class="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-bold transition-all whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {activeTab ===
+        class="flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-bold whitespace-nowrap transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {activeTab ===
         'access'
-          ? 'bg-amber-500/15 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 shadow-sm'
+          ? 'bg-amber-500/15 text-amber-700 shadow-sm dark:bg-amber-500/20 dark:text-amber-400'
           : 'text-text-main hover:bg-black/5 dark:hover:bg-white/5'}"
       >
         <Lock size={18} strokeWidth={2.5} />
@@ -337,7 +337,7 @@
       </button>
 
       <!-- Boutons de danger (Desktop uniquement, placés en bas) -->
-      <div class="hidden md:flex md:flex-col mt-auto pt-6 gap-2">
+      <div class="mt-auto hidden gap-2 pt-6 md:flex md:flex-col">
         <!-- Only a private channel can be left: a public one is readable by every member of the
              community, so there is no per-member access to give up. Leaving is a community-level
              action there ("Quitter la communaute", in the community panel). -->
@@ -345,7 +345,7 @@
           <button
             type="button"
             onclick={handleLeaveChannel}
-            class="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-bold text-orange-600 dark:text-orange-400 hover:bg-orange-500/10 transition-colors w-full outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
+            class="flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-bold text-orange-600 transition-colors outline-none hover:bg-orange-500/10 focus-visible:ring-2 focus-visible:ring-orange-500 dark:text-orange-400"
           >
             <LogOut size={18} strokeWidth={2.5} />
             {m.chat_leave_channel_button()}
@@ -354,7 +354,7 @@
         <button
           type="button"
           onclick={handleDeleteChannel}
-          class="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-bold text-red-600 dark:text-red-400 hover:bg-red-500/10 transition-colors w-full outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+          class="flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-bold text-red-600 transition-colors outline-none hover:bg-red-500/10 focus-visible:ring-2 focus-visible:ring-red-500 dark:text-red-400"
         >
           <Trash2 size={18} strokeWidth={2.5} />
           {m.chat_delete_channel_button()}
@@ -363,20 +363,20 @@
     </div>
 
     <!-- Contenu Principal -->
-    <div class="flex-1 bg-transparent p-5 md:p-8 overflow-y-auto custom-scrollbar">
+    <div class="custom-scrollbar flex-1 overflow-y-auto bg-transparent p-5 md:p-8">
       <!-- ================= ONGLET : GÉNÉRAL ================= -->
       {#if activeTab === 'general'}
-        <div class="space-y-6 max-w-2xl">
-          <h2 class="text-xl font-bold text-text-main">{m.chat_channel_overview_tab()}</h2>
+        <div class="max-w-2xl space-y-6">
+          <h2 class="text-text-main text-xl font-bold">{m.chat_channel_overview_tab()}</h2>
           <div class="space-y-4">
             <div class="space-y-2">
-              <label class="text-xs font-bold uppercase text-text-muted" for="channel-name"
+              <label class="text-text-muted text-xs font-bold uppercase" for="channel-name"
                 >{m.chat_channel_name_label()}</label
               >
               <div class="flex gap-2">
                 <input
                   id="channel-name"
-                  class="w-full bg-white/80 dark:bg-black/40 border border-black/10 dark:border-white/10 rounded-xl px-4 py-3 text-sm font-semibold outline-none focus:ring-2 focus:ring-amber-500/50 shadow-inner transition-all"
+                  class="w-full rounded-xl border border-black/10 bg-white/80 px-4 py-3 text-sm font-semibold shadow-inner transition-all outline-none focus:ring-2 focus:ring-amber-500/50 dark:border-white/10 dark:bg-black/40"
                   bind:value={channelNameInput}
                   onkeydown={(e) => e.key === 'Enter' && handleRenameChannel()}
                   placeholder={m.chat_channel_name_placeholder()}
@@ -387,7 +387,7 @@
                 onclick={handleRenameChannel}
                 disabled={!channelNameInput.trim() ||
                   channelNameInput.trim() === selectedChannel?.name}
-                class="rounded-xl bg-amber-500 px-6 py-3 text-sm font-bold text-cn-ink hover:bg-amber-400 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-amber-500/20 disabled:shadow-none"
+                class="text-cn-ink rounded-xl bg-amber-500 px-6 py-3 text-sm font-bold shadow-md shadow-amber-500/20 transition-all hover:bg-amber-400 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
               >
                 {m.chat_rename_channel_button()}
               </button>
@@ -398,11 +398,11 @@
           <div class="space-y-3 pt-2">
             <div class="flex items-center gap-2">
               <Bell size={16} class="text-amber-500" strokeWidth={2.5} />
-              <h3 class="text-sm font-bold text-text-main">
+              <h3 class="text-text-main text-sm font-bold">
                 {m.chat_channel_notifications_label()}
               </h3>
             </div>
-            <p class="text-xs text-text-muted">{m.chat_channel_notifications_description()}</p>
+            <p class="text-text-muted text-xs">{m.chat_channel_notifications_description()}</p>
             <div class="grid grid-cols-3 gap-2" aria-busy={notifLoading || notifSaving}>
               <button
                 type="button"
@@ -411,7 +411,7 @@
                 class="flex flex-col items-center gap-1.5 rounded-xl border px-2 py-3 text-xs font-bold transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-50 {notifLevel ===
                 'all'
                   ? 'border-amber-500 bg-amber-500/10 text-amber-700 dark:text-amber-400'
-                  : 'border-black/10 dark:border-white/10 text-text-muted hover:bg-black/5 dark:hover:bg-white/5'}"
+                  : 'text-text-muted border-black/10 hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/5'}"
               >
                 <Bell size={18} strokeWidth={2.5} />
                 {m.chat_channel_notif_all_label()}
@@ -423,7 +423,7 @@
                 class="flex flex-col items-center gap-1.5 rounded-xl border px-2 py-3 text-xs font-bold transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-50 {notifLevel ===
                 'mentions'
                   ? 'border-amber-500 bg-amber-500/10 text-amber-700 dark:text-amber-400'
-                  : 'border-black/10 dark:border-white/10 text-text-muted hover:bg-black/5 dark:hover:bg-white/5'}"
+                  : 'text-text-muted border-black/10 hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/5'}"
               >
                 <AtSign size={18} strokeWidth={2.5} />
                 {m.chat_channel_notif_mentions_label()}
@@ -435,7 +435,7 @@
                 class="flex flex-col items-center gap-1.5 rounded-xl border px-2 py-3 text-xs font-bold transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-50 {notifLevel ===
                 'none'
                   ? 'border-amber-500 bg-amber-500/10 text-amber-700 dark:text-amber-400'
-                  : 'border-black/10 dark:border-white/10 text-text-muted hover:bg-black/5 dark:hover:bg-white/5'}"
+                  : 'text-text-muted border-black/10 hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/5'}"
               >
                 <BellOff size={18} strokeWidth={2.5} />
                 {m.chat_channel_notif_none_label()}
@@ -444,8 +444,8 @@
           </div>
 
           <!-- Zone de danger (Visible uniquement sur mobile dans cet onglet) -->
-          <div class="md:hidden pt-6 border-t border-black/10 dark:border-white/10 space-y-3">
-            <h3 class="text-xs font-bold uppercase tracking-wider text-red-500 px-1 mb-2">
+          <div class="space-y-3 border-t border-black/10 pt-6 md:hidden dark:border-white/10">
+            <h3 class="mb-2 px-1 text-xs font-bold tracking-wider text-red-500 uppercase">
               {m.chat_danger_zone_label()}
             </h3>
             <!-- Private channels only - see the desktop block above. -->
@@ -453,7 +453,7 @@
               <button
                 type="button"
                 onclick={handleLeaveChannel}
-                class="w-full flex items-center justify-center gap-3 px-4 py-3.5 rounded-xl text-sm font-bold text-orange-600 dark:text-orange-400 bg-orange-500/10 border border-orange-500/20 active:scale-[0.98] transition-all"
+                class="flex w-full items-center justify-center gap-3 rounded-xl border border-orange-500/20 bg-orange-500/10 px-4 py-3.5 text-sm font-bold text-orange-600 transition-all active:scale-[0.98] dark:text-orange-400"
               >
                 <LogOut size={18} strokeWidth={2.5} />
                 {m.chat_leave_channel_button()}
@@ -462,7 +462,7 @@
             <button
               type="button"
               onclick={handleDeleteChannel}
-              class="w-full flex items-center justify-center gap-3 px-4 py-3.5 rounded-xl text-sm font-bold text-red-600 dark:text-red-400 bg-red-500/10 border border-red-500/20 active:scale-[0.98] transition-all"
+              class="flex w-full items-center justify-center gap-3 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3.5 text-sm font-bold text-red-600 transition-all active:scale-[0.98] dark:text-red-400"
             >
               <Trash2 size={18} strokeWidth={2.5} />
               {m.chat_delete_channel_button()}
@@ -473,53 +473,53 @@
 
       <!-- ================= ONGLET : ACCÈS ================= -->
       {#if activeTab === 'access'}
-        <div class="space-y-6 max-w-2xl animate-in fade-in slide-in-from-bottom-2 duration-300">
+        <div class="animate-in fade-in slide-in-from-bottom-2 max-w-2xl space-y-6 duration-300">
           <div>
-            <h2 class="text-xl font-extrabold text-text-main mb-1">
+            <h2 class="text-text-main mb-1 text-xl font-extrabold">
               {m.chat_channel_access_title()}
             </h2>
-            <p class="text-sm font-medium text-text-muted leading-relaxed">
+            <p class="text-text-muted text-sm leading-relaxed font-medium">
               {m.chat_channel_access_description()}
             </p>
           </div>
 
           {#if accessLoading}
-            <div class="flex items-center gap-2 text-sm text-text-muted">
+            <div class="text-text-muted flex items-center gap-2 text-sm">
               <Loader size={16} class="animate-spin" />
               {m.common_loading_label()}
             </div>
           {:else if accessError}
-            <div class="p-3 rounded-xl bg-red-err/10 text-red-err text-sm border border-red-err/30">
+            <div class="bg-red-err/10 text-red-err border-red-err/30 rounded-xl border p-3 text-sm">
               {accessError}
             </div>
           {:else}
             <div
-              class="bg-white/60 dark:bg-black/20 border border-black/5 dark:border-white/10 rounded-[1.5rem] p-5 space-y-5 shadow-sm"
+              class="space-y-5 rounded-[1.5rem] border border-black/5 bg-white/60 p-5 shadow-sm dark:border-white/10 dark:bg-black/20"
             >
               <!-- ═══ Visibility toggle ═══ -->
               <div class="flex items-center justify-between gap-4">
                 <div class="flex items-center gap-3">
                   {#if accessIsPrivate}
-                    <div class="p-2 rounded-xl bg-amber-500/10 text-amber-warn">
+                    <div class="text-amber-warn rounded-xl bg-amber-500/10 p-2">
                       <Lock size={18} strokeWidth={2.5} />
                     </div>
                     <div>
-                      <p class="font-bold text-text-main text-sm">
+                      <p class="text-text-main text-sm font-bold">
                         {m.chat_channel_private_label()}
                       </p>
-                      <p class="text-xs text-text-muted">
+                      <p class="text-text-muted text-xs">
                         {m.chat_channel_private_description()}
                       </p>
                     </div>
                   {:else}
-                    <div class="p-2 rounded-xl bg-emerald-500/10 text-green-ok">
+                    <div class="text-green-ok rounded-xl bg-emerald-500/10 p-2">
                       <Globe size={18} strokeWidth={2.5} />
                     </div>
                     <div>
-                      <p class="font-bold text-text-main text-sm">
+                      <p class="text-text-main text-sm font-bold">
                         {m.chat_channel_public_label()}
                       </p>
-                      <p class="text-xs text-text-muted">
+                      <p class="text-text-muted text-xs">
                         {m.chat_channel_public_description()}
                       </p>
                     </div>
@@ -546,29 +546,29 @@
               </div>
 
               <!-- ═══ Qui peut écrire ? ═══ -->
-              <div class="border-t border-black/5 dark:border-white/10 pt-4 space-y-2">
+              <div class="space-y-2 border-t border-black/5 pt-4 dark:border-white/10">
                 <div class="flex items-center gap-2">
                   <MessageSquareText size={16} class="text-amber-500" strokeWidth={2.5} />
-                  <p class="text-xs font-bold uppercase tracking-wider text-text-muted">
+                  <p class="text-text-muted text-xs font-bold tracking-wider uppercase">
                     {m.chat_channel_who_can_write()}
                   </p>
                 </div>
                 <select
-                  class="w-full bg-white/80 dark:bg-black/40 border border-black/10 dark:border-white/10 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-amber-500/50 shadow-inner transition-all text-sm font-semibold appearance-none"
+                  class="w-full appearance-none rounded-xl border border-black/10 bg-white/80 px-4 py-3 text-sm font-semibold shadow-inner transition-all outline-none focus:ring-2 focus:ring-amber-500/50 dark:border-white/10 dark:bg-black/40"
                   bind:value={writePolicy}
                 >
                   <option value="everyone">{m.chat_channel_write_everyone()}</option>
                   <option value="admins_moderators">{m.chat_channel_write_admins_mods()}</option>
                   <option value="admins">{m.chat_channel_write_admins()}</option>
                 </select>
-                <p class="text-xs text-text-muted">{m.chat_channel_admins_join_hint()}</p>
+                <p class="text-text-muted text-xs">{m.chat_channel_admins_join_hint()}</p>
               </div>
 
               <!-- ═══ Member allowlist (only when private) ═══ -->
               {#if accessIsPrivate}
-                <div class="border-t border-black/5 dark:border-white/10 pt-4 space-y-3">
+                <div class="space-y-3 border-t border-black/5 pt-4 dark:border-white/10">
                   <p
-                    class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
+                    class="text-text-muted flex items-center gap-1.5 text-xs font-bold tracking-wider uppercase"
                   >
                     <Lock size={13} />
                     {m.chat_allowed_members_label()}
@@ -576,27 +576,27 @@
 
                   <!-- Existing allowed users -->
                   {#if accessAllowedUserIds.length === 0}
-                    <p class="text-sm text-text-muted italic">
+                    <p class="text-text-muted text-sm italic">
                       {m.chat_no_allowed_members_warning()}
                     </p>
                   {:else}
                     <ul class="space-y-1.5">
                       {#each accessAllowedUserIds as uid (uid)}
                         <li
-                          class="flex items-center justify-between gap-2 rounded-xl bg-black/5 dark:bg-white/5 px-3 py-2"
+                          class="flex items-center justify-between gap-2 rounded-xl bg-black/5 px-3 py-2 dark:bg-white/5"
                         >
-                          <div class="flex items-center gap-2 min-w-0">
+                          <div class="flex min-w-0 items-center gap-2">
                             <Avatar userId={uid} size="sm" />
                             <UserName
                               userId={uid}
-                              class="text-sm font-medium text-text-main truncate"
+                              class="text-text-main truncate text-sm font-medium"
                             />
                           </div>
                           <button
                             type="button"
                             onclick={() => handleRemoveMemberFromChannel(uid)}
                             disabled={memberRemoving[uid]}
-                            class="text-red-500 hover:text-red-err disabled:opacity-50 transition-colors flex-shrink-0"
+                            class="hover:text-red-err flex-shrink-0 text-red-500 transition-colors disabled:opacity-50"
                             title={m.chat_channel_remove_access_title()}
                           >
                             {#if memberRemoving[uid]}
@@ -613,11 +613,11 @@
                   <!-- Add a user -->
                   <div class="space-y-2 pt-1">
                     <p
-                      class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
+                      class="text-text-muted flex items-center gap-1.5 text-xs font-bold tracking-wider uppercase"
                     >
                       {m.chat_channel_add_user_label()}
                     </p>
-                    <div class="flex gap-2 items-start">
+                    <div class="flex items-start gap-2">
                       <div class="flex-1">
                         <!--
                           Already-granted users are not offered again. `addAllowedUser` deduped
@@ -635,7 +635,7 @@
                         type="button"
                         onclick={addAllowedUser}
                         disabled={!addingUserId.trim()}
-                        class="rounded-xl bg-amber-500 px-3 py-2.5 text-sm font-bold text-cn-ink hover:bg-amber-400 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 shadow-md shadow-amber-500/20 mt-0"
+                        class="text-cn-ink mt-0 flex items-center gap-1.5 rounded-xl bg-amber-500 px-3 py-2.5 text-sm font-bold shadow-md shadow-amber-500/20 transition-all hover:bg-amber-400 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         <Check size={14} strokeWidth={3} />
                         {m.common_add_button()}
@@ -647,13 +647,13 @@
 
               <!-- Save -->
               <div
-                class="flex items-center gap-3 border-t border-black/5 dark:border-white/10 pt-4"
+                class="flex items-center gap-3 border-t border-black/5 pt-4 dark:border-white/10"
               >
                 <button
                   type="button"
                   onclick={saveChannelAccess}
                   disabled={accessSaving}
-                  class="rounded-xl bg-amber-500 px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-amber-400 active:scale-95 transition-all disabled:opacity-50 flex items-center gap-2 shadow-md shadow-amber-500/20"
+                  class="text-cn-ink flex items-center gap-2 rounded-xl bg-amber-500 px-5 py-2.5 text-sm font-bold shadow-md shadow-amber-500/20 transition-all hover:bg-amber-400 active:scale-95 disabled:opacity-50"
                 >
                   {#if accessSaving}
                     <Loader size={14} class="animate-spin" /> {m.common_saving_label()}
@@ -662,7 +662,7 @@
                   {/if}
                 </button>
                 {#if accessSaved}
-                  <span class="text-xs font-medium text-green-ok flex items-center gap-1">
+                  <span class="text-green-ok flex items-center gap-1 text-xs font-medium">
                     <Check size={12} strokeWidth={3} />
                     {m.common_saved_label()}
                   </span>

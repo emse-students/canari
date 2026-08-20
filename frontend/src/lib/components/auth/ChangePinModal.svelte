@@ -122,9 +122,9 @@
 
 <Modal {open} {title} {onClose}>
   <form onsubmit={handleSubmit} class="space-y-5 p-1">
-    <div class="rounded-xl border border-cn-yellow/30 bg-cn-yellow/10 px-4 py-3">
+    <div class="border-cn-yellow/30 bg-cn-yellow/10 rounded-xl border px-4 py-3">
       {#if isRecover}
-        <p class="text-sm text-text-muted leading-relaxed">
+        <p class="text-text-muted text-sm leading-relaxed">
           {m.auth_changepin_recover_p1()}<strong class="text-text-main"
             >{m.auth_changepin_recover_old()}</strong
           >{m.auth_changepin_recover_p2()}<strong class="text-text-main"
@@ -132,7 +132,7 @@
           >{m.auth_changepin_recover_p3()}
         </p>
       {:else}
-        <p class="text-sm text-text-muted leading-relaxed">
+        <p class="text-text-muted text-sm leading-relaxed">
           {m.auth_changepin_change_p1()}<strong class="text-text-main"
             >{m.auth_pin_never_sent()}</strong
           >{m.auth_changepin_change_p2()}<strong class="text-text-main"
@@ -143,7 +143,7 @@
     </div>
 
     <div class="space-y-2">
-      <label for="current-pin" class="block text-xs font-bold text-text-muted px-1"
+      <label for="current-pin" class="text-text-muted block px-1 text-xs font-bold"
         >{currentLabel}</label
       >
       <input
@@ -159,7 +159,7 @@
     </div>
 
     <div class="space-y-2">
-      <label for="new-pin" class="block text-xs font-bold text-text-muted px-1">{newLabel}</label>
+      <label for="new-pin" class="text-text-muted block px-1 text-xs font-bold">{newLabel}</label>
       <input
         id="new-pin"
         type="password"
@@ -173,7 +173,7 @@
     </div>
 
     <div class="space-y-2">
-      <label for="confirm-pin" class="block text-xs font-bold text-text-muted px-1"
+      <label for="confirm-pin" class="text-text-muted block px-1 text-xs font-bold"
         >{m.auth_changepin_confirm_label()}</label
       >
       <input
@@ -189,7 +189,7 @@
     </div>
 
     {#if displayError}
-      <p class="text-sm text-red-500 font-medium flex items-center gap-2 px-1">
+      <p class="flex items-center gap-2 px-1 text-sm font-medium text-red-500">
         <AlertTriangle size={16} class="shrink-0" />
         {displayError}
       </p>
@@ -197,16 +197,16 @@
 
     {#if isLoading && loadingProgress}
       <div class="space-y-2 px-1" role="status" aria-live="polite">
-        <div class="flex items-center justify-between gap-3 text-xs text-text-muted">
+        <div class="text-text-muted flex items-center justify-between gap-3 text-xs">
           <span class="truncate">{progressCaption}</span>
           <span class="shrink-0 font-mono tabular-nums">{loadingProgress.percent}%</span>
         </div>
         <div
-          class="w-full h-2 rounded-full bg-black/10 dark:bg-white/10 overflow-hidden"
+          class="h-2 w-full overflow-hidden rounded-full bg-black/10 dark:bg-white/10"
           aria-hidden="true"
         >
           <div
-            class="h-full bg-cn-yellow rounded-full transition-[width] duration-300 ease-out"
+            class="bg-cn-yellow h-full rounded-full transition-[width] duration-300 ease-out"
             style="width: {loadingProgress.percent}%"
           ></div>
         </div>
@@ -216,7 +216,7 @@
     <button
       type="submit"
       disabled={isLoading}
-      class="w-full py-3.5 bg-cn-yellow text-cn-ink rounded-xl font-extrabold text-sm hover:bg-cn-yellow-hover hover:-translate-y-0.5 active:translate-y-0 shadow-lg shadow-cn-yellow/20 transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed disabled:hover:translate-y-0"
+      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover shadow-cn-yellow/20 flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-sm font-extrabold shadow-lg transition-all hover:-translate-y-0.5 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:translate-y-0"
     >
       {#if isLoading}
         <LoaderCircle size={16} class="animate-spin" />

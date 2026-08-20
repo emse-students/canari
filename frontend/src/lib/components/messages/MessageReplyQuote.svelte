@@ -22,7 +22,7 @@
 
 <button
   type="button"
-  class="mb-2 pt-2 pb-2 border-l-4 border-current/60 pl-3.5 text-xs opacity-95 text-left w-full hover:opacity-100 transition-opacity rounded-r-lg bg-black/5 dark:bg-white/5"
+  class="mb-2 w-full rounded-r-lg border-l-4 border-current/60 bg-black/5 pt-2 pb-2 pl-3.5 text-left text-xs opacity-95 transition-opacity hover:opacity-100 dark:bg-white/5"
   onclick={(e) => {
     e.stopPropagation();
     if (replyId) onNavigateToMessage?.(replyId);
@@ -32,8 +32,8 @@
 >
   <a
     href="/profile/{encodeURIComponent(senderId)}"
-    class="font-bold truncate hover:underline"
+    class="truncate font-bold hover:underline"
     onclick={(e) => e.stopPropagation()}>{displayName}</a
   >
-  <div class="truncate mt-0.5">{previewText}</div>
+  <div class="mt-0.5 truncate">{previewText}</div>
 </button>

@@ -17,30 +17,30 @@
 </script>
 
 <!-- Wrapper principal pour encapsuler l'état "group" et gérer l'espacement -->
-<div class="flex items-center gap-3 group select-none">
+<div class="group flex items-center gap-3 select-none">
   <!-- Conteneur de l'icône -->
   <div
-    class="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-[14px] bg-cn-ink shadow-md shadow-black/10 border border-black/5 dark:border-white/10 overflow-hidden transition-all duration-300 group-hover:scale-105 group-hover:shadow-lg group-hover:shadow-black/20 dark:group-hover:shadow-white/5"
+    class="bg-cn-ink relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[14px] border border-black/5 shadow-md shadow-black/10 transition-all duration-300 group-hover:scale-105 group-hover:shadow-lg group-hover:shadow-black/20 dark:border-white/10 dark:group-hover:shadow-white/5"
   >
     <!-- Le logo avec un léger effet de rotation au survol pour le dynamisme -->
     <img
       src="/favicon.png"
       alt="Logo Canari"
-      class="w-[26px] h-[26px] object-contain drop-shadow-md transition-transform duration-300 group-hover:-rotate-3 group-hover:scale-110"
+      class="h-[26px] w-[26px] object-contain drop-shadow-md transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-3"
     />
   </div>
 
   <!-- Conteneur du texte -->
-  <div class="leading-tight flex flex-col justify-center {compact ? 'hidden sm:flex' : 'flex'}">
+  <div class="flex flex-col justify-center leading-tight {compact ? 'hidden sm:flex' : 'flex'}">
     <p
-      class="text-xl font-brand font-bold tracking-wide text-text-main capitalize transition-colors duration-300 group-hover:text-amber-500 dark:group-hover:text-amber-400"
+      class="font-brand text-text-main text-xl font-bold tracking-wide capitalize transition-colors duration-300 group-hover:text-amber-500 dark:group-hover:text-amber-400"
     >
       {brandName}
     </p>
 
     {#if subtitle}
       <p
-        class="text-[11px] font-medium text-text-muted mt-[1px] opacity-80 transition-opacity duration-300 group-hover:opacity-100"
+        class="text-text-muted mt-[1px] text-[11px] font-medium opacity-80 transition-opacity duration-300 group-hover:opacity-100"
       >
         {subtitle}
       </p>

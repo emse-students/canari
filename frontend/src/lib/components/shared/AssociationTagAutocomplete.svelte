@@ -186,7 +186,7 @@
 
 <div class="space-y-1">
   <div class="relative">
-    <span class="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-text-muted">
+    <span class="text-text-muted pointer-events-none absolute top-1/2 left-3 -translate-y-1/2">
       <Search size={15} />
     </span>
     <input
@@ -200,13 +200,13 @@
       {placeholder}
       autocomplete="off"
       disabled={disabled || !associationId}
-      class="w-full pl-9 pr-4 py-2.5 bg-[var(--cn-surface)] border border-cn-border rounded-xl text-sm outline-none focus:ring-2 focus:ring-amber-400/45 focus:border-amber-400/60 disabled:opacity-50 disabled:cursor-not-allowed"
+      class="border-cn-border w-full rounded-xl border bg-(--cn-surface) py-2.5 pr-4 pl-9 text-sm outline-none focus:border-amber-400/60 focus:ring-2 focus:ring-amber-400/45 disabled:cursor-not-allowed disabled:opacity-50"
     />
 
     {#if isLoading}
-      <div class="absolute right-3 top-1/2 -translate-y-1/2">
+      <div class="absolute top-1/2 right-3 -translate-y-1/2">
         <svg
-          class="animate-spin h-4 w-4 text-amber-500"
+          class="h-4 w-4 animate-spin text-amber-500"
           xmlns="http://www.w3.org/2000/svg"
           fill="none"
           viewBox="0 0 24 24"
@@ -225,20 +225,20 @@
 
     {#if showDropdown && (suggestions.length > 0 || canCreateCurrent)}
       <ul
-        class="absolute z-50 w-full mt-1 bg-white/95 dark:bg-gray-900/95 border border-white/60 dark:border-white/10 rounded-xl shadow-lg max-h-48 overflow-auto backdrop-blur-sm"
+        class="absolute z-50 mt-1 max-h-48 w-full overflow-auto rounded-xl border border-white/60 bg-white/95 shadow-lg backdrop-blur-sm dark:border-white/10 dark:bg-gray-900/95"
       >
         {#each suggestions as tag, index (tag)}
           <li>
             <button
               type="button"
-              class="w-full px-4 py-2 text-left text-sm hover:bg-amber-100/50 dark:hover:bg-amber-900/30 transition-colors first:rounded-t-xl {index ===
+              class="w-full px-4 py-2 text-left text-sm transition-colors first:rounded-t-xl hover:bg-amber-100/50 dark:hover:bg-amber-900/30 {index ===
               selectedIndex
                 ? 'bg-amber-100/50 dark:bg-amber-900/30'
                 : ''}"
               onmousedown={() => selectTag(tag)}
             >
-              <span class="inline-flex items-center gap-2 font-mono text-text-main">
-                <Tag size={14} class="shrink-0 text-text-muted" />
+              <span class="text-text-main inline-flex items-center gap-2 font-mono">
+                <Tag size={14} class="text-text-muted shrink-0" />
                 {tag}
               </span>
             </button>
@@ -248,7 +248,7 @@
           <li>
             <button
               type="button"
-              class="w-full px-4 py-2 text-left text-sm hover:bg-amber-100/50 dark:hover:bg-amber-900/30 transition-colors last:rounded-b-xl {selectedIndex ===
+              class="w-full px-4 py-2 text-left text-sm transition-colors last:rounded-b-xl hover:bg-amber-100/50 dark:hover:bg-amber-900/30 {selectedIndex ===
               suggestions.length
                 ? 'bg-amber-100/50 dark:bg-amber-900/30'
                 : ''}"
@@ -265,11 +265,11 @@
   </div>
 
   {#if !associationId}
-    <p class="text-xs text-text-muted ml-1">{m.tag_autocomplete_select_asso_first()}</p>
+    <p class="text-text-muted ml-1 text-xs">{m.tag_autocomplete_select_asso_first()}</p>
   {:else if !allowCreate}
-    <p class="text-xs text-text-muted ml-1">{m.tag_autocomplete_no_create_hint()}</p>
+    <p class="text-text-muted ml-1 text-xs">{m.tag_autocomplete_no_create_hint()}</p>
   {:else if suggestions.length === 0 && !isLoading && trimmedQuery}
-    <p class="text-xs text-text-muted ml-1">
+    <p class="text-text-muted ml-1 text-xs">
       {m.tag_autocomplete_no_tag_hint()}
     </p>
   {/if}

@@ -15,16 +15,16 @@
 </script>
 
 <header
-  class="hidden md:block sticky top-0 z-20 bg-[var(--surface-elevated)] border-b border-cn-border backdrop-blur-sm flex-shrink-0"
+  class="border-cn-border sticky top-0 z-20 hidden flex-shrink-0 border-b bg-(--surface-elevated) backdrop-blur-sm md:block"
 >
-  <div class="h-14 flex items-center justify-between px-4 md:px-6 gap-3">
+  <div class="flex h-14 items-center justify-between gap-3 px-4 md:px-6">
     <!-- Left: Brand -->
-    <div class="flex items-center gap-2 flex-shrink-0">
+    <div class="flex flex-shrink-0 items-center gap-2">
       <CanariBrand compact={true} />
     </div>
 
     <!-- Right: Status + Theme + actions -->
-    <div class="flex items-center gap-2 flex-shrink-0 ml-auto">
+    <div class="ml-auto flex flex-shrink-0 items-center gap-2">
       <StatusPill isConnected={globalSession.isWsConnected} />
       <SessionActionButtons onLogout={handleLogout} />
       {#if globalSession.isLoggedIn && globalSession.userId}
@@ -32,7 +32,7 @@
           type="button"
           onclick={() => goto('/profile')}
           title={m.nav_my_profile_title()}
-          class="rounded-2xl ring-2 ring-transparent hover:ring-amber-400 transition-all duration-200"
+          class="rounded-2xl ring-2 ring-transparent transition-all duration-200 hover:ring-amber-400"
           aria-label={m.nav_my_profile_label()}
         >
           <Avatar userId={globalSession.userId} size="sm" />

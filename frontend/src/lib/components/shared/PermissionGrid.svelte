@@ -89,23 +89,23 @@
 </script>
 
 {#if permissions.length === 0}
-  <p class="text-sm text-text-muted italic">{m.chat_permission_grid_empty()}</p>
+  <p class="text-text-muted text-sm italic">{m.chat_permission_grid_empty()}</p>
 {:else}
-  <div class="overflow-x-auto custom-scrollbar">
+  <div class="custom-scrollbar overflow-x-auto">
     <table class="w-full border-collapse text-xs" cellspacing="0">
       <thead>
         <tr>
           <th
-            class="sticky left-0 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-sm text-left px-3 py-2.5 font-bold uppercase tracking-wider text-[0.65rem] text-text-muted border-b border-black/5 dark:border-white/10 min-w-52"
+            class="text-text-muted sticky left-0 min-w-52 border-b border-black/5 bg-white/80 px-3 py-2.5 text-left text-[0.65rem] font-bold tracking-wider uppercase backdrop-blur-sm dark:border-white/10 dark:bg-zinc-900/80"
           >
             {m.chat_permission_grid_column_header()}
           </th>
           {#each sortedRoles as role (role.id)}
             <th
-              class="px-3 py-2.5 font-bold uppercase tracking-wider text-[0.65rem] text-text-muted border-b border-black/5 dark:border-white/10 text-center min-w-24"
+              class="text-text-muted min-w-24 border-b border-black/5 px-3 py-2.5 text-center text-[0.65rem] font-bold tracking-wider uppercase dark:border-white/10"
             >
               <span
-                class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full {role.priority >=
+                class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 {role.priority >=
                   maxPriority && lockAdmin
                   ? 'bg-red-500/10 text-red-600 dark:text-red-400'
                   : role.priority >= 50
@@ -120,13 +120,13 @@
       </thead>
       <tbody>
         {#each permissions as perm (perm.key)}
-          <tr class="group hover:bg-black/2 dark:hover:bg-white/2 transition-colors">
+          <tr class="group transition-colors hover:bg-black/2 dark:hover:bg-white/2">
             <td
-              class="sticky left-0 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-sm px-3 py-2.5 border-b border-black/5 dark:border-white/10"
+              class="sticky left-0 border-b border-black/5 bg-white/80 px-3 py-2.5 backdrop-blur-sm dark:border-white/10 dark:bg-zinc-900/80"
               title={perm.tooltip}
             >
               <div class="flex flex-col">
-                <span class="text-[0.7rem] font-semibold text-text-main leading-tight"
+                <span class="text-text-main text-[0.7rem] leading-tight font-semibold"
                   >{perm.label}</span
                 >
               </div>
@@ -134,7 +134,7 @@
             {#each sortedRoles as role (role.id)}
               {@const state = getCellState(role.id, perm.key)}
               {@const isAdmin = lockAdmin && role.priority >= maxPriority}
-              <td class="px-2 py-2.5 border-b border-black/5 dark:border-white/10 text-center">
+              <td class="border-b border-black/5 px-2 py-2.5 text-center dark:border-white/10">
                 <button
                   type="button"
                   onclick={() => cycleCell(role.id, perm.key)}
@@ -145,13 +145,13 @@
                         label: perm.label,
                         state: stateLabel(state),
                       })}
-                  class="inline-flex items-center justify-center w-8 h-8 rounded-lg transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {isAdmin
+                  class="inline-flex h-8 w-8 items-center justify-center rounded-lg transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {isAdmin
                     ? 'cursor-not-allowed opacity-40'
                     : 'cursor-pointer hover:scale-110 active:scale-95'} {state === 'allow'
                     ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
                     : state === 'deny'
                       ? 'bg-red-500/15 text-red-600 dark:text-red-400'
-                      : 'bg-transparent text-text-muted/50 hover:bg-black/5 dark:hover:bg-white/5'}"
+                      : 'text-text-muted/50 bg-transparent hover:bg-black/5 dark:hover:bg-white/5'}"
                 >
                   {#if isAdmin}
                     <Check size={16} strokeWidth={3} class="text-emerald-500/70" />
@@ -172,7 +172,7 @@
   </div>
 
   <!-- Légende -->
-  <div class="flex flex-wrap items-center gap-4 pt-3 text-[0.65rem] font-medium text-text-muted">
+  <div class="text-text-muted flex flex-wrap items-center gap-4 pt-3 text-[0.65rem] font-medium">
     <span class="inline-flex items-center gap-1.5">
       <Check size={12} strokeWidth={3} class="text-emerald-500" />
       {disableDeny ? m.chat_permission_state_yes() : m.chat_permission_state_allowed()}

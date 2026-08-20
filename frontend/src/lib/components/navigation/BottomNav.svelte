@@ -48,10 +48,10 @@
 </script>
 
 <nav
-  class="md:hidden fixed bottom-0 inset-x-0 z-30 border-t border-black/5 dark:border-white/10 bg-white/70 dark:bg-black/80 backdrop-blur-2xl shadow-[0_-4px_24px_rgba(0,0,0,0.02)] dark:shadow-[0_-4px_24px_rgba(0,0,0,0.2)]"
+  class="fixed inset-x-0 bottom-0 z-30 border-t border-black/5 bg-white/70 shadow-[0_-4px_24px_rgba(0,0,0,0.02)] backdrop-blur-2xl md:hidden dark:border-white/10 dark:bg-black/80 dark:shadow-[0_-4px_24px_rgba(0,0,0,0.2)]"
   style="padding-bottom: env(safe-area-inset-bottom)"
 >
-  <div class="flex items-stretch justify-around h-16">
+  <div class="flex h-16 items-stretch justify-around">
     {#each APP_PLACES.filter((p) => p.mobileNav) as place (place.id)}
       {@const PlaceIcon = getIcon(place.icon)}
       {@const isActive = place.id === activePlaceId}
@@ -60,7 +60,7 @@
       <a
         href={place.href}
         data-sveltekit-preload-code="viewport"
-        class="group relative flex flex-col items-center justify-center gap-1 min-w-0 flex-1 py-1 px-1 transition-all duration-200 active:scale-95
+        class="group relative flex min-w-0 flex-1 flex-col items-center justify-center gap-1 px-1 py-1 transition-all duration-200 active:scale-95
           {isActive
           ? 'text-amber-600 dark:text-amber-400'
           : 'text-text-muted hover:text-text-main'}"
@@ -74,23 +74,23 @@
 
           {#if badge > 0}
             <span
-              class="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white dark:ring-cn-ink shadow-sm"
+              class="dark:ring-cn-ink absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-red-500 shadow-sm ring-2 ring-white"
               aria-label="{badge} non lus"
             ></span>
           {/if}
         </span>
 
         <span
-          class="text-[10px] font-bold leading-none truncate max-w-full transition-opacity duration-200 {isActive
+          class="max-w-full truncate text-[10px] leading-none font-bold transition-opacity duration-200 {isActive
             ? 'opacity-100'
-            : 'opacity-70 font-medium'}"
+            : 'font-medium opacity-70'}"
         >
           {place.label()}
         </span>
 
         {#if isActive}
           <span
-            class="absolute bottom-0 left-1/2 -translate-x-1/2 h-1 w-8 rounded-t-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.6)]"
+            class="absolute bottom-0 left-1/2 h-1 w-8 -translate-x-1/2 rounded-t-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.6)]"
           ></span>
         {/if}
       </a>

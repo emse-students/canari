@@ -99,7 +99,7 @@
     <!-- ================= IMAGE ================= -->
     {#if mediaRef.type === 'image'}
       {#if blobUrl}
-        <div class="relative inline-block group/media">
+        <div class="group/media relative inline-block">
           <!--
             `w-56 max-w-full`, never `w-full`: the wrapper is `inline-block`, so its width comes from
             its content, and a percentage width inside it has nothing definite to resolve against -
@@ -113,13 +113,13 @@
             onclick={openLightbox}
             onpointerdown={(e) => e.stopPropagation()}
             aria-label={m.msg_open_image_fullscreen_label()}
-            class="block overflow-hidden rounded-[1.1rem] bg-black/5 dark:bg-white/5 w-56 max-w-full"
+            class="block w-56 max-w-full overflow-hidden rounded-[1.1rem] bg-black/5 dark:bg-white/5"
             style={imageAspectStyle}
           >
             <img
               src={blobUrl}
               alt={mediaRef.fileName ?? m.msg_shared_image_alt()}
-              class="w-full h-full object-cover cursor-zoom-in transition-transform duration-500 md:group-hover/media:scale-[1.02]"
+              class="h-full w-full cursor-zoom-in object-cover transition-transform duration-500 md:group-hover/media:scale-[1.02]"
             />
           </button>
 
@@ -129,7 +129,7 @@
               e.stopPropagation();
               downloadBlob(blobUrl!, mediaRef.fileName ?? 'image');
             }}
-            class="absolute right-2.5 bottom-2.5 w-9 h-9 rounded-full bg-black/50 backdrop-blur-md text-white inline-flex items-center justify-center shadow-lg transition-all duration-300 md:opacity-0 md:group-hover/media:opacity-100 hover:bg-black/70 hover:scale-110 focus:opacity-100 outline-none"
+            class="absolute right-2.5 bottom-2.5 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white shadow-lg backdrop-blur-md transition-all duration-300 outline-none hover:scale-110 hover:bg-black/70 focus:opacity-100 md:opacity-0 md:group-hover/media:opacity-100"
             aria-label={m.msg_download_image_label()}
             title={m.common_download_label()}
           >
@@ -138,20 +138,20 @@
         </div>
       {:else if loadError}
         <div
-          class="w-full max-w-xs sm:w-64 rounded-[1.1rem] border border-dashed {glassBoxClass} flex flex-col items-center justify-center gap-3 p-4 text-center"
+          class="w-full max-w-xs rounded-[1.1rem] border border-dashed sm:w-64 {glassBoxClass} flex flex-col items-center justify-center gap-3 p-4 text-center"
           style={imageAspectStyle}
         >
           <CircleAlert size={28} class="opacity-50" />
-          <span class="text-xs font-medium leading-snug {textMutedClass}">
+          <span class="text-xs leading-snug font-medium {textMutedClass}">
             {mediaPurgedByRetention ? m.msg_media_expired_label() : m.msg_image_load_error()}
           </span>
         </div>
       {:else}
         <!-- Skeleton Image -->
         <div
-          class="w-full max-w-[14rem] sm:w-56 rounded-[1.1rem] {isOwn
+          class="w-full max-w-[14rem] rounded-[1.1rem] sm:w-56 {isOwn
             ? 'bg-black/10'
-            : 'bg-black/5 dark:bg-white/10'} animate-pulse flex items-center justify-center"
+            : 'bg-black/5 dark:bg-white/10'} flex animate-pulse items-center justify-center"
           style={imageAspectStyle}
         >
           <ImageIcon size={32} class="opacity-20" />
@@ -161,20 +161,20 @@
       <!-- ================= VIDEO ================= -->
     {:else if mediaRef.type === 'video'}
       {#if blobUrl}
-        <div class="relative inline-block group/media">
+        <div class="group/media relative inline-block">
           <!-- svelte-ignore a11y_media_has_caption -->
           <video
             src={blobUrl}
             controls
             preload="metadata"
             onclick={(e) => e.stopPropagation()}
-            class="rounded-[1.1rem] max-h-80 max-w-full sm:max-w-md bg-black/10 dark:bg-black/40 shadow-sm"
+            class="max-h-80 max-w-full rounded-[1.1rem] bg-black/10 shadow-sm sm:max-w-md dark:bg-black/40"
           ></video>
 
           <button
             type="button"
             onclick={openLightbox}
-            class="absolute left-2.5 bottom-2.5 px-2.5 h-8 rounded-full bg-black/50 backdrop-blur-md text-white inline-flex items-center justify-center shadow-lg transition-all duration-300 hover:bg-black/70"
+            class="absolute bottom-2.5 left-2.5 inline-flex h-8 items-center justify-center rounded-full bg-black/50 px-2.5 text-white shadow-lg backdrop-blur-md transition-all duration-300 hover:bg-black/70"
             aria-label={m.msg_open_video_fullscreen_label()}
             title={m.msg_fullscreen_label()}
           >
@@ -187,7 +187,7 @@
               e.stopPropagation();
               downloadBlob(blobUrl!, mediaRef.fileName ?? 'video.mp4');
             }}
-            class="absolute right-2.5 top-2.5 w-9 h-9 rounded-full bg-black/50 backdrop-blur-md text-white inline-flex items-center justify-center shadow-lg transition-all duration-300 md:opacity-0 md:group-hover/media:opacity-100 hover:bg-black/70 hover:scale-110 focus:opacity-100 outline-none z-10"
+            class="absolute top-2.5 right-2.5 z-10 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white shadow-lg backdrop-blur-md transition-all duration-300 outline-none hover:scale-110 hover:bg-black/70 focus:opacity-100 md:opacity-0 md:group-hover/media:opacity-100"
             aria-label={m.msg_download_video_label()}
             title={m.common_download_label()}
           >
@@ -196,19 +196,19 @@
         </div>
       {:else if loadError}
         <div
-          class="w-full max-w-[16rem] aspect-video rounded-[1.1rem] border border-dashed {glassBoxClass} flex flex-col items-center justify-center gap-3 p-4 text-center"
+          class="aspect-video w-full max-w-[16rem] rounded-[1.1rem] border border-dashed {glassBoxClass} flex flex-col items-center justify-center gap-3 p-4 text-center"
         >
           <CircleAlert size={28} class="opacity-50" />
-          <span class="text-xs font-medium leading-snug {textMutedClass}">
+          <span class="text-xs leading-snug font-medium {textMutedClass}">
             {mediaPurgedByRetention ? m.msg_video_expired_label() : m.msg_video_load_error()}
           </span>
         </div>
       {:else}
         <!-- Skeleton Video -->
         <div
-          class="w-full max-w-[16rem] aspect-video rounded-[1.1rem] {isOwn
+          class="aspect-video w-full max-w-[16rem] rounded-[1.1rem] {isOwn
             ? 'bg-black/10'
-            : 'bg-black/5 dark:bg-white/10'} animate-pulse flex items-center justify-center"
+            : 'bg-black/5 dark:bg-white/10'} flex animate-pulse items-center justify-center"
         >
           <VideoIcon size={32} class="opacity-20" />
         </div>
@@ -225,21 +225,21 @@
         </div>
       {:else if loadError}
         <div
-          class="w-full sm:w-56 h-14 rounded-xl border border-dashed {glassBoxClass} flex items-center justify-center px-4 text-center"
+          class="h-14 w-full rounded-xl border border-dashed sm:w-56 {glassBoxClass} flex items-center justify-center px-4 text-center"
         >
-          <span class="text-[0.7rem] font-medium leading-snug {textMutedClass}">
+          <span class="text-[0.7rem] leading-snug font-medium {textMutedClass}">
             {mediaPurgedByRetention ? m.msg_audio_expired_label() : m.msg_audio_load_error()}
           </span>
         </div>
       {:else}
         <!-- Skeleton Audio -->
         <div
-          class="w-full sm:w-56 h-14 rounded-xl {isOwn
+          class="h-14 w-full rounded-xl sm:w-56 {isOwn
             ? 'bg-black/10'
-            : 'bg-black/5 dark:bg-white/10'} animate-pulse flex items-center justify-center px-4"
+            : 'bg-black/5 dark:bg-white/10'} flex animate-pulse items-center justify-center px-4"
         >
           <Mic size={20} class="opacity-20" />
-          <div class="flex-1 ml-3 h-2 bg-current opacity-10 rounded-full"></div>
+          <div class="ml-3 h-2 flex-1 rounded-full bg-current opacity-10"></div>
         </div>
       {/if}
 
@@ -247,14 +247,14 @@
     {:else}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
-        class="flex items-center gap-3.5 px-3.5 py-3 w-full max-w-full rounded-[1rem] border {glassBoxClass} backdrop-blur-md transition-colors group/file"
+        class="flex w-full max-w-full items-center gap-3.5 rounded-[1rem] border px-3.5 py-3 {glassBoxClass} group/file backdrop-blur-md transition-colors"
         ontouchstart={(e) => e.stopPropagation()}
         ontouchend={(e) => e.stopPropagation()}
       >
         {#snippet fileRowContent()}
           <!-- File icon, or the PDF's own first page once it is decrypted. -->
           <div
-            class="w-11 h-11 rounded-xl bg-current/10 flex items-center justify-center shrink-0 overflow-hidden text-current opacity-80"
+            class="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-current/10 text-current opacity-80"
           >
             {#if isPdf && blobUrl}
               <PdfThumbnail
@@ -272,13 +272,13 @@
           </div>
 
           <!-- File metadata. -->
-          <div class="flex-1 min-w-0 overflow-hidden text-left">
-            <p class="text-[0.85rem] font-bold truncate leading-tight mb-0.5">
+          <div class="min-w-0 flex-1 overflow-hidden text-left">
+            <p class="mb-0.5 truncate text-[0.85rem] leading-tight font-bold">
               {mediaRef!.fileName ?? m.msg_attached_file_label()}
             </p>
             {#if !mediaPurgedByRetention}
               <!-- No `uppercase`: it would render the "Ko" unit as "KO". -->
-              <p class="text-[0.65rem] tracking-wider font-semibold opacity-60">
+              <p class="text-[0.65rem] font-semibold tracking-wider opacity-60">
                 {formatFileSize(mediaRef!.size)}
               </p>
             {/if}
@@ -291,7 +291,7 @@
           <button
             type="button"
             onclick={openPdfViewer}
-            class="flex flex-1 min-w-0 items-center gap-3.5 cursor-pointer outline-none rounded-xl focus-visible:ring-2 focus-visible:ring-current"
+            class="flex min-w-0 flex-1 cursor-pointer items-center gap-3.5 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-current"
             aria-label={m.pdf_open_document_label()}
           >
             {@render fileRowContent()}
@@ -310,25 +310,25 @@
             }}
             aria-label={m.msg_download_file_label()}
             title={m.common_download_label()}
-            class="p-2.5 rounded-xl hover:bg-current/10 transition-all outline-none focus-visible:ring-2 focus-visible:ring-current shrink-0"
+            class="shrink-0 rounded-xl p-2.5 transition-all outline-none hover:bg-current/10 focus-visible:ring-2 focus-visible:ring-current"
           >
             <Download
               size={18}
               strokeWidth={2.5}
-              class="opacity-70 group-hover/file:opacity-100 transition-opacity"
+              class="opacity-70 transition-opacity group-hover/file:opacity-100"
             />
           </button>
         {:else if mediaPurgedByRetention}
           <span
-            class="text-[0.65rem] font-bold text-red-600 dark:text-red-400 bg-red-500/10 px-2 py-1 rounded-md shrink-0"
+            class="shrink-0 rounded-md bg-red-500/10 px-2 py-1 text-[0.65rem] font-bold text-red-600 dark:text-red-400"
           >
             {m.msg_expired_label()}
           </span>
         {:else if loadError}
-          <CircleAlert size={18} class="opacity-50 text-red-500 shrink-0" />
+          <CircleAlert size={18} class="shrink-0 text-red-500 opacity-50" />
         {:else}
           <div
-            class="w-8 h-8 rounded-full border-2 border-current/20 border-t-current animate-spin shrink-0"
+            class="h-8 w-8 shrink-0 animate-spin rounded-full border-2 border-current/20 border-t-current"
           ></div>
         {/if}
       </div>
@@ -337,7 +337,7 @@
 
   <!-- Caption text below the media. -->
   {#if textContent}
-    <p class="select-text mt-2 text-[0.95rem] leading-relaxed break-words whitespace-pre-wrap">
+    <p class="mt-2 text-[0.95rem] leading-relaxed break-words whitespace-pre-wrap select-text">
       {#each textSegments as segment, index (`${segment.type}-${segment.value}-${index}`)}
         {#if segment.type === 'link'}
           <AppLink href={segment.value} />
@@ -377,7 +377,7 @@
         src={blobUrl}
         controls
         autoplay
-        class="max-h-full max-w-full object-contain bg-black rounded-xl"
+        class="max-h-full max-w-full rounded-xl bg-black object-contain"
       ></video>
     {/if}
   </MediaLightbox>

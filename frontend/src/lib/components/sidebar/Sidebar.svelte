@@ -343,11 +343,11 @@
   aria-label={viewMode === 'communities'
     ? m.nav_communities_landmark()
     : m.nav_conversations_landmark()}
-  class="sidebar-panel h-full backdrop-blur-md bg-white/40 dark:bg-gray-900/50 border-r border-white/50 dark:border-white/10 flex {viewMode ===
+  class="sidebar-panel flex h-full border-r border-white/50 bg-white/40 backdrop-blur-md dark:border-white/10 dark:bg-gray-900/50 {viewMode ===
   'communities'
     ? 'flex-row'
     : 'flex-col'} {drawerMode
-    ? 'fixed left-0 top-0 bottom-0 z-40 md:hidden shadow-2xl animate-panel-in pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] ' +
+    ? 'animate-panel-in fixed top-0 bottom-0 left-0 z-40 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] shadow-2xl md:hidden ' +
       (viewMode === 'communities' ? 'w-[95vw] max-w-md' : 'w-[88vw] max-w-sm')
     : viewMode === 'communities'
       ? 'w-full md:w-96'
@@ -355,7 +355,7 @@
 >
   {#if viewMode === 'communities'}
     <div
-      class="w-[72px] h-full flex-shrink-0 flex flex-col items-center py-3 gap-3 border-r border-white/50 dark:border-white/10 bg-white/20 dark:bg-black/10 overflow-y-auto no-scrollbar"
+      class="no-scrollbar flex h-full w-[72px] flex-shrink-0 flex-col items-center gap-3 overflow-y-auto border-r border-white/50 bg-white/20 py-3 dark:border-white/10 dark:bg-black/10"
     >
       <div
         class="flex flex-col items-center gap-3"
@@ -366,10 +366,10 @@
         {#each orderedWorkspaces as workspace (workspace.id)}
           <div animate:flip={{ duration: 150 }}>
             <button
-              class="relative w-12 h-12 flex-shrink-0 rounded-2xl overflow-hidden transition-all duration-200 {selectedCommunityWorkspaceId ===
+              class="relative h-12 w-12 flex-shrink-0 overflow-hidden rounded-2xl transition-all duration-200 {selectedCommunityWorkspaceId ===
               workspace.id
-                ? 'ring-2 ring-cn-yellow ring-offset-2 ring-offset-cn-bg'
-                : 'opacity-70 hover:opacity-100 hover:rounded-xl'}"
+                ? 'ring-cn-yellow ring-offset-cn-bg ring-2 ring-offset-2'
+                : 'opacity-70 hover:rounded-xl hover:opacity-100'}"
               onclick={() => {
                 if (selectedCommunityWorkspaceId === workspace.id) return;
                 selectedCommunityWorkspaceId = workspace.id;
@@ -391,13 +391,13 @@
         {/each}
       </div>
 
-      <div class="w-8 h-[2px] bg-white/30 dark:bg-white/10 rounded-full my-1"></div>
+      <div class="my-1 h-[2px] w-8 rounded-full bg-white/30 dark:bg-white/10"></div>
 
       <button
         onclick={() => {
           showNewCommunityModal = true;
         }}
-        class="w-12 h-12 flex-shrink-0 rounded-2xl border border-dashed border-text-muted/50 text-text-muted flex items-center justify-center hover:text-text-main hover:border-text-main hover:bg-white/10 transition-all hover:rounded-[10px]"
+        class="border-text-muted/50 text-text-muted hover:text-text-main hover:border-text-main flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-2xl border border-dashed transition-all hover:rounded-[10px] hover:bg-white/10"
         title={m.sidebar_add_community_title()}
         aria-label={m.sidebar_add_community_title()}
       >
@@ -406,7 +406,7 @@
     </div>
   {/if}
 
-  <div class="flex-1 h-full min-w-0 flex flex-col">
+  <div class="flex h-full min-w-0 flex-1 flex-col">
     {#if viewMode === 'chat'}
       <SidebarHeaderControls
         {activeSidebarTab}
@@ -420,16 +420,16 @@
       />
     {:else}
       <div
-        class="px-4 py-3 border-b border-white/50 dark:border-white/10 bg-white/30 dark:bg-gray-900/40 backdrop-blur-sm sticky top-0 z-10 flex items-center justify-between"
+        class="sticky top-0 z-10 flex items-center justify-between border-b border-white/50 bg-white/30 px-4 py-3 backdrop-blur-sm dark:border-white/10 dark:bg-gray-900/40"
       >
-        <h2 class="font-black tracking-tight text-text-main text-lg truncate">
+        <h2 class="text-text-main truncate text-lg font-black tracking-tight">
           {selectedCommunityWorkspace?.name || m.sidebar_communities_fallback()}
         </h2>
 
         <div class="flex items-center gap-1">
           {#if selectedCommunityWorkspace}
             <button
-              class="w-8 h-8 rounded-full flex items-center justify-center text-text-muted hover:text-text-main hover:bg-white/50 dark:hover:bg-black/30 transition-colors"
+              class="text-text-muted hover:text-text-main flex h-8 w-8 items-center justify-center rounded-full transition-colors hover:bg-white/50 dark:hover:bg-black/30"
               onclick={() => {
                 showCommunityAdminModal = true;
               }}
@@ -444,7 +444,7 @@
             <button
               type="button"
               onclick={() => onCloseDrawer?.()}
-              class="w-8 h-8 rounded-full flex items-center justify-center text-text-muted hover:bg-white/65 dark:hover:bg-black/30 bg-transparent transition-colors"
+              class="text-text-muted flex h-8 w-8 items-center justify-center rounded-full bg-transparent transition-colors hover:bg-white/65 dark:hover:bg-black/30"
               aria-label={m.common_close_label()}
             >
               <X size={18} />
@@ -491,23 +491,23 @@
         {/each}
 
         {#if filteredConversationEntries.length === 0}
-          <div class="text-center py-12 px-6 text-text-muted">
+          <div class="text-text-muted px-6 py-12 text-center">
             <div class="mb-4 flex justify-center">
-              <div class="p-4 rounded-2xl bg-black/5 dark:bg-white/5">
+              <div class="rounded-2xl bg-black/5 p-4 dark:bg-white/5">
                 <MessageSquarePlus size={36} class="opacity-40" />
               </div>
             </div>
             {#if searchQuery.trim()}
               <p class="text-sm font-medium">{m.chat_no_discussion_found()}</p>
             {:else}
-              <p class="text-sm font-bold text-text-main mb-1">
+              <p class="text-text-main mb-1 text-sm font-bold">
                 {m.sidebar_no_conversations_title()}
               </p>
-              <p class="text-xs mb-4">{m.sidebar_start_writing()}</p>
+              <p class="mb-4 text-xs">{m.sidebar_start_writing()}</p>
               <button
                 type="button"
                 onclick={() => (showNewChatModal = true)}
-                class="px-4 py-2 rounded-xl bg-amber-500 text-white text-xs font-semibold transition-all active:scale-95"
+                class="rounded-xl bg-amber-500 px-4 py-2 text-xs font-semibold text-white transition-all active:scale-95"
               >
                 {m.chat_new_discussion_label()}
               </button>
@@ -545,10 +545,10 @@
                         ? `, ${m.chat_unread_messages_label({ count: channel.unreadCount })}`
                         : ''
                     }`}
-                class="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-left transition-colors {selectedChannelId ===
+                class="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors {selectedChannelId ===
                 channel.id
-                  ? 'bg-[color-mix(in_srgb,var(--cn-yellow)_16%,transparent)] text-text-main'
-                  : 'hover:bg-white/40 dark:hover:bg-black/20 text-text-muted hover:text-text-main'}"
+                  ? 'text-text-main bg-[color-mix(in_srgb,var(--cn-yellow)_16%,transparent)]'
+                  : 'text-text-muted hover:text-text-main hover:bg-white/40 dark:hover:bg-black/20'}"
               >
                 <span class="opacity-70" aria-hidden="true">
                   {#if channel.isPrivate}
@@ -566,7 +566,7 @@
                 {#if unjoined}
                   <span
                     aria-hidden="true"
-                    class="px-2 py-0.5 rounded-full border border-text-muted/30 text-[0.65rem] font-semibold uppercase tracking-wide"
+                    class="border-text-muted/30 rounded-full border px-2 py-0.5 text-[0.65rem] font-semibold tracking-wide uppercase"
                   >
                     {m.chat_channel_join_as_admin_label()}
                   </span>
@@ -574,7 +574,7 @@
                 {#if channel.unreadCount}
                   <span
                     aria-hidden="true"
-                    class="min-w-5 h-5 px-1 rounded-full bg-cn-dark text-cn-yellow text-[0.65rem] font-extrabold inline-flex items-center justify-center"
+                    class="bg-cn-dark text-cn-yellow inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[0.65rem] font-extrabold"
                   >
                     {channel.unreadCount}
                   </span>
@@ -586,15 +586,15 @@
               <button
                 type="button"
                 onclick={() => openNewChatModal('channel')}
-                class="w-full mt-2 flex items-center gap-2 px-3 py-2 rounded-xl text-left border border-dashed border-text-muted/30 text-text-muted hover:text-text-main hover:bg-white/40 dark:hover:bg-black/20 transition-colors"
+                class="border-text-muted/30 text-text-muted hover:text-text-main mt-2 flex w-full items-center gap-2 rounded-xl border border-dashed px-3 py-2 text-left transition-colors hover:bg-white/40 dark:hover:bg-black/20"
               >
                 <Plus size={16} aria-hidden="true" />
-                <span class="font-medium text-sm">{m.chat_add_channel_label()}</span>
+                <span class="text-sm font-medium">{m.chat_add_channel_label()}</span>
               </button>
             {/if}
           </div>
         {:else}
-          <div class="text-center py-8 px-4 text-text-muted text-sm">
+          <div class="text-text-muted px-4 py-8 text-center text-sm">
             {m.sidebar_select_or_create_community()}
           </div>
         {/if}

@@ -71,7 +71,7 @@
   <a
     href={inAppPath}
     title={linkTitle}
-    class="canari-app-link inline-flex items-center gap-0.5 font-medium text-amber-700 dark:text-amber-400 underline underline-offset-2 decoration-amber-500/50 hover:text-amber-600 dark:hover:text-amber-300 transition-colors {className}"
+    class="canari-app-link inline-flex items-center gap-0.5 font-medium text-amber-700 underline decoration-amber-500/50 underline-offset-2 transition-colors hover:text-amber-600 dark:text-amber-400 dark:hover:text-amber-300 {className}"
     onclick={handleInAppClick}
   >
     {#if children}
@@ -87,7 +87,7 @@
     title={linkTitle}
     target="_blank"
     rel="noopener noreferrer"
-    class="underline underline-offset-2 decoration-current hover:opacity-80 font-medium transition-opacity {className}"
+    class="font-medium underline decoration-current underline-offset-2 transition-opacity hover:opacity-80 {className}"
     onclick={handleExternalClick}
   >
     {#if children}

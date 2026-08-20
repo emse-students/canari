@@ -100,25 +100,25 @@
   }
 </script>
 
-<div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-5 shadow-sm">
-  <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
+<div class="border-cn-border space-y-5 rounded-2xl border bg-[var(--cn-surface)]/95 p-6 shadow-sm">
+  <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
     <div>
-      <h2 class="text-lg font-bold text-text-main tracking-tight flex items-center gap-2">
+      <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
         <UsersIcon size={20} />
         {m.asso_achats_title()}
       </h2>
-      <p class="text-sm text-text-muted mt-1">
+      <p class="text-text-muted mt-1 text-sm">
         {m.asso_achats_subtitle()}
       </p>
     </div>
-    <div class="w-full sm:w-64 space-y-1">
-      <label for="purchase-filter" class="text-xs font-semibold text-text-muted"
+    <div class="w-full space-y-1 sm:w-64">
+      <label for="purchase-filter" class="text-text-muted text-xs font-semibold"
         >{m.asso_achats_filter_label()}</label
       >
       <select
         id="purchase-filter"
         bind:value={purchaseFilterProductId}
-        class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm"
+        class="border-cn-border w-full rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm"
       >
         <option value="">{m.asso_achats_filter_all()}</option>
         {#each products as product (product.id)}
@@ -129,19 +129,19 @@
   </div>
 
   <form
-    class="rounded-xl border border-cn-border bg-cn-bg/40 p-4 space-y-4"
+    class="border-cn-border bg-cn-bg/40 space-y-4 rounded-xl border p-4"
     onsubmit={(e) => {
       e.preventDefault();
       void handleGrantProduct();
     }}
   >
-    <h3 class="text-sm font-bold text-text-main flex items-center gap-2">
+    <h3 class="text-text-main flex items-center gap-2 text-sm font-bold">
       <Gift size={16} />
       {m.asso_achats_grant_title()}
     </h3>
     <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <div class="sm:col-span-2">
-        <label for="grant-user" class="text-xs font-semibold text-text-muted block mb-1"
+        <label for="grant-user" class="text-text-muted mb-1 block text-xs font-semibold"
           >{m.asso_achats_grant_user_label()}</label
         >
         <UserAutocomplete
@@ -153,13 +153,13 @@
         />
       </div>
       <div>
-        <label for="grant-product" class="text-xs font-semibold text-text-muted block mb-1"
+        <label for="grant-product" class="text-text-muted mb-1 block text-xs font-semibold"
           >{m.asso_achats_grant_product_label()}</label
         >
         <select
           id="grant-product"
           bind:value={grantProductId}
-          class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2.5 text-sm"
+          class="border-cn-border w-full rounded-xl border bg-[var(--cn-surface)] px-3 py-2.5 text-sm"
           required
         >
           <option value="">{m.asso_achats_grant_product_placeholder()}</option>
@@ -170,7 +170,7 @@
       </div>
       {#if grantNeedsAmount}
         <div>
-          <label for="grant-amount" class="text-xs font-semibold text-text-muted block mb-1"
+          <label for="grant-amount" class="text-text-muted mb-1 block text-xs font-semibold"
             >{m.asso_achats_grant_amount_label()}</label
           >
           <input
@@ -180,13 +180,13 @@
             step="0.01"
             bind:value={grantAmountEuros}
             placeholder="0.00"
-            class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2.5 text-sm"
+            class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2.5 text-sm"
             required
           />
         </div>
       {/if}
     </div>
-    <p class="text-xs text-text-muted">
+    <p class="text-text-muted text-xs">
       {#if grantSelectedProduct?.type === 'membership' && grantSelectedProduct.grantedTagName}
         {m.asso_achats_grant_tag_hint({ tag: grantSelectedProduct.grantedTagName })}
       {:else if grantSelectedProduct?.type === 'balance_topup'}
@@ -198,14 +198,14 @@
     <button
       type="submit"
       disabled={grantingProduct || !grantUserId.trim() || !grantProductId}
-      class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
+      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
     >
       {grantingProduct ? m.asso_achats_grant_submitting() : m.asso_achats_grant_button()}
     </button>
   </form>
 
   {#if purchasesError}
-    <div class="rounded-xl border border-red-err/30 bg-red-err/10 text-red-err px-4 py-3 text-sm">
+    <div class="border-red-err/30 bg-red-err/10 text-red-err rounded-xl border px-4 py-3 text-sm">
       {purchasesError}
     </div>
   {/if}
@@ -213,16 +213,16 @@
   {#if purchasesLoading}
     <div class="flex justify-center py-8">
       <div
-        class="h-6 w-6 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+        class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if filteredPurchases.length === 0}
-    <p class="text-sm text-text-muted text-center py-8">{m.asso_achats_no_purchases()}</p>
+    <p class="text-text-muted py-8 text-center text-sm">{m.asso_achats_no_purchases()}</p>
   {:else}
-    <div class="overflow-x-auto rounded-xl border border-cn-border/70">
+    <div class="border-cn-border/70 overflow-x-auto rounded-xl border">
       <table class="w-full text-sm">
         <thead
-          class="bg-cn-bg/60 text-left text-xs font-bold uppercase tracking-wide text-text-muted"
+          class="bg-cn-bg/60 text-text-muted text-left text-xs font-bold tracking-wide uppercase"
         >
           <tr>
             <th class="px-4 py-3">{m.asso_achats_col_date()}</th>
@@ -233,14 +233,14 @@
             <th class="px-4 py-3 text-right">{m.asso_achats_col_amount()}</th>
           </tr>
         </thead>
-        <tbody class="divide-y divide-cn-border/50">
+        <tbody class="divide-cn-border/50 divide-y">
           {#each filteredPurchases as purchase (purchase.id)}
             <tr class="bg-cn-bg/20 hover:bg-cn-bg/40">
-              <td class="px-4 py-3 text-text-muted whitespace-nowrap">
+              <td class="text-text-muted px-4 py-3 whitespace-nowrap">
                 {new Date(purchase.paidAt).toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR')}
               </td>
-              <td class="px-4 py-3 font-medium text-text-main">{purchaseBuyerName(purchase)}</td>
-              <td class="px-4 py-3 text-text-main">{purchase.productName}</td>
+              <td class="text-text-main px-4 py-3 font-medium">{purchaseBuyerName(purchase)}</td>
+              <td class="text-text-main px-4 py-3">{purchase.productName}</td>
               <td class="px-4 py-3">
                 <span
                   class="rounded-full px-2 py-0.5 text-xs font-semibold {purchase.source ===
@@ -253,7 +253,7 @@
                     : m.asso_achats_source_form()}
                 </span>
               </td>
-              <td class="px-4 py-3 text-text-muted">{paymentMethodLabel(purchase.paymentMethod)}</td
+              <td class="text-text-muted px-4 py-3">{paymentMethodLabel(purchase.paymentMethod)}</td
               >
               <td class="px-4 py-3 text-right font-semibold tabular-nums">
                 {(purchase.amountCents / 100).toFixed(2)} €
@@ -263,7 +263,7 @@
         </tbody>
       </table>
     </div>
-    <p class="text-xs text-text-muted text-right">
+    <p class="text-text-muted text-right text-xs">
       {m.asso_achats_count_label({ count: filteredPurchases.length })}
     </p>
   {/if}

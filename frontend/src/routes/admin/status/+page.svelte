@@ -104,13 +104,13 @@
 
 {#snippet deviceTable(rows: DeviceEntry[])}
   {#if rows.length === 0}
-    <p class="text-sm text-text-muted">{m.admin_status_no_devices()}</p>
+    <p class="text-text-muted text-sm">{m.admin_status_no_devices()}</p>
   {:else}
-    <div class="overflow-x-auto rounded-xl border border-cn-border">
+    <div class="border-cn-border overflow-x-auto rounded-xl border">
       <table class="w-full text-sm">
         <thead>
           <tr
-            class="border-b border-cn-border bg-[var(--surface-elevated)] text-xs font-semibold uppercase tracking-wide text-text-muted"
+            class="border-cn-border text-text-muted border-b bg-(--surface-elevated) text-xs font-semibold tracking-wide uppercase"
           >
             <th class="px-4 py-2.5 text-left">{m.admin_status_col_user()}</th>
             <th class="px-4 py-2.5 text-left">{m.admin_status_col_device_id()}</th>
@@ -123,34 +123,34 @@
         <tbody>
           {#each rows as d (d.userId + ':' + d.deviceId)}
             <tr
-              class="border-b border-cn-border last:border-0 transition-colors
+              class="border-cn-border border-b transition-colors last:border-0
                 {isAnomaly(d)
                 ? 'bg-[color-mix(in_srgb,var(--cn-yellow)_6%,var(--cn-surface))]'
-                : 'bg-[var(--cn-surface)] hover:bg-[var(--surface-elevated)]'}"
+                : 'bg-(--cn-surface) hover:bg-(--surface-elevated)'}"
             >
               <td class="px-4 py-3">
-                <span class="block font-medium text-text-main">{displayName(d.userId)}</span>
-                <span class="block text-xs text-text-muted font-mono" title={d.userId}
+                <span class="text-text-main block font-medium">{displayName(d.userId)}</span>
+                <span class="text-text-muted block font-mono text-xs" title={d.userId}
                   >{shortId(d.userId)}</span
                 >
               </td>
-              <td class="px-4 py-3 font-mono text-xs text-text-muted" title={d.deviceId}>
+              <td class="text-text-muted px-4 py-3 font-mono text-xs" title={d.deviceId}>
                 {shortId(d.deviceId)}
               </td>
               <td class="px-4 py-3 text-center">
                 {#if d.wsConnected}
-                  <span class="inline-flex items-center gap-1 text-green-ok font-medium">
+                  <span class="text-green-ok inline-flex items-center gap-1 font-medium">
                     <Wifi size={14} />
                     <span class="text-xs">{m.admin_status_ws_connected_label()}</span>
                   </span>
                 {:else}
-                  <span class="inline-flex items-center gap-1 text-text-muted">
+                  <span class="text-text-muted inline-flex items-center gap-1">
                     <WifiOff size={14} />
                     <span class="text-xs">-</span>
                   </span>
                 {/if}
               </td>
-              <td class="px-4 py-3 text-center text-text-muted">
+              <td class="text-text-muted px-4 py-3 text-center">
                 {d.wsTabs > 0 ? d.wsTabs : '-'}
               </td>
               <td class="px-4 py-3 text-center">
@@ -175,14 +175,14 @@
   <!-- En-tête -->
   <div class="mb-6 flex flex-wrap items-start justify-between gap-3">
     <div>
-      <h1 class="text-2xl font-bold text-text-main">{m.admin_status_title()}</h1>
-      <p class="mt-0.5 text-text-muted">
+      <h1 class="text-text-main text-2xl font-bold">{m.admin_status_title()}</h1>
+      <p class="text-text-muted mt-0.5">
         {m.admin_status_subtitle({ count: total, sec: REFRESH_MS / 1000 })}
       </p>
     </div>
     <div class="flex items-center gap-2">
       {#if lastUpdated}
-        <span class="text-xs text-text-muted"
+        <span class="text-text-muted text-xs"
           >{m.admin_status_last_updated_label({
             time: lastUpdated.toLocaleTimeString(getLocale() === 'en' ? 'en-US' : 'fr-FR'),
           })}</span
@@ -190,14 +190,14 @@
       {/if}
       <button
         onclick={() => (showLegend = !showLegend)}
-        class="flex items-center gap-1.5 rounded-lg border border-cn-border bg-[var(--cn-surface)] px-3 py-1.5 text-sm text-text-muted hover:border-cn-yellow hover:text-text-main transition-colors"
+        class="border-cn-border text-text-muted hover:border-cn-yellow hover:text-text-main flex items-center gap-1.5 rounded-lg border bg-(--cn-surface) px-3 py-1.5 text-sm transition-colors"
       >
         <Info size={14} />
         {m.admin_status_legend_button()}
       </button>
       <button
         onclick={() => void fetchPresence()}
-        class="flex items-center gap-1.5 rounded-lg border border-cn-border bg-[var(--cn-surface)] px-3 py-1.5 text-sm text-text-muted hover:border-cn-yellow hover:text-text-main transition-colors"
+        class="border-cn-border text-text-muted hover:border-cn-yellow hover:text-text-main flex items-center gap-1.5 rounded-lg border bg-(--cn-surface) px-3 py-1.5 text-sm transition-colors"
       >
         <RefreshCw size={14} />
         {m.common_refresh_button()}
@@ -207,12 +207,12 @@
 
   <!-- Légende -->
   {#if showLegend}
-    <div class="mb-6 rounded-xl border border-cn-border bg-[var(--cn-surface)] p-5 text-sm">
-      <h2 class="mb-4 font-semibold text-text-main">{m.admin_status_legend_heading()}</h2>
+    <div class="border-cn-border mb-6 rounded-xl border bg-(--cn-surface) p-5 text-sm">
+      <h2 class="text-text-main mb-4 font-semibold">{m.admin_status_legend_heading()}</h2>
       <div class="grid gap-4 sm:grid-cols-2">
         <div>
-          <p class="mb-1 font-medium text-text-main">
-            <Wifi size={13} class="mr-1 inline text-green-ok" />{m.admin_status_legend_ws_label()}
+          <p class="text-text-main mb-1 font-medium">
+            <Wifi size={13} class="text-green-ok mr-1 inline" />{m.admin_status_legend_ws_label()}
           </p>
           <p class="text-text-muted">
             <!-- eslint-disable-next-line svelte/no-at-html-tags -- static admin-authored copy, not user input -->
@@ -220,24 +220,24 @@
           </p>
         </div>
         <div>
-          <p class="mb-1 font-medium text-text-main">{m.admin_status_legend_redis_label()}</p>
+          <p class="text-text-main mb-1 font-medium">{m.admin_status_legend_redis_label()}</p>
           <p class="text-text-muted">
             <!-- eslint-disable-next-line svelte/no-at-html-tags -- static admin-authored copy, not user input -->
             {@html m.admin_status_legend_redis_html()}
           </p>
         </div>
         <div>
-          <p class="mb-1 font-medium text-text-main">{m.admin_status_legend_ttl_label()}</p>
+          <p class="text-text-main mb-1 font-medium">{m.admin_status_legend_ttl_label()}</p>
           <p class="text-text-muted">
             <!-- eslint-disable-next-line svelte/no-at-html-tags -- static admin-authored copy, not user input -->
             {@html m.admin_status_legend_ttl_html()}
           </p>
         </div>
         <div>
-          <p class="mb-1 font-medium text-text-main">
+          <p class="text-text-main mb-1 font-medium">
             <TriangleAlert
               size={13}
-              class="mr-1 inline text-cn-yellow"
+              class="text-cn-yellow mr-1 inline"
             />{m.admin_status_legend_anomalies_label()}
           </p>
           <p class="text-text-muted">
@@ -251,7 +251,7 @@
 
   {#if error}
     <div
-      class="mb-4 rounded-xl border border-red-err/30 bg-[color-mix(in_srgb,var(--red-err)_8%,var(--cn-surface))] px-4 py-3 text-sm text-red-err"
+      class="border-red-err/30 text-red-err mb-4 rounded-xl border bg-[color-mix(in_srgb,var(--red-err)_8%,var(--cn-surface))] px-4 py-3 text-sm"
     >
       {error}
     </div>
@@ -263,18 +263,18 @@
     <!-- Anomalies -->
     {#if anomalies.length > 0}
       <section class="mb-8">
-        <h2 class="mb-1 flex items-center gap-2 font-semibold text-text-main">
+        <h2 class="text-text-main mb-1 flex items-center gap-2 font-semibold">
           <TriangleAlert size={16} class="text-cn-yellow" />
           {m.admin_status_anomalies_heading({ count: anomalies.length })}
         </h2>
-        <p class="mb-3 text-sm text-text-muted">
+        <p class="text-text-muted mb-3 text-sm">
           {m.admin_status_anomalies_desc()}
         </p>
         {@render deviceTable(anomalies)}
       </section>
     {:else}
       <div
-        class="mb-6 flex items-center gap-2 rounded-xl border border-cn-border bg-[var(--cn-surface)] px-4 py-3 text-sm text-green-ok"
+        class="border-cn-border text-green-ok mb-6 flex items-center gap-2 rounded-xl border bg-(--cn-surface) px-4 py-3 text-sm"
       >
         <Wifi size={14} />
         {m.admin_status_no_anomalies()}
@@ -283,7 +283,7 @@
 
     <!-- Tous les appareils -->
     <section>
-      <h2 class="mb-3 text-xs font-semibold uppercase tracking-widest text-text-muted">
+      <h2 class="text-text-muted mb-3 text-xs font-semibold tracking-widest uppercase">
         {m.admin_status_all_devices_heading({ count: total })}
       </h2>
       {@render deviceTable(devices)}

@@ -17,15 +17,15 @@
 </script>
 
 {#if errorMessage || actionMessage}
-  <div class="px-5 pb-5 pt-2">
+  <div class="px-5 pt-2 pb-5">
     {#if errorMessage}
       <div
         transition:slide={{ duration: 200 }}
-        class="flex items-start gap-3 p-3.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 shadow-inner"
+        class="flex items-start gap-3 rounded-xl border border-red-500/20 bg-red-500/10 p-3.5 text-red-600 shadow-inner dark:text-red-400"
       >
         <div transition:fade={{ duration: 150 }} class="flex items-center gap-3">
-          <CircleAlert size={18} class="shrink-0 mt-0.5" />
-          <span class="text-sm font-bold leading-snug">{errorMessage}</span>
+          <CircleAlert size={18} class="mt-0.5 shrink-0" />
+          <span class="text-sm leading-snug font-bold">{errorMessage}</span>
         </div>
       </div>
     {/if}
@@ -33,11 +33,11 @@
     {#if actionMessage}
       <div
         transition:slide={{ duration: 200 }}
-        class="flex items-start gap-3 p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400 shadow-inner mt-2"
+        class="mt-2 flex items-start gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3.5 text-emerald-700 shadow-inner dark:text-emerald-400"
       >
         <div transition:fade={{ duration: 150 }} class="flex items-center gap-3">
-          <CircleCheck size={18} class="shrink-0 mt-0.5" />
-          <span class="text-sm font-bold leading-snug">{actionMessage}</span>
+          <CircleCheck size={18} class="mt-0.5 shrink-0" />
+          <span class="text-sm leading-snug font-bold">{actionMessage}</span>
         </div>
       </div>
     {/if}

@@ -93,27 +93,27 @@
       aria-label={ariaLabel}
       tabindex="-1"
       use:focusTrap
-      class="relative flex flex-col w-full text-white overflow-hidden
-             h-dvh sm:h-[90dvh] {maxWidthClass}
-             sm:rounded-xl sm:border sm:border-white/8
-             bg-black/20 sm:bg-white/4 sm:backdrop-blur-2xl
-             sm:shadow-[0_20px_60px_rgba(0,0,0,0.7)]"
+      class="relative flex h-dvh w-full flex-col overflow-hidden
+             text-white sm:h-[90dvh] {maxWidthClass}
+             bg-black/20 sm:rounded-xl sm:border
+             sm:border-white/8 sm:bg-white/4 sm:shadow-[0_20px_60px_rgba(0,0,0,0.7)]
+             sm:backdrop-blur-2xl"
       style={touchStyle}
       onclick={(e) => e.stopPropagation()}
       transition:fly={{ y: 18, duration: 240, easing: cubicOut }}
     >
       <div
-        class="flex shrink-0 items-center justify-between gap-3 px-3 sm:px-4 pb-2 sm:pb-3 border-b border-white/8 bg-linear-to-b from-black/30 to-transparent"
+        class="flex shrink-0 items-center justify-between gap-3 border-b border-white/8 bg-linear-to-b from-black/30 to-transparent px-3 pb-2 sm:px-4 sm:pb-3"
         style="padding-top: max(0.75rem, env(safe-area-inset-top, 0.75rem));"
       >
         <div class="flex min-w-0 flex-1 items-center gap-2">
           {@render headerLead?.()}
         </div>
-        <div class="flex items-center gap-1.5 shrink-0">
+        <div class="flex shrink-0 items-center gap-1.5">
           {@render headerActions?.()}
           <button
             type="button"
-            class="p-2 rounded-lg bg-white/15 hover:bg-white/25 transition-colors"
+            class="rounded-lg bg-white/15 p-2 transition-colors hover:bg-white/25"
             onclick={(e) => {
               e.stopPropagation();
               onClose();

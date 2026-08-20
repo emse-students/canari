@@ -120,26 +120,24 @@
   }
 </script>
 
-<div class="px-4 py-6 sm:px-6 max-w-4xl mx-auto space-y-8">
+<div class="mx-auto max-w-4xl space-y-8 px-4 py-6 sm:px-6">
   <div class="flex items-center gap-3">
-    <ShoppingBag class="h-7 w-7 text-cn-accent shrink-0" />
+    <ShoppingBag class="text-cn-accent h-7 w-7 shrink-0" />
     <div>
-      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">{m.shop_heading()}</h1>
-      <p class="text-sm text-text-muted mt-0.5">
+      <h1 class="text-text-main text-2xl font-extrabold tracking-tight">{m.shop_heading()}</h1>
+      <p class="text-text-muted mt-0.5 text-sm">
         {m.shop_subtitle()}
       </p>
     </div>
   </div>
 
   {#if !isLoggedIn}
-    <div
-      class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-8 text-center space-y-3"
-    >
-      <p class="text-text-main font-semibold text-lg">{m.shop_login_required_title()}</p>
+    <div class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface) p-8 text-center">
+      <p class="text-text-main text-lg font-semibold">{m.shop_login_required_title()}</p>
       <p class="text-text-muted text-sm">{m.shop_login_required_desc()}</p>
       <a
         href="/login"
-        class="inline-flex items-center gap-2 rounded-xl bg-cn-accent px-5 py-2.5 text-sm font-bold text-white hover:opacity-90 transition-opacity"
+        class="bg-cn-accent inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold text-white transition-opacity hover:opacity-90"
       >
         {m.shop_login_button()}
       </a>
@@ -147,13 +145,13 @@
   {:else if loading}
     <div class="flex justify-center py-16">
       <div
-        class="h-8 w-8 animate-spin rounded-full border-4 border-cn-border border-t-cn-accent"
+        class="border-cn-border border-t-cn-accent h-8 w-8 animate-spin rounded-full border-4"
       ></div>
     </div>
   {:else if error}
-    <p class="text-red-500 text-sm">{error}</p>
+    <p class="text-sm text-red-500">{error}</p>
   {:else if grouped.size === 0}
-    <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-10 text-center">
+    <div class="border-cn-border rounded-2xl border bg-(--cn-surface) p-10 text-center">
       <p class="text-text-muted text-sm">{m.shop_empty()}</p>
     </div>
   {:else}
@@ -167,12 +165,12 @@
             <div>
               <a
                 href="/associations/{asso.slug}"
-                class="font-bold text-text-main hover:text-cn-accent transition-colors"
+                class="text-text-main hover:text-cn-accent font-bold transition-colors"
               >
                 {asso.name}
               </a>
               {#if asso.description}
-                <p class="text-xs text-text-muted">{asso.description}</p>
+                <p class="text-text-muted text-xs">{asso.description}</p>
               {/if}
             </div>
           </div>
@@ -183,11 +181,11 @@
               {@const sibling = upgradeSibling(product, assocProducts)}
               {@const memberEligible = qualifiesForMemberPrice(product, assocProducts)}
               <div
-                class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-5 flex flex-col gap-3"
+                class="border-cn-border flex flex-col gap-3 rounded-2xl border bg-(--cn-surface) p-5"
               >
                 <!-- Type badge -->
-                <div class="flex items-center justify-between gap-2 flex-wrap">
-                  <div class="flex items-center gap-1.5 flex-wrap">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <div class="flex flex-wrap items-center gap-1.5">
                     <span
                       class="rounded-full px-2.5 py-0.5 text-xs font-semibold {product.type ===
                       'membership'
@@ -200,42 +198,42 @@
                     </span>
                     {#if product.membersOnly}
                       <span
-                        class="rounded-full px-2.5 py-0.5 text-xs font-semibold bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
+                        class="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
                       >
                         {m.shop_members_only_badge()}
                       </span>
                     {/if}
                     {#if product.type === 'membership' && product.variantKey !== null && product.viewerActiveTier === product.variantKey}
                       <span
-                        class="rounded-full px-2.5 py-0.5 text-xs font-semibold bg-cn-accent/15 text-cn-accent"
+                        class="bg-cn-accent/15 text-cn-accent rounded-full px-2.5 py-0.5 text-xs font-semibold"
                       >
                         {m.shop_current_tier_badge()}
                       </span>
                     {/if}
                   </div>
                   {#if memberEligible && memberPriceLabel(product)}
-                    <span class="text-sm font-bold text-right">
-                      <span class="line-through text-text-muted font-normal"
+                    <span class="text-right text-sm font-bold">
+                      <span class="text-text-muted font-normal line-through"
                         >{priceLabel(product)}</span
                       >
                       <span class="text-emerald-600 dark:text-emerald-400"
                         >{memberPriceLabel(product)}</span
                       >
-                      <span class="text-xs text-text-muted font-normal block sm:inline"
+                      <span class="text-text-muted block text-xs font-normal sm:inline"
                         >{sibling
                           ? m.shop_tier_upgrade_price_suffix({ tier: sibling.name })
                           : m.shop_member_price_suffix()}</span
                       >
                     </span>
                   {:else}
-                    <span class="text-sm font-bold text-cn-accent">{priceLabel(product)}</span>
+                    <span class="text-cn-accent text-sm font-bold">{priceLabel(product)}</span>
                   {/if}
                 </div>
 
                 <div>
-                  <p class="font-semibold text-text-main">{product.name}</p>
+                  <p class="text-text-main font-semibold">{product.name}</p>
                   {#if product.description}
-                    <p class="text-xs text-text-muted mt-1 line-clamp-2">{product.description}</p>
+                    <p class="text-text-muted mt-1 line-clamp-2 text-xs">{product.description}</p>
                   {/if}
                 </div>
 
@@ -252,10 +250,10 @@
                         : undefined}
                       step="0.01"
                       placeholder={m.shop_amount_placeholder()}
-                      class="flex-1 rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-cn-accent"
+                      class="border-cn-border text-text-main focus:ring-cn-accent flex-1 rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
                       bind:value={customAmounts[product.id]}
                     />
-                    <span class="text-xs text-text-muted">{product.currency.toUpperCase()}</span>
+                    <span class="text-text-muted text-xs">{product.currency.toUpperCase()}</span>
                   </div>
                 {/if}
 

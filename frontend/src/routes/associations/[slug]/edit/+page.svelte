@@ -319,10 +319,10 @@
   }
 </script>
 
-<div class="px-4 py-6 sm:px-6 max-w-4xl mx-auto space-y-6">
+<div class="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-6">
   <a
     href="/associations/{encodeURIComponent(slug)}"
-    class="inline-flex items-center gap-2 text-sm text-text-muted hover:text-text-main transition-colors"
+    class="text-text-muted hover:text-text-main inline-flex items-center gap-2 text-sm transition-colors"
   >
     <ArrowLeft size={16} />
     {m.asso_edit_page_back()}
@@ -331,23 +331,23 @@
   {#if loading}
     <div class="flex items-center justify-center py-20">
       <div
-        class="h-8 w-8 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+        class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if error && !asso}
-    <div class="rounded-xl bg-red-err/10 border border-red-err/30 text-red-err p-4 text-sm">
+    <div class="bg-red-err/10 border-red-err/30 text-red-err rounded-xl border p-4 text-sm">
       {error}
     </div>
   {:else if asso}
     <header class="space-y-1">
-      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">
+      <h1 class="text-text-main text-2xl font-extrabold tracking-tight">
         {m.asso_edit_page_title()}
       </h1>
-      <p class="text-sm text-text-muted">@{asso.slug}</p>
+      <p class="text-text-muted text-sm">@{asso.slug}</p>
     </header>
 
     {#if error}
-      <div class="rounded-xl bg-red-err/10 border border-red-err/30 text-red-err p-4 text-sm">
+      <div class="bg-red-err/10 border-red-err/30 text-red-err rounded-xl border p-4 text-sm">
         {error}
       </div>
     {/if}
@@ -355,17 +355,17 @@
     <!-- Section tabs -->
     <nav
       data-swipe-nav-ignore
-      class="sticky top-0 z-30 -mx-4 px-4 py-3 bg-[var(--cn-bg)]/95 backdrop-blur-md border-y border-cn-border/80 sm:border sm:rounded-2xl sm:mx-0"
+      class="border-cn-border/80 sticky top-0 z-30 -mx-4 border-y bg-[var(--cn-bg)]/95 px-4 py-3 backdrop-blur-md sm:mx-0 sm:rounded-2xl sm:border"
       aria-label="Edit sections"
     >
       <div class="flex flex-wrap gap-2">
         <button
           type="button"
           onclick={() => (editSection = 'profile')}
-          class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+          class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
           {editSection === 'profile'
             ? 'bg-cn-yellow text-cn-ink shadow-sm'
-            : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
+            : 'border-cn-border text-text-muted hover:text-text-main border bg-[var(--cn-surface)]'}"
         >
           <Building2 size={17} />
           {m.asso_edit_tab_profile()}
@@ -374,10 +374,10 @@
           <button
             type="button"
             onclick={() => (editSection = 'members')}
-            class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+            class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'members'
               ? 'bg-cn-yellow text-cn-ink shadow-sm'
-              : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
+              : 'border-cn-border text-text-muted hover:text-text-main border bg-[var(--cn-surface)]'}"
           >
             <Users size={17} />
             {m.common_members_label()}
@@ -391,10 +391,10 @@
               void refreshActivePaymentProvider();
               if (canManageStripeConnect) void refreshStripeConnectStatus();
             }}
-            class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+            class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'payments'
               ? 'bg-cn-yellow text-cn-ink shadow-sm'
-              : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
+              : 'border-cn-border text-text-muted hover:text-text-main border bg-[var(--cn-surface)]'}"
           >
             <CreditCard size={17} />
             {m.asso_edit_tab_payments()}
@@ -404,10 +404,10 @@
           <button
             type="button"
             onclick={() => (editSection = 'documents')}
-            class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+            class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'documents'
               ? 'bg-cn-yellow text-cn-ink shadow-sm'
-              : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
+              : 'border-cn-border text-text-muted hover:text-text-main border bg-[var(--cn-surface)]'}"
           >
             <FolderLock size={17} />
             {m.asso_edit_tab_documents()}
@@ -417,10 +417,10 @@
           <button
             type="button"
             onclick={() => (editSection = 'achats')}
-            class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+            class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'achats'
               ? 'bg-cn-yellow text-cn-ink shadow-sm'
-              : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
+              : 'border-cn-border text-text-muted hover:text-text-main border bg-[var(--cn-surface)]'}"
           >
             <UsersIcon size={17} />
             {m.asso_edit_tab_achats()}
@@ -430,10 +430,10 @@
           <button
             type="button"
             onclick={() => (editSection = 'cotisations')}
-            class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+            class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'cotisations'
               ? 'bg-cn-yellow text-cn-ink shadow-sm'
-              : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
+              : 'border-cn-border text-text-muted hover:text-text-main border bg-[var(--cn-surface)]'}"
           >
             <HandCoins size={17} />
             {m.asso_edit_tab_cotisations()}
@@ -443,10 +443,10 @@
           <button
             type="button"
             onclick={() => (editSection = 'delegation')}
-            class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+            class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'delegation'
               ? 'bg-cn-yellow text-cn-ink shadow-sm'
-              : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
+              : 'border-cn-border text-text-muted hover:text-text-main border bg-[var(--cn-surface)]'}"
           >
             <Share2 size={17} />
             {m.asso_edit_tab_delegation()}
@@ -456,10 +456,10 @@
           <button
             type="button"
             onclick={() => (editSection = 'formulaires')}
-            class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+            class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'formulaires'
               ? 'bg-cn-yellow text-cn-ink shadow-sm'
-              : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
+              : 'border-cn-border text-text-muted hover:text-text-main border bg-[var(--cn-surface)]'}"
           >
             <ClipboardList size={17} />
             {m.asso_edit_tab_formulaires()}
@@ -469,10 +469,10 @@
           <button
             type="button"
             onclick={() => (editSection = 'danger')}
-            class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+            class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'danger'
-              ? 'bg-red-err/20 text-red-err border border-red-err/30'
-              : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-red-err'}"
+              ? 'bg-red-err/20 text-red-err border-red-err/30 border'
+              : 'border-cn-border text-text-muted hover:text-red-err border bg-[var(--cn-surface)]'}"
           >
             <AlertTriangle size={17} />
             {m.asso_edit_tab_danger()}
@@ -499,10 +499,10 @@
           />
         {:else if canManageStripeConnect}
           <div
-            class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-4 shadow-sm"
+            class="border-cn-border space-y-4 rounded-2xl border bg-[var(--cn-surface)]/95 p-6 shadow-sm"
           >
-            <div class="flex items-start justify-between gap-3 flex-wrap">
-              <h2 class="text-lg font-bold text-text-main flex items-center gap-2 tracking-tight">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
                 <CreditCard size={20} />
                 Stripe Connect
               </h2>
@@ -511,7 +511,7 @@
                   type="button"
                   onclick={() => void refreshStripeConnectStatus()}
                   disabled={stripeStatusLoading}
-                  class="inline-flex items-center gap-1.5 rounded-lg border border-cn-border px-3 py-1.5 text-xs font-semibold text-text-muted hover:text-text-main hover:bg-cn-bg disabled:opacity-50"
+                  class="border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
                 >
                   <RefreshCw size={14} class={stripeStatusLoading ? 'animate-spin' : ''} />
                   {m.common_refresh_button()}
@@ -521,7 +521,7 @@
                     type="button"
                     onclick={() => void handleDisconnectStripe()}
                     disabled={stripeDisconnecting}
-                    class="inline-flex items-center gap-1.5 rounded-lg border border-red-err/30 px-3 py-1.5 text-xs font-semibold text-red-err hover:bg-red-err/10 disabled:opacity-50"
+                    class="border-red-err/30 text-red-err hover:bg-red-err/10 inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
                   >
                     {stripeDisconnecting
                       ? m.asso_stripe_disconnect_loading()
@@ -532,22 +532,22 @@
             </div>
 
             {#if stripeStatusLoading && !stripeConnectStatus}
-              <p class="text-sm text-text-muted">{m.asso_stripe_status_verifying()}</p>
+              <p class="text-text-muted text-sm">{m.asso_stripe_status_verifying()}</p>
             {:else if stripeConnectStatus?.status === 'active' || stripePaymentsReady}
-              <p class="text-sm text-green-ok font-semibold">{m.asso_stripe_connected_label()}</p>
-              <p class="text-xs text-text-muted">
+              <p class="text-green-ok text-sm font-semibold">{m.asso_stripe_connected_label()}</p>
+              <p class="text-text-muted text-xs">
                 {m.asso_stripe_connected_desc()}
               </p>
               {#if stripeConnectStatus?.balance}
-                <div class="rounded-xl border border-cn-border bg-cn-bg/50 p-4 space-y-3">
-                  <p class="text-sm font-bold text-text-main flex items-center gap-2">
+                <div class="border-cn-border bg-cn-bg/50 space-y-3 rounded-xl border p-4">
+                  <p class="text-text-main flex items-center gap-2 text-sm font-bold">
                     <Wallet size={18} class="text-cn-dark" />
                     {m.asso_stripe_balance_title()}
                   </p>
                   <div class="grid grid-cols-2 gap-3">
                     <div>
-                      <p class="text-xs text-text-muted">{m.asso_stripe_balance_available()}</p>
-                      <p class="text-lg font-extrabold text-text-main tabular-nums">
+                      <p class="text-text-muted text-xs">{m.asso_stripe_balance_available()}</p>
+                      <p class="text-text-main text-lg font-extrabold tabular-nums">
                         {formatStripeConnectAmount(
                           stripeConnectStatus.balance.availableCents,
                           stripeConnectStatus.balance.currency
@@ -555,8 +555,8 @@
                       </p>
                     </div>
                     <div>
-                      <p class="text-xs text-text-muted">{m.asso_stripe_balance_pending()}</p>
-                      <p class="text-lg font-extrabold text-text-muted tabular-nums">
+                      <p class="text-text-muted text-xs">{m.asso_stripe_balance_pending()}</p>
+                      <p class="text-text-muted text-lg font-extrabold tabular-nums">
                         {formatStripeConnectAmount(
                           stripeConnectStatus.balance.pendingCents,
                           stripeConnectStatus.balance.currency
@@ -564,7 +564,7 @@
                       </p>
                     </div>
                   </div>
-                  <p class="text-xs text-text-muted leading-relaxed">
+                  <p class="text-text-muted text-xs leading-relaxed">
                     {m.asso_stripe_balance_pending_note()}
                   </p>
                   {#if stripeConnectStatus.payoutsEnabled !== false}
@@ -572,7 +572,7 @@
                       type="button"
                       onclick={() => void handleOpenStripeDashboard()}
                       disabled={stripeDashboardLoading}
-                      class="inline-flex items-center justify-center gap-2 w-full sm:w-auto rounded-xl bg-cn-yellow px-4 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-colors disabled:opacity-50"
+                      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:opacity-50 sm:w-auto"
                     >
                       {#if stripeDashboardLoading}
                         <RefreshCw size={16} class="animate-spin" />
@@ -589,16 +589,16 @@
                   type="button"
                   onclick={() => void handleOpenStripeDashboard()}
                   disabled={stripeDashboardLoading}
-                  class="inline-flex items-center gap-1.5 rounded-lg border border-cn-border px-3 py-1.5 text-xs font-semibold text-text-muted hover:text-text-main hover:bg-cn-bg disabled:opacity-50"
+                  class="border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
                 >
                   {m.asso_stripe_manage_payouts_link()}
                 </button>
               {/if}
             {:else if stripeConnectStatus?.status === 'pending'}
               <div
-                class="rounded-xl border border-sky-200 bg-sky-50 text-sky-900 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-100 px-4 py-3 space-y-2"
+                class="space-y-2 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sky-900 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-100"
               >
-                <p class="text-sm font-semibold flex items-center gap-2">
+                <p class="flex items-center gap-2 text-sm font-semibold">
                   <Clock size={18} class="shrink-0" />
                   {m.asso_stripe_verification_pending_title()}
                 </p>
@@ -615,7 +615,7 @@
               </div>
             {:else if stripeConnectStatus?.status === 'restricted'}
               <div
-                class="rounded-xl border border-red-err/30 bg-red-err/10 text-red-err px-4 py-3 text-sm space-y-1"
+                class="border-red-err/30 bg-red-err/10 text-red-err space-y-1 rounded-xl border px-4 py-3 text-sm"
               >
                 <p class="font-semibold">{m.asso_stripe_restricted_title()}</p>
                 <p>
@@ -628,9 +628,9 @@
                 </p>
               </div>
             {:else if stripeConnectStatus?.status === 'unavailable'}
-              <p class="text-sm text-amber-warn">{m.asso_stripe_unavailable()}</p>
+              <p class="text-amber-warn text-sm">{m.asso_stripe_unavailable()}</p>
             {:else}
-              <p class="text-sm text-text-muted leading-relaxed">
+              <p class="text-text-muted text-sm leading-relaxed">
                 {#if asso.stripeAccountId}
                   {m.asso_stripe_complete_setup()}
                 {:else}
@@ -642,7 +642,7 @@
                   type="button"
                   onclick={handleStripeOnboarding}
                   disabled={stripeLoading}
-                  class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50 shadow-sm"
+                  class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-5 py-2.5 text-sm font-bold shadow-sm disabled:opacity-50"
                 >
                   {stripeLoading
                     ? m.asso_stripe_onboarding_loading()
@@ -663,14 +663,14 @@
 
     {#if editSection === 'documents' && canManageDocuments && asso}
       <div
-        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-5 shadow-sm"
+        class="border-cn-border space-y-5 rounded-2xl border bg-[var(--cn-surface)]/95 p-6 shadow-sm"
       >
         <div>
-          <h2 class="text-lg font-bold text-text-main tracking-tight flex items-center gap-2">
+          <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
             <FolderLock size={20} />
             {m.asso_doc_vault_title()}
           </h2>
-          <p class="text-sm text-text-muted mt-1">
+          <p class="text-text-muted mt-1 text-sm">
             {m.asso_doc_vault_desc()}
           </p>
         </div>

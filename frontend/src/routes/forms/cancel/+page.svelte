@@ -28,22 +28,22 @@
   <title>{m.form_cancel_title()}</title>
 </svelte:head>
 
-<div class="min-h-screen flex items-center justify-center px-4">
-  <div class="max-w-md w-full text-center space-y-6">
+<div class="flex min-h-screen items-center justify-center px-4">
+  <div class="w-full max-w-md space-y-6 text-center">
     <div class="flex justify-center">
-      <div class="p-4 rounded-full bg-red-err/20">
+      <div class="bg-red-err/20 rounded-full p-4">
         <CircleX size={48} class="text-red-500" />
       </div>
     </div>
     <div>
-      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">{m.form_cancel_title()}</h1>
+      <h1 class="text-text-main text-2xl font-extrabold tracking-tight">{m.form_cancel_title()}</h1>
       <p class="text-text-muted mt-2">
         {m.form_cancel_desc()}
       </p>
     </div>
     <a
       href={formId ? `/forms/${formId}` : '/forms'}
-      class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-6 py-3 text-sm font-bold text-cn-dark shadow-sm transition-all hover:bg-cn-yellow-hover"
+      class="bg-cn-yellow text-cn-dark hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold shadow-sm transition-all"
     >
       {formId ? m.common_retry_button() : m.form_cancel_back_button()}
     </a>

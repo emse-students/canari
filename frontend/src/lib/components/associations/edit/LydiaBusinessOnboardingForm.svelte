@@ -94,39 +94,39 @@
   }
 </script>
 
-<div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-4 shadow-sm">
-  <h2 class="text-lg font-bold text-text-main flex items-center gap-2 tracking-tight">
+<div class="border-cn-border space-y-4 rounded-2xl border bg-[var(--cn-surface)]/95 p-6 shadow-sm">
+  <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
     <Building2 size={20} />
     {m.asso_lydia_title()}
   </h2>
 
   {#if asso.lydiaAccountId}
-    <p class="text-sm font-semibold text-green-ok">{m.asso_lydia_created_title()}</p>
-    <p class="text-sm text-text-muted leading-relaxed">{m.asso_lydia_created_desc()}</p>
-    <p class="text-xs text-text-muted">
+    <p class="text-green-ok text-sm font-semibold">{m.asso_lydia_created_title()}</p>
+    <p class="text-text-muted text-sm leading-relaxed">{m.asso_lydia_created_desc()}</p>
+    <p class="text-text-muted text-xs">
       {m.asso_lydia_vendor_token_label()}: <span class="font-mono">{asso.lydiaAccountId}</span>
     </p>
     <button
       type="button"
       onclick={() => void handleDisconnect()}
       disabled={disconnecting}
-      class="inline-flex items-center gap-1.5 rounded-lg border border-red-err/30 px-3 py-1.5 text-xs font-semibold text-red-err hover:bg-red-err/10 disabled:opacity-50"
+      class="border-red-err/30 text-red-err hover:bg-red-err/10 inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
     >
       {disconnecting ? m.asso_lydia_disconnect_loading() : m.asso_lydia_disconnect_button()}
     </button>
   {:else if createdDashboardUrl}
-    <p class="text-sm font-semibold text-green-ok">{m.asso_lydia_created_title()}</p>
-    <p class="text-sm text-text-muted leading-relaxed">{m.asso_lydia_created_desc()}</p>
+    <p class="text-green-ok text-sm font-semibold">{m.asso_lydia_created_title()}</p>
+    <p class="text-text-muted text-sm leading-relaxed">{m.asso_lydia_created_desc()}</p>
     <button
       type="button"
       onclick={() => void openDashboard()}
-      class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-4 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover shadow-sm"
+      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm"
     >
       <ExternalLink size={16} />
       {m.asso_lydia_open_dashboard_button()}
     </button>
   {:else}
-    <p class="text-sm text-text-muted leading-relaxed">{m.asso_lydia_intro()}</p>
+    <p class="text-text-muted text-sm leading-relaxed">{m.asso_lydia_intro()}</p>
 
     <Input label={m.asso_lydia_name_label()} bind:value={name} required disabled={submitting} />
     <Input
@@ -170,13 +170,13 @@
       type="button"
       onclick={() => void handleSubmit()}
       disabled={submitting || missingFields}
-      class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50 shadow-sm"
+      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-5 py-2.5 text-sm font-bold shadow-sm disabled:opacity-50"
     >
       {submitting ? m.asso_lydia_submitting_label() : m.asso_lydia_submit_button()}
     </button>
   {/if}
 
   {#if error}
-    <div class="text-sm text-red-err">{error}</div>
+    <div class="text-red-err text-sm">{error}</div>
   {/if}
 </div>

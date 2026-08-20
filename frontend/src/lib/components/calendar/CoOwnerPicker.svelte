@@ -52,8 +52,8 @@
   }
 </script>
 
-<div class="space-y-2 rounded-xl border border-cn-border/70 bg-cn-bg/30 p-3">
-  <p class="text-xs font-bold text-text-muted uppercase tracking-wide flex items-center gap-1">
+<div class="border-cn-border/70 bg-cn-bg/30 space-y-2 rounded-xl border p-3">
+  <p class="text-text-muted flex items-center gap-1 text-xs font-bold tracking-wide uppercase">
     <Users size={14} />
     {label}
   </p>
@@ -61,17 +61,17 @@
     <div class="flex flex-wrap gap-1.5">
       {#each selected as asso (asso.id)}
         <span
-          class="inline-flex items-center gap-1 rounded-full border border-cn-border bg-[var(--cn-surface)] px-2.5 py-1 text-xs font-semibold text-text-main"
+          class="border-cn-border text-text-main inline-flex items-center gap-1 rounded-full border bg-(--cn-surface) px-2.5 py-1 text-xs font-semibold"
         >
           {#if asso.color}
-            <span class="inline-block w-2 h-2 rounded-full shrink-0" style="background:{asso.color}"
+            <span class="inline-block h-2 w-2 shrink-0 rounded-full" style="background:{asso.color}"
             ></span>
           {/if}
           {asso.name}
           <button
             type="button"
             onclick={() => remove(asso.id)}
-            class="ml-0.5 text-text-muted hover:text-red-500 transition-colors"
+            class="text-text-muted ml-0.5 transition-colors hover:text-red-500"
             aria-label="Retirer {asso.name}"
           >
             <X size={12} />
@@ -87,11 +87,11 @@
       bind:value={searchQuery}
       onfocus={() => (dropdownOpen = true)}
       onblur={() => setTimeout(() => (dropdownOpen = false), 150)}
-      class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm text-text-main placeholder:text-text-muted"
+      class="border-cn-border text-text-main placeholder:text-text-muted w-full rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm"
     />
     {#if dropdownOpen && candidates.length > 0}
       <ul
-        class="absolute z-20 mt-1 w-full rounded-xl border border-cn-border bg-white/95 dark:bg-black/90 backdrop-blur-xl shadow-lg max-h-48 overflow-y-auto"
+        class="border-cn-border absolute z-20 mt-1 max-h-48 w-full overflow-y-auto rounded-xl border bg-white/95 shadow-lg backdrop-blur-xl dark:bg-black/90"
       >
         {#each candidates.slice(0, 12) as asso (asso.id)}
           <li>
@@ -101,11 +101,11 @@
                 e.preventDefault();
                 add(asso.id);
               }}
-              class="w-full flex items-center gap-2 px-3 py-2 text-sm text-text-main hover:bg-cn-yellow/10 transition-colors text-left"
+              class="text-text-main hover:bg-cn-yellow/10 flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors"
             >
               {#if asso.color}
                 <span
-                  class="inline-block w-2.5 h-2.5 rounded-full shrink-0"
+                  class="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
                   style="background:{asso.color}"
                 ></span>
               {/if}

@@ -154,7 +154,7 @@
 
 {#if isLoadingOlder}
   <div class="flex justify-center py-3">
-    <Loader2 size={18} class="animate-spin text-text-muted" />
+    <Loader2 size={18} class="text-text-muted animate-spin" />
   </div>
 {/if}
 
@@ -164,10 +164,10 @@
          while the {#each} key expression is still being evaluated. All accesses use ?. -->
     <!-- Date separator. -->
     {#if group?.type === 'date_separator'}
-      <div class="flex justify-center my-5">
+      <div class="my-5 flex justify-center">
         <div
           data-chat-date-separator={group.date}
-          class="px-4 py-1.5 bg-white/50 dark:bg-black/30 rounded-full text-[0.65rem] text-text-main font-bold uppercase tracking-widest border border-black/5 dark:border-white/10 backdrop-blur-md shadow-sm"
+          class="text-text-main rounded-full border border-black/5 bg-white/50 px-4 py-1.5 text-[0.65rem] font-bold tracking-widest uppercase shadow-sm backdrop-blur-md dark:border-white/10 dark:bg-black/30"
         >
           {group.date}
         </div>
@@ -175,8 +175,8 @@
 
       <!-- Time separator (hour). -->
     {:else if group?.type === 'time_separator'}
-      <div class="flex justify-center my-3">
-        <div class="px-2 py-0.5 text-[0.65rem] font-semibold text-text-muted/70 tracking-wider">
+      <div class="my-3 flex justify-center">
+        <div class="text-text-muted/70 px-2 py-0.5 text-[0.65rem] font-semibold tracking-wider">
           {group.time}
         </div>
       </div>
@@ -216,7 +216,7 @@
         !msg.isOwn && !isDirect && groupPosition !== 'middle' && groupPosition !== 'end'}
 
       {#if msg.isSystem}
-        <div class="flex justify-center my-3">
+        <div class="my-3 flex justify-center">
           <MessageBubble
             messageId={msg.id}
             senderId={msg.senderId}
@@ -240,7 +240,7 @@
         <div class="flex gap-2.5 {msg.isOwn ? 'justify-end' : 'justify-start'} w-full">
           <!-- Sender avatar (received messages only). -->
           {#if !msg.isOwn}
-            <div class="w-8 shrink-0 flex flex-col justify-end pb-1">
+            <div class="flex w-8 shrink-0 flex-col justify-end pb-1">
               {#if groupPosition === 'end' || groupPosition === 'single'}
                 <Avatar userId={msg.senderId} size="sm" />
               {/if}
@@ -255,7 +255,7 @@
           >
             <!-- Sender name. -->
             {#if showSender && !msg.isSystem}
-              <div class="text-[0.75rem] text-text-muted px-1 mb-1 font-bold tracking-wide">
+              <div class="text-text-muted mb-1 px-1 text-[0.75rem] font-bold tracking-wide">
                 <a
                   href="/profile/{encodeURIComponent(msg.senderId)}"
                   class="hover:text-text-main transition-colors"

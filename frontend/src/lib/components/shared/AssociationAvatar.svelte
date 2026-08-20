@@ -71,7 +71,7 @@
   <img
     src={displaySrc}
     alt={name}
-    class="{shapeClasses} object-cover bg-white shadow-sm ring-1 ring-white/20 flex-shrink-0 select-none {sizeClasses}"
+    class="{shapeClasses} flex-shrink-0 bg-white object-cover shadow-sm ring-1 ring-white/20 select-none {sizeClasses}"
     title={name}
     onerror={() => {
       if (!triedDirectFallback && src && displaySrc !== src) {
@@ -84,7 +84,7 @@
   />
 {:else}
   <div
-    class="{shapeClasses} shadow-sm ring-1 ring-white/20 flex-shrink-0 select-none {sizeClasses} bg-cn-dark text-cn-yellow flex items-center justify-center font-bold"
+    class="{shapeClasses} flex-shrink-0 shadow-sm ring-1 ring-white/20 select-none {sizeClasses} bg-cn-dark text-cn-yellow flex items-center justify-center font-bold"
     title={name}
     aria-label={`Logo de ${name}`}
   >

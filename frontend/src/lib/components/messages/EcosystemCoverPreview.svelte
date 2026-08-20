@@ -69,7 +69,7 @@
   rel="noopener noreferrer"
   class="group relative isolate overflow-hidden {standalone
     ? ''
-    : 'mt-3'} flex items-center gap-3.5 p-3 pr-2.5 rounded-2xl border border-black/5 dark:border-white/10 bg-gradient-to-br from-amber-100/50 via-white/45 to-rose-100/40 dark:from-amber-400/10 dark:via-black/25 dark:to-fuchsia-400/10 backdrop-blur-xl transition-all duration-300 hover:border-amber-500/40 hover:shadow-lg hover:shadow-amber-500/10 dark:hover:shadow-amber-400/5"
+    : 'mt-3'} flex items-center gap-3.5 rounded-2xl border border-black/5 bg-gradient-to-br from-amber-100/50 via-white/45 to-rose-100/40 p-3 pr-2.5 backdrop-blur-xl transition-all duration-300 hover:border-amber-500/40 hover:shadow-lg hover:shadow-amber-500/10 dark:border-white/10 dark:from-amber-400/10 dark:via-black/25 dark:to-fuchsia-400/10 dark:hover:shadow-amber-400/5"
 >
   <!-- The cover's own colours, blurred out of legibility, under a scrim -->
   {#if coverUrl}
@@ -78,28 +78,28 @@
       alt=""
       aria-hidden="true"
       loading="lazy"
-      class="absolute inset-0 -z-10 w-full h-full object-cover scale-150 blur-2xl saturate-150 opacity-45 dark:opacity-35 transition-opacity duration-500 group-hover:opacity-60 dark:group-hover:opacity-50"
+      class="absolute inset-0 -z-10 h-full w-full scale-150 object-cover opacity-45 blur-2xl saturate-150 transition-opacity duration-500 group-hover:opacity-60 dark:opacity-35 dark:group-hover:opacity-50"
     />
     <div class="absolute inset-0 -z-10 bg-white/55 dark:bg-black/55" aria-hidden="true"></div>
   {/if}
 
   <!-- Cover, printed on a stack of the album's other photos -->
-  <div class="relative shrink-0 w-24 sm:w-28 aspect-square">
+  <div class="relative aspect-square w-24 shrink-0 sm:w-28">
     <div
-      class="absolute inset-0 rounded-xl bg-white/70 dark:bg-white/15 rotate-6 scale-90 shadow-sm transition-transform duration-500 motion-safe:group-hover:rotate-[14deg]"
+      class="absolute inset-0 scale-90 rotate-6 rounded-xl bg-white/70 shadow-sm transition-transform duration-500 motion-safe:group-hover:rotate-[14deg] dark:bg-white/15"
     ></div>
     <div
-      class="absolute inset-0 rounded-xl bg-white/85 dark:bg-white/20 rotate-3 scale-95 shadow-sm transition-transform duration-500 motion-safe:group-hover:rotate-[7deg]"
+      class="absolute inset-0 scale-95 rotate-3 rounded-xl bg-white/85 shadow-sm transition-transform duration-500 motion-safe:group-hover:rotate-[7deg] dark:bg-white/20"
     ></div>
 
     <div
-      class="absolute inset-0 overflow-hidden rounded-xl ring-1 ring-black/10 dark:ring-white/15 bg-black/8 dark:bg-white/8 shadow-md transition-transform duration-500 motion-safe:group-hover:-rotate-2"
+      class="absolute inset-0 overflow-hidden rounded-xl bg-black/8 shadow-md ring-1 ring-black/10 transition-transform duration-500 motion-safe:group-hover:-rotate-2 dark:bg-white/8 dark:ring-white/15"
     >
       {#if coverUrl}
         <img
           src={coverUrl}
           alt=""
-          class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
+          class="h-full w-full object-cover transition-transform duration-700 group-hover:scale-110"
           loading="lazy"
         />
       {:else if isLoading}
@@ -113,25 +113,25 @@
   </div>
 
   <!-- Text metadata -->
-  <div class="min-w-0 flex-1 flex flex-col justify-center gap-1">
+  <div class="flex min-w-0 flex-1 flex-col justify-center gap-1">
     <span
-      class="inline-flex self-start max-w-full items-center gap-1 rounded-md bg-amber-500/15 dark:bg-amber-400/12 px-1.5 py-0.5 text-[0.6rem] tracking-wider font-bold text-amber-800 dark:text-amber-300 truncate"
+      class="inline-flex max-w-full items-center gap-1 self-start truncate rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[0.6rem] font-bold tracking-wider text-amber-800 dark:bg-amber-400/12 dark:text-amber-300"
     >
       <Images size={11} strokeWidth={2.5} />
       {siteLabel}
     </span>
 
     {#if isLoading}
-      <div class="h-3.5 w-3/4 rounded bg-black/8 dark:bg-white/8 animate-pulse"></div>
-      <div class="h-2.5 w-1/2 rounded bg-black/6 dark:bg-white/6 animate-pulse"></div>
+      <div class="h-3.5 w-3/4 animate-pulse rounded bg-black/8 dark:bg-white/8"></div>
+      <div class="h-2.5 w-1/2 animate-pulse rounded bg-black/6 dark:bg-white/6"></div>
     {:else}
       <p
-        class="text-sm font-bold text-text-main leading-snug line-clamp-2 group-hover:text-amber-700 dark:group-hover:text-amber-300 transition-colors duration-300"
+        class="text-text-main line-clamp-2 text-sm leading-snug font-bold transition-colors duration-300 group-hover:text-amber-700 dark:group-hover:text-amber-300"
       >
         {preview?.title || fallbackTitle}
       </p>
       {#if preview?.description}
-        <p class="text-xs text-text-muted leading-snug line-clamp-2">
+        <p class="text-text-muted line-clamp-2 text-xs leading-snug">
           {preview.description}
         </p>
       {/if}
@@ -139,7 +139,7 @@
   </div>
 
   <div
-    class="shrink-0 self-start mt-0.5 rounded-full p-1.5 text-amber-700/60 dark:text-amber-300/60 bg-amber-500/0 group-hover:bg-amber-500/15 group-hover:text-amber-700 dark:group-hover:text-amber-300 transition-all duration-300 group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
+    class="mt-0.5 shrink-0 self-start rounded-full bg-amber-500/0 p-1.5 text-amber-700/60 transition-all duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:bg-amber-500/15 group-hover:text-amber-700 dark:text-amber-300/60 dark:group-hover:text-amber-300"
   >
     <ArrowUpRight size={16} strokeWidth={2.5} />
   </div>

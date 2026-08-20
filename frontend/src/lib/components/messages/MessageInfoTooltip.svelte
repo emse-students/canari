@@ -67,7 +67,7 @@
   <div
     class="absolute {isOwn
       ? 'right-0'
-      : 'left-0'} top-full mt-1.5 px-3.5 py-2.5 bg-white/90 dark:bg-black/80 backdrop-blur-xl border border-black/5 dark:border-white/10 text-text-main text-[0.7rem] rounded-xl shadow-xl shadow-black/10 dark:shadow-black/40 z-50 whitespace-nowrap flex flex-col gap-1.5"
+      : 'left-0'} text-text-main top-full z-50 mt-1.5 flex flex-col gap-1.5 rounded-xl border border-black/5 bg-white/90 px-3.5 py-2.5 text-[0.7rem] whitespace-nowrap shadow-xl shadow-black/10 backdrop-blur-xl dark:border-white/10 dark:bg-black/80 dark:shadow-black/40"
     in:fly={{ y: -4, duration: 200, opacity: 0, easing: (t) => t * (2 - t) }}
   >
     <!-- Send timestamp. -->
@@ -92,11 +92,11 @@
     <!-- Read receipt list. -->
     {#if readBy.length > 0}
       <div
-        class="flex items-center gap-1.5 mt-1 pt-1.5 border-t border-black/5 dark:border-white/10"
+        class="mt-1 flex items-center gap-1.5 border-t border-black/5 pt-1.5 dark:border-white/10"
       >
-        <CheckCheck size={14} strokeWidth={2.5} class="text-amber-500 shrink-0" />
-        <span class="font-medium text-text-muted">
-          {m.msg_lu_par()} <span class="font-bold text-text-main">{readByLabels.join(', ')}</span>
+        <CheckCheck size={14} strokeWidth={2.5} class="shrink-0 text-amber-500" />
+        <span class="text-text-muted font-medium">
+          {m.msg_lu_par()} <span class="text-text-main font-bold">{readByLabels.join(', ')}</span>
         </span>
       </div>
     {/if}

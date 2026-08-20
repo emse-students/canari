@@ -294,14 +294,14 @@
     lockTouch
   >
     {#snippet headerLead()}
-      <p class="min-w-0 flex-1 truncate text-xs sm:text-sm opacity-80">{title}</p>
+      <p class="min-w-0 flex-1 truncate text-xs opacity-80 sm:text-sm">{title}</p>
     {/snippet}
 
     {#snippet headerActions()}
       {#if onDownload}
         <button
           type="button"
-          class="px-3 h-9 rounded-lg bg-white/15 hover:bg-white/25 transition-colors text-sm font-semibold"
+          class="h-9 rounded-lg bg-white/15 px-3 text-sm font-semibold transition-colors hover:bg-white/25"
           onclick={(e) => {
             e.stopPropagation();
             onDownload!();
@@ -313,12 +313,12 @@
     {/snippet}
 
     <div
-      class="relative flex flex-1 min-h-0 w-full items-center justify-center pointer-events-none overflow-hidden"
+      class="pointer-events-none relative flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden"
     >
       {#if showPrev && onPrev}
         <button
           type="button"
-          class="absolute left-2 z-20 p-2.5 rounded-full bg-black/40 hover:bg-black/60 backdrop-blur-sm transition-colors pointer-events-auto"
+          class="pointer-events-auto absolute left-2 z-20 rounded-full bg-black/40 p-2.5 backdrop-blur-sm transition-colors hover:bg-black/60"
           onclick={(e) => {
             e.stopPropagation();
             handlePrev();
@@ -333,7 +333,7 @@
       <div
         bind:this={transformEl}
         role="presentation"
-        class="relative z-10 flex h-full w-full items-center justify-center pointer-events-auto select-none"
+        class="pointer-events-auto relative z-10 flex h-full w-full items-center justify-center select-none"
         style="transform: translate({tx}px, {ty}px) scale({scale}); transform-origin: center; will-change: transform; touch-action: none; cursor: {isDragging
           ? 'grabbing'
           : isZoomed
@@ -352,7 +352,7 @@
       {#if showNext && onNext}
         <button
           type="button"
-          class="absolute right-2 z-20 p-2.5 rounded-full bg-black/40 hover:bg-black/60 backdrop-blur-sm transition-colors pointer-events-auto"
+          class="pointer-events-auto absolute right-2 z-20 rounded-full bg-black/40 p-2.5 backdrop-blur-sm transition-colors hover:bg-black/60"
           onclick={(e) => {
             e.stopPropagation();
             handleNext();
@@ -367,7 +367,7 @@
       {#if showZoomIndicator}
         <div
           transition:fade={{ duration: 200 }}
-          class="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 px-3 py-1 rounded-full bg-black/60 backdrop-blur-sm text-white/90 text-xs font-semibold pointer-events-none tabular-nums"
+          class="pointer-events-none absolute bottom-4 left-1/2 z-30 -translate-x-1/2 rounded-full bg-black/60 px-3 py-1 text-xs font-semibold text-white/90 tabular-nums backdrop-blur-sm"
         >
           {scaleLabel}
         </div>
@@ -376,7 +376,7 @@
 
     {#snippet footer()}
       {#if dotCount > 1 && onDotSelect}
-        <div class="flex justify-center gap-1.5 pt-2 pointer-events-auto">
+        <div class="pointer-events-auto flex justify-center gap-1.5 pt-2">
           {#each { length: dotCount } as _, i (i)}
             <button
               type="button"
@@ -385,7 +385,7 @@
                 resetZoom();
                 onDotSelect!(i);
               }}
-              class="w-2 h-2 rounded-full transition-all {i === dotIndex
+              class="h-2 w-2 rounded-full transition-all {i === dotIndex
                 ? 'bg-white'
                 : 'bg-white/40'}"
               aria-label={m.media_lightbox_dot_aria({ index: i + 1 })}

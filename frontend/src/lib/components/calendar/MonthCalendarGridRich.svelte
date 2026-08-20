@@ -20,7 +20,9 @@
 
   const weekdayLabels = $derived(
     Array.from({ length: 7 }, (_, i) =>
-      new Intl.DateTimeFormat(getLocale() === 'en' ? 'en-US' : 'fr-FR', { weekday: 'short' })
+      new Intl.DateTimeFormat(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
+        weekday: 'short',
+      })
         .format(new Date(2024, 0, 1 + ((i + 0) % 7)))
         .replace(/\.$/, '')
         .slice(0, 3)
@@ -96,7 +98,10 @@
   /** Logos for the event: primary first, then co-owners (resolved src, or null → initials). */
   function eventLogos(ev: AssociationCalendarFeedEvent): { src: string | null; name: string }[] {
     return [
-      { src: associationLogoSrc(ev.associationLogoUrl), name: ev.associationName },
+      {
+        src: associationLogoSrc(ev.associationLogoUrl),
+        name: ev.associationName,
+      },
       ...(ev.coOwners ?? []).map((co) => ({
         src: associationLogoSrc(co.logoUrl ?? null),
         name: co.name,
@@ -122,16 +127,16 @@
 {#if loading}
   <div class="flex justify-center py-16">
     <div
-      class="h-8 w-8 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+      class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
     ></div>
   </div>
 {:else}
-  <div class="rounded-2xl overflow-hidden shadow-sm border border-cn-border/60">
+  <div class="border-cn-border/60 overflow-hidden rounded-2xl border shadow-sm">
     <!-- Weekday header -->
-    <div class="grid grid-cols-7 bg-[var(--cn-surface)]">
+    <div class="grid grid-cols-7 bg-(--cn-surface)">
       {#each weekdayLabels as w, wi (w)}
         <div
-          class="py-2.5 text-center text-[11px] font-bold uppercase tracking-widest border-b border-cn-border/60
+          class="border-cn-border/60 border-b py-2.5 text-center text-[11px] font-bold tracking-widest uppercase
                  {wi >= 5 ? 'text-text-muted/60' : 'text-text-muted'}"
         >
           {w}
@@ -144,8 +149,8 @@
       {#each calendarCells as cell, i (i)}
         {#if cell.day === null}
           <div
-            class="min-h-[72px] sm:min-h-[100px] border-r border-b border-cn-border/40
-                   {isWeekend(i) ? 'bg-cn-bg/40' : 'bg-[var(--cn-surface)]/30'}"
+            class="border-cn-border/40 min-h-18 border-r border-b sm:min-h-25
+                   {isWeekend(i) ? 'bg-cn-bg/40' : 'bg-(--cn-surface)/30'}"
             role="gridcell"
             aria-hidden="true"
           ></div>
@@ -167,15 +172,15 @@
             onclick={() => {
               selectedDay = selectedDay === cell.day ? null : cell.day;
             }}
-            class="relative min-h-[72px] sm:min-h-[100px] text-left transition-all border-r border-b border-cn-border/40 overflow-hidden
-              {isWeekend(i) ? 'bg-cn-bg/40' : 'bg-[var(--cn-surface)]/60'}
+            class="border-cn-border/40 relative min-h-18 overflow-hidden border-r border-b text-left transition-all sm:min-h-25
+              {isWeekend(i) ? 'bg-cn-bg/40' : 'bg-(--cn-surface)/60'}
               {selected ? '' : 'hover:brightness-95'}"
           >
             <!-- Break (vacation / no-course) background tint - behind everything so a period reads
                  across days; the title shows as a bottom band and on empty days below. -->
             {#if dayBreaks.length > 0}
               <div
-                class="absolute inset-0 z-0 pointer-events-none"
+                class="pointer-events-none absolute inset-0 z-0"
                 style="background:{eventColors(dayBreaks[0])[0]};opacity:0.14;"
               ></div>
             {/if}
@@ -183,12 +188,12 @@
             {#if dayEvents.length === 0}
               <!-- Empty cell: day number, plus the break title when this is a vacation day. -->
               <span
-                class="absolute top-1.5 left-2 text-xs font-bold leading-none z-10
+                class="absolute top-1.5 left-2 z-10 text-xs leading-none font-bold
                   {today ? 'text-cn-yellow' : 'text-text-muted/50'}">{cell.day}</span
               >
               {#if dayBreaks.length > 0}
                 <span
-                  class="absolute inset-x-1 bottom-1 z-10 text-center text-[9px] font-bold leading-tight line-clamp-2"
+                  class="absolute inset-x-1 bottom-1 z-10 line-clamp-2 text-center text-[9px] leading-tight font-bold"
                   style="color:{eventColors(dayBreaks[0])[0]};"
                   title={dayBreaks[0].title}>{dayBreaks[0].title}</span
                 >
@@ -201,7 +206,7 @@
                   {@const fg = contrastColor(colors[0])}
                   {@const logos = eventLogos(ev)}
                   <div
-                    class="relative flex-1 flex items-center justify-center overflow-hidden {ev.status ===
+                    class="relative flex flex-1 items-center justify-center overflow-hidden {ev.status ===
                     'pending'
                       ? 'opacity-50'
                       : ''}"
@@ -215,7 +220,7 @@
                     <!-- Day number on the first slot -->
                     {#if ei === 0}
                       <span
-                        class="absolute top-1 left-1.5 text-[10px] font-extrabold leading-none z-10
+                        class="absolute top-1 left-1.5 z-10 text-[10px] leading-none font-extrabold
                           {today ? 'underline decoration-2' : ''}"
                         style="color:{fg};">{cell.day}</span
                       >
@@ -286,7 +291,7 @@
                     {/if}
                     <!-- Event title, centred and always on top of watermark -->
                     <span
-                      class="relative z-10 text-[10px] font-bold text-center leading-tight px-3 line-clamp-2"
+                      class="relative z-10 line-clamp-2 px-3 text-center text-[10px] leading-tight font-bold"
                       title="{ev.title} - {ev.associationName}"
                       style="color:{fg};">{ev.title}</span
                     >
@@ -295,7 +300,7 @@
 
                 {#if overflowCount > 0}
                   <div
-                    class="flex-1 flex items-center justify-center text-[9px] font-bold text-text-muted bg-cn-bg/80"
+                    class="text-text-muted bg-cn-bg/80 flex flex-1 items-center justify-center text-[9px] font-bold"
                   >
                     +{overflowCount} autre{overflowCount > 1 ? 's' : ''}
                   </div>
@@ -306,7 +311,7 @@
             <!-- Break band: a colored strip along the bottom edge, continuous across a period. -->
             {#if dayBreaks.length > 0}
               <div
-                class="absolute bottom-0 inset-x-0 h-1 z-20 pointer-events-none"
+                class="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-1"
                 style="background:{eventColors(dayBreaks[0])[0]};"
               ></div>
             {/if}
@@ -314,7 +319,7 @@
             <!-- Selected ring overlay (always on top) -->
             {#if selected}
               <div
-                class="absolute inset-0 ring-inset ring-2 ring-cn-yellow/70 pointer-events-none z-20"
+                class="ring-cn-yellow/70 pointer-events-none absolute inset-0 z-20 ring-2 ring-inset"
               ></div>
             {/if}
           </button>

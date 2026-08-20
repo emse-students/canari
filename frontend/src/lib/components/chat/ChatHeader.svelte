@@ -142,15 +142,15 @@
 
 <!-- Main header -->
 <header
-  class="bg-white/70 dark:bg-black/50 px-3 md:px-6 py-3 border-b border-black/5 dark:border-white/10 flex items-center gap-3 md:gap-4 relative backdrop-blur-2xl z-20"
+  class="relative z-20 flex items-center gap-3 border-b border-black/5 bg-white/70 px-3 py-3 backdrop-blur-2xl md:gap-4 md:px-6 dark:border-white/10 dark:bg-black/50"
 >
   <!-- Back button (mobile) - fixed width so the avatar stays centered -->
-  <div class="w-8 flex-shrink-0 flex items-center justify-start md:hidden">
+  <div class="flex w-8 flex-shrink-0 items-center justify-start md:hidden">
     {#if onBack}
       <button
         onclick={onBack}
         aria-label={m.chat_back_label()}
-        class="p-1 rounded-xl text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10 active:scale-95 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+        class="text-text-muted hover:text-text-main rounded-xl p-1 transition-all outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 dark:hover:bg-white/10"
       >
         <ChevronLeft size={24} />
       </button>
@@ -159,33 +159,33 @@
 
   <!-- Conversation icon (avatar for groups/DMs; channels show no avatar, only a type icon) -->
   {#if isChannel}
-    <div class="w-10 h-10 flex-shrink-0 flex items-center justify-center text-text-muted">
+    <div class="text-text-muted flex h-10 w-10 flex-shrink-0 items-center justify-center">
       <Hash size={22} strokeWidth={2.5} />
     </div>
   {:else if isGroupConversation}
-    <div class="w-10 h-10 flex-shrink-0 flex items-center justify-center">
+    <div class="flex h-10 w-10 flex-shrink-0 items-center justify-center">
       <GroupAvatar {imageMediaId} name={displayName} variant="group" size="lg" />
     </div>
   {:else}
-    <div class="relative shrink-0 w-10 h-10 flex items-center justify-center">
+    <div class="relative flex h-10 w-10 shrink-0 items-center justify-center">
       <Avatar userId={contactName} size="lg" fallbackLabel={effectiveDisplayName} />
       {#if isOnline}
         <span
-          class="absolute bottom-0 right-0 block h-3.5 w-3.5 rounded-full ring-2 ring-white dark:ring-zinc-900 bg-green-500 shadow-sm"
+          class="absolute right-0 bottom-0 block h-3.5 w-3.5 rounded-full bg-green-500 shadow-sm ring-2 ring-white dark:ring-zinc-900"
         ></span>
       {/if}
     </div>
   {/if}
 
   <!-- Info (name, status) -->
-  <div class="flex-1 min-w-0 flex flex-col justify-center">
-    <h2 class="text-base md:text-[1.05rem] font-bold text-text-main mb-0.5 truncate leading-tight">
+  <div class="flex min-w-0 flex-1 flex-col justify-center">
+    <h2 class="text-text-main mb-0.5 truncate text-base leading-tight font-bold md:text-[1.05rem]">
       {effectiveDisplayName}
     </h2>
 
     {#if isChannel}
       <span
-        class="inline-flex items-center text-[0.7rem] md:text-xs font-semibold text-text-muted uppercase tracking-wider"
+        class="text-text-muted inline-flex items-center text-[0.7rem] font-semibold tracking-wider uppercase md:text-xs"
       >
         {m.chat_community_channel_label()}
       </span>
@@ -202,14 +202,14 @@
   </div>
 
   <!-- Actions (calls, members, search, settings) -->
-  <div class="flex items-center gap-1 shrink-0">
+  <div class="flex shrink-0 items-center gap-1">
     {#if showCallButtons}
       {#if onStartAudioCall}
         <button
           onclick={onStartAudioCall}
           aria-label={m.chat_audio_call_label()}
           title={m.chat_audio_call_label()}
-          class="p-2.5 rounded-xl text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95"
+          class="text-text-muted hover:text-text-main rounded-xl p-2.5 transition-all outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 dark:hover:bg-white/10"
         >
           <Phone size={20} strokeWidth={2.5} />
         </button>
@@ -219,7 +219,7 @@
           onclick={onStartVideoCall}
           aria-label={m.chat_video_call_label()}
           title={m.chat_video_call_label()}
-          class="p-2.5 rounded-xl text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95"
+          class="text-text-muted hover:text-text-main rounded-xl p-2.5 transition-all outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 dark:hover:bg-white/10"
         >
           <Video size={20} strokeWidth={2.5} />
         </button>
@@ -232,9 +232,9 @@
         aria-label={m.chat_channel_members_title()}
         title={m.common_members_label()}
         aria-pressed={membersActive}
-        class="p-2.5 rounded-xl transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 {membersActive
-          ? 'text-amber-500 bg-amber-500/10'
-          : 'text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main'}"
+        class="rounded-xl p-2.5 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 {membersActive
+          ? 'bg-amber-500/10 text-amber-500'
+          : 'text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
       >
         <Users size={20} strokeWidth={2.5} />
       </button>
@@ -245,7 +245,7 @@
         onclick={onOpenMedia}
         aria-label={m.chat_media_links_files_label()}
         title={m.chat_media_links_files_label()}
-        class="p-2.5 rounded-xl text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95"
+        class="text-text-muted hover:text-text-main rounded-xl p-2.5 transition-all outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 dark:hover:bg-white/10"
       >
         <Images size={20} strokeWidth={2.5} />
       </button>
@@ -256,9 +256,9 @@
         onclick={onToggleSearch}
         aria-label={m.chat_search_in_conversation_label()}
         title={m.chat_search_title()}
-        class="p-2.5 rounded-xl transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 {searchActive
-          ? 'text-amber-500 bg-amber-500/10'
-          : 'text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main'}"
+        class="rounded-xl p-2.5 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 {searchActive
+          ? 'bg-amber-500/10 text-amber-500'
+          : 'text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
       >
         <Search size={20} strokeWidth={2.5} />
       </button>
@@ -275,7 +275,7 @@
         : isGroupConversation
           ? m.chat_group_settings_label()
           : m.chat_dm_settings_label()}
-      class="p-2.5 rounded-xl text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95"
+      class="text-text-muted hover:text-text-main rounded-xl p-2.5 transition-all outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 dark:hover:bg-white/10"
       title={m.chat_settings_title()}
     >
       <Settings size={20} strokeWidth={2.5} />

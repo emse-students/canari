@@ -21,26 +21,26 @@
 
 <div class="space-y-3">
   {#if loading}
-    <p class="text-sm text-text-muted">{m.common_loading_label()}</p>
+    <p class="text-text-muted text-sm">{m.common_loading_label()}</p>
   {:else if memberships.length === 0}
-    <p class="text-sm text-text-muted">{emptyMessage}</p>
+    <p class="text-text-muted text-sm">{emptyMessage}</p>
   {:else}
     <ul class="space-y-2">
       {#each memberships as mb (mb.associationId)}
         <li>
           <a
             href="/associations/{encodeURIComponent(mb.slug)}"
-            class="flex items-center gap-3 rounded-xl border border-cn-border bg-white/50 dark:bg-white/5 px-4 py-3 hover:border-cn-yellow/30 transition-colors"
+            class="border-cn-border hover:border-cn-yellow/30 flex items-center gap-3 rounded-xl border bg-white/50 px-4 py-3 transition-colors dark:bg-white/5"
           >
             <AssociationAvatar name={mb.name} logoUrl={mb.logoUrl} size="sm" />
             <div class="min-w-0 flex-1">
-              <p class="text-sm font-bold text-text-main truncate">{mb.name}</p>
-              <p class="text-xs text-text-muted mt-0.5">
+              <p class="text-text-main truncate text-sm font-bold">{mb.name}</p>
+              <p class="text-text-muted mt-0.5 text-xs">
                 {mb.role}{#if mb.isAdmin}
                   · Admin{/if}
               </p>
             </div>
-            <Building2 size={16} class="shrink-0 text-text-muted" />
+            <Building2 size={16} class="text-text-muted shrink-0" />
           </a>
         </li>
       {/each}

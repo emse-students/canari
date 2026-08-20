@@ -50,7 +50,7 @@
 
 {#if Object.keys(groupedReactions).length > 0}
   <div
-    class="mt-1 flex w-full max-h-[5.5rem] max-w-[min(100%,38rem)] flex-wrap content-start gap-1.5 overflow-hidden px-1 pb-2 pt-0.5 {isOwn
+    class="mt-1 flex max-h-[5.5rem] w-full max-w-[min(100%,38rem)] flex-wrap content-start gap-1.5 overflow-hidden px-1 pt-0.5 pb-2 {isOwn
       ? 'justify-end'
       : 'justify-start'}"
     role="group"
@@ -62,10 +62,10 @@
 
       <button
         type="button"
-        class="flex shrink-0 items-center gap-1.5 px-2.5 py-1 rounded-xl text-sm transition-all duration-200 border shadow-sm active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50
+        class="flex shrink-0 items-center gap-1.5 rounded-xl border px-2.5 py-1 text-sm shadow-sm transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50 active:scale-95
           {hasReacted
-          ? 'bg-amber-500/15 dark:bg-amber-500/20 border-amber-500/30 dark:border-amber-500/20 text-amber-700 dark:text-amber-400 hover:bg-amber-500/25'
-          : 'bg-white/60 dark:bg-black/30 border-black/5 dark:border-white/10 hover:bg-white/90 dark:hover:bg-black/50 text-text-muted hover:text-text-main backdrop-blur-md'}"
+          ? 'border-amber-500/30 bg-amber-500/15 text-amber-700 hover:bg-amber-500/25 dark:border-amber-500/20 dark:bg-amber-500/20 dark:text-amber-400'
+          : 'text-text-muted hover:text-text-main border-black/5 bg-white/60 backdrop-blur-md hover:bg-white/90 dark:border-white/10 dark:bg-black/30 dark:hover:bg-black/50'}"
         onclick={(e) => {
           e.stopPropagation(); // Prevent opening message info when clicking a reaction badge.
           onReact?.(emoji);

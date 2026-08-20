@@ -92,9 +92,7 @@ import {
   evaluate,
   realClick,
   clickAtPoint,
-  activate,
   hoverBubble,
-  bubbleCentre,
   armComposer,
   fireComposer,
   awaitMessage,
@@ -1813,7 +1811,7 @@ async function mut16() {
     // `channelService.listPinnedMessageIds` + `setPinnedSet` (which REPLACES the set, not merges)
     // every time a channel is opened, and that is what this reads back.
     await restorePinKey(a, key, before[key]);
-    [a] = await Promise.all([openChannel(a, VENUE.community, VENUE.channel)]).then(() => [a]);
+    [a] = await Promise.resolve(openChannel(a, VENUE.community, VENUE.channel)).then(() => [a]);
     await until(a, `${paneExpr()}.innerText.indexOf(${JSON.stringify(marker)}) !== -1`, 15000);
 
     const stateAfterFreshLoad = await pinState(a, marker);

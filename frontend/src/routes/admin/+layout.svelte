@@ -124,14 +124,14 @@
 {#if !ready}
   <div class="flex justify-center py-24">
     <div
-      class="h-8 w-8 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+      class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
     ></div>
   </div>
 {:else}
-  <div class="px-4 py-6 sm:px-6 max-w-4xl mx-auto space-y-6">
+  <div class="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-6">
     <a
       href="/dashboard"
-      class="text-sm text-text-muted hover:text-text-main transition-colors inline-flex items-center gap-1"
+      class="text-text-muted hover:text-text-main inline-flex items-center gap-1 text-sm transition-colors"
     >
       <ArrowLeft size={14} />
       {m.admin_dashboard_link()}
@@ -139,13 +139,13 @@
 
     <header class="flex items-start gap-3">
       <span
-        class="flex h-11 w-11 items-center justify-center rounded-2xl bg-cn-yellow/20 text-cn-dark"
+        class="bg-cn-yellow/20 text-cn-dark flex h-11 w-11 items-center justify-center rounded-2xl"
       >
         <Shield size={22} />
       </span>
       <div>
-        <h1 class="text-xl font-extrabold text-text-main tracking-tight">{m.admin_title()}</h1>
-        <p class="text-sm text-text-muted mt-0.5">
+        <h1 class="text-text-main text-xl font-extrabold tracking-tight">{m.admin_title()}</h1>
+        <p class="text-text-muted mt-0.5 text-sm">
           {#if isGlobalAdminUser}
             {m.admin_global_description()}
           {:else}
@@ -161,7 +161,7 @@
         class="shrink-0 rounded-xl px-4 py-2 text-sm font-bold transition-colors
         {path === '/admin'
           ? 'bg-cn-yellow text-cn-ink shadow-sm'
-          : 'border border-cn-border text-text-muted hover:text-text-main'}"
+          : 'border-cn-border text-text-muted hover:text-text-main border'}"
       >
         {m.admin_home_label()}
       </a>
@@ -176,10 +176,10 @@
       {#each directLinks as item (item.href)}
         <a
           href={item.href}
-          class="inline-flex items-center gap-1.5 shrink-0 rounded-xl px-4 py-2 text-sm font-bold transition-colors
+          class="inline-flex shrink-0 items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-bold transition-colors
           {path.startsWith(item.href)
             ? 'bg-cn-yellow text-cn-ink shadow-sm'
-            : 'border border-cn-border text-text-muted hover:text-text-main'}"
+            : 'border-cn-border text-text-muted hover:text-text-main border'}"
         >
           <item.icon size={15} />
           {item.label}

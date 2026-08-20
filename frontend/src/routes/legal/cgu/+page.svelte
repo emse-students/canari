@@ -10,13 +10,13 @@
   class="min-h-dvh overflow-y-auto bg-transparent px-4 py-10 pt-[max(2.5rem,env(safe-area-inset-top))] pb-[max(2.5rem,env(safe-area-inset-bottom))]"
 >
   <div
-    class="mx-auto w-full max-w-2xl rounded-3xl border border-white/40 bg-white/20 p-8 shadow-2xl backdrop-blur-2xl dark:border-white/10 dark:bg-black/40 md:p-12"
+    class="mx-auto w-full max-w-2xl rounded-3xl border border-white/40 bg-white/20 p-8 shadow-2xl backdrop-blur-2xl md:p-12 dark:border-white/10 dark:bg-black/40"
   >
     <!-- En-tête -->
     <div class="mb-10 text-center">
       <button
         onclick={() => history.back()}
-        class="mb-6 inline-flex items-center gap-1.5 text-sm text-text-muted hover:text-text-main transition-colors"
+        class="text-text-muted hover:text-text-main mb-6 inline-flex items-center gap-1.5 text-sm transition-colors"
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
@@ -33,38 +33,38 @@
         {m.common_back()}
       </button>
       <div
-        class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-cn-ink shadow-lg"
+        class="bg-cn-ink mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl shadow-lg"
       >
         <img src="/favicon.png" alt="Canari" class="h-8 w-8 object-contain" />
       </div>
-      <h1 class="text-3xl font-bold text-text-main">{m.legal_cgu_title()}</h1>
-      <p class="mt-2 text-sm text-text-muted">{m.legal_cgu_subtitle()}</p>
-      <p class="mt-1 text-xs text-text-muted">Dernière mise à jour : 28/05/2026</p>
+      <h1 class="text-text-main text-3xl font-bold">{m.legal_cgu_title()}</h1>
+      <p class="text-text-muted mt-2 text-sm">{m.legal_cgu_subtitle()}</p>
+      <p class="text-text-muted mt-1 text-xs">Dernière mise à jour : 28/05/2026</p>
     </div>
 
     <!-- Navigation rapide -->
     <nav
       class="mb-8 rounded-2xl border border-white/30 bg-white/10 p-4 dark:border-white/10 dark:bg-white/5"
     >
-      <p class="mb-2 text-xs font-semibold uppercase tracking-widest text-text-muted">
+      <p class="text-text-muted mb-2 text-xs font-semibold tracking-widest uppercase">
         {m.legal_toc_heading()}
       </p>
-      <ul class="space-y-1 text-sm text-cn-yellow">
+      <ul class="text-cn-yellow space-y-1 text-sm">
         {#each [['#definitions', '1. Définitions'], ['#age', '2. Âge minimum et accès'], ['#hebergement', '3. Accès et hébergement'], ['#chiffrement', '4. Chiffrement et sécurité'], ['#regles', "5. Règles d'utilisation"], ['#contenu', '6. Contenu, modération et signalement'], ['#enfants', '7. Sécurité des enfants'], ['#paiements', '8. Paiements et remboursements'], ['#suppression', '9. Suppression de compte'], ['#donnees', '10. Données personnelles'], ['#propriete', '11. Propriété intellectuelle'], ['#responsabilite', '12. Responsabilité'], ['#droit', '13. Droit applicable et litiges'], ['#modifications', '14. Modifications des CGU'], ['#contact', '15. Contact']] as [href, label], i (i)}
           <li><a {href} class="hover:underline">{label}</a></li>
         {/each}
       </ul>
     </nav>
 
-    <div class="space-y-8 text-sm leading-relaxed text-text-main">
+    <div class="text-text-main space-y-8 text-sm leading-relaxed">
       <!-- 1 -->
       <section id="definitions">
-        <h2 class="mb-3 text-lg font-bold text-text-main">1. Définitions</h2>
+        <h2 class="text-text-main mb-3 text-lg font-bold">1. Définitions</h2>
         <p class="mb-3">Pour la bonne compréhension des présentes conditions :</p>
         <ul class="space-y-2">
           {#each [['Le Service', "L'application Canari (mobile Android, bureau Windows/macOS/Linux, web) et son infrastructure backend."], ["L'Éditeur", "L'association étudiante Rootz, affiliée à l'École des Mines de Saint-Étienne."], ["L'Utilisateur", "Toute personne disposant d'un compte valide lié à l'École des Mines de Saint-Étienne (EMSE)."], ['MLS', 'Messaging Layer Security (RFC 9420) - protocole de chiffrement de bout en bout utilisé pour les messages privés.'], ['Association', 'Groupe ou organisation étudiante créé au sein de la plateforme.'], ['Contenu', 'Tout texte, image, fichier ou média publié ou envoyé via le Service par un Utilisateur.']] as [terme, def], i (i)}
             <li class="rounded-xl border border-white/20 bg-white/10 p-3 dark:bg-white/5">
-              <span class="font-semibold text-cn-yellow">{terme} - </span><span
+              <span class="text-cn-yellow font-semibold">{terme} - </span><span
                 class="text-text-muted">{def}</span
               >
             </li>
@@ -74,8 +74,8 @@
 
       <!-- 2 -->
       <section id="age">
-        <h2 class="mb-3 text-lg font-bold text-text-main">2. Âge minimum et accès</h2>
-        <p class="mb-3 text-text-muted">
+        <h2 class="text-text-main mb-3 text-lg font-bold">2. Âge minimum et accès</h2>
+        <p class="text-text-muted mb-3">
           L'accès au Service est réservé aux membres de la communauté EMSE titulaires d'un compte
           institutionnel valide. <strong
             >L'utilisation du Service est interdite aux personnes de moins de 13 ans.</strong
@@ -91,10 +91,10 @@
 
       <!-- 3 -->
       <section id="hebergement">
-        <h2 class="mb-3 text-lg font-bold text-text-main">3. Accès et hébergement</h2>
+        <h2 class="text-text-main mb-3 text-lg font-bold">3. Accès et hébergement</h2>
 
-        <h3 class="mb-2 font-semibold text-text-main">Hébergement</h3>
-        <p class="mb-4 text-text-muted">
+        <h3 class="text-text-main mb-2 font-semibold">Hébergement</h3>
+        <p class="text-text-muted mb-4">
           Les données sont hébergées sur des serveurs privés gérés par l'association Rootz, situés
           physiquement à la Maison des Élèves de l'École des Mines, 20 Boulevard Alexandre de
           Fraissinette, 42100 Saint-Étienne. Aucune donnée principale n'est transmise à des clouds
@@ -105,7 +105,7 @@
           pour les sous-traitants).
         </p>
 
-        <h3 class="mb-2 font-semibold text-text-main">Disponibilité</h3>
+        <h3 class="text-text-main mb-2 font-semibold">Disponibilité</h3>
         <p class="text-text-muted">
           Le Service est fourni "en l'état". Des interruptions pour maintenance ou incident réseau
           peuvent survenir sans préavis. L'association Rootz ne garantit pas une disponibilité
@@ -115,9 +115,9 @@
 
       <!-- 4 -->
       <section id="chiffrement">
-        <h2 class="mb-3 text-lg font-bold text-text-main">4. Chiffrement et sécurité</h2>
-        <div class="rounded-xl border border-cn-yellow/30 bg-cn-yellow/5 p-4">
-          <p class="font-semibold text-cn-yellow mb-2">Chiffrement de bout en bout</p>
+        <h2 class="text-text-main mb-3 text-lg font-bold">4. Chiffrement et sécurité</h2>
+        <div class="border-cn-yellow/30 bg-cn-yellow/5 rounded-xl border p-4">
+          <p class="text-cn-yellow mb-2 font-semibold">Chiffrement de bout en bout</p>
           <p class="text-text-muted">
             Tous les messages privés sont chiffrés via le protocole MLS (RFC 9420). Le serveur
             Canari stocke uniquement des blobs chiffrés et n'a techniquement pas accès au contenu de
@@ -127,7 +127,7 @@
         <ul class="mt-3 space-y-2">
           {#each [['Confidentialité persistante', "Le protocole MLS garantit que la compromission d'une clé ne compromet pas les messages passés."], ['Synchronisation multi-appareils', "Votre état de chiffrement peut être synchronisé entre plusieurs appareils via un mécanisme d'échange de clés sécurisé (ECDH)."], ['Médias', 'Les fichiers et images partagés en privé sont chiffrés côté client avant upload. Le serveur stocke uniquement les données chiffrées.']] as [titre, desc], i (i)}
             <li class="rounded-xl border border-white/20 bg-white/10 p-3 dark:bg-white/5">
-              <span class="font-semibold text-cn-yellow">{titre} - </span><span
+              <span class="text-cn-yellow font-semibold">{titre} - </span><span
                 class="text-text-muted">{desc}</span
               >
             </li>
@@ -137,9 +137,9 @@
 
       <!-- 5 -->
       <section id="regles">
-        <h2 class="mb-3 text-lg font-bold text-text-main">5. Règles d'utilisation</h2>
+        <h2 class="text-text-main mb-3 text-lg font-bold">5. Règles d'utilisation</h2>
         <p class="mb-3">En utilisant Canari, vous vous engagez à :</p>
-        <ul class="space-y-1 ml-4 list-disc text-text-muted">
+        <ul class="text-text-muted ml-4 list-disc space-y-1">
           <li>
             Utiliser le Service uniquement à des fins légales et respectueuses de la communauté EMSE
           </li>
@@ -161,7 +161,7 @@
             > plutôt que de l'exploiter
           </li>
         </ul>
-        <p class="mt-4 text-text-muted">
+        <p class="text-text-muted mt-4">
           Le non-respect de ces règles peut entraîner la suspension immédiate ou la suppression
           définitive de votre compte, sans obligation de préavis.
         </p>
@@ -169,32 +169,32 @@
 
       <!-- 6 -->
       <section id="contenu">
-        <h2 class="mb-3 text-lg font-bold text-text-main">6. Contenu, modération et signalement</h2>
+        <h2 class="text-text-main mb-3 text-lg font-bold">6. Contenu, modération et signalement</h2>
 
-        <h3 class="mb-2 font-semibold text-text-main">Publications publiques</h3>
-        <p class="mb-4 text-text-muted">
+        <h3 class="text-text-main mb-2 font-semibold">Publications publiques</h3>
+        <p class="text-text-muted mb-4">
           Les posts, commentaires et réactions publiés sur le fil d'actualité sont visibles par tous
           les membres de la plateforme. Vous restez seul responsable de l'intégralité du contenu que
           vous publiez.
         </p>
 
-        <h3 class="mb-2 font-semibold text-text-main">Associations et workspaces</h3>
-        <p class="mb-4 text-text-muted">
+        <h3 class="text-text-main mb-2 font-semibold">Associations et workspaces</h3>
+        <p class="text-text-muted mb-4">
           Les responsables d'association peuvent créer des workspaces et des canaux de discussion.
           Les canaux utilisent un chiffrement dérivé côté serveur (HKDF) distinct du chiffrement MLS
           des messages directs.
         </p>
 
-        <h3 class="mb-2 font-semibold text-text-main">Signalement de contenu</h3>
-        <p class="mb-3 text-text-muted">
+        <h3 class="text-text-main mb-2 font-semibold">Signalement de contenu</h3>
+        <p class="text-text-muted mb-3">
           Si vous observez un contenu ou un comportement contraire aux présentes CGU, vous pouvez le
           signaler directement depuis l'application via le bouton <em>" Signaler "</em> présent sur chaque
           publication. Vous pouvez également contacter l'équipe de modération par e-mail :
         </p>
-        <div class="rounded-xl border border-white/20 bg-white/10 p-3 dark:bg-white/5 mb-3">
+        <div class="mb-3 rounded-xl border border-white/20 bg-white/10 p-3 dark:bg-white/5">
           <p class="text-text-muted">
             <strong>E-mail :</strong>
-            <a href="mailto:bureau@rootz-emse.fr" class="text-cn-yellow hover:underline ml-1"
+            <a href="mailto:bureau@rootz-emse.fr" class="text-cn-yellow ml-1 hover:underline"
               >bureau@rootz-emse.fr</a
             >
             - Objet recommandé : <em>" Signalement contenu Canari "</em>
@@ -205,14 +205,14 @@
           l'utilisateur concerné si connu.
         </p>
 
-        <h3 class="mb-2 mt-5 font-semibold text-text-main">Politique de modération</h3>
-        <p class="mb-3 text-text-muted">
+        <h3 class="text-text-main mt-5 mb-2 font-semibold">Politique de modération</h3>
+        <p class="text-text-muted mb-3">
           La modération suit un processus en deux étapes visant à équilibrer la liberté d'expression
           et la sécurité de la communauté :
         </p>
-        <ul class="space-y-2 mb-4">
+        <ul class="mb-4 space-y-2">
           <li class="rounded-xl border border-white/20 bg-white/10 p-3 dark:bg-white/5">
-            <span class="font-semibold text-cn-yellow">Masquage automatique - </span>
+            <span class="text-cn-yellow font-semibold">Masquage automatique - </span>
             <span class="text-text-muted">
               Dès qu'un post accumule <strong>5 signalements distincts</strong> (de 5 utilisateurs différents),
               il est automatiquement masqué des fils d'actualité et placé en file de révision. L'auteur
@@ -220,7 +220,7 @@
             </span>
           </li>
           <li class="rounded-xl border border-white/20 bg-white/10 p-3 dark:bg-white/5">
-            <span class="font-semibold text-cn-yellow">Révision manuelle - </span>
+            <span class="text-cn-yellow font-semibold">Révision manuelle - </span>
             <span class="text-text-muted">
               Un modérateur (membre du BDE disposant du droit MODERATE, ou administrateur global)
               examine le contenu masqué et décide de le <strong>restaurer</strong> si le signalement
@@ -230,13 +230,13 @@
             </span>
           </li>
         </ul>
-        <p class="text-text-muted text-xs mb-4">
+        <p class="text-text-muted mb-4 text-xs">
           Les signalements abusifs ou de mauvaise foi peuvent eux-mêmes faire l'objet de mesures de
           modération. Le seuil de masquage automatique peut évoluer en fonction de l'usage réel de
           la plateforme.
         </p>
 
-        <h3 class="mb-2 font-semibold text-text-main">Recours</h3>
+        <h3 class="text-text-main mb-2 font-semibold">Recours</h3>
         <p class="text-text-muted">
           Toute décision de modération (suppression de contenu, restriction de compte) peut faire
           l'objet d'un recours par e-mail à
@@ -250,9 +250,9 @@
 
       <!-- 7 -->
       <section id="enfants">
-        <h2 class="mb-3 text-lg font-bold text-text-main">7. Sécurité des enfants</h2>
-        <div class="rounded-xl border border-red-500/30 bg-red-500/5 p-4 mb-3">
-          <p class="font-semibold text-red-400 mb-2">Interdiction absolue des CSAE</p>
+        <h2 class="text-text-main mb-3 text-lg font-bold">7. Sécurité des enfants</h2>
+        <div class="mb-3 rounded-xl border border-red-500/30 bg-red-500/5 p-4">
+          <p class="mb-2 font-semibold text-red-400">Interdiction absolue des CSAE</p>
           <p class="text-text-muted">
             L'application <strong>Canari</strong>, éditée par l'association <strong>Rootz</strong>,
             interdit strictement toute forme d'abus et d'exploitation sexuels d'enfants (CSAE),
@@ -265,7 +265,7 @@
           Tout contenu ou comportement relevant des CSAE entraîne la suspension immédiate du compte
           et un signalement aux autorités judiciaires compétentes. Pour en savoir plus ou signaler
           un abus, consultez nos
-          <a href="/legal/child-safety" class="text-cn-yellow hover:underline font-medium"
+          <a href="/legal/child-safety" class="text-cn-yellow font-medium hover:underline"
             >{m.legal_child_safety_link()}</a
           >.
         </p>
@@ -273,10 +273,10 @@
 
       <!-- 8 -->
       <section id="paiements">
-        <h2 class="mb-3 text-lg font-bold text-text-main">8. Paiements et remboursements</h2>
+        <h2 class="text-text-main mb-3 text-lg font-bold">8. Paiements et remboursements</h2>
 
-        <h3 class="mb-2 font-semibold text-text-main">Traitement des paiements</h3>
-        <p class="mb-4 text-text-muted">
+        <h3 class="text-text-main mb-2 font-semibold">Traitement des paiements</h3>
+        <p class="text-text-muted mb-4">
           Certaines fonctionnalités de Canari (billetterie événements, formulaires payants)
           impliquent des transactions financières traitées par <strong>Stripe, Inc.</strong>
           (prestataire de paiement certifié PCI DSS niveau 1). En effectuant un paiement, vous acceptez
@@ -289,20 +289,20 @@
           >. Canari ne stocke jamais vos coordonnées bancaires.
         </p>
 
-        <h3 class="mb-2 font-semibold text-text-main">Politique de remboursement</h3>
-        <p class="mb-3 text-text-muted">
+        <h3 class="text-text-main mb-2 font-semibold">Politique de remboursement</h3>
+        <p class="text-text-muted mb-3">
           Les conditions de remboursement varient selon le type de transaction :
         </p>
         <ul class="space-y-2">
           <li class="rounded-xl border border-white/20 bg-white/10 p-3 dark:bg-white/5">
-            <span class="font-semibold text-cn-yellow">Événements et billets - </span>
+            <span class="text-cn-yellow font-semibold">Événements et billets - </span>
             <span class="text-text-muted"
               >Le remboursement est à la discrétion de l'association organisatrice, dont les
               conditions sont indiquées sur la page de l'événement.</span
             >
           </li>
           <li class="rounded-xl border border-white/20 bg-white/10 p-3 dark:bg-white/5">
-            <span class="font-semibold text-cn-yellow">Formulaires payants - </span>
+            <span class="text-cn-yellow font-semibold">Formulaires payants - </span>
             <span class="text-text-muted"
               >Remboursement possible sur demande à <a
                 href="mailto:bureau@rootz-emse.fr"
@@ -311,7 +311,7 @@
             >
           </li>
           <li class="rounded-xl border border-white/20 bg-white/10 p-3 dark:bg-white/5">
-            <span class="font-semibold text-cn-yellow">Dons et contributions - </span>
+            <span class="text-cn-yellow font-semibold">Dons et contributions - </span>
             <span class="text-text-muted"
               >Les dons sont en principe non remboursables, sauf erreur manifeste ou transaction non
               autorisée.</span
@@ -319,7 +319,7 @@
           </li>
         </ul>
 
-        <p class="mt-3 text-text-muted">
+        <p class="text-text-muted mt-3">
           En cas de litige relatif à une transaction, contactez-nous à
           <a href="mailto:bureau@rootz-emse.fr" class="text-cn-yellow hover:underline"
             >bureau@rootz-emse.fr</a
@@ -330,11 +330,11 @@
 
       <!-- 9 -->
       <section id="suppression">
-        <h2 class="mb-3 text-lg font-bold text-text-main">9. Suppression de compte</h2>
+        <h2 class="text-text-main mb-3 text-lg font-bold">9. Suppression de compte</h2>
 
-        <h3 class="mb-2 font-semibold text-text-main">Suppression depuis l'application</h3>
-        <div class="rounded-xl border border-cn-yellow/30 bg-cn-yellow/5 p-4 mb-3">
-          <p class="font-semibold text-cn-yellow mb-2">
+        <h3 class="text-text-main mb-2 font-semibold">Suppression depuis l'application</h3>
+        <div class="border-cn-yellow/30 bg-cn-yellow/5 mb-3 rounded-xl border p-4">
+          <p class="text-cn-yellow mb-2 font-semibold">
             Méthode principale - directement dans Canari
           </p>
           <p class="text-text-muted">
@@ -345,20 +345,20 @@
           </p>
         </div>
 
-        <h3 class="mb-2 font-semibold text-text-main">
+        <h3 class="text-text-main mb-2 font-semibold">
           Suppression par e-mail (accès à l'app impossible)
         </h3>
-        <p class="mb-2 text-text-muted">
+        <p class="text-text-muted mb-2">
           Si vous ne pouvez plus accéder à l'application (ex. après désinstallation), envoyez votre
           demande à :
         </p>
-        <div class="rounded-xl border border-white/20 bg-white/10 p-3 dark:bg-white/5 mb-3">
+        <div class="mb-3 rounded-xl border border-white/20 bg-white/10 p-3 dark:bg-white/5">
           <p class="font-medium">
             <a href="mailto:bureau@rootz-emse.fr" class="text-cn-yellow hover:underline"
               >bureau@rootz-emse.fr</a
             >
           </p>
-          <p class="mt-1 text-text-muted text-xs">
+          <p class="text-text-muted mt-1 text-xs">
             Objet : <em>" Suppression compte Canari "</em> - depuis l'adresse e-mail liée à votre compte
             EMSE. Délai de traitement : 30 jours maximum.
           </p>
@@ -372,7 +372,7 @@
           >.
         </p>
 
-        <p class="mt-3 text-text-muted">
+        <p class="text-text-muted mt-3">
           <strong>La désinstallation seule ne supprime pas votre compte.</strong>
           Une action explicite (in-app ou par e-mail) est nécessaire.
         </p>
@@ -380,10 +380,10 @@
 
       <!-- 10 -->
       <section id="donnees">
-        <h2 class="mb-3 text-lg font-bold text-text-main">10. Données personnelles</h2>
+        <h2 class="text-text-main mb-3 text-lg font-bold">10. Données personnelles</h2>
         <p class="text-text-muted">
           Le traitement de vos données personnelles est détaillé dans notre
-          <a href="/legal/privacy" class="text-cn-yellow hover:underline font-medium"
+          <a href="/legal/privacy" class="text-cn-yellow font-medium hover:underline"
             >{m.legal_privacy_link()}</a
           >. Conformément au RGPD, vous disposez d'un droit d'accès, de rectification, de
           suppression, de limitation, de portabilité et d'opposition. Pour toute demande :
@@ -395,8 +395,8 @@
 
       <!-- 11 -->
       <section id="propriete">
-        <h2 class="mb-3 text-lg font-bold text-text-main">11. Propriété intellectuelle</h2>
-        <p class="mb-3 text-text-muted">
+        <h2 class="text-text-main mb-3 text-lg font-bold">11. Propriété intellectuelle</h2>
+        <p class="text-text-muted mb-3">
           L'application Canari, son code source et son design sont la propriété de l'association
           Rootz. Le code est développé en open source sous licence MIT.
         </p>
@@ -409,12 +409,12 @@
 
       <!-- 12 -->
       <section id="responsabilite">
-        <h2 class="mb-3 text-lg font-bold text-text-main">12. Responsabilité</h2>
-        <p class="mb-3 text-text-muted">
+        <h2 class="text-text-main mb-3 text-lg font-bold">12. Responsabilité</h2>
+        <p class="text-text-muted mb-3">
           L'association Rootz met en œuvre tous les moyens techniques raisonnables pour assurer la
           sécurité et la disponibilité du Service. Cependant, elle ne peut être tenue responsable :
         </p>
-        <ul class="ml-4 list-disc space-y-1 text-text-muted">
+        <ul class="text-text-muted ml-4 list-disc space-y-1">
           <li>Des interruptions de service indépendantes de sa volonté</li>
           <li>Du contenu publié par les utilisateurs</li>
           <li>Des dommages résultant d'une utilisation inappropriée du Service</li>
@@ -430,8 +430,8 @@
 
       <!-- 13 -->
       <section id="droit">
-        <h2 class="mb-3 text-lg font-bold text-text-main">13. Droit applicable et litiges</h2>
-        <p class="mb-3 text-text-muted">
+        <h2 class="text-text-main mb-3 text-lg font-bold">13. Droit applicable et litiges</h2>
+        <p class="text-text-muted mb-3">
           Les présentes CGU sont soumises au <strong>droit français</strong>. En cas de litige
           relatif à l'interprétation ou à l'exécution des présentes, les parties s'engagent à
           rechercher une solution amiable avant tout recours judiciaire.
@@ -445,7 +445,7 @@
 
       <!-- 14 -->
       <section id="modifications">
-        <h2 class="mb-3 text-lg font-bold text-text-main">14. Modifications des CGU</h2>
+        <h2 class="text-text-main mb-3 text-lg font-bold">14. Modifications des CGU</h2>
         <p class="text-text-muted">
           L'association Rootz se réserve le droit de modifier les présentes CGU à tout moment. En
           cas de modification substantielle, vous serez notifié par une notification dans
@@ -459,7 +459,7 @@
 
       <!-- 15 -->
       <section id="contact">
-        <h2 class="mb-3 text-lg font-bold text-text-main">15. Contact et mentions légales</h2>
+        <h2 class="text-text-main mb-3 text-lg font-bold">15. Contact et mentions légales</h2>
         <div class="rounded-xl border border-white/20 bg-white/10 p-4 dark:bg-white/5">
           <p><strong>Éditeur</strong></p>
           <p class="text-text-muted">Association Rootz - EMSE</p>
@@ -469,7 +469,7 @@
           </p>
           <p class="mt-2">
             <strong>Contact RGPD, signalement et support :</strong>
-            <a href="mailto:bureau@rootz-emse.fr" class="text-cn-yellow hover:underline ml-1"
+            <a href="mailto:bureau@rootz-emse.fr" class="text-cn-yellow ml-1 hover:underline"
               >bureau@rootz-emse.fr</a
             >
           </p>
@@ -478,7 +478,7 @@
     </div>
 
     <!-- Footer -->
-    <div class="mt-10 border-t border-white/20 pt-6 text-center text-xs text-text-muted">
+    <div class="text-text-muted mt-10 border-t border-white/20 pt-6 text-center text-xs">
       <p>{m.legal_footer_credits()}</p>
       <div class="mt-2 flex justify-center gap-4">
         <a href="/legal/privacy" class="text-cn-yellow hover:underline">{m.legal_privacy_link()}</a>

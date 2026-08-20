@@ -31,16 +31,16 @@
 </script>
 
 <div
-  class="rounded-2xl border border-red-500/20 bg-red-500/5 p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-300"
+  class="animate-in fade-in slide-in-from-bottom-4 rounded-2xl border border-red-500/20 bg-red-500/5 p-6 shadow-sm delay-300 duration-500 md:p-8"
   style="animation-fill-mode: backwards;"
 >
   <div class="flex items-start gap-4">
-    <div class="p-2.5 rounded-xl bg-red-500/10 text-red-500 shrink-0 mt-0.5">
+    <div class="mt-0.5 shrink-0 rounded-xl bg-red-500/10 p-2.5 text-red-500">
       <Trash2 size={22} strokeWidth={2.5} />
     </div>
-    <div class="flex-1 min-w-0">
-      <h2 class="text-lg font-extrabold text-red-500 mb-1">{m.profile_delete_heading()}</h2>
-      <p class="text-sm text-text-muted mb-4 leading-relaxed">
+    <div class="min-w-0 flex-1">
+      <h2 class="mb-1 text-lg font-extrabold text-red-500">{m.profile_delete_heading()}</h2>
+      <p class="text-text-muted mb-4 text-sm leading-relaxed">
         {m.profile_delete_desc()}
       </p>
       {#if !deletionDialogOpen}
@@ -50,7 +50,7 @@
             deletionConfirmText = '';
             deletionError = '';
           }}
-          class="inline-flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2.5 text-sm font-bold text-red-500 hover:bg-red-500/20 transition-all active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+          class="inline-flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2.5 text-sm font-bold text-red-500 transition-all outline-none hover:bg-red-500/20 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95"
         >
           <Trash2 size={16} strokeWidth={2.5} />
           {m.profile_delete_heading()}
@@ -65,12 +65,12 @@
             bind:value={deletionConfirmText}
             placeholder={DELETION_CONFIRM_WORD}
             disabled={deleting}
-            class="w-full max-w-xs rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-2.5 text-sm font-mono font-bold text-red-400 placeholder-red-500/30 outline-none focus:border-red-500/60 focus:ring-2 focus:ring-red-500/20 disabled:opacity-50 transition-all"
+            class="w-full max-w-xs rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-2.5 font-mono text-sm font-bold text-red-400 placeholder-red-500/30 transition-all outline-none focus:border-red-500/60 focus:ring-2 focus:ring-red-500/20 disabled:opacity-50"
           />
           {#if deletionError}
             <p
               transition:slide={{ duration: 150 }}
-              class="text-sm font-semibold text-red-500 flex items-center gap-2"
+              class="flex items-center gap-2 text-sm font-semibold text-red-500"
             >
               <AlertCircle size={16} />
               {deletionError}
@@ -83,14 +83,14 @@
                 deletionConfirmText = '';
               }}
               disabled={deleting}
-              class="rounded-xl px-4 py-2.5 text-sm font-bold text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/5 transition-all disabled:opacity-50 outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
+              class="text-text-muted hover:text-text-main focus-visible:ring-text-muted rounded-xl px-4 py-2.5 text-sm font-bold transition-all outline-none hover:bg-black/5 focus-visible:ring-2 disabled:opacity-50 dark:hover:bg-white/5"
             >
               {m.common_cancel_button()}
             </button>
             <button
               onclick={handleDeleteAccount}
               disabled={deleting || deletionConfirmText !== DELETION_CONFIRM_WORD}
-              class="inline-flex items-center gap-2 rounded-xl bg-red-500 px-5 py-2.5 text-sm font-bold text-white hover:bg-red-600 transition-all disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 shadow-md shadow-red-500/20 disabled:shadow-none outline-none focus-visible:ring-2 focus-visible:ring-red-500/50"
+              class="inline-flex items-center gap-2 rounded-xl bg-red-500 px-5 py-2.5 text-sm font-bold text-white shadow-md shadow-red-500/20 transition-all outline-none hover:bg-red-600 focus-visible:ring-2 focus-visible:ring-red-500/50 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
             >
               {#if deleting}
                 <Loader2 size={16} class="animate-spin" /> {m.profile_delete_deleting()}

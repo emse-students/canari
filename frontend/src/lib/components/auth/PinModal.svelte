@@ -106,18 +106,18 @@
 >
   <form onsubmit={handleSubmit} class="space-y-6 p-1">
     {#if isFirstSetup}
-      <div class="rounded-xl border border-cn-yellow/30 bg-cn-yellow/10 px-4 py-3 space-y-1.5">
-        <p class="text-sm font-semibold text-cn-yellow">
+      <div class="border-cn-yellow/30 bg-cn-yellow/10 space-y-1.5 rounded-xl border px-4 py-3">
+        <p class="text-cn-yellow text-sm font-semibold">
           {m.auth_pin_first_heading()}
         </p>
-        <p class="text-sm text-text-muted leading-relaxed">
+        <p class="text-text-muted text-sm leading-relaxed">
           {m.auth_pin_setup_p1()}<strong class="text-text-main">{m.auth_pin_never_sent()}</strong
           >{m.auth_pin_setup_p2()}<br />
           <strong class="text-text-main">{m.auth_pin_keep_safe()}</strong>
         </p>
       </div>
     {:else}
-      <p class="text-sm text-text-muted leading-relaxed text-center">
+      <p class="text-text-muted text-center text-sm leading-relaxed">
         {m.auth_pin_unlock_desc()}
       </p>
     {/if}
@@ -127,16 +127,16 @@
         type="button"
         onclick={onBiometricRequest}
         disabled={isLoading}
-        class="w-full py-3 flex items-center justify-center gap-2 rounded-xl border border-cn-border/60 bg-white/5 dark:bg-black/20 text-sm font-semibold text-text-main hover:bg-white/10 dark:hover:bg-black/30 transition-all disabled:opacity-50"
+        class="border-cn-border/60 text-text-main flex w-full items-center justify-center gap-2 rounded-xl border bg-white/5 py-3 text-sm font-semibold transition-all hover:bg-white/10 disabled:opacity-50 dark:bg-black/20 dark:hover:bg-black/30"
       >
         <Fingerprint size={18} />
         {m.auth_pin_use_fingerprint()}
       </button>
 
       <div class="flex items-center gap-3">
-        <hr class="flex-1 border-cn-border/40" />
-        <span class="text-xs text-text-muted">{m.auth_pin_or_enter()}</span>
-        <hr class="flex-1 border-cn-border/40" />
+        <hr class="border-cn-border/40 flex-1" />
+        <span class="text-text-muted text-xs">{m.auth_pin_or_enter()}</span>
+        <hr class="border-cn-border/40 flex-1" />
       </div>
     {/if}
 
@@ -145,7 +145,7 @@
       <div class="flex items-center justify-center gap-3 py-2">
         {#each Array(Math.max(pin.length, 4)) as _, i (i)}
           <span
-            class="w-3.5 h-3.5 rounded-full transition-all duration-150 {i < pin.length
+            class="h-3.5 w-3.5 rounded-full transition-all duration-150 {i < pin.length
               ? 'bg-cn-yellow scale-110'
               : 'bg-black/15 dark:bg-white/20'}"
           ></span>
@@ -153,7 +153,7 @@
       </div>
 
       {#if displayError}
-        <p class="text-sm text-red-500 font-medium text-center -mt-1">{displayError}</p>
+        <p class="-mt-1 text-center text-sm font-medium text-red-500">{displayError}</p>
       {/if}
 
       <!-- Numeric keypad -->
@@ -173,10 +173,10 @@
                   pin = pin + key;
                 }
               }}
-              class="h-14 rounded-2xl text-xl font-semibold text-text-main transition-all active:scale-95 disabled:opacity-50
+              class="text-text-main h-14 rounded-2xl text-xl font-semibold transition-all active:scale-95 disabled:opacity-50
                 {key === '⌫'
-                ? 'bg-black/5 dark:bg-white/10 text-base'
-                : 'bg-black/5 dark:bg-white/8 hover:bg-black/10 dark:hover:bg-white/15'}"
+                ? 'bg-black/5 text-base dark:bg-white/10'
+                : 'bg-black/5 hover:bg-black/10 dark:bg-white/8 dark:hover:bg-white/15'}"
             >
               {key}
             </button>
@@ -184,7 +184,7 @@
         {/each}
       </div>
 
-      <p class="text-xs text-text-muted text-center">
+      <p class="text-text-muted text-center text-xs">
         {isFirstSetup ? m.auth_pin_hint_setup_short() : m.auth_pin_hint_returning()}
         <button
           type="button"
@@ -192,7 +192,7 @@
             pin = '';
             useNumpad = false;
           }}
-          class="ml-1 underline hover:text-text-main transition-colors"
+          class="hover:text-text-main ml-1 underline transition-colors"
           >{m.auth_pin_manual_entry()}</button
         >
       </p>
@@ -211,9 +211,9 @@
           }}
           disabled={isLoading}
           placeholder="••••••"
-          class="w-full rounded-xl border border-cn-border/60 bg-white/5 dark:bg-black/20 px-4 py-3.5 text-center text-2xl tracking-[0.4em] font-mono focus:border-cn-yellow focus:ring-2 focus:ring-cn-yellow/30 focus:outline-none transition-all placeholder:tracking-normal placeholder:text-text-muted/50 disabled:opacity-50"
+          class="border-cn-border/60 focus:border-cn-yellow focus:ring-cn-yellow/30 placeholder:text-text-muted/50 w-full rounded-xl border bg-white/5 px-4 py-3.5 text-center font-mono text-2xl tracking-[0.4em] transition-all placeholder:tracking-normal focus:ring-2 focus:outline-none disabled:opacity-50 dark:bg-black/20"
         />
-        <p class="text-xs text-text-muted text-center">
+        <p class="text-text-muted text-center text-xs">
           {isFirstSetup ? m.auth_pin_hint_setup_long() : m.auth_pin_hint_returning()}
           <button
             type="button"
@@ -221,30 +221,30 @@
               pin = '';
               useNumpad = true;
             }}
-            class="ml-1 underline hover:text-text-main transition-colors"
+            class="hover:text-text-main ml-1 underline transition-colors"
             >{m.auth_pin_numeric_keypad()}</button
           >
         </p>
         {#if displayError}
-          <p class="text-sm text-red-500 font-medium text-center">{displayError}</p>
+          <p class="text-center text-sm font-medium text-red-500">{displayError}</p>
         {/if}
       </div>
     {/if}
 
     {#if showStaySignedIn}
       <label
-        class="flex items-start gap-2.5 cursor-pointer select-none text-left px-0.5 {isLoading
-          ? 'opacity-50 pointer-events-none'
+        class="flex cursor-pointer items-start gap-2.5 px-0.5 text-left select-none {isLoading
+          ? 'pointer-events-none opacity-50'
           : ''}"
       >
         <input
           type="checkbox"
           bind:checked={staySignedIn}
           disabled={isLoading}
-          class="mt-0.5 h-4 w-4 shrink-0 rounded border-cn-border/60 accent-cn-yellow"
+          class="border-cn-border/60 accent-cn-yellow mt-0.5 h-4 w-4 shrink-0 rounded"
         />
-        <span class="text-xs text-text-muted leading-relaxed">
-          <span class="font-semibold text-text-main">{m.auth_pin_stay_signed_in()}</span><br />
+        <span class="text-text-muted text-xs leading-relaxed">
+          <span class="text-text-main font-semibold">{m.auth_pin_stay_signed_in()}</span><br />
           {m.auth_pin_stay_signed_in_desc()}
         </span>
       </label>
@@ -253,7 +253,7 @@
     <button
       type="submit"
       disabled={isLoading}
-      class="w-full py-3.5 bg-cn-yellow text-cn-ink rounded-xl font-extrabold text-sm hover:bg-cn-yellow-hover hover:-translate-y-0.5 active:translate-y-0 shadow-lg shadow-cn-yellow/20 transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed disabled:hover:translate-y-0"
+      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover shadow-cn-yellow/20 flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-sm font-extrabold shadow-lg transition-all hover:-translate-y-0.5 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:translate-y-0"
     >
       {#if isLoading}
         <LoaderCircle size={16} class="animate-spin" />
@@ -271,7 +271,7 @@
         type="button"
         disabled={isLoading}
         onclick={() => onRecoverPin?.()}
-        class="w-full text-xs font-semibold text-cn-yellow hover:underline text-center disabled:opacity-50"
+        class="text-cn-yellow w-full text-center text-xs font-semibold hover:underline disabled:opacity-50"
       >
         {m.auth_pin_recover_link()}
       </button>
@@ -279,20 +279,20 @@
 
     <!-- Forgot PIN section (only for returning users) -->
     {#if !isFirstSetup}
-      <div class="border-t border-cn-border/30 pt-4">
+      <div class="border-cn-border/30 border-t pt-4">
         <button
           type="button"
           onclick={() => (showForgotPin = !showForgotPin)}
-          class="w-full text-xs text-text-muted hover:text-text-main transition-colors text-center"
+          class="text-text-muted hover:text-text-main w-full text-center text-xs transition-colors"
         >
           {m.auth_pin_forgot()}
         </button>
 
         {#if showForgotPin}
-          <div class="mt-3 rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3 space-y-3">
+          <div class="mt-3 space-y-3 rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3">
             <div class="flex items-start gap-2">
-              <AlertTriangle size={16} class="text-red-500 shrink-0 mt-0.5" />
-              <p class="text-xs text-text-muted leading-relaxed">
+              <AlertTriangle size={16} class="mt-0.5 shrink-0 text-red-500" />
+              <p class="text-text-muted text-xs leading-relaxed">
                 {m.auth_pin_forgot_p1()}<strong class="text-text-main"
                   >{m.auth_pin_forgot_never_stored()}</strong
                 >{m.auth_pin_forgot_p2()}
@@ -300,7 +300,7 @@
             </div>
 
             {#if onForgotPinReset}
-              <p class="text-xs text-text-muted leading-relaxed">
+              <p class="text-text-muted text-xs leading-relaxed">
                 <strong class="text-text-main">{m.auth_pin_reset_strong1()}</strong
                 >{m.auth_pin_reset_mid()}<strong class="text-text-main"
                   >{m.auth_pin_reset_strong2()}</strong
@@ -314,7 +314,7 @@
                     confirmReset = false;
                     onForgotPinReset?.();
                   }}
-                  class="block w-full text-center text-xs font-bold text-white bg-red-500 hover:bg-red-600 transition-colors py-2 rounded-lg disabled:opacity-50"
+                  class="block w-full rounded-lg bg-red-500 py-2 text-center text-xs font-bold text-white transition-colors hover:bg-red-600 disabled:opacity-50"
                 >
                   {m.auth_pin_reset_confirm()}
                 </button>
@@ -323,7 +323,7 @@
                   type="button"
                   disabled={isLoading}
                   onclick={() => (confirmReset = true)}
-                  class="block w-full text-center text-xs font-semibold text-red-500 hover:text-red-400 transition-colors py-1.5 rounded-lg border border-red-500/30 hover:border-red-400/40 hover:bg-red-500/5 disabled:opacity-50"
+                  class="block w-full rounded-lg border border-red-500/30 py-1.5 text-center text-xs font-semibold text-red-500 transition-colors hover:border-red-400/40 hover:bg-red-500/5 hover:text-red-400 disabled:opacity-50"
                 >
                   {m.auth_pin_reset_button()}
                 </button>
@@ -333,7 +333,7 @@
             <a
               href="/profile"
               onclick={() => onClose?.()}
-              class="block w-full text-center text-xs font-medium text-text-muted hover:text-text-main transition-colors py-1.5"
+              class="text-text-muted hover:text-text-main block w-full py-1.5 text-center text-xs font-medium transition-colors"
             >
               {m.auth_pin_delete_account_link()}
             </a>

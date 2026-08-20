@@ -74,10 +74,10 @@
   }
 </script>
 
-<div class="px-4 py-6 sm:px-6 max-w-4xl mx-auto space-y-6">
+<div class="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-6">
   <a
     href="/lists/{encodeURIComponent(slug)}"
-    class="inline-flex items-center gap-2 text-sm text-text-muted hover:text-text-main transition-colors"
+    class="text-text-muted hover:text-text-main inline-flex items-center gap-2 text-sm transition-colors"
   >
     <ArrowLeft size={16} />
     {m.list_edit_back_to_public()}
@@ -86,23 +86,23 @@
   {#if loading}
     <div class="flex items-center justify-center py-20">
       <div
-        class="h-8 w-8 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+        class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if error && !list}
-    <div class="rounded-xl bg-red-err/10 border border-red-err/30 text-red-err p-4 text-sm">
+    <div class="bg-red-err/10 border-red-err/30 text-red-err rounded-xl border p-4 text-sm">
       {error}
     </div>
   {:else if list}
     <header class="space-y-1">
-      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">Gestion de la liste</h1>
-      <p class="text-sm text-text-muted">
+      <h1 class="text-text-main text-2xl font-extrabold tracking-tight">Gestion de la liste</h1>
+      <p class="text-text-muted text-sm">
         @{list.slug}{list.promo ? ` · ${m.list_campaigns_heading({ year: list.promo })}` : ''}
       </p>
     </header>
 
     {#if error}
-      <div class="rounded-xl bg-red-err/10 border border-red-err/30 text-red-err p-4 text-sm">
+      <div class="bg-red-err/10 border-red-err/30 text-red-err rounded-xl border p-4 text-sm">
         {error}
       </div>
     {/if}
@@ -110,17 +110,17 @@
     <!-- Section tabs -->
     <nav
       data-swipe-nav-ignore
-      class="sticky top-0 z-30 -mx-4 px-4 py-3 bg-[var(--cn-bg)]/95 backdrop-blur-md border-y border-cn-border/80 sm:border sm:rounded-2xl sm:mx-0"
+      class="border-cn-border/80 sticky top-0 z-30 -mx-4 border-y bg-(--cn-bg)/95 px-4 py-3 backdrop-blur-md sm:mx-0 sm:rounded-2xl sm:border"
       aria-label={m.list_edit_sections_aria()}
     >
       <div class="flex flex-wrap gap-2">
         <button
           type="button"
           onclick={() => (editSection = 'profile')}
-          class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+          class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
           {editSection === 'profile'
             ? 'bg-cn-yellow text-cn-ink shadow-sm'
-            : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
+            : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
         >
           <Building2 size={17} />
           Profil
@@ -129,10 +129,10 @@
           <button
             type="button"
             onclick={() => (editSection = 'members')}
-            class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+            class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'members'
               ? 'bg-cn-yellow text-cn-ink shadow-sm'
-              : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
+              : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
           >
             <Users size={17} />
             Membres
@@ -142,10 +142,10 @@
           <button
             type="button"
             onclick={() => (editSection = 'danger')}
-            class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+            class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'danger'
-              ? 'bg-red-err/20 text-red-err border border-red-err/30'
-              : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-red-err'}"
+              ? 'bg-red-err/20 text-red-err border-red-err/30 border'
+              : 'border-cn-border text-text-muted hover:text-red-err border bg-(--cn-surface)'}"
           >
             <AlertTriangle size={17} />
             Danger

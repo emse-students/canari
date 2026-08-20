@@ -30,24 +30,24 @@
 </script>
 
 <div
-  class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-250"
+  class="border-cn-border animate-in fade-in slide-in-from-bottom-4 rounded-2xl border bg-(--cn-surface) p-6 shadow-sm delay-250 duration-500 md:p-8"
   style="animation-fill-mode: backwards;"
 >
-  <div class="flex items-center justify-between mb-6">
+  <div class="mb-6 flex items-center justify-between">
     <div class="flex items-center gap-3">
-      <div class="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+      <div class="rounded-xl bg-emerald-500/10 p-2.5 text-emerald-600 dark:text-emerald-400">
         <Tag size={22} strokeWidth={2.5} />
       </div>
       <div>
-        <h2 class="text-lg font-extrabold text-text-main">{m.profile_subs_heading()}</h2>
-        <p class="text-xs font-medium text-text-muted mt-0.5">
+        <h2 class="text-text-main text-lg font-extrabold">{m.profile_subs_heading()}</h2>
+        <p class="text-text-muted mt-0.5 text-xs font-medium">
           {m.profile_subs_subtitle()}
         </p>
       </div>
     </div>
     <a
       href="/account/purchases"
-      class="hidden sm:inline-flex items-center gap-1.5 rounded-xl bg-black/5 dark:bg-white/10 px-4 py-2 text-sm font-bold text-text-main hover:bg-black/10 dark:hover:bg-white/20 transition-all"
+      class="text-text-main hidden items-center gap-1.5 rounded-xl bg-black/5 px-4 py-2 text-sm font-bold transition-all hover:bg-black/10 sm:inline-flex dark:bg-white/10 dark:hover:bg-white/20"
     >
       <ShoppingBag size={16} />
       {m.profile_subs_see_all()}
@@ -56,22 +56,22 @@
   </div>
 
   {#if purchasesLoading}
-    <div class="flex items-center gap-3 text-sm font-semibold text-text-muted py-2">
+    <div class="text-text-muted flex items-center gap-3 py-2 text-sm font-semibold">
       <Loader2 size={18} class="animate-spin" />
       {m.common_loading_label()}
     </div>
   {:else if activeTags.length === 0}
-    <p class="text-sm text-text-muted mb-4">{m.profile_subs_empty()}</p>
+    <p class="text-text-muted mb-4 text-sm">{m.profile_subs_empty()}</p>
   {:else}
-    <ul class="space-y-2 mb-4">
+    <ul class="mb-4 space-y-2">
       {#each activeTags as tag (tag.id)}
         <li
-          class="flex items-center gap-3 rounded-xl border border-cn-border bg-white/50 dark:bg-white/5 px-4 py-3"
+          class="border-cn-border flex items-center gap-3 rounded-xl border bg-white/50 px-4 py-3 dark:bg-white/5"
         >
           <CotisationTagRow {tag}>
             {#snippet trailing()}
               <span
-                class="shrink-0 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-2.5 py-0.5 text-xs font-bold"
+                class="shrink-0 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-xs font-bold text-emerald-600 dark:text-emerald-400"
               >
                 {m.profile_subs_active_badge()}
               </span>
@@ -84,7 +84,7 @@
 
   <a
     href="/account/purchases"
-    class="sm:hidden w-full flex items-center justify-center gap-2 rounded-xl bg-black/5 dark:bg-white/10 px-4 py-3.5 text-sm font-bold text-text-main active:scale-[0.98] transition-all"
+    class="text-text-main flex w-full items-center justify-center gap-2 rounded-xl bg-black/5 px-4 py-3.5 text-sm font-bold transition-all active:scale-[0.98] sm:hidden dark:bg-white/10"
   >
     <ShoppingBag size={18} />
     {m.profile_subs_see_all_mobile()}

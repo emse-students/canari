@@ -78,7 +78,7 @@
     class="inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-bold transition-colors
     {active
       ? 'bg-cn-yellow text-cn-ink shadow-sm'
-      : 'border border-cn-border text-text-muted hover:text-text-main'}"
+      : 'border-cn-border text-text-muted hover:text-text-main border'}"
   >
     <Icon size={15} />
     {label}
@@ -99,13 +99,13 @@
       bind:this={panelEl}
       id={panelId}
       use:portal
-      class="fixed z-200 min-w-52 rounded-2xl border border-black/8 dark:border-white/10 bg-cn-surface/95 backdrop-blur-xl shadow-lg p-1.5 space-y-0.5"
+      class="bg-cn-surface/95 fixed z-200 min-w-52 space-y-0.5 rounded-2xl border border-black/8 p-1.5 shadow-lg backdrop-blur-xl dark:border-white/10"
     >
       {#each items as item (item.href)}
         <a
           href={item.href}
           onclick={() => (open = false)}
-          class="flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold text-text-main hover:bg-cn-yellow/15 transition-colors"
+          class="text-text-main hover:bg-cn-yellow/15 flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold transition-colors"
         >
           <item.icon size={15} />
           {item.label}

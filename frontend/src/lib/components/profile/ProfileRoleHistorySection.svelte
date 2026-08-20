@@ -105,16 +105,16 @@
 
 <div class="space-y-3">
   {#if entries.length === 0 && !showForm}
-    <p class="text-sm text-text-muted">
+    <p class="text-text-muted text-sm">
       {editable ? m.profile_role_history_add_prompt() : m.profile_role_history_empty()}
     </p>
   {:else}
     <ul class="space-y-2">
       {#each entries as entry (entry.id)}
         <li
-          class="flex items-start gap-3 rounded-xl border border-black/5 dark:border-white/10 bg-white/50 dark:bg-white/5 px-4 py-3"
+          class="flex items-start gap-3 rounded-xl border border-black/5 bg-white/50 px-4 py-3 dark:border-white/10 dark:bg-white/5"
         >
-          <div class="shrink-0 mt-0.5">
+          <div class="mt-0.5 shrink-0">
             <AssociationAvatar
               name={entry.associationName}
               logoUrl={entry.associationLogoUrl}
@@ -122,9 +122,9 @@
             />
           </div>
           <div class="min-w-0 flex-1">
-            <p class="text-sm font-bold text-text-main">
+            <p class="text-text-main text-sm font-bold">
               {entry.roleTitle}
-              <span class="font-semibold text-text-muted"> · </span>
+              <span class="text-text-muted font-semibold"> · </span>
               <a
                 href="/associations/{encodeURIComponent(entry.associationSlug)}"
                 class="text-cn-dark hover:underline"
@@ -133,7 +133,7 @@
               </a>
             </p>
             {#if formatRoleHistoryPeriod(entry.startYear, entry.endYear)}
-              <p class="text-xs text-text-muted mt-0.5">
+              <p class="text-text-muted mt-0.5 text-xs">
                 {formatRoleHistoryPeriod(entry.startYear, entry.endYear)}
               </p>
             {/if}
@@ -142,7 +142,7 @@
             <button
               type="button"
               onclick={() => void handleDelete(entry)}
-              class="shrink-0 p-2 rounded-lg text-text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors"
+              class="text-text-muted shrink-0 rounded-lg p-2 transition-colors hover:bg-red-500/10 hover:text-red-500"
               title={m.common_delete_button()}
               aria-label={m.common_delete_button()}
             >
@@ -157,18 +157,18 @@
   {#if editable}
     {#if showForm}
       <form
-        class="rounded-xl border border-cn-border bg-cn-bg/30 p-4 space-y-3"
+        class="border-cn-border bg-cn-bg/30 space-y-3 rounded-xl border p-4"
         onsubmit={(e) => void handleSubmit(e)}
       >
         <div class="grid gap-3 sm:grid-cols-2">
           <div class="sm:col-span-2">
-            <label for="rh-asso" class="text-xs font-semibold text-text-muted block mb-1"
+            <label for="rh-asso" class="text-text-muted mb-1 block text-xs font-semibold"
               >{m.profile_role_history_asso_group()}</label
             >
             <select
               id="rh-asso"
               bind:value={formAssociationId}
-              class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm"
+              class="border-cn-border w-full rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm"
             >
               <option value="">{m.profile_role_history_choose_asso()}</option>
               {#if assoOptions.length > 0}
@@ -188,7 +188,7 @@
             </select>
           </div>
           <div class="sm:col-span-2">
-            <label for="rh-role" class="text-xs font-semibold text-text-muted block mb-1"
+            <label for="rh-role" class="text-text-muted mb-1 block text-xs font-semibold"
               >{m.profile_role_history_role_label()}</label
             >
             <input
@@ -196,11 +196,11 @@
               type="text"
               bind:value={formRoleTitle}
               placeholder={m.profile_role_history_role_placeholder()}
-              class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm"
+              class="border-cn-border w-full rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm"
             />
           </div>
           <div>
-            <label for="rh-start" class="text-xs font-semibold text-text-muted block mb-1"
+            <label for="rh-start" class="text-text-muted mb-1 block text-xs font-semibold"
               >{m.profile_role_history_start_year_label()}</label
             >
             <input
@@ -210,11 +210,11 @@
               max="2100"
               bind:value={formStartYear}
               placeholder="2018"
-              class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm"
+              class="border-cn-border w-full rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm"
             />
           </div>
           <div>
-            <label for="rh-end" class="text-xs font-semibold text-text-muted block mb-1"
+            <label for="rh-end" class="text-text-muted mb-1 block text-xs font-semibold"
               >{m.profile_role_history_end_year_label()}</label
             >
             <input
@@ -224,25 +224,25 @@
               max="2100"
               bind:value={formEndYear}
               placeholder="2019"
-              class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm"
+              class="border-cn-border w-full rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm"
             />
           </div>
         </div>
         {#if formError}
-          <p class="text-sm text-red-err">{formError}</p>
+          <p class="text-red-err text-sm">{formError}</p>
         {/if}
-        <div class="flex gap-2 justify-end">
+        <div class="flex justify-end gap-2">
           <button
             type="button"
             onclick={() => (showForm = false)}
-            class="rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold"
+            class="border-cn-border rounded-xl border px-4 py-2 text-sm font-semibold"
           >
             {m.common_cancel_button()}
           </button>
           <button
             type="submit"
             disabled={saving}
-            class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-dark disabled:opacity-50"
+            class="bg-cn-yellow text-cn-dark rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
           >
             {saving ? m.common_saving_label() : m.common_add_button()}
           </button>
@@ -252,7 +252,7 @@
       <button
         type="button"
         onclick={() => void openForm()}
-        class="inline-flex items-center gap-2 rounded-xl border border-dashed border-cn-border px-4 py-2.5 text-sm font-semibold text-text-muted hover:text-text-main hover:border-cn-yellow/50 transition-colors"
+        class="border-cn-border text-text-muted hover:text-text-main hover:border-cn-yellow/50 inline-flex items-center gap-2 rounded-xl border border-dashed px-4 py-2.5 text-sm font-semibold transition-colors"
       >
         <Plus size={16} />
         {m.profile_role_history_add_button()}

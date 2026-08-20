@@ -27,7 +27,7 @@
 {#if show}
   <Banner busy={reconnecting}>
     {#if reconnecting}
-      <RefreshCw size={15} class="shrink-0 opacity-70 animate-spin" aria-hidden="true" />
+      <RefreshCw size={15} class="shrink-0 animate-spin opacity-70" aria-hidden="true" />
       <span class="truncate">{m.offline_banner_reconnecting()}</span>
     {:else}
       <CloudOff size={15} class="shrink-0 opacity-70" aria-hidden="true" />

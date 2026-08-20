@@ -140,19 +140,19 @@
 <Modal {open} title={m.chat_forward_modal_title()} {onClose}>
   <div class="flex flex-col gap-3">
     <div class="relative">
-      <Search size={16} class="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+      <Search size={16} class="text-text-muted absolute top-1/2 left-3 -translate-y-1/2" />
       <input
         type="text"
         bind:value={query}
         placeholder={m.chat_search_discussion_placeholder()}
         aria-label={m.chat_search_discussion_label()}
-        class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] py-2.5 pl-9 pr-3 text-sm text-text-main outline-none focus:border-cn-yellow"
+        class="border-cn-border text-text-main focus:border-cn-yellow w-full rounded-xl border bg-(--cn-surface) py-2.5 pr-3 pl-9 text-sm outline-none"
       />
     </div>
 
     <div class="-mx-1 flex max-h-[50vh] flex-col gap-0.5 overflow-y-auto px-1">
       {#if candidates.length === 0}
-        <p class="py-8 text-center text-sm text-text-muted">{m.chat_no_discussion_found()}</p>
+        <p class="text-text-muted py-8 text-center text-sm">{m.chat_no_discussion_found()}</p>
       {:else}
         {#each candidates as cand (cand.key)}
           <button
@@ -167,7 +167,7 @@
                 fallbackLabel={cand.label}
               />
             {:else if cand.conversation.conversationType === 'channel'}
-              <div class="w-8 h-8 flex items-center justify-center text-text-muted flex-shrink-0">
+              <div class="text-text-muted flex h-8 w-8 flex-shrink-0 items-center justify-center">
                 <Hash size={18} strokeWidth={2.5} />
               </div>
             {:else}
@@ -179,15 +179,15 @@
               />
             {/if}
             <span class="flex min-w-0 flex-1 flex-col">
-              <span class="truncate text-sm font-semibold text-text-main">{cand.label}</span>
+              <span class="text-text-main truncate text-sm font-semibold">{cand.label}</span>
               {#if cand.community}
-                <span class="flex items-center gap-1 truncate text-xs text-text-muted">
+                <span class="text-text-muted flex items-center gap-1 truncate text-xs">
                   <Hash size={11} class="shrink-0" />
                   {cand.community}
                 </span>
               {/if}
             </span>
-            <Forward size={16} class="shrink-0 text-text-muted" />
+            <Forward size={16} class="text-text-muted shrink-0" />
           </button>
         {/each}
       {/if}

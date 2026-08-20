@@ -46,37 +46,37 @@
 </script>
 
 <div
-  class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500"
+  class="border-cn-border animate-in fade-in slide-in-from-bottom-4 rounded-2xl border bg-(--cn-surface) p-6 shadow-sm duration-500 md:p-8"
   style="animation-fill-mode: backwards;"
 >
-  <div class="flex items-center justify-between gap-2 mb-4">
-    <h2 class="text-lg font-bold text-text-main flex items-center gap-2">
+  <div class="mb-4 flex items-center justify-between gap-2">
+    <h2 class="text-text-main flex items-center gap-2 text-lg font-bold">
       <NotebookPen size={20} class="text-cn-dark" />
       {m.profile_notepad_heading()}
     </h2>
-    <span class="text-xs text-text-muted">{m.profile_notepad_private()}</span>
+    <span class="text-text-muted text-xs">{m.profile_notepad_private()}</span>
   </div>
   {#if noteLoading}
-    <p class="text-sm text-text-muted py-3">{m.common_loading_label()}</p>
+    <p class="text-text-muted py-3 text-sm">{m.common_loading_label()}</p>
   {:else}
     <MarkdownComposerField
       bind:value={noteInput}
       placeholder={m.profile_notepad_placeholder()}
       minHeight="140px"
-      class="w-full min-w-0 rounded-[1.25rem] border border-black/10 dark:border-white/10 bg-white/80 dark:bg-black/40 shadow-inner focus-within:border-cn-yellow/50 focus-within:ring-2 focus-within:ring-cn-yellow/30 transition-all overflow-hidden"
+      class="focus-within:border-cn-yellow/50 focus-within:ring-cn-yellow/30 w-full min-w-0 overflow-hidden rounded-[1.25rem] border border-black/10 bg-white/80 shadow-inner transition-all focus-within:ring-2 dark:border-white/10 dark:bg-black/40"
       editorClass="min-h-[140px] w-full max-w-full px-4 py-3 text-[0.95rem] text-text-main leading-relaxed"
     />
     <div class="flex items-center justify-end gap-3 pt-3">
       {#if noteError}
-        <span class="text-xs text-red-err mr-auto">{noteError}</span>
+        <span class="text-red-err mr-auto text-xs">{noteError}</span>
       {:else if noteSaved}
-        <span class="text-xs text-green-ok mr-auto">{m.profile_notepad_saved()}</span>
+        <span class="text-green-ok mr-auto text-xs">{m.profile_notepad_saved()}</span>
       {/if}
       <button
         type="button"
         onclick={saveNote}
         disabled={noteSaving}
-        class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50 shadow-sm"
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-5 py-2.5 text-sm font-bold shadow-sm disabled:opacity-50"
       >
         {noteSaving ? m.common_saving_label() : m.common_save_button()}
       </button>

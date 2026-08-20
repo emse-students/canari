@@ -3,7 +3,7 @@
   import { goto } from '$app/navigation';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { listAssociations, updateAssociation, type Association } from '$lib/associations/api';
-  import { Building2, Search, Loader2, ShieldCheck } from '@lucide/svelte';
+  import { Building2, Search, ShieldCheck, LoaderCircle } from '@lucide/svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { m } from '$lib/paraglide/messages';
 
@@ -66,13 +66,13 @@
 <div class="space-y-6">
   <header class="flex items-start gap-3">
     <span
-      class="flex h-10 w-10 items-center justify-center rounded-xl bg-cn-yellow/15 text-cn-dark"
+      class="bg-cn-yellow/15 text-cn-dark flex h-10 w-10 items-center justify-center rounded-xl"
     >
       <Building2 size={20} />
     </span>
     <div>
-      <h2 class="text-lg font-extrabold text-text-main">{m.admin_assoc_title()}</h2>
-      <p class="text-sm text-text-muted mt-0.5">
+      <h2 class="text-text-main text-lg font-extrabold">{m.admin_assoc_title()}</h2>
+      <p class="text-text-muted mt-0.5 text-sm">
         {m.admin_assoc_subtitle()}
       </p>
     </div>
@@ -81,22 +81,22 @@
   {#if loading}
     <div class="flex justify-center py-16">
       <div
-        class="h-8 w-8 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+        class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else}
     <div class="flex flex-wrap items-center justify-between gap-3">
-      <div class="relative flex-1 min-w-[200px] max-w-sm">
-        <Search size={16} class="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+      <div class="relative max-w-sm min-w-50 flex-1">
+        <Search size={16} class="text-text-muted absolute top-1/2 left-3 -translate-y-1/2" />
         <input
           type="text"
           bind:value={query}
           placeholder={m.admin_assoc_search_placeholder()}
           aria-label={m.admin_assoc_search_aria_label()}
-          class="w-full rounded-xl border border-cn-border bg-transparent py-2 pl-9 pr-3 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-cn-yellow/40"
+          class="border-cn-border text-text-main focus:ring-cn-yellow/40 w-full rounded-xl border bg-transparent py-2 pr-3 pl-9 text-sm focus:ring-2 focus:outline-none"
         />
       </div>
-      <span class="inline-flex items-center gap-1.5 text-xs font-semibold text-text-muted">
+      <span class="text-text-muted inline-flex items-center gap-1.5 text-xs font-semibold">
         <ShieldCheck size={14} class="text-emerald-500" />
         {m.admin_assoc_bde_count_label({ bdeCount, total: associations.length })}
       </span>
@@ -107,20 +107,20 @@
     {/if}
 
     <div
-      class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] divide-y divide-cn-border/70 overflow-hidden"
+      class="border-cn-border divide-cn-border/70 divide-y overflow-hidden rounded-2xl border bg-(--cn-surface)"
     >
       {#if filtered.length === 0}
-        <p class="px-4 py-8 text-center text-sm text-text-muted">{m.admin_assoc_empty()}</p>
+        <p class="text-text-muted px-4 py-8 text-center text-sm">{m.admin_assoc_empty()}</p>
       {:else}
         {#each filtered as assoc (assoc.id)}
           <div class="flex items-center justify-between gap-3 px-4 py-3">
             <div class="min-w-0">
-              <span class="block truncate text-sm font-semibold text-text-main">{assoc.name}</span>
-              <span class="block truncate text-xs text-text-muted">/{assoc.slug}</span>
+              <span class="text-text-main block truncate text-sm font-semibold">{assoc.name}</span>
+              <span class="text-text-muted block truncate text-xs">/{assoc.slug}</span>
             </div>
             <label class="flex shrink-0 cursor-pointer items-center gap-2">
               {#if savingIds.has(assoc.id)}
-                <Loader2 size={14} class="animate-spin text-cn-yellow" />
+                <LoaderCircle size={14} class="text-cn-yellow animate-spin" />
               {/if}
               <span class="text-xs font-bold {assoc.isBDE ? 'text-green-ok' : 'text-text-muted'}">
                 BDE
@@ -130,7 +130,7 @@
                 checked={assoc.isBDE}
                 disabled={savingIds.has(assoc.id)}
                 onchange={(e) => toggleBde(assoc, (e.currentTarget as HTMLInputElement).checked)}
-                class="h-4 w-4 rounded border-cn-border text-cn-yellow focus:ring-cn-yellow disabled:opacity-50"
+                class="border-cn-border text-cn-yellow focus:ring-cn-yellow h-4 w-4 rounded disabled:opacity-50"
                 aria-label={m.admin_assoc_mark_bde_aria_label({ name: assoc.name })}
               />
             </label>

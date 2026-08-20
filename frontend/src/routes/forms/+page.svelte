@@ -153,17 +153,17 @@
   }
 </script>
 
-<div class="px-4 py-6 sm:px-6 max-w-3xl mx-auto">
-  <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-8">
+<div class="mx-auto max-w-3xl px-4 py-6 sm:px-6">
+  <div class="mb-8 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
     <div>
-      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">{m.form_list_title()}</h1>
-      <p class="text-sm text-text-muted mt-0.5">
+      <h1 class="text-text-main text-2xl font-extrabold tracking-tight">{m.form_list_title()}</h1>
+      <p class="text-text-muted mt-0.5 text-sm">
         {forms.length === 1 ? m.form_list_count_one() : m.form_list_count({ count: forms.length })}
       </p>
     </div>
     <a
       href="/forms/create"
-      class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-colors self-start sm:self-auto"
+      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 self-start rounded-xl px-5 py-2.5 text-sm font-bold transition-colors sm:self-auto"
     >
       <Plus size={16} />
       {m.form_list_new_button()}
@@ -173,25 +173,25 @@
   {#if loading}
     <div class="flex justify-center py-16">
       <div
-        class="w-10 h-10 border-4 border-cn-yellow border-t-transparent rounded-full animate-spin"
+        class="border-cn-yellow h-10 w-10 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if forms.length === 0}
     <div
-      class="text-center py-16 px-8 rounded-2xl border-2 border-dashed border-cn-border bg-[var(--cn-surface)]"
+      class="border-cn-border rounded-2xl border-2 border-dashed bg-(--cn-surface) px-8 py-16 text-center"
     >
       <div
-        class="w-14 h-14 mx-auto mb-4 rounded-2xl bg-cn-yellow/15 flex items-center justify-center text-cn-dark"
+        class="bg-cn-yellow/15 text-cn-dark mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl"
       >
         <FileText size={28} />
       </div>
-      <p class="text-text-muted font-medium mb-1">{m.form_list_empty_title()}</p>
-      <p class="text-sm text-text-muted/60 mb-4">
+      <p class="text-text-muted mb-1 font-medium">{m.form_list_empty_title()}</p>
+      <p class="text-text-muted/60 mb-4 text-sm">
         {m.form_list_empty_desc()}
       </p>
       <a
         href="/forms/create"
-        class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-colors"
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold transition-colors"
       >
         <Plus size={16} />
         {m.form_list_create_button()}
@@ -201,32 +201,32 @@
     <div class="space-y-3">
       {#each forms as form (form.id)}
         <div
-          class="rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] transition-colors {expandedForms[
+          class="border-cn-border rounded-2xl border-2 bg-(--cn-surface) transition-colors {expandedForms[
             form.id
           ]
             ? 'border-cn-yellow/40'
             : 'hover:border-cn-yellow/40'}"
         >
           <!-- Card header -->
-          <div class="p-5 flex flex-col sm:flex-row sm:items-center gap-3">
-            <div class="flex-1 min-w-0">
-              <h2 class="font-bold text-text-main truncate">{form.title}</h2>
+          <div class="flex flex-col gap-3 p-5 sm:flex-row sm:items-center">
+            <div class="min-w-0 flex-1">
+              <h2 class="text-text-main truncate font-bold">{form.title}</h2>
               {#if form.description}
-                <p class="text-sm text-text-muted mt-0.5 truncate">{form.description}</p>
+                <p class="text-text-muted mt-0.5 truncate text-sm">{form.description}</p>
               {/if}
-              <p class="text-xs text-text-muted/60 font-mono mt-1.5 truncate">{form.id}</p>
+              <p class="text-text-muted/60 mt-1.5 truncate font-mono text-xs">{form.id}</p>
             </div>
-            <div class="flex flex-wrap gap-2 flex-shrink-0">
+            <div class="flex flex-shrink-0 flex-wrap gap-2">
               <a
                 href="/forms/{form.id}/edit"
-                class="inline-flex items-center gap-1.5 rounded-xl bg-cn-yellow px-3.5 py-2 text-xs font-bold text-cn-ink hover:bg-cn-yellow-hover transition-colors"
+                class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-bold transition-colors"
               >
                 <Pencil size={14} />
                 {m.form_list_edit_button()}
               </a>
               <button
                 onclick={() => copyFormLink(form.id)}
-                class="inline-flex items-center gap-1.5 rounded-xl border-2 border-cn-border bg-[var(--cn-surface)] px-3.5 py-2 text-xs font-bold text-text-main hover:border-cn-yellow/40 transition-colors"
+                class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-xl border-2 bg-(--cn-surface) px-3.5 py-2 text-xs font-bold transition-colors"
               >
                 {#if copiedId === form.id}
                   <Check size={14} class="text-green-ok" />
@@ -238,14 +238,14 @@
               </button>
               <button
                 onclick={() => handleExport(form.id)}
-                class="inline-flex items-center gap-1.5 rounded-xl border-2 border-cn-border bg-[var(--cn-surface)] px-3.5 py-2 text-xs font-bold text-text-main hover:border-cn-yellow/40 transition-colors"
+                class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-xl border-2 bg-(--cn-surface) px-3.5 py-2 text-xs font-bold transition-colors"
               >
                 <Download size={14} />
                 {m.form_list_export_button()}
               </button>
               <button
                 onclick={() => toggleResponses(form.id)}
-                class="inline-flex items-center gap-1.5 rounded-xl border-2 border-cn-border bg-[var(--cn-surface)] px-3.5 py-2 text-xs font-bold text-text-main hover:border-cn-yellow/40 transition-colors"
+                class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-xl border-2 bg-(--cn-surface) px-3.5 py-2 text-xs font-bold transition-colors"
               >
                 <Users size={14} />
                 {m.form_list_responses_button()}
@@ -258,7 +258,7 @@
               <button
                 onclick={() => handleDelete(form.id, form.title)}
                 disabled={deletingId === form.id}
-                class="inline-flex items-center justify-center rounded-xl border-2 border-red-err/30 bg-red-err/10 p-2 text-red-err hover:bg-red-err/20 transition-colors disabled:opacity-50"
+                class="border-red-err/30 bg-red-err/10 text-red-err hover:bg-red-err/20 inline-flex items-center justify-center rounded-xl border-2 p-2 transition-colors disabled:opacity-50"
                 title={m.common_delete_button()}
               >
                 <Trash2 size={14} />
@@ -268,19 +268,19 @@
 
           <!-- Responses accordion -->
           {#if expandedForms[form.id]}
-            <div class="border-t-2 border-cn-border px-5 py-4">
+            <div class="border-cn-border border-t-2 px-5 py-4">
               {#if submissionsData[form.id] === 'loading'}
                 <div class="flex justify-center py-4">
                   <div
-                    class="w-6 h-6 border-2 border-cn-yellow border-t-transparent rounded-full animate-spin"
+                    class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-2 border-t-transparent"
                   ></div>
                 </div>
               {:else if submissionsData[form.id] === 'error'}
-                <p class="text-sm text-red-err text-center py-2">
+                <p class="text-red-err py-2 text-center text-sm">
                   {m.form_list_responses_error()}
                 </p>
               {:else if Array.isArray(submissionsData[form.id]) && (submissionsData[form.id] as Submission[]).length === 0}
-                <p class="text-sm text-text-muted text-center py-2">
+                <p class="text-text-muted py-2 text-center text-sm">
                   {m.form_list_responses_empty()}
                 </p>
               {:else if Array.isArray(submissionsData[form.id])}
@@ -289,26 +289,26 @@
                   <table class="w-full text-sm">
                     <thead>
                       <tr
-                        class="text-left text-xs font-bold text-text-muted uppercase tracking-wide border-b border-cn-border"
+                        class="text-text-muted border-cn-border border-b text-left text-xs font-bold tracking-wide uppercase"
                       >
-                        <th class="pb-2 pr-4 whitespace-nowrap">{m.form_list_col_date()}</th>
-                        <th class="pb-2 pr-4 whitespace-nowrap">{m.form_list_col_name()}</th>
-                        <th class="pb-2 pr-4 whitespace-nowrap">{m.form_list_col_status()}</th>
-                        <th class="pb-2 pr-4 whitespace-nowrap">{m.form_list_col_amount()}</th>
+                        <th class="pr-4 pb-2 whitespace-nowrap">{m.form_list_col_date()}</th>
+                        <th class="pr-4 pb-2 whitespace-nowrap">{m.form_list_col_name()}</th>
+                        <th class="pr-4 pb-2 whitespace-nowrap">{m.form_list_col_status()}</th>
+                        <th class="pr-4 pb-2 whitespace-nowrap">{m.form_list_col_amount()}</th>
                         <th class="pb-2 whitespace-nowrap"></th>
                       </tr>
                     </thead>
-                    <tbody class="divide-y divide-cn-border/50">
+                    <tbody class="divide-cn-border/50 divide-y">
                       {#each subs as sub (sub.id)}
                         <tr class="text-text-main">
-                          <td class="py-2 pr-4 text-xs font-mono text-text-muted whitespace-nowrap"
+                          <td class="text-text-muted py-2 pr-4 font-mono text-xs whitespace-nowrap"
                             >{formatDate(sub.createdAt)}</td
                           >
                           <td class="py-2 pr-4 whitespace-nowrap">
                             {#if sub.firstName || sub.lastName}
                               {[sub.firstName, sub.lastName].filter(Boolean).join(' ')}
                             {:else}
-                              <span class="text-text-muted/60 text-xs font-mono"
+                              <span class="text-text-muted/60 font-mono text-xs"
                                 >{getUserDisplayNameSync(sub.userId)}</span
                               >
                             {/if}
@@ -335,7 +335,7 @@
                             <button
                               onclick={() => void handleDeleteSubmission(form.id, sub)}
                               disabled={deletingSubmissionId === sub.id}
-                              class="inline-flex items-center justify-center rounded-lg p-1.5 text-text-muted hover:text-red-600 hover:bg-red-err/10 transition-colors disabled:opacity-50"
+                              class="text-text-muted hover:bg-red-err/10 inline-flex items-center justify-center rounded-lg p-1.5 transition-colors hover:text-red-600 disabled:opacity-50"
                               title={m.form_list_delete_response_title()}
                             >
                               <X size={13} />

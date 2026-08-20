@@ -63,20 +63,20 @@
 </script>
 
 {#if formInfos.length > 0}
-  <div class="px-5 py-3 space-y-3">
+  <div class="space-y-3 px-5 py-3">
     {#each formInfos as fi (fi.id)}
       <a
         href="/forms/{fi.id}?redirect=/posts"
-        class="relative flex items-center justify-between p-4 rounded-2xl border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 backdrop-blur-xl shadow-sm hover:shadow-md transition-all duration-300 hover:-translate-y-0.5 group outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50 {fi.submitted
+        class="group relative flex items-center justify-between rounded-2xl border border-black/5 bg-white/60 p-4 shadow-sm backdrop-blur-xl transition-all duration-300 outline-none hover:-translate-y-0.5 hover:shadow-md focus-visible:ring-4 focus-visible:ring-amber-500/50 dark:border-white/10 dark:bg-black/20 {fi.submitted
           ? 'hover:border-emerald-500/30'
           : 'hover:border-amber-500/30'}"
       >
-        <div class="flex items-center gap-3.5 min-w-0">
+        <div class="flex min-w-0 items-center gap-3.5">
           <!-- Icône d'état -->
           <div
-            class="p-2.5 rounded-xl flex-shrink-0 transition-colors {fi.submitted
+            class="flex-shrink-0 rounded-xl p-2.5 transition-colors {fi.submitted
               ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-              : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 group-hover:bg-amber-500/20'}"
+              : 'bg-amber-500/10 text-amber-600 group-hover:bg-amber-500/20 dark:text-amber-400'}"
           >
             {#if fi.submitted}
               <CheckCircle2 size={20} strokeWidth={2.5} />
@@ -86,16 +86,16 @@
           </div>
 
           <!-- Informations du Formulaire -->
-          <div class="flex-1 min-w-0">
+          <div class="min-w-0 flex-1">
             <h3
-              class="font-bold text-[0.95rem] text-text-main truncate transition-colors {fi.submitted
+              class="text-text-main truncate text-[0.95rem] font-bold transition-colors {fi.submitted
                 ? 'group-hover:text-emerald-600 dark:group-hover:text-emerald-400'
                 : 'group-hover:text-amber-600 dark:group-hover:text-amber-400'}"
             >
               {fi.title || m.post_form_fallback_title()}
             </h3>
             <p
-              class="text-[0.75rem] font-semibold mt-0.5 {fi.submitted
+              class="mt-0.5 text-[0.75rem] font-semibold {fi.submitted
                 ? 'text-emerald-600/80 dark:text-emerald-400/80'
                 : 'text-text-muted'}"
             >
@@ -115,7 +115,7 @@
 
         <!-- Flèche / Icône d'action externe -->
         <div
-          class="flex-shrink-0 ml-4 opacity-40 group-hover:opacity-100 transition-all duration-300 group-hover:translate-x-1 {fi.submitted
+          class="ml-4 flex-shrink-0 opacity-40 transition-all duration-300 group-hover:translate-x-1 group-hover:opacity-100 {fi.submitted
             ? 'group-hover:text-emerald-500'
             : 'group-hover:text-amber-500'}"
         >
@@ -132,10 +132,10 @@
           type="button"
           onclick={() => toggleReminder(fi.id)}
           disabled={toggling[fi.id]}
-          class="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-xl transition-colors {subscribed[
+          class="flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-medium transition-colors {subscribed[
             fi.id
           ]
-            ? 'text-amber-600 dark:text-amber-400 bg-amber-500/10 hover:bg-amber-500/20'
+            ? 'bg-amber-500/10 text-amber-600 hover:bg-amber-500/20 dark:text-amber-400'
             : 'text-text-muted hover:text-text hover:bg-cn-surface'}"
           title={subscribed[fi.id]
             ? m.post_form_disable_reminder_label()

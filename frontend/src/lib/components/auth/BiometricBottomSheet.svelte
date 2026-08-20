@@ -37,28 +37,28 @@
 
   <!-- Sheet -->
   <div
-    class="fixed inset-x-0 bottom-0 z-50 rounded-t-3xl border-t border-cn-border bg-cn-surface/95 backdrop-blur-2xl shadow-2xl px-6 pt-5 pb-[calc(1.5rem+env(safe-area-inset-bottom))]"
+    class="border-cn-border bg-cn-surface/95 fixed inset-x-0 bottom-0 z-50 rounded-t-3xl border-t px-6 pt-5 pb-[calc(1.5rem+env(safe-area-inset-bottom))] shadow-2xl backdrop-blur-2xl"
     role="dialog"
     aria-modal="true"
     aria-label={m.auth_biometric_aria()}
   >
     <!-- Drag handle -->
-    <div class="mx-auto mb-5 h-1 w-10 rounded-full bg-text-muted/40"></div>
+    <div class="bg-text-muted/40 mx-auto mb-5 h-1 w-10 rounded-full"></div>
 
     <!-- Fingerprint icon (animated) -->
-    <div class="flex justify-center mb-5">
-      <div class="relative p-5 rounded-full bg-amber-500/10">
+    <div class="mb-5 flex justify-center">
+      <div class="relative rounded-full bg-amber-500/10 p-5">
         <Fingerprint size={52} strokeWidth={1.5} class="text-amber-500" />
         <!-- Pulsing ring -->
-        <span class="absolute inset-0 rounded-full border-2 border-amber-500/40 animate-ping"
+        <span class="absolute inset-0 animate-ping rounded-full border-2 border-amber-500/40"
         ></span>
       </div>
     </div>
 
-    <h2 class="text-center text-lg font-extrabold text-text-main mb-1">
+    <h2 class="text-text-main mb-1 text-center text-lg font-extrabold">
       {title}
     </h2>
-    <p class="text-center text-sm text-text-muted mb-6 leading-relaxed">
+    <p class="text-text-muted mb-6 text-center text-sm leading-relaxed">
       {description}
     </p>
 
@@ -66,7 +66,7 @@
       <button
         type="button"
         onclick={onSkip}
-        class="w-full mt-3 py-2.5 text-sm font-semibold text-text-muted hover:text-text-main transition-colors"
+        class="text-text-muted hover:text-text-main mt-3 w-full py-2.5 text-sm font-semibold transition-colors"
       >
         {m.auth_biometric_use_pin()}
       </button>

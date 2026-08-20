@@ -51,7 +51,7 @@
 
 <div class={className}>
   {#if label}
-    <label for={uniqueId} class="block text-sm font-bold text-text-main mb-2 ml-1">
+    <label for={uniqueId} class="text-text-main mb-2 ml-1 block text-sm font-bold">
       {label}
       {#if required}<span class="text-red-500">*</span>{/if}
     </label>
@@ -65,7 +65,7 @@
     {required}
     aria-invalid={isInvalid || undefined}
     aria-errormessage={error ? `${uniqueId}-error` : undefined}
-    class="w-full px-4 py-3 border-2 rounded-2xl text-base text-text-main bg-[var(--cn-surface)] outline-none transition-all placeholder:text-text-muted/50 focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)] disabled:opacity-50 disabled:bg-cn-border/20 {isInvalid
+    class="text-text-main placeholder:text-text-muted/50 disabled:bg-cn-border/20 w-full rounded-2xl border-2 bg-(--cn-surface) px-4 py-3 text-base transition-all outline-none focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)] disabled:opacity-50 {isInvalid
       ? 'border-red-err focus:border-red-err'
       : 'border-cn-border focus:border-cn-yellow'}"
     {oninput}
@@ -73,7 +73,7 @@
     {...rest}
   />
   {#if error}
-    <p id="{uniqueId}-error" role="alert" class="mt-1.5 ml-1 text-xs font-medium text-red-err">
+    <p id="{uniqueId}-error" role="alert" class="text-red-err mt-1.5 ml-1 text-xs font-medium">
       {error}
     </p>
   {/if}

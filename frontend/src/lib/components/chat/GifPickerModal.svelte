@@ -112,23 +112,23 @@
       transition:fade={{ duration: 150 }}
     ></button>
     <div
-      class="relative flex max-h-[80vh] w-full flex-col rounded-t-2xl bg-[var(--cn-surface)] shadow-2xl sm:max-w-lg sm:rounded-2xl"
+      class="relative flex max-h-[80vh] w-full flex-col rounded-t-2xl bg-(--cn-surface) shadow-2xl sm:max-w-lg sm:rounded-2xl"
       transition:fly={{ y: 30, duration: 200 }}
     >
-      <div class="flex items-center gap-2 border-b border-cn-border p-3">
+      <div class="border-cn-border flex items-center gap-2 border-b p-3">
         <div class="relative flex-1">
-          <Search size={16} class="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+          <Search size={16} class="text-text-muted absolute top-1/2 left-3 -translate-y-1/2" />
           <input
             bind:value={query}
             placeholder={m.chat_gif_search_placeholder()}
             aria-label={m.chat_gif_search_label()}
-            class="w-full rounded-xl border border-cn-border bg-transparent py-2 pl-9 pr-3 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-cn-yellow/40"
+            class="border-cn-border text-text-main focus:ring-cn-yellow/40 w-full rounded-xl border bg-transparent py-2 pr-3 pl-9 text-sm focus:ring-2 focus:outline-none"
           />
         </div>
         <button
           type="button"
           onclick={onClose}
-          class="rounded-xl p-2 text-text-muted hover:bg-black/5 dark:hover:bg-white/10"
+          class="text-text-muted rounded-xl p-2 hover:bg-black/5 dark:hover:bg-white/10"
           aria-label={m.common_close_label()}
         >
           <X size={18} />
@@ -137,19 +137,19 @@
 
       <div class="min-h-0 flex-1 overflow-y-auto p-2">
         {#if !KLIPY_KEY}
-          <p class="py-10 text-center text-sm text-text-muted">
+          <p class="text-text-muted py-10 text-center text-sm">
             {m.chat_gif_not_configured()}
           </p>
         {:else if loading && results.length === 0}
           <div class="flex justify-center py-10">
             <div
-              class="h-6 w-6 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+              class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
             ></div>
           </div>
         {:else if error}
           <p class="py-10 text-center text-sm text-red-500">{error}</p>
         {:else if results.length === 0}
-          <p class="py-10 text-center text-sm text-text-muted">{m.chat_no_gif_found()}</p>
+          <p class="text-text-muted py-10 text-center text-sm">{m.chat_no_gif_found()}</p>
         {:else}
           <div class="columns-2 gap-2 sm:columns-3">
             {#each results as g (g.id)}
@@ -159,7 +159,7 @@
                   onSelect(g.full);
                   onClose();
                 }}
-                class="mb-2 block w-full overflow-hidden rounded-lg outline-none hover:opacity-90 focus-visible:ring-2 focus-visible:ring-cn-yellow"
+                class="focus-visible:ring-cn-yellow mb-2 block w-full overflow-hidden rounded-lg outline-none hover:opacity-90 focus-visible:ring-2"
                 aria-label={m.chat_send_gif_action_label()}
               >
                 <img src={g.preview} alt="GIF" loading="lazy" class="w-full" />
@@ -170,7 +170,7 @@
       </div>
 
       <!-- Attribution "Powered by KLIPY" required by the KLIPY API terms. -->
-      <div class="border-t border-cn-border px-3 py-1.5 text-center text-[0.65rem] text-text-muted">
+      <div class="border-cn-border text-text-muted border-t px-3 py-1.5 text-center text-[0.65rem]">
         Powered by KLIPY
       </div>
     </div>

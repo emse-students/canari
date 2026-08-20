@@ -50,27 +50,27 @@
 </script>
 
 <div
-  class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-500"
+  class="border-cn-border animate-in fade-in slide-in-from-bottom-4 rounded-2xl border bg-(--cn-surface) p-6 shadow-sm delay-500 duration-500 md:p-8"
   style="animation-fill-mode: backwards;"
 >
-  <div class="flex items-center gap-3 mb-2">
-    <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
+  <div class="mb-2 flex items-center gap-3">
+    <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
       <Info size={22} strokeWidth={2.5} />
     </div>
-    <h2 class="text-lg font-extrabold text-text-main">{m.settings_about_heading()}</h2>
+    <h2 class="text-text-main text-lg font-extrabold">{m.settings_about_heading()}</h2>
   </div>
-  <p class="text-xs font-medium text-text-muted mb-6 sm:pl-[3.75rem] leading-relaxed">
+  <p class="text-text-muted mb-6 text-xs leading-relaxed font-medium sm:pl-[3.75rem]">
     {m.settings_about_desc()}
   </p>
 
-  <div class="sm:pl-[3.75rem] space-y-3">
-    <p class="text-sm text-text-main">
+  <div class="space-y-3 sm:pl-[3.75rem]">
+    <p class="text-text-main text-sm">
       {m.settings_about_version_label()}
       <strong class="font-bold">{clientVersion}</strong>
     </p>
 
     {#if updateAvailable}
-      <p class="text-sm text-text-muted leading-relaxed">
+      <p class="text-text-muted text-sm leading-relaxed">
         {m.settings_about_update_available({ version: info?.serverVersion ?? '' })}
         {#if target}
           {updateTargetInstruction(target.kind)}
@@ -78,7 +78,7 @@
       </p>
       <button
         type="button"
-        class="inline-flex items-center gap-2 rounded-lg border border-cn-border px-4 py-2 text-sm font-bold text-text-main hover:bg-cn-bg transition-colors disabled:opacity-60"
+        class="border-cn-border text-text-main hover:bg-cn-bg inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-bold transition-colors disabled:opacity-60"
         disabled={updating || target === null}
         onclick={() => void handleUpdate()}
       >
@@ -90,7 +90,7 @@
             : m.common_loading_label()}
       </button>
     {:else}
-      <p class="text-sm text-text-muted">{m.settings_about_up_to_date()}</p>
+      <p class="text-text-muted text-sm">{m.settings_about_up_to_date()}</p>
     {/if}
   </div>
 </div>

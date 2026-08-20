@@ -386,7 +386,7 @@
 <Modal {open} title={m.chat_device_management_title()} {onClose} maxWidth="max-w-xl">
   <div class="px-1">
     {#if loading}
-      <div class="flex flex-col items-center justify-center py-12 gap-4 text-text-muted">
+      <div class="text-text-muted flex flex-col items-center justify-center gap-4 py-12">
         <Loader size={28} class="animate-spin text-amber-500" />
         <span class="text-sm font-semibold tracking-wide">{m.chat_syncing_devices()}</span>
       </div>
@@ -395,10 +395,10 @@
            next to the devices it refused to touch, not on an empty panel. -->
       {#if error}
         <div
-          class="flex items-start gap-3 p-4 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 mb-4 shadow-inner"
+          class="mb-4 flex items-start gap-3 rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-red-600 shadow-inner dark:text-red-400"
         >
-          <ShieldAlert size={20} class="shrink-0 mt-0.5" />
-          <p class="text-sm font-medium leading-relaxed">{error}</p>
+          <ShieldAlert size={20} class="mt-0.5 shrink-0" />
+          <p class="text-sm leading-relaxed font-medium">{error}</p>
         </div>
       {/if}
 
@@ -406,30 +406,30 @@
            no connection line has to be readable as "not known" rather than "none". -->
       {#if sessionError}
         <div
-          class="flex items-start gap-3 p-4 rounded-2xl bg-orange-500/10 border border-orange-500/20 text-orange-700 dark:text-orange-300 mb-4 shadow-inner"
+          class="mb-4 flex items-start gap-3 rounded-2xl border border-orange-500/20 bg-orange-500/10 p-4 text-orange-700 shadow-inner dark:text-orange-300"
         >
-          <TriangleAlert size={20} class="shrink-0 mt-0.5" />
-          <p class="text-sm font-medium leading-relaxed">{sessionError}</p>
+          <TriangleAlert size={20} class="mt-0.5 shrink-0" />
+          <p class="text-sm leading-relaxed font-medium">{sessionError}</p>
         </div>
       {/if}
 
       {#if devices.length > 0 && !currentDeviceListed}
         <div
-          class="flex items-start gap-3 p-4 rounded-2xl bg-orange-500/10 border border-orange-500/20 text-orange-700 dark:text-orange-300 mb-4 shadow-inner"
+          class="mb-4 flex items-start gap-3 rounded-2xl border border-orange-500/20 bg-orange-500/10 p-4 text-orange-700 shadow-inner dark:text-orange-300"
         >
-          <TriangleAlert size={20} class="shrink-0 mt-0.5" />
-          <p class="text-sm font-medium leading-relaxed">
+          <TriangleAlert size={20} class="mt-0.5 shrink-0" />
+          <p class="text-sm leading-relaxed font-medium">
             {m.chat_device_not_listed_warning({ id: myDeviceId })}
           </p>
         </div>
       {/if}
 
       <div class="space-y-5 pb-2">
-        <p class="text-sm text-text-muted leading-relaxed">
+        <p class="text-text-muted text-sm leading-relaxed">
           {m.chat_devices_intro()}
         </p>
 
-        <p class="text-[0.85rem] font-bold uppercase tracking-wider text-text-muted">
+        <p class="text-text-muted text-[0.85rem] font-bold tracking-wider uppercase">
           {m.chat_devices_count_label({ devices: devices.length })}
         </p>
 
@@ -439,21 +439,21 @@
             {@const browser = sessionBrowserLabel(row)}
 
             <div
-              class="rounded-3xl border p-4 sm:p-5 transition-all duration-300 hover:shadow-md
+              class="rounded-3xl border p-4 transition-all duration-300 hover:shadow-md sm:p-5
                 {row.isCurrentDevice
                 ? 'border-amber-500/30 bg-amber-500/5 shadow-inner'
                 : row.device === null
                   ? 'border-orange-500/30 bg-orange-500/5'
-                  : 'border-black/5 dark:border-white/10 bg-white/40 dark:bg-black/20 backdrop-blur-md'}"
+                  : 'border-black/5 bg-white/40 backdrop-blur-md dark:border-white/10 dark:bg-black/20'}"
             >
-              <div class="flex items-start sm:items-center gap-4">
+              <div class="flex items-start gap-4 sm:items-center">
                 <div
-                  class="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-sm
+                  class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl shadow-sm
                   {row.isCurrentDevice
                     ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400'
                     : row.device === null
                       ? 'bg-orange-500/15 text-orange-600 dark:text-orange-400'
-                      : 'bg-white/80 dark:bg-white/10 text-text-muted'}"
+                      : 'text-text-muted bg-white/80 dark:bg-white/10'}"
                 >
                   {#if row.device === null}
                     <ShieldAlert size={24} strokeWidth={2} />
@@ -464,44 +464,44 @@
                   {/if}
                 </div>
 
-                <div class="flex-1 min-w-0 pt-0.5 sm:pt-0">
+                <div class="min-w-0 flex-1 pt-0.5 sm:pt-0">
                   {#if row.device && editingDeviceId === row.device.deviceId}
-                    <div class="flex gap-2 items-center mb-2">
+                    <div class="mb-2 flex items-center gap-2">
                       <input
                         type="text"
                         bind:value={editingName}
                         placeholder={m.chat_device_name_placeholder()}
                         maxlength="80"
-                        class="flex-1 px-3 py-1.5 rounded-lg text-sm bg-white/50 dark:bg-white/10 border border-black/10 dark:border-white/10 text-text-main placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-amber-500"
+                        class="text-text-main placeholder:text-text-muted flex-1 rounded-lg border border-black/10 bg-white/50 px-3 py-1.5 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none dark:border-white/10 dark:bg-white/10"
                       />
                       <button
                         onclick={() => void saveName()}
-                        class="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-amber-500 text-white hover:bg-amber-600 transition-all active:scale-95"
+                        class="rounded-lg bg-amber-500 px-2.5 py-1.5 text-xs font-bold text-white transition-all hover:bg-amber-600 active:scale-95"
                       >
                         {m.common_ok_button()}
                       </button>
                       <button
                         onclick={cancelEditing}
-                        class="p-1.5 rounded-lg text-text-muted hover:bg-black/5 dark:hover:bg-white/5 transition-all"
+                        class="text-text-muted rounded-lg p-1.5 transition-all hover:bg-black/5 dark:hover:bg-white/5"
                       >
                         <X size={16} />
                       </button>
                     </div>
                   {:else}
-                    <div class="flex flex-wrap items-center gap-2 mb-1">
-                      <span class="font-bold text-[0.95rem] text-text-main truncate">
+                    <div class="mb-1 flex flex-wrap items-center gap-2">
+                      <span class="text-text-main truncate text-[0.95rem] font-bold">
                         {rowLabel(row)}
                       </span>
                       {#if row.device}
                         <span
-                          class="text-[0.65rem] px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/10 font-semibold text-text-muted uppercase tracking-wider"
+                          class="text-text-muted rounded-full bg-black/5 px-2 py-0.5 text-[0.65rem] font-semibold tracking-wider uppercase dark:bg-white/10"
                         >
                           {getDeviceOsLabel(row.device)}
                         </span>
                       {/if}
                       {#if row.isCurrentDevice}
                         <span
-                          class="text-[0.65rem] px-2 py-0.5 rounded-full bg-amber-500 text-cn-ink font-extrabold uppercase tracking-wider shadow-sm"
+                          class="text-cn-ink rounded-full bg-amber-500 px-2 py-0.5 text-[0.65rem] font-extrabold tracking-wider uppercase shadow-sm"
                         >
                           {m.chat_current_device_badge()}
                         </span>
@@ -513,7 +513,7 @@
                     {#if sessionsKnown}
                       {#if latest}
                         <p
-                          class="text-xs font-medium text-text-muted"
+                          class="text-text-muted text-xs font-medium"
                           title={exactDate(latest.lastUsedAt)}
                         >
                           {#if browser}<span class="font-semibold">{browser}</span> -
@@ -523,19 +523,19 @@
                               - {m.chat_device_session_count({ count: row.sessions.length })}</span
                             >{/if}
                         </p>
-                        <p class="text-xs font-medium text-text-muted/70 mt-0.5">
+                        <p class="text-text-muted/70 mt-0.5 text-xs font-medium">
                           {m.settings_sessions_started({ when: exactDate(latest.createdAt) })}
                         </p>
                       {:else}
-                        <p class="text-xs font-medium text-text-muted/70">
+                        <p class="text-text-muted/70 text-xs font-medium">
                           {m.chat_device_no_session()}
                         </p>
                       {/if}
                     {/if}
 
-                    <div class="flex items-center gap-2 mt-1">
+                    <div class="mt-1 flex items-center gap-2">
                       <div
-                        class="text-[0.7rem] font-mono text-text-muted opacity-80 truncate flex-1"
+                        class="text-text-muted flex-1 truncate font-mono text-[0.7rem] opacity-80"
                         title={row.device?.deviceId ?? row.unlistedDeviceId ?? ''}
                       >
                         {#if row.device}
@@ -554,7 +554,7 @@
                       {#if row.device}
                         <button
                           onclick={() => row.device && startEditing(row.device.deviceId)}
-                          class="p-1.5 rounded-lg text-text-muted hover:text-amber-600 dark:hover:text-amber-400 hover:bg-black/5 dark:hover:bg-white/5 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                          class="text-text-muted rounded-lg p-1.5 transition-all outline-none hover:bg-black/5 hover:text-amber-600 focus-visible:ring-2 focus-visible:ring-amber-500 dark:hover:bg-white/5 dark:hover:text-amber-400"
                           title={m.chat_rename_device_title()}
                           aria-label={m.chat_rename_device_label()}
                         >
@@ -570,7 +570,7 @@
                   <button
                     onclick={() => void handleRemoveRow(row)}
                     disabled={deleting !== null}
-                    class="shrink-0 p-2.5 rounded-xl bg-black/5 dark:bg-white/5 hover:bg-red-500/15 dark:hover:bg-red-500/20 text-text-muted hover:text-red-600 dark:hover:text-red-400 transition-all outline-none focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 disabled:opacity-40"
+                    class="text-text-muted shrink-0 rounded-xl bg-black/5 p-2.5 transition-all outline-none hover:bg-red-500/15 hover:text-red-600 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 disabled:opacity-40 dark:bg-white/5 dark:hover:bg-red-500/20 dark:hover:text-red-400"
                     title={m.chat_delete_device_title()}
                     aria-label={m.chat_delete_device_label()}
                   >
@@ -586,7 +586,7 @@
               <!-- A login with no device: say why it is here rather than let it look like a bug. -->
               {#if row.device === null}
                 <p
-                  class="text-xs text-orange-700 dark:text-orange-300 leading-relaxed font-medium mt-3 sm:pl-16"
+                  class="mt-3 text-xs leading-relaxed font-medium text-orange-700 sm:pl-16 dark:text-orange-300"
                 >
                   {row.unlistedDeviceId
                     ? m.chat_device_session_unlisted_note()
@@ -599,7 +599,7 @@
 
         {#if rows.length === 0}
           <div
-            class="text-center py-10 text-text-muted text-sm font-medium border border-dashed border-black/10 dark:border-white/10 rounded-3xl bg-black/5 dark:bg-white/5"
+            class="text-text-muted rounded-3xl border border-dashed border-black/10 bg-black/5 py-10 text-center text-sm font-medium dark:border-white/10 dark:bg-white/5"
           >
             {m.chat_no_devices_registered()}
           </div>
@@ -609,7 +609,7 @@
              without a database round trip, so it keeps working until it expires. Hiding that
              would make the deletion look like it did nothing. -->
         {#if sessionsKnown}
-          <p class="text-xs text-text-muted/70 leading-relaxed">
+          <p class="text-text-muted/70 text-xs leading-relaxed">
             {m.settings_sessions_delay_note()}
           </p>
         {/if}
@@ -621,7 +621,7 @@
     <button
       onclick={loadDeviceData}
       disabled={loading}
-      class="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-text-main bg-black/5 dark:bg-white/10 hover:bg-black/10 dark:hover:bg-white/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
+      class="text-text-main focus-visible:ring-text-muted inline-flex items-center justify-center gap-2 rounded-xl bg-black/5 px-5 py-2.5 text-sm font-bold transition-all outline-none hover:bg-black/10 focus-visible:ring-2 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white/10 dark:hover:bg-white/20"
     >
       <RefreshCw size={16} strokeWidth={2.5} class={loading ? 'animate-spin' : ''} />
       {m.common_refresh_button()}

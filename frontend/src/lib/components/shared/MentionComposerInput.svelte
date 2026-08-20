@@ -256,7 +256,7 @@
   }
 </script>
 
-<div class="mention-composer relative min-w-0 max-w-full w-full {className}">
+<div class="mention-composer relative w-full max-w-full min-w-0 {className}">
   <MentionDropdown
     open={mention.open}
     suggestions={mention.suggestions}
@@ -266,7 +266,7 @@
 
   {#if !editorHasContent && placeholder}
     <div
-      class="mention-composer-placeholder pointer-events-none absolute inset-0 block truncate text-text-muted/60 select-none {editorClass}"
+      class="mention-composer-placeholder text-text-muted/60 pointer-events-none absolute inset-0 block truncate select-none {editorClass}"
       aria-hidden="true"
     >
       {placeholder}

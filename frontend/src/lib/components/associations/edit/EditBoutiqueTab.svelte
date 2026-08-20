@@ -169,21 +169,21 @@
   }
 </script>
 
-<div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-6 shadow-sm">
-  <div class="flex items-center justify-between gap-3 flex-wrap">
+<div class="border-cn-border space-y-6 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm">
+  <div class="flex flex-wrap items-center justify-between gap-3">
     <div>
-      <h2 class="text-lg font-bold text-text-main tracking-tight flex items-center gap-2">
+      <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
         <ShoppingBag size={20} />
         {m.asso_boutique_title()}
       </h2>
-      <p class="text-sm text-text-muted mt-1">
+      <p class="text-text-muted mt-1 text-sm">
         {m.asso_boutique_subtitle()}
       </p>
     </div>
     <button
       type="button"
       onclick={() => (showProductForm = !showProductForm)}
-      class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-colors"
+      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-colors"
     >
       <Plus size={16} />
       {m.asso_boutique_new_product_button()}
@@ -191,14 +191,14 @@
   </div>
 
   {#if productsError}
-    <div class="rounded-xl border border-red-err/30 bg-red-err/10 text-red-err px-4 py-3 text-sm">
+    <div class="border-red-err/30 bg-red-err/10 text-red-err rounded-xl border px-4 py-3 text-sm">
       {productsError}
     </div>
   {/if}
 
   {#if !stripePaymentsReady}
     <div
-      class="rounded-xl border border-amber-warn/30 bg-amber-warn/10 text-amber-warn px-4 py-3 text-sm"
+      class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn rounded-xl border px-4 py-3 text-sm"
     >
       {#if stripePending}
         {m.asso_boutique_stripe_pending()}
@@ -216,16 +216,16 @@
   <!-- New product form -->
   {#if showProductForm}
     <form
-      class="rounded-xl border border-cn-border bg-cn-bg/40 p-5 space-y-4"
+      class="border-cn-border bg-cn-bg/40 space-y-4 rounded-xl border p-5"
       onsubmit={(e) => {
         e.preventDefault();
         void handleCreateProduct();
       }}
     >
-      <h3 class="font-bold text-sm text-text-main">{m.asso_boutique_form_title()}</h3>
+      <h3 class="text-text-main text-sm font-bold">{m.asso_boutique_form_title()}</h3>
 
       <div class="space-y-1">
-        <label for="new-product-name" class="text-xs font-semibold text-text-muted"
+        <label for="new-product-name" class="text-text-muted text-xs font-semibold"
           >{m.asso_boutique_name_label()}</label
         >
         <input
@@ -234,7 +234,7 @@
           bind:value={newProductName}
           placeholder="T-shirt promo"
           required
-          class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+          class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
         />
       </div>
 
@@ -250,7 +250,7 @@
 
       <div class="grid gap-4 sm:grid-cols-2">
         <div class="space-y-1">
-          <label for="new-product-amount" class="text-xs font-semibold text-text-muted"
+          <label for="new-product-amount" class="text-text-muted text-xs font-semibold"
             >{m.asso_boutique_fixed_price_label()}</label
           >
           <input
@@ -260,11 +260,11 @@
             step="0.01"
             bind:value={newProductAmountCents}
             placeholder="10.00"
-            class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+            class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
           />
         </div>
-        <div class="space-y-1 flex flex-col justify-end">
-          <label class="flex items-center gap-2 text-sm cursor-pointer">
+        <div class="flex flex-col justify-end space-y-1">
+          <label class="flex cursor-pointer items-center gap-2 text-sm">
             <input type="checkbox" bind:checked={newProductAllowCustom} class="rounded" />
             {m.asso_boutique_allow_custom_label()}
           </label>
@@ -274,7 +274,7 @@
       {#if newProductAllowCustom}
         <div class="grid gap-4 sm:grid-cols-2">
           <div class="space-y-1">
-            <label for="new-product-min" class="text-xs font-semibold text-text-muted"
+            <label for="new-product-min" class="text-text-muted text-xs font-semibold"
               >{m.asso_boutique_min_label()}</label
             >
             <input
@@ -284,11 +284,11 @@
               step="0.01"
               bind:value={newProductMinCents}
               placeholder="5.00"
-              class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+              class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
             />
           </div>
           <div class="space-y-1">
-            <label for="new-product-max" class="text-xs font-semibold text-text-muted"
+            <label for="new-product-max" class="text-text-muted text-xs font-semibold"
               >{m.asso_boutique_max_label()}</label
             >
             <input
@@ -298,7 +298,7 @@
               step="0.01"
               bind:value={newProductMaxCents}
               placeholder="100.00"
-              class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+              class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
             />
           </div>
         </div>
@@ -310,16 +310,16 @@
         maxEuros={newProductAllowCustom ? newProductMaxCents : ''}
       />
 
-      <div class="rounded-xl border border-cn-border/60 bg-cn-bg/30 p-4 space-y-3">
-        <p class="text-xs font-bold text-text-main uppercase tracking-wide">
+      <div class="border-cn-border/60 bg-cn-bg/30 space-y-3 rounded-xl border p-4">
+        <p class="text-text-main text-xs font-bold tracking-wide uppercase">
           {m.asso_boutique_cotisant_pricing_title()}
         </p>
-        <label class="flex items-center gap-2 text-sm cursor-pointer">
+        <label class="flex cursor-pointer items-center gap-2 text-sm">
           <input type="checkbox" bind:checked={newProductMembersOnly} class="rounded" />
           {m.asso_boutique_members_only_label()}
         </label>
         <div class="space-y-1">
-          <label for="new-product-member-price" class="text-xs font-semibold text-text-muted"
+          <label for="new-product-member-price" class="text-text-muted text-xs font-semibold"
             >{m.asso_boutique_member_price_label()}</label
           >
           <input
@@ -329,24 +329,24 @@
             step="0.01"
             bind:value={newProductAmountCentsMember}
             placeholder={m.asso_boutique_member_price_placeholder()}
-            class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+            class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
           />
         </div>
-        <p class="text-xs text-text-muted">{m.asso_boutique_member_price_hint()}</p>
+        <p class="text-text-muted text-xs">{m.asso_boutique_member_price_hint()}</p>
       </div>
 
-      <div class="rounded-xl border border-cn-border/60 bg-cn-bg/30 p-4 space-y-3">
-        <p class="text-xs font-bold text-text-main uppercase tracking-wide">
+      <div class="border-cn-border/60 bg-cn-bg/30 space-y-3 rounded-xl border p-4">
+        <p class="text-text-main text-xs font-bold tracking-wide uppercase">
           {m.asso_boutique_limits_title()}
         </p>
-        <label class="flex items-center gap-2 text-sm cursor-pointer">
+        <label class="flex cursor-pointer items-center gap-2 text-sm">
           <input type="checkbox" bind:checked={newProductAllowRepeat} class="rounded" />
           {m.asso_boutique_allow_repeat_label()}
         </label>
         {#if newProductAllowRepeat}
           <div class="grid gap-4 sm:grid-cols-2">
             <div class="space-y-1">
-              <label for="new-product-max-user" class="text-xs font-semibold text-text-muted"
+              <label for="new-product-max-user" class="text-text-muted text-xs font-semibold"
                 >{m.asso_boutique_max_per_user_label()}</label
               >
               <input
@@ -356,11 +356,11 @@
                 step="1"
                 bind:value={newProductMaxPerUser}
                 placeholder={m.asso_boutique_unlimited_placeholder()}
-                class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
               />
             </div>
             <div class="space-y-1">
-              <label for="new-product-max-total" class="text-xs font-semibold text-text-muted"
+              <label for="new-product-max-total" class="text-text-muted text-xs font-semibold"
                 >{m.asso_boutique_max_total_label()}</label
               >
               <input
@@ -370,12 +370,12 @@
                 step="1"
                 bind:value={newProductMaxTotal}
                 placeholder={m.asso_boutique_unlimited_placeholder()}
-                class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
               />
             </div>
           </div>
         {:else}
-          <p class="text-xs text-text-muted">
+          <p class="text-text-muted text-xs">
             {m.asso_boutique_no_repeat_hint()}
           </p>
         {/if}
@@ -385,14 +385,14 @@
         <button
           type="submit"
           disabled={savingProduct || !newProductName.trim()}
-          class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
+          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
         >
           {savingProduct ? m.asso_boutique_creating() : m.asso_boutique_create_button()}
         </button>
         <button
           type="button"
           onclick={resetProductForm}
-          class="text-sm text-text-muted hover:text-text-main">{m.common_cancel_button()}</button
+          class="text-text-muted hover:text-text-main text-sm">{m.common_cancel_button()}</button
         >
       </div>
     </form>
@@ -402,19 +402,19 @@
   {#if productsLoading}
     <div class="flex justify-center py-6">
       <div
-        class="h-6 w-6 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+        class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if otherProducts.length === 0}
-    <p class="text-sm text-text-muted text-center py-6">{m.asso_boutique_no_products()}</p>
+    <p class="text-text-muted py-6 text-center text-sm">{m.asso_boutique_no_products()}</p>
   {:else}
     <ul class="space-y-3">
       {#each otherProducts as product (product.id)}
-        <li class="rounded-xl border border-cn-border/70 bg-cn-bg/40 overflow-hidden">
+        <li class="border-cn-border/70 bg-cn-bg/40 overflow-hidden rounded-xl border">
           <div class="flex items-center gap-3 px-4 py-3">
             <div class="min-w-0 flex-1">
-              <div class="flex items-center gap-2 flex-wrap">
-                <p class="font-semibold text-sm text-text-main">{product.name}</p>
+              <div class="flex flex-wrap items-center gap-2">
+                <p class="text-text-main text-sm font-semibold">{product.name}</p>
                 <span
                   class="rounded-full px-2 py-0.5 text-xs font-semibold {product.isActive
                     ? 'bg-green-ok/15 text-green-ok'
@@ -426,13 +426,13 @@
                 </span>
                 {#if product.membersOnly}
                   <span
-                    class="rounded-full px-2 py-0.5 text-xs font-semibold bg-amber-warn/15 text-amber-warn"
+                    class="bg-amber-warn/15 text-amber-warn rounded-full px-2 py-0.5 text-xs font-semibold"
                   >
                     {m.asso_boutique_members_only_label()}
                   </span>
                 {/if}
               </div>
-              <p class="text-xs text-text-muted mt-0.5">
+              <p class="text-text-muted mt-0.5 text-xs">
                 {product.amountCents != null
                   ? `${(product.amountCents / 100).toFixed(2)} €`
                   : m.asso_boutique_product_free()}
@@ -452,11 +452,11 @@
                 {/if}
               </p>
             </div>
-            <div class="flex items-center gap-2 shrink-0">
+            <div class="flex shrink-0 items-center gap-2">
               <button
                 type="button"
                 onclick={() => toggleProductSettings(product)}
-                class="inline-flex items-center gap-1 text-xs rounded-lg border border-cn-border px-3 py-1.5 font-semibold hover:bg-[var(--cn-surface)] transition-colors"
+                class="border-cn-border inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-(--cn-surface)"
               >
                 {m.asso_boutique_limits_button()}
                 <ChevronDown
@@ -469,7 +469,7 @@
               <button
                 type="button"
                 onclick={() => handleToggleProduct(product)}
-                class="text-xs rounded-lg border border-cn-border px-3 py-1.5 font-semibold hover:bg-[var(--cn-surface)] transition-colors"
+                class="border-cn-border rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-(--cn-surface)"
               >
                 {product.isActive
                   ? m.asso_boutique_deactivate_button()
@@ -479,7 +479,7 @@
                 type="button"
                 onclick={() => handleDeleteProduct(product)}
                 title={m.common_delete_button()}
-                class="inline-flex items-center justify-center rounded-xl border border-red-err/30 bg-red-err/10 p-2 text-red-err hover:bg-red-err/20 transition-colors"
+                class="border-red-err/30 bg-red-err/10 text-red-err hover:bg-red-err/20 inline-flex items-center justify-center rounded-xl border p-2 transition-colors"
               >
                 <Trash2 size={14} />
               </button>
@@ -487,7 +487,7 @@
           </div>
 
           {#if expandedProductSettingsId === product.id}
-            <div class="border-t border-cn-border/60 px-4 py-3 bg-cn-bg/20">
+            <div class="border-cn-border/60 bg-cn-bg/20 border-t px-4 py-3">
               <form
                 class="grid gap-3 sm:grid-cols-2"
                 onsubmit={(e) => {
@@ -495,7 +495,7 @@
                   void handleSaveProductSettings(product, e.currentTarget);
                 }}
               >
-                <label class="flex items-center gap-2 text-sm cursor-pointer sm:col-span-2">
+                <label class="flex cursor-pointer items-center gap-2 text-sm sm:col-span-2">
                   <input
                     type="checkbox"
                     name="membersOnly"
@@ -507,7 +507,7 @@
                 <div class="space-y-1 sm:col-span-2">
                   <label
                     for="member-price-{product.id}"
-                    class="text-xs font-semibold text-text-muted"
+                    class="text-text-muted text-xs font-semibold"
                     >{m.asso_boutique_member_price_label()}</label
                   >
                   <input
@@ -518,10 +518,10 @@
                     step="0.01"
                     value={product.amountCentsMember != null ? product.amountCentsMember / 100 : ''}
                     placeholder={m.asso_boutique_member_price_placeholder()}
-                    class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                    class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
                   />
                 </div>
-                <label class="flex items-center gap-2 text-sm cursor-pointer sm:col-span-2">
+                <label class="flex cursor-pointer items-center gap-2 text-sm sm:col-span-2">
                   <input
                     type="checkbox"
                     name="allowRepeat"
@@ -531,7 +531,7 @@
                   {m.asso_boutique_allow_repeat_label()}
                 </label>
                 <div class="space-y-1">
-                  <label for="max-user-{product.id}" class="text-xs font-semibold text-text-muted"
+                  <label for="max-user-{product.id}" class="text-text-muted text-xs font-semibold"
                     >{m.asso_boutique_max_per_user_field_label()}</label
                   >
                   <input
@@ -541,11 +541,11 @@
                     min="1"
                     value={product.maxPurchasesPerUser ?? ''}
                     placeholder={m.asso_boutique_unlimited_placeholder()}
-                    class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                    class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
                   />
                 </div>
                 <div class="space-y-1">
-                  <label for="max-total-{product.id}" class="text-xs font-semibold text-text-muted"
+                  <label for="max-total-{product.id}" class="text-text-muted text-xs font-semibold"
                     >{m.asso_boutique_max_total_field_label()}</label
                   >
                   <input
@@ -555,13 +555,13 @@
                     min="1"
                     value={product.maxPurchasesTotal ?? ''}
                     placeholder={m.asso_boutique_unlimited_placeholder()}
-                    class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                    class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
                   />
                 </div>
                 <button
                   type="submit"
                   disabled={savingProductSettings === product.id}
-                  class="sm:col-span-2 text-xs rounded-lg bg-cn-yellow px-4 py-2 font-bold text-cn-dark disabled:opacity-50 w-fit"
+                  class="bg-cn-yellow text-cn-dark w-fit rounded-lg px-4 py-2 text-xs font-bold disabled:opacity-50 sm:col-span-2"
                 >
                   {savingProductSettings === product.id
                     ? m.asso_boutique_saving_limits_label()

@@ -45,22 +45,22 @@
   }
 </script>
 
-<div class="px-4 py-6 sm:px-6 max-w-lg mx-auto space-y-6">
+<div class="mx-auto max-w-lg space-y-6 px-4 py-6 sm:px-6">
   <div>
     <a
       href="/associations"
-      class="inline-flex items-center gap-2 text-sm text-text-muted hover:text-text-main transition-colors"
+      class="text-text-muted hover:text-text-main inline-flex items-center gap-2 text-sm transition-colors"
     >
       <ArrowLeft size={16} />
       {m.assoc_new_back()}
     </a>
-    <h1 class="text-2xl font-extrabold text-text-main tracking-tight mt-2">
+    <h1 class="text-text-main mt-2 text-2xl font-extrabold tracking-tight">
       {m.assoc_new_heading()}
     </h1>
   </div>
 
   <form
-    class="rounded-2xl border border-cn-border bg-cn-surface/80 p-6 space-y-5"
+    class="border-cn-border bg-cn-surface/80 space-y-5 rounded-2xl border p-6"
     onsubmit={(e) => {
       e.preventDefault();
       handleSubmit();
@@ -75,7 +75,7 @@
     />
 
     <Input label="Slug (URL)" bind:value={slug} placeholder="bureau-des-eleves" required />
-    <p class="text-xs text-text-muted -mt-3">
+    <p class="text-text-muted -mt-3 text-xs">
       {m.assoc_new_slug_hint()}
     </p>
 
@@ -94,7 +94,7 @@
     />
 
     {#if error}
-      <div class="rounded-xl border border-red-err/30 bg-red-err/10 px-4 py-3 text-sm text-red-err">
+      <div class="border-red-err/30 bg-red-err/10 text-red-err rounded-xl border px-4 py-3 text-sm">
         {error}
       </div>
     {/if}
@@ -102,7 +102,7 @@
     <button
       type="submit"
       disabled={submitting || !name.trim() || !slug.trim()}
-      class="w-full rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-dark shadow-sm transition-all hover:bg-cn-yellow-hover disabled:cursor-not-allowed disabled:opacity-50"
+      class="bg-cn-yellow text-cn-dark hover:bg-cn-yellow-hover w-full rounded-xl px-5 py-2.5 text-sm font-bold shadow-sm transition-all disabled:cursor-not-allowed disabled:opacity-50"
     >
       {submitting ? m.common_creating_label() : m.assoc_new_create_btn()}
     </button>

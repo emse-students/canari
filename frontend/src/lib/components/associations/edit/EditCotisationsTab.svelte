@@ -481,77 +481,71 @@
 </script>
 
 <div class="space-y-6">
-  <div
-    class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-1 shadow-sm"
-  >
-    <h2 class="text-lg font-bold text-text-main tracking-tight flex items-center gap-2">
+  <div class="border-cn-border space-y-1 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm">
+    <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
       <HandCoins size={20} />
       {m.asso_cotisations_title()}
     </h2>
-    <p class="text-sm text-text-muted">{m.asso_cotisations_subtitle()}</p>
+    <p class="text-text-muted text-sm">{m.asso_cotisations_subtitle()}</p>
   </div>
 
   {#if !asso.cotisationEnabled}
     {#if canManageProducts}
-      <div
-        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-4 shadow-sm"
-      >
+      <div class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm">
         <div>
-          <h3 class="text-sm font-bold text-text-main">{m.asso_cotisations_activate_title()}</h3>
-          <p class="text-xs text-text-muted mt-1">{m.asso_cotisations_activate_desc()}</p>
+          <h3 class="text-text-main text-sm font-bold">{m.asso_cotisations_activate_title()}</h3>
+          <p class="text-text-muted mt-1 text-xs">{m.asso_cotisations_activate_desc()}</p>
         </div>
         <div class="grid gap-3 sm:grid-cols-2">
           <div class="space-y-1">
-            <label for="activate-mode" class="text-xs font-semibold text-text-muted"
+            <label for="activate-mode" class="text-text-muted text-xs font-semibold"
               >{m.asso_cotisations_mode_label()}</label
             >
             <select
               id="activate-mode"
               bind:value={activateMode}
-              class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2.5 text-sm"
+              class="border-cn-border w-full rounded-xl border bg-(--cn-surface) px-3 py-2.5 text-sm"
             >
               <option value="lifetime">{m.asso_cotisations_mode_lifetime()}</option>
               <option value="dated">{m.asso_cotisations_mode_dated()}</option>
             </select>
           </div>
           {#if activateMode === 'dated'}
-            <p class="text-xs text-text-muted self-end pb-2.5">
+            <p class="text-text-muted self-end pb-2.5 text-xs">
               {m.asso_cotisations_dated_auto_hint()}
             </p>
           {/if}
         </div>
         {#if activateError}
-          <p class="text-sm text-red-err">{activateError}</p>
+          <p class="text-red-err text-sm">{activateError}</p>
         {/if}
         <button
           type="button"
           onclick={() => void handleActivate()}
           disabled={activating}
-          class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
+          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
         >
           {activating ? m.common_saving_label() : m.asso_cotisations_activate_button()}
         </button>
       </div>
     {:else}
-      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 shadow-sm">
-        <p class="text-sm font-semibold text-text-main">
+      <div class="border-cn-border rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm">
+        <p class="text-text-main text-sm font-semibold">
           {m.asso_cotisations_disabled_no_perm_title()}
         </p>
-        <p class="text-sm text-text-muted mt-1">{m.asso_cotisations_disabled_no_perm_desc()}</p>
+        <p class="text-text-muted mt-1 text-sm">{m.asso_cotisations_disabled_no_perm_desc()}</p>
       </div>
     {/if}
   {:else}
     <!-- Config summary -->
-    <div
-      class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-4 shadow-sm"
-    >
-      <div class="flex items-start justify-between gap-3 flex-wrap">
-        <h3 class="text-sm font-bold text-text-main">{m.asso_cotisations_config_title()}</h3>
+    <div class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <h3 class="text-text-main text-sm font-bold">{m.asso_cotisations_config_title()}</h3>
         {#if canManageProducts && !editingConfig}
           <button
             type="button"
             onclick={startEditConfig}
-            class="inline-flex items-center gap-1.5 rounded-lg border border-cn-border px-3 py-1.5 text-xs font-semibold text-text-muted hover:text-text-main hover:bg-cn-bg"
+            class="border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold"
           >
             <Pencil size={14} />
             {m.asso_cotisations_config_edit_button()}
@@ -562,33 +556,33 @@
       {#if editingConfig}
         <div class="grid gap-3 sm:grid-cols-2">
           <div class="space-y-1">
-            <label for="config-mode" class="text-xs font-semibold text-text-muted"
+            <label for="config-mode" class="text-text-muted text-xs font-semibold"
               >{m.asso_cotisations_mode_label()}</label
             >
             <select
               id="config-mode"
               bind:value={configMode}
-              class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2.5 text-sm"
+              class="border-cn-border w-full rounded-xl border bg-(--cn-surface) px-3 py-2.5 text-sm"
             >
               <option value="lifetime">{m.asso_cotisations_mode_lifetime()}</option>
               <option value="dated">{m.asso_cotisations_mode_dated()}</option>
             </select>
           </div>
           {#if configMode === 'dated'}
-            <p class="text-xs text-text-muted self-end pb-2.5">
+            <p class="text-text-muted self-end pb-2.5 text-xs">
               {m.asso_cotisations_dated_auto_hint()}
             </p>
           {/if}
         </div>
         {#if configError}
-          <p class="text-sm text-red-err">{configError}</p>
+          <p class="text-red-err text-sm">{configError}</p>
         {/if}
         <div class="flex gap-2">
           <button
             type="button"
             onclick={() => void handleSaveConfig()}
             disabled={configSaving}
-            class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
+            class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
           >
             {configSaving ? m.common_saving_label() : m.common_save_button()}
           </button>
@@ -596,13 +590,13 @@
             type="button"
             onclick={() => (editingConfig = false)}
             disabled={configSaving}
-            class="rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold text-text-muted hover:text-text-main"
+            class="border-cn-border text-text-muted hover:text-text-main rounded-xl border px-4 py-2 text-sm font-semibold"
           >
             {m.common_cancel_button()}
           </button>
         </div>
       {:else}
-        <p class="text-sm text-text-main">
+        <p class="text-text-main text-sm">
           {#if asso.cotisationMode === 'dated'}
             {m.asso_cotisations_config_mode_dated_label({
               date: asso.cotisationExpiresAt
@@ -616,16 +610,16 @@
       {/if}
 
       {#if canManageProducts}
-        <div class="border-t border-cn-border pt-4 space-y-3">
-          <div class="flex items-center justify-between gap-3 flex-wrap">
-            <h4 class="text-xs font-bold text-text-main uppercase tracking-wide">
+        <div class="border-cn-border space-y-3 border-t pt-4">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <h4 class="text-text-main text-xs font-bold tracking-wide uppercase">
               {m.asso_cotisations_price_title()}
             </h4>
             {#if !tiersLoading && tierProducts.length > 0}
               <button
                 type="button"
                 onclick={() => (showAddTierForm = !showAddTierForm)}
-                class="inline-flex items-center gap-1.5 rounded-lg border border-cn-border px-3 py-1.5 text-xs font-semibold text-text-muted hover:text-text-main hover:bg-cn-bg"
+                class="border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold"
               >
                 <Plus size={14} />
                 {m.asso_cotisations_tier_add_button()}
@@ -634,41 +628,41 @@
           </div>
 
           {#if tiersError}
-            <p class="text-sm text-red-err">{tiersError}</p>
+            <p class="text-red-err text-sm">{tiersError}</p>
           {/if}
 
           {#if tiersLoading}
-            <div class="flex items-center gap-2 text-sm text-text-muted">
+            <div class="text-text-muted flex items-center gap-2 text-sm">
               <div
-                class="h-4 w-4 animate-spin rounded-full border-2 border-cn-yellow border-t-transparent"
+                class="border-cn-yellow h-4 w-4 animate-spin rounded-full border-2 border-t-transparent"
               ></div>
               {m.common_loading_label()}
             </div>
           {:else if tierProducts.length === 0}
-            <p class="text-sm text-text-muted">{m.asso_cotisations_membership_missing()}</p>
+            <p class="text-text-muted text-sm">{m.asso_cotisations_membership_missing()}</p>
           {:else}
             <ul class="space-y-3">
               {#each tierProducts as product (product.id)}
-                <li class="rounded-xl border border-cn-border/70 bg-cn-bg/40 overflow-hidden">
+                <li class="border-cn-border/70 bg-cn-bg/40 overflow-hidden rounded-xl border">
                   <div class="flex items-center gap-3 px-4 py-3">
                     <div class="min-w-0 flex-1">
-                      <div class="flex items-center gap-2 flex-wrap">
-                        <p class="font-semibold text-sm text-text-main">{product.name}</p>
+                      <div class="flex flex-wrap items-center gap-2">
+                        <p class="text-text-main text-sm font-semibold">{product.name}</p>
                         {#if product.variantKey}
                           <span
-                            class="rounded-full px-2 py-0.5 text-xs font-semibold bg-amber-warn/15 text-amber-warn"
+                            class="bg-amber-warn/15 text-amber-warn rounded-full px-2 py-0.5 text-xs font-semibold"
                           >
                             {product.variantKey}
                           </span>
                         {:else}
                           <span
-                            class="rounded-full px-2 py-0.5 text-xs font-semibold bg-cn-surface-alt text-text-muted"
+                            class="bg-cn-surface-alt text-text-muted rounded-full px-2 py-0.5 text-xs font-semibold"
                           >
                             {m.asso_cotisations_tier_base_badge()}
                           </span>
                         {/if}
                       </div>
-                      <p class="text-xs text-text-muted mt-0.5">
+                      <p class="text-text-muted mt-0.5 text-xs">
                         {product.amountCents != null
                           ? `${(product.amountCents / 100).toFixed(2)} €`
                           : m.asso_cotisations_tier_price_free_label()}
@@ -679,11 +673,11 @@
                         {/if}
                       </p>
                     </div>
-                    <div class="flex items-center gap-2 shrink-0">
+                    <div class="flex shrink-0 items-center gap-2">
                       <button
                         type="button"
                         onclick={() => toggleTierEdit(product)}
-                        class="inline-flex items-center gap-1 text-xs rounded-lg border border-cn-border px-3 py-1.5 font-semibold hover:bg-[var(--cn-surface)] transition-colors"
+                        class="border-cn-border inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-(--cn-surface)"
                       >
                         <Pencil size={12} />
                         <ChevronDown
@@ -699,7 +693,7 @@
                           type="button"
                           onclick={() => void handleDeleteTier(product)}
                           title={m.common_delete_button()}
-                          class="inline-flex items-center justify-center rounded-xl border border-red-err/30 bg-red-err/10 p-2 text-red-err hover:bg-red-err/20 transition-colors"
+                          class="border-red-err/30 bg-red-err/10 text-red-err hover:bg-red-err/20 inline-flex items-center justify-center rounded-xl border p-2 transition-colors"
                         >
                           <Trash2 size={14} />
                         </button>
@@ -708,7 +702,7 @@
                   </div>
 
                   {#if expandedTierId === product.id}
-                    <div class="border-t border-cn-border/60 px-4 py-3 bg-cn-bg/20">
+                    <div class="border-cn-border/60 bg-cn-bg/20 border-t px-4 py-3">
                       <form
                         class="grid gap-3 sm:grid-cols-2"
                         onsubmit={(e) => {
@@ -719,7 +713,7 @@
                         <div class="space-y-1">
                           <label
                             for="tier-name-{product.id}"
-                            class="text-xs font-semibold text-text-muted"
+                            class="text-text-muted text-xs font-semibold"
                             >{m.asso_cotisations_price_name_label()}</label
                           >
                           <input
@@ -728,13 +722,13 @@
                             type="text"
                             value={product.name}
                             required
-                            class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                            class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
                           />
                         </div>
                         <div class="space-y-1">
                           <label
                             for="tier-price-{product.id}"
-                            class="text-xs font-semibold text-text-muted"
+                            class="text-text-muted text-xs font-semibold"
                             >{m.asso_cotisations_price_amount_label()}</label
                           >
                           <input
@@ -745,13 +739,13 @@
                             step="0.01"
                             value={product.amountCents != null ? product.amountCents / 100 : ''}
                             placeholder="10.00"
-                            class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                            class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
                           />
                         </div>
                         <div class="space-y-1 sm:col-span-2">
                           <label
                             for="tier-variant-{product.id}"
-                            class="text-xs font-semibold text-text-muted"
+                            class="text-text-muted text-xs font-semibold"
                             >{m.asso_cotisations_tier_variant_key_label()}</label
                           >
                           <input
@@ -760,9 +754,9 @@
                             type="text"
                             value={product.variantKey ?? ''}
                             placeholder={m.asso_cotisations_tier_variant_key_base_placeholder()}
-                            class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                            class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
                           />
-                          <p class="text-xs text-text-muted">
+                          <p class="text-text-muted text-xs">
                             {m.asso_cotisations_tier_variant_key_change_hint()}
                           </p>
                         </div>
@@ -770,14 +764,14 @@
                           <div class="space-y-1 sm:col-span-2">
                             <label
                               for="tier-upgrade-from-{product.id}"
-                              class="text-xs font-semibold text-text-muted"
+                              class="text-text-muted text-xs font-semibold"
                               >{m.asso_cotisations_tier_upgrade_from_label()}</label
                             >
                             <select
                               id="tier-upgrade-from-{product.id}"
                               name="memberPriceTag"
                               value={product.memberPriceTag ?? ''}
-                              class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm"
+                              class="border-cn-border w-full rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm"
                             >
                               <option value="">{m.asso_cotisations_tier_upgrade_none()}</option>
                               {#each tierProducts.filter((p) => p.id !== product.id) as sibling (sibling.id)}
@@ -788,7 +782,7 @@
                           <div class="space-y-1 sm:col-span-2">
                             <label
                               for="tier-upgrade-price-{product.id}"
-                              class="text-xs font-semibold text-text-muted"
+                              class="text-text-muted text-xs font-semibold"
                               >{m.asso_cotisations_tier_upgrade_price_field_label()}</label
                             >
                             <input
@@ -801,14 +795,14 @@
                                 ? product.amountCentsMember / 100
                                 : ''}
                               placeholder={m.asso_cotisations_tier_upgrade_price_placeholder()}
-                              class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                              class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
                             />
                           </div>
                         {/if}
                         <button
                           type="submit"
                           disabled={savingTierId === product.id}
-                          class="sm:col-span-2 text-xs rounded-lg bg-cn-yellow px-4 py-2 font-bold text-cn-dark disabled:opacity-50 w-fit"
+                          class="bg-cn-yellow text-cn-dark w-fit rounded-lg px-4 py-2 text-xs font-bold disabled:opacity-50 sm:col-span-2"
                         >
                           {savingTierId === product.id
                             ? m.common_saving_label()
@@ -824,18 +818,18 @@
 
           {#if showAddTierForm}
             <form
-              class="rounded-xl border border-cn-border bg-cn-bg/40 p-4 space-y-3"
+              class="border-cn-border bg-cn-bg/40 space-y-3 rounded-xl border p-4"
               onsubmit={(e) => {
                 e.preventDefault();
                 void handleCreateTier();
               }}
             >
-              <p class="text-xs font-bold text-text-main uppercase tracking-wide">
+              <p class="text-text-main text-xs font-bold tracking-wide uppercase">
                 {m.asso_cotisations_tier_add_title()}
               </p>
               <div class="grid gap-3 sm:grid-cols-2">
                 <div class="space-y-1">
-                  <label for="new-tier-name" class="text-xs font-semibold text-text-muted"
+                  <label for="new-tier-name" class="text-text-muted text-xs font-semibold"
                     >{m.asso_cotisations_price_name_label()}</label
                   >
                   <input
@@ -843,11 +837,11 @@
                     type="text"
                     bind:value={newTierName}
                     required
-                    class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                    class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
                   />
                 </div>
                 <div class="space-y-1">
-                  <label for="new-tier-variant" class="text-xs font-semibold text-text-muted"
+                  <label for="new-tier-variant" class="text-text-muted text-xs font-semibold"
                     >{m.asso_cotisations_tier_variant_key_label()}</label
                   >
                   <input
@@ -856,11 +850,11 @@
                     bind:value={newTierVariantKey}
                     placeholder="avec-alcool"
                     required
-                    class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                    class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
                   />
                 </div>
                 <div class="space-y-1">
-                  <label for="new-tier-price" class="text-xs font-semibold text-text-muted"
+                  <label for="new-tier-price" class="text-text-muted text-xs font-semibold"
                     >{m.asso_cotisations_price_amount_label()}</label
                   >
                   <input
@@ -870,19 +864,19 @@
                     step="0.01"
                     bind:value={newTierPriceEuros}
                     placeholder="10.00"
-                    class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                    class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
                   />
                 </div>
               </div>
-              <p class="text-xs text-text-muted">{m.asso_cotisations_tier_variant_key_hint()}</p>
+              <p class="text-text-muted text-xs">{m.asso_cotisations_tier_variant_key_hint()}</p>
               <div class="space-y-1">
-                <label for="new-tier-upgrade-from" class="text-xs font-semibold text-text-muted"
+                <label for="new-tier-upgrade-from" class="text-text-muted text-xs font-semibold"
                   >{m.asso_cotisations_tier_upgrade_from_label()}</label
                 >
                 <select
                   id="new-tier-upgrade-from"
                   bind:value={newTierMemberPriceTag}
-                  class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm"
+                  class="border-cn-border w-full rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm"
                 >
                   <option value="">{m.asso_cotisations_tier_upgrade_none()}</option>
                   {#each tierProducts as sibling (sibling.id)}
@@ -892,7 +886,7 @@
               </div>
               {#if newTierMemberPriceTag}
                 <div class="space-y-1">
-                  <label for="new-tier-upgrade-price" class="text-xs font-semibold text-text-muted"
+                  <label for="new-tier-upgrade-price" class="text-text-muted text-xs font-semibold"
                     >{m.asso_cotisations_tier_upgrade_price_field_label()}</label
                   >
                   <input
@@ -902,7 +896,7 @@
                     step="0.01"
                     bind:value={newTierMemberPriceEuros}
                     placeholder={m.asso_cotisations_tier_upgrade_price_placeholder()}
-                    class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                    class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
                   />
                 </div>
               {/if}
@@ -910,14 +904,14 @@
                 <button
                   type="submit"
                   disabled={addingTier || !newTierName.trim() || !newTierVariantKey.trim()}
-                  class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
+                  class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
                 >
                   {addingTier ? m.common_saving_label() : m.asso_cotisations_tier_create_button()}
                 </button>
                 <button
                   type="button"
                   onclick={resetAddTierForm}
-                  class="text-sm text-text-muted hover:text-text-main"
+                  class="text-text-muted hover:text-text-main text-sm"
                   >{m.common_cancel_button()}</button
                 >
               </div>
@@ -926,7 +920,7 @@
             <button
               type="button"
               onclick={() => (showAddTierForm = true)}
-              class="inline-flex items-center gap-2 rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold text-text-muted hover:text-text-main hover:bg-cn-bg"
+              class="border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-semibold"
             >
               <Plus size={15} />
               {m.asso_cotisations_tier_add_button()}
@@ -937,17 +931,15 @@
     </div>
 
     <!-- Roster -->
-    <div
-      class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-4 shadow-sm"
-    >
-      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <h3 class="text-sm font-bold text-text-main">{m.asso_cotisations_roster_title()}</h3>
+    <div class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm">
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h3 class="text-text-main text-sm font-bold">{m.asso_cotisations_roster_title()}</h3>
         {#if canManageMembers}
           <button
             type="button"
             onclick={() => void handleExport()}
             disabled={exporting}
-            class="inline-flex items-center gap-2 rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold text-text-muted hover:text-text-main hover:bg-cn-bg disabled:opacity-50 shrink-0"
+            class="border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg inline-flex shrink-0 items-center gap-2 rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-50"
           >
             <Download size={15} />
             {exporting ? m.common_generating_label() : m.asso_cotisations_export_button()}
@@ -955,24 +947,24 @@
         {/if}
       </div>
       {#if exportError}
-        <p class="text-sm text-red-err">{exportError}</p>
+        <p class="text-red-err text-sm">{exportError}</p>
       {/if}
 
       <div class="relative">
-        <span class="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-text-muted">
+        <span class="text-text-muted pointer-events-none absolute top-1/2 left-3 -translate-y-1/2">
           <Search size={15} />
         </span>
         <input
           type="text"
           bind:value={search}
           placeholder={m.asso_cotisations_search_placeholder()}
-          class="w-full pl-9 pr-4 py-2.5 bg-[var(--cn-surface)] border border-cn-border rounded-xl text-sm outline-none focus:ring-2 focus:ring-amber-400/45 focus:border-amber-400/60"
+          class="border-cn-border w-full rounded-xl border bg-(--cn-surface) py-2.5 pr-4 pl-9 text-sm outline-none focus:border-amber-400/60 focus:ring-2 focus:ring-amber-400/45"
         />
       </div>
 
       {#if rosterError}
         <div
-          class="rounded-xl border border-red-err/30 bg-red-err/10 text-red-err px-4 py-3 text-sm"
+          class="border-red-err/30 bg-red-err/10 text-red-err rounded-xl border px-4 py-3 text-sm"
         >
           {rosterError}
         </div>
@@ -981,16 +973,16 @@
       {#if rosterLoading}
         <div class="flex justify-center py-8">
           <div
-            class="h-6 w-6 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+            class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
           ></div>
         </div>
       {:else if rosterItems.length === 0}
-        <p class="text-sm text-text-muted text-center py-8">{m.asso_cotisations_no_cotisants()}</p>
+        <p class="text-text-muted py-8 text-center text-sm">{m.asso_cotisations_no_cotisants()}</p>
       {:else}
         <div class="space-y-4">
           {#each rosterGroups as group (group.promo ?? 'none')}
             <div class="space-y-2">
-              <h4 class="text-xs font-bold uppercase tracking-wide text-text-muted">
+              <h4 class="text-text-muted text-xs font-bold tracking-wide uppercase">
                 {group.promo != null
                   ? m.asso_cotisations_group_promo_label({ promo: group.promo })
                   : m.asso_cotisations_group_no_promo()}
@@ -998,11 +990,11 @@
               <ul class="space-y-2">
                 {#each group.items as item (item.tagId)}
                   <li
-                    class="flex items-center gap-3 rounded-xl border border-cn-border bg-cn-bg/40 px-4 py-3"
+                    class="border-cn-border bg-cn-bg/40 flex items-center gap-3 rounded-xl border px-4 py-3"
                   >
                     <div class="min-w-0 flex-1">
-                      <div class="flex items-center gap-2 flex-wrap">
-                        <p class="text-sm font-semibold text-text-main">{cotisantName(item)}</p>
+                      <div class="flex flex-wrap items-center gap-2">
+                        <p class="text-text-main text-sm font-semibold">{cotisantName(item)}</p>
                         <!-- Multi-tier: the badge becomes a picker, so a forfait can be upgraded
                              or downgraded in place (the server swaps the tags atomically). -->
                         {#if canManageMembers && cotisationTiers.length > 1}
@@ -1012,7 +1004,7 @@
                             disabled={switchingTagId !== null}
                             value={currentVariantKey(item)}
                             onchange={(e) => void handleChangeTier(item, e.currentTarget.value)}
-                            class="rounded-full border border-amber-warn/40 bg-amber-warn/15 px-2 py-0.5 text-xs font-semibold text-amber-warn disabled:opacity-50"
+                            class="border-amber-warn/40 bg-amber-warn/15 text-amber-warn rounded-full border px-2 py-0.5 text-xs font-semibold disabled:opacity-50"
                           >
                             {#each cotisationTiers as tier (tier.tagName)}
                               <option value={tier.variantKey ?? ''}>{tier.name}</option>
@@ -1020,13 +1012,13 @@
                           </select>
                         {:else if item.tier}
                           <span
-                            class="rounded-full px-2 py-0.5 text-xs font-semibold bg-amber-warn/15 text-amber-warn"
+                            class="bg-amber-warn/15 text-amber-warn rounded-full px-2 py-0.5 text-xs font-semibold"
                           >
                             {item.tier}
                           </span>
                         {/if}
                       </div>
-                      <p class="text-xs text-text-muted mt-0.5">
+                      <p class="text-text-muted mt-0.5 text-xs">
                         {m.asso_cotisations_col_granted()}: {formatDate(item.grantedAt)}
                         {#if item.expiresAt}
                           · {m.asso_cotisations_col_expiry()}: {formatDate(item.expiresAt)}
@@ -1039,7 +1031,7 @@
                       <button
                         type="button"
                         onclick={() => void handleRevoke(item)}
-                        class="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-red-err/30 px-3 py-1.5 text-xs font-semibold text-red-err hover:bg-red-err/10"
+                        class="border-red-err/30 text-red-err hover:bg-red-err/10 inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold"
                       >
                         <Trash2 size={14} />
                         {m.asso_cotisations_revoke_button()}
@@ -1055,25 +1047,25 @@
         {#if rosterLoadingMore}
           <div class="flex justify-center py-3">
             <div
-              class="h-5 w-5 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+              class="border-cn-yellow h-5 w-5 animate-spin rounded-full border-4 border-t-transparent"
             ></div>
           </div>
         {/if}
-        <p class="text-xs text-text-muted text-right">
+        <p class="text-text-muted text-right text-xs">
           {m.asso_cotisations_total_label({ count: rosterTotal })}
         </p>
       {/if}
 
       {#if canManageMembers}
         <form
-          class="border-t border-cn-border pt-4 flex flex-col sm:flex-row gap-3"
+          class="border-cn-border flex flex-col gap-3 border-t pt-4 sm:flex-row"
           onsubmit={(e) => {
             e.preventDefault();
             void handleAdd();
           }}
         >
-          <div class="flex-1 min-w-0">
-            <label for="add-cotisant-user" class="text-xs font-semibold text-text-muted block mb-1">
+          <div class="min-w-0 flex-1">
+            <label for="add-cotisant-user" class="text-text-muted mb-1 block text-xs font-semibold">
               <span class="inline-flex items-center gap-1.5"
                 ><UserPlus size={14} />{m.asso_cotisations_add_title()}</span
               >
@@ -1090,14 +1082,14 @@
             <div class="sm:w-56">
               <label
                 for="add-cotisant-tier"
-                class="text-xs font-semibold text-text-muted block mb-1"
+                class="text-text-muted mb-1 block text-xs font-semibold"
               >
                 {m.asso_cotisations_add_tier_label()}
               </label>
               <select
                 id="add-cotisant-tier"
                 bind:value={addVariantKey}
-                class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2.5 text-sm"
+                class="border-cn-border w-full rounded-xl border bg-(--cn-surface) px-3 py-2.5 text-sm"
               >
                 {#each cotisationTiers as tier (tier.tagName)}
                   <option value={tier.variantKey ?? ''}>{tier.name}</option>
@@ -1108,13 +1100,13 @@
           <button
             type="submit"
             disabled={adding || !addUserId.trim()}
-            class="self-end rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50 shrink-0"
+            class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover shrink-0 self-end rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
           >
             {adding ? m.common_saving_label() : m.common_add_button()}
           </button>
         </form>
         {#if addError}
-          <p class="text-sm text-red-err">{addError}</p>
+          <p class="text-red-err text-sm">{addError}</p>
         {/if}
       {/if}
     </div>

@@ -50,21 +50,21 @@
   });
 </script>
 
-<div class="min-h-dvh flex items-center justify-center px-4">
+<div class="flex min-h-dvh items-center justify-center px-4">
   <div
-    class="w-full max-w-sm p-10 rounded-3xl text-center border border-cn-border shadow-lg"
+    class="border-cn-border w-full max-w-sm rounded-3xl border p-10 text-center shadow-lg"
     style="background: color-mix(in srgb, var(--cn-surface) 88%, transparent); backdrop-filter: blur(12px);"
   >
     {#if error}
       <div class="space-y-4">
-        <div class="w-16 h-16 rounded-full bg-red-err/20 flex items-center justify-center mx-auto">
+        <div class="bg-red-err/20 mx-auto flex h-16 w-16 items-center justify-center rounded-full">
           <span class="text-red-err text-2xl">✗</span>
         </div>
-        <h2 class="text-lg font-bold text-text-main">{m.auth_callback_error_title()}</h2>
-        <p class="text-sm text-red-err">{error}</p>
+        <h2 class="text-text-main text-lg font-bold">{m.auth_callback_error_title()}</h2>
+        <p class="text-red-err text-sm">{error}</p>
         <button
           onclick={() => goto('/login', { replaceState: true })}
-          class="mt-4 px-6 py-3 bg-cn-yellow text-cn-ink rounded-2xl font-bold hover:bg-cn-yellow-hover transition-all"
+          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover mt-4 rounded-2xl px-6 py-3 font-bold transition-all"
         >
           {m.auth_callback_retry()}
         </button>
@@ -72,13 +72,13 @@
     {:else}
       <div class="space-y-4">
         <div
-          class="w-16 h-16 rounded-full bg-cn-yellow/20 flex items-center justify-center mx-auto"
+          class="bg-cn-yellow/20 mx-auto flex h-16 w-16 items-center justify-center rounded-full"
         >
           <span
-            class="inline-block w-6 h-6 border-3 border-cn-dark/20 border-t-cn-dark rounded-full animate-spin"
+            class="border-cn-dark/20 border-t-cn-dark inline-block h-6 w-6 animate-spin rounded-full border-3"
           ></span>
         </div>
-        <p class="text-sm font-medium text-text-muted">{status}</p>
+        <p class="text-text-muted text-sm font-medium">{status}</p>
       </div>
     {/if}
   </div>

@@ -77,7 +77,7 @@
     <button
       type="button"
       onclick={sharePost}
-      class="p-1.5 rounded-lg text-text-muted hover:text-amber-600 hover:bg-amber-500/10 transition-colors outline-none"
+      class="text-text-muted rounded-lg p-1.5 transition-colors outline-none hover:bg-amber-500/10 hover:text-amber-600"
       aria-label={copiedLink ? m.post_link_copied_label() : m.post_share_post_label()}
       title={copiedLink ? m.post_link_copied_label() : m.post_share_label()}
     >
@@ -91,7 +91,7 @@
       <button
         type="button"
         onclick={onTogglePin}
-        class="p-1.5 rounded-lg text-text-muted hover:text-amber-500 hover:bg-amber-500/10 transition-colors outline-none"
+        class="text-text-muted rounded-lg p-1.5 transition-colors outline-none hover:bg-amber-500/10 hover:text-amber-500"
         aria-label={pinned ? m.post_unpin_action_label() : m.post_pin_action_label()}
         title={pinned ? m.post_unpin_action_label() : m.post_pin_action_label()}
       >
@@ -106,7 +106,7 @@
       <button
         type="button"
         onclick={onStartEdit}
-        class="p-1.5 rounded-lg text-text-muted hover:text-amber-500 hover:bg-amber-500/10 transition-colors outline-none"
+        class="text-text-muted rounded-lg p-1.5 transition-colors outline-none hover:bg-amber-500/10 hover:text-amber-500"
         aria-label={m.post_edit_post_label()}
       >
         <Pencil size={14} strokeWidth={2.5} />
@@ -116,7 +116,7 @@
       <button
         type="button"
         onclick={onDelete}
-        class="p-1.5 rounded-lg text-text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors outline-none"
+        class="text-text-muted rounded-lg p-1.5 transition-colors outline-none hover:bg-red-500/10 hover:text-red-500"
         aria-label={m.post_delete_post_label()}
       >
         <Trash2 size={14} strokeWidth={2.5} />
@@ -125,39 +125,39 @@
     {#if !isOwnPost}
       {#if reportOpen}
         <div
-          class="absolute top-0 right-0 flex flex-col gap-2 bg-surface-elevated border border-cn-border rounded-xl p-3 shadow-lg w-52 z-50"
+          class="bg-surface-elevated border-cn-border absolute top-0 right-0 z-50 flex w-52 flex-col gap-2 rounded-xl border p-3 shadow-lg"
           transition:slide={{ duration: 150 }}
         >
-          <p class="text-[0.65rem] font-bold text-text-muted uppercase tracking-wide">
+          <p class="text-text-muted text-[0.65rem] font-bold tracking-wide uppercase">
             {m.post_report_post_title()}
           </p>
           <div class="flex flex-col gap-1">
             {#each reportReasons as r (r)}
               <label
-                class="flex items-center gap-2 text-sm cursor-pointer hover:text-text-main transition-colors"
+                class="hover:text-text-main flex cursor-pointer items-center gap-2 text-sm transition-colors"
               >
                 <input
                   type="radio"
                   checked={reportReason === r}
                   onchange={() => onReportReasonChange(r)}
-                  class="accent-amber-500 shrink-0"
+                  class="shrink-0 accent-amber-500"
                 />
                 <span class="text-[0.82rem]">{r}</span>
               </label>
             {/each}
           </div>
-          <div class="flex gap-2 mt-1">
+          <div class="mt-1 flex gap-2">
             <button
               type="button"
               onclick={() => onToggleReport(false)}
-              class="flex-1 text-xs font-bold text-text-muted hover:text-text-main rounded-lg py-1.5 transition-colors"
+              class="text-text-muted hover:text-text-main flex-1 rounded-lg py-1.5 text-xs font-bold transition-colors"
               >{m.common_cancel_button()}</button
             >
             <button
               type="button"
               onclick={onSubmitReport}
               disabled={!reportReason || reportSubmitting}
-              class="flex-1 text-xs font-bold bg-red-500 text-white rounded-lg py-1.5 disabled:opacity-40 transition-colors hover:bg-red-400"
+              class="flex-1 rounded-lg bg-red-500 py-1.5 text-xs font-bold text-white transition-colors hover:bg-red-400 disabled:opacity-40"
               >{m.post_report_label()}</button
             >
           </div>
@@ -166,7 +166,7 @@
         <button
           type="button"
           onclick={() => onToggleReport(true)}
-          class="p-1.5 rounded-lg text-text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors outline-none"
+          class="text-text-muted rounded-lg p-1.5 transition-colors outline-none hover:bg-red-500/10 hover:text-red-500"
           aria-label={m.post_report_post_title()}
         >
           <Flag size={14} strokeWidth={2.5} />

@@ -121,22 +121,22 @@
 {#if !isRecording}
   <button
     onclick={startRecording}
-    class="w-11 h-11 text-cn-muted rounded-full flex items-center justify-center flex-shrink-0 hover:text-cn-dark hover:bg-cn-bg transition-colors"
+    class="text-cn-muted hover:text-cn-dark hover:bg-cn-bg flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full transition-colors"
     aria-label={m.chat_record_voice_message_label()}
     title={m.chat_record_voice_message_title()}
   >
     <Mic size={20} />
   </button>
 {:else}
-  <div class="flex items-center gap-2 px-3 py-2 bg-red-err/10 rounded-2xl border border-red-err/30">
+  <div class="bg-red-err/10 border-red-err/30 flex items-center gap-2 rounded-2xl border px-3 py-2">
     <div class="flex items-center gap-2">
-      <div class="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
-      <span class="text-sm font-mono text-red-err">{formatDuration(recordingDuration)}</span>
+      <div class="h-2 w-2 animate-pulse rounded-full bg-red-500"></div>
+      <span class="text-red-err font-mono text-sm">{formatDuration(recordingDuration)}</span>
     </div>
 
     <button
       onclick={stopRecording}
-      class="p-1.5 rounded-lg bg-red-500 text-white hover:bg-red-600 transition-colors"
+      class="rounded-lg bg-red-500 p-1.5 text-white transition-colors hover:bg-red-600"
       aria-label={m.chat_stop_recording_label()}
       title={m.chat_stop_and_send_title()}
     >
@@ -145,7 +145,7 @@
 
     <button
       onclick={cancelRecording}
-      class="p-1.5 rounded-lg text-cn-muted hover:bg-cn-bg transition-colors"
+      class="text-cn-muted hover:bg-cn-bg rounded-lg p-1.5 transition-colors"
       aria-label={m.chat_cancel_recording_label()}
       title={m.common_cancel_button()}
     >

@@ -14,7 +14,7 @@
   onclick={onLogout}
   title={m.nav_logout_title()}
   aria-label={m.nav_logout_label()}
-  class="p-2 rounded-lg text-text-muted hover:bg-red-err/10 hover:text-red-500 transition-colors"
+  class="text-text-muted hover:bg-red-err/10 rounded-lg p-2 transition-colors hover:text-red-500"
 >
   <LogOut size={20} />
 </button>

@@ -200,15 +200,15 @@
 </script>
 
 <div class="space-y-4">
-  <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+  <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
     {#each cards as card (card.kind)}
       {#if card.href}
         <a
           href={card.href}
-          class="group flex items-start gap-4 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-cn-yellow transition-colors"
+          class="group border-cn-border hover:border-cn-yellow flex items-start gap-4 rounded-2xl border bg-(--cn-surface) p-4 transition-colors"
         >
           <span
-            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-cn-yellow/15 text-cn-dark"
+            class="bg-cn-yellow/15 text-cn-dark flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
           >
             {#if card.kind === 'agenda'}
               <CalendarClock size={20} />
@@ -236,7 +236,7 @@
           </span>
           <span class="min-w-0 flex-1">
             <span class="flex items-center gap-2">
-              <span class="font-bold text-text-main">{card.label}</span>
+              <span class="text-text-main font-bold">{card.label}</span>
               {#if card.badge}
                 <span
                   class="rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-bold text-white"
@@ -245,38 +245,38 @@
                 </span>
               {/if}
             </span>
-            <span class="block text-sm text-text-muted mt-0.5">{card.description}</span>
+            <span class="text-text-muted mt-0.5 block text-sm">{card.description}</span>
           </span>
-          <ChevronRight size={18} class="shrink-0 text-text-muted group-hover:text-cn-dark" />
+          <ChevronRight size={18} class="text-text-muted group-hover:text-cn-dark shrink-0" />
         </a>
       {/if}
     {/each}
   </div>
 
   {#if isGlobalAdminUser}
-    <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-4 space-y-3">
+    <div class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface) p-4">
       <div class="flex items-center gap-2">
         <Bell size={18} class="text-cn-dark" />
-        <h2 class="text-sm font-bold text-text-main">{m.admin_push_test_heading()}</h2>
+        <h2 class="text-text-main text-sm font-bold">{m.admin_push_test_heading()}</h2>
       </div>
-      <p class="text-xs text-text-muted">
+      <p class="text-text-muted text-xs">
         {m.admin_push_test_description()}
       </p>
       <button
         type="button"
         onclick={() => void handleBroadcastPushTest()}
         disabled={isPushTestRunning}
-        class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
       >
         {isPushTestRunning ? m.common_sending_label() : m.admin_push_test_button_label()}
       </button>
       {#if pushTestResult}
-        <p class="text-xs text-text-muted">{pushTestResult}</p>
+        <p class="text-text-muted text-xs">{pushTestResult}</p>
       {/if}
     </div>
   {/if}
 
-  <p class="text-xs text-text-muted">
+  <p class="text-text-muted text-xs">
     {m.admin_stripe_connect_hint()}
   </p>
 </div>

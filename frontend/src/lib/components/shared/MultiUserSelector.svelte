@@ -59,12 +59,12 @@
     <div class="flex flex-wrap gap-2">
       {#each users as user (user)}
         <div
-          class="flex items-center gap-1 pl-3 pr-1 py-1 bg-cn-bg text-cn-dark rounded-full text-sm"
+          class="bg-cn-bg text-cn-dark flex items-center gap-1 rounded-full py-1 pr-1 pl-3 text-sm"
         >
           <UserName userId={user} class="text-sm font-medium" />
           <button
             onclick={() => removeUser(user)}
-            class="p-1 hover:bg-gray-200 dark:hover:bg-white/10 rounded-full transition-colors"
+            class="rounded-full p-1 transition-colors hover:bg-gray-200 dark:hover:bg-white/10"
             aria-label={m.user_selector_remove_label()}
           >
             <X size={14} />

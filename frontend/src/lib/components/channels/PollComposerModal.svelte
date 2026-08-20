@@ -101,16 +101,16 @@
       transition:fade={{ duration: 150 }}
     ></button>
     <div
-      class="relative flex max-h-[85vh] w-full flex-col rounded-t-2xl bg-[var(--cn-surface)] shadow-2xl sm:max-w-lg sm:rounded-2xl"
+      class="relative flex max-h-[85vh] w-full flex-col rounded-t-2xl bg-(--cn-surface) shadow-2xl sm:max-w-lg sm:rounded-2xl"
       transition:fly={{ y: 30, duration: 200 }}
     >
-      <div class="flex items-center gap-2 border-b border-cn-border p-4">
+      <div class="border-cn-border flex items-center gap-2 border-b p-4">
         <ChartColumn size={18} strokeWidth={2.5} class="text-cn-yellow shrink-0" />
-        <h2 class="flex-1 text-base font-extrabold text-text-main">{m.channel_poll_title()}</h2>
+        <h2 class="text-text-main flex-1 text-base font-extrabold">{m.channel_poll_title()}</h2>
         <button
           type="button"
           onclick={close}
-          class="rounded-xl p-2 text-text-muted hover:bg-black/5 dark:hover:bg-white/10"
+          class="text-text-muted rounded-xl p-2 hover:bg-black/5 dark:hover:bg-white/10"
           aria-label={m.common_close_label()}
         >
           <X size={18} />
@@ -119,7 +119,7 @@
 
       <div class="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
         <div>
-          <label for="poll-question" class="mb-1.5 block text-sm font-semibold text-text-main">
+          <label for="poll-question" class="text-text-main mb-1.5 block text-sm font-semibold">
             Question
           </label>
           <input
@@ -127,12 +127,12 @@
             bind:value={question}
             maxlength="300"
             placeholder={m.channel_poll_question_placeholder()}
-            class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-cn-yellow/40"
+            class="border-cn-border text-text-main focus:ring-cn-yellow/40 w-full rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
           />
         </div>
 
         <div class="space-y-2">
-          <span class="block text-sm font-semibold text-text-main"
+          <span class="text-text-main block text-sm font-semibold"
             >{m.channel_poll_options_label()}</span
           >
           {#each options as option (option.id)}
@@ -141,13 +141,13 @@
                 bind:value={option.label}
                 maxlength="150"
                 placeholder={m.channel_poll_option_placeholder()}
-                class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-cn-yellow/40"
+                class="border-cn-border text-text-main focus:ring-cn-yellow/40 w-full rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
               />
               <button
                 type="button"
                 onclick={() => removeOption(option.id)}
                 disabled={options.length <= 2}
-                class="rounded-xl p-2 text-text-muted hover:bg-black/5 disabled:opacity-30 dark:hover:bg-white/10"
+                class="text-text-muted rounded-xl p-2 hover:bg-black/5 disabled:opacity-30 dark:hover:bg-white/10"
                 aria-label={m.channel_poll_remove_option_aria()}
               >
                 <Trash2 size={16} />
@@ -158,7 +158,7 @@
             <button
               type="button"
               onclick={addOption}
-              class="flex items-center gap-1.5 rounded-xl px-2 py-1.5 text-sm font-semibold text-cn-yellow hover:bg-cn-yellow/10"
+              class="text-cn-yellow hover:bg-cn-yellow/10 flex items-center gap-1.5 rounded-xl px-2 py-1.5 text-sm font-semibold"
             >
               <Plus size={16} />
               {m.channel_poll_add_option()}
@@ -167,24 +167,24 @@
         </div>
 
         <label
-          class="flex cursor-pointer select-none items-center justify-between rounded-xl bg-black/5 px-4 py-3 dark:bg-white/5"
+          class="flex cursor-pointer items-center justify-between rounded-xl bg-black/5 px-4 py-3 select-none dark:bg-white/5"
         >
-          <span class="text-sm font-semibold text-text-main"
+          <span class="text-text-main text-sm font-semibold"
             >{m.post_poll_allow_multiple_label()}</span
           >
-          <input type="checkbox" bind:checked={multipleChoice} class="h-5 w-5 accent-cn-yellow" />
+          <input type="checkbox" bind:checked={multipleChoice} class="accent-cn-yellow h-5 w-5" />
         </label>
 
         <div>
-          <label for="poll-deadline" class="mb-1.5 block text-sm font-semibold text-text-main">
+          <label for="poll-deadline" class="text-text-main mb-1.5 block text-sm font-semibold">
             {m.channel_poll_deadline_label()}
-            <span class="font-normal text-text-muted">{m.channel_poll_deadline_optional()}</span>
+            <span class="text-text-muted font-normal">{m.channel_poll_deadline_optional()}</span>
           </label>
           <input
             id="poll-deadline"
             type="datetime-local"
             bind:value={deadline}
-            class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-cn-yellow/40"
+            class="border-cn-border text-text-main focus:ring-cn-yellow/40 w-full rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
           />
         </div>
 
@@ -193,11 +193,11 @@
         {/if}
       </div>
 
-      <div class="flex justify-end gap-2 border-t border-cn-border p-4">
+      <div class="border-cn-border flex justify-end gap-2 border-t p-4">
         <button
           type="button"
           onclick={close}
-          class="rounded-xl px-4 py-2 text-sm font-semibold text-text-muted hover:bg-black/5 dark:hover:bg-white/10"
+          class="text-text-muted rounded-xl px-4 py-2 text-sm font-semibold hover:bg-black/5 dark:hover:bg-white/10"
         >
           {m.common_cancel_button()}
         </button>
@@ -205,7 +205,7 @@
           type="button"
           onclick={submit}
           disabled={!canSubmit || submitting}
-          class="rounded-xl bg-cn-yellow px-5 py-2 text-sm font-extrabold text-cn-ink transition-all hover:brightness-105 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+          class="bg-cn-yellow text-cn-ink rounded-xl px-5 py-2 text-sm font-extrabold transition-all hover:brightness-105 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {submitting ? m.common_sending_label() : m.channel_poll_submit_button()}
         </button>

@@ -381,7 +381,7 @@ h6,
 }
 
 /* `.app-layout` deliberately has NO keyboard-open height override (WP-KBD-1). Its ancestor
-   chain (routes/+layout.svelte's `h-[var(--app-viewport-height,100dvh)]` wrapper, down through
+   chain (routes/+layout.svelte's `h-(--app-viewport-height,100dvh)` wrapper, down through
    several `flex-1`/`inset-0`/`height:100%` layers) already shrinks to the pinned height, with
    the status-bar inset subtracted exactly once via that wrapper's own `padding-top`. Pinning
    `.app-layout` to the SAME variable a second time, independently of its already-shrunk parent

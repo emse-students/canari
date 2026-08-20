@@ -600,20 +600,20 @@
   title={m.chat_community_settings_title()}
   maxWidth={activeTab === 'roles' ? 'max-w-6xl' : 'max-w-4xl'}
 >
-  <div class="flex flex-col md:flex-row min-h-0 border-t border-cn-border/40">
+  <div class="border-cn-border/40 flex min-h-0 flex-col border-t md:flex-row">
     <!-- Sidebar tabs -->
     <div
-      class="w-full md:w-64 md:shrink-0 bg-cn-surface border-b md:border-b-0 md:border-r border-cn-border/40 flex flex-row md:flex-col overflow-x-auto md:overflow-x-visible p-2 md:p-4 gap-1 md:space-y-1"
+      class="bg-cn-surface border-cn-border/40 flex w-full flex-row gap-1 overflow-x-auto border-b p-2 md:w-64 md:shrink-0 md:flex-col md:space-y-1 md:overflow-x-visible md:border-r md:border-b-0 md:p-4"
     >
       <h3
-        class="hidden md:block text-xs font-bold uppercase tracking-wider text-text-muted mb-2 px-2"
+        class="text-text-muted mb-2 hidden px-2 text-xs font-bold tracking-wider uppercase md:block"
       >
         {selectedWorkspace ? selectedWorkspace.name : m.chat_community_fallback_name()}
       </h3>
 
       <button
         onclick={() => (activeTab = 'overview')}
-        class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-colors {activeTab ===
+        class="flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors {activeTab ===
         'overview'
           ? 'bg-cn-yellow/15 text-cn-dark'
           : 'text-text-main hover:bg-cn-bg'}"
@@ -624,7 +624,7 @@
       {#if canManage}
         <button
           onclick={() => (activeTab = 'roles')}
-          class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-colors {activeTab ===
+          class="flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors {activeTab ===
           'roles'
             ? 'bg-cn-yellow/15 text-cn-dark'
             : 'text-text-main hover:bg-cn-bg'}"
@@ -635,7 +635,7 @@
       {/if}
       <button
         onclick={() => (activeTab = 'members')}
-        class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-colors {activeTab ===
+        class="flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors {activeTab ===
         'members'
           ? 'bg-cn-yellow/15 text-cn-dark'
           : 'text-text-main hover:bg-cn-bg'}"
@@ -644,9 +644,9 @@
         {m.common_members_label()}
       </button>
 
-      <div class="hidden md:block mt-auto pt-4 space-y-2">
+      <div class="mt-auto hidden space-y-2 pt-4 md:block">
         <button
-          class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-red-err hover:bg-red-err/10 transition-colors w-full"
+          class="text-red-err hover:bg-red-err/10 flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors"
           onclick={leaveCommunity}
         >
           <LogOut size={18} />
@@ -654,7 +654,7 @@
         </button>
         {#if canManage}
           <button
-            class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-red-err hover:bg-red-err/10 transition-colors w-full"
+            class="text-red-err hover:bg-red-err/10 flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors"
             onclick={deleteCommunity}
           >
             <Trash2 size={18} />
@@ -665,14 +665,14 @@
     </div>
 
     <!-- Main content -->
-    <div class="flex-1 bg-cn-bg p-6 overflow-y-auto min-h-75">
+    <div class="bg-cn-bg min-h-75 flex-1 overflow-y-auto p-6">
       {#if activeTab === 'overview'}
-        <div class="space-y-6 max-w-2xl">
-          <h2 class="text-xl font-bold text-text-main">{m.chat_community_overview_tab()}</h2>
+        <div class="max-w-2xl space-y-6">
+          <h2 class="text-text-main text-xl font-bold">{m.chat_community_overview_tab()}</h2>
 
           <div class="flex items-center gap-6">
             <div class="relative shrink-0">
-              <div class="w-24 h-24 rounded-full overflow-hidden shadow-md">
+              <div class="h-24 w-24 overflow-hidden rounded-full shadow-md">
                 <GroupAvatar
                   imageMediaId={selectedWorkspace?.imageMediaId}
                   name={selectedWorkspace?.name ?? ''}
@@ -683,7 +683,7 @@
               </div>
               {#if canManage}
                 <label
-                  class="absolute bottom-0 right-0 w-8 h-8 rounded-full bg-cn-yellow text-cn-ink flex items-center justify-center cursor-pointer hover:bg-cn-yellow-hover transition-colors shadow"
+                  class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover absolute right-0 bottom-0 flex h-8 w-8 cursor-pointer items-center justify-center rounded-full shadow transition-colors"
                   title={m.chat_community_change_image_title()}
                 >
                   {#if imageUploading}
@@ -703,14 +703,14 @@
             </div>
             <div class="flex-1 space-y-2">
               {#if imageUploadError}
-                <p class="text-xs text-red-err">{imageUploadError}</p>
+                <p class="text-red-err text-xs">{imageUploadError}</p>
               {/if}
-              <label class="text-xs font-bold uppercase text-text-muted" for="server-name"
+              <label class="text-text-muted text-xs font-bold uppercase" for="server-name"
                 >{m.chat_community_name_label()}</label
               >
               <input
                 id="server-name"
-                class="w-full bg-cn-surface text-text-main border border-cn-border rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-cn-yellow/50 read-only:opacity-60 read-only:cursor-not-allowed"
+                class="bg-cn-surface text-text-main border-cn-border focus:ring-cn-yellow/50 w-full rounded-xl border px-4 py-2.5 outline-none read-only:cursor-not-allowed read-only:opacity-60 focus:ring-2"
                 value={selectedWorkspace ? selectedWorkspace.name : ''}
                 readonly={!canManage}
               />
@@ -718,27 +718,27 @@
           </div>
 
           <div
-            class="border border-cn-border bg-cn-surface rounded-xl p-4 shadow-sm text-sm text-text-main flex items-center gap-3"
+            class="border-cn-border bg-cn-surface text-text-main flex items-center gap-3 rounded-xl border p-4 text-sm shadow-sm"
           >
             <ShieldCheck size={24} class="text-green-ok" />
             <div class="flex-1">
-              <span class="font-bold block">{m.chat_community_e2e_active_title()}</span>
-              <span class="text-xs text-text-muted">{m.chat_community_e2e_description()}</span>
+              <span class="block font-bold">{m.chat_community_e2e_active_title()}</span>
+              <span class="text-text-muted text-xs">{m.chat_community_e2e_description()}</span>
             </div>
           </div>
 
           {#if canManage}
-            <div class="border border-cn-border bg-cn-surface rounded-xl p-4 shadow-sm space-y-3">
+            <div class="border-cn-border bg-cn-surface space-y-3 rounded-xl border p-4 shadow-sm">
               <p
-                class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
+                class="text-text-muted flex items-center gap-1.5 text-xs font-bold tracking-wider uppercase"
               >
                 <History size={14} />
                 {m.chat_community_history_visibility_label()}
               </p>
-              <p class="text-sm text-text-muted">
+              <p class="text-text-muted text-sm">
                 {m.chat_community_history_visibility_description()}
               </p>
-              <label class="flex flex-col gap-1 text-xs font-semibold text-text-muted">
+              <label class="text-text-muted flex flex-col gap-1 text-xs font-semibold">
                 <select
                   value={historyVisibility}
                   disabled={historyVisibilitySaving}
@@ -746,19 +746,19 @@
                     void saveHistoryVisibility(
                       (event.currentTarget as HTMLSelectElement).value as GraineHistoryVisibility
                     )}
-                  class="rounded-xl border border-cn-border bg-cn-surface px-3 py-2 text-sm font-normal text-text-main disabled:opacity-50"
+                  class="border-cn-border bg-cn-surface text-text-main rounded-xl border px-3 py-2 text-sm font-normal disabled:opacity-50"
                 >
                   <option value="shared">{m.chat_community_history_shared_option()}</option>
                   <option value="joined">{m.chat_community_history_joined_option()}</option>
                 </select>
               </label>
-              <p class="text-xs text-text-muted">
+              <p class="text-text-muted text-xs">
                 {historyVisibility === 'shared'
                   ? m.chat_community_history_shared_note()
                   : m.chat_community_history_joined_note()}
               </p>
               {#if historyVisibilityError}
-                <p class="text-xs text-red-err">{historyVisibilityError}</p>
+                <p class="text-red-err text-xs">{historyVisibilityError}</p>
               {/if}
             </div>
           {/if}
@@ -768,21 +768,21 @@
       {#if activeTab === 'roles'}
         <div class="space-y-6">
           <div>
-            <h2 class="text-xl font-bold text-text-main mb-1">{m.chat_community_roles_tab()}</h2>
-            <p class="text-sm text-text-muted">{m.chat_community_roles_description()}</p>
+            <h2 class="text-text-main mb-1 text-xl font-bold">{m.chat_community_roles_tab()}</h2>
+            <p class="text-text-muted text-sm">{m.chat_community_roles_description()}</p>
           </div>
 
           {#if rolesLoading}
-            <div class="flex items-center gap-2 text-sm text-text-muted">
+            <div class="text-text-muted flex items-center gap-2 text-sm">
               <Loader size={16} class="animate-spin" />
               {m.common_loading_label()}
             </div>
           {:else if rolesError}
-            <div class="p-3 rounded-xl bg-red-err/10 text-red-err text-sm border border-red-err/30">
+            <div class="bg-red-err/10 text-red-err border-red-err/30 rounded-xl border p-3 text-sm">
               {rolesError}
             </div>
           {:else if workspaceRoles.length > 0}
-            <div class="border border-cn-border bg-cn-surface rounded-xl p-4 shadow-sm">
+            <div class="border-cn-border bg-cn-surface rounded-xl border p-4 shadow-sm">
               <PermissionGrid
                 roles={workspaceRoles}
                 permissions={roleGridPermissions}
@@ -796,19 +796,19 @@
       {/if}
 
       {#if activeTab === 'members'}
-        <div class="space-y-6 max-w-3xl">
-          <h2 class="text-xl font-bold text-text-main">{m.common_members_label()}</h2>
-          <p class="text-sm text-text-muted">{m.chat_community_members_description()}</p>
+        <div class="max-w-3xl space-y-6">
+          <h2 class="text-text-main text-xl font-bold">{m.common_members_label()}</h2>
+          <p class="text-text-muted text-sm">{m.chat_community_members_description()}</p>
 
-          <div class="border border-cn-border rounded-xl bg-cn-surface overflow-hidden text-sm">
-            <div class="p-4 flex items-center justify-between border-b border-cn-border bg-cn-bg">
-              <span class="font-semibold text-text-main"
+          <div class="border-cn-border bg-cn-surface overflow-hidden rounded-xl border text-sm">
+            <div class="border-cn-border bg-cn-bg flex items-center justify-between border-b p-4">
+              <span class="text-text-main font-semibold"
                 >{communityMembers.length} {m.chat_community_member_count_label()}</span
               >
             </div>
             {#if canManage}
-              <div class="px-4 py-3 border-b border-cn-border bg-cn-bg/60 space-y-2.5">
-                <div class="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-2.5">
+              <div class="border-cn-border bg-cn-bg/60 space-y-2.5 border-b px-4 py-3">
+                <div class="grid grid-cols-1 gap-2.5 md:grid-cols-[1fr_auto_auto]">
                   <!-- Members of this community are already here; inviting them again is not an action. -->
                   <UserAutocomplete
                     value={inviteUserId}
@@ -819,14 +819,14 @@
                   />
                   <select
                     bind:value={inviteRole}
-                    class="bg-cn-surface text-text-main border border-cn-border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-cn-yellow/40"
+                    class="bg-cn-surface text-text-main border-cn-border focus:ring-cn-yellow/40 rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2"
                   >
                     <option value="member">{m.chat_role_member()}</option>
                     <option value="moderator">{m.chat_role_moderator()}</option>
                     <option value="admin">{m.chat_role_admin()}</option>
                   </select>
                   <button
-                    class="bg-cn-yellow text-cn-ink rounded-lg px-3 py-2 text-xs font-bold hover:bg-cn-yellow-hover transition disabled:opacity-50 disabled:cursor-not-allowed"
+                    class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-lg px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-50"
                     onclick={handleGenerateInvitation}
                     disabled={inviteLoading}
                   >
@@ -838,34 +838,34 @@
               </div>
             {/if}
             {#if inviteStatus}
-              <div class="px-4 py-2 border-b border-cn-border text-xs font-medium text-text-muted">
+              <div class="border-cn-border text-text-muted border-b px-4 py-2 text-xs font-medium">
                 {inviteStatus}
               </div>
             {/if}
             {#if membersLoading}
-              <div class="p-6 text-center text-text-muted">
+              <div class="text-text-muted p-6 text-center">
                 {m.chat_community_loading_members()}
               </div>
             {:else if membersError}
-              <div class="p-6 text-center text-red-err">{membersError}</div>
+              <div class="text-red-err p-6 text-center">{membersError}</div>
             {:else if communityMembers.length === 0}
-              <div class="p-6 text-center text-text-muted">{m.chat_community_no_members()}</div>
+              <div class="text-text-muted p-6 text-center">{m.chat_community_no_members()}</div>
             {:else}
-              <div class="divide-y divide-cn-border/70">
+              <div class="divide-cn-border/70 divide-y">
                 {#each communityMembers as member (member.userId)}
-                  <div class="px-4 py-3 flex items-center justify-between gap-3">
-                    <div class="flex items-center gap-2.5 min-w-0">
+                  <div class="flex items-center justify-between gap-3 px-4 py-3">
+                    <div class="flex min-w-0 items-center gap-2.5">
                       <Avatar userId={member.userId} size="sm" />
                       <UserName
                         userId={member.userId}
-                        class="font-medium text-text-main truncate"
+                        class="text-text-main truncate font-medium"
                       />
                     </div>
                     {#if canManage}
-                      <div class="flex items-center gap-1.5 shrink-0">
+                      <div class="flex shrink-0 items-center gap-1.5">
                         <div class="relative">
                           <select
-                            class="w-32 bg-cn-surface text-text-main border border-cn-border rounded-lg px-2 py-1.5 text-xs font-semibold outline-none focus:ring-1 focus:ring-cn-yellow/50 disabled:opacity-50"
+                            class="bg-cn-surface text-text-main border-cn-border focus:ring-cn-yellow/50 w-32 rounded-lg border px-2 py-1.5 text-xs font-semibold outline-none focus:ring-1 disabled:opacity-50"
                             value={member.role}
                             disabled={memberRoleSaving[member.userId]}
                             onchange={(e) => {
@@ -880,8 +880,8 @@
                             <option value="admin">{m.chat_role_admin()}</option>
                           </select>
                           {#if memberRoleSaving[member.userId]}
-                            <span class="absolute right-1.5 top-1/2 -translate-y-1/2">
-                              <Loader size={12} class="animate-spin text-cn-yellow" />
+                            <span class="absolute top-1/2 right-1.5 -translate-y-1/2">
+                              <Loader size={12} class="text-cn-yellow animate-spin" />
                             </span>
                           {/if}
                         </div>
@@ -889,7 +889,7 @@
                           type="button"
                           onclick={() => handleRemoveMember(member.userId)}
                           disabled={memberRemoving[member.userId]}
-                          class="rounded-lg border border-red-err/20 bg-red-err/5 px-2 py-1.5 text-xs font-bold text-red-err hover:bg-red-err/10 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                          class="border-red-err/20 bg-red-err/5 text-red-err hover:bg-red-err/10 rounded-lg border px-2 py-1.5 text-xs font-bold transition-all disabled:cursor-not-allowed disabled:opacity-50"
                           title={m.chat_community_remove_member_title()}
                         >
                           {#if memberRemoving[member.userId]}
@@ -913,22 +913,22 @@
           </div>
 
           {#if canManage}
-            <div class="border border-cn-border rounded-xl bg-cn-surface p-4 space-y-3 shadow-sm">
+            <div class="border-cn-border bg-cn-surface space-y-3 rounded-xl border p-4 shadow-sm">
               <p
-                class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
+                class="text-text-muted flex items-center gap-1.5 text-xs font-bold tracking-wider uppercase"
               >
                 <Link2 size={14} />
                 {m.chat_community_invite_link_label()}
               </p>
-              <p class="text-sm text-text-muted">{m.chat_community_invite_link_description()}</p>
-              <p class="text-sm text-text-muted">{m.chat_community_invite_single_link_note()}</p>
+              <p class="text-text-muted text-sm">{m.chat_community_invite_link_description()}</p>
+              <p class="text-text-muted text-sm">{m.chat_community_invite_single_link_note()}</p>
 
               <div class="flex flex-wrap gap-3">
-                <label class="flex flex-col gap-1 text-xs font-semibold text-text-muted">
+                <label class="text-text-muted flex flex-col gap-1 text-xs font-semibold">
                   {m.chat_community_invite_expiry_label()}
                   <select
                     bind:value={shareExpiryDays}
-                    class="rounded-xl border border-cn-border bg-cn-surface px-3 py-2 text-sm font-normal text-text-main"
+                    class="border-cn-border bg-cn-surface text-text-main rounded-xl border px-3 py-2 text-sm font-normal"
                   >
                     {#each SHARE_EXPIRY_CHOICES as days (days)}
                       <option value={days}>
@@ -939,11 +939,11 @@
                     {/each}
                   </select>
                 </label>
-                <label class="flex flex-col gap-1 text-xs font-semibold text-text-muted">
+                <label class="text-text-muted flex flex-col gap-1 text-xs font-semibold">
                   {m.chat_community_invite_max_uses_label()}
                   <select
                     bind:value={shareMaxUses}
-                    class="rounded-xl border border-cn-border bg-cn-surface px-3 py-2 text-sm font-normal text-text-main"
+                    class="border-cn-border bg-cn-surface text-text-main rounded-xl border px-3 py-2 text-sm font-normal"
                   >
                     {#each SHARE_MAX_USES_CHOICES as count (count)}
                       <option value={count}>
@@ -962,20 +962,20 @@
                     type="text"
                     readonly
                     value={shareLink}
-                    class="flex-1 min-w-0 rounded-xl border border-cn-border bg-cn-surface px-3 py-2 text-sm text-text-main"
+                    class="border-cn-border bg-cn-surface text-text-main min-w-0 flex-1 rounded-xl border px-3 py-2 text-sm"
                   />
                   <button
                     type="button"
                     onclick={() => void loadShareLink(true)}
                     disabled={shareLoading}
-                    class="shrink-0 rounded-xl border border-cn-border px-3 py-2 text-xs font-semibold hover:bg-cn-bg disabled:opacity-50"
+                    class="border-cn-border hover:bg-cn-bg shrink-0 rounded-xl border px-3 py-2 text-xs font-semibold disabled:opacity-50"
                   >
                     {m.chat_regenerate_link_button()}
                   </button>
                 </div>
-                <p class="text-xs text-text-muted">{shareBounds}</p>
+                <p class="text-text-muted text-xs">{shareBounds}</p>
                 {#if shareCopied}
-                  <p class="text-xs font-semibold text-green-ok">
+                  <p class="text-green-ok text-xs font-semibold">
                     {m.chat_link_copied_success()}
                   </p>
                 {/if}
@@ -984,13 +984,13 @@
                   type="button"
                   onclick={() => void loadShareLink(false)}
                   disabled={shareLoading}
-                  class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
+                  class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
                 >
                   {shareLoading ? m.common_loading_label() : m.chat_generate_invite_link_button()}
                 </button>
               {/if}
               {#if shareError}
-                <p class="text-xs font-medium text-red-err">{shareError}</p>
+                <p class="text-red-err text-xs font-medium">{shareError}</p>
               {/if}
             </div>
           {/if}
@@ -998,9 +998,9 @@
       {/if}
 
       <!-- Destructive action reachable on mobile (desktop keeps it in the sidebar). -->
-      <div class="md:hidden mt-8 pt-4 border-t border-cn-border/40 space-y-2">
+      <div class="border-cn-border/40 mt-8 space-y-2 border-t pt-4 md:hidden">
         <button
-          class="flex w-full items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold text-red-err bg-red-err/10 hover:bg-red-err/20 transition-colors"
+          class="text-red-err bg-red-err/10 hover:bg-red-err/20 flex w-full items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors"
           onclick={leaveCommunity}
         >
           <LogOut size={18} />
@@ -1008,7 +1008,7 @@
         </button>
         {#if canManage}
           <button
-            class="flex w-full items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold text-red-err bg-red-err/10 hover:bg-red-err/20 transition-colors"
+            class="text-red-err bg-red-err/10 hover:bg-red-err/20 flex w-full items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors"
             onclick={deleteCommunity}
           >
             <Trash2 size={18} />

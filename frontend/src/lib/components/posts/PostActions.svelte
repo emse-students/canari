@@ -31,14 +31,14 @@
   }: Props = $props();
 </script>
 
-<div class="flex items-center gap-2 px-5 py-3 border-b border-cn-border/40">
+<div class="border-cn-border/40 flex items-center gap-2 border-b px-5 py-3">
   <div class="relative">
     <button
       type="button"
       onclick={onToggleReactionPicker}
-      class="flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors {userReaction
+      class="flex items-center gap-1.5 rounded-lg px-3 py-2 transition-colors {userReaction
         ? 'bg-cn-yellow/15 text-cn-dark'
-        : 'text-text-muted hover:bg-[var(--cn-surface)]'}"
+        : 'text-text-muted hover:bg-(--cn-surface)'}"
       aria-label={m.post_reacter()}
     >
       {#if userReaction}
@@ -54,20 +54,20 @@
 
     {#if showReactionPicker}
       <div
-        class="absolute bottom-full left-0 mb-2 bg-[var(--cn-surface)] border border-cn-border rounded-2xl shadow-lg p-2 flex gap-1 z-50 overflow-x-auto max-w-[min(100vw-2rem,32rem)]"
+        class="border-cn-border absolute bottom-full left-0 z-50 mb-2 flex max-w-[min(100vw-2rem,32rem)] gap-1 overflow-x-auto rounded-2xl border bg-(--cn-surface) p-2 shadow-lg"
       >
         {#each reactionList as reaction (reaction.type)}
           <button
             type="button"
             onclick={() => onReactionSelect(reaction.type)}
-            class="flex flex-col items-center gap-1 p-2 rounded-lg transition-all hover:bg-cn-yellow/20 {userReaction ===
+            class="hover:bg-cn-yellow/20 flex flex-col items-center gap-1 rounded-lg p-2 transition-all {userReaction ===
             reaction.type
-              ? 'ring-2 ring-cn-yellow'
+              ? 'ring-cn-yellow ring-2'
               : ''}"
             title={reaction.type}
           >
             <span class="text-2xl">{reaction.emoji}</span>
-            <span class="text-[0.6rem] font-bold text-text-muted">{reaction.type}</span>
+            <span class="text-text-muted text-[0.6rem] font-bold">{reaction.type}</span>
           </button>
         {/each}
       </div>
@@ -77,7 +77,7 @@
   <button
     type="button"
     onclick={onCommentClick}
-    class="flex items-center gap-1.5 px-3 py-2 rounded-lg text-text-muted hover:bg-[var(--cn-surface)] transition-colors"
+    class="text-text-muted flex items-center gap-1.5 rounded-lg px-3 py-2 transition-colors hover:bg-(--cn-surface)"
     aria-label={m.post_commenter()}
   >
     <MessageCircle size={20} />

@@ -69,7 +69,7 @@
     maxWidth="max-w-lg"
     onClose={() => {}}
   >
-    <div class="space-y-4 text-sm text-text-muted leading-relaxed">
+    <div class="text-text-muted space-y-4 text-sm leading-relaxed">
       <p>
         {m.platform_gate_version_prefix()}<strong class="text-cn-dark">{info.clientVersion}</strong
         >{m.platform_gate_version_middle()}
@@ -84,7 +84,7 @@
     {#snippet footer()}
       <button
         type="button"
-        class="inline-flex items-center gap-2 rounded-lg bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-60 shadow-sm w-full justify-center"
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-bold shadow-sm disabled:opacity-60"
         disabled={updating || target === null}
         onclick={() => void handleUpdate()}
       >
@@ -105,10 +105,10 @@
     maxWidth="max-w-lg"
     onClose={() => {}}
   >
-    <div class="space-y-4 text-sm text-text-muted leading-relaxed">
+    <div class="text-text-muted space-y-4 text-sm leading-relaxed">
       <div class="flex justify-center">
         <span
-          class="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-warn"
+          class="text-amber-warn flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/15"
         >
           <Wrench size={28} />
         </span>
@@ -121,7 +121,7 @@
     {#snippet footer()}
       <button
         type="button"
-        class="rounded-lg px-4 py-2 text-sm font-bold text-cn-dark bg-cn-yellow hover:bg-cn-yellow-hover disabled:opacity-60 w-full"
+        class="text-cn-dark bg-cn-yellow hover:bg-cn-yellow-hover w-full rounded-lg px-4 py-2 text-sm font-bold disabled:opacity-60"
         disabled={loggingOut}
         onclick={() => void handleMaintenanceLogout()}
       >

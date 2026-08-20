@@ -338,28 +338,28 @@
   <div class="flex items-start gap-2.5 {isReply ? 'mt-2.5' : 'mt-4'}">
     <a
       href="/profile/{encodeURIComponent(comment.userId)}"
-      class="shrink-0 mt-0.5 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded-full"
+      class="mt-0.5 shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
     >
       <Avatar userId={comment.userId} size="sm" />
     </a>
 
-    <div class="flex-1 min-w-0">
+    <div class="min-w-0 flex-1">
       {#if isEditing}
         <!-- Inline edit mode. -->
         <div
-          class="flex items-center gap-2 bg-black/5 dark:bg-white/5 rounded-2xl rounded-tl-sm px-3.5 py-2.5 border border-amber-500/40"
+          class="flex items-center gap-2 rounded-2xl rounded-tl-sm border border-amber-500/40 bg-black/5 px-3.5 py-2.5 dark:bg-white/5"
         >
           <input
             type="text"
             bind:this={editInputEl}
             bind:value={editingText}
             onkeydown={handleEditKeyDown}
-            class="flex-1 bg-transparent text-[0.9rem] font-medium text-text-main outline-none"
+            class="text-text-main flex-1 bg-transparent text-[0.9rem] font-medium outline-none"
           />
           <button
             type="button"
             onclick={submitEdit}
-            class="text-amber-500 hover:text-amber-400 shrink-0 outline-none"
+            class="shrink-0 text-amber-500 outline-none hover:text-amber-400"
             aria-label={m.common_validate_button()}
           >
             <Send size={15} strokeWidth={2.5} />
@@ -375,11 +375,11 @@
         </div>
       {:else}
         <div
-          class="bg-black/5 dark:bg-white/5 rounded-2xl rounded-tl-sm px-3.5 py-2.5 w-fit max-w-full border border-black/5 dark:border-white/5 shadow-sm"
+          class="w-fit max-w-full rounded-2xl rounded-tl-sm border border-black/5 bg-black/5 px-3.5 py-2.5 shadow-sm dark:border-white/5 dark:bg-white/5"
         >
           <a
             href="/profile/{encodeURIComponent(comment.userId)}"
-            class="font-bold text-[0.8rem] text-text-main hover:text-amber-500 transition-colors block mb-0.5 outline-none focus-visible:underline"
+            class="text-text-main mb-0.5 block text-[0.8rem] font-bold transition-colors outline-none hover:text-amber-500 focus-visible:underline"
           >
             {getCommentAuthorName(comment)}
           </a>
@@ -388,7 +388,7 @@
             {@const parentComment = comments.find((c) => c.id === comment.parentId)}
             {#if parentComment}
               <span
-                class="flex items-center gap-1 text-[0.65rem] font-semibold text-text-muted mb-1 opacity-75"
+                class="text-text-muted mb-1 flex items-center gap-1 text-[0.65rem] font-semibold opacity-75"
               >
                 <CornerDownRight size={11} />
                 {getCommentAuthorName(parentComment)}
@@ -399,7 +399,7 @@
             {@const isLong = comment.text.length > COMMENT_TRUNCATE_THRESHOLD}
             {@const isExpanded = expandedComments.has(comment.id)}
             <div
-              class="text-[0.9rem] text-text-main leading-snug break-words [&_p]:inline [&_p]:m-0 {isLong &&
+              class="text-text-main text-[0.9rem] leading-snug break-words [&_p]:m-0 [&_p]:inline {isLong &&
               !isExpanded
                 ? 'line-clamp-5'
                 : ''}"
@@ -414,7 +414,7 @@
               <button
                 type="button"
                 onclick={() => toggleCommentExpanded(comment.id)}
-                class="text-[0.75rem] font-semibold text-primary mt-0.5 hover:underline focus-visible:underline outline-none"
+                class="text-primary mt-0.5 text-[0.75rem] font-semibold outline-none hover:underline focus-visible:underline"
               >
                 {isExpanded ? m.post_voir_moins() : m.post_voir_plus()}
               </button>
@@ -423,7 +423,7 @@
           {#if comment.media && authToken}
             {@const reserved = reservesAspectRatio(resolveMediaType(comment.media))}
             <div
-              class="relative mt-1.5 w-full rounded-xl overflow-hidden {reserved
+              class="relative mt-1.5 w-full overflow-hidden rounded-xl {reserved
                 ? 'max-w-[14rem] bg-black/5 dark:bg-white/5'
                 : 'max-w-[20rem]'}"
               style={reserved ? mediaAspectStyle(comment.media.width, comment.media.height) : ''}
@@ -434,9 +434,9 @@
         </div>
       {/if}
 
-      <div class="flex items-center gap-3.5 px-2 mt-1">
+      <div class="mt-1 flex items-center gap-3.5 px-2">
         <span
-          class="text-[0.65rem] font-bold text-text-muted opacity-80"
+          class="text-text-muted text-[0.65rem] font-bold opacity-80"
           title={exactDate(comment.createdAt)}>{timeAgo(comment.createdAt)}</span
         >
 
@@ -457,7 +457,7 @@
         <button
           type="button"
           onclick={() => initiateReply(comment)}
-          class="text-[0.7rem] font-extrabold text-text-muted hover:text-text-main transition-colors outline-none focus-visible:underline"
+          class="text-text-muted hover:text-text-main text-[0.7rem] font-extrabold transition-colors outline-none focus-visible:underline"
         >
           {m.post_reply_label()}
         </button>
@@ -466,7 +466,7 @@
           <button
             type="button"
             onclick={() => initiateEdit(comment)}
-            class="text-[0.7rem] font-extrabold text-text-muted hover:text-amber-500 transition-colors outline-none"
+            class="text-text-muted text-[0.7rem] font-extrabold transition-colors outline-none hover:text-amber-500"
             aria-label={m.common_edit_label()}
           >
             <Pencil size={12} strokeWidth={2.5} />
@@ -474,7 +474,7 @@
           <button
             type="button"
             onclick={() => onDeleteComment(comment.id)}
-            class="text-[0.7rem] font-extrabold text-text-muted hover:text-red-500 transition-colors outline-none"
+            class="text-text-muted text-[0.7rem] font-extrabold transition-colors outline-none hover:text-red-500"
             aria-label={m.common_delete_button()}
           >
             <Trash2 size={12} strokeWidth={2.5} />
@@ -483,7 +483,7 @@
           <button
             type="button"
             onclick={() => onReport?.(comment.id)}
-            class="text-[0.7rem] font-extrabold text-text-muted hover:text-red-400 transition-colors outline-none"
+            class="text-text-muted text-[0.7rem] font-extrabold transition-colors outline-none hover:text-red-400"
             aria-label={m.post_report_comment_label()}
             title={m.post_report_label()}
           >
@@ -496,7 +496,7 @@
         {@const replies = comments.filter((c) => c.parentId === comment.id)}
         {#if replies.length > 0}
           <div
-            class="pl-3 sm:pl-4 ml-2 sm:ml-3.5 mt-1 border-l-2 border-black/5 dark:border-white/10"
+            class="mt-1 ml-2 border-l-2 border-black/5 pl-3 sm:ml-3.5 sm:pl-4 dark:border-white/10"
           >
             {#each replies as reply (reply.id)}
               {@render commentNode(reply, true)}
@@ -510,16 +510,16 @@
 
 {#if comments.length > 0 || showComments}
   <div
-    class="border-t border-black/5 dark:border-white/10 px-4 sm:px-5 py-4 bg-white/30 dark:bg-black/10"
+    class="border-t border-black/5 bg-white/30 px-4 py-4 sm:px-5 dark:border-white/10 dark:bg-black/10"
   >
     <!-- Controls: show/hide + sort. -->
-    <div class="flex items-center justify-between mb-2 gap-2">
+    <div class="mb-2 flex items-center justify-between gap-2">
       <div>
         {#if topLevelComments.length > PREVIEW_COUNT && !showComments}
           <button
             type="button"
             onclick={onToggleComments}
-            class="text-[0.75rem] font-bold text-text-muted hover:text-text-main flex items-center gap-1.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded-lg px-2 py-1"
+            class="text-text-muted hover:text-text-main flex items-center gap-1.5 rounded-lg px-2 py-1 text-[0.75rem] font-bold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
           >
             <ChevronDown size={16} strokeWidth={2.5} />
             {m.post_show_comments_label({ count: topLevelComments.length })}
@@ -528,7 +528,7 @@
           <button
             type="button"
             onclick={onToggleComments}
-            class="text-[0.75rem] font-bold text-text-muted hover:text-text-main flex items-center gap-1.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded-lg px-2 py-1"
+            class="text-text-muted hover:text-text-main flex items-center gap-1.5 rounded-lg px-2 py-1 text-[0.75rem] font-bold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
           >
             <ChevronUp size={16} strokeWidth={2.5} />
             {m.post_hide_comments_label()}
@@ -544,7 +544,7 @@
             <button
               type="button"
               onclick={() => (sortMode = mode)}
-              class="text-[0.65rem] font-bold px-2 py-0.5 rounded-full transition-colors {sortMode ===
+              class="rounded-full px-2 py-0.5 text-[0.65rem] font-bold transition-colors {sortMode ===
               mode
                 ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
                 : 'text-text-muted hover:text-text-main'}"
@@ -557,7 +557,7 @@
     </div>
 
     <!-- Comment list. -->
-    <div class="space-y-1 mb-4">
+    <div class="mb-4 space-y-1">
       {#each visibleComments as comment (comment.id)}
         {@render commentNode(comment, false)}
       {/each}
@@ -569,17 +569,17 @@
         type="button"
         onclick={handleLoadAll}
         disabled={loadingAll}
-        class="w-full text-[0.75rem] font-bold text-text-muted hover:text-text-main py-1.5 rounded-lg transition-colors disabled:opacity-50 mb-2"
+        class="text-text-muted hover:text-text-main mb-2 w-full rounded-lg py-1.5 text-[0.75rem] font-bold transition-colors disabled:opacity-50"
       >
         {loadingAll ? m.common_loading_label() : m.post_load_all_comments_label()}
       </button>
     {/if}
 
     <!-- Input area. -->
-    <div class="pt-3 flex flex-col gap-2">
+    <div class="flex flex-col gap-2 pt-3">
       {#if replyingToId}
         <div
-          class="flex items-center justify-between px-3 py-1.5 bg-amber-500/10 border border-amber-500/20 rounded-xl text-amber-700 dark:text-amber-400 text-[0.7rem] font-bold ml-10 animate-in fade-in slide-in-from-bottom-1"
+          class="animate-in fade-in slide-in-from-bottom-1 ml-10 flex items-center justify-between rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-[0.7rem] font-bold text-amber-700 dark:text-amber-400"
         >
           <span class="flex items-center gap-1.5"
             ><CornerDownRight size={14} />
@@ -587,7 +587,7 @@
           >
           <button
             onclick={cancelReply}
-            class="hover:bg-amber-500/20 rounded-full p-1 transition-colors outline-none"
+            class="rounded-full p-1 transition-colors outline-none hover:bg-amber-500/20"
             aria-label={m.post_cancel_reply_label()}
           >
             <X size={14} strokeWidth={2.5} />
@@ -601,7 +601,7 @@
   </div>
 {:else}
   <div
-    class="border-t border-black/5 dark:border-white/10 px-4 sm:px-5 py-4 bg-white/30 dark:bg-black/10"
+    class="border-t border-black/5 bg-white/30 px-4 py-4 sm:px-5 dark:border-white/10 dark:bg-black/10"
   >
     {@render commentInputRow(m.post_first_comment_placeholder())}
   </div>
@@ -610,25 +610,25 @@
 {#snippet commentInputRow(placeholder: string)}
   <div class="relative">
     {#if pendingPreviewUrl || uploadingMedia}
-      <div class="flex items-center gap-2 mb-2 ml-[2.125rem]">
+      <div class="mb-2 ml-[2.125rem] flex items-center gap-2">
         <div
-          class="relative w-20 max-h-14 rounded-lg overflow-hidden bg-black/10 dark:bg-white/10 flex-shrink-0"
+          class="relative max-h-14 w-20 flex-shrink-0 overflow-hidden rounded-lg bg-black/10 dark:bg-white/10"
           style={pendingMedia?.width && pendingMedia?.height
             ? mediaAspectStyle(pendingMedia.width, pendingMedia.height)
             : 'aspect-ratio: 10/7'}
         >
           {#if pendingPreviewUrl}
-            <img src={pendingPreviewUrl} alt="GIF" class="w-full h-full object-cover" />
+            <img src={pendingPreviewUrl} alt="GIF" class="h-full w-full object-cover" />
           {:else}
-            <div class="w-full h-full flex items-center justify-center">
-              <ImageIcon size={20} class="opacity-30 animate-pulse" />
+            <div class="flex h-full w-full items-center justify-center">
+              <ImageIcon size={20} class="animate-pulse opacity-30" />
             </div>
           {/if}
           {#if !uploadingMedia}
             <button
               type="button"
               onclick={clearPendingMedia}
-              class="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-red-500 transition-colors"
+              class="absolute top-0.5 right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-black/60 text-white transition-colors hover:bg-red-500"
               aria-label={m.post_remove_image_label()}
             >
               <X size={10} strokeWidth={3} />
@@ -636,7 +636,7 @@
           {/if}
         </div>
         {#if uploadingMedia}
-          <span class="text-[0.7rem] text-text-muted animate-pulse">{m.common_loading_label()}</span
+          <span class="text-text-muted animate-pulse text-[0.7rem]">{m.common_loading_label()}</span
           >
         {/if}
       </div>
@@ -644,7 +644,7 @@
     <div class="flex items-center gap-2.5">
       <div class="shrink-0"><Avatar userId={currentUserId} size="sm" /></div>
       <div
-        class="flex-1 min-w-0 flex items-end bg-black/5 dark:bg-white/5 rounded-[1.25rem] px-3.5 py-1.5 border border-black/5 dark:border-white/10 focus-within:ring-2 focus-within:ring-amber-500/50 focus-within:bg-white dark:focus-within:bg-black/40 transition-all shadow-inner"
+        class="flex min-w-0 flex-1 items-end rounded-[1.25rem] border border-black/5 bg-black/5 px-3.5 py-1.5 shadow-inner transition-all focus-within:bg-white focus-within:ring-2 focus-within:ring-amber-500/50 dark:border-white/10 dark:bg-white/5 dark:focus-within:bg-black/40"
         onfocusin={() => (commentInputFocused = true)}
         onfocusout={() => (commentInputFocused = false)}
       >
@@ -653,7 +653,7 @@
           onchange={(text) => onCommentTextChange(text)}
           {placeholder}
           singleLine
-          class="flex-1 min-w-0"
+          class="min-w-0 flex-1"
           editorClass="flex-1 bg-transparent text-[0.9rem] font-medium text-text-main outline-none py-1 min-h-0"
           minHeight="0"
           onpaste={handleCommentPaste}
@@ -666,7 +666,7 @@
             disabled={uploadingMedia}
             title={m.chat_send_gif_title()}
             aria-label={m.chat_send_gif_label()}
-            class="shrink-0 px-1.5 mr-0.5 self-center text-[0.7rem] font-extrabold tracking-tight text-text-muted hover:text-amber-500 disabled:opacity-40 transition-colors"
+            class="text-text-muted mr-0.5 shrink-0 self-center px-1.5 text-[0.7rem] font-extrabold tracking-tight transition-colors hover:text-amber-500 disabled:opacity-40"
           >
             GIF
           </button>
@@ -675,10 +675,10 @@
           type="button"
           onclick={handleSubmitComment}
           disabled={(!commentText.trim() && !pendingMedia) || submittingComment || uploadingMedia}
-          class="shrink-0 p-1.5 ml-1 rounded-full text-amber-500 hover:bg-amber-500/10 hover:text-amber-600 disabled:opacity-40 disabled:hover:bg-transparent transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95"
+          class="ml-1 shrink-0 rounded-full p-1.5 text-amber-500 transition-all outline-none hover:bg-amber-500/10 hover:text-amber-600 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 disabled:opacity-40 disabled:hover:bg-transparent"
           aria-label={m.post_send_comment_label()}
         >
-          <Send size={18} strokeWidth={2.5} class="ml-0.5 mt-0.5" />
+          <Send size={18} strokeWidth={2.5} class="mt-0.5 ml-0.5" />
         </button>
       </div>
     </div>

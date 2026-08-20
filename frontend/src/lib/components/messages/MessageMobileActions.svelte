@@ -81,7 +81,7 @@
   <div class="fixed inset-0 z-[110] md:hidden">
     <button
       type="button"
-      class="absolute inset-0 bg-black/45 backdrop-blur-sm cursor-default outline-none"
+      class="absolute inset-0 cursor-default bg-black/45 backdrop-blur-sm outline-none"
       aria-label={m.msg_close_actions_label()}
       onclick={onClose}
       transition:fade={{ duration: 180 }}
@@ -95,13 +95,13 @@
       {#if !isDeleted && canReact}
         <!-- Quick emoji reaction strip (WhatsApp/Messenger style) -->
         <div
-          class="flex items-center gap-1 px-3 py-2 bg-white/95 dark:bg-[var(--cn-surface)] rounded-full border border-black/10 dark:border-white/10 shadow-2xl"
+          class="flex items-center gap-1 rounded-full border border-black/10 bg-white/95 px-3 py-2 shadow-2xl dark:border-white/10 dark:bg-(--cn-surface)"
         >
           {#each QUICK_EMOJIS as emoji (emoji)}
             {@const isActive = userReactions.includes(emoji)}
             <button
               type="button"
-              class="w-11 h-11 rounded-full text-2xl leading-none flex items-center justify-center transition-transform active:scale-75 {isActive
+              class="flex h-11 w-11 items-center justify-center rounded-full text-2xl leading-none transition-transform active:scale-75 {isActive
                 ? 'bg-amber-400/20 ring-2 ring-amber-400'
                 : 'hover:bg-black/5 dark:hover:bg-white/10'}"
               aria-label={m.msg_react_with_emoji({ emoji })}
@@ -116,7 +116,7 @@
           {/each}
           <button
             type="button"
-            class="w-11 h-11 rounded-full flex items-center justify-center text-text-muted hover:bg-black/5 dark:hover:bg-white/10 transition-transform active:scale-75"
+            class="text-text-muted flex h-11 w-11 items-center justify-center rounded-full transition-transform hover:bg-black/5 active:scale-75 dark:hover:bg-white/10"
             aria-label={m.msg_more_reactions_label()}
             onclick={() => {
               onOpenFullPicker?.();
@@ -130,7 +130,7 @@
 
       <!-- Action buttons row -->
       <div
-        class="flex items-center gap-3 px-4 py-3 bg-white/90 dark:bg-[var(--cn-surface)]/95 rounded-2xl border border-black/10 dark:border-white/10 shadow-xl"
+        class="flex items-center gap-3 rounded-2xl border border-black/10 bg-white/90 px-4 py-3 shadow-xl dark:border-white/10 dark:bg-(--cn-surface)/95"
       >
         {#if !isDeleted && canReply}
           <button
@@ -138,11 +138,11 @@
               onReply?.();
               onClose?.();
             }}
-            class="flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-text-main active:scale-95 transition-transform hover:bg-black/5 dark:hover:bg-white/5"
+            class="text-text-main flex flex-col items-center gap-1 rounded-xl px-3 py-2 transition-transform hover:bg-black/5 active:scale-95 dark:hover:bg-white/5"
             aria-label={m.msg_reply_label()}
           >
             <Reply size={20} />
-            <span class="text-[10px] font-medium text-text-muted">{m.msg_reply_label()}</span>
+            <span class="text-text-muted text-[10px] font-medium">{m.msg_reply_label()}</span>
           </button>
         {/if}
 
@@ -152,11 +152,11 @@
               onForward?.();
               onClose?.();
             }}
-            class="flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-text-main active:scale-95 transition-transform hover:bg-black/5 dark:hover:bg-white/5"
+            class="text-text-main flex flex-col items-center gap-1 rounded-xl px-3 py-2 transition-transform hover:bg-black/5 active:scale-95 dark:hover:bg-white/5"
             aria-label={m.msg_forward_label()}
           >
             <Forward size={20} />
-            <span class="text-[10px] font-medium text-text-muted">{m.msg_forward_label()}</span>
+            <span class="text-text-muted text-[10px] font-medium">{m.msg_forward_label()}</span>
           </button>
         {/if}
 
@@ -166,11 +166,11 @@
               onCopy?.();
               onClose?.();
             }}
-            class="flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-text-main active:scale-95 transition-transform hover:bg-black/5 dark:hover:bg-white/5"
+            class="text-text-main flex flex-col items-center gap-1 rounded-xl px-3 py-2 transition-transform hover:bg-black/5 active:scale-95 dark:hover:bg-white/5"
             aria-label={m.msg_copy_label()}
           >
             <Copy size={20} />
-            <span class="text-[10px] font-medium text-text-muted">{m.msg_copy_label()}</span>
+            <span class="text-text-muted text-[10px] font-medium">{m.msg_copy_label()}</span>
           </button>
         {/if}
 
@@ -180,7 +180,7 @@
               onPin?.();
               onClose?.();
             }}
-            class="flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-amber-600 dark:text-amber-500 active:scale-95 transition-transform hover:bg-amber-500/10"
+            class="flex flex-col items-center gap-1 rounded-xl px-3 py-2 text-amber-600 transition-transform hover:bg-amber-500/10 active:scale-95 dark:text-amber-500"
             aria-label={pinned ? m.msg_unpin_label() : m.msg_pin_label()}
           >
             {#if pinned}<PinOff size={20} />{:else}<Pin size={20} />{/if}
@@ -196,7 +196,7 @@
               onEdit?.();
               onClose?.();
             }}
-            class="flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-blue-500 active:scale-95 transition-transform hover:bg-blue-500/10"
+            class="flex flex-col items-center gap-1 rounded-xl px-3 py-2 text-blue-500 transition-transform hover:bg-blue-500/10 active:scale-95"
             aria-label={m.common_edit_label()}
           >
             <Pencil size={20} />
@@ -210,7 +210,7 @@
               onDelete?.();
               onClose?.();
             }}
-            class="flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-red-500 active:scale-95 transition-transform hover:bg-red-500/10"
+            class="flex flex-col items-center gap-1 rounded-xl px-3 py-2 text-red-500 transition-transform hover:bg-red-500/10 active:scale-95"
             aria-label={m.common_delete_button()}
           >
             <Trash2 size={20} />

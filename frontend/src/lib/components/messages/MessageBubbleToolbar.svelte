@@ -90,10 +90,10 @@
 -->
 <div
   class="absolute {isOwn
-    ? 'bottom-full mb-1 right-0'
-    : 'bottom-full mb-1 left-0'} whitespace-nowrap opacity-0 {showEmojiPicker
+    ? 'right-0 bottom-full mb-1'
+    : 'bottom-full left-0 mb-1'} whitespace-nowrap opacity-0 {showEmojiPicker
     ? 'opacity-100'
-    : 'group-hover:opacity-100'} transition-opacity duration-200 hidden md:flex flex-row items-center gap-0.5 rounded-full bg-white/90 dark:bg-black/70 backdrop-blur-xl border border-black/5 dark:border-white/10 shadow-lg px-2 py-1.5 z-10 text-text-muted"
+    : 'group-hover:opacity-100'} text-text-muted z-10 hidden flex-row items-center gap-0.5 rounded-full border border-black/5 bg-white/90 px-2 py-1.5 shadow-lg backdrop-blur-xl transition-opacity duration-200 md:flex dark:border-white/10 dark:bg-black/70"
 >
   <!-- Quick reactions (web): the same set as mobile, hidden in mobile long-press mode where
        MessageMobileActions already shows its own reaction strip. -->
@@ -105,7 +105,7 @@
           e.stopPropagation();
           onReact?.(emoji);
         }}
-        class="w-7 h-7 rounded-full text-base leading-none flex items-center justify-center transition-transform hover:scale-125 active:scale-95 {isActive
+        class="flex h-7 w-7 items-center justify-center rounded-full text-base leading-none transition-transform hover:scale-125 active:scale-95 {isActive
           ? 'bg-amber-400/20 ring-1 ring-amber-400'
           : 'hover:bg-black/5 dark:hover:bg-white/10'}"
         aria-label={m.msg_react_with_emoji({ emoji })}
@@ -115,12 +115,12 @@
         {emoji}
       </button>
     {/each}
-    <div class="mx-0.5 self-stretch w-px bg-black/10 dark:bg-white/10"></div>
+    <div class="mx-0.5 w-px self-stretch bg-black/10 dark:bg-white/10"></div>
   {/if}
   {#if !isDeleted && onReply}
     <button
       onclick={() => onReply?.()}
-      class="p-1.5 rounded-full hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main transition-colors"
+      class="hover:text-text-main rounded-full p-1.5 transition-colors hover:bg-black/5 dark:hover:bg-white/10"
       aria-label={m.msg_reply_label()}
       title={m.msg_reply_label()}
     >
@@ -133,7 +133,7 @@
         e.stopPropagation();
         onForward?.();
       }}
-      class="p-1.5 rounded-full hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main transition-colors"
+      class="hover:text-text-main rounded-full p-1.5 transition-colors hover:bg-black/5 dark:hover:bg-white/10"
       aria-label={m.msg_forward_label()}
       title={m.msg_forward_label()}
     >
@@ -146,7 +146,7 @@
         e.stopPropagation();
         onToggleEmojiPicker?.();
       }}
-      class="p-1.5 rounded-full hover:bg-black/5 dark:hover:bg-white/10 hover:text-amber-500 transition-colors"
+      class="rounded-full p-1.5 transition-colors hover:bg-black/5 hover:text-amber-500 dark:hover:bg-white/10"
       aria-label={onReact ? m.msg_more_reactions_label() : m.msg_react_label()}
       title={onReact ? m.msg_more_reactions_label() : m.msg_react_label()}
     >
@@ -159,9 +159,9 @@
         e.stopPropagation();
         onPin?.();
       }}
-      class="p-1.5 rounded-full transition-colors {pinned
+      class="rounded-full p-1.5 transition-colors {pinned
         ? 'text-amber-500'
-        : 'hover:bg-black/5 dark:hover:bg-white/10 hover:text-amber-500'}"
+        : 'hover:bg-black/5 hover:text-amber-500 dark:hover:bg-white/10'}"
       aria-label={pinned ? m.msg_unpin_label() : m.msg_pin_label()}
       title={pinned ? m.msg_unpin_label() : m.msg_pin_label()}
     >
@@ -174,7 +174,7 @@
         e.stopPropagation();
         onEdit?.();
       }}
-      class="p-1.5 rounded-full hover:bg-black/5 dark:hover:bg-white/10 hover:text-blue-500 transition-colors"
+      class="rounded-full p-1.5 transition-colors hover:bg-black/5 hover:text-blue-500 dark:hover:bg-white/10"
       aria-label={m.common_edit_label()}
       title={m.common_edit_label()}
     >
@@ -187,7 +187,7 @@
         e.stopPropagation();
         onDelete?.();
       }}
-      class="p-1.5 rounded-full hover:bg-red-500/10 hover:text-red-500 transition-colors"
+      class="rounded-full p-1.5 transition-colors hover:bg-red-500/10 hover:text-red-500"
       aria-label={m.common_delete_button()}
       title={m.common_delete_button()}
     >

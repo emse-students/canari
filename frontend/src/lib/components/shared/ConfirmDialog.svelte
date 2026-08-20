@@ -39,7 +39,7 @@
   <div use:portal>
     <div
       role="presentation"
-      class="fixed inset-0 z-[300] flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm px-4 pb-[env(safe-area-inset-bottom)]"
+      class="fixed inset-0 z-[300] flex items-end justify-center bg-black/40 px-4 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm sm:items-center"
       onclick={() => resolveConfirm(false)}
       in:fly={{ duration: 150, opacity: 0 }}
     >
@@ -49,16 +49,16 @@
         aria-label={pending.message}
         tabindex="-1"
         use:focusTrap
-        class="w-full max-w-sm rounded-2xl bg-[var(--cn-surface)] border border-cn-border shadow-2xl p-6 space-y-5"
+        class="border-cn-border w-full max-w-sm space-y-5 rounded-2xl border bg-(--cn-surface) p-6 shadow-2xl"
         onclick={(e) => e.stopPropagation()}
         onkeydown={handleKeydown}
         in:fly={{ duration: 200, y: 16 }}
       >
-        <p class="text-sm font-medium text-text-main leading-relaxed">{pending.message}</p>
+        <p class="text-text-main text-sm leading-relaxed font-medium">{pending.message}</p>
         {#if pending.requireText}
           <div class="space-y-2">
-            <p class="text-xs text-text-muted">{m.confirm_type_to_continue()}</p>
-            <p class="text-sm font-bold text-text-main wrap-break-word select-all">
+            <p class="text-text-muted text-xs">{m.confirm_type_to_continue()}</p>
+            <p class="text-text-main text-sm font-bold wrap-break-word select-all">
               {pending.requireText}
             </p>
             <!--
@@ -78,24 +78,24 @@
               spellcheck="false"
               aria-label={m.confirm_type_to_continue()}
               placeholder={m.confirm_type_placeholder()}
-              class="w-full px-3 py-2 rounded-xl bg-cn-border/30 border border-cn-border text-sm text-text-main placeholder:text-text-muted focus:outline-none focus:border-red-500 transition-colors"
+              class="bg-cn-border/30 border-cn-border text-text-main placeholder:text-text-muted w-full rounded-xl border px-3 py-2 text-sm transition-colors focus:border-red-500 focus:outline-none"
             />
           </div>
         {/if}
         <div class="flex justify-end gap-2">
           <button
             onclick={() => resolveConfirm(false)}
-            class="px-4 py-2 rounded-xl text-sm font-semibold text-text-muted hover:bg-cn-border/40 transition-colors"
+            class="text-text-muted hover:bg-cn-border/40 rounded-xl px-4 py-2 text-sm font-semibold transition-colors"
           >
             {pending.cancelLabel}
           </button>
           <button
             onclick={() => resolveConfirm(true)}
             disabled={!canConfirm}
-            class="px-4 py-2 rounded-xl text-sm font-bold transition-colors
-              disabled:opacity-40 disabled:cursor-not-allowed
+            class="rounded-xl px-4 py-2 text-sm font-bold transition-colors
+              disabled:cursor-not-allowed disabled:opacity-40
               {pending.danger
-              ? 'bg-red-500 hover:bg-red-600 text-white'
+              ? 'bg-red-500 text-white hover:bg-red-600'
               : 'bg-cn-yellow hover:bg-cn-yellow-hover text-cn-dark'}"
           >
             {pending.confirmLabel}

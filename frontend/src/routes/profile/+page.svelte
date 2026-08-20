@@ -148,31 +148,31 @@
   });
 </script>
 
-<div class="px-4 py-8 sm:px-6 max-w-3xl mx-auto space-y-6 md:space-y-8">
+<div class="mx-auto max-w-3xl space-y-6 px-4 py-8 sm:px-6 md:space-y-8">
   {#if loading}
-    <div class="flex flex-col items-center justify-center py-32 gap-4 text-text-muted" in:fade>
-      <Loader2 size={32} class="animate-spin text-cn-yellow" strokeWidth={2.5} />
+    <div class="text-text-muted flex flex-col items-center justify-center gap-4 py-32" in:fade>
+      <Loader2 size={32} class="text-cn-yellow animate-spin" strokeWidth={2.5} />
       <span class="text-sm font-bold tracking-wider uppercase">{m.profile_loading()}</span>
     </div>
   {:else if error}
     <div
-      class="rounded-2xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 p-5 flex items-start gap-3 shadow-sm backdrop-blur-md"
+      class="flex items-start gap-3 rounded-2xl border border-red-500/20 bg-red-500/10 p-5 text-red-600 shadow-sm backdrop-blur-md dark:text-red-400"
       in:slide
     >
-      <AlertCircle size={20} class="shrink-0 mt-0.5" />
+      <AlertCircle size={20} class="mt-0.5 shrink-0" />
       <div>
-        <h3 class="font-bold text-sm mb-1">{m.common_generic_error_label()}</h3>
+        <h3 class="mb-1 text-sm font-bold">{m.common_generic_error_label()}</h3>
         <p class="text-sm font-medium">{error}</p>
       </div>
     </div>
   {:else if profile}
     <!-- Profile header -->
     <div
-      class="flex items-center gap-5 sm:gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500"
+      class="animate-in fade-in slide-in-from-bottom-4 flex items-center gap-5 duration-500 sm:gap-6"
     >
-      <div class="relative w-24 h-24 sm:w-28 sm:h-28 flex-shrink-0">
+      <div class="relative h-24 w-24 flex-shrink-0 sm:h-28 sm:w-28">
         <div
-          class="w-full h-full shadow-lg ring-4 ring-white/50 dark:ring-black/20 rounded-full overflow-hidden"
+          class="h-full w-full overflow-hidden rounded-full shadow-lg ring-4 ring-white/50 dark:ring-black/20"
         >
           <Avatar userId={profile.id} fill shape="circle" />
         </div>
@@ -181,22 +181,22 @@
           onclick={changeProfilePhoto}
           title={m.profile_photo_change_label()}
           aria-label={m.profile_photo_change_label()}
-          class="absolute bottom-0 right-0 flex items-center justify-center w-8 h-8 rounded-full
-                 bg-cn-yellow hover:bg-cn-yellow-hover text-cn-ink
-                 shadow-md shadow-cn-yellow/30 ring-2 ring-white dark:ring-[var(--cn-bg)]
-                 transition-all active:scale-95"
+          class="bg-cn-yellow hover:bg-cn-yellow-hover text-cn-ink shadow-cn-yellow/30 absolute right-0 bottom-0 flex h-8
+                 w-8 items-center justify-center
+                 rounded-full shadow-md ring-2 ring-white transition-all
+                 active:scale-95 dark:ring-(--cn-bg)"
         >
           <Camera size={15} strokeWidth={2.5} />
         </button>
       </div>
-      <div class="flex-1 min-w-0">
-        <h1 class="text-2xl sm:text-3xl font-extrabold text-text-main tracking-tight truncate mb-1">
+      <div class="min-w-0 flex-1">
+        <h1 class="text-text-main mb-1 truncate text-2xl font-extrabold tracking-tight sm:text-3xl">
           {displayFallbackName}
         </h1>
         <ProfileMinesweeperBadge userId={profile.id} />
         {#if profile.formation}
           <div
-            class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-cn-yellow/10 border border-cn-yellow/20 text-cn-dark text-xs font-bold uppercase tracking-wider mt-2 shadow-sm"
+            class="bg-cn-yellow/10 border-cn-yellow/20 text-cn-dark mt-2 inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold tracking-wider uppercase shadow-sm"
           >
             <GraduationCap size={14} strokeWidth={2.5} />
             {profile.formation}
@@ -206,7 +206,7 @@
       <a
         href="/settings"
         title={m.settings_page_title()}
-        class="self-start inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold text-text-muted hover:text-cn-dark hover:bg-black/5 dark:hover:bg-white/10 transition-all outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow active:scale-95"
+        class="text-text-muted hover:text-cn-dark focus-visible:ring-cn-yellow inline-flex items-center gap-1.5 self-start rounded-xl px-3 py-1.5 text-xs font-bold transition-all outline-none hover:bg-black/5 focus-visible:ring-2 active:scale-95 dark:hover:bg-white/10"
       >
         <SlidersHorizontal size={15} strokeWidth={2.5} />
         <span class="hidden sm:inline">{m.settings_page_title()}</span>
@@ -215,20 +215,20 @@
 
     <!-- Bio -->
     <div
-      class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-75"
+      class="border-cn-border animate-in fade-in slide-in-from-bottom-4 rounded-2xl border bg-(--cn-surface) p-6 shadow-sm delay-75 duration-500 md:p-8"
       style="animation-fill-mode: backwards;"
     >
-      <div class="flex items-center justify-between mb-4">
+      <div class="mb-4 flex items-center justify-between">
         <div class="flex items-center gap-3">
-          <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
+          <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
             <UserRound size={22} strokeWidth={2.5} />
           </div>
-          <h2 class="text-lg font-extrabold text-text-main">{m.profile_bio_heading()}</h2>
+          <h2 class="text-text-main text-lg font-extrabold">{m.profile_bio_heading()}</h2>
         </div>
         {#if !editingBio}
           <button
             onclick={startEditBio}
-            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-bold text-text-muted hover:text-cn-dark hover:bg-black/5 dark:hover:bg-white/10 transition-all outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow active:scale-95"
+            class="text-text-muted hover:text-cn-dark focus-visible:ring-cn-yellow inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm font-bold transition-all outline-none hover:bg-black/5 focus-visible:ring-2 active:scale-95 dark:hover:bg-white/10"
           >
             <Edit3 size={16} strokeWidth={2.5} />
             {m.common_edit_label()}
@@ -242,13 +242,13 @@
             bind:value={bioInput}
             maxlength={500}
             minHeight="100px"
-            class="w-full min-w-0 rounded-[1.25rem] border border-black/10 dark:border-white/10 bg-white/80 dark:bg-black/40 shadow-inner focus-within:border-cn-yellow/50 focus-within:ring-2 focus-within:ring-cn-yellow/30 transition-all overflow-hidden"
+            class="focus-within:border-cn-yellow/50 focus-within:ring-cn-yellow/30 w-full min-w-0 overflow-hidden rounded-[1.25rem] border border-black/10 bg-white/80 shadow-inner transition-all focus-within:ring-2 dark:border-white/10 dark:bg-black/40"
             editorClass="min-h-[100px] w-full max-w-full px-4 py-3 text-[0.95rem] text-text-main leading-relaxed"
             placeholder={m.profile_bio_placeholder()}
           />
           <div class="flex items-center justify-between">
             <span
-              class="text-xs font-semibold text-text-muted pl-1 {bioInput.length >= 490
+              class="text-text-muted pl-1 text-xs font-semibold {bioInput.length >= 490
                 ? 'text-orange-500'
                 : ''}"
             >
@@ -257,14 +257,14 @@
             <div class="flex gap-2">
               <button
                 onclick={cancelEditBio}
-                class="rounded-xl px-4 py-2 text-sm font-bold text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/5 transition-all active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
+                class="text-text-muted hover:text-text-main focus-visible:ring-text-muted rounded-xl px-4 py-2 text-sm font-bold transition-all outline-none hover:bg-black/5 focus-visible:ring-2 active:scale-95 dark:hover:bg-white/5"
               >
                 {m.common_cancel_button()}
               </button>
               <button
                 onclick={saveBio}
                 disabled={saving || bioInput.trim() === profile.bio}
-                class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-5 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-all disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 shadow-md shadow-cn-yellow/20 disabled:shadow-none outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow/50"
+                class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover shadow-cn-yellow/20 focus-visible:ring-cn-yellow/50 inline-flex items-center gap-2 rounded-xl px-5 py-2 text-sm font-bold shadow-md transition-all outline-none focus-visible:ring-2 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
               >
                 {#if saving}
                   <Loader2 size={16} class="animate-spin" strokeWidth={3} />
@@ -281,7 +281,7 @@
           {#if profile.bio?.trim()}
             <ProfileBioMarkdown source={profile.bio} />
           {:else}
-            <p class="text-[0.95rem] text-text-main leading-relaxed opacity-90">
+            <p class="text-text-main text-[0.95rem] leading-relaxed opacity-90">
               {m.profile_bio_empty()}
             </p>
           {/if}
@@ -291,30 +291,30 @@
 
     <!-- Associations -->
     <div
-      class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-100"
+      class="border-cn-border animate-in fade-in slide-in-from-bottom-4 rounded-2xl border bg-(--cn-surface) p-6 shadow-sm delay-100 duration-500 md:p-8"
       style="animation-fill-mode: backwards;"
     >
-      <div class="flex items-center gap-3 mb-5">
-        <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
+      <div class="mb-5 flex items-center gap-3">
+        <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
           <Building2 size={22} strokeWidth={2.5} />
         </div>
-        <h2 class="text-lg font-extrabold text-text-main">{m.profile_assoc_heading()}</h2>
+        <h2 class="text-text-main text-lg font-extrabold">{m.profile_assoc_heading()}</h2>
       </div>
       <ProfileAssociationsSection {memberships} loading={membershipsLoading} />
     </div>
 
     <!-- Associative career -->
     <div
-      class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-125"
+      class="border-cn-border animate-in fade-in slide-in-from-bottom-4 rounded-2xl border bg-(--cn-surface) p-6 shadow-sm delay-125 duration-500 md:p-8"
       style="animation-fill-mode: backwards;"
     >
-      <div class="flex items-center gap-3 mb-5">
-        <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
+      <div class="mb-5 flex items-center gap-3">
+        <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
           <History size={22} strokeWidth={2.5} />
         </div>
-        <h2 class="text-lg font-extrabold text-text-main">{m.profile_career_heading()}</h2>
+        <h2 class="text-text-main text-lg font-extrabold">{m.profile_career_heading()}</h2>
         {#if roleHistoryLoading}
-          <Loader2 size={16} class="animate-spin text-cn-yellow" />
+          <Loader2 size={16} class="text-cn-yellow animate-spin" />
         {/if}
       </div>
       <ProfileRoleHistorySection
@@ -329,16 +329,16 @@
 
     <!-- Sponsorship (close tree, from Sky) -->
     {#if (parrainage?.parrains.length ?? 0) > 0 || (parrainage?.fillots.length ?? 0) > 0 || parrainageLoading}
-      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm">
-        <div class="flex items-center gap-3 mb-5">
-          <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
+      <div class="border-cn-border rounded-2xl border bg-(--cn-surface) p-6 shadow-sm md:p-8">
+        <div class="mb-5 flex items-center gap-3">
+          <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
             <Users size={22} strokeWidth={2.5} />
           </div>
-          <h2 class="text-lg font-extrabold text-text-main">
+          <h2 class="text-text-main text-lg font-extrabold">
             {m.profile_public_sponsorship_heading()}
           </h2>
           {#if parrainageLoading}
-            <Loader2 size={16} class="animate-spin text-cn-yellow" />
+            <Loader2 size={16} class="text-cn-yellow animate-spin" />
           {/if}
         </div>
         <ProfileParrainageSection
@@ -351,42 +351,42 @@
 
     <!-- Information -->
     <div
-      class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-150"
+      class="border-cn-border animate-in fade-in slide-in-from-bottom-4 rounded-2xl border bg-(--cn-surface) p-6 shadow-sm delay-150 duration-500 md:p-8"
       style="animation-fill-mode: backwards;"
     >
-      <div class="flex items-center gap-3 mb-6">
-        <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
+      <div class="mb-6 flex items-center gap-3">
+        <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
           <Info size={22} strokeWidth={2.5} />
         </div>
-        <h2 class="text-lg font-extrabold text-text-main">{m.profile_info_heading()}</h2>
+        <h2 class="text-text-main text-lg font-extrabold">{m.profile_info_heading()}</h2>
       </div>
 
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+      <div class="grid grid-cols-1 gap-5 md:grid-cols-2">
         <div
-          class="flex items-center gap-3.5 p-4 rounded-2xl bg-white/50 dark:bg-white/5 border border-black/5 dark:border-white/5 shadow-sm"
+          class="flex items-center gap-3.5 rounded-2xl border border-black/5 bg-white/50 p-4 shadow-sm dark:border-white/5 dark:bg-white/5"
         >
-          <div class="p-2.5 rounded-xl bg-black/5 dark:bg-black/40 text-text-muted">
+          <div class="text-text-muted rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
             <GraduationCap size={20} strokeWidth={2.5} />
           </div>
           <div class="min-w-0">
-            <p class="text-[0.65rem] font-bold uppercase tracking-wider text-text-muted mb-0.5">
+            <p class="text-text-muted mb-0.5 text-[0.65rem] font-bold tracking-wider uppercase">
               {m.profile_promo_label()}
             </p>
-            <p class="text-sm font-bold text-text-main truncate">{formatYear(profile.promo)}</p>
+            <p class="text-text-main truncate text-sm font-bold">{formatYear(profile.promo)}</p>
           </div>
         </div>
 
         <div
-          class="flex items-center gap-3.5 p-4 rounded-2xl bg-white/50 dark:bg-white/5 border border-black/5 dark:border-white/5 shadow-sm"
+          class="flex items-center gap-3.5 rounded-2xl border border-black/5 bg-white/50 p-4 shadow-sm dark:border-white/5 dark:bg-white/5"
         >
-          <div class="p-2.5 rounded-xl bg-black/5 dark:bg-black/40 text-text-muted">
+          <div class="text-text-muted rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
             <CalendarDays size={20} strokeWidth={2.5} />
           </div>
           <div class="min-w-0">
-            <p class="text-[0.65rem] font-bold uppercase tracking-wider text-text-muted mb-0.5">
+            <p class="text-text-muted mb-0.5 text-[0.65rem] font-bold tracking-wider uppercase">
               {m.profile_member_since_label()}
             </p>
-            <p class="text-sm font-bold text-text-main capitalize">
+            <p class="text-text-main text-sm font-bold capitalize">
               {new Date(profile.createdAt).toLocaleDateString(
                 getLocale() === 'en' ? 'en-US' : 'fr-FR',
                 {

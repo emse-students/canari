@@ -50,8 +50,8 @@
 
 <AssociationAvatar name={assoc?.name ?? fmt.acronym} logoUrl={assoc?.logoUrl} size="md" />
 <div class="min-w-0 flex-1">
-  <p class="text-sm font-bold text-text-main truncate">{title}</p>
-  <p class="text-xs text-text-muted mt-0.5 truncate">
+  <p class="text-text-main truncate text-sm font-bold">{title}</p>
+  <p class="text-text-muted mt-0.5 truncate text-xs">
     {#if assoc}{m.cotisation_tag_role()} &middot;
     {/if}{duration}{#if note}
       &middot; {note}{/if}

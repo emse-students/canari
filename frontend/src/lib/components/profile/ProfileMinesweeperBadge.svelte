@@ -39,10 +39,10 @@
 
 {#if rank != null && personalBestMs != null}
   <div
-    class="mt-2 inline-flex items-center gap-1.5 rounded-full border border-cn-yellow/25 bg-cn-yellow/10 px-2.5 py-0.5 text-[0.7rem] font-bold text-cn-dark"
+    class="border-cn-yellow/25 bg-cn-yellow/10 text-cn-dark mt-2 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[0.7rem] font-bold"
     title={m.minesweeper_profile_badge_title()}
   >
-    <Trophy size={12} strokeWidth={2.5} class="shrink-0 text-cn-yellow" />
+    <Trophy size={12} strokeWidth={2.5} class="text-cn-yellow shrink-0" />
     <span>
       {m.minesweeper_profile_badge({
         rank: String(rank),

@@ -38,23 +38,23 @@
   <title>{m.form_success_title()}</title>
 </svelte:head>
 
-<div class="min-h-screen flex items-center justify-center px-4">
-  <div class="max-w-md w-full text-center space-y-6">
+<div class="flex min-h-screen items-center justify-center px-4">
+  <div class="w-full max-w-md space-y-6 text-center">
     {#if status === 'loading'}
       <div class="flex justify-center">
-        <div class="p-4 rounded-full bg-cn-border/30 animate-pulse">
+        <div class="bg-cn-border/30 animate-pulse rounded-full p-4">
           <Loader size={48} class="text-text-muted animate-spin" />
         </div>
       </div>
       <p class="text-text-muted">{m.form_success_verifying()}</p>
     {:else if status === 'confirmed'}
       <div class="flex justify-center">
-        <div class="p-4 rounded-full bg-green-ok/15">
+        <div class="bg-green-ok/15 rounded-full p-4">
           <CircleCheck size={48} class="text-green-ok" />
         </div>
       </div>
       <div>
-        <h1 class="text-2xl font-extrabold text-text-main tracking-tight">
+        <h1 class="text-text-main text-2xl font-extrabold tracking-tight">
           {m.form_success_confirmed_heading()}
         </h1>
         <p class="text-text-muted mt-2">
@@ -63,18 +63,18 @@
       </div>
       <a
         href={formId ? `/forms/${formId}` : '/forms'}
-        class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-6 py-3 text-sm font-bold text-cn-dark shadow-sm transition-all hover:bg-cn-yellow-hover"
+        class="bg-cn-yellow text-cn-dark hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold shadow-sm transition-all"
       >
         {m.form_success_back_to_form()}
       </a>
     {:else}
       <div class="flex justify-center">
-        <div class="p-4 rounded-full bg-red-err/20">
+        <div class="bg-red-err/20 rounded-full p-4">
           <CircleX size={48} class="text-red-500" />
         </div>
       </div>
       <div>
-        <h1 class="text-2xl font-extrabold text-text-main tracking-tight">
+        <h1 class="text-text-main text-2xl font-extrabold tracking-tight">
           {m.form_success_not_found_heading()}
         </h1>
         <p class="text-text-muted mt-2">
@@ -83,7 +83,7 @@
       </div>
       <a
         href="/forms"
-        class="inline-flex items-center gap-2 rounded-xl bg-cn-border/40 px-6 py-3 text-sm font-bold text-text-main transition-all hover:bg-cn-border/60"
+        class="bg-cn-border/40 text-text-main hover:bg-cn-border/60 inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold transition-all"
       >
         {m.form_success_back_to_forms()}
       </a>

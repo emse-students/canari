@@ -71,12 +71,12 @@
       : 'mt-1 justify-end'}"
   >
     {#if showTimestamp}
-      <span class="text-[0.65rem] opacity-50 font-medium tabular-nums">
+      <span class="text-[0.65rem] font-medium tabular-nums opacity-50">
         {formatTime24(timestamp!)}
       </span>
     {/if}
     {#if showEdited}
-      <span class="italic text-[0.65rem] opacity-65 font-medium">{m.msg_modifie()}</span>
+      <span class="text-[0.65rem] font-medium italic opacity-65">{m.msg_modifie()}</span>
     {/if}
     {#if showSendStatus}
       {#if status === 'pending'}

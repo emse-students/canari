@@ -383,11 +383,11 @@
 -->
 {#snippet filePlaceholder(name: string)}
   <div
-    class="w-full h-full flex flex-col items-center justify-center gap-1.5 px-2 text-text-muted bg-black/5 dark:bg-white/5"
+    class="text-text-muted flex h-full w-full flex-col items-center justify-center gap-1.5 bg-black/5 px-2 dark:bg-white/5"
   >
     <FileText size={20} strokeWidth={1.5} />
     <span
-      class="text-[0.6rem] sm:text-[0.65rem] font-medium text-center leading-tight line-clamp-2 px-1 break-all"
+      class="line-clamp-2 px-1 text-center text-[0.6rem] leading-tight font-medium break-all sm:text-[0.65rem]"
     >
       {name}
     </span>
@@ -407,17 +407,17 @@
   -->
   <div class="chat-typing-indicator" role="status" aria-live="polite">
     {#if typingLabel}
-      <div transition:slide={{ duration: 150, axis: 'y' }} class="px-3 sm:px-4 md:px-6 pb-1">
-        <span class="inline-flex items-center gap-1.5 text-xs font-medium text-text-muted">
+      <div transition:slide={{ duration: 150, axis: 'y' }} class="px-3 pb-1 sm:px-4 md:px-6">
+        <span class="text-text-muted inline-flex items-center gap-1.5 text-xs font-medium">
           <span class="flex items-end gap-0.5" aria-hidden="true">
-            <span class="h-1 w-1 rounded-full bg-current animate-bounce" style="animation-delay:0ms"
+            <span class="h-1 w-1 animate-bounce rounded-full bg-current" style="animation-delay:0ms"
             ></span>
             <span
-              class="h-1 w-1 rounded-full bg-current animate-bounce"
+              class="h-1 w-1 animate-bounce rounded-full bg-current"
               style="animation-delay:150ms"
             ></span>
             <span
-              class="h-1 w-1 rounded-full bg-current animate-bounce"
+              class="h-1 w-1 animate-bounce rounded-full bg-current"
               style="animation-delay:300ms"
             ></span>
           </span>
@@ -430,14 +430,14 @@
   {#if replyingTo}
     <div transition:slide={{ duration: 200, axis: 'y' }} class="pointer-events-auto">
       <div
-        class="mx-3 sm:mx-4 md:mx-6 mb-3 flex items-center justify-between bg-white/85 dark:bg-cn-ink/85 backdrop-blur-2xl border border-black/5 dark:border-white/10 rounded-2xl p-3 md:p-4 shadow-lg relative overflow-hidden"
+        class="dark:bg-cn-ink/85 relative mx-3 mb-3 flex items-center justify-between overflow-hidden rounded-2xl border border-black/5 bg-white/85 p-3 shadow-lg backdrop-blur-2xl sm:mx-4 md:mx-6 md:p-4 dark:border-white/10"
       >
         <div
-          class="absolute left-0 top-0 bottom-0 w-1.5 bg-amber-500 shadow-[0_0_12px_rgba(245,158,11,0.6)]"
+          class="absolute top-0 bottom-0 left-0 w-1.5 bg-amber-500 shadow-[0_0_12px_rgba(245,158,11,0.6)]"
         ></div>
-        <div class="flex-1 min-w-0 pl-1.5">
+        <div class="min-w-0 flex-1 pl-1.5">
           <div
-            class="text-xs font-bold text-amber-600 dark:text-amber-500 mb-0.5 flex items-center gap-1.5"
+            class="mb-0.5 flex items-center gap-1.5 text-xs font-bold text-amber-600 dark:text-amber-500"
           >
             <span class="truncate"
               >{m.chat_reply_to_message({
@@ -445,14 +445,14 @@
               })}</span
             >
           </div>
-          <div class="text-[0.85rem] font-medium text-text-muted truncate leading-snug">
+          <div class="text-text-muted truncate text-[0.85rem] leading-snug font-medium">
             {replyPreviewText}
           </div>
         </div>
         {#if onCancelReply}
           <button
             onclick={onCancelReply}
-            class="p-2 ml-2 rounded-full bg-black/5 dark:bg-white/5 text-text-muted hover:text-text-main hover:bg-black/10 dark:hover:bg-white/10 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 flex-shrink-0 active:scale-95"
+            class="text-text-muted hover:text-text-main ml-2 flex-shrink-0 rounded-full bg-black/5 p-2 transition-all outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 dark:bg-white/5 dark:hover:bg-white/10"
             aria-label={m.chat_cancel_reply_label()}
           >
             <X size={16} strokeWidth={2.5} />
@@ -462,11 +462,11 @@
     </div>
   {/if}
 
-  <div class="px-3 sm:px-4 md:px-6 pointer-events-auto flex flex-col gap-2">
+  <div class="pointer-events-auto flex flex-col gap-2 px-3 sm:px-4 md:px-6">
     <!-- Pending file attachments. -->
     {#if pendingFiles.length > 0}
       <div transition:slide={{ duration: 200, axis: 'y' }} class="w-full">
-        <div class="text-[0.7rem] font-bold uppercase tracking-wider text-text-muted mb-2 px-1">
+        <div class="text-text-muted mb-2 px-1 text-[0.7rem] font-bold tracking-wider uppercase">
           {m.chat_pending_files_count({ pendingFiles: pendingFiles.length })}
         </div>
         <div class="flex flex-wrap gap-3">
@@ -479,13 +479,13 @@
                 : 'aspect-ratio: 1'}
             <div
               transition:scale={{ duration: 200, start: 0.9 }}
-              class="relative rounded-[1rem] bg-white/90 dark:bg-cn-ink/90 backdrop-blur-xl border border-black/5 dark:border-white/10 overflow-hidden w-20 sm:w-24 shadow-md group/file"
+              class="dark:bg-cn-ink/90 group/file relative w-20 overflow-hidden rounded-[1rem] border border-black/5 bg-white/90 shadow-md backdrop-blur-xl sm:w-24 dark:border-white/10"
               style="{thumbAspect}; max-height: 6rem;"
             >
               {#if isImageFile(file) && previewUrls[key]}
                 <button
                   type="button"
-                  class="block w-full h-full p-0 border-0 cursor-zoom-in"
+                  class="block h-full w-full cursor-zoom-in border-0 p-0"
                   aria-label={m.chat_enlarge_preview_label()}
                   onclick={(e) => {
                     e.stopPropagation();
@@ -493,7 +493,7 @@
                   }}
                   onpointerdown={(e) => e.stopPropagation()}
                 >
-                  <img src={previewUrls[key]} alt={file.name} class="w-full h-full object-cover" />
+                  <img src={previewUrls[key]} alt={file.name} class="h-full w-full object-cover" />
                 </button>
               {:else if isPdfFile(file) && previewUrls[key]}
                 <!--
@@ -518,10 +518,10 @@
 
               <!-- Gradient overlay and file name. -->
               <div
-                class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent pt-4 pb-1.5 px-2 pointer-events-none"
+                class="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-2 pt-4 pb-1.5"
               >
                 <div
-                  class="text-white text-[0.55rem] sm:text-[0.6rem] font-medium truncate drop-shadow-md"
+                  class="truncate text-[0.55rem] font-medium text-white drop-shadow-md sm:text-[0.6rem]"
                   title={file.name}
                 >
                   {file.name}
@@ -532,7 +532,7 @@
               {#if onRemovePendingFile}
                 <button
                   type="button"
-                  class="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-black/50 backdrop-blur-md hover:bg-red-500 inline-flex items-center justify-center text-white shadow-sm opacity-100 sm:opacity-0 sm:group-hover/file:opacity-100 transition-all duration-200 outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-red-500 scale-90 hover:scale-105 active:scale-95"
+                  class="absolute top-1.5 right-1.5 inline-flex h-6 w-6 scale-90 items-center justify-center rounded-full bg-black/50 text-white opacity-100 shadow-sm backdrop-blur-md transition-all duration-200 outline-none hover:scale-105 hover:bg-red-500 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 sm:opacity-0 sm:group-hover/file:opacity-100"
                   onclick={() => onRemovePendingFile(index)}
                   aria-label={m.chat_remove_file_label()}
                   title={m.common_remove_label()}
@@ -559,10 +559,10 @@
       {#if isDragOver}
         <div
           transition:fade={{ duration: 150 }}
-          class="absolute left-1/2 -translate-x-1/2 -translate-y-16 z-10 pointer-events-none"
+          class="pointer-events-none absolute left-1/2 z-10 -translate-x-1/2 -translate-y-16"
         >
           <span
-            class="px-4 py-2.5 bg-amber-500 text-cn-ink font-extrabold rounded-full shadow-xl shadow-amber-500/20 text-sm flex items-center gap-2 whitespace-nowrap"
+            class="text-cn-ink flex items-center gap-2 rounded-full bg-amber-500 px-4 py-2.5 text-sm font-extrabold whitespace-nowrap shadow-xl shadow-amber-500/20"
           >
             <UploadCloud size={18} strokeWidth={2.5} />
             {m.chat_drag_files_badge()}
@@ -580,7 +580,7 @@
           class="chat-composer-icon-button"
         >
           {#if isUploading}
-            <Loader2 class="animate-spin w-5 h-5 text-amber-500" strokeWidth={2.5} />
+            <Loader2 class="h-5 w-5 animate-spin text-amber-500" strokeWidth={2.5} />
           {:else}
             <Paperclip size={20} strokeWidth={2} />
           {/if}
@@ -639,7 +639,7 @@
         value={messageText}
         {allowedUserIds}
         onchange={handleMessageChange}
-        class="flex-1 min-w-0"
+        class="min-w-0 flex-1"
         editorClass="chat-composer-textarea"
         placeholder={m.chat_message_placeholder()}
         minHeight="44px"
@@ -667,7 +667,7 @@
           class="chat-composer-send-button {isSendDisabled ? 'is-disabled' : ''}"
         >
           <!-- Slight icon offset for optical centering. -->
-          <Send size={18} strokeWidth={2.5} class={isSendDisabled ? '' : 'ml-0.5 mt-0.5'} />
+          <Send size={18} strokeWidth={2.5} class={isSendDisabled ? '' : 'mt-0.5 ml-0.5'} />
         </button>
       </div>
     </div>

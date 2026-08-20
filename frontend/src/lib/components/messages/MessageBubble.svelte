@@ -520,7 +520,7 @@
   {#if channelInvite}
     <!-- Channel invite card with Join button -->
     <div
-      class="inline-flex flex-col gap-2.5 px-4 py-3 rounded-2xl max-w-xs border border-amber-500/20 bg-amber-500/5 dark:bg-amber-500/10 backdrop-blur-md shadow-sm {shouldAnimate
+      class="inline-flex max-w-xs flex-col gap-2.5 rounded-2xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 shadow-sm backdrop-blur-md dark:bg-amber-500/10 {shouldAnimate
         ? 'animate-rise-in'
         : ''}"
     >
@@ -535,14 +535,14 @@
             fill
           />
         </div>
-        <span class="text-xs font-bold truncate">{channelInvite.channelName}</span>
+        <span class="truncate text-xs font-bold">{channelInvite.channelName}</span>
         {#if channelInvite.workspaceName && channelInvite.workspaceName !== channelInvite.channelName}
-          <span class="text-xs text-text-muted font-medium truncate"
+          <span class="text-text-muted truncate text-xs font-medium"
             >· {channelInvite.workspaceName}</span
           >
         {/if}
       </div>
-      <p class="text-xs text-text-muted leading-relaxed">
+      <p class="text-text-muted text-xs leading-relaxed">
         {#if channelInvite.invitedName}
           {m.msg_channel_invite_sent_description({ member: channelInvite.invitedName })}
         {:else if channelInvite.inviterName}
@@ -555,7 +555,7 @@
         <button
           onclick={() => onJoinChannel?.(channelInvite.channelId)}
           type="button"
-          class="inline-flex items-center justify-center gap-1.5 rounded-xl bg-amber-500 px-3 py-1.5 text-xs font-bold text-cn-ink hover:bg-amber-400 active:scale-95 transition-all shadow-sm shadow-amber-500/20"
+          class="text-cn-ink inline-flex items-center justify-center gap-1.5 rounded-xl bg-amber-500 px-3 py-1.5 text-xs font-bold shadow-sm shadow-amber-500/20 transition-all hover:bg-amber-400 active:scale-95"
         >
           <Building2 size={12} strokeWidth={3} />
           {m.msg_channel_invite_join_button()}
@@ -564,7 +564,7 @@
     </div>
   {:else}
     <div
-      class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-medium text-text-muted text-center max-w-md border border-black/5 dark:border-white/10 bg-black/5 dark:bg-white/5 backdrop-blur-md shadow-sm {shouldAnimate
+      class="text-text-muted inline-flex max-w-md items-center gap-2 rounded-xl border border-black/5 bg-black/5 px-3.5 py-1.5 text-center text-xs font-medium shadow-sm backdrop-blur-md dark:border-white/10 dark:bg-white/5 {shouldAnimate
         ? 'animate-rise-in'
         : ''}"
     >
@@ -589,7 +589,7 @@
     <div class="relative w-fit max-w-full">
       {#if replyDragPx !== 0 && onReply}
         <div
-          class="pointer-events-none absolute top-1/2 z-20 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-amber-400/90 text-cn-ink shadow-md transition-opacity
+          class="text-cn-ink pointer-events-none absolute top-1/2 z-20 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-amber-400/90 shadow-md transition-opacity
           {isOwn ? 'right-full mr-1.5' : 'left-full ml-1.5'}"
           style:opacity={replyHintOpacity}
           aria-hidden="true"
@@ -600,7 +600,7 @@
 
       {#if reactDragPx !== 0 && onReact}
         <div
-          class="pointer-events-none absolute top-1/2 z-20 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 dark:bg-black/60 shadow-md transition-opacity
+          class="pointer-events-none absolute top-1/2 z-20 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 shadow-md transition-opacity dark:bg-black/60
           {isOwn ? 'left-full ml-1.5' : 'right-full mr-1.5'}"
           style:opacity={Math.min(1, Math.abs(reactDragPx) / 56)}
           aria-hidden="true"
@@ -651,10 +651,10 @@
         {isMediaOnly || isLinkOnly || isGifOnly || isPollOnly
           ? ''
           : isOwn
-            ? 'bg-gradient-to-br from-amber-400 to-amber-500 text-cn-ink shadow-md shadow-amber-500/20 hover:shadow-lg hover:shadow-amber-500/30'
-            : 'bg-white/70 dark:bg-black/40 backdrop-blur-xl border border-black/5 dark:border-white/10 text-text-main shadow-sm hover:shadow-md'}
+            ? 'text-cn-ink bg-gradient-to-br from-amber-400 to-amber-500 shadow-md shadow-amber-500/20 hover:shadow-lg hover:shadow-amber-500/30'
+            : 'text-text-main border border-black/5 bg-white/70 shadow-sm backdrop-blur-xl hover:shadow-md dark:border-white/10 dark:bg-black/40'}
         {isHighlighted
-          ? 'ring-2 ring-amber-500/80 ring-offset-2 ring-offset-transparent animate-pulse'
+          ? 'animate-pulse ring-2 ring-amber-500/80 ring-offset-2 ring-offset-transparent'
           : ''}
         {shouldAnimate ? 'animate-rise-in' : ''}"
       >
@@ -768,8 +768,8 @@
 
     {#if showQuickReactions && onReact}
       <div
-        class="absolute z-30 flex items-center gap-1 rounded-2xl border border-black/8 dark:border-white/10 bg-cn-surface/95 backdrop-blur-xl shadow-lg px-2 py-1.5
-          {isOwn ? 'right-0 bottom-full mb-2' : 'left-0 bottom-full mb-2'}"
+        class="bg-cn-surface/95 absolute z-30 flex items-center gap-1 rounded-2xl border border-black/8 px-2 py-1.5 shadow-lg backdrop-blur-xl dark:border-white/10
+          {isOwn ? 'right-0 bottom-full mb-2' : 'bottom-full left-0 mb-2'}"
         use:clickOutside={() => (showQuickReactions = false)}
       >
         {#each ['❤️', '😂', '😮', '😢', '👍', '👎'] as emoji (emoji)}
@@ -786,7 +786,7 @@
                 navigator.vibrate(12);
               }
             }}
-            class="text-xl leading-none px-1 py-0.5 rounded-xl hover:bg-black/8 dark:hover:bg-white/10 active:scale-125 transition-all"
+            class="rounded-xl px-1 py-0.5 text-xl leading-none transition-all hover:bg-black/8 active:scale-125 dark:hover:bg-white/10"
             >{emoji}</button
           >
         {/each}
@@ -867,19 +867,19 @@
     title={m.msg_supprimer_message()}
     onClose={() => (showDeleteModal = false)}
   >
-    <p class="text-sm text-text-muted leading-relaxed">
+    <p class="text-text-muted text-sm leading-relaxed">
       {m.msg_supprimer_definitif()}
     </p>
     {#snippet footer()}
       <button
         onclick={() => (showDeleteModal = false)}
-        class="px-4 py-2.5 text-sm font-semibold rounded-xl text-text-muted hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+        class="text-text-muted rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors hover:bg-black/5 dark:hover:bg-white/5"
       >
         {m.common_cancel_button()}
       </button>
       <button
         onclick={confirmDelete}
-        class="px-4 py-2.5 text-sm rounded-xl bg-red-500 text-white font-bold hover:bg-red-600 hover:-translate-y-0.5 shadow-md shadow-red-500/20 transition-all"
+        class="rounded-xl bg-red-500 px-4 py-2.5 text-sm font-bold text-white shadow-md shadow-red-500/20 transition-all hover:-translate-y-0.5 hover:bg-red-600"
       >
         {m.common_delete_button()}
       </button>

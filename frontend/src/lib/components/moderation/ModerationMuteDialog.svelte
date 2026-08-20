@@ -61,7 +61,7 @@
   dismissible={!loading}
 >
   <div class="space-y-4 px-1 pb-2">
-    <p class="text-sm text-text-muted leading-relaxed">
+    <p class="text-text-muted text-sm leading-relaxed">
       {m.moderation_mute_desc()}
     </p>
 
@@ -69,7 +69,7 @@
       {#each presets as preset (preset.label)}
         <button
           type="button"
-          class="text-[11px] px-2.5 py-1.5 rounded-lg border border-cn-border text-text-muted hover:border-amber-400 hover:text-text-main transition-colors"
+          class="border-cn-border text-text-muted hover:text-text-main rounded-lg border px-2.5 py-1.5 text-[11px] transition-colors hover:border-amber-400"
           onclick={() => applyPreset(preset.text)}
           disabled={loading}
           title={preset.text}
@@ -80,7 +80,7 @@
     </div>
 
     <label class="block">
-      <span class="text-xs font-semibold text-text-muted mb-1.5 block"
+      <span class="text-text-muted mb-1.5 block text-xs font-semibold"
         >{m.moderation_mute_message_label()}</span
       >
       <textarea
@@ -88,14 +88,14 @@
         rows="4"
         maxlength="500"
         placeholder={m.moderation_mute_placeholder()}
-        class="w-full rounded-xl border border-cn-border bg-white/50 dark:bg-black/20 px-3 py-2.5 text-sm text-text-main placeholder:text-text-muted/60 focus:border-cn-yellow focus:ring-2 focus:ring-cn-yellow/20 outline-none resize-y min-h-[6rem]"
+        class="border-cn-border text-text-main placeholder:text-text-muted/60 focus:border-cn-yellow focus:ring-cn-yellow/20 min-h-[6rem] w-full resize-y rounded-xl border bg-white/50 px-3 py-2.5 text-sm outline-none focus:ring-2 dark:bg-black/20"
         disabled={loading}></textarea>
     </label>
 
     <div class="flex justify-end gap-2 pt-1">
       <button
         type="button"
-        class="px-4 py-2 text-sm font-semibold rounded-xl text-text-muted hover:bg-black/5 transition-colors"
+        class="text-text-muted rounded-xl px-4 py-2 text-sm font-semibold transition-colors hover:bg-black/5"
         onclick={onClose}
         disabled={loading}
       >
@@ -103,7 +103,7 @@
       </button>
       <button
         type="button"
-        class="px-4 py-2 text-sm font-semibold rounded-xl bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-40"
+        class="rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-700 disabled:opacity-40"
         onclick={submit}
         disabled={loading || !reason.trim()}
       >

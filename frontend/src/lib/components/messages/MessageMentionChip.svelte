@@ -18,7 +18,7 @@
 <button
   type="button"
   onclick={openProfile}
-  class="font-semibold text-amber-600 dark:text-amber-400 bg-amber-500/10 rounded-full px-1 text-[0.9em] hover:bg-amber-500/20 transition-colors cursor-pointer inline align-baseline"
+  class="inline cursor-pointer rounded-full bg-amber-500/10 px-1 align-baseline text-[0.9em] font-semibold text-amber-600 transition-colors hover:bg-amber-500/20 dark:text-amber-400"
 >
   @{name}
 </button>

@@ -203,19 +203,19 @@
     bind:this={panelEl}
     data-swipe-nav-ignore
     transition:scale={{ duration: 250, start: 0.95, opacity: 0, easing: (t) => t * (2 - t) }}
-    class="fixed z-[200] w-[min(92vw,22rem)] bg-white/85 dark:bg-black/60 backdrop-blur-2xl border border-black/5 dark:border-white/10 rounded-[1.5rem] shadow-2xl shadow-black/10 dark:shadow-black/40 overflow-hidden flex flex-col origin-[var(--popover-origin)]"
+    class="fixed z-[200] flex w-[min(92vw,22rem)] origin-(--popover-origin) flex-col overflow-hidden rounded-[1.5rem] border border-black/5 bg-white/85 shadow-2xl shadow-black/10 backdrop-blur-2xl dark:border-white/10 dark:bg-black/60 dark:shadow-black/40"
     style:--popover-origin={isOwn ? 'top right' : 'top left'}
   >
     <!-- En-tête -->
     <div
-      class="px-4 py-3 border-b border-black/5 dark:border-white/10 text-xs font-semibold text-text-muted flex items-center gap-2 bg-white/40 dark:bg-black/20"
+      class="text-text-muted flex items-center gap-2 border-b border-black/5 bg-white/40 px-4 py-3 text-xs font-semibold dark:border-white/10 dark:bg-black/20"
     >
       <Smile size={14} class="text-amber-500" />
       {m.msg_react_to_message_label()}
     </div>
     {#if reactionsAtLimit}
       <p
-        class="px-4 py-2 text-[0.7rem] text-amber-700 dark:text-amber-400 bg-amber-500/10 border-b border-amber-500/20"
+        class="border-b border-amber-500/20 bg-amber-500/10 px-4 py-2 text-[0.7rem] text-amber-700 dark:text-amber-400"
       >
         {m.msg_max_reactions_label({ max: MAX_DISTINCT_MESSAGE_REACTIONS })}
       </p>
@@ -224,16 +224,16 @@
     <!-- Section Émojis Récents -->
     {#if recentEmojis.length > 0}
       <div
-        class="px-3 py-2 border-b border-black/5 dark:border-white/10 flex items-center gap-1.5 flex-wrap bg-white/20 dark:bg-black/10"
+        class="flex flex-wrap items-center gap-1.5 border-b border-black/5 bg-white/20 px-3 py-2 dark:border-white/10 dark:bg-black/10"
       >
-        <span class="text-[0.65rem] font-bold uppercase tracking-widest text-text-muted/80 mr-2">
+        <span class="text-text-muted/80 mr-2 text-[0.65rem] font-bold tracking-widest uppercase">
           {m.msg_recent_reactions_label()}
         </span>
         {#each recentEmojis as emoji (emoji)}
           <button
             type="button"
             onclick={() => handleEmojiClick(emoji)}
-            class="w-8 h-8 rounded-xl hover:bg-black/10 dark:hover:bg-white/10 hover:scale-110 transition-all text-lg inline-flex items-center justify-center shadow-sm hover:shadow-md cursor-pointer"
+            class="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-xl text-lg shadow-sm transition-all hover:scale-110 hover:bg-black/10 hover:shadow-md dark:hover:bg-white/10"
             aria-label={m.msg_react_with_emoji({ emoji })}
           >
             {emoji}
@@ -248,7 +248,7 @@
          la recherche ne fonctionnait qu'en anglais ("wing" au lieu de "aile"). -->
     <emoji-picker
       use:attachEmojiPicker
-      class="w-full min-h-0 flex-1"
+      class="min-h-0 w-full flex-1"
       style="height: min(22rem, calc(var(--popover-max-h, 22rem) - {recentEmojis.length > 0
         ? '5.5rem'
         : '3rem'}));"

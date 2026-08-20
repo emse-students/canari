@@ -204,11 +204,11 @@
 </script>
 
 {#if showPanel}
-  <div use:portal class="fixed inset-0 z-[260] pointer-events-none flex justify-end">
+  <div use:portal class="pointer-events-none fixed inset-0 z-[260] flex justify-end">
     <!-- Clickable dark overlay to close -->
     <button
       type="button"
-      class="absolute inset-0 bg-black/40 backdrop-blur-sm border-0 pointer-events-auto outline-none transition-opacity"
+      class="pointer-events-auto absolute inset-0 border-0 bg-black/40 backdrop-blur-sm transition-opacity outline-none"
       aria-label={m.chat_group_close_backdrop_label()}
       onclick={closePanel}
       transition:fade={{ duration: 250 }}
@@ -219,23 +219,23 @@
       role="dialog"
       aria-modal="true"
       aria-label={m.chat_group_panel_label()}
-      class="relative pointer-events-auto w-full md:w-[28rem] h-full bg-white/85 dark:bg-cn-ink/95 border-l border-black/5 dark:border-white/10 shadow-[-10px_0_30px_rgba(0,0,0,0.1)] dark:shadow-[-10px_0_30px_rgba(0,0,0,0.4)] backdrop-blur-3xl flex flex-col overflow-hidden text-text-main"
+      class="dark:bg-cn-ink/95 text-text-main pointer-events-auto relative flex h-full w-full flex-col overflow-hidden border-l border-black/5 bg-white/85 shadow-[-10px_0_30px_rgba(0,0,0,0.1)] backdrop-blur-3xl md:w-[28rem] dark:border-white/10 dark:shadow-[-10px_0_30px_rgba(0,0,0,0.4)]"
       transition:fly={{ x: 20, duration: 300, easing: (t) => t * (2 - t) }}
     >
       <!-- Panel header -->
       <div
-        class="px-5 md:px-6 py-5 border-b border-black/5 dark:border-white/10 flex items-start justify-between gap-3 bg-white/40 dark:bg-black/20"
+        class="flex items-start justify-between gap-3 border-b border-black/5 bg-white/40 px-5 py-5 md:px-6 dark:border-white/10 dark:bg-black/20"
         style="padding-top: max(1.25rem, env(safe-area-inset-top))"
       >
         <div class="min-w-0">
-          <h3 class="text-lg font-extrabold text-text-main truncate tracking-wide">
+          <h3 class="text-text-main truncate text-lg font-extrabold tracking-wide">
             {panelTitle}
           </h3>
-          <p class="text-xs font-medium text-text-muted mt-1 leading-snug">{panelSubtitle}</p>
+          <p class="text-text-muted mt-1 text-xs leading-snug font-medium">{panelSubtitle}</p>
         </div>
         <button
           onclick={closePanel}
-          class="p-2.5 rounded-full bg-black/5 dark:bg-white/10 text-text-muted hover:text-text-main hover:bg-black/10 dark:hover:bg-white/20 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 shrink-0"
+          class="text-text-muted hover:text-text-main shrink-0 rounded-full bg-black/5 p-2.5 transition-all outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 dark:bg-white/10 dark:hover:bg-white/20"
           aria-label={m.common_close_label()}
         >
           <X size={18} strokeWidth={2.5} />
@@ -244,11 +244,11 @@
 
       <!-- Scrollable content -->
       <div
-        class="keyboard-aware-panel-scroll flex-1 min-h-0 overflow-y-auto p-5 md:p-6 flex flex-col gap-6"
+        class="keyboard-aware-panel-scroll flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto p-5 md:p-6"
       >
         <!-- Group/contact identity card -->
         <div
-          class="rounded-[1.5rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 px-4 py-4 flex items-center gap-4 shadow-sm"
+          class="flex items-center gap-4 rounded-[1.5rem] border border-black/5 bg-white/60 px-4 py-4 shadow-sm dark:border-white/10 dark:bg-black/20"
         >
           {#if isGroupConversation}
             <button
@@ -257,11 +257,11 @@
               disabled={imageUploading}
               aria-label={m.chat_group_change_photo_label()}
               title={m.chat_group_change_photo_label()}
-              class="group/avatar relative w-[3.25rem] h-[3.25rem] rounded-2xl flex-shrink-0 overflow-hidden shadow-inner outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 transition-transform disabled:opacity-60"
+              class="group/avatar relative h-[3.25rem] w-[3.25rem] flex-shrink-0 overflow-hidden rounded-2xl shadow-inner transition-transform outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 disabled:opacity-60"
             >
               <GroupAvatar {imageMediaId} name={effectiveDisplayName} variant="group" fill />
               <span
-                class="absolute inset-0 flex items-center justify-center bg-black/45 text-white opacity-0 group-hover/avatar:opacity-100 transition-opacity"
+                class="absolute inset-0 flex items-center justify-center bg-black/45 text-white opacity-0 transition-opacity group-hover/avatar:opacity-100"
               >
                 {#if imageUploading}
                   <Clock size={18} class="animate-spin" strokeWidth={2.5} />
@@ -281,17 +281,17 @@
             <Avatar userId={contactName} size="lg" fallbackLabel={effectiveDisplayName} />
           {/if}
           <div class="min-w-0 flex-1">
-            <div class="text-[1.05rem] font-extrabold text-text-main truncate mb-1">
+            <div class="text-text-main mb-1 truncate text-[1.05rem] font-extrabold">
               {effectiveDisplayName}
             </div>
             <div
-              class="text-[0.7rem] font-bold text-text-muted inline-flex items-center gap-1.5 uppercase tracking-wider"
+              class="text-text-muted inline-flex items-center gap-1.5 text-[0.7rem] font-bold tracking-wider uppercase"
             >
               {#if isReady}
                 <Shield size={14} class="text-emerald-500" strokeWidth={2.5} />
                 {m.chat_group_secured_sync_label()}
               {:else}
-                <Clock size={14} class="text-amber-500 animate-pulse" strokeWidth={2.5} />
+                <Clock size={14} class="animate-pulse text-amber-500" strokeWidth={2.5} />
                 {m.chat_group_syncing_label()}
               {/if}
             </div>
@@ -299,7 +299,7 @@
         </div>
 
         {#if imageUploadError}
-          <p class="text-xs font-medium text-red-600 dark:text-red-400 -mt-3 px-1">
+          <p class="-mt-3 px-1 text-xs font-medium text-red-600 dark:text-red-400">
             {imageUploadError}
           </p>
         {/if}
@@ -307,26 +307,26 @@
         <!-- Rename section -->
         {#if isGroupConversation}
           <div
-            class="rounded-[1.5rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 p-4 md:p-5 flex flex-col gap-3 shadow-sm"
+            class="flex flex-col gap-3 rounded-[1.5rem] border border-black/5 bg-white/60 p-4 shadow-sm md:p-5 dark:border-white/10 dark:bg-black/20"
           >
             <label
               for="group-rename-input"
-              class="text-[0.75rem] text-text-muted font-bold uppercase tracking-wider inline-flex items-center gap-2 mb-1"
+              class="text-text-muted mb-1 inline-flex items-center gap-2 text-[0.75rem] font-bold tracking-wider uppercase"
             >
               <PencilLine size={14} />
               {m.chat_group_name_label()}
             </label>
-            <div class="flex flex-col sm:flex-row gap-3">
+            <div class="flex flex-col gap-3 sm:flex-row">
               <input
                 id="group-rename-input"
                 type="text"
                 bind:value={renameInput}
                 onkeydown={handleRenameKey}
-                class="flex-1 px-4 py-3 border border-black/10 dark:border-white/10 rounded-xl text-sm font-semibold outline-none bg-white/80 dark:bg-black/40 text-text-main focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500/50 shadow-inner transition-all"
+                class="text-text-main flex-1 rounded-xl border border-black/10 bg-white/80 px-4 py-3 text-sm font-semibold shadow-inner transition-all outline-none focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/50 dark:border-white/10 dark:bg-black/40"
               />
               <button
                 onclick={submitRename}
-                class="inline-flex items-center justify-center gap-2 px-5 py-3 bg-amber-500 text-cn-ink font-bold rounded-xl hover:bg-amber-400 active:scale-95 transition-all shadow-sm shadow-amber-500/20 outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                class="text-cn-ink inline-flex items-center justify-center gap-2 rounded-xl bg-amber-500 px-5 py-3 font-bold shadow-sm shadow-amber-500/20 transition-all outline-none hover:bg-amber-400 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95"
                 aria-label={m.chat_group_validate_rename_label()}
               >
                 <Check size={16} strokeWidth={3} />
@@ -339,10 +339,10 @@
         <!-- Invite link section -->
         {#if isGroupConversation && groupId}
           <div class="flex flex-col gap-2">
-            <span class="text-[0.75rem] text-text-muted font-bold uppercase tracking-wider px-1">
+            <span class="text-text-muted px-1 text-[0.75rem] font-bold tracking-wider uppercase">
               {m.chat_group_invite_link_title()}
             </span>
-            <p class="text-[0.8rem] text-text-muted leading-relaxed px-1">
+            <p class="text-text-muted px-1 text-[0.8rem] leading-relaxed">
               {m.chat_group_invite_link_description()}
             </p>
             {#if shareLink}
@@ -351,18 +351,18 @@
                   type="text"
                   readonly
                   value={shareLink}
-                  class="flex-1 min-w-0 rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-[0.8rem] text-text-main"
+                  class="border-cn-border text-text-main min-w-0 flex-1 rounded-xl border bg-(--cn-surface) px-3 py-2 text-[0.8rem]"
                 />
                 <button
                   type="button"
                   onclick={generateShareLink}
-                  class="shrink-0 rounded-xl border border-cn-border px-3 py-2 text-xs font-semibold hover:bg-cn-bg"
+                  class="border-cn-border hover:bg-cn-bg shrink-0 rounded-xl border px-3 py-2 text-xs font-semibold"
                 >
                   {m.chat_group_regenerate_button()}
                 </button>
               </div>
               {#if shareCopied}
-                <p class="text-xs font-semibold text-green-ok px-1">
+                <p class="text-green-ok px-1 text-xs font-semibold">
                   {m.chat_group_link_copied_label()}
                 </p>
               {/if}
@@ -371,13 +371,13 @@
                 type="button"
                 onclick={generateShareLink}
                 disabled={shareLoading}
-                class="self-start rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 px-3 py-1.5 text-[0.75rem] font-bold transition-colors disabled:opacity-50 mx-1"
+                class="mx-1 self-start rounded-xl bg-amber-500/10 px-3 py-1.5 text-[0.75rem] font-bold text-amber-600 transition-colors hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-400"
               >
                 {shareLoading ? m.common_generating_label() : m.chat_group_generate_link_button()}
               </button>
             {/if}
             {#if shareError}
-              <p class="text-xs font-medium text-red-600 dark:text-red-400 px-1">{shareError}</p>
+              <p class="px-1 text-xs font-medium text-red-600 dark:text-red-400">{shareError}</p>
             {/if}
           </div>
         {/if}
@@ -387,7 +387,7 @@
           <div class="flex flex-col gap-3">
             <div class="flex items-center justify-between gap-2 px-1">
               <span
-                class="text-[0.75rem] text-text-muted font-bold uppercase tracking-wider inline-flex items-center gap-2"
+                class="text-text-muted inline-flex items-center gap-2 text-[0.75rem] font-bold tracking-wider uppercase"
               >
                 <Users size={14} />
                 {m.chat_group_members_count_label({ count: groupMembers.length })}
@@ -397,7 +397,7 @@
                 onclick={() => {
                   showInviteModal = true;
                 }}
-                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 text-[0.75rem] font-bold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                class="inline-flex items-center gap-1.5 rounded-lg bg-amber-500/10 px-3 py-1.5 text-[0.75rem] font-bold text-amber-600 transition-colors outline-none hover:bg-amber-500/20 focus-visible:ring-2 focus-visible:ring-amber-500 dark:text-amber-400"
               >
                 <UserPlus size={14} strokeWidth={2.5} />
                 {m.common_add_button()}
@@ -406,9 +406,9 @@
 
             {#if groupMembers.length > 0 || pendingDisplay.length > 0}
               <div
-                class="rounded-[1.5rem] border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 overflow-hidden shadow-sm"
+                class="overflow-hidden rounded-[1.5rem] border border-black/5 bg-white/60 shadow-sm dark:border-white/10 dark:bg-black/20"
               >
-                <ul class="flex flex-col max-h-[35dvh] overflow-y-auto">
+                <ul class="flex max-h-[35dvh] flex-col overflow-y-auto">
                   {#each groupMembers as member, index (member)}
                     <li
                       class="flex items-center justify-between gap-3 px-4 py-3.5 {index !==
@@ -416,15 +416,15 @@
                         ? 'border-b border-black/5 dark:border-white/5'
                         : ''}"
                     >
-                      <div class="flex items-center gap-3 min-w-0">
+                      <div class="flex min-w-0 items-center gap-3">
                         <Avatar userId={member} size="sm" />
                         <UserName
                           userId={member}
-                          class="text-[0.9rem] font-semibold text-text-main truncate"
+                          class="text-text-main truncate text-[0.9rem] font-semibold"
                         />
                         {#if currentUserId && member.toLowerCase() === currentUserId.toLowerCase()}
                           <span
-                            class="text-[0.65rem] font-bold text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded-md shrink-0"
+                            class="shrink-0 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[0.65rem] font-bold text-amber-500"
                             >{m.common_you_label()}</span
                           >
                         {/if}
@@ -435,7 +435,7 @@
                           onclick={() => onRemoveMember?.(member)}
                           aria-label={m.chat_group_remove_member_label({ member })}
                           title={m.chat_group_remove_member_title()}
-                          class="p-2 rounded-xl bg-black/5 dark:bg-white/5 text-text-muted hover:text-red-500 hover:bg-red-500/10 active:scale-95 transition-all flex-shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                          class="text-text-muted flex-shrink-0 rounded-xl bg-black/5 p-2 transition-all outline-none hover:bg-red-500/10 hover:text-red-500 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 dark:bg-white/5"
                         >
                           <UserMinus size={16} />
                         </button>
@@ -449,15 +449,15 @@
                         ? 'border-b border-black/5 dark:border-white/5'
                         : ''}"
                     >
-                      <div class="flex items-center gap-3 min-w-0">
+                      <div class="flex min-w-0 items-center gap-3">
                         <Avatar userId={pending} size="sm" />
                         <UserName
                           userId={pending}
-                          class="text-[0.9rem] font-semibold text-text-main truncate"
+                          class="text-text-main truncate text-[0.9rem] font-semibold"
                         />
                       </div>
                       <span
-                        class="text-[0.65rem] font-bold text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded-md shrink-0 animate-pulse"
+                        class="shrink-0 animate-pulse rounded-md bg-amber-500/10 px-2 py-0.5 text-[0.65rem] font-bold text-amber-500"
                         >{m.chat_group_invite_pending_label()}</span
                       >
                     </li>
@@ -466,7 +466,7 @@
               </div>
             {:else}
               <div
-                class="rounded-[1.5rem] border border-dashed border-black/10 dark:border-white/20 bg-white/30 dark:bg-black/10 px-4 py-6 text-center text-sm font-medium text-text-muted"
+                class="text-text-muted rounded-[1.5rem] border border-dashed border-black/10 bg-white/30 px-4 py-6 text-center text-sm font-medium dark:border-white/20 dark:bg-black/10"
               >
                 {m.chat_group_no_members_label()}
               </div>
@@ -478,14 +478,14 @@
       <!-- Leave / delete section (panel footer) -->
       {#if onGroupLeave || onGroupDelete}
         <div
-          class="keyboard-aware-panel-footer mt-auto border-t border-black/5 dark:border-white/10 p-5 md:p-6 bg-white/40 dark:bg-black/30 backdrop-blur-md flex flex-col gap-3"
+          class="keyboard-aware-panel-footer mt-auto flex flex-col gap-3 border-t border-black/5 bg-white/40 p-5 backdrop-blur-md md:p-6 dark:border-white/10 dark:bg-black/30"
         >
           {#if onGroupLeave && !confirmLeave && !confirmDelete}
             <button
               onclick={() => {
                 confirmLeave = true;
               }}
-              class="w-full flex items-center justify-center gap-2.5 px-4 py-3.5 text-orange-600 dark:text-orange-400 font-bold bg-orange-500/10 border border-orange-500/20 rounded-2xl text-[0.95rem] hover:bg-orange-500/20 active:scale-[0.98] transition-all outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
+              class="flex w-full items-center justify-center gap-2.5 rounded-2xl border border-orange-500/20 bg-orange-500/10 px-4 py-3.5 text-[0.95rem] font-bold text-orange-600 transition-all outline-none hover:bg-orange-500/20 focus-visible:ring-2 focus-visible:ring-orange-500 active:scale-[0.98] dark:text-orange-400"
             >
               <LogOut size={18} strokeWidth={2.5} />
               {m.chat_group_leave_button()}
@@ -495,7 +495,7 @@
           {#if confirmLeave}
             <div class="flex flex-col gap-3" transition:fade={{ duration: 150 }}>
               <p
-                class="text-[0.8rem] font-bold uppercase tracking-wider text-orange-500 text-center"
+                class="text-center text-[0.8rem] font-bold tracking-wider text-orange-500 uppercase"
               >
                 {m.chat_group_leave_confirm_question()}
               </p>
@@ -504,7 +504,7 @@
                   onclick={() => {
                     confirmLeave = false;
                   }}
-                  class="flex-1 px-4 py-3.5 border border-black/10 dark:border-white/10 bg-white/80 dark:bg-white/5 rounded-2xl font-bold text-text-main hover:bg-black/5 dark:hover:bg-white/10 active:scale-[0.98] transition-all outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
+                  class="text-text-main focus-visible:ring-text-muted flex-1 rounded-2xl border border-black/10 bg-white/80 px-4 py-3.5 font-bold transition-all outline-none hover:bg-black/5 focus-visible:ring-2 active:scale-[0.98] dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
                 >
                   {m.common_cancel_button()}
                 </button>
@@ -513,7 +513,7 @@
                     onGroupLeave?.();
                     closePanel();
                   }}
-                  class="flex-1 px-4 py-3.5 bg-orange-500 text-white rounded-2xl font-bold hover:bg-orange-600 active:scale-[0.98] transition-all shadow-md shadow-orange-500/20 outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
+                  class="flex-1 rounded-2xl bg-orange-500 px-4 py-3.5 font-bold text-white shadow-md shadow-orange-500/20 transition-all outline-none hover:bg-orange-600 focus-visible:ring-2 focus-visible:ring-orange-500 active:scale-[0.98]"
                 >
                   {m.common_leave_button()}
                 </button>
@@ -527,7 +527,7 @@
                 onclick={() => {
                   confirmDelete = true;
                 }}
-                class="w-full flex items-center justify-center gap-2.5 px-4 py-3.5 text-red-600 dark:text-red-400 font-bold bg-red-500/10 border border-red-500/20 rounded-2xl text-[0.95rem] hover:bg-red-500/20 active:scale-[0.98] transition-all outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                class="flex w-full items-center justify-center gap-2.5 rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3.5 text-[0.95rem] font-bold text-red-600 transition-all outline-none hover:bg-red-500/20 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-[0.98] dark:text-red-400"
               >
                 <Trash2 size={18} strokeWidth={2.5} />
                 {isGroupConversation
@@ -537,7 +537,7 @@
             {:else}
               <div class="flex flex-col gap-3" transition:fade={{ duration: 150 }}>
                 <p
-                  class="text-[0.8rem] font-bold uppercase tracking-wider text-red-500 text-center"
+                  class="text-center text-[0.8rem] font-bold tracking-wider text-red-500 uppercase"
                 >
                   {m.chat_group_delete_confirm_question()}
                 </p>
@@ -546,7 +546,7 @@
                     onclick={() => {
                       confirmDelete = false;
                     }}
-                    class="flex-1 px-4 py-3.5 border border-black/10 dark:border-white/10 bg-white/80 dark:bg-white/5 rounded-2xl font-bold text-text-main hover:bg-black/5 dark:hover:bg-white/10 active:scale-[0.98] transition-all outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
+                    class="text-text-main focus-visible:ring-text-muted flex-1 rounded-2xl border border-black/10 bg-white/80 px-4 py-3.5 font-bold transition-all outline-none hover:bg-black/5 focus-visible:ring-2 active:scale-[0.98] dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
                   >
                     {m.common_cancel_button()}
                   </button>
@@ -555,7 +555,7 @@
                       onGroupDelete?.();
                       closePanel();
                     }}
-                    class="flex-1 px-4 py-3.5 bg-red-500 text-white rounded-2xl font-bold hover:bg-red-600 active:scale-[0.98] transition-all shadow-md shadow-red-500/20 outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                    class="flex-1 rounded-2xl bg-red-500 px-4 py-3.5 font-bold text-white shadow-md shadow-red-500/20 transition-all outline-none hover:bg-red-600 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-[0.98]"
                   >
                     {m.common_delete_button()}
                   </button>
@@ -579,9 +579,9 @@
   title={m.chat_group_invite_modal_title()}
 >
   <div class="space-y-5 px-1">
-    <p class="text-sm font-medium text-text-muted leading-relaxed">
+    <p class="text-text-muted text-sm leading-relaxed font-medium">
       {m.chat_group_invite_description_prefix()}
-      <span class="font-bold text-text-main">{effectiveDisplayName}</span>
+      <span class="text-text-main font-bold">{effectiveDisplayName}</span>
       {m.chat_group_invite_description_suffix()}
     </p>
 
@@ -604,7 +604,7 @@
     <button
       onclick={handleInviteMembers}
       disabled={newMembers.length === 0}
-      class="w-full py-3.5 bg-amber-500 text-cn-ink font-extrabold rounded-2xl hover:bg-amber-400 hover:-translate-y-0.5 active:translate-y-0 shadow-lg shadow-amber-500/20 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50 mt-2"
+      class="text-cn-ink mt-2 w-full rounded-2xl bg-amber-500 py-3.5 font-extrabold shadow-lg shadow-amber-500/20 transition-all duration-200 outline-none hover:-translate-y-0.5 hover:bg-amber-400 focus-visible:ring-4 focus-visible:ring-amber-500/50 active:translate-y-0 disabled:transform-none disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
     >
       {m.chat_group_send_invite_button()}{newMembers.length > 0 ? ` (${newMembers.length})` : ''}
     </button>

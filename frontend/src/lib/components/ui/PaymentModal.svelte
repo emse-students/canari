@@ -103,7 +103,7 @@
 <!-- Backdrop -->
 <div
   data-keyboard-aware-overlay
-  class="z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm"
+  class="z-50 flex items-end justify-center bg-black/40 backdrop-blur-sm sm:items-center"
   role="presentation"
 >
   <div
@@ -111,24 +111,24 @@
     role="dialog"
     aria-modal="true"
     aria-label={m.payment_modal_title()}
-    class="keyboard-aware-modal-panel w-full max-w-md rounded-t-3xl sm:rounded-2xl border border-cn-border bg-cn-surface shadow-2xl max-h-[min(92dvh,var(--app-viewport-height,100dvh))] overflow-y-auto"
+    class="keyboard-aware-modal-panel border-cn-border bg-cn-surface max-h-[min(92dvh,var(--app-viewport-height,100dvh))] w-full max-w-md overflow-y-auto rounded-t-3xl border shadow-2xl sm:rounded-2xl"
   >
     <!-- Header -->
-    <div class="flex items-center justify-between px-6 pt-5 pb-4 border-b border-cn-border">
+    <div class="border-cn-border flex items-center justify-between border-b px-6 pt-5 pb-4">
       <div class="flex items-center gap-2.5">
-        <div class="p-2 rounded-xl bg-cn-yellow/15 text-cn-dark">
+        <div class="bg-cn-yellow/15 text-cn-dark rounded-xl p-2">
           <CreditCard size={20} />
         </div>
         <div>
-          <h2 class="text-base font-extrabold text-text-main">{m.payment_modal_title()}</h2>
-          <p class="text-xs text-text-muted">
+          <h2 class="text-text-main text-base font-extrabold">{m.payment_modal_title()}</h2>
+          <p class="text-text-muted text-xs">
             {m.payment_modal_amount_label({ amount: formatted })}
           </p>
         </div>
       </div>
       <button
         onclick={onClose}
-        class="p-1.5 rounded-lg text-text-muted hover:text-text-main hover:bg-cn-border/30 transition-colors"
+        class="text-text-muted hover:text-text-main hover:bg-cn-border/30 rounded-lg p-1.5 transition-colors"
         aria-label="Fermer"
       >
         <X size={18} />
@@ -136,22 +136,22 @@
     </div>
 
     <!-- Body -->
-    <div class="px-6 py-5 space-y-3">
+    <div class="space-y-3 px-6 py-5">
       {#if error}
         <div
-          class="flex items-start gap-2 rounded-xl bg-red-err/10 border border-red-err/30 text-red-err px-4 py-3 text-sm"
+          class="bg-red-err/10 border-red-err/30 text-red-err flex items-start gap-2 rounded-xl border px-4 py-3 text-sm"
         >
-          <AlertCircle size={16} class="shrink-0 mt-0.5" />
+          <AlertCircle size={16} class="mt-0.5 shrink-0" />
           {error}
         </div>
       {/if}
 
-      <p class="text-sm font-semibold text-text-main">{m.payment_modal_saved_card()}</p>
+      <p class="text-text-main text-sm font-semibold">{m.payment_modal_saved_card()}</p>
 
       <div class="space-y-2">
         {#each paymentMethods as pm (pm.id)}
           <label
-            class="flex items-center gap-3 rounded-xl border-2 px-4 py-3 cursor-pointer transition-colors
+            class="flex cursor-pointer items-center gap-3 rounded-xl border-2 px-4 py-3 transition-colors
             {selectedMethodId === pm.id
               ? 'border-cn-yellow bg-cn-yellow/5'
               : 'border-cn-border hover:border-cn-yellow/50'}"
@@ -163,13 +163,13 @@
               bind:group={selectedMethodId}
               class="sr-only"
             />
-            <div class="flex-1 flex items-center gap-3 min-w-0">
+            <div class="flex min-w-0 flex-1 items-center gap-3">
               <CreditCard size={18} class="text-text-muted shrink-0" />
               <div class="min-w-0">
-                <p class="text-sm font-bold text-text-main">
+                <p class="text-text-main text-sm font-bold">
                   {brandLabel(pm.brand)} •••• {pm.last4}
                 </p>
-                <p class="text-xs text-text-muted">
+                <p class="text-text-muted text-xs">
                   {m.payment_modal_expires({ month: pm.expMonth, year: pm.expYear })}
                 </p>
               </div>
@@ -184,7 +184,7 @@
       <button
         onclick={handlePay}
         disabled={!selectedMethodId || paying}
-        class="w-full rounded-xl bg-cn-yellow py-3 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover flex w-full items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold transition-colors disabled:opacity-50"
       >
         {#if paying}
           <Loader2 size={16} class="animate-spin" />
@@ -198,14 +198,14 @@
 
     <!-- Footer -->
     <div class="px-6 pb-5">
-      <div class="relative flex items-center gap-3 mb-3">
-        <div class="flex-1 border-t border-cn-border"></div>
-        <span class="text-xs text-text-muted">{m.payment_modal_or()}</span>
-        <div class="flex-1 border-t border-cn-border"></div>
+      <div class="relative mb-3 flex items-center gap-3">
+        <div class="border-cn-border flex-1 border-t"></div>
+        <span class="text-text-muted text-xs">{m.payment_modal_or()}</span>
+        <div class="border-cn-border flex-1 border-t"></div>
       </div>
       <button
         onclick={onPayWithNew}
-        class="w-full rounded-xl border border-cn-border py-2.5 text-sm font-semibold text-text-muted hover:text-text-main hover:border-cn-yellow/50 transition-colors"
+        class="border-cn-border text-text-muted hover:text-text-main hover:border-cn-yellow/50 w-full rounded-xl border py-2.5 text-sm font-semibold transition-colors"
       >
         {m.payment_modal_pay_new_card()}
       </button>

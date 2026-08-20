@@ -148,43 +148,43 @@
   );
 </script>
 
-<div class="px-4 py-6 sm:px-6 max-w-7xl mx-auto space-y-6">
+<div class="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6">
   <a
     href={backHref}
-    class="inline-flex items-center gap-2 text-sm text-text-muted hover:text-text-main transition-colors"
+    class="text-text-muted hover:text-text-main inline-flex items-center gap-2 text-sm transition-colors"
   >
     <ArrowLeft size={16} />
     {m.calendar_export_back()}
   </a>
 
-  <h1 class="text-2xl font-extrabold text-text-main tracking-tight">{m.calendar_export_title()}</h1>
+  <h1 class="text-text-main text-2xl font-extrabold tracking-tight">{m.calendar_export_title()}</h1>
 
-  <div class="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-6 items-start">
+  <div class="grid grid-cols-1 items-start gap-6 lg:grid-cols-[360px_1fr]">
     <!-- ── Settings panel ── -->
     <div
-      class="space-y-5 rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-5 shadow-sm lg:sticky lg:top-4"
+      class="border-cn-border space-y-5 rounded-2xl border bg-(--cn-surface)/90 p-5 shadow-sm lg:sticky lg:top-4"
     >
       <!-- Month navigation -->
       <div>
-        <p class="text-xs font-bold uppercase tracking-wider text-text-muted mb-2">
+        <p class="text-text-muted mb-2 text-xs font-bold tracking-wider uppercase">
           {m.calendar_export_month_label()}
         </p>
         <div class="flex items-center gap-2">
           <button
             type="button"
             onclick={prevMonth}
-            class="rounded-xl border border-cn-border p-2 text-text-main hover:bg-cn-bg transition-colors"
+            class="border-cn-border text-text-main hover:bg-cn-bg rounded-xl border p-2 transition-colors"
             aria-label={m.calendar_prev_month()}
           >
             <ChevronLeft size={18} />
           </button>
-          <span class="flex-1 text-center text-sm font-bold text-text-main capitalize"
+          <span class="text-text-main flex-1 text-center text-sm font-bold capitalize"
             >{titleMonth}</span
           >
           <button
             type="button"
             onclick={nextMonth}
-            class="rounded-xl border border-cn-border p-2 text-text-main hover:bg-cn-bg transition-colors"
+            class="border-cn-border text-text-main hover:bg-cn-bg rounded-xl border p-2 transition-colors"
             aria-label={m.calendar_next_month()}
           >
             <ChevronRight size={18} />
@@ -196,7 +196,7 @@
 
       <!-- Theme picker -->
       <div class="space-y-2">
-        <p class="text-xs font-bold uppercase tracking-wider text-text-muted">
+        <p class="text-text-muted text-xs font-bold tracking-wider uppercase">
           {m.calendar_export_theme_label()}
         </p>
         <div class="grid grid-cols-3 gap-2">
@@ -205,7 +205,7 @@
               type="button"
               onclick={() => applyTheme(theme.id)}
               class="relative rounded-xl border p-2 transition-colors {selectedThemeId === theme.id
-                ? 'border-cn-yellow ring-2 ring-cn-yellow/40'
+                ? 'border-cn-yellow ring-cn-yellow/40 ring-2'
                 : 'border-cn-border hover:bg-cn-bg'}"
             >
               <span
@@ -213,11 +213,11 @@
                 style="background:linear-gradient(135deg, {theme.options.pageBg} 55%, {theme.options
                   .weekendLabelColor} 55%);"
               ></span>
-              <span class="block text-center text-[11px] font-semibold text-text-main"
+              <span class="text-text-main block text-center text-[11px] font-semibold"
                 >{theme.name()}</span
               >
               {#if selectedThemeId === theme.id}
-                <span class="absolute right-1 top-1 text-cn-yellow"><Check size={12} /></span>
+                <span class="text-cn-yellow absolute top-1 right-1"><Check size={12} /></span>
               {/if}
             </button>
           {/each}
@@ -228,16 +228,16 @@
 
       <!-- Background image -->
       <div class="space-y-3">
-        <p class="text-xs font-bold uppercase tracking-wider text-text-muted">
+        <p class="text-text-muted text-xs font-bold tracking-wider uppercase">
           {m.calendar_export_bg_label()}
         </p>
         {#if opts.bgDataUrl}
           <div class="flex items-center gap-2">
-            <span class="flex-1 text-xs text-text-muted">{m.calendar_export_bg_loaded()}</span>
+            <span class="text-text-muted flex-1 text-xs">{m.calendar_export_bg_loaded()}</span>
             <button
               type="button"
               onclick={clearBg}
-              class="rounded-lg border border-cn-border p-1.5 text-text-muted hover:bg-cn-bg"
+              class="border-cn-border text-text-muted hover:bg-cn-bg rounded-lg border p-1.5"
               title={m.calendar_export_bg_remove()}
             >
               <X size={14} />
@@ -245,7 +245,7 @@
           </div>
         {:else}
           <label
-            class="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-cn-border bg-cn-bg px-3 py-2 text-xs font-semibold text-text-muted hover:bg-[var(--cn-surface)] transition-colors"
+            class="border-cn-border bg-cn-bg text-text-muted inline-flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold transition-colors hover:bg-(--cn-surface)"
           >
             <ImagePlus size={14} />
             {m.calendar_export_bg_choose()}
@@ -253,7 +253,7 @@
           </label>
         {/if}
         <div class="flex items-center justify-between gap-2">
-          <span class="text-xs text-text-muted"
+          <span class="text-text-muted text-xs"
             >{m.calendar_export_opacity({ value: opts.bgOpacity })}</span
           >
           <input
@@ -261,12 +261,12 @@
             min="0"
             max="100"
             bind:value={opts.bgOpacity}
-            class="w-28 accent-cn-dark"
+            class="accent-cn-dark w-28"
           />
         </div>
         {#if opts.bgDataUrl}
           <div class="flex items-center justify-between gap-2">
-            <span class="text-xs text-text-muted"
+            <span class="text-text-muted text-xs"
               >{m.calendar_export_scrim({ value: opts.scrimOpacity })}</span
             >
             <input
@@ -274,7 +274,7 @@
               min="0"
               max="80"
               bind:value={opts.scrimOpacity}
-              class="w-28 accent-cn-dark"
+              class="accent-cn-dark w-28"
             />
           </div>
         {/if}
@@ -285,7 +285,7 @@
       <!-- Text shadows (kept simple: Justine relies on them) -->
       <div class="space-y-2">
         <div class="flex items-center justify-between gap-2">
-          <span class="text-xs font-bold uppercase tracking-wider text-text-muted"
+          <span class="text-text-muted text-xs font-bold tracking-wider uppercase"
             >{m.calendar_export_text_shadow()}</span
           >
           <button
@@ -307,14 +307,14 @@
         </div>
         {#if opts.enableTextShadow}
           <div class="flex items-center justify-between gap-2">
-            <span class="text-xs text-text-muted">{m.calendar_export_shadow_color()}</span>
+            <span class="text-text-muted text-xs">{m.calendar_export_shadow_color()}</span>
             <ColorPicker
               bind:value={opts.textShadowColor}
               label={m.calendar_export_shadow_color()}
             />
           </div>
           <div class="flex items-center justify-between gap-2">
-            <span class="text-xs text-text-muted"
+            <span class="text-text-muted text-xs"
               >{m.calendar_export_shadow_offset({ value: opts.textShadowOffset })}</span
             >
             <input
@@ -322,7 +322,7 @@
               min="1"
               max="8"
               bind:value={opts.textShadowOffset}
-              class="w-28 accent-cn-dark"
+              class="accent-cn-dark w-28"
             />
           </div>
         {/if}
@@ -333,7 +333,7 @@
       <!-- Advanced (fine-grained) controls, collapsed by default -->
       <details bind:open={showAdvanced}>
         <summary
-          class="flex cursor-pointer list-none items-center gap-2 text-xs font-bold uppercase tracking-wider text-text-muted"
+          class="text-text-muted flex cursor-pointer list-none items-center gap-2 text-xs font-bold tracking-wider uppercase"
         >
           <SlidersHorizontal size={14} />
           {m.calendar_export_advanced()}
@@ -341,22 +341,22 @@
         <div class="mt-4 space-y-5">
           <!-- Header -->
           <div class="space-y-2">
-            <p class="text-xs font-bold uppercase tracking-wider text-text-muted">
+            <p class="text-text-muted text-xs font-bold tracking-wider uppercase">
               {m.calendar_export_header_label()}
             </p>
             <div class="flex items-center justify-between gap-2">
-              <span class="text-xs text-text-muted">{m.calendar_export_bg_field()}</span>
+              <span class="text-text-muted text-xs">{m.calendar_export_bg_field()}</span>
               <ColorPicker bind:value={opts.headerBg} label={m.calendar_export_bg_field()} />
             </div>
             <div class="flex items-center justify-between gap-2">
-              <span class="text-xs text-text-muted">{m.calendar_export_month_title_color()}</span>
+              <span class="text-text-muted text-xs">{m.calendar_export_month_title_color()}</span>
               <ColorPicker
                 bind:value={opts.monthTitleColor}
                 label={m.calendar_export_month_title_color()}
               />
             </div>
             <div class="flex items-center justify-between gap-2">
-              <span class="text-xs text-text-muted">{m.calendar_export_page_bg()}</span>
+              <span class="text-text-muted text-xs">{m.calendar_export_page_bg()}</span>
               <ColorPicker bind:value={opts.pageBg} label={m.calendar_export_page_bg()} />
             </div>
           </div>
@@ -365,32 +365,32 @@
 
           <!-- Weekday row -->
           <div class="space-y-2">
-            <p class="text-xs font-bold uppercase tracking-wider text-text-muted">
+            <p class="text-text-muted text-xs font-bold tracking-wider uppercase">
               {m.calendar_export_weekday_row_label()}
             </p>
             <div class="flex items-center justify-between gap-2">
-              <span class="text-xs text-text-muted">{m.calendar_export_bg_field()}</span>
+              <span class="text-text-muted text-xs">{m.calendar_export_bg_field()}</span>
               <ColorPicker
                 bind:value={opts.weekdayRowBg}
                 label={m.calendar_export_weekday_row_label()}
               />
             </div>
             <div class="flex items-center justify-between gap-2">
-              <span class="text-xs text-text-muted">{m.calendar_export_weekday_labels()}</span>
+              <span class="text-text-muted text-xs">{m.calendar_export_weekday_labels()}</span>
               <ColorPicker
                 bind:value={opts.weekdayLabelColor}
                 label={m.calendar_export_weekday_labels()}
               />
             </div>
             <div class="flex items-center justify-between gap-2">
-              <span class="text-xs text-text-muted">{m.calendar_export_weekend_labels()}</span>
+              <span class="text-text-muted text-xs">{m.calendar_export_weekend_labels()}</span>
               <ColorPicker
                 bind:value={opts.weekendLabelColor}
                 label={m.calendar_export_weekend_labels()}
               />
             </div>
             <div class="flex items-center justify-between gap-2">
-              <span class="text-xs text-text-muted">{m.calendar_export_weekday_fullnames()}</span>
+              <span class="text-text-muted text-xs">{m.calendar_export_weekday_fullnames()}</span>
               <button
                 type="button"
                 role="switch"
@@ -414,15 +414,15 @@
 
           <!-- Cells -->
           <div class="space-y-2">
-            <p class="text-xs font-bold uppercase tracking-wider text-text-muted">
+            <p class="text-text-muted text-xs font-bold tracking-wider uppercase">
               {m.calendar_export_cells_label()}
             </p>
             <div class="flex items-center justify-between gap-2">
-              <span class="text-xs text-text-muted">{m.calendar_export_cell_bg_normal()}</span>
+              <span class="text-text-muted text-xs">{m.calendar_export_cell_bg_normal()}</span>
               <ColorPicker bind:value={opts.cellBg} label={m.calendar_export_cell_bg_normal()} />
             </div>
             <div class="flex items-center justify-between gap-2">
-              <span class="text-xs text-text-muted"
+              <span class="text-text-muted text-xs"
                 >{m.calendar_export_cell_opacity_normal({ value: opts.cellBgOpacity })}</span
               >
               <input
@@ -430,18 +430,18 @@
                 min="0"
                 max="100"
                 bind:value={opts.cellBgOpacity}
-                class="w-28 accent-cn-dark"
+                class="accent-cn-dark w-28"
               />
             </div>
             <div class="flex items-center justify-between gap-2">
-              <span class="text-xs text-text-muted">{m.calendar_export_cell_bg_weekend()}</span>
+              <span class="text-text-muted text-xs">{m.calendar_export_cell_bg_weekend()}</span>
               <ColorPicker
                 bind:value={opts.weekendCellBg}
                 label={m.calendar_export_cell_bg_weekend()}
               />
             </div>
             <div class="flex items-center justify-between gap-2">
-              <span class="text-xs text-text-muted"
+              <span class="text-text-muted text-xs"
                 >{m.calendar_export_cell_opacity_weekend({
                   value: opts.weekendCellBgOpacity,
                 })}</span
@@ -451,18 +451,18 @@
                 min="0"
                 max="100"
                 bind:value={opts.weekendCellBgOpacity}
-                class="w-28 accent-cn-dark"
+                class="accent-cn-dark w-28"
               />
             </div>
             <div class="flex items-center justify-between gap-2">
-              <span class="text-xs text-text-muted">{m.calendar_export_empty_day_color()}</span>
+              <span class="text-text-muted text-xs">{m.calendar_export_empty_day_color()}</span>
               <ColorPicker
                 bind:value={opts.emptyDayColor}
                 label={m.calendar_export_empty_day_color()}
               />
             </div>
             <div class="flex items-center justify-between gap-2">
-              <span class="text-xs text-text-muted"
+              <span class="text-text-muted text-xs"
                 >{m.calendar_export_break_tint({ value: opts.breakTintOpacity })}</span
               >
               <input
@@ -470,7 +470,7 @@
                 min="0"
                 max="60"
                 bind:value={opts.breakTintOpacity}
-                class="w-28 accent-cn-dark"
+                class="accent-cn-dark w-28"
               />
             </div>
           </div>
@@ -479,25 +479,25 @@
 
           <!-- Grid borders -->
           <div class="space-y-2">
-            <p class="text-xs font-bold uppercase tracking-wider text-text-muted">
+            <p class="text-text-muted text-xs font-bold tracking-wider uppercase">
               {m.calendar_export_grid_label()}
             </p>
             <div class="flex items-center justify-between gap-2">
-              <span class="text-xs text-text-muted">{m.calendar_export_inner_borders()}</span>
+              <span class="text-text-muted text-xs">{m.calendar_export_inner_borders()}</span>
               <ColorPicker
                 bind:value={opts.borderColor}
                 label={m.calendar_export_inner_borders()}
               />
             </div>
             <div class="flex items-center justify-between gap-2">
-              <span class="text-xs text-text-muted">{m.calendar_export_outer_border()}</span>
+              <span class="text-text-muted text-xs">{m.calendar_export_outer_border()}</span>
               <ColorPicker
                 bind:value={opts.gridOuterBorder}
                 label={m.calendar_export_outer_border()}
               />
             </div>
             <div class="flex items-center justify-between gap-2">
-              <span class="text-xs text-text-muted">{m.calendar_export_scrim_color()}</span>
+              <span class="text-text-muted text-xs">{m.calendar_export_scrim_color()}</span>
               <ColorPicker bind:value={opts.scrimColor} label={m.calendar_export_scrim_color()} />
             </div>
           </div>
@@ -512,7 +512,7 @@
           type="button"
           onclick={handleExport}
           disabled={loading || exporting}
-          class="inline-flex items-center justify-center gap-2 rounded-xl bg-cn-yellow px-4 py-3 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-colors disabled:opacity-40 disabled:pointer-events-none"
+          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold transition-colors disabled:pointer-events-none disabled:opacity-40"
         >
           <FileDown size={18} />
           {exporting ? m.common_generating_label() : m.calendar_export_download_btn()}
@@ -520,7 +520,7 @@
         <button
           type="button"
           onclick={resetOptions}
-          class="inline-flex items-center justify-center gap-2 rounded-xl border border-cn-border px-4 py-2 text-xs font-semibold text-text-muted hover:bg-cn-bg transition-colors"
+          class="border-cn-border text-text-muted hover:bg-cn-bg inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-2 text-xs font-semibold transition-colors"
         >
           <RotateCcw size={14} />
           {m.calendar_export_reset_colors()}
@@ -529,15 +529,15 @@
     </div>
 
     <!-- ── Preview panel ── -->
-    <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-4 shadow-sm">
-      <p class="text-xs font-bold uppercase tracking-wider text-text-muted mb-3">
+    <div class="border-cn-border rounded-2xl border bg-(--cn-surface)/90 p-4 shadow-sm">
+      <p class="text-text-muted mb-3 text-xs font-bold tracking-wider uppercase">
         {m.calendar_export_preview_label()}
       </p>
       <div bind:clientWidth={previewContainerWidth}>
         {#if loading}
           <div class="flex items-center justify-center py-16">
             <div
-              class="h-6 w-6 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+              class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
             ></div>
           </div>
         {:else if previewScale > 0}

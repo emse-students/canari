@@ -394,11 +394,11 @@
   />
 {/if}
 
-<div class="max-w-2xl mx-auto px-4 pt-6 pb-36">
+<div class="mx-auto max-w-2xl px-4 pt-6 pb-36">
   <!-- Back + Share -->
-  <div class="flex items-center justify-between mb-6">
+  <div class="mb-6 flex items-center justify-between">
     <button
-      class="inline-flex items-center gap-1.5 text-sm font-semibold text-text-muted hover:text-text-main transition-colors"
+      class="text-text-muted hover:text-text-main inline-flex items-center gap-1.5 text-sm font-semibold transition-colors"
       onclick={() => goto(redirectTo)}
     >
       <ArrowLeft size={15} />
@@ -408,7 +408,7 @@
       <button
         type="button"
         onclick={copyFormLink}
-        class="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl transition-colors {copiedLink
+        class="inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors {copiedLink
           ? 'text-green-ok bg-green-50 dark:bg-green-950/20'
           : 'text-text-muted hover:text-text-main hover:bg-cn-border/30'}"
       >
@@ -424,35 +424,33 @@
   {#if loading}
     <div class="flex justify-center py-24">
       <div
-        class="h-8 w-8 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+        class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if error && !form}
-    <div
-      class="rounded-3xl border border-cn-border bg-[var(--cn-surface)] p-10 text-center space-y-3"
-    >
+    <div class="border-cn-border space-y-3 rounded-3xl border bg-(--cn-surface) p-10 text-center">
       <p class="text-red-err font-semibold">{error}</p>
-      <button class="text-sm text-text-muted hover:underline" onclick={() => goto(redirectTo)}
+      <button class="text-text-muted text-sm hover:underline" onclick={() => goto(redirectTo)}
         >{m.common_back()}</button
       >
     </div>
   {:else if form}
     <!-- ── Header ── -->
     <div
-      class="rounded-3xl overflow-hidden border border-cn-border bg-[var(--cn-surface)] shadow-sm mb-5"
+      class="border-cn-border mb-5 overflow-hidden rounded-3xl border bg-(--cn-surface) shadow-sm"
     >
       {#if form.imageUrl}
         <div class="relative">
-          <img src={form.imageUrl} alt="" class="w-full max-h-72 object-cover" loading="lazy" />
+          <img src={form.imageUrl} alt="" class="max-h-72 w-full object-cover" loading="lazy" />
           <div
             class="absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-black/60 to-transparent"
           ></div>
-          <div class="absolute bottom-0 inset-x-0 p-5 flex items-end gap-3">
-            <div class="flex-1 min-w-0">
-              <h1 class="text-2xl font-extrabold text-white leading-tight">{form.title}</h1>
+          <div class="absolute inset-x-0 bottom-0 flex items-end gap-3 p-5">
+            <div class="min-w-0 flex-1">
+              <h1 class="text-2xl leading-tight font-extrabold text-white">{form.title}</h1>
               {#if effectiveBasePrice(form) > 0}
                 <span
-                  class="inline-block mt-1.5 text-xs font-bold bg-cn-yellow text-cn-ink px-2.5 py-1 rounded-full"
+                  class="bg-cn-yellow text-cn-ink mt-1.5 inline-block rounded-full px-2.5 py-1 text-xs font-bold"
                 >
                   {m.form_view_from_price({
                     price: formatCurrency(effectiveBasePrice(form), form.currency),
@@ -462,7 +460,7 @@
               {/if}
             </div>
             {#if submitted}
-              <div class="p-2 rounded-xl bg-green-500 text-white shrink-0">
+              <div class="shrink-0 rounded-xl bg-green-500 p-2 text-white">
                 <Check size={20} />
               </div>
             {/if}
@@ -470,16 +468,16 @@
         </div>
       {:else}
         <div
-          class="bg-gradient-to-br from-cn-yellow/10 via-transparent to-transparent px-6 pt-6 pb-4 flex items-start gap-4"
+          class="from-cn-yellow/10 flex items-start gap-4 bg-gradient-to-br via-transparent to-transparent px-6 pt-6 pb-4"
         >
-          <div class="p-3 rounded-2xl bg-cn-yellow/20 text-cn-dark shrink-0">
+          <div class="bg-cn-yellow/20 text-cn-dark shrink-0 rounded-2xl p-3">
             <ClipboardList size={26} />
           </div>
-          <div class="flex-1 min-w-0">
-            <h1 class="text-2xl font-extrabold text-text-main leading-tight">{form.title}</h1>
+          <div class="min-w-0 flex-1">
+            <h1 class="text-text-main text-2xl leading-tight font-extrabold">{form.title}</h1>
             {#if effectiveBasePrice(form) > 0}
               <span
-                class="inline-block mt-1.5 text-xs font-bold bg-cn-yellow text-cn-ink px-2.5 py-1 rounded-full"
+                class="bg-cn-yellow text-cn-ink mt-1.5 inline-block rounded-full px-2.5 py-1 text-xs font-bold"
               >
                 {m.form_view_from_price({
                   price: formatCurrency(effectiveBasePrice(form), form.currency),
@@ -489,14 +487,14 @@
             {/if}
           </div>
           {#if submitted}
-            <div class="p-2 rounded-xl bg-green-ok/15 text-green-ok shrink-0">
+            <div class="bg-green-ok/15 text-green-ok shrink-0 rounded-xl p-2">
               <Check size={20} />
             </div>
           {/if}
         </div>
       {/if}
       {#if form.description?.trim()}
-        <div class="px-6 py-4 border-t border-cn-border/60">
+        <div class="border-cn-border/60 border-t px-6 py-4">
           <ProfileBioMarkdown source={form.description} />
         </div>
       {/if}
@@ -504,14 +502,14 @@
 
     <!-- ── Progress bar ── -->
     {#if !submitted && totalCount > 0}
-      <div class="flex items-center gap-3 mb-5">
-        <div class="flex-1 h-2 bg-cn-border/60 rounded-full overflow-hidden">
+      <div class="mb-5 flex items-center gap-3">
+        <div class="bg-cn-border/60 h-2 flex-1 overflow-hidden rounded-full">
           <div
-            class="h-full bg-cn-yellow rounded-full transition-all duration-500"
+            class="bg-cn-yellow h-full rounded-full transition-all duration-500"
             style="width:{progressPct}%"
           ></div>
         </div>
-        <span class="text-xs font-bold text-text-muted tabular-nums shrink-0">
+        <span class="text-text-muted shrink-0 text-xs font-bold tabular-nums">
           {answeredCount} / {totalCount}
         </span>
       </div>
@@ -523,25 +521,25 @@
         href={agendaAssociationSlug
           ? `/associations/${encodeURIComponent(agendaAssociationSlug)}`
           : '/associations'}
-        class="flex items-center gap-3 rounded-2xl border border-cn-yellow/35 bg-cn-yellow/10 px-4 py-3 mb-4 transition-colors hover:bg-cn-yellow/15"
+        class="border-cn-yellow/35 bg-cn-yellow/10 hover:bg-cn-yellow/15 mb-4 flex items-center gap-3 rounded-2xl border px-4 py-3 transition-colors"
       >
-        <div class="rounded-xl bg-cn-yellow/25 p-2 text-cn-dark shrink-0">
+        <div class="bg-cn-yellow/25 text-cn-dark shrink-0 rounded-xl p-2">
           <CalendarDays size={18} />
         </div>
         <div class="min-w-0 flex-1">
-          <p class="text-xs font-bold uppercase tracking-wide text-text-muted">
+          <p class="text-text-muted text-xs font-bold tracking-wide uppercase">
             {m.form_view_event_linked()}
           </p>
-          <p class="text-sm font-semibold text-text-main truncate">{linkedAgendaEvent.title}</p>
+          <p class="text-text-main truncate text-sm font-semibold">{linkedAgendaEvent.title}</p>
         </div>
-        <span class="text-xs font-semibold text-cn-dark shrink-0">{m.form_view_event_see()}</span>
+        <span class="text-cn-dark shrink-0 text-xs font-semibold">{m.form_view_event_see()}</span>
       </a>
     {/if}
 
     <!-- ── Not open yet ── -->
     {#if isNotOpenYet && form.opensAt}
       <div
-        class="rounded-2xl border border-amber-300/60 bg-amber-50/80 dark:bg-amber-950/20 px-4 py-4 mb-4 flex items-center justify-between gap-4"
+        class="mb-4 flex items-center justify-between gap-4 rounded-2xl border border-amber-300/60 bg-amber-50/80 px-4 py-4 dark:bg-amber-950/20"
       >
         <p class="text-sm font-semibold text-amber-800 dark:text-amber-300">
           {m.form_view_opens_at({ date: formatFormOpensAt(form.opensAt) })}
@@ -551,7 +549,7 @@
             type="button"
             onclick={reminder.toggle}
             disabled={reminder.toggling}
-            class="flex items-center gap-1.5 text-xs font-bold shrink-0 px-3 py-2 rounded-xl transition-colors {reminder.subscribed
+            class="flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold transition-colors {reminder.subscribed
               ? 'bg-amber-600 text-white hover:bg-amber-700'
               : 'bg-amber-warn/20 text-amber-warn hover:bg-amber-warn/30'}"
           >
@@ -568,14 +566,14 @@
     <!-- ── Success ── -->
     {#if successMessage}
       <div
-        class="rounded-2xl border border-green-ok/30 bg-green-ok/10 px-5 py-4 mb-4 flex items-center gap-3"
+        class="border-green-ok/30 bg-green-ok/10 mb-4 flex items-center gap-3 rounded-2xl border px-5 py-4"
       >
-        <div class="p-2 rounded-xl bg-green-100 dark:bg-green-900/40 text-green-ok shrink-0">
+        <div class="text-green-ok shrink-0 rounded-xl bg-green-100 p-2 dark:bg-green-900/40">
           <Check size={20} />
         </div>
         <div>
           <p class="font-bold text-green-700 dark:text-green-300">{successMessage}</p>
-          <p class="text-xs text-green-600/70 dark:text-green-400/70 mt-0.5">
+          <p class="mt-0.5 text-xs text-green-600/70 dark:text-green-400/70">
             {m.form_view_redirecting()}
           </p>
         </div>
@@ -585,34 +583,34 @@
     <!-- ── Questions ── -->
     <div class="space-y-3">
       {#each visibleItems as item, qi (item.id)}
-        <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-5 shadow-sm">
+        <div class="border-cn-border rounded-2xl border bg-(--cn-surface) p-5 shadow-sm">
           <!-- svelte-ignore a11y_label_has_associated_control -->
-          <label class="flex items-start gap-2 mb-1.5">
+          <label class="mb-1.5 flex items-start gap-2">
             <span
-              class="text-[10px] font-bold text-text-muted bg-cn-border/50 rounded-md px-1.5 py-0.5 mt-0.5 shrink-0 tabular-nums"
+              class="text-text-muted bg-cn-border/50 mt-0.5 shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold tabular-nums"
             >
               {qi + 1}
             </span>
-            <span class="text-sm font-bold text-text-main leading-snug">
+            <span class="text-text-main text-sm leading-snug font-bold">
               {item.label}
-              {#if item.required}<span class="text-red-500 ml-0.5">*</span>{/if}
+              {#if item.required}<span class="ml-0.5 text-red-500">*</span>{/if}
             </span>
           </label>
 
           {#if item.description}
-            <p class="text-xs text-text-muted mb-3 ml-6 leading-relaxed">{item.description}</p>
+            <p class="text-text-muted mb-3 ml-6 text-xs leading-relaxed">{item.description}</p>
           {/if}
 
           {#if item.imageUrl}
-            <div class="mb-3 ml-6 rounded-xl overflow-hidden border border-cn-border/60">
-              <img src={item.imageUrl} alt="" class="w-full max-h-48 object-cover" loading="lazy" />
+            <div class="border-cn-border/60 mb-3 ml-6 overflow-hidden rounded-xl border">
+              <img src={item.imageUrl} alt="" class="max-h-48 w-full object-cover" loading="lazy" />
             </div>
           {/if}
 
           {#if item.type === 'short_text'}
             <input
               type="text"
-              class="w-full px-4 py-3 border-2 border-cn-border rounded-2xl text-sm text-text-main bg-cn-bg outline-none transition-all placeholder:text-text-muted/50 focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
+              class="border-cn-border text-text-main bg-cn-bg placeholder:text-text-muted/50 focus:border-cn-yellow w-full rounded-2xl border-2 px-4 py-3 text-sm transition-all outline-none focus:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
               bind:value={selections[item.id]}
               placeholder={m.form_view_answer_placeholder()}
               disabled={submitted || isNotOpenYet}
@@ -620,13 +618,13 @@
           {:else if item.type === 'long_text'}
             <textarea
               rows="4"
-              class="w-full px-4 py-3 border-2 border-cn-border rounded-2xl text-sm text-text-main bg-cn-bg outline-none transition-all resize-y placeholder:text-text-muted/50 focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
+              class="border-cn-border text-text-main bg-cn-bg placeholder:text-text-muted/50 focus:border-cn-yellow w-full resize-y rounded-2xl border-2 px-4 py-3 text-sm transition-all outline-none focus:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
               bind:value={selections[item.id]}
               placeholder={m.form_view_answer_placeholder()}
               disabled={submitted || isNotOpenYet}></textarea>
           {:else if item.type === 'dropdown' || item.type === 'single'}
             <select
-              class="w-full px-4 py-3 border-2 border-cn-border rounded-2xl text-sm text-text-main bg-cn-bg outline-none transition-all appearance-none focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
+              class="border-cn-border text-text-main bg-cn-bg focus:border-cn-yellow w-full appearance-none rounded-2xl border-2 px-4 py-3 text-sm transition-all outline-none focus:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
               bind:value={selections[item.id]}
               disabled={submitted || isNotOpenYet}
             >
@@ -645,24 +643,24 @@
             <div class="space-y-2">
               {#each item.options ?? [] as opt (opt.id)}
                 <label
-                  class="flex items-center gap-3 px-4 py-3 rounded-2xl border-2 cursor-pointer select-none transition-all
+                  class="flex cursor-pointer items-center gap-3 rounded-2xl border-2 px-4 py-3 transition-all select-none
                   {selections[item.id] === opt.id
                     ? 'border-cn-yellow bg-cn-yellow/8'
                     : 'border-cn-border hover:border-cn-yellow/60 bg-cn-bg'}
-                  {submitted || isNotOpenYet ? 'opacity-60 cursor-not-allowed' : ''}"
+                  {submitted || isNotOpenYet ? 'cursor-not-allowed opacity-60' : ''}"
                 >
                   <input
                     type="radio"
                     name={`radio-${form.id}-${item.id}`}
                     value={opt.id}
                     bind:group={selections[item.id]}
-                    class="h-4 w-4 accent-cn-yellow shrink-0"
+                    class="accent-cn-yellow h-4 w-4 shrink-0"
                     disabled={submitted || isNotOpenYet}
                   />
-                  <span class="text-sm text-text-main font-medium flex-1">{opt.label}</span>
+                  <span class="text-text-main flex-1 text-sm font-medium">{opt.label}</span>
                   {#if optionModifier(opt) !== 0}
                     <span
-                      class="text-xs font-bold text-cn-dark bg-cn-yellow/20 px-2 py-0.5 rounded-full shrink-0"
+                      class="text-cn-dark bg-cn-yellow/20 shrink-0 rounded-full px-2 py-0.5 text-xs font-bold"
                     >
                       {optionModifier(opt) > 0 ? '+' : ''}{formatCurrency(
                         optionModifier(opt),
@@ -677,23 +675,23 @@
             <div class="space-y-2">
               {#each item.options ?? [] as opt (opt.id)}
                 <label
-                  class="flex items-center gap-3 px-4 py-3 rounded-2xl border-2 cursor-pointer select-none transition-all
+                  class="flex cursor-pointer items-center gap-3 rounded-2xl border-2 px-4 py-3 transition-all select-none
                   {(selections[item.id] ?? []).includes(opt.id)
                     ? 'border-cn-yellow bg-cn-yellow/8'
                     : 'border-cn-border hover:border-cn-yellow/60 bg-cn-bg'}
-                  {submitted || isNotOpenYet ? 'opacity-60 cursor-not-allowed' : ''}"
+                  {submitted || isNotOpenYet ? 'cursor-not-allowed opacity-60' : ''}"
                 >
                   <input
                     type="checkbox"
                     value={opt.id}
                     bind:group={selections[item.id]}
-                    class="h-4 w-4 accent-cn-yellow shrink-0 rounded"
+                    class="accent-cn-yellow h-4 w-4 shrink-0 rounded"
                     disabled={submitted || isNotOpenYet}
                   />
-                  <span class="text-sm text-text-main font-medium flex-1">{opt.label}</span>
+                  <span class="text-text-main flex-1 text-sm font-medium">{opt.label}</span>
                   {#if optionModifier(opt) !== 0}
                     <span
-                      class="text-xs font-bold text-cn-dark bg-cn-yellow/20 px-2 py-0.5 rounded-full shrink-0"
+                      class="text-cn-dark bg-cn-yellow/20 shrink-0 rounded-full px-2 py-0.5 text-xs font-bold"
                     >
                       {optionModifier(opt) > 0 ? '+' : ''}{formatCurrency(
                         optionModifier(opt),
@@ -706,16 +704,16 @@
             </div>
           {:else if item.type === 'linear_scale'}
             <div>
-              <div class="flex justify-between text-xs font-semibold text-text-muted mb-2 px-1">
+              <div class="text-text-muted mb-2 flex justify-between px-1 text-xs font-semibold">
                 <span>{item.scale?.minLabel || item.scale?.min}</span>
                 <span>{item.scale?.maxLabel || item.scale?.max}</span>
               </div>
               <div
-                class="flex items-stretch gap-1 rounded-2xl border-2 border-cn-border overflow-hidden bg-cn-bg"
+                class="border-cn-border bg-cn-bg flex items-stretch gap-1 overflow-hidden rounded-2xl border-2"
               >
                 {#each Array.from({ length: (item.scale?.max || 5) - (item.scale?.min || 1) + 1 }, (_, i) => (item.scale?.min || 1) + i) as val (val)}
                   <label
-                    class="flex-1 flex flex-col items-center justify-center gap-1.5 py-3 cursor-pointer transition-all select-none
+                    class="flex flex-1 cursor-pointer flex-col items-center justify-center gap-1.5 py-3 transition-all select-none
                     {selections[item.id] === val ? 'bg-cn-yellow/15' : 'hover:bg-cn-border/30'}
                     {submitted || isNotOpenYet ? 'cursor-not-allowed opacity-60' : ''}"
                   >
@@ -724,24 +722,23 @@
                       name={`scale-${form.id}-${item.id}`}
                       value={val}
                       bind:group={selections[item.id]}
-                      class="h-4 w-4 accent-cn-yellow"
+                      class="accent-cn-yellow h-4 w-4"
                       disabled={submitted || isNotOpenYet}
                     />
-                    <span class="text-xs font-bold text-text-muted">{val}</span>
+                    <span class="text-text-muted text-xs font-bold">{val}</span>
                   </label>
                 {/each}
               </div>
             </div>
           {:else if ['matrix_single', 'matrix_multiple'].includes(item.type)}
-            <div class="overflow-x-auto rounded-2xl border-2 border-cn-border">
-              <table class="w-full text-sm border-separate border-spacing-0">
+            <div class="border-cn-border overflow-x-auto rounded-2xl border-2">
+              <table class="w-full border-separate border-spacing-0 text-sm">
                 <thead>
                   <tr class="bg-cn-border/20">
-                    <th class="w-1/3 min-w-[120px] sticky left-0 bg-[var(--cn-surface)] z-10 p-3"
-                    ></th>
+                    <th class="sticky left-0 z-10 w-1/3 min-w-[120px] bg-(--cn-surface) p-3"></th>
                     {#each item.options ?? [] as col (col.id)}
                       <th
-                        class="px-3 py-3 text-center font-bold text-xs text-text-muted uppercase tracking-wide min-w-[80px]"
+                        class="text-text-muted min-w-[80px] px-3 py-3 text-center text-xs font-bold tracking-wide uppercase"
                         >{col.label}</th
                       >
                     {/each}
@@ -751,18 +748,18 @@
                   {#each item.rows ?? [] as row (row)}
                     <tr class="hover:bg-cn-border/10 transition-colors">
                       <td
-                        class="py-3 px-3 font-medium text-sm text-text-main sticky left-0 bg-[var(--cn-surface)] z-10 border-t border-cn-border"
+                        class="text-text-main border-cn-border sticky left-0 z-10 border-t bg-(--cn-surface) px-3 py-3 text-sm font-medium"
                         >{row}</td
                       >
                       {#each item.options ?? [] as col (col.id)}
-                        <td class="text-center py-3 border-t border-cn-border">
+                        <td class="border-cn-border border-t py-3 text-center">
                           {#if item.type === 'matrix_single'}
                             <input
                               type="radio"
                               name={`matrix-${form.id}-${item.id}-${row}`}
                               value={col.id}
                               bind:group={selections[item.id][row]}
-                              class="h-4 w-4 accent-cn-yellow"
+                              class="accent-cn-yellow h-4 w-4"
                               disabled={submitted || isNotOpenYet}
                             />
                           {:else}
@@ -770,7 +767,7 @@
                               type="checkbox"
                               value={col.id}
                               bind:group={selections[item.id][row]}
-                              class="h-4 w-4 accent-cn-yellow"
+                              class="accent-cn-yellow h-4 w-4"
                               disabled={submitted || isNotOpenYet}
                             />
                           {/if}
@@ -782,7 +779,7 @@
               </table>
             </div>
           {:else}
-            <div class="p-3 bg-red-err/10 text-red-err text-xs rounded-xl border border-red-err/30">
+            <div class="bg-red-err/10 text-red-err border-red-err/30 rounded-xl border p-3 text-xs">
               Unsupported type: <strong>{item.type}</strong>
             </div>
           {/if}
@@ -792,13 +789,13 @@
 
     <!-- ── Payment method (cash vs Stripe) ── -->
     {#if calculateTotal() > 0 && form.allowCashPayment && !submitted}
-      <div class="mt-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-5">
-        <p class="text-xs font-bold text-text-muted uppercase tracking-wide mb-3">
+      <div class="border-cn-border mt-4 rounded-2xl border bg-(--cn-surface) p-5">
+        <p class="text-text-muted mb-3 text-xs font-bold tracking-wide uppercase">
           {m.form_view_payment_mode_heading()}
         </p>
         <div class="grid grid-cols-2 gap-2">
           <label
-            class="flex items-center gap-2.5 px-4 py-3 rounded-2xl border-2 cursor-pointer select-none transition-all {paymentMethodChoice ===
+            class="flex cursor-pointer items-center gap-2.5 rounded-2xl border-2 px-4 py-3 transition-all select-none {paymentMethodChoice ===
             'stripe'
               ? 'border-cn-yellow bg-cn-yellow/8'
               : 'border-cn-border hover:border-cn-yellow/50'}"
@@ -810,12 +807,12 @@
               class="accent-cn-yellow"
             />
             <div>
-              <p class="text-sm font-semibold text-text-main">{m.form_view_online_label()}</p>
-              <p class="text-xs text-text-muted">{m.form_view_online_desc()}</p>
+              <p class="text-text-main text-sm font-semibold">{m.form_view_online_label()}</p>
+              <p class="text-text-muted text-xs">{m.form_view_online_desc()}</p>
             </div>
           </label>
           <label
-            class="flex items-center gap-2.5 px-4 py-3 rounded-2xl border-2 cursor-pointer select-none transition-all {paymentMethodChoice ===
+            class="flex cursor-pointer items-center gap-2.5 rounded-2xl border-2 px-4 py-3 transition-all select-none {paymentMethodChoice ===
             'cash'
               ? 'border-cn-yellow bg-cn-yellow/8'
               : 'border-cn-border hover:border-cn-yellow/50'}"
@@ -827,8 +824,8 @@
               class="accent-cn-yellow"
             />
             <div>
-              <p class="text-sm font-semibold text-text-main">{m.form_view_cash_label()}</p>
-              <p class="text-xs text-text-muted">{m.form_view_cash_desc()}</p>
+              <p class="text-text-main text-sm font-semibold">{m.form_view_cash_label()}</p>
+              <p class="text-text-muted text-xs">{m.form_view_cash_desc()}</p>
             </div>
           </label>
         </div>
@@ -838,7 +835,7 @@
     <!-- ── Error ── -->
     {#if error}
       <div
-        class="mt-4 rounded-2xl border border-red-err/30 bg-red-err/10 dark:bg-red-950/20 px-4 py-3 text-sm font-medium text-red-err"
+        class="border-red-err/30 bg-red-err/10 text-red-err mt-4 rounded-2xl border px-4 py-3 text-sm font-medium dark:bg-red-950/20"
       >
         {error}
       </div>
@@ -849,26 +846,26 @@
 <!-- ── Sticky bottom bar ── -->
 {#if form && !loading}
   <div
-    class="keyboard-aware-bottom fixed bottom-0 inset-x-0 md:left-[4.5rem] z-50 pointer-events-none pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-5"
+    class="keyboard-aware-bottom pointer-events-none fixed inset-x-0 bottom-0 z-50 pb-[calc(4rem+env(safe-area-inset-bottom))] md:left-[4.5rem] md:pb-5"
   >
-    <div class="max-w-2xl mx-auto px-4">
+    <div class="mx-auto max-w-2xl px-4">
       <div
-        class="pointer-events-auto rounded-2xl border border-cn-border/60 bg-[var(--cn-surface)]/90 backdrop-blur-xl shadow-lg px-4 py-3 flex items-center gap-3"
+        class="border-cn-border/60 pointer-events-auto flex items-center gap-3 rounded-2xl border bg-(--cn-surface)/90 px-4 py-3 shadow-lg backdrop-blur-xl"
       >
-        <div class="flex-1 min-w-0">
+        <div class="min-w-0 flex-1">
           {#if submitted}
-            <span class="text-sm font-bold text-green-ok flex items-center gap-1.5"
+            <span class="text-green-ok flex items-center gap-1.5 text-sm font-bold"
               ><Check size={16} /> {m.form_view_response_sent()}</span
             >
           {:else if calculateTotal() > 0}
             <div>
-              <p class="text-xs text-text-muted font-medium">{m.form_view_total_to_pay()}</p>
-              <p class="text-lg font-extrabold text-cn-dark">
+              <p class="text-text-muted text-xs font-medium">{m.form_view_total_to_pay()}</p>
+              <p class="text-cn-dark text-lg font-extrabold">
                 {formatCurrency(calculateTotal(), form.currency)}
               </p>
             </div>
           {:else}
-            <span class="text-sm text-text-muted">{form.submitLabel || 'Envoyer'}</span>
+            <span class="text-text-muted text-sm">{form.submitLabel || 'Envoyer'}</span>
           {/if}
         </div>
         <Button
@@ -895,22 +892,22 @@
       </div>
 
       {#if paymentPending}
-        <p class="pointer-events-auto text-sm text-amber-warn font-medium text-center mt-2">
+        <p class="text-amber-warn pointer-events-auto mt-2 text-center text-sm font-medium">
           {m.form_view_payment_pending_note()}
         </p>
       {:else if formFull && !submitted}
-        <p class="pointer-events-auto text-sm text-text-muted font-medium text-center mt-2">
+        <p class="text-text-muted pointer-events-auto mt-2 text-center text-sm font-medium">
           {m.form_view_form_full_note()}
         </p>
       {/if}
 
       {#if !submitted && form.requiresPayment && paymentMethods.length === 0 && userId}
-        <div class="pointer-events-auto flex justify-center mt-2">
+        <div class="pointer-events-auto mt-2 flex justify-center">
           <button
             type="button"
             onclick={() => void handleSaveCard()}
             disabled={savingCard}
-            class="inline-flex items-center gap-1.5 text-xs text-text-muted hover:text-text-main underline underline-offset-2 disabled:opacity-50"
+            class="text-text-muted hover:text-text-main inline-flex items-center gap-1.5 text-xs underline underline-offset-2 disabled:opacity-50"
           >
             <CreditCard size={13} />
             {savingCard ? m.form_view_saving_card() : m.form_view_save_card()}

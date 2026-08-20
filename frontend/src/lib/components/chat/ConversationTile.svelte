@@ -115,12 +115,12 @@
 
 <button
   onclick={onClick}
-  class="w-full p-3.5 flex items-center gap-4 rounded-[1.25rem] transition-all duration-200 text-left outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-[0.98] group
+  class="group flex w-full items-center gap-4 rounded-[1.25rem] p-3.5 text-left transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-[0.98]
     {isSelected
-    ? 'bg-white/60 dark:bg-black/40 border border-black/5 dark:border-white/10 shadow-sm backdrop-blur-md'
+    ? 'border border-black/5 bg-white/60 shadow-sm backdrop-blur-md dark:border-white/10 dark:bg-black/40'
     : unreadCount > 0
-      ? 'bg-white/30 dark:bg-white/5 hover:bg-white/50 dark:hover:bg-white/10 border border-transparent'
-      : 'hover:bg-white/40 dark:hover:bg-black/20 border border-transparent'}
+      ? 'border border-transparent bg-white/30 hover:bg-white/50 dark:bg-white/5 dark:hover:bg-white/10'
+      : 'border border-transparent hover:bg-white/40 dark:hover:bg-black/20'}
     animate-rise-in"
 >
   <!-- Avatar / group icon zone -->
@@ -129,11 +129,11 @@
       <Avatar userId={contactName} size="lg" fallbackLabel={effectiveDisplayName} />
       {#if isOnline}
         <span
-          class="absolute bottom-0 right-0 block h-3.5 w-3.5 rounded-full ring-2 ring-white dark:ring-zinc-900 bg-green-500 shadow-sm"
+          class="absolute right-0 bottom-0 block h-3.5 w-3.5 rounded-full bg-green-500 shadow-sm ring-2 ring-white dark:ring-zinc-900"
         ></span>
       {/if}
     {:else if conversationType === 'channel'}
-      <div class="w-12 h-12 flex items-center justify-center text-text-muted">
+      <div class="text-text-muted flex h-12 w-12 items-center justify-center">
         <Hash size={22} strokeWidth={2.5} />
       </div>
     {:else}
@@ -142,11 +142,11 @@
   </div>
 
   <!-- Info zone (name, preview, badges) -->
-  <div class="flex-1 min-w-0 flex flex-col justify-center">
-    <div class="flex justify-between items-center mb-0.5 gap-3">
+  <div class="flex min-w-0 flex-1 flex-col justify-center">
+    <div class="mb-0.5 flex items-center justify-between gap-3">
       <!-- Conversation name -->
       <span
-        class="text-[0.95rem] text-text-main truncate {unreadCount > 0
+        class="text-text-main truncate text-[0.95rem] {unreadCount > 0
           ? 'font-extrabold'
           : 'font-bold'}"
       >
@@ -154,17 +154,17 @@
       </span>
 
       <!-- Badges area (unread, sync) -->
-      <div class="flex items-center gap-2 flex-shrink-0">
+      <div class="flex flex-shrink-0 items-center gap-2">
         {#if !isReady && !isRemoved}
           <span
-            class="bg-amber-500/15 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 border border-amber-500/20 text-[0.6rem] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider"
+            class="rounded-full border border-amber-500/20 bg-amber-500/15 px-2 py-0.5 text-[0.6rem] font-bold tracking-wider text-amber-700 uppercase dark:bg-amber-500/20 dark:text-amber-400"
           >
             {m.chat_sync_badge_label()}
           </span>
         {/if}
         {#if unreadCount > 0}
           <span
-            class="min-w-[1.25rem] h-5 px-1.5 rounded-full bg-red-500 text-white text-[0.7rem] font-bold inline-flex items-center justify-center shadow-sm shadow-red-500/20"
+            class="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-red-500 px-1.5 text-[0.7rem] font-bold text-white shadow-sm shadow-red-500/20"
             aria-label={m.chat_unread_messages_label({ count: unreadCount })}
           >
             {unreadCount > 99 ? '99+' : unreadCount}
@@ -175,7 +175,7 @@
 
     <!-- Last message preview -->
     <div
-      class="text-sm truncate mt-0.5 {unreadCount > 0
+      class="mt-0.5 truncate text-sm {unreadCount > 0
         ? 'text-text-main font-semibold'
         : 'text-text-muted opacity-90'}"
     >

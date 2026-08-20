@@ -156,42 +156,42 @@
   }
 </script>
 
-<div class="px-4 py-8 sm:px-6 max-w-3xl mx-auto space-y-6 md:space-y-8">
+<div class="mx-auto max-w-3xl space-y-6 px-4 py-8 sm:px-6 md:space-y-8">
   {#if loading}
-    <div class="flex flex-col items-center justify-center py-32 gap-4 text-text-muted" in:fade>
-      <Loader2 size={32} class="animate-spin text-cn-yellow" strokeWidth={2.5} />
+    <div class="text-text-muted flex flex-col items-center justify-center gap-4 py-32" in:fade>
+      <Loader2 size={32} class="text-cn-yellow animate-spin" strokeWidth={2.5} />
       <span class="text-sm font-bold tracking-wider uppercase">{m.profile_public_loading()}</span>
     </div>
   {:else if error}
     <div
-      class="rounded-2xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 p-5 flex items-start gap-3 shadow-sm backdrop-blur-md"
+      class="flex items-start gap-3 rounded-2xl border border-red-500/20 bg-red-500/10 p-5 text-red-600 shadow-sm backdrop-blur-md dark:text-red-400"
       in:slide
     >
-      <AlertCircle size={20} class="shrink-0 mt-0.5" />
+      <AlertCircle size={20} class="mt-0.5 shrink-0" />
       <div>
-        <h3 class="font-bold text-sm mb-1">{m.common_error_heading()}</h3>
+        <h3 class="mb-1 text-sm font-bold">{m.common_error_heading()}</h3>
         <p class="text-sm font-medium">{error}</p>
       </div>
     </div>
   {:else if profile}
     <!-- Public profile header -->
     <div
-      class="flex flex-col sm:flex-row sm:items-center gap-5 sm:gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500"
+      class="animate-in fade-in slide-in-from-bottom-4 flex flex-col gap-5 duration-500 sm:flex-row sm:items-center sm:gap-6"
     >
       <div
-        class="relative shrink-0 self-start sm:self-auto w-24 h-24 rounded-full overflow-hidden ring-4 ring-white/50 dark:ring-black/20 shadow-lg"
+        class="relative h-24 w-24 shrink-0 self-start overflow-hidden rounded-full shadow-lg ring-4 ring-white/50 sm:self-auto dark:ring-black/20"
       >
         <Avatar userId={profile.id} fill shape="circle" />
       </div>
 
-      <div class="flex-1 min-w-0">
-        <h1 class="text-2xl sm:text-3xl font-extrabold text-text-main tracking-tight truncate mb-1">
+      <div class="min-w-0 flex-1">
+        <h1 class="text-text-main mb-1 truncate text-2xl font-extrabold tracking-tight sm:text-3xl">
           {displayFallbackName}
         </h1>
         <ProfileMinesweeperBadge userId={profile.id} />
         {#if profile.formation}
           <div
-            class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-cn-yellow/10 border border-cn-yellow/20 text-cn-dark text-xs font-bold uppercase tracking-wider mt-2 shadow-sm"
+            class="bg-cn-yellow/10 border-cn-yellow/20 text-cn-dark mt-2 inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold tracking-wider uppercase shadow-sm"
           >
             <GraduationCap size={14} strokeWidth={2.5} />
             {profile.formation}
@@ -200,14 +200,14 @@
       </div>
 
       <!-- Actions -->
-      <div class="shrink-0 mt-2 sm:mt-0 flex flex-col sm:flex-row gap-2">
+      <div class="mt-2 flex shrink-0 flex-col gap-2 sm:mt-0 sm:flex-row">
         <button
           onclick={handleFollowToggle}
           disabled={followLoading}
-          class="inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold transition-all active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow/50 disabled:opacity-60
+          class="focus-visible:ring-cn-yellow/50 inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold transition-all outline-none focus-visible:ring-2 active:scale-95 disabled:opacity-60
             {following
-            ? 'bg-white/60 dark:bg-white/10 border border-black/10 dark:border-white/10 text-text-main hover:bg-red-500/10 hover:text-red-600 hover:border-red-500/20'
-            : 'bg-cn-yellow/10 border border-cn-yellow/20 text-amber-700 dark:text-cn-yellow hover:bg-cn-yellow/20'}"
+            ? 'text-text-main border border-black/10 bg-white/60 hover:border-red-500/20 hover:bg-red-500/10 hover:text-red-600 dark:border-white/10 dark:bg-white/10'
+            : 'bg-cn-yellow/10 border-cn-yellow/20 dark:text-cn-yellow hover:bg-cn-yellow/20 border text-amber-700'}"
         >
           {#if following}
             <UserCheck size={18} strokeWidth={2.5} /> {m.profile_public_following_btn()}
@@ -217,7 +217,7 @@
         </button>
         <button
           onclick={handleSendMessage}
-          class="inline-flex items-center justify-center gap-2 rounded-xl bg-cn-yellow px-5 py-3 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-all active:scale-95 shadow-md shadow-cn-yellow/20 outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow/50"
+          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover shadow-cn-yellow/20 focus-visible:ring-cn-yellow/50 inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold shadow-md transition-all outline-none focus-visible:ring-2 active:scale-95"
         >
           <MessageCircle size={18} strokeWidth={2.5} />
           {m.profile_public_message_btn()}
@@ -228,10 +228,10 @@
     <!-- Bio section -->
     {#if profile.bio}
       <div
-        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-75"
+        class="border-cn-border animate-in fade-in slide-in-from-bottom-4 rounded-2xl border bg-(--cn-surface) p-6 shadow-sm delay-75 duration-500 md:p-8"
         style="animation-fill-mode: backwards;"
       >
-        <h2 class="text-lg font-extrabold text-text-main mb-4">
+        <h2 class="text-text-main mb-4 text-lg font-extrabold">
           {m.profile_public_about_heading()}
         </h2>
         <ProfileBioMarkdown source={profile.bio} />
@@ -239,8 +239,8 @@
     {/if}
 
     {#if memberships.length > 0 || extrasLoading}
-      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm">
-        <h2 class="text-lg font-extrabold text-text-main mb-5 flex items-center gap-2">
+      <div class="border-cn-border rounded-2xl border bg-(--cn-surface) p-6 shadow-sm md:p-8">
+        <h2 class="text-text-main mb-5 flex items-center gap-2 text-lg font-extrabold">
           <Building2 size={20} />
           {m.assoc_list_heading()}
         </h2>
@@ -249,8 +249,8 @@
     {/if}
 
     {#if roleHistory.length > 0 || extrasLoading}
-      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm">
-        <h2 class="text-lg font-extrabold text-text-main mb-5">
+      <div class="border-cn-border rounded-2xl border bg-(--cn-surface) p-6 shadow-sm md:p-8">
+        <h2 class="text-text-main mb-5 text-lg font-extrabold">
           {m.profile_public_career_heading()}
         </h2>
         <ProfileRoleHistorySection entries={roleHistory} />
@@ -258,8 +258,8 @@
     {/if}
 
     {#if (parrainage?.parrains.length ?? 0) > 0 || (parrainage?.fillots.length ?? 0) > 0 || extrasLoading}
-      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm">
-        <h2 class="text-lg font-extrabold text-text-main mb-5 flex items-center gap-2">
+      <div class="border-cn-border rounded-2xl border bg-(--cn-surface) p-6 shadow-sm md:p-8">
+        <h2 class="text-text-main mb-5 flex items-center gap-2 text-lg font-extrabold">
           <Users size={20} />
           {m.profile_public_sponsorship_heading()}
         </h2>
@@ -273,37 +273,37 @@
 
     <!-- Information section -->
     <div
-      class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-150"
+      class="border-cn-border animate-in fade-in slide-in-from-bottom-4 rounded-2xl border bg-(--cn-surface) p-6 shadow-sm delay-150 duration-500 md:p-8"
       style="animation-fill-mode: backwards;"
     >
-      <h2 class="text-lg font-extrabold text-text-main mb-6">{m.profile_public_info_heading()}</h2>
+      <h2 class="text-text-main mb-6 text-lg font-extrabold">{m.profile_public_info_heading()}</h2>
 
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+      <div class="grid grid-cols-1 gap-5 md:grid-cols-2">
         <div
-          class="flex items-center gap-3.5 p-4 rounded-2xl bg-white/50 dark:bg-white/5 border border-black/5 dark:border-white/5 shadow-sm"
+          class="flex items-center gap-3.5 rounded-2xl border border-black/5 bg-white/50 p-4 shadow-sm dark:border-white/5 dark:bg-white/5"
         >
-          <div class="p-2.5 rounded-xl bg-black/5 dark:bg-black/40 text-text-muted">
+          <div class="text-text-muted rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
             <GraduationCap size={20} strokeWidth={2.5} />
           </div>
           <div class="min-w-0">
-            <p class="text-[0.65rem] font-bold uppercase tracking-wider text-text-muted mb-0.5">
+            <p class="text-text-muted mb-0.5 text-[0.65rem] font-bold tracking-wider uppercase">
               {m.profile_promo_label()}
             </p>
-            <p class="text-sm font-bold text-text-main truncate">{formatYear(profile.promo)}</p>
+            <p class="text-text-main truncate text-sm font-bold">{formatYear(profile.promo)}</p>
           </div>
         </div>
 
         <div
-          class="flex items-center gap-3.5 p-4 rounded-2xl bg-white/50 dark:bg-white/5 border border-black/5 dark:border-white/5 shadow-sm"
+          class="flex items-center gap-3.5 rounded-2xl border border-black/5 bg-white/50 p-4 shadow-sm dark:border-white/5 dark:bg-white/5"
         >
-          <div class="p-2.5 rounded-xl bg-black/5 dark:bg-black/40 text-text-muted">
+          <div class="text-text-muted rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
             <CalendarDays size={20} strokeWidth={2.5} />
           </div>
           <div class="min-w-0">
-            <p class="text-[0.65rem] font-bold uppercase tracking-wider text-text-muted mb-0.5">
+            <p class="text-text-muted mb-0.5 text-[0.65rem] font-bold tracking-wider uppercase">
               {m.profile_member_since_label()}
             </p>
-            <p class="text-sm font-bold text-text-main capitalize">
+            <p class="text-text-main text-sm font-bold capitalize">
               {new Date(profile.createdAt).toLocaleDateString(
                 getLocale() === 'en' ? 'en-US' : 'fr-FR',
                 { year: 'numeric', month: 'long', day: 'numeric' }

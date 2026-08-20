@@ -466,8 +466,8 @@
 <div class="space-y-5">
   <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
     <div>
-      <h2 class="text-lg font-bold text-text-main tracking-tight">{m.asso_tab_calendar()}</h2>
-      <p class="text-sm text-text-muted">
+      <h2 class="text-text-main text-lg font-bold tracking-tight">{m.asso_tab_calendar()}</h2>
+      <p class="text-text-muted text-sm">
         {m.asso_calendar_subtitle()}
         {#if canEdit}
           {m.asso_calendar_pending_note()}
@@ -478,7 +478,7 @@
       <button
         type="button"
         onclick={() => (showSubscribeModal = true)}
-        class="inline-flex items-center justify-center gap-2 rounded-xl border border-cn-border px-4 py-2.5 text-sm font-semibold text-text-main hover:bg-cn-bg transition-colors"
+        class="border-cn-border text-text-main hover:bg-cn-bg inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors"
       >
         <CalendarSync size={18} />
         {m.asso_calendar_subscribe_button()}
@@ -487,7 +487,7 @@
         type="button"
         onclick={exportMonthIcs}
         disabled={loading || validatedEvents.length === 0}
-        class="inline-flex items-center justify-center gap-2 rounded-xl border border-cn-border px-4 py-2.5 text-sm font-semibold text-text-main hover:bg-cn-bg transition-colors disabled:opacity-40 disabled:pointer-events-none"
+        class="border-cn-border text-text-main hover:bg-cn-bg inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors disabled:pointer-events-none disabled:opacity-40"
       >
         <Download size={18} />
         {m.asso_calendar_export_ics_button()}
@@ -496,7 +496,7 @@
         <button
           type="button"
           onclick={openCreate}
-          class="inline-flex items-center justify-center gap-2 rounded-xl bg-cn-yellow px-4 py-2.5 text-sm font-bold text-cn-dark shadow-sm hover:bg-cn-yellow-hover transition-colors"
+          class="bg-cn-yellow text-cn-dark hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors"
         >
           <CalendarPlus size={18} />
           {m.asso_calendar_propose_event_button()}
@@ -509,16 +509,16 @@
     <button
       type="button"
       onclick={prevMonth}
-      class="inline-flex items-center justify-center rounded-xl border border-cn-border p-2 text-text-main hover:bg-cn-bg transition-colors"
+      class="border-cn-border text-text-main hover:bg-cn-bg inline-flex items-center justify-center rounded-xl border p-2 transition-colors"
       aria-label={m.asso_calendar_prev_month_label()}
     >
       <ChevronLeft size={20} />
     </button>
-    <p class="text-base font-bold text-text-main capitalize flex-1 text-center">{titleMonth}</p>
+    <p class="text-text-main flex-1 text-center text-base font-bold capitalize">{titleMonth}</p>
     <button
       type="button"
       onclick={nextMonth}
-      class="inline-flex items-center justify-center rounded-xl border border-cn-border p-2 text-text-main hover:bg-cn-bg transition-colors"
+      class="border-cn-border text-text-main hover:bg-cn-bg inline-flex items-center justify-center rounded-xl border p-2 transition-colors"
       aria-label={m.asso_calendar_next_month_label()}
     >
       <ChevronRight size={20} />
@@ -526,7 +526,7 @@
   </div>
 
   {#if loadError}
-    <div class="rounded-xl border border-red-err/30 bg-red-err/10 text-red-err px-4 py-3 text-sm">
+    <div class="border-red-err/30 bg-red-err/10 text-red-err rounded-xl border px-4 py-3 text-sm">
       {loadError}
     </div>
   {/if}
@@ -557,29 +557,29 @@
 
   {#if canEdit && !loading && sortedPendingEvents.length > 0}
     <div class="space-y-3">
-      <h3 class="text-sm font-bold text-amber-warn uppercase tracking-wide">
+      <h3 class="text-amber-warn text-sm font-bold tracking-wide uppercase">
         {m.asso_calendar_pending_section_title({ count: sortedPendingEvents.length })}
       </h3>
       {#each sortedPendingEvents as ev (ev.id)}
         <div
-          class="rounded-2xl border border-amber-warn/30 bg-amber-warn/10 px-4 py-3 flex flex-col sm:flex-row sm:items-start gap-3"
+          class="border-amber-warn/30 bg-amber-warn/10 flex flex-col gap-3 rounded-2xl border px-4 py-3 sm:flex-row sm:items-start"
         >
           <div class="min-w-0 flex-1">
-            <p class="font-bold text-text-main flex items-center gap-2 flex-wrap">
+            <p class="text-text-main flex flex-wrap items-center gap-2 font-bold">
               {ev.title}
               <span
-                class="text-[10px] font-bold uppercase tracking-wide text-amber-warn bg-amber-warn/20 px-2 py-0.5 rounded-full"
+                class="text-amber-warn bg-amber-warn/20 rounded-full px-2 py-0.5 text-[10px] font-bold tracking-wide uppercase"
               >
                 {m.asso_calendar_pending_badge()}
               </span>
             </p>
-            <p class="text-xs text-text-muted mt-0.5">{formatEventRange(ev)}</p>
+            <p class="text-text-muted mt-0.5 text-xs">{formatEventRange(ev)}</p>
           </div>
-          <div class="flex items-center gap-1 shrink-0">
+          <div class="flex shrink-0 items-center gap-1">
             <button
               type="button"
               onclick={() => validateEvent(ev.id)}
-              class="inline-flex items-center gap-1 rounded-xl bg-cn-yellow px-3 py-2 text-xs font-bold text-cn-ink hover:bg-cn-yellow-hover"
+              class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-1 rounded-xl px-3 py-2 text-xs font-bold"
               title={m.asso_calendar_validate_title()}
             >
               <Check size={14} />
@@ -588,7 +588,7 @@
             <button
               type="button"
               onclick={() => openEdit(ev)}
-              class="rounded-xl border border-cn-border p-2 hover:bg-cn-bg text-text-main"
+              class="border-cn-border hover:bg-cn-bg text-text-main rounded-xl border p-2"
               title={m.common_edit_label()}
             >
               <Pencil size={16} />
@@ -596,7 +596,7 @@
             <button
               type="button"
               onclick={() => removeEvent(ev.id)}
-              class="rounded-xl border border-red-err/30 p-2 text-red-err hover:bg-red-err/10"
+              class="border-red-err/30 text-red-err hover:bg-red-err/10 rounded-xl border p-2"
               title={m.common_delete_button()}
             >
               <Trash2 size={16} />
@@ -609,34 +609,34 @@
 
   {#if canEdit && !loading && sortedRejectedEvents.length > 0}
     <div class="space-y-3">
-      <h3 class="text-sm font-bold text-red-err uppercase tracking-wide">
+      <h3 class="text-red-err text-sm font-bold tracking-wide uppercase">
         {m.asso_calendar_rejected_section_title({ count: sortedRejectedEvents.length })}
       </h3>
       {#each sortedRejectedEvents as ev (ev.id)}
         <div
-          class="rounded-2xl border border-red-err/30 bg-red-err/10 dark:bg-red-950/20 px-4 py-3 flex flex-col sm:flex-row sm:items-start gap-3"
+          class="border-red-err/30 bg-red-err/10 flex flex-col gap-3 rounded-2xl border px-4 py-3 sm:flex-row sm:items-start dark:bg-red-950/20"
         >
           <div class="min-w-0 flex-1">
-            <p class="font-bold text-text-main flex items-center gap-2 flex-wrap">
+            <p class="text-text-main flex flex-wrap items-center gap-2 font-bold">
               {ev.title}
               <span
-                class="text-[10px] font-bold uppercase tracking-wide text-red-err bg-red-err/20 px-2 py-0.5 rounded-full"
+                class="text-red-err bg-red-err/20 rounded-full px-2 py-0.5 text-[10px] font-bold tracking-wide uppercase"
               >
                 {m.asso_calendar_rejected_badge()}
               </span>
             </p>
-            <p class="text-xs text-text-muted mt-0.5">{formatEventRange(ev)}</p>
+            <p class="text-text-muted mt-0.5 text-xs">{formatEventRange(ev)}</p>
             {#if ev.rejectionReason?.trim()}
-              <p class="text-xs text-red-err mt-1">
+              <p class="text-red-err mt-1 text-xs">
                 {m.asso_calendar_rejection_reason_prefix()}{ev.rejectionReason}
               </p>
             {/if}
           </div>
-          <div class="flex items-center gap-1 shrink-0">
+          <div class="flex shrink-0 items-center gap-1">
             <button
               type="button"
               onclick={() => removeEvent(ev.id)}
-              class="rounded-xl border border-red-err/30 p-2 text-red-err hover:bg-red-err/10"
+              class="border-red-err/30 text-red-err hover:bg-red-err/10 rounded-xl border p-2"
               title={m.common_delete_button()}
             >
               <Trash2 size={16} />
@@ -652,21 +652,21 @@
   <div use:portal>
     <div
       data-keyboard-aware-overlay
-      class="z-[280] flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm"
+      class="z-[280] flex items-end justify-center bg-black/40 backdrop-blur-sm sm:items-center"
       role="presentation"
       onclick={(e) => e.target === e.currentTarget && closeModal()}
     >
       <div
-        class="keyboard-aware-modal-panel w-full max-w-lg rounded-t-3xl sm:rounded-2xl border border-cn-border bg-[var(--cn-surface)] shadow-xl p-6 space-y-4 max-h-[90vh] overflow-y-auto"
+        class="keyboard-aware-modal-panel border-cn-border max-h-[90vh] w-full max-w-lg space-y-4 overflow-y-auto rounded-t-3xl border bg-(--cn-surface) p-6 shadow-xl sm:rounded-2xl"
         role="dialog"
         aria-modal="true"
         aria-labelledby="cal-modal-title"
       >
-        <h3 id="cal-modal-title" class="text-lg font-bold text-text-main">
+        <h3 id="cal-modal-title" class="text-text-main text-lg font-bold">
           {editingId ? m.asso_calendar_modal_edit_title() : m.asso_calendar_modal_create_title()}
         </h3>
         {#if !editingId}
-          <p class="text-xs text-text-muted">
+          <p class="text-text-muted text-xs">
             {m.asso_calendar_modal_pending_note()}
           </p>
         {/if}
@@ -674,7 +674,7 @@
 
         <!-- Entry kind: normal event card vs full-day background band (break / vacation). -->
         <div>
-          <span class="block text-sm font-bold text-text-main mb-1 ml-1"
+          <span class="text-text-main mb-1 ml-1 block text-sm font-bold"
             >{m.asso_calendar_event_kind_label()}</span
           >
           <div class="grid grid-cols-2 gap-2">
@@ -700,7 +700,7 @@
             </button>
           </div>
           {#if formKind === 'break'}
-            <p class="text-xs text-text-muted mt-1 ml-1">
+            <p class="text-text-muted mt-1 ml-1 text-xs">
               {m.asso_calendar_event_kind_break_hint()}
             </p>
           {/if}
@@ -708,30 +708,30 @@
 
         <div class="grid gap-4 sm:grid-cols-2">
           <div>
-            <label class="block text-sm font-bold text-text-main mb-1 ml-1" for="ev-start"
+            <label class="text-text-main mb-1 ml-1 block text-sm font-bold" for="ev-start"
               >{m.asso_calendar_event_start_label()}</label
             >
             <input
               id="ev-start"
               type="datetime-local"
               bind:value={formStart}
-              class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm text-text-main"
+              class="border-cn-border text-text-main w-full rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm"
             />
           </div>
           <div>
-            <label class="block text-sm font-bold text-text-main mb-1 ml-1" for="ev-end"
+            <label class="text-text-main mb-1 ml-1 block text-sm font-bold" for="ev-end"
               >{m.asso_calendar_event_end_label()}</label
             >
             <input
               id="ev-end"
               type="datetime-local"
               bind:value={formEnd}
-              class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm text-text-main"
+              class="border-cn-border text-text-main w-full rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm"
             />
           </div>
         </div>
         <div>
-          <p class="block text-sm font-bold text-text-main mb-1 ml-1">
+          <p class="text-text-main mb-1 ml-1 block text-sm font-bold">
             {m.asso_calendar_event_description_label()}
           </p>
           <MarkdownComposerField
@@ -743,15 +743,15 @@
         <!-- Poster image - only available when editing an existing event -->
         {#if editingId}
           <div class="space-y-2">
-            <p class="text-sm font-bold text-text-main ml-1">
+            <p class="text-text-main ml-1 text-sm font-bold">
               {m.asso_calendar_event_poster_label()}
             </p>
             {#if formImageUrl}
-              <div class="relative rounded-xl overflow-hidden border border-cn-border">
+              <div class="border-cn-border relative overflow-hidden rounded-xl border">
                 <img
                   src={formImageUrl}
                   alt={m.asso_calendar_poster_alt()}
-                  class="w-full max-h-48 object-cover"
+                  class="max-h-48 w-full object-cover"
                   loading="lazy"
                 />
                 <button
@@ -766,11 +766,11 @@
               </div>
             {:else}
               <label
-                class="flex items-center gap-2 cursor-pointer rounded-xl border-2 border-dashed border-cn-border bg-cn-bg/40 px-4 py-3 text-sm text-text-muted hover:border-cn-yellow/50 transition-colors {uploadingImage
-                  ? 'opacity-50 pointer-events-none'
+                class="border-cn-border bg-cn-bg/40 text-text-muted hover:border-cn-yellow/50 flex cursor-pointer items-center gap-2 rounded-xl border-2 border-dashed px-4 py-3 text-sm transition-colors {uploadingImage
+                  ? 'pointer-events-none opacity-50'
                   : ''}"
               >
-                <ImagePlus size={18} class="shrink-0 text-text-muted/60" />
+                <ImagePlus size={18} class="text-text-muted/60 shrink-0" />
                 {uploadingImage
                   ? m.asso_calendar_poster_uploading()
                   : m.asso_calendar_poster_add_label()}
@@ -784,28 +784,28 @@
             {/if}
           </div>
         {:else}
-          <p class="text-xs text-text-muted">
+          <p class="text-text-muted text-xs">
             {m.asso_calendar_poster_after_save_note()}
           </p>
         {/if}
         <!-- Co-owner associations picker -->
         <CoOwnerPicker bind:selectedIds={formCoOwnerIds} excludeId={associationId} />
         {#if canEdit && linkCandidates}
-          <div class="space-y-3 rounded-xl border border-cn-border/70 bg-cn-bg/30 p-3">
+          <div class="border-cn-border/70 bg-cn-bg/30 space-y-3 rounded-xl border p-3">
             <p
-              class="text-xs font-bold text-text-muted uppercase tracking-wide flex items-center gap-1"
+              class="text-text-muted flex items-center gap-1 text-xs font-bold tracking-wide uppercase"
             >
               <Link2 size={14} />
               {m.asso_calendar_link_form_label()}
             </p>
             <div>
-              <label class="block text-xs font-semibold text-text-main mb-1" for="cal-link-form"
+              <label class="text-text-main mb-1 block text-xs font-semibold" for="cal-link-form"
                 >{m.asso_calendar_form_label()}</label
               >
               <select
                 id="cal-link-form"
                 bind:value={formLinkedFormId}
-                class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm text-text-main"
+                class="border-cn-border text-text-main w-full rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm"
               >
                 <option value="">{m.asso_calendar_link_form_none_option()}</option>
                 {#each linkCandidates.forms as f (f.id)}
@@ -816,13 +816,13 @@
           </div>
         {/if}
         {#if formError}
-          <p class="text-sm text-red-err">{formError}</p>
+          <p class="text-red-err text-sm">{formError}</p>
         {/if}
-        <div class="flex flex-wrap gap-2 justify-end pt-2">
+        <div class="flex flex-wrap justify-end gap-2 pt-2">
           <button
             type="button"
             onclick={closeModal}
-            class="rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold hover:bg-cn-bg"
+            class="border-cn-border hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold"
           >
             {m.common_cancel_button()}
           </button>
@@ -830,7 +830,7 @@
             type="button"
             onclick={submitForm}
             disabled={saving}
-            class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
+            class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
           >
             {saving ? m.asso_calendar_saving_label() : m.common_save_button()}
           </button>
@@ -846,29 +846,29 @@
   maxWidth="max-w-lg"
   onClose={() => (showSubscribeModal = false)}
 >
-  <div class="space-y-6 text-sm text-text-main">
+  <div class="text-text-main space-y-6 text-sm">
     <p class="text-text-muted">
       {m.asso_calendar_subscribe_intro()}
     </p>
 
     <div class="space-y-3">
-      <h3 class="text-sm font-bold text-cn-dark">{m.asso_calendar_google_title()}</h3>
+      <h3 class="text-cn-dark text-sm font-bold">{m.asso_calendar_google_title()}</h3>
       {#if googleCalendarSubscribeUrl}
         <a
           href={googleCalendarSubscribeUrl}
           target="_blank"
           rel="noopener noreferrer"
-          class="inline-flex w-full items-center justify-center rounded-xl bg-cn-yellow px-4 py-2.5 text-sm font-bold text-cn-dark shadow-sm hover:bg-cn-yellow-hover transition-colors"
+          class="bg-cn-yellow text-cn-dark hover:bg-cn-yellow-hover inline-flex w-full items-center justify-center rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors"
         >
           {m.asso_calendar_google_add_button()}
         </a>
       {/if}
 
       <details class="group">
-        <summary class="cursor-pointer text-text-muted hover:text-text-main">
+        <summary class="text-text-muted hover:text-text-main cursor-pointer">
           {m.asso_calendar_manual_add_summary()}
         </summary>
-        <ol class="mt-3 ml-4 list-decimal space-y-1.5 text-text-muted leading-relaxed">
+        <ol class="text-text-muted mt-3 ml-4 list-decimal space-y-1.5 leading-relaxed">
           <li>{m.asso_calendar_manual_step1()}</li>
           <li>
             {m.asso_calendar_manual_step2_open()}
@@ -876,7 +876,7 @@
               href="https://calendar.google.com"
               target="_blank"
               rel="noopener noreferrer"
-              class="font-semibold text-cn-dark underline"
+              class="text-cn-dark font-semibold underline"
             >
               {m.asso_calendar_manual_step2_link()}
             </a>
@@ -892,13 +892,13 @@
               type="text"
               readonly
               value={calendarIcsUrl}
-              class="min-w-0 flex-1 rounded-xl border border-cn-border bg-cn-bg/50 px-3 py-2 text-xs font-mono text-text-main"
+              class="border-cn-border bg-cn-bg/50 text-text-main min-w-0 flex-1 rounded-xl border px-3 py-2 font-mono text-xs"
               onclick={(e) => e.currentTarget.select()}
             />
             <button
               type="button"
               onclick={copyCalendarLink}
-              class="shrink-0 rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold hover:bg-cn-bg transition-colors"
+              class="border-cn-border hover:bg-cn-bg shrink-0 rounded-xl border px-4 py-2 text-sm font-semibold transition-colors"
             >
               {isCopied ? m.asso_calendar_copied() : m.asso_calendar_copy_button()}
             </button>
@@ -908,21 +908,21 @@
     </div>
 
     <div class="space-y-3">
-      <h3 class="text-sm font-bold text-cn-dark">{m.asso_calendar_apple_title()}</h3>
+      <h3 class="text-cn-dark text-sm font-bold">{m.asso_calendar_apple_title()}</h3>
       <p class="text-text-muted">
         {m.asso_calendar_apple_intro()}
       </p>
       {#if webcalUrl}
         <a
           href={webcalUrl}
-          class="inline-flex w-full items-center justify-center rounded-xl bg-cn-yellow px-4 py-2.5 text-sm font-bold text-cn-dark shadow-sm hover:bg-cn-yellow-hover transition-colors"
+          class="bg-cn-yellow text-cn-dark hover:bg-cn-yellow-hover inline-flex w-full items-center justify-center rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors"
         >
           {m.asso_calendar_apple_subscribe_button()}
         </a>
       {/if}
     </div>
 
-    <p class="text-[11px] text-text-muted">
+    <p class="text-text-muted text-[11px]">
       {m.asso_calendar_subscribe_note()}
     </p>
   </div>

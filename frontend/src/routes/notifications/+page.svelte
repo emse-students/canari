@@ -57,38 +57,38 @@
   <title>{m.nav_notifications_label()} - Canari</title>
 </svelte:head>
 
-<main class="max-w-xl mx-auto px-4 py-6 pb-24 md:pb-8">
-  <h1 class="text-xl font-bold mb-5 text-text-main">{m.nav_notifications_label()}</h1>
+<main class="mx-auto max-w-xl px-4 py-6 pb-24 md:pb-8">
+  <h1 class="text-text-main mb-5 text-xl font-bold">{m.nav_notifications_label()}</h1>
 
   {#if postNotifStore.loading && postNotifStore.notifications.length === 0}
     <div class="flex flex-col gap-3">
       {#each { length: 6 } as _, i (i)}
-        <div class="flex gap-3 items-start animate-pulse">
-          <div class="w-10 h-10 rounded-full bg-cn-surface shrink-0"></div>
+        <div class="flex animate-pulse items-start gap-3">
+          <div class="bg-cn-surface h-10 w-10 shrink-0 rounded-full"></div>
           <div class="flex-1 space-y-2 py-1">
-            <div class="h-3 bg-cn-surface rounded w-3/4"></div>
-            <div class="h-2.5 bg-cn-surface rounded w-1/3"></div>
+            <div class="bg-cn-surface h-3 w-3/4 rounded"></div>
+            <div class="bg-cn-surface h-2.5 w-1/3 rounded"></div>
           </div>
         </div>
       {/each}
     </div>
   {:else if postNotifStore.notifications.length === 0}
-    <div class="flex flex-col items-center gap-3 py-16 text-text-muted">
+    <div class="text-text-muted flex flex-col items-center gap-3 py-16">
       <BellOff size={40} strokeWidth={1.5} class="opacity-40" />
       <p class="text-sm">{m.notif_empty_message()}</p>
     </div>
   {:else}
-    <ul class="flex flex-col divide-y divide-cn-border">
+    <ul class="divide-cn-border flex flex-col divide-y">
       {#each postNotifStore.notifications as notif (notif.id)}
         <li>
           <button
             type="button"
-            class="w-full text-left py-3.5 flex gap-3 items-start hover:bg-cn-surface/60 transition-colors rounded-xl px-2 -mx-2"
+            class="hover:bg-cn-surface/60 -mx-2 flex w-full items-start gap-3 rounded-xl px-2 py-3.5 text-left transition-colors"
             onclick={() => openNotification(notif)}
           >
             <!-- Notification type icon -->
             <span
-              class="shrink-0 mt-0.5 flex items-center justify-center w-10 h-10 rounded-full
+              class="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full
                 {notif.type === 'reaction' ? 'bg-pink-500/10 text-pink-500' : ''}
                 {notif.type === 'mention'
                 ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
@@ -113,7 +113,7 @@
             <!-- Content -->
             <div class="min-w-0 flex-1">
               <p class="text-sm leading-snug">
-                <span class="font-semibold text-text-main"
+                <span class="text-text-main font-semibold"
                   >{notif.actorName || m.notif_actor_unknown()}</span
                 >
                 {#if notif.type === 'reaction'}
@@ -131,12 +131,12 @@
                   >
                 {/if}
               </p>
-              <p class="text-xs text-text-muted mt-1">{formatRelative(notif.createdAt)}</p>
+              <p class="text-text-muted mt-1 text-xs">{formatRelative(notif.createdAt)}</p>
             </div>
 
             <!-- Unread indicator -->
             {#if !notif.read}
-              <span class="mt-2 w-2.5 h-2.5 rounded-full bg-blue-500 shrink-0 shadow-sm"></span>
+              <span class="mt-2 h-2.5 w-2.5 shrink-0 rounded-full bg-blue-500 shadow-sm"></span>
             {/if}
           </button>
         </li>

@@ -53,34 +53,34 @@
   }
 </script>
 
-<div class="px-4 py-8 sm:px-6 min-h-dvh flex items-start justify-center">
-  <div class="w-full max-w-md rounded-2xl border border-cn-border bg-cn-surface/80 p-6 shadow-sm">
-    <h1 class="text-2xl font-extrabold text-text-main tracking-tight mb-6">
+<div class="flex min-h-dvh items-start justify-center px-4 py-8 sm:px-6">
+  <div class="border-cn-border bg-cn-surface/80 w-full max-w-md rounded-2xl border p-6 shadow-sm">
+    <h1 class="text-text-main mb-6 text-2xl font-extrabold tracking-tight">
       {m.event_buy_heading()}
     </h1>
 
-    <div class="space-y-3 mb-6">
+    <div class="mb-6 space-y-3">
       <label
-        class="flex items-center gap-3 cursor-pointer select-none p-3 rounded-xl border border-cn-border hover:bg-cn-surface/50 transition-colors"
+        class="border-cn-border hover:bg-cn-surface/50 flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition-colors select-none"
       >
         <input
           type="checkbox"
           bind:checked={options.isMemberBDE}
-          class="w-4 h-4 accent-yellow-400"
+          class="h-4 w-4 accent-yellow-400"
         />
-        <span class="text-sm font-medium text-text-main">{m.event_buy_option_bde()}</span>
+        <span class="text-text-main text-sm font-medium">{m.event_buy_option_bde()}</span>
       </label>
 
       <label
-        class="flex items-center gap-3 cursor-pointer select-none p-3 rounded-xl border border-cn-border hover:bg-cn-surface/50 transition-colors"
+        class="border-cn-border hover:bg-cn-surface/50 flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition-colors select-none"
       >
-        <input type="checkbox" bind:checked={options.wantsMeal} class="w-4 h-4 accent-yellow-400" />
-        <span class="text-sm font-medium text-text-main">{m.event_buy_option_meal()}</span>
+        <input type="checkbox" bind:checked={options.wantsMeal} class="h-4 w-4 accent-yellow-400" />
+        <span class="text-text-main text-sm font-medium">{m.event_buy_option_meal()}</span>
       </label>
     </div>
 
     {#if paymentError}
-      <div class="rounded-xl bg-red-err/10 border border-red-err/30 text-red-err p-3 mb-4 text-sm">
+      <div class="bg-red-err/10 border-red-err/30 text-red-err mb-4 rounded-xl border p-3 text-sm">
         {paymentError}
       </div>
     {/if}
@@ -88,7 +88,7 @@
     <button
       onclick={handlePayment}
       disabled={isProcessing}
-      class="w-full rounded-xl bg-cn-yellow px-4 py-3 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-colors disabled:opacity-50"
+      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover w-full rounded-xl px-4 py-3 text-sm font-bold transition-colors disabled:opacity-50"
     >
       {isProcessing ? m.event_buy_processing() : m.event_buy_pay_btn()}
     </button>

@@ -401,16 +401,16 @@
 
 <div class="space-y-5">
   <!-- Shared admin notepad (vault-encrypted) -->
-  <div class="space-y-2 rounded-2xl border border-cn-border/70 bg-cn-bg/40 p-4">
+  <div class="border-cn-border/70 bg-cn-bg/40 space-y-2 rounded-2xl border p-4">
     <div class="flex items-center justify-between gap-2">
-      <p class="text-sm font-bold text-text-main flex items-center gap-1.5">
+      <p class="text-text-main flex items-center gap-1.5 text-sm font-bold">
         <NotebookPen size={16} class="text-cn-dark" />
         {m.asso_doc_notepad_title()}
       </p>
-      <span class="text-[11px] text-text-muted">{m.asso_doc_notepad_badge()}</span>
+      <span class="text-text-muted text-[11px]">{m.asso_doc_notepad_badge()}</span>
     </div>
     {#if noteLoading}
-      <p class="text-xs text-text-muted py-3">{m.asso_doc_decrypting()}</p>
+      <p class="text-text-muted py-3 text-xs">{m.asso_doc_decrypting()}</p>
     {:else}
       <MarkdownComposerField
         bind:value={noteText}
@@ -419,15 +419,15 @@
       />
       <div class="flex items-center justify-end gap-3 pt-1">
         {#if noteError}
-          <span class="text-xs text-red-err mr-auto">{noteError}</span>
+          <span class="text-red-err mr-auto text-xs">{noteError}</span>
         {:else if noteSaved}
-          <span class="text-xs text-green-ok mr-auto">{m.asso_doc_saved_label()}</span>
+          <span class="text-green-ok mr-auto text-xs">{m.asso_doc_saved_label()}</span>
         {/if}
         <button
           type="button"
           onclick={saveNote}
           disabled={noteSaving}
-          class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
+          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
         >
           {noteSaving ? m.common_saving_label() : m.common_save_button()}
         </button>
@@ -438,21 +438,21 @@
   {#if loading}
     <div class="flex justify-center py-10">
       <div
-        class="h-7 w-7 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+        class="border-cn-yellow h-7 w-7 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if error}
-    <div class="rounded-xl bg-red-err/10 border border-red-err/30 text-red-err p-4 text-sm">
+    <div class="bg-red-err/10 border-red-err/30 text-red-err rounded-xl border p-4 text-sm">
       {error}
     </div>
   {:else if stats}
     <!-- Quota bar -->
     <div class="space-y-1.5">
-      <div class="flex items-center justify-between text-xs text-text-muted">
+      <div class="text-text-muted flex items-center justify-between text-xs">
         <span>{m.asso_doc_quota_label()}</span>
         <span>{formatFileSize(stats.usedBytes)} / {formatFileSize(stats.quotaBytes)}</span>
       </div>
-      <div class="h-2 rounded-full bg-cn-border/50 overflow-hidden">
+      <div class="bg-cn-border/50 h-2 overflow-hidden rounded-full">
         <div
           class="h-full rounded-full transition-all duration-300
             {stats.usedBytes / stats.quotaBytes > 0.9
@@ -478,47 +478,47 @@
         type="button"
         onclick={() => fileInput?.click()}
         disabled={uploading}
-        class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-4 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50 shadow-sm"
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm disabled:opacity-50"
       >
         <FileUp size={16} />
         {uploading ? m.asso_doc_upload_encrypting() : m.asso_doc_upload_button()}
       </button>
       {#if uploadError}
-        <p class="text-sm text-red-err mt-2">{uploadError}</p>
+        <p class="text-red-err mt-2 text-sm">{uploadError}</p>
       {/if}
     </div>
 
     <!-- Private/public explanation -->
     <div
-      class="flex items-start gap-2 rounded-xl border border-cn-border/60 bg-cn-bg/30 px-3 py-2.5 text-xs text-text-muted"
+      class="border-cn-border/60 bg-cn-bg/30 text-text-muted flex items-start gap-2 rounded-xl border px-3 py-2.5 text-xs"
     >
-      <Info size={14} class="mt-0.5 shrink-0 text-cn-dark" />
+      <Info size={14} class="text-cn-dark mt-0.5 shrink-0" />
       <p>{m.asso_doc_visibility_hint()}</p>
     </div>
 
     <!-- Document list -->
     {#if stats.documents.length === 0}
-      <p class="text-sm text-text-muted text-center py-8">{m.asso_doc_no_documents()}</p>
+      <p class="text-text-muted py-8 text-center text-sm">{m.asso_doc_no_documents()}</p>
     {:else}
       <ul class="space-y-2">
         {#each stats.documents as doc (doc.id)}
           <li
-            class="flex items-center gap-3 rounded-xl border border-cn-border/70 bg-cn-bg/40 px-4 py-3"
+            class="border-cn-border/70 bg-cn-bg/40 flex items-center gap-3 rounded-xl border px-4 py-3"
           >
-            <FileText size={18} class="shrink-0 text-text-muted" />
+            <FileText size={18} class="text-text-muted shrink-0" />
             <div class="min-w-0 flex-1">
-              <p class="font-semibold text-text-main text-sm truncate flex items-center gap-1.5">
+              <p class="text-text-main flex items-center gap-1.5 truncate text-sm font-semibold">
                 {#if isProtected(doc)}
-                  <Lock size={13} class="shrink-0 text-amber-warn" />
+                  <Lock size={13} class="text-amber-warn shrink-0" />
                 {/if}
                 <span class="truncate">{doc.name}</span>
               </p>
-              <p class="text-xs text-text-muted">
+              <p class="text-text-muted text-xs">
                 {formatFileSize(doc.size)} · {doc.mimeType}{#if isProtected(doc)}
                   · {m.asso_doc_protected_suffix()}{/if}
               </p>
             </div>
-            <div class="flex items-center gap-2 shrink-0">
+            <div class="flex shrink-0 items-center gap-2">
               <button
                 type="button"
                 onclick={() => toggleVisibility(doc)}
@@ -531,7 +531,7 @@
                 class="inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-2 text-xs font-bold transition-colors disabled:opacity-40
                   {doc.visibility === 'public' && !isProtected(doc)
                   ? 'border-green-ok/40 bg-green-ok/10 text-green-ok'
-                  : 'border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
+                  : 'border-cn-border text-text-muted hover:text-text-main bg-(--cn-surface)'}"
               >
                 {#if doc.visibility === 'public' && !isProtected(doc)}
                   <Globe size={14} />
@@ -545,7 +545,7 @@
                 type="button"
                 onclick={() => openRename(doc)}
                 title={m.asso_doc_rename_title()}
-                class="inline-flex items-center justify-center rounded-xl border border-cn-border bg-[var(--cn-surface)] p-2 text-text-muted hover:text-text-main transition-colors"
+                class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center justify-center rounded-xl border bg-(--cn-surface) p-2 transition-colors"
               >
                 <Pencil size={15} />
               </button>
@@ -554,11 +554,11 @@
                 onclick={() => handleDownload(doc)}
                 disabled={downloadingId === doc.id}
                 title={m.asso_doc_download_title()}
-                class="inline-flex items-center justify-center rounded-xl border border-cn-border bg-[var(--cn-surface)] p-2 text-text-muted hover:text-text-main disabled:opacity-40 transition-colors"
+                class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center justify-center rounded-xl border bg-(--cn-surface) p-2 transition-colors disabled:opacity-40"
               >
                 {#if downloadingId === doc.id}
                   <div
-                    class="h-4 w-4 animate-spin rounded-full border-2 border-cn-yellow border-t-transparent"
+                    class="border-cn-yellow h-4 w-4 animate-spin rounded-full border-2 border-t-transparent"
                   ></div>
                 {:else}
                   <Download size={15} />
@@ -568,7 +568,7 @@
                 type="button"
                 onclick={() => handleDelete(doc)}
                 title={m.common_delete_button()}
-                class="inline-flex items-center justify-center rounded-xl border border-red-err/30 bg-red-err/10 p-2 text-red-err hover:bg-red-err/20 transition-colors"
+                class="border-red-err/30 bg-red-err/10 text-red-err hover:bg-red-err/20 inline-flex items-center justify-center rounded-xl border p-2 transition-colors"
               >
                 <Trash2 size={15} />
               </button>
@@ -583,20 +583,20 @@
 {#if uploadModalOpen}
   <div use:portal>
     <div
-      class="fixed inset-0 z-[280] flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm p-4"
+      class="fixed inset-0 z-[280] flex items-end justify-center bg-black/40 p-4 backdrop-blur-sm sm:items-center"
       role="presentation"
       onclick={(e) => e.target === e.currentTarget && (uploadModalOpen = false)}
     >
       <div
-        class="w-full max-w-md rounded-t-3xl sm:rounded-2xl border border-cn-border bg-[var(--cn-surface)] shadow-xl p-6 space-y-4"
+        class="border-cn-border w-full max-w-md space-y-4 rounded-t-3xl border bg-(--cn-surface) p-6 shadow-xl sm:rounded-2xl"
         role="dialog"
         aria-modal="true"
         aria-labelledby="upload-modal-title"
       >
-        <h3 id="upload-modal-title" class="text-lg font-bold text-text-main">
+        <h3 id="upload-modal-title" class="text-text-main text-lg font-bold">
           {m.asso_doc_upload_modal_title()}
         </h3>
-        <p class="text-sm text-text-muted truncate">{pendingFile?.name}</p>
+        <p class="text-text-muted truncate text-sm">{pendingFile?.name}</p>
         <div class="space-y-1.5">
           <Input
             label={m.asso_doc_password_label()}
@@ -604,22 +604,22 @@
             bind:value={uploadPassword}
             placeholder={m.asso_doc_password_placeholder()}
           />
-          <p class="text-xs text-text-muted">
+          <p class="text-text-muted text-xs">
             {m.asso_doc_password_warning()}
           </p>
         </div>
-        <div class="flex flex-wrap gap-2 justify-end pt-1">
+        <div class="flex flex-wrap justify-end gap-2 pt-1">
           <button
             type="button"
             onclick={() => (uploadModalOpen = false)}
-            class="rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold hover:bg-cn-bg"
+            class="border-cn-border hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold"
           >
             {m.common_cancel_button()}
           </button>
           <button
             type="button"
             onclick={confirmUpload}
-            class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover"
+            class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold"
           >
             {m.asso_doc_upload_confirm_button()}
           </button>
@@ -632,21 +632,21 @@
 {#if pwPromptDoc}
   <div use:portal>
     <div
-      class="fixed inset-0 z-[280] flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm p-4"
+      class="fixed inset-0 z-[280] flex items-end justify-center bg-black/40 p-4 backdrop-blur-sm sm:items-center"
       role="presentation"
       onclick={(e) => e.target === e.currentTarget && !pwPromptBusy && (pwPromptDoc = null)}
     >
       <div
-        class="w-full max-w-md rounded-t-3xl sm:rounded-2xl border border-cn-border bg-[var(--cn-surface)] shadow-xl p-6 space-y-4"
+        class="border-cn-border w-full max-w-md space-y-4 rounded-t-3xl border bg-(--cn-surface) p-6 shadow-xl sm:rounded-2xl"
         role="dialog"
         aria-modal="true"
         aria-labelledby="pw-prompt-title"
       >
-        <h3 id="pw-prompt-title" class="text-lg font-bold text-text-main flex items-center gap-2">
+        <h3 id="pw-prompt-title" class="text-text-main flex items-center gap-2 text-lg font-bold">
           <Lock size={18} class="text-amber-warn" />
           {m.asso_doc_protected_title()}
         </h3>
-        <p class="text-sm text-text-muted truncate">{pwPromptDoc.name}</p>
+        <p class="text-text-muted truncate text-sm">{pwPromptDoc.name}</p>
         <form
           onsubmit={(e) => {
             e.preventDefault();
@@ -656,21 +656,21 @@
         >
           <Input label={m.common_password_label()} type="password" bind:value={pwPromptValue} />
           {#if pwPromptError}
-            <p class="text-sm text-red-err">{pwPromptError}</p>
+            <p class="text-red-err text-sm">{pwPromptError}</p>
           {/if}
-          <div class="flex flex-wrap gap-2 justify-end pt-1">
+          <div class="flex flex-wrap justify-end gap-2 pt-1">
             <button
               type="button"
               onclick={() => (pwPromptDoc = null)}
               disabled={pwPromptBusy}
-              class="rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold hover:bg-cn-bg disabled:opacity-50"
+              class="border-cn-border hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-50"
             >
               {m.common_cancel_button()}
             </button>
             <button
               type="submit"
               disabled={pwPromptBusy || !pwPromptValue}
-              class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
+              class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
             >
               {pwPromptBusy ? m.asso_doc_decrypting() : m.asso_doc_open_button()}
             </button>
@@ -684,17 +684,17 @@
 {#if renameDoc}
   <div use:portal>
     <div
-      class="fixed inset-0 z-[280] flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm p-4"
+      class="fixed inset-0 z-[280] flex items-end justify-center bg-black/40 p-4 backdrop-blur-sm sm:items-center"
       role="presentation"
       onclick={(e) => e.target === e.currentTarget && !renameBusy && (renameDoc = null)}
     >
       <div
-        class="w-full max-w-md rounded-t-3xl sm:rounded-2xl border border-cn-border bg-[var(--cn-surface)] shadow-xl p-6 space-y-4"
+        class="border-cn-border w-full max-w-md space-y-4 rounded-t-3xl border bg-(--cn-surface) p-6 shadow-xl sm:rounded-2xl"
         role="dialog"
         aria-modal="true"
         aria-labelledby="rename-doc-title"
       >
-        <h3 id="rename-doc-title" class="text-lg font-bold text-text-main flex items-center gap-2">
+        <h3 id="rename-doc-title" class="text-text-main flex items-center gap-2 text-lg font-bold">
           <Pencil size={18} class="text-cn-dark" />
           {m.asso_doc_rename_title()}
         </h3>
@@ -711,21 +711,21 @@
             placeholder={m.asso_doc_rename_placeholder()}
           />
           {#if renameError}
-            <p class="text-sm text-red-err">{renameError}</p>
+            <p class="text-red-err text-sm">{renameError}</p>
           {/if}
-          <div class="flex flex-wrap gap-2 justify-end pt-1">
+          <div class="flex flex-wrap justify-end gap-2 pt-1">
             <button
               type="button"
               onclick={() => (renameDoc = null)}
               disabled={renameBusy}
-              class="rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold hover:bg-cn-bg disabled:opacity-50"
+              class="border-cn-border hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-50"
             >
               {m.common_cancel_button()}
             </button>
             <button
               type="submit"
               disabled={renameBusy || !renameValue.trim()}
-              class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
+              class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
             >
               {renameBusy ? m.common_saving_label() : m.common_save_button()}
             </button>

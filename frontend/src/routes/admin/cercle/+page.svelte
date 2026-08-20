@@ -19,11 +19,11 @@
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import {
     Wallet,
-    AlertTriangle,
+    TriangleAlert,
     RefreshCw,
     FlaskConical,
-    CheckCircle2,
-    XCircle,
+    CircleCheck,
+    CircleX,
     Trash2,
   } from '@lucide/svelte';
   import StripeNetPayoutHint from '$lib/components/payments/StripeNetPayoutHint.svelte';
@@ -285,18 +285,18 @@
   <div class="space-y-6">
     <header class="flex items-start gap-3">
       <span
-        class="flex h-10 w-10 items-center justify-center rounded-xl bg-cn-yellow/15 text-cn-dark"
+        class="bg-cn-yellow/15 text-cn-dark flex h-10 w-10 items-center justify-center rounded-xl"
       >
         <Wallet size={20} />
       </span>
       <div>
-        <h2 class="text-lg font-extrabold text-text-main">{m.admin_cercle_title()}</h2>
-        <p class="text-sm text-text-muted mt-0.5">{m.admin_cercle_subtitle()}</p>
+        <h2 class="text-text-main text-lg font-extrabold">{m.admin_cercle_title()}</h2>
+        <p class="text-text-muted mt-0.5 text-sm">{m.admin_cercle_subtitle()}</p>
       </div>
     </header>
 
     {#if error}
-      <div class="rounded-xl border border-red-err/30 bg-red-err/10 text-red-err px-4 py-3 text-sm">
+      <div class="border-red-err/30 bg-red-err/10 text-red-err rounded-xl border px-4 py-3 text-sm">
         {error}
       </div>
     {/if}
@@ -304,19 +304,19 @@
     {#if loading}
       <div class="flex justify-center py-10">
         <div
-          class="h-6 w-6 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+          class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
         ></div>
       </div>
     {:else}
       <div class="space-y-1.5">
-        <label for="cercle-asso-select" class="text-sm font-bold text-text-main">
+        <label for="cercle-asso-select" class="text-text-main text-sm font-bold">
           {m.admin_cercle_asso_label()}
         </label>
         <select
           id="cercle-asso-select"
           bind:value={selectedAssoId}
           onchange={() => void loadProduct()}
-          class="w-full max-w-md rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-cn-yellow/40"
+          class="border-cn-border text-text-main focus:ring-cn-yellow/40 w-full max-w-md rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
         >
           <option value="">{m.admin_cercle_asso_placeholder()}</option>
           {#each associations as assoc (assoc.id)}
@@ -327,15 +327,13 @@
     {/if}
 
     {#if !loading && !asso}
-      <p class="text-sm text-text-muted">{m.admin_cercle_select_asso_hint()}</p>
+      <p class="text-text-muted text-sm">{m.admin_cercle_select_asso_hint()}</p>
     {:else if !loading && asso}
-      <div
-        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-5 shadow-sm"
-      >
-        <div class="flex items-center justify-between gap-3 flex-wrap">
+      <div class="border-cn-border space-y-5 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm">
+        <div class="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h3 class="text-base font-bold text-text-main">{m.admin_cercle_config_title()}</h3>
-            <p class="text-xs text-text-muted mt-0.5">
+            <h3 class="text-text-main text-base font-bold">{m.admin_cercle_config_title()}</h3>
+            <p class="text-text-muted mt-0.5 text-xs">
               {m.admin_cercle_config_hint({ name: asso.name })}
             </p>
           </div>
@@ -353,7 +351,7 @@
               <button
                 type="button"
                 onclick={() => void handleToggleActive()}
-                class="text-xs rounded-lg border border-cn-border px-3 py-1.5 font-semibold hover:bg-cn-bg/50 transition-colors"
+                class="border-cn-border hover:bg-cn-bg/50 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors"
               >
                 {product.isActive
                   ? m.admin_cercle_deactivate_button()
@@ -372,7 +370,7 @@
         >
           <div class="grid gap-4 sm:grid-cols-2">
             <div class="space-y-1">
-              <label for="cercle-min" class="text-xs font-semibold text-text-muted"
+              <label for="cercle-min" class="text-text-muted text-xs font-semibold"
                 >{m.admin_cercle_min_label()}</label
               >
               <input
@@ -381,11 +379,11 @@
                 min="0.01"
                 step="0.01"
                 bind:value={minEuros}
-                class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
               />
             </div>
             <div class="space-y-1">
-              <label for="cercle-max" class="text-xs font-semibold text-text-muted"
+              <label for="cercle-max" class="text-text-muted text-xs font-semibold"
                 >{m.admin_cercle_max_label()}</label
               >
               <input
@@ -394,17 +392,17 @@
                 min="0.01"
                 step="0.01"
                 bind:value={maxEuros}
-                class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
               />
             </div>
           </div>
-          <p class="text-xs text-text-muted">{m.admin_cercle_amount_hint()}</p>
+          <p class="text-text-muted text-xs">{m.admin_cercle_amount_hint()}</p>
           <!-- A 5 EUR recharge credits the member 5 EUR but pays the association less: the Cercle's
                treasury has to know the gap before setting the bounds. -->
           <StripeNetPayoutHint grossEuros="" {minEuros} {maxEuros} />
 
           <div class="space-y-1">
-            <label for="cercle-webhook-url" class="text-xs font-semibold text-text-muted"
+            <label for="cercle-webhook-url" class="text-text-muted text-xs font-semibold"
               >{m.admin_cercle_webhook_url_label()}</label
             >
             <input
@@ -412,12 +410,12 @@
               type="url"
               bind:value={webhookUrl}
               placeholder={m.admin_cercle_webhook_url_placeholder()}
-              class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+              class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
             />
           </div>
 
           <div class="space-y-1">
-            <label for="cercle-webhook-secret" class="text-xs font-semibold text-text-muted"
+            <label for="cercle-webhook-secret" class="text-text-muted text-xs font-semibold"
               >{m.admin_cercle_webhook_secret_label()}</label
             >
             <input
@@ -428,9 +426,9 @@
               placeholder={product?.webhookConfigured
                 ? m.admin_cercle_webhook_edit_hint()
                 : m.admin_cercle_webhook_secret_placeholder()}
-              class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+              class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
             />
-            <p class="text-xs text-text-muted">
+            <p class="text-text-muted text-xs">
               {product?.webhookConfigured
                 ? m.admin_cercle_webhook_secret_set()
                 : m.admin_cercle_webhook_secret_hint()}
@@ -441,7 +439,7 @@
             <button
               type="submit"
               disabled={saving}
-              class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
+              class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
             >
               {saving
                 ? m.admin_cercle_saving()
@@ -450,8 +448,8 @@
                   : m.admin_cercle_create_button()}
             </button>
             {#if saved}
-              <span class="text-xs font-semibold text-green-ok inline-flex items-center gap-1.5">
-                <CheckCircle2 size={14} />
+              <span class="text-green-ok inline-flex items-center gap-1.5 text-xs font-semibold">
+                <CircleCheck size={14} />
                 {m.admin_cercle_saved()}
               </span>
             {/if}
@@ -459,12 +457,10 @@
         </form>
       </div>
 
-      <div
-        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-4 shadow-sm"
-      >
+      <div class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm">
         <div>
-          <h3 class="text-base font-bold text-text-main">{m.admin_cercle_test_title()}</h3>
-          <p class="text-xs text-text-muted mt-0.5">
+          <h3 class="text-text-main text-base font-bold">{m.admin_cercle_test_title()}</h3>
+          <p class="text-text-muted mt-0.5 text-xs">
             {m.admin_cercle_test_section_hint({ amount: (TEST_TOPUP_CENTS / 100).toFixed(2) })}
           </p>
         </div>
@@ -473,7 +469,7 @@
           type="button"
           disabled={testing || !isConfigured}
           onclick={() => void handleTestTopup()}
-          class="inline-flex items-center gap-2 rounded-xl border border-cn-yellow/50 bg-cn-yellow/10 px-4 py-2.5 text-sm font-bold text-text-main hover:bg-cn-yellow/20 disabled:opacity-50 transition-colors"
+          class="border-cn-yellow/50 bg-cn-yellow/10 text-text-main hover:bg-cn-yellow/20 inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-colors disabled:opacity-50"
         >
           <FlaskConical size={16} class={testing ? 'animate-pulse' : ''} />
           {testing
@@ -481,13 +477,13 @@
             : m.admin_cercle_test_button({ amount: (TEST_TOPUP_CENTS / 100).toFixed(2) })}
         </button>
         {#if !isConfigured}
-          <p class="text-xs text-amber-warn">{m.admin_cercle_test_needs_config()}</p>
+          <p class="text-amber-warn text-xs">{m.admin_cercle_test_needs_config()}</p>
         {/if}
 
         {#if testResult}
           {@const delivered = testResult.status === 'delivered'}
           <div
-            class="rounded-xl border px-4 py-3 space-y-1 {delivered
+            class="space-y-1 rounded-xl border px-4 py-3 {delivered
               ? 'border-green-ok/30 bg-green-ok/10'
               : 'border-red-err/30 bg-red-err/10'}"
           >
@@ -497,20 +493,20 @@
                 : 'text-red-err'}"
             >
               {#if delivered}
-                <CheckCircle2 size={16} />
+                <CircleCheck size={16} />
                 {m.admin_cercle_test_delivered({
                   amount: (testResult.amountCents / 100).toFixed(2),
                   attempts: testResult.attemptCount,
                 })}
               {:else}
-                <XCircle size={16} />
+                <CircleX size={16} />
                 {m.admin_cercle_test_failed({ attempts: testResult.attemptCount })}
               {/if}
             </p>
             {#if testResult.lastError}
-              <p class="text-xs text-red-err break-all">{testResult.lastError}</p>
+              <p class="text-red-err text-xs break-all">{testResult.lastError}</p>
             {/if}
-            <p class="text-xs text-text-muted break-all">
+            <p class="text-text-muted text-xs break-all">
               {m.admin_cercle_test_intent({ intent: testResult.paymentIntentId })}
             </p>
           </div>
@@ -519,13 +515,13 @@
 
       {#if webhookFailures.length > 0}
         <div
-          class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-3 shadow-sm"
+          class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm"
         >
-          <h3 class="text-sm font-bold flex items-center gap-2 text-amber-warn">
-            <AlertTriangle size={16} />
+          <h3 class="text-amber-warn flex items-center gap-2 text-sm font-bold">
+            <TriangleAlert size={16} />
             {m.admin_cercle_webhook_failures_title({ count: webhookFailures.length })}
           </h3>
-          <p class="text-xs text-text-muted">{m.admin_cercle_webhook_failures_hint()}</p>
+          <p class="text-text-muted text-xs">{m.admin_cercle_webhook_failures_hint()}</p>
 
           {#if retryOutcome}
             <p
@@ -540,16 +536,16 @@
           <ul class="space-y-2">
             {#each webhookFailures as delivery (delivery.id)}
               <li
-                class="flex items-center gap-3 rounded-xl border border-amber-warn/30 bg-amber-warn/10 px-4 py-3"
+                class="border-amber-warn/30 bg-amber-warn/10 flex items-center gap-3 rounded-xl border px-4 py-3"
               >
                 <div class="min-w-0 flex-1 space-y-0.5">
-                  <p class="text-xs font-semibold text-text-main">
+                  <p class="text-text-main text-xs font-semibold">
                     {memberLabel(delivery)} - {(delivery.amountCents / 100).toFixed(2)} €
                     {#if delivery.productName}
-                      <span class="font-normal text-text-muted">· {delivery.productName}</span>
+                      <span class="text-text-muted font-normal">· {delivery.productName}</span>
                     {/if}
                   </p>
-                  <p class="text-xs text-text-muted">
+                  <p class="text-text-muted text-xs">
                     {m.admin_cercle_webhook_attempts({ count: delivery.attemptCount })} ·
                     {delivery.lastAttemptAt ? formatMoment(delivery.lastAttemptAt) : '-'}
                   </p>
@@ -567,16 +563,16 @@
                       : m.admin_cercle_webhook_retries_exhausted()}
                   </p>
                   {#if delivery.lastError}
-                    <p class="text-xs text-red-err break-all">{delivery.lastError}</p>
+                    <p class="text-red-err text-xs break-all">{delivery.lastError}</p>
                   {/if}
-                  <p class="text-xs text-text-muted break-all">{delivery.paymentIntentId}</p>
+                  <p class="text-text-muted text-xs break-all">{delivery.paymentIntentId}</p>
                 </div>
-                <div class="flex items-center gap-2 shrink-0">
+                <div class="flex shrink-0 items-center gap-2">
                   <button
                     type="button"
                     disabled={retryingDelivery === delivery.id}
                     onclick={() => void handleRetryDelivery(delivery)}
-                    class="inline-flex items-center gap-1.5 rounded-xl border border-cn-border px-3 py-1.5 text-xs font-semibold hover:bg-[var(--cn-surface)] disabled:opacity-50"
+                    class="border-cn-border inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold hover:bg-(--cn-surface) disabled:opacity-50"
                   >
                     <RefreshCw
                       size={13}
@@ -589,7 +585,7 @@
                     disabled={deletingDelivery === delivery.id}
                     onclick={() => void handleDeleteDelivery(delivery)}
                     title={m.common_delete_button()}
-                    class="inline-flex items-center justify-center rounded-xl border border-red-err/30 bg-red-err/10 p-2 text-red-err hover:bg-red-err/20 disabled:opacity-50 transition-colors"
+                    class="border-red-err/30 bg-red-err/10 text-red-err hover:bg-red-err/20 inline-flex items-center justify-center rounded-xl border p-2 transition-colors disabled:opacity-50"
                   >
                     <Trash2 size={14} />
                   </button>

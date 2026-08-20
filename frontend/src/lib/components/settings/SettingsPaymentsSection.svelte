@@ -90,21 +90,21 @@
 </script>
 
 <div
-  class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200"
+  class="border-cn-border animate-in fade-in slide-in-from-bottom-4 rounded-2xl border bg-[var(--cn-surface)] p-6 shadow-sm delay-200 duration-500 md:p-8"
   style="animation-fill-mode: backwards;"
 >
-  <div class="flex items-center justify-between mb-6">
+  <div class="mb-6 flex items-center justify-between">
     <div class="flex items-center gap-3">
-      <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
+      <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
         <CreditCard size={22} strokeWidth={2.5} />
       </div>
-      <h2 class="text-lg font-extrabold text-text-main">{m.profile_payment_heading()}</h2>
+      <h2 class="text-text-main text-lg font-extrabold">{m.profile_payment_heading()}</h2>
     </div>
 
     <button
       onclick={handleSetupPayment}
       disabled={paymentSetupLoading}
-      class="hidden sm:inline-flex items-center gap-2 rounded-xl bg-black/5 dark:bg-white/10 px-4 py-2 text-sm font-bold text-text-main hover:bg-black/10 dark:hover:bg-white/20 transition-all disabled:opacity-50 active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
+      class="text-text-main focus-visible:ring-text-muted hidden items-center gap-2 rounded-xl bg-black/5 px-4 py-2 text-sm font-bold transition-all outline-none hover:bg-black/10 focus-visible:ring-2 active:scale-95 disabled:opacity-50 sm:inline-flex dark:bg-white/10 dark:hover:bg-white/20"
     >
       {#if paymentSetupLoading}
         <Loader2 size={16} class="animate-spin" /> {m.profile_payment_redirecting()}
@@ -117,7 +117,7 @@
   {#if paymentSuccess}
     <div
       transition:slide={{ duration: 200 }}
-      class="flex items-center gap-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400 p-4 text-sm font-bold mb-6 shadow-inner"
+      class="mb-6 flex items-center gap-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-sm font-bold text-emerald-700 shadow-inner dark:text-emerald-400"
     >
       <CheckCircle2 size={20} class="shrink-0" />
       {paymentSuccess}
@@ -127,7 +127,7 @@
   {#if paymentError}
     <div
       transition:slide={{ duration: 200 }}
-      class="flex items-center gap-3 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 p-4 text-sm font-bold mb-6 shadow-inner"
+      class="mb-6 flex items-center gap-3 rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-sm font-bold text-red-600 shadow-inner dark:text-red-400"
     >
       <AlertCircle size={20} class="shrink-0" />
       {paymentError}
@@ -135,31 +135,31 @@
   {/if}
 
   {#if paymentLoading}
-    <div class="flex items-center gap-3 text-sm font-semibold text-text-muted py-4">
+    <div class="text-text-muted flex items-center gap-3 py-4 text-sm font-semibold">
       <Loader2 size={18} class="animate-spin" />
       {m.profile_payment_loading()}
     </div>
   {:else}
     {#if paymentMethods.length > 0}
-      <div class="space-y-3 mb-6">
+      <div class="mb-6 space-y-3">
         {#each paymentMethods as pm (pm.id)}
           <div
             transition:slide={{ duration: 200 }}
-            class="flex items-center justify-between rounded-[1.25rem] bg-gradient-to-r from-black/5 to-transparent dark:from-white/5 dark:to-transparent border border-black/5 dark:border-white/5 px-5 py-4 group hover:border-black/10 dark:hover:border-white/10 transition-colors shadow-sm"
+            class="group flex items-center justify-between rounded-[1.25rem] border border-black/5 bg-gradient-to-r from-black/5 to-transparent px-5 py-4 shadow-sm transition-colors hover:border-black/10 dark:border-white/5 dark:from-white/5 dark:to-transparent dark:hover:border-white/10"
           >
             <div class="flex items-center gap-4">
               <div
-                class="w-8 h-6 rounded bg-cn-yellow/20 border border-cn-yellow/30 flex items-center justify-center opacity-80"
+                class="bg-cn-yellow/20 border-cn-yellow/30 flex h-6 w-8 items-center justify-center rounded border opacity-80"
               >
-                <div class="w-4 h-3 border border-cn-yellow/40 rounded-sm"></div>
+                <div class="border-cn-yellow/40 h-3 w-4 rounded-sm border"></div>
               </div>
 
               <div class="flex flex-col">
-                <span class="text-[0.95rem] font-bold text-text-main tracking-wider font-mono">
+                <span class="text-text-main font-mono text-[0.95rem] font-bold tracking-wider">
                   •••• •••• •••• {pm.last4}
                 </span>
                 <span
-                  class="text-[0.65rem] font-extrabold text-text-muted uppercase tracking-wider mt-0.5"
+                  class="text-text-muted mt-0.5 text-[0.65rem] font-extrabold tracking-wider uppercase"
                 >
                   {brandLabel(pm.brand)} • Exp: {String(pm.expMonth).padStart(2, '0')}/{pm.expYear}
                 </span>
@@ -168,7 +168,7 @@
 
             <button
               onclick={() => handleDeletePaymentMethod(pm.id)}
-              class="p-2.5 rounded-xl text-text-muted hover:text-red-500 hover:bg-red-500/10 transition-all opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100 outline-none focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95"
+              class="text-text-muted rounded-xl p-2.5 opacity-100 transition-all outline-none hover:bg-red-500/10 hover:text-red-500 focus:opacity-100 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 sm:opacity-0 sm:group-hover:opacity-100"
               title={m.profile_payment_delete_label()}
               aria-label={m.common_delete_button()}
             >
@@ -179,16 +179,16 @@
       </div>
     {:else}
       <div
-        class="text-center py-6 px-4 border border-dashed border-black/10 dark:border-white/10 rounded-[1.25rem] bg-black/5 dark:bg-white/5 mb-6"
+        class="mb-6 rounded-[1.25rem] border border-dashed border-black/10 bg-black/5 px-4 py-6 text-center dark:border-white/10 dark:bg-white/5"
       >
-        <p class="text-sm font-semibold text-text-muted">{m.profile_payment_none_title()}</p>
+        <p class="text-text-muted text-sm font-semibold">{m.profile_payment_none_title()}</p>
       </div>
     {/if}
 
     <button
       onclick={handleSetupPayment}
       disabled={paymentSetupLoading}
-      class="sm:hidden w-full flex items-center justify-center gap-2 rounded-xl bg-black/5 dark:bg-white/10 px-4 py-3.5 text-sm font-bold text-text-main active:scale-[0.98] transition-all disabled:opacity-50 outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
+      class="text-text-main focus-visible:ring-text-muted flex w-full items-center justify-center gap-2 rounded-xl bg-black/5 px-4 py-3.5 text-sm font-bold transition-all outline-none focus-visible:ring-2 active:scale-[0.98] disabled:opacity-50 sm:hidden dark:bg-white/10"
     >
       {#if paymentSetupLoading}
         <Loader2 size={18} class="animate-spin" /> {m.profile_payment_redirect_stripe()}

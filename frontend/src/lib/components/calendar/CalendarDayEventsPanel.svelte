@@ -67,20 +67,20 @@
 
 {#if selectedDay == null}
   <div
-    class="rounded-2xl border border-dashed border-cn-border bg-cn-bg/30 px-4 py-6 text-center text-sm text-text-muted"
+    class="border-cn-border bg-cn-bg/30 text-text-muted rounded-2xl border border-dashed px-4 py-6 text-center text-sm"
   >
     <CalendarDays size={20} class="mx-auto mb-2 opacity-50" />
     {m.calendar_day_select_prompt()}
   </div>
 {:else if dayEvents.length === 0}
   <div
-    class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 px-4 py-5 text-center text-sm text-text-muted"
+    class="border-cn-border text-text-muted rounded-2xl border bg-(--cn-surface)/90 px-4 py-5 text-center text-sm"
   >
     {m.calendar_day_no_events()}
     {#if onClearSelection}
       <button
         type="button"
-        class="mt-2 block mx-auto text-sm font-semibold text-cn-dark hover:underline"
+        class="text-cn-dark mx-auto mt-2 block text-sm font-semibold hover:underline"
         onclick={onClearSelection}
       >
         {m.calendar_day_choose_another()}
@@ -88,49 +88,47 @@
     {/if}
   </div>
 {:else}
-  <div
-    class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 overflow-hidden shadow-sm"
-  >
+  <div class="border-cn-border overflow-hidden rounded-2xl border bg-(--cn-surface)/90 shadow-sm">
     <div
-      class="flex items-center justify-between gap-2 border-b border-cn-border/60 px-4 py-3 bg-cn-bg/30"
+      class="border-cn-border/60 bg-cn-bg/30 flex items-center justify-between gap-2 border-b px-4 py-3"
     >
-      <p class="text-sm font-bold text-text-main capitalize">
+      <p class="text-text-main text-sm font-bold capitalize">
         {formatDayLabel(selectedDay)}
-        <span class="text-text-muted font-semibold ml-1">
+        <span class="text-text-muted ml-1 font-semibold">
           · {m.calendar_day_event_count({ count: dayEvents.length })}
         </span>
       </p>
       {#if onClearSelection}
         <button
           type="button"
-          class="text-xs font-semibold text-cn-dark hover:underline shrink-0"
+          class="text-cn-dark shrink-0 text-xs font-semibold hover:underline"
           onclick={onClearSelection}
         >
           {m.calendar_day_all_month()}
         </button>
       {/if}
     </div>
-    <ul class="divide-y divide-cn-border/40">
+    <ul class="divide-cn-border/40 divide-y">
       {#each dayEvents as ev (ev.id)}
         {@const accent = eventAccentColor(ev)}
         {@const logoSrc = associationLogoSrc(ev.associationLogoUrl)}
         <li>
           <button
             type="button"
-            class="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-cn-bg/50 transition-colors"
+            class="hover:bg-cn-bg/50 flex w-full items-center gap-3 px-4 py-3 text-left transition-colors"
             onclick={() => onEventClick(ev)}
           >
             <span
-              class="h-9 w-1 rounded-full shrink-0"
+              class="h-9 w-1 shrink-0 rounded-full"
               style="background:{accent};"
               aria-hidden="true"
             ></span>
             {#if logoSrc && !hideAssociationName}
-              <img src={logoSrc} alt="" class="h-8 w-8 rounded-full object-cover shrink-0" />
+              <img src={logoSrc} alt="" class="h-8 w-8 shrink-0 rounded-full object-cover" />
             {/if}
             <div class="min-w-0 flex-1">
-              <p class="text-sm font-bold text-text-main truncate">{ev.title}</p>
-              <p class="text-xs text-text-muted mt-0.5 truncate">
+              <p class="text-text-main truncate text-sm font-bold">{ev.title}</p>
+              <p class="text-text-muted mt-0.5 truncate text-xs">
                 {#if !hideAssociationName}
                   <span class="font-semibold">{ev.associationName}</span>
                   <span class="mx-1">·</span>
@@ -138,7 +136,7 @@
                 {formatTimeRange(ev)}
               </p>
             </div>
-            <ChevronRight size={18} class="shrink-0 text-text-muted" />
+            <ChevronRight size={18} class="text-text-muted shrink-0" />
           </button>
         </li>
       {/each}

@@ -73,7 +73,7 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div
-    class="fixed inset-0 top-[calc(3.5rem+env(safe-area-inset-top))] z-[22] hidden md:block bg-black/10 dark:bg-black/30 backdrop-blur-[2px]"
+    class="fixed inset-0 top-[calc(3.5rem+env(safe-area-inset-top))] z-[22] hidden bg-black/10 backdrop-blur-[2px] md:block dark:bg-black/30"
     transition:fade={{ duration: 300, easing: (t) => t * (2 - t) }}
     onclick={() => (isExpanded = false)}
   ></div>
@@ -89,10 +89,10 @@
   aria-label={m.nav_main_landmark()}
   onmouseenter={handleMouseEnter}
   onmouseleave={handleMouseLeave}
-  class="app-nav-rail fixed hidden md:flex flex-col left-0 top-[env(safe-area-inset-top)] h-[calc(var(--app-viewport-height,100dvh)-env(safe-area-inset-top))] border-r border-black/5 dark:border-white/10 bg-white/70 dark:bg-black/80 backdrop-blur-2xl overflow-hidden transition-all duration-300 ease-out shadow-[4px_0_24px_rgba(0,0,0,0.02)] dark:shadow-[4px_0_24px_rgba(0,0,0,0.2)]
-    {isExpanded ? 'w-64 z-30' : 'w-[4.5rem] z-20'}"
+  class="app-nav-rail fixed top-[env(safe-area-inset-top)] left-0 hidden h-[calc(var(--app-viewport-height,100dvh)-env(safe-area-inset-top))] flex-col overflow-hidden border-r border-black/5 bg-white/70 shadow-[4px_0_24px_rgba(0,0,0,0.02)] backdrop-blur-2xl transition-all duration-300 ease-out md:flex dark:border-white/10 dark:bg-black/80 dark:shadow-[4px_0_24px_rgba(0,0,0,0.2)]
+    {isExpanded ? 'z-30 w-64' : 'z-20 w-[4.5rem]'}"
 >
-  <nav class="flex flex-col p-3 flex-1 gap-1.5 pt-[4.5rem]">
+  <nav class="flex flex-1 flex-col gap-1.5 p-3 pt-[4.5rem]">
     {#each APP_PLACES as place (place.id)}
       {@const PlaceIcon = getIcon(place.icon)}
       {@const isActive = place.id === activePlaceId}
@@ -108,28 +108,28 @@
         data-sveltekit-preload-code="viewport"
         title={isExpanded ? undefined : place.label()}
         aria-current={isActive ? 'page' : undefined}
-        class="group relative flex items-center gap-4 h-12 rounded-2xl px-3 text-left transition-all duration-200 w-full overflow-hidden
+        class="group relative flex h-12 w-full items-center gap-4 overflow-hidden rounded-2xl px-3 text-left transition-all duration-200
           {isActive
-          ? 'bg-amber-500/15 hover:bg-amber-500/25 dark:bg-amber-400/10 dark:hover:bg-amber-400/20 text-amber-700 dark:text-amber-400 shadow-sm shadow-amber-500/5'
-          : 'text-text-muted hover:bg-black/10 dark:hover:bg-white/10 hover:text-text-main'}"
+          ? 'bg-amber-500/15 text-amber-700 shadow-sm shadow-amber-500/5 hover:bg-amber-500/25 dark:bg-amber-400/10 dark:text-amber-400 dark:hover:bg-amber-400/20'
+          : 'text-text-muted hover:text-text-main hover:bg-black/10 dark:hover:bg-white/10'}"
       >
         <!-- Narrow left accent bar for the active item. -->
         {#if isActive}
           <div
-            class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-amber-500 rounded-r-full shadow-[0_0_8px_rgba(245,158,11,0.6)]"
+            class="absolute top-1/2 left-0 h-6 w-1 -translate-y-1/2 rounded-r-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.6)]"
           ></div>
         {/if}
 
         <!-- Icon container with scale-on-hover effect. -->
         <span
-          class="relative flex-shrink-0 w-7 flex items-center justify-center transition-transform duration-300 group-hover:scale-110"
+          class="relative flex w-7 flex-shrink-0 items-center justify-center transition-transform duration-300 group-hover:scale-110"
         >
           <PlaceIcon size={22} strokeWidth={isActive ? 2.5 : 2} />
 
           <!-- Red dot mini-badge shown when the sidebar is collapsed. -->
           {#if unread > 0 && !isExpanded}
             <span
-              class="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-[var(--surface-elevated)] dark:ring-cn-ink"
+              class="dark:ring-cn-ink absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-(--surface-elevated)"
             ></span>
           {/if}
         </span>
@@ -138,14 +138,14 @@
         <span
           class="min-w-0 flex-1 overflow-hidden transition-all duration-300 ease-out
             {isExpanded
-            ? 'opacity-100 translate-x-0 delay-75'
-            : 'opacity-0 -translate-x-4 delay-0'}"
+            ? 'translate-x-0 opacity-100 delay-75'
+            : '-translate-x-4 opacity-0 delay-0'}"
         >
-          <span class="block text-[0.9rem] font-bold leading-tight truncate whitespace-nowrap">
+          <span class="block truncate text-[0.9rem] leading-tight font-bold whitespace-nowrap">
             {place.label()}
           </span>
           <span
-            class="block text-xs font-medium opacity-70 leading-snug mt-0.5 truncate whitespace-nowrap"
+            class="mt-0.5 block truncate text-xs leading-snug font-medium whitespace-nowrap opacity-70"
           >
             {place.description()}
           </span>
@@ -154,8 +154,8 @@
         <!-- Full count badge, visible only when the sidebar is expanded. -->
         {#if unread > 0}
           <span
-            class="ml-auto flex-shrink-0 inline-flex items-center justify-center rounded-full bg-red-500 px-2 py-0.5 text-[0.7rem] font-bold text-white leading-none shadow-sm shadow-red-500/30 transition-all duration-300
-              {isExpanded ? 'opacity-100 scale-100 delay-100' : 'opacity-0 scale-75'}"
+            class="ml-auto inline-flex flex-shrink-0 items-center justify-center rounded-full bg-red-500 px-2 py-0.5 text-[0.7rem] leading-none font-bold text-white shadow-sm shadow-red-500/30 transition-all duration-300
+              {isExpanded ? 'scale-100 opacity-100 delay-100' : 'scale-75 opacity-0'}"
           >
             {unread > 99 ? '99+' : unread}
           </span>
@@ -167,25 +167,25 @@
   <!-- Settings, pinned at the bottom (desktop entry point to /settings). -->
   {#if globalSession.isLoggedIn}
     {@const settingsActive = pathname.startsWith('/settings')}
-    <div class="p-3 border-t border-black/5 dark:border-white/10">
+    <div class="border-t border-black/5 p-3 dark:border-white/10">
       <a
         href="/settings"
         data-sveltekit-preload-code="viewport"
         title={isExpanded ? undefined : m.settings_page_title()}
         aria-current={settingsActive ? 'page' : undefined}
-        class="group relative flex items-center gap-4 h-12 rounded-2xl px-3 text-left transition-all duration-200 w-full overflow-hidden
+        class="group relative flex h-12 w-full items-center gap-4 overflow-hidden rounded-2xl px-3 text-left transition-all duration-200
           {settingsActive
-          ? 'bg-amber-500/15 hover:bg-amber-500/25 dark:bg-amber-400/10 dark:hover:bg-amber-400/20 text-amber-700 dark:text-amber-400 shadow-sm shadow-amber-500/5'
-          : 'text-text-muted hover:bg-black/10 dark:hover:bg-white/10 hover:text-text-main'}"
+          ? 'bg-amber-500/15 text-amber-700 shadow-sm shadow-amber-500/5 hover:bg-amber-500/25 dark:bg-amber-400/10 dark:text-amber-400 dark:hover:bg-amber-400/20'
+          : 'text-text-muted hover:text-text-main hover:bg-black/10 dark:hover:bg-white/10'}"
       >
         {#if settingsActive}
           <div
-            class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-amber-500 rounded-r-full shadow-[0_0_8px_rgba(245,158,11,0.6)]"
+            class="absolute top-1/2 left-0 h-6 w-1 -translate-y-1/2 rounded-r-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.6)]"
           ></div>
         {/if}
 
         <span
-          class="relative flex-shrink-0 w-7 flex items-center justify-center transition-transform duration-300 group-hover:scale-110"
+          class="relative flex w-7 flex-shrink-0 items-center justify-center transition-transform duration-300 group-hover:scale-110"
         >
           <SlidersHorizontal size={22} strokeWidth={settingsActive ? 2.5 : 2} />
         </span>
@@ -193,14 +193,14 @@
         <span
           class="min-w-0 flex-1 overflow-hidden transition-all duration-300 ease-out
             {isExpanded
-            ? 'opacity-100 translate-x-0 delay-75'
-            : 'opacity-0 -translate-x-4 delay-0'}"
+            ? 'translate-x-0 opacity-100 delay-75'
+            : '-translate-x-4 opacity-0 delay-0'}"
         >
-          <span class="block text-[0.9rem] font-bold leading-tight truncate whitespace-nowrap">
+          <span class="block truncate text-[0.9rem] leading-tight font-bold whitespace-nowrap">
             {m.settings_page_title()}
           </span>
           <span
-            class="block text-xs font-medium opacity-70 leading-snug mt-0.5 truncate whitespace-nowrap"
+            class="mt-0.5 block truncate text-xs leading-snug font-medium whitespace-nowrap opacity-70"
           >
             {m.settings_page_subtitle()}
           </span>

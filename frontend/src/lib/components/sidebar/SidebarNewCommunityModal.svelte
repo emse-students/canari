@@ -28,7 +28,7 @@
 <Modal {open} {onClose} title={m.chat_modal_community_name_label()}>
   <div class="space-y-4 pt-2">
     <div>
-      <label for="new-community-name" class="block text-sm font-medium text-text-main mb-1"
+      <label for="new-community-name" class="text-text-main mb-1 block text-sm font-medium"
         >{m.chat_modal_community_name_label()}</label
       >
       <input
@@ -38,17 +38,17 @@
         value={communityName}
         oninput={(e) => onNameChange((e.target as HTMLInputElement).value)}
         placeholder={m.chat_modal_community_name_placeholder()}
-        class="w-full px-4 py-2.5 bg-white/65 dark:bg-black/30 border border-white/60 dark:border-white/10 rounded-xl text-sm outline-none focus:ring-2 focus:ring-amber-400/45"
+        class="w-full rounded-xl border border-white/60 bg-white/65 px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-amber-400/45 dark:border-white/10 dark:bg-black/30"
         onkeydown={(e) => e.key === 'Enter' && onSubmit()}
       />
     </div>
-    <p class="text-xs text-text-muted text-center px-4">
+    <p class="text-text-muted px-4 text-center text-xs">
       {m.chat_modal_community_description()}
     </p>
     <button
       onclick={onSubmit}
       disabled={!communityName.trim()}
-      class="w-full py-2.5 bg-amber-500 text-white font-semibold rounded-xl hover:bg-amber-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+      class="w-full rounded-xl bg-amber-500 py-2.5 font-semibold text-white transition-colors hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
     >
       {m.chat_modal_create_community_button()}
     </button>

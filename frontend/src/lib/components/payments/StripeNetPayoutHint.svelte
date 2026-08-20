@@ -50,7 +50,7 @@
 
 {#if grossCents || memberCents || minCents || maxCents}
   <div
-    class="rounded-xl border border-amber-200/80 bg-amber-50/70 dark:bg-amber-950/20 dark:border-amber-800/40 px-4 py-3 text-xs text-amber-950/90 dark:text-amber-100/90 space-y-1"
+    class="space-y-1 rounded-xl border border-amber-200/80 bg-amber-50/70 px-4 py-3 text-xs text-amber-950/90 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-100/90"
     role="note"
   >
     <p class="font-semibold">{m.stripe_payout_hint_title()}</p>

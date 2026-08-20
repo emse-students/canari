@@ -46,21 +46,21 @@
 </script>
 
 <div
-  class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-300"
+  class="border-cn-border animate-in fade-in slide-in-from-bottom-4 rounded-2xl border bg-(--cn-surface) p-6 shadow-sm delay-300 duration-500 md:p-8"
   style="animation-fill-mode: backwards;"
 >
-  <div class="flex items-center gap-3 mb-2">
-    <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
+  <div class="mb-2 flex items-center gap-3">
+    <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
       <HardDrive size={22} strokeWidth={2.5} />
     </div>
-    <h2 class="text-lg font-extrabold text-text-main">{m.settings_storage_heading()}</h2>
+    <h2 class="text-text-main text-lg font-extrabold">{m.settings_storage_heading()}</h2>
   </div>
-  <p class="text-xs font-medium text-text-muted mb-6 sm:pl-[3.75rem] leading-relaxed">
+  <p class="text-text-muted mb-6 text-xs leading-relaxed font-medium sm:pl-[3.75rem]">
     {m.settings_storage_desc()}
   </p>
 
   {#if loading}
-    <div class="flex items-center gap-2 text-sm text-text-muted sm:pl-[3.75rem]">
+    <div class="text-text-muted flex items-center gap-2 text-sm sm:pl-[3.75rem]">
       <Loader2 size={16} class="animate-spin" />
       {m.settings_storage_measuring()}
     </div>
@@ -68,23 +68,23 @@
     <div class="space-y-3 sm:pl-[3.75rem]">
       <div class="flex items-center justify-between text-sm">
         <span class="text-text-muted">{m.settings_storage_media_cache_label()}</span>
-        <span class="font-bold text-text-main">{formatStorageBytes(usage.mediaCacheBytes)}</span>
+        <span class="text-text-main font-bold">{formatStorageBytes(usage.mediaCacheBytes)}</span>
       </div>
       <div class="flex items-center justify-between text-sm">
         <span class="text-text-muted">{m.settings_storage_messages_label()}</span>
-        <span class="font-bold text-text-main">{formatStorageBytes(usage.messagesBytes)}</span>
+        <span class="text-text-main font-bold">{formatStorageBytes(usage.messagesBytes)}</span>
       </div>
       {#if usage.encryptionStateBytes !== null}
         <div class="flex items-center justify-between text-sm">
           <span class="text-text-muted">{m.settings_storage_encryption_label()}</span>
-          <span class="font-bold text-text-main"
+          <span class="text-text-main font-bold"
             >{formatStorageBytes(usage.encryptionStateBytes)}</span
           >
         </div>
       {/if}
-      <div class="flex items-center justify-between text-sm pt-3 border-t border-cn-border">
-        <span class="font-bold text-text-main">{m.settings_storage_total_label()}</span>
-        <span class="font-extrabold text-text-main">{formatStorageBytes(usage.totalBytes)}</span>
+      <div class="border-cn-border flex items-center justify-between border-t pt-3 text-sm">
+        <span class="text-text-main font-bold">{m.settings_storage_total_label()}</span>
+        <span class="text-text-main font-extrabold">{formatStorageBytes(usage.totalBytes)}</span>
       </div>
     </div>
 
@@ -92,7 +92,7 @@
       type="button"
       onclick={handleClearCache}
       disabled={clearing || usage.mediaCacheBytes === 0}
-      class="mt-6 inline-flex items-center gap-2 rounded-xl border border-cn-border px-4 py-2.5 text-sm font-bold text-text-main hover:border-cn-yellow/40 transition-all active:scale-95 disabled:opacity-50 sm:ml-[3.75rem]"
+      class="border-cn-border text-text-main hover:border-cn-yellow/40 mt-6 inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-all active:scale-95 disabled:opacity-50 sm:ml-[3.75rem]"
     >
       {#if clearing}
         <Loader2 size={16} class="animate-spin" />

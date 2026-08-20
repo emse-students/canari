@@ -100,20 +100,20 @@
         aria-label={title}
         tabindex="-1"
         use:focusTrap
-        class="keyboard-aware-modal-panel bg-[var(--cn-surface)] border border-cn-border shadow-2xl w-full {maxWidth} sm:mx-4 text-text-main flex flex-col {panelSizeClass} {panelClass}"
+        class="keyboard-aware-modal-panel border-cn-border w-full border bg-(--cn-surface) shadow-2xl {maxWidth} text-text-main flex flex-col sm:mx-4 {panelSizeClass} {panelClass}"
         in:fly={{ duration: 220, y: 24 }}
         onclick={(e) => e.stopPropagation()}
         onkeydown={(e) => e.stopPropagation()}
       >
         {#if title}
           <div
-            class="px-6 py-4 border-b border-cn-border flex items-center justify-between shrink-0"
+            class="border-cn-border flex shrink-0 items-center justify-between border-b px-6 py-4"
           >
-            <h2 class="text-base font-semibold text-cn-dark">{title}</h2>
+            <h2 class="text-cn-dark text-base font-semibold">{title}</h2>
             {#if dismissible}
               <button
                 onclick={dismiss}
-                class="p-1.5 rounded-lg hover:bg-cn-bg transition-colors text-text-muted hover:text-cn-dark"
+                class="hover:bg-cn-bg text-text-muted hover:text-cn-dark rounded-lg p-1.5 transition-colors"
                 aria-label="Fermer"
               >
                 <X size={16} />
@@ -122,12 +122,12 @@
           </div>
         {/if}
 
-        <div class="px-6 py-4 flex-1 overscroll-contain {bodyClass || 'overflow-y-auto'}">
+        <div class="flex-1 overscroll-contain px-6 py-4 {bodyClass || 'overflow-y-auto'}">
           {@render children?.()}
         </div>
 
         {#if footer}
-          <div class="px-6 pb-4 flex justify-end gap-2 shrink-0">
+          <div class="flex shrink-0 justify-end gap-2 px-6 pb-4">
             {@render footer?.()}
           </div>
         {/if}

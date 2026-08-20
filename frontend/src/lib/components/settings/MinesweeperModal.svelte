@@ -605,7 +605,7 @@
   <!-- Compact segmented tab control: Play (game) vs Leaderboard (ranked scores). -->
   <div
     role="tablist"
-    class="shrink-0 mb-2 flex gap-1 rounded-xl border border-white/50 bg-white/45 p-1 dark:border-white/10 dark:bg-black/25"
+    class="mb-2 flex shrink-0 gap-1 rounded-xl border border-white/50 bg-white/45 p-1 dark:border-white/10 dark:bg-black/25"
   >
     <button
       type="button"
@@ -635,16 +635,16 @@
   </div>
 
   {#if activeTab === 'play'}
-    <div class="flex-1 min-h-0 flex flex-col">
+    <div class="flex min-h-0 flex-1 flex-col">
       <!-- HUD: mines left + timer must stay visible at all times, so this row never scrolls away. -->
       <div class="shrink-0">
-        <div class="flex items-center justify-between gap-2 mb-1">
-          <div class="flex items-center gap-3 text-base font-bold text-text-main sm:text-lg">
+        <div class="mb-1 flex items-center justify-between gap-2">
+          <div class="text-text-main flex items-center gap-3 text-base font-bold sm:text-lg">
             <span class="flex items-center gap-1.5">
               <Bomb size={18} class="text-cn-dark" />
               {m.minesweeper_mines_left({ count: remainingMines(board) })}
             </span>
-            <span class="flex items-center gap-1 font-mono text-sm text-text-muted">
+            <span class="text-text-muted flex items-center gap-1 font-mono text-sm">
               <Timer size={16} />
               {m.minesweeper_time({ time: formatDurationMs(elapsedMs) })}
             </span>
@@ -652,22 +652,22 @@
           <button
             type="button"
             onclick={newGame}
-            class="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold bg-cn-yellow/10 text-cn-dark hover:bg-cn-yellow/20 transition-colors"
+            class="bg-cn-yellow/10 text-cn-dark hover:bg-cn-yellow/20 flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors"
           >
             <RotateCcw size={14} strokeWidth={2.5} />
             {m.minesweeper_new_game()}
           </button>
         </div>
 
-        <div class="flex items-center justify-between gap-2 mb-1.5">
-          <p class="text-xs font-semibold text-text-muted truncate">{statusMessage}</p>
+        <div class="mb-1.5 flex items-center justify-between gap-2">
+          <p class="text-text-muted truncate text-xs font-semibold">{statusMessage}</p>
           <div class="flex shrink-0 items-center gap-2">
             <button
               type="button"
               onclick={toggleFlagPrimary}
               aria-pressed={flagPrimary}
               title={m.minesweeper_flag_primary_hint()}
-              class="flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-[0.65rem] font-bold uppercase tracking-wide transition-colors {flagPrimary
+              class="flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-[0.65rem] font-bold tracking-wide uppercase transition-colors {flagPrimary
                 ? 'bg-cn-yellow/20 text-cn-dark'
                 : 'text-text-muted hover:bg-cn-bg'}"
             >
@@ -675,7 +675,7 @@
               {m.minesweeper_flag_primary()}
             </button>
             <span
-              class="text-[0.65rem] font-bold uppercase tracking-wide {rankedMode
+              class="text-[0.65rem] font-bold tracking-wide uppercase {rankedMode
                 ? 'text-cn-yellow'
                 : 'text-text-muted'}"
             >
@@ -688,7 +688,7 @@
       <div
         bind:this={viewportEl}
         role="presentation"
-        class="flex-1 min-h-0 relative overflow-hidden rounded-xl border border-cn-border bg-cn-bg/40"
+        class="border-cn-border bg-cn-bg/40 relative min-h-0 flex-1 overflow-hidden rounded-xl border"
         style="touch-action: none;"
         onwheel={handleWheel}
         onpointerdown={handleViewportPointerDown}
@@ -698,11 +698,11 @@
       >
         <div
           bind:this={layerEl}
-          class="absolute left-0 top-0 w-fit"
+          class="absolute top-0 left-0 w-fit"
           style="transform: translate({panX}px, {panY}px) scale({scale}); transform-origin: 0 0;"
         >
           <div
-            class="grid gap-px w-max [--ms-cell:1.75rem] sm:[--ms-cell:2rem]"
+            class="grid w-max gap-px [--ms-cell:1.75rem] sm:[--ms-cell:2rem]"
             style="grid-template-columns: repeat({board.width}, var(--ms-cell));"
           >
             {#each board.cells as cell, i (i)}
@@ -717,13 +717,13 @@
                 onpointerup={handlePointerRelease}
                 onpointerleave={handlePointerRelease}
                 onpointercancel={handlePointerRelease}
-                class="h-[length:var(--ms-cell)] w-[length:var(--ms-cell)] shrink-0 box-border flex items-center justify-center select-none touch-manipulation rounded-sm border font-mono font-bold text-xs sm:text-sm
+                class="box-border flex h-[length:var(--ms-cell)] w-[length:var(--ms-cell)] shrink-0 touch-manipulation items-center justify-center rounded-sm border font-mono text-xs font-bold select-none sm:text-sm
               {cell.state === 'hidden'
                   ? 'bg-cn-yellow/25 hover:bg-cn-yellow/40 border-cn-border'
                   : cell.state === 'flagged'
                     ? 'bg-cn-yellow/25 hover:bg-cn-yellow/40 border-cn-border'
                     : cell.mine
-                      ? 'bg-red-500/80 border-transparent'
+                      ? 'border-transparent bg-red-500/80'
                       : cell.adjacent === 0
                         ? 'bg-cn-bg/60 border-transparent'
                         : 'bg-cn-bg/80 border-transparent'}
@@ -743,12 +743,12 @@
           </div>
         </div>
 
-        <div class="absolute bottom-2 right-2 flex flex-col gap-1">
+        <div class="absolute right-2 bottom-2 flex flex-col gap-1">
           <button
             type="button"
             onclick={zoomIn}
             aria-label={m.minesweeper_zoom_in()}
-            class="flex items-center justify-center size-8 rounded-lg bg-cn-surface/90 border border-cn-border shadow-sm text-text-main hover:bg-cn-bg transition-colors"
+            class="bg-cn-surface/90 border-cn-border text-text-main hover:bg-cn-bg flex size-8 items-center justify-center rounded-lg border shadow-sm transition-colors"
           >
             <ZoomIn size={15} />
           </button>
@@ -756,7 +756,7 @@
             type="button"
             onclick={zoomOut}
             aria-label={m.minesweeper_zoom_out()}
-            class="flex items-center justify-center size-8 rounded-lg bg-cn-surface/90 border border-cn-border shadow-sm text-text-main hover:bg-cn-bg transition-colors"
+            class="bg-cn-surface/90 border-cn-border text-text-main hover:bg-cn-bg flex size-8 items-center justify-center rounded-lg border shadow-sm transition-colors"
           >
             <ZoomOut size={15} />
           </button>
@@ -764,7 +764,7 @@
             type="button"
             onclick={handleResetView}
             aria-label={m.minesweeper_zoom_reset()}
-            class="flex items-center justify-center size-8 rounded-lg bg-cn-surface/90 border border-cn-border shadow-sm text-text-main hover:bg-cn-bg transition-colors"
+            class="bg-cn-surface/90 border-cn-border text-text-main hover:bg-cn-bg flex size-8 items-center justify-center rounded-lg border shadow-sm transition-colors"
           >
             <Maximize2 size={15} />
           </button>
@@ -779,7 +779,7 @@
             transition:fade={{ duration: 200 }}
           >
             <div
-              class="pointer-events-auto flex flex-col items-center gap-3 rounded-2xl border px-6 py-6 text-center shadow-2xl bg-cn-surface/95 {isWin
+              class="bg-cn-surface/95 pointer-events-auto flex flex-col items-center gap-3 rounded-2xl border px-6 py-6 text-center shadow-2xl {isWin
                 ? 'border-cn-yellow/50 shadow-[0_0_40px_-12px_rgba(246,194,50,0.45)]'
                 : 'border-red-500/40 shadow-[0_0_40px_-12px_rgba(239,68,68,0.35)]'}"
               transition:scaleTransition={{ duration: 280, start: 0.9, easing: backOut }}
@@ -798,21 +798,21 @@
               </p>
               {#if isWin}
                 <p
-                  class="flex items-center gap-2 rounded-xl border border-cn-yellow/40 bg-cn-yellow/15 px-4 py-2 font-mono text-xl font-extrabold tabular-nums text-text-main sm:text-2xl"
+                  class="border-cn-yellow/40 bg-cn-yellow/15 text-text-main flex items-center gap-2 rounded-xl border px-4 py-2 font-mono text-xl font-extrabold tabular-nums sm:text-2xl"
                 >
-                  <Timer size={20} class="shrink-0 text-cn-yellow" strokeWidth={2.5} />
+                  <Timer size={20} class="text-cn-yellow shrink-0" strokeWidth={2.5} />
                   {m.minesweeper_time({
                     time: formatDurationMs(winDurationMs ?? elapsedMs),
                   })}
                 </p>
                 {#if rankedMode}
                   {#if submitPending}
-                    <p class="text-sm font-semibold text-text-muted">
+                    <p class="text-text-muted text-sm font-semibold">
                       {m.minesweeper_rank_pending()}
                     </p>
                   {:else if winRank != null}
                     <p
-                      class="inline-flex items-center gap-1.5 rounded-full border border-cn-yellow/30 bg-cn-yellow/10 px-3 py-1 text-sm font-bold text-cn-dark"
+                      class="border-cn-yellow/30 bg-cn-yellow/10 text-cn-dark inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-sm font-bold"
                     >
                       <Trophy size={14} class="text-cn-yellow" strokeWidth={2.5} />
                       {#if winRanksGained > 0}
@@ -830,7 +830,7 @@
               <button
                 type="button"
                 onclick={newGame}
-                class="mt-1 flex items-center gap-1.5 rounded-lg bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-dark transition-colors hover:bg-cn-yellow-hover"
+                class="bg-cn-yellow text-cn-dark hover:bg-cn-yellow-hover mt-1 flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-bold transition-colors"
               >
                 <RotateCcw size={15} strokeWidth={2.5} />
                 {m.minesweeper_new_game()}
@@ -841,8 +841,8 @@
       </div>
 
       <!-- Compact one-line control/zoom hints + score feedback, kept on the play tab. -->
-      <div class="shrink-0 mt-2 border-t border-cn-border pt-1.5">
-        <p class="truncate text-center text-[11px] text-text-muted">
+      <div class="border-cn-border mt-2 shrink-0 border-t pt-1.5">
+        <p class="text-text-muted truncate text-center text-[11px]">
           <span class="hidden sm:inline">
             {flagPrimary ? m.minesweeper_hint_desktop_flag_primary() : m.minesweeper_hint_desktop()}
           </span>
@@ -865,32 +865,32 @@
     </div>
   {:else}
     <!-- Leaderboard tab: full height, scrollable, roomier rows than the old cramped strip. -->
-    <div class="flex-1 min-h-0 flex flex-col overflow-y-auto">
+    <div class="flex min-h-0 flex-1 flex-col overflow-y-auto">
       {#if personalBestMs !== null}
-        <p class="mb-2 shrink-0 text-sm text-text-muted">
+        <p class="text-text-muted mb-2 shrink-0 text-sm">
           {m.minesweeper_personal_best({ time: formatDurationMs(personalBestMs) })}
         </p>
       {/if}
 
       {#if leaderboardLoading}
-        <p class="text-sm text-text-muted">…</p>
+        <p class="text-text-muted text-sm">…</p>
       {:else if leaderboard.length === 0}
-        <p class="text-sm text-text-muted">{m.minesweeper_empty_leaderboard()}</p>
+        <p class="text-text-muted text-sm">{m.minesweeper_empty_leaderboard()}</p>
       {:else}
         <ol class="space-y-1.5">
           {#each leaderboard as entry (entry.userId)}
             <li
-              class="flex items-center justify-between gap-3 rounded-xl border border-cn-border bg-cn-bg/60 px-3 py-2.5"
+              class="border-cn-border bg-cn-bg/60 flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5"
             >
               <span class="flex items-center gap-2.5 truncate">
-                <span class="w-7 shrink-0 font-mono text-sm font-bold text-text-muted">
+                <span class="text-text-muted w-7 shrink-0 font-mono text-sm font-bold">
                   #{entry.rank}
                 </span>
-                <span class="truncate text-sm font-semibold text-text-main">
+                <span class="text-text-main truncate text-sm font-semibold">
                   {entry.displayName}
                 </span>
               </span>
-              <span class="shrink-0 font-mono text-sm font-semibold text-cn-dark">
+              <span class="text-cn-dark shrink-0 font-mono text-sm font-semibold">
                 {formatDurationMs(entry.durationMs)}
               </span>
             </li>

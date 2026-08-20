@@ -96,29 +96,29 @@
   }
 </script>
 
-<div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-5 shadow-sm">
+<div class="border-cn-border space-y-5 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm">
   <div>
-    <h2 class="text-lg font-bold text-text-main tracking-tight flex items-center gap-2">
+    <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
       <ClipboardList size={20} />
       {m.asso_forms_title()}
     </h2>
-    <p class="text-sm text-text-muted mt-1">
+    <p class="text-text-muted mt-1 text-sm">
       {m.asso_forms_subtitle()}
     </p>
   </div>
 
   {#if hasPaidForms && !stripePaymentsReady}
     <div
-      class="rounded-xl border border-amber-warn/30 bg-amber-warn/10 px-4 py-3 text-sm text-amber-warn flex items-start gap-2.5"
+      class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn flex items-start gap-2.5 rounded-xl border px-4 py-3 text-sm"
     >
-      <AlertTriangle size={15} class="shrink-0 mt-0.5" />
+      <AlertTriangle size={15} class="mt-0.5 shrink-0" />
       <span>
         {#if canManageStripeConnect}
           {m.asso_forms_stripe_missing_can_manage_prefix()}<strong
             >{m.asso_forms_stripe_missing_strong()}</strong
           >{m.asso_forms_stripe_missing_suffix()}<button
             type="button"
-            class="underline font-semibold hover:no-underline"
+            class="font-semibold underline hover:no-underline"
             onclick={onGoToPayments}>{m.asso_forms_stripe_configure_link()}</button
           >.
         {:else}
@@ -129,7 +129,7 @@
   {/if}
 
   {#if formsError}
-    <div class="rounded-xl border border-red-err/30 bg-red-err/10 text-red-err px-4 py-3 text-sm">
+    <div class="border-red-err/30 bg-red-err/10 text-red-err rounded-xl border px-4 py-3 text-sm">
       {formsError}
     </div>
   {/if}
@@ -137,29 +137,29 @@
   {#if formsLoading}
     <div class="flex justify-center py-8">
       <div
-        class="h-6 w-6 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+        class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if forms.length === 0}
-    <p class="text-sm text-text-muted text-center py-8">{m.asso_forms_no_forms()}</p>
+    <p class="text-text-muted py-8 text-center text-sm">{m.asso_forms_no_forms()}</p>
   {:else}
     <ul class="space-y-4">
       {#each forms as form (form.id)}
-        <li class="rounded-xl border border-cn-border/70 bg-cn-bg/40 px-4 py-4 space-y-3">
-          <div class="flex items-start justify-between gap-2 flex-wrap">
+        <li class="border-cn-border/70 bg-cn-bg/40 space-y-3 rounded-xl border px-4 py-4">
+          <div class="flex flex-wrap items-start justify-between gap-2">
             <div>
-              <p class="font-semibold text-sm text-text-main">{form.title}</p>
+              <p class="text-text-main text-sm font-semibold">{form.title}</p>
               {#if form.description}
-                <p class="text-xs text-text-muted mt-0.5 line-clamp-2">{form.description}</p>
+                <p class="text-text-muted mt-0.5 line-clamp-2 text-xs">{form.description}</p>
               {/if}
-              <p class="text-xs text-text-muted mt-1 flex items-center gap-1.5 flex-wrap">
+              <p class="text-text-muted mt-1 flex flex-wrap items-center gap-1.5 text-xs">
                 {form.basePrice > 0
                   ? `${(form.basePrice / 100).toFixed(2)} €`
                   : m.asso_forms_price_free()}
                 {form.allowCashPayment ? ` · ${m.asso_forms_cash_accepted()}` : ''}
                 {#if form.basePrice > 0 && !stripePaymentsReady}
                   <span
-                    class="inline-flex items-center gap-1 text-amber-warn font-medium"
+                    class="text-amber-warn inline-flex items-center gap-1 font-medium"
                     title="Stripe Connect not configured - online payments inactive"
                   >
                     <AlertTriangle size={11} />
@@ -170,44 +170,44 @@
             </div>
             <a
               href="/forms/{form.id}"
-              class="text-xs font-semibold text-cn-yellow hover:underline shrink-0"
+              class="text-cn-yellow shrink-0 text-xs font-semibold hover:underline"
               target="_blank"
               rel="noopener noreferrer">{m.asso_forms_view_link()}</a
             >
           </div>
 
           {#if pendingCash[form.id]?.length}
-            <div class="border-t border-cn-border/50 pt-3 space-y-2">
-              <p class="text-xs font-bold text-amber-warn flex items-center gap-1.5">
+            <div class="border-cn-border/50 space-y-2 border-t pt-3">
+              <p class="text-amber-warn flex items-center gap-1.5 text-xs font-bold">
                 <AlertTriangle size={13} />
                 {m.asso_forms_pending_cash_label({ count: pendingCash[form.id].length })}
               </p>
               <ul class="space-y-2">
                 {#each pendingCash[form.id] as sub (sub.id)}
                   <li
-                    class="flex items-center gap-3 rounded-xl border border-amber-warn/30 bg-amber-warn/10 px-3 py-2"
+                    class="border-amber-warn/30 bg-amber-warn/10 flex items-center gap-3 rounded-xl border px-3 py-2"
                   >
                     <div class="min-w-0 flex-1">
-                      <p class="text-xs font-semibold text-text-main truncate">
+                      <p class="text-text-main truncate text-xs font-semibold">
                         {getUserDisplayNameSync(sub.userId)}
                       </p>
-                      <p class="text-xs text-text-muted">
+                      <p class="text-text-muted text-xs">
                         {(sub.totalPaid / 100).toFixed(2)} € · {new Date(
                           sub.createdAt
                         ).toLocaleDateString(getLocale() === 'en' ? 'en-US' : 'fr-FR')}
                       </p>
                     </div>
-                    <div class="flex items-center gap-2 shrink-0">
+                    <div class="flex shrink-0 items-center gap-2">
                       <button
                         type="button"
                         onclick={() => validateCash(form.id, sub.id)}
-                        class="rounded-lg border border-green-ok/40 bg-green-ok/10 px-3 py-1.5 text-xs font-semibold text-green-ok hover:bg-green-ok/20 transition-colors"
+                        class="border-green-ok/40 bg-green-ok/10 text-green-ok hover:bg-green-ok/20 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors"
                         >{m.common_validate_button()}</button
                       >
                       <button
                         type="button"
                         onclick={() => cancelCash(form.id, sub.id)}
-                        class="rounded-lg border border-red-err/30 bg-red-err/10 px-3 py-1.5 text-xs font-semibold text-red-err hover:bg-red-err/20 transition-colors"
+                        class="border-red-err/30 bg-red-err/10 text-red-err hover:bg-red-err/20 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors"
                         >{m.common_cancel_button()}</button
                       >
                     </div>
@@ -216,7 +216,7 @@
               </ul>
             </div>
           {:else if form.allowCashPayment}
-            <p class="text-xs text-text-muted border-t border-cn-border/50 pt-3">
+            <p class="text-text-muted border-cn-border/50 border-t pt-3 text-xs">
               {m.asso_forms_no_pending_cash()}
             </p>
           {/if}

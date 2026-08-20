@@ -16,18 +16,18 @@
   the logo says at a glance that the link stays in the app.
 -->
 <div
-  class="shrink-0 relative overflow-hidden rounded-xl border border-black/5 dark:border-white/10 flex items-center justify-center w-16 h-16 sm:w-[4.5rem] sm:h-[4.5rem] bg-gradient-to-br from-cn-ink via-[#1e2848] to-amber-700/70"
+  class="from-cn-ink relative flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-black/5 bg-gradient-to-br via-[#1e2848] to-amber-700/70 sm:h-[4.5rem] sm:w-[4.5rem] dark:border-white/10"
 >
   {#if loading}
     <div
-      class="absolute inset-0 bg-black/15 dark:bg-white/10 animate-pulse"
+      class="absolute inset-0 animate-pulse bg-black/15 dark:bg-white/10"
       aria-hidden="true"
     ></div>
   {:else if preview?.imageUrl}
     <img
       src={preview.imageUrl}
       alt=""
-      class="absolute inset-0 w-full h-full object-cover"
+      class="absolute inset-0 h-full w-full object-cover"
       loading="lazy"
     />
     <div
@@ -38,7 +38,7 @@
     <img
       src="/favicon.svg"
       alt=""
-      class="relative z-[1] w-9 h-9 sm:w-10 sm:h-10 object-contain pointer-events-none select-none"
+      class="pointer-events-none relative z-[1] h-9 w-9 object-contain select-none sm:h-10 sm:w-10"
       aria-hidden="true"
     />
   {/if}

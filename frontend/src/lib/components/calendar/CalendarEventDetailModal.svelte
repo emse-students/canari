@@ -79,7 +79,7 @@
   {#if event}
     <div class="space-y-4 text-sm">
       {#if identityLinks.length > 0}
-        <p class="text-xs font-semibold uppercase tracking-wide text-cn-dark/80">
+        <p class="text-cn-dark/80 text-xs font-semibold tracking-wide uppercase">
           {#each identityLinks as link, i (link.slug)}
             {#if i > 0}<span class="text-text-muted"> · </span>{/if}
             <a href="/associations/{encodeURIComponent(link.slug)}" class="hover:underline">
@@ -98,12 +98,12 @@
         <img
           src={associationLogoSrc(event.imageUrl) ?? ''}
           alt=""
-          class="w-full rounded-xl object-cover max-h-52 border border-cn-border/40"
+          class="border-cn-border/40 max-h-52 w-full rounded-xl border object-cover"
         />
       {/if}
 
       {#if event.description?.trim()}
-        <div class="rounded-xl border border-cn-border/50 bg-cn-bg/30 p-3">
+        <div class="border-cn-border/50 bg-cn-bg/30 rounded-xl border p-3">
           <ProfileBioMarkdown source={event.description} />
         </div>
       {/if}
@@ -111,14 +111,14 @@
       {#if event.linkedFormId}
         <a
           href="/forms/{encodeURIComponent(event.linkedFormId)}"
-          class="inline-flex items-center gap-2 rounded-xl border border-cn-border bg-cn-bg/50 px-3 py-2 text-xs font-semibold text-text-main hover:border-cn-yellow/50 transition-colors"
+          class="border-cn-border bg-cn-bg/50 text-text-main hover:border-cn-yellow/50 inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold transition-colors"
         >
           <ClipboardList size={14} />
           {m.calendar_event_linked_form()}
         </a>
       {/if}
 
-      <div class="flex flex-wrap items-center gap-2 pt-2 border-t border-cn-border/60">
+      <div class="border-cn-border/60 flex flex-wrap items-center gap-2 border-t pt-2">
         <AddEventToCalendarButton event={toAgendaExport(event)} />
         {#if canEdit && onEdit}
           <button
@@ -127,7 +127,7 @@
               onEdit(event);
               onClose();
             }}
-            class="inline-flex items-center gap-1.5 rounded-xl border border-cn-border px-3 py-2 text-xs font-semibold text-text-main hover:bg-cn-bg transition-colors"
+            class="border-cn-border text-text-main hover:bg-cn-bg inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold transition-colors"
           >
             <Pencil size={14} />
             {m.common_edit_label()}
@@ -137,7 +137,7 @@
           <button
             type="button"
             onclick={() => onDelete?.(event.id)}
-            class="inline-flex items-center gap-1.5 rounded-xl border border-red-err/30 px-3 py-2 text-xs font-semibold text-red-err hover:bg-red-err/10 transition-colors"
+            class="border-red-err/30 text-red-err hover:bg-red-err/10 inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold transition-colors"
           >
             <Trash2 size={14} />
             {m.common_delete_button()}

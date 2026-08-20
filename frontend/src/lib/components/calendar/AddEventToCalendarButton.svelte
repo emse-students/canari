@@ -45,7 +45,7 @@
 <button
   type="button"
   onclick={handleClick}
-  class="shrink-0 p-1.5 rounded-lg text-text-muted hover:text-cn-dark hover:bg-cn-bg/60 transition-colors"
+  class="text-text-muted hover:text-cn-dark hover:bg-cn-bg/60 shrink-0 rounded-lg p-1.5 transition-colors"
   title={m.calendar_add_title()}
 >
   <CalendarPlus size={16} />
@@ -60,9 +60,9 @@
           downloadIcs();
           showModal = false;
         }}
-        class="flex items-center gap-3 rounded-xl border border-cn-border px-4 py-3 text-sm font-medium text-text-main hover:bg-cn-bg transition-colors"
+        class="border-cn-border text-text-main hover:bg-cn-bg flex items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium transition-colors"
       >
-        <Download size={18} class="shrink-0 text-text-muted" />
+        <Download size={18} class="text-text-muted shrink-0" />
         {isMac ? 'Apple Calendar' : 'iCalendar (Outlook, Thunderbird…)'}
       </button>
       <a
@@ -70,9 +70,9 @@
         target="_blank"
         rel="noopener noreferrer"
         onclick={() => (showModal = false)}
-        class="flex items-center gap-3 rounded-xl border border-cn-border px-4 py-3 text-sm font-medium text-text-main hover:bg-cn-bg transition-colors"
+        class="border-cn-border text-text-main hover:bg-cn-bg flex items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium transition-colors"
       >
-        <ExternalLink size={18} class="shrink-0 text-text-muted" />
+        <ExternalLink size={18} class="text-text-muted shrink-0" />
         Google Calendar
       </a>
     </div>

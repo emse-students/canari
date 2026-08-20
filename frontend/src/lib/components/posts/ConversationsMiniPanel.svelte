@@ -158,23 +158,23 @@
 </script>
 
 <aside
-  class="hidden xl:flex flex-col w-72 h-full border border-black/5 dark:border-white/10 bg-white/60 dark:bg-black/20 backdrop-blur-2xl overflow-hidden rounded-[1.5rem] shadow-sm transition-all duration-300"
+  class="hidden h-full w-72 flex-col overflow-hidden rounded-[1.5rem] border border-black/5 bg-white/60 shadow-sm backdrop-blur-2xl transition-all duration-300 xl:flex dark:border-white/10 dark:bg-black/20"
 >
   <!-- Header. -->
   <div
-    class="flex items-center justify-between px-5 py-4 border-b border-black/5 dark:border-white/10 flex-shrink-0 bg-white/40 dark:bg-black/10"
+    class="flex flex-shrink-0 items-center justify-between border-b border-black/5 bg-white/40 px-5 py-4 dark:border-white/10 dark:bg-black/10"
   >
     <div class="flex items-center gap-2.5">
-      <div class="p-1.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-lg">
+      <div class="rounded-lg bg-amber-500/10 p-1.5 text-amber-600 dark:text-amber-400">
         <MessageCircle size={16} strokeWidth={2.5} />
       </div>
-      <span class="text-[0.95rem] font-extrabold text-text-main tracking-wide"
+      <span class="text-text-main text-[0.95rem] font-extrabold tracking-wide"
         >{m.post_conversations_panel_title()}</span
       >
     </div>
     <a
       href="/chat"
-      class="text-[0.7rem] font-bold text-amber-600 dark:text-amber-500 hover:text-amber-500 dark:hover:text-amber-400 transition-colors flex items-center gap-0.5 uppercase tracking-wider outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded"
+      class="flex items-center gap-0.5 rounded text-[0.7rem] font-bold tracking-wider text-amber-600 uppercase transition-colors outline-none hover:text-amber-500 focus-visible:ring-2 focus-visible:ring-amber-500 dark:text-amber-500 dark:hover:text-amber-400"
     >
       {m.post_conversations_see_all_label()}
       <ChevronRight size={14} strokeWidth={2.5} />
@@ -182,32 +182,32 @@
   </div>
 
   <!-- Conversation list. -->
-  <div class="flex-1 overflow-y-auto py-2 custom-scrollbar">
+  <div class="custom-scrollbar flex-1 overflow-y-auto py-2">
     {#if isLoading}
-      <div class="flex flex-col justify-center items-center py-10 gap-3 text-text-muted">
+      <div class="text-text-muted flex flex-col items-center justify-center gap-3 py-10">
         <LoaderCircle size={24} class="animate-spin text-amber-500" />
         <span class="text-xs font-semibold">{m.common_loading_label()}</span>
       </div>
     {:else if displayItems.length === 0}
-      <div class="text-center py-10 px-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+      <div class="animate-in fade-in slide-in-from-bottom-2 px-4 py-10 text-center duration-300">
         <div
-          class="w-12 h-12 rounded-2xl bg-black/5 dark:bg-white/5 flex items-center justify-center mx-auto mb-3 text-text-muted opacity-60 shadow-inner"
+          class="text-text-muted mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-black/5 opacity-60 shadow-inner dark:bg-white/5"
         >
           <MessageCircle size={24} strokeWidth={2} />
         </div>
-        <p class="text-sm font-bold text-text-main mb-1">{m.post_conversations_empty_title()}</p>
-        <p class="text-xs font-medium text-text-muted px-2 mb-4 leading-relaxed">
+        <p class="text-text-main mb-1 text-sm font-bold">{m.post_conversations_empty_title()}</p>
+        <p class="text-text-muted mb-4 px-2 text-xs leading-relaxed font-medium">
           {m.post_conversations_empty_description()}
         </p>
         <a
           href="/chat"
-          class="inline-flex items-center justify-center px-4 py-2.5 rounded-xl bg-amber-500/10 text-amber-700 dark:text-amber-400 text-xs font-bold hover:bg-amber-500/20 active:scale-95 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+          class="inline-flex items-center justify-center rounded-xl bg-amber-500/10 px-4 py-2.5 text-xs font-bold text-amber-700 transition-all outline-none hover:bg-amber-500/20 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 dark:text-amber-400"
         >
           {m.chat_new_discussion_label()}
         </a>
       </div>
     {:else}
-      <div class="flex flex-col px-2 animate-in fade-in duration-300">
+      <div class="animate-in fade-in flex flex-col px-2 duration-300">
         {#each displayItems as item (item.meta.id)}
           <ConversationTile
             contactName={item.contactId}
@@ -228,13 +228,13 @@
 
   <!-- Footer -->
   <div
-    class="px-4 py-4 border-t border-black/5 dark:border-white/10 flex-shrink-0 bg-white/40 dark:bg-black/10 backdrop-blur-md"
+    class="flex-shrink-0 border-t border-black/5 bg-white/40 px-4 py-4 backdrop-blur-md dark:border-white/10 dark:bg-black/10"
   >
     <a
       href="/chat"
-      class="flex items-center justify-center gap-2 w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-[0.98] transition-all text-cn-ink text-[0.85rem] font-extrabold shadow-md shadow-amber-500/20 hover:shadow-lg hover:shadow-amber-500/30 outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50"
+      class="text-cn-ink flex w-full items-center justify-center gap-2 rounded-xl bg-amber-500 py-3 text-[0.85rem] font-extrabold shadow-md shadow-amber-500/20 transition-all outline-none hover:bg-amber-400 hover:shadow-lg hover:shadow-amber-500/30 focus-visible:ring-4 focus-visible:ring-amber-500/50 active:scale-[0.98]"
     >
-      <MessageCircle size={18} strokeWidth={2.5} class="ml-0.5 mt-0.5" />
+      <MessageCircle size={18} strokeWidth={2.5} class="mt-0.5 ml-0.5" />
       {m.post_conversations_open_messaging_label()}
     </a>
   </div>

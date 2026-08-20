@@ -81,11 +81,11 @@
   }
 </script>
 
-<div class="px-4 py-6 sm:px-6 max-w-3xl mx-auto space-y-8">
+<div class="mx-auto max-w-3xl space-y-8 px-4 py-6 sm:px-6">
   <div class="flex items-center gap-3">
     <a
       href="/profile"
-      class="inline-flex items-center gap-1 text-sm text-text-muted hover:text-text-main transition-colors"
+      class="text-text-muted hover:text-text-main inline-flex items-center gap-1 text-sm transition-colors"
     >
       <ArrowLeft size={16} />
       {m.purchases_back_profile()}
@@ -93,44 +93,44 @@
   </div>
 
   <div class="flex items-center gap-3">
-    <ShoppingBag class="h-7 w-7 text-cn-accent shrink-0" />
+    <ShoppingBag class="text-cn-accent h-7 w-7 shrink-0" />
     <div>
-      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">{m.purchases_heading()}</h1>
-      <p class="text-sm text-text-muted mt-0.5">
+      <h1 class="text-text-main text-2xl font-extrabold tracking-tight">{m.purchases_heading()}</h1>
+      <p class="text-text-muted mt-0.5 text-sm">
         {m.purchases_subtitle()}
       </p>
     </div>
   </div>
 
   {#if !isLoggedIn}
-    <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-8 text-center">
+    <div class="border-cn-border rounded-2xl border bg-(--cn-surface) p-8 text-center">
       <p class="text-text-muted text-sm">{m.purchases_login_required()}</p>
     </div>
   {:else if loading}
     <div class="flex justify-center py-16">
       <div
-        class="h-8 w-8 animate-spin rounded-full border-4 border-cn-border border-t-cn-accent"
+        class="border-cn-border border-t-cn-accent h-8 w-8 animate-spin rounded-full border-4"
       ></div>
     </div>
   {:else if error}
-    <p class="text-red-500 text-sm">{error}</p>
+    <p class="text-sm text-red-500">{error}</p>
   {:else if data}
     <!-- Active cotisation tags -->
     {#if data.activeTags.length > 0}
       <section class="space-y-3">
-        <h2 class="text-base font-bold text-text-main flex items-center gap-2">
+        <h2 class="text-text-main flex items-center gap-2 text-base font-bold">
           <Tag size={18} class="text-cn-accent" />
           {m.purchases_active_tags_heading()}
         </h2>
         <ul class="space-y-2">
           {#each data.activeTags as tag (tag.id)}
             <li
-              class="flex items-center gap-3 rounded-2xl border border-cn-border bg-[var(--cn-surface)] px-5 py-3"
+              class="border-cn-border flex items-center gap-3 rounded-2xl border bg-(--cn-surface) px-5 py-3"
             >
               <CotisationTagRow {tag}>
                 {#snippet trailing()}
                   <span
-                    class="shrink-0 rounded-full bg-green-ok/15 text-green-ok px-3 py-1 text-xs font-bold"
+                    class="bg-green-ok/15 text-green-ok shrink-0 rounded-full px-3 py-1 text-xs font-bold"
                   >
                     {m.purchases_tag_active_badge()}
                   </span>
@@ -144,17 +144,17 @@
 
     <!-- Purchase history -->
     <section class="space-y-3">
-      <h2 class="text-base font-bold text-text-main flex items-center gap-2">
+      <h2 class="text-text-main flex items-center gap-2 text-base font-bold">
         <ShoppingBag size={18} class="text-cn-accent" />
         {m.purchases_history_heading({ count: data.purchases.length })}
       </h2>
 
       {#if data.purchases.length === 0}
-        <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-10 text-center">
+        <div class="border-cn-border rounded-2xl border bg-(--cn-surface) p-10 text-center">
           <p class="text-text-muted text-sm">{m.purchases_empty_title()}</p>
           <a
             href="/shop"
-            class="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-cn-accent hover:underline"
+            class="text-cn-accent mt-3 inline-flex items-center gap-2 text-sm font-semibold hover:underline"
           >
             {m.purchases_explore_shop()}
           </a>
@@ -163,11 +163,11 @@
         <ul class="space-y-2">
           {#each data.purchases as purchase (purchase.id)}
             <li
-              class="flex items-center gap-3 rounded-2xl border border-cn-border bg-[var(--cn-surface)] px-5 py-4"
+              class="border-cn-border flex items-center gap-3 rounded-2xl border bg-(--cn-surface) px-5 py-4"
             >
               <div class="min-w-0 flex-1">
-                <div class="flex items-center gap-2 flex-wrap">
-                  <p class="font-semibold text-sm text-text-main">{purchase.productName}</p>
+                <div class="flex flex-wrap items-center gap-2">
+                  <p class="text-text-main text-sm font-semibold">{purchase.productName}</p>
                   <span
                     class="rounded-full px-2 py-0.5 text-xs font-semibold {statusClass(
                       purchase.status
@@ -176,12 +176,12 @@
                     {statusLabel(purchase.status)}
                   </span>
                   <span
-                    class="rounded-full bg-cn-surface-alt text-text-muted px-2 py-0.5 text-xs font-semibold"
+                    class="bg-cn-surface-alt text-text-muted rounded-full px-2 py-0.5 text-xs font-semibold"
                   >
                     {sourceLabel(purchase.source)}
                   </span>
                 </div>
-                <p class="text-xs text-text-muted mt-1">
+                <p class="text-text-muted mt-1 text-xs">
                   {new Date(purchase.paidAt).toLocaleDateString(
                     getLocale() === 'en' ? 'en-US' : 'fr-FR',
                     {
@@ -196,7 +196,7 @@
                     : m.purchases_payment_card()}
                 </p>
               </div>
-              <span class="shrink-0 font-bold text-sm text-text-main">
+              <span class="text-text-main shrink-0 text-sm font-bold">
                 {formatAmount(purchase.amountCents)}
               </span>
             </li>

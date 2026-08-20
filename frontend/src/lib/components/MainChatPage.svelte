@@ -853,13 +853,13 @@
       <svelte:boundary onerror={(e) => appendLog(`[UI] ChatArea error recovered: ${e}`)}>
         {#snippet failed(_error, reset)}
           <div
-            class="flex flex-1 min-h-0 flex-col items-center justify-center gap-4 p-8 text-center"
+            class="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 p-8 text-center"
           >
-            <p class="text-sm text-text-muted">{m.chat_area_error_message()}</p>
+            <p class="text-text-muted text-sm">{m.chat_area_error_message()}</p>
             <button
               type="button"
               onclick={reset}
-              class="px-4 py-2 rounded-xl bg-amber-500 text-white text-sm font-semibold"
+              class="rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold text-white"
             >
               {m.common_retry_button()}
             </button>
@@ -973,7 +973,7 @@
             onclick={convs.closeChannelMembersDrawer}
           ></button>
           <div
-            class="fixed right-0 top-0 bottom-0 z-50 w-[90vw] max-w-sm border-l border-cn-border bg-[color-mix(in_srgb,var(--cn-surface)_90%,white)] shadow-2xl xl:hidden"
+            class="border-cn-border fixed top-0 right-0 bottom-0 z-50 w-[90vw] max-w-sm border-l bg-[color-mix(in_srgb,var(--cn-surface)_90%,white)] shadow-2xl xl:hidden"
           >
             <ChannelMembersSidebar
               mode="mobile"

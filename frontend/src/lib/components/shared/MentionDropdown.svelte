@@ -13,7 +13,7 @@
 
 {#if open && suggestions.length > 0}
   <ul
-    class="absolute bottom-full mb-1 left-0 right-0 z-50 bg-white/95 dark:bg-gray-900/95 border border-black/10 dark:border-white/10 rounded-xl shadow-xl max-h-48 overflow-auto backdrop-blur-sm"
+    class="absolute right-0 bottom-full left-0 z-50 mb-1 max-h-48 overflow-auto rounded-xl border border-black/10 bg-white/95 shadow-xl backdrop-blur-sm dark:border-white/10 dark:bg-gray-900/95"
   >
     {#each suggestions as user, i (user.id)}
       <li>
@@ -28,8 +28,8 @@
             onSelect(user);
           }}
         >
-          <span class="font-bold text-amber-600 dark:text-amber-400 mr-0.5">@</span><span
-            class="font-medium text-text-main">{user.displayName || user.id}</span
+          <span class="mr-0.5 font-bold text-amber-600 dark:text-amber-400">@</span><span
+            class="text-text-main font-medium">{user.displayName || user.id}</span
           >
         </button>
       </li>

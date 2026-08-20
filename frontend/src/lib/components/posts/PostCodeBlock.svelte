@@ -30,11 +30,11 @@
 </script>
 
 <div
-  class="post-code-block group relative my-3 overflow-hidden rounded-xl border border-cn-border/70 bg-black/[0.03] dark:bg-white/[0.05]"
+  class="post-code-block group border-cn-border/70 relative my-3 overflow-hidden rounded-xl border bg-black/[0.03] dark:bg-white/[0.05]"
 >
   {#if label}
     <span
-      class="absolute right-2.5 top-2 z-10 rounded-md bg-black/5 px-1.5 py-0.5 font-mono text-[0.62rem] font-semibold uppercase tracking-wide text-text-muted dark:bg-white/10"
+      class="text-text-muted absolute top-2 right-2.5 z-10 rounded-md bg-black/5 px-1.5 py-0.5 font-mono text-[0.62rem] font-semibold tracking-wide uppercase dark:bg-white/10"
     >
       {label}
     </span>

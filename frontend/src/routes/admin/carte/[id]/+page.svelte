@@ -384,7 +384,7 @@
   <div class="space-y-6">
     <a
       href="/admin/carte"
-      class="text-sm text-text-muted hover:text-text-main transition-colors inline-flex items-center gap-1"
+      class="text-text-muted hover:text-text-main inline-flex items-center gap-1 text-sm transition-colors"
     >
       <ArrowLeft size={14} />
       {m.carte_editor_back()}
@@ -393,7 +393,7 @@
     {#if loading}
       <div class="flex justify-center py-16">
         <div
-          class="h-8 w-8 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+          class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
         ></div>
       </div>
     {:else if error && !project}
@@ -410,18 +410,18 @@
               if (e.key === 'Escape') cancelRename();
             }}
             maxlength={120}
-            class="text-lg font-extrabold text-text-main bg-transparent border-b-2 border-cn-yellow outline-none px-0 py-0"
+            class="text-text-main border-cn-yellow border-b-2 bg-transparent px-0 py-0 text-lg font-extrabold outline-none"
             style="min-width:120px;max-width:400px;width:{Math.max(120, editedName.length * 10)}px;"
           />
         {:else}
           <button
             type="button"
-            class="group flex items-center gap-2 text-lg font-extrabold text-text-main hover:text-cn-yellow transition-colors"
+            class="group text-text-main hover:text-cn-yellow flex items-center gap-2 text-lg font-extrabold transition-colors"
             onclick={startRenamingName}
             title="Renommer le projet"
           >
             {project.name}
-            <Pencil size={14} class="opacity-0 group-hover:opacity-60 transition-opacity" />
+            <Pencil size={14} class="opacity-0 transition-opacity group-hover:opacity-60" />
           </button>
         {/if}
         <div class="flex items-center gap-2">
@@ -429,7 +429,7 @@
             type="button"
             onclick={handleSave}
             disabled={saving}
-            class="inline-flex items-center gap-2 rounded-xl border border-cn-border px-4 py-2 text-sm font-bold text-text-main hover:bg-cn-bg disabled:opacity-50"
+            class="border-cn-border text-text-main hover:bg-cn-bg inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold disabled:opacity-50"
           >
             {#if saved}
               <Check size={16} />
@@ -445,7 +445,7 @@
             disabled={publishing}
             title={isPublished ? m.carte_unpublish_hint() : m.carte_publish_hint()}
             class="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold disabled:opacity-50 {isPublished
-              ? 'border-green-600/40 bg-green-600/10 text-green-700 dark:text-green-400 hover:bg-green-600/20'
+              ? 'border-green-600/40 bg-green-600/10 text-green-700 hover:bg-green-600/20 dark:text-green-400'
               : 'border-cn-border text-text-main hover:bg-cn-bg'}"
           >
             {#if isPublished}
@@ -460,7 +460,7 @@
             type="button"
             onclick={handleExport}
             disabled={exporting}
-            class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
+            class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
           >
             <Download size={16} />
             {exporting ? m.carte_exporting_label() : m.carte_export_button()}
@@ -474,7 +474,7 @@
 
       <div
         class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px] {isFullPage
-          ? 'fixed inset-0 z-50 overflow-auto bg-cn-bg p-5'
+          ? 'bg-cn-bg fixed inset-0 z-50 overflow-auto p-5'
           : ''}"
       >
         <!-- Poster preview column: a zoom toolbar above a scrollable, fit-height stage. -->
@@ -484,14 +484,14 @@
               type="button"
               onclick={() => zoomBy(-0.25)}
               aria-label={m.carte_zoom_out()}
-              class="inline-flex items-center justify-center rounded-lg border border-cn-border p-1.5 text-text-muted hover:text-text-main hover:bg-cn-bg"
+              class="border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg inline-flex items-center justify-center rounded-lg border p-1.5"
             >
               <ZoomOut size={15} />
             </button>
             <button
               type="button"
               onclick={() => (zoom = 1)}
-              class="min-w-[3.5rem] rounded-lg border border-cn-border px-2 py-1 text-xs font-semibold text-text-muted hover:text-text-main hover:bg-cn-bg"
+              class="border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg min-w-[3.5rem] rounded-lg border px-2 py-1 text-xs font-semibold"
             >
               {Math.round(zoom * 100)}%
             </button>
@@ -499,7 +499,7 @@
               type="button"
               onclick={() => zoomBy(0.25)}
               aria-label={m.carte_zoom_in()}
-              class="inline-flex items-center justify-center rounded-lg border border-cn-border p-1.5 text-text-muted hover:text-text-main hover:bg-cn-bg"
+              class="border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg inline-flex items-center justify-center rounded-lg border p-1.5"
             >
               <ZoomIn size={15} />
             </button>
@@ -508,7 +508,7 @@
                scrolls; the inner (un-scaled) element is the exact node captured for PDF export. -->
           <div
             bind:clientWidth={previewWidth}
-            class="overflow-auto rounded-2xl border border-cn-border"
+            class="border-cn-border overflow-auto rounded-2xl border"
             style:height="{previewHeight}px"
           >
             <div style:width="{1600 * viewScale}px" style:height="{STAGE_HEIGHT * viewScale}px">
@@ -544,15 +544,15 @@
 
         <!-- Settings + per-bubble property panel -->
         <div class="space-y-4">
-          <section class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-4 space-y-4">
+          <section class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface) p-4">
             <div class="flex items-center justify-between gap-2">
-              <h3 class="text-sm font-bold text-text-main">
+              <h3 class="text-text-main text-sm font-bold">
                 {m.carte_settings_heading()}
               </h3>
               <button
                 type="button"
                 onclick={toggleFullPage}
-                class="inline-flex items-center gap-1.5 rounded-lg border border-cn-border px-2.5 py-1 text-xs font-semibold text-text-muted hover:text-text-main hover:bg-cn-bg"
+                class="border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold"
               >
                 {#if isFullPage}
                   <Minimize size={14} />
@@ -565,11 +565,11 @@
             </div>
 
             <div class="flex flex-wrap items-center gap-3">
-              <span class="block text-xs font-semibold text-text-muted"
+              <span class="text-text-muted block text-xs font-semibold"
                 >{m.carte_background_label()}</span
               >
               <label
-                class="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-cn-border px-3 py-1.5 text-sm font-semibold text-text-main hover:bg-cn-bg"
+                class="border-cn-border text-text-main hover:bg-cn-bg inline-flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-1.5 text-sm font-semibold"
               >
                 <ImagePlus size={15} />
                 {m.carte_background_upload()}
@@ -579,12 +579,12 @@
                 <button
                   type="button"
                   onclick={() => (bgDataUrl = null)}
-                  class="inline-flex items-center gap-1.5 rounded-xl border border-cn-border px-3 py-1.5 text-sm font-semibold text-text-muted hover:text-text-main"
+                  class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-sm font-semibold"
                 >
                   <X size={15} />
                   {m.carte_background_clear()}
                 </button>
-                <label class="inline-flex items-center gap-2 text-xs text-text-muted">
+                <label class="text-text-muted inline-flex items-center gap-2 text-xs">
                   {m.carte_scrim_label()}
                   <input
                     type="range"
@@ -597,29 +597,29 @@
               {/if}
             </div>
 
-            <label class="inline-flex items-center gap-2 text-xs font-semibold text-text-muted">
+            <label class="text-text-muted inline-flex items-center gap-2 text-xs font-semibold">
               <input type="checkbox" bind:checked={directoryVisible} class="accent-cn-yellow" />
               {m.carte_directory_toggle()}
             </label>
 
-            <div class="flex items-center gap-2 text-xs font-semibold text-text-muted">
+            <div class="text-text-muted flex items-center gap-2 text-xs font-semibold">
               <span>{m.carte_title_color_label()}</span>
               <ColorPicker bind:value={titleColor} label={m.carte_title_color_label()} />
             </div>
 
-            <p class="text-xs text-text-muted">{m.carte_editor_hint()}</p>
-            <p class="text-xs text-text-muted">{m.carte_generated_note()}</p>
+            <p class="text-text-muted text-xs">{m.carte_editor_hint()}</p>
+            <p class="text-text-muted text-xs">{m.carte_generated_note()}</p>
           </section>
 
           <!-- Add-element palette -->
-          <section class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-4 space-y-3">
-            <h3 class="text-sm font-bold text-text-main">
+          <section class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface) p-4">
+            <h3 class="text-text-main text-sm font-bold">
               {m.carte_elements_heading()}
             </h3>
             <button
               type="button"
               onclick={addText}
-              class="inline-flex items-center gap-2 rounded-xl border border-cn-border px-3 py-1.5 text-sm font-semibold text-text-main hover:bg-cn-bg"
+              class="border-cn-border text-text-main hover:bg-cn-bg inline-flex items-center gap-2 rounded-xl border px-3 py-1.5 text-sm font-semibold"
             >
               <Type size={15} />
               {m.carte_add_text()}
@@ -628,16 +628,14 @@
 
           {#if selectedDecoration}
             <!-- Selected-decoration property panel -->
-            <section
-              class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-4 space-y-3"
-            >
-              <h3 class="text-sm font-bold text-text-main">
+            <section class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface) p-4">
+              <h3 class="text-text-main text-sm font-bold">
                 {m.carte_deco_heading()}
               </h3>
 
               {#if selectedTextDeco}
                 <label class="block space-y-1">
-                  <span class="block text-xs font-semibold text-text-muted"
+                  <span class="text-text-muted block text-xs font-semibold"
                     >{m.carte_deco_content()}</span
                   >
                   <textarea
@@ -647,13 +645,13 @@
                         content: e.currentTarget.value,
                       })}
                     rows="2"
-                    class="w-full resize-y rounded-lg border border-cn-border bg-transparent px-2 py-1.5 text-sm text-text-main"
+                    class="border-cn-border text-text-main w-full resize-y rounded-lg border bg-transparent px-2 py-1.5 text-sm"
                   ></textarea>
                 </label>
               {/if}
 
               <div class="flex flex-wrap items-center gap-3">
-                <div class="flex items-center gap-2 text-xs font-semibold text-text-muted">
+                <div class="text-text-muted flex items-center gap-2 text-xs font-semibold">
                   {m.carte_panel_color()}
                   <ColorPicker
                     value={selectedDecoration.color}
@@ -662,7 +660,7 @@
                   />
                 </div>
                 {#if selectedTextDeco}
-                  <label class="flex items-center gap-2 text-xs font-semibold text-text-muted">
+                  <label class="text-text-muted flex items-center gap-2 text-xs font-semibold">
                     <input
                       type="checkbox"
                       checked={selectedTextDeco.bold}
@@ -702,7 +700,7 @@
                 <button
                   type="button"
                   onclick={() => decoBringToFront(selectedDecoration.id)}
-                  class="inline-flex items-center gap-1.5 rounded-lg border border-cn-border px-2.5 py-1 text-xs font-semibold text-text-muted hover:text-text-main"
+                  class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold"
                 >
                   <BringToFront size={13} />
                   {m.carte_panel_front()}
@@ -710,7 +708,7 @@
                 <button
                   type="button"
                   onclick={() => decoSendToBack(selectedDecoration.id)}
-                  class="inline-flex items-center gap-1.5 rounded-lg border border-cn-border px-2.5 py-1 text-xs font-semibold text-text-muted hover:text-text-main"
+                  class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold"
                 >
                   <SendToBack size={13} />
                   {m.carte_panel_back()}
@@ -728,16 +726,16 @@
           {/if}
 
           <!-- Selected-bubble property panel -->
-          <section class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-4 space-y-3">
-            <h3 class="text-sm font-bold text-text-main">
+          <section class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface) p-4">
+            <h3 class="text-text-main text-sm font-bold">
               {m.carte_panel_heading()}
             </h3>
             {#if selectedBubble && selectedContent}
-              <p class="text-sm font-extrabold text-text-main">
+              <p class="text-text-main text-sm font-extrabold">
                 {selectedContent.name}
               </p>
 
-              <div class="flex items-center gap-2 text-xs font-semibold text-text-muted">
+              <div class="text-text-muted flex items-center gap-2 text-xs font-semibold">
                 {m.carte_panel_color()}
                 <ColorPicker
                   value={selectedBubble.colorOverride ?? selectedContent.color}
@@ -751,7 +749,7 @@
                       patchBubble(selectedBubble.assoId, {
                         colorOverride: null,
                       })}
-                    class="text-text-muted underline hover:text-text-main"
+                    class="text-text-muted hover:text-text-main underline"
                   >
                     {m.carte_panel_color_reset()}
                   </button>
@@ -759,7 +757,7 @@
               </div>
 
               <div class="space-y-1.5">
-                <span class="block text-xs font-semibold text-text-muted"
+                <span class="text-text-muted block text-xs font-semibold"
                   >{m.carte_shape_label()}</span
                 >
                 <div class="flex flex-wrap gap-1.5">
@@ -782,7 +780,7 @@
               </div>
 
               <div class="space-y-1.5">
-                <span class="block text-xs font-semibold text-text-muted"
+                <span class="text-text-muted block text-xs font-semibold"
                   >{m.carte_logo_shape_label()}</span
                 >
                 <div class="flex flex-wrap gap-1.5">
@@ -811,8 +809,8 @@
                 </div>
               </div>
 
-              <div class="space-y-1.5 pt-2 border-t border-cn-border">
-                <span class="block text-xs font-semibold text-text-muted"
+              <div class="border-cn-border space-y-1.5 border-t pt-2">
+                <span class="text-text-muted block text-xs font-semibold"
                   >Membres affichés (Max 7)</span
                 >
                 <div class="space-y-1">
@@ -831,7 +829,7 @@
                       {@const maxReached =
                         (selectedBubble.selectedBureau || defaultSelected).length >= 7}
                       <label
-                        class="flex items-center gap-2 text-xs text-text-main {maxReached &&
+                        class="text-text-main flex items-center gap-2 text-xs {maxReached &&
                         !isSelected
                           ? 'opacity-50'
                           : ''}"
@@ -861,7 +859,7 @@
                     {/each}
 
                     {#if nonAdmins.length > 0 && admins.length > 0}
-                      <div class="my-1.5 border-t border-cn-border opacity-50"></div>
+                      <div class="border-cn-border my-1.5 border-t opacity-50"></div>
                     {/if}
 
                     {#each nonAdmins as member (member.userId)}
@@ -871,7 +869,7 @@
                       {@const maxReached =
                         (selectedBubble.selectedBureau || defaultSelected).length >= 7}
                       <label
-                        class="flex items-center gap-2 text-xs text-text-main {maxReached &&
+                        class="text-text-main flex items-center gap-2 text-xs {maxReached &&
                         !isSelected
                           ? 'opacity-50'
                           : ''}"
@@ -907,7 +905,7 @@
                 <button
                   type="button"
                   onclick={() => bringToFront(selectedBubble.assoId)}
-                  class="inline-flex items-center gap-1.5 rounded-lg border border-cn-border px-2.5 py-1 text-xs font-semibold text-text-muted hover:text-text-main"
+                  class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold"
                 >
                   <BringToFront size={13} />
                   {m.carte_panel_front()}
@@ -915,7 +913,7 @@
                 <button
                   type="button"
                   onclick={() => sendToBack(selectedBubble.assoId)}
-                  class="inline-flex items-center gap-1.5 rounded-lg border border-cn-border px-2.5 py-1 text-xs font-semibold text-text-muted hover:text-text-main"
+                  class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold"
                 >
                   <SendToBack size={13} />
                   {m.carte_panel_back()}
@@ -923,14 +921,14 @@
                 <button
                   type="button"
                   onclick={() => resetBubble(selectedBubble.assoId)}
-                  class="inline-flex items-center gap-1.5 rounded-lg border border-cn-border px-2.5 py-1 text-xs font-semibold text-text-muted hover:text-text-main"
+                  class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold"
                 >
                   <RotateCcw size={13} />
                   {m.carte_panel_reset()}
                 </button>
               </div>
             {:else}
-              <p class="text-xs text-text-muted">{m.carte_panel_empty()}</p>
+              <p class="text-text-muted text-xs">{m.carte_panel_empty()}</p>
             {/if}
           </section>
         </div>

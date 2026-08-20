@@ -160,8 +160,8 @@
   }
 </script>
 
-<div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-5 shadow-sm">
-  <h2 class="text-lg font-bold text-text-main tracking-tight">{m.asso_edit_profile_title()}</h2>
+<div class="border-cn-border space-y-5 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm">
+  <h2 class="text-text-main text-lg font-bold tracking-tight">{m.asso_edit_profile_title()}</h2>
   <div class="flex flex-wrap items-start gap-4">
     <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="lg" />
     {#if canEdit}
@@ -170,7 +170,7 @@
           type="button"
           onclick={() => (showCropper = !showCropper)}
           disabled={logoBusy}
-          class="rounded-xl border border-cn-border px-4 py-2 text-sm font-semibold hover:bg-cn-bg disabled:opacity-50"
+          class="border-cn-border hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-50"
         >
           {showCropper ? m.asso_edit_logo_close_cropper() : m.asso_edit_logo_change()}
         </button>
@@ -179,7 +179,7 @@
             type="button"
             onclick={handleRemoveLogo}
             disabled={logoBusy}
-            class="rounded-xl px-4 py-2 text-sm font-semibold text-red-err hover:bg-red-err/10 disabled:opacity-50"
+            class="text-red-err hover:bg-red-err/10 rounded-xl px-4 py-2 text-sm font-semibold disabled:opacity-50"
           >
             {m.asso_edit_logo_remove()}
           </button>
@@ -207,13 +207,13 @@
       placeholder="2027"
     />
     <div>
-      <label for="edit-list-parent" class="block text-sm font-bold text-text-main mb-2 ml-1">
+      <label for="edit-list-parent" class="text-text-main mb-2 ml-1 block text-sm font-bold">
         {m.list_new_parent_label()}
       </label>
       <select
         id="edit-list-parent"
         bind:value={editParentId}
-        class="w-full rounded-xl border border-cn-border bg-cn-bg/30 px-4 py-2.5 text-sm text-text-main"
+        class="border-cn-border bg-cn-bg/30 text-text-main w-full rounded-xl border px-4 py-2.5 text-sm"
       >
         <option value="">{m.list_new_parent_none()}</option>
         {#each parentOptions as opt (opt.id)}
@@ -230,31 +230,31 @@
     placeholder="contact@asso.fr"
   />
   <div class="space-y-2">
-    <span class="block text-sm font-bold text-text-main ml-1"
+    <span class="text-text-main ml-1 block text-sm font-bold"
       >{m.asso_edit_description_label()}</span
     >
     <MarkdownComposerField
       bind:value={editDescription}
       maxlength={2000}
       minHeight="72px"
-      class="rounded-xl border border-cn-border bg-cn-bg/30 overflow-hidden"
+      class="border-cn-border bg-cn-bg/30 overflow-hidden rounded-xl border"
       editorClass="min-h-[72px] w-full px-4 py-3 text-sm text-text-main leading-relaxed"
       placeholder={m.asso_edit_description_placeholder()}
     />
   </div>
   <div class="space-y-2">
-    <span class="block text-sm font-bold text-text-main ml-1">{m.asso_edit_bio_label()}</span>
+    <span class="text-text-main ml-1 block text-sm font-bold">{m.asso_edit_bio_label()}</span>
     <MarkdownComposerField
       bind:value={editBioMarkdown}
       maxlength={16000}
       minHeight="160px"
-      class="rounded-xl border border-cn-border bg-cn-bg/30 overflow-hidden"
+      class="border-cn-border bg-cn-bg/30 overflow-hidden rounded-xl border"
       editorClass="min-h-[160px] w-full px-4 py-3 text-sm text-text-main leading-relaxed"
       placeholder={m.asso_edit_bio_placeholder()}
     />
   </div>
   <div class="flex flex-col gap-3">
-    <span class="block text-sm font-bold text-text-main ml-1"
+    <span class="text-text-main ml-1 block text-sm font-bold"
       >{m.asso_edit_calendar_color_label()}</span
     >
     <div class="flex flex-wrap gap-1.5">
@@ -263,53 +263,53 @@
           type="button"
           onclick={() => (editColor = c)}
           title={c}
-          class="h-7 w-7 rounded-full border-2 transition-all hover:scale-110 focus:outline-none shrink-0
+          class="h-7 w-7 shrink-0 rounded-full border-2 transition-all hover:scale-110 focus:outline-none
                  {editColor === c
-            ? 'border-cn-dark ring-2 ring-offset-1 ring-cn-yellow/70 scale-110'
+            ? 'border-cn-dark ring-cn-yellow/70 scale-110 ring-2 ring-offset-1'
             : 'border-transparent hover:border-white/60'}"
           style="background:{c};"
           aria-label={c}
         ></button>
       {/each}
     </div>
-    <div class="flex items-center gap-2 ml-0.5">
-      <span class="text-xs text-text-muted">{m.asso_edit_custom_color_label()}</span>
+    <div class="ml-0.5 flex items-center gap-2">
+      <span class="text-text-muted text-xs">{m.asso_edit_custom_color_label()}</span>
       <ColorPicker bind:value={editColor} label={m.asso_edit_color_picker_label()} />
     </div>
   </div>
 
   {#if !isList}
     <div>
-      <label for="edit-asso-category" class="block text-sm font-bold text-text-main mb-2 ml-1">
+      <label for="edit-asso-category" class="text-text-main mb-2 ml-1 block text-sm font-bold">
         {m.asso_edit_category_label()}
       </label>
       <select
         id="edit-asso-category"
         bind:value={editCategoryId}
-        class="w-full rounded-xl border border-cn-border bg-cn-bg/30 px-4 py-2.5 text-sm text-text-main"
+        class="border-cn-border bg-cn-bg/30 text-text-main w-full rounded-xl border px-4 py-2.5 text-sm"
       >
         <option value="">{m.asso_edit_category_none()}</option>
         {#each categoryOptions as cat (cat.id)}
           <option value={cat.id}>{cat.label}</option>
         {/each}
       </select>
-      <p class="mt-1.5 ml-1 text-xs text-text-muted">{m.asso_edit_category_hint()}</p>
+      <p class="text-text-muted mt-1.5 ml-1 text-xs">{m.asso_edit_category_hint()}</p>
     </div>
   {/if}
 
   <div
-    class="rounded-xl border border-cn-border/70 bg-cn-bg/40 p-3 text-xs text-text-muted space-y-3"
+    class="border-cn-border/70 bg-cn-bg/40 text-text-muted space-y-3 rounded-xl border p-3 text-xs"
   >
-    <p class="font-semibold text-text-main">{m.asso_edit_preview_label()}</p>
+    <p class="text-text-main font-semibold">{m.asso_edit_preview_label()}</p>
     {#if editDescription.trim()}
       <div>
-        <p class="font-medium text-text-main mb-1">{m.asso_edit_preview_description_label()}</p>
+        <p class="text-text-main mb-1 font-medium">{m.asso_edit_preview_description_label()}</p>
         <ProfileBioMarkdown source={editDescription} class="text-sm" />
       </div>
     {/if}
     {#if editBioMarkdown.trim()}
       <div>
-        <p class="font-medium text-text-main mb-1">{m.asso_edit_preview_bio_label()}</p>
+        <p class="text-text-main mb-1 font-medium">{m.asso_edit_preview_bio_label()}</p>
         <ProfileBioMarkdown source={editBioMarkdown} />
       </div>
     {:else if !editDescription.trim()}
@@ -317,27 +317,27 @@
     {/if}
   </div>
   {#if settingsError}
-    <div class="text-sm text-red-err">{settingsError}</div>
+    <div class="text-red-err text-sm">{settingsError}</div>
   {/if}
   {#if canEdit}
-    <div class="flex items-center gap-3 flex-wrap">
+    <div class="flex flex-wrap items-center gap-3">
       <button
         type="button"
         onclick={handleSaveProfile}
         disabled={saving}
-        class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
       >
         {saving ? m.asso_edit_saving_label() : m.asso_edit_save_profile_button()}
       </button>
       {#if saveSuccess}
-        <span class="inline-flex items-center gap-1.5 text-sm font-semibold text-green-ok">
+        <span class="text-green-ok inline-flex items-center gap-1.5 text-sm font-semibold">
           <Check size={15} />
           {m.asso_edit_saved_success()}
         </span>
       {/if}
     </div>
   {:else}
-    <p class="text-sm text-text-muted">
+    <p class="text-text-muted text-sm">
       {m.asso_edit_no_manage_permission()}
     </p>
   {/if}

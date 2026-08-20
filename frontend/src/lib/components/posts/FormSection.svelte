@@ -50,11 +50,11 @@
 </script>
 
 <div
-  class="rounded-2xl border border-cn-border/60 bg-cn-surface/70 dark:bg-black/25 p-5 shadow-sm ring-1 ring-black/[0.02] dark:ring-white/[0.04]"
+  class="border-cn-border/60 bg-cn-surface/70 rounded-2xl border p-5 shadow-sm ring-1 ring-black/[0.02] dark:bg-black/25 dark:ring-white/[0.04]"
 >
   <div class="mb-4 flex items-center justify-between gap-2">
     <p
-      class="flex items-center gap-2 text-[0.75rem] font-bold uppercase tracking-widest text-text-muted"
+      class="text-text-muted flex items-center gap-2 text-[0.75rem] font-bold tracking-widest uppercase"
     >
       <ClipboardList size={16} strokeWidth={2.5} class="text-cn-yellow shrink-0" />
       {m.post_form_fallback_title()}
@@ -62,7 +62,7 @@
     <button
       type="button"
       onclick={onRemove}
-      class="rounded-full p-1.5 text-text-muted transition-colors hover:bg-cn-surface hover:text-text-main"
+      class="text-text-muted hover:bg-cn-surface hover:text-text-main rounded-full p-1.5 transition-colors"
       title={m.post_form_section_remove_label()}
     >
       <X size={16} />
@@ -87,13 +87,13 @@
       </p>
     {/if}
   {:else}
-    <p class="mb-3 text-sm font-medium text-text-muted">{m.post_form_none_yet_label()}</p>
+    <p class="text-text-muted mb-3 text-sm font-medium">{m.post_form_none_yet_label()}</p>
   {/if}
 
   <a
     href={createFormHref}
     onclick={() => onBeforeCreateForm?.()}
-    class="mt-3 inline-flex items-center gap-1.5 text-xs font-bold text-cn-yellow hover:underline"
+    class="text-cn-yellow mt-3 inline-flex items-center gap-1.5 text-xs font-bold hover:underline"
   >
     <Plus size={14} strokeWidth={2.5} />
     {m.post_form_create_new_label()}

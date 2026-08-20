@@ -52,16 +52,16 @@
   }
 </script>
 
-<div class="px-4 py-8 sm:px-6 max-w-3xl mx-auto space-y-6 md:space-y-8">
-  <div class="flex items-center gap-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
-    <div class="p-3 rounded-2xl bg-cn-yellow/10 text-cn-dark">
+<div class="mx-auto max-w-3xl space-y-6 px-4 py-8 sm:px-6 md:space-y-8">
+  <div class="animate-in fade-in slide-in-from-bottom-4 flex items-center gap-4 duration-500">
+    <div class="bg-cn-yellow/10 text-cn-dark rounded-2xl p-3">
       <SlidersHorizontal size={26} strokeWidth={2.5} />
     </div>
     <div>
-      <h1 class="text-2xl sm:text-3xl font-extrabold text-text-main tracking-tight">
+      <h1 class="text-text-main text-2xl font-extrabold tracking-tight sm:text-3xl">
         {m.settings_page_title()}
       </h1>
-      <p class="text-sm text-text-muted mt-0.5">{m.settings_page_subtitle()}</p>
+      <p class="text-text-muted mt-0.5 text-sm">{m.settings_page_subtitle()}</p>
     </div>
   </div>
 
@@ -78,7 +78,7 @@
   {#if session.myDeviceId}
     <button
       type="button"
-      class="block w-full text-center text-[0.65rem] font-mono text-text-muted/40 select-none pt-2 cursor-default"
+      class="text-text-muted/40 block w-full cursor-default pt-2 text-center font-mono text-[0.65rem] select-none"
       onclick={onDeviceIdTap}
       aria-label={m.settings_device_id_label({ id: session.myDeviceId })}
     >

@@ -161,10 +161,10 @@
   }
 </script>
 
-<div class="px-4 py-6 sm:px-6 max-w-4xl mx-auto space-y-8">
+<div class="mx-auto max-w-4xl space-y-8 px-4 py-6 sm:px-6">
   <a
     href={basePath}
-    class="inline-flex items-center gap-2 text-sm text-text-muted hover:text-text-main transition-colors"
+    class="text-text-muted hover:text-text-main inline-flex items-center gap-2 text-sm transition-colors"
   >
     <ArrowLeft size={16} />
     {backLabel}
@@ -173,17 +173,17 @@
   {#if loading}
     <div class="flex items-center justify-center py-20">
       <div
-        class="h-8 w-8 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+        class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if error && !asso}
-    <div class="rounded-xl bg-red-err/10 border border-red-err/30 text-red-err p-4 text-sm">
+    <div class="bg-red-err/10 border-red-err/30 text-red-err rounded-xl border p-4 text-sm">
       {error}
     </div>
   {:else if asso}
-    <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-6 shadow-sm">
+    <div class="border-cn-border rounded-2xl border bg-(--cn-surface)/90 p-6 shadow-sm">
       <div class="flex items-start gap-4">
-        <div class="flex gap-2 shrink-0">
+        <div class="flex shrink-0 gap-2">
           <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="lg" />
           {#if kind === 'list' && asso.logoMediaId2}
             <AssociationAvatar
@@ -193,14 +193,14 @@
             />
           {/if}
         </div>
-        <div class="flex-1 min-w-0">
-          <h1 class="text-xl font-extrabold text-text-main tracking-tight truncate">
+        <div class="min-w-0 flex-1">
+          <h1 class="text-text-main truncate text-xl font-extrabold tracking-tight">
             {asso.name}{#if kind === 'list' && asso.name2}<span class="text-text-muted font-bold">
                 &amp; {asso.name2}</span
               >{/if}
           </h1>
-          <p class="text-sm text-text-muted">
-            {#if kind === 'list' && asso.parentName}<span class="font-semibold text-text-main"
+          <p class="text-text-muted text-sm">
+            {#if kind === 'list' && asso.parentName}<span class="text-text-main font-semibold"
                 >{asso.parentName}</span
               > ·
             {/if}@{asso.slug} · {asso.memberCount ?? members.length} membre{(asso.memberCount ??
@@ -212,13 +212,13 @@
             {/if}
           </p>
         </div>
-        <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0">
+        <div class="flex shrink-0 flex-col items-stretch gap-2 sm:flex-row sm:items-center">
           {#if userId}
             <button
               type="button"
               onclick={() => toggleFollow()}
               disabled={followLoading}
-              class="flex items-center justify-center gap-1.5 rounded-xl border border-cn-border px-3 py-2 text-sm font-medium text-text-main hover:bg-[var(--cn-surface)] transition-colors disabled:opacity-50"
+              class="border-cn-border text-text-main flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-medium transition-colors hover:bg-(--cn-surface) disabled:opacity-50"
             >
               {#if following}
                 <BellOff size={16} />
@@ -232,7 +232,7 @@
           {#if canManage}
             <a
               href="{basePath}/{encodeURIComponent(slug)}/edit"
-              class="inline-flex items-center justify-center gap-1.5 rounded-xl bg-cn-yellow px-3 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-colors"
+              class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-sm font-bold transition-colors"
             >
               <Settings size={16} />
               {kind === 'list' ? m.asso_manage_list_button() : m.asso_manage_button()}
@@ -243,23 +243,23 @@
     </div>
 
     {#if error}
-      <div class="rounded-xl bg-red-err/10 border border-red-err/30 text-red-err p-4 text-sm">
+      <div class="bg-red-err/10 border-red-err/30 text-red-err rounded-xl border p-4 text-sm">
         {error}
       </div>
     {/if}
 
     <nav
-      class="sticky top-0 z-30 -mx-4 px-4 py-3 bg-[var(--cn-bg)]/95 backdrop-blur-md border-y border-cn-border/80 sm:border sm:rounded-2xl sm:mx-0"
+      class="border-cn-border/80 sticky top-0 z-30 -mx-4 border-y bg-(--cn-bg)/95 px-4 py-3 backdrop-blur-md sm:mx-0 sm:rounded-2xl sm:border"
       aria-label="Sections"
     >
       <div class="flex gap-2 overflow-x-auto pb-1" data-swipe-nav-ignore>
         <button
           type="button"
           onclick={() => (activeSection = 'about')}
-          class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+          class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
           {activeSection === 'about'
             ? 'bg-cn-yellow text-cn-ink shadow-sm'
-            : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
+            : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
         >
           <Building2 size={17} />
           {m.asso_tab_about()}
@@ -267,10 +267,10 @@
         <button
           type="button"
           onclick={() => (activeSection = 'calendar')}
-          class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+          class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
           {activeSection === 'calendar'
             ? 'bg-cn-yellow text-cn-ink shadow-sm'
-            : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
+            : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
         >
           <CalendarDays size={17} />
           {m.asso_tab_calendar()}
@@ -278,10 +278,10 @@
         <button
           type="button"
           onclick={() => (activeSection = 'members')}
-          class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+          class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
           {activeSection === 'members'
             ? 'bg-cn-yellow text-cn-ink shadow-sm'
-            : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
+            : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
         >
           <Users size={17} />
           {m.common_members_label()}
@@ -290,10 +290,10 @@
           <button
             type="button"
             onclick={() => (activeSection = 'shop')}
-            class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+            class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {activeSection === 'shop'
               ? 'bg-cn-yellow text-cn-ink shadow-sm'
-              : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
+              : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
           >
             <ShoppingBag size={17} />
             {m.asso_tab_shop()}
@@ -303,22 +303,20 @@
     </nav>
 
     {#if activeSection === 'about'}
-      <div
-        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-6 space-y-4 shadow-sm"
-      >
-        <h2 class="text-lg font-bold text-text-main tracking-tight">{m.asso_tab_about()}</h2>
+      <div class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface)/90 p-6 shadow-sm">
+        <h2 class="text-text-main text-lg font-bold tracking-tight">{m.asso_tab_about()}</h2>
         {#if asso.description?.trim()}
           <ProfileBioMarkdown source={asso.description} class="text-sm" />
         {/if}
         {#if asso.bioMarkdown?.trim()}
           <ProfileBioMarkdown source={asso.bioMarkdown} />
         {:else if !asso.description?.trim()}
-          <p class="text-sm text-text-muted">{m.asso_no_description()}</p>
+          <p class="text-text-muted text-sm">{m.asso_no_description()}</p>
         {/if}
         {#if asso.contactEmail?.trim()}
           <a
             href="mailto:{asso.contactEmail}"
-            class="inline-flex items-center gap-2 text-sm font-semibold text-cn-dark hover:underline pt-1"
+            class="text-cn-dark inline-flex items-center gap-2 pt-1 text-sm font-semibold hover:underline"
           >
             <Mail size={15} />
             {asso.contactEmail}
@@ -326,12 +324,12 @@
         {/if}
       </div>
     {:else if activeSection === 'calendar'}
-      <div class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-6 shadow-sm">
-        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-4">
-          <h2 class="text-lg font-bold text-text-main tracking-tight">{m.asso_tab_calendar()}</h2>
+      <div class="border-cn-border rounded-2xl border bg-(--cn-surface)/90 p-6 shadow-sm">
+        <div class="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <h2 class="text-text-main text-lg font-bold tracking-tight">{m.asso_tab_calendar()}</h2>
           <a
             href="/calendar?association={encodeURIComponent(asso.id)}"
-            class="text-xs font-semibold text-cn-dark hover:underline"
+            class="text-cn-dark text-xs font-semibold hover:underline"
           >
             {m.asso_view_global_calendar()}
           </a>
@@ -346,11 +344,9 @@
         />
       </div>
     {:else if activeSection === 'members'}
-      <div
-        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-6 space-y-4 shadow-sm"
-      >
+      <div class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface)/90 p-6 shadow-sm">
         <div class="flex items-center justify-between gap-2">
-          <h2 class="text-lg font-bold text-text-main tracking-tight">
+          <h2 class="text-text-main text-lg font-bold tracking-tight">
             {m.common_members_label()}
           </h2>
           {#if members.length > 0}
@@ -358,14 +354,14 @@
               type="button"
               onclick={handleExportTrombinoscope}
               disabled={exportingPdf}
-              class="inline-flex items-center gap-1.5 rounded-xl border border-cn-border px-3 py-2 text-xs font-semibold text-text-muted hover:text-text-main hover:bg-[var(--cn-surface)] transition-colors disabled:opacity-50"
+              class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold transition-colors hover:bg-(--cn-surface) disabled:opacity-50"
             >
               <Download size={14} />
               {exportingPdf ? m.common_generating_label() : m.asso_trombinoscope_button()}
             </button>
           {/if}
         </div>
-        <p class="text-sm text-text-muted">
+        <p class="text-text-muted text-sm">
           {kind === 'list'
             ? m.asso_member_count_list({ count: members.length })
             : m.asso_member_count_association({ count: members.length })}
@@ -383,27 +379,25 @@
         </div>
       </div>
     {:else if activeSection === 'shop'}
-      <div
-        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/90 p-6 space-y-4 shadow-sm"
-      >
+      <div class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface)/90 p-6 shadow-sm">
         <div class="flex items-center justify-between gap-2">
-          <h2 class="text-lg font-bold text-text-main tracking-tight flex items-center gap-2">
+          <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
             <ShoppingBag size={20} />
             {m.asso_tab_shop()}
           </h2>
-          <a href="/shop" class="text-xs font-semibold text-cn-dark hover:underline">
+          <a href="/shop" class="text-cn-dark text-xs font-semibold hover:underline">
             {m.asso_view_all_shop()}
           </a>
         </div>
         <div class="space-y-3">
           {#each products as product (product.id)}
-            <div class="flex items-start gap-4 rounded-xl border border-cn-border p-4">
-              <div class="flex-1 min-w-0">
-                <p class="text-sm font-semibold text-text-main">{product.name}</p>
+            <div class="border-cn-border flex items-start gap-4 rounded-xl border p-4">
+              <div class="min-w-0 flex-1">
+                <p class="text-text-main text-sm font-semibold">{product.name}</p>
                 {#if product.description}
-                  <p class="text-xs text-text-muted mt-0.5">{product.description}</p>
+                  <p class="text-text-muted mt-0.5 text-xs">{product.description}</p>
                 {/if}
-                <p class="text-xs text-text-muted mt-1">
+                <p class="text-text-muted mt-1 text-xs">
                   {#if product.amountCents}
                     {(product.amountCents / 100).toFixed(2)} {product.currency.toUpperCase()}
                   {:else if product.allowCustomAmount}
@@ -412,7 +406,7 @@
                     {m.asso_product_free_price()}
                   {/if}
                   <span
-                    class="ml-2 px-1.5 py-0.5 rounded-full bg-cn-border/40 text-[10px] font-bold uppercase"
+                    class="bg-cn-border/40 ml-2 rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase"
                   >
                     {product.type === 'membership'
                       ? m.asso_product_membership_type()
@@ -422,7 +416,7 @@
                   </span>
                 </p>
                 {#if product.allowCustomAmount && product.amountCents === null}
-                  <div class="flex items-center gap-2 mt-2 max-w-xs">
+                  <div class="mt-2 flex max-w-xs items-center gap-2">
                     <input
                       type="number"
                       min={product.customAmountMinCents != null
@@ -433,7 +427,7 @@
                         : undefined}
                       step="0.01"
                       placeholder={m.asso_product_amount_placeholder()}
-                      class="flex-1 rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-cn-accent"
+                      class="border-cn-border text-text-main focus:ring-cn-accent flex-1 rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
                       bind:value={shopCustomAmounts[product.id]}
                     />
                   </div>
@@ -443,7 +437,7 @@
                 {product}
                 customAmountEuros={shopCustomAmounts[product.id]}
                 variant="yellow"
-                class="shrink-0 text-xs px-3 py-2"
+                class="shrink-0 px-3 py-2 text-xs"
               />
             </div>
           {/each}

@@ -921,7 +921,7 @@ new `shellTop` measurement (`.app-layout`'s own `getBoundingClientRect().top`) f
 shell's own top" at the source, rather than patching every CSS consumer with its own
 `- env(safe-area-inset-top)` the way the desktop `AppSidebar` already does. That reasoning was
 right for `.app-layout` **considered alone** and wrong for the system as a whole: `.app-layout`'s
-own ancestor chain - `routes/+layout.svelte`'s `h-[var(--app-viewport-height,100dvh)]` wrapper,
+own ancestor chain - `routes/+layout.svelte`'s `h-(--app-viewport-height,100dvh)` wrapper,
 whose `padding-top: env(safe-area-inset-top)` **already** reduces its content box by the same
 inset, unconditionally, whether or not the keyboard is open - was *already* correctly shrunk by
 that same variable. Subtracting the inset a second time, inside the variable itself, meant

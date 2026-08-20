@@ -207,7 +207,7 @@
 </script>
 
 <div class="relative" bind:this={anchorEl}>
-  <span class="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-text-muted">
+  <span class="text-text-muted pointer-events-none absolute top-1/2 left-3 -translate-y-1/2">
     <Search size={15} />
   </span>
   <!--
@@ -232,13 +232,13 @@
     onfocus={handleFocus}
     {placeholder}
     autocomplete="off"
-    class="w-full pl-9 pr-4 py-2.5 bg-(--cn-surface) border border-cn-border rounded-xl text-sm outline-none focus:ring-2 focus:ring-amber-400/45 focus:border-amber-400/60"
+    class="border-cn-border w-full rounded-xl border bg-(--cn-surface) py-2.5 pr-4 pl-9 text-sm outline-none focus:border-amber-400/60 focus:ring-2 focus:ring-amber-400/45"
   />
 
   {#if isLoading}
-    <div class="absolute right-3 top-1/2 -translate-y-1/2">
+    <div class="absolute top-1/2 right-3 -translate-y-1/2">
       <svg
-        class="animate-spin h-4 w-4 text-amber-500"
+        class="h-4 w-4 animate-spin text-amber-500"
         xmlns="http://www.w3.org/2000/svg"
         fill="none"
         viewBox="0 0 24 24"
@@ -263,7 +263,7 @@
       id={listboxId}
       role="listbox"
       aria-label={placeholder}
-      class="fixed z-290 bg-white/95 dark:bg-gray-900/95 border border-white/60 dark:border-white/10 rounded-xl shadow-lg overflow-auto backdrop-blur-sm"
+      class="fixed z-290 overflow-auto rounded-xl border border-white/60 bg-white/95 shadow-lg backdrop-blur-sm dark:border-white/10 dark:bg-gray-900/95"
     >
       {#each suggestions as user, index (user.id)}
         <!--
@@ -277,13 +277,13 @@
           id={optionId(index)}
           role="option"
           aria-selected={index === selectedIndex}
-          class="px-4 py-2 text-left text-sm cursor-pointer hover:bg-amber-100/50 dark:hover:bg-amber-900/30 transition-colors first:rounded-t-xl last:rounded-b-xl {index ===
+          class="cursor-pointer px-4 py-2 text-left text-sm transition-colors first:rounded-t-xl last:rounded-b-xl hover:bg-amber-100/50 dark:hover:bg-amber-900/30 {index ===
           selectedIndex
             ? 'bg-amber-100/50 dark:bg-amber-900/30'
             : ''}"
           onmousedown={() => selectUser(user)}
         >
-          <span class="font-medium text-text-main">{user.displayName || user.id}</span>
+          <span class="text-text-main font-medium">{user.displayName || user.id}</span>
         </li>
       {/each}
     </ul>

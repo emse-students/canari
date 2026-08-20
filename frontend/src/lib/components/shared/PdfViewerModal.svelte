@@ -497,7 +497,7 @@
 <FullScreenViewer ariaLabel={fileName} {onClose} maxWidthClass="sm:max-w-275">
   {#snippet headerLead()}
     <FileText size={16} strokeWidth={2.5} class="shrink-0 opacity-70" />
-    <p class="min-w-0 flex-1 truncate text-xs sm:text-sm opacity-80">{fileName}</p>
+    <p class="min-w-0 flex-1 truncate text-xs opacity-80 sm:text-sm">{fileName}</p>
     {#if pageCount > 0}
       <span class="shrink-0 text-[0.7rem] tabular-nums opacity-50">
         {m.pdf_viewer_page_count({ count: pageCount })}
@@ -508,7 +508,7 @@
   {#snippet headerActions()}
     <button
       type="button"
-      class="p-2 rounded-lg bg-white/15 hover:bg-white/25 transition-colors disabled:opacity-30"
+      class="rounded-lg bg-white/15 p-2 transition-colors hover:bg-white/25 disabled:opacity-30"
       disabled={zoomIndex === 0}
       onclick={() => (zoomIndex = Math.max(0, zoomIndex - 1))}
       aria-label={m.pdf_viewer_zoom_out()}
@@ -517,7 +517,7 @@
     </button>
     <button
       type="button"
-      class="p-2 rounded-lg bg-white/15 hover:bg-white/25 transition-colors disabled:opacity-30"
+      class="rounded-lg bg-white/15 p-2 transition-colors hover:bg-white/25 disabled:opacity-30"
       disabled={zoomIndex === ZOOM_STEPS.length - 1}
       onclick={() => (zoomIndex = Math.min(ZOOM_STEPS.length - 1, zoomIndex + 1))}
       aria-label={m.pdf_viewer_zoom_in()}
@@ -527,7 +527,7 @@
     {#if onDownload}
       <button
         type="button"
-        class="p-2 rounded-lg bg-white/15 hover:bg-white/25 transition-colors"
+        class="rounded-lg bg-white/15 p-2 transition-colors hover:bg-white/25"
         onclick={onDownload}
         aria-label={m.common_download_label()}
         title={m.common_download_label()}
@@ -542,7 +542,7 @@
        handlers below need the element to carry a role. -->
   <div
     role="document"
-    class="flex-1 min-h-0 overflow-auto overscroll-contain px-2 sm:px-4 py-3 touch-pan-x touch-pan-y"
+    class="min-h-0 flex-1 touch-pan-x touch-pan-y overflow-auto overscroll-contain px-2 py-3 sm:px-4"
     class:cursor-grab={canPan && !isPanning}
     class:cursor-grabbing={isPanning}
     bind:this={scrollEl}

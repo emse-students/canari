@@ -32,11 +32,11 @@
   );
 </script>
 
-<div class="flex items-center gap-3.5 px-5 py-4 bg-transparent">
+<div class="flex items-center gap-3.5 bg-transparent px-5 py-4">
   {#if post.association}
     <a
       href={associationHref}
-      class="shrink-0 transition-transform duration-200 hover:scale-105 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded-full shadow-sm"
+      class="shrink-0 rounded-full shadow-sm transition-transform duration-200 outline-none hover:scale-105 focus-visible:ring-2 focus-visible:ring-amber-500"
       aria-label={m.post_view_association_label({ name: post.association.name })}
     >
       <AssociationAvatar
@@ -49,33 +49,33 @@
   {:else}
     <a
       href="/profile/{encodeURIComponent(post.authorId ?? '')}"
-      class="shrink-0 transition-transform duration-200 hover:scale-105 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded-full shadow-sm"
+      class="shrink-0 rounded-full shadow-sm transition-transform duration-200 outline-none hover:scale-105 focus-visible:ring-2 focus-visible:ring-amber-500"
       aria-label={m.post_view_profile_label({ name: getPostAuthorName() })}
     >
       <Avatar userId={post.authorId ?? ''} size="md" />
     </a>
   {/if}
 
-  <div class="flex-1 min-w-0 flex flex-col justify-center">
+  <div class="flex min-w-0 flex-1 flex-col justify-center">
     <div class="truncate">
       {#if post.association}
         <a
           href={associationHref}
-          class="font-bold text-[0.95rem] text-text-main hover:text-amber-600 dark:hover:text-amber-400 transition-colors outline-none focus-visible:underline"
+          class="text-text-main text-[0.95rem] font-bold transition-colors outline-none hover:text-amber-600 focus-visible:underline dark:hover:text-amber-400"
         >
           {post.association.name}
         </a>
       {:else}
         <a
           href="/profile/{encodeURIComponent(post.authorId ?? '')}"
-          class="font-bold text-[0.95rem] text-text-main hover:text-amber-600 dark:hover:text-amber-400 transition-colors outline-none focus-visible:underline"
+          class="text-text-main text-[0.95rem] font-bold transition-colors outline-none hover:text-amber-600 focus-visible:underline dark:hover:text-amber-400"
         >
           {getPostAuthorName()}
         </a>
       {/if}
     </div>
     <div
-      class="text-[0.75rem] font-medium text-text-muted flex items-center gap-1.5 mt-0.5 opacity-80"
+      class="text-text-muted mt-0.5 flex items-center gap-1.5 text-[0.75rem] font-medium opacity-80"
     >
       <Clock size={12} strokeWidth={2.5} />
       <span title={exactDate(post.createdAt)}>{timeAgo(post.createdAt)}</span>

@@ -25,20 +25,20 @@
 </script>
 
 <div
-  class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-6 md:p-8 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200"
+  class="border-cn-border animate-in fade-in slide-in-from-bottom-4 rounded-2xl border bg-(--cn-surface) p-6 shadow-sm delay-200 duration-500 md:p-8"
   style="animation-fill-mode: backwards;"
 >
-  <div class="flex items-center gap-3 mb-6">
-    <div class="p-2.5 rounded-xl bg-cn-yellow/10 text-cn-dark">
+  <div class="mb-6 flex items-center gap-3">
+    <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
       <Settings size={22} strokeWidth={2.5} />
     </div>
-    <h2 class="text-lg font-extrabold text-text-main">{m.profile_preferences_title()}</h2>
+    <h2 class="text-text-main text-lg font-extrabold">{m.profile_preferences_title()}</h2>
   </div>
 
   <div class="space-y-5">
     <div class="flex items-center justify-between gap-4">
       <div class="flex items-center gap-3.5">
-        <div class="p-2.5 rounded-xl bg-black/5 dark:bg-black/40 text-text-muted">
+        <div class="text-text-muted rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
           {#if settings.soundsEnabled}
             <Volume2 size={20} strokeWidth={2.5} />
           {:else}
@@ -46,8 +46,8 @@
           {/if}
         </div>
         <div>
-          <p class="text-sm font-bold text-text-main">{m.profile_bruitages()}</p>
-          <p class="text-xs font-medium text-text-muted mt-0.5">
+          <p class="text-text-main text-sm font-bold">{m.profile_bruitages()}</p>
+          <p class="text-text-muted mt-0.5 text-xs font-medium">
             {m.profile_bruitages_desc()}
           </p>
         </div>
@@ -58,11 +58,11 @@
         aria-checked={settings.soundsEnabled}
         aria-label={m.profile_pref_sounds_aria()}
         onclick={() => settings.setSoundsEnabled(!settings.soundsEnabled)}
-        class="relative shrink-0 w-12 h-6 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow focus-visible:ring-offset-2
+        class="focus-visible:ring-cn-yellow relative h-6 w-12 shrink-0 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2
           {settings.soundsEnabled ? 'bg-cn-yellow' : 'bg-black/20 dark:bg-white/15'}"
       >
         <span
-          class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-transform duration-200
+          class="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-transform duration-200
             {settings.soundsEnabled ? 'translate-x-6' : 'translate-x-0'}"
         ></span>
       </button>
@@ -71,7 +71,7 @@
     {#if isTouchDevice}
       <div class="flex items-center justify-between gap-4">
         <div class="flex items-center gap-3.5">
-          <div class="p-2.5 rounded-xl bg-black/5 dark:bg-black/40 text-text-muted">
+          <div class="text-text-muted rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
             {#if settings.vibrationsEnabled}
               <Vibrate size={20} strokeWidth={2.5} />
             {:else}
@@ -79,8 +79,8 @@
             {/if}
           </div>
           <div>
-            <p class="text-sm font-bold text-text-main">{m.profile_vibrations()}</p>
-            <p class="text-xs font-medium text-text-muted mt-0.5">
+            <p class="text-text-main text-sm font-bold">{m.profile_vibrations()}</p>
+            <p class="text-text-muted mt-0.5 text-xs font-medium">
               {m.profile_vibrations_desc()}
             </p>
           </div>
@@ -91,11 +91,11 @@
           aria-checked={settings.vibrationsEnabled}
           aria-label={m.profile_pref_vibrations_aria()}
           onclick={() => settings.setVibrationsEnabled(!settings.vibrationsEnabled)}
-          class="relative shrink-0 w-12 h-6 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-cn-yellow focus-visible:ring-offset-2
+          class="focus-visible:ring-cn-yellow relative h-6 w-12 shrink-0 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2
             {settings.vibrationsEnabled ? 'bg-cn-yellow' : 'bg-black/20 dark:bg-white/15'}"
         >
           <span
-            class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-transform duration-200
+            class="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-transform duration-200
               {settings.vibrationsEnabled ? 'translate-x-6' : 'translate-x-0'}"
           ></span>
         </button>
@@ -104,7 +104,7 @@
 
     <div class="flex items-center justify-between gap-4">
       <div class="flex items-center gap-3.5">
-        <div class="p-2.5 rounded-xl bg-black/5 dark:bg-black/40 text-text-muted">
+        <div class="text-text-muted rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
           {#if themeStore.preference === 'light'}
             <Sun size={20} strokeWidth={2.5} />
           {:else if themeStore.preference === 'dark'}
@@ -114,8 +114,8 @@
           {/if}
         </div>
         <div>
-          <p class="text-sm font-bold text-text-main">{m.profile_theme()}</p>
-          <p class="text-xs font-medium text-text-muted mt-0.5">{m.profile_theme_desc()}</p>
+          <p class="text-text-main text-sm font-bold">{m.profile_theme()}</p>
+          <p class="text-text-muted mt-0.5 text-xs font-medium">{m.profile_theme_desc()}</p>
         </div>
       </div>
 
@@ -133,7 +133,7 @@
             aria-label={opt.label}
             title={opt.label}
             onclick={() => themeStore.setPreference(opt.value as 'system' | 'light' | 'dark')}
-            class="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold outline-none transition-colors focus-visible:ring-2 focus-visible:ring-cn-yellow
+            class="focus-visible:ring-cn-yellow flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors outline-none focus-visible:ring-2
               {themeStore.preference === opt.value
               ? 'bg-cn-yellow text-cn-ink shadow'
               : 'text-text-muted hover:text-text-main'}"
@@ -147,12 +147,12 @@
 
     <div class="flex items-center justify-between gap-4">
       <div class="flex items-center gap-3.5">
-        <div class="p-2.5 rounded-xl bg-black/5 dark:bg-black/40 text-text-muted">
+        <div class="text-text-muted rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
           <Languages size={20} strokeWidth={2.5} />
         </div>
         <div>
-          <p class="text-sm font-bold text-text-main">{m.settings_language_label()}</p>
-          <p class="text-xs font-medium text-text-muted mt-0.5">{m.settings_language_desc()}</p>
+          <p class="text-text-main text-sm font-bold">{m.settings_language_label()}</p>
+          <p class="text-text-muted mt-0.5 text-xs font-medium">{m.settings_language_desc()}</p>
         </div>
       </div>
 
@@ -169,7 +169,7 @@
             aria-label={LOCALE_LABELS[locale]}
             title={LOCALE_LABELS[locale]}
             onclick={() => void changeLocale(locale)}
-            class="rounded-lg px-3 py-1.5 text-xs font-semibold uppercase outline-none transition-colors focus-visible:ring-2 focus-visible:ring-cn-yellow
+            class="focus-visible:ring-cn-yellow rounded-lg px-3 py-1.5 text-xs font-semibold uppercase transition-colors outline-none focus-visible:ring-2
               {getLocale() === locale
               ? 'bg-cn-yellow text-cn-ink shadow'
               : 'text-text-muted hover:text-text-main'}"

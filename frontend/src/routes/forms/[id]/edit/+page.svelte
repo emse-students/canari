@@ -336,40 +336,40 @@
   }
 </script>
 
-<div class="px-3 py-5 sm:px-6 max-w-3xl mx-auto">
+<div class="mx-auto max-w-3xl px-3 py-5 sm:px-6">
   <!-- Header -->
-  <div class="flex items-center gap-3 mb-8">
+  <div class="mb-8 flex items-center gap-3">
     <button
       onclick={() => goto('/forms')}
-      class="p-2 rounded-xl text-text-muted hover:text-text-main hover:bg-cn-border/30 transition-colors"
+      class="text-text-muted hover:text-text-main hover:bg-cn-border/30 rounded-xl p-2 transition-colors"
       title={m.common_back()}
     >
       <ArrowLeft size={20} />
     </button>
-    <div class="flex-1 min-w-0">
-      <h1 class="text-2xl font-extrabold text-text-main tracking-tight">{m.form_edit_heading()}</h1>
+    <div class="min-w-0 flex-1">
+      <h1 class="text-text-main text-2xl font-extrabold tracking-tight">{m.form_edit_heading()}</h1>
       {#if form}
-        <p class="text-sm text-text-muted mt-0.5 truncate">{form.title}</p>
+        <p class="text-text-muted mt-0.5 truncate text-sm">{form.title}</p>
       {/if}
     </div>
   </div>
 
   {#if loadError}
     <div
-      class="rounded-2xl bg-red-err/10 border-2 border-red-err/30 text-red-err px-4 py-3 mb-6 text-sm font-medium"
+      class="bg-red-err/10 border-red-err/30 text-red-err mb-6 rounded-2xl border-2 px-4 py-3 text-sm font-medium"
     >
       {loadError}
     </div>
   {:else if !form}
     <div class="flex justify-center py-16">
       <div
-        class="w-10 h-10 border-4 border-cn-yellow border-t-transparent rounded-full animate-spin"
+        class="border-cn-yellow h-10 w-10 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else}
     {#if error}
       <div
-        class="rounded-2xl bg-red-err/10 border-2 border-red-err/30 text-red-err px-4 py-3 mb-6 text-sm font-medium flex items-center gap-2"
+        class="bg-red-err/10 border-red-err/30 text-red-err mb-6 flex items-center gap-2 rounded-2xl border-2 px-4 py-3 text-sm font-medium"
       >
         {error}
       </div>
@@ -377,11 +377,11 @@
 
     <!-- Section: General Settings -->
     <section
-      class="rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] p-4 sm:p-6 mb-4 sm:mb-5"
+      class="border-cn-border mb-4 rounded-2xl border-2 bg-(--cn-surface) p-4 sm:mb-5 sm:p-6"
     >
-      <div class="flex items-center gap-2.5 mb-4 sm:mb-5">
-        <div class="p-2 rounded-xl bg-cn-yellow/15 text-cn-dark"><FileText size={20} /></div>
-        <h2 class="text-lg font-bold text-text-main">{m.form_section_general()}</h2>
+      <div class="mb-4 flex items-center gap-2.5 sm:mb-5">
+        <div class="bg-cn-yellow/15 text-cn-dark rounded-xl p-2"><FileText size={20} /></div>
+        <h2 class="text-text-main text-lg font-bold">{m.form_section_general()}</h2>
       </div>
       <div class="space-y-4">
         <Input
@@ -391,7 +391,7 @@
           required
         />
         <div>
-          <p class="block text-sm font-bold text-text-main mb-1 ml-1">
+          <p class="text-text-main mb-1 ml-1 block text-sm font-bold">
             {m.form_description_label()}
           </p>
           <MarkdownComposerField
@@ -408,52 +408,52 @@
           min="1"
         />
 
-        <label class="flex items-center gap-3 cursor-pointer select-none group">
+        <label class="group flex cursor-pointer items-center gap-3 select-none">
           <div class="relative">
             <input type="checkbox" bind:checked={allowMultipleSubmissions} class="peer sr-only" />
             <div
-              class="w-11 h-6 bg-cn-border rounded-full peer-checked:bg-cn-yellow transition-colors"
+              class="bg-cn-border peer-checked:bg-cn-yellow h-6 w-11 rounded-full transition-colors"
             ></div>
             <div
-              class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full transition-transform peer-checked:translate-x-5"
+              class="absolute top-1 left-1 h-4 w-4 rounded-full bg-white transition-transform peer-checked:translate-x-5"
             ></div>
           </div>
           <div>
-            <span class="text-sm font-semibold text-text-main">{m.form_allow_multiple_label()}</span
+            <span class="text-text-main text-sm font-semibold">{m.form_allow_multiple_label()}</span
             >
-            <p class="text-xs text-text-muted">{m.form_allow_multiple_hint()}</p>
+            <p class="text-text-muted text-xs">{m.form_allow_multiple_hint()}</p>
           </div>
         </label>
 
         <div>
-          <label for="form-opens-at" class="block text-sm font-bold text-text-main mb-2 ml-1"
+          <label for="form-opens-at" class="text-text-main mb-2 ml-1 block text-sm font-bold"
             >{m.form_opens_at_label()}</label
           >
           <input
             id="form-opens-at"
             type="datetime-local"
             bind:value={opensAt}
-            class="w-full px-4 py-3 border-2 border-cn-border rounded-2xl text-base text-text-main bg-[var(--cn-surface)] outline-none transition-all focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)]"
+            class="border-cn-border text-text-main focus:border-cn-yellow w-full rounded-2xl border-2 bg-(--cn-surface) px-4 py-3 text-base transition-all outline-none focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)]"
           />
-          <p class="text-xs text-text-muted mt-1.5 ml-1">{m.form_opens_at_hint_short()}</p>
+          <p class="text-text-muted mt-1.5 ml-1 text-xs">{m.form_opens_at_hint_short()}</p>
         </div>
       </div>
     </section>
 
     <!-- Section: Banner Image -->
     <section
-      class="rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] p-4 sm:p-6 mb-4 sm:mb-5"
+      class="border-cn-border mb-4 rounded-2xl border-2 bg-(--cn-surface) p-4 sm:mb-5 sm:p-6"
     >
-      <div class="flex items-center gap-2.5 mb-4">
-        <div class="p-2 rounded-xl bg-cn-yellow/15 text-cn-dark"><ImagePlus size={20} /></div>
-        <h2 class="text-lg font-bold text-text-main">{m.form_image_section()}</h2>
+      <div class="mb-4 flex items-center gap-2.5">
+        <div class="bg-cn-yellow/15 text-cn-dark rounded-xl p-2"><ImagePlus size={20} /></div>
+        <h2 class="text-text-main text-lg font-bold">{m.form_image_section()}</h2>
       </div>
       {#if imageError}
-        <p class="text-sm text-red-err mb-3">{imageError}</p>
+        <p class="text-red-err mb-3 text-sm">{imageError}</p>
       {/if}
       {#if imageUrl}
-        <div class="relative rounded-xl overflow-hidden border border-cn-border mb-2">
-          <img src={imageUrl} alt="Affiche" class="w-full max-h-56 object-cover" loading="lazy" />
+        <div class="border-cn-border relative mb-2 overflow-hidden rounded-xl border">
+          <img src={imageUrl} alt="Affiche" class="max-h-56 w-full object-cover" loading="lazy" />
           <button
             type="button"
             onclick={handleImageRemove}
@@ -466,11 +466,11 @@
         </div>
       {:else}
         <label
-          class="flex items-center gap-2 cursor-pointer rounded-xl border-2 border-dashed border-cn-border bg-cn-bg/40 px-4 py-4 text-sm text-text-muted hover:border-cn-yellow/50 transition-colors {uploadingImage
-            ? 'opacity-50 pointer-events-none'
+          class="border-cn-border bg-cn-bg/40 text-text-muted hover:border-cn-yellow/50 flex cursor-pointer items-center gap-2 rounded-xl border-2 border-dashed px-4 py-4 text-sm transition-colors {uploadingImage
+            ? 'pointer-events-none opacity-50'
             : ''}"
         >
-          <ImagePlus size={18} class="shrink-0 text-text-muted/60" />
+          <ImagePlus size={18} class="text-text-muted/60 shrink-0" />
           {uploadingImage ? m.form_image_uploading() : m.form_image_add_label()}
           <input
             type="file"
@@ -484,26 +484,26 @@
 
     <!-- Section: Payment -->
     <section
-      class="rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] p-4 sm:p-6 mb-4 sm:mb-5"
+      class="border-cn-border mb-4 rounded-2xl border-2 bg-(--cn-surface) p-4 sm:mb-5 sm:p-6"
     >
-      <div class="flex items-center gap-2.5 mb-4 sm:mb-5">
-        <div class="p-2 rounded-xl bg-cn-yellow/15 text-cn-dark"><CreditCard size={20} /></div>
-        <h2 class="text-lg font-bold text-text-main">{m.form_section_payment()}</h2>
+      <div class="mb-4 flex items-center gap-2.5 sm:mb-5">
+        <div class="bg-cn-yellow/15 text-cn-dark rounded-xl p-2"><CreditCard size={20} /></div>
+        <h2 class="text-text-main text-lg font-bold">{m.form_section_payment()}</h2>
       </div>
-      <label class="flex items-center gap-3 cursor-pointer select-none">
+      <label class="flex cursor-pointer items-center gap-3 select-none">
         <div class="relative">
           <input type="checkbox" bind:checked={requiresPayment} class="peer sr-only" />
           <div
-            class="w-11 h-6 bg-cn-border rounded-full peer-checked:bg-cn-yellow transition-colors"
+            class="bg-cn-border peer-checked:bg-cn-yellow h-6 w-11 rounded-full transition-colors"
           ></div>
           <div
-            class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"
+            class="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-5"
           ></div>
         </div>
-        <span class="text-sm font-semibold text-text-main">{m.form_requires_payment_label()}</span>
+        <span class="text-text-main text-sm font-semibold">{m.form_requires_payment_label()}</span>
       </label>
       {#if requiresPayment}
-        <div class="mt-5 pt-5 border-t-2 border-cn-border">
+        <div class="border-cn-border mt-5 border-t-2 pt-5">
           <Input
             label={m.form_base_price_label()}
             type="number"
@@ -514,14 +514,14 @@
           />
         </div>
         <div class="mt-4">
-          <label for="association-select" class="block text-sm font-bold text-text-main mb-2 ml-1"
+          <label for="association-select" class="text-text-main mb-2 ml-1 block text-sm font-bold"
             >{m.form_association_label()}</label
           >
           {#if associations.length > 0}
             <select
               id="association-select"
               bind:value={associationId}
-              class="w-full px-4 py-3 border-2 border-cn-border rounded-2xl text-base text-text-main bg-[var(--cn-surface)] outline-none transition-all focus:border-cn-yellow"
+              class="border-cn-border text-text-main focus:border-cn-yellow w-full rounded-2xl border-2 bg-(--cn-surface) px-4 py-3 text-base transition-all outline-none"
             >
               <option value="">{m.form_association_select_placeholder()}</option>
               {#each associations as a (a.id)}
@@ -529,16 +529,16 @@
               {/each}
             </select>
           {:else}
-            <p class="text-sm text-text-muted bg-cn-border/20 rounded-2xl px-4 py-3">
+            <p class="text-text-muted bg-cn-border/20 rounded-2xl px-4 py-3 text-sm">
               {m.form_no_stripe_connected()}
             </p>
           {/if}
         </div>
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+        <div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div class="space-y-1">
             <label
               for="pricing-tag-autocomplete-edit"
-              class="block text-sm font-bold text-text-main ml-1">{m.form_member_tag_label()}</label
+              class="text-text-main ml-1 block text-sm font-bold">{m.form_member_tag_label()}</label
             >
             <AssociationTagAutocomplete
               {associationId}
@@ -558,7 +558,7 @@
             disabled={!showMemberPricing}
           />
         </div>
-        <p class="text-xs text-text-muted mt-1 ml-1">
+        <p class="text-text-muted mt-1 ml-1 text-xs">
           {m.form_member_tag_desc()}
         </p>
         <div class="mt-4">
@@ -568,18 +568,18 @@
             showOptionSupplementNote={true}
           />
         </div>
-        <div class="mt-4 pt-4 border-t-2 border-cn-border space-y-3">
-          <label class="flex items-center gap-3 cursor-pointer select-none">
+        <div class="border-cn-border mt-4 space-y-3 border-t-2 pt-4">
+          <label class="flex cursor-pointer items-center gap-3 select-none">
             <div class="relative">
               <input type="checkbox" bind:checked={allowCashPayment} class="peer sr-only" />
               <div
-                class="w-11 h-6 bg-cn-border rounded-full peer-checked:bg-cn-yellow transition-colors"
+                class="bg-cn-border peer-checked:bg-cn-yellow h-6 w-11 rounded-full transition-colors"
               ></div>
               <div
-                class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-5"
+                class="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-5"
               ></div>
             </div>
-            <span class="text-sm font-semibold text-text-main">{m.form_cash_label()}</span>
+            <span class="text-text-main text-sm font-semibold">{m.form_cash_label()}</span>
           </label>
           {#if allowCashPayment}
             <Input
@@ -598,29 +598,29 @@
 
     <!-- Section: Co-owners -->
     <section
-      class="rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] p-4 sm:p-6 mb-4 sm:mb-5"
+      class="border-cn-border mb-4 rounded-2xl border-2 bg-(--cn-surface) p-4 sm:mb-5 sm:p-6"
     >
-      <div class="flex items-center gap-2.5 mb-4">
-        <div class="p-2 rounded-xl bg-cn-yellow/15 text-cn-dark"><Users size={20} /></div>
-        <h2 class="text-lg font-bold text-text-main">{m.form_coowners_section()}</h2>
+      <div class="mb-4 flex items-center gap-2.5">
+        <div class="bg-cn-yellow/15 text-cn-dark rounded-xl p-2"><Users size={20} /></div>
+        <h2 class="text-text-main text-lg font-bold">{m.form_coowners_section()}</h2>
       </div>
-      <p class="text-sm text-text-muted mb-4">
+      <p class="text-text-muted mb-4 text-sm">
         {m.form_coowners_desc()}
       </p>
       {#if coOwnerError}
-        <p class="text-sm text-red-err mb-3">{coOwnerError}</p>
+        <p class="text-red-err mb-3 text-sm">{coOwnerError}</p>
       {/if}
       {#if coOwners.length > 0}
-        <ul class="space-y-2 mb-4">
+        <ul class="mb-4 space-y-2">
           {#each coOwners as co (co.id)}
             <li
-              class="flex items-center justify-between gap-3 rounded-xl border border-cn-border bg-cn-bg/40 px-3 py-2"
+              class="border-cn-border bg-cn-bg/40 flex items-center justify-between gap-3 rounded-xl border px-3 py-2"
             >
-              <span class="text-sm font-medium text-text-main truncate">{co.displayName}</span>
+              <span class="text-text-main truncate text-sm font-medium">{co.displayName}</span>
               <button
                 type="button"
                 onclick={() => handleRemoveCoOwner(co.id)}
-                class="rounded-lg border border-red-err/30 p-1.5 text-red-500 hover:bg-red-err/10 transition-colors"
+                class="border-red-err/30 hover:bg-red-err/10 rounded-lg border p-1.5 text-red-500 transition-colors"
                 title={m.common_remove_label()}
               >
                 <Trash2 size={13} />
@@ -630,7 +630,7 @@
         </ul>
       {/if}
       <div class="flex gap-2">
-        <div class="flex-1 min-w-0">
+        <div class="min-w-0 flex-1">
           <UserAutocomplete
             value={coOwnerInput}
             onValueChange={(v) => (coOwnerInput = v)}
@@ -642,7 +642,7 @@
           type="button"
           onclick={() => handleAddCoOwner(coOwnerInput.trim())}
           disabled={addingCoOwner || !coOwnerInput.trim()}
-          class="shrink-0 rounded-xl border border-cn-border px-3 py-2 text-sm font-semibold hover:bg-cn-bg disabled:opacity-40"
+          class="border-cn-border hover:bg-cn-bg shrink-0 rounded-xl border px-3 py-2 text-sm font-semibold disabled:opacity-40"
         >
           {addingCoOwner ? '…' : m.form_coowner_add_button()}
         </button>
@@ -650,12 +650,12 @@
     </section>
 
     <!-- Section: Questions -->
-    <section class="rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] p-3 sm:p-6">
-      <div class="flex items-center gap-2.5 mb-4 sm:mb-5 px-1 sm:px-0">
-        <div class="p-2 rounded-xl bg-cn-yellow/15 text-cn-dark"><ListChecks size={20} /></div>
-        <h2 class="text-lg font-bold text-text-main">{m.form_section_questions()}</h2>
+    <section class="border-cn-border rounded-2xl border-2 bg-(--cn-surface) p-3 sm:p-6">
+      <div class="mb-4 flex items-center gap-2.5 px-1 sm:mb-5 sm:px-0">
+        <div class="bg-cn-yellow/15 text-cn-dark rounded-xl p-2"><ListChecks size={20} /></div>
+        <h2 class="text-text-main text-lg font-bold">{m.form_section_questions()}</h2>
         <span
-          class="ml-auto text-xs font-semibold text-text-muted bg-cn-border/40 px-2.5 py-1 rounded-full"
+          class="text-text-muted bg-cn-border/40 ml-auto rounded-full px-2.5 py-1 text-xs font-semibold"
         >
           {items.length === 1
             ? m.form_questions_count_one()
@@ -672,9 +672,9 @@
             ondrop={() => handleDrop(i)}
             ondragend={handleDragEnd}
             class="transition-all duration-150 {dragIndex === i
-              ? 'opacity-40 scale-[0.98]'
+              ? 'scale-[0.98] opacity-40'
               : ''} {dropIndex === i && dragIndex !== i
-              ? 'ring-2 ring-cn-yellow/60 ring-offset-1 rounded-[2rem]'
+              ? 'ring-cn-yellow/60 rounded-[2rem] ring-2 ring-offset-1'
               : ''}"
           >
             <FormBuilder
@@ -701,7 +701,7 @@
         <button
           type="button"
           onclick={() => (showTypePicker = !showTypePicker)}
-          class="w-full py-3 rounded-2xl border-2 border-dashed border-cn-border text-sm font-bold text-text-muted hover:border-cn-yellow hover:text-cn-dark hover:bg-cn-yellow/5 transition-all flex items-center justify-center gap-2"
+          class="border-cn-border text-text-muted hover:border-cn-yellow hover:text-cn-dark hover:bg-cn-yellow/5 flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed py-3 text-sm font-bold transition-all"
         >
           <Plus size={18} />
           {m.form_add_question_button()}
@@ -712,27 +712,27 @@
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div class="fixed inset-0 z-40" onclick={() => (showTypePicker = false)}></div>
           <div
-            class="absolute bottom-full left-0 right-0 mb-2 z-50 rounded-2xl border-2 border-cn-border bg-[var(--cn-surface)] shadow-xl p-3"
+            class="border-cn-border absolute right-0 bottom-full left-0 z-50 mb-2 rounded-2xl border-2 bg-(--cn-surface) p-3 shadow-xl"
           >
             <p
-              class="text-[0.65rem] font-bold text-text-muted uppercase tracking-wider mb-2.5 ml-1"
+              class="text-text-muted mb-2.5 ml-1 text-[0.65rem] font-bold tracking-wider uppercase"
             >
               {m.form_question_type_picker_label()}
             </p>
-            <div class="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+            <div class="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
               {#each QUESTION_TYPES as qtype (qtype.value)}
                 {@const Icon = qtype.Icon}
                 <button
                   type="button"
                   onclick={() => addItem(qtype.value)}
-                  class="flex flex-col items-center gap-1.5 p-2.5 rounded-xl border border-cn-border hover:border-cn-yellow hover:bg-cn-yellow/5 text-center transition-all group"
+                  class="border-cn-border hover:border-cn-yellow hover:bg-cn-yellow/5 group flex flex-col items-center gap-1.5 rounded-xl border p-2.5 text-center transition-all"
                 >
                   <Icon
                     size={18}
                     class="text-text-muted group-hover:text-cn-dark transition-colors"
                   />
                   <span
-                    class="text-[0.65rem] font-semibold text-text-muted group-hover:text-text-main leading-tight"
+                    class="text-text-muted group-hover:text-text-main text-[0.65rem] leading-tight font-semibold"
                     >{qtype.label()}</span
                   >
                 </button>
@@ -747,9 +747,9 @@
   {#if form}
     <!-- Save bar -->
     <div
-      class="mt-5 rounded-2xl border border-cn-border/60 bg-[var(--cn-surface)]/85 dark:bg-cn-ink/85 backdrop-blur-xl shadow-lg px-4 sm:px-5 py-3.5 flex flex-col sm:flex-row items-center justify-center sm:justify-between gap-3"
+      class="border-cn-border/60 dark:bg-cn-ink/85 mt-5 flex flex-col items-center justify-center gap-3 rounded-2xl border bg-(--cn-surface)/85 px-4 py-3.5 shadow-lg backdrop-blur-xl sm:flex-row sm:justify-between sm:px-5"
     >
-      <p class="text-sm text-text-muted min-h-[1.25rem]">
+      <p class="text-text-muted min-h-[1.25rem] text-sm">
         {#if titleMissing}
           <span class="text-amber-warn font-medium">{m.form_title_required_hint()}</span>
         {:else}
@@ -761,7 +761,7 @@
       <button
         onclick={handleSave}
         disabled={isSubmitting || titleMissing}
-        class="inline-flex items-center justify-center gap-2 rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0 w-full sm:w-auto"
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex w-full shrink-0 items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto"
       >
         <Save size={16} />
         {isSubmitting ? m.form_saving_label() : m.form_save_changes_button()}

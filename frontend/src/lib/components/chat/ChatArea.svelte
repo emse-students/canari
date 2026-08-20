@@ -775,7 +775,7 @@
 </script>
 
 <section
-  class="relative flex-1 min-h-0 min-w-0 flex flex-col bg-transparent {isHidden
+  class="relative flex min-h-0 min-w-0 flex-1 flex-col bg-transparent {isHidden
     ? 'hidden md:flex'
     : ''}"
   use:swipeBack={{ onBack: onBack ?? (() => {}), enabled: _isMobile && !!onBack }}
@@ -830,7 +830,7 @@
     {/if}
 
     {#if showSearch}
-      <div class="px-3 md:px-6 pt-2 pb-0.5" transition:slide={{ duration: 180 }}>
+      <div class="px-3 pt-2 pb-0.5 md:px-6" transition:slide={{ duration: 180 }}>
         <div class="chat-search-panel">
           <div class="chat-search-input-wrap">
             <Search size={15} class="opacity-60" />
@@ -884,7 +884,7 @@
           </div>
         </div>
         {#if searchLimitedToLoaded && searchQuery.trim().length >= 2}
-          <p class="px-1 pt-1 text-[0.7rem] text-text-muted">
+          <p class="text-text-muted px-1 pt-1 text-[0.7rem]">
             {m.chat_search_limited_loaded_warning()}
           </p>
         {/if}
@@ -892,13 +892,13 @@
     {/if}
 
     {#if activePolls.length > 0}
-      <div class="px-3 md:px-6 pt-1">
+      <div class="px-3 pt-1 md:px-6">
         <button
           type="button"
           onclick={() => (showPolls = !showPolls)}
-          class="flex w-full items-center gap-2 rounded-xl border border-cn-border bg-[var(--cn-surface)]/80 px-3 py-1.5 text-left text-sm text-text-main hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+          class="border-cn-border text-text-main flex w-full items-center gap-2 rounded-xl border bg-(--cn-surface)/80 px-3 py-1.5 text-left text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5"
         >
-          <ChartColumn size={14} class="shrink-0 text-cn-yellow" />
+          <ChartColumn size={14} class="text-cn-yellow shrink-0" />
           <span class="font-semibold"
             >{m.chat_active_polls_count({ activePolls: activePolls.length })}</span
           >
@@ -910,12 +910,12 @@
         {#if showPolls}
           <div
             transition:slide={{ duration: 150 }}
-            class="mt-1 flex max-h-60 flex-col gap-0.5 overflow-y-auto rounded-xl border border-cn-border bg-[var(--cn-surface)] p-1"
+            class="border-cn-border mt-1 flex max-h-60 flex-col gap-0.5 overflow-y-auto rounded-xl border bg-(--cn-surface) p-1"
           >
             {#each activePolls as poll (poll.id)}
               <button
                 type="button"
-                class="truncate rounded-lg px-2 py-1.5 text-left text-sm text-text-main hover:bg-black/5 dark:hover:bg-white/5"
+                class="text-text-main truncate rounded-lg px-2 py-1.5 text-left text-sm hover:bg-black/5 dark:hover:bg-white/5"
                 onclick={() => {
                   showPolls = false;
                   void navigateToMessageEnsureLoaded(poll.id);
@@ -930,11 +930,11 @@
     {/if}
 
     {#if pinnedIds.length > 0}
-      <div class="px-3 md:px-6 pt-1">
+      <div class="px-3 pt-1 md:px-6">
         <button
           type="button"
           onclick={() => (showPinned = !showPinned)}
-          class="flex w-full items-center gap-2 rounded-xl border border-cn-border bg-[var(--cn-surface)]/80 px-3 py-1.5 text-left text-sm text-text-main hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+          class="border-cn-border text-text-main flex w-full items-center gap-2 rounded-xl border bg-(--cn-surface)/80 px-3 py-1.5 text-left text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5"
         >
           <Pin size={14} class="shrink-0 text-amber-500" />
           <span class="font-semibold"
@@ -948,7 +948,7 @@
         {#if showPinned}
           <div
             transition:slide={{ duration: 150 }}
-            class="mt-1 flex max-h-60 flex-col gap-0.5 overflow-y-auto rounded-xl border border-cn-border bg-[var(--cn-surface)] p-1"
+            class="border-cn-border mt-1 flex max-h-60 flex-col gap-0.5 overflow-y-auto rounded-xl border bg-(--cn-surface) p-1"
           >
             {#each pinnedIds as pid (pid)}
               <div
@@ -956,7 +956,7 @@
               >
                 <button
                   type="button"
-                  class="min-w-0 flex-1 truncate text-left text-sm text-text-main"
+                  class="text-text-main min-w-0 flex-1 truncate text-left text-sm"
                   onclick={() => {
                     showPinned = false;
                     void navigateToMessageEnsureLoaded(pid);
@@ -968,7 +968,7 @@
                   <button
                     type="button"
                     onclick={() => onTogglePin?.(pid)}
-                    class="shrink-0 rounded-lg p-1 text-text-muted hover:bg-red-500/10 hover:text-red-500"
+                    class="text-text-muted shrink-0 rounded-lg p-1 hover:bg-red-500/10 hover:text-red-500"
                     aria-label={m.chat_unpin_label()}
                     title={m.chat_unpin_title()}
                   >
@@ -983,21 +983,21 @@
     {/if}
 
     <!-- Messages (bottom padding so they scroll under the glass composer) -->
-    <div class="relative flex-1 min-h-0 flex flex-col">
+    <div class="relative flex min-h-0 flex-1 flex-col">
       <!-- Sync banners live HERE, not beside the header: `absolute top-0` resolves against the
            nearest positioned ancestor, and the enclosing <section> is the one that also holds
            <ChatHeader> - so anchored there they paint over the avatar and the contact name. -->
       <!-- One column, so two simultaneous banners STACK instead of hiding one another: both were
            `absolute top-0` and the amber one simply covered the sky one. -->
-      <div class="absolute top-0 inset-x-0 z-40 flex flex-col pointer-events-none">
+      <div class="pointer-events-none absolute inset-x-0 top-0 z-40 flex flex-col">
         {#if isCatchupAnnounced}
           <div
-            class="flex items-center justify-center gap-2 py-1.5 px-4 bg-banner-warn text-text-main text-xs font-medium border-b border-amber-warn/30 pointer-events-none"
+            class="bg-banner-warn text-text-main border-amber-warn/30 pointer-events-none flex items-center justify-center gap-2 border-b px-4 py-1.5 text-xs font-medium"
             role="status"
             aria-live="polite"
             aria-busy="true"
           >
-            <Loader2 size={11} class="animate-spin shrink-0" strokeWidth={2.5} aria-hidden="true" />
+            <Loader2 size={11} class="shrink-0 animate-spin" strokeWidth={2.5} aria-hidden="true" />
             {m.chat_mls_sync_in_progress()}
           </div>
         {/if}
@@ -1006,18 +1006,18 @@
       <div
         bind:this={chatContainer}
         onscroll={handleScroll}
-        class="chat-scrollbar chat-messages-scroll flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 py-3 md:px-6 md:py-6 flex flex-col gap-2 transition-opacity duration-150 {hideDuringEntry
+        class="chat-scrollbar chat-messages-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-auto px-3 py-3 transition-opacity duration-150 md:px-6 md:py-6 {hideDuringEntry
           ? 'opacity-0'
           : 'opacity-100'}"
       >
         {#if showSkeleton}
           <!-- Loading skeleton - hides per-message pop-in while history replays -->
-          <div class="flex flex-col gap-3 px-1 py-4 animate-pulse" aria-hidden="true">
+          <div class="flex animate-pulse flex-col gap-3 px-1 py-4" aria-hidden="true">
             {#each [0.55, 0.8, 0.4, 0.7, 0.5, 0.65, 0.45] as w, i (i)}
               <div class="flex {i % 2 === 0 ? 'justify-end' : 'justify-start'} gap-2">
                 {#if i % 2 !== 0}
                   <div
-                    class="w-7 h-7 rounded-full bg-black/10 dark:bg-white/10 shrink-0 self-end"
+                    class="h-7 w-7 shrink-0 self-end rounded-full bg-black/10 dark:bg-white/10"
                   ></div>
                 {/if}
                 <div
@@ -1036,17 +1036,17 @@
           -->
           {#if scrollbackState === 'asking'}
             <div
-              class="flex items-center justify-center gap-2 py-2 text-xs text-muted-foreground"
+              class="text-muted-foreground flex items-center justify-center gap-2 py-2 text-xs"
               role="status"
               aria-live="polite"
               aria-busy="true"
             >
-              <Loader2 size={12} class="animate-spin shrink-0" strokeWidth={2.5} />
+              <Loader2 size={12} class="shrink-0 animate-spin" strokeWidth={2.5} />
               {m.chat_scrollback_loading()}
             </div>
           {:else if scrollbackState === 'no-peer'}
             <div
-              class="flex items-center justify-center gap-2 py-2 px-4 text-xs text-muted-foreground"
+              class="text-muted-foreground flex items-center justify-center gap-2 px-4 py-2 text-xs"
               role="status"
               aria-live="polite"
             >
@@ -1097,12 +1097,12 @@
         aria-label={m.chat_scroll_to_bottom_label()}
         title={m.chat_scroll_to_bottom_title()}
       >
-        <span class="inline-flex items-center justify-center w-full h-full">
+        <span class="inline-flex h-full w-full items-center justify-center">
           <ArrowDown size={18} />
         </span>
         {#if hiddenBelowCount > 0}
           <span
-            class="absolute -top-1.5 -right-1.5 min-w-[1.25rem] h-5 px-1 rounded-full bg-amber-500 text-cn-dark text-[0.6rem] font-extrabold inline-flex items-center justify-center shadow-sm shadow-amber-500/30 pointer-events-none"
+            class="text-cn-dark pointer-events-none absolute -top-1.5 -right-1.5 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-amber-500 px-1 text-[0.6rem] font-extrabold shadow-sm shadow-amber-500/30"
             aria-hidden="true"
           >
             {hiddenBelowCount > 99 ? '99+' : hiddenBelowCount}
@@ -1117,14 +1117,14 @@
 
     {#if conversation?.lifecycle === 'removed'}
       <div
-        class="absolute inset-x-0 bottom-0 z-20 flex flex-col items-center gap-2 px-4 py-3 bg-[var(--color-surface)] border-t border-black/8 dark:border-white/10"
+        class="absolute inset-x-0 bottom-0 z-20 flex flex-col items-center gap-2 border-t border-black/8 bg-(--color-surface) px-4 py-3 dark:border-white/10"
       >
-        <p class="text-sm text-[var(--color-text-muted)] text-center">
+        <p class="text-center text-sm text-(--color-text-muted)">
           {m.chat_conversation_deleted_message()}
         </p>
         <button
           onclick={() => onGroupDeleteLocally?.()}
-          class="px-4 py-1.5 rounded-lg text-sm font-medium bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20 active:scale-95 transition-all"
+          class="rounded-lg bg-red-500/10 px-4 py-1.5 text-sm font-medium text-red-600 transition-all hover:bg-red-500/20 active:scale-95 dark:text-red-400"
         >
           {m.chat_delete_locally_button()}
         </button>
@@ -1137,14 +1137,14 @@
            branch above, and deliberately not a disabled composer - a greyed-out field says "later",
            and this is not later. -->
       <div
-        class="absolute inset-x-0 bottom-0 z-20 flex flex-col items-center gap-2 px-4 py-3 bg-[var(--color-surface)] border-t border-black/8 dark:border-white/10"
+        class="absolute inset-x-0 bottom-0 z-20 flex flex-col items-center gap-2 border-t border-black/8 bg-[var(--color-surface)] px-4 py-3 dark:border-white/10"
       >
-        <p class="text-sm text-[var(--color-text-muted)] text-center">
+        <p class="text-center text-sm text-[var(--color-text-muted)]">
           {m.chat_channel_read_only()}
         </p>
       </div>
     {:else}
-      <div class="absolute inset-x-0 bottom-0 z-20 pointer-events-none">
+      <div class="pointer-events-none absolute inset-x-0 bottom-0 z-20">
         <!-- NOT LOCKED DURING A DRAIN. `interactionLocked={isCatchingUpMessages}` used to sit on
              <ChatComposer> below - a fourth, undocumented reader of a flag whose three real guards
              are named elsewhere. It had no protocol justification in either venue: a CHANNEL send
@@ -1186,12 +1186,12 @@
       <!-- Safety net: when a conversation ID is selected but its object is null (e.g. load race),
            the back button must still be reachable on mobile or the user is completely stuck. -->
       <header
-        class="md:hidden bg-white/70 dark:bg-black/50 px-3 py-3 border-b border-black/5 dark:border-white/10 flex items-center backdrop-blur-2xl z-20"
+        class="z-20 flex items-center border-b border-black/5 bg-white/70 px-3 py-3 backdrop-blur-2xl md:hidden dark:border-white/10 dark:bg-black/50"
       >
         <button
           onclick={onBack}
           aria-label={m.chat_back_label()}
-          class="p-1 rounded-xl text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10 active:scale-95 transition-all"
+          class="text-text-muted hover:text-text-main rounded-xl p-1 transition-all hover:bg-black/5 active:scale-95 dark:hover:bg-white/10"
         >
           <ChevronLeft size={24} />
         </button>

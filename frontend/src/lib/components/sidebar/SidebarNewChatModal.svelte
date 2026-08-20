@@ -70,7 +70,7 @@
   <!-- Système d'onglets accessible -->
   <div
     role="tablist"
-    class="flex gap-2 rounded-2xl bg-white/45 dark:bg-black/25 border border-white/50 dark:border-white/10 p-1 mb-4"
+    class="mb-4 flex gap-2 rounded-2xl border border-white/50 bg-white/45 p-1 dark:border-white/10 dark:bg-black/25"
   >
     <button
       id="tab-contact"
@@ -99,7 +99,7 @@
     <div id="tabpanel-contact" role="tabpanel" aria-labelledby="tab-contact">
       <form class="space-y-4" onsubmit={handleContactSubmit}>
         <div>
-          <label for="new-contact-id" class="block text-sm font-medium text-text-main mb-1">
+          <label for="new-contact-id" class="text-text-main mb-1 block text-sm font-medium">
             {m.chat_modal_contact_label()}
           </label>
           <!--
@@ -121,12 +121,12 @@
         <button
           type="submit"
           disabled={!contactId.trim() || isSelf}
-          class="w-full py-2.5 bg-amber-500 text-white font-semibold rounded-xl hover:bg-amber-400 focus:ring-2 focus:ring-amber-500/50 focus:outline-none transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+          class="w-full rounded-xl bg-amber-500 py-2.5 font-semibold text-white transition-all duration-200 hover:bg-amber-400 focus:ring-2 focus:ring-amber-500/50 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
         >
           {m.chat_modal_start_discussion_button()}
         </button>
         {#if isSelf}
-          <p class="text-xs text-red-500 font-medium text-center -mt-1">
+          <p class="-mt-1 text-center text-xs font-medium text-red-500">
             {m.chat_modal_self_conversation_error()}
           </p>
         {/if}
@@ -136,7 +136,7 @@
     <div id="tabpanel-group" role="tabpanel" aria-labelledby="tab-group">
       <form class="space-y-4" onsubmit={handleGroupSubmit}>
         <div>
-          <label for="new-group-name" class="block text-sm font-medium text-text-main mb-1">
+          <label for="new-group-name" class="text-text-main mb-1 block text-sm font-medium">
             {m.chat_modal_group_name_label()}
           </label>
           <input
@@ -145,14 +145,14 @@
             value={groupName}
             oninput={(e) => onGroupNameChange(e.currentTarget.value)}
             placeholder={m.chat_modal_group_name_placeholder()}
-            class="w-full px-4 py-2.5 bg-white/65 dark:bg-black/30 border border-white/60 dark:border-white/10 rounded-xl text-sm outline-none focus:ring-2 focus:ring-amber-400/45 focus:border-amber-400/50 transition-all placeholder:text-text-muted/70"
+            class="placeholder:text-text-muted/70 w-full rounded-xl border border-white/60 bg-white/65 px-4 py-2.5 text-sm transition-all outline-none focus:border-amber-400/50 focus:ring-2 focus:ring-amber-400/45 dark:border-white/10 dark:bg-black/30"
             autocomplete="off"
           />
         </div>
         <button
           type="submit"
           disabled={!groupName.trim()}
-          class="w-full py-2.5 bg-amber-500 text-white font-semibold rounded-xl hover:bg-amber-400 focus:ring-2 focus:ring-amber-500/50 focus:outline-none transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+          class="w-full rounded-xl bg-amber-500 py-2.5 font-semibold text-white transition-all duration-200 hover:bg-amber-400 focus:ring-2 focus:ring-amber-500/50 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
         >
           {m.chat_modal_create_group_button()}
         </button>

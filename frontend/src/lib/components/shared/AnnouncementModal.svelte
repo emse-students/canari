@@ -55,13 +55,13 @@
   >
     <div class="flex gap-3">
       <span
-        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-cn-yellow/15 text-cn-dark"
+        class="bg-cn-yellow/15 text-cn-dark flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
       >
         <Megaphone size={20} />
       </span>
       <!-- Plain text with its line breaks kept: an announcement is typed in a textarea, and
            rendering it as markup would make the admin panel an injection surface. -->
-      <p class="text-sm leading-relaxed text-text-main whitespace-pre-wrap wrap-break-word">
+      <p class="text-text-main text-sm leading-relaxed wrap-break-word whitespace-pre-wrap">
         {announcement.body}
       </p>
     </div>
@@ -71,7 +71,7 @@
         type="button"
         onclick={() => void close()}
         disabled={dismissing}
-        class="px-4 py-2 rounded-xl bg-cn-yellow hover:bg-cn-yellow-hover text-cn-dark text-sm font-bold disabled:opacity-50"
+        class="bg-cn-yellow hover:bg-cn-yellow-hover text-cn-dark rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
       >
         {m.announcement_understood_button()}
       </button>

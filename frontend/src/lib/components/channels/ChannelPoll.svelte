@@ -105,7 +105,7 @@
     type="button"
     onclick={handleClose}
     disabled={closing}
-    class="mt-1.5 text-xs font-semibold text-text-muted underline underline-offset-2 hover:text-red-500 disabled:opacity-50"
+    class="text-text-muted mt-1.5 text-xs font-semibold underline underline-offset-2 hover:text-red-500 disabled:opacity-50"
   >
     {closing ? m.common_sending_label() : m.channel_poll_close_button()}
   </button>
