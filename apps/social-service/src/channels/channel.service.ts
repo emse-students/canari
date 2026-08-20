@@ -1630,6 +1630,38 @@ export class ChannelService {
       }
     }
 
+    // A CREATION IS A GRANT, AND EVERY OTHER GRANT HERE ANNOUNCES ITSELF. The three paths that put
+    // a user into `allowedUsers` - an accepted invite, an admin join, an added member - each publish
+    // this event to `channelAudience`, and each does it AFTER the grant so the newly-admitted person
+    // is inside the audience rather than the one person it misses. Creation was the only grant that
+    // told nobody, including the creator's own other devices.
+    //
+    // The consequence was not cosmetic. The only ways into a private salon's distribution group are
+    // a full workspace load - post-login, the `online` event, or a deep link - and this event, so a
+    // second device already running joined nothing and could not decrypt a word of the salon until
+    // it was relaunched. COMM-25 measured it on 2026-08-21: the phone joined the group of all three
+    // private salons that existed when it loaded its workspaces, and never heard about the one
+    // created nine seconds later. A public salon has the same hole with no MLS consequence - it
+    // simply did not appear for anybody until their next load.
+    //
+    // The audience is derived from access, so a private salon reaches its `allowedUsers` (here, the
+    // creator alone, on every device they hold) and a public one reaches the whole community.
+    const workspace = await this.workspaceRepo.findOne({ where: { id: savedChannel.workspaceId } });
+    const audience = await this.channelAudience(savedChannel);
+    await this.redis.publishChannelEvent(
+      'channel.member.joined',
+      {
+        channelId: savedChannel.id,
+        channelName: savedChannel.name,
+        workspaceId: savedChannel.workspaceId,
+        workspaceSlug: workspace?.slug,
+        workspaceName: workspace?.name,
+        visibility: savedChannel.isPrivate ? 'private' : 'public',
+        joinedBy: input.actorUserId,
+      },
+      audience
+    );
+
     return {
       id: savedChannel.id,
       workspaceId: savedChannel.workspaceId,

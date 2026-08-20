@@ -25,6 +25,8 @@ const line = (sev, tag, msg) => `08-16 12:00:00.000  4321  4321 ${sev} ${tag}: $
 const CASES = [
   // ── ours, and benign: every EXPLAINED rule gets one ────────────────────────────────────────────
   [line('D', 'MainActivity', 'onPause: isInForeground=false'), 'explained'],
+  [line('D', 'MainActivity', 'IME inset: 899 -> content padding'), 'explained'],
+  [line('D', 'MainActivity', 'IME inset: 0 -> content padding'), 'explained'],
   [line('D', 'MlsDeviceKeyStore', 'retrieve: success alias=mls_device_key_0000'), 'explained'],
   [line('D', 'CanariApp', 'checkKeystoreHealth: Keystore operational'), 'explained'],
   [line('I', 'CanariApp', 'processPendingPushSecret: secret stored in the Keystore'), 'explained'],

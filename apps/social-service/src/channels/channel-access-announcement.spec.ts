@@ -172,3 +172,164 @@ describe('ChannelService.updateChannelAccess - announcing the new decision', () 
     expect(sent[0].data).toMatchObject({ isPrivate: true, viewerCanWrite: true });
   });
 });
+
+/**
+ * A CREATION IS A GRANT, AND IT HAS TO ANNOUNCE ITSELF LIKE EVERY OTHER GRANT HERE.
+ *
+ * MEASURED ON PRODUCTION 2026-08-21 (COMM-25). The owner's phone, unlocked and online, did a full
+ * workspace load and joined the distribution group of all three private salons that existed at that
+ * instant. A fourth was created nine seconds later and the phone never heard of it: the only ways
+ * into a private salon's group are a full workspace load - post-login, the `online` event, a deep
+ * link - and `channel.member.joined`, and `createChannel` published nothing at all.
+ *
+ * The three sibling grants (an accepted invite, an admin join, an added member) each publish to
+ * `channelAudience` AFTER writing `allowedUsers`, so the newly-admitted person is inside the
+ * audience rather than the one it misses. This asserts creation now does the same, and that the
+ * audience is still derived from ACCESS - a private salon reaches its roster, a public one the
+ * community.
+ */
+describe('ChannelService.createChannel - a creation is a grant', () => {
+  const WORKSPACE = 'ws-1';
+  const OWNER = 'u-admin';
+  const MEMBER = 'u-member';
+
+  const OWNER_ROLE = {
+    id: 'r-admin',
+    workspaceId: WORKSPACE,
+    name: 'Administrateur',
+    permissions: [CHANNEL_PERMISSIONS.MANAGE_WORKSPACE, CHANNEL_PERMISSIONS.MANAGE_CHANNEL],
+  };
+
+  function makeService() {
+    const saved: Record<string, unknown>[] = [];
+    const channelRepo = {
+      create: jest.fn((c: Record<string, unknown>) => ({ ...c })),
+      save: jest.fn((c: Record<string, unknown>) => {
+        const row = { ...c, id: 'ch-new' };
+        saved.push(row);
+        return Promise.resolve(row);
+      }),
+      findOne: jest.fn(),
+      delete: jest.fn(),
+    };
+    const memberRepo = {
+      findOne: jest.fn((opts: { where: { userId: string } }) =>
+        Promise.resolve(
+          opts.where.userId === OWNER
+            ? { workspaceId: WORKSPACE, userId: OWNER, roleIds: [OWNER_ROLE.id] }
+            : { workspaceId: WORKSPACE, userId: MEMBER, roleIds: [] }
+        )
+      ),
+      find: jest.fn().mockResolvedValue([
+        { workspaceId: WORKSPACE, userId: OWNER, roleIds: [OWNER_ROLE.id] },
+        { workspaceId: WORKSPACE, userId: MEMBER, roleIds: [] },
+      ]),
+      save: jest.fn(),
+    };
+    const roleRepo = {
+      findOne: jest.fn(),
+      find: jest.fn().mockResolvedValue([OWNER_ROLE]),
+      save: jest.fn(),
+    };
+    const workspaceRepo = {
+      findOne: jest.fn().mockResolvedValue({ id: WORKSPACE, slug: 'ws', name: 'Workspace' }),
+      find: jest.fn().mockResolvedValue([]),
+      save: jest.fn(),
+    };
+    const noop = { findOne: jest.fn(), find: jest.fn().mockResolvedValue([]) };
+    const redis = { publishChannelEvent: jest.fn().mockResolvedValue(undefined) };
+
+    const service = new ChannelService(
+      workspaceRepo as unknown as Repository<Workspace>,
+      channelRepo as unknown as Repository<Channel>,
+      roleRepo as unknown as Repository<ChannelRole>,
+      memberRepo as unknown as Repository<ChannelMember>,
+      noop as unknown as Repository<ChannelMessage>,
+      noop as unknown as Repository<WorkspaceInvite>,
+      redis as unknown as RedisService
+    );
+    jest.spyOn(service['logger'], 'log').mockImplementation(() => undefined);
+    jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
+    jest.spyOn(service['logger'], 'error').mockImplementation(() => undefined);
+    return { service, redis };
+  }
+
+  const previousSecret = process.env.INTERNAL_SECRET;
+
+  beforeEach(() => {
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    // A private salon MINTS ITS GROUP on the way through, and that call may abort the creation - so
+    // it is answered here or the test fails on an unreachable key service instead of on the
+    // announcement it is about.
+    process.env.INTERNAL_SECRET = 'internal-secret-for-tests';
+    global.fetch = jest.fn(() =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve(JSON.stringify({ groupId: 'g-1', created: true })),
+      } as unknown as Response)
+    ) as unknown as typeof fetch;
+  });
+  afterEach(() => {
+    jest.restoreAllMocks();
+    if (previousSecret === undefined) delete process.env.INTERNAL_SECRET;
+    else process.env.INTERNAL_SECRET = previousSecret;
+  });
+
+  /** Every `channel.member.joined` publish, as `[data, audience]` pairs. */
+  const joins = (redis: { publishChannelEvent: jest.Mock }) =>
+    redis.publishChannelEvent.mock.calls
+      .filter(([type]: [string]) => type === 'channel.member.joined')
+      .map(([, data, audience]: [string, Record<string, unknown>, string[]]) => ({
+        data,
+        audience,
+      }));
+
+  /**
+   * THE DEFECT ITSELF. The creator holds more than one device and only the one that made the salon
+   * knows it exists; the audience is by USER, so naming them is what reaches the others.
+   */
+  it('announces a private salon to its roster, which is the creator alone', async () => {
+    const { service, redis } = makeService();
+
+    await service.createChannel({
+      workspaceId: WORKSPACE,
+      actorUserId: OWNER,
+      name: 'c25',
+      visibility: 'private',
+    } as Parameters<typeof service.createChannel>[0]);
+
+    const sent = joins(redis);
+    expect(sent.length).toBe(1);
+    expect(sent[0].audience).toEqual([OWNER]);
+    expect(sent[0].data).toMatchObject({
+      channelId: 'ch-new',
+      channelName: 'c25',
+      workspaceId: WORKSPACE,
+      visibility: 'private',
+    });
+  });
+
+  /**
+   * THE NEGATIVE CONTROL ON THE AUDIENCE, and the half with no MLS consequence: a public salon has
+   * no group of its own, so nothing fails to decrypt - it simply did not appear for anybody until
+   * their next workspace load. An audience derived from access rather than from the container is
+   * what makes the two answers differ.
+   */
+  it('announces a public salon to the whole community', async () => {
+    const { service, redis } = makeService();
+
+    await service.createChannel({
+      workspaceId: WORKSPACE,
+      actorUserId: OWNER,
+      name: 'general',
+      visibility: 'public',
+    } as Parameters<typeof service.createChannel>[0]);
+
+    const sent = joins(redis);
+    expect(sent.length).toBe(1);
+    expect(sent[0].audience).toEqual([OWNER, MEMBER]);
+    expect(sent[0].data).toMatchObject({ visibility: 'public', channelName: 'general' });
+  });
+});

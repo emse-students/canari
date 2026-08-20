@@ -491,13 +491,24 @@ The social-service publishes to `chat:channel_events`:
 
 | Event | Emitted by |
 |---|---|
-| `channel.member.joined` | join, invite accept |
+| `channel.member.joined` | **channel creation**, join, invite accept, admin join, member added |
 | `channel.member.kicked` | `kickFromWorkspace`, `leaveWorkspace` |
 | `channel.member.removed` | `removeMemberFromChannel` |
 | `channel.message.created` / `.deleted` | send, delete |
 | `channel.updated` / `.deleted` | rename, **access change** (carries `viewerCanWrite`, one publish per verdict), delete |
 | `workspace.updated` / `.deleted` | cover image change, soft delete |
 | `workspace.role.permissions` | a role's permission set changed - addressed to the MEMBERSHIP, since every open grid draws it |
+
+**`channel.member.joined` IS THE ACCESS-GRANTED EVENT, AND CREATION IS ONE OF ITS PATHS.** The name
+reads as a person arriving, but what every publisher of it actually means is *this audience may now
+read this salon, register it*, and the client handler is written to that: it adds the row to the
+sidebar, puts the conversation in the store, and - for a private salon - enters its distribution
+group through `registerJoinedChannel`. `createChannel` was the one writer of `allowedUsers` that
+published nothing, which is why a private salon never reached the creator's other devices; it now
+publishes like the other four. The audience always comes from `channelAudience`, so a private salon
+reaches its roster and a public one the whole community, and the publish always happens AFTER the
+row is saved - the audience is derived from access, so announcing first would address the event to
+everyone except the person it is about.
 | `channel.typing`, `channel.pin`, `channel.poll.vote` | live UI signals |
 
 The chat-gateway subscribers fan out these events to all connected devices of the affected users.

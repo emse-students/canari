@@ -1160,6 +1160,10 @@ export function logcatReport(lines, label = 'A1') {
    */
   const EXPLAINED = [
     ['lifecycle', /^(onPause|onResume|onCreate|onDestroy|onNewIntent): /],
+    // The keyboard opening or closing, and ONLY when it actually moved: the line sits behind
+    // `if (view.paddingBottom != ime)` in `MainActivity.applyKeyboardInsets`, so it is a decision
+    // being recorded rather than a tick. MSG-8 types into the composer, which is what raises it.
+    ['ime-inset', /^IME inset: \d+ -> content padding$/],
     ['keystore-read', /^retrieve: success alias=/],
     ['keystore-health', /^checkKeystoreHealth: Keystore operational/],
     ['push-secret', /^processPendingPushSecret: /],
