@@ -67,7 +67,18 @@ describe('ChannelService security hardening', () => {
       save: jest.fn(),
       delete: jest.fn(),
     };
+    // The Graine history floor is the one read that goes through a query builder rather than a
+    // `find`. Rows are pushed in by the test that needs them, so every other test sees the honest
+    // default - no message readable by anybody - instead of a builder that throws.
+    const floorRows: { sessionId: string; floor: string }[] = [];
+    const floorBuilder: Record<string, unknown> = {
+      getRawMany: jest.fn(() => Promise.resolve(floorRows)),
+    };
+    for (const step of ['select', 'addSelect', 'where', 'andWhere', 'groupBy']) {
+      floorBuilder[step] = jest.fn(() => floorBuilder);
+    }
     const messageRepo = {
+      createQueryBuilder: jest.fn(() => floorBuilder),
       create: jest.fn((x: unknown) => x),
       save: jest.fn((x: unknown) => Promise.resolve(x)),
       delete: jest.fn(() => Promise.resolve({ affected: 1 })),
@@ -109,6 +120,7 @@ describe('ChannelService security hardening', () => {
       inviteRepo,
       redis,
       hardDeletes,
+      floorRows,
     };
   }
 
@@ -1555,5 +1567,84 @@ describe('ChannelService security hardening', () => {
     await repos.service.repairWorkspacesAfterAccountDeletion(['ws1'], 'boss');
 
     expect(repos.hardDeletes).toHaveBeenCalledTimes(6);
+  });
+
+  describe('the Graine history floor (WP-34)', () => {
+    /**
+     * WHERE A MEMBER'S PAST STOPS, computed on the server because only the server holds both halves.
+     *
+     * A Graine session can span an arrival - rotation is decided by the SENDER when it notices the
+     * distribution group's epoch has moved, and a join is an external commit it learns of late - so
+     * "withhold the session" and "hand the session over" are both wrong for the same session. The
+     * floor is the third answer, and it is drawn between the member's own arrival row and the message
+     * dates, which are two columns written by ONE clock.
+     */
+    function readableChannel(
+      channelRepo: { findOne: jest.Mock },
+      memberRepo: { findOne: jest.Mock }
+    ) {
+      channelRepo.findOne.mockResolvedValue({
+        id: 'chan-1',
+        workspaceId: 'ws-1',
+        isPrivate: false,
+        allowedUsers: [],
+      });
+      memberRepo.findOne.mockResolvedValue({
+        workspaceId: 'ws-1',
+        userId: 'newcomer',
+        createdAt: new Date('2026-08-20T12:00:00Z'),
+      });
+    }
+
+    it('answers a floor for a session that spans the arrival, and omits one entirely before it', async () => {
+      const { service, channelRepo, memberRepo, floorRows } = makeService();
+      readableChannel(channelRepo, memberRepo);
+      floorRows.push({ sessionId: 'spanning', floor: '7' });
+
+      const floors = await service.getGraineHistoryFloors('chan-1', 'answerer', 'newcomer', [
+        'spanning',
+        'entirely-before',
+      ]);
+
+      // ABSENCE, NOT A ZERO. "Give it from index 7" and "there is nothing here you may read" are
+      // different instructions, and a zero would read as the second meaning the first.
+      expect(floors).toEqual({ spanning: 7 });
+    });
+
+    it('refuses when the person the seed is for is not a member', async () => {
+      const { service, channelRepo, memberRepo } = makeService();
+      channelRepo.findOne.mockResolvedValue({
+        id: 'chan-1',
+        workspaceId: 'ws-1',
+        isPrivate: false,
+        allowedUsers: [],
+      });
+      // The caller reads the channel; the person the floor is for has no arrival at all.
+      memberRepo.findOne
+        .mockResolvedValueOnce({ workspaceId: 'ws-1', userId: 'answerer' })
+        .mockResolvedValueOnce(null);
+
+      // A refusal rather than an empty object: the caller must fail closed, and an empty object is
+      // also what a member with nothing readable looks like.
+      await expect(
+        service.getGraineHistoryFloors('chan-1', 'answerer', 'stranger', ['s-1'])
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('refuses a caller who cannot read the channel', async () => {
+      const { service, channelRepo, memberRepo } = makeService();
+      channelRepo.findOne.mockResolvedValue({
+        id: 'chan-1',
+        workspaceId: 'ws-1',
+        isPrivate: true,
+        allowedUsers: ['someone-else'],
+      });
+      memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws-1', userId: 'outsider' });
+
+      // The floor names which messages exist and when, for a salon this caller may not open.
+      await expect(
+        service.getGraineHistoryFloors('chan-1', 'outsider', 'newcomer', ['s-1'])
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
   });
 });

@@ -51,14 +51,16 @@ describe('ChannelsController routing', () => {
 
   it.each([
     'GET /channels/:channelId/distribution-group',
+    'GET /channels/:channelId/graine/history-floor',
     'POST /channels/:channelId/distribution-group/group-info',
     'POST /channels/:channelId/join-as-admin',
     'GET /channels/workspaces/:workspaceId/distribution-group',
     'POST /channels/workspaces/:workspaceId/distribution-group/group-info',
   ])('registers %s, which the Graine client calls by that exact path', (route) => {
-    // The five routes a device needs to be handed the seeds of a scope it may read. They are named
-    // literally because the client names them literally: `ChannelService.distributionGroupUrl` in
-    // the frontend builds these strings, and no compiler relates the two sides.
+    // The six routes a device needs to be handed the seeds of a scope it may read, and to know
+    // from which index it may hand one over. They are named literally because the client names them
+    // literally - `ChannelService.distributionGroupUrl` and `graineHistoryFloor` in the frontend
+    // build these strings - and no compiler relates the two sides.
     expect(routes()).toContain(route);
   });
 
@@ -68,8 +70,11 @@ describe('ChannelsController routing', () => {
     // above it, which is the only warning there would be.
     const all = routes();
     const salon = all.indexOf('GET /channels/:channelId/distribution-group');
+    const floor = all.indexOf('GET /channels/:channelId/graine/history-floor');
     const catchAll = all.indexOf('GET /channels/:channelId/messages');
     expect(salon).toBeGreaterThanOrEqual(0);
+    expect(floor).toBeGreaterThanOrEqual(0);
     expect(catchAll).toBeGreaterThan(salon);
+    expect(catchAll).toBeGreaterThan(floor);
   });
 });

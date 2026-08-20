@@ -701,36 +701,45 @@ community that had chosen *"rien de plus ancien"* got the opposite. **Found on p
 lives in `historyBoundary.ts` and both callers read it from there, which is what stops the two
 readings drifting apart again.
 
-**The boundary is a member's arrival, and it is unambiguous by construction.** `historyFloorFor`
-reads `joinedAt` off the community roster - fresh every time, never cached, because a member removed
-and invited back starts again LATER and a cached start is the earlier, more permissive one. A seed
-minted before that instant is withheld, and that costs the member nothing they could otherwise have
-read: every membership change commits to the distribution group and advances its epoch,
-`graineRotationReason` rotates on any epoch it does not recognise (an ADD included, deliberately), so
-no session ever spans an arrival.
+**A SESSION CAN SPAN AN ARRIVAL, so the answer is a FLOOR and not a yes or a no.** The first fix
+withheld any seed minted before the member arrived, on the reasoning that a join advances the
+distribution group's epoch and `graineRotationReason` rotates on any epoch it does not recognise -
+an ADD included. **That reasoning is wrong, and COMM-12's own log says so:** four markers sealed
+under TWO sessions, `PAST`+`IN1` together and `OUT`+`IN2` together. Rotation is decided by the
+SENDER at the moment it seals its next message, from the epoch it has PROCESSED - and a join is an
+EXTERNAL commit, so the sender learns of it late and seals a few more messages under the session it
+already had. A removal is committed by a remaining member, which is why that direction rotates
+immediately; the asymmetry is exactly visible in the pairing above. So withholding such a session
+costs the newcomer messages sent AFTER they arrived, and handing it over gives them messages sent
+before. Only `firstIndex` expresses the difference, and it is the field that exists for it: *"non-zero
+when the seed was handed over mid-session, so a member who joined late cannot open messages sent
+before they were allowed to"*. It is RAISED and never lowered - a member cannot hand over more than
+they were given.
 
-**The one thing this comparison rests on that nothing else here does: a clock.** `joinedAt` is
-server-stamped, `StoredGraineSession.createdAt` is stamped by the device that MINTED the session, and
-there is no server-anchored mint time anywhere - the server never sees a seed. So the boundary is
-sharp to within the minter's clock skew, in both directions: a clock running fast can leak seeds
-minted in the skew window before an arrival, one running slow can withhold a seed the member was
-entitled to. **Named rather than papered over, and deliberately not widened by a margin** - a fudge
-factor would trade the privacy half for the functional half without saying so. The alternative that
-would remove the clock is an epoch-anchored boundary, which needs a per-member "entered at epoch N"
-record written by every device and silently wrong the once it is missed: exactly the durable marker
-`distributionEpoch` exists to avoid. Revisit it only if a real skew is ever measured in the field.
+**The floor is computed by the SERVER, and that is what makes it deterministic.**
+`GET /api/channels/:channelId/graine/history-floor?forUser=&sessions=` answers, per session, the
+lowest `messageIndex` whose row is dated at or after that member's `channel_members.createdAt`; a
+session absent from the answer has nothing that member may read and is withheld whole - absence
+rather than a zero, because *"give it from index 0"* and *"there is nothing here for you"* are
+different instructions. Both halves are the server's own columns, written by one clock, so **no
+device clock enters the decision at any point** and every device that asks gets the same number for
+the same state. Neither the member answering nor the member asking supplies anything the result
+depends on: the answerer names who the seed is for, and the server looks their arrival up itself.
+The caller must be able to READ the channel, and the person named must be a member of its
+community - otherwise the route refuses and the answerer, which fails closed, hands over nothing.
 
 **A withheld seed is absent from BOTH lists in the answer.** Reporting it as `missing` would be a lie
 with a cost - `missing` means *"elect somebody else"*, and every other member applies the same rule,
 so the requester would walk the whole roster to arrive at the answer it was handed first.
 
-**And the requester applies the same rule before it asks.** It knows the community's setting (it was
-broadcast) and its own arrival (one roster fetch), and each unreadable row carries a SERVER
-timestamp - so the two sides of that comparison come from one clock. Without it a newcomer to a
-closed community would spend one frame per pre-arrival session, on the whole group, at every start,
-to be told what it already knew. `withheldFromUs` fails OPEN, unlike its counterpart: it is a
-bandwidth decision, not the enforcement, and refusing to ask because a roster fetch failed would
-strand seeds the member is entitled to.
+**And the requester declines to ask for what it can see it may not have.** It knows the community's
+setting (broadcast) and its own arrival (one roster fetch), and it keeps the NEWEST server timestamp
+it has seen for each wanted session - so a session whose every known row predates the arrival is
+dropped before the request is built, and both sides of that comparison are server values too.
+Without it a newcomer to a closed community would spend one frame per pre-arrival session, on the
+whole group, at every start, to be told what it already knew. `withheldFromUs` fails OPEN, unlike
+its counterpart: it is a bandwidth decision, not the enforcement, and refusing to ask because a
+roster fetch failed would strand seeds the member is entitled to.
 
 **Broadcast, not just stored.** `workspace.updated` carries the new value to every member, because a
 device still holding `shared` in memory would keep handing the past over after an admin had closed

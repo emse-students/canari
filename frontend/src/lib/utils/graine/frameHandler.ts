@@ -12,7 +12,7 @@ import {
   historyVisibilityFor,
   requireGraineRuntime,
 } from './runtime';
-import { historyFloorFor, withinHistoryFloor } from './historyBoundary';
+import { historyFloorsFor } from './historyBoundary';
 import { mirrorGraineSeed } from './graineMirror';
 import { forgetAskedSession, noteSeedUnavailable } from './repair';
 
@@ -233,10 +233,15 @@ function toWireSeed(held: StoredGraineSession): canari.GraineMsg.$Properties {
 /**
  * The seeds named by a SESSIONS request, and what this device turned out not to hold.
  *
- * **Gated by the community's history rule, exactly like the join-time bundle** ({@link
- * historyFloorFor}). A repair request names sessions by id and asks for nothing else, so without
- * this a community set to `joined` refused the bundle and then handed the same past over one id at
- * a time - which is what a newcomer's device asks for the moment it renders a salon it cannot read.
+ * **Gated by the community's history rule, exactly like the join-time bundle.** A repair request
+ * names sessions by id and asks for nothing else, so without this a community set to `joined`
+ * refused the bundle and then handed the same past over one id at a time - which is what a
+ * newcomer's device asks for the moment it renders a salon it cannot read.
+ *
+ * **The gate is a FLOOR, not a yes or a no**, because a session can span the member's arrival:
+ * {@link historyFloorsFor} carries the reason and the asymmetry that produces it. A seed that may be
+ * given only in part travels with `firstIndex` raised, which is the field that exists for exactly
+ * that; one with nothing readable in it is not sent at all.
  *
  * A seed withheld here is absent from BOTH lists, and that is deliberate. Reporting it as `missing`
  * would be a lie with a cost: `missing` means "elect somebody else", and every other member applies
@@ -251,9 +256,37 @@ async function gatherNamedSessions(
   storage: IStorage,
   deviceKeyB64: string
 ): Promise<GatheredSeeds | null> {
-  let floor: number | null;
+  const wanted = (request.sessionIds ?? []).map(String).filter(Boolean);
+  const truncated = wanted.length > GRAINE_HISTORY_BUNDLE_MAX_SEEDS;
+
+  const held: StoredGraineSession[] = [];
+  const missing: string[] = [];
+  for (const sessionId of wanted.slice(0, GRAINE_HISTORY_BUNDLE_MAX_SEEDS)) {
+    const session = await storage.getGraineSession(sessionId, deviceKeyB64);
+    if (!session) {
+      missing.push(sessionId);
+      continue;
+    }
+    held.push(session);
+  }
+
+  if (missing.length > 0) {
+    // Named rather than counted: this device was chosen as the holder and turned out not to be,
+    // which is either a roster that moved under the requester or a seed lost on this side. The list
+    // also TRAVELS, in the bundle, so the requester can elect somebody else instead of waiting on an
+    // answer that is never coming.
+    console.warn(
+      `[GRAINE] asked for ${wanted.length} seed(s) by ${frame.sender}, holding ${held.length} - missing ${missing.join(', ')}`
+    );
+  }
+
+  if (historyVisibilityFor(frame.workspaceId) === 'shared') {
+    return { seeds: held.map(toWireSeed), missing, truncated };
+  }
+
+  let floors: Map<string, number>;
   try {
-    floor = await historyFloorFor(frame.workspaceId, frame.sender);
+    floors = await historyFloorsFor(held, frame.sender);
   } catch (e) {
     // Fail-closed, and said out loud: this device cannot place the boundary, so it hands over
     // nothing. The other symptom is a member whose repairs silently stop working, which no log
@@ -266,21 +299,17 @@ async function gatherNamedSessions(
     return null;
   }
 
-  const wanted = (request.sessionIds ?? []).map(String).filter(Boolean);
   const seeds: canari.GraineMsg.$Properties[] = [];
-  const missing: string[] = [];
   const withheld: string[] = [];
-  for (const sessionId of wanted.slice(0, GRAINE_HISTORY_BUNDLE_MAX_SEEDS)) {
-    const held = await storage.getGraineSession(sessionId, deviceKeyB64);
-    if (!held) {
-      missing.push(sessionId);
+  for (const session of held) {
+    const floor = floors.get(session.sessionId);
+    if (floor === undefined) {
+      withheld.push(session.sessionId);
       continue;
     }
-    if (!withinHistoryFloor(floor, held.createdAt)) {
-      withheld.push(sessionId);
-      continue;
-    }
-    seeds.push(toWireSeed(held));
+    // RAISED, NEVER LOWERED. Our own floor is what we were given ourselves, and a repair that
+    // widened access would be the leak this whole path exists to close.
+    seeds.push(toWireSeed({ ...session, firstIndex: Math.max(session.firstIndex, floor) }));
   }
 
   if (withheld.length > 0) {
@@ -289,19 +318,10 @@ async function gatherNamedSessions(
     // names either a client that has not learned the rule yet or one that is not applying it.
     console.info(
       `[GRAINE] withholding ${withheld.length} seed(s) from ${frame.sender}: community ` +
-        `${frame.workspaceId.slice(0, 8)} is set to 'joined' and they predate that member's arrival`
+        `${frame.workspaceId.slice(0, 8)} is set to 'joined' and they hold nothing that member may read`
     );
   }
-  if (missing.length > 0) {
-    // Named rather than counted: this device was chosen as the holder and turned out not to be,
-    // which is either a roster that moved under the requester or a seed lost on this side. The list
-    // also TRAVELS, in the bundle, so the requester can elect somebody else instead of waiting on an
-    // answer that is never coming.
-    console.warn(
-      `[GRAINE] asked for ${wanted.length} seed(s) by ${frame.sender}, holding ${seeds.length} - missing ${missing.join(', ')}`
-    );
-  }
-  return { seeds, missing, truncated: wanted.length > GRAINE_HISTORY_BUNDLE_MAX_SEEDS };
+  return { seeds, missing, truncated };
 }
 
 /**

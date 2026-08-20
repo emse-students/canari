@@ -317,6 +317,36 @@ export class ChannelService {
   }
 
   /**
+   * Where each named Graine session becomes readable for ONE member of the channel's community.
+   *
+   * Asked by the device about to HAND A SEED OVER, under a community that closes its past, and
+   * answered from two columns only the server holds: that member's arrival row and the message
+   * dates. A session absent from the answer has nothing that member may read and must be withheld
+   * whole - which is why absence, not a zero, is what carries it.
+   *
+   * The reason this is a server call rather than a comparison: a Graine session can SPAN an
+   * arrival, so neither withholding it nor handing it over is right, and only the message rows say
+   * where the line falls. See `docs/wiki/protocols/channel-encryption.md`.
+   *
+   * @param channelId Channel the sessions belong to.
+   * @param forUserId Whose arrival draws the floor.
+   * @param sessionIds Sessions the repair request named.
+   * @returns `sessionId -> lowest readable index`, omitting sessions with nothing readable.
+   */
+  async graineHistoryFloor(
+    channelId: string,
+    forUserId: string,
+    sessionIds: string[]
+  ): Promise<Record<string, number>> {
+    const query = new URLSearchParams({ forUser: forUserId, sessions: sessionIds.join(',') });
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/${encodeURIComponent(channelId)}/graine/history-floor?${query}`
+    );
+    await this.handleError(res);
+    return res.json() as Promise<Record<string, number>>;
+  }
+
+  /**
    * A scope's Graine key-distribution group, and the latest GroupInfo published on it.
    *
    * Served by social-service rather than chat-delivery, and that is not an arbitrary placement: the

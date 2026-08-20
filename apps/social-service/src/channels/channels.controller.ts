@@ -150,6 +150,45 @@ export class ChannelsController {
     );
   }
 
+  /**
+   * Where each named Graine session becomes readable for ONE member - the floor a seed travels with.
+   *
+   * Asked by the member ANSWERING a seed repair, never by the one asking, and it names the person
+   * the seed is for rather than the person fetching it: the arrival that draws the floor and the
+   * message dates it is drawn against are both this server's own columns, so nothing the answerer
+   * or the requester says can move the result. Two devices asking the same question of the same
+   * state get the same number.
+   *
+   * `sessions` is comma-separated, like every other list this controller takes. A session absent
+   * from the answer has nothing readable by that member and must be withheld whole - which is why
+   * absence, rather than a zero, is what carries it.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get(':channelId/graine/history-floor')
+  getGraineHistoryFloor(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string,
+    @Query('forUser') forUser: string,
+    @Query('sessions') sessions: string
+  ) {
+    const forUserId = String(forUser ?? '')
+      .trim()
+      .toLowerCase();
+    if (!forUserId) {
+      throw new HttpException('forUser is required', HttpStatus.BAD_REQUEST);
+    }
+    const sessionIds = String(sessions ?? '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+    return this.service.getGraineHistoryFloors(
+      channelId,
+      xUserId.trim().toLowerCase(),
+      forUserId,
+      sessionIds
+    );
+  }
+
   /** Publishes the GroupInfo a reader just committed on a private salon's distribution group. */
   @UseGuards(NginxAuthGuard)
   @Post(':channelId/distribution-group/group-info')

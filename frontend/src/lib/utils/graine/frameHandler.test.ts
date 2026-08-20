@@ -27,12 +27,12 @@ import {
 
 vi.mock('./graineMirror', () => ({ mirrorGraineSeed: vi.fn().mockResolvedValue(undefined) }));
 
-/** The roster the history boundary is read from, when a community closes its past. */
-const listWorkspaceMembers = vi.fn();
+/** Where each session becomes readable for the asker - computed by the server, never here. */
+const graineHistoryFloor = vi.fn();
 vi.mock('$lib/services/ChannelService', () => ({
   ChannelService: class {
-    listWorkspaceMembers(...args: unknown[]) {
-      return listWorkspaceMembers(...args);
+    graineHistoryFloor(...args: unknown[]) {
+      return graineHistoryFloor(...args);
     }
   },
 }));
@@ -258,7 +258,7 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
     // it. Left unregistered it would fail closed, and every one of them would measure the boundary
     // instead of the thing it is named after.
     registerCommunityHistoryVisibility('ws-1', 'shared');
-    listWorkspaceMembers.mockReset();
+    graineHistoryFloor.mockReset();
   });
 
   it('ignores a request addressed to somebody else', async () => {
@@ -335,45 +335,68 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
     warn.mockRestore();
   });
 
-  it('withholds the seeds of a session minted before the asker arrived (WP-34)', async () => {
-    // THE DEFECT THIS ROW EXISTS FOR. `joined` refused the join-time bundle and nothing refused
-    // this, so a newcomer read the past one session id at a time - which is exactly what a device
-    // asks for the moment it renders a salon it cannot open. Found on prod by COMM-12, 2026-08-20.
+  it('hands a spanning session over from the index the asker arrived at (WP-34)', async () => {
+    // THE DEFECT THIS ROW EXISTS FOR, AND THE SHAPE THE FIRST FIX GOT WRONG. `joined` refused the
+    // join-time bundle and nothing refused this, so a newcomer read the past one session id at a
+    // time. Withholding the session whole was not the answer either: rotation is decided by the
+    // SENDER when it notices the epoch moved, and a join is an external commit it learns of late,
+    // so one session carries messages from both sides of the arrival. Only a floor separates them.
     registerCommunityHistoryVisibility('ws-1', 'joined');
-    listWorkspaceMembers.mockResolvedValue([
-      { userId: 'Bob', joinedAt: '2026-08-20T12:00:00Z' },
-      { userId: 'alice', joinedAt: '2026-01-01T00:00:00Z' },
-    ]);
-    const before = { ...heldSeed('sess-old'), createdAt: Date.parse('2026-08-20T11:00:00Z') };
-    const after = { ...heldSeed('sess-new'), createdAt: Date.parse('2026-08-20T13:00:00Z') };
-    const { storage } = fakeStorage([before, after]);
+    graineHistoryFloor.mockResolvedValue({ spanning: 4 });
+    const { storage } = fakeStorage([heldSeed('spanning', 0), heldSeed('entirely-before', 0)]);
     const sendMessage = wireWithMls(storage);
 
     await handleDistributionFrame(
       requestFrame({
         workspaceId: 'ws-1',
         kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS,
-        sessionIds: ['sess-old', 'sess-new'],
+        sessionIds: ['spanning', 'entirely-before'],
         answererUserId: 'alice',
         requestId: 'r-1',
       })
     );
 
-    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(graineHistoryFloor).toHaveBeenCalledWith('chan-1', 'bob', [
+      'spanning',
+      'entirely-before',
+    ]);
     const answer = decodeAppMessage(sendMessage.mock.calls[0][1]);
-    expect(answer?.graineBundle?.seeds?.map((x) => x.sessionId)).toEqual(['sess-new']);
-    // ABSENT FROM BOTH LISTS, and that is the assertion. Reported as missing it would mean "elect
-    // somebody else", and every other member applies the same rule - so the requester would walk
-    // the whole roster to arrive at the answer it was handed first.
+    expect(answer?.graineBundle?.seeds?.map((x) => x.sessionId)).toEqual(['spanning']);
+    expect(Number(answer?.graineBundle?.seeds?.[0].firstIndex)).toBe(4);
+    // ABSENT FROM BOTH LISTS. Reported as missing it would mean "elect somebody else", and every
+    // other member applies the same rule - so the requester would walk the whole roster to reach
+    // the answer it was handed first.
     expect(answer?.graineBundle?.missingSessionIds ?? []).toEqual([]);
   });
 
-  it('hands the same seeds over when the community shares its past', async () => {
-    // The positive control the row above needs: without it, a refusal cannot be told apart from a
-    // repair path that answers nothing at all.
+  it('never lowers a floor it was given itself', async () => {
+    // A member cannot hand over more than they were given. A server floor BELOW ours would widen
+    // access on every hop, which is the leak this path exists to close.
+    registerCommunityHistoryVisibility('ws-1', 'joined');
+    graineHistoryFloor.mockResolvedValue({ 'sess-1': 2 });
+    const { storage } = fakeStorage([heldSeed('sess-1', 12)]);
+    const sendMessage = wireWithMls(storage);
+
+    await handleDistributionFrame(
+      requestFrame({
+        workspaceId: 'ws-1',
+        kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS,
+        sessionIds: ['sess-1'],
+        answererUserId: 'alice',
+        requestId: 'r-1',
+      })
+    );
+
+    const answer = decodeAppMessage(sendMessage.mock.calls[0][1]);
+    expect(Number(answer?.graineBundle?.seeds?.[0].firstIndex)).toBe(12);
+  });
+
+  it('hands the same seeds over untouched when the community shares its past', async () => {
+    // The positive control the rows above need: without it, a refusal cannot be told apart from a
+    // repair path that answers nothing at all. And it must not ask the server anything - a
+    // community that shares its past has no boundary to place.
     registerCommunityHistoryVisibility('ws-1', 'shared');
-    const before = { ...heldSeed('sess-old'), createdAt: Date.parse('2026-08-20T11:00:00Z') };
-    const { storage } = fakeStorage([before]);
+    const { storage } = fakeStorage([heldSeed('sess-old', 3)]);
     const sendMessage = wireWithMls(storage);
 
     await handleDistributionFrame(
@@ -388,14 +411,15 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
 
     const answer = decodeAppMessage(sendMessage.mock.calls[0][1]);
     expect(answer?.graineBundle?.seeds?.map((x) => x.sessionId)).toEqual(['sess-old']);
-    expect(listWorkspaceMembers).not.toHaveBeenCalled();
+    expect(Number(answer?.graineBundle?.seeds?.[0].firstIndex)).toBe(3);
+    expect(graineHistoryFloor).not.toHaveBeenCalled();
   });
 
-  it('hands over nothing when it cannot place the asker on the roster', async () => {
+  it('hands over nothing when the floors cannot be established', async () => {
     // Fail-closed, like every other reading of this rule: a boundary nobody can place is not a
     // boundary, and guessing it wide is the expensive half of the asymmetry.
     registerCommunityHistoryVisibility('ws-1', 'joined');
-    listWorkspaceMembers.mockResolvedValue([{ userId: 'alice', joinedAt: '2026-01-01T00:00:00Z' }]);
+    graineHistoryFloor.mockRejectedValue(new Error('offline'));
     const { storage } = fakeStorage([heldSeed('sess-1')]);
     const sendMessage = wireWithMls(storage);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);

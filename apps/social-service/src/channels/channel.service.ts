@@ -1097,7 +1097,14 @@ export class ChannelService {
    * none does, which is precisely the confusion this scope was added to end. The refusal is a 400,
    * not a 403: nothing about the caller is wrong.
    */
-  private async assertPrivateChannelReader(channelId: string, userId: string): Promise<Channel> {
+  /**
+   * The channel, once `userId` has been shown to be allowed to READ it.
+   *
+   * The question every Graine route asks first, and it is asked of the channel rather than of the
+   * community: being in the community is not being in a private salon, and the two used to be the
+   * same query.
+   */
+  private async assertChannelReader(channelId: string, userId: string): Promise<Channel> {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
 
@@ -1110,6 +1117,11 @@ export class ChannelService {
       );
       throw new ForbiddenException('No access to this channel');
     }
+    return channel;
+  }
+
+  private async assertPrivateChannelReader(channelId: string, userId: string): Promise<Channel> {
+    const channel = await this.assertChannelReader(channelId, userId);
 
     if (!channel.isPrivate) {
       throw new BadRequestException({
@@ -1152,6 +1164,78 @@ export class ChannelService {
       `[CHANNEL_GRAINE] served channel=${channelId} user=${userId.slice(0, 8)} group=${ref.groupId} published=${ref.groupInfo !== null}`
     );
     return ref;
+  }
+
+  /**
+   * The lowest message index of each named session that `forUserId` arrived in time to read.
+   *
+   * **THE PART OF `historyVisibility` NO CLIENT CAN COMPUTE.** A community set to `joined` promises
+   * that nothing said before a member arrived is readable by them, and the seed layer enforces it
+   * where a seed leaves a device. But a Graine session can SPAN an arrival: rotation is decided by
+   * the SENDER when it notices the distribution group's epoch has moved, and a join is an external
+   * commit, so the sender learns of it late and seals a few more messages under the session it
+   * already had. Withholding that whole session costs the newcomer messages sent AFTER they
+   * arrived; handing it over whole gives them the ones sent before. Only a floor can express the
+   * difference, and `firstIndex` is exactly the field that carries one.
+   *
+   * **The floor is computed HERE because only here are both halves authoritative.** The arrival is
+   * this server's own `channel_members.createdAt` and the message dates are its own `createdAt`, so
+   * the comparison is between two values written by ONE clock - where a client comparing a
+   * server-stamped arrival with a peer's device-stamped mint time is sharp only to that peer's clock
+   * skew. And because the answer is derived from stored rows rather than from any caller's opinion,
+   * every device that asks gets the same number for the same state: neither the member answering nor
+   * the member asking supplies anything the result depends on.
+   *
+   * The caller must be able to READ the channel; `forUserId` must be a member of its community. A
+   * session with no message at or after the arrival is absent from the result, which means withhold
+   * it entirely - the distinction between "nothing to give" and "give from index k" is the whole
+   * point, so it is carried as presence rather than as a zero.
+   *
+   * @param channelId Channel the sessions belong to.
+   * @param callerId Who is asking - a reader of the channel, i.e. the member about to hand a seed over.
+   * @param forUserId Whose arrival draws the floor.
+   * @param sessionIds Sessions the repair request named.
+   * @returns `sessionId -> lowest readable index`, omitting sessions with nothing readable.
+   */
+  async getGraineHistoryFloors(
+    channelId: string,
+    callerId: string,
+    forUserId: string,
+    sessionIds: string[]
+  ): Promise<Record<string, number>> {
+    const channel = await this.assertChannelReader(channelId, callerId);
+
+    const arrival = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId: forUserId },
+      select: { createdAt: true },
+    });
+    if (!arrival) {
+      // Not a member, so there is no arrival to measure from and nothing they may be handed. Said
+      // as a refusal rather than as an empty result: the caller must fail closed, and an empty
+      // object is what a community with no matching messages also looks like.
+      throw new ForbiddenException('That user is not a member of this community');
+    }
+    if (sessionIds.length === 0) return {};
+
+    const rows: { sessionId: string; floor: string }[] = await this.messageRepo
+      .createQueryBuilder('m')
+      .select('m."senderSessionId"', 'sessionId')
+      .addSelect('MIN(m."messageIndex")', 'floor')
+      .where('m."channelId" = :channelId', { channelId })
+      .andWhere('m."senderSessionId" IN (:...sessionIds)', { sessionIds })
+      // A row with no index answers no key derivation, so it can never be the floor of anything.
+      .andWhere('m."messageIndex" IS NOT NULL')
+      .andWhere('m."createdAt" >= :arrival', { arrival: arrival.createdAt })
+      .groupBy('m."senderSessionId"')
+      .getRawMany();
+
+    const floors: Record<string, number> = {};
+    for (const row of rows) floors[row.sessionId] = Number(row.floor);
+    this.logger.log(
+      `[CHANNEL_GRAINE] floors channel=${channelId} for=${forUserId.slice(0, 8)} ` +
+        `asked=${sessionIds.length} readable=${rows.length}`
+    );
+    return floors;
   }
 
   /** Publishes a reader's freshly committed GroupInfo for a private salon's distribution group. */
