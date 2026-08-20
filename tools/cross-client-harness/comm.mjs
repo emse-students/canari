@@ -173,7 +173,21 @@ export const control = (key) => `text=${caption(key)}`;
  * triggers, so a check that left the roles modal open makes the NEXT one fail on a button that is
  * plainly in the DOM - the failure `invite.mjs` documents and paid three runs for.
  */
+/**
+ * Which community each client has been PROVEN to have open, keyed by its debugging port.
+ *
+ * A LEDGER, NOT A CACHE. Nothing reads it to skip work: it exists so that a community-scoped
+ * gesture can refuse to run on a community no check ever named. It is filled only by a gesture
+ * that watched the app say the name, and emptied by everything that can invalidate it - a
+ * navigation, a failed open, a deletion.
+ */
+const provenCommunity = new Map();
+
 export async function enterCommunities(cx) {
+  // WHAT WAS OPEN IS FORGOTTEN HERE, and this line is the whole reason the ledger below is not
+  // decoration. On a reload the app selects a community BY ITSELF - the first in the rail - so a
+  // client that lands on /communities always has one open and never the one the last check named.
+  provenCommunity.delete(cx.port);
   await goto(cx, '/communities', { relaunch: 'no click path to /communities on the phone yet' });
   const debris = await clearOverlays(cx);
   await awaitAppSettled(cx);
@@ -212,11 +226,66 @@ export async function listCommunities(cx) {
  * nothing are two causes with opposite fixes, and no amount of waiting separates them.
  */
 export async function openCommunity(cx, name) {
-  await awaitListed(cx, `!!${RESOLVE}('text=${name}')`, 20000, 'the community', cx.port);
+  provenCommunity.delete(cx.port);
+  // WAITED FOR BY THE SELECTOR THE CLICK WILL USE. It used to wait on a text match, which any
+  // element mentioning the community satisfies - the line the app logs on creation among them -
+  // so the wait could pass while the rail button the next line needs was not on the page at all.
+  const listed = `[aria-label=${JSON.stringify(name)}]`;
+  await awaitListed(cx, `!!${RESOLVE}(${JSON.stringify(listed)})`, 20000, 'the community', cx.port);
   await awaitAppSettled(cx);
-  const point = await realClick(cx, `[aria-label=${JSON.stringify(name)}]`);
-  await until(cx, `document.body.innerText.indexOf(${JSON.stringify(name)}) >= 0`, 10000);
+  const point = await realClick(cx, listed);
+  await provesOpen(cx, name, 10000);
   return point.received ?? null;
+}
+
+/**
+ * The community the APP says is open, read from the panel header beside the settings gear.
+ *
+ * STRUCTURAL, because the header carries no hook of its own: the gear is locatable by a caption
+ * read from the app's own messages, and the heading is the first one any of its ancestors holds.
+ * Empty when no community is open, which is a real state and not a failure to read.
+ */
+export async function openCommunityName(cx) {
+  const gear = JSON.stringify(caption('sidebar_community_settings_title'));
+  return evaluate(
+    cx,
+    `(function () {
+       var g = document.querySelector('[aria-label=' + JSON.stringify(${gear}) + ']');
+       if (!g) return '';
+       for (var n = g; n; n = n.parentElement) {
+         var h = n.querySelector ? n.querySelector('h2') : null;
+         if (h) return (h.innerText || '').trim();
+       }
+       return '';
+     })()`
+  );
+}
+
+/**
+ * Waits until the app's own header names this community, then records that it did.
+ *
+ * A CLICK IS NOT A SELECTION. realClick proves a mousedown reached the centre of an element;
+ * whether the app then opened that community is a separate fact, and the two came apart on
+ * 2026-08-20. COMM-12 clicked a rail button, the click did not take, every later gesture ran on
+ * whatever was still selected - and it wrote a history-visibility rule onto a community the check
+ * had never heard of. Nothing failed, because nothing was asked. So the app's own statement is
+ * the proof, and it is the only thing this ledger will accept.
+ */
+async function provesOpen(cx, name, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const shown = String(await openCommunityName(cx));
+    if (shown === name) {
+      provenCommunity.set(cx.port, name);
+      return;
+    }
+    if (Date.now() > deadline) {
+      throw new Error(
+        `the community did not open: the panel names ${JSON.stringify(shown)}, not ${JSON.stringify(name)}`
+      );
+    }
+    await new Promise((r) => setTimeout(r, 120));
+  }
 }
 
 /**
@@ -252,6 +321,9 @@ export async function createCommunity(cx, name) {
   await realClick(cx, `text=${submit}`);
 
   await awaitListed(cx, `!!${RESOLVE}('[aria-label=' + JSON.stringify(${JSON.stringify(name)}) + ']')`, 25000, 'the new community', cx.port);
+  // CREATING SELECTS IT, so this leaves the client ready for the settings gestures - but that is
+  // the app's behaviour and not this function's promise, so it is READ rather than assumed.
+  await provesOpen(cx, name, 10000);
   return name;
 }
 
@@ -350,6 +422,23 @@ export async function createChannel(cx, name, { visibility = 'public' } = {}) {
 
 /** Opens the community settings modal (the gear beside the community's name). */
 export async function openCommunitySettings(cx) {
+  // THE GATE. Every community-scoped write in this file reaches the panel through here, so this
+  // is the one place that can refuse to administer a community nobody named. Both halves are
+  // needed: the ledger says which community was proven open on this client, and the header says
+  // which one is open NOW - a check that swallowed a failed openCommunity has the first and not
+  // the second, which is exactly the state that wrote a Graine rule onto a stranger.
+  const expected = provenCommunity.get(cx.port);
+  if (!expected) {
+    throw new Error(
+      'openCommunitySettings: no community has been proven open on this client - call openCommunity first'
+    );
+  }
+  const shown = String(await openCommunityName(cx));
+  if (shown !== expected) {
+    throw new Error(
+      `openCommunitySettings: the panel now names ${JSON.stringify(shown)}, not ${JSON.stringify(expected)}`
+    );
+  }
   // IDEMPOTENT, because the gear is COVERED once the modal is up: clicking it a second time lands
   // on the overlay and the wait then times out on a modal that was already open. Detected by
   // "Quitter la communaute", which only this modal draws - the three tab captions are ordinary
@@ -1037,6 +1126,7 @@ export async function deleteCommunity(cx, name) {
   await openCommunitySettings(cx);
   await realClick(cx, control('chat_community_delete_button'));
   await confirmDialog(cx, 'common_delete_button', { typeText: name });
+  provenCommunity.delete(cx.port);
   return clearOverlays(cx);
 }
 
@@ -1236,7 +1326,67 @@ export async function setHistoryVisibility(cx, visibility) {
   }
   await communityTab(cx, 'overview');
   await pickSelect(cx, selectOffering(['shared', 'joined']), visibility, 'setHistoryVisibility');
+
+  // THE SAVE IS NOT THE GESTURE, AND THE SELECT IS NOT THE PROOF. The change handler fires a PATCH
+  // and applies nothing until the server has accepted it, so returning here would hand the caller a
+  // request in flight; COMM-12 read the column immediately afterwards and recorded the value it had
+  // just asked to replace. And the control cannot be the witness: the option was assigned by this
+  // harness, so it reads back as the wanted value whether the save landed, is pending, or was
+  // refused - the three outcomes it exists to tell apart.
+  await savedHistoryVisibility(cx, visibility);
   return clearOverlays(cx);
+}
+
+/**
+ * Blocks until the history card SHOWS the requested rule, or says why it will not.
+ *
+ * The note under the select is drawn from the component's own state, which moves only once the
+ * server has answered - so it is the one thing on screen that separates a landed save from a
+ * pending one. A refusal is read from the error line beside it and raised in its own
+ * words, because a timeout would report "it never took" for a rule the server explicitly declined.
+ */
+async function savedHistoryVisibility(cx, visibility, timeoutMs = 15000) {
+  // Built here rather than written into this file: the notes are French sentences, and a check that
+  // spelt one would stop matching the day it is reworded.
+  const notes = JSON.stringify({
+    shared: caption('chat_community_history_shared_note'),
+    joined: caption('chat_community_history_joined_note'),
+  });
+  const state = `(function () {
+     var notes = ${notes};
+     var s = ${selectOffering(['shared', 'joined'])};
+     if (!s) return 'no-control';
+     var card = s;
+     while (card) {
+       var t = card.innerText || '';
+       if (t.indexOf(notes.shared) >= 0 || t.indexOf(notes.joined) >= 0) break;
+       card = card.parentElement;
+     }
+     if (!card) return 'no-note';
+     if ((card.innerText || '').indexOf(notes[${JSON.stringify(visibility)}]) >= 0) return 'saved';
+     var err = card.querySelector('.text-red-err');
+     var msg = err && (err.innerText || '').trim();
+     if (msg) return 'refused: ' + msg;
+     return s.disabled ? 'saving' : 'pending';
+   })()`;
+
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const now = String(await evaluate(cx, state));
+    if (now === 'saved') return;
+    if (now.startsWith('refused: ')) {
+      throw new Error(`setHistoryVisibility: the server refused ${visibility} - ${now.slice(9)}`);
+    }
+    if (now === 'no-control' || now === 'no-note') {
+      throw new Error(`setHistoryVisibility: the history card is not on screen (${now})`);
+    }
+    if (Date.now() > deadline) {
+      throw new Error(
+        `setHistoryVisibility: ${visibility} never took - the card still reads ${now} after ${timeoutMs}ms`
+      );
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
 }
 
 /**

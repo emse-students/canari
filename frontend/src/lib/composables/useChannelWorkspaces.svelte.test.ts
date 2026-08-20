@@ -431,3 +431,62 @@ describe('useChannelWorkspaces - createNewCommunity', () => {
     expect(api.channelWorkspaces.some((w) => w.workspaceDbId === 'ws-soft')).toBe(true);
   });
 });
+
+describe('useChannelWorkspaces - a listing that predates a creation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    listUserWorkspaces.mockReset();
+    listChannels.mockReset();
+    ensureCommunityDistributionGroup.mockResolvedValue(true);
+  });
+
+  /**
+   * THE PRUNE IS THE DANGEROUS HALF OF THE LOAD. Between the listing going out and the deletion of
+   * everything it did not mention, the load awaits an MLS group join and a channel listing per
+   * community - seconds on a real account. A community created in that window is absent from an
+   * answer that was already on its way, and until 2026-08-20 it was deleted for it: measured on
+   * production, the community vanished from the sidebar 1.5 s after it was created and the app
+   * dropped the user into an unrelated one. Every gesture afterwards went to the wrong community.
+   */
+  it('keeps a community created while a workspace listing was in flight', async () => {
+    let releaseListing: (value: WorkspaceDto[]) => void = () => {};
+    listUserWorkspaces.mockImplementationOnce(
+      () =>
+        new Promise<WorkspaceDto[]>((resolve) => {
+          releaseListing = resolve;
+        })
+    );
+    listChannels.mockResolvedValue([]);
+    createWorkspace.mockResolvedValue(makeWorkspaceDto('ws-late', 'Tardive', 'tardive'));
+
+    const ctx = makeContext({ ensureMls: vi.fn().mockResolvedValue({}) } as never);
+    const api = useChannelWorkspaces();
+
+    const loading = api.loadChannelWorkspacesFromBackend(ctx);
+    await tick();
+    await api.createNewCommunity('Tardive', ctx);
+    releaseListing([]);
+    await loading;
+
+    expect(api.channelWorkspaces.some((w) => w.id === 'tardive')).toBe(true);
+  });
+
+  /**
+   * THE NEGATIVE CONTROL, without which the line above is satisfied by a load that prunes nothing.
+   * A community that existed when the listing was requested and is missing from the answer really
+   * was deleted, and must go.
+   */
+  it('still prunes a community the server no longer lists', async () => {
+    listChannels.mockResolvedValue([]);
+    const api = useChannelWorkspaces();
+    const ctx = makeContext();
+
+    listUserWorkspaces.mockResolvedValueOnce([makeWorkspaceDto('ws-gone', 'Partie', 'partie')]);
+    await api.loadChannelWorkspacesFromBackend(ctx);
+    expect(api.channelWorkspaces.some((w) => w.id === 'partie')).toBe(true);
+
+    listUserWorkspaces.mockResolvedValueOnce([]);
+    await api.loadChannelWorkspacesFromBackend(ctx);
+    expect(api.channelWorkspaces.some((w) => w.id === 'partie')).toBe(false);
+  });
+});

@@ -1164,6 +1164,43 @@ The other half of the lesson is the report. `whyNotStable` named the blocker
 nothing - and finding the panel behind it took a hand-driven DOM dig. It now names the covering
 dialog by its label, and separately the dialogs open anywhere: "the dialog is over me" and "a dialog
 is open somewhere" are two claims, and the second must not be read as the first.
+#### 27. A CLICK IS NOT A SELECTION, AND A CHECK THAT SWALLOWS THE GESTURE THAT NAMES ITS SUBJECT WRITES ON A STRANGER
+
+`realClick` proves that a mousedown reached the centre of an element which was there, still, and on
+top. Whether the application then did the thing is a SEPARATE FACT, and on 2026-08-20 the two came
+apart: COMM-12 clicked a community in the rail, the click did not take, and `openCommunity` reported
+it honestly. Everything after that is the lesson.
+
+The check caught the failure in its `step()` wrapper, recorded it, and carried on - which sounds
+careful and is the opposite. Every gesture below that line is scoped to "the open community" and
+none of them names one, so they all ran against whatever the app still had selected. The arm then set
+a Graine **history-visibility rule on a community the check had never heard of**, and reported the
+value it read back from its OWN community, which was untouched and therefore still at the default.
+Nothing failed. Two unrelated communities on production were left carrying `historyVisibility =
+joined`, and the only reason it was found is that the wrong value looked odd in an unrelated query.
+
+Three things were wrong and each is its own rule:
+
+**The wait did not prove what the click needed.** `openCommunity` waited on `text=<name>`, which any
+element mentioning the community satisfies - including the line the app logs when it creates one -
+then clicked `[aria-label="<name>"]`. A wait must be expressed in the selector the next gesture will
+use, or it is a different question answered confidently.
+
+**The proof of a selection is the application's own statement.** The panel header names the open
+community, so that is what `provesOpen` polls. A click that lands and a community that opens are now
+two assertions instead of one hopeful one.
+
+**A gesture scoped to a subject must refuse to run when nobody named that subject.** Every
+community-scoped write in `comm.mjs` reaches the panel through `openCommunitySettings`, so that is
+where the gate went: a ledger records which community each client was PROVEN to have open, the header
+says which one is open now, and the two must agree. It is emptied by everything that can invalidate
+it - a navigation (the app re-selects the first community by itself after a reload, which is exactly
+how this stayed invisible), a failed open, a deletion. No call site changed.
+
+And in the check: **the step that establishes the subject of every later step must be fatal.** COMM-12
+already returned early when it could not read its community's id; it now does the same when it could
+not open it. A swallowed failure is only safe when nothing after it depends on the thing that failed.
+
 ## Observation is part of the check, not a debugging step
 
 Decided 2026-08-06, after two shipped bugs came out of the logs of **passing** checks.

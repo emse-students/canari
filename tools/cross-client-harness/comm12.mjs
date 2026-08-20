@@ -172,11 +172,17 @@ async function arm(visibility, peerId) {
   const tag = `[${visibility}]`;
   const out = { community, channel, markers: m, visibility };
 
-  await step(`${tag} create the community`, async () => {
+  // FATAL TO THE ARM, and the one step here that has to be. It does not merely create a venue: it
+  // establishes WHICH community every gesture below acts on. When it failed on 2026-08-20 the arm
+  // carried on against whatever the app still had selected and set a Graine history rule on an
+  // unrelated community - silently, because nothing downstream names its subject.
+  const opened = await step(`${tag} create the community`, async () => {
     await enterCommunities(w1);
     await createCommunity(w1, community);
     await openCommunity(w1, community);
+    return true;
   });
+  if (!opened) return out;
   out.workspaceId = await step(`${tag} read the community id`, () => workspaceIdOf(community));
   if (!out.workspaceId) return out;
 

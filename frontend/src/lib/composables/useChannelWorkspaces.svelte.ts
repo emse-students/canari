@@ -89,6 +89,12 @@ export interface ChannelSidebarWorkspace {
   historyVisibility?: GraineHistoryVisibility;
   /** Ordered list of channels belonging to this workspace. */
   channels: ChannelSidebarItem[];
+  /**
+   * The creation tick at which THIS DEVICE made the community, or absent when the server named
+   * it first. Compared against the tick a workspace listing was requested at, so a listing can
+   * never delete a community that did not exist when it was asked for.
+   */
+  createdEpoch?: number;
 }
 
 /** Runtime dependencies injected by the parent composable into workspace/channel operations. */
@@ -142,6 +148,32 @@ const WORKSPACE_LOAD_RETRY_DELAYS = [1_000, 3_000, 7_000];
 /** Creates and returns the reactive channel/workspace store: sidebar state, API operations (create, rename, delete, invite, leave, image update), and real-time event handlers. */
 export function useChannelWorkspaces() {
   let channelWorkspaces = $state<ChannelSidebarWorkspace[]>([]);
+
+  /**
+   * How many communities and salons this device has created, ever - a tick, not a clock.
+   *
+   * IT EXISTS TO DATE A SERVER LISTING AGAINST A LOCAL FACT. `executeWorkspaceLoadAttempt` ends
+   * by deleting everything the listing did not mention, and between the request going out and
+   * that prune it awaits an MLS group join and a channel listing PER COMMUNITY - seconds, on a
+   * real account. Anything created in that window is absent from an answer that was already on
+   * its way, and was deleted for it: measured 2026-08-20, a community vanished from the sidebar
+   * 1.5 s after it was created and the app dropped the user into an unrelated one.
+   *
+   * A COUNTER RATHER THAN A TIMESTAMP, deliberately. The question is not "how old is this" but
+   * "did this exist when I asked", and a monotonic tick answers it exactly, with no clock to be
+   * wrong about and nothing to tune.
+   */
+  let creationEpoch = 0;
+
+  /**
+   * Conversation id of every salon this device created, and the tick it created it at.
+   *
+   * The same protection as `createdEpoch`, for the half of the reconciliation that prunes
+   * CHANNELS. A salon created during the window was dropped from the sidebar and its
+   * conversation deleted, which is how COMM-12 came to log "Channel created" for a salon that
+   * was not there a second later.
+   */
+  const locallyCreatedChannels = new SvelteMap<string, number>();
   let selectedChannelConversationId = $state('');
   let isLoadingWorkspaces = false;
   let workspacesLoadError = $state<string | null>(null);
@@ -180,6 +212,10 @@ export function useChannelWorkspaces() {
    * Mutates `channelWorkspaces` on success; on failure the existing list is left untouched.
    */
   async function executeWorkspaceLoadAttempt(ctx: ChannelWorkspaceContext): Promise<void> {
+    // READ BEFORE THE REQUEST GOES OUT, not after it comes back. The server answers about the
+    // moment it was asked, so anything this device creates from here on is newer than the answer
+    // whatever order the two happen to complete in.
+    const epochAtRequest = creationEpoch;
     const backendWorkspaces = await service.listUserWorkspaces();
     const validChannelConversationIds: string[] = [];
     const validWorkspaceSlugs = new SvelteSet<string>();
@@ -265,9 +301,28 @@ export function useChannelWorkspaces() {
       await ctx.reloadChannelHistory(selectedChannel);
     }
 
+    // NEWER THAN THE QUESTION IS NOT ABSENT FROM THE ANSWER. A salon created while this listing
+    // was in flight is missing from it by construction, and deleting it here destroys a salon the
+    // user is very probably typing in.
+    const bornAfterTheRequest = (id: string) =>
+      (locallyCreatedChannels.get(id) ?? 0) > epochAtRequest;
     const staleLocalChannelIds = Array.from(ctx.conversations.keys()).filter(
-      (id) => isChannelConversationId(id) && !validChannelConversationIds.includes(id)
+      (id) =>
+        isChannelConversationId(id) &&
+        !validChannelConversationIds.includes(id) &&
+        !bornAfterTheRequest(id)
     );
+    const sparedChannels = Array.from(ctx.conversations.keys()).filter(
+      (id) =>
+        isChannelConversationId(id) &&
+        !validChannelConversationIds.includes(id) &&
+        bornAfterTheRequest(id)
+    );
+    if (sparedChannels.length > 0) {
+      ctx.log(
+        `[WORKSPACE-LOAD] kept ${sparedChannels.length} salon(s) created after this listing was requested`
+      );
+    }
     for (const staleId of staleLocalChannelIds) {
       ctx.invalidateChannelHistoryCache?.(staleId);
       ctx.conversations.delete(staleId);
@@ -278,8 +333,20 @@ export function useChannelWorkspaces() {
       await ctx.deleteConversation?.(staleId).catch(() => {});
     }
 
-    // Prune workspaces that no longer exist on the server.
-    channelWorkspaces = channelWorkspaces.filter((ws) => validWorkspaceSlugs.has(ws.id));
+    // Prune workspaces that no longer exist on the server - EXCEPT the ones that did not exist
+    // when this listing was requested, which are missing from it for a reason that is not deletion.
+    const spared = channelWorkspaces.filter(
+      (ws) => !validWorkspaceSlugs.has(ws.id) && (ws.createdEpoch ?? 0) > epochAtRequest
+    );
+    if (spared.length > 0) {
+      ctx.log(
+        `[WORKSPACE-LOAD] kept ${spared.length} community(ies) created after this listing was requested: ` +
+          spared.map((ws) => ws.id).join(', ')
+      );
+    }
+    channelWorkspaces = channelWorkspaces.filter(
+      (ws) => validWorkspaceSlugs.has(ws.id) || (ws.createdEpoch ?? 0) > epochAtRequest
+    );
   }
 
   /**
@@ -636,6 +703,9 @@ export function useChannelWorkspaces() {
 
     const workspace = await service.createWorkspace({ slug, name: nameRaw.trim() });
     const sidebarWorkspace = upsertWorkspaceFromDto(workspace);
+    // STAMPED THE MOMENT IT EXISTS LOCALLY, and before any of the awaits below: a listing already
+    // in flight cannot know about it, and this is what stops that listing from deleting it.
+    sidebarWorkspace.createdEpoch = ++creationEpoch;
     const workspaceId = sidebarWorkspace.workspaceDbId;
 
     // THE CREATOR PREPARES ITS OWN COMMUNITY, and until 2026-08-20 nothing did. Creating a community
@@ -744,6 +814,8 @@ export function useChannelWorkspaces() {
       const channelId = `channel_${actualId}`;
 
       const isPrivate = visibility === 'private';
+      // Same stamp as a community, for the same window and the same prune.
+      locallyCreatedChannels.set(channelId, ++creationEpoch);
       registerChannelWorkspace(actualId, workspaceId, isPrivate);
 
       // The salon was created private, so social-service has already minted its group; this device

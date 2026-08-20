@@ -1068,6 +1068,39 @@ which taking it verbatim would do whenever the stored row is still the notificat
 COUNT in the startup restore is now computed over the merged list too - counting the page alone lost
 the same message twice, once from the display and once from the badge.
 
+## The workspace list prunes only what existed when it asked
+
+The same seam as the section above, one level up, and it destroyed whole communities rather than
+single messages. `executeWorkspaceLoadAttempt` fetches `listUserWorkspaces()`, then - per community -
+joins the Graine distribution group and lists the salons, awaiting both. Only after all of that does
+it end with two deletions: every conversation the listing did not mention, and
+
+```ts
+channelWorkspaces = channelWorkspaces.filter((ws) => validWorkspaceSlugs.has(ws.id));
+```
+
+The gap between the question and the deletion is SECONDS on a real account, and anything created in
+it is absent from an answer that was already on its way.
+
+**Measured on production, 2026-08-20**, three runs out of three, with the community-phase harness:
+create a community, and the header names it for between 500 ms and 4 s; then `rail=false` - it is
+gone from the sidebar entirely - and the app falls back to the first community in the list, salon
+deselected. The salon created inside it went the same way, which is how COMM-12 came to log
+`Channel created: #c12-joined-...` for a salon that was not there a second later. It came back on a
+reload, which is what kept it invisible for two days while the check failed in a different place
+every run. The request ordering is the proof and needs no inference: the console shows
+`GET /api/channels/workspaces/user/me` issued at line 196, `POST /api/channels/workspaces` (the
+creation) at 398, and `[WORKSPACE-LOAD] communities/channels loaded` at 497.
+
+The repair is a **creation tick**, not a timestamp: `creationEpoch` counts what this device has
+created, ever. It is read BEFORE the listing request goes out, stamped onto the sidebar entry the
+moment a community exists locally (`createdEpoch`) and onto `locallyCreatedChannels` for a salon, and
+both prunes spare anything stamped later than the request. The question is not "how old is this" but
+"did this exist when I asked", and a monotonic counter answers that exactly - there is no clock to be
+wrong about and nothing to tune. A community that really was deleted elsewhere is still removed, and
+both prunes now LOG what they spared, because a reconciliation that silently deletes is one nobody
+can attribute.
+
 ## UI features
 
 - **Focus writing mode**: header hides when composer is focused on mobile.
