@@ -410,10 +410,10 @@
             {m.asso_view_all_shop()}
           </a>
         </div>
-        <div class="space-y-3">
+        <div class="grid gap-4 sm:grid-cols-2">
           {#each products as product (product.id)}
             <CardTile iconUrl={product.iconUrl} fallbackIcon={productFallbackIcon(product.type)}>
-              <div class="flex items-start gap-4 p-4">
+              <div class="flex h-full flex-col gap-3 p-5">
                 <div class="min-w-0 flex-1">
                   <p class="text-text-main text-sm font-semibold">{product.name}</p>
                   {#if product.description}
@@ -438,7 +438,7 @@
                     </span>
                   </p>
                   {#if product.allowCustomAmount && product.amountCents === null}
-                    <div class="mt-2 flex max-w-xs items-center gap-2">
+                    <div class="mt-2 flex items-center gap-2">
                       <input
                         type="number"
                         min={product.customAmountMinCents != null
@@ -459,7 +459,7 @@
                   {product}
                   customAmountEuros={shopCustomAmounts[product.id]}
                   variant="yellow"
-                  class="shrink-0 px-3 py-2 text-xs"
+                  class="w-full"
                 />
               </div>
             </CardTile>

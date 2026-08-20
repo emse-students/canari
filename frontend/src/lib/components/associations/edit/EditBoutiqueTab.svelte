@@ -423,11 +423,11 @@
   {:else if otherProducts.length === 0}
     <p class="text-text-muted py-6 text-center text-sm">{m.asso_boutique_no_products()}</p>
   {:else}
-    <ul class="space-y-3">
+    <ul class="grid gap-4 sm:grid-cols-2">
       {#each otherProducts as product (product.id)}
-        <li>
+        <li class={expandedProductSettingsId === product.id ? 'sm:col-span-2' : ''}>
           <CardTile iconUrl={product.iconUrl} fallbackIcon={productFallbackIcon(product.type)}>
-            <div class="flex items-center gap-3 px-4 py-3">
+            <div class="flex flex-col gap-3 p-4">
               <div class="min-w-0 flex-1">
                 <div class="flex flex-wrap items-center gap-2">
                   <p class="text-text-main text-sm font-semibold">{product.name}</p>
@@ -468,7 +468,7 @@
                   {/if}
                 </p>
               </div>
-              <div class="flex shrink-0 items-center gap-2">
+              <div class="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onclick={() => toggleProductSettings(product)}
@@ -495,7 +495,7 @@
                   type="button"
                   onclick={() => handleDeleteProduct(product)}
                   title={m.common_delete_button()}
-                  class="border-red-err/30 bg-red-err/10 text-red-err hover:bg-red-err/20 inline-flex items-center justify-center rounded-xl border p-2 transition-colors"
+                  class="border-red-err/30 bg-red-err/10 text-red-err hover:bg-red-err/20 ml-auto inline-flex items-center justify-center rounded-xl border p-2 transition-colors"
                 >
                   <Trash2 size={14} />
                 </button>

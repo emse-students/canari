@@ -6,13 +6,20 @@
    * Square logo export for associations: center crop with zoom, or letterbox on white.
    */
   interface Props {
-    /** Called with the exported 512×512 JPEG blob when the user confirms the crop. */
+    /** Called with the exported 512×512 blob when the user confirms the crop. */
     onExport: (blob: Blob) => void;
     /** Called when the user clicks Cancel. Omit to hide the cancel button. */
     onCancel?: () => void;
+    /**
+     * Export format. `'jpeg'` (default, association logos - always opaque) or `'png'` to
+     * preserve transparency, e.g. a partner brand icon with a transparent background:
+     * flattening it to JPEG turns every transparent pixel black (canvas has no alpha to give
+     * a JPEG encoder, so it reads the cleared `rgba(0,0,0,0)` backing as opaque black).
+     */
+    outputFormat?: 'jpeg' | 'png';
   }
 
-  let { onExport, onCancel }: Props = $props();
+  let { onExport, onCancel, outputFormat = 'jpeg' }: Props = $props();
 
   const OUT = 512;
 
@@ -57,8 +64,12 @@
     if (nw < 1 || nh < 1) return;
 
     if (mode === 'pad') {
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, size, size);
+      // A png export keeps the padding transparent (the icon just sits centered with margin);
+      // jpeg has no alpha channel, so it needs an explicit background or the margin renders black.
+      if (outputFormat !== 'png') {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, size, size);
+      }
       const scale = Math.min(size / nw, size / nh);
       const dw = nw * scale;
       const dh = nh * scale;
@@ -95,8 +106,8 @@
       (b) => {
         if (b) onExport(b);
       },
-      'image/jpeg',
-      0.92
+      outputFormat === 'png' ? 'image/png' : 'image/jpeg',
+      outputFormat === 'png' ? undefined : 0.92
     );
   }
 </script>

@@ -21,7 +21,7 @@
     busy = true;
     error = '';
     try {
-      const file = new File([blob], 'icon.jpg', { type: 'image/jpeg' });
+      const file = new File([blob], 'icon.png', { type: 'image/png' });
       await onUpload(file);
       showCropper = false;
     } catch (e) {
@@ -89,6 +89,10 @@
   {/if}
 
   {#if showCropper}
-    <AssociationLogoCropper onExport={handleExported} onCancel={() => (showCropper = false)} />
+    <AssociationLogoCropper
+      onExport={handleExported}
+      onCancel={() => (showCropper = false)}
+      outputFormat="png"
+    />
   {/if}
 </div>

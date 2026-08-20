@@ -38,12 +38,12 @@
 {#if cards.length === 0}
   <p class="text-text-muted py-6 text-center text-sm">{m.shop_partnership_none()}</p>
 {:else}
-  <div class="space-y-3">
+  <div class="grid gap-4 sm:grid-cols-2">
     {#each cards as card (card.id)}
       {@const locked = card.membersOnly && !card.viewerIsCotisant}
       {@const result = claimResults[card.id]}
       <CardTile iconUrl={card.iconUrl} fallbackIcon={PARTNERSHIP_FALLBACK_ICON}>
-        <div class="flex items-start gap-4 p-4">
+        <div class="flex h-full flex-col gap-3 p-5">
           <div class="min-w-0 flex-1">
             <div class="flex flex-wrap items-center gap-2">
               <p class="text-text-main text-sm font-semibold">
@@ -71,34 +71,34 @@
                 <ExternalLink size={12} />
               </a>
             {/if}
-
-            {#if locked}
-              <p class="text-text-muted mt-2 text-xs">{m.shop_partnership_members_only_hint()}</p>
-            {:else if result}
-              <div class="bg-cn-accent/10 border-cn-accent/30 mt-2 rounded-lg border px-3 py-2">
-                {#if result.mode === 'text'}
-                  <p class="text-text-main text-sm">{result.staticText}</p>
-                {:else}
-                  <p class="text-text-muted text-xs">{m.shop_partnership_your_code_label()}</p>
-                  <p class="text-text-main font-mono text-sm font-bold">{result.code}</p>
-                {/if}
-              </div>
-            {:else}
-              {#if claimErrors[card.id]}
-                <p class="text-red-err mt-1 text-xs">{claimErrors[card.id]}</p>
-              {/if}
-              <button
-                type="button"
-                onclick={() => handleClaim(card)}
-                disabled={claiming === card.id}
-                class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover mt-2 rounded-lg px-3 py-1.5 text-xs font-bold transition-colors disabled:opacity-50"
-              >
-                {claiming === card.id
-                  ? m.shop_partnership_claiming()
-                  : m.shop_partnership_claim_button()}
-              </button>
-            {/if}
           </div>
+
+          {#if locked}
+            <p class="text-text-muted text-xs">{m.shop_partnership_members_only_hint()}</p>
+          {:else if result}
+            <div class="bg-cn-accent/10 border-cn-accent/30 rounded-lg border px-3 py-2">
+              {#if result.mode === 'text'}
+                <p class="text-text-main text-sm">{result.staticText}</p>
+              {:else}
+                <p class="text-text-muted text-xs">{m.shop_partnership_your_code_label()}</p>
+                <p class="text-text-main font-mono text-sm font-bold">{result.code}</p>
+              {/if}
+            </div>
+          {:else}
+            {#if claimErrors[card.id]}
+              <p class="text-red-err text-xs">{claimErrors[card.id]}</p>
+            {/if}
+            <button
+              type="button"
+              onclick={() => handleClaim(card)}
+              disabled={claiming === card.id}
+              class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover w-full rounded-lg px-3 py-1.5 text-xs font-bold transition-colors disabled:opacity-50"
+            >
+              {claiming === card.id
+                ? m.shop_partnership_claiming()
+                : m.shop_partnership_claim_button()}
+            </button>
+          {/if}
         </div>
       </CardTile>
     {/each}
