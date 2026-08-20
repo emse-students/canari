@@ -434,7 +434,16 @@ if (flag('file')) {
   const f = argv[argv.indexOf('--file') + 1];
   if (!f) throw new Error('--file needs a script name');
   jobs.push({ phase: '(file)', script: f });
-  for (const d of ['W1', 'W2']) devices.add(d);
+  // THE DEVICES COME FROM THE SCRIPT'S OWN PHASE, NEVER FROM A DEFAULT. `--file` used to preflight
+  // W1 and W2 whatever it was about to run, so `--file comm25.mjs` - the one COMM check whose whole
+  // subject is a SECOND DEVICE - started against a phone nobody had looked at. `checks.mjs` already
+  // says COMM needs A1 and says why; reading it here is what makes that declaration load-bearing
+  // rather than documentation. A script belonging to no phase keeps the old pair, which is the only
+  // honest answer when nothing has declared what it needs.
+  const owner = Object.values(PHASES).find((p) =>
+    p.scripts.some((s) => s.split(' ')[0] === f)
+  );
+  for (const d of owner?.needs ?? ['W1', 'W2']) devices.add(d);
 } else {
   const wanted = flag('all') ? Object.keys(PHASES).filter((p) => PHASES[p].scripts.length) : named;
   for (const name of wanted) {
@@ -712,7 +721,14 @@ for (const job of jobs) {
           ? 'done'
           : 'NO VERDICT - exited 0 and recorded nothing'
   );
-  if (code !== 0) console.log(`      ${job.tail}`);
+  if (code !== 0) {
+    console.log(`      ${job.tail}`);
+    // AND WHERE THE REST OF IT IS. Four lines is a summary, and a crash is exactly the case where
+    // the last four are not the informative ones: on 2026-08-20 a libuv abort printed two lines
+    // after the real error, so the console showed an assertion in `async.c` and the cause - a 502
+    // from the edge - sat in the log file nobody had been told existed.
+    console.log(`      full output: ${job.log}`);
+  }
 }
 
 // ---------------------------------------------------------------------------- report

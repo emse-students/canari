@@ -10,6 +10,7 @@ import { appendFileSync, readFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { request } from 'node:https';
 import { SITE, STATE_DIR } from './names.mjs';
 import { gate, report } from './watch.mjs';
 
@@ -79,10 +80,45 @@ export function commitDate(commit) {
   return iso;
 }
 
+/**
+ * ONE GET, ON `node:https` RATHER THAN `fetch`, BECAUSE THIS ONE RUNS DURING MODULE INIT.
+ *
+ * A failure here has to end the process, and `process.exit()` after a `fetch` aborts on node 24 for
+ * Windows - libuv trips `!(handle->flags & UV_HANDLE_CLOSING)` tearing undici down, which maps the
+ * exit to 0xC0000409 and prints two lines AFTER the real error. Measured 2026-08-21 on the identical
+ * script: `fetch` aborts, `node:https` exits 1. Closing the global dispatcher first does NOT help,
+ * so the transport is the fix rather than the teardown. `agent: false` keeps no socket alive.
+ */
+function getText(url) {
+  return new Promise((resolve, reject) => {
+    const call = request(url, { agent: false }, (answer) => {
+      let body = '';
+      answer.setEncoding('utf8');
+      answer.on('data', (chunk) => (body += chunk));
+      answer.on('end', () => resolve({ status: answer.statusCode, body }));
+    });
+    call.on('error', reject);
+    call.end();
+  });
+}
+
 async function deployedBuild() {
-  const answer = await fetch(`${SITE}/_app/version.json`);
-  if (!answer.ok) throw new Error(`${SITE}/_app/version.json answered ${answer.status}`);
-  return resolveStamp(Number((await answer.json())?.version), `${SITE}/_app/version.json`);
+  const answer = await getText(`${SITE}/_app/version.json`);
+  // A GATEWAY STATUS IS THE EDGE SAYING IT HAS NO ANSWER, NOT THE DEPLOYMENT STATING ITS VERSION,
+  // and the two send a reader to different places. Seen 2026-08-20T22:39Z: a run started three
+  // minutes into a deploy and read `answered 502`, which names the version endpoint - the endpoint
+  // was fine and the origin was restarting. Still a throw, because a verdict nobody can attribute
+  // to a build is worth less than no verdict; only the sentence changes, and it says WAIT.
+  if (answer.status >= 502 && answer.status <= 504) {
+    throw new Error(
+      `${SITE} is not reachable through its edge (${answer.status}) - the origin is down or ` +
+        `mid-deploy. No verdict can be attributed to a build until it answers.`
+    );
+  }
+  if (answer.status !== 200) {
+    throw new Error(`${SITE}/_app/version.json answered ${answer.status}`);
+  }
+  return resolveStamp(Number(JSON.parse(answer.body)?.version), `${SITE}/_app/version.json`);
 }
 
 /**
@@ -114,7 +150,32 @@ export async function clientBuild(cx) {
   return resolveStamp(stamp, "the client's own /_app/version.json");
 }
 
-const BUILD = await deployedBuild();
+/**
+ * A MODULE-INIT FAILURE EXITS, IT DOES NOT ABORT.
+ *
+ * Everything below this line is computed while the module loads, so a failure here is a THROW OUT OF
+ * TOP LEVEL - and node 24 on Windows answers that by tearing down an undici handle it has already
+ * begun closing, which makes libuv abort:
+ * `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\win\async.c, line 94`. The
+ * abort maps the exit to 0xC0000409 and prints two lines AFTER the real error, so `run.mjs`, which
+ * echoes the last four of a crashed script, showed the assertion in `async.c` and hid the cause.
+ * Seen 2026-08-20 on a COMM-25 run that had simply started three minutes into a deploy.
+ *
+ * Nothing is swallowed: the same sentence is printed, on the same stream. Only the exit is honest.
+ */
+function initFailed(what, message) {
+  console.error(`
+[${what}] ${message}
+`);
+  process.exit(1);
+}
+
+let BUILD;
+try {
+  BUILD = await deployedBuild();
+} catch (e) {
+  initFailed('BUILD', e.message);
+}
 
 /**
  * THE CHECK A VERDICT RAN AS, hashed from the runner's own source.
@@ -137,7 +198,7 @@ const BUILD = await deployedBuild();
 const CHECK = (() => {
   const entry = process.argv[1];
   if (!entry || !existsSync(entry)) {
-    throw new Error(`results.mjs cannot identify the running check (argv[1]=${entry ?? 'unset'})`);
+    initFailed('CHECK', `results.mjs cannot identify the running check (argv[1]=${entry ?? 'unset'})`);
   }
   return {
     file: basename(entry),
