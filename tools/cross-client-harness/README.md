@@ -46,8 +46,8 @@ is only for surfaces the WebView cannot reach (the notification shade, the syste
 
 **A1's devtools socket is `webview_devtools_remote_<pid>`, so it changes on every restart.** A
 forward left over from an earlier session stays listed and points at nothing, or at another app's
-socket - the phone then reads as "not debuggable" while it is in the foreground. `a1forward.mjs`
-derives it from the running pid and fails loudly when the target list is empty.
+socket - the phone then reads as "not debuggable" while it is in the foreground. `phone.mjs`
+derives it from the running pid every time and refuses to report success until CDP has answered.
 
 ## Setting it up
 
@@ -61,7 +61,7 @@ derives it from the running pid and fails loudly when the target list is empty.
    directory, this copy is the pointer. Both are gitignored.
 4. `node launch.mjs start w1 && node launch.mjs start w2`. Read the flags in that file before
    changing them; they are load-bearing (see *Operating it*).
-5. Phone: plug it in, then `node a1forward.mjs`.
+5. Phone: plug it in, then `node phone.mjs` (`node phone.mjs <port>` for another port).
 6. `node unlock.mjs` after any launch, kill, reboot, radio cycle or `install -r`: every one of those
    re-locks the encryption PIN, and a locked client does not fail honestly - it renders, answers, and
    reports on an empty store.
@@ -100,7 +100,7 @@ whose bucket is known.
 | `watch.mjs` | Continuous observation: console, page errors, HTTP, WebSocket. Attached by every runner. |
 | `srvlog.mjs` | The server observer, held to the same bar as the two clients: the whole window is classified, and it partitions by SUBJECT because production is shared. |
 | `names.mjs` / `accounts.mjs` | The only two readers of machine-local truth. Every other file goes through them. |
-| `phone.mjs`, `a1forward.mjs` | adb, app lifecycle, notifications, the WebView. |
+| `phone.mjs` | adb, app lifecycle, notifications, the WebView - and the only entry point for the devtools forward. |
 | `login.mjs`, `pin.mjs`, `unlock.mjs` | The auth gates. `unlock.mjs` unlocks every client it can identify; `login.mjs --match cas.emse.fr` also drives the phone's system-browser login. |
 | `net.mjs` | The radios. `armCut`/`cutHard` exist because CDP offline emulation leaves an already-established WebSocket alone - the plain cut could never produce a receiver-side disconnection, so MSG-9 had never once measured the thing it was named for. |
 | `a1.py` | Native Android surfaces via `uiautomator2`, for what the WebView cannot see. |
@@ -245,7 +245,7 @@ run.
 
 **The phone**
 
-- The WebView pid changes on every cold start, so redo the forward with `a1forward.mjs`. **The socket
+- The WebView pid changes on every cold start, so redo the forward with `node phone.mjs`. **The socket
   exists only once the WebView does**: a process started by a broadcast has neither a window nor a
   devtools socket (see WP-DIRECTBOOT-1), so poll for the socket rather than concluding the app is not
   running - and a stale forward does not error, it connects to nothing.

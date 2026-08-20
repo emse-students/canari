@@ -6,6 +6,7 @@
  * because the LIFE phase cuts the radios, and a wireless transport dies with the wifi it rides on.
  */
 import { execFileSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { A1_WIFI, PORTS } from './names.mjs';
 
 /** The USB serial if there is one, else the wireless entry. */
@@ -313,3 +314,23 @@ export function console_(sinceLines = 3000) {
 }
 
 export const clearLogcat = () => adb(['logcat', '-c']);
+
+// Run directly => bring the phone to a measurable state and print what it took. This is the ONLY
+// entry point for the forward: `a1forward.mjs` used to be a second one, and it declared its own bare
+// `adb` with no `-s`, so with both a USB and a wireless transport attached - the normal state of this
+// phone during a long run - it died on `more than one device/emulator` while `run()` right here was
+// selecting the transport correctly. A duplicated primitive does not drift slowly; it is simply
+// missing whatever the original learnt.
+//
+// `pathToFileURL` rather than a hand-built `file://`: on Windows the hand-built form is
+// `file://C:/...` where `import.meta.url` is `file:///C:/...`, so the guard never matched and the
+// script printed nothing, which looks exactly like a run that succeeded.
+// `process.argv[1]` is UNDEFINED under `node -e` / `node --eval`, and `pathToFileURL(undefined)`
+// throws - at IMPORT time, in a module every browser-only runner imports. That is the same fault the
+// SERIAL resolution above was written to avoid, arriving through a different door.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const port = Number(process.argv[2] || PORTS.A1);
+  const state = await ensure({ port });
+  console.log(JSON.stringify({ port, serial: SERIAL, ...state }, null, 1));
+  if (!state.ok) process.exit(1);
+}

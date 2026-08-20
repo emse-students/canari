@@ -349,7 +349,7 @@ instrument has produced so far - latest verdict per check, all against productio
 | COMM-5 | 2026-08-20 | `PASS` clean `ce6ef963` | re-run under the tightened expectations: `liveWithoutReload` and `capabilityIsLive` are both true for the first time, so a role change now reaches an open client without a reload |
 | COMM-6 | 2026-08-20 | `PASS` clean `ce6ef963` | re-run once the grid was derived from the announcement alone; the six offered are the six enforced, the administrator column is locked, a toggle reaches the column and comes back |
 | COMM-7 | 2026-08-20 | `PASS` clean `d3cff54c` | two defects, both fixed, all five assertions hold and the window is clean: the server refuses the member (`403`), the composer is absent rather than disabled, nothing the member sent landed, the administrator still writes. The earlier `PASS-DIRTY` was one mis-tagged log line, now deployed correct |
-| COMM-8 | 2026-08-20 | `PASS` clean | STALE by rule 18b: earned 00:30Z, before `614bddbd` added the console reading, whose pattern then reached `RegExp` with its backslashes eaten and could not say yes. Re-run owed |
+| COMM-8 | 2026-08-20 | `PASS` clean `fa317916` | re-run once both halves of its console reading could speak. Peer on the community roster, on none of the salon's, announced no seed; sidebar absent; the API refuses them `403`. Armed both ways: after the grant the peer's row appears (roster 1 -> 2) and its device says `seedAfterTheGrant: repaired` - the repair line the same run's FAIL put into the product |
 | COMM-9/10 | 2026-08-20 | `VACUOUS` | never re-run since the per-salon groups landed |
 | COMM-11 | 2026-08-20 | `PASS` clean | - |
 | COMM-12 | 2026-08-20 | `PASS-DIRTY` | re-run owed on a build where the watcher classifies its lines |
