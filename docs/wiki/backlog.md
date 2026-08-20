@@ -340,6 +340,36 @@ the route, not today's problem.
 of the grid and out of `channel_roles.permissions` by migration, and `RETIRED_PERMISSIONS` keeps
 their names only so an old client's write can be told from a wrong one.
 
+### CLOSED 2026-08-20 - deleting a salon archived it, after destroying its key
+
+`DELETE /channels/:channelId` set `channels.archived = true` and, in the same call, destroyed the
+salon's key-distribution group. A private salon therefore ended as ciphertext nothing holds a seed
+for: invisible to every listing, unreachable by every route, with no un-archive anywhere in the
+service, and removable only by deleting the whole community. That is the shape `deleteWorkspace`
+had rejected on 2026-08-18, one scope up, in the same words - the fix was written as a sentence
+about a mechanism and applied to exactly one caller of it.
+
+**Found by COMM-16**, whose `channelRowGone` came back false on its first run, and very nearly lost
+by "fixing" the check to match the code. Now shipped: the salon, its `channel_messages` and its
+group are deleted, group first and allowed to abort; both `archived` columns dropped by migration
+046 (prod held zero archived rows in either); six tests in `channel-delete.spec.ts`, which the route
+had none of. No confirmation argument, deliberately - reasoning on
+[social-service](services/social-service.md#deleting-a-channel-took-no-new-argument-deliberately-2026-08-20).
+
+### P3 - an admin who never joined a private salon is not told when it is deleted
+
+`channelAudience` is the salon's roster, and since 2026-08-19 an administrator reaches a private
+salon by JOINING it rather than through `workspace.manage` - so one who has not joined is not on the
+roster and receives no `channel.deleted`, nor any other event the salon emits. They ARE shown that
+the salon exists (name only, `viewerHasAccess: false`), so their sidebar keeps a row for something
+that is gone until their next load.
+
+**Not fixed by widening the audience**, which is the obvious move and the wrong one: that is exactly
+what put every private salon's messages, typing, pins and poll tallies on the socket of members the
+same server refuses to serve them over REST, and it was closed this week. The shape that would work
+is a separate, contentless `channel.gone` addressed to the community - worth doing only if the stale
+row is ever seen to matter, since a reload clears it and nothing is wrong underneath.
+
 ## Post-campaign projects - decided, not scheduled
 
 ### The MLS + Graine explanation, written FOR THE USER - audience settled 2026-08-20

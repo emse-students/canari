@@ -33,7 +33,6 @@ describe('channel audience', () => {
     isPrivate: true,
     allowedUsers: [INSIDER],
     writePolicy: 'everyone' as const,
-    archived: false,
   };
 
   const publicChannel = {
@@ -43,7 +42,6 @@ describe('channel audience', () => {
     isPrivate: false,
     allowedUsers: [] as string[],
     writePolicy: 'everyone' as const,
-    archived: false,
   };
 
   const roster = [

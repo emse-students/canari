@@ -135,6 +135,7 @@ The numbers and what they imply are in
 | POST | `/api/channels/:channelId/members/invite` | Invite user to channel |
 | POST | `/api/channels/:channelId/members/leave` | Leave a **private** channel (drops the caller from `allowedUsers` and rotates the key). A public channel answers 400 - see "A channel-scoped action never touches community membership" |
 | GET | `/api/channels/:channelId/members` | Roster of THIS channel (private = `allowedUsers` + admins); `?scope=workspace` for the whole community |
+| DELETE | `/api/channels/:channelId` | Delete a salon outright - its row, its `channel_messages` and its distribution group. MANAGE_CHANNEL **or** MANAGE_WORKSPACE, and no confirmation argument - see "Deleting a channel" |
 | DELETE | `/api/channels/workspaces/:workspaceId` | Delete a whole community for every member, irreversibly. MANAGE_WORKSPACE **only**, and the body must carry `{confirmationName}` equal to the community name or it is refused with `WORKSPACE_CONFIRMATION_MISMATCH` - see "Deleting a community" |
 | DELETE | `/api/channels/workspaces/:workspaceId/members/:userId` | Remove a member from the whole workspace (MANAGE_WORKSPACE / MANAGE_CHANNEL / KICK_MEMBERS) |
 | PATCH | `/api/channels/workspaces/:workspaceId/members/:userId/role` | Set a member's workspace role, replacing existing roles (MANAGE_WORKSPACE / MANAGE_ROLES) |
@@ -237,7 +238,7 @@ strips it: there is no `ClassSerializerInterceptor` and the entity carries no `@
 #### Deleting a community
 
 `DELETE /api/channels/workspaces/:workspaceId` (`deleteWorkspace`) is the only way a community
-disappears. It is **admin-only**: unlike a kick or a channel archive, MANAGE_CHANNEL is
+disappears. It is **admin-only**: unlike a kick or a channel deletion, MANAGE_CHANNEL is
 deliberately not accepted, because the action hits every member at once.
 
 **It is a hard delete, since 2026-08-18.** It calls the same `hardDeleteWorkspace` the last member
@@ -251,6 +252,37 @@ community's messages are ciphertext whose seeds no client keeps, so what the two
 restore is rows nobody can read - occupying the name and the slug, invisible to every screen, and
 no longer deletable through any route, since deleting needs a member and the UI lists only
 communities you are in. That is the orphan shape the 2026-08-17 purge had to find by hand.
+
+#### Deleting a channel
+
+`DELETE /api/channels/:channelId` (`deleteChannel`) removes the salon's row, every
+`channel_messages` keyed by it, and - first of all - its distribution group. **MANAGE_CHANNEL is
+enough**, where the community demands MANAGE_WORKSPACE: a salon is one room, and governing rooms is
+what that permission is.
+
+**It archived until 2026-08-20, which was the community's own defect one scope down.** The call set
+`channels.archived = true` and, in the same breath, destroyed the group holding the salon's seeds -
+so a private salon survived as ciphertext no client keeps a key for: hidden from every listing,
+unreachable by every route, with no un-archive anywhere in this service and no way to remove the
+rows short of deleting the whole community. `deleteWorkspace` had rejected exactly that shape two
+days earlier. Both `archived` columns went with it (migration 046): `channel.archived = true` was
+the last writer of either, so `channel_workspaces.archived` had been a constant that a dozen `WHERE`
+clauses still consulted since 2026-08-18.
+
+**The group is destroyed BEFORE the transaction, and is allowed to abort it.** It lives in
+chat-delivery and cannot join the transaction, so the alternative is a group nothing on earth still
+names - the orphan the 2026-08-17 purge had to find by hand. A failure here leaves the salon whole
+and the deletion retryable, and publishes no `channel.deleted`: a client told the salon is gone
+drops it and never asks again. Same rule as `hardDeleteWorkspace`, `createWorkspace` and
+`ensureChannelDistributionGroup`.
+
+**No `confirmationName`, and the asymmetry is a measurement.** See "Deleting a channel took no new
+argument, deliberately" below.
+
+**The event reaches the salon's roster, not the community.** `channelAudience` is snapshotted before
+the delete, since it reads `allowedUsers` off the row about to go. An administrator who never joined
+a private salon is not on that roster and gets no event - the 2026-08-19 decision working, at the
+cost of a stale sidebar entry until their next load ([backlog](../backlog.md)).
 
 **The confirmation is enforced here, not only in the dialog.** The request must carry
 `confirmationName` equal to the community's name (both trimmed, otherwise exact) or it is refused
@@ -464,6 +496,25 @@ server-side - so an old client fails closed. It is checked AFTER the permission 
 non-admin cannot probe whether a name matches, and trimmed on both sides because a copied name
 carries whitespace. **A confirmation only the dialog enforces is not a gate, it is a decoration on
 one client.**
+
+### Deleting a channel took no new argument, deliberately (2026-08-20)
+
+`deleteChannel` made the same reversible -> irreversible move `deleteWorkspace` made two days
+earlier, and did **not** take a `confirmationName` with it. The symmetry is tempting and would be
+wrong, because the argument up there was never about symmetry: it was a gate against ALREADY
+DEPLOYED clients whose "are you sure?" was worded for the old meaning.
+
+That is a question about the string, and the string answers it. `chat_delete_channel_confirm` has
+read "Supprimer definitivement le canal #{channel} ?" since `5babb466` (2026-06-16), the first
+version of it that ever shipped. **Every client in the field already promises exactly what the
+server now does**, so there is nothing to fail closed against, and an argument would break working
+clients for no gain. The rule the community case actually establishes is *check what the deployed
+clients say before changing what the server means* - not *add a token whenever a delete becomes
+real*.
+
+The two also differ in blast radius, which is why the DIALOG keeps the typed name only on the
+community: a salon is one room and its deletion is a moderation gesture, a community is destroyed
+for everyone at once.
 
 ### Removal events are fan-out, and the payload is the only discriminator
 

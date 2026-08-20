@@ -843,3 +843,24 @@ export async function deleteCommunity(cx, name) {
   await confirmDialog(cx, 'common_delete_button', { typeText: name });
   return clearOverlays(cx);
 }
+
+/**
+ * Deletes the OPEN channel from its settings modal.
+ *
+ * NO TYPED NAME HERE, and the asymmetry with {@link deleteCommunity} is the product's, not an
+ * oversight: a channel takes an ordinary confirmation, a community makes you type what you are
+ * about to destroy. A check that assumed one shape for both would answer "no" to a question it
+ * meant to answer "yes" - which reads exactly like the app refusing.
+ */
+export async function deleteChannel(cx) {
+  await awaitAppSettled(cx);
+  await realClick(cx, `[aria-label=${JSON.stringify(caption('chat_channel_settings_label'))}]`);
+  await until(
+    cx,
+    `document.body.innerText.indexOf(${JSON.stringify(caption('chat_channel_settings_title'))}) >= 0`,
+    10000
+  );
+  await realClick(cx, control('chat_delete_channel_button'));
+  await confirmDialog(cx, 'common_delete_button');
+  return clearOverlays(cx);
+}

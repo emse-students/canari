@@ -40,6 +40,20 @@ const BENIGN = [
   // The app narrating a community or channel the CHECK itself just created. Routine, and it is
   // the COMM phase's own vocabulary - every check in it creates something.
   /^(Channel|Community) created: /,
+  // AND THE SAME VOCABULARY FOR DESTRUCTION, which COMM-16 needed and nothing had classified: five
+  // lines, all of them the app reporting an operation the check asked for, and each one the LAST
+  // thing that will ever name what it removes. `Channel deleted.` became literally true on
+  // 2026-08-20 - it announced an archive until then, which is the defect that row found.
+  //
+  // The three `[GRAINE]` lines are the client releasing what it held: the distribution groups it
+  // has left, the community's seeds dropped, and - on a community with one member - the
+  // reconciliation reporting that there was nobody to ask rather than that asking failed. Their
+  // ABSENCE would be the finding: a client that deletes a community and says nothing about its
+  // seeds is a client still holding them.
+  /^(Channel|Community) deleted\.$/,
+  /^\[GRAINE\] left \d+ distribution group\(s\) of community /,
+  /^\[GRAINE\] community \S+ forgotten - \d+ seed\(s\)/,
+  /^\[GRAINE\] community \S+ has no other member to ask for history/,
   // THE SWEEP SPARING A KEY-DISTRIBUTION GROUP, which is the fix WP-GRAINE-1 and the 2026-08-20
   // discriminator repair both landed. Its ABSENCE is what would be the signal: a boot where these
   // do not appear is a boot where the sweep deleted the group and sending stops working.

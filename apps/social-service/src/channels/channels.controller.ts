@@ -481,11 +481,17 @@ export class ChannelsController {
     return this.service.renameChannel(channelId, xUserId.trim().toLowerCase(), body.name);
   }
 
-  /** Archives (soft-deletes) the specified channel. */
+  /**
+   * Deletes the specified channel outright - its row, its messages and its key-distribution group.
+   *
+   * It archived until 2026-08-20, behind this same verb and this same client wording. See
+   * {@link ChannelService.deleteChannel} for why hiding a salon whose seeds had just been destroyed
+   * was the worse of the two.
+   */
   @UseGuards(NginxAuthGuard)
   @Delete(':channelId')
-  archiveChannel(@Headers('x-user-id') xUserId: string, @Param('channelId') channelId: string) {
-    return this.service.archiveChannel(channelId, xUserId.trim().toLowerCase());
+  deleteChannel(@Headers('x-user-id') xUserId: string, @Param('channelId') channelId: string) {
+    return this.service.deleteChannel(channelId, xUserId.trim().toLowerCase());
   }
 
   /** Sends an encrypted message to a channel. */

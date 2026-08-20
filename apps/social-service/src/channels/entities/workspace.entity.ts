@@ -19,14 +19,6 @@ export class Workspace {
   imageMediaId: string | null;
 
   /**
-   * Soft-delete tombstone. Every read path filters it out, so an archived workspace is
-   * invisible to members, invites and slug lookups while its row keeps the slug reserved
-   * and its data recoverable.
-   */
-  @Column({ default: false })
-  archived: boolean;
-
-  /**
    * `dm_groups.id` of this community's Graine key-distribution group, minted by chat-delivery when
    * the community is created and never changed afterwards.
    *

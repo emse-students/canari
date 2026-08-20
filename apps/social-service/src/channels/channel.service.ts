@@ -676,7 +676,7 @@ export class ChannelService {
     opts?: { expiresAt?: string | null; maxUses?: number | null; rotate?: boolean }
   ): Promise<WorkspaceInviteDto> {
     const workspace = await this.workspaceRepo.findOne({
-      where: { id: workspaceId, archived: false },
+      where: { id: workspaceId },
     });
     if (!workspace) throw new NotFoundException('Workspace not found');
     if (!(await this.actorCanInvite(workspaceId, actorUserId))) {
@@ -762,7 +762,7 @@ export class ChannelService {
       return { valid: false, workspaceName: null, workspaceSlug: null, imageMediaId: null };
     }
     const ws = await this.workspaceRepo.findOne({
-      where: { id: invite.workspaceId, archived: false },
+      where: { id: invite.workspaceId },
     });
     if (!ws) return { valid: false, workspaceName: null, workspaceSlug: null, imageMediaId: null };
     return {
@@ -788,7 +788,7 @@ export class ChannelService {
     // Links outlive the community they point at: an invite to a deleted community must not
     // resurrect it for the joiner.
     const ws = await this.workspaceRepo.findOne({
-      where: { id: invite.workspaceId, archived: false },
+      where: { id: invite.workspaceId },
     });
     if (!ws) throw new NotFoundException('Workspace not found');
 
@@ -1012,7 +1012,7 @@ export class ChannelService {
    */
   private async assertWorkspaceMember(workspaceId: string, userId: string): Promise<Workspace> {
     const workspace = await this.workspaceRepo.findOne({
-      where: { id: workspaceId, archived: false },
+      where: { id: workspaceId },
     });
     if (!workspace) throw new NotFoundException('Workspace not found');
 
@@ -1098,7 +1098,7 @@ export class ChannelService {
    * not a 403: nothing about the caller is wrong.
    */
   private async assertPrivateChannelReader(channelId: string, userId: string): Promise<Channel> {
-    const channel = await this.channelRepo.findOne({ where: { id: channelId, archived: false } });
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
 
     const member = await this.memberRepo.findOne({
@@ -1196,7 +1196,7 @@ export class ChannelService {
    * Idempotent: an admin already in the roster gets the same answer and no second event.
    */
   async joinPrivateChannelAsAdmin(channelId: string, actorUserId: string) {
-    const channel = await this.channelRepo.findOne({ where: { id: channelId, archived: false } });
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
     if (!channel.isPrivate) {
       throw new BadRequestException({
@@ -1260,9 +1260,9 @@ export class ChannelService {
    * so it must not be enough to read a community's roster or channel list from the outside.
    */
   async getWorkspaceBySlug(slug: string, userId: string) {
-    // `archived: false` rather than a post-lookup check: a deleted community must be a 404
-    // on its own slug, not a readable tombstone.
-    const ws = await this.workspaceRepo.findOne({ where: { slug, archived: false } });
+    // A deleted community is a 404 on its own slug because there is no row, not because a
+    // filter hides one. It was the other way round until deletion became real.
+    const ws = await this.workspaceRepo.findOne({ where: { slug } });
     if (!ws) throw new NotFoundException('Workspace not found');
 
     const normalizedUserId = (userId ?? '').trim().toLowerCase();
@@ -1272,9 +1272,7 @@ export class ChannelService {
 
     const roles = await this.roleRepo.find({ where: { workspaceId: ws.id } });
 
-    const allChannels = await this.channelRepo.find({
-      where: { workspaceId: ws.id, archived: false },
-    });
+    const allChannels = await this.channelRepo.find({ where: { workspaceId: ws.id } });
     // RESOLVED BEFORE THE CHANNEL LOOP, because it now decides what goes IN it. An admin has no
     // access to a private salon they have not joined, so without this they would not see it exists
     // and could never join it - a capability nobody can reach is not a capability.
@@ -1330,11 +1328,12 @@ export class ChannelService {
     if (memberships.length === 0) return [];
 
     const workspaceIds = [...new Set(memberships.map((m) => m.workspaceId))];
-    // Membership rows survive a community deletion (so it stays recoverable); the archived
-    // filter is what actually removes it from every member's sidebar.
-    const workspaces = await this.workspaceRepo.find({
-      where: { id: In(workspaceIds), archived: false },
-    });
+    // A DELETED COMMUNITY LEAVES NO ROW IN ANY OF THESE TABLES, membership included, so an id
+    // that resolves to nothing is the ordinary shape of one that is gone rather than a filtered
+    // tombstone. This comment said the opposite until 2026-08-20 - it was written for the soft
+    // delete and outlived it by two days, which is how a stale comment lies: it named a mechanism
+    // (`archived`) that `hardDeleteWorkspace` had already made incapable of removing anything.
+    const workspaces = await this.workspaceRepo.find({ where: { id: In(workspaceIds) } });
 
     // Derive per-workspace management rights server-side so the client can gate admin
     // controls (e.g. "change image", invite) without deriving permissions itself. We
@@ -1640,7 +1639,7 @@ export class ChannelService {
    */
   async deleteWorkspace(workspaceId: string, actorUserId: string, confirmationName: string) {
     const workspace = await this.workspaceRepo.findOne({
-      where: { id: workspaceId, archived: false },
+      where: { id: workspaceId },
     });
     if (!workspace) throw new NotFoundException('Workspace not found');
 
@@ -1820,8 +1819,29 @@ export class ChannelService {
     };
   }
 
-  /** Marks a channel as archived (hidden from listings) and broadcasts a channel.deleted event to workspace members. */
-  async archiveChannel(channelId: string, actorUserId: string) {
+  /**
+   * Deletes a salon, for real - its row, its messages and its key-distribution group.
+   *
+   * IT USED TO ARCHIVE, which was the community's own defect one scope down. `archived = true` hid
+   * the salon from every listing while the same call destroyed the group holding its seeds, so a
+   * private salon's messages survived as ciphertext no client on earth could open: invisible to
+   * every screen, unreachable by every route, and removable only by deleting the whole community.
+   * Nothing could bring it back either - there is no un-archive anywhere in this service, and never
+   * was. The reasoning is {@link deleteWorkspace}'s, unchanged one level down: recoverability that
+   * only recovers unreadable rows is not recoverability.
+   *
+   * NO CONFIRMATION ARGUMENT, and the asymmetry with `deleteWorkspace` is a measurement rather than
+   * an oversight. That call needed one because the fleet held clients whose dialog described a
+   * REVERSIBLE action, and making the server irreversible behind that wording would have destroyed
+   * a community behind a warning that no longer described it. This dialog has read "Supprimer
+   * definitivement le canal #x ?" since 2026-06-16, which is the first version of the string that
+   * ever shipped: every client in the field already promises exactly what this now does, so there
+   * is nothing to fail closed against and an argument would only break them for no gain.
+   *
+   * MANAGE_CHANNEL is enough here where the community demands MANAGE_WORKSPACE. A salon is one room
+   * and governing rooms is what that permission IS; deleting a community acts on everyone at once.
+   */
+  async deleteChannel(channelId: string, actorUserId: string) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
 
@@ -1841,29 +1861,43 @@ export class ChannelService {
     }
     if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL permission');
 
-    channel.archived = true;
-    await this.channelRepo.save(channel);
-
-    // Read BEFORE the archive flag is saved would make no difference here - `channelAudience`
-    // reads membership and access, neither of which archiving touches.
+    // Snapshot the audience BEFORE anything goes. `channelAudience` reads the salon's own roster off
+    // the row this is about to delete, so afterwards there is nobody left to address the event to -
+    // the same reason `deleteWorkspace` takes its member ids first.
     const audience = await this.channelAudience(channel);
+    const workspaceId = channel.workspaceId;
 
-    // ARCHIVING IS HOW A SALON ENDS - there is no route back, so this is the last moment anything
-    // names its group. Best-effort like the public switch: a group that outlives its salon
-    // distributes to a roster nothing consults, while refusing the archive over it would leave a
-    // salon nobody can remove.
-    await this.retireChannelDistributionGroup(channel, 'archived');
-    await this.redis.publishChannelEvent(
-      'channel.deleted',
-      { channelId, workspaceId: channel.workspaceId },
-      audience
+    // BEFORE the transaction, and allowed to ABORT it - the one line separating this from the
+    // archive it replaces. `retireChannelDistributionGroup` swallows its failure deliberately: there
+    // the salon survives, so a group outliving its retirement is inert and refusing the change would
+    // be worse. Here the row is about to be gone, and a group nothing names any more is exactly the
+    // orphan the 2026-08-17 purge had to find by hand. Failing here leaves the salon whole and the
+    // deletion retryable, which is the only outcome that stays reconcilable.
+    if (channel.distributionGroupId) {
+      await deleteDistributionGroup(this.internalSecret, channelScope(channel.id));
+    }
+
+    // Named by hand for the reason `hardDeleteWorkspace` gives: there is not one foreign key on
+    // `channels`, so nothing cascades and nothing would complain if a table were forgotten.
+    // `channel_messages` is the only one keyed by channel - checked, not assumed.
+    await this.channelRepo.manager.transaction(async (mgr) => {
+      await mgr.delete(ChannelMessage, { channelId });
+      await mgr.delete(Channel, { id: channelId });
+    });
+
+    await this.redis.publishChannelEvent('channel.deleted', { channelId, workspaceId }, audience);
+
+    this.logger.log(
+      `[CHANNEL] delete channel=${channelId} workspace=${workspaceId} ` +
+        `private=${channel.isPrivate} group=${channel.distributionGroupId ?? 'none'} ` +
+        `by=${actorUserId.slice(0, 8)} audience=${audience.length}`
     );
 
     return { success: true };
   }
 
   /**
-   * Lists the non-archived channels a user may see in a workspace.
+   * Lists the channels a user may see in a workspace.
    *
    * MAY SEE, not may read, and the two stopped being the same thing on 2026-08-19: an
    * administrator is shown a private salon they have not joined - its name, its `viewerHasAccess:
@@ -1883,7 +1917,7 @@ export class ChannelService {
     if (!member) throw new ForbiddenException('Not a member of this workspace');
 
     const viewerCanManage = await this.memberHasWorkspaceManage(member);
-    const channels = await this.channelRepo.find({ where: { workspaceId, archived: false } });
+    const channels = await this.channelRepo.find({ where: { workspaceId } });
     const visible: Array<{
       id: string;
       workspaceId: string;
@@ -2184,7 +2218,7 @@ export class ChannelService {
     );
 
     // An admin removing themselves as the last member is the same disappearance as leaving, and
-    // gets the same answer rather than an archived community nobody belongs to.
+    // gets the same answer rather than a community nobody belongs to.
     if (remainingMemberIds.length === 0) {
       await this.hardDeleteWorkspace(workspaceId, 'last_member_kicked');
     }

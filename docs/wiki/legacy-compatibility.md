@@ -46,6 +46,15 @@ describes it, so the missing argument IS the protection - see
 [social-service](services/social-service.md#deleting-a-community). It retires itself when no client
 below 0.15.0 remains; there is nothing to delete when it does.
 
+**And one deliberate NON-break, recorded for the same reason.** `DELETE /api/channels/:channelId`
+made the identical archive -> destroy move on 2026-08-20 and took **no** new argument. The rule the
+entry above establishes is not "a delete that becomes real needs a token" - it is *check what the
+deployed clients are promising before changing what the server means*. Here they were already
+promising it: `chat_delete_channel_confirm` has read "Supprimer definitivement le canal #x ?" since
+`5babb466` (2026-06-16), the first version of the string that shipped. A gate would have broken
+working clients to protect them from a warning that was accurate all along - see
+[social-service](services/social-service.md#deleting-a-channel-took-no-new-argument-deliberately-2026-08-20).
+
 ---
 
 ## The diary

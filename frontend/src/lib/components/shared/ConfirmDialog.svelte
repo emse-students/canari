@@ -61,11 +61,18 @@
             <p class="text-sm font-bold text-text-main wrap-break-word select-all">
               {pending.requireText}
             </p>
-            <!-- svelte-ignore a11y_autofocus -->
+            <!--
+              NO `autofocus` HERE, and its absence is what makes the field focused rather than the
+              other way round. Chrome refuses the attribute when something already holds focus -
+              always the case, since the dialog is opened by a button the user just clicked - and
+              logged "Autofocus processing was blocked because a document already has a focused
+              element" on every community deletion, which is how it was found. `use:focusTrap` on
+              the dialog focuses its first focusable child, and in DOM order that is this input; a
+              programmatic focus is never blocked, so the attribute added a warning and nothing else.
+            -->
             <input
               type="text"
               bind:value={typed}
-              autofocus
               autocomplete="off"
               autocapitalize="off"
               spellcheck="false"

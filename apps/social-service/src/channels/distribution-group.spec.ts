@@ -180,7 +180,7 @@ describe('ChannelService - the community distribution group', () => {
   describe('serving the group to a member', () => {
     it('refuses a user who is not in the community, without asking chat-delivery', async () => {
       const { service, workspaceRepo, memberRepo } = makeService();
-      workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE, archived: false });
+      workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE });
       memberRepo.findOne.mockResolvedValue(null);
 
       await expect(service.getDistributionGroupForMember(WORKSPACE, USER)).rejects.toBeInstanceOf(
@@ -191,7 +191,10 @@ describe('ChannelService - the community distribution group', () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it('refuses on an archived community', async () => {
+    // It said `archived` until 2026-08-20, and the mock has always returned null - i.e. it was
+    // asserting a missing row while claiming to assert a hidden one. The column is gone; the
+    // behaviour it named never existed here.
+    it('refuses on a community that does not exist', async () => {
       const { service, workspaceRepo } = makeService();
       workspaceRepo.findOne.mockResolvedValue(null);
 
@@ -203,7 +206,7 @@ describe('ChannelService - the community distribution group', () => {
 
     it('passes an uninitialised group through as a state, not an error', async () => {
       const { service, workspaceRepo, memberRepo } = makeService();
-      workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE, archived: false });
+      workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE });
       memberRepo.findOne.mockResolvedValue({ workspaceId: WORKSPACE, userId: USER });
       global.fetch = answerWith({
         groupId: 'g-1',
@@ -222,7 +225,7 @@ describe('ChannelService - the community distribution group', () => {
 
     it('returns the published GroupInfo to a member', async () => {
       const { service, workspaceRepo, memberRepo } = makeService();
-      workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE, archived: false });
+      workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE });
       memberRepo.findOne.mockResolvedValue({ workspaceId: WORKSPACE, userId: USER });
       global.fetch = answerWith({
         groupId: 'g-1',
@@ -239,7 +242,7 @@ describe('ChannelService - the community distribution group', () => {
 
     it('says loudly that a community has no distribution group at all', async () => {
       const { service, workspaceRepo, memberRepo } = makeService();
-      workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE, archived: false });
+      workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE });
       memberRepo.findOne.mockResolvedValue({ workspaceId: WORKSPACE, userId: USER });
       global.fetch = answerWith(null) as unknown as typeof fetch;
 
@@ -252,7 +255,7 @@ describe('ChannelService - the community distribution group', () => {
 
     it('reports an unreachable chat-delivery as unavailable, not as an empty community', async () => {
       const { service, workspaceRepo, memberRepo } = makeService();
-      workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE, archived: false });
+      workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE });
       memberRepo.findOne.mockResolvedValue({ workspaceId: WORKSPACE, userId: USER });
       global.fetch = jest.fn(() => Promise.reject(new Error('timeout'))) as unknown as never;
 
@@ -265,7 +268,7 @@ describe('ChannelService - the community distribution group', () => {
   describe('publishing group info', () => {
     it('refuses a user who is not in the community', async () => {
       const { service, workspaceRepo, memberRepo } = makeService();
-      workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE, archived: false });
+      workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE });
       memberRepo.findOne.mockResolvedValue(null);
 
       await expect(
@@ -276,7 +279,7 @@ describe('ChannelService - the community distribution group', () => {
 
     it('forwards a member GroupInfo and reports what the far side stored', async () => {
       const { service, workspaceRepo, memberRepo } = makeService();
-      workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE, archived: false });
+      workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE });
       memberRepo.findOne.mockResolvedValue({ workspaceId: WORKSPACE, userId: USER });
       const fetchSpy = answerWith({ stored: false });
       global.fetch = fetchSpy as unknown as typeof fetch;
@@ -312,7 +315,6 @@ describe('ChannelService - the community distribution group', () => {
         id: WORKSPACE,
         name: WORKSPACE_NAME,
         slug: 'test',
-        archived: false,
       });
       repos.memberRepo.findOne.mockResolvedValue({
         workspaceId: WORKSPACE,
@@ -538,7 +540,6 @@ describe('ChannelService - the community distribution group', () => {
         workspaceId: WORKSPACE,
         name: 'direction',
         isPrivate: true,
-        archived: false,
         allowedUsers: [USER],
         distributionGroupId: 'g-chan',
         writePolicy: 'everyone',

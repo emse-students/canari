@@ -240,3 +240,61 @@ export function isCommunityMember(workspaceId, userId) {
   );
   return found.length > 0;
 }
+
+/**
+ * Everything a community owns, counted per table - what a DELETE must leave at zero.
+ *
+ * COUNTED RATHER THAN LOOKED AT. Deletion became a real delete on 2026-08-18, and "the sidebar
+ * entry is gone" is a statement about one client's cache: the rows are what decides whether the
+ * name is free again, whether a member still has a membership row pointing at nothing, and whether
+ * the key-distribution group was retired or merely abandoned.
+ *
+ * `slug` is returned SEPARATELY from the counts because it answers a different question - not "is
+ * it gone" but "may the next community have this name". A slug held by a row that no longer exists
+ * is exactly the state the old soft delete left behind.
+ */
+export function workspaceFootprint(workspaceId) {
+  const one = (sql) => {
+    const found = rows(psql(sql));
+    return found.length ? Number(found[0][0]) : 0;
+  };
+  const slugRows = rows(psql(`SELECT slug FROM channel_workspaces WHERE id = '${workspaceId}'`));
+  return {
+    workspace: slugRows.length,
+    slug: slugRows.length ? slugRows[0][0] : null,
+    channels: one(`SELECT count(*) FROM channels WHERE "workspaceId" = '${workspaceId}'`),
+    members: one(`SELECT count(*) FROM channel_members WHERE "workspaceId" = '${workspaceId}'`),
+    roles: one(`SELECT count(*) FROM channel_roles WHERE "workspaceId" = '${workspaceId}'`),
+    invites: one(`SELECT count(*) FROM workspace_invites WHERE "workspaceId" = '${workspaceId}'`),
+    // Live key-distribution groups still claiming this community or one of its salons. A retired
+    // group releases its scope, so a surviving CLAIM - not a surviving row - is the fault.
+    liveDistributionGroups: one(
+      `SELECT count(*) FROM dm_groups WHERE "distributionWorkspaceId" = '${workspaceId}' AND "deletedAt" IS NULL`
+    ),
+  };
+}
+
+/** Whether any community currently holds `slug`. The question "is the name free again". */
+export function slugTaken(slug) {
+  return rows(psql(`SELECT id FROM channel_workspaces WHERE slug = '${slug}'`)).length > 0;
+}
+
+/**
+ * Whether a channel row still exists at all, by id.
+ *
+ * IT ANSWERED `true` FOREVER UNTIL 2026-08-20, and the check that asked was right: `DELETE
+ * /channels/:id` set `archived = true` while destroying the salon's key-distribution group, so the
+ * row survived as ciphertext nothing could open. COMM-16 failed on exactly this question, was
+ * nearly "fixed" to ask a softer one, and was the only thing that noticed. The server now deletes.
+ */
+export function channelExists(channelId) {
+  return rows(psql(`SELECT id FROM channels WHERE id = '${channelId}'`)).length > 0;
+}
+
+/** How many messages still name this channel - the rows a delete has to take with it. */
+export function channelMessageCount(channelId) {
+  const found = rows(
+    psql(`SELECT count(*) FROM channel_messages WHERE "channelId" = '${channelId}'`)
+  );
+  return found.length ? Number(found[0][0]) : 0;
+}

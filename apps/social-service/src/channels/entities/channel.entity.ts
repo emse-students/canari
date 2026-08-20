@@ -57,9 +57,6 @@ export class Channel {
   @Column({ type: 'uuid', nullable: true, default: null })
   distributionGroupId: string | null;
 
-  @Column({ default: false })
-  archived: boolean;
-
   @CreateDateColumn()
   createdAt: Date;
 

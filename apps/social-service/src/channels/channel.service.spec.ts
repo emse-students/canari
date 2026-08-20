@@ -1275,8 +1275,8 @@ describe('ChannelService security hardening', () => {
     };
     repos.channelRepo.findOne.mockResolvedValue(channel);
     repos.channelRepo.save.mockImplementation((c: unknown) => Promise.resolve(c));
-    repos.workspaceRepo.findOne.mockResolvedValue({ id: 'ws1', slug: 'ws1', archived: false });
-    repos.workspaceRepo.find.mockResolvedValue([{ id: 'ws1', slug: 'ws1', archived: false }]);
+    repos.workspaceRepo.findOne.mockResolvedValue({ id: 'ws1', slug: 'ws1' });
+    repos.workspaceRepo.find.mockResolvedValue([{ id: 'ws1', slug: 'ws1' }]);
     repos.roleRepo.find.mockResolvedValue([
       { id: 'r-admin', name: 'Administrateur', priority: 10, permissions: ['workspace.manage'] },
     ]);
@@ -1355,7 +1355,7 @@ describe('ChannelService security hardening', () => {
       members.map((mem) => ({ workspaceId: 'ws1', ...mem }))
     );
     repos.memberRepo.save.mockImplementation((m: unknown) => Promise.resolve(m));
-    repos.workspaceRepo.findOne.mockResolvedValue({ id: 'ws1', slug: 'ws1', archived: false });
+    repos.workspaceRepo.findOne.mockResolvedValue({ id: 'ws1', slug: 'ws1' });
     repos.roleRepo.find.mockResolvedValue(GOVERNED_ROLES);
     repos.roleRepo.findOne.mockImplementation(({ where }: { where: { name: string } }) =>
       Promise.resolve(GOVERNED_ROLES.find((r) => r.name === where.name) ?? null)
