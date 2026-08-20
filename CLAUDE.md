@@ -187,11 +187,8 @@ in the field (user, 2026-08-19)**, so the iOS ladder cannot run and parity is ke
     [cross-client-testing](docs/wiki/cross-client-testing.md) §9, the only copy. **Board rows stay
     `pending` on purpose** - a runner that PASSes while still proving itself is not a campaign verdict.
     **Owed before the campaign, and each is a run, not a decision:**
-    - **COMM-12 re-run on the build carrying `174a24be`** - the prune fix its third run named. It is
-      `VACUOUS` and has never been armed; the arm it exercises is the one the defect broke.
-    - **COMM-9/10 re-run** (`VACUOUS` since the per-salon groups landed), now that `grainestore.mjs`
-      measures the sealed column that is actually on disk rather than a field only the decoded object
-      has - which is what made every row read as 0 bytes.
+    - **COMM-25 has never run.** The runner is written; it needs the phone online and the account
+      holding two devices, and nothing has yet produced a result it could not have produced by accident.
     - **The phone shows a GENERIC notification body** (user, 2026-08-20, on an app that is not up to
       date). That is COMM-14's row; it is an observation, not a defect, until that runner says so.
     - **`cleanup.mjs` before the campaign** - five venues waiting as of 2026-08-20T20:30Z:

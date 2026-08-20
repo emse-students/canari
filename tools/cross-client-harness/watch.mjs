@@ -181,6 +181,13 @@ const BENIGN = [
   // Kept as its own line rather than widened into the rule above: the two sentences name two
   // different server decisions, and a reader of the dirt has to be able to tell them apart.
   /^\[Channel Event\] community [0-9a-f]{8} deleted by an admin$/,
+  // THE PRUNE DECLINING TO DELETE WHAT DID NOT EXIST WHEN IT ASKED. Benign because it is the
+  // fix of 2026-08-20 doing its work: a workspace listing that went out before a community was
+  // created cannot be evidence that the community is gone, and the load now says which ones it
+  // spared instead of deleting them in silence. It is EXPECTED here specifically - COMM-12 builds
+  // two communities back to back, which is the race - and its absence proves nothing either way,
+  // since a run where no listing happened to be in flight is a run with nothing to spare.
+  /^\[WORKSPACE-LOAD\] kept \d+ (community\(ies\)|salon\(s\)) created after this listing was requested/,
   // THE SWEEP SPARING A KEY-DISTRIBUTION GROUP, which is the fix WP-GRAINE-1 and the 2026-08-20
   // discriminator repair both landed. Its ABSENCE is what would be the signal: a boot where these
   // do not appear is a boot where the sweep deleted the group and sending stops working.
