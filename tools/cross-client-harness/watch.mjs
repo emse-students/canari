@@ -277,6 +277,12 @@ const SEVERE_BUT_EXPECTED = /CannotDecryptOwnMessage/i;
 /** Console text that must be reported even though it is not an error - it means something happened. */
 const NOTABLE = [
   /SecretReuse|out of bounds|Duplicate|silent ACK|ACK silencieux/i,
+  // A FRAME NOBODY HANDLED, on a group whose whole point is that its frames are handled. The app
+  // logs this to announce VERSION SKEW, and on 2026-08-20 it was printing it between two clients
+  // running the same bundle - because the history reconciliation was probing distribution groups as
+  // though they were conversations. It sat in `unexplained` for one run, which is one run too many:
+  // the line is rare, it names a cause, and a named cause is a claim worth checking every time.
+  /distribution frame of kind .* is not handled by this client/i,
   /epoch|GAP|out-?of-?sync|re-?add|welcome_request/i,
   // PEER RECONCILIATION, WHICH IS NOT THE SAME THING AS READING THE MAILBOX. `GET
   // /api/mls/history/<groupId>` is a client fetching its OWN ciphertexts from the server and happens

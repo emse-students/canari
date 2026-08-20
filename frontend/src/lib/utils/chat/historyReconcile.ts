@@ -392,7 +392,10 @@ export function answerAfterMailboxDrained(
  * @returns `true` when a probe left the device.
  */
 export async function reconcileGroup(
-  mlsService: Pick<IMlsService, 'sendHistoryRequest' | 'waitForMessageQueueIdle'>,
+  mlsService: Pick<
+    IMlsService,
+    'sendHistoryRequest' | 'waitForMessageQueueIdle' | 'isDistributionGroup'
+  >,
   groupId: string,
   log: (msg: string) => void,
   now: number = Date.now(),
@@ -403,6 +406,35 @@ export async function reconcileGroup(
   exclude: readonly string[] = []
 ): Promise<boolean> {
   const short = groupId.slice(0, 8);
+
+  // A DISTRIBUTION GROUP HAS NO HISTORY TO RECONCILE, and this is the one door every trigger comes
+  // through, so it is the only place the exclusion has to be written.
+  //
+  // Found on production 2026-08-20. The connection audit takes its targets from `getLocalGroups()`,
+  // which names every group this device holds - the community's seed carrier and, since the salon
+  // scopes shipped, one per private salon. Each of them got a `history_state` probe broadcast to
+  // every member as an MLS application frame, for a group that carries seeds and has never held a
+  // message: the peers answered nothing and logged `distribution frame of kind 'system' ... is not
+  // handled by this client` - a warning meant to announce VERSION SKEW, on two clients running the
+  // same bundle.
+  //
+  // WHAT IS ACTUALLY WRONG WITH IT IS NOT THE COST. Both sides compute "empty", agree, and fall
+  // silent, so the exchange is a no-op; and a broadcast advances every member's sender ratchet by
+  // one, uniformly, which is not the generation GAP the recipients rule warns about. What it costs
+  // is traffic - a stored, fanned-out frame per group per connection, queued for whoever is
+  // offline, and now N+1 of them for someone who can open N private salons.
+  //
+  // THE REASON IT IS CLOSED IS THE INVARIANT. A distribution group must never reach the
+  // conversation pipeline, and this IS that pipeline's repair arm: `recovery.ts` calls it straight
+  // after a re-add. Today it compares and says nothing; the next branch it grows - a purge, a drop,
+  // a "this group is damaged" - would act on a group it fundamentally misunderstands. Two defects
+  // have already shipped from breaking this same invariant (the sweep that deleted the group, and
+  // `getUserGroups` leaking it into the conversation list); this is the third place found.
+  //
+  // Silent, because there is nothing here for a reader to act on: not asking is the correct and
+  // permanent behaviour for this kind of group, not a degradation of anything.
+  if (mlsService.isDistributionGroup(groupId)) return false;
+
   if (recentlyAsked(groupId, now)) return false;
 
   if (!sendProbe) {
@@ -540,7 +572,10 @@ function excludes(exclude: readonly string[], member: string): boolean {
  * what you asked" means - so the walk ends there too, with no state to unwind.
  */
 export async function noteCoverageShortfall(
-  mlsService: Pick<IMlsService, 'sendHistoryRequest' | 'waitForMessageQueueIdle'>,
+  mlsService: Pick<
+    IMlsService,
+    'sendHistoryRequest' | 'waitForMessageQueueIdle' | 'isDistributionGroup'
+  >,
   groupId: string,
   from: string,
   coverage: { since: number; coveredFrom: number },
@@ -620,7 +655,10 @@ const ELECTION_CONCURRENCY = 6;
  * was right and nothing here changes it.
  */
 export async function reconcileAllGroups(
-  mlsService: Pick<IMlsService, 'sendHistoryRequest' | 'waitForMessageQueueIdle'>,
+  mlsService: Pick<
+    IMlsService,
+    'sendHistoryRequest' | 'waitForMessageQueueIdle' | 'isDistributionGroup'
+  >,
   groupIds: Iterable<string>,
   log: (msg: string) => void
 ): Promise<string[]> {
@@ -663,7 +701,10 @@ export async function reconcileAllGroups(
  * already compared. Only the ones that could not be asked at all have anything to gain.
  */
 export async function retryDeferredReconciliations(
-  mlsService: Pick<IMlsService, 'sendHistoryRequest' | 'waitForMessageQueueIdle'>,
+  mlsService: Pick<
+    IMlsService,
+    'sendHistoryRequest' | 'waitForMessageQueueIdle' | 'isDistributionGroup'
+  >,
   localGroupIds: Iterable<string>,
   log: (msg: string) => void
 ): Promise<void> {

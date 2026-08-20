@@ -213,7 +213,10 @@ export function decideAbsentLocalGroupFate(input: AbsentLocalGroupInput): LocalG
 export async function reconcileAbsentLocalGroup(
   mlsService: Pick<
     IMlsService,
-    'isDistributionGroup' | 'getGroupServerStatus' | 'registerDistributionGroup'
+    | 'isDistributionGroup'
+    | 'getGroupServerStatus'
+    | 'registerDistributionGroup'
+    | 'noteDistributionGroup'
   >,
   groupId: string
 ): Promise<LocalGroupFate> {
@@ -228,8 +231,17 @@ export async function reconcileAbsentLocalGroup(
   const fate = decideAbsentLocalGroupFate({ isKnownDistributionGroup: false, serverStatus });
 
   if (serverStatus.kind === 'active' || serverStatus.kind === 'tombstone') {
-    const scope = distributionScopeFromMeta(serverStatus.meta);
-    if (scope) mlsService.registerDistributionGroup(scope, groupId);
+    const meta = serverStatus.meta;
+    const scope = distributionScopeFromMeta(meta);
+    if (scope) {
+      mlsService.registerDistributionGroup(scope, groupId);
+    } else if (meta.distributionWorkspaceId || meta.distributionChannelId) {
+      // KEPT AND SAID SO. The decision above already spared this group on the server's word; before
+      // this line that word was then thrown away, and `isDistributionGroup` answered false about a
+      // group the server had just identified. Every later consumer of the predicate inherited the
+      // ignorance - including the history reconciliation, which probed it as a conversation.
+      mlsService.noteDistributionGroup(groupId);
+    }
   }
   return fate;
 }

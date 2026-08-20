@@ -1386,6 +1386,70 @@ replay of what came before is a stream of frames it cannot decrypt.
 a group whose creator is on no roster - this defect, silently - and storing it would leave the group
 looking healthy while nothing can be delivered on it.
 
+### Two more, from reading one warning nobody had classified
+
+The run that proved the roster fix printed a line the harness could not classify, on a pair of
+clients running the same bundle:
+
+```
+[GRAINE] distribution frame of kind 'system' from b78568a3... is not handled by this client
+```
+
+That warning exists to announce **version skew** - a peer speaking a protocol this bundle does not
+answer. There was no skew. It is the visible end of two separate faults, and the second is what made
+the first impossible to fix with a filter.
+
+**1. The history reconciliation probed distribution groups as though they were conversations.** The
+connection audit takes its targets from `getLocalGroups()`, which names every group a device holds:
+the community's seed carrier and, since the salon scopes shipped, **one per private salon**. Each
+got a `history_state` probe, broadcast to every member as an MLS application frame, asking them to
+compare a transcript that does not exist. The peers answered nothing and logged the warning above.
+
+**The cost is not the reason, and saying it was would be wrong.** Both sides compute "empty", agree
+and fall silent, so the exchange is a no-op; and a broadcast advances every member's sender ratchet
+by one uniformly, which is not the generation GAP the `recipients` rule warns about. What it really
+costs is traffic - one stored, fanned-out frame per group per connection, queued for whoever is
+offline, and now N+1 of them for someone who can open N private salons.
+
+**The reason it is closed is the invariant.** A distribution group must never reach the conversation
+pipeline, and the reconciliation IS that pipeline's repair arm - `recovery.ts` calls it straight
+after a re-add. Today it compares and says nothing. The next branch it grows - a purge, a drop, a
+"this group is damaged" - would act on a group it fundamentally misunderstands, and two defects have
+already shipped from breaking this same invariant: the sweep that deleted the group, and
+`getUserGroups` leaking it into the conversation list. This is the third place it was broken.
+
+The guard goes in `reconcileGroup`, which is the ONE door every trigger comes through (a connection
+edge, an unreadable frame, a peer coming back, a replay that gave up); the five call sites are
+covered by writing it once. It is silent: not asking is the permanent, correct behaviour for this
+kind of group, not a degradation of anything.
+
+**2. `isDistributionGroup` answered FALSE about groups the server had just identified as
+distribution groups.** One `Map<groupId, scope>` was answering two questions - *is this a
+distribution group* and *whose roster is it* - and only the second needs the community. A salon's
+`dm_groups` row carries the salon and cannot carry the community (chat-delivery does not own
+`channels`), so for a salon whose community this session had not loaded, `distributionScopeFromMeta`
+returned null and **the caller registered nothing at all** - although the sweep had, one line
+earlier, spared the group on the server's word. The cheap answer was waiting on the expensive one,
+and every consumer of the predicate inherited the ignorance for the rest of the session.
+
+A separate `knownDistributionGroups` set now answers `isDistributionGroup`; the map keeps answering
+`distributionGroupFor`. `noteDistributionGroup(groupId)` records what a group IS when its scope
+cannot yet be named, and both are dropped together when the group is left - a predicate that
+outlived its group would make the sweep spare state the device no longer holds, for ever.
+
+**The other four consumers were enumerated, not assumed.** `getLocalGroups()` has five callers that
+could have made the same mistake, and the seam is only closed if all of them are read:
+`sessionAuth`'s lifecycle promotion and `sessionWatchdogs` both iterate CONVERSATIONS and use the
+local list only as a membership lookup, so a distribution group - which is never in
+`cb.conversations` - cannot reach them; `actions.ts` already routes through
+`reconcileAbsentLocalGroup`, the shared decision, and gains the fix above for free; the frame
+pipeline asks `isDistributionGroup` before `handleKnownGroup`. One of five was wrong. Enumerating
+them is the only way that sentence can be written at all.
+
+**The rule this leaves behind:** a log line nobody has classified is not noise to be filtered, and a
+warning that names a cause is a CLAIM about that cause. This one said "version skew" on two clients
+running the same bundle, which was enough to refute it on the spot.
+
 ### Migration: there was nothing to migrate
 
 Measured on production 2026-08-19 before writing any of it: **zero private salons existed.** So no

@@ -458,6 +458,14 @@ export interface IMlsService {
   /** True when `groupId` carries channel seeds and must never reach the conversation pipeline. */
   isDistributionGroup(groupId: string): boolean;
   /**
+   * Records that a group IS a distribution group when the server says so but its scope cannot yet
+   * be named - a private salon's group whose community this session has not loaded.
+   *
+   * Separate from {@link registerDistributionGroup} because the two answer different questions, and
+   * conflating them made the answerable one wait on the unanswerable one.
+   */
+  noteDistributionGroup(groupId: string): void;
+  /**
    * Leaves a scope's key-distribution group - the MLS tree and the registration together - and
    * returns the group left, or null when this device held none. The counterpart of
    * {@link ensureDistributionGroup}: without it, a community or salon that leaves this device keeps

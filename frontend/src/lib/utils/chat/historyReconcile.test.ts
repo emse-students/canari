@@ -38,7 +38,8 @@ const OTHER = 'g2';
  */
 function service(
   outcome: { noPeerOnline?: boolean; target?: string; excludedOnline?: number } | Error = {},
-  waitForMessageQueueIdle = vi.fn().mockResolvedValue(undefined)
+  waitForMessageQueueIdle = vi.fn().mockResolvedValue(undefined),
+  distributionGroups: readonly string[] = []
 ) {
   return {
     sendHistoryRequest: vi.fn().mockImplementation(async () => {
@@ -46,9 +47,11 @@ function service(
       return outcome;
     }),
     waitForMessageQueueIdle,
+    isDistributionGroup: vi.fn((groupId: string) => distributionGroups.includes(groupId)),
   } as unknown as Parameters<typeof reconcileGroup>[0] & {
     sendHistoryRequest: ReturnType<typeof vi.fn>;
     waitForMessageQueueIdle: ReturnType<typeof vi.fn>;
+    isDistributionGroup: ReturnType<typeof vi.fn>;
   };
 }
 
@@ -68,6 +71,37 @@ afterEach(() => setHistoryProbeSender(null));
 const deferredGroups = (): string[] => deferredReconciliations().map(([groupId]) => groupId);
 
 describe('reconcileGroup', () => {
+  // FOUND ON PRODUCTION 2026-08-20, and it is the whole reason this guard exists. The connection
+  // audit takes its targets from `getLocalGroups()`, which names the community's seed carrier and
+  // one group per private salon - none of which has ever held a message. Each got a `history_state`
+  // probe broadcast as an MLS application frame to every member, who logged it as an unhandled
+  // frame of an unknown kind and answered nothing. Asserted BEFORE the coalescing window, because
+  // the two refusals are not the same fact: this one is permanent.
+  it('never probes a distribution group - it has no history to reconcile', async () => {
+    const mls = service({}, vi.fn().mockResolvedValue(undefined), [GROUP]);
+
+    expect(await reconcileGroup(mls, GROUP, log)).toBe(false);
+    expect(mls.sendHistoryRequest).not.toHaveBeenCalled();
+    expect(probe).not.toHaveBeenCalled();
+    // Not deferred either: deferring means "ask later", and there will never be anything to ask.
+    expect(deferredGroups()).not.toContain(GROUP);
+  });
+
+  it('refuses it on every trigger, not only the first - the window is not what stops it', async () => {
+    const mls = service({}, vi.fn().mockResolvedValue(undefined), [GROUP]);
+
+    expect(await reconcileGroup(mls, GROUP, log)).toBe(false);
+    expect(await reconcileGroup(mls, GROUP, log, Date.now() + 3_600_000)).toBe(false);
+    expect(mls.sendHistoryRequest).not.toHaveBeenCalled();
+  });
+
+  it('still probes an ordinary group on the same device', async () => {
+    const mls = service({}, vi.fn().mockResolvedValue(undefined), ['distribution-group']);
+
+    expect(await reconcileGroup(mls, GROUP, log)).toBe(true);
+    expect(probe).toHaveBeenCalledWith(GROUP);
+  });
+
   it('elects a responder FIRST, then sends the probe', async () => {
     // Order, not just presence: a state key sent before the election is an MLS frame every member
     // of the group decrypts, for an exchange that may never have started.

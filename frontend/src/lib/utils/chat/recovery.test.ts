@@ -34,6 +34,9 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     sendHistoryRequest: vi.fn().mockResolvedValue({ noPeerOnline: false }),
     // A reconciliation waits for this device's own inbound queue before asking anybody anything;
     // no case here is about the mailbox, so it is already idle.
+    // No distribution group here: `reconcileGroup` asks this before anything else,
+    // because a seed carrier has no history to reconcile.
+    isDistributionGroup: vi.fn().mockReturnValue(false),
     waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
     // Default = external join unavailable, so tests exercise the welcome_request fallback.
     externalJoin: vi.fn().mockResolvedValue(false),

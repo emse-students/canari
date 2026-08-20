@@ -56,6 +56,9 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
       submitCommit: vi.fn(),
     },
     distributionScopeByGroup: new Map<string, DistributionScope>(),
+    // The predicate's own store: it answers "is this one", which the scope map cannot answer
+    // for a salon whose community this session has not loaded.
+    knownDistributionGroups: new Set<string>(),
     distributionGroupInfo: {
       fetch: vi.fn().mockResolvedValue({ groupInfo: 'c29j', baseEpoch: 7 }),
       publish: vi.fn().mockResolvedValue({ stored: true }),

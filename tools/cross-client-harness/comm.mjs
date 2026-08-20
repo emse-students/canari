@@ -448,7 +448,7 @@ export async function revokeChannelAccess(cx, displayName) {
  * The dialog is `showConfirm` in `stores/confirm.svelte.ts`, rendered once in `+layout.svelte`, so
  * this one gesture serves every destructive control in the app.
  */
-export async function confirmDialog(cx, confirmKey) {
+export async function confirmDialog(cx, confirmKey, { typeText = null } = {}) {
   const label = caption(confirmKey);
   await until(
     cx,
@@ -459,6 +459,29 @@ export async function confirmDialog(cx, confirmKey) {
      })()`,
     10000
   );
+
+  // THE TYPED HALF, when the dialog asks for it. `showConfirm({ requireText })` renders an input and
+  // keeps the confirming button DISABLED until it matches - so a check that clicks straight through
+  // clicks a dead button, waits, and reports the app as refusing to delete. The input is found by
+  // its own accessible name, which is the only thing about it that is not a Tailwind class.
+  if (typeText !== null) {
+    const field = `input[aria-label=${JSON.stringify(caption('confirm_type_to_continue'))}]`;
+    await until(cx, `!!document.querySelector(${JSON.stringify(field)})`, 10000);
+    await realClick(cx, field);
+    await cx.send('Input.insertText', { text: typeText });
+    // The button is what the typing is FOR, so it is what proves the typing landed.
+    await until(
+      cx,
+      `(function () {
+         var b = [].slice.call(document.querySelectorAll('button')).filter(function (x) {
+           return (x.innerText || '').trim() === ${JSON.stringify(label)};
+         })[0];
+         return !!b && !b.disabled;
+       })()`,
+      10000
+    );
+  }
+
   await realClick(cx, `text=${label}`);
 }
 
@@ -481,5 +504,262 @@ export async function saveChannelAccess(cx) {
   // post, and died on `no stable element` for a composer that was plainly in the DOM - which is the
   // exact aftermath `clearOverlays` was written for. A gesture that leaves a modal behind is a fault
   // in the gesture, not in the check that comes next.
+  return clearOverlays(cx);
+}
+
+/**
+ * Chooses a value in a native `<select>`, and makes the app hear it.
+ *
+ * A NATIVE SELECT CANNOT BE CLICKED THROUGH CDP: the option list is drawn by the operating system,
+ * outside the page, so there is nothing to hit-test and `realClick` on an `<option>` finds nothing.
+ * The value is therefore assigned and a bubbling `change` dispatched, which is precisely the event
+ * the `onchange` handler is bound to - so what runs afterwards is the application's own code path,
+ * not a shortcut around it.
+ *
+ * WHAT THIS DOES NOT PROVE, and no check may claim it does: that the option was REACHABLE. A select
+ * rendered disabled, or one whose option list the app never populated, is refused here loudly
+ * instead of silently succeeding - but "a person could have picked it" is a question for the eyes,
+ * not for this gesture.
+ */
+export async function chooseOption(cx, selector, value) {
+  const outcome = await evaluate(
+    cx,
+    `(function () {
+       var el = document.querySelector(${JSON.stringify(selector)});
+       if (!el) return 'no-select';
+       if (el.disabled) return 'disabled';
+       var has = [].slice.call(el.options).some(function (o) { return o.value === ${JSON.stringify(value)}; });
+       if (!has) return 'no-option:' + [].slice.call(el.options).map(function (o) { return o.value; }).join(',');
+       el.value = ${JSON.stringify(value)};
+       el.dispatchEvent(new Event('change', { bubbles: true }));
+       return 'chosen';
+     })()`
+  );
+  if (outcome !== 'chosen') {
+    throw new Error(`chooseOption: ${outcome} for ${selector} := ${value}`);
+  }
+}
+
+/**
+ * Marks the community-member row belonging to a display name, and returns the selector for it.
+ *
+ * FOUND BY WHAT THE ROW IS, NOT BY WHAT IT IS STYLED AS. The obvious selector is the Tailwind
+ * container (`div.divide-y > div`), and it would break the first time somebody changed a class that
+ * has nothing to do with membership. The predicate used instead is structural and says what a
+ * member row actually IS: the SMALLEST element that contains both this person's name and exactly
+ * one role control. Nothing else on the modal satisfies it, and no restyling can stop it doing so.
+ *
+ * It MARKS rather than returns a handle, for the same reason `revokeChannelAccess` does: the click
+ * that follows goes through `realClick`, which hit-tests, and a hit-test needs a selector.
+ */
+async function markMemberRow(cx, displayName) {
+  const marked = await evaluate(
+    cx,
+    `(function () {
+       var name = ${JSON.stringify(displayName)};
+       var all = [].slice.call(document.querySelectorAll('div, li, tr'));
+       var rows = all.filter(function (el) {
+         if ((el.innerText || '').indexOf(name) < 0) return false;
+         return el.querySelectorAll('select').length === 1;
+       });
+       if (rows.length === 0) return 'no-row';
+       rows.sort(function (a, b) { return a.innerText.length - b.innerText.length; });
+       [].slice.call(document.querySelectorAll('[data-harness-member]')).forEach(function (e) {
+         e.removeAttribute('data-harness-member');
+       });
+       rows[0].setAttribute('data-harness-member', '1');
+       return 'marked';
+     })()`
+  );
+  if (marked !== 'marked') throw new Error(`markMemberRow: ${marked} for "${displayName}"`);
+  return '[data-harness-member]';
+}
+
+/**
+ * The community's members as the modal shows them: `[{ name, role, readFrom }]`.
+ *
+ * THE ROLE IS READ FROM WHICHEVER CONTROL THIS VIEWER GETS, and the two are not the same evidence.
+ * Someone who may manage the community sees a `<select>` whose VALUE is the role, straight from the
+ * server; everyone else sees a badge whose TEXT is the role's translated label. Both are reported
+ * through one shape and the caller is told which by `readFrom`, because a check asserting on a badge
+ * is also asserting on `fr.json` - and a check that cannot tell the two apart will one day report
+ * "the promotion did not happen" for a client that simply is not an admin.
+ */
+export async function communityMembers(cx) {
+  const raw = await evaluate(
+    cx,
+    `(function () {
+       var byRole = {};
+       byRole[${JSON.stringify(caption('chat_role_admin'))}] = 'admin';
+       byRole[${JSON.stringify(caption('chat_role_moderator'))}] = 'moderator';
+       byRole[${JSON.stringify(caption('chat_role_member'))}] = 'member';
+       var firstLine = function (el) {
+         return ((el && el.innerText) || '').split(String.fromCharCode(10))[0].trim();
+       };
+
+       var rows = [].slice.call(document.querySelectorAll('div, li, tr')).filter(function (el) {
+         if (el.querySelectorAll('select').length !== 1) return false;
+         var opts = [].slice.call(el.querySelector('select').options).map(function (o) { return o.value; });
+         return opts.indexOf('moderator') >= 0 && opts.indexOf('admin') >= 0;
+       });
+       // Smallest first, then drop any candidate CONTAINING one already taken: every ancestor of a
+       // row satisfies the same predicate and would otherwise be counted as a second member.
+       rows.sort(function (a, b) { return a.innerText.length - b.innerText.length; });
+       var taken = [];
+       var out = [];
+       rows.forEach(function (el) {
+         if (taken.some(function (t) { return el.contains(t); })) return;
+         taken.push(el);
+         out.push({ name: firstLine(el), role: el.querySelector('select').value, readFrom: 'select' });
+       });
+       if (out.length) return JSON.stringify(out);
+
+       var badges = [].slice.call(document.querySelectorAll('span')).filter(function (sp) {
+         return byRole[(sp.innerText || '').trim()] !== undefined;
+       });
+       return JSON.stringify(badges.map(function (sp) {
+         var label = (sp.innerText || '').trim();
+         var row = sp.parentElement;
+         while (row && (row.innerText || '').trim() === label) row = row.parentElement;
+         return { name: firstLine(row), role: byRole[label], readFrom: 'badge' };
+       }));
+     })()`
+  );
+  return JSON.parse(raw);
+}
+
+/** Opens the community settings on the members tab, and waits for the roster to have LOADED. */
+export async function openCommunityMembers(cx) {
+  await openCommunitySettings(cx);
+  await communityTab(cx, 'members');
+  // THE LOADING LINE IS WAITED OUT, not the heading: the heading renders before the request returns,
+  // so a check that reads the roster immediately reads an EMPTY list and calls it a community with
+  // no members - which is how an assertion of absence passes for entirely the wrong reason.
+  await until(
+    cx,
+    `document.body.innerText.indexOf(${JSON.stringify(caption('chat_community_loading_members'))}) < 0`,
+    20000
+  );
+  return communityMembers(cx);
+}
+
+/**
+ * Sets a member's community role, and waits for the app to stop saving it.
+ *
+ * THE RE-ENABLED CONTROL IS THE WITNESS, not the choosing: the handler disables the select, sends
+ * the request and re-enables it. A check that reads the roster the instant it has chosen reads back
+ * the value it typed in, which is a statement about the harness and not about the server.
+ */
+export async function setMemberRole(cx, displayName, role) {
+  if (!['member', 'moderator', 'admin'].includes(role)) {
+    throw new Error(`setMemberRole: unknown role '${role}'`);
+  }
+  const before = await communityMembers(cx);
+  const row = await markMemberRow(cx, displayName);
+  await chooseOption(cx, `${row} select`, role);
+  await until(cx, `!(document.querySelector('${row} select') || {}).disabled`, 20000);
+  return { before, after: await communityMembers(cx) };
+}
+
+/**
+ * Removes a member from the community outright, answering the confirmation it raises.
+ *
+ * The row's only BUTTON is the removal - the role control beside it is a `<select>` - which is what
+ * makes addressing it structurally safe: there is nothing else in the row to click by accident.
+ */
+export async function removeCommunityMember(cx, displayName) {
+  const before = await communityMembers(cx);
+  const row = await markMemberRow(cx, displayName);
+  await realClick(cx, `${row} button`);
+  await confirmDialog(cx, 'common_remove_label');
+  await until(
+    cx,
+    `(function () {
+       var el = document.querySelector('[data-harness-member]');
+       return !el || (el.innerText || '').indexOf(${JSON.stringify(displayName)}) < 0;
+     })()`,
+    20000
+  );
+  return { before, after: await communityMembers(cx) };
+}
+
+/**
+ * Sends a direct invitation to one person, at a chosen role, from the members tab.
+ *
+ * NOT THE SAME THING AS THE LINK, and the difference is the whole of COMM-4: a link is a URL anyone
+ * holding it may use, while this creates an invitation addressed to one account and delivered into
+ * the DM with them. The modal's status line is RETURNED rather than asserted - what it says is the
+ * check's question, including when what it says is that the invitation could not be sent.
+ */
+export async function inviteToCommunity(cx, displayName, role = 'member') {
+  await communityTab(cx, 'members');
+  const placeholder = caption('chat_community_search_user_placeholder');
+  await realClick(cx, `input[placeholder=${JSON.stringify(placeholder)}]`);
+  await cx.send('Input.insertText', { text: displayName });
+  await until(cx, `!!${RESOLVE}('text=${displayName}')`, 10000);
+  await realClick(cx, `text=${displayName}`);
+
+  // The invite row's select is the one that is NOT inside a member row, and the autocomplete input
+  // carries the only stable id on the modal - so the row is reached from it rather than by counting.
+  const inviteSelect = await evaluate(
+    cx,
+    `(function () {
+       var input = document.querySelector('#community-invite-autocomplete');
+       if (!input) return 'no-input';
+       var box = input;
+       while (box && box.querySelectorAll('select').length === 0) box = box.parentElement;
+       if (!box) return 'no-select';
+       box.querySelector('select').setAttribute('data-harness-invite-role', '1');
+       return 'marked';
+     })()`
+  );
+  if (inviteSelect !== 'marked') throw new Error(`inviteToCommunity: ${inviteSelect}`);
+  await chooseOption(cx, '[data-harness-invite-role]', role);
+  await realClick(cx, control('chat_community_generate_invite_button'));
+
+  // The click returns long before the request does, so the SENDING label is waited out rather than
+  // the status line waited for: a status line that never changes is itself an answer worth keeping.
+  await until(
+    cx,
+    `document.body.innerText.indexOf(${JSON.stringify(caption('common_sending_label'))}) < 0`,
+    25000
+  );
+  return evaluate(
+    cx,
+    `(function () {
+       var input = document.querySelector('#community-invite-autocomplete');
+       var box = input;
+       while (box && box.querySelectorAll('button').length < 2) box = box.parentElement;
+       return (box && box.innerText) || '';
+     })()`
+  );
+}
+
+/**
+ * Leaves the open community, answering the confirmation.
+ *
+ * WHAT MAKES THIS WORTH A GESTURE rather than two clicks inside a check: leaving is the one action
+ * in this module with a cryptographic half. The device must also leave the community's distribution
+ * group and every private salon's, and the server must drop its routing rows - so what a check does
+ * NEXT is read the database, and it must not also be debugging the click that got it here.
+ */
+export async function leaveCommunity(cx) {
+  await openCommunitySettings(cx);
+  await realClick(cx, control('chat_community_leave_button'));
+  await confirmDialog(cx, 'common_leave_button');
+  return clearOverlays(cx);
+}
+
+/**
+ * Deletes the whole community, typing its name as the dialog demands.
+ *
+ * THE TYPED NAME IS NOT A FORMALITY: the server re-checks it, so a check that gets the name wrong
+ * gets a refusal from the API rather than merely a dead button - two different failures that look
+ * identical from the screen. It is passed in by the caller, the only party that knows what it made.
+ */
+export async function deleteCommunity(cx, name) {
+  await openCommunitySettings(cx);
+  await realClick(cx, control('chat_community_delete_button'));
+  await confirmDialog(cx, 'common_delete_button', { typeText: name });
   return clearOverlays(cx);
 }

@@ -129,10 +129,11 @@ before the campaign restarts.** Everything actionable is HERE, in order, one lin
 lives where the link says and **is not restated**. An item is done when its code, its tests, its doc
 and its commit are in, and it is then deleted from BOTH files.
 
-**The campaign started 2026-08-19 and has produced FIFTEEN defects, all fixed.** FIVE came from ONE
-private salon driven on prod through create -> public -> private -> a SECOND MEMBER, and not one was
-reachable from the repository - the last of them meant a private salon with two people in it did not
-work AT ALL ([graine](docs/wiki/protocols/channel-encryption.md) §13, the only copy). **That is the whole lesson of the week, and it
+**The campaign started 2026-08-19 and has produced SEVENTEEN defects, all fixed.** SEVEN came from
+ONE private salon driven on prod through create -> public -> private -> a SECOND MEMBER, and not
+one was reachable from the repository: a private salon with two people in it did not work AT ALL,
+and the LAST TWO came from reading a single log line the harness had left unclassified
+([graine](docs/wiki/protocols/channel-encryption.md) §13, the only copy). **That is the whole lesson of the week, and it
 is now a rule: a lifecycle is a SEQUENCE, and a unit test arranges the state it asserts on.**
 1-2 are numbers a run has to produce; 3 is the community phase, stale AND never run, where the
 rework's remaining risk sits; 4 is the campaign.

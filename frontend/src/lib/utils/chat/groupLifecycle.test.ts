@@ -201,6 +201,7 @@ describe('reconcileAbsentLocalGroup', () => {
     isDistributionGroup: vi.fn().mockReturnValue(known),
     getGroupServerStatus: vi.fn().mockResolvedValue(status),
     registerDistributionGroup: vi.fn(),
+    noteDistributionGroup: vi.fn(),
   });
 
   it('asks nothing when the group is already registered', async () => {
@@ -219,5 +220,19 @@ describe('reconcileAbsentLocalGroup', () => {
     const mls = makeMls('absent');
     expect((await reconcileAbsentLocalGroup(mls, 'g-1')).action).toBe('forget');
     expect(mls.registerDistributionGroup).not.toHaveBeenCalled();
+    expect(mls.noteDistributionGroup).not.toHaveBeenCalled();
+  });
+
+  // THE DISCRIMINATOR THE SERVER GAVE US MUST SURVIVE THE FACT THAT WE CANNOT NAME THE SCOPE. A
+  // salon's `dm_groups` row carries the salon but not its community, so a session that has not
+  // loaded that community can keep the group - and used to forget WHY, leaving
+  // `isDistributionGroup` answering false about a group the server had just identified. Everything
+  // downstream inherited it, the history reconciliation included, which then probed a seed carrier
+  // as though it were a conversation.
+  it('still records WHAT a salon group is when it cannot yet say WHOSE', async () => {
+    const mls = makeMls({ groupId: 'd-2', distributionChannelId: 'ch-unknown-community' });
+    expect((await reconcileAbsentLocalGroup(mls, 'd-2')).action).toBe('keep');
+    expect(mls.registerDistributionGroup).not.toHaveBeenCalled();
+    expect(mls.noteDistributionGroup).toHaveBeenCalledWith('d-2');
   });
 });

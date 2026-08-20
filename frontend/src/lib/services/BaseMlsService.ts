@@ -133,6 +133,23 @@ export abstract class BaseMlsService implements IMlsService {
    */
   private readonly distributionScopeByGroup = new Map<string, DistributionScope>();
 
+  /**
+   * Groups the SERVER has said are distribution groups, whose scope this session cannot yet name.
+   *
+   * TWO QUESTIONS, AND ONLY ONE OF THEM NEEDS THE SCOPE. "Is this a distribution group" is
+   * answerable from the `dm_groups` row alone; "which roster is it" is not, because a salon's scope
+   * carries its community and the row cannot - chat-delivery does not own `channels`. Holding both
+   * answers in the map above made the easy question inherit the hard one's precondition: a salon's
+   * group whose community this session had not loaded answered `isDistributionGroup() === false`,
+   * although the server had just said otherwise and the sweep had just kept it on that basis.
+   *
+   * That is a discriminator dropped in transit, and it is not harmless: every consumer of the
+   * predicate - the sweep, the frame router, the history reconciliation - was then wrong about that
+   * group for the rest of the session. Recorded here instead, so the cheap answer stops waiting on
+   * the expensive one.
+   */
+  private readonly knownDistributionGroups = new Set<string>();
+
   /** Set once at wiring time; see {@link setDistributionGroupInfoTransport}. */
   private distributionGroupInfo: DistributionGroupInfoTransport | null = null;
 
@@ -1754,11 +1771,22 @@ export abstract class BaseMlsService implements IMlsService {
    */
   registerDistributionGroup(scope: DistributionScope, groupId: string): void {
     this.distributionScopeByGroup.set(groupId, scope);
+    this.knownDistributionGroups.add(groupId);
+  }
+
+  /**
+   * Records that `groupId` IS a distribution group, without claiming to know whose.
+   *
+   * The server's answer for a salon's group whose community this session has not loaded. Naming the
+   * scope has to wait for that load; being right about what the group is must not.
+   */
+  noteDistributionGroup(groupId: string): void {
+    this.knownDistributionGroups.add(groupId);
   }
 
   /** True when `groupId` carries channel seeds and must never reach the conversation pipeline. */
   isDistributionGroup(groupId: string): boolean {
-    return this.distributionScopeByGroup.has(groupId);
+    return this.knownDistributionGroups.has(groupId);
   }
 
   /**
@@ -1782,6 +1810,10 @@ export abstract class BaseMlsService implements IMlsService {
     if (!groupId) return null;
     this.forgetGroup(groupId);
     this.distributionScopeByGroup.delete(groupId);
+    // BOTH, OR THE PREDICATE OUTLIVES THE GROUP: a set entry left behind would go on answering
+    // "distribution group" for state this device no longer holds, and the sweep would go on
+    // sparing it for ever.
+    this.knownDistributionGroups.delete(groupId);
     return groupId;
   }
 

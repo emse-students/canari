@@ -26,6 +26,9 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       forgetGroup: vi.fn(),
       saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
       getDeviceId: vi.fn().mockReturnValue('dev-1'),
+      // No distribution group here: `reconcileGroup` asks this before anything else,
+      // because a seed carrier has no history to reconcile.
+      isDistributionGroup: vi.fn().mockReturnValue(false),
       waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
     };
     const log = vi.fn();
@@ -55,6 +58,9 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       forgetGroup: vi.fn(),
       saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
       getDeviceId: vi.fn().mockReturnValue('dev-1'),
+      // No distribution group here: `reconcileGroup` asks this before anything else,
+      // because a seed carrier has no history to reconcile.
+      isDistributionGroup: vi.fn().mockReturnValue(false),
       waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
     };
     const log = vi.fn();
@@ -82,6 +88,9 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       forgetGroup: vi.fn(),
       saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
       getDeviceId: vi.fn().mockReturnValue('dev-1'),
+      // No distribution group here: `reconcileGroup` asks this before anything else,
+      // because a seed carrier has no history to reconcile.
+      isDistributionGroup: vi.fn().mockReturnValue(false),
       waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
     };
     const log = vi.fn();
