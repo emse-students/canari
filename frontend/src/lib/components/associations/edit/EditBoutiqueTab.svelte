@@ -17,6 +17,7 @@
   import CardTile from '$lib/components/shared/CardTile.svelte';
   import CardIconEditor from '$lib/components/shared/CardIconEditor.svelte';
   import { productFallbackIcon } from '$lib/utils/cardIcons';
+  import { generateAvatarColor } from '$lib/utils/avatar';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -30,6 +31,9 @@
   }
 
   let { asso, stripePaymentsReady, stripePending, canManageStripeConnect }: Props = $props();
+
+  /** Card accent color - the association's own, or a deterministic fallback when unset. */
+  const cardAccentColor = $derived(asso.color ?? generateAvatarColor(asso.name));
 
   let products = $state<AssociationProduct[]>([]);
   let productsLoading = $state(false);
@@ -142,12 +146,14 @@
       const maxTotalRaw = String(fd.get('maxTotal') ?? '').trim();
       const membersOnly = fd.get('membersOnly') === 'on';
       const memberPriceRaw = String(fd.get('memberPriceEuros') ?? '').trim();
+      const badgeTextRaw = String(fd.get('badgeText') ?? '').trim();
       const updated = await updateProduct(asso.id, product.id, {
         allowRepeatPurchase: allowRepeat,
         maxPurchasesPerUser: maxPerUserRaw ? Number(maxPerUserRaw) : null,
         maxPurchasesTotal: maxTotalRaw ? Number(maxTotalRaw) : null,
         membersOnly,
         amountCentsMember: memberPriceRaw ? Math.round(Number(memberPriceRaw) * 100) : null,
+        badgeText: badgeTextRaw || null,
       });
       products = products.map((p) => (p.id === product.id ? updated : p));
     } catch (e) {
@@ -426,7 +432,12 @@
     <ul class="grid gap-4 sm:grid-cols-2">
       {#each otherProducts as product (product.id)}
         <li class={expandedProductSettingsId === product.id ? 'sm:col-span-2' : ''}>
-          <CardTile iconUrl={product.iconUrl} fallbackIcon={productFallbackIcon(product.type)}>
+          <CardTile
+            iconUrl={product.iconUrl}
+            fallbackIcon={productFallbackIcon(product.type)}
+            accentColor={cardAccentColor}
+            badgeText={product.badgeText}
+          >
             <div class="flex flex-col gap-3 p-4">
               <div class="min-w-0 flex-1">
                 <div class="flex flex-wrap items-center gap-2">
@@ -542,6 +553,22 @@
                         ? product.amountCentsMember / 100
                         : ''}
                       placeholder={m.asso_boutique_member_price_placeholder()}
+                      class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <div class="space-y-1 sm:col-span-2">
+                    <label
+                      for="badge-text-{product.id}"
+                      class="text-text-muted text-xs font-semibold"
+                      >{m.asso_card_badge_label()}</label
+                    >
+                    <input
+                      id="badge-text-{product.id}"
+                      name="badgeText"
+                      type="text"
+                      maxlength="30"
+                      value={product.badgeText ?? ''}
+                      placeholder={m.asso_card_badge_placeholder()}
                       class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
                     />
                   </div>

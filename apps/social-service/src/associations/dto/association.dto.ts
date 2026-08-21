@@ -615,6 +615,12 @@ export class UpdateProductDto {
   @Min(1)
   @IsOptional()
   maxPurchasesTotal?: number | null;
+
+  /** Short decorative label shown as a pill on the card (e.g. "Nouveau", "-20%"). Pass null to clear it. */
+  @IsString()
+  @IsOptional()
+  @MaxLength(30)
+  badgeText?: string | null;
 }
 
 /** DTO for manually recording a product purchase (cash, retroactive, etc.). */

@@ -60,6 +60,10 @@ export class PartnershipCard {
   @Column({ type: 'uuid', nullable: true })
   iconMediaId: string | null;
 
+  /** Short decorative label shown as a pill on the card (e.g. "Nouveau", "Offre limitée"). */
+  @Column({ length: 30, nullable: true })
+  badgeText: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

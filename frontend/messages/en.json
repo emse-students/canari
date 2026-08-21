@@ -1177,6 +1177,8 @@
   "card_icon_remove_button": "Remove icon",
   "card_icon_remove_confirm": "Remove this card's custom icon? It will fall back to the default icon.",
   "card_icon_upload_error": "Icon upload failed",
+  "asso_card_badge_label": "Badge (optional)",
+  "asso_card_badge_placeholder": "e.g. \"New\", \"-20%\"",
   "asso_edit_name_label": "Name",
   "asso_edit_contact_email_label": "Contact email",
   "asso_edit_description_label": "Description (below the title)",

@@ -236,6 +236,20 @@ describe('PartnershipsService claiming, gating and mode validation', () => {
     });
   });
 
+  describe('update - badgeText', () => {
+    it('persists badgeText, and clears it with null', async () => {
+      const { service, cardRepo } = makeService();
+      cardRepo.findOne.mockResolvedValue(card({ badgeText: null } as any));
+
+      const withBadge = await service.update('asso1', 'card1', { badgeText: 'Offre limitée' });
+      expect(withBadge.badgeText).toBe('Offre limitée');
+
+      cardRepo.findOne.mockResolvedValue(card({ badgeText: 'Offre limitée' } as any));
+      const cleared = await service.update('asso1', 'card1', { badgeText: null });
+      expect(cleared.badgeText).toBeNull();
+    });
+  });
+
   describe('setCardIcon / clearCardIcon', () => {
     const file = { buffer: Buffer.from('x'), mimetype: 'image/png', size: 1024 };
 

@@ -21,6 +21,7 @@
   import PartnershipCardList from '$lib/components/shop/PartnershipCardList.svelte';
   import CardTile from '$lib/components/shared/CardTile.svelte';
   import { productFallbackIcon } from '$lib/utils/cardIcons';
+  import { generateAvatarColor } from '$lib/utils/avatar';
   import { currentUserId, isGlobalAdmin, isAssociationSuperAdmin } from '$lib/stores/user';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import {
@@ -63,6 +64,9 @@
   let loading = $state(true);
   let error = $state('');
   let resolvedMemberNames = $state<Record<string, string>>({});
+
+  /** Card accent color - the association's own, or a deterministic fallback when unset. */
+  let cardAccentColor = $derived(asso ? (asso.color ?? generateAvatarColor(asso.name)) : null);
 
   let userId = $derived(currentUserId());
   let myMembership = $derived(members.find((m) => m.userId === userId));
@@ -412,7 +416,12 @@
         </div>
         <div class="grid gap-4 sm:grid-cols-2">
           {#each products as product (product.id)}
-            <CardTile iconUrl={product.iconUrl} fallbackIcon={productFallbackIcon(product.type)}>
+            <CardTile
+              iconUrl={product.iconUrl}
+              fallbackIcon={productFallbackIcon(product.type)}
+              accentColor={cardAccentColor}
+              badgeText={product.badgeText}
+            >
               <div class="flex h-full flex-col gap-3 p-5">
                 <div class="min-w-0 flex-1">
                   <p class="text-text-main text-sm font-semibold">{product.name}</p>
@@ -472,7 +481,7 @@
           <Handshake size={20} />
           {m.asso_tab_partnerships()}
         </h2>
-        <PartnershipCardList cards={partnerships} />
+        <PartnershipCardList cards={partnerships} accentColor={cardAccentColor} />
       </div>
     {/if}
   {/if}

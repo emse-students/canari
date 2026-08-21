@@ -20,6 +20,7 @@
   import CardTile from '$lib/components/shared/CardTile.svelte';
   import CardIconEditor from '$lib/components/shared/CardIconEditor.svelte';
   import { PARTNERSHIP_FALLBACK_ICON } from '$lib/utils/cardIcons';
+  import { generateAvatarColor } from '$lib/utils/avatar';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -27,6 +28,9 @@
   }
 
   let { asso }: Props = $props();
+
+  /** Card accent color - the association's own, or a deterministic fallback when unset. */
+  const cardAccentColor = $derived(asso.color ?? generateAvatarColor(asso.name));
 
   let cards = $state<ManagedPartnershipCard[]>([]);
   let cardsLoading = $state(false);
@@ -47,6 +51,7 @@
   let savingCodes = $state<string | null>(null);
   let claimsByCard = $state<Record<string, PartnershipClaimRow[]>>({});
   let claimsLoading = $state<string | null>(null);
+  let savingBadge = $state<string | null>(null);
 
   onMount(loadCards);
 
@@ -159,6 +164,23 @@
       cardsError = e instanceof Error ? e.message : 'Error';
     } finally {
       savingCodes = null;
+    }
+  }
+
+  async function handleSaveBadge(card: ManagedPartnershipCard, form: HTMLFormElement) {
+    const fd = new FormData(form);
+    const badgeTextRaw = String(fd.get('badgeText') ?? '').trim();
+    savingBadge = card.id;
+    cardsError = '';
+    try {
+      const updated = await updatePartnershipCard(asso.id, card.id, {
+        badgeText: badgeTextRaw || null,
+      });
+      cards = cards.map((c) => (c.id === card.id ? { ...c, ...updated } : c));
+    } catch (e) {
+      cardsError = e instanceof Error ? e.message : 'Error';
+    } finally {
+      savingBadge = null;
     }
   }
 
@@ -330,7 +352,12 @@
     <ul class="grid gap-4 sm:grid-cols-2">
       {#each cards as card (card.id)}
         <li class={expandedCardId === card.id ? 'sm:col-span-2' : ''}>
-          <CardTile iconUrl={card.iconUrl} fallbackIcon={PARTNERSHIP_FALLBACK_ICON}>
+          <CardTile
+            iconUrl={card.iconUrl}
+            fallbackIcon={PARTNERSHIP_FALLBACK_ICON}
+            accentColor={cardAccentColor}
+            badgeText={card.badgeText}
+          >
             <div class="flex flex-col gap-3 p-4">
               <div class="min-w-0 flex-1">
                 <div class="flex flex-wrap items-center gap-2">
@@ -404,6 +431,36 @@
                   onUpload={(file) => handleUploadCardIcon(card, file)}
                   onRemove={() => handleRemoveCardIcon(card)}
                 />
+
+                <form
+                  class="flex items-end gap-2"
+                  onsubmit={(e) => {
+                    e.preventDefault();
+                    void handleSaveBadge(card, e.currentTarget);
+                  }}
+                >
+                  <div class="flex-1 space-y-1">
+                    <label for="badge-text-{card.id}" class="text-text-muted text-xs font-semibold"
+                      >{m.asso_card_badge_label()}</label
+                    >
+                    <input
+                      id="badge-text-{card.id}"
+                      name="badgeText"
+                      type="text"
+                      maxlength="30"
+                      value={card.badgeText ?? ''}
+                      placeholder={m.asso_card_badge_placeholder()}
+                      class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={savingBadge === card.id}
+                    class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-lg px-4 py-2 text-xs font-bold disabled:opacity-50"
+                  >
+                    {savingBadge === card.id ? m.common_saving_label() : m.common_save_button()}
+                  </button>
+                </form>
 
                 {#if card.claimMode === 'code_pool'}
                   <div class="space-y-2">

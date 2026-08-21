@@ -133,6 +133,10 @@ export class AssociationProduct {
   @Column({ type: 'uuid', nullable: true })
   iconMediaId: string | null;
 
+  /** Short decorative label shown as a pill on the card (e.g. "Nouveau", "-20%"). */
+  @Column({ length: 30, nullable: true })
+  badgeText: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

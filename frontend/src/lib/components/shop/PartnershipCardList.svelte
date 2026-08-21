@@ -11,9 +11,11 @@
 
   interface Props {
     cards: PartnershipCard[];
+    /** Accent color applied to every card - see `CardTile`'s `accentColor` doc. */
+    accentColor?: string | null;
   }
 
-  let { cards }: Props = $props();
+  let { cards, accentColor }: Props = $props();
 
   let claimResults = $state<Record<string, PartnershipClaimResult>>({});
   let claimErrors = $state<Record<string, string>>({});
@@ -42,7 +44,12 @@
     {#each cards as card (card.id)}
       {@const locked = card.membersOnly && !card.viewerIsCotisant}
       {@const result = claimResults[card.id]}
-      <CardTile iconUrl={card.iconUrl} fallbackIcon={PARTNERSHIP_FALLBACK_ICON}>
+      <CardTile
+        iconUrl={card.iconUrl}
+        fallbackIcon={PARTNERSHIP_FALLBACK_ICON}
+        {accentColor}
+        badgeText={card.badgeText}
+      >
         <div class="flex h-full flex-col gap-3 p-5">
           <div class="min-w-0 flex-1">
             <div class="flex flex-wrap items-center gap-2">

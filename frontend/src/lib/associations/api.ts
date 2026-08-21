@@ -1110,6 +1110,8 @@ export interface AssociationProduct {
   isActive: boolean;
   /** Decorative icon shown on the product's card (e.g. a partner brand's logo); null = type-based fallback. */
   iconUrl: string | null;
+  /** Short decorative label shown as a pill on the card (e.g. "Nouveau", "-20%"); null = no badge. */
+  badgeText: string | null;
   sortOrder: number;
   allowRepeatPurchase: boolean;
   maxPurchasesPerUser: number | null;
@@ -1197,6 +1199,8 @@ export type UpdateProductPayload = Omit<
    * holding the old one, so a base tier can be converted into a named forfait. Null = base tier.
    */
   variantKey?: string | null;
+  /** Pass null to remove the badge shown on the card. */
+  badgeText?: string | null;
 };
 
 /** Returns all active products across all associations (login required). */
@@ -1943,6 +1947,8 @@ export interface PartnershipCard {
   isActive: boolean;
   /** Decorative icon shown on the card (e.g. the partner brand's logo); null = Handshake fallback. */
   iconUrl: string | null;
+  /** Short decorative label shown as a pill on the card (e.g. "Nouveau", "Offre limitée"); null = no badge. */
+  badgeText: string | null;
   /** True when the requesting user holds an active cotisation tag for this card's association. */
   viewerIsCotisant?: boolean;
   createdAt: string;
@@ -1984,7 +1990,11 @@ export interface CreatePartnershipCardPayload {
 /** `claimMode` cannot be changed after creation - delete and recreate instead. */
 export type UpdatePartnershipCardPayload = Partial<
   Omit<CreatePartnershipCardPayload, 'claimMode'>
-> & { isActive?: boolean };
+> & {
+  isActive?: boolean;
+  /** Pass null to remove the badge shown on the card. */
+  badgeText?: string | null;
+};
 
 /** Returns active partnership cards across every association (shown on the shop page). */
 export async function listAllPartnerships(): Promise<PartnershipCard[]> {

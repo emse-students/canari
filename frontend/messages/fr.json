@@ -1198,6 +1198,8 @@
   "card_icon_remove_button": "Retirer l'icône",
   "card_icon_remove_confirm": "Retirer l'icône personnalisée de cette carte ? Elle reviendra à l'icône par défaut.",
   "card_icon_upload_error": "Échec de l'envoi de l'icône",
+  "asso_card_badge_label": "Badge (optionnel)",
+  "asso_card_badge_placeholder": "ex. \"Nouveau\", \"-20%\"",
   "asso_edit_name_label": "Nom",
   "asso_edit_contact_email_label": "E-mail de contact",
   "asso_edit_description_label": "Description (sous le titre)",

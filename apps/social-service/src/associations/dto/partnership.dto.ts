@@ -95,6 +95,12 @@ export class UpdatePartnershipCardDto {
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
+
+  /** Short decorative label shown as a pill on the card (e.g. "Nouveau", "Offre limitée"). Pass null to clear it. */
+  @IsString()
+  @IsOptional()
+  @MaxLength(30)
+  badgeText?: string | null;
 }
 
 /** DTO for bulk-adding codes to a `code_pool` card. Already-stored codes are silently skipped. */

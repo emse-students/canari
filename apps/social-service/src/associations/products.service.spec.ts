@@ -470,6 +470,18 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         service.update('asso1', 'prod1', { name: 'New name' }, false)
       ).resolves.toBeDefined();
     });
+
+    it('persists badgeText on update, and clears it with null', async () => {
+      const { service, productRepo } = makeService();
+      productRepo.findOne.mockResolvedValue(product({ type: 'other', badgeText: null }));
+
+      const withBadge = await service.update('asso1', 'prod1', { badgeText: 'Nouveau' }, false);
+      expect(withBadge.badgeText).toBe('Nouveau');
+
+      productRepo.findOne.mockResolvedValue(product({ type: 'other', badgeText: 'Nouveau' }));
+      const cleared = await service.update('asso1', 'prod1', { badgeText: null }, false);
+      expect(cleared.badgeText).toBeNull();
+    });
   });
 
   /** THE Cercle product: a repeatable, buyer-priced top-up with its webhook configured. */
