@@ -5,6 +5,26 @@ vi.mock('$lib/mls-client/tabLeader', () => ({
 import { syncConnectionAfterWsOpen } from './initializeConnection';
 import { workspaceScope } from '$lib/mls-client/distributionScope';
 
+/**
+ * The two halves of forgetting a group, as `BaseMlsService` really implements them.
+ *
+ * EVERY STUB HERE GETS BOTH. The sweep drops a group through `forgetDistributionGroupById`, which
+ * erases the tree AND the note classifying it; a stub carrying only `forgetGroup` turns that call
+ * into a `TypeError`, which `forgetMlsGroupIfPresent` catches - so every `not.toHaveBeenCalled()`
+ * below would pass for the wrong reason, and the anti-purge-storm rules these cases exist to guard
+ * would stop being guarded at all.
+ */
+function forgetPair() {
+  const forgetGroup = vi.fn();
+  return {
+    forgetGroup,
+    forgetDistributionGroupById: vi.fn((groupId: string) => {
+      forgetGroup(groupId);
+      return true;
+    }),
+  };
+}
+
 describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
   // No fake timers here any more: the 500 ms sleep this used to advance past is gone, replaced by
   // `waitForMessageQueueIdle`. Advancing a clock that nothing reads would only hide a real one.
@@ -23,7 +43,7 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
         .fn()
         .mockResolvedValue([{ status: 'pending', groupId: 'g-deleted' }]),
       getLocalGroups: vi.fn().mockReturnValue([]),
-      forgetGroup: vi.fn(),
+      ...forgetPair(),
       saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
       getDeviceId: vi.fn().mockReturnValue('dev-1'),
       // No distribution group here: `reconcileGroup` asks this before anything else,
@@ -55,7 +75,7 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       reconcilePublishedKeyPackages: vi.fn().mockResolvedValue(undefined),
       getUserGroups: vi.fn().mockRejectedValue(new Error('getUserGroups failed: 503')),
       getLocalGroups: vi.fn().mockReturnValue(['g-live-1', 'g-live-2']),
-      forgetGroup: vi.fn(),
+      ...forgetPair(),
       saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
       getDeviceId: vi.fn().mockReturnValue('dev-1'),
       // No distribution group here: `reconcileGroup` asks this before anything else,
@@ -85,7 +105,7 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       reconcilePublishedKeyPackages: vi.fn().mockResolvedValue(undefined),
       getUserGroups: vi.fn().mockResolvedValue([]),
       getLocalGroups: vi.fn().mockReturnValue(['g-live-1']),
-      forgetGroup: vi.fn(),
+      ...forgetPair(),
       saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
       getDeviceId: vi.fn().mockReturnValue('dev-1'),
       // No distribution group here: `reconcileGroup` asks this before anything else,
@@ -125,7 +145,7 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
         .fn()
         .mockResolvedValue({ groupId: 'd-dist', distributionWorkspaceId: 'ws-1' }),
       registerDistributionGroup: vi.fn(),
-      forgetGroup: vi.fn(),
+      ...forgetPair(),
       saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
       getDeviceId: vi.fn().mockReturnValue('dev-1'),
       waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
@@ -156,7 +176,7 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       isDistributionGroup: vi.fn().mockReturnValue(false),
       getGroupServerStatus: vi.fn().mockResolvedValue('absent'),
       registerDistributionGroup: vi.fn(),
-      forgetGroup: vi.fn(),
+      ...forgetPair(),
       saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
       getDeviceId: vi.fn().mockReturnValue('dev-1'),
       waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
@@ -186,7 +206,7 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       isDistributionGroup: vi.fn().mockReturnValue(false),
       getGroupServerStatus: vi.fn().mockResolvedValue('error'),
       registerDistributionGroup: vi.fn(),
-      forgetGroup: vi.fn(),
+      ...forgetPair(),
       saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
       getDeviceId: vi.fn().mockReturnValue('dev-1'),
       waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),

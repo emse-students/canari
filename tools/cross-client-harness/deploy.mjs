@@ -20,6 +20,16 @@
  * deliberately conservative: over-reporting a redeploy costs a re-run, and under-reporting one files
  * a Work Package against the product for something we did.
  *
+ * AND THE SERVED BUNDLE'S STAMP IS NOT THE DISCRIMINATOR IT LOOKS LIKE. The obvious refinement -
+ * read `/_app/version.json` before and after, and only call it a redeploy when the build changed -
+ * is wrong, and measuring it is what showed why. `cd.yml` has a `detect-changed-services` job, so a
+ * push that touches only `tools/` rebuilds no frontend: prod went on serving the bundle built for
+ * `29b12fee` across `5a10f9a7`'s entire CD run, dated 03:14:21Z against a run created at 03:22:57Z.
+ * That same run is the one whose window swallowed two COMM-22 cycles. An unchanged stamp therefore
+ * proves the FRONTEND was not replaced, which is a different question from whether the origin
+ * restarted - the containers behind it can come down for a service the bundle knows nothing about.
+ * The run window stays the signal.
+ *
  * IT CANNOT ALWAYS ANSWER, AND SAYS SO. `gh` may be absent, unauthenticated or rate-limited, and a
  * module that guessed "no deploy" in that case would be a silent blind spot. {@link overlapping}
  * returns `asked: false` with the reason instead, which the record carries verbatim.

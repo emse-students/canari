@@ -12,7 +12,17 @@ vi.mock('$lib/utils/hex', () => ({
 }));
 
 function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
-  return {
+  // BOTH HALVES OF ONE ACT, mirrored from `BaseMlsService`. Dropping a group goes through
+  // `forgetDistributionGroupById`, which erases the tree AND the note classifying it as a seed
+  // carrier - a note left behind would answer "distribution group" for state the device no longer
+  // holds, and the sweep spares whatever that note names. A stub with only `forgetGroup` would turn
+  // the call into a caught `TypeError` and every assertion here would pass for the wrong reason.
+  //
+  // The held-check is kept too, because "only when WASM knows the group" is a real claim: the real
+  // method returns false, and forgets nothing, for a group this device holds nothing under. Read
+  // lazily off the built object so a test overriding `getLocalGroups` or `forgetGroup` still gets a
+  // consistent pair.
+  const built: Record<string, unknown> = {
     getUserGroups: vi.fn().mockResolvedValue([]),
     getLocalGroups: vi.fn().mockReturnValue([]),
     forgetGroup: vi.fn(),
@@ -23,8 +33,15 @@ function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
     getGroupUserMembers: vi.fn().mockResolvedValue([]),
     isDistributionGroup: vi.fn().mockReturnValue(false),
     registerDistributionGroup: vi.fn(),
+    forgetDistributionGroupById: vi.fn((groupId: string) => {
+      const local = (built.getLocalGroups as () => string[])();
+      if (!local.includes(groupId)) return false;
+      (built.forgetGroup as (id: string) => void)(groupId);
+      return true;
+    }),
     ...overrides,
-  } as unknown as IMlsService;
+  };
+  return built as unknown as IMlsService;
 }
 
 describe('forgetMlsGroupIfPresent', () => {
@@ -33,7 +50,7 @@ describe('forgetMlsGroupIfPresent', () => {
       getLocalGroups: vi.fn().mockReturnValue(['g1']),
     });
     expect(forgetMlsGroupIfPresent(mlsService, 'g1')).toBe(true);
-    expect(mlsService.forgetGroup).toHaveBeenCalledWith('g1', 0);
+    expect(mlsService.forgetGroup).toHaveBeenCalledWith('g1');
     expect(forgetMlsGroupIfPresent(mlsService, 'missing')).toBe(false);
   });
 });
@@ -97,7 +114,7 @@ describe('purgeOrphanGroup', () => {
       groupId: 'g1',
     });
 
-    expect(mlsService.forgetGroup).toHaveBeenCalledWith('g1', 0);
+    expect(mlsService.forgetGroup).toHaveBeenCalledWith('g1');
     // The forget has to reach disk, whatever "disk" means on this platform - which is exactly why
     // the assertion is on the checkpoint and not on `saveState`, whose result web still has to store.
     expect(mlsService.persistCheckpoint).toHaveBeenCalledWith('1234');
@@ -358,7 +375,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
       log: vi.fn(),
     });
 
-    expect(mlsService.forgetGroup).toHaveBeenCalledWith('phantom-mls', 0);
+    expect(mlsService.forgetGroup).toHaveBeenCalledWith('phantom-mls');
     // The forget has to reach disk, whatever "disk" means on this platform - which is exactly why
     // the assertion is on the checkpoint and not on `saveState`, whose result web still has to store.
     expect(mlsService.persistCheckpoint).toHaveBeenCalledWith('1234');

@@ -39,6 +39,8 @@ Updated after every run.
 | State | Meaning |
 | --- | --- |
 | `PASS` / `passed` | ran, assertions held, run was clean - and the row names the build |
+| `PASS-DIRTY` | ran, assertions held, and a client logged something no rule classifies - `gate()` demotes it, and the row NAMES the line. Not a pass: the campaign ends green or it does not end |
+| `VACUOUS` | ran and proved nothing - never armed, or production was redeployed under it (`deploy.mjs`) |
 | `pending` | not run against the current build |
 | `FAIL` | ran and did not hold - paired with a Work Package carrying the log, or with a fixed commit |
 | `SKIPPED` | cannot be armed with two accounts, or needs `--destructive` |
@@ -206,10 +208,16 @@ MSG-5's standing assertion: no `masterSecret` in any payload, ever.
 `d70e8952`, community `b9d52032`); the figures are on
 [graine](protocols/channel-encryption.md#10-a-departure-moved-nothing-and-rotation-waited-on-it---fixed-2026-08-19).
 
-**Twenty-five rows, nineteen runners** (`comm1` `comm2` `comm3` `comm4` `comm5` `comm6` `comm7`
-`comm8` `comm910` `comm11` `comm12` `comm13` `comm15` `comm16` `comm19` `comm20` `comm21`
-`comm2324`), sharing `comm.mjs`. Why the rows were rewritten on 2026-08-20 is in
+**Twenty-five rows, and as of 2026-08-21 every one of them has a runner** - `comm1` .. `comm8`,
+`comm910`, `comm11` .. `comm22`, `comm2324` (twice, once per check) and `comm25`, all sharing
+`comm.mjs` and all reachable from `run.mjs COMM`. `checks.mjs` carries twenty-four entries for the
+twenty-five checks, and the count in its own comment is what makes an omission visible. Why the rows
+were rewritten on 2026-08-20 is in
 [cross-client-campaign](cross-client-campaign.md#rows-that-named-a-mechanism-the-product-does-not-have).
+
+**Three have never run on production**: COMM-14 needs real push, COMM-18 kills the app and follows a
+link into a cold start, and COMM-22 has run seven times without once producing a believable verdict
+(six VACUOUS, one FAIL) - the instrument was wrong each time, not the assertion.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
@@ -229,7 +237,7 @@ MSG-5's standing assertion: no `masterSecret` in any payload, ever.
 | COMM-14 | Channel notification levels enforced server-side | `+push` | `pending` |
 | COMM-15 | Polls: create, vote, close; auto-pinned | `W1 W2` | `pending` |
 | COMM-16 | Delete a channel, then a community by typing its name: the rows are really gone and the slug is free again | `W1 W2` | `pending` |
-| COMM-17 | Reorder communities by drag and drop; survives a reload, reaches the other device | `+A1` | `pending` |
+| COMM-17 | Reorder communities by drag and drop; survives a reload, reaches the other device | `+A1` | `PASS-DIRTY` - `29b12fee`, 2026-08-21. All six held: a real pointer drag moved it to the top, nothing else moved, `channel_members.sortOrder` held the new order, it survived a reload of W1, it reached A1, and the reverse drag restored the original. The dirt was one `[PIPELINE] Recovery attempt finished for b0192801...` - a deleted community's seed carrier, fixed in `f950c01c`; **re-run owed on a build carrying it** |
 | COMM-18 | Deep link into a channel from a cold start | `+A1` | `pending` |
 | COMM-19 | The last admin tries to leave: refused, unless they are the last MEMBER, which deletes the community | `W1 W2` | `pending` |
 | COMM-20 | Two admins change the same role at the same moment | `W1 W2` | `pending` |
