@@ -60,6 +60,7 @@ import {
   openChannel,
   openDM,
   PANE,
+  parkConversation,
   realClick,
   send,
   awaitMessage,
@@ -111,42 +112,17 @@ async function unreadCountOf(cx, name) {
   return raw === '99+' ? 100 : parseInt(raw, 10) || 0;
 }
 
+
 /**
- * Leaves whatever conversation this client has OPEN, so it stops reading what arrives in it.
+ * READ's name for {@link parkConversation}, which now lives in `chat.mjs`.
  *
- * `ensureChat` cannot be used for this and it is not a near-miss: it returns `'already'` the instant
- * `location.pathname === '/chat'`, and a phone sitting in a DM is on `/chat` with that DM selected.
- * So a check that called it to get another device out of the way changed nothing at all - which is
- * how READ-3 came to blame a hidden tab for a receipt the PHONE had sent, the read watermark being
- * per-user rather than per-device.
- *
- * Mobile gives the whole screen to the conversation and carries a back control; the desktop layout
- * keeps the list beside it and has none, so a browser is left as it is and its callers open a
- * different route instead. Addressed by ACCESSIBLE NAME, which is the part of a control that cannot
- * change silently.
- *
- * READS THE COMPOSER FIRST, AND THAT ORDER IS THE POINT. "No back control" has TWO legitimate
- * causes - no conversation is open, or this layout has no such control - and they mean opposite
- * things: the first is the state this function exists to reach, the second is a failure to reach
- * it. Collapsing them into one string made READ-3 report `no back control on this layout` on a
- * phone that was in fact already out, which reads as an unarmed precondition when it is a satisfied
- * one. The return value is what a later verdict is judged against, so it has to separate them.
+ * IT MOVED BECAUSE A THIRD CALLER NEEDED IT. `deadrows.mjs` has to park a phone before it can read
+ * the sidebar, and READ-10's teardown has to park each of the owner's devices - and on A1 a plain
+ * `goto('/chat')` is refused outright (it reloads the Tauri webview and re-locks the PIN), so
+ * "get to the list" is exactly this gesture and nothing else. A private copy in a fourth file is how
+ * the composer-means-open fault got into three files to begin with.
  */
-async function leaveConversation(cx) {
-  const BACK = '[aria-label="Retour au menu"]';
-  const COMPOSER = '.chat-composer-footer .chat-composer-editor';
-  if (!(await evaluate(cx, `!!document.querySelector('${COMPOSER}')`))) return 'already outside a conversation';
-  const visible = `(function () {
-    var b = document.querySelector('${BACK}');
-    if (!b) return false;
-    var r = b.getBoundingClientRect();
-    return r.width > 0 && r.height > 0;
-  })()`;
-  if (!(await evaluate(cx, visible))) return 'a conversation is open and this layout offers no back control';
-  await realClick(cx, BACK);
-  const gone = await until(cx, `!document.querySelector('${COMPOSER}')`, 8000).catch(() => null);
-  return gone === null ? 'back clicked but the composer stayed' : 'left';
-}
+const leaveConversation = parkConversation;
 
 /** Predicate: the row is found AND carries a badge. Precondition-arming, not the pass condition. */
 const unreadHasCount = (name) =>
@@ -753,7 +729,7 @@ async function read10() {
   // offers an existing member, so trying candidates in turn and watching the roster go 1 -> 2 is
   // the only reliable way to know, per del1.mjs's own comment on why parsing a name off the page
   // picked the wrong account there).
-  const { dismissLocally, openGroup } = await import('./groupnav.mjs');
+  const { deleteGroup, dismissLocally, openGroup } = await import('./groupnav.mjs');
   // (`usernames` is no longer needed here - see the display-name note below.)
 
   const NAME = `READ10-${Date.now().toString(36)}`;
@@ -783,105 +759,142 @@ async function read10() {
   // Both are tried rather than the one `peerNameFor` would name, because which account is the peer
   // is a property of the GROUP, not of the device: the picker never offers an existing member or
   // yourself, so being accepted is what identifies them.
-  const { addAnyMember } = await import('./addmember.mjs');
-  const { OWNER_NAME, PEER_NAME } = await import('./names.mjs');
-  let peer;
+  // EVERYTHING FROM HERE IS WRAPPED, because the group deletion IS this check's stimulus and a run
+  // that dies before it leaves a LIVE group on production. Measured on prod 2026-08-21: of the
+  // twenty-five throwaway groups every phase has ever built, twenty-three were tombstoned as designed
+  // and TWO were still alive - both from READ-10 runs that died at the invite step, on the two days
+  // this check was being repaired. Rule 8, in its own words: a cleanup that only runs on the happy
+  // path is not a cleanup.
+  let a1probe = { ok: false, why: 'not probed' };
   try {
-    peer = await addAnyMember(w2, [OWNER_NAME, PEER_NAME]);
-  } catch (e) {
-    record('READ-10', 'ERROR', {
-      reason: 'could not invite the peer into the throwaway group',
-      group: NAME,
-      // THE REFUSALS, not just the fact of refusal: `addAnyMember` names what each candidate did,
-      // and a bare "could not invite" is what made this row unactionable for a fortnight.
-      why: e instanceof Error ? e.message : String(e),
-    });
-    [w1, w2].forEach((c) => c.close());
-    return false;
-  }
-  console.log(`[read10] invited ${JSON.stringify(peer)}`);
-  await realClick(w2, 'text=Fermer').catch(() => {});
-
-  const m = mark('READ10');
-  await send(w2, `${m} pre-delete probe`);
-
-  // W1 receives it and holds it unread BEFORE the delete - the row it opens afterward must carry
-  // something for the read gate to have skipped, or a green result would mean nothing.
-  await until(w1, `document.body.innerText.indexOf(${JSON.stringify(NAME)}) !== -1`, 60000);
-  await openGroup(w1, NAME, { navigate: true, label: 'read10-w1-before' });
-  await awaitMessage(w1, m, 20000);
-  await goto(w1, '/chat'); // leave it unread and unopened before the peer deletes it
-
-  // The PEER deletes the group. The row survives on W1's side with `lifecycle: 'removed'`
-  // (deliberate, per WP-HISTGHOST-1 - the UI has to be able to explain the absence).
-  await openGroup(w2, NAME, { navigate: true, label: 'read10-delete' });
-  await realClick(w2, '[aria-label="Paramètres du groupe"]');
-  await until(w2, `/Supprimer le groupe/.test(document.body.innerText)`, 10000);
-  await sleep(1000);
-  await realClick(w2, 'text=Supprimer le groupe');
-  await sleep(1500);
-  await realClick(w2, 'text=Supprimer').catch(() => {});
-  await until(w2, `document.body.innerText.indexOf(${JSON.stringify(NAME)}) === -1`, 30000).catch(() => {});
-  await sleep(5000);
-
-  // THE WINDOW OPENS HERE, and it is a `watch` rather than a hand-cleared buffer.
-  //
-  // Clearing the events was right - group create/invite/delete above is noisy by nature (three
-  // overlay open/closes on W2) and none of it is what this check is about - but it left READ-10 the
-  // ONE check in this file that reads a single bucket. `exceptionsOf(w1)` answers "did anything
-  // throw", and the failure this check exists to catch is the opposite shape: a receipt that WAS
-  // sent for a dead conversation is an outbound request or a WS frame, neither of which throws
-  // anything. It would have passed over the very event it is named for.
-  const oR10 = await watch(w1, 'READ-10-W1');
-
-  // W1 opens the now-dead row and "reads" it - focused + visible + open, exactly the state that
-  // fires a receipt on an ACTIVE conversation. `convo.lifecycle !== 'active'`
-  // (MainChatPage.svelte:422) must have made this a no-op before any of that runs.
-  let threw = null;
-  try {
-    await openGroup(w1, NAME, { navigate: true, label: 'read10-w1-after' });
-  } catch (e) {
-    threw = e.message;
-  }
-  await sleep(4000); // full debounce window + slack, for a receipt that must never be sent
-
-  const rW1 = await report(oR10);
-  const exceptions = rW1.exceptions;
-
-  // THE CHECK CLEANS UP AFTER ITSELF, and until 2026-08-21 it did not. A row the peer deleted is
-  // kept until its owner dismisses it BY HAND - the guard at the top of `decideAbsentGroupFate` -
-  // so every run of this check left one more dead `READ10-*` conversation in W1's profile, and each
-  // of them narrated itself on every load of every later check. Four had piled up.
-  //
-  // Part of the VERDICT, not a best-effort teardown, for two reasons: the dismissal is the only exit
-  // the product offers that row, so failing it is a real defect on this check's own subject; and a
-  // teardown that may silently fail is how the four accumulated in the first place.
-  //
-  // OUTSIDE the observation window on purpose. `report` has already judged the read path; the
-  // purge's own lines belong to the DEL rows that assert them, and folding them in here would let a
-  // future unclassified line from a different mechanism decide READ-10's verdict.
-  let cleaned = 'not attempted - the row never opened';
-  if (threw === null) {
+    const { addAnyMember } = await import('./addmember.mjs');
+    const { OWNER_NAME, PEER_NAME } = await import('./names.mjs');
+    let peer;
     try {
-      await dismissLocally(w1, NAME);
-      cleaned = true;
+      peer = await addAnyMember(w2, [OWNER_NAME, PEER_NAME]);
     } catch (e) {
-      cleaned = e instanceof Error ? e.message : String(e);
+      record('READ-10', 'ERROR', {
+        reason: 'could not invite the peer into the throwaway group',
+        group: NAME,
+        // THE REFUSALS, not just the fact of refusal: `addAnyMember` names what each candidate did,
+        // and a bare "could not invite" is what made this row unactionable for a fortnight.
+        why: e instanceof Error ? e.message : String(e),
+      });
+      return false;
     }
-  }
+    console.log(`[read10] invited ${JSON.stringify(peer)}`);
+    await realClick(w2, 'text=Fermer').catch(() => {});
 
-  const ok = threw === null && exceptions.length === 0 && cleaned === true;
-  const gated = gate(ok ? 'PASS' : 'FAIL', { W1: rW1 });
-  record('READ-10', gated.verdict, {
-    ...gated.detail,
-    group: NAME,
-    marker: m,
-    threw,
-    exceptions,
-    cleaned,
-  });
-  [w1, w2].forEach((c) => c.close());
-  return ok;
+    const m = mark('READ10');
+    await send(w2, `${m} pre-delete probe`);
+
+    // W1 receives it and holds it unread BEFORE the delete - the row it opens afterward must carry
+    // something for the read gate to have skipped, or a green result would mean nothing.
+    await until(w1, `document.body.innerText.indexOf(${JSON.stringify(NAME)}) !== -1`, 60000);
+    await openGroup(w1, NAME, { navigate: true, label: 'read10-w1-before' });
+    await awaitMessage(w1, m, 20000);
+    await goto(w1, '/chat'); // leave it unread and unopened before the peer deletes it
+
+    // The PEER deletes the group. The row survives on W1's side with `lifecycle: 'removed'`
+    // (deliberate, per WP-HISTGHOST-1 - the UI has to be able to explain the absence).
+    await deleteGroup(w2, NAME);
+    await sleep(2000);
+
+    // THE WINDOW OPENS HERE, and it is a `watch` rather than a hand-cleared buffer.
+    //
+    // Clearing the events was right - group create/invite/delete above is noisy by nature (three
+    // overlay open/closes on W2) and none of it is what this check is about - but it left READ-10 the
+    // ONE check in this file that reads a single bucket. `exceptionsOf(w1)` answers "did anything
+    // throw", and the failure this check exists to catch is the opposite shape: a receipt that WAS
+    // sent for a dead conversation is an outbound request or a WS frame, neither of which throws
+    // anything. It would have passed over the very event it is named for.
+    const oR10 = await watch(w1, 'READ-10-W1');
+
+    // W1 opens the now-dead row and "reads" it - focused + visible + open, exactly the state that
+    // fires a receipt on an ACTIVE conversation. `convo.lifecycle !== 'active'`
+    // (MainChatPage.svelte:422) must have made this a no-op before any of that runs.
+    let threw = null;
+    try {
+      await openGroup(w1, NAME, { navigate: true, label: 'read10-w1-after' });
+    } catch (e) {
+      threw = e.message;
+    }
+    await sleep(4000); // full debounce window + slack, for a receipt that must never be sent
+
+    const rW1 = await report(oR10);
+    const exceptions = rW1.exceptions;
+
+    // THE CHECK CLEANS UP AFTER ITSELF, and until 2026-08-21 it did not. A row the peer deleted is
+    // kept until its owner dismisses it BY HAND - the guard at the top of `decideAbsentGroupFate` -
+    // so every run of this check left one more dead `READ10-*` conversation in W1's profile, and each
+    // of them narrated itself on every load of every later check. Four had piled up.
+    //
+    // Part of the VERDICT, not a best-effort teardown, for two reasons: the dismissal is the only exit
+    // the product offers that row, so failing it is a real defect on this check's own subject; and a
+    // teardown that may silently fail is how the four accumulated in the first place.
+    //
+    // OUTSIDE the observation window on purpose. `report` has already judged the read path; the
+    // purge's own lines belong to the DEL rows that assert them, and folding them in here would let a
+    // future unclassified line from a different mechanism decide READ-10's verdict.
+    // AND IT CLEANS EVERY DEVICE OF THAT ACCOUNT, not just the one it measured - which the first
+    // version got wrong and A1 proved within the hour. The dead row is per-DEVICE local state, and the
+    // group was created with the OWNER as a member, so every device that account has holds one: W1 had
+    // its row dismissed, the phone kept THREE, and the next check to park the phone found it holding a
+    // dead conversation, read "no composer" as "nothing open", and died reporting an empty sidebar on a
+    // device with thirteen rows. A per-device teardown that runs on one device is not a teardown.
+    //
+    // A device it cannot reach is NAMED rather than skipped: unreported debris is what this whole
+    // teardown exists to stop, and "A1 was absent" is a fact the next reader needs.
+    const owners = [{ label: 'W1', cx: w1 }];
+    a1probe = await a1SameAccountAs(w1);
+    if (a1probe.ok) owners.push({ label: 'A1', cx: a1probe.a1 });
+
+    const cleaned = {};
+    if (threw === null) {
+      for (const { label, cx } of owners) {
+        try {
+          // NOT `goto`: on A1 it reloads the webview and re-locks the PIN, and `chat.mjs` refuses
+          // it. Park first, or the phone's list is off screen behind the conversation it is showing.
+          await ensureChat(cx);
+          await parkConversation(cx);
+          await openGroup(cx, NAME, { navigate: false, label: `read10-cleanup-${label}` });
+          await dismissLocally(cx, NAME);
+          cleaned[label] = true;
+        } catch (e) {
+          cleaned[label] = e instanceof Error ? e.message : String(e);
+        }
+      }
+      if (!a1probe.ok) cleaned.A1 = `unreachable: ${a1probe.why}`;
+    } else {
+      cleaned.W1 = 'not attempted - the row never opened';
+    }
+
+    const cleanedAll = Object.values(cleaned).every((v) => v === true);
+    const ok = threw === null && exceptions.length === 0 && cleanedAll;
+    const gated = gate(ok ? 'PASS' : 'FAIL', { W1: rW1 });
+    record('READ-10', gated.verdict, {
+      ...gated.detail,
+      group: NAME,
+      marker: m,
+      threw,
+      exceptions,
+      cleaned,
+    });
+    return ok;
+  } finally {
+    // THE GROUP, ON EVERY EXIT PATH. `deleteGroup` answers 'not listed' when the stimulus already
+    // took it, which is the ordinary case and not an error - so this is a guarantee rather than a
+    // second deletion. It runs before the sockets close, and a teardown that cannot finish says so
+    // in the log rather than throwing over the verdict that was just recorded.
+    try {
+      const gone = await deleteGroup(w2, NAME);
+      if (gone === 'deleted') console.log(`[read10] teardown deleted ${NAME} - the stimulus never ran`);
+    } catch (e) {
+      console.log(`[read10] TEARDOWN FAILED for ${NAME}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    if (a1probe.ok) a1probe.a1.close();
+    [w1, w2].forEach((c) => c.close());
+  }
 }
 
 const CHECKS = {

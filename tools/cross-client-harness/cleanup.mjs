@@ -1,9 +1,9 @@
 /**
- * Deletes the communities AND the salons a CRASHED check left on production.
+ * Deletes the communities, the salons AND the throwaway GROUPS a CRASHED check left on production.
  *
  *   node cleanup.mjs [--dry]
  *
- * TWO ESTATES, NOT ONE, and for a while this swept only the first. A runner that builds its own
+ * THREE ESTATES, NOT ONE, and for a while this swept only the first. A runner that builds its own
  * community takes it down with it, so debris there is rare - but most checks build a SALON inside the
  * shared `Campagne de test` venue, and a shared venue is never deleted, so every salon a crashed
  * runner left sits there for ever. Measured 2026-08-21: 25 salons in that one community, 23 of them
@@ -37,6 +37,7 @@
  */
 import { client, openChannel } from './chat.mjs';
 import { deleteChannel, deleteCommunity, enterCommunities, openCommunity } from './comm.mjs';
+import { deleteGroup } from './groupnav.mjs';
 import { psql } from './ssh.mjs';
 import { PORTS } from './names.mjs';
 
@@ -65,6 +66,32 @@ const DEBRIS = /^C\d+( [a-z]+)? COMM\d+-[0-9a-z]+$/;
 const SALON_DEBRIS = /^c\d+(-[a-z]+)?-comm\d+-[0-9a-z]+$/;
 
 /** The community every check that does not build its own venue works inside. Never deleted. */
+/**
+ * THE THIRD ESTATE: the throwaway DM GROUPS checks build, enumerated from the runners that mint them.
+ *
+ * Every one of these deletes its own group as its last act, so debris here is a check that DIED - and
+ * for READ-10 the deletion IS the stimulus, which makes a mid-run death leave a LIVE group rather
+ * than a tombstone. Measured on prod 2026-08-21: twenty-five throwaway groups from every phase that
+ * has ever built one, twenty-three of them tombstoned as designed, and TWO alive - both `READ10-*`,
+ * from the two runs that died at the invite step while that check was being repaired.
+ *
+ * A TOMBSTONE IS NOT DEBRIS AND IS NOT TOUCHED. It is what a deleted group is supposed to look like,
+ * the 90-day reaper owns it, and a sweep that "cleaned up" tombstones would be destroying the record
+ * of every check that worked. Only `deletedAt IS NULL` is eligible.
+ *
+ * Enumerated, never widened by relaxing: `READ10-<mark>` (read.mjs), `DEL1-<mark>` (del1.mjs),
+ * `HGRP<5>` (heal-w2.mjs), `HEALW2-<mark>` (newgroup.mjs's default), `GRP<n>-<mark>`
+ * (grp-traffic.mjs). Nothing a person would type can collide with a `Date.now()` base-36 mark.
+ */
+const GROUP_DEBRIS = [
+  /^READ10-[0-9a-z]+$/,
+  /^DEL\d*-[0-9a-z]+$/,
+  /^HGRP[0-9a-z]{4,6}$/,
+  /^HEALW2-[0-9a-z]+$/,
+  /^GRP\d+-[0-9a-z]+$/,
+];
+const isGroupDebris = (name) => GROUP_DEBRIS.some((r) => r.test(name));
+
 const SHARED = 'Campagne de test';
 
 const dry = process.argv.includes('--dry');
@@ -122,7 +149,19 @@ if (shared) {
   }
 }
 
-if (debris.length === 0 && salonDebris.length === 0) {
+// THE LIVE ONES ONLY. A tombstoned group is a check that worked; deleting the record of that would
+// be the sweep destroying evidence rather than debris.
+const liveGroups = psql(`SELECT name FROM dm_groups WHERE "deletedAt" IS NULL ORDER BY "createdAt"`)
+  .split('\n')
+  .map((l) => l.trim())
+  .filter(Boolean);
+const groupDebris = liveGroups.filter(isGroupDebris);
+if (groupDebris.length > 0) {
+  console.log(`[cleanup] ${groupDebris.length} live throwaway group(s) - a check died before its own delete:`);
+  for (const n of groupDebris) console.log(`  ${n}`);
+}
+
+if (debris.length === 0 && salonDebris.length === 0 && groupDebris.length === 0) {
   console.log('[cleanup] nothing to sweep');
   process.exit(0);
 }
@@ -150,6 +189,34 @@ for (const n of salonDebris) {
   }
 }
 
+// GROUPS BEFORE COMMUNITIES AND AFTER SALONS: a group is unrelated to either estate, and doing it
+// while the sidebar is still whole is simply cheaper than doing it after two rounds of deletions have
+// re-sorted the list.
+//
+// FROM EITHER BROWSER, because which one may delete a group is a property of the GROUP: the creator
+// varies by check - READ-10 builds on W2, `del1.mjs` on W1 - and `deleteGroup` answers 'not listed'
+// rather than throwing when this client does not have it, which makes trying both the whole logic.
+const w2 = groupDebris.length > 0 ? await client(PORTS.W2) : null;
+for (const n of groupDebris) {
+  let done = false;
+  for (const [who, cx] of [
+    ['W1', w1],
+    ['W2', w2],
+  ]) {
+    if (!cx || done) continue;
+    try {
+      if ((await deleteGroup(cx, n)) === 'deleted') {
+        console.log(`[cleanup] deleted group ${n} from ${who}`);
+        done = true;
+      }
+    } catch (e) {
+      console.log(`[cleanup] ${who} could not delete group ${n} - ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  if (!done) failed.push(`group ${n}: neither browser could delete it`);
+}
+if (w2) w2.close();
+
 for (const w of debris) {
   try {
     await enterCommunities(w1);
@@ -176,8 +243,17 @@ const salonsLeft = shared
       .filter((l) => SALON_DEBRIS.test(l))
   : [];
 
+const groupsLeft = psql(`SELECT name FROM dm_groups WHERE "deletedAt" IS NULL`)
+  .split('\n')
+  .map((l) => l.trim())
+  .filter(isGroupDebris);
+
 console.log(
   `[cleanup] communities ${debris.length - left.length}/${debris.length} swept, ${left.length} left`
+);
+console.log(
+  `[cleanup] groups ${groupDebris.length - groupsLeft.length}/${groupDebris.length} swept, ` +
+    `${groupsLeft.length} left`
 );
 console.log(
   `[cleanup] salons ${salonDebris.length - salonsLeft.length}/${salonDebris.length} swept, ` +

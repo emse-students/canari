@@ -54,6 +54,86 @@ export const PANE = `(function () {
 })()`;
 
 /**
+ * WHAT THE CONVERSATION PANE IS SHOWING: `'composer'`, `'removed'`, or `'nothing'`.
+ *
+ * THREE CALL SITES INFERRED "no conversation is open" FROM "no composer", AND ALL THREE WERE WRONG
+ * IN THE SAME WAY. `ChatArea.svelte` renders a conversation the peer deleted with a notice and a
+ * "Supprimer localement" button IN PLACE OF the composer (`lifecycle === 'removed'`), so a pane can
+ * be showing a conversation and have no composer at all - by design, not by failure:
+ *
+ *   - `groupnav.openGroup` waited twelve seconds for a control the product does not draw there, three
+ *     times, and then threw "would not open" - which reads as a product defect and is not one. It
+ *     cost READ-10 every verdict it had ever tried to produce.
+ *   - `openConversation`'s post-condition did the same with a bare `until`, so the failure named
+ *     neither the client nor the conversation.
+ *   - `read.leaveConversation` had it INVERTED and that was the expensive one: it returned
+ *     `'already outside a conversation'` the moment the composer was absent, so on a phone holding a
+ *     dead conversation it parked NOTHING and reported success. Mobile gives the whole screen to the
+ *     conversation, so the next step looked for a sidebar row in a sidebar that was not on screen and
+ *     died reporting an empty conversation list on a device with thirteen rows.
+ *
+ * One predicate, exported, because the fault was never the wait - it was three files each holding a
+ * different third of what "open" means. `'removed'` is a conversation and `'nothing'` is not.
+ */
+export const PANE_STATE = `(function () {
+  if (document.querySelector('${COMPOSER}')) return 'composer';
+  var dead = [].slice.call(document.querySelectorAll('button')).some(function (b) {
+    return (b.innerText || '').indexOf('Supprimer localement') !== -1;
+  });
+  return dead ? 'removed' : 'nothing';
+})()`;
+
+/** True when the pane holds a conversation, whether or not that conversation can be typed in. */
+export const PANE_HAS_CONVERSATION = `(${PANE_STATE} !== 'nothing')`;
+
+/**
+ * Leaves whatever conversation this client has OPEN, so it stops reading what arrives in it.
+ *
+ * `ensureChat` cannot be used for this and it is not a near-miss: it returns `'already'` the instant
+ * `location.pathname === '/chat'`, and a phone sitting in a DM is on `/chat` with that DM selected.
+ * So a check that called it to get another device out of the way changed nothing at all - which is
+ * how READ-3 came to blame a hidden tab for a receipt the PHONE had sent, the read watermark being
+ * per-user rather than per-device.
+ *
+ * Mobile gives the whole screen to the conversation and carries a back control; the desktop layout
+ * keeps the list beside it and has none, so a browser is left as it is and its callers open a
+ * different route instead. Addressed by ACCESSIBLE NAME, which is the part of a control that cannot
+ * change silently.
+ *
+ * READS THE COMPOSER FIRST, AND THAT ORDER IS THE POINT. "No back control" has TWO legitimate
+ * causes - no conversation is open, or this layout has no such control - and they mean opposite
+ * things: the first is the state this function exists to reach, the second is a failure to reach
+ * it. Collapsing them into one string made READ-3 report `no back control on this layout` on a
+ * phone that was in fact already out, which reads as an unarmed precondition when it is a satisfied
+ * one. The return value is what a later verdict is judged against, so it has to separate them.
+ */
+export async function parkConversation(cx) {
+  const BACK = '[aria-label="Retour au menu"]';
+  // THE COMPOSER IS NOT WHAT "A CONVERSATION IS OPEN" MEANS, and reading it as such made this
+  // function a no-op that reported success. A conversation the peer deleted draws a notice and
+  // "Supprimer localement" INSTEAD of the composer, so on 2026-08-21 A1 - holding exactly such a
+  // conversation, left there by an earlier failed run - was declared "already outside a
+  // conversation" and never parked. Mobile gives the whole screen to the conversation, so the next
+  // step went looking for a sidebar row in a sidebar that was not on screen, and READ-9 died
+  // reporting an EMPTY conversation list on a device that had thirteen rows.
+  //
+  // `PANE_STATE` is shared with `openConversation` and `groupnav` for that reason: three files each
+  // held a different third of this and all three were wrong about the same state.
+  const state = await evaluate(cx, PANE_STATE);
+  if (state === 'nothing') return 'already outside a conversation';
+  const visible = `(function () {
+    var b = document.querySelector('${BACK}');
+    if (!b) return false;
+    var r = b.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  })()`;
+  if (!(await evaluate(cx, visible))) return 'a conversation is open and this layout offers no back control';
+  await realClick(cx, BACK);
+  const gone = await until(cx, `${PANE_STATE} === 'nothing'`, 8000).catch(() => null);
+  return gone === null ? `back clicked but the pane stayed on a conversation (${state})` : 'left';
+}
+
+/**
  * The pane's text WITHOUT the composer's - the composer is inside the pane.
  *
  * Without the subtraction, text sitting in the composer reads back as a delivered message: a send
@@ -975,7 +1055,34 @@ export async function openConversation(cx, name) {
   } finally {
     await evaluate(cx, `(function () { var e = document.querySelector('[${TAG}]'); if (e) e.removeAttribute('${TAG}'); return 'cleared'; })()`);
   }
-  await until(cx, `!!document.querySelector('${COMPOSER}')`, 15000);
+  // THE POST-CONDITION MUST SAY WHAT IT SAW, and this one said nothing for as long as it existed.
+  //
+  // `openChannel` above learnt this the hard way and got a sentence naming the port, the target and
+  // whether the row ever became `aria-current`. This call site kept a bare `until`, so READ-9 died as
+  // `until() timed out after 15000ms: !!document.querySelector('.chat-composer-footer ...')` - which
+  // names neither the client, nor the conversation, nor which of three causes fired. One sentence for
+  // three different fixes is rule 16's shape exactly, and it cost a run.
+  //
+  // IT WAITS FOR EITHER OUTCOME, and that is the substance rather than the wording. A conversation
+  // the peer deleted renders a notice and "Supprimer localement" INSTEAD of a composer
+  // (`ChatArea.svelte`, `lifecycle === 'removed'`), so waiting only for the composer is waiting for
+  // something the product deliberately does not draw - the fault that cost READ-10 its verdict for a
+  // fortnight, in `groupnav.mjs` this time. Waiting for "the pane rendered something" keeps the
+  // deadline where it belongs, on the render, and lets the sentence below name the state.
+  await until(cx, PANE_HAS_CONVERSATION, 15000).catch(() => null);
+  const state = await evaluate(cx, PANE_STATE);
+  if (state !== 'composer') {
+    const openAs = await evaluate(cx, HEADER_NAME).catch(() => '(unreadable)');
+    throw new Error(
+      `openConversation: no composer for ${JSON.stringify(name)} on port ${cx.port} - ` +
+        (state === 'removed'
+          ? 'the pane IS showing a conversation, and it is one the peer DELETED - which draws a notice ' +
+            'and "Supprimer localement" where the composer would be. That is the product working: a ' +
+            'check that needs to type here has been handed a dead conversation.'
+          : 'nothing is open at all - the click was received and not handled.') +
+        ` header=${JSON.stringify(openAs)} clickedRow=${JSON.stringify(hit)}`
+    );
+  }
   return hit;
 }
 

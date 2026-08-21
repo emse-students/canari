@@ -48,11 +48,62 @@ const argv = process.argv.slice(2);
 const strict = argv.includes('--strict');
 const sinceBuild = argv.includes('--build') ? argv[argv.indexOf('--build') + 1] : null;
 
-/** Every row id the board names, in board order. */
+/**
+ * Every row id the board names, in board order, WITH THE WORD THE BOARD ITSELF CLAIMS FOR IT.
+ *
+ * THE STATE COLUMN IS A THIRD VOCABULARY, and ignoring it made this tool lie in the useful
+ * direction. SETUP is nine rows the board calls `passed` (six of them, dated), `skipped` (one,
+ * deliberately) and `pending` (two, owed before CORRUPT) - and the first draft printed "9 NEVER RUN",
+ * because none of them was ever recorded through `record`: they predate the ledger, and three of them
+ * are session steps a preflight performs rather than checks a runner can run. A count that calls a
+ * dated hand-verified row "never run" buries the two that really are owed among seven that are not.
+ *
+ * So the three sources are kept apart and named apart. The ledger says what a RUNNER measured; the
+ * board says what a HUMAN claims; a row with neither is the campaign's actual remaining work. The
+ * interesting cell is the disagreement, and it now has a name - see `claimedOnly` and `contradicted`.
+ */
+/**
+ * The board's word -> the ledger's word. `pending` is not a verdict and does not become one: it is
+ * the ABSENCE of a claim, which is why it maps to itself and is never compared against a verdict.
+ */
+const CLAIM = {
+  passed: 'PASS',
+  PASS: 'PASS',
+  'PASS-DIRTY': 'PASS-DIRTY',
+  failed: 'FAIL',
+  FAIL: 'FAIL',
+  skipped: 'SKIPPED',
+  SKIPPED: 'SKIPPED',
+  partial: 'PARTIAL',
+  PARTIAL: 'PARTIAL',
+  VACUOUS: 'VACUOUS',
+  INVALID: 'INVALID',
+  ERROR: 'ERROR',
+  UNOBSERVED: 'UNOBSERVED',
+  pending: 'pending',
+};
+
 const rows = [];
+const boardState = new Map();
 for (const line of readFileSync(BOARD, 'utf8').split('\n')) {
-  const m = /^\|\s*([A-Z][A-Z0-9]*-[0-9A-Za-z-]+)\s*\|/.exec(line);
-  if (m) rows.push(m[1]);
+  const m = /^\|\s*([A-Z][A-Z0-9]*-[0-9A-Za-z-]+)\s*\|(.*)$/.exec(line);
+  if (!m) continue;
+  rows.push(m[1]);
+  // The LAST cell of the row is the state. A table row ends with a pipe, so the raw split has a
+  // trailing empty piece and `.at(-1)` on it would be that empty string rather than the cell.
+  const cells = m[2]
+    .split('|')
+    .map((c) => c.trim())
+    .filter((c) => c !== '');
+  const cell = cells.length ? cells[cells.length - 1] : '';
+  // THE BOARD SPEAKS TWO VOCABULARIES AND BOTH ARE CURRENT. Rows written before the ledger existed
+  // say `passed` / `pending` / `skipped`; every row a runner has answered since says `PASS` /
+  // `SKIPPED` / `FAIL` - the same words `results.mjs` records, deliberately, so a row and its
+  // verdict read alike. Knowing only the older set reported sixty-seven disagreements on the day
+  // MSG, TYPE, READ, MUT and FWD were all green, which is the shape of an instrument fault: a
+  // finding that large about a state just measured is about the instrument.
+  const w = /^`([A-Za-z-]+)`/.exec(cell);
+  boardState.set(m[1], w ? CLAIM[w[1]] || 'unstated' : 'unstated');
 }
 const known = new Set(rows);
 
@@ -79,6 +130,17 @@ function boardRowsFor(id) {
   return hits.length === parts.length ? hits : [];
 }
 
+/**
+ * Ids that are DIAGNOSTICS, not checks - a one-off probe written to answer one question during an
+ * investigation, recorded through `record` because that is where the evidence belongs.
+ *
+ * They are named here rather than filtered by shape, because "an id the board does not name" is the
+ * report's most valuable line - it is how DEL-1 and `HEAL-WEB` were found - and a heuristic that
+ * swallowed a real runner would take that value away. Six ids, listed, so the day a seventh appears
+ * it appears in the report and someone decides what it is.
+ */
+const DIAGNOSTIC = new Set(['PROBE', 'LOSSHUNT', 'A1-NAMES', 'CHECK-M', 'FREEZE-repro', 'PREFIX-1']);
+
 if (!existsSync(LEDGER)) {
   console.log('[rows] no ledger at ' + LEDGER + ' - nothing has been recorded on this machine');
   process.exit(strict ? 1 : 0);
@@ -88,6 +150,7 @@ if (!existsSync(LEDGER)) {
 // is failing, and a tool reporting the pass would be the reason nobody looked.
 const latest = new Map();
 const divergent = new Map();
+const diagnostics = new Map();
 for (const line of readFileSync(LEDGER, 'utf8').split('\n')) {
   if (!line.trim()) continue;
   let r;
@@ -102,6 +165,10 @@ for (const line of readFileSync(LEDGER, 'utf8').split('\n')) {
   if (!r || !r.id) continue;
   const hits = boardRowsFor(r.id);
   if (hits.length === 0) {
+    if (DIAGNOSTIC.has(r.id)) {
+      diagnostics.set(r.id, (diagnostics.get(r.id) || 0) + 1);
+      continue;
+    }
     const e = divergent.get(r.id) || { check: r.check || '?', count: 0 };
     e.count++;
     divergent.set(r.id, e);
@@ -131,7 +198,11 @@ for (const phase of [...new Set(rows.map((r) => r.split('-')[0]))]) {
   const done = mine.filter((r) => latest.has(r));
   const tally = {};
   for (const r of done) tally[latest.get(r).verdict] = (tally[latest.get(r).verdict] || 0) + 1;
-  const gap = mine.length - done.length;
+  // A ROW THE BOARD CLAIMS IS NOT A HOLE, and printing it as one is what buried SETUP's two real
+  // ones among seven that were settled by hand and dated. `claimed` is counted and named separately.
+  const holes = mine.filter((r) => !latest.has(r) && !['PASS', 'SKIPPED'].includes(boardState.get(r)));
+  const claimed = mine.length - done.length - holes.length;
+  const gap = holes.length;
   const words = Object.entries(tally)
     .map(([v, n]) => n + ' ' + v)
     .join(', ');
@@ -142,13 +213,52 @@ for (const phase of [...new Set(rows.map((r) => r.split('-')[0]))]) {
       ' / ' +
       String(mine.length).padEnd(4) +
       words +
-      (gap ? (words ? ' | ' : '') + gap + ' NEVER RUN' : '')
+      (gap ? (words ? ' | ' : '') + gap + ' NEVER RUN' : '') +
+      (claimed ? ' | ' + claimed + ' by hand' : '')
   );
 }
 
-if (never.length) {
-  console.log('\n[rows] ' + never.length + ' row(s) with no verdict EVER - the campaign\'s remaining work:');
-  console.log('  ' + never.join(' '));
+// NO VERDICT, SPLIT BY WHAT THE BOARD CLAIMS - because "never measured" and "never measured but
+// asserted by hand, with a date" are owed different things. The first is work; the second is a
+// belief, and a belief the ledger cannot corroborate is exactly what `checkSha` was added to stop
+// being invisible. Merging them into one count is what made SETUP read as nine open items.
+const claimedOnly = never.filter((r) => ['PASS', 'SKIPPED'].includes(boardState.get(r)));
+const reallyNever = never.filter((r) => !claimedOnly.includes(r));
+if (reallyNever.length) {
+  console.log(
+    '\n[rows] ' + reallyNever.length + " row(s) with no verdict and no claim - the campaign's remaining work:"
+  );
+  console.log('  ' + reallyNever.join(' '));
+}
+if (claimedOnly.length) {
+  console.log(
+    '\n[rows] ' + claimedOnly.length + ' row(s) the BOARD claims and the ledger cannot corroborate:'
+  );
+  for (const r of claimedOnly) console.log('  ' + r.padEnd(14) + boardState.get(r) + ' by hand, never recorded');
+}
+
+// TWO WAYS THE BOARD CAN BE WRONG, AND THEY ARE NOT THE SAME FAULT.
+//
+// A row the ledger has answered and the board still calls `pending` is a board that was not updated
+// - the verdict exists, nobody wrote it down, and the campaign's own record of itself is behind. A
+// row where both name a verdict and the words differ is worse: two records of the same measurement
+// disagree, and which one is stale cannot be decided from here. COMM-14 was the first kind on
+// 2026-08-21, reading `pending` while the ledger had held a FAIL for hours.
+const stale = rows.filter((r) => latest.has(r) && ['pending', 'unstated'].includes(boardState.get(r)));
+const contradicted = rows.filter(
+  (r) => latest.has(r) && !['pending', 'unstated'].includes(boardState.get(r)) && boardState.get(r) !== latest.get(r).verdict
+);
+if (stale.length) {
+  console.log('\n[rows] ' + stale.length + ' row(s) the ledger has answered and the BOARD has not recorded:');
+  for (const r of stale) {
+    console.log('  ' + r.padEnd(14) + ('board: ' + boardState.get(r)).padEnd(18) + 'ledger: ' + latest.get(r).verdict);
+  }
+}
+if (contradicted.length) {
+  console.log('\n[rows] ' + contradicted.length + ' row(s) where the BOARD and the LEDGER name DIFFERENT verdicts:');
+  for (const r of contradicted) {
+    console.log('  ' + r.padEnd(14) + ('board: ' + boardState.get(r)).padEnd(18) + 'ledger: ' + latest.get(r).verdict);
+  }
 }
 
 // NOT GREEN, WHATEVER THE REASON, because a campaign that must end green owes a line for every row
@@ -206,6 +316,12 @@ if (sinceBuild) {
   if (stale.length) console.log('  ' + stale.join(' '));
 }
 
+if (diagnostics.size) {
+  console.log(
+    '\n[rows] ' + diagnostics.size + ' diagnostic id(s) in the ledger, answering no row by design:'
+  );
+  console.log('  ' + [...diagnostics].map(([id, n]) => id + ' (' + n + ')').join('  '));
+}
 if (divergent.size) {
   console.log('\n[rows] ' + divergent.size + ' recorded id(s) the board does NOT name:');
   for (const [id, e] of divergent) console.log('  ' + id.padEnd(16) + e.check + ' (' + e.count + ' row(s))');
@@ -235,7 +351,16 @@ if (unreachable.length) {
 }
 
 if (strict) {
-  const bad = never.length + notGreen.length + divergent.size + unreachable.length + superseded.length + noSha.length;
+  const bad =
+    reallyNever.length +
+    claimedOnly.length +
+    contradicted.length +
+    stale.length +
+    notGreen.length +
+    divergent.size +
+    unreachable.length +
+    superseded.length +
+    noSha.length;
   console.log('\n[rows] --strict: ' + bad + ' owed');
   process.exit(bad > 0 ? 1 : 0);
 }

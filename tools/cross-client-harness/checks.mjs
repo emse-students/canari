@@ -40,9 +40,19 @@ export const PHASES = {
     needs: ['W1', 'W2', 'A1'],
   },
   TYPE: { title: 'typing indicators', scripts: only('type.mjs', 1, 5), needs: ['W1', 'W2'] },
-  // READ-5 and READ-10 record SKIPPED on their own (a 4th reader, `--destructive`), and they are
-  // listed anyway: a skip that produces a row is a state, a skip that produces nothing is a hole.
-  READ: { title: 'receipts and unread counts', scripts: only('read.mjs', 1, 10), needs: ['W1', 'W2', 'A1'] },
+  // READ-5 records SKIPPED on its own - it needs a fourth reader, and there are two accounts - and it
+  // is listed anyway: a skip that produces a row is a state, a skip that produces nothing is a hole.
+  //
+  // READ-10 IS ARMED HERE, and it was not until 2026-08-21. `--destructive` existed because the check
+  // left a group behind on both sides and a dead conversation row in W1's profile FOR EVER - one per
+  // run, each narrating itself on every later load. It now dismisses that row through the product's
+  // own control, as part of its verdict, so the reason for the opt-in is gone. A flag kept after its
+  // reason expires is how a check stays permanently SKIPPED in a campaign that must end green.
+  READ: {
+    title: 'receipts and unread counts',
+    scripts: [...only('read.mjs', 1, 9), 'read.mjs --only 10 --destructive'],
+    needs: ['W1', 'W2', 'A1'],
+  },
   MUT: {
     title: 'editing, deleting, reacting, pinning',
     scripts: only('mut.mjs', 1, 21),

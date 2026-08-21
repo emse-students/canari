@@ -218,6 +218,21 @@ were rewritten on 2026-08-20 is in
 **Two have never run on production**: COMM-14 needs real push, and COMM-18 kills the app and follows
 a link into a cold start.
 
+**AND THE STATE COLUMN BELOW STILL SAYS `pending` FOR TWENTY-ONE OF THEM, WHICH IS THE BOARD BEING
+BEHIND ITS OWN LEDGER.** Measured 2026-08-21 by `rows.mjs`, which reads both: twenty-two rows across
+the whole campaign have a verdict nobody wrote down, and twenty-one of them are COMM's. The rows are
+deliberately left `pending` rather than filled in now, because filling them in would record belief the
+same tool says not to hold - **twelve of the twenty-one cannot be believed as they stand**:
+
+- **ten name no runner and eight name no build.** `COMM-2, 3, 11, 13, 15, 16, 19, 21, 23, 24` were
+  recorded before `results.mjs` carried `check`/`checkSha`, and a verdict that cannot say which script
+  produced it, on which bundle, is a memory rather than a measurement.
+- **two were taken by a runner that has since been rewritten**: `COMM-4` (PASS) and `COMM-14` (FAIL).
+
+The other nine PASSes and COMM-22's `PASS-DIRTY` name a current runner AND a build, and stand. Every
+one of the twelve is re-run when the ladder reaches rung 9, and the cells are written ONCE, from
+verdicts that carry both fields - which is also why they are not written twice.
+
 **A1 has run a current build since 2026-08-21** - `67d40e3a`, replacing the `02ae609b` every earlier
 A1 row was read on. That does not retire those rows, it dates them: a device's build is part of its
 answer, and a row recorded on `02ae609b` says what that build did. **COMM-22 settled on the tenth attempt** - nine runs produced no believable
@@ -384,13 +399,27 @@ rewinds W1's ratchet in EVERY group it holds, so no rung may follow without a te
 the **invariant**, never a snapshot. Every run needs `reload.mjs` first and a record of which device
 answered.
 
+**SEVEN ROWS SINCE 2026-08-21, AND TWO OF THEM ARE OLDER THAN THE ROWS.** `heal-a1.mjs` and
+`heal.mjs` have existed, worked and recorded verdicts throughout - the phone mirror of HEAL-repair,
+and the "does the next message arrive" question that follows an escalation - under ids no row had ever
+named, which is why nothing reconciled them and nothing could report them missing. `rows.mjs` reads
+the board and the ledger together and named all three faults at once: those two, plus `heal-web.mjs`
+answering HEAL-repair under `HEAL-WEB`. Four runners, seven rows, and every runner now records the id
+of the row it answers.
+
+**HEAL-W1, HEAL-W3 and HEAL-W4 have no runner yet**, and are written as the ladder reaches this rung.
+HEAL-W2's only ledger verdict is a `FAIL` from 2026-08-11, taken by a script **rewritten that same
+day** - so the honest reading of that row is `pending`, not failing, and it says so.
+
 | Id | How the group is broken | Needs | State |
 | --- | --- | --- | --- |
 | HEAL-W1 | Restore a snapshot from BEFORE a membership commit, then have the peer send | `+snapshot` | `pending` - a `healed` verdict after applying ZERO commits is a regression |
 | HEAL-W2 | Restore from BEFORE the group was joined at all | `+snapshot` | `pending` |
 | HEAL-W3 | Freeze one client while the peer advances past 2 000 frames in one epoch | `+snapshot` | `pending` - `TooDistantInTheFuture` must beat `GAP_QUEUED` |
 | HEAL-W4 | HEAL-W2 with a SECOND tab holding the leader role | `+snapshot` | `pending` - no prior art on either client |
-| HEAL-repair | Does the history diff repair a rewound sender end to end? | `+snapshot` | `pending` - quantitative: a run whose frame rate does not fall back to the ordinary send rate has found something |
+| HEAL-repair | Does the history diff repair a rewound sender end to end? | `+snapshot` | `pending` - quantitative: a run whose frame rate does not fall back to the ordinary send rate has found something. Runner: `heal-web.mjs` |
+| HEAL-A1 | HEAL-repair mirrored onto the phone: **W2** is rewound and **A1** is the receiver that must detect and repair | `+A1` `+snapshot` | `pending` - W1 is parked deliberately, so the only possible history responder is W2, which holds the plaintexts because it sent them. Runner: `heal-a1.mjs` |
+| HEAL-NEXT | After an escalation has ALREADY happened, does the next message arrive? | `+A1` `+snapshot` | `pending` - the frame that caused the escalation is unrecoverable by construction, so this is the only question left: does the group work again. Runner: `heal.mjs` |
 
 ## 17 - PIN
 

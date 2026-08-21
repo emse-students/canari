@@ -88,6 +88,21 @@ check(
 const matches = (rules, l) => rules.some((r) => r.test(l));
 
 const BENIGN_CASES = [
+  // THE GROUP LIFECYCLE, which every check that builds a group produces and nothing classified until
+  // 2026-08-21 - twenty-four unexplained lines from one READ-10 run, all of them its own fixture.
+  `${NEST}[GroupsController] [CREATE_GROUP][create-grp-6126d2fe] name="READ10-mt3bjpjl" createdBy=aaaaaaaa isGroup=true creatorDevice=web-a-b groupId=g`,
+  `${NEST}[GroupsController] [CREATE_GROUP][create-grp-6126d2fe] creator membership set to active`,
+  `${NEST}[GroupsController] [CREATE_GROUP][create-grp-6126d2fe] DONE groupId=g`,
+  `${NEST}[MembersController] [ADD_MEMBER][add-member-29ebc748] START group=g user=aaaaaaaa`,
+  `${NEST}[MembersController] [ADD_MEMBER][add-member-29ebc748] DONE group=g user=aaaaaaaa devices=1`,
+  `${NEST}[MessagingService] [WELCOME][welcome-send-ea3ef295] QUEUED id=q recipient=aaaaaaaa:web-a-b group=g`,
+  `${NEST}[InvitationsController] [INVITATION_STATUS] device=web-a-b user=aaaaaaaa group=g newStatus=active`,
+  // A SEND WITH NOBODY TO SEND TO. Benign in THIS spelling only; its sibling is in NOTABLE_CASES,
+  // and the two were one indistinguishable sentence until the discriminator was added.
+  `${NEST}[MessagingService] [SEND][send-65d68721] No message queued after validation - recipients=0 durable=true - the group named no other device, so there was nobody to queue for`,
+  // ANOTHER CONTRIBUTOR'S SHOP WORK, on the same production server, inside our window. The claim path
+  // is deliberately NOT covered by that rule and appears in UNEXPLAINED_CASES below.
+  `${NEST}[PartnershipsService] [PARTNERSHIP] create card: association=d1f769ce mode=text`,
   `${GW}[presence] Online: aaaaaaaaaaaaaaaa:web-aaaaaaaaaaaaaaaa-msglwqh6-vegy (TTL=20s)`,
   `${GW}[presence] DEL aaaaaaaaaaaaaaaa:web-aaaaaaaaaaaaaaaa-msglwqh6-vegy ok (attempt 1)`,
   `${GW}Received WS JSON frame from aaaaaaaaaaaaaaaa (21 bytes)`,
@@ -148,6 +163,13 @@ for (const l of BENIGN_CASES) {
 }
 
 const NOTABLE_CASES = [
+  // THE OTHER HALF of the `No message queued` warning: recipients existed and every one was offline,
+  // so a 60-second rendezvous will expire with nothing answering it. Shown, never fatal.
+  `${NEST}[MessagingService] [SEND][send-65d68721] No message queued after validation - recipients=2 durable=false - every recipient device is offline and this frame is transport-only`,
+  // A DISMISSAL MARKER MOVING. It is the one row a group's purge must not take, so both directions
+  // are visible whenever they happen.
+  `${NEST}[MembersController] [DISMISS] user=aaaaaaaa group=g`,
+  `${NEST}[MembersController] [UNDISMISS] user=aaaaaaaa group=g`,
   `${NEST}[MessagingService] [HISTORY_REQ][history-req-fcd21c9c] FORWARDED target=a:web-a-b group=g requester=c:web-c-d`,
   `${NEST}[MessagingService] [HISTORY_REQ][history-req-13bea09c] NO_PEER_ONLINE group=g requester=a:web-a-b`,
   `${NEST}[MessagingService] [SEND][send-85d25af2] TRANSPORT_SKIPPED_OFFLINE count=1 group=g - no row, no push: the rendezvous would expire first`,

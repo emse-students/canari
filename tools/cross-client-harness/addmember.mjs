@@ -91,7 +91,16 @@ async function optionFor(cx, who) {
         return JSON.stringify({
           x: Math.round(r.left + r.width / 2),
           y: Math.round(r.top + r.height / 2),
-          text: (opt.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 40),
+          // THE BACKSLASH IS DOUBLED, and it has to be. This whole expression is a JS template
+          // literal, so a single backslash in it is an ESCAPE: the whitespace class reached the page
+          // with its backslash eaten and matched the LETTER s, so this stripped every s out of the
+          // option text - the value addAnyMember RETURNS as "who was invited". READ-10 logged
+          // invited the owner under a name missing every s in it, and the same eaten backslash split a
+          // sidebar row into "conver" and "ation" in deadrows.mjs an hour later.
+          //
+          // No backticks in this comment either: a backtick inside a template literal CLOSES it, and
+          // quoting the pattern the natural way turned the rest of the function into code.
+          text: (opt.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 40),
         });
       })()`
     )

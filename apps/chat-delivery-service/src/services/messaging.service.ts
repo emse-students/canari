@@ -789,7 +789,18 @@ export class MessagingService {
       await this.queuedMessageRepo.save(toDeliver);
       this.logger.log(`[SEND][${traceId}] QUEUED count=${toDeliver.length}`);
     } else {
-      this.logger.warn(`[SEND][${traceId}] No message queued after validation`);
+      // TWO CAUSES, AND THE SENTENCE USED TO NAME NEITHER. `toDeliver` empties for one of exactly
+      // two reasons and they want opposite readings: a group that named no other device has nobody
+      // to queue for and nothing is wrong, while a TRANSPORT frame whose every recipient went offline
+      // is a rendezvous that will now expire unanswered. A warning that cannot say which is a warning
+      // its reader learns to skip - and this one fires on the ordinary path, during an invite into a
+      // group whose other members have not joined yet.
+      this.logger.warn(
+        `[SEND][${traceId}] No message queued after validation - recipients=${ops.length} durable=${durable}` +
+          (ops.length === 0
+            ? ' - the group named no other device, so there was nobody to queue for'
+            : ' - every recipient device is offline and this frame is transport-only')
+      );
     }
 
     // 1b. Append to the group's shared history stream, so a device that was absent can obtain the

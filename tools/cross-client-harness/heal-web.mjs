@@ -17,6 +17,12 @@
  *   - narrow  : `[MLS] ... retransmitting N payload(s)` on the SENDER, driven by `decrypt_failed`
  *   - the diff: `[MLS] Retransmission has not repaired ... - escalating`, then `[HISTORY_REQ]`
  * A check that does not name which one fired has not exercised the difference.
+ *
+ * IT RECORDS `HEAL-repair`, WHICH IS THE BOARD'S NAME FOR THIS QUESTION - "does the history diff
+ * repair a rewound sender end to end?". It recorded `HEAL-WEB` until 2026-08-21, an id no row has
+ * ever named, so the row read `pending` while this script's verdicts piled up in the ledger under a
+ * name nothing reconciled - DEL-1's fault seen from the other end, and what `rows.mjs` exists to
+ * catch. The board's vocabulary is the campaign's only vocabulary; a runner does not get its own.
  */
 import { client, openConversation, send, evaluate, markers } from './chat.mjs';
 import { watch } from './watch.mjs';
@@ -268,7 +274,7 @@ console.log(
 // `unobservable` rather than a gate, for the reason spelt out at the same point in `heal-a1.mjs`:
 // this check rewinds W1's MLS store deliberately, so the loss markers are its stimulus and the
 // console is read as the ASSERTION (`sawLoss`, `escalated`, `diffRan`) rather than as a gate.
-row = record('HEAL-WEB', finalOnW2 === BREAK_SENDS ? 'PASS' : finalOnW2 > 0 ? 'PARTIAL' : 'FAIL', {
+row = record('HEAL-repair', finalOnW2 === BREAK_SENDS ? 'PASS' : finalOnW2 > 0 ? 'PARTIAL' : 'FAIL', {
   unobservable:
     'rewinds W1 MLS store on purpose - LOST frame / SecretReuse / out-of-bounds are the stimulus. ' +
     'The console is the assertion here: see lossDetected / escalated / historyDiffRan.',

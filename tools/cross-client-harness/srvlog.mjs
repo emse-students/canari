@@ -232,6 +232,35 @@ const BENIGN = [
   // session really being destroyed; a rule loose enough to cover both would hide the only one that
   // matters. That one is named in SEVERE below rather than left to `unexplained`.
   /\[AuthSessionsService\] Concurrent refresh accepted sid=\S+ \(grace window\)/,
+  // THE GROUP LIFECYCLE, WHICH EVERY CHECK THAT BUILDS A GROUP PRODUCES AND NOTHING CLASSIFIED.
+  // Twenty-four unexplained lines from one READ-10 run on 2026-08-21, all of them its own fixture:
+  // create, add member, welcome, invitation status. Each is a step reporting that it completed, and
+  // the check that asked for it asserts the OUTCOME directly - a group that was not created fails on
+  // its own post-condition, not on a missing log line. The failing spellings are elsewhere: a refused
+  // membership mutation throws and lands in `errors`, and `SEND ... No message queued` is a warn.
+  /\[GroupsController\] \[CREATE_GROUP\]\[create-grp-[0-9a-f]+\] (name=|creator membership set to active|DONE )/,
+  /\[MembersController\] \[ADD_MEMBER\]\[add-member-[0-9a-f]+\] (START|DONE) group=/,
+  /\[MessagingService\] \[WELCOME\]\[welcome-send-[0-9a-f]+\] (START|QUEUED|DONE) /,
+  /\[InvitationsController\] \[INVITATION_STATUS\] device=\S+ user=\S+ group=\S+ newStatus=(active|pending)/,
+  // A SEND WITH NOBODY TO SEND TO, which during an invite is the ordinary path: the group exists and
+  // the invitee has not joined it yet, so there is no other device to queue for. Benign only in THIS
+  // spelling - the sibling sentence, every recipient offline on a transport frame, is a rendezvous
+  // that will expire unanswered and sits in NOTABLE. The two were one sentence until 2026-08-21.
+  /\[SEND\]\[send-[0-9a-f]+\] No message queued after validation - recipients=0 durable=\S+ - the group named no other device/,
+  // ASSOCIATION AND PARTNERSHIP MANAGEMENT, which this campaign does not measure and cannot attribute.
+  //
+  // Not a whitelist of convenience, and the reason is worth reading. `isThirdParty` needs a 64-hex id
+  // to tell somebody else's traffic from ours - and social-service logs ids TRUNCATED TO EIGHT, so no
+  // line it writes can ever be attributed that way. These two arrived while another contributor was
+  // building the shop feature on the same production server, inside our observation window, and read
+  // as ours to explain. The board has no row for a partnership card; a campaign whose server verdict
+  // turns on one is measuring the wrong thing.
+  //
+  // Narrow on purpose: `create card` and `added N code(s)`, not `^\[PARTNERSHIP\]`. The claim path
+  // (`claim gate`, `claimed`) names a USER and is left alone - it is a real transaction, and the day
+  // it appears in one of our windows we want to see it.
+  /\[PartnershipsService\] \[PARTNERSHIP\] create card: association=[0-9a-f]{8} mode=\S+/,
+  /\[PartnershipsService\] \[PARTNERSHIP\] added \d+ code\(s\) to card=[0-9a-f]{8}/,
 ];
 
 /**
@@ -250,6 +279,14 @@ const BENIGN = [
  */
 const NOTABLE = [
   /welcome_request|history_request|history_bundle|history_digest/i,
+  // A RENDEZVOUS NOBODY CAN ANSWER. The other half of the `No message queued` warning: a transport
+  // frame is addressed to whoever is online now, expires in 60 s, and had recipients - all offline.
+  // Nothing is lost that was durable, and nothing will answer either, so it is shown and never fatal.
+  /\[SEND\]\[send-[0-9a-f]+\] No message queued after validation - recipients=[1-9]\d* .* every recipient device is offline/,
+  // A PERSON'S DISMISSAL MARKER BEING WRITTEN OR ERASED. It outlives the group deliberately (it is a
+  // fact about what someone chose, not about the group), so it is the one row a group's purge must
+  // NOT take - and it is worth seeing whenever it moves. Both spellings, because they are opposites.
+  /\[MembersController\] \[(DISMISS|UNDISMISS)\] user=\S+ group=\S+/,
   /epoch|re-?add|revoke|forget/i,
   /retention|purge|evict/i,
   /queue depth|QUEUE_DEPTH|page capped by bytes/i,
@@ -443,11 +480,32 @@ let clean = true;
 
 /** Every 64-hex user id a line names. Devices carry the id too (`tauri-<id>-...`), so one regex finds both. */
 const USER_ID = /[0-9a-f]{64}/g;
+
+/**
+ * A user id TRUNCATED TO EIGHT, and only where the line says it is a user.
+ *
+ * ONE SERVICE LOGS NOTHING BUT PREFIXES, so until 2026-08-21 no line it wrote could ever be
+ * attributed: social-service slices every id to eight characters, so `USER_ID` found nothing, and
+ * `isThirdParty` read "names nobody - always ours to explain" over another contributor's traffic
+ * arriving inside our window.
+ *
+ * ONLY IN A LABELLED POSITION, and that restriction is the whole safety of it. An eight-hex token on
+ * its own is not an identity in this system - a trace id is eight hex (`history-req-dc5922d1`), so is
+ * a card id, so is an association id. Attributing on shape would let a run's own trace ids decide
+ * whose traffic a line was. `user=`/`userId=`/`claimedByUserId=`/`device=` is the line SAYING what
+ * the token is, and nothing else counts.
+ */
+const LABELLED_USER = /\b(?:user|userId|claimedByUserId|device)=(?:tauri-|web-)?([0-9a-f]{8,})/g;
+
 const isThirdParty = (line) => {
   if (!subjects.length) return false;
-  const ids = line.match(USER_ID);
-  if (!ids) return false; // names nobody - infrastructure, cron, startup. Always ours to explain.
-  return !ids.some((id) => subjects.some((s) => id.startsWith(s)));
+  const ids = [...line.matchAll(LABELLED_USER)].map((m) => m[1]);
+  ids.push(...(line.match(USER_ID) || []));
+  if (!ids.length) return false; // names nobody - infrastructure, cron, startup. Always ours to explain.
+  // `startsWith` in BOTH directions: the line may carry a full id and a subject prefix, or an
+  // eight-character prefix against a subject spelt out in full. Either way one is a prefix of the
+  // other, and a mismatch of eight hex characters is somebody else.
+  return !ids.some((id) => subjects.some((s) => id.startsWith(s) || s.startsWith(id)));
 };
 
 for (const service of SERVICES) {

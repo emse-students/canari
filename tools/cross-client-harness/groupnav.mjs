@@ -10,7 +10,7 @@
  * One module rather than a copy in each check, because the failure it prevents is precisely two
  * call sites disagreeing about which conversation is on screen.
  */
-import { evaluate, goto, realClick, until } from './chat.mjs';
+import { evaluate, goto, PANE_HAS_CONVERSATION, realClick, until } from './chat.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const COMPOSER = '.chat-composer-footer .chat-composer-editor';
@@ -28,12 +28,10 @@ const COMPOSER = '.chat-composer-footer .chat-composer-editor';
  * So the post-condition is "the pane is showing a conversation", satisfied either way, and
  * `paneIs(name)` still decides whether it is the RIGHT one.
  */
-const OPENED = `(function () {
-  if (document.querySelector('${COMPOSER}')) return true;
-  return [].slice.call(document.querySelectorAll('button')).some(function (b) {
-    return (b.innerText || '').indexOf('Supprimer localement') !== -1;
-  });
-})()`;
+// SHARED WITH `chat.mjs`, WHICH IS WHERE THE PANE PRIMITIVES LIVE. This file had its own copy, and
+// so did `openConversation` and `read.leaveConversation` - three copies of a predicate two of which
+// were wrong, one of them inverted. `PANE_HAS_CONVERSATION` is that predicate, once.
+const OPENED = PANE_HAS_CONVERSATION;
 
 /** A real mouse click at a point - `element.click()` is not what these components listen for. */
 export async function clickAt(cx, x, y) {
@@ -238,4 +236,35 @@ export async function dismissLocally(cx, name) {
   await realClick(cx, 'text=Supprimer localement');
   await until(cx, `document.body.innerText.indexOf(${JSON.stringify(name)}) === -1`, 20000);
   await sleep(1500);
+}
+
+/**
+ * Deletes the group named `name` through the product, from a client that may delete it.
+ *
+ * The gesture is settings -> "Supprimer le groupe" -> confirm, and it was written out inline in
+ * READ-10 while `cleanup.mjs` was about to need the same six lines for its group sweep. One copy,
+ * for the reason `createGroup` and `addMember` exist: the three post-conditions here are the whole
+ * correctness of it, and a second copy would be missing one of them within a week.
+ *
+ * @returns `'deleted'`, or `'not listed'` when the group is not on this client at all - which is the
+ *   ANSWER for a teardown asking "is it gone", and never an error.
+ */
+export async function deleteGroup(cx, name) {
+  await closeOverlays(cx);
+  if ((await evaluate(cx, 'location.pathname')) !== '/chat') await goto(cx, '/chat');
+  const listed = await evaluate(cx, `document.body.innerText.indexOf(${JSON.stringify(name)}) !== -1`);
+  if (listed !== true && listed !== 'true') return 'not listed';
+
+  await openGroup(cx, name, { navigate: false, label: 'deleteGroup' });
+  await realClick(cx, '[aria-label="Paramètres du groupe"]');
+  await until(cx, `/Supprimer le groupe/.test(document.body.innerText)`, 10000);
+  await sleep(1000);
+  await realClick(cx, 'text=Supprimer le groupe');
+  await sleep(1500);
+  // The confirmation is a second dialog on some layouts and a direct action on others, so a missing
+  // "Supprimer" is not a failure - the post-condition below is what decides.
+  await realClick(cx, 'text=Supprimer').catch(() => {});
+  await until(cx, `document.body.innerText.indexOf(${JSON.stringify(name)}) === -1`, 30000);
+  await sleep(3000);
+  return 'deleted';
 }
