@@ -208,6 +208,41 @@ async function awaitEpochAbove(epoch, timeoutMs = 60_000) {
   }
 }
 
+/**
+ * Sends, and does not return until the SERVER holds one more row for this salon.
+ *
+ * `send` PROVES THE COMPOSER EMPTIED, WHICH IS THE CLIENT'S OPINION. That is the right
+ * post-condition for the gesture - a click that lands while the draft stays put is the failure it
+ * was written for - but it says nothing about the row. Measured 2026-08-21: twelve sends, twelve
+ * emptied composers, no error line on either client, no failing request in the window, and TEN rows
+ * on the server. The run reported `everyMessageReachedTheServer: false` and could not name which two
+ * were missing, because the only evidence it kept was a total.
+ *
+ * A COUNT AT THE END CANNOT LOCATE A LOSS. Asking after each send turns the aggregate into a
+ * per-gesture assertion: the cycle that lost a message fails AT that message, with the marker in the
+ * sentence, while the state that produced it is still on both clients. It also removes the other
+ * reading of the same number - a message still sitting in the outbox when the total was read - since
+ * a send that is merely slow satisfies this within the window and a send that is lost never does.
+ *
+ * @returns the row count the server settled at, so a caller can record that it really moved
+ */
+async function sendConfirmed(cx, text, timeoutMs = 30_000) {
+  const before = messageCount(channelId);
+  await send(cx, text);
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const now = messageCount(channelId);
+    if (typeof now === 'number' && typeof before === 'number' && now > before) return now;
+    if (Date.now() > deadline) {
+      throw new Error(
+        `"${text}" left the composer and never reached the server ` +
+          `(${before} -> ${now} row(s) for the salon in ${timeoutMs} ms)`
+      );
+    }
+    await sleep(1500);
+  }
+}
+
 /** Leaves the salon so the next open is a real open, not a no-op on an already-rendered pane. */
 async function leaveSalon(cx) {
   await enterCommunities(cx);
@@ -293,7 +328,7 @@ for (let i = 1; i <= CYCLES && channelId; i += 1) {
     const joinedAt = await awaitPeerRouting(true);
 
     const withPeer = `${run}-in${i}`;
-    await send(w1, withPeer);
+    await sendConfirmed(w1, withPeer);
     inside.push(withPeer);
 
     await inPanel(w1, openChannelAccess, () => revokeChannelAccess(w1, PEER_NAME));
@@ -307,7 +342,7 @@ for (let i = 1; i <= CYCLES && channelId; i += 1) {
     const leftAt = await awaitEpochAbove(joinedAt);
 
     const withoutPeer = `${run}-out${i}`;
-    await send(w1, withoutPeer);
+    await sendConfirmed(w1, withoutPeer);
     outside.push(withoutPeer);
 
     return { i, withPeer, withoutPeer, joinedAt, leftAt };
@@ -403,13 +438,55 @@ const saying = (lines, re) => lines.filter((l) => re.test(l));
 // separates the three. Recorded rather than asserted: which path supplied a given seed is the
 // product's business, and demanding one of them would freeze an implementation into a check.
 const repair = {
-  peerMissedASession: saying(linesW2, /\[GRAINE\] no seed for session /).length,
+  // WHAT THE PEER COULD NOT RENDER, IN THE PRODUCT'S OWN WORDS. The first spelling of this counted
+  // `[GRAINE] no seed for session ` and matched NOTHING, on a run whose peer hit the case six times:
+  // the sentence exists, but it is `[CHANNEL] Message <row> of <salon> is unreadable and is not
+  // rendered - no seed for session <id> (repairable)`, written by `reportUnreadableChannelMessage`,
+  // and no `[GRAINE]` line carries those words at all. A predicate that cannot fire is worse than an
+  // absent one: it reports zero and is read as evidence.
+  peerMissedASession: saying(linesW2, /is unreadable and is not rendered - no seed for session /).length,
   peerAbsorbed: saying(linesW2, /\[GRAINE\] absorbed \d+\//),
   peerAskedForHistory: saying(linesW2, /\[GRAINE\] (asking|could not ask) for /).length,
   senderAnswered: saying(linesW1, /\[GRAINE\] answered .* with \d+ seed/),
   senderWithheld: saying(linesW1, /\[GRAINE\] (withholding|refusing) /),
   truncatedBundles: saying(linesW2, /TRUNCATED bundle/).length,
 };
+
+// -- Two observations this row surfaces and does NOT judge --------------------------------------
+
+/**
+ * Message rows the peer refused to render, and the reason each carried.
+ *
+ * THREE REASONS, TWO OF WHICH ARE THE PRODUCT WORKING. `reportUnreadableChannelMessage` classifies
+ * from the ERROR TYPE and prints the class: a missing seed is `(repairable)` and triggers the
+ * history request; a row below the handover floor was sent before this device was given the seed,
+ * which is `history_visibility` doing its job; anything else is the string of an error nobody
+ * classified, and that is the one this check is entitled to fail on.
+ */
+const unreadableRows = saying(linesW2, /is unreadable and is not rendered/);
+const unclassifiedRows = unreadableRows.filter(
+  (l) => !/\(repairable\)|sent before this device was given the seed/.test(l)
+);
+
+/**
+ * Frames that arrived sealed under an epoch whose secrets are gone - RECORDED, NOT JUDGED.
+ *
+ * Measured on 2026-08-21, six cycles, SIX of these, one per cycle, every one of them `msg_epoch=0`
+ * while the group stood at 3, 5, 7, 9, 11 and 13 - and both clients saw the same frame at the same
+ * second. The product names the recovery in the same breath ("its seed comes back through a history
+ * request, not a redelivery") and the transcript proves the recovery: 12 markers of 12, warm and
+ * cold, and a seed per session in the store.
+ *
+ * SO IT IS NOT THIS ROW'S FAILURE, AND IT IS NOT NOTHING EITHER. A frame nobody can open is work
+ * done twice on every rotation, and the cause is not established: `queued_message` holds no publish
+ * matching it, which points at a REPLAY rather than at a sender sealing under a stale handle - and
+ * "points at" is not a finding. It is carried here so the next run can say whether it is still six,
+ * and `docs/wiki/backlog.md` carries what is known and what is not.
+ */
+const pastEpochFrames = [
+  ...saying(linesW1, /Past-epoch application frame/),
+  ...saying(linesW2, /Past-epoch application frame/),
+];
 
 const expectations = {
   // The churn really produced what the row is about.
@@ -427,8 +504,20 @@ const expectations = {
   // raw count would pass on a salon the peer had only ever written to. `received` is the figure the
   // store was given a separate field for, and it is the one the row is about.
   thePeerHoldsASeedPerSession: (seedsCold?.received ?? 0) >= (sessions?.length ?? 0),
-  // A gap that is never repaired is the one failure the transcript itself cannot show.
-  nothingStaysUnreadable: saying(linesW2, /unreadable for good/).length === 0,
+  // A gap that is never repaired is the one failure the transcript itself cannot show - so what is
+  // asserted is an UNCLASSIFIED refusal to render, not the word "unreadable".
+  //
+  // THE FIRST SPELLING MATCHED THE WRONG SENTENCE. It looked for `unreadable for good`, which is
+  // `[GRAINE] frame on <group> is unreadable for good (<kind>) - acknowledged; its seed comes back
+  // through a history request, not a redelivery`: a statement about ONE FRAME, ending in the name of
+  // the mechanism that covers it. It fired six times on a run whose peer then read all twelve
+  // markers warm AND cold and held a seed per session - i.e. the run where nothing stayed
+  // unreadable is the run this predicate called a failure. That is the campaign's own rule about a
+  // predicate that named the last incident, so it was re-measured against the population it runs on
+  // rather than deleted: the line that means "a person could not see this message" is
+  // `[CHANNEL] Message ... is unreadable and is not rendered`, and the reason it carries is what
+  // separates a loss from the protocol working. See `unclassifiedRows` above.
+  nothingStaysUnreadable: unclassifiedRows.length === 0,
 };
 
 // A COLD READ TAKEN BEHIND A CLOSED GATE IS NOT A FAILING COLD READ, it is an absent one - "the
@@ -469,6 +558,9 @@ record('COMM-22', gated.verdict, {
   seedsWarm,
   seedsCold,
   repair,
+  // Recorded beside the verdict because neither is asserted and both are the reason to look again.
+  unreadableRows,
+  pastEpochFrames,
   ...expectations,
   failures,
 });

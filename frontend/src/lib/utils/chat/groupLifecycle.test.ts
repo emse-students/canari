@@ -128,16 +128,37 @@ describe('decideAbsentLocalGroupFate', () => {
     meta: { groupId: 'd-1', distributionWorkspaceId: 'ws-1' },
   });
 
-  it('keeps a group this session already registered as a seed carrier, without asking', () => {
+  // WHAT THIS SESSION REMEMBERS IS NOT EVIDENCE THAT THE GROUP STILL EXISTS. This used to keep, on
+  // the strength of the local predicate alone, and nothing could ever collect what it spared: the
+  // purge that owns a community's carriers enumerates scopes, and a carrier noted without a scope is
+  // in none of them. Prod 2026-08-21: one such group held for hours after its community was deleted,
+  // starting a recovery attempt on every load. `absent` is a read of `dm_groups` with no membership
+  // check, and a carrier is named by the server before it can be joined - so it cannot be premature.
+  it('forgets a registered seed carrier whose dm_groups row is confirmed gone', () => {
     expect(
       decideAbsentLocalGroupFate({
         isKnownDistributionGroup: true,
         serverStatus: { kind: 'absent' },
       })
     ).toEqual({
-      action: 'keep',
-      reason: 'key-distribution group registered on this device',
+      action: 'forget',
+      reason: 'absent from dm_groups (confirmed)',
     });
+  });
+
+  // The measured state, exactly: deleting a community tombstones its group's row AND clears the
+  // distribution columns, so the row no longer names any scope. The local predicate goes on saying
+  // "seed carrier" for the rest of the session; the row is what decides.
+  it('forgets a registered seed carrier whose row has stopped naming a scope', () => {
+    expect(
+      decideAbsentLocalGroupFate({
+        isKnownDistributionGroup: true,
+        serverStatus: {
+          kind: 'tombstone',
+          meta: { groupId: 'd-1', deletedAt: '2026-08-21T05:50:52Z' },
+        },
+      }).action
+    ).toBe('forget');
   });
 
   it('keeps a distribution group the ROW names, which is how a cold boot learns it', () => {
@@ -172,6 +193,20 @@ describe('decideAbsentLocalGroupFate', () => {
     ).toBe('keep');
   });
 
+  // The one case the local flag is still consulted in - and it is the only one where nothing better
+  // exists. An unreadable row must never cost a live community its seed carrier (WP-GRAINE-1).
+  it('spares a registered seed carrier when the row cannot be read at all', () => {
+    expect(
+      decideAbsentLocalGroupFate({
+        isKnownDistributionGroup: true,
+        serverStatus: { kind: 'unknown' },
+      })
+    ).toEqual({
+      action: 'keep',
+      reason: 'key-distribution group registered on this device, server status uncertain',
+    });
+  });
+
   it('forgets a conversation whose dm_groups row is confirmed gone', () => {
     expect(
       decideAbsentLocalGroupFate({
@@ -204,10 +239,18 @@ describe('reconcileAbsentLocalGroup', () => {
     noteDistributionGroup: vi.fn(),
   });
 
-  it('asks nothing when the group is already registered', async () => {
+  // IT ASKS EVEN WHEN IT ALREADY KNOWS WHAT THE GROUP IS, because the two questions have different
+  // lifetimes: the predicate is true for the session, the group can stop existing inside it. The
+  // short-circuit that used to live here is what left a deleted community's carrier held for ever.
+  it('reads the row even for a group it has already registered, and believes it', async () => {
     const mls = makeMls('absent', true);
+    expect((await reconcileAbsentLocalGroup(mls, 'd-1')).action).toBe('forget');
+    expect(mls.getGroupServerStatus).toHaveBeenCalledWith('d-1');
+  });
+
+  it('still spares a registered group when the read fails', async () => {
+    const mls = makeMls('error', true);
     expect((await reconcileAbsentLocalGroup(mls, 'd-1')).action).toBe('keep');
-    expect(mls.getGroupServerStatus).not.toHaveBeenCalled();
   });
 
   it('registers the community it just learnt about, so no later sweep asks again', async () => {

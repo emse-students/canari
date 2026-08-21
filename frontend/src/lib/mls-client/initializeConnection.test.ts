@@ -13,7 +13,12 @@ vi.mock('$lib/mls-client/tabLeader', () => ({
 }));
 
 // Mock persistMlsStateAfterMutation for syncConnectionAfterWsOpen calls.
-vi.mock('$lib/utils/chat/groupActions', () => ({
+// PARTIAL, and deliberately so: only the checkpoint is stubbed (it needs a device key and a real
+// store). `forgetMlsGroupIfPresent` stays REAL, because what it drops is the point - forgetting the
+// tree while leaving the distribution registration standing is the defect this sweep now depends on
+// it not having, and a mocked helper would hide exactly that.
+vi.mock('$lib/utils/chat/groupActions', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/chat/groupActions')>()),
   persistMlsStateAfterMutation: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -72,6 +77,9 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
   });
 
   it('connects, publie les KeyPackages et réconcilie les groupes', async () => {
+    // Held outside the literal so the distribution-aware drop below can delegate to it without the
+    // object referring to itself in its own initializer.
+    const forgetGroup = vi.fn();
     const mls = {
       connect: vi.fn().mockResolvedValue(undefined),
       fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
@@ -80,7 +88,15 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       generateKeyPackage: vi.fn().mockResolvedValue(undefined),
       reconcilePublishedKeyPackages: vi.fn().mockResolvedValue(undefined),
       getLocalGroups: vi.fn().mockReturnValue(['g-in-wasm', 'g-orphan']),
-      forgetGroup: vi.fn(),
+      forgetGroup,
+      // The drop goes through `forgetDistributionGroupById` now, which drops the tree AND the
+      // registration together. Delegating to `forgetGroup` here keeps the assertion below a
+      // statement about the tree actually being forgotten rather than about which method was called
+      // on the way to it.
+      forgetDistributionGroupById: vi.fn((groupId: string) => {
+        forgetGroup(groupId);
+        return true;
+      }),
       // `g-orphan` is absent from the server list AND from `dm_groups`: a real phantom, which is
       // the one case the sweep may still destroy. See `reconcileAbsentLocalGroup`.
       isDistributionGroup: vi.fn().mockReturnValue(false),
@@ -122,7 +138,8 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
     expect(onGroupMissing).toHaveBeenCalledWith('g-not-in-wasm');
     // Group in WASM -> no onGroupMissing
     expect(onGroupMissing).not.toHaveBeenCalledWith('g-in-wasm');
-    // Group absent from server -> forgetGroup
+    // Group absent from server -> forgotten, tree and distribution registration together
+    expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith('g-orphan');
     expect(mls.forgetGroup).toHaveBeenCalledWith('g-orphan');
     // No direct sendWelcomeRequest (onGroupMissing is provided)
     expect(mls.sendWelcomeRequest).not.toHaveBeenCalled();

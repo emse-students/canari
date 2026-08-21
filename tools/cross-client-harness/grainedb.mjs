@@ -445,3 +445,30 @@ export function channelNotifLevelOf(workspaceId, channelId, userId) {
   const value = String(found[0][1] ?? '').trim();
   return value === '' ? null : value;
 }
+
+/**
+ * One user's personal community order, as the SERVER holds it: `[{ workspaceId, name, sortOrder }]`,
+ * sorted the way the rail is drawn.
+ *
+ * THE ORDER IS PER MEMBER, NOT PER COMMUNITY. It lives in `channel_members.sortOrder`, one row per
+ * (user, community), which is why this takes a user id and why the same rail can be in two different
+ * orders on two accounts without either being wrong. A check that read the community table would be
+ * reading a column that does not exist.
+ *
+ * THE TIE-BREAK IS THE APP'S OWN. `listWorkspacesForUser` sorts on `sortOrder` alone, so rows
+ * sharing a value come back in whatever order Postgres liked - which is exactly the state a
+ * reorder is supposed to leave behind for the communities it did NOT name. The name is returned
+ * beside the id so a caller can compare this against the rail without a second query.
+ */
+export function workspaceOrderOf(userId) {
+  const out = psql(
+    `SELECT m."workspaceId", m."sortOrder", w.name FROM channel_members m ` +
+      `JOIN channel_workspaces w ON w.id = m."workspaceId" ` +
+      `WHERE m."userId" = '${userId}' ORDER BY m."sortOrder" ASC, w.name ASC`
+  );
+  return rows(out).map(([workspaceId, sortOrder, name]) => ({
+    workspaceId,
+    sortOrder: Number(sortOrder),
+    name,
+  }));
+}

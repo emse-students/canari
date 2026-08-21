@@ -33,8 +33,10 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { PHASES } from './checks.mjs';
+import { awaitQuiet } from './deploy.mjs';
 import { srvReport, srvSummary } from './srvlog.mjs';
 import { OVERLAYS, clearOverlays, client, evaluate } from './chat.mjs';
+import * as phone from './phone.mjs';
 import { closeExtraAppTabs } from './tabs.mjs';
 import { ORIGIN, PORTS } from './names.mjs';
 import { all } from './results.mjs';
@@ -253,8 +255,55 @@ async function settle(d, deadlineMs) {
  */
 const SUBJECTS = new Set();
 
+/**
+ * Wakes the phone, foregrounds the app and re-derives the devtools forward - and says what it did.
+ *
+ * IT NEVER THROWS. A phone that is genuinely absent must be reported by the readiness check that
+ * follows, with its own hint, and not by this dying first: "adb has no device" and "the app is
+ * backgrounded" want completely different fixes and only the second is repairable from here.
+ *
+ * @returns a sentence for the preflight to print, or '' when there was nothing to do
+ */
+async function reviveThePhone() {
+  const notes = [];
+  try {
+    phone.sh('svc power stayon usb');
+    phone.wake();
+    if (!phone.pid()) {
+      phone.launch();
+      notes.push('the app was not running - launched');
+    } else if (!phone.foregrounded()) {
+      // A BACKGROUNDED WEBVIEW IS THE FAILURE THIS EXISTS FOR, and `am start` on a running app is a
+      // no-op that brings it forward rather than a restart - so nothing is lost by it.
+      phone.launch();
+      notes.push('the app was in the background - foregrounded');
+    }
+    const up = await phone.ensure({ port: PORTS.A1, timeoutMs: 20_000 });
+    if (!up.ok) notes.push(`devtools still not answering: ${JSON.stringify(up)}`);
+    else if (up.reason && notes.length) notes.push(up.reason);
+  } catch (e) {
+    notes.push(`could not be revived: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  return notes.join('; ');
+}
+
 async function preflight(devices, { quiet = false } = {}) {
   const problems = [];
+
+  // PRODUCTION MUST BE STILL BEFORE A CHECK TOUCHES IT. Prod IS the test server, and a push to
+  // `main` restarts every container under whatever is running: on 2026-08-21 a commit touching only
+  // `tools/` took out COMM-22's last two cycles, which reported `the salon never appeared in the
+  // sidebar` - a sentence about the product, caused by us. `gate()` catches an overlap AFTERWARDS
+  // and makes the run VACUOUS, but a run that was never going to count is cheapest not to start.
+  //
+  // IT WAITS RATHER THAN REFUSING, because the ladder runs unattended: aborting a phase because a
+  // deploy was ninety seconds from finishing would cost the whole run for nothing. An answer it
+  // cannot get is printed and not treated as quiet - see `deploy.mjs`.
+  const quietProd = await awaitQuiet({ log: (l) => console.log(l) }).catch((e) => ({ unknown: e.message }));
+  if (quietProd.unknown) console.log(`  ??   production deploy state unknown - ${quietProd.unknown}`);
+  else if (quietProd.waitedFor.length)
+    console.log(`  ok   production is quiet again after ${Math.round(quietProd.waitedMs / 1000)} s`);
+
   for (const d of devices) {
     // ONE APP TAB, AND BEFORE ANY PROBE. Every read below resolves a client by its position among
     // the browser's tabs, so an extra tab is not noise - it is a second device wearing this one's
@@ -263,6 +312,21 @@ async function preflight(devices, { quiet = false } = {}) {
     if (d !== 'A1') {
       const extra = await closeExtraAppTabs(PORTS[d]).catch(() => 0);
       if (extra) console.log(`  fix  ${d.padEnd(3)} ${extra} extra tab(s) closed - a second app tab is a second MLS client`);
+    }
+
+    // THE PHONE IS BROUGHT BACK BEFORE IT IS ASKED ANYTHING, because the state it is usually found
+    // in is not a failure - it is asleep. A screen that has gone off is enough to lose A1: Android
+    // throttles a WebView whose window is not visible, the abstract devtools socket stays LISTED so
+    // `/json/list` answers, and CDP never does - which is precisely the hint below, printed as
+    // "unreachable" three times in one session on 2026-08-21 and repaired by hand each time.
+    //
+    // `svc power stayon usb` IS A DEVICE SETTING, NOT A TIMER. While the cable is in, the screen
+    // does not sleep, so the class cannot come back in the middle of a phase - which a `wake()` at
+    // the start of each job could not promise. Everything here is idempotent, so a healthy phone
+    // pays a few hundred milliseconds and prints nothing.
+    if (d === 'A1') {
+      const revived = await reviveThePhone();
+      if (revived) console.log(`  fix  A1  ${revived}`);
     }
 
     let s;

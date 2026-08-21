@@ -11,6 +11,7 @@
  * to see what was not predicted.
  */
 import { evaluate } from './cdp.mjs';
+import { describe as describeDeploy, overlapping as overlappingDeploys } from './deploy.mjs';
 
 /** Console text that is normal traffic on this app and carries no signal on its own. */
 const BENIGN = [
@@ -645,7 +646,7 @@ export async function awaitLine(cx, needle, timeoutMs = 15000) {
 
 /** Drains what was observed and classifies it. */
 export async function report(w) {
-  const { cx, label } = w;
+  const { cx, label, since } = w;
   const reqs = new Map();
   /** `Network.loadingFailed` events for a requestId this window never saw start - see the case. */
   let untrackedFailures = 0;
@@ -869,6 +870,11 @@ export async function report(w) {
   // `clean`, which is WP-RECONNECT-2's shape.
   return applyNavigationForgiveness({
     label,
+    // WHEN THIS WINDOW OPENED, carried through so {@link gate} can ask whether production was
+    // redeployed under it. The check itself must not have to remember to pass a start time: it is
+    // already in `watch()`'s handle, and a correction derivable from the evidence should not depend
+    // on the caller asking for it - the same argument as the navigation forgiveness below.
+    since,
     // `unexplained` BREAKS CLEAN, and that is the campaign's actual bar rather than a stricter one:
     // "tout doit etre explique, limite tu devrais savoir exactement avant de le voir". A line nobody
     // has classified is by definition a line whose meaning nobody knows, so a verdict formed over it
@@ -1424,7 +1430,31 @@ export function gate(verdict, reports) {
   const detail = { clean: dirty.length === 0 };
   // `{}` for a clean client, so the record shows WHO was dirty without five empty objects around it.
   for (const [label, r] of dirty) detail[`dirt_${label}`] = dirtOf(r);
-  return { verdict: verdict === 'PASS' && dirty.length ? 'PASS-DIRTY' : verdict, detail };
+
+  // A RUN PRODUCTION RESTARTED UNDER IS NOT A FAILING RUN, IT IS AN ABSENT ONE - see `deploy.mjs`
+  // for the measurement that put this here. Every push to `main` redeploys the server the whole rig
+  // is pointed at, so nginx drops what is in flight and the clients report `ERR_CONNECTION_CLOSED`
+  // on whatever they were doing. That is a transport failure, and the campaign's first rule is that
+  // a transport failure is not an answer: the gestures after it are asking a server that is not
+  // there, and their failures are sentences about the product that the product did not say.
+  //
+  // IT OUTRANKS EVERY OTHER OUTCOME, including FAIL - a FAIL earns a Work Package, and a Work
+  // Package written from a run whose server went away is a bug report about us.
+  const since = Math.min(...entries.map(([, r]) => r.since ?? Number.POSITIVE_INFINITY));
+  let out = verdict === 'PASS' && dirty.length ? 'PASS-DIRTY' : verdict;
+  if (Number.isFinite(since)) {
+    const window = overlappingDeploys(since);
+    if (window.asked === false) {
+      // A BLIND SPOT IS RECORDED, NEVER GUESSED AWAY. `gh` can be absent, logged out or rate-limited,
+      // and a gate that read that as "no deploy" would be silently weaker exactly when the network is
+      // already misbehaving. The verdict stands and the reader is told what could not be asked.
+      detail.deployWindow = `unknown - ${window.why}`;
+    } else if (window.overlapped.length) {
+      detail.redeployedMidRun = window.overlapped.map(describeDeploy);
+      out = 'VACUOUS';
+    }
+  }
+  return { verdict: out, detail };
 }
 
 /**

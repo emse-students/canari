@@ -7,7 +7,7 @@
  *
  * See docs/wiki/cross-client-testing.md section 9 (evidence rule).
  */
-import { IS_MOVING_FN, RESOLVE, activate, clickAtPoint, connect, evaluate, listTargets, pressKey, realClick, stablePoint, until } from './cdp.mjs';
+import { IS_MOVING_FN, RESOLVE, activate, clickAtPoint, connect, dragTo, evaluate, listTargets, pressKey, realClick, stablePoint, until } from './cdp.mjs';
 // For the device check in `goto`: the phone is the one client a reload costs something on.
 import { PORTS } from './names.mjs';
 
@@ -1634,7 +1634,7 @@ export async function attachFiles(cx, files) {
   return files.length;
 }
 
-export { IS_MOVING_FN, activate, clickAtPoint, evaluate, pressKey, realClick, stablePoint, until };
+export { IS_MOVING_FN, activate, clickAtPoint, dragTo, evaluate, pressKey, realClick, stablePoint, until };
 
 /**
  * One authenticated request, made from a client's OWN page, as that client's account.

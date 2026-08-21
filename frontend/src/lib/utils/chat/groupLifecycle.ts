@@ -139,7 +139,12 @@ export type LocalGroupFate = {
 
 /** Signals {@link decideAbsentLocalGroupFate} reduces. Both are facts, never guesses. */
 export interface AbsentLocalGroupInput {
-  /** True when this session has ALREADY registered the group as a community's seed carrier. */
+  /**
+   * True when this session has ALREADY registered the group as a community's seed carrier.
+   *
+   * ONLY CONSULTED WHEN THE SERVER CANNOT BE BELIEVED. It answers what the group IS, which is not
+   * evidence that it still exists - see the note on {@link reconcileAbsentLocalGroup}.
+   */
   isKnownDistributionGroup: boolean;
   /** Resolved server state of the `dm_groups` row (see {@link classifyServerStatus}). */
   serverStatus: GroupServerStatus;
@@ -161,20 +166,24 @@ export interface AbsentLocalGroupInput {
  * So absence from that list stopped being a reason to destroy anything. It is only a reason to
  * ASK, and the answer names the kind of group: a distribution group is kept, a row that is simply
  * gone is forgotten, a network failure decides nothing.
+ *
+ * AND THE SERVER'S ANSWER OUTRANKS WHAT THIS SESSION REMEMBERS. `isKnownDistributionGroup` used to
+ * be an unconditional first branch, which made a memory of what the group WAS stand in for whether
+ * it still exists - two different questions with two different lifetimes. It is now consulted in
+ * the one case where nothing better exists: `unknown`.
  */
 export function decideAbsentLocalGroupFate(input: AbsentLocalGroupInput): LocalGroupFate {
-  if (input.isKnownDistributionGroup) {
-    // NAMED BY THE SOURCE, not by the scope. This branch fires for a community's group AND a
-    // private salon's - anything this device has registered a scope for - so calling it "community"
-    // sent anyone chasing a salon's group looking at the wrong scope. What actually distinguishes
-    // it from the branch below is WHO said so: this one is local knowledge, that one is the server.
-    return { action: 'keep', reason: 'key-distribution group registered on this device' };
-  }
-
   switch (input.serverStatus.kind) {
     case 'unknown':
-      // Never destroy on doubt - the same rule the conversation reducer above obeys.
-      return { action: 'keep', reason: 'server status uncertain (network)' };
+      // Never destroy on doubt - the same rule the conversation reducer above obeys. This is the
+      // whole remaining use of the local flag: when the row cannot be read, what this session
+      // registered is the only thing left to go on, and it says spare it.
+      return {
+        action: 'keep',
+        reason: input.isKnownDistributionGroup
+          ? 'key-distribution group registered on this device, server status uncertain'
+          : 'server status uncertain (network)',
+      };
 
     case 'absent':
       // No `dm_groups` row at all: nothing this state could ever belong to again.
@@ -193,6 +202,11 @@ export function decideAbsentLocalGroupFate(input: AbsentLocalGroupInput): LocalG
       // A live-or-tombstoned conversation row we hold no membership in: the exclusion or the
       // deletion is real, and the local tree is what has to go. This is the behaviour the sweeps
       // always had, now taken on a row that was read rather than on a list that never named it.
+      //
+      // A ROW THAT NAMES NO SCOPE IS NOT A SEED CARRIER ANY MORE, whatever this session remembers.
+      // Deleting a community clears the distribution columns of its group and tombstones the row,
+      // so this is where the carrier of a community that is gone is finally collected - the state
+      // that otherwise survives every sweep for ever because the local predicate outlives it.
       return { action: 'forget', reason: 'conversation row held with no membership left' };
   }
 }
@@ -204,11 +218,28 @@ export function decideAbsentLocalGroupFate(input: AbsentLocalGroupInput): LocalG
  * decision IS the defect this function exists to close, exactly as {@link decideAbsentGroupFate}
  * closed it for conversations.
  *
- * ONE REQUEST PER COMMUNITY PER SESSION, not per sweep. Learning that a group is a community's
- * seed carrier is worth remembering, so the answer is registered on the MLS service - the same
- * fact `ensureCommunityDistributionGroup` would have registered, whichever runs first. Every later
- * sweep in the session then answers from `isDistributionGroup` without a round trip, and the
- * ordering between the Graine layer and the reconcilers stops mattering at all.
+ * THE ROW IS READ EVERY TIME, INCLUDING FOR A GROUP THIS SESSION HAS ALREADY IDENTIFIED, and that
+ * read used to be short-circuited. `isDistributionGroup` answers "does this carry seeds rather than
+ * messages" - the question WP-GRAINE-1 needed - and it was being read as "does this group still
+ * exist", which it has never been evidence for. The two differ only in lifetime: the predicate is
+ * true for the rest of the session, the group can stop existing at any point inside it.
+ *
+ * NOTHING ELSE WOULD EVER COLLECT WHAT THE SHORT-CIRCUIT SPARED. The purge that owns forgetting a
+ * community's carriers (`forgetCommunityGraine`, WP-60) enumerates `distributionScopes()`, and a
+ * group the server identified as a salon's carrier while this session could not yet name its
+ * community is recorded by `noteDistributionGroup` - in the predicate, in no scope. It is therefore
+ * unreachable from the purge side by construction, and only a caller holding the server's answer
+ * can end it. Measured on production 2026-08-21: `b0192801`, tombstoned with its distribution
+ * columns cleared, still held by a web client and still starting a recovery attempt on every load,
+ * three hours after the community it belonged to was deleted through the product.
+ *
+ * THE ANSWER IS AUTHORITATIVE AND THE EXTRA REQUEST BUYS IT. `GET /api/mls/groups/:id` reads
+ * `dm_groups` with NO membership check, so the exclusion that hid distribution groups from
+ * `getUserGroups` does not apply; and a distribution group cannot be held locally before the server
+ * named it, since `ensureDistributionGroupFor` takes the id from `getDistributionGroup` and joins
+ * only afterwards. There is no window in which a live group reads absent. The registration below
+ * still happens, so the Graine layer keeps learning the scope from whichever sweep saw the row
+ * first - it just no longer decides on that memory alone.
  */
 export async function reconcileAbsentLocalGroup(
   mlsService: Pick<
@@ -220,15 +251,9 @@ export async function reconcileAbsentLocalGroup(
   >,
   groupId: string
 ): Promise<LocalGroupFate> {
-  if (mlsService.isDistributionGroup(groupId)) {
-    return decideAbsentLocalGroupFate({
-      isKnownDistributionGroup: true,
-      serverStatus: { kind: 'unknown' },
-    });
-  }
-
+  const isKnownDistributionGroup = mlsService.isDistributionGroup(groupId);
   const serverStatus = classifyServerStatus(await mlsService.getGroupServerStatus(groupId));
-  const fate = decideAbsentLocalGroupFate({ isKnownDistributionGroup: false, serverStatus });
+  const fate = decideAbsentLocalGroupFate({ isKnownDistributionGroup, serverStatus });
 
   if (serverStatus.kind === 'active' || serverStatus.kind === 'tombstone') {
     const meta = serverStatus.meta;

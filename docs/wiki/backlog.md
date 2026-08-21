@@ -178,9 +178,62 @@ The five that shipped on 2026-08-18: the mechanism is on
 the audit and its prod figures on [community-rework](services/community-rework.md), the rule in
 [durable-rules](durable-rules.md), and the story in `CHANGELOG.md`. Those six are closed; the entry
 below them, a private salon's seed being sealed to the whole community, closed on 2026-08-20.
-**Nothing is open here.** WP-REGRANT-1, opened 2026-08-21 by the campaign, shipped and was verified
-on production the same day - its entry below is kept as CLOSED because the second attempt at the fix
-is the interesting half.
+WP-REGRANT-1, opened 2026-08-21 by the campaign, shipped and was verified on production the same day -
+its entry below is kept as CLOSED because the second attempt at the fix is the interesting half. **One
+thing IS open here, and it is an observation rather than a finding:** the past-epoch seed frame below.
+
+### OBSERVED 2026-08-21 - a seed frame nobody can open, once per rotation, on every churned salon
+
+**COMM-22, six cycles, SIX of these - one per cycle, and both clients saw the same frame at the same
+second:**
+
+```
+[RUST::WARN] Past-epoch application frame, unreadable for good: msg_epoch=0 group_epoch=3
+  group=c274bb29 err=ValidationError(UnableToDecrypt(SecretTreeError(TooDistantInThePast)))
+[GRAINE] frame on c274bb29... is unreadable for good (past-epoch-application) - acknowledged;
+  its seed comes back through a history request, not a redelivery
+```
+
+`group_epoch` was 3, 5, 7, 9, 11 and 13 - the six epochs the peer's joins produced - and `msg_epoch`
+was **0 every time**. So one frame sealed at the group's very first epoch is presented again on every
+rotation, to every member, and nobody can open it.
+
+**WHAT IS ESTABLISHED.** The product handles it correctly and says so: the frame is acknowledged, and
+the seed arrives instead through the history request - `[GRAINE] answered ... with 1 seed(s)` six
+times on the sender, `absorbed 1/1 seed(s)` six times on the peer. The transcript is whole either way:
+12 markers of 12 warm AND cold, and a seed per session in the peer's store. **This is not a loss.**
+
+**WHAT IS NOT.** Why an epoch-0 frame is delivered at all. `queued_message` for that group holds no
+publish matching it - the 39 rows it does hold are all addressed to the PHONE, which never drained
+them and whose APK predates per-salon groups - so nothing in the table accounts for the six
+deliveries, which points at a REPLAY rather than at a sender sealing under a stale handle. "Points at"
+is not a finding, and the commit log settles nothing either: only two devices ever committed on that
+group, W1 and W2, in strict epoch order.
+
+**AND IT DID NOT REPRODUCE.** The next run of the same check, on the same build, after
+`cleanup.mjs` had swept three debris communities left by the WP-REGRANT-1 probes, recorded
+`pastEpochFrames: []` - zero, over six cycles. The debris is the likeliest reason: the same session
+was logging `[GRAINE] undecryptable frame on b0192801... - not acknowledged` in bursts on every load,
+b0192801 being a salon group W1 held at epoch 0 while the server had moved on, and those frames
+stopped the moment the venue was deleted. **So this is one defect or two**: a client carrying a group
+it can no longer follow, and a frame nobody can open.
+
+**THE FIRST HALF IS NOW CLOSED, AND IT WAS REAL** - see
+[graine](protocols/channel-encryption.md#a-community-deleted-left-its-seed-carrier-held-for-ever---fixed-2026-08-21).
+`b0192801` was a distribution group whose community had been deleted through the product hours
+earlier: its `dm_groups` row was tombstoned with both distribution columns cleared, and W1 held it
+anyway, because the sweep short-circuited on a LOCAL predicate ("have I recognised this as a seed
+carrier") and never read the row - while the purge that owns forgetting such a group enumerates
+scopes, and a carrier noted without one is in none of them. It is now read, believed, and dropped
+with the note that classified it. That accounts for the redelivery bursts and for the recovery
+attempt on every load; it does NOT account for the epoch-0 seed frames, which appeared on a salon
+whose community was alive. **The second half stays open and stays unestablished.**
+
+**WHY IT IS NOT PARKED.** A frame nobody can open is a repair on the hot path of every rotation, and
+the campaign's own rule is that a fallback is a signal and never a path. It needs ONE probe that
+publishes a seed and reads back what the server fanned out, which is a different instrument from the
+COMM runners - so it waits for a gap in the ladder rather than for a decision. `comm22.mjs` records
+`pastEpochFrames` verbatim on every run, so every future run says whether it is back.
 
 ### CLOSED 2026-08-21 - a member let BACK IN to a private salon was never routed again (WP-REGRANT-1)
 

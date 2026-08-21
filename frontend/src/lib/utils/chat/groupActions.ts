@@ -318,18 +318,24 @@ export async function persistMlsStateAfterMutation(
 
 /**
  * Drops one group from the in-memory WASM/OpenMLS state when the server no longer lists it.
- * @returns true when forgetGroup was applied (caller should persist MLS state).
+ *
+ * THE TREE AND THE DISTRIBUTION REGISTRATION GO TOGETHER, OR THE PREDICATE OUTLIVES THE GROUP.
+ * A bare `forgetGroup` leaves the group's entry in `knownDistributionGroups`, which then answers
+ * "this carries seeds" about state this device no longer holds - and the reconciliation sweep,
+ * which spares a seed carrier by design, would spare that entry on every later load for ever.
+ * `forgetDistributionGroupById` drops the pair, and for a group registered as nothing it is exactly
+ * `forgetGroup` with the same held-check in front of it (`minEpoch` defaults to 0, which is what
+ * this call always passed).
+ *
+ * @returns true when the group was dropped (caller should persist MLS state).
  */
 export function forgetMlsGroupIfPresent(
   mlsService: IMlsService,
   groupId: string,
   log?: (msg: string) => void
 ): boolean {
-  if (!mlsService.getLocalGroups().includes(groupId)) {
-    return false;
-  }
   try {
-    mlsService.forgetGroup(groupId, 0);
+    if (!mlsService.forgetDistributionGroupById(groupId)) return false;
     log?.(`[MLS] forgetGroup ${groupId} (absent from server)`);
     return true;
   } catch (e) {

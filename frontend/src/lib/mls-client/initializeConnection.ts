@@ -1,6 +1,9 @@
 import type { IMlsService, UserGroupRow } from './IMlsService';
 import { getIsTabLeader } from './tabLeader';
-import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
+import {
+  forgetMlsGroupIfPresent,
+  persistMlsStateAfterMutation,
+} from '$lib/utils/chat/groupActions';
 import { reconcileAbsentLocalGroup } from '$lib/utils/chat/groupLifecycle';
 import {
   connectionSweepDecision,
@@ -220,7 +223,10 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
         log(`[SYNC] WASM kept ${localId.slice(0, 8)}… - ${fate.reason}`);
         continue;
       }
-      mlsService.forgetGroup(localId);
+      // THROUGH THE SHARED HELPER, so this sweep and discovery's drop the same two halves. Forgetting
+      // the tree alone would leave `isDistributionGroup` answering true for a group that is gone,
+      // and this very loop spares whatever that predicate names.
+      if (!forgetMlsGroupIfPresent(mlsService, localId)) continue;
       stateMutated = true;
       log(`[SYNC] WASM removed (${fate.reason}): ${localId.slice(0, 8)}…`);
     }

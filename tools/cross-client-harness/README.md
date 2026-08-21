@@ -95,12 +95,13 @@ whose bucket is known.
 
 | File | Role |
 | ---- | ---- |
-| `cdp.mjs` | The whole CDP client: targets, `evaluate`, `stableCentreOf`, `clickAtPoint`, `realClick`, `until`, focus emulation. |
+| `cdp.mjs` | The whole CDP client: targets, `evaluate`, `stableCentreOf`, `clickAtPoint`, `realClick`, `dragTo`, `until`, focus emulation. |
 | `chat.mjs` | Chat primitives shared by every check - `client`, `ensureChat`, `openConversation`, `send`, `clickBubbleAction`. The single definition of "a message arrived", so two checks cannot disagree for harness reasons. |
 | `watch.mjs` | Continuous observation: console, page errors, HTTP, WebSocket. Attached by every runner. |
 | `srvlog.mjs` | The server observer, held to the same bar as the two clients: the whole window is classified, and it partitions by SUBJECT because production is shared. |
+| `deploy.mjs` | Whether production was REDEPLOYED under the run - the one cause of transport failure that is ours. The preflight waits for a deploy in flight; `gate()` turns an overlap into VACUOUS, never FAIL. |
 | `comm.mjs` | Community and salon gestures, and the panels behind them - `openChannelSettings` and `openChannelAccess` share one modal-open, `setChannelNotifLevel` reads the radio group's `aria-checked` rather than a styling class. |
-| `grainedb.mjs` | The questions a SCREEN cannot answer, asked of production's database: what a device is routed, what sessions a salon holds, what notification level a member stored. Read-only, always. |
+| `grainedb.mjs` | The questions a SCREEN cannot answer, asked of production's database: what a device is routed, what sessions a salon holds, what notification level a member stored, what order a member put their communities in. Read-only, always. |
 | `names.mjs` / `accounts.mjs` | The only two readers of machine-local truth. Every other file goes through them. |
 | `phone.mjs` | adb, app lifecycle, notifications, the WebView - and the only entry point for the devtools forward. |
 | `login.mjs`, `pin.mjs`, `unlock.mjs` | The auth gates. `unlock.mjs` unlocks every client it can identify; `login.mjs --match cas.emse.fr` also drives the phone's system-browser login. |

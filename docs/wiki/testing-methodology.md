@@ -1549,6 +1549,22 @@ rate has found something.
 These are not faults of judgement - they are platform behaviours that will be mistaken for defects
 by anyone who has not met them.
 
+- **A PUSH TO `main` IS A RESTART OF THE SERVER UNDER THE RUN.** Prod IS the test server, so every
+  commit that reaches CD - including one touching only `tools/` - stops the containers, and nginx
+  drops whatever the rig had in flight. On 2026-08-21 that took out COMM-22's fifth and sixth cycles,
+  which reported `the salon never appeared in the sidebar` and `the access panel is not open`: two
+  sentences about the product, both caused by the operator pushing while the check ran. **A redeploy
+  makes a run VACUOUS, never FAIL** - a server that restarted never answered, and the campaign's
+  first rule is that a transport failure is not an answer. Both halves are mechanised in
+  `deploy.mjs`: the preflight WAITS for a deploy in flight rather than starting a run that cannot
+  count, and `gate()` asks afterwards whether one overlapped the window and demotes the verdict if it
+  did. When `gh` cannot answer, the record says `deployWindow: unknown - <why>` and the verdict
+  stands: a blind spot is reported, never guessed away.
+- **The Cloudflare edge in front of production drops connections in bursts**, and it takes the SSH
+  tunnel with it - so `[ssh] canari: transport failure (255)` and a page of `ERR_CONNECTION_CLOSED`
+  arrive together, from one cause, with no deploy anywhere near. Measured 2026-08-21 06:23-06:34
+  local: prod's own uptime was 59 days and it answered normally four minutes later. A run in that
+  window arms nothing and must be re-run, not diagnosed.
 - **Chrome discards every input event on a page it considers hidden**, and native occlusion detection
   marks a fully covered window hidden while `windowState` still says `normal`. Hence the
   `--disable-features=CalculateNativeWinOcclusion --disable-backgrounding-occluded-windows` launch

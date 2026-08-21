@@ -1648,3 +1648,61 @@ sidebar, and its salons then refuse to send with a named cause rather than the c
 
 Three tests hold it: that the group is ensured, that it is ensured *before* the listing, and that a
 failure to prepare still leaves the community on screen.
+### A community deleted left its seed carrier held for ever - FIXED 2026-08-21
+
+**Measured on production during the COMM campaign.** Group `b0192801` belonged to a community deleted
+through the product at 05:50:52 UTC. Three hours later W1 still held it, and every single load wrote:
+
+```
+[PIPELINE] Out-of-sync for b0192801... - requestReAdd
+[PIPELINE] Recovery attempt finished for b0192801...
+```
+
+Its `dm_groups` row was exactly what a deletion leaves: `deletedAt` set, `activeEpoch 2`, and both
+distribution columns cleared. Before the debris was swept by hand, the same group also produced
+repeated `[GRAINE] undecryptable frame on b0192801... - not acknowledged` - the server had frames
+queued for it, a frame nobody can read is deliberately left unacknowledged so it will be retried, and
+the seeds needed to read it had been correctly deleted with the community. A loop with no end on
+either side, for a community nobody could name any more.
+
+**Two independent causes, either one sufficient.**
+
+`reconcileAbsentLocalGroup` short-circuited on `isDistributionGroup(groupId)` and returned `keep`
+with `serverStatus: { kind: 'unknown' }` - it never read the row at all. That predicate exists so a
+sweep will not destroy a LIVE seed carrier, which is WP-GRAINE-1 and is genuinely needed; it answers
+*what the group is*, and it was being read as *whether the group still exists*. The two differ only
+in lifetime - the predicate stays true for the rest of the session, the group can stop existing at
+any point inside it.
+
+Nothing else could ever collect what the shortcut spared, either. WP-60 gave the job of forgetting a
+community's carriers to `forgetCommunityGraine`, and that is the right owner - a tombstone is not a
+purge cue, and `groupLifecycle.test.ts` says so on purpose. But it enumerates
+`mlsService.distributionScopes()`, which is `distributionScopeByGroup.values()`, and a group the
+server identified while this session could not yet name its community is recorded by
+`noteDistributionGroup` - which writes `knownDistributionGroups` **only**. In the predicate, in no
+scope: unreachable from the purge side by construction. The only caller that can end such a group is
+one holding the server's answer, which is why `forgetDistributionGroupById` was written and why the
+sweep is where this had to be fixed.
+
+**Asking is safe, and the answer is authoritative.** `GET /api/mls/groups/:id` reads `dm_groups` with
+NO membership check, so the exclusion that hides distribution groups from `getUserGroups` does not
+apply here. And a distribution group cannot be held locally before the server named it:
+`ensureDistributionGroupFor` takes the id from `getDistributionGroup(scope)` and joins only
+afterwards. There is no window in which a live carrier reads `absent`.
+
+So `isKnownDistributionGroup` stopped being an unconditional first branch and became what it is - the
+fallback for `unknown`, where nothing better exists. Every keep that mattered is unchanged: `active`
+with distribution columns, `tombstone` with distribution columns (the deliberate decision), and any
+row that cannot be read. What is now collected is the one state that used to be permanent: a row
+confirmed gone, or one that has stopped naming any scope.
+
+**The second cause was the drop itself.** `forgetMlsGroupIfPresent` called `forgetGroup`, which
+erases the tree and leaves the `knownDistributionGroups` entry standing - so the predicate outlives
+the group it described, and the sweep, which spares whatever that predicate names, would spare the
+leftover entry for ever. It now goes through `forgetDistributionGroupById`, which drops the pair;
+`initializeConnection`'s sweep, which had its own inline `forgetGroup`, uses the same helper.
+
+Six tests hold it, and two that asserted the old behaviour were rewritten rather than deleted, each
+carrying why: a registered carrier whose row is confirmed gone is forgotten, one whose row has
+stopped naming a scope is forgotten, one whose row cannot be read is spared, and the reconciler reads
+the row even for a group it has already registered.

@@ -466,6 +466,91 @@ export async function clickAtPoint(cx, x, y, { park = true, expect = null } = {}
 }
 
 /**
+ * Drags one element onto another with real pointer events, and reports where it went.
+ *
+ * A CLICK IS AN EVENT AND A DRAG IS A TRAJECTORY, which is why this cannot be built out of
+ * {@link clickAtPoint}. `svelte-dnd-action` - what the community rail uses - starts a drag on
+ * MOVEMENT past a threshold after a press, tracks the pointer to decide the insertion index, and
+ * commits on release. A press and a release at two different points produce no drag at all: the
+ * library never sees the crossing, so the list never reorders and the check reads as "the product
+ * does not reorder". The intermediate moves ARE the gesture.
+ *
+ * BOTH CENTRES ARE RE-READ AFTER THE PRESS, because a dnd list moves under the pointer by design:
+ * the placeholder shifts every sibling the moment the drag starts, so a target centre measured
+ * before the press names a position nothing occupies by the time the pointer arrives.
+ *
+ * TOUCH IS NOT MOUSE HERE EITHER, for the reason `clickAtPoint` documents: the phone's WebView
+ * ignores synthetic mouse events. The touch path also holds still for a moment after the press,
+ * which is what `svelte-dnd-action` requires before it will lift on a touch device.
+ *
+ * @returns {{from: {x:number,y:number}, to: {x:number,y:number}, steps: number}}
+ */
+export async function dragTo(cx, fromSelector, toSelector, { steps = 14, holdMs = 120 } = {}) {
+  if (cx.__touch === undefined) cx.__touch = await evaluate(cx, 'navigator.maxTouchPoints > 0');
+  const touch = cx.__touch;
+  const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  const from = await stableCentreOf(cx, fromSelector);
+  const press = touch
+    ? () =>
+        cx.send('Input.dispatchTouchEvent', {
+          type: 'touchStart',
+          touchPoints: [{ x: from.x, y: from.y, radiusX: 12, radiusY: 12, force: 1 }],
+        })
+    : async () => {
+        await cx.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: from.x, y: from.y, buttons: 0 });
+        await cx.send('Input.dispatchMouseEvent', {
+          type: 'mousePressed',
+          x: from.x,
+          y: from.y,
+          button: 'left',
+          clickCount: 1,
+          buttons: 1,
+        });
+      };
+  const move = (x, y) =>
+    touch
+      ? cx.send('Input.dispatchTouchEvent', {
+          type: 'touchMove',
+          touchPoints: [{ x, y, radiusX: 12, radiusY: 12, force: 1 }],
+        })
+      : cx.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'left', buttons: 1 });
+  const release = (x, y) =>
+    touch
+      ? cx.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+      : cx.send('Input.dispatchMouseEvent', {
+          type: 'mouseReleased',
+          x,
+          y,
+          button: 'left',
+          clickCount: 1,
+          buttons: 0,
+        });
+
+  await press();
+  await pause(holdMs);
+
+  // RE-READ AFTER THE LIFT. Everything below the dragged item has already moved by now.
+  const to = await stableCentreOf(cx, toSelector);
+  for (let i = 1; i <= steps; i += 1) {
+    await move(
+      Math.round(from.x + ((to.x - from.x) * i) / steps),
+      Math.round(from.y + ((to.y - from.y) * i) / steps)
+    );
+    await pause(20);
+  }
+  // TWO EXTRA MOVES AT THE DESTINATION, one pixel apart. A library that decides the insertion index
+  // from the LAST move it saw has nothing to decide from if the final move and the release carry the
+  // same coordinates and arrive in the same frame.
+  await move(to.x, to.y + 1);
+  await pause(holdMs);
+  await move(to.x, to.y);
+  await pause(holdMs);
+  await release(to.x, to.y);
+  return { from, to, steps };
+}
+
+/**
  * Clicks the element a selector names, at a centre that is still true when the click lands.
  *
  * AND SAYS SO IF IT WAS NOT. A dispatch that misses is silent by nature - the wrong element usually
