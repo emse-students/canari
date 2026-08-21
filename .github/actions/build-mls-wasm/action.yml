@@ -27,6 +27,17 @@ runs:
         # rust-cache run `cargo metadata` there and print `failed with exit code 101` on every
         # run - a red line that means nothing and teaches its reader to skip red lines.
         cache-workspaces: frontend/mls-wasm
+        # THIS ACTION EXPORTS ITS `rustflags` INTO $GITHUB_ENV, so its default (`-D warnings`) does
+        # not stay in this step - it becomes RUSTFLAGS for EVERY LATER STEP OF THE CALLING JOB. The
+        # AppImage release of v0.14.1 died that way: `bun tauri build`, six steps down, compiled the
+        # vendored `tao` patch under our lint bar and three upstream `glib::MainContext::channel`
+        # deprecations became errors. A path dependency is the one kind Cargo does NOT `--cap-lints
+        # allow`, so vendoring a crate silently opts its upstream code into our strictness.
+        #
+        # WORSE, IT WAS INTERMITTENT: every step here is gated on a WASM cache miss, so whether the
+        # release built at all depended on whether a cache entry had expired. Emptying it here makes
+        # the flag scoped to the one command that should carry it, below.
+        rustflags: ''
 
     - name: Install wasm-pack
       if: steps.cache.outputs.cache-hit != 'true'
@@ -37,6 +48,10 @@ runs:
       if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
       working-directory: frontend/mls-wasm
+      # Where `-D warnings` belongs: on OUR crypto crates, and nowhere else. Registry dependencies
+      # are lint-capped by Cargo, so this reaches mls-wasm and mls-core only.
+      env:
+        RUSTFLAGS: '-D warnings'
       run: wasm-pack build --target web --out-dir ../src/lib/wasm
 
     # A cache that restores an empty directory would otherwise be found by a module-resolution

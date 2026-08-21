@@ -232,13 +232,18 @@ export class MembersController {
     );
     const safeGroupId = sanitizeQueryValue(body?.groupId ?? '', 'groupId');
     // Idempotent: ON CONFLICT DO NOTHING via unique constraint (userId, groupId).
-    await this.dismissedRepo
+    const ins = await this.dismissedRepo
       .createQueryBuilder()
       .insert()
       .values({ userId: safeUserId, groupId: safeGroupId })
       .orIgnore()
       .execute();
-    this.logger.log(`[DISMISS] user=${safeUserId} group=${safeGroupId}`);
+    // WHAT ACTUALLY HAPPENED, not what was asked for. TypeORM appends RETURNING on Postgres, so
+    // `raw` holds one row when the insert landed and none when the unique constraint ignored it.
+    // Without this the line is identical whether a dismissal was recorded or already existed, and
+    // a reader counting dismissals in a window counts requests instead.
+    const recorded = Array.isArray(ins.raw) ? ins.raw.length : 0;
+    this.logger.log(`[DISMISS] user=${safeUserId} group=${safeGroupId} recorded=${recorded}`);
     return { status: 'dismissed' };
   }
 
@@ -259,11 +264,19 @@ export class MembersController {
       'Cannot un-dismiss a group for another user'
     );
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
-    await this.dismissedRepo.delete({
+    const del = await this.dismissedRepo.delete({
       userId: safeUserId,
       groupId: safeGroupId,
     });
-    this.logger.log(`[UNDISMISS] user=${safeUserId} group=${safeGroupId}`);
+    // ZERO IS THE ORDINARY CASE AND HAD TO BE VISIBLE. This endpoint means "ensure this group is not
+    // dismissed", so every Welcome calls it whether or not a dismissal exists - and a dismissal is
+    // per USER while the call is per DEVICE, so one re-add on a two-device account produces two
+    // requests and at most one lift. Until 2026-08-21 both said the same sentence, and a READ-10
+    // window on production showed two `[UNDISMISS]` lines one second apart for a group nobody had
+    // ever dismissed: two events reported, zero events occurred, both promoted to `notable` for a
+    // human to read. The count is what separates the lift from the no-op.
+    const lifted = del.affected ?? 0;
+    this.logger.log(`[UNDISMISS] user=${safeUserId} group=${safeGroupId} lifted=${lifted}`);
     return { status: 'undismissed' };
   }
 

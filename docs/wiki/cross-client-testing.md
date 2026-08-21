@@ -17,7 +17,7 @@ Updated after every run.
 | 0 SETUP | - | - | 5/9 `passed`; SETUP-2 skipped by decision, SETUP-7/8 owed before CORRUPT and PIN |
 | 1 MSG | 12 | `226fe755` | **12/12 `PASS`, all clients clean, server clean** (2026-08-16) |
 | 2 TYPE | 5 | `25376b86` | 5/5 `passed` x5 - 25 verdicts, 25 `PASS`; re-run owed on the current build |
-| 3 READ | 10 | `25376b86` | 8/8 runnable `passed` x5 - 40 verdicts, 40 `PASS`; READ-5 and READ-10 `skipped` |
+| 3 READ | 10 | `70497810` | **9/9 runnable `PASS` x5 - 45 verdicts, 45 `PASS`, CLEAN 5/5**, server window clean on every pass (2026-08-21), runner `2c2b83d1b748`. READ-10 is now armed and green; READ-5 stays `SKIPPED` - it needs four readers and the estate has two accounts. The per-row timings the cells used to carry were measured by a superseded runner and were not carried over; `results.ndjson` holds this run's |
 | 4 MUT | 21 | `25376b86` | 19/21 `PASS` x5; MUT-15 and MUT-19 fixed and rewritten - **re-run owed** |
 | 5 SEARCH | 6 | - | `pending` |
 | 6 MENTION | 6 | - | `pending` |
@@ -106,16 +106,16 @@ window. Earlier x5 series on `8a3edbdd`, `e62c21f1` and `25376b86` all read 13/1
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| READ-1 | Reading on W1 clears the badge on W1 and marks it read for the sender | `W1 W2` | `PASS` 5/5 - clears 3-11 ms, read 1-4 ms |
-| READ-2 | The SAME user's other device also clears | `+A1` | `PASS` 5/5 - A1 clears in ~2.2 s |
-| READ-3 | The receipt only fires with the window FOCUSED and the tab visible | `W1 W2` | `PASS` 5/5 - silent 6 s hidden, ~2.1 s once restored |
-| READ-4 | The 2 s debounce batches: twenty messages send ONE watermark | `W1 W2` | `PASS` 5/5 - 20 markers, one flip in 2-8 ms |
-| READ-5 | "Seen by" resolves to display names, and to `+N` past three | `W1 W2` | `SKIPPED` - needs a 4th reader |
-| READ-6 | Channels send no receipts at all; read state comes from the server tally | `W1 W2` | `PASS` 5/5 - no receipt in a 4 s window |
+| READ-1 | Reading on W1 clears the badge on W1 and marks it read for the sender | `W1 W2` | `PASS` 5/5 |
+| READ-2 | The SAME user's other device also clears | `+A1` | `PASS` 5/5 |
+| READ-3 | The receipt only fires with the window FOCUSED and the tab visible | `W1 W2` | `PASS` 5/5 |
+| READ-4 | The 2 s debounce batches: twenty messages send ONE watermark | `W1 W2` | `PASS` 5/5 |
+| READ-5 | "Seen by" resolves to display names, and to `+N` past three | `+user` | `SKIPPED` - needs FOUR readers and the estate has TWO accounts. The watermark is per USER, not per device (READ-3's lesson), so the phone does not make a third: two more enrolments are owed, and each costs the owner's 2FA. The `W1 W2` in this column was wrong - it said the row was runnable. |
+| READ-6 | Channels send no receipts at all; read state comes from the server tally | `W1 W2` | `PASS` 5/5 |
 | READ-7 | Unread count after a reload, with the receipt still in flight | `W1 W2` | `PASS` 5/5 |
-| READ-8 | Unread count on a conversation whose messages arrived while logged out | `W1 W2` | `PASS` 5/5 - 3 of 3, ~215 ms after reconnect |
-| READ-9 | Read on A1 while W1 is open: the count on W1 goes without a reload | `+A1` | `PASS` 5/5 - clears live in ~2.1 s |
-| READ-10 | Reading a conversation whose peer has deleted it | `W1 W2` | `SKIPPED` - `--destructive` only |
+| READ-8 | Unread count on a conversation whose messages arrived while logged out | `W1 W2` | `PASS` 5/5 |
+| READ-9 | Read on A1 while W1 is open: the count on W1 goes without a reload | `+A1` | `PASS` 5/5 |
+| READ-10 | Reading a conversation whose peer has deleted it | `+A1` | `PASS` 5/5 - `--destructive`, and it now dismisses its own dead row on EVERY owner device before it will pass |
 
 ## 4 - MUT - editing, deleting, reacting, pinning
 

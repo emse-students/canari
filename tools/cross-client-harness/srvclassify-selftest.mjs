@@ -88,6 +88,17 @@ check(
 const matches = (rules, l) => rules.some((r) => r.test(l));
 
 const BENIGN_CASES = [
+  // THE SAME TWO ENDPOINTS WITH NOTHING TO DO. Siblings of the NOTABLE_CASES pair below, and the
+  // reason the rule reads the count instead of the endpoint name.
+  `${NEST}[MembersController] [DISMISS] user=aaaaaaaa group=g recorded=0`,
+  `${NEST}[MembersController] [UNDISMISS] user=aaaaaaaa group=g lifted=0`,
+  // A CONTAINER'S BOOT BANNER, all four spellings. Silent because the boot itself is announced once
+  // in NOTABLE - see the `Nest application successfully started` case below, which is the sibling
+  // that makes this silence safe rather than a hole.
+  `${NEST}[RouterExplorer] Mapped {/api/mls/groups/:groupId, DELETE} route +0ms`,
+  `${NEST}[RoutesResolver] MembersController {/api}: +0ms`,
+  `${NEST}[NestMicroservice] Nest microservice successfully started +1ms`,
+  `${NEST}[ServerKafka] INFO [ConsumerGroup] Consumer has joined the group {"timestamp":"2026-08-21T20:06:21.247Z","groupId":"chat-delivery-consumer-server"}`,
   // THE GROUP LIFECYCLE, which every check that builds a group produces and nothing classified until
   // 2026-08-21 - twenty-four unexplained lines from one READ-10 run, all of them its own fixture.
   `${NEST}[GroupsController] [CREATE_GROUP][create-grp-6126d2fe] name="READ10-mt3bjpjl" createdBy=aaaaaaaa isGroup=true creatorDevice=web-a-b groupId=g`,
@@ -163,13 +174,22 @@ for (const l of BENIGN_CASES) {
 }
 
 const NOTABLE_CASES = [
+  // THE TWO BOOT LINES THAT ARE NOT THE ROUTE TABLE: a capability whose absence nothing else would
+  // reveal, and a deletion pass crossing whatever window it lands in.
+  `${NEST}[AppController] [FIREBASE] Admin SDK initialized`,
+  `${NEST}[AppController] [CRON] initial sweep: running every GC job once`,
+  `${NEST}[AppController] [CRON] initial sweep: done`,
+  // THE ONE LINE A RESTART IS WORTH. Its 106 companions are BENIGN above; if this ever moved with
+  // them, a service could restart under a check and no bucket would say so.
+  `${NEST}[NestApplication] Nest application successfully started +1ms`,
   // THE OTHER HALF of the `No message queued` warning: recipients existed and every one was offline,
   // so a 60-second rendezvous will expire with nothing answering it. Shown, never fatal.
   `${NEST}[MessagingService] [SEND][send-65d68721] No message queued after validation - recipients=2 durable=false - every recipient device is offline and this frame is transport-only`,
   // A DISMISSAL MARKER MOVING. It is the one row a group's purge must not take, so both directions
-  // are visible whenever they happen.
-  `${NEST}[MembersController] [DISMISS] user=aaaaaaaa group=g`,
-  `${NEST}[MembersController] [UNDISMISS] user=aaaaaaaa group=g`,
+  // are visible whenever they happen - and ONLY when they happen. The no-op spellings are in
+  // BENIGN_CASES; separating them is what stopped a two-device re-add claiming two events.
+  `${NEST}[MembersController] [DISMISS] user=aaaaaaaa group=g recorded=1`,
+  `${NEST}[MembersController] [UNDISMISS] user=aaaaaaaa group=g lifted=1`,
   `${NEST}[MessagingService] [HISTORY_REQ][history-req-fcd21c9c] FORWARDED target=a:web-a-b group=g requester=c:web-c-d`,
   `${NEST}[MessagingService] [HISTORY_REQ][history-req-13bea09c] NO_PEER_ONLINE group=g requester=a:web-a-b`,
   `${NEST}[MessagingService] [SEND][send-85d25af2] TRANSPORT_SKIPPED_OFFLINE count=1 group=g - no row, no push: the rendezvous would expire first`,

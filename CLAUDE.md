@@ -26,6 +26,7 @@
 | Campaign board: every check, its verdict, its build | [docs/wiki/cross-client-testing.md](docs/wiki/cross-client-testing.md) |
 | Campaign design: the ladder, the scope, the preflight | [docs/wiki/cross-client-campaign.md](docs/wiki/cross-client-campaign.md) |
 | Why a result may be believed | [docs/wiki/testing-methodology.md](docs/wiki/testing-methodology.md) |
+| What the app has that NOTHING watches | [docs/wiki/mechanism-audit.md](docs/wiki/mechanism-audit.md) |
 | How to operate the test rig | [tools/cross-client-harness/README.md](tools/cross-client-harness/README.md) |
 | What is owed on real hardware | [docs/wiki/device-verification.md](docs/wiki/device-verification.md) |
 | Secrets, services, bootstrap steps | `infrastructure/MIGRATION.md` |

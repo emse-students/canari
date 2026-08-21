@@ -7,7 +7,13 @@
 // mls.bin. Every `char *` returned here is heap-allocated by Rust and MUST be
 // released with `canari_free_string`.
 
+// <stddef.h> for size_t, <stdint.h> for the fixed-width types. Both are needed and neither is
+// implied: this header is precompiled as the NSE's bridging header, where nothing else is in
+// scope, so a missing include is a build failure in the extension target ALONE - the app target
+// links the same libapp.a without ever parsing this file. `uint32_t` arrived with the Graine
+// decrypt entry point and <stdint.h> did not, which took out the whole v0.14.1 iOS release.
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {

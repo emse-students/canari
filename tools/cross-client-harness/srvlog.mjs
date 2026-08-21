@@ -261,6 +261,34 @@ const BENIGN = [
   // it appears in one of our windows we want to see it.
   /\[PartnershipsService\] \[PARTNERSHIP\] create card: association=[0-9a-f]{8} mode=\S+/,
   /\[PartnershipsService\] \[PARTNERSHIP\] added \d+ code\(s\) to card=[0-9a-f]{8}/,
+  // A CONTAINER'S BOOT BANNER - ONE BOOT SAID A HUNDRED AND SIX TIMES.
+  //
+  // A redeploy landing inside an observation window put 106 unexplained lines into the READ phase on
+  // 2026-08-21 and failed its server verdict while all ten checks passed. Every one of them was Nest
+  // printing its own route table: 90 `RouterExplorer Mapped`, 14 `RoutesResolver`, the microservice
+  // start, and kafkajs joining its consumer group. Not one carries information about the run.
+  //
+  // SILENT HERE BECAUSE THE BOOT IS ALREADY LOUD SOMEWHERE ELSE. `[NestApplication] Nest application
+  // successfully started` is in NOTABLE and stays there, so a restart under a check is still SEEN -
+  // once, in one line, which is the whole content of the event. That is the discrimination being
+  // made: the fact that a service restarted is worth a line; the identical route table it prints
+  // every single time is not. Demoting the announcement and keeping the table would be the exact
+  // inversion, and `[CRON] ... scheduled` and `[FIREBASE] Admin SDK initialized` - which DO differ
+  // between builds - are deliberately left classified as they were.
+  //
+  // Shaped tightly enough that only a boot matches. `Mapped {<route>, <VERB>} route` needs both
+  // braces and the trailing word; `RoutesResolver` needs a controller name and a mount path. A
+  // runtime line cannot accidentally wear either.
+  /\[RouterExplorer\] Mapped \{[^}]*\} route/,
+  /\[RoutesResolver\] \w+Controller \{[^}]*\}:/,
+  /\[NestMicroservice\] Nest microservice successfully started/,
+  /\[ServerKafka\] INFO \[ConsumerGroup\] Consumer has joined the group /,
+  // THE DISMISSAL NO-OPS, whose loud siblings are in NOTABLE above. Asking that a group not be
+  // dismissed when it never was is the ordinary path through every re-add, and asking twice from two
+  // devices is what one re-add looks like on an account with two. Nothing changed, so nothing is
+  // claimed - but the request is still named here rather than dropped from the rules, so that the
+  // day these outnumber the lifts by a factor nobody expected, the count is in the window.
+  /\[MembersController\] \[(DISMISS|UNDISMISS)\] user=\S+ group=\S+ (recorded|lifted)=0/,
 ];
 
 /**
@@ -279,14 +307,35 @@ const BENIGN = [
  */
 const NOTABLE = [
   /welcome_request|history_request|history_bundle|history_digest/i,
+  // TWO THINGS A BOOT DOES THAT ITS ROUTE TABLE DOES NOT, and they are the reason the banner above
+  // was demoted to BENIGN rather than the whole boot being waved through.
+  //
+  // FIREBASE IS A CAPABILITY DECLARING ITSELF. Real push is the one thing the harness has never
+  // proved (COMM-14), so the line that says the Admin SDK came up is the only positive evidence in
+  // any window that push COULD have worked. An absence is unnoticeable unless the presence is shown.
+  /\[AppController\] \[FIREBASE\] Admin SDK initialized/,
+  // A DESTRUCTIVE SWEEP RUNNING INSIDE AN OBSERVATION WINDOW. Every container start replays every GC
+  // job once, a minute in - message cleanup, soft-deleted group purge, orphaned member rows, stale
+  // invitations. Each is age-gated, so a boot-time run deletes only what was already eligible and the
+  // behaviour is right: a box that was down for a week catches up instead of waiting for its tick.
+  // It is still a deletion pass crossing a measurement, and a check whose fixture vanished deserves
+  // to find this in its own window rather than reconstruct it from a deploy timestamp afterwards.
+  /\[AppController\] \[CRON\] initial sweep: (running every GC job once|done)/,
   // A RENDEZVOUS NOBODY CAN ANSWER. The other half of the `No message queued` warning: a transport
   // frame is addressed to whoever is online now, expires in 60 s, and had recipients - all offline.
   // Nothing is lost that was durable, and nothing will answer either, so it is shown and never fatal.
   /\[SEND\]\[send-[0-9a-f]+\] No message queued after validation - recipients=[1-9]\d* .* every recipient device is offline/,
-  // A PERSON'S DISMISSAL MARKER BEING WRITTEN OR ERASED. It outlives the group deliberately (it is a
-  // fact about what someone chose, not about the group), so it is the one row a group's purge must
-  // NOT take - and it is worth seeing whenever it moves. Both spellings, because they are opposites.
-  /\[MembersController\] \[(DISMISS|UNDISMISS)\] user=\S+ group=\S+/,
+  // A PERSON'S DISMISSAL MARKER ACTUALLY MOVING. It outlives the group deliberately (it is a fact
+  // about what someone chose, not about the group), so it is the one row a group's purge must NOT
+  // take - and it is worth seeing whenever it moves. Both directions, because they are opposites.
+  //
+  // ON THE COUNT, NOT ON THE ENDPOINT, and that is the whole point of the count existing. `POST
+  // dismissed-groups` is an upsert and `DELETE` is an ensure-not-dismissed, so both are called on
+  // paths where nothing is there to change: every Welcome lifts a dismissal that usually does not
+  // exist, once PER DEVICE for a marker that is per USER. Matching the endpoint made a two-device
+  // re-add print two notable lines for zero events. `recorded=0` / `lifted=0` are the no-ops and sit
+  // in BENIGN; only a marker that moved reaches a reader.
+  /\[MembersController\] \[(DISMISS|UNDISMISS)\] user=\S+ group=\S+ (recorded|lifted)=[1-9]\d*/,
   /epoch|re-?add|revoke|forget/i,
   /retention|purge|evict/i,
   /queue depth|QUEUE_DEPTH|page capped by bytes/i,

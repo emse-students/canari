@@ -11,6 +11,40 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The v0.14.1 iOS release never built: a header declared `uint32_t` without `<stdint.h>`.**
+  `canari_mls_ffi.h` includes `<stddef.h>` for `size_t`, and `canari_native_decrypt_graine_message`
+  arrived later carrying a `uint32_t message_index` that nothing declared. Only the Notification
+  Service Extension parses that header - it is the NSE's bridging header, precompiled with nothing
+  else in scope - while the app target links the same `libapp.a` without ever reading it, so the
+  break was invisible everywhere except the one target that ships push decryption.
+- **The v0.14.1 AppImage release died on a lint policy that escaped its step.**
+  `actions-rust-lang/setup-rust-toolchain` writes its `rustflags` input into `$GITHUB_ENV`, so its
+  default `-D warnings` applied to every later step of the job - including `bun tauri build` six
+  steps down, which compiles our vendored `tao` patch. A path dependency is the one kind Cargo does
+  not `--cap-lints allow`, so three upstream `glib::MainContext::channel` deprecations became our
+  errors. It was intermittent on top: the whole setup is gated on a WASM cache miss, so whether the
+  release built depended on whether a cache entry had expired. `-D warnings` is now set on the
+  `wasm-pack build` step alone, where it was always meant to apply.
+
+- **The dismissal endpoints reported requests rather than events.** `[DISMISS]` and `[UNDISMISS]`
+  printed the same sentence whether a marker moved or nothing did. Both are deliberately idempotent -
+  `POST dismissed-groups` upserts, `DELETE` means "ensure this is not dismissed" and every Welcome
+  calls it - and a dismissal is per USER while the call is per DEVICE. A READ-10 window on production
+  showed two `[UNDISMISS]` lines one second apart for a group nobody had ever dismissed: two events
+  reported, zero occurred, and the harness promoted both to `notable` for a human to read. Both lines
+  now carry `recorded=` / `lifted=`, and the server-log classifier splits on the count instead of the
+  endpoint - a marker that moved is notable, a no-op is not.
+- **A container's boot banner failed a phase that had passed every check.** A redeploy landing inside
+  an observation window put 106 unexplained lines into the READ phase - 90 `RouterExplorer Mapped`,
+  14 `RoutesResolver`, the microservice start, the kafka consumer join - and the phase exited non-zero
+  with 9 PASS and 1 SKIPPED behind it. The route table is now benign, because the boot is already
+  announced once by `Nest application successfully started`; `[FIREBASE] Admin SDK initialized` and
+  `[CRON] initial sweep` are promoted to notable instead, being the only two boot lines that carry
+  information - a capability whose absence nothing else would reveal, and a deletion pass crossing
+  whatever window it lands in.
+
 ### Added
 - **Product and partnership cards now carry the owning association's own color, and an admin can add a short badge like "Nouveau" or "-20%".** Every card in a shared grid used to be visually identical regardless of which association it belonged to; the card shell now takes a colored left edge from the association's own `color` (the same one the calendar already uses), falling back to a name-derived color when the association hasn't set one, so every card is distinguishable without any admin having to configure anything. A short free-text badge is a separate, optional per-card field, shown as a ribbon across the top in the same accent color. Getting the ribbon to actually sit flush with the card's rounded top corners took three attempts: a plain CSS `border` makes `overflow-hidden` clip children at the padding box - a smaller, differently-curved rectangle than the border-box the card itself is rounded to - so a full-bleed ribbon's corners kept coming up a hair short no matter what radius or negative margin it was given, revealed as a sliver of the card's own background peeking through (confirmed with `elementFromPoint`, not by eye - two rounds of "looks fine" screenshots turned out not to be). The border is now painted as an inset `box-shadow` instead, which consumes no box-model space at all, so there is no padding-box/border-box gap left to fall into
 - **The logo/icon upload editor is now a real crop tool: drag the photo, resize the selection, zoom - instead of a mode switch nobody could make sense of.** The previous editor offered a choice between "Square" and "Margins," where margins meant letterboxing the whole photo on a white background - a real feature, but nothing about the label said so, and the only thing that visibly did anything was zoom. It's now one view: the full photo, a square selection that stays centered and can be resized by dragging its handle, a zoom slider, and you reposition the photo itself by dragging it under the selection - what shows inside the white square is exactly what gets exported, with no separate preview to keep in sync. Same component behind both association logos and the partnership/product card icons above, so fixing it once fixes it everywhere it's used. Three defects surfaced once the tool was actually used: the viewport's solid black background made a transparent photo's cleared areas indistinguishable from an opaque black background while editing (the export itself was already correct - only the editing view lied), replaced with a checkerboard, the industry-standard way of showing "nothing is here" rather than "black is here"; the minimum zoom scaled every photo to COVER the full 440x300 viewport, which forced an already-square photo bigger than it needed to be and left no way to zoom back out to see the whole thing at once, fixed by scaling to CONTAIN the photo instead, so the entire photo is visible at zoom 1 and the crop square's maximum size follows the photo's own displayed size rather than the viewport's; and picking a second photo after already having picked one silently broke the editor to a blank, zero-size view, because the code that reset internal state on a new pick was nulling out the bound `<img>` element reference even though the element itself never actually unmounted - Svelte only re-establishes that binding on a real mount, so cleanup and re-pick collapsing into the same render tick left it null forever after the first swap

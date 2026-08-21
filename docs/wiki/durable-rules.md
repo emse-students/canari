@@ -123,6 +123,8 @@ Deep links, system events, rosters and the channel/DM asymmetry are on those two
 
 **Who may do what, and who is told**
 
+- **A LOG LINE NAMED AFTER ITS ENDPOINT COUNTS REQUESTS; ONLY ONE NAMED AFTER ITS OUTCOME COUNTS EVENTS.** An idempotent write is CALLED on paths where there is nothing to do - and a dismissal is per USER while the call that lifts it is per DEVICE, so one re-add on a two-device account is two requests and at most one lift. Print what changed (`lifted=`, `recorded=`), or the line claims an event on every no-op and a reader counting them counts traffic. [cd](services/chat-delivery.md)
+
 - **A CAPABILITY REMOVED IS URGENT IN A WAY A CAPABILITY GRANTED IS NOT** - a promotion arriving late is an annoyance, a demotion arriving late leaves somebody clicking controls the server now refuses. Push the change to the subject, carrying what the role GRANTS, not its name. [backlog](backlog.md)
 
 - **A permission check that runs where the action is OFFERED is not a check** - where the server cannot read the content, the RECEIVER enforces it, against the identity MLS authenticated. [chat](frontend/modules/chat.md)

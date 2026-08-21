@@ -99,6 +99,15 @@ answer to a question still being asked - discovery reads the marker to tell "I d
 "somebody else deleted it", and only the first may be purged silently. The `character varying` type
 is the CONSEQUENCE of that design, not an obstacle to a cascade somebody would otherwise want.
 
+**Both endpoints that touch it are idempotent, and their logs say how much of that was needed.**
+`POST dismissed-groups` upserts (`ON CONFLICT DO NOTHING` on `(userId, groupId)`) and the `DELETE`
+means *ensure this group is not dismissed* - so every Welcome calls it, almost always with nothing to
+lift. The marker is per USER and the call is per DEVICE, which makes one re-add on a two-device
+account exactly two requests and at most one lift. `[DISMISS] ... recorded=N` and
+`[UNDISMISS] ... lifted=N` therefore print the affected row count, not the endpoint's intention: the
+harness classifies a non-zero count as notable and a zero as benign, and before the counts existed a
+single re-add printed two notable lines for zero events.
+
 Which is why `deleteGroupOwnedRows` takes `groupRowSurvives`: a soft delete keeps the tombstone,
 so it keeps the marker; a hard delete may take it, because nothing will ever ask again. The three
 routes that end a group softly all pass it. **This was learnt by breaking it** - the day the three
