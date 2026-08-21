@@ -261,9 +261,13 @@ was written for from the other side. Under investigation; whatever it turns out 
 Deletion removes state while OTHER state keeps pointing at it, so each row pairs it with something
 mid-flight.
 
+**One of the ten has a runner, and it had one all along** - `del1.mjs`, WP-HISTGHOST-1's regression
+check. It was absent from `checks.mjs`, so `run.mjs --list` reported DEL as zero coverage and nobody
+looked for the file. The other nine are still to write.
+
 | Id | The crossing | Needs | State |
 | --- | --- | --- | --- |
-| DEL-1 | Peer deletes while a history solicitation for that group is outstanding | `W1 W2` | `pending` - no banner, marker or retried solicitation may survive |
+| DEL-1 | Peer deletes while a history solicitation for that group is outstanding | `W1 W2` | `pending` - no banner, marker or retried solicitation may survive. **`del1.mjs` has covered this since WP-HISTGHOST-1** and was reachable from nothing: `checks.mjs` listed DEL with no scripts, so the phase read as zero coverage, and the script printed its verdict to stdout instead of recording it. Registered and wired to `record`/`gate` on 2026-08-21 - rule 22 |
 | DEL-2 | Peer deletes while a message from us is in the outbox | `W1 W2` | `pending` - resolves or fails LOUDLY, never a silent permanent pending |
 | DEL-3 | Both peers delete the same conversation within a second | `W1 W2` | `pending` - no error either side, neither resurrects it |
 | DEL-4 | Delete a conversation while its media is still uploading | `W1 W2` | `pending` - no orphan blob left addressable |

@@ -22,17 +22,37 @@
  * an existing member, so the account that answers a search on a fresh group is by construction the
  * other one. That removes the "which profile is which account" question from the check entirely.
  *
+ * IT WAS WRITTEN BEFORE THE CAMPAIGN HAD A BOARD, and printed its verdict to stdout only - so DEL-1
+ * read `pending` on [cross-client-testing](../../docs/wiki/cross-client-testing.md) while a runner
+ * for it had existed all along, and `checks.mjs` listed the DEL phase with no scripts at all. That is
+ * rule 22 exactly: a file nobody executes reads as coverage on every review. It now records like
+ * every other check and is registered in the manifest.
+ *
+ * A CRASH BEFORE THE VERDICT STILL RECORDS NOTHING, and that is left as it is rather than papered
+ * over: `run.mjs` prints `EXIT n (and recorded nothing)`, which is a LOUD and distinct state - a
+ * check that died is not a check that failed, and giving the two one row would merge them.
+ *
  *   node del1.mjs [--keep]     --keep leaves the group behind for manual inspection
  */
 import { client, evaluate, realClick, until } from './chat.mjs';
 import { usernames } from './accounts.mjs';
+import { mark, record } from './results.mjs';
+import { gate, report, watch } from './watch.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const NAME = `DEL1-${Date.now().toString(36)}`;
+// THE CAMPAIGN'S OWN STAMP, so the group this check leaves behind on a failure is recognisable as
+// debris from a named run rather than as a group somebody made by hand.
+const run = mark('DEL1');
+const NAME = run;
 const keep = process.argv.includes('--keep');
 
 const W1 = await client(9224, 'canari-emse.fr', { focus: false });
 const W2 = await client(9223, 'canari-emse.fr', { focus: false });
+
+// FROM THE FIRST GESTURE, not from the delete: what a run leaves in the console is evidence about
+// the whole flow, and a window opened at the verdict would miss the join that armed it.
+const wa = await watch(W1, 'W1');
+const wb = await watch(W2, 'W2');
 
 /** Closes whatever overlay is open, by that overlay's own control. See `invite.mjs`. */
 const overlay = (cx) =>
@@ -328,10 +348,30 @@ console.log(`[del1] W2 AFTER delete:  ${JSON.stringify(after)}`);
 const fail = [];
 if (after.marker !== null) fail.push('the durable awaiting-history marker survived the delete');
 if (after.banner !== null) fail.push(`a history banner is still on screen: ${after.banner}`);
-console.log(
-  `[del1] VERDICT ${fail.length ? 'FAIL - ' + fail.join('; ') : armed ? 'PASS' : 'VACUOUS - assertions held but nothing was armed'}`
-);
+
+const expectations = {
+  // The deliberate part, and what makes the other two mean anything: a row that simply vanished
+  // would satisfy them for the wrong reason and would be a DIFFERENT behaviour from the reported one.
+  theRowIsKeptAndMarkedRemoved: after.lifecycle === 'removed',
+  theDurableMarkerIsGone: after.marker === null,
+  noHistoryBannerSurvives: after.banner === null,
+};
+
+const verdict = !armed ? 'VACUOUS' : fail.length > 0 ? 'FAIL' : 'PASS';
+const gated = gate(verdict, { W1: await report(wa), W2: await report(wb) });
+
+record('DEL-1', gated.verdict, {
+  ...gated.detail,
+  group: NAME,
+  groupId,
+  armed,
+  before,
+  after,
+  ...expectations,
+  failures: fail,
+});
+console.log(`[del1] VERDICT ${gated.verdict}${fail.length ? ' - ' + fail.join('; ') : ''}`);
 
 W1.close?.();
 W2.close?.();
-process.exit(fail.length ? 1 : 0);
+process.exit(gated.verdict === 'PASS' ? 0 : 1);

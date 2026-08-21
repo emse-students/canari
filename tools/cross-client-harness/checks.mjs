@@ -149,7 +149,10 @@ export const PHASES = {
   MULTI: { title: 'one user, two devices', scripts: [], needs: ['W1', 'W2', 'A1'] },
   CALL: { title: 'audio and video', scripts: [], needs: ['W1', 'W2', 'A1'] },
   CORRUPT: { title: 'deliberate store damage', scripts: [], needs: ['W1', 'W2'] },
-  DEL: { title: 'deleting a conversation, crossed', scripts: [], needs: ['W1', 'W2'] },
+  // ONE OF TEN, AND IT WAS WRITTEN BEFORE THIS MANIFEST EXISTED. `del1.mjs` covers DEL-1
+  // (WP-HISTGHOST-1's regression check) and was reachable from nothing: the phase read as ZERO
+  // coverage, the board read `pending`, and the script's verdict lived in a console line. Rule 22.
+  DEL: { title: 'deleting a conversation, crossed', scripts: ['del1.mjs'], needs: ['W1', 'W2'] },
   PIN: { title: 'the encryption PIN', scripts: [], needs: ['W1', 'W2'] },
 };
 
