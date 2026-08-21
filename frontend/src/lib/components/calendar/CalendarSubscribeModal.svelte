@@ -3,11 +3,16 @@
   import { m } from '$lib/paraglide/messages';
 
   /**
-   * Subscribe options for an `.ics` feed. `webcal://` only has a registered handler on Apple
-   * platforms (and some manually-configured desktops) - clicking it anywhere else silently does
-   * nothing, no error, no dialog. Google Calendar's `cid=` link works everywhere a browser does,
-   * and copy-the-URL-and-paste-it-into-your-calendar-app always works, so both are offered
-   * alongside the Apple-only button rather than in place of it.
+   * Subscribe options for an `.ics` feed. `webcal:` is historically defined as equivalent to
+   * `http:`, not `https:` - a client that follows that literally (confirmed against Thunderbird)
+   * requests plain HTTP, gets Cloudflare's 301 to HTTPS, and refuses to follow a cross-scheme
+   * redirect for a calendar subscription, reporting no calendar found at the address. `webcals:`
+   * is the less-common but real secure counterpart (equivalent to `https:`), which is what this
+   * component hands out since our feed is always HTTPS-only - never plain `webcal:`, which can
+   * only ever break against us. Even so, only some clients have a registered handler for either
+   * scheme at all, and clicking one with none does nothing, no error, no dialog - so Google
+   * Calendar's `cid=` link (works anywhere a browser does) and copy-the-URL-and-paste-it are
+   * offered alongside rather than in place of it.
    */
   interface Props {
     open: boolean;
@@ -28,7 +33,9 @@
     return `https://calendar.google.com/calendar/render?cid=${encodeURIComponent(httpUrl)}`;
   });
 
-  const webcalUrl = $derived(icsUrl ? icsUrl.replace(/^https?:/, 'webcal:') : '');
+  const webcalUrl = $derived(
+    icsUrl ? icsUrl.replace(/^https:/, 'webcals:').replace(/^http:/, 'webcal:') : ''
+  );
 
   function copyCalendarLink() {
     if (!icsUrl) return;
