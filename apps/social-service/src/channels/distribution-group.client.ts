@@ -124,7 +124,9 @@ export async function readDistributionGroup(
 ): Promise<DistributionGroupRef | null> {
   // Named ON THE READ rather than inferred later: only the delivery side holds the membership rows,
   // and a caller that did not ask gets `memberDevices: undefined` instead of a misleading empty list.
-  const reader = String(forUserId ?? '').trim().toLowerCase();
+  const reader = String(forUserId ?? '')
+    .trim()
+    .toLowerCase();
   const query = reader ? `?userId=${encodeURIComponent(reader)}` : '';
   const payload = (await callDelivery(
     secret,

@@ -1092,7 +1092,11 @@ export class ChannelService {
   ): Promise<DistributionGroupRef> {
     await this.assertWorkspaceMember(workspaceId, userId);
 
-    const ref = await readDistributionGroup(this.internalSecret, workspaceScope(workspaceId), userId);
+    const ref = await readDistributionGroup(
+      this.internalSecret,
+      workspaceScope(workspaceId),
+      userId
+    );
     if (!ref) {
       // Every community created since WP-21 has one, and the clean cut leaves no older population.
       // So this is not a state to repair silently: it is a community that cannot carry seeds, and

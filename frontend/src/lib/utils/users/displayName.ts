@@ -180,6 +180,11 @@ export async function resolveUserDisplayName(userId: string): Promise<string | n
   // label - a system message is rendered from its event, never from a sender name.
   if (normalized === SYSTEM_SENDER_ID) return null;
 
+  // NOR IS THE ABSENCE OF ONE. A caller writing `authorId ?? ''` is stating that there is no user
+  // here; `GET /api/users/` cannot turn that into a name and was 404ing once per mount. Null for the
+  // same reason as above - the caller's own fallback label is the answer, and it already has it.
+  if (!normalized) return null;
+
   const cached = displayNameCache.get(normalized);
   if (cached) return cached;
   if (shouldSkipRetry(normalized)) return null;

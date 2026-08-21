@@ -31,6 +31,18 @@
     return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3012';
   }
 
+  /**
+   * WHETHER THERE IS ANYONE TO ASK ABOUT.
+   *
+   * Two call sites hand this component `?? ''` on purpose - a post whose author is gone, a
+   * parrainage entry with no `sub` - which is them stating a FACT: there is no user here. Passing it
+   * on to the network turned that fact into `GET /api/users//avatar`, a 404 per mount, plus the
+   * `GET /api/users/` its name lookup made beside it. Neither could have answered anything. The
+   * initials placeholder below is the ANSWER for an absent user, not a fallback for a failed
+   * request.
+   */
+  const identified = $derived(userId.trim().length > 0);
+
   const avatarSrc = $derived(`${getCoreUrl()}/api/users/${encodeURIComponent(userId)}/avatar`);
   const _fallbackSrc = $derived(generateAvatarPlaceholder(userId));
 
@@ -66,6 +78,11 @@
     imageFailed = false;
     imageLoaded = false;
     triedDirectFallback = false;
+    if (!identified) {
+      // Nothing requested, so nothing to retain and nothing to release.
+      display = { kind: 'none' };
+      return;
+    }
     let cancelled = false;
     const pending = resolveUserAvatarDisplayUrl(httpUrl).then((resolved) => {
       if (cancelled) return;

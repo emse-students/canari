@@ -281,7 +281,9 @@ export class InternalController {
     // a row in either state means the join happened and the fan-out will reach it, while NO row
     // means nothing here will ever deliver to it again. Treating `pending` as absent would send a
     // device that had just joined straight back through an external join it does not need.
-    const asked = String(userId ?? '').trim().toLowerCase();
+    const asked = String(userId ?? '')
+      .trim()
+      .toLowerCase();
     const memberDevices = asked
       ? (
           await this.deviceGroupRepo.find({

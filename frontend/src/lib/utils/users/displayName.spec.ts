@@ -149,6 +149,24 @@ describe('resolveDisplayNames', () => {
     expect(getName('system')).toBe('system');
   });
 
+  it('never fetches a BLANK id - the absence of a user is not a user', async () => {
+    // Two call sites hand `authorId ?? ''` to <Avatar>/<UserName> on purpose: a post whose author
+    // is gone, a parrainage entry with no `sub`. That `??` is the caller stating a fact, and it was
+    // being turned into `GET /api/users/` (plus `GET /api/users//avatar`), a 404 per mount that
+    // could not have answered anything.
+    const mod = await import('./displayName');
+
+    // Whitespace normalises to the same nothing, and asked separately so the two do not collide
+    // on one map key.
+    const blank = await mod.resolveDisplayNames(['']);
+    const spaces = await mod.resolveDisplayNames(['   ']);
+
+    expect(userStore.fetchUserProfile).not.toHaveBeenCalled();
+    // Unresolved, so the caller keeps what it passed - the same decision as the `system` sentinel.
+    expect(blank('')).toBe('');
+    expect(spaces('   ')).toBe('   ');
+  });
+
   it('labels a profile that genuinely carries no name', async () => {
     // Distinct from the regression above: here the fetch DID happen and the profile simply has
     // no first/last/display name. The label is the right answer - a raw UUID in the middle of a
