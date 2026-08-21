@@ -1238,13 +1238,7 @@ export async function deleteCommunity(cx, name) {
  * meant to answer "yes" - which reads exactly like the app refusing.
  */
 export async function deleteChannel(cx) {
-  await awaitAppSettled(cx);
-  await realClick(cx, `[aria-label=${JSON.stringify(caption('chat_channel_settings_label'))}]`);
-  await until(
-    cx,
-    `document.body.innerText.indexOf(${JSON.stringify(caption('chat_channel_settings_title'))}) >= 0`,
-    10000
-  );
+  await openChannelSettings(cx);
   await realClick(cx, control('chat_delete_channel_button'));
   await confirmDialog(cx, 'common_delete_button');
   return clearOverlays(cx);
