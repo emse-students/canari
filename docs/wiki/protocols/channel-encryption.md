@@ -1706,3 +1706,47 @@ Six tests hold it, and two that asserted the old behaviour were rewritten rather
 carrying why: a registered carrier whose row is confirmed gone is forgotten, one whose row has
 stopped naming a scope is forgotten, one whose row cannot be read is spared, and the reconciler reads
 the row even for a group it has already registered.
+
+### One gesture called the join twice, and the second call repaired the first one's half-finished work - FIXED 2026-08-21
+
+Found in COMM-22's dirt, which is the whole reason a `PASS` carrying an unexplained line is recorded
+as `PASS-DIRTY` rather than as a pass.
+
+Both clients logged, on first opening the salon, `[GRAINE] salon 0a00f651 of 85d5164f: this device
+holds the distribution group but the group holds NO row for it (0 device(s) for this user) - the local
+group is stale, rejoining`. **W2's line was the mechanism working**: the check had revoked it fourteen
+seconds earlier, so it held a group the server routed nothing to - the exact asymmetry WP-REGRANT-1
+exists to repair, and it repaired it. W1's was not, and the server's own log settles which:
+
+```
+11:41:58  created                 published=false devices=0
+11:41:59  read                    published=false devices=0
+11:41:59  group-info epoch=0 stored=true
+11:41:59  group-info epoch=0 stored=true      <- the same base, published twice
+11:42:01  read                    published=true  devices=1
+```
+
+**Two concurrent calls, from one click.** Three call sites reach `ensureDistributionGroupFor` for a
+private salon - creating it (the creator initialises its MLS state), loading the workspace that now
+lists it (the walk enters every private channel's group), and joining it in-session - and the first
+two fire on the same gesture, because creating a salon refetches the workspace to put it in the
+sidebar. Both read a group with no roster row for this user, both created and published epoch 0, and
+the second then found a group held locally that the server named no row for. That is indistinguishable
+from an eviction, so it took the repair branch: it forgot the tree the other call had just built and
+external-joined again, costing an extra epoch and leaving its first leaf in the tree.
+
+The repair was right about what it saw. What it saw was another call's half-finished work - which is
+the shape the standing rule names: **a race that heals cleanly is still a defect, so name what makes
+the two paths overlap and delete the overlap.** A ledger reconciling them afterwards is a witness,
+never a fix, and here the "ledger" was a destructive repair.
+
+`ensureDistributionGroupFor` now shares one in-flight promise per scope. Every caller wants the same
+postcondition - "this device is in this scope's group" - so the second caller wants the first one's
+ANSWER, not a second attempt at it. Keyed on the scope, which is the durable identity of the thing
+being joined, never on a done-flag: a flag is a second bookkeeping layer able to lag the tree, and
+this file already carries what believing one of those cost. The entry is deleted in `finally`, so a
+later join - the one a revoke makes necessary - runs for real.
+
+Four tests hold it: two concurrent callers produce one read, one join and one reconciliation; the
+caller that waited SAYS it waited, so it is not indistinguishable from the one that worked; nothing
+survives the call; and a rejection is shared without poisoning the next attempt.

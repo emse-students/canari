@@ -52,6 +52,99 @@ function makeChannels(overrides: Record<string, unknown> = {}) {
 const run = (mls: unknown, channels: unknown, log: (m: string) => void = () => {}) =>
   ensureCommunityDistributionGroup(mls as never, channels as never, 'ws-1', log);
 
+describe('ensureCommunityDistributionGroup - concurrent callers share one join', () => {
+  /**
+   * TWO CALLERS ON ONE GESTURE, which is what production did.
+   *
+   * Creating a private salon initialises its MLS state, and the workspace refetch that puts the new
+   * salon in the sidebar walks every private channel and enters its group - so one click reaches this
+   * seam twice for the same scope. Measured 2026-08-21: both calls read a group with no roster row,
+   * both created and published epoch 0, and the second then saw a group held locally that the server
+   * named no row for - the signature of an eviction - so it FORGOT the tree the first call had just
+   * built and joined again, costing an epoch and leaving a leaf behind.
+   *
+   * A race that heals is still a defect, so what is pinned is the absence of the overlap: one
+   * execution, whatever the number of callers.
+   */
+  it('runs the join once when two callers arrive together', async () => {
+    let release: (v: unknown) => void = () => {};
+    const gate = new Promise((r) => (release = r));
+    const mls = makeMls();
+    const channels = makeChannels({
+      getDistributionGroup: vi.fn(async () => {
+        await gate;
+        return { groupId: 'g-1', groupInfo: 'c29j', baseEpoch: 7, memberDevices: [] };
+      }),
+    });
+
+    const both = Promise.all([run(mls, channels), run(mls, channels)]);
+    release(null);
+    expect(await both).toEqual([true, true]);
+
+    // The read, the join and the reconciliation each happen ONCE - not once per caller.
+    expect(channels.getDistributionGroup).toHaveBeenCalledTimes(1);
+    expect(mls.ensureDistributionGroup).toHaveBeenCalledTimes(1);
+    expect(reconcile).toHaveBeenCalledTimes(1);
+  });
+
+  it('says so, so a caller that waited is not indistinguishable from one that did the work', async () => {
+    let release: (v: unknown) => void = () => {};
+    const gate = new Promise((r) => (release = r));
+    const lines: string[] = [];
+    const mls = makeMls();
+    const channels = makeChannels({
+      getDistributionGroup: vi.fn(async () => {
+        await gate;
+        return { groupId: 'g-1', groupInfo: 'c29j', baseEpoch: 7, memberDevices: [] };
+      }),
+    });
+
+    const both = Promise.all([
+      run(mls, channels, (m) => lines.push(m)),
+      run(mls, channels, (m) => lines.push(m)),
+    ]);
+    release(null);
+    await both;
+
+    expect(lines.some((l) => l.includes('a join is already in flight'))).toBe(true);
+  });
+
+  it('holds nothing after it settles, so a later join runs for real', async () => {
+    // The entry is removed in `finally`. Without that, the FIRST join of a session would answer
+    // every later one - including the re-join a revoke makes necessary, which is the one that must
+    // not be skipped.
+    const mls = makeMls();
+    const channels = makeChannels({
+      getDistributionGroup: vi
+        .fn()
+        .mockResolvedValue({ groupId: 'g-1', groupInfo: 'c29j', baseEpoch: 7, memberDevices: [] }),
+    });
+
+    await run(mls, channels);
+    await run(mls, channels);
+
+    expect(channels.getDistributionGroup).toHaveBeenCalledTimes(2);
+    expect(mls.ensureDistributionGroup).toHaveBeenCalledTimes(2);
+  });
+
+  it('shares a REJECTION too, and leaves nothing behind for the next caller', async () => {
+    // A failed join must not poison the map: the next attempt has to be a real attempt.
+    const mls = makeMls();
+    let attempts = 0;
+    const channels = makeChannels({
+      getDistributionGroup: vi.fn(async () => {
+        attempts += 1;
+        if (attempts === 1) throw new ChannelApiError(503, null, 'the gateway is down');
+        return { groupId: 'g-1', groupInfo: 'c29j', baseEpoch: 7, memberDevices: [] };
+      }),
+    });
+
+    expect(await Promise.all([run(mls, channels), run(mls, channels)])).toEqual([false, false]);
+    expect(await run(mls, channels)).toBe(true);
+    expect(attempts).toBe(2);
+  });
+});
+
 describe('ensureCommunityDistributionGroup', () => {
   it('re-joins nothing when the group is held AND the server routes to this device', async () => {
     const mls = makeHeldMls();

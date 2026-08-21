@@ -35,14 +35,70 @@ import { reconcileDistributionGroupRoster } from './rosterReconcile';
  * in whose roster it carries, and a second copy of this would be a second place for the join, the
  * reconciliation and the history request to drift apart.
  *
+ * ONE EXECUTION PER SCOPE AT A TIME, and that is not an optimisation - see {@link inFlight}.
+ *
  * @returns true when the device holds the group afterwards. False is a REPORTED failure, not a
  *   silent one: every branch that returns it has logged which of the causes it was.
  */
-export async function ensureDistributionGroupFor(
+export function ensureDistributionGroupFor(
   mlsService: IMlsService,
   channelService: ChannelService,
   scope: DistributionScope,
   log: (message: string) => void = () => {}
+): Promise<boolean> {
+  // THE CALLERS OVERLAP, AND THE OVERLAP IS THE DEFECT - so it is deleted here rather than repaired
+  // downstream. Three call sites reach this for one salon (creating it, loading the workspace that
+  // now lists it, joining it in-session) and two of them fire on ONE gesture: creating a private
+  // salon initialises its MLS state, and the workspace refetch that puts the salon in the sidebar
+  // walks every private channel and enters its group.
+  //
+  // Measured on production 2026-08-21, W1 creating a salon during COMM-22, one second apart:
+  //
+  //   11:41:58  created                published=false devices=0
+  //   11:41:59  read                   published=false devices=0
+  //   11:41:59  group-info epoch=0 stored=true
+  //   11:41:59  group-info epoch=0 stored=true     <- the same base published twice
+  //   11:42:01  read                   published=true  devices=1
+  //
+  // Both calls read a group with no roster row, both created and published epoch 0, and the second
+  // one then found a group held locally that the server named no row for - which is the signature of
+  // an eviction - so it took the repair branch, FORGOT the tree it had just built and external-joined
+  // again, costing an extra epoch and leaving its first leaf behind. The repair was right about what
+  // it saw; what it saw was the other call's half-finished work.
+  //
+  // Sharing the promise is the whole fix: every caller wants the same postcondition ("this device is
+  // in this scope's group"), so the second one wants the first one's answer, not a second attempt at
+  // it. Keyed on the scope, which is the durable identity of the thing being joined - not on a flag
+  // saying it was done once, which would be a second bookkeeping layer able to lag the tree. The
+  // entry is removed in `finally`, so nothing survives the call and a later join is unaffected.
+  const key = scopeLabel(scope);
+  const running = inFlight.get(key);
+  if (running) {
+    log(`[GRAINE] ${key}: a join is already in flight for this scope - awaiting it`);
+    return running;
+  }
+  const attempt = joinDistributionGroup(mlsService, channelService, scope, log).finally(() =>
+    inFlight.delete(key)
+  );
+  inFlight.set(key, attempt);
+  return attempt;
+}
+
+/**
+ * Joins in progress, by scope label.
+ *
+ * Module-level and deliberately so: the callers that overlap are in different composables and can
+ * share nothing else. It holds a promise only for the duration of one call - `finally` deletes the
+ * entry - so it is not state about the session and logging out leaves nothing behind.
+ */
+const inFlight = new Map<string, Promise<boolean>>();
+
+/** {@link ensureDistributionGroupFor} without the in-flight sharing. Never called directly. */
+async function joinDistributionGroup(
+  mlsService: IMlsService,
+  channelService: ChannelService,
+  scope: DistributionScope,
+  log: (message: string) => void
 ): Promise<boolean> {
   // WHAT THIS DEVICE HOLDS, BEFORE ASKING. Only used to decide what a FAILED read may conclude; the
   // membership decision below is taken against the group the SERVER names, not this one.

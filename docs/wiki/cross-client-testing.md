@@ -215,9 +215,10 @@ twenty-five checks, and the count in its own comment is what makes an omission v
 were rewritten on 2026-08-20 is in
 [cross-client-campaign](cross-client-campaign.md#rows-that-named-a-mechanism-the-product-does-not-have).
 
-**Three have never run on production**: COMM-14 needs real push, COMM-18 kills the app and follows a
-link into a cold start, and COMM-22 has run seven times without once producing a believable verdict
-(six VACUOUS, one FAIL) - the instrument was wrong each time, not the assertion.
+**Two have never run on production**: COMM-14 needs real push, and COMM-18 kills the app and follows
+a link into a cold start. **COMM-22 settled on the tenth attempt** - nine runs produced no believable
+verdict (seven VACUOUS, one FAIL, and one VACUOUS that collided with a deploy of the harness
+operator's own making, see rule 30) and the instrument was wrong every time, never the assertion.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
@@ -242,7 +243,15 @@ link into a cold start, and COMM-22 has run seven times without once producing a
 | COMM-19 | The last admin tries to leave: refused, unless they are the last MEMBER, which deletes the community | `W1 W2` | `pending` |
 | COMM-20 | Two admins change the same role at the same moment | `W1 W2` | `pending` |
 | COMM-21 | A member is removed while composing a message in that salon | `W1 W2` | `pending` |
-| COMM-22 | A salon carrying many Graine sessions: time the first render, and the repair when one seed is missing | `W1 W2` | `pending` |
+| COMM-22 | A salon carrying many Graine sessions: time the first render, and the repair when one seed is missing | `W1 W2` | `PASS-DIRTY` - `f9e17e49`, 2026-08-21, on the TENTH attempt and the first believable one. Armed as intended: 6 grant/join/send/revoke/send cycles drove the salon's group through **13 epochs** and minted **12 distinct sessions** for 12 messages, one per session - a shape no message count could distinguish from an unchurned salon. All seven expectations held. The peer missed 7 sessions while revoked and **absorbed all 7** on re-grant, leaving nothing unreadable. First render: sender 3 815 ms, peer warm 2 938 ms, peer **cold 6 789 ms** after a reload and a PIN - recorded, never asserted, because the product carries no budget for it. Dirt: one line, identical on BOTH clients - see below |
+
+**COMM-22's dirt is a lead, not a footnote.** Both clients logged, at the moment they first opened
+the salon, `[GRAINE] salon 0a00f651 of 85d5164f: this device holds the distribution group but the
+group holds NO row for it (0 device(s) for this user) - the local group is stale, rejoining` - W1 at
+13:41:59, seconds after creating the salon, W2 at 13:42:38 on its first open. The repair fired and
+worked; **a race that heals cleanly is still a defect**, and this one names the seam WP-REGRANT-1
+was written for from the other side. Under investigation; whatever it turns out to be belongs in
+`CHANGELOG.md` and its rule in [durable-rules](durable-rules.md), not here.
 | COMM-23 | Public -> private: a group is minted, and a reader outside `allowedUsers` stops being routed | `W1 W2` | `pending` |
 | COMM-24 | Private -> public: the salon's group is tombstoned and the community's carries it again | `W1 W2` | `pending` |
 | COMM-25 | An admin's SECOND device receives the salon's seeds after the join, without a second join | `W1 A1` | `pending` |
