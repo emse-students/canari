@@ -18,7 +18,7 @@
   class="border-cn-border relative overflow-hidden rounded-2xl border bg-(--cn-surface) {className}"
 >
   <div
-    class="pointer-events-none absolute top-3 right-3 h-16 w-16 opacity-20"
+    class="pointer-events-none absolute top-3 right-3 h-16 w-16 opacity-40"
     style="mask-image: radial-gradient(circle at top right, black 10%, transparent 90%); -webkit-mask-image: radial-gradient(circle at top right, black 10%, transparent 90%);"
   >
     {#if iconUrl}
@@ -27,7 +27,7 @@
       <FallbackIcon size={64} class="h-full w-full" />
     {/if}
   </div>
-  <div class="relative">
+  <div class="relative h-full">
     {@render children()}
   </div>
 </div>

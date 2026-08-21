@@ -12,6 +12,7 @@
   } from '$lib/associations/api';
   import { currentUserId } from '$lib/stores/user';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
+  import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import ProductPurchaseButton from '$lib/components/shop/ProductPurchaseButton.svelte';
   import PartnershipCardList from '$lib/components/shop/PartnershipCardList.svelte';
   import CardTile from '$lib/components/shared/CardTile.svelte';
@@ -219,8 +220,12 @@
                   >
                     {asso.name}
                   </a>
-                  {#if asso.description}
-                    <p class="text-text-muted text-xs">{asso.description}</p>
+                  {#if asso.description?.trim()}
+                    <div
+                      class="text-text-muted [&_.post-markdown]:text-xs [&_.post-markdown]:leading-snug [&_.post-markdown_p]:m-0 [&_.post-markdown_p+p]:mt-0"
+                    >
+                      <ProfileBioMarkdown source={asso.description} />
+                    </div>
                   {/if}
                 </div>
               </div>
@@ -352,8 +357,12 @@
                 >
                   {asso.name}
                 </a>
-                {#if asso.description}
-                  <p class="text-text-muted text-xs">{asso.description}</p>
+                {#if asso.description?.trim()}
+                  <div
+                    class="text-text-muted [&_.post-markdown]:text-xs [&_.post-markdown]:leading-snug [&_.post-markdown_p]:m-0 [&_.post-markdown_p+p]:mt-0"
+                  >
+                    <ProfileBioMarkdown source={asso.description} />
+                  </div>
                 {/if}
               </div>
             </div>
