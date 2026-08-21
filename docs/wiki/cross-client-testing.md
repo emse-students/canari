@@ -8,6 +8,13 @@ every defect is `CHANGELOG.md`, and what is still open is `CLAUDE.md`.
 
 Two accounts, anonymised everywhere as **owner** (W1, A1) and **peer** (W2). Target is PRODUCTION.
 
+**A `PASS` CELL SAYS `PASS X/X` AND A TIME IF THE TIME MEANS ANYTHING. Nothing else.** A cell keeps
+prose in exactly two cases: the verdict is not a clean pass (`PASS-DIRTY`, `FAIL`, `SKIPPED`, a
+partial like `4/5`), or the row carries an unresolved item - a missing `a1Build`, an owed re-run.
+Both are open state, which is what this file is. Everything a hard-won run cost to get goes to
+[cross-client-campaign](cross-client-campaign.md); everything that was a defect goes to
+`CHANGELOG.md`. The build belongs on the PHASE row, once, not on twelve check rows.
+
 ## Standing
 
 Updated after every run.
@@ -15,10 +22,10 @@ Updated after every run.
 | Phase | Scripts | Last build | State |
 | --- | --- | --- | --- |
 | 0 SETUP | - | - | 5/9 `passed`; SETUP-2 skipped by decision, SETUP-7/8 owed before CORRUPT and PIN |
-| 1 MSG | 12 | `226fe755` | **12/12 `PASS`, all clients clean, server clean** (2026-08-16) |
-| 2 TYPE | 5 | `25376b86` | 5/5 `passed` x5 - 25 verdicts, 25 `PASS`; re-run owed on the current build |
-| 3 READ | 10 | `70497810` | **9/9 runnable `PASS` x5 - 45 verdicts, 45 `PASS`, CLEAN 5/5**, server window clean on every pass (2026-08-21), runner `2c2b83d1b748`. READ-10 is now armed and green; READ-5 stays `SKIPPED` - it needs four readers and the estate has two accounts. The per-row timings the cells used to carry were measured by a superseded runner and were not carried over; `results.ndjson` holds this run's |
-| 4 MUT | 21 | `25376b86` | 19/21 `PASS` x5; MUT-15 and MUT-19 fixed and rewritten - **re-run owed** |
+| 1 MSG | 12 | `e9d951d7` | **12/12 `PASS` x1** (2026-08-21), all clients clean, server clean. Four A1 rows carry no `a1Build` - the runners never recorded it; the preflight does now, so they are owed a re-run for attribution alone |
+| 2 TYPE | 5 | `e9d951d7` | **5/5 `PASS` x1** (2026-08-21), server clean. An earlier 5/5 x5 stands on superseded runner `25376b86` |
+| 3 READ | 10 | `70497810` | **9/9 runnable `PASS` x5 - 45 verdicts, CLEAN 5/5**, server clean every pass (2026-08-21), runner `2c2b83d1b748`. READ-5 `SKIPPED`: needs four readers, the estate has two accounts |
+| 4 MUT | 21 | `c115218e` | **RE-MEASURING x5, in flight 2026-08-22** on runner `4a9814f845d7`. An x1 on this build gave 22 `PASS` / 1 `FAIL` / 2 `SKIPPED`, and all three non-passes were harness faults now fixed (MUT-17 a clock, MUT-18 an undeclared device, then a mobile precondition) - so that x1 is itself on a superseded runner. **The check rows below still carry `25376b86` verdicts and are NOT to be believed**; they are rewritten in one pass when the x5 lands. MUT-17 and MUT-18 are already `PASS` on the current runner with A1 armed and stamped. MUT-20 stays `SKIPPED` - unarmable until 2026-11-09 |
 | 5 SEARCH | 6 | - | `pending` |
 | 6 MENTION | 6 | - | `pending` |
 | 7 FWD | 5 | `25376b86` | 5/5 `passed` - 20 verdicts, 20 `PASS`; FWD-2 25/25 by hand |
@@ -74,19 +81,19 @@ window. Earlier x5 series on `8a3edbdd`, `e62c21f1` and `25376b86` all read 13/1
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| MSG-1 | W1 -> W2 plain DM: under 2 s, one copy, correct author | `W1 W2` | `PASS` - `e9d951d7`, 2026-08-21, clean, 325 ms |
-| MSG-1-cold | Same, after a reload | `W1 W2` | `PASS` - `e9d951d7`, 2026-08-21, clean, 326 ms |
-| MSG-1b | Delivery DURING a history load | `W1 W2` | `PASS` - `e9d951d7`, 2026-08-21, clean, 3 ms |
-| MSG-2 | W2 -> A1 with the app foreground: no duplicate against the push | `+A1` | `PASS` - `e9d951d7`, 2026-08-21, clean, 578 ms. **This row and the three other A1 ones below carry no `a1Build`** - the runners never recorded it, found by this very run and fixed in the preflight, so the NEXT A1 phase names the phone's build and these four are owed a re-run for attribution alone |
-| MSG-3 | Reply renders with its quoted parent on both sides | `W1 W2` | `PASS` - `e9d951d7`, 2026-08-21, clean, 303 ms |
-| MSG-4 | Image then PDF: ciphertext upload, both render, receiver decodes | `W1 W2` | `PASS` - `e9d951d7`, 2026-08-21, clean |
-| MSG-5 | Channel message converges on all three; no `masterSecret` in any payload | `+A1` | `PASS` - `e9d951d7`, 2026-08-21, CLEAN. **The re-run this row owed since 2026-08-19 is settled**: it was `PASS-DIRTY` on `a232c070` with A1 at 5 989 ms behind an ERROR line, `89368eb0` fixed it, and this run on a build carrying that fix is clean. No `a1Build` on the row - see MSG-2 |
-| MSG-6 | Link preview served through the proxy, never a third-party `<img src>` | `W1 W2` | `PASS` - `e9d951d7`, 2026-08-21, clean |
-| MSG-7 | 30 rapid sends: order preserved, no gap, no duplicate | `W1 W2` | `PASS` - `e9d951d7`, 2026-08-21, clean, 2 000 ms |
-| MSG-8 | Send to a BACKGROUNDED tab | `W1 W2` `+A1` | `PASS` - `e9d951d7`, 2026-08-21, clean |
-| MSG-8b | Same, receiver on another page: badge and unread count | `W1 W2` `+A1` | `PASS` - `e9d951d7`, 2026-08-21, clean |
-| MSG-9 | **Receiver** offline at the GATEWAY, then restored: lands once on reconnect | `W1 W2` | `PASS` - `e9d951d7`, 2026-08-21, clean, 16.9 s, nearly all the deliberate outage |
-| MSG-10 | **Sender** offline: optimistic echo persists, outbox drains, survives a reload | `W1 W2` | `PASS` - `e9d951d7`, 2026-08-21, clean |
+| MSG-1 | W1 -> W2 plain DM: under 2 s, one copy, correct author | `W1 W2` | `PASS` - 325 ms |
+| MSG-1-cold | Same, after a reload | `W1 W2` | `PASS` - 326 ms |
+| MSG-1b | Delivery DURING a history load | `W1 W2` | `PASS` - 3 ms |
+| MSG-2 | W2 -> A1 with the app foreground: no duplicate against the push | `+A1` | `PASS` - 578 ms. **No `a1Build`** - re-run owed for attribution (see the phase note) |
+| MSG-3 | Reply renders with its quoted parent on both sides | `W1 W2` | `PASS` - 303 ms |
+| MSG-4 | Image then PDF: ciphertext upload, both render, receiver decodes | `W1 W2` | `PASS` |
+| MSG-5 | Channel message converges on all three; no `masterSecret` in any payload | `+A1` | `PASS`. **No `a1Build`** - re-run owed for attribution |
+| MSG-6 | Link preview served through the proxy, never a third-party `<img src>` | `W1 W2` | `PASS` |
+| MSG-7 | 30 rapid sends: order preserved, no gap, no duplicate | `W1 W2` | `PASS` - 2 000 ms |
+| MSG-8 | Send to a BACKGROUNDED tab | `W1 W2` `+A1` | `PASS` |
+| MSG-8b | Same, receiver on another page: badge and unread count | `W1 W2` `+A1` | `PASS` |
+| MSG-9 | **Receiver** offline at the GATEWAY, then restored: lands once on reconnect | `W1 W2` | `PASS` - 16.9 s, nearly all the deliberate outage |
+| MSG-10 | **Sender** offline: optimistic echo persists, outbox drains, survives a reload | `W1 W2` | `PASS` |
 
 ## 2 - TYPE - typing indicators
 
@@ -94,11 +101,11 @@ window. Earlier x5 series on `8a3edbdd`, `e62c21f1` and `25376b86` all read 13/1
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| TYPE-1 | Typing on W1 shows on W2 within a second, and clears on stop | `W1 W2` | `PASS` - `e9d951d7`, 2026-08-21, clean: shown 73 ms, cleared 243 ms. Earlier `PASS` 5/5 - shown 70-90 ms, cleared 245-272 ms |
-| TYPE-2 | It expires on its own after 6 s if the stop is never sent | `W1 W2` | `PASS` - `e9d951d7`, 2026-08-21, clean: expired 4 180 ms, held 5 552 ms, inside the 3 500-9 000 ms bound. Earlier `PASS` 5/5 - 4 138-4 221 ms |
-| TYPE-3 | Killing the tab mid-typing leaves no stuck indicator on the peer | `W1 W2` | `PASS` - `e9d951d7`, 2026-08-21, clean: cleared 5 978 ms, tab restored (navigated and unlocked). Earlier `PASS` 5/5 - 6 138-6 181 ms |
-| TYPE-4 | An offline peer gets nothing, and nothing is replayed when it returns | `W1 W2` | `PASS` - `e9d951d7`, 2026-08-21, clean: nothing while offline, nothing on reconnect, cut acted in 995 ms, back in 877 ms, 1 socket closed. Earlier `PASS` 5/5 |
-| TYPE-5 | Channel typing, a different transport entirely (REST, not WS) | `W1 W2` | `PASS` - `e9d951d7`, 2026-08-21, clean: channel/HTTP, shown 65 ms, cleared 224 ms. Earlier `PASS` 5/5 |
+| TYPE-1 | Typing on W1 shows on W2 within a second, and clears on stop | `W1 W2` | `PASS` - shown 73 ms, cleared 243 ms |
+| TYPE-2 | It expires on its own after 6 s if the stop is never sent | `W1 W2` | `PASS` - expired 4 180 ms, held 5 552 ms, inside the 3 500-9 000 ms bound |
+| TYPE-3 | Killing the tab mid-typing leaves no stuck indicator on the peer | `W1 W2` | `PASS` - cleared 5 978 ms, tab restored (navigated and unlocked) |
+| TYPE-4 | An offline peer gets nothing, and nothing is replayed when it returns | `W1 W2` | `PASS` - nothing while offline, nothing on reconnect, cut acted in 995 ms, back in 877 ms, 1 socket closed |
+| TYPE-5 | Channel typing, a different transport entirely (REST, not WS) | `W1 W2` | `PASS` - channel/HTTP, shown 65 ms, cleared 224 ms |
 
 ## 3 - READ - receipts and unread counts
 
@@ -115,7 +122,7 @@ window. Earlier x5 series on `8a3edbdd`, `e62c21f1` and `25376b86` all read 13/1
 | READ-7 | Unread count after a reload, with the receipt still in flight | `W1 W2` | `PASS` 5/5 |
 | READ-8 | Unread count on a conversation whose messages arrived while logged out | `W1 W2` | `PASS` 5/5 |
 | READ-9 | Read on A1 while W1 is open: the count on W1 goes without a reload | `+A1` | `PASS` 5/5 |
-| READ-10 | Reading a conversation whose peer has deleted it | `+A1` | `PASS` 5/5 - `--destructive`, and it now dismisses its own dead row on EVERY owner device before it will pass |
+| READ-10 | Reading a conversation whose peer has deleted it | `+A1` | `PASS` 5/5 - `--destructive` |
 
 ## 4 - MUT - editing, deleting, reacting, pinning
 
@@ -257,12 +264,12 @@ operator's own making, see rule 30) and the instrument was wrong every time, nev
 | COMM-14 | Channel notification levels enforced server-side | `+push` | `pending` |
 | COMM-15 | Polls: create, vote, close; auto-pinned | `W1 W2` | `pending` |
 | COMM-16 | Delete a channel, then a community by typing its name: the rows are really gone and the slug is free again | `W1 W2` | `pending` |
-| COMM-17 | Reorder communities by drag and drop; survives a reload, reaches the other device | `+A1` | `PASS` - `67d40e3a`, 2026-08-21, on the fourth attempt and CLEAN. All six held: a real pointer drag moved it to the top, nothing else moved, `channel_members.sortOrder` held the new order, it survived a reload of W1, it reached A1 (`a1Build` 67d40e3a - the first A1 row of the campaign read on a current build), and the reverse drag restored the original. The `PASS-DIRTY` of `29b12fee` carried one `[PIPELINE] Recovery attempt finished for b0192801...`; `f950c01c` fixed it and this run proves it. The third attempt held all six too and was VACUOUS anyway - a push of ours landed mid-run, which is rule 30's lesson from the other side |
+| COMM-17 | Reorder communities by drag and drop; survives a reload, reaches the other device | `+A1` | `PASS` 1/1 - `67d40e3a`, all six expectations, first A1 row on a current build |
 | COMM-18 | Deep link into a channel from a cold start | `+A1` | `pending` |
 | COMM-19 | The last admin tries to leave: refused, unless they are the last MEMBER, which deletes the community | `W1 W2` | `pending` |
 | COMM-20 | Two admins change the same role at the same moment | `W1 W2` | `pending` |
 | COMM-21 | A member is removed while composing a message in that salon | `W1 W2` | `pending` |
-| COMM-22 | A salon carrying many Graine sessions: time the first render, and the repair when one seed is missing | `W1 W2` | `PASS-DIRTY` - `f9e17e49`, 2026-08-21, on the TENTH attempt and the first believable one. Armed as intended: 6 grant/join/send/revoke/send cycles drove the salon's group through **13 epochs** and minted **12 distinct sessions** for 12 messages, one per session - a shape no message count could distinguish from an unchurned salon. All seven expectations held. The peer missed 7 sessions while revoked and **absorbed all 7** on re-grant, leaving nothing unreadable. First render: sender 3 815 ms, peer warm 2 938 ms, peer **cold 6 789 ms** after a reload and a PIN - recorded, never asserted, because the product carries no budget for it. Dirt: one line, identical on BOTH clients - see below |
+| COMM-22 | A salon carrying many Graine sessions: time the first render, and the repair when one seed is missing | `W1 W2` | `PASS-DIRTY` - `f9e17e49`, tenth attempt, first believable one. 12 sessions over 13 epochs, all seven expectations held. One dirt line, identical on both clients - see below |
 
 **COMM-22's dirt is a lead, not a footnote.** Both clients logged, at the moment they first opened
 the salon, `[GRAINE] salon 0a00f651 of 85d5164f: this device holds the distribution group but the

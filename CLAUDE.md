@@ -131,17 +131,14 @@ deleted from BOTH this file and [backlog](docs/wiki/backlog.md). **Every defect 
 `CHANGELOG.md`, every rule one left is in [durable-rules](docs/wiki/durable-rules.md), every verdict
 is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the three is restated here.**
 
-1. **THE COMM RUNNERS - ALL TWENTY-FIVE WRITTEN AND REGISTERED**, each RUN ON PROD as it was written
-    (the user's decision, 2026-08-20: writing all of them then running once is verification by
-    COMPILING). **TWO HAVE STILL NEVER RUN THERE - 14 and 18** - each needing a capability the
-    harness has yet to prove: real push (COMM-14) and a cold start through `adb` (COMM-18). A
-    capability is unproven until a check using it produces a result it could not have produced by
-    accident. **COMM-22 settled on its tenth attempt** (`PASS-DIRTY`, 12 sessions over 13 epochs) and
-    **COMM-17 on its fourth** (`PASS`, clean, `67d40e3a`); both verdicts and what the dirt led to are
-    on [cross-client-testing](docs/wiki/cross-client-testing.md). **The phone shows a GENERIC
-    notification body** (user, 2026-08-20, on an app that was not up to date): that is COMM-14's row,
-    an observation and not a defect until the runner says so - and A1 now runs a current build, so
-    the observation is owed a re-look.
+1. **THE COMM RUNNERS - ALL TWENTY-FIVE WRITTEN AND REGISTERED**, each run on prod as it was written
+    (user, 2026-08-20: writing all then running once is verification by COMPILING). **TWO HAVE NEVER
+    RUN THERE - 14 and 18**, each needing a capability the harness has yet to prove: real push, and a
+    cold start through `adb`. A capability is unproven until a check using it produces a result it
+    could not have produced by accident. Verdicts are on the board and are not restated here. **The
+    phone shows a GENERIC notification body** (user, 2026-08-20, on a stale app): COMM-14's row, an
+    observation and not a defect until the runner says so - and A1 now runs a current build, so it is
+    owed a re-look.
 2. **A1 RUNS `67d40e3a` as of 2026-08-21** - rebuilt and installed after the two Graine fixes of that
     day, replacing `02ae609b`. `npx tauri` does NOT resolve here (`could not determine executable to
     run`); build with `./node_modules/.bin/tauri.exe android build --debug` from `frontend/`, and
@@ -150,20 +147,39 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     and `pin.mjs` alone reports `ECONNREFUSED`. **A phone `offline` in adb is a HUMAN action**: no
     `adb reconnect` or daemon restart clears it, the screen must be unlocked and the prompt accepted.
 3. **THE CAMPAIGN ITSELF - RUNNING, by the user's decision of 2026-08-21** (*"C'est parti pour la
-    campagne"*, in autonomy). The ladder, top to bottom. **Everything must end green, so every phase
-    runs** - including the six phases that had no runner at all, which are written as the ladder
-    reaches them. The order, the cost, the decisions it turns on and **the four decided at launch**
-    (write every empty phase, x1 then x5 targeted, rebuild the APK after every mobile fix, replay the
-    blast radius at each phase boundary) are on
+    campagne"*, in autonomy). The ladder, top to bottom, everything must end green, so every phase
+    runs - including the six that had no runner, written as the ladder reaches them. The design, the
+    cost and the decisions it turns on are on
     [cross-client-testing](docs/wiki/cross-client-testing.md) and
-    [cross-client-campaign](docs/wiki/cross-client-campaign.md), the only copies.
+    [cross-client-campaign](docs/wiki/cross-client-campaign.md), the only copies. **Where the ladder
+    stands: rungs 1 MSG and 2 TYPE green x1, 3 READ green CLEAN 5/5, 4 MUT re-measuring x5 (in flight
+    2026-08-22). Next: 5 SEARCH, 6 MENTION, then FWD, GRP, COMM, DEL, TAB, MULTI, LIFE, NOTIF, CALL,
+    HEAL, PIN, CORRUPT.** The board carries every verdict; do not restate them here.
+    **THE BOARD'S FORMAT IS NOW FIXED by the user (2026-08-22): a `PASS` cell is `PASS X/X` and a time
+    if the time means anything, nothing else.** Prose only for a non-clean verdict or an unresolved
+    item. The rule is written at the top of the board itself.
 
-**THE ESTATE WAS SWEPT AND MEASURED CLEAN 2026-08-21, before the ladder started.** 22 debris salons
-went through the product (`cleanup.mjs` now owns salons as well as communities), and all thirteen
-residue counts on prod came back ZERO afterwards - for absent AND tombstoned groups. The 855
-`queued_message` rows that remain all name a LIVE group and an abandoned test device; twelve of those
-devices hold no membership anywhere, so their single frame each is inert until the 90-day reaper.
-Three probe salons no runner mints (`g3-priv-a`, two `rep-repair-<mark>`) were deleted by name.
+**OWED RIGHT NOW, and none of it is derivable from the code:**
+
+- **COMMITS SIT UNPUSHED.** Six local commits on `main` past `c115218e` (the release fixes, the forms
+  P1, the harness fixes, the `minClientVersion` ceiling, the audit). They were NOT pushed because a
+  check was running and the standing rule forbids pushing during one. **Push them** - background,
+  `rm -rf apps/*/dist` first.
+- **A VERIFICATION IS OWED ON PROD.** The new `[DISMISS] ... recorded=N` / `[UNDISMISS] ... lifted=N`
+  format is proven only by `srvclassify-selftest.mjs`, never against production - MUT generates no
+  dismissal traffic. **Run READ-10 once** (`--destructive`, self-cleaning, 5/5) and read the window.
+  Until then the fix is verified by compiling, which this repo does not accept as verified.
+- **`tools/cross-client-harness/checks-selftest.mjs` IS NEW AND WIRED INTO NOTHING.** It asserts that
+  every phase declares the devices its scripts actually drive - the defect that cost MUT-18 every run
+  it ever had - and it is proven to fail on that exact case. It needs a home in a gate beside
+  `classify-selftest.mjs` and `srvclassify-selftest.mjs`, which are themselves invoked from nowhere
+  found so far. **Wire all three.**
+- **THE MECHANISM AUDIT IS DONE AND SCORED**, on [mechanism-audit](docs/wiki/mechanism-audit.md): of
+  five ranked findings, two produced a code change (forms P1, the `minClientVersion` ceiling), two a
+  verified negative (moderation's authorisation is correct, media holds no key material), one is
+  unchanged (twenty CALL rows still never run). The negatives are recorded on purpose.
+
+**The estate was swept and measured clean 2026-08-21 before the ladder started** - 22 debris salons through the product, all thirteen residue counts on prod zero afterwards. `cleanup.mjs` owns communities, salons AND throwaway groups now; the detail is on [cross-client-campaign](docs/wiki/cross-client-campaign.md).
 
 **OWED TO THE USER, NOT TO THE CODE: the MLS + Graine explanation.** For THEM, prose and diagrams, no
 code (user, 2026-08-20). Post-campaign; scope and the two audiences declined are on
@@ -190,31 +206,23 @@ release pipeline could be green one week and red the next with no commit between
 `minClientVersion` still lives in `platform_config`, is still raised by hand from `/admin/platform`
 so no deploy touches it - and **the App Store half was never verified, so a raise locks out any iOS
 user it has not reached** ([legacy-compatibility](docs/wiki/legacy-compatibility.md) carries the
-shipping order it violated). **v0.14.1 IS COMPLETE AS A GITHUB RELEASE - all four artefacts attached** (`app-universal-release.aab`,
-`app-universal-release.apk`, `Canari.ipa`, `Canari_0.14.1_amd64.AppImage`). **TestFlight is the one
-thing still blocked, and it is BLOCKED ON THE USER, not on the code** (their decision, 2026-08-22:
-leave it for now). The iOS build and archive now succeed; App Store Connect refuses the upload with
-*"Invalid Export Compliance Code. The export compliance key value [] in the app's Info.plist doesn't
-match the key value of the app's export compliance documentation."* Apple holds export-compliance
-documentation for this app carrying a code, and `ITSAppUsesNonExemptEncryption=true` alone does not
-satisfy it - the plist must also carry `ITSEncryptionExportComplianceCode`, whose value exists ONLY
-in the user's App Store Connect account (My Apps -> Canari -> App Information -> Export Compliance).
-The alternative is deleting `ITSAppUsesNonExemptEncryption`, which restores the per-build compliance
-questionnaire in App Store Connect. Nothing here can be decided from the repository.
+shipping order it violated). **v0.14.1 IS COMPLETE AS A GITHUB RELEASE** - AAB, APK, IPA and AppImage all attached. **TestFlight
+is the one thing blocked, and it is blocked ON THE USER** (their decision, 2026-08-22: leave it).
+App Store Connect refuses the upload: *"Invalid Export Compliance Code... the key value [] in the
+app's Info.plist doesn't match... the app's export compliance documentation."* Apple holds compliance
+docs carrying a code, so `ITSAppUsesNonExemptEncryption=true` alone is not enough - the plist also
+needs `ITSEncryptionExportComplianceCode`, whose value exists ONLY in the user's App Store Connect
+account. The alternative is deleting the key, which restores the per-build questionnaire. Not
+decidable from this repository.
 
 So **the App Store half of `minClientVersion` is still unverified and still locks out any iOS user a
 release has not reached** - v0.14.1 did not close that gap and will not until TestFlight accepts it.
 
 ### CANARI - the test campaign
 
-Three files, three jobs, no overlap: **[cross-client-testing](docs/wiki/cross-client-testing.md)** is
-the board (state only - every check, its verdict, the commit it ran on);
-**[cross-client-campaign](docs/wiki/cross-client-campaign.md)** is the design (the ladder, the scope,
-the standing rules, the preflight, the negative rows, the debris cleanup);
-**[testing-methodology](docs/wiki/testing-methodology.md)** is how a result earns belief (thirty
-rules distilled from harness faults); **[`tools/cross-client-harness/README.md`](tools/cross-client-harness/README.md)**
-is the operating manual. **Read them rather than re-deriving the state here, and keep no second
-copy.**
+Four files, four jobs, no overlap, all four listed in WHERE THINGS LIVE above: the board is state,
+the campaign page is design, the methodology page is how a result earns belief, the harness README is
+the operating manual. **Read them rather than re-deriving state here, and keep no second copy.**
 
 **The rig lives in the repo at `tools/cross-client-harness/`; its STATE lives outside at
 `../canari-harness`** - `test-accounts.json`, the debug APK, A1's baseline, `results.ndjson`, and

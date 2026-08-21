@@ -323,3 +323,36 @@ both learnt by nearly getting them wrong:
 
 A cleanup script must also only ever match the harness's own name prefixes: a real user's group sits
 in the same sidebar.
+
+## Measurements the board deliberately no longer carries
+
+**The board is a state table, and a `PASS` cell says `PASS X/X` and a time.** That was decided on
+2026-08-22 (the user: *"rien de verbeux quand c'est pass, je veux juste PASS X/X avec le temps si
+pertinent"*), and it is not only a formatting preference - a cell that grows a paragraph every time a
+check is hard-won stops being readable as state at all, and the paragraph is never about the pass. It
+is about what the run cost to get. That belongs here, or in `CHANGELOG.md` if it was a defect.
+
+A cell keeps prose in exactly two cases: the verdict is not a clean pass (`PASS-DIRTY`, `FAIL`,
+`SKIPPED`, a partial like `4/5`), or the row carries an unresolved item such as a missing `a1Build`.
+Both are open state, which is what the board is for.
+
+What was removed on 2026-08-22, preserved because it was measured once and is expensive to measure
+again:
+
+- **COMM-22** settled on its TENTH attempt and is the campaign's only `PASS-DIRTY` that is
+  nonetheless believed. Armed as intended: six grant/join/send/revoke/send cycles drove the salon's
+  group through **13 epochs** and minted **12 distinct sessions** for 12 messages, one per session - a
+  shape no message count could distinguish from an unchurned salon, which is why the earlier nine
+  attempts proved nothing. The peer missed 7 sessions while revoked and **absorbed all 7** on
+  re-grant, leaving nothing unreadable. First render: sender 3 815 ms, peer warm 2 938 ms, peer
+  **cold 6 789 ms** after a reload and a PIN. Recorded, never asserted - the product carries no
+  budget for a cold first render, and inventing one in a check would be the check deciding product
+  policy.
+- **COMM-17** settled on its FOURTH attempt. All six expectations held: a real pointer drag moved the
+  community to the top, nothing else moved, `channel_members.sortOrder` held the new order, it
+  survived a reload of W1, it reached A1, and the reverse drag restored the original. It is the first
+  A1 row of the campaign read on a build that was current at the time. The `PASS-DIRTY` before it
+  carried one `[PIPELINE] Recovery attempt finished` line, fixed by `f950c01c`; the attempt before
+  THAT held all six and was `VACUOUS` anyway, because a push of ours landed mid-run.
+- **TYPE** holds a 5/5 x5 on superseded runner `25376b86` (shown 70-90 ms, cleared 245-272 ms;
+  TYPE-2 expired 4 138-4 221 ms). The current-runner run is x1, and the header says so.
