@@ -1924,6 +1924,7 @@
   "calendar_filter_all": "All associations",
   "calendar_export_pdf": "Export as PDF",
   "calendar_subscribe": "Subscribe to calendar",
+  "calendar_subscribe_intro": "To add every club's events to your personal calendar:",
   "calendar_empty": "No events this month.",
   "calendar_deposit_modal_title": "Submit an event",
   "calendar_deposit_on_behalf": "On behalf of",

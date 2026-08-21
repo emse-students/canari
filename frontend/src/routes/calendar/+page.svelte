@@ -23,6 +23,7 @@
   import MonthCalendarGridRich from '$lib/components/calendar/MonthCalendarGridRich.svelte';
   import CalendarDayEventsPanel from '$lib/components/calendar/CalendarDayEventsPanel.svelte';
   import CalendarEventDetailModal from '$lib/components/calendar/CalendarEventDetailModal.svelte';
+  import CalendarSubscribeModal from '$lib/components/calendar/CalendarSubscribeModal.svelte';
   import CoOwnerPicker from '$lib/components/calendar/CoOwnerPicker.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
@@ -175,17 +176,18 @@
     }
   });
 
-  /** webcal:// URL for calendar app subscription (desktop only). */
-  function calendarSubscribeUrl(): string {
+  let showSubscribeModal = $state(false);
+
+  /** https:// URL to the aggregated .ics feed; `CalendarSubscribeModal` derives webcal/Google variants. */
+  const calendarIcsUrl = $derived.by(() => {
     if (typeof window === 'undefined') return '';
     const { from, to } = icsSubscriptionRangeISO();
-    const httpUrl = aggregatedCalendarFeedIcsAbsoluteUrl({
+    return aggregatedCalendarFeedIcsAbsoluteUrl({
       from,
       to,
       associationId: filterAssociationId || undefined,
     });
-    return httpUrl.replace(/^https?:/, 'webcal:');
-  }
+  });
 
   const sortedEvents = $derived(
     [...events].sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime())
@@ -463,13 +465,14 @@
         <FileDown size={18} />
         {m.calendar_export_pdf()}
       </a>
-      <a
-        href={calendarSubscribeUrl()}
+      <button
+        type="button"
+        onclick={() => (showSubscribeModal = true)}
         class="bg-cn-yellow text-cn-dark hover:bg-cn-yellow-hover hidden shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors sm:inline-flex"
       >
         <CalendarCheck size={18} />
         {m.calendar_subscribe()}
-      </a>
+      </button>
     </div>
   </Card>
 
@@ -501,6 +504,13 @@
     }}
     onEdit={handleDetailEdit}
     onDelete={handleDetailDelete}
+  />
+
+  <CalendarSubscribeModal
+    open={showSubscribeModal}
+    onClose={() => (showSubscribeModal = false)}
+    icsUrl={calendarIcsUrl}
+    intro={m.calendar_subscribe_intro()}
   />
 </div>
 

@@ -1945,6 +1945,7 @@
   "calendar_filter_all": "Toutes les associations",
   "calendar_export_pdf": "Exporter en PDF",
   "calendar_subscribe": "S'abonner au calendrier",
+  "calendar_subscribe_intro": "Pour ajouter les événements de toutes les associations à votre calendrier personnel :",
   "calendar_empty": "Aucun événement ce mois-ci.",
   "calendar_deposit_modal_title": "Déposer un événement",
   "calendar_deposit_on_behalf": "Au nom de",
