@@ -47,7 +47,6 @@
       URL.revokeObjectURL(objectUrl);
       objectUrl = null;
     }
-    imgEl = undefined;
     loaded = false;
   }
 
@@ -66,22 +65,32 @@
     naturalW = imgEl.naturalWidth;
     naturalH = imgEl.naturalHeight;
     zoom = 1;
-    boxSize = Math.max(MIN_BOX, Math.min(VIEWPORT_W, VIEWPORT_H) * 0.65);
     offsetX = 0;
     offsetY = 0;
+    const g = computeGeometry();
+    const floor = Math.min(MIN_BOX, g.maxBoxSize);
+    boxSize = Math.min(Math.max(Math.min(VIEWPORT_W, VIEWPORT_H) * 0.65, floor), g.maxBoxSize);
     loaded = true;
   }
 
-  /** How the photo is currently laid out in the viewport: covers it at zoom 1, scales up from there. */
+  /**
+   * How the photo is currently laid out in the viewport: the whole photo fits inside it at
+   * zoom 1 (never pre-cropped out of view before the user touches anything), scales up from
+   * there. `maxBoxSize` follows the displayed image size, not the viewport's own rectangle - a
+   * square photo in this landscape viewport is only ever as tall as the viewport, so the crop
+   * square can never exceed that height even though the viewport itself is wider.
+   */
   function computeGeometry() {
-    const coverScale = Math.max(VIEWPORT_W / naturalW, VIEWPORT_H / naturalH);
-    const scale = coverScale * zoom;
+    const containScale = Math.min(VIEWPORT_W / naturalW, VIEWPORT_H / naturalH);
+    const scale = containScale * zoom;
     const displayW = naturalW * scale;
     const displayH = naturalH * scale;
+    const maxBoxSize = Math.min(VIEWPORT_W, VIEWPORT_H, displayW, displayH);
     return {
       scale,
       displayW,
       displayH,
+      maxBoxSize,
       centeredLeft: (VIEWPORT_W - displayW) / 2,
       centeredTop: (VIEWPORT_H - displayH) / 2,
       boxLeft: (VIEWPORT_W - boxSize) / 2,
@@ -134,10 +143,9 @@
     // Growth is symmetric around the centered box, so moving the corner by `delta` grows the
     // full side by `2 * delta`.
     const delta = (e.clientX - resizeFrom.x + (e.clientY - resizeFrom.y)) / 2;
-    boxSize = Math.min(
-      Math.max(resizeFrom.size + delta * 2, MIN_BOX),
-      Math.min(VIEWPORT_W, VIEWPORT_H)
-    );
+    const g = computeGeometry();
+    const floor = Math.min(MIN_BOX, g.maxBoxSize);
+    boxSize = Math.min(Math.max(resizeFrom.size + delta * 2, floor), g.maxBoxSize);
     clampOffsets();
   }
   function onHandlePointerUp() {
@@ -146,6 +154,8 @@
 
   function onZoomInput(e: Event) {
     zoom = Number((e.target as HTMLInputElement).value);
+    const g = computeGeometry();
+    if (boxSize > g.maxBoxSize) boxSize = g.maxBoxSize;
     clampOffsets();
   }
 
@@ -193,8 +203,8 @@
 
   {#if objectUrl}
     <div
-      class="relative mx-auto touch-none overflow-hidden rounded-2xl bg-black select-none"
-      style="width: {VIEWPORT_W}px; height: {VIEWPORT_H}px; max-width: 100%;"
+      class="relative mx-auto touch-none overflow-hidden rounded-2xl select-none"
+      style="width: {VIEWPORT_W}px; height: {VIEWPORT_H}px; max-width: 100%; background-color: #1f2937; background-image: linear-gradient(45deg, #4b5563 25%, transparent 25%), linear-gradient(-45deg, #4b5563 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #4b5563 75%), linear-gradient(-45deg, transparent 75%, #4b5563 75%); background-size: 20px 20px; background-position: 0 0, 0 10px, 10px -10px, -10px 0;"
       role="img"
       aria-label={m.asso_logo_preview_aria()}
       onpointerdown={onImagePointerDown}
@@ -229,7 +239,7 @@
             aria-label={m.asso_logo_resize_handle_aria()}
             aria-valuenow={Math.round(boxSize)}
             aria-valuemin={MIN_BOX}
-            aria-valuemax={Math.min(VIEWPORT_W, VIEWPORT_H)}
+            aria-valuemax={geo?.maxBoxSize ?? Math.min(VIEWPORT_W, VIEWPORT_H)}
             tabindex="0"
             onpointerdown={onHandlePointerDown}
             onpointermove={onHandlePointerMove}
