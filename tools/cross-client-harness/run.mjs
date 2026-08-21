@@ -39,7 +39,7 @@ import { OVERLAYS, clearOverlays, client, evaluate } from './chat.mjs';
 import * as phone from './phone.mjs';
 import { closeExtraAppTabs } from './tabs.mjs';
 import { ORIGIN, PORTS } from './names.mjs';
-import { all } from './results.mjs';
+import { all, clientBuild } from './results.mjs';
 
 const argv = process.argv.slice(2);
 const flag = (n) => argv.includes(`--${n}`);
@@ -436,6 +436,38 @@ async function preflight(devices, { quiet = false } = {}) {
       if (who) SUBJECTS.add(who[1]);
     }
     if (r.status !== 0) problems.push('at least one client is not connected to the gateway - see the lines above');
+  }
+
+  // WHICH BUILD THE PHONE IS RUNNING, read ONCE here and handed to every script this run spawns.
+  //
+  // The phone is not on the deployment and never will be, so a phase that reads it produces verdicts
+  // about a DIFFERENT build from the web ones beside them - and until this existed, only four of the
+  // thirty runners said so. See `A1_BUILD` in `results.mjs` for why it lives there and not in each
+  // check. Read AFTER the presence deadline on purpose: the repairs above end in a navigation, and a
+  // fetch issued into a document being torn down measures the repair.
+  //
+  // A FAILURE HERE IS A PROBLEM, NOT A SHRUG. The phone answered every readiness probe above, so a
+  // static asset it cannot serve means the WebView is not what the preflight just said it was - and
+  // the alternative is a whole phase of rows that quietly stop naming the build they ran on.
+  // `[...devices]`, NOT `.has`: this function is called with an ARRAY by `--preflight` and with a
+  // `Set` by a phase run, and the loops above work on both because they only ever iterate.
+  if ([...devices].includes('A1')) {
+    try {
+      const cx = await client(PORTS.A1, null, { focus: false });
+      try {
+        const b = await clientBuild(cx);
+        process.env.CANARI_A1_BUILD = JSON.stringify(b);
+        if (!quiet) console.log(`  ok   A1 runs ${b.commit.slice(0, 8)} built ${b.builtAt}`);
+      } finally {
+        cx.close();
+      }
+    } catch (e) {
+      problems.push(`A1 would not say which build it is running: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  } else {
+    // A PHASE WITH NO PHONE CARRIES NO STAMP, rather than a stale one from a previous phase in the
+    // same process. `--preflight` can be called twice with different device sets.
+    delete process.env.CANARI_A1_BUILD;
   }
 
   return problems;

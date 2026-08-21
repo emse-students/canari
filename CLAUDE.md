@@ -148,9 +148,7 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     `phone.ensure({ port: 9333 })` before `pin.mjs --device A1` - the old devtools forward is dead
     and `pin.mjs` alone reports `ECONNREFUSED`. **A phone `offline` in adb is a HUMAN action**: no
     `adb reconnect` or daemon restart clears it, the screen must be unlocked and the prompt accepted.
-3. **`cleanup.mjs` before the campaign** - venues from the COMM runs, each `C<n> COMM<n>-<mark>`,
-    deleted THROUGH the product so its Graine group goes with it; `--dry` to look first.
-4. **THE CAMPAIGN ITSELF - RUNNING, by the user's decision of 2026-08-21** (*"C'est parti pour la
+3. **THE CAMPAIGN ITSELF - RUNNING, by the user's decision of 2026-08-21** (*"C'est parti pour la
     campagne"*, in autonomy). The ladder, top to bottom. **Everything must end green, so every phase
     runs** - including the six phases that had no runner at all, which are written as the ladder
     reaches them. The order, the cost, the decisions it turns on and **the four decided at launch**
@@ -158,6 +156,13 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     blast radius at each phase boundary) are on
     [cross-client-testing](docs/wiki/cross-client-testing.md) and
     [cross-client-campaign](docs/wiki/cross-client-campaign.md), the only copies.
+
+**THE ESTATE WAS SWEPT AND MEASURED CLEAN 2026-08-21, before the ladder started.** 22 debris salons
+went through the product (`cleanup.mjs` now owns salons as well as communities), and all thirteen
+residue counts on prod came back ZERO afterwards - for absent AND tombstoned groups. The 855
+`queued_message` rows that remain all name a LIVE group and an abandoned test device; twelve of those
+devices hold no membership anywhere, so their single frame each is inert until the 90-day reaper.
+Three probe salons no runner mints (`g3-priv-a`, two `rep-repair-<mark>`) were deleted by name.
 
 **OWED TO THE USER, NOT TO THE CODE: the MLS + Graine explanation.** For THEM, prose and diagrams, no
 code (user, 2026-08-20). Post-campaign; scope and the two audiences declined are on
@@ -196,8 +201,12 @@ SETUP-4's 2FA, the one step no tool here can answer. Outside the work tree a cre
 committed and `git clean -xdf` cannot reach a profile.
 
 **A1's APK predates the deployment on purpose** - `frontendDist` is `../build`, so the phone serves
-what is inside its APK and a deploy never reaches it. That is a real mixed-fleet state; every A1 row
-says which build it read, and `results.mjs` records `a1Build` next to `build`.
+what is inside its APK and a deploy never reaches it. That is a real mixed-fleet state, so every row
+of a phase that arms the phone names `a1Build` beside `build`. **That is now true by construction and
+was not before**: the preflight reads the phone once and hands the stamp down through
+`CANARI_A1_BUILD`, because only four runners out of thirty had ever recorded it themselves - `msg2`,
+`msg5`, `msg8` and `msg8b` all drive the phone and all landed rows without it, found while MSG was
+running on 2026-08-21. A phase with no phone carries no stamp at all.
 
 **MUT-20 is unarmable until a campaign message reaches 90 days** (earliest 2026-11-09).
 

@@ -288,6 +288,20 @@ A campaign that creates groups, devices and backlogs on the PRODUCTION database 
 that later runs then measure - and cannot tell from real traffic. Clearing it is the last step of the
 ladder, after CORRUPT's rollback.
 
+**IT IS ALSO THE FIRST STEP, because debris does not merely get measured - it BREAKS the instrument.**
+Most checks build a salon inside the shared `Campagne de test` venue, which is never deleted, so a
+crashed runner's salon stays for ever. Measured 2026-08-21: 25 salons in that one community, 23 of
+them debris, and at that length the community's own "add a channel" control sat at y=1149 in a
+944-tall viewport - below the fold and unclickable. COMM-14 failed on it. The check could not build
+its venue, in a community whose only problem was the debris of the checks before it. So `cleanup.mjs`
+owns BOTH estates now, salons first, and it runs before the ladder as well as after it.
+
+Its allowlist for salons is enumerated from what the runners mint - `c<n>-comm<n>-<mark>`, plus
+COMM-12's `c12-<arm>-comm12-<mark>` - and a name outside that shape is listed for a human rather than
+swept. Three such existed (`g3-priv-a` and two `rep-repair-<mark>`, from hand-made probes no runner in
+the repo mints) and were deleted BY NAME, not by widening the shape: a pattern loose enough to reach
+them is loose enough to reach a real salon.
+
 **Delete test groups through the UI, never by SQL.** `DELETE /api/mls/groups/:groupId` emits nothing
 to clients: the notice is an E2EE MLS `groupDeleted` system message the CLIENT sends *before* calling
 the server, precisely because the server call hard-deletes `dm_group_members` and strips the routing a

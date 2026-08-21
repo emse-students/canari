@@ -206,6 +206,37 @@ const CHECK = (() => {
   };
 })();
 
+/**
+ * THE BUILD THE PHONE IS RUNNING, handed down by the preflight rather than asked for by each check.
+ *
+ * A1's APK deliberately predates the deployment - `frontendDist` is `../build`, so the phone serves
+ * what was packaged into it and a deploy never reaches it. A verdict from a phase that read the phone
+ * and does not say which side it read is unattributable, and the board's convention already demands
+ * it. **Only four runners out of thirty ever recorded it**, all in COMM, and the wiki claimed every
+ * A1 row did. Measured 2026-08-21 while MSG was running: `msg2`, `msg5`, `msg8` and `msg8b` all
+ * drive the phone, and all four landed rows with no `a1Build` at all.
+ *
+ * A rule saying "record it" would be the rule that was already implied and forgotten the same way,
+ * so it is not a call any check makes. `run.mjs` reads the phone ONCE per phase, while arming it, and
+ * puts the stamp here; every row of every script it spawns then carries it, and a phase with no phone
+ * carries nothing rather than a null that reads as "the phone was there and answered nothing".
+ *
+ * IT IS THE ARMING-TIME STAMP, which is what a reader wants: a reinstall mid-phase would make it
+ * stale, and by the campaign's own rule a rebuild restarts the phase anyway.
+ */
+const A1_BUILD = (() => {
+  const raw = process.env.CANARI_A1_BUILD;
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    // NOT SWALLOWED. Garbage here means the preflight wrote something it should not have, and
+    // continuing would drop the phone's build from every row of the phase - the exact fault this
+    // exists to close, restored silently.
+    initFailed('A1_BUILD', `CANARI_A1_BUILD is not JSON (${String(e)}): ${raw.slice(0, 120)}`);
+  }
+})();
+
 /** Every verdict THIS process has recorded, so the exit code can be derived rather than remembered. */
 const recorded = [];
 
@@ -244,6 +275,9 @@ export function record(id, verdict, detail) {
     builtAt: BUILD.builtAt,
     check: CHECK.file,
     checkSha: CHECK.sha,
+    // BEFORE `detail`, so a runner that read the phone at its OWN arming moment overrides this one.
+    // Four COMM checks do, and theirs is the more precise of the two.
+    ...(A1_BUILD ? { a1Build: A1_BUILD.commit, a1BuiltAt: A1_BUILD.builtAt } : {}),
     ...detail,
     ...(owedObservation
       ? { claimedVerdict: verdict, unobserved: 'no report was gated into this verdict - see gate() in watch.mjs' }

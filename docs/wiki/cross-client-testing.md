@@ -74,19 +74,19 @@ window. Earlier x5 series on `8a3edbdd`, `e62c21f1` and `25376b86` all read 13/1
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| MSG-1 | W1 -> W2 plain DM: under 2 s, one copy, correct author | `W1 W2` | `PASS` - 261 ms |
-| MSG-1-cold | Same, after a reload | `W1 W2` | `PASS` - 265 ms |
-| MSG-1b | Delivery DURING a history load | `W1 W2` | `PASS` - 3 ms |
-| MSG-2 | W2 -> A1 with the app foreground: no duplicate against the push | `+A1` | `PASS` - 274 ms |
-| MSG-3 | Reply renders with its quoted parent on both sides | `W1 W2` | `PASS` - 196 ms |
-| MSG-4 | Image then PDF: ciphertext upload, both render, receiver decodes | `W1 W2` | `PASS` |
-| MSG-5 | Channel message converges on all three; no `masterSecret` in any payload | `+A1` | **`PASS-DIRTY` 2026-08-19 on `a232c070`** - 1 copy on each of W1/W2/A1, no `masterSecret`; the dirt (A1 at 5 989 ms behind an ERROR line) is fixed in `89368eb0` - **re-run owed on that build** |
-| MSG-6 | Link preview served through the proxy, never a third-party `<img src>` | `W1 W2` | `PASS` |
-| MSG-7 | 30 rapid sends: order preserved, no gap, no duplicate | `W1 W2` | `PASS` - 1 944 ms |
-| MSG-8 | Send to a BACKGROUNDED tab | `W1 W2` `+A1` | `PASS` |
-| MSG-8b | Same, receiver on another page: badge and unread count | `W1 W2` `+A1` | `PASS` |
-| MSG-9 | **Receiver** offline at the GATEWAY, then restored: lands once on reconnect | `W1 W2` | `PASS` - 15.7 s, nearly all the deliberate outage |
-| MSG-10 | **Sender** offline: optimistic echo persists, outbox drains, survives a reload | `W1 W2` | `PASS` |
+| MSG-1 | W1 -> W2 plain DM: under 2 s, one copy, correct author | `W1 W2` | `PASS` - `e9d951d7`, 2026-08-21, clean, 325 ms |
+| MSG-1-cold | Same, after a reload | `W1 W2` | `PASS` - `e9d951d7`, 2026-08-21, clean, 326 ms |
+| MSG-1b | Delivery DURING a history load | `W1 W2` | `PASS` - `e9d951d7`, 2026-08-21, clean, 3 ms |
+| MSG-2 | W2 -> A1 with the app foreground: no duplicate against the push | `+A1` | `PASS` - `e9d951d7`, 2026-08-21, clean, 578 ms. **This row and the three other A1 ones below carry no `a1Build`** - the runners never recorded it, found by this very run and fixed in the preflight, so the NEXT A1 phase names the phone's build and these four are owed a re-run for attribution alone |
+| MSG-3 | Reply renders with its quoted parent on both sides | `W1 W2` | `PASS` - `e9d951d7`, 2026-08-21, clean, 303 ms |
+| MSG-4 | Image then PDF: ciphertext upload, both render, receiver decodes | `W1 W2` | `PASS` - `e9d951d7`, 2026-08-21, clean |
+| MSG-5 | Channel message converges on all three; no `masterSecret` in any payload | `+A1` | `PASS` - `e9d951d7`, 2026-08-21, CLEAN. **The re-run this row owed since 2026-08-19 is settled**: it was `PASS-DIRTY` on `a232c070` with A1 at 5 989 ms behind an ERROR line, `89368eb0` fixed it, and this run on a build carrying that fix is clean. No `a1Build` on the row - see MSG-2 |
+| MSG-6 | Link preview served through the proxy, never a third-party `<img src>` | `W1 W2` | `PASS` - `e9d951d7`, 2026-08-21, clean |
+| MSG-7 | 30 rapid sends: order preserved, no gap, no duplicate | `W1 W2` | `PASS` - `e9d951d7`, 2026-08-21, clean, 2 000 ms |
+| MSG-8 | Send to a BACKGROUNDED tab | `W1 W2` `+A1` | `PASS` - `e9d951d7`, 2026-08-21, clean |
+| MSG-8b | Same, receiver on another page: badge and unread count | `W1 W2` `+A1` | `PASS` - `e9d951d7`, 2026-08-21, clean |
+| MSG-9 | **Receiver** offline at the GATEWAY, then restored: lands once on reconnect | `W1 W2` | `PASS` - `e9d951d7`, 2026-08-21, clean, 16.9 s, nearly all the deliberate outage |
+| MSG-10 | **Sender** offline: optimistic echo persists, outbox drains, survives a reload | `W1 W2` | `PASS` - `e9d951d7`, 2026-08-21, clean |
 
 ## 2 - TYPE - typing indicators
 
