@@ -176,8 +176,56 @@ sharing a name, the user closed by decision rather than by code (2026-08-19: it 
 The five that shipped on 2026-08-18: the mechanism is on
 [social-service](services/social-service.md#a-community-always-has-an-admin-or-it-has-no-members-2026-08-18),
 the audit and its prod figures on [community-rework](services/community-rework.md), the rule in
-[durable-rules](durable-rules.md), and the story in `CHANGELOG.md`. **Nothing is open here**: the
-last entry, a private salon's seed being sealed to the whole community, closed on 2026-08-20.
+[durable-rules](durable-rules.md), and the story in `CHANGELOG.md`. Those six are closed; the entry
+below them, a private salon's seed being sealed to the whole community, closed on 2026-08-20.
+**One is open**, opened 2026-08-21 by the campaign: WP-REGRANT-1, immediately below.
+
+### P1 - a member let BACK IN to a private salon is never routed again (WP-REGRANT-1)
+
+**Found 2026-08-21 on production**, by COMM-22, and measured by
+`scratch/graine-regrant.mjs` on venue `C22 regrant COMM22-k8qsrko`, salon `4407ec7c`:
+
+| Gesture | Salon group epoch | Delivery rows | Peer routed |
+| --- | --- | --- | --- |
+| salon created | 1 | 2 | no |
+| granted, peer opens it | **2** (2 455 ms) | 3 | **yes** |
+| revoked | 2 (rows dropped in 2 002 ms) | 2 | no |
+| the owner reloads the salon | **3** | 2 | no |
+| **re-granted, peer opens it again** | **3, unchanged after 180 s** | **2** | **NO** |
+
+The peer is entitled, the panel lists them, `PATCH /api/channels/:id/access` answers 200 - and they
+receive nothing from that salon, permanently. Every message minted afterwards renders on their
+screen as `no seed for session … (repairable)` and the repair cannot succeed, because a seed is
+fanned out along `dm_device_group_memberships` and they have no row on it.
+
+**The cause is an ordering, and then a stale belief built on it.** A revoke has two halves.
+`evictFromDistributionGroup` (chat-delivery) deletes the leaver's membership rows, their queued
+frames and their Redis routes **immediately**; the MLS half - removing their LEAF from the tree - is
+committed later by a REMAINING member, when that member next loads the salon
+(`rosterReconcile`). So the commit that says "you are out" is published to a group the leaver is
+already unrouted from, and **the leaver never receives it**: their client keeps a live local MLS
+group for a group it is no longer in. `ensureDistributionGroupFor` then reads exactly that stale
+belief as its early return -
+
+```ts
+const known = mlsService.distributionGroupFor(scope);
+if (known && mlsService.getLocalGroups().includes(known)) { … return true; }
+```
+
+- so on the re-grant it reconciles, asks for history, and **never re-joins**. The join is the only
+thing that writes the delivery rows back. Confirmed in the peer's own console: on the second open it
+logs `salon 4407ec7c … agrees with its roster - 3 leaf/leaves, nobody to remove` and posts no
+`group-info` at all, while the server holds 2 rows and epoch 3.
+
+**A local group list is not evidence of membership** - it is this device's memory of having joined,
+and the authority is the server's delivery roster. The fix must carry that fact to where the
+decision is made rather than let the client infer it, and it must be a durable diff and not an
+event: `channel.member.removed` reaches only the devices online when it fires, which is why the
+departure mechanism was built as a diff in the first place.
+
+Related and NOT yet measured: the same shape at COMMUNITY level (COMM-12 passed on 2026-08-20, so
+either that path differs or the check did not reach this state), and whether a device that was
+merely OFFLINE across a legitimate removal ends up in the same stale state.
 
 ### CLOSED 2026-08-20 - a private salon now has its own distribution group
 

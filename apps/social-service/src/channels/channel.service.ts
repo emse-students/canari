@@ -1092,7 +1092,7 @@ export class ChannelService {
   ): Promise<DistributionGroupRef> {
     await this.assertWorkspaceMember(workspaceId, userId);
 
-    const ref = await readDistributionGroup(this.internalSecret, workspaceScope(workspaceId));
+    const ref = await readDistributionGroup(this.internalSecret, workspaceScope(workspaceId), userId);
     if (!ref) {
       // Every community created since WP-21 has one, and the clean cut leaves no older population.
       // So this is not a state to repair silently: it is a community that cannot carry seeds, and
@@ -1107,7 +1107,7 @@ export class ChannelService {
     }
 
     this.logger.log(
-      `[DISTRIBUTION_GROUP] served workspace=${workspaceId} user=${userId.slice(0, 8)} group=${ref.groupId} published=${ref.groupInfo !== null}`
+      `[DISTRIBUTION_GROUP] served workspace=${workspaceId} user=${userId.slice(0, 8)} group=${ref.groupId} published=${ref.groupInfo !== null} devices=${ref.memberDevices?.length ?? '?'}`
     );
     return ref;
   }
@@ -1198,7 +1198,7 @@ export class ChannelService {
   ): Promise<DistributionGroupRef> {
     await this.assertPrivateChannelReader(channelId, userId);
 
-    const ref = await readDistributionGroup(this.internalSecret, channelScope(channelId));
+    const ref = await readDistributionGroup(this.internalSecret, channelScope(channelId), userId);
     if (!ref) {
       // Every private salon is given one at birth and cannot be created without it, so this is not
       // a state to repair silently: it is a salon that cannot carry seeds.
@@ -1212,7 +1212,7 @@ export class ChannelService {
     }
 
     this.logger.log(
-      `[CHANNEL_GRAINE] served channel=${channelId} user=${userId.slice(0, 8)} group=${ref.groupId} published=${ref.groupInfo !== null}`
+      `[CHANNEL_GRAINE] served channel=${channelId} user=${userId.slice(0, 8)} group=${ref.groupId} published=${ref.groupInfo !== null} devices=${ref.memberDevices?.length ?? '?'}`
     );
     return ref;
   }

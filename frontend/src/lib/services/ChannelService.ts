@@ -65,6 +65,19 @@ export interface DistributionGroupDto {
   groupInfo: string | null;
   /** The epoch `groupInfo` was exported at, or null when `groupInfo` is. */
   baseEpoch: number | null;
+  /**
+   * This user's device ids that the group actually holds a membership row for - the SERVER's answer
+   * to "would anything be delivered to me here".
+   *
+   * The only authority on that. A client knows only that it once joined, and the two can disagree
+   * for good: an eviction deletes these rows at once while the MLS removal is committed later by a
+   * remaining member, so the leaver never receives the commit and keeps a live local group for a
+   * group it is no longer in.
+   *
+   * **Undefined is "the server did not answer", never "no devices".** An absent field must leave the
+   * caller's behaviour exactly as it was; only a present-and-missing device id may make it re-join.
+   */
+  memberDevices?: string[];
 }
 
 export interface CreateChannelDto {

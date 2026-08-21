@@ -128,6 +128,33 @@ Decided with the user, not to be re-litigated.
   which branch each A1 row is reading, or rebuild before the device rungs - never report an A1 verdict
   without knowing which of the two it was.
 
+### The four decided 2026-08-21, when the campaign was launched
+
+Asked and answered before the first rung, because each one changes what the run costs and what it is
+worth. They hold for the whole campaign and are not re-litigated inside it.
+
+- **Every empty phase gets its runners written, CALL included.** Six phases had no instrument at all
+  when the campaign opened - DEL, MULTI, CALL, PIN, CORRUPT, and GRP beyond `grp-traffic.mjs`, about
+  fifty-six checks. They are written **as the ladder reaches the phase**, never in a batch ahead of
+  it: writing a phase and running it later is verification by COMPILING, which is the thing this
+  campaign exists to refuse. Each new script joins `checks.mjs` in the commit that writes it.
+- **One pass everywhere first, five passes where a race is the subject.** The ladder is walked once
+  end to end so that every row carries a verdict on one known build, and only then is `--repeat 5`
+  spent on the rows whose subject IS an intermittency - a reconnect, an outbox drain, a merge, a
+  rewind - and on any row a first pass found unstable. Breadth before depth: a phase with no verdict
+  at all is a bigger hole than a phase with one.
+- **The APK is rebuilt after every fix that touches the mobile path.** The alternative - one build at
+  the start - leaves every defect the campaign finds unverified on the client that cannot receive a
+  deploy, which is the one place a Tauri capability, a Kotlin path or a native store can fail alone.
+  A build costs minutes and forbids any other frontend build while it runs; that is the price of a
+  phone verdict meaning anything. `a1Build` on the row still names which bundle answered.
+- **A defect is fixed and pushed on discovery; the blast radius is replayed before the next rung.**
+  The phase in progress is finished on the new build, then everything the fix could touch is re-run,
+  and only then does the ladder descend. Deferring the wide re-run to one pass at the end would leave
+  a rung's verdicts standing on a build that no longer exists; replaying it the instant a fix lands
+  would restart the ladder from the top on every defect. The end of a phase is the seam that has
+  both properties.
+
 ## Pre-flight, and none of it is a check
 
 A run that skips this measures the previous build.

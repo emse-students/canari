@@ -4,6 +4,7 @@ import {
   Post,
   Delete,
   Param,
+  Query,
   Body,
   Headers,
   BadRequestException,
@@ -240,13 +241,30 @@ export class InternalController {
    *
    * `groupInfo` is null until the first client has initialised the MLS group - a real state, not an
    * error: the community or salon exists and nobody has opened it yet.
+   *
+   * `memberDevices` answers ONE question and it is the client's only way to ask it: which of THIS
+   * USER's devices does the group actually hold a membership row for. A client cannot work that out
+   * for itself - it knows only that it once joined - and the two can disagree permanently. A revoke
+   * deletes the leaver's rows here IMMEDIATELY (see `evictFromDistributionGroup`) while the MLS half,
+   * removing their leaf, is committed later by a REMAINING member; the commit is therefore published
+   * to a group the leaver is already unrouted from, so the leaver never learns of it and keeps a live
+   * local group for a group it is no longer in. Re-granted, it then believes it is already a member,
+   * never re-joins, and never gets its rows back - it is entitled and unreachable, for good. Answered
+   * only when `userId` is given, because every other caller of this route is asking a different
+   * question and should not pay for a query it will not read.
    */
   @Get('mls/distribution-groups/:scope/:scopeId')
   async getDistributionGroup(
     @Param('scope') scope: string,
     @Param('scopeId') scopeId: string,
-    @Headers('x-internal-secret') headerSecret: string
-  ): Promise<{ groupId: string; groupInfo: string | null; baseEpoch: number | null } | null> {
+    @Headers('x-internal-secret') headerSecret: string,
+    @Query('userId') userId?: string
+  ): Promise<{
+    groupId: string;
+    groupInfo: string | null;
+    baseEpoch: number | null;
+    memberDevices?: string[];
+  } | null> {
     this.assertInternalSecret(headerSecret);
     const where = this.distributionWhere(this.assertDistributionScope(scope), scopeId);
     const label = `${scope}:${scopeId}`;
@@ -258,13 +276,30 @@ export class InternalController {
     }
 
     const info = await this.messagingService.readGroupInfo(group.id);
+
+    // PENDING COUNTS. The question is "has this device's join been RECORDED", not "is it in sync":
+    // a row in either state means the join happened and the fan-out will reach it, while NO row
+    // means nothing here will ever deliver to it again. Treating `pending` as absent would send a
+    // device that had just joined straight back through an external join it does not need.
+    const asked = String(userId ?? '').trim().toLowerCase();
+    const memberDevices = asked
+      ? (
+          await this.deviceGroupRepo.find({
+            where: { groupId: group.id, userId: asked },
+            select: { deviceId: true },
+          })
+        ).map((row) => row.deviceId)
+      : undefined;
+
     this.logger.log(
-      `[DISTRIBUTION_GROUP] read scope=${label} group=${group.id} published=${!!info}`
+      `[DISTRIBUTION_GROUP] read scope=${label} group=${group.id} published=${!!info}` +
+        (asked ? ` user=${asked.slice(0, 8)} devices=${memberDevices?.length ?? 0}` : '')
     );
     return {
       groupId: group.id,
       groupInfo: info?.groupInfo ?? null,
       baseEpoch: info?.baseEpoch ?? null,
+      ...(memberDevices ? { memberDevices } : {}),
     };
   }
 

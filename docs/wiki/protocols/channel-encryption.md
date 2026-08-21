@@ -1152,6 +1152,61 @@ leaf is no longer in. Their routing is already cut. The stale leaves from the WP
 storm are removed by the same pass whenever their user is off the roster; the ones belonging to
 current members are inert and stay.
 
+### The asymmetry has a third half: COMING BACK - FIXED 2026-08-21 (WP-REGRANT-1)
+
+The two halves above are what a departure costs. What neither of them says is what the LEAVER ends
+up believing, and that turned out to be the defect.
+
+The routing revoke is immediate; the Remove is committed later, by a remaining member, **and it is
+published to the group the leaver is already unrouted from**. So the leaver never receives the
+commit that removes them. Their local MLS group stays alive, at its old epoch, for ever. Nothing
+ever corrects it, because the only thing that could was routed away one step earlier.
+
+`ensureDistributionGroupFor` then read that local group as membership:
+
+```ts
+const known = mlsService.distributionGroupFor(scope);
+if (known && mlsService.getLocalGroups().includes(known)) { reconcile; askForHistory; return true; }
+```
+
+Re-granted, the member's client took that early return on every load - reconciled, asked for
+history, and never re-joined. **The join is the ONLY writer of `dm_device_group_memberships`**, so
+nothing put their delivery rows back and they read nothing in that salon again. A reinstall was the
+only recovery.
+
+**Measured on production 2026-08-21**, one private salon, W1 owner and W2 peer:
+
+| gesture | epoch | delivery rows for W2 | W2 reads |
+| --- | --- | --- | --- |
+| granted, peer opens the salon | 1 -> 2 (1863 ms) | 3 | yes |
+| revoked, owner opens it | 2 -> 3 | 2 | no |
+| **re-granted, peer opens it again** | **3, unchanged after 180 s** | **2** | **NO** |
+
+**The fix carries the fact to the decision, rather than inferring it.** Holding the group locally is
+this device's MEMORY of having joined; the delivery rows are the fact, and only the server holds
+them. `GET internal/mls/distribution-groups/:scope/:scopeId?userId=` now answers `memberDevices` -
+this user's device ids in that group, `pending` rows included, because the question is "was the join
+RECORDED", not "is it in sync". social-service names the reader on both distribution-group reads and
+passes the array through; the client compares it against its own device id and, when the group holds
+no row for it, calls `forgetDistributionGroup(scope)` before re-joining. **In that order, and the
+order is the fix:** `ensureDistributionGroup` returns early on a group it already holds
+(`BaseMlsService.ts`), so re-joining without forgetting first is a no-op.
+
+Three properties, each deliberate:
+
+- **`undefined` is "nobody asked", never "no devices".** A caller that did not name a reader, or an
+  older delivery service, leaves behavior exactly as it was.
+- **A failed read is not an eviction.** The fetch used to happen only when the group was NOT held,
+  so transport could never break a healthy load; now that it always happens, a throw keeps the held
+  group and takes the old path. Same rule as the roster reconciliation.
+- **The repair ACCUSES.** Reaching it means the two sides had drifted and a member was sitting in a
+  salon receiving nothing. The line is the only record that it was ever broken, and its RATE is what
+  says whether the drift is rare or routine. `[DISTRIBUTION_GROUP] served ... devices=N` and
+  `[CHANNEL_GRAINE] served ... devices=N` are the server's half of the same evidence.
+
+A diff, not an event - the same reason the roster reconciliation is one. Nothing has to be online at
+the right moment, nothing has to be remembered, and repeating it converges to nothing to do.
+
 ## 11. A private salon's ciphertext was addressed to the whole community - FIXED 2026-08-19
 
 Found while answering a question about §4.3, and it is the second half of it. §4.3 settles how a

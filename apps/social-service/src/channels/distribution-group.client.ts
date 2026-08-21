@@ -64,6 +64,14 @@ export interface DistributionGroupRef {
   groupInfo: string | null;
   /** Epoch the GroupInfo above was published at; null exactly when `groupInfo` is. */
   baseEpoch: number | null;
+  /**
+   * Device ids of the reader this was read FOR that the group holds a membership row for.
+   *
+   * Undefined when the read did not name a reader - "nobody asked", which a client must not read as
+   * "no devices". Present and EMPTY is the answer that matters: the group would deliver nothing to
+   * that user, whatever their client believes about having joined.
+   */
+  memberDevices?: string[];
 }
 
 /** Shape chat-delivery answers with on the distribution-group routes. */
@@ -71,6 +79,7 @@ interface DeliveryGroupPayload {
   groupId?: unknown;
   groupInfo?: unknown;
   baseEpoch?: unknown;
+  memberDevices?: unknown;
 }
 
 /**
@@ -110,22 +119,32 @@ export async function createDistributionGroup(
  */
 export async function readDistributionGroup(
   secret: string,
-  scope: DistributionScope
+  scope: DistributionScope,
+  forUserId?: string
 ): Promise<DistributionGroupRef | null> {
+  // Named ON THE READ rather than inferred later: only the delivery side holds the membership rows,
+  // and a caller that did not ask gets `memberDevices: undefined` instead of a misleading empty list.
+  const reader = String(forUserId ?? '').trim().toLowerCase();
+  const query = reader ? `?userId=${encodeURIComponent(reader)}` : '';
   const payload = (await callDelivery(
     secret,
     'DISTRIBUTION_GROUP',
-    `internal/mls/distribution-groups/${seg(scope)}`,
+    `internal/mls/distribution-groups/${seg(scope)}${query}`,
     { method: 'GET' }
   )) as DeliveryGroupPayload | null;
 
   const groupId = typeof payload?.groupId === 'string' ? payload.groupId : '';
   if (!groupId) return null;
 
+  const devices = Array.isArray(payload?.memberDevices)
+    ? payload.memberDevices.filter((d): d is string => typeof d === 'string')
+    : undefined;
+
   return {
     groupId,
     groupInfo: typeof payload?.groupInfo === 'string' ? payload.groupInfo : null,
     baseEpoch: typeof payload?.baseEpoch === 'number' ? payload.baseEpoch : null,
+    ...(devices ? { memberDevices: devices } : {}),
   };
 }
 

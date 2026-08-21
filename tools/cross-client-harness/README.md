@@ -102,6 +102,7 @@ whose bucket is known.
 | `names.mjs` / `accounts.mjs` | The only two readers of machine-local truth. Every other file goes through them. |
 | `phone.mjs` | adb, app lifecycle, notifications, the WebView - and the only entry point for the devtools forward. |
 | `login.mjs`, `pin.mjs`, `unlock.mjs` | The auth gates. `unlock.mjs` unlocks every client it can identify; `login.mjs --match cas.emse.fr` also drives the phone's system-browser login. |
+| `pingate.mjs` | The PIN gate as a LIBRARY, for a check that has to re-unlock mid-run. `unlockClient` types the PIN and then RE-READS the client to say whether it got through - see below. |
 | `net.mjs` | The radios. `armCut`/`cutHard` exist because CDP offline emulation leaves an already-established WebSocket alone - the plain cut could never produce a receiver-side disconnection, so MSG-9 had never once measured the thing it was named for. |
 | `a1.py` | Native Android surfaces via `uiautomator2`, for what the WebView cannot see. |
 
@@ -209,6 +210,17 @@ Four properties worth keeping:
 - **`unlock.mjs`** resolves which account owns which port from `test-accounts.json`, navigates to a
   route where the gate actually MOUNTS, and spawns `pin.mjs` - so the recurring "you forgot the PIN"
   costs one idempotent command, and no real first name is typed into a shell line.
+- **`pingate.mjs` is that same gate for a check that has to re-unlock in the MIDDLE of a run**, and
+  it exists because five runners had each grown a private `unlock()` that spawned `pin.mjs` and kept
+  **its last line of stdout**. A string is not a post-condition: `pin.mjs failed: …` and `[pin]
+  unlocked` are both truthy, both were recorded beside the verdict instead of gating it, and the run
+  carried on either way - into a client that renders, answers every probe and reports on an EMPTY
+  store, so the next assertion reads zero of everything and the check blames the application for the
+  harness's own locked browser. `unlockClient` re-reads the client afterwards and returns
+  `unlocked` / `LOCKED` / `UNDECIDED`; a caller that gets anything but the first has an UNASKABLE
+  question, not a failing one. **`comm22.mjs` uses it; `life.mjs`, `notif.mjs`, `notif7.mjs` and
+  `tab236.mjs` still hold the old shape** and are converted when the LIFE, NOTIF and TAB phases run,
+  where the change can be validated on the spot rather than four rungs ahead of any evidence.
 - **`onetab.mjs`** closes every app tab but the front one. A second tab is a second MLS client on that
   profile, and `client()` resolves by position among the tabs; `run.mjs` runs the same repair before
   every job.

@@ -57,6 +57,19 @@ const debris = named.filter((w) => DEBRIS.test(w.name));
 console.log(`[cleanup] ${named.length} communities on production, ${debris.length} match a check's venue`);
 for (const w of debris) console.log(`  ${w.id.slice(0, 8)}  ${w.name}`);
 
+// WHAT IT DID NOT MATCH IS THE HALF WORTH READING, and it used to print nothing at all. An
+// allowlist is only as good as its enumeration, so its failure mode is a venue sitting in plain
+// sight while the sweep reports success - "0 match a check's venue" reads as "the estate is clean"
+// and means "I recognised nothing". It has happened twice: COMM-12's second venue on 2026-08-20,
+// and a scratch probe on 2026-08-21 that minted `C22 PROBE-<mark>` outside the shape. Naming the
+// rest costs one line and makes the next escape visible on the run that causes it. These are REAL
+// communities, so they are listed and never touched.
+const strangers = named.filter((w) => !DEBRIS.test(w.name));
+if (strangers.length > 0) {
+  console.log(`[cleanup] ${strangers.length} NOT matched - left alone, check none of these is debris:`);
+  for (const w of strangers) console.log(`  ${w.id.slice(0, 8)}  ${w.name}`);
+}
+
 if (debris.length === 0) {
   console.log('[cleanup] nothing to sweep');
   process.exit(0);

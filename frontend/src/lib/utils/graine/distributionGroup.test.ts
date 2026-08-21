@@ -23,8 +23,19 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     distributionGroupFor: vi.fn().mockReturnValue(null),
     getLocalGroups: vi.fn().mockReturnValue([]),
     ensureDistributionGroup: vi.fn().mockResolvedValue(true),
+    forgetDistributionGroup: vi.fn().mockReturnValue('g-1'),
+    getDeviceId: vi.fn().mockReturnValue('dev-me'),
     ...overrides,
   };
+}
+
+/** A device that holds the group locally - the state a re-grant used to strand for ever. */
+function makeHeldMls(overrides: Record<string, unknown> = {}) {
+  return makeMls({
+    distributionGroupFor: vi.fn().mockReturnValue('g-1'),
+    getLocalGroups: vi.fn().mockReturnValue(['g-1']),
+    ...overrides,
+  });
 }
 
 function makeChannels(overrides: Record<string, unknown> = {}) {
@@ -40,17 +51,23 @@ const run = (mls: unknown, channels: unknown, log: (m: string) => void = () => {
   ensureCommunityDistributionGroup(mls as never, channels as never, 'ws-1', log);
 
 describe('ensureCommunityDistributionGroup', () => {
-  it('asks nobody when the group is already registered and held', async () => {
-    const mls = makeMls({
-      distributionGroupFor: vi.fn().mockReturnValue('g-1'),
-      getLocalGroups: vi.fn().mockReturnValue(['g-1']),
+  it('re-joins nothing when the group is held AND the server routes to this device', async () => {
+    const mls = makeHeldMls();
+    const channels = makeChannels({
+      getDistributionGroup: vi.fn().mockResolvedValue({
+        groupId: 'g-1',
+        groupInfo: null,
+        baseEpoch: 7,
+        memberDevices: ['dev-me'],
+      }),
     });
-    const channels = makeChannels();
 
     expect(await run(mls, channels)).toBe(true);
-    // The early return is derived from state that already exists rather than from a "done" flag,
-    // so a state reload that dropped the group re-joins instead of being lied to.
-    expect(channels.getDistributionGroup).not.toHaveBeenCalled();
+    // Held is a MEMORY of having joined; the rows are the fact. Asking is what tells them apart, so
+    // the ask happens on this branch too - it just changes nothing when the two agree.
+    expect(channels.getDistributionGroup).toHaveBeenCalledWith(workspaceScope('ws-1'));
+    expect(mls.forgetDistributionGroup).not.toHaveBeenCalled();
+    expect(mls.ensureDistributionGroup).not.toHaveBeenCalled();
   });
 
   it('re-joins when the group is registered but no longer held locally', async () => {
@@ -101,6 +118,87 @@ describe('ensureCommunityDistributionGroup', () => {
 
     expect(await run(mls, makeChannels(), log)).toBe(false);
     expect(log.mock.calls.flat().join(' ')).toMatch(/could not join/);
+  });
+});
+
+/**
+ * WP-REGRANT-1, measured on production 2026-08-21: a member removed from a private salon and then
+ * let back in was never routed again. The eviction deletes the delivery rows at once while the MLS
+ * removal is committed later by a remaining member - published to a group the leaver is no longer
+ * routed from - so the leaver never learns it was removed and keeps a live local group for ever.
+ * Held-therefore-member then took the early return on every subsequent load, and the join, which is
+ * the ONLY writer of delivery rows, never ran again.
+ */
+describe('ensureCommunityDistributionGroup - a held group the server routes nothing to', () => {
+  const heldButUnrouted = () =>
+    makeChannels({
+      getDistributionGroup: vi
+        .fn()
+        .mockResolvedValue({ groupId: 'g-1', groupInfo: 'c29j', baseEpoch: 7, memberDevices: [] }),
+    });
+
+  it('forgets it and re-joins, so the rows are written back', async () => {
+    const mls = makeHeldMls();
+
+    expect(await run(mls, heldButUnrouted())).toBe(true);
+    // In this order, and the order is the fix: `ensureDistributionGroup` returns early on a group
+    // it already holds, so re-joining without forgetting first would be a no-op.
+    expect(mls.forgetDistributionGroup).toHaveBeenCalledWith(workspaceScope('ws-1'));
+    expect(mls.ensureDistributionGroup).toHaveBeenCalledWith(workspaceScope('ws-1'), {
+      groupId: 'g-1',
+      groupInfo: 'c29j',
+      baseEpoch: 7,
+      memberDevices: [],
+    });
+  });
+
+  it('accuses, because a repair with no report is a defect nobody counts', async () => {
+    const log = vi.fn();
+
+    expect(await run(makeHeldMls(), heldButUnrouted(), log)).toBe(true);
+    expect(log.mock.calls.flat().join(' ')).toMatch(/holds NO row for it/);
+  });
+
+  it('keeps another device of the same user from counting as this one', async () => {
+    // The server answers with THIS user's devices in the group. A second, still-routed device of
+    // the same user says nothing about whether this one is routed.
+    const mls = makeHeldMls();
+    const channels = makeChannels({
+      getDistributionGroup: vi.fn().mockResolvedValue({
+        groupId: 'g-1',
+        groupInfo: 'c29j',
+        baseEpoch: 7,
+        memberDevices: ['dev-other'],
+      }),
+    });
+
+    expect(await run(mls, channels)).toBe(true);
+    expect(mls.forgetDistributionGroup).toHaveBeenCalled();
+  });
+
+  it('changes nothing when the server did not answer the question', async () => {
+    // `undefined` is "nobody asked" and never "no devices" - an older server, or a caller that did
+    // not pass the reader. Reading it as an eviction would forget a healthy group on every load.
+    const mls = makeHeldMls();
+
+    expect(await run(mls, makeChannels())).toBe(true);
+    expect(mls.forgetDistributionGroup).not.toHaveBeenCalled();
+    expect(mls.ensureDistributionGroup).not.toHaveBeenCalled();
+  });
+
+  it('keeps a held group when the read itself failed', async () => {
+    // A transport failure is not the server saying this device is out. The fetch used to happen
+    // only when the group was NOT held, so it could never break a healthy load; now that it always
+    // happens, a throw has to leave that path exactly as it was.
+    const mls = makeHeldMls();
+    const channels = makeChannels({
+      getDistributionGroup: vi.fn().mockRejectedValue(new Error('network')),
+    });
+    const log = vi.fn();
+
+    expect(await run(mls, channels, log)).toBe(true);
+    expect(mls.forgetDistributionGroup).not.toHaveBeenCalled();
+    expect(log.mock.calls.flat().join(' ')).toMatch(/keeping the one this device holds/);
   });
 });
 

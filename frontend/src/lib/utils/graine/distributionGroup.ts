@@ -23,9 +23,13 @@ import { reconcileDistributionGroupRoster } from './rosterReconcile';
 /**
  * Ensures this device is in `scope`'s key-distribution group, joining or creating it.
  *
- * IDEMPOTENT AND CHEAP TO REPEAT. The early return is derived from state that already exists - the
- * registered group id and the local MLS group list - rather than from a "done" flag, so it stays
- * correct across a state reload that a flag would have lied about.
+ * IDEMPOTENT AND CHEAP TO REPEAT. Nothing here is derived from a "done" flag: the answer comes from
+ * state that already exists, on BOTH sides - the group this device holds, and the delivery rows the
+ * group holds for it. One of those alone is not membership. A device can hold the MLS group and be
+ * routed nothing (it was evicted while offline), and a device routed something may not hold the
+ * group yet (a fresh install). Only the pair says whether a join is owed - see the comment on the
+ * comparison below, and `WP-REGRANT-1` in `docs/wiki/backlog.md` for what believing one of them
+ * cost.
  *
  * ONE FUNCTION FOR BOTH SCOPES, because it is one mechanism: a private salon's group differs only
  * in whose roster it carries, and a second copy of this would be a second place for the join, the
@@ -41,19 +45,29 @@ export async function ensureDistributionGroupFor(
   log: (message: string) => void = () => {}
 ): Promise<boolean> {
   const known = mlsService.distributionGroupFor(scope);
-  if (known && mlsService.getLocalGroups().includes(known)) {
-    // Already in the group - but not necessarily holding anything. A device that joined while its
-    // answerer was offline would never ask again if the ask lived only on the joining branch, and
-    // the request is exactly what decides whether it is needed.
-    await reconcileRoster(channelService, scope, log);
-    await askForHistory(scope, log);
-    return true;
-  }
+  const heldLocally = !!known && mlsService.getLocalGroups().includes(known);
 
-  let ref: { groupId: string; groupInfo: string | null; baseEpoch: number | null };
+  let ref: {
+    groupId: string;
+    groupInfo: string | null;
+    baseEpoch: number | null;
+    memberDevices?: string[];
+  };
   try {
     ref = await channelService.getDistributionGroup(scope);
   } catch (e) {
+    // A HELD GROUP SURVIVES A FAILED READ. This fetch used to happen only when the group was NOT
+    // held, so transport could never break a healthy load; now that the answer below depends on it,
+    // a fetch that threw must leave that path exactly as it was. A failed read is not "the server
+    // says you are out" - the same rule the roster reconciliation already obeys.
+    if (heldLocally) {
+      log(
+        `[GRAINE] could not re-read the distribution group of ${scopeLabel(scope)} (${e instanceof Error ? e.message : String(e)}) - keeping the one this device holds`
+      );
+      await reconcileRoster(channelService, scope, log);
+      await askForHistory(scope, log);
+      return true;
+    }
     // The causes need different responses and only the code tells them apart: a scope with no group
     // at all is a server-side gap somebody has to fix, a 403 means this user may no longer read it,
     // and anything else is transport. Never branched on the sentence.
@@ -69,6 +83,42 @@ export async function ensureDistributionGroupFor(
       `[GRAINE] could not read the distribution group of ${scopeLabel(scope)}: ${e instanceof Error ? e.message : String(e)}`
     );
     return false;
+  }
+
+  // WHAT THIS DEVICE BELIEVES, AGAINST WHAT THE GROUP WOULD ACTUALLY DELIVER TO IT.
+  //
+  // Holding the group locally is this device's MEMORY of having joined, and it is not evidence of
+  // membership: a revoke deletes the delivery rows at once while the MLS removal is committed later
+  // by a remaining member, so the commit is published to a group the leaver is already unrouted
+  // from and the leaver never receives it. Its local group then says "member" for ever. Re-granted,
+  // it took the early return below, reconciled, asked for history, and NEVER re-joined - so nothing
+  // put its rows back and it read nothing from that salon again. Measured on production 2026-08-21:
+  // three minutes after a re-grant, epoch unchanged, zero rows, every message `no seed for session`.
+  //
+  // `memberDevices` is the server's own answer and the only authority. Undefined means it was not
+  // asked - never "no devices" - so it changes nothing.
+  const serverForgotThisDevice =
+    heldLocally &&
+    Array.isArray(ref.memberDevices) &&
+    !ref.memberDevices.includes(mlsService.getDeviceId());
+
+  if (heldLocally && !serverForgotThisDevice) {
+    // Already in the group - but not necessarily holding anything. A device that joined while its
+    // answerer was offline would never ask again if the ask lived only on the joining branch, and
+    // the request is exactly what decides whether it is needed.
+    await reconcileRoster(channelService, scope, log);
+    await askForHistory(scope, log);
+    return true;
+  }
+
+  if (serverForgotThisDevice) {
+    // AT A LEVEL THAT ACCUSES. Reaching this means the two sides had drifted apart and a member was
+    // sitting in a salon receiving nothing; the re-join below repairs it, and this line is the only
+    // record that it was ever broken. Its RATE is what says whether the drift is rare or routine.
+    log(
+      `[GRAINE] ${scopeLabel(scope)}: this device holds the distribution group but the group holds NO row for it (${ref.memberDevices?.length ?? 0} device(s) for this user) - the local group is stale, rejoining`
+    );
+    mlsService.forgetDistributionGroup(scope);
   }
 
   const joined = await mlsService.ensureDistributionGroup(scope, ref);

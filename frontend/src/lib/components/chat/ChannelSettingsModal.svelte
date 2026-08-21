@@ -398,14 +398,29 @@
           <div class="space-y-3 pt-2">
             <div class="flex items-center gap-2">
               <Bell size={16} class="text-amber-500" strokeWidth={2.5} />
-              <h3 class="text-text-main text-sm font-bold">
+              <h3 id="channel-notif-heading" class="text-text-main text-sm font-bold">
                 {m.chat_channel_notifications_label()}
               </h3>
             </div>
             <p class="text-text-muted text-xs">{m.chat_channel_notifications_description()}</p>
-            <div class="grid grid-cols-3 gap-2" aria-busy={notifLoading || notifSaving}>
+            <!--
+              A RADIO GROUP, NOT THREE BUTTONS. These three are mutually exclusive and exactly one is
+              active, but the active one used to be marked by colour classes alone - so a screen
+              reader announced three identical buttons with no way to say which level was in force,
+              and the only way to READ the current level was to match a Tailwind class. `aria-checked`
+              is the control's own answer to that question, it is what assistive technology is told,
+              and it outlives any restyling.
+            -->
+            <div
+              class="grid grid-cols-3 gap-2"
+              role="radiogroup"
+              aria-labelledby="channel-notif-heading"
+              aria-busy={notifLoading || notifSaving}
+            >
               <button
                 type="button"
+                role="radio"
+                aria-checked={notifLevel === 'all'}
                 onclick={() => setNotifLevel('all')}
                 disabled={notifLoading}
                 class="flex flex-col items-center gap-1.5 rounded-xl border px-2 py-3 text-xs font-bold transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-50 {notifLevel ===
@@ -418,6 +433,8 @@
               </button>
               <button
                 type="button"
+                role="radio"
+                aria-checked={notifLevel === 'mentions'}
                 onclick={() => setNotifLevel('mentions')}
                 disabled={notifLoading}
                 class="flex flex-col items-center gap-1.5 rounded-xl border px-2 py-3 text-xs font-bold transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-50 {notifLevel ===
@@ -430,6 +447,8 @@
               </button>
               <button
                 type="button"
+                role="radio"
+                aria-checked={notifLevel === 'none'}
                 onclick={() => setNotifLevel('none')}
                 disabled={notifLoading}
                 class="flex flex-col items-center gap-1.5 rounded-xl border px-2 py-3 text-xs font-bold transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-50 {notifLevel ===

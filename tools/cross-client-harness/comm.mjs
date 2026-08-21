@@ -778,6 +778,24 @@ export async function confirmDialog(cx, confirmKey, { typeText = null } = {}) {
  * transient, so it is waited for rather than asserted afterwards.
  */
 export async function saveChannelAccess(cx) {
+  // IT REFUSES OFF A CLOSED PANEL, BY NAME. This save is the LAST gesture inside an
+  // `openChannelAccess` - it commits and then clears the modal itself - so wrapping the grant it
+  // follows in `inPanel` closes the panel first and the click below finds nothing. What that used
+  // to produce was `no stable element for selector: text=Enregistrer`, which reads as a caption
+  // that moved or a button the app failed to render, and sends the next hour into the frontend.
+  // COMM-22 lost six cycles to it. The panel's lifetime belongs to whoever opened it (methodology
+  // rule 26) and a rule the harness writes only in prose is one the harness will break (rule 21),
+  // so the seam says so instead.
+  const up = await evaluate(
+    cx,
+    `document.body.innerText.indexOf(${JSON.stringify(caption('chat_channel_access_title'))}) >= 0`
+  );
+  if (!up) {
+    throw new Error(
+      'saveChannelAccess: the access panel is not open - a grant is saved INSIDE openChannelAccess, ' +
+        'never through inPanel (which closes it) and never after one'
+    );
+  }
   await realClick(cx, control('common_save_button'));
   await until(
     cx,
