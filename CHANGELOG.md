@@ -37,6 +37,23 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **Nobody could be made an association admin: the server refused the preset its own client sends.**
+  `POST /associations/:id/members` and `PATCH .../members/:userId` answered
+  `{"message":["permissions must not be greater than 1023"],"statusCode":400}` for every attempt.
+  `AssociationPermissionFlag` has eleven flags, so the widest legal mask is 2047, but both DTOs
+  carried a hand-written `@Max(1023)`: `MANAGE_PARTNERSHIPS` (bit 10 = 1024) landed in `53b826f3`
+  and the bound stayed where `MANAGE_STRIPE_CONNECT` had left it. The frontend's "Admin" option
+  sends `ASSOCIATION_ADMIN_PRESET` = 1823, and `ALL_CORE_FLAGS` alone is 1311 - both over the cap,
+  so the role was unreachable rather than intermittently broken. Any mask carrying bit 10 failed
+  too, including ticking *Partenariats* on a plain member. Existing admins sat at 799 and loaded
+  fine, breaking only on their next save, which is why this read as new.
+
+  This was the bound's **second** drift - `79e7e913` had already raised it 511 -> 1023 by hand - so
+  the fix is not 2048. `ALL_PERMISSION_FLAGS` is now folded from the enum's own values and is the
+  only bound either DTO may name; a new flag moves it with no second edit.
+  `association-permissions.dto.spec.ts` locks the two together, asserting the mask covers every
+  declared flag and that the preset the frontend actually sends validates.
+
 - **The v0.14.1 iOS release never built: a header declared `uint32_t` without `<stdint.h>`.**
   `canari_mls_ffi.h` includes `<stddef.h>` for `size_t`, and `canari_native_decrypt_graine_message`
   arrived later carrying a `uint32_t message_index` that nothing declared. Only the Notification
