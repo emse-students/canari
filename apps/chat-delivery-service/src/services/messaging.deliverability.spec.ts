@@ -189,6 +189,27 @@ describe('MessagingService - a tombstone is not a destination', () => {
     expect(line).toContain('left residue');
   });
 
+  it('accuses a tombstoned group ONCE per process, not once per fetch', async () => {
+    // The residue is a STANDING FACT and not an event: the rows do not go away when they are read,
+    // so a per-fetch line repeats for as long as they exist. Measured minutes after this shipped:
+    // 134 warnings in one three-minute window, the same four ids over and over, because every client
+    // asks on every reconnection. Once is enough to be found, which is the line's whole job.
+    groups['g-dead'] = { id: 'g-dead', deletedAt: new Date(BASE) };
+    table = [row('m1', 'g-dead', 0)];
+
+    await fetch();
+    const first = warnings.filter((w) => w.includes('left residue')).length;
+    warnings = [];
+    await fetch();
+    const second = warnings.filter((w) => w.includes('left residue')).length;
+
+    expect(first).toBe(1);
+    expect(second).toBe(0);
+    // The frame is still DROPPED on the second fetch - it is the accusation that is silenced, never
+    // the behaviour, and the count of undeliverable rows is still reported.
+    expect(warnings.some((w) => w.includes('undeliverable'))).toBe(true);
+  });
+
   it('drops frames addressed to an absent group AND purges its residue', async () => {
     // No row at all: an incomplete deletion. Here the sweep IS the right answer - there is no
     // tombstone counting down to the reaper, so nothing else will ever collect these rows.

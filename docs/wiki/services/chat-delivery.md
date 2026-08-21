@@ -121,6 +121,15 @@ different code:
 | **absent** from `dm_groups` | dropped | purged here, through the shared list | `[ORPHAN_PURGE]` WARN, with per-table counts |
 | **tombstoned** | dropped | **left alone** | `[MSG_FETCH] ... undeliverable` WARN naming the group |
 
+**The accusation is made once per group per process, and that was learned the hard way.** Written per
+fetch it became the loudest line on the server within minutes of shipping: 134 warnings in one
+three-minute window, the same four group ids over and over, because the residue is a STANDING FACT
+rather than an event - every client asks on every reconnection and the rows do not go away when they
+are read. Once is enough to be found, which is the line's whole job, and a restart re-announces
+whatever is still there. The in-process set answers "have I already said this here", which differs
+from "is this still broken" only in lifetime - so it is deliberately not durable, or it would silence
+the trigger the day somebody wanted it again.
+
 A tombstoned group's residue is deliberately **not** swept from the fetch path. It exists because a
 delete route failed to take it, the fix belongs at that route, and a second collector here would hide
 that route's failure - the tombstone is already counting down to the reaper. So the line accuses

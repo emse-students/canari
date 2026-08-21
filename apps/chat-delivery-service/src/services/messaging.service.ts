@@ -1943,6 +1943,17 @@ export class MessagingService {
    * @returns `deliverable` - present in `dm_groups` AND not tombstoned, the only ids a frame may be
    *   handed to; `tombstoned` - present but soft-deleted, undeliverable and awaiting the reaper.
    */
+  /**
+   * Tombstoned groups already accused of holding queued rows, so the accusation is made once per
+   * group per process rather than once per fetch - see the log line in {@link fetchMessages}.
+   *
+   * IN-PROCESS AND NOT DURABLE, on purpose. It answers "have I already said this here", which is a
+   * different question from "is this still broken" and differs from it only in lifetime: a restart
+   * re-announces whatever residue is still there, so using durable state here would silence the
+   * trigger the day somebody wanted it again.
+   */
+  private readonly accusedTombstones = new Set<string>();
+
   async purgeOrphanGroups(
     groupIds: string[]
   ): Promise<{ deliverable: Set<string>; tombstoned: Set<string> }> {
@@ -2338,7 +2349,15 @@ export class MessagingService {
       // LEFT: every path that ends a group sweeps `deleteGroupOwnedRows`, which takes the queue with
       // it, so this line is the visible end of one that did not - and it is not swept from here,
       // because a second collector would hide the first one's absence.
-      const leaked = groupIds.filter((id) => tombstoned.has(id));
+      //
+      // ONCE PER GROUP PER PROCESS, because the residue is a STANDING FACT and not an event. Written
+      // per fetch it was the loudest line on the server within minutes of shipping - 134 warnings in
+      // one three-minute window, the same four group ids over and over, because every client asks on
+      // every reconnection and the rows do not go away when they are read. A line its reader learns
+      // to skip is the one that hides the next defect. Once is enough to be FOUND, which is the
+      // line's whole job, and a restart re-announces whatever is still there, so nothing is lost.
+      const leaked = groupIds.filter((id) => tombstoned.has(id) && !this.accusedTombstones.has(id));
+      for (const id of leaked) this.accusedTombstones.add(id);
       this.logger.warn(
         `[MSG_FETCH][${traceId}] dropped ${messages.length - deliverable.length} undeliverable ` +
           `message(s)` +

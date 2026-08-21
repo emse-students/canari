@@ -111,6 +111,24 @@ const BENIGN = [
   // bootstrap of a device that has enrolled but has not yet joined anything, `[]` is the correct
   // answer, and a rule anchored on the two happy-path words could never have covered it.
   /\[InvitationsController\] \[PENDING\]\[[^\]]+\] No active membership for /,
+  // THE GRAINE HALF OF THE SAME BOOTSTRAP, and it is the largest single shape in `unexplained`:
+  // 294 lines of it on the COMM-17 run of 2026-08-21. A client asks each scope it can see for that
+  // scope's key-distribution group when it loads - one read per community and per private salon, on
+  // both services, twice per load because two sweeps run. That is one line per SCOPE, by
+  // construction, and the count is a statement about how many salons the test accounts are in (the
+  // debris `cleanup.mjs` exists to cut), not about the product.
+  //
+  // `published=true` IS PINNED AND `devices=` DELIBERATELY IS NOT. A read answering
+  // `published=false` on a group somebody should already have published is exactly the shape that
+  // found the concurrent-join race the same morning - two callers, both reading an unpublished
+  // group, both creating it - so that form stays unexplained and visible. `devices=0` is left
+  // classified because it is the ORDINARY answer before a first join, and pinning it would bury
+  // every legitimate join in this bucket to catch a case the CLIENT already logs and accuses.
+  /\[InternalController\] \[DISTRIBUTION_GROUP\] read scope=(workspace|channel):\S+ group=\S+ published=true user=\S+ devices=\d+/,
+  /\[ChannelService\] \[CHANNEL_GRAINE\] served channel=\S+ user=\S+ group=\S+ published=true devices=\S+/,
+  /\[ChannelService\] \[DISTRIBUTION_GROUP\] served workspace=\S+ user=\S+ group=\S+ published=true devices=\S+/,
+  // The live-session census a client asks for when it opens a community. One line per load.
+  /\[GRAINE\] liveGraineSessions user=\S+ asked=\d+ live=\d+/,
   // A media upload succeeding. The blob is opaque to the server by construction (the client holds
   // the CEK), so the size is all it can report and there is nothing else to say about it.
   /\[MediaController\] Stored encrypted blob:/,
