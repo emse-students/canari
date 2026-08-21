@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
+import { isUUID } from 'class-validator';
 import { In, Not, Repository } from 'typeorm';
 import { randomBytes, hkdfSync } from 'crypto';
 import { firstValueFrom } from 'rxjs';
@@ -209,6 +210,11 @@ export class AssociationsService {
 
   /** Loads one association by its UUID and appends a memberCount. Throws NotFoundException if absent. */
   async findById(id: string) {
+    // `id` is a `uuid` column; a non-UUID string reaches Postgres as a syntax error rather than
+    // a plain miss, which TypeORM surfaces as an uncaught 500 instead of the 404 every caller
+    // expects. A malformed id and a well-formed id nothing points to are the same fact to the
+    // caller, so both are reported identically.
+    if (!isUUID(id)) throw new NotFoundException('Association not found');
     const asso = await this.assoRepo.findOne({ where: { id } });
     if (!asso) throw new NotFoundException('Association not found');
     const memberCount = await this.memberRepo.count({

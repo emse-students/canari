@@ -1,12 +1,14 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { AssociationsService } from './associations.service';
 
 /**
- * Focused unit tests for `listAggregatedCalendarFeed`'s `from`/`to` handling. Only `calendarRepo`
- * is exercised (via a chainable query-builder stub); every other constructor dependency is
- * unused for this path since no `associationId` filter is passed (which would call `findById`)
- * and the stub always returns zero rows (so `batchLoadCoOwners([])` short-circuits without
- * touching `coOwnerRepo`).
+ * Focused unit tests for `listAggregatedCalendarFeed`'s `from`/`to` handling, plus the
+ * malformed-`associationId` guard in `findById` that this feed's `associationId` filter goes
+ * through. Only `calendarRepo` is exercised (via a chainable query-builder stub); every other
+ * constructor dependency is unused for the `from`/`to` cases since no `associationId` filter is
+ * passed there and the stub always returns zero rows (so `batchLoadCoOwners([])` short-circuits
+ * without touching `coOwnerRepo`). The malformed-id case never reaches `assoRepo` either - the
+ * guard rejects it before any repository call.
  */
 function makeQueryBuilder() {
   const qb: Record<string, jest.Mock> = {};
@@ -91,5 +93,14 @@ describe('AssociationsService.listAggregatedCalendarFeed', () => {
     await expect(
       service.listAggregatedCalendarFeed('2026-02-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')
     ).rejects.toThrow(BadRequestException);
+  });
+
+  it('reports a malformed associationId as not-found instead of a raw database error', async () => {
+    const { service } = makeService();
+    // Not a UUID - previously reached `assoRepo.findOne` and surfaced Postgres's
+    // "invalid input syntax for type uuid" as an uncaught 500 (confirmed live on prod).
+    await expect(
+      service.listAggregatedCalendarFeed(undefined, undefined, 'does-not-exist')
+    ).rejects.toThrow(NotFoundException);
   });
 });
