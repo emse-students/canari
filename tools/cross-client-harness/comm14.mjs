@@ -240,30 +240,44 @@ const byName = Object.fromEntries(cases.map((c) => [c.name, c]));
 // EACH NAMES BOTH OBSERVERS. The server line is the decision; the tray is that the decision reaches
 // a person. A level that passed the first and failed the second is a different defect from one that
 // failed both, and a single boolean could not say which.
-const levelsStored = cases.length > 0 && cases.every((c) => c.levelStored === c.levelAsked);
-const noneIsSilent = byName.none?.pushed === false && byName.none?.trayAfter === 0;
-const mentionsSkipsTheUnmentioned =
+// AN EXPECTATION NOBODY MEASURED IS `null`, NEVER `false`. Without the venue no case runs at all,
+// and six `false` lines then describe six failures where there was exactly ONE - a reader counting
+// them believes the notification filter is broken in six places. `measured` is the discriminator,
+// and it is the venue: the four cases are built from `channelId` or from nothing.
+const measured = cases.length > 0;
+const only = (v) => (measured ? v : null);
+
+const levelsStored = only(cases.every((c) => c.levelStored === c.levelAsked));
+const noneIsSilent = only(byName.none?.pushed === false && byName.none?.trayAfter === 0);
+const mentionsSkipsTheUnmentioned = only(
   byName['mentions, unmentioned']?.pushed === false &&
-  byName['mentions, unmentioned']?.trayAfter === 0;
-const mentionsDelivers =
+    byName['mentions, unmentioned']?.trayAfter === 0
+);
+const mentionsDelivers = only(
   byName['mentions, mentioned']?.pushed === true &&
-  (byName['mentions, mentioned']?.recipients ?? []).every((n) => n >= 1);
-const allDelivers =
-  byName.all?.pushed === true && (byName.all?.recipients ?? []).every((n) => n >= 1);
+    (byName['mentions, mentioned']?.recipients ?? []).every((n) => n >= 1)
+);
+const allDelivers = only(
+  byName.all?.pushed === true && (byName.all?.recipients ?? []).every((n) => n >= 1)
+);
 // THE CAPABILITY ITSELF. Without one real notification in the tray the four cases above are a story
 // about a log line, and three of them read identically on a phone that has never received a push.
-const thePhoneWasReallyPushed = (byName['mentions, mentioned']?.trayAfter ?? 0) > 0;
+const thePhoneWasReallyPushed = only((byName['mentions, mentioned']?.trayAfter ?? 0) > 0);
 
+// `channelId` IS NOT PART OF `armed`, deliberately. Creating a public salon is product surface, so
+// a venue that could not be built is a FAILING check and not an unarmed one - calling it VACUOUS
+// would hide a broken create path behind "the phone was not ready". `armed` stays what it says: the
+// three facts this check cannot itself establish.
 const verdict = !armed
   ? 'VACUOUS'
   : failures.length > 0 ||
       !channelId ||
-      !levelsStored ||
-      !noneIsSilent ||
-      !mentionsSkipsTheUnmentioned ||
-      !mentionsDelivers ||
-      !allDelivers ||
-      !thePhoneWasReallyPushed
+      levelsStored !== true ||
+      noneIsSilent !== true ||
+      mentionsSkipsTheUnmentioned !== true ||
+      mentionsDelivers !== true ||
+      allDelivers !== true ||
+      thePhoneWasReallyPushed !== true
     ? 'FAIL'
     : 'PASS';
 
@@ -276,6 +290,8 @@ record('COMM-14', gated.verdict, {
   channelId,
   owner: ownerId ? ownerId.slice(0, 8) : null,
   armed,
+  venueBuilt: !!channelId,
+  casesMeasured: measured,
   phoneRunning: !!phoneUp,
   // WHICH BUILD THE PHONE READ. The filter is server-side, so a stale APK does not invalidate the
   // four cases - but it is exactly what the body observation below is about, and a reader needs it.

@@ -1,7 +1,16 @@
 /**
- * Deletes the communities a CRASHED check left on production.
+ * Deletes the communities AND the salons a CRASHED check left on production.
  *
  *   node cleanup.mjs [--dry]
+ *
+ * TWO ESTATES, NOT ONE, and for a while this swept only the first. A runner that builds its own
+ * community takes it down with it, so debris there is rare - but most checks build a SALON inside the
+ * shared `Campagne de test` venue, and a shared venue is never deleted, so every salon a crashed
+ * runner left sits there for ever. Measured 2026-08-21: 25 salons in that one community, 23 of them
+ * from COMM runs, against a sweep reporting "nothing to sweep". That is not cosmetic. The channel
+ * list grows downward, and at 25 rows the community's own "add a channel" control sat at y=1149 in a
+ * 944-tall viewport - below the fold, unclickable, which is how COMM-14 failed: the check could not
+ * build its venue, in a community whose only problem was the debris of the checks before it.
  *
  * WHY THIS EXISTS AT ALL, given every runner deletes its own venue. Because a runner that dies
  * mid-way does not: COMM-6 threw on a bad query on 2026-08-20 and left `C6 COMM6-mt1gh7hx4it`
@@ -26,8 +35,8 @@
  * show it. What the screen then refuses is reported per community rather than thrown - a sweep that
  * stops on the first stubborn one is a sweep nobody runs twice.
  */
-import { client } from './chat.mjs';
-import { deleteCommunity, enterCommunities, openCommunity } from './comm.mjs';
+import { client, openChannel } from './chat.mjs';
+import { deleteChannel, deleteCommunity, enterCommunities, openCommunity } from './comm.mjs';
 import { psql } from './ssh.mjs';
 import { PORTS } from './names.mjs';
 
@@ -40,6 +49,23 @@ import { PORTS } from './names.mjs';
  * community, typed name and all, and there is no undo.
  */
 const DEBRIS = /^C\d+( [a-z]+)? COMM\d+-[0-9a-z]+$/;
+
+/**
+ * THE SAME ALLOWLIST, FOR THE OTHER ESTATE, and enumerated from the runners rather than guessed:
+ * every one of them mints `c<n>-` plus its run mark lowercased, where the mark comes from
+ * `mark('COMM<n>')` - giving `c8-comm8-<mark>` - and COMM-12 alone inserts its arm, as
+ * `c12-private-comm12-<mark>`. The mark is minted by `results.mjs` and cannot collide with anything
+ * a person would type.
+ *
+ * A salon whose name does not match is LEFT, listed, and looked at by a human. Two such sat in the
+ * venue the day this was written - `rep-repair-<mark>` from a scratch probe, and `g3-priv-a` - and
+ * neither is minted by anything still in this repo, so neither may be swept by a shape derived from
+ * what is. Widening this to reach them would mean widening it far enough to reach a real salon.
+ */
+const SALON_DEBRIS = /^c\d+(-[a-z]+)?-comm\d+-[0-9a-z]+$/;
+
+/** The community every check that does not build its own venue works inside. Never deleted. */
+const SHARED = 'Campagne de test';
 
 const dry = process.argv.includes('--dry');
 
@@ -70,7 +96,33 @@ if (strangers.length > 0) {
   for (const w of strangers) console.log(`  ${w.id.slice(0, 8)}  ${w.name}`);
 }
 
-if (debris.length === 0) {
+// THE SALONS OF THE SHARED VENUE. Read from the database for the same reason the communities are:
+// the sidebar is the thing this debris BREAKS, so a sweep enumerating from the screen would go blind
+// at exactly the size that makes it necessary.
+const shared = named.find((w) => w.name === SHARED);
+const salons = shared
+  ? psql(`SELECT name FROM channels WHERE "workspaceId" = '${shared.id}' ORDER BY "createdAt"`)
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+  : [];
+const salonDebris = salons.filter((n) => SALON_DEBRIS.test(n));
+const salonStrangers = salons.filter((n) => !SALON_DEBRIS.test(n));
+
+if (shared) {
+  console.log(
+    `[cleanup] ${salons.length} salons in "${SHARED}", ${salonDebris.length} match a check's venue`
+  );
+  for (const n of salonDebris) console.log(`  ${n}`);
+  if (salonStrangers.length > 0) {
+    console.log(
+      `[cleanup] ${salonStrangers.length} salon(s) NOT matched - left alone, look at these:`
+    );
+    for (const n of salonStrangers) console.log(`  ${n}`);
+  }
+}
+
+if (debris.length === 0 && salonDebris.length === 0) {
   console.log('[cleanup] nothing to sweep');
   process.exit(0);
 }
@@ -81,6 +133,22 @@ if (dry) {
 
 const w1 = await client(PORTS.W1);
 const failed = [];
+
+// SALONS FIRST, COMMUNITIES SECOND. A community's deletion takes its salons with it, so the other
+// order would walk a sidebar whose rows are vanishing underneath it - and the salons are the half
+// that unblocks the next run.
+for (const n of salonDebris) {
+  try {
+    await openChannel(w1, SHARED, n);
+    await deleteChannel(w1);
+    console.log(`[cleanup] deleted salon ${n}`);
+  } catch (e) {
+    failed.push(`salon ${n}: ${e instanceof Error ? e.message : String(e)}`);
+    console.log(
+      `[cleanup] COULD NOT delete salon ${n} - ${e instanceof Error ? e.message : String(e)}`
+    );
+  }
+}
 
 for (const w of debris) {
   try {
@@ -101,9 +169,22 @@ const left = psql(`SELECT name FROM channel_workspaces`)
   .map((l) => l.trim())
   .filter((l) => DEBRIS.test(l));
 
-console.log(`[cleanup] ${debris.length - left.length}/${debris.length} swept, ${left.length} left`);
-for (const name of left) console.log(`  still there: ${name}`);
+const salonsLeft = shared
+  ? psql(`SELECT name FROM channels WHERE "workspaceId" = '${shared.id}'`)
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => SALON_DEBRIS.test(l))
+  : [];
+
+console.log(
+  `[cleanup] communities ${debris.length - left.length}/${debris.length} swept, ${left.length} left`
+);
+console.log(
+  `[cleanup] salons ${salonDebris.length - salonsLeft.length}/${salonDebris.length} swept, ` +
+    `${salonsLeft.length} left`
+);
+for (const name of [...left, ...salonsLeft]) console.log(`  still there: ${name}`);
 for (const f of failed) console.log(`  failure: ${f}`);
 
 w1.close();
-process.exit(left.length === 0 ? 0 : 1);
+process.exit(left.length === 0 && salonsLeft.length === 0 ? 0 : 1);
