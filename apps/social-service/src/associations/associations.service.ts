@@ -961,6 +961,21 @@ export class AssociationsService {
   private static readonly CALENDAR_FEED_MAX_MS = 550 * 24 * 60 * 60 * 1000;
 
   /**
+   * Default window for the aggregated calendar feed when `from`/`to` are omitted: 3 months back
+   * to the end of the 12th month ahead. A "subscribe by URL" feed (`.ics`) is saved once by the
+   * calendar app and re-polled with the exact same URL forever - requiring the caller to always
+   * supply a window defeats that, since nothing ever adds one after the first save. Mirrors the
+   * range the frontend itself computes for the same purpose (`icsSubscriptionRangeISO`).
+   */
+  private static defaultCalendarFeedRange(): { from: Date; to: Date } {
+    const now = new Date();
+    return {
+      from: new Date(now.getFullYear(), now.getMonth() - 3, 1, 0, 0, 0, 0),
+      to: new Date(now.getFullYear(), now.getMonth() + 12, 0, 23, 59, 59, 999),
+    };
+  }
+
+  /**
    * Returns true if the user has the PROPOSE_EVENT flag in at least one association.
    * Used to decide whether to show the pending-events queue link.
    */
@@ -1133,15 +1148,17 @@ export class AssociationsService {
   /**
    * Lists agenda events across all associations in `[from, to]` (by `startsAt`),
    * optionally restricted to one association. Public (same visibility as per-association `/events`).
+   * `fromIso`/`toIso` default to `defaultCalendarFeedRange()` when omitted or blank.
    */
   async listAggregatedCalendarFeed(
-    fromIso: string,
-    toIso: string,
+    fromIso?: string,
+    toIso?: string,
     associationId?: string,
     opts?: { includePending?: boolean }
   ) {
-    const from = new Date(fromIso.trim());
-    const to = new Date(toIso.trim());
+    const defaultRange = AssociationsService.defaultCalendarFeedRange();
+    const from = fromIso?.trim() ? new Date(fromIso.trim()) : defaultRange.from;
+    const to = toIso?.trim() ? new Date(toIso.trim()) : defaultRange.to;
     if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
       throw new BadRequestException('Invalid from or to');
     }

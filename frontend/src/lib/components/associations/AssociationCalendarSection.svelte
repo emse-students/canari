@@ -11,6 +11,7 @@
     uploadCalendarEventImage,
     deleteCalendarEventImage,
     aggregatedCalendarFeedIcsAbsoluteUrl,
+    icsSubscriptionRangeISO,
     type AssociationCalendarEvent,
     type AssociationCalendarEventKind,
     type AssociationCalendarFeedEvent,
@@ -116,13 +117,6 @@
   let isCopied = $state(false);
 
   /** ~15 months window for feed subscription (server max ~18 months). */
-  function icsSubscriptionRangeISO(): { from: string; to: string } {
-    const now = new Date();
-    const from = new Date(now.getFullYear(), now.getMonth() - 3, 1, 0, 0, 0, 0);
-    const to = new Date(now.getFullYear(), now.getMonth() + 12, 0, 23, 59, 59, 999);
-    return { from: from.toISOString(), to: to.toISOString() };
-  }
-
   const calendarIcsUrl = $derived.by(() => {
     if (!browser) return '';
     const { from, to } = icsSubscriptionRangeISO();

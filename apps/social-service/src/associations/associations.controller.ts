@@ -214,12 +214,13 @@ export class AssociationsController {
 
   /**
    * Aggregated agenda across associations (`startsAt` in `[from, to]`).
-   * Optional `associationId` limits to one association. Public.
+   * `from`/`to` default to a rolling window when omitted; optional `associationId` limits to
+   * one association. Public.
    */
   @Get('calendar/feed')
   async aggregatedCalendarFeed(
-    @Query('from') from: string,
-    @Query('to') to: string,
+    @Query('from') from: string | undefined,
+    @Query('to') to: string | undefined,
     @Query('associationId') associationId?: string,
     @Query('includePending') includePending?: string,
     @Headers('x-user-id') userId?: string,
@@ -241,12 +242,15 @@ export class AssociationsController {
 
   /**
    * Returns the iCalendar document for the aggregated feed.
-   * Suitable for "subscribe by URL" in Apple/Google Calendar.
+   * Suitable for "subscribe by URL" in Apple/Google Calendar - `from`/`to` are optional and
+   * default to a rolling window (see `AssociationsService.defaultCalendarFeedRange`), since a
+   * subscribed URL is saved once by the calendar app and re-polled forever with no way to ever
+   * add query params to it.
    */
   @Get('calendar/feed.ics')
   async aggregatedCalendarFeedIcs(
-    @Query('from') from: string,
-    @Query('to') to: string,
+    @Query('from') from: string | undefined,
+    @Query('to') to: string | undefined,
     @Query('associationId') associationId: string | undefined,
     @Res({ passthrough: true }) res: Response
   ) {

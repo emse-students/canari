@@ -12,6 +12,8 @@
     deleteAssociationCalendarEvent,
     hasPermissionFlag,
     AssociationPermissionFlag,
+    aggregatedCalendarFeedIcsAbsoluteUrl,
+    icsSubscriptionRangeISO,
     type AssociationCalendarFeedEvent,
     type Association,
   } from '$lib/associations/api';
@@ -176,10 +178,13 @@
   /** webcal:// URL for calendar app subscription (desktop only). */
   function calendarSubscribeUrl(): string {
     if (typeof window === 'undefined') return '';
-    const query = filterAssociationId
-      ? `?associationId=${encodeURIComponent(filterAssociationId)}`
-      : '';
-    return `webcal://${window.location.host}/api/associations/calendar/feed.ics${query}`;
+    const { from, to } = icsSubscriptionRangeISO();
+    const httpUrl = aggregatedCalendarFeedIcsAbsoluteUrl({
+      from,
+      to,
+      associationId: filterAssociationId || undefined,
+    });
+    return httpUrl.replace(/^https?:/, 'webcal:');
   }
 
   const sortedEvents = $derived(

@@ -59,6 +59,13 @@ same background band described above.
 
 ## ICS export
 
-## ICS export
+`GET /api/associations/calendar/feed.ics` returns an ICS file for the aggregated agenda, optionally
+filtered to one association via `?associationId=`. There is no separate per-association route - it's
+the same aggregated feed as `GET /api/associations/calendar/feed` (JSON), with an ICS body instead.
 
-`GET /api/associations/:id/events/ics` (or global `/api/calendar/ics`) returns an ICS file for calendar subscription.
+`from`/`to` are optional on both routes: a "subscribe by URL" link is saved once by the calendar app
+and re-polled forever with the exact same URL, so the caller can never add parameters to it after the
+fact. When omitted, `AssociationsService.defaultCalendarFeedRange()` supplies a rolling
+3-months-back/12-months-forward window - the same window the frontend computes for the link it
+builds (`icsSubscriptionRangeISO()` in `frontend/src/lib/associations/api.ts`, shared by
+`AssociationCalendarSection.svelte` and `routes/calendar/+page.svelte`).

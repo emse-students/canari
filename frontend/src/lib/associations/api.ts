@@ -366,6 +366,19 @@ export async function listAggregatedCalendarFeed(opts: {
   return request<AssociationCalendarFeedEvent[]>(`/api/associations/calendar/feed?${q.toString()}`);
 }
 
+/**
+ * Default window for an `.ics` subscription link: 3 months back to the end of the 12th month
+ * ahead. The backend defaults to the same range when `from`/`to` are omitted, but a subscribe
+ * link is built once and copied/saved by the user, so we still send an explicit window here -
+ * it reads better in a calendar app's "range of this subscription" UI than a bare URL would.
+ */
+export function icsSubscriptionRangeISO(): { from: string; to: string } {
+  const now = new Date();
+  const from = new Date(now.getFullYear(), now.getMonth() - 3, 1, 0, 0, 0, 0);
+  const to = new Date(now.getFullYear(), now.getMonth() + 12, 0, 23, 59, 59, 999);
+  return { from: from.toISOString(), to: to.toISOString() };
+}
+
 /** Path + query for the dynamic iCalendar feed (same params as `listAggregatedCalendarFeed`). */
 export function aggregatedCalendarFeedIcsPath(opts: {
   from: string;
