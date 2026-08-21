@@ -106,9 +106,41 @@ next one, and the only real fix for that one is the shipping order in
 user-visible: a broken report queue or a follow that does not stick is a support ticket nobody can
 reproduce.
 
+**Moderation was READ on 2026-08-22 and its authorisation is correct** - recorded because a coverage
+map that only ever reports holes teaches its reader that uncovered means broken. Every admin path
+(`GET reports`, `PATCH reports/:id`, mute, unmute, `GET muted`) calls `assertModerator`, which
+demands a global admin or the `MODERATE` flag in a BDE; `POST reports` is deliberately open to any
+authenticated user, and takes `reporterId` from the `x-user-id` header rather than the body, so a
+report cannot be filed in somebody else's name. Nothing here needs fixing. What it still lacks is
+anything that would NOTICE if that stopped being true, which is the finding - not a defect.
+
 **5. Media has one spec for the whole encrypted-blob path.** The client mints the CEK and the backend
 sees opaque bytes, so a fault here is unrecoverable by design - there is no server-side copy to fall
 back on. One spec is thin for a mechanism with no undo.
+
+**Media's central invariant was CHECKED on 2026-08-22 and holds.** `apps/media-service/src` contains
+no key material of any kind - no `cek`, no `key_b64`, no `iv`, no AES, no decrypt - and its two
+mentions of encryption are both comments saying the server does not do it. The CEK travels inside the
+MLS-encrypted `MediaMsg` and never reaches the service that stores the bytes. So the thin spec
+coverage here is not sitting on top of a leak; the mechanism is as the architecture describes it. One
+spec is still thin for a path with no undo, which is the finding.
+
+## The findings so far, as a scoreboard
+
+Stated because the value of this page is whether reading it CHANGES anything, and that is now
+measurable rather than asserted.
+
+| Ranked finding | What reading it produced |
+| --- | --- |
+| 1 Forms take money, nothing watches | **a P1 fixed** - the submitter could mark their own submission paid |
+| 2 Twenty CALL rows never ran | unchanged; they are written and still unmeasured |
+| 3 Admin can lock out every client | **a ceiling added**, and its limits written down |
+| 4 Moderation and follows have nothing | **read, and correct** - authorisation sound, nothing to fix |
+| 5 Media has one spec, no undo | **invariant checked, holds** - no key material server-side |
+
+Two of five produced a code change, two produced a verified negative, one is unchanged. The negatives
+matter as much as the fixes: a coverage map that only ever reports holes teaches its reader that
+uncovered means broken, and three of these five were not.
 
 ## What this page deliberately does not say
 
