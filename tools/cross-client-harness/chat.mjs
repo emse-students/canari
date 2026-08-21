@@ -770,8 +770,17 @@ export async function ensureChat(cx) {
  * measurement taken on W1/W2 has to be re-baselined.
  */
 export async function openDM(cx, name) {
-  if (cx.port === PORTS.A1) await ensureChat(cx);
-  else await goto(cx, '/chat');
+  if (cx.port === PORTS.A1) {
+    await ensureChat(cx);
+    // THE TWO BRANCHES OWED THE SAME PRECONDITION AND ONLY ONE DELIVERED IT. `goto('/chat')` reloads,
+    // so the desktop branch always arrives with the conversation LIST on screen. `ensureChat` cannot
+    // reload - that re-locks the PIN - so on the phone an already-open conversation stays open, and
+    // mobile gives it the whole screen: `openConversation` then hunts for a sidebar row in a sidebar
+    // that is not rendered. MUT-18 died exactly there on 2026-08-22, reporting `listedEntries: 0` on
+    // a device whose list has ten. Parking is a no-op when nothing is open, so this costs the phone
+    // one evaluate and buys every A1 check the precondition the desktop path got for free.
+    await parkConversation(cx);
+  } else await goto(cx, '/chat');
   return openConversation(cx, name);
 }
 

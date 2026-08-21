@@ -296,22 +296,57 @@ async function readIndicator(cx, locator) {
  *  styling (`italic opacity-60` in `MessageTextBody.svelte` - the only DOM trace `isDeleted` leaves
  *  on the body). `null` means the row itself is gone, which is a different answer from "not
  *  tombstoned" and must never again be collapsed into one. */
+const bodyPExpr = (locator) => `(function () {
+  var pane = ${paneExpr()};
+  var findRow = ${FIND_ROW_FN};
+  var row = findRow(pane, ${JSON.stringify(locator)});
+  return row ? row.querySelector('p') : null;
+})()`;
+
+/** How a tombstone is recognised, in ONE place - `bubbleBody` reports it and `awaitTombstone` waits on it. */
+const IS_TOMBSTONE = (locator) =>
+  `(function () { var p = ${bodyPExpr(locator)}; ` +
+  `return !!(p && p.classList.contains('italic') && p.classList.contains('opacity-60')); })()`;
+
 async function bubbleBody(cx, locator) {
   const raw = await evaluate(
     cx,
     `JSON.stringify((function () {
       var pane = ${paneExpr()};
       var findRow = ${FIND_ROW_FN};
-      var row = findRow(pane, ${JSON.stringify(locator)});
-      if (!row) return null;
-      var p = row.querySelector('p');
+      // NULL MEANS THE ROW IS GONE, which is a different finding from a row whose body is empty -
+      // the first is a message that vanished, the second a render this check does not understand.
+      if (!findRow(pane, ${JSON.stringify(locator)})) return null;
+      var p = ${bodyPExpr(locator)};
       return {
         text: p ? (p.textContent || '').trim().slice(0, 80) : null,
-        styledAsDeleted: !!(p && p.classList.contains('italic') && p.classList.contains('opacity-60')),
+        styledAsDeleted: ${IS_TOMBSTONE(locator)},
       };
     })())`
   );
   return JSON.parse(raw);
+}
+
+/**
+ * Waits until a row's body IS the tombstone, on this client.
+ *
+ * A DELETION HAS TO CROSS THE NETWORK, SO IT IS WAITED FOR, NOT SLEPT THROUGH. MUT-17 sent a delete
+ * and then sampled both clients after a flat `sleep(600)`, which is the one transition in that check
+ * given a clock while every other one - `awaitMessage` for the send, `awaitMessage` for the edit -
+ * waited on a proof. On 2026-08-21 it recorded a FAIL whose whole content was that the peer still
+ * showed `... v2` 600 ms after the author's copy had tombstoned: a real delete, in flight, sampled
+ * early. The timeout here is a FAILURE BOUNDARY and never the measurement - a delete that genuinely
+ * does not propagate still fails, it just has to actually not propagate to do it.
+ */
+async function awaitTombstone(cx, locator, timeoutMs = 15000) {
+  try {
+    return await until(cx, IS_TOMBSTONE(locator), timeoutMs, 50);
+  } catch {
+    throw new Error(
+      `row ${locator} never became a tombstone in ${timeoutMs}ms - ` +
+        `body is ${JSON.stringify(await bubbleBody(cx, locator))}`
+    );
+  }
 }
 
 /** True/false/null(row not found) for whether `svg.<iconClass>` exists anywhere in the row. */
@@ -1856,7 +1891,10 @@ async function mut17() {
     if (!row) throw new Error(`no #msg-<id> anchor on the row of ${v2} - the bubble carries no id`);
 
     await deleteBubble(a, v2);
-    await sleep(600);
+    // BOTH CLIENTS, because the crossing this check is named for only exists once BOTH have the
+    // tombstone: the author's copy turns locally, the peer's turns when the delete arrives, and
+    // sampling between the two measures the gap rather than the behaviour.
+    await Promise.all([awaitTombstone(a, row), awaitTombstone(b, row)]);
 
     // `MessageBubbleToolbar.svelte`: the quick-reaction strip IS gated by `!isDeleted`, but the
     // "open full picker" (smile) button is NOT - `MessageBubble.svelte` passes `onToggleEmojiPicker`

@@ -56,7 +56,13 @@ export const PHASES = {
   MUT: {
     title: 'editing, deleting, reacting, pinning',
     scripts: only('mut.mjs', 1, 21),
-    needs: ['W1', 'W2'],
+    // A1 BECAUSE MUT-18 DRIVES THE PHONE, and this said `W1 W2` until 2026-08-22 - so the preflight
+    // never armed A1 for this phase, `sameAccountAs` found nothing on 9333, and MUT-18 recorded
+    // `SKIPPED - second client not reachable` every time it was asked. A check cannot arm a device
+    // the phase did not declare, and the skip named the symptom rather than the declaration.
+    // Declaring it here is also what makes the phase carry `CANARI_A1_BUILD`, without which its rows
+    // would land with no `a1Build` beside `build` - the fault found in MSG one day earlier.
+    needs: ['W1', 'W2', 'A1'],
   },
   SEARCH: { title: 'finding a message', scripts: only('search.mjs', 1, 6), needs: ['W1', 'W2'] },
   MENTION: { title: 'mentions and what they trigger', scripts: only('mention.mjs', 1, 6), needs: ['W1', 'W2'] },

@@ -16,6 +16,20 @@ over a filtered copy of its own evidence.
 
 ---
 
+**A PHASE THAT DOES NOT DECLARE A DEVICE CANNOT ARM IT, AND THE SKIP WILL NAME THE WRONG THING.**
+MUT-18 drives the phone; `checks.mjs` said MUT needs `W1 W2`. So the preflight never touched A1,
+`sameAccountAs` found nothing on 9333, and the check recorded `SKIPPED - second client not reachable`
+- true, useless, and pointing at the cable instead of at the declaration one file away. Read a skip's
+reason against the phase's `needs` before believing it names an obstacle.
+
+**TWO BRANCHES OF ONE HELPER OWE THE SAME PRECONDITION, OR THE WEAKER ONE IS THE HARNESS'S FLOOR.**
+`openDM` reached `/chat` by reloading on desktop and by navigating on the phone - and the reload
+delivered a visible conversation LIST as a side effect nobody had written down. On mobile, where an
+open conversation takes the whole screen, the phone branch arrived with the list hidden and the next
+step searched a sidebar that was not rendered, reporting zero rows on a device with ten. Where two
+paths claim to establish the same state, name the state and assert it on both.
+
+
 ## The rules
 
 Grouped by what they protect, and ordered inside each group by how expensive they are to break.

@@ -569,9 +569,25 @@ if (flag('file')) {
   // reason to refuse - and an operator taught to answer that with `--no-preflight` has disarmed the
   // gate entirely. Where a phase declares WHICH of its scripts need the phone (`PHONE_SCRIPTS`), one
   // that does not is preflighted without it.
+  // A SCRIPT NAME WITH A SPACE IN IT IS A QUOTED ARGUMENT, AND IT USED TO COST THE PREFLIGHT ITS
+  // TEETH IN SILENCE. `--file "mut.mjs --only 18"` makes `f` the whole string, which matches no
+  // phase, so `owner` fell through to the `['W1','W2']` default - the exact outcome the block below
+  // exists to prevent. It happened on 2026-08-22 and MUT-18 ran with A1 unarmed and unstamped.
+  if (f.includes(' ')) {
+    throw new Error(
+      `--file takes ONE script name; "${f}" is a quoted argument list. ` +
+        `Write it unquoted - the words after the name are forwarded to the script: ` +
+        `--file ${f.split(' ')[0]} ${f.split(' ').slice(1).join(' ')}`
+    );
+  }
   const owner = Object.entries(PHASES).find(([, p]) =>
     p.scripts.some((s) => s.split(' ')[0] === f)
   );
+  // AND A NAME BELONGING TO NO PHASE SAYS SO. Falling back to the pair is the honest answer, but a
+  // silent fallback is indistinguishable from a phase that really does need only two browsers.
+  if (!owner) {
+    console.log(`  note ${f} belongs to no phase in checks.mjs - preflighting W1 W2 by default`);
+  }
   const withPhone = owner ? PHONE_SCRIPTS[owner[0]] : undefined;
   const need =
     withPhone && !withPhone.includes(f)
