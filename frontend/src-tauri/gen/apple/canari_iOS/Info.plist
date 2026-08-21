@@ -104,5 +104,10 @@
 	     YES makes the dependency intentional instead of relying on the framework default. -->
 	<key>FirebaseAppDelegateProxyEnabled</key>
 	<true/>
+	<!-- App Store Connect compliance: the app includes end-to-end encryption (MLS messages,
+	     device keys, vaults, etc.) that is not covered by an encryption exemption. Declaring
+	     this in Info.plist avoids the annual compliance question in App Store Connect. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<true/>
 </dict>
 </plist>

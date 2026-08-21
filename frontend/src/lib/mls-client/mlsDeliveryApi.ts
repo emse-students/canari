@@ -927,7 +927,10 @@ export class MlsDeliveryApi {
     }
   }
 
-  /** Marque un groupe comme dismisse par cet utilisateur (suppression/quitter manuel propage a ses appareils). Best-effort. */
+  /**
+   * Marks a group as dismissed by this user - a manual delete or leave, propagated to their other
+   * devices. Best-effort: the local purge has already happened, so a failure costs nothing here.
+   */
   async dismissGroup(groupId: string): Promise<void> {
     try {
       await this.f(
@@ -939,7 +942,7 @@ export class MlsDeliveryApi {
         }
       );
     } catch {
-      /* non-bloquant : la purge locale a deja eu lieu, les autres appareils retenteront */
+      /* non-blocking: the local purge already happened and the other devices will retry */
     }
   }
 
