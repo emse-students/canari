@@ -94,11 +94,11 @@ window. Earlier x5 series on `8a3edbdd`, `e62c21f1` and `25376b86` all read 13/1
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| TYPE-1 | Typing on W1 shows on W2 within a second, and clears on stop | `W1 W2` | `PASS` 5/5 - shown 70-90 ms, cleared 245-272 ms |
-| TYPE-2 | It expires on its own after 6 s if the stop is never sent | `W1 W2` | `PASS` 5/5 - expired 4 138-4 221 ms |
-| TYPE-3 | Killing the tab mid-typing leaves no stuck indicator on the peer | `W1 W2` | `PASS` 5/5 - cleared 6 138-6 181 ms |
-| TYPE-4 | An offline peer gets nothing, and nothing is replayed when it returns | `W1 W2` | `PASS` 5/5 - cut acted in 874-995 ms, back in 797-1 173 ms |
-| TYPE-5 | Channel typing, a different transport entirely (REST, not WS) | `W1 W2` | `PASS` 5/5 - shown 53-72 ms, cleared 232-331 ms |
+| TYPE-1 | Typing on W1 shows on W2 within a second, and clears on stop | `W1 W2` | `PASS` - `e9d951d7`, 2026-08-21, clean: shown 73 ms, cleared 243 ms. Earlier `PASS` 5/5 - shown 70-90 ms, cleared 245-272 ms |
+| TYPE-2 | It expires on its own after 6 s if the stop is never sent | `W1 W2` | `PASS` - `e9d951d7`, 2026-08-21, clean: expired 4 180 ms, held 5 552 ms, inside the 3 500-9 000 ms bound. Earlier `PASS` 5/5 - 4 138-4 221 ms |
+| TYPE-3 | Killing the tab mid-typing leaves no stuck indicator on the peer | `W1 W2` | `PASS` - `e9d951d7`, 2026-08-21, clean: cleared 5 978 ms, tab restored (navigated and unlocked). Earlier `PASS` 5/5 - 6 138-6 181 ms |
+| TYPE-4 | An offline peer gets nothing, and nothing is replayed when it returns | `W1 W2` | `PASS` - `e9d951d7`, 2026-08-21, clean: nothing while offline, nothing on reconnect, cut acted in 995 ms, back in 877 ms, 1 socket closed. Earlier `PASS` 5/5 |
+| TYPE-5 | Channel typing, a different transport entirely (REST, not WS) | `W1 W2` | `PASS` - `e9d951d7`, 2026-08-21, clean: channel/HTTP, shown 65 ms, cleared 224 ms. Earlier `PASS` 5/5 |
 
 ## 3 - READ - receipts and unread counts
 

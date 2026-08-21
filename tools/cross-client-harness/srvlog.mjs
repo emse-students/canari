@@ -90,8 +90,26 @@ const BENIGN = [
   // The push fan-out succeeding, and the reason a web device gets no push: it has no FCM token, by
   // construction. `failed=` is pinned to zero here so a failure cannot ride in on this pattern - the
   // non-zero form is NOTABLE below.
-  /\[InternalController\] \[INTERNAL_PUSH\] user=\S+ sent=\d+ failed=0\b/,
+  //
+  // `type=\S+ ` IS NOT OPTIONAL DECORATION - IT IS WHY THIS PATTERN WENT BLIND. The line is
+  // `[INTERNAL_PUSH] type=${data.type ?? 'none'} user=...`, so the field is ALWAYS there, and a
+  // pattern written before it went from matching every push to matching none. Found on READ's own
+  // run, 2026-08-21: four `unexplained` lines on a phase that pushed exactly as it should, two of
+  // them this very shape. A stale pattern does not announce itself - it reads as new noise - and the
+  // NOTABLE twin below had gone blind in the same edit, which is the half that matters: a push that
+  // FAILED would have been filed as unexplained instead of as the thing a reader looks for.
+  /\[InternalController\] \[INTERNAL_PUSH\] type=\S+ user=\S+ sent=\d+ failed=0\b/,
   /\[PUSH_SEND\]\[send-[0-9a-f]+\] No push token for user=\S+ device=(web|ios)-/,
+  // THE PER-DEVICE HALF OF THE SAME FAN-OUT, and it is LOAD-BEARING rather than merely benign:
+  // `comm14.mjs` reads these lines as its instrument - they are how a check knows a push decision
+  // was taken and for whom - so they may not be quietened, only classified. One per device that
+  // actually received something, and the no-token case beside it for the reason `PUSH_SEND` above
+  // gives: a device that never registered a token is a fact about the device, not an event.
+  //
+  // `sent ` and `No token ` are PINNED, so the three failing shapes of this family cannot ride in
+  // here - they are NOTABLE below.
+  /\[MessagingService\] \[SOCIAL_PUSH\]\[social-push-[0-9a-f]+\] sent user=\S+ device=\S+/,
+  /\[MessagingService\] \[SOCIAL_PUSH\]\[social-push-[0-9a-f]+\] No token for user=\S+/,
   // Housekeeping and one real user playing the anti-bot minesweeper. Neither is about this campaign.
   /\[AuthSessionsService\] Swept \d+ expired session\(s\)/,
   /\[MinesweeperService\] minesweeper (challenge started|score ok) /,
@@ -249,8 +267,19 @@ const NOTABLE = [
   // A send deliberately not persisted because its recipient is offline and its payload would go
   // stale before they returned - the rendezvous TTL. Correct by design, never routine.
   /TRANSPORT_SKIPPED_OFFLINE/,
-  // A push that did not reach someone it was meant to reach.
-  /\[INTERNAL_PUSH\] user=\S+ sent=\d+ failed=[1-9]/,
+  // A push that did not reach someone it was meant to reach. `type=\S+ ` for the reason its EXPECTED
+  // twin states: the field is always present, so without it this pattern matched NOTHING - between
+  // the day `type=` was added and 2026-08-21, a failed push was unexplained rather than notable.
+  /\[INTERNAL_PUSH\] type=\S+ user=\S+ sent=\d+ failed=[1-9]/,
+  // THE THREE WAYS THE PER-DEVICE PUSH GOES WRONG, each sending its reader somewhere different.
+  // `FCM failed` is the send refused. `deleted invalid token` is the server pruning a token the
+  // provider called dead, which is worth seeing because it explains a silent device on the NEXT run.
+  // `Firebase not initialized` is the whole capability absent, which would turn every push check in
+  // the campaign into a vacuous pass. None gates on its own - a stale token is normal after a
+  // reinstall - but a window holding one is not a window a reader should have to re-derive.
+  /\[SOCIAL_PUSH\]\[social-push-[0-9a-f]+\] FCM failed user=/,
+  /\[SOCIAL_PUSH\]\[social-push-[0-9a-f]+\] deleted invalid token user=/,
+  /\[SOCIAL_PUSH\] Firebase not initialized/,
   // THE PUSH PATH, WHICH ONLY RUNS WHEN THE SOCKET DID NOT DO THE JOB. `PUSH_DEFERRED` says a frame
   // sat unACKed long enough to fall back to FCM, and `FCM sent` is that fallback leaving. Neither is
   // a defect - it is the outbox working - but both say a device was not keeping up, which is the

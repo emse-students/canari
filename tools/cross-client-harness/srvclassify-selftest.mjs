@@ -107,8 +107,16 @@ const BENIGN_CASES = [
   `${NEST}[MembersController] [GET_MEMBERS] group=00000000-0000-4000-8000-000000000001 count=3`,
   `${NEST}[DevicesController] [REGISTER_PREKEYS] user=aaaaaaaaaaaaaaaa device=web-a-b count=50`,
   `${NEST}[SecurityController] [LINK_PREVIEW] cache hit fr.wikipedia.org ok=true`,
-  `${NEST}[InternalController] [INTERNAL_PUSH] user=aaaaaaaaaaaaaaaa sent=1 failed=0`,
+  // COPIED FROM PRODUCTION, not remembered. This fixture used to read `[INTERNAL_PUSH] user=...`
+  // with no `type=`, which is a shape the service has not emitted since `type=` was added - so the
+  // self-test AGREED with a rule that had gone blind, and both said the same wrong thing. That is
+  // how four correctly-pushed lines reached `unexplained` on READ's run of 2026-08-21 with every
+  // gate green. A fixture invented from memory can only ever confirm the rule it was written beside.
+  `${NEST}[InternalController] [INTERNAL_PUSH] type=channel user=aaaaaaaaaaaaaaaa sent=1 failed=0`,
   `${NEST}[MessagingService] [PUSH_SEND][send-33f8f65a] No push token for user=a device=web-a-b`,
+  // The per-device half of the same fan-out, which `comm14.mjs` reads as its instrument.
+  `${NEST}[MessagingService] [SOCIAL_PUSH][social-push-5a2f8d1a] sent user=aaaaaaaaaaaaaaaa device=tauri-aaaa-b-c`,
+  `${NEST}[MessagingService] [SOCIAL_PUSH][social-push-5a2f8d1a] No token for user=aaaaaaaaaaaaaaaa`,
   `${NEST}[AuthSessionsService] Swept 4 expired session(s)`,
   `${NEST}[MinesweeperService] minesweeper challenge started user=a id=b`,
   `${NEST}[PublicController] public getPublishedCarte`,
@@ -185,10 +193,25 @@ if (!scanOk) failures++;
 console.log(`${scanOk ? 'ok  ' : 'FAIL'} unexplained a scanner path that ANSWERED is not the 404 that ignored it`);
 
 // THE ONE THAT MUST NOT BE FORGIVEN BY THE PATTERN THAT FORGIVES ITS SIBLING.
-const failedPush = `${NEST}[InternalController] [INTERNAL_PUSH] user=aaaaaaaaaaaaaaaa sent=0 failed=2`;
+const failedPush = `${NEST}[InternalController] [INTERNAL_PUSH] type=channel user=aaaaaaaaaaaaaaaa sent=0 failed=2`;
 const pushOk = !matches(BENIGN_RULES, failedPush) && matches(NOTABLE_RULES, failedPush);
 if (!pushOk) failures++;
 console.log(`${pushOk ? 'ok  ' : 'FAIL'} notable      a push that FAILED is not the push that succeeded`);
+
+// THE SAME SEPARATION ON THE PER-DEVICE HALF, and it needs asserting three times because the family
+// fails three different ways and the benign rule pins only the two success words. `sent ` forgives a
+// delivery; it must forgive nothing that says the delivery did not happen, the token was dead, or
+// the whole capability is absent - the last of which would make every push row in the campaign a
+// vacuous pass while every gate stayed green.
+for (const [what, line] of [
+  ['the send refused', `${NEST}[MessagingService] [SOCIAL_PUSH][social-push-5a2f8d1a] FCM failed user=a device=tauri-a-b-c err=Error`],
+  ['a token the provider called dead', `${NEST}[MessagingService] [SOCIAL_PUSH][social-push-5a2f8d1a] deleted invalid token user=a device=tauri-a-b-c`],
+  ['the capability absent entirely', `${NEST}[MessagingService] [SOCIAL_PUSH] Firebase not initialized - nothing sent`],
+]) {
+  const ok = !matches(BENIGN_RULES, line) && matches(NOTABLE_RULES, line);
+  if (!ok) failures++;
+  console.log(`${ok ? 'ok  ' : 'FAIL'} notable      ${what} is not the per-device push that worked`);
+}
 
 // SAME SHAPE, ON THE PUBLIC ROUTES. `serving` is the success word and the rule carries it; a public
 // read that did NOT serve must stay unexplained, or the bucket that exists to catch a broken public
