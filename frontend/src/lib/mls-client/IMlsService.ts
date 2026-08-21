@@ -472,6 +472,16 @@ export interface IMlsService {
    * delivering seeds to it.
    */
   forgetDistributionGroup(scope: DistributionScope): string | null;
+  /**
+   * The same, named by the GROUP rather than by the scope. Returns whether anything was held.
+   *
+   * Two entry points because they answer two different questions, and one of them cannot be asked
+   * through the other: {@link forgetDistributionGroup} resolves the group through the scope
+   * registration, so it can only forget what that registration already names - and the state worth
+   * forgetting is precisely one where the two have drifted apart. The server names the group; this
+   * takes that name.
+   */
+  forgetDistributionGroupById(groupId: string): boolean;
   /** The distribution group registered for `scope`, or null when none is. */
   distributionGroupFor(scope: DistributionScope): string | null;
   /** Every scope this device currently holds a distribution group for. */

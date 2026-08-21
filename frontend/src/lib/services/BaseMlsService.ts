@@ -1808,13 +1808,34 @@ export abstract class BaseMlsService implements IMlsService {
   forgetDistributionGroup(scope: DistributionScope): string | null {
     const groupId = this.distributionGroupFor(scope);
     if (!groupId) return null;
+    this.forgetDistributionGroupById(groupId);
+    return groupId;
+  }
+
+  /**
+   * The same, named by the GROUP - for a caller holding the server's answer rather than a scope.
+   *
+   * IT CANNOT BE EXPRESSED THROUGH THE SCOPE FORM, and that is the whole reason it exists. The
+   * scope form resolves the group through `distributionScopeByGroup`, so it forgets only what that
+   * registration already names; the state worth forgetting is one where the registration and the
+   * held tree have drifted apart, and there the scope form returns null and leaves the tree behind -
+   * whereupon {@link ensureDistributionGroup}, which early-returns on the GROUP ID, sees the group
+   * still held and joins nothing. Named by the group, both halves go, whatever the registration
+   * says.
+   *
+   * @returns whether this device held anything under that id
+   */
+  forgetDistributionGroupById(groupId: string): boolean {
+    const held =
+      this.getLocalGroups().includes(groupId) || this.knownDistributionGroups.has(groupId);
+    if (!held) return false;
     this.forgetGroup(groupId);
     this.distributionScopeByGroup.delete(groupId);
     // BOTH, OR THE PREDICATE OUTLIVES THE GROUP: a set entry left behind would go on answering
     // "distribution group" for state this device no longer holds, and the sweep would go on
     // sparing it for ever.
     this.knownDistributionGroups.delete(groupId);
-    return groupId;
+    return true;
   }
 
   /**

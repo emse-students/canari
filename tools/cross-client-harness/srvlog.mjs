@@ -331,6 +331,8 @@ const SEVERE = [
 // cannot match has no symptom on a live window - it just makes the unexplained pile bigger - so the
 // only way to catch one is to assert it against a line whose bucket is known. See
 // `srvclassify-selftest.mjs`.
+export { linesOf as srvLines };
+
 export {
   BENIGN as BENIGN_RULES,
   NOTABLE as NOTABLE_RULES,
@@ -338,7 +340,14 @@ export {
   EXPECTED_ERRORS as EXPECTED_ERROR_RULES,
 };
 
-/** One service's lines in the window, ANSI stripped and blanks dropped. */
+/**
+ * One service's lines in the window, ANSI stripped and blanks dropped.
+ *
+ * EXPORTED as `srvLines` because a check that asserts one SPECIFIC server line does not want the
+ * whole classified report: COMM-14's subject is `[CHANNEL_PUSH] ... recipients=N`, and the only
+ * honest source for it is the service's own log. A second copy of the `docker logs` incantation in a
+ * runner would be a second place for the window, the `2>&1` and the ANSI stripping to drift.
+ */
 function linesOf(service, since) {
   // `2>&1` because Nest logs to stdout and tracing to stderr, and a check that read only one of them
   // would be blind to half the platform. Quoted for `sh -c` on the far side, single quotes only.

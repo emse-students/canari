@@ -1207,6 +1207,20 @@ Three properties, each deliberate:
 A diff, not an event - the same reason the roster reconciliation is one. Nothing has to be online at
 the right moment, nothing has to be remembered, and repeating it converges to nothing to do.
 
+**THE FIRST ATTEMPT AT THIS FIX WAS A NO-OP ON PRODUCTION, and only the accusing line caught it.**
+It gated the comparison on `distributionGroupFor(scope)` - the scope->group registration - and
+forgot through the same door. But that registration is a SECOND copy of a fact the MLS layer already
+holds, `ensureDistributionGroup` early-returns on the GROUP ID, and the two can disagree. A device
+whose registration did not name the group therefore failed the gate (so no check), then reached a
+join that early-returned on the tree it was still holding (so no join): the bug wearing the fix's
+clothes, and the server log was identical to a healthy load. Re-measured on `19a58034` at 01:56:04
+UTC - `served ... user=b78568a3 devices=0`, one read, no publish, no repair line.
+
+Both sides of the comparison are now named by `ref.groupId`, the one name the server and the MLS
+layer agree on, and the forget is `forgetDistributionGroupById` for the same reason. And the third
+state - `memberDevices` absent, the question never put - logs, because "the roster agreed" and
+"nobody asked" reaching a run log looking identical is precisely what let the first attempt pass.
+
 ## 11. A private salon's ciphertext was addressed to the whole community - FIXED 2026-08-19
 
 Found while answering a question about §4.3, and it is the second half of it. §4.3 settles how a

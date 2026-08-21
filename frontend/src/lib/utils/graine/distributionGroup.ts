@@ -44,6 +44,8 @@ export async function ensureDistributionGroupFor(
   scope: DistributionScope,
   log: (message: string) => void = () => {}
 ): Promise<boolean> {
+  // WHAT THIS DEVICE HOLDS, BEFORE ASKING. Only used to decide what a FAILED read may conclude; the
+  // membership decision below is taken against the group the SERVER names, not this one.
   const known = mlsService.distributionGroupFor(scope);
   const heldLocally = !!known && mlsService.getLocalGroups().includes(known);
 
@@ -85,9 +87,9 @@ export async function ensureDistributionGroupFor(
     return false;
   }
 
-  // WHAT THIS DEVICE BELIEVES, AGAINST WHAT THE GROUP WOULD ACTUALLY DELIVER TO IT.
+  // WHAT THIS DEVICE HOLDS, AGAINST WHAT THE GROUP WOULD ACTUALLY DELIVER TO IT.
   //
-  // Holding the group locally is this device's MEMORY of having joined, and it is not evidence of
+  // Holding the group is this device's MEMORY of having joined, and it is not evidence of
   // membership: a revoke deletes the delivery rows at once while the MLS removal is committed later
   // by a remaining member, so the commit is published to a group the leaver is already unrouted
   // from and the leaver never receives it. Its local group then says "member" for ever. Re-granted,
@@ -95,14 +97,27 @@ export async function ensureDistributionGroupFor(
   // put its rows back and it read nothing from that salon again. Measured on production 2026-08-21:
   // three minutes after a re-grant, epoch unchanged, zero rows, every message `no seed for session`.
   //
-  // `memberDevices` is the server's own answer and the only authority. Undefined means it was not
-  // asked - never "no devices" - so it changes nothing.
+  // BOTH SIDES OF THE COMPARISON ARE NAMED BY THE SERVER'S OWN ANSWER, and the first attempt at this
+  // fix was not: it asked `distributionGroupFor(scope)`, a SECOND bookkeeping layer that can lag
+  // behind the tree this device actually holds, and `ensureDistributionGroup` early-returns on the
+  // GROUP ID - so a device whose registration did not name the group skipped the check AND skipped
+  // the join, which is the bug wearing the fix's clothes. `ref.groupId` is the one name both the
+  // server and the MLS layer agree on.
+  const holdsTheGroup = mlsService.getLocalGroups().includes(ref.groupId);
+  const roster = ref.memberDevices;
   const serverForgotThisDevice =
-    heldLocally &&
-    Array.isArray(ref.memberDevices) &&
-    !ref.memberDevices.includes(mlsService.getDeviceId());
+    Array.isArray(roster) && !roster.includes(mlsService.getDeviceId());
 
-  if (heldLocally && !serverForgotThisDevice) {
+  if (holdsTheGroup && !Array.isArray(roster)) {
+    // NOT A NEGATIVE ANSWER, AND NOT A SILENT ONE EITHER. `undefined` means the question was never
+    // put - an older delivery service, or a read that did not name the reader - so behaviour is
+    // unchanged, and this line is what separates "the roster agreed" from "nobody asked".
+    log(
+      `[GRAINE] ${scopeLabel(scope)}: the server named no devices for this user - the group this device holds cannot be checked against the delivery roster`
+    );
+  }
+
+  if (holdsTheGroup && !serverForgotThisDevice) {
     // Already in the group - but not necessarily holding anything. A device that joined while its
     // answerer was offline would never ask again if the ask lived only on the joining branch, and
     // the request is exactly what decides whether it is needed.
@@ -111,14 +126,18 @@ export async function ensureDistributionGroupFor(
     return true;
   }
 
-  if (serverForgotThisDevice) {
+  if (holdsTheGroup) {
     // AT A LEVEL THAT ACCUSES. Reaching this means the two sides had drifted apart and a member was
     // sitting in a salon receiving nothing; the re-join below repairs it, and this line is the only
     // record that it was ever broken. Its RATE is what says whether the drift is rare or routine.
+    //
+    // BY GROUP ID, because the scope registration is exactly what may be wrong here: the scope form
+    // resolves through it, would return null, and would leave the tree standing for the join to
+    // early-return on.
     log(
-      `[GRAINE] ${scopeLabel(scope)}: this device holds the distribution group but the group holds NO row for it (${ref.memberDevices?.length ?? 0} device(s) for this user) - the local group is stale, rejoining`
+      `[GRAINE] ${scopeLabel(scope)}: this device holds the distribution group but the group holds NO row for it (${roster?.length ?? 0} device(s) for this user) - the local group is stale, rejoining`
     );
-    mlsService.forgetDistributionGroup(scope);
+    mlsService.forgetDistributionGroupById(ref.groupId);
   }
 
   const joined = await mlsService.ensureDistributionGroup(scope, ref);

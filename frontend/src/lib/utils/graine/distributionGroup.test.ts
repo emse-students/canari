@@ -24,6 +24,7 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     getLocalGroups: vi.fn().mockReturnValue([]),
     ensureDistributionGroup: vi.fn().mockResolvedValue(true),
     forgetDistributionGroup: vi.fn().mockReturnValue('g-1'),
+    forgetDistributionGroupById: vi.fn().mockReturnValue(true),
     getDeviceId: vi.fn().mockReturnValue('dev-me'),
     ...overrides,
   };
@@ -66,7 +67,7 @@ describe('ensureCommunityDistributionGroup', () => {
     // Held is a MEMORY of having joined; the rows are the fact. Asking is what tells them apart, so
     // the ask happens on this branch too - it just changes nothing when the two agree.
     expect(channels.getDistributionGroup).toHaveBeenCalledWith(workspaceScope('ws-1'));
-    expect(mls.forgetDistributionGroup).not.toHaveBeenCalled();
+    expect(mls.forgetDistributionGroupById).not.toHaveBeenCalled();
     expect(mls.ensureDistributionGroup).not.toHaveBeenCalled();
   });
 
@@ -143,7 +144,9 @@ describe('ensureCommunityDistributionGroup - a held group the server routes noth
     expect(await run(mls, heldButUnrouted())).toBe(true);
     // In this order, and the order is the fix: `ensureDistributionGroup` returns early on a group
     // it already holds, so re-joining without forgetting first would be a no-op.
-    expect(mls.forgetDistributionGroup).toHaveBeenCalledWith(workspaceScope('ws-1'));
+    // BY GROUP ID: the scope registration is the layer that may be wrong, and resolving through it
+    // would forget nothing and leave the join to early-return on the tree it left standing.
+    expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith('g-1');
     expect(mls.ensureDistributionGroup).toHaveBeenCalledWith(workspaceScope('ws-1'), {
       groupId: 'g-1',
       groupInfo: 'c29j',
@@ -173,17 +176,37 @@ describe('ensureCommunityDistributionGroup - a held group the server routes noth
     });
 
     expect(await run(mls, channels)).toBe(true);
-    expect(mls.forgetDistributionGroup).toHaveBeenCalled();
+    expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith('g-1');
   });
 
-  it('changes nothing when the server did not answer the question', async () => {
+  it('changes nothing when the server did not answer the question, and SAYS so', async () => {
     // `undefined` is "nobody asked" and never "no devices" - an older server, or a caller that did
     // not pass the reader. Reading it as an eviction would forget a healthy group on every load.
+    // Unchanged is not the same as unremarked: without the line, "the roster agreed" and "nobody
+    // asked" reach a run log looking identical, which is how the first version of this fix shipped
+    // and measured as a no-op on production.
     const mls = makeHeldMls();
+    const log = vi.fn();
 
-    expect(await run(mls, makeChannels())).toBe(true);
-    expect(mls.forgetDistributionGroup).not.toHaveBeenCalled();
+    expect(await run(mls, makeChannels(), log)).toBe(true);
+    expect(mls.forgetDistributionGroupById).not.toHaveBeenCalled();
     expect(mls.ensureDistributionGroup).not.toHaveBeenCalled();
+    expect(log.mock.calls.flat().join(' ')).toMatch(/named no devices for this user/);
+  });
+
+  it('checks the group the SERVER names, not the one the scope registration remembers', async () => {
+    // The registration is a second copy of the same fact and it can lag. Here it names nothing at
+    // all while the tree is held - the exact state that made the first version of this fix a no-op
+    // on production, because it read `distributionGroupFor(scope)` and concluded "not held", while
+    // `ensureDistributionGroup` early-returns on the GROUP ID and concluded "already in".
+    const mls = makeMls({
+      distributionGroupFor: vi.fn().mockReturnValue(null),
+      getLocalGroups: vi.fn().mockReturnValue(['g-1']),
+    });
+
+    expect(await run(mls, heldButUnrouted())).toBe(true);
+    expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith('g-1');
+    expect(mls.ensureDistributionGroup).toHaveBeenCalled();
   });
 
   it('keeps a held group when the read itself failed', async () => {
@@ -197,7 +220,7 @@ describe('ensureCommunityDistributionGroup - a held group the server routes noth
     const log = vi.fn();
 
     expect(await run(mls, channels, log)).toBe(true);
-    expect(mls.forgetDistributionGroup).not.toHaveBeenCalled();
+    expect(mls.forgetDistributionGroupById).not.toHaveBeenCalled();
     expect(log.mock.calls.flat().join(' ')).toMatch(/keeping the one this device holds/);
   });
 });
