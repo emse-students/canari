@@ -48,7 +48,10 @@
   });
 </script>
 
-<div class="relative overflow-hidden rounded-2xl bg-(--cn-surface) {className}" style={outerStyle}>
+<div
+  class="relative flex flex-col overflow-hidden rounded-2xl bg-(--cn-surface) {className}"
+  style={outerStyle}
+>
   {#if trimmedBadge}
     <div
       class="rounded-t-2xl px-3 py-1 text-[10px] font-bold tracking-wide uppercase"
@@ -59,7 +62,14 @@
       {trimmedBadge}
     </div>
   {/if}
-  <div class="relative h-full">
+  <!--
+    `flex-1` (not `h-full`): the ribbon above is a sibling taking real space in normal flow, not
+    a percentage of the container. A height:100% here would compute against the WHOLE container
+    (ribbon included), so combined with the ribbon's own height the content would overflow the
+    bottom by exactly the ribbon's height - confirmed by measuring real bounding rects, not by
+    eye. flex-1 fills only what's actually left after the ribbon, however tall it renders.
+  -->
+  <div class="relative min-h-0 flex-1">
     <div
       class="pointer-events-none absolute top-3 right-3 h-16 w-16 opacity-40"
       style="mask-image: radial-gradient(circle at top right, black 10%, transparent 90%); -webkit-mask-image: radial-gradient(circle at top right, black 10%, transparent 90%);"

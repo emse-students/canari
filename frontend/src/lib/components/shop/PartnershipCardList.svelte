@@ -85,14 +85,17 @@
           <div class="flex min-h-16 flex-col justify-end">
             {#if locked}
               <p class="text-text-muted text-xs">{m.shop_partnership_members_only_hint()}</p>
+            {:else if card.claimMode === 'text'}
+              <!-- A static instruction is not a code being handed out - nothing to claim, so
+                   nothing to gate behind a button. Already present on the public listing (only
+                   sharedCode is stripped there). -->
+              <div class="bg-cn-accent/10 border-cn-accent/30 min-w-0 rounded-lg border px-3 py-2">
+                <p class="text-text-main text-sm break-words">{card.staticText}</p>
+              </div>
             {:else if result}
-              <div class="bg-cn-accent/10 border-cn-accent/30 rounded-lg border px-3 py-2">
-                {#if result.mode === 'text'}
-                  <p class="text-text-main text-sm">{result.staticText}</p>
-                {:else}
-                  <p class="text-text-muted text-xs">{m.shop_partnership_your_code_label()}</p>
-                  <p class="text-text-main font-mono text-sm font-bold">{result.code}</p>
-                {/if}
+              <div class="bg-cn-accent/10 border-cn-accent/30 min-w-0 rounded-lg border px-3 py-2">
+                <p class="text-text-muted text-xs">{m.shop_partnership_your_code_label()}</p>
+                <p class="text-text-main font-mono text-sm font-bold break-all">{result.code}</p>
               </div>
             {:else}
               {#if claimErrors[card.id]}
