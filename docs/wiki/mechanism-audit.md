@@ -74,6 +74,15 @@ is also the only place in the product where a mechanism the campaign cannot see 
 every sixty seconds. Whether that deserves a spec is a scoping call; that nothing would notice if it
 stopped is a measurement.
 
+**And it had a hole, found the moment anyone read it.** `POST /forms/submissions/:id/mark-paid`
+let the submitter mark their own submission paid - tag granted, purchase record written, no Stripe
+call in the path. It is deleted; the story is in `CHANGELOG.md` and the two rules it left are in
+[durable-rules](durable-rules.md). Worth stating plainly, because it is the argument this whole page
+exists to make: the defect was not subtle, not recent, and not hidden behind a race. It sat in a
+public controller with its own JSDoc describing the behaviour ("Requires the submitter or a form
+manager"), and it survived because no instrument in the repository was pointed at forms. A coverage
+map does not find defects - but it says where to look, and the first place it pointed had one.
+
 **2. Twenty CALL rows have never run.** The mechanism has real coverage in the SFU crate, and none
 above it: no frontend test, and every board row `pending`. Ringing, CallKit, the missed-call system
 message and the sibling-device path are all in the "written down, never measured" state - which the

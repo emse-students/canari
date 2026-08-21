@@ -11,6 +11,30 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Security
+
+- **Any authenticated user could mark their own form submission paid, and be granted what payment
+  buys.** `POST /api/forms/submissions/:id/mark-paid` was guarded by `NginxAuthGuard` and then by
+  `assertSubmissionAccess`, whose first line is `if (sub.userId === callerId) return` - so the
+  SUBMITTER passed. One request against their own pending submission id, with no body and no Stripe
+  call anywhere in the path, set `paymentStatus='paid'`, granted the form's cotisation tag through
+  `grantOrRenew`, and wrote a `purchase_record` with `paymentMethod:'stripe'`, `status:'paid'` and
+  the full `totalPaid` - free goods, and revenue in an association's books that no money backed. The
+  optional `sessionId` was stored without ever being checked against Stripe.
+
+  The endpoint was **deleted**: nothing in our own client had ever called it, and all three
+  legitimate routes to `paid` already existed elsewhere. Stripe confirms through
+  `POST /api/internal/forms/submissions/:id/mark-paid`, guarded by a timing-safe
+  `X-Internal-Secret` and reached only from core-service *after*
+  `stripe.webhooks.constructEvent` verifies the signature; a form manager takes cash through the
+  form-scoped `validate-cash`; a free submission is written `'free'` at submit time.
+  `FormsService.markPaid` lost its `callerId`/`isGlobalAdmin` parameters with it - they gated the
+  access check behind `if (callerId)`, so the check silently did not run whenever the argument was
+  absent.
+
+  Found by the mechanism audit, which had ranked forms first precisely because they take money and
+  nothing - no spec, no frontend test, no board row - watches them.
+
 ### Fixed
 
 - **The v0.14.1 iOS release never built: a header declared `uint32_t` without `<stdint.h>`.**

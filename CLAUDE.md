@@ -178,11 +178,32 @@ sixth is owed to the user, not to the code:** is a MiGallery application worth b
 
 ### CANARI - what is open
 
-**Release status:** v0.14.0 cut 2026-08-17; prod VERIFIED answering
-`{"version":"0.14.0","minClientVersion":"0.14.0"}`. `minClientVersion` lives in `platform_config`
-and was raised by hand from `/admin/platform`, so no deploy touches it - and **the App Store half
-was never verified, so that raise locks out any iOS user it has not reached**
-([legacy-compatibility](docs/wiki/legacy-compatibility.md) carries the shipping order it violated).
+**Release status:** v0.14.1 cut 2026-08-21 by the user, carrying their
+`ITSAppUsesNonExemptEncryption=true` in the iOS `Info.plist` (App Store Connect compliance; the app
+does MLS end-to-end encryption, so `true` is the honest declaration). **Two of its four pipelines
+failed and were repaired in place** - the runs were re-run rather than a version burnt, because both
+release workflows check out `ref: main` and `gh run rerun` keeps the `workflow_run` event context the
+upload and TestFlight steps are gated on. Both defects are in `CHANGELOG.md`; the second one, a
+`-D warnings` that escaped its step through `$GITHUB_ENV` and only bit on a WASM cache MISS, is why a
+release pipeline could be green one week and red the next with no commit between.
+
+`minClientVersion` still lives in `platform_config`, is still raised by hand from `/admin/platform`
+so no deploy touches it - and **the App Store half was never verified, so a raise locks out any iOS
+user it has not reached** ([legacy-compatibility](docs/wiki/legacy-compatibility.md) carries the
+shipping order it violated). **v0.14.1 IS COMPLETE AS A GITHUB RELEASE - all four artefacts attached** (`app-universal-release.aab`,
+`app-universal-release.apk`, `Canari.ipa`, `Canari_0.14.1_amd64.AppImage`). **TestFlight is the one
+thing still blocked, and it is BLOCKED ON THE USER, not on the code** (their decision, 2026-08-22:
+leave it for now). The iOS build and archive now succeed; App Store Connect refuses the upload with
+*"Invalid Export Compliance Code. The export compliance key value [] in the app's Info.plist doesn't
+match the key value of the app's export compliance documentation."* Apple holds export-compliance
+documentation for this app carrying a code, and `ITSAppUsesNonExemptEncryption=true` alone does not
+satisfy it - the plist must also carry `ITSEncryptionExportComplianceCode`, whose value exists ONLY
+in the user's App Store Connect account (My Apps -> Canari -> App Information -> Export Compliance).
+The alternative is deleting `ITSAppUsesNonExemptEncryption`, which restores the per-build compliance
+questionnaire in App Store Connect. Nothing here can be decided from the repository.
+
+So **the App Store half of `minClientVersion` is still unverified and still locks out any iOS user a
+release has not reached** - v0.14.1 did not close that gap and will not until TestFlight accepts it.
 
 ### CANARI - the test campaign
 

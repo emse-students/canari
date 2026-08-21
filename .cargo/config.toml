@@ -1,19 +1,27 @@
-# Durcissement reseau pour TOUS les builds Rust/WASM du repo (CI, hooks pre-push, local).
-# Decouvert via la recherche de config par cargo dans les repertoires ancetres : ce fichier a la
-# racine s'applique a frontend/mls-core, frontend/mls-wasm, frontend/src-tauri, apps/chat-gateway.
+# Network hardening for EVERY Rust/WASM build in the repo (CI, pre-push hooks, local).
 #
-# Cause traitee : la CI a echoue sur `curl [16] Error in the HTTP2 framing layer` en mettant a
-# jour l'index crates.io (telechargement d'une dependance via HTTP/2 multiplexe sur le CDN). Ce
-# n'est pas un bug de code mais une fragilite reseau ; on la neutralise au niveau cargo.
+# It applies through cargo's ancestor-directory config search, which is the only reason one file at
+# the root reaches frontend/mls-core, frontend/mls-wasm, frontend/src-tauri and apps/chat-gateway -
+# there is no workspace manifest here tying them together.
+#
+# The cause it treats: CI failed on `curl [16] Error in the HTTP2 framing layer` while updating the
+# crates.io index (a dependency downloaded over multiplexed HTTP/2 from the CDN). That is not a code
+# defect but a network fragility, so it is neutralised at the cargo level rather than retried.
+#
+# NOTHING HERE SETS `rustflags`, DELIBERATELY. A lint policy declared this widely would reach every
+# crate cargo builds from a path - including the vendored patches in frontend/src-tauri/patches,
+# which Cargo does NOT `--cap-lints allow` the way it caps registry dependencies. That is exactly how
+# the v0.14.1 AppImage release died, from a `-D warnings` exported into `$GITHUB_ENV` by a setup
+# action. Lint strictness belongs on the command that compiles OUR code, never on the environment.
 
 [http]
-# Cure directe du framing error : on desactive le multiplexage HTTP/2 et on retombe sur HTTP/1.1,
-# bien plus tolerant face aux proxies/CDN capricieux qui cassent les flux HTTP/2 multiplexes.
+# The direct cure for the framing error: disable HTTP/2 multiplexing and fall back to HTTP/1.1,
+# which is far more tolerant of the proxies and CDNs that break multiplexed HTTP/2 streams.
 multiplexing = false
 
 [net]
-# Retente les telechargements transitoires (index + crates) au lieu d'echouer au premier echec.
+# Retry transient downloads (index + crates) instead of failing on the first miss.
 retry = 10
-# Utilise le git systeme pour les eventuelles dependances git (plus tolerant que l'implementation
-# integree de cargo en environnement CI).
+# Use the system git for any git dependency - more tolerant than cargo's built-in implementation
+# in a CI environment.
 git-fetch-with-cli = true

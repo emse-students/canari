@@ -19,6 +19,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { AssociationCalendarEventKind } from '../entities/association-calendar-event.entity';
+import { ALL_PERMISSION_FLAGS } from '../entities/association-member.entity';
 
 export class ReorderMembersDto {
   /** Ordered list of member user IDs - position in the array becomes the new sortOrder. */
@@ -210,7 +211,7 @@ export class AddMemberDto {
    */
   @IsInt()
   @Min(0)
-  @Max(1023) // 2^10 - 1 covers all 10 current flags
+  @Max(ALL_PERMISSION_FLAGS) // derived from the enum - never a literal, see the entity
   // Note: BDE-only flags (VALIDATE_EVENTS=32, MANAGE_ASSO=64, MODERATE=128) are silently
   // inert when the association is not marked isBDE=true in the DB.
   permissions: number;
@@ -224,7 +225,7 @@ export class UpdateMemberRoleDto {
   /** Bitmask of `AssociationPermissionFlag` values. */
   @IsInt()
   @Min(0)
-  @Max(1023)
+  @Max(ALL_PERMISSION_FLAGS)
   @IsOptional()
   permissions?: number;
 }

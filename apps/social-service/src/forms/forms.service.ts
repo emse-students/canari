@@ -568,15 +568,17 @@ export class FormsService {
    * Requires the caller to be the submitter or a form manager.
    * If the parent form has a `grantedTagName`, grants or renews the tag for the submitter.
    */
-  async markPaid(
-    submissionId: string,
-    sessionId?: string,
-    callerId?: string,
-    isGlobalAdmin?: boolean
-  ) {
-    if (callerId) {
-      await this.assertSubmissionAccess(submissionId, callerId, isGlobalAdmin ?? false);
-    }
+  /**
+   * Records that a submission has been paid, and grants everything that payment buys.
+   *
+   * THE CALLER IS THE AUTHORISATION, WHICH IS WHY THIS TAKES NO CALLER. Its only route is the
+   * internal `X-Internal-Secret` controller, reached from core-service after Stripe's webhook
+   * signature has been verified - so by the time this runs, the payment is a fact established
+   * somewhere that cannot be spoofed by a client. It used to accept `callerId`/`isGlobalAdmin` and
+   * run `assertSubmissionAccess` only `if (callerId)`: a check that quietly did not happen when the
+   * argument was absent, behind a public route the SUBMITTER could reach. Both are gone.
+   */
+  async markPaid(submissionId: string, sessionId?: string) {
     const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
     if (!submission) throw new NotFoundException('Submission not found');
     submission.paymentStatus = 'paid';

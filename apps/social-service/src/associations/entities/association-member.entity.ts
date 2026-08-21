@@ -35,6 +35,22 @@ export enum AssociationPermissionFlag {
 }
 
 /**
+ * Every flag the enum defines, OR-ed together - the widest legal `permissions` bitmask.
+ *
+ * Derived from the enum rather than written down, because the literal that preceded it had to be
+ * raised by hand on every new flag and was not: `@Max(511)` became `@Max(1023)` for
+ * MANAGE_STRIPE_CONNECT (bit 9) and then stayed at 1023 when MANAGE_PARTNERSHIPS (bit 10) landed,
+ * so the server rejected the admin preset outright. This constant is the ONLY bound the member
+ * DTOs may use; adding a flag to the enum above moves it with no second edit.
+ *
+ * TypeScript reverse-maps numeric enums, so `Object.values` yields the names too - hence the
+ * numeric filter.
+ */
+export const ALL_PERMISSION_FLAGS = Object.values(AssociationPermissionFlag)
+  .filter((value): value is AssociationPermissionFlag => typeof value === 'number')
+  .reduce<number>((mask, flag) => mask | flag, 0);
+
+/**
  * Base admin flags granted to association admins.
  * = POST_AS_ASSO | PROPOSE_EVENT | MANAGE_MEMBERS | MANAGE_DOCUMENTS | MANAGE_FORMS |
  *   MANAGE_PRODUCTS | MANAGE_PARTNERSHIPS

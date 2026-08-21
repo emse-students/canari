@@ -200,17 +200,20 @@ export class FormsController {
     return this.service.getSubmissionById(submissionId);
   }
 
-  /** Marks a submission as paid after Stripe redirect. Requires the submitter or a form manager. */
-  @UseGuards(NginxAuthGuard)
-  @Post('submissions/:submissionId/mark-paid')
-  markPaid(
-    @Param('submissionId') submissionId: string,
-    @Body() body: { sessionId?: string },
-    @Headers('x-user-id') xUserId: string,
-    @Headers('x-global-admin') ga?: string
-  ) {
-    return this.service.markPaid(submissionId, body.sessionId, xUserId, ga === 'true');
-  }
+  // THERE IS NO PUBLIC `mark-paid`, AND THERE MUST NOT BE ONE. It existed until 2026-08-22 and
+  // `assertSubmissionAccess` let the SUBMITTER through it, so any authenticated user could POST
+  // their own pending submission id, with no body, and receive: `paymentStatus='paid'`, the form's
+  // cotisation tag granted through `grantOrRenew`, and a `purchase_record` written with
+  // `paymentMethod:'stripe'`, `status:'paid'` and the full amount - free goods plus revenue in an
+  // association's books that no money ever backed. No Stripe call verified anything; the optional
+  // `sessionId` was stored unchecked. Nothing in our own client ever called it.
+  //
+  // The three legitimate ways a submission becomes paid all still exist and none of them is this:
+  // Stripe confirms through `POST /api/internal/forms/submissions/:id/mark-paid`, which is guarded
+  // by the timing-safe `X-Internal-Secret` and reached only from core-service AFTER
+  // `stripe.webhooks.constructEvent` has verified the signature; a form manager takes cash through
+  // `POST :id/submissions/:submissionId/validate-cash`, which is scoped to the form they manage;
+  // and a free submission is written `'free'` at submit time.
 
   /** Cancels a pending submission. Requires the submitter or a form manager. */
   @UseGuards(NginxAuthGuard)
