@@ -220,7 +220,18 @@ for (const spec of channelId
       { name: 'all', level: 'all', text: `${run}-all` },
     ]
   : []) {
-  cases.push(await caseOf(spec.name, { ...spec, channelId, workspaceId, ownerId }));
+  // THE WHOLE CASE IS A STEP. The tray read goes over adb and the server read over ssh, and either
+  // can fail transiently - a throw here used to kill the runner and take the three cases that had
+  // already run with it. A case that could not be taken is recorded as one that failed, which the
+  // assertions below then read as FAIL rather than as a passing absence.
+  cases.push(
+    (await step(spec.name, () => caseOf(spec.name, { ...spec, channelId, workspaceId, ownerId }))) ?? {
+      name: spec.name,
+      levelAsked: spec.level,
+      levelStored: null,
+      unmeasured: true,
+    }
+  );
 }
 
 const byName = Object.fromEntries(cases.map((c) => [c.name, c]));

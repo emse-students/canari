@@ -429,12 +429,19 @@ export function channelPolls(channelId) {
  * level is per (member, salon) and the map is where the per-salon part lives.
  */
 export function channelNotifLevelOf(workspaceId, channelId, userId) {
+  // THE `userId` COLUMN IS THERE TO KEEP THE LINE NON-BLANK, and it is not decoration. Tuples-only
+  // psql prints a NULL as an empty field, `rows` drops blank lines, and a member who has never set
+  // a level for this salon therefore produced ZERO rows - indistinguishable from not being a member
+  // at all. Selecting a column that cannot be null makes the row's existence readable, and the
+  // `coalesce` turns "no entry" into a value this function can name.
   const out = psql(
-    `SELECT "notifLevels"->>'${channelId}' FROM channel_members ` +
+    `SELECT "userId", coalesce("notifLevels"->>'${channelId}', '') FROM channel_members ` +
       `WHERE "workspaceId" = '${workspaceId}' AND "userId" = '${userId}'`
   );
   const found = rows(out);
-  if (found.length === 0) throw new Error(`channelNotifLevelOf: ${userId.slice(0, 8)} is not a member of ${workspaceId}`);
-  const value = String(found[0][0] ?? '').trim();
+  if (found.length === 0) {
+    throw new Error(`channelNotifLevelOf: ${userId.slice(0, 8)} is not a member of ${workspaceId}`);
+  }
+  const value = String(found[0][1] ?? '').trim();
   return value === '' ? null : value;
 }
