@@ -502,15 +502,43 @@ export async function clearOverlays(cx) {
   const TAG = 'data-harness-backdrop';
   const CLOSE = 'data-harness-close';
   let escaped = false;
-  let closeClicked = false;
+  // NOT a once-only flag. `closeClicked` used to be one, and that alone limited this function to
+  // closing exactly ONE dialog per call - so a stacked pair survived, the rig stayed blocked, and the
+  // loop spent its remaining rounds re-reading a state it had decided not to act on.
+  //
+  // WHAT LICENSES ANOTHER CLOSE IS THE LAST CLOSE HAVING WORKED, not the round having made progress.
+  // The first attempt at this gated on the round, and Escape is the first round's action: Escape does
+  // nothing to these dialogs, so the count never dropped, so no close was ever licensed and the fix
+  // fixed nothing. This holds the count AT THE LAST CLOSE - so the first close is always allowed, and
+  // a further one only after the previous one removed something. A dialog that will not close is met
+  // exactly once, which is the point of the icon-only rule: pressing on would be clicking blindly.
+  let countAtLastClose = null;
 
   /** Tags the dialog's icon-only top-right control, and says whether there was one. */
   const tagCloseControl = async () =>
     (await evaluate(
       cx,
       `(function () {
-        var d = document.querySelector('[role=dialog][aria-modal=true]');
-        if (!d) return 'no-dialog';
+        // THE TOPMOST DIALOG, NOT THE FIRST IN THE DOM. With two stacked - a group settings panel
+        // holding a member picker - querySelector returns the OUTER one, whose close button is then
+        // covered by the inner one's own backdrop. The click died with 'no stable element', and
+        // because it THREW it took the whole preflight with it. Stacking is not exotic: any check
+        // that opens a picker from a settings panel and fails inside it leaves exactly this.
+        var all = [].slice.call(document.querySelectorAll('[role=dialog][aria-modal=true]'));
+        if (all.length === 0) return 'no-dialog';
+        var z = function (e) {
+          var v = 0;
+          for (var n = e; n && n !== document.body; n = n.parentElement) {
+            var s = getComputedStyle(n);
+            var zi = parseInt(s.zIndex, 10);
+            if (!isNaN(zi) && zi > v) v = zi;
+          }
+          return v;
+        };
+        // Highest stacking context wins; DOM order breaks a tie, because a portal appended later is
+        // on top of one appended earlier at the same z-index.
+        var d = all[0];
+        for (var i = 1; i < all.length; i++) if (z(all[i]) >= z(d)) d = all[i];
         var dr = d.getBoundingClientRect();
         var hit = [].slice.call(d.querySelectorAll('button')).filter(function (b) {
           if (b.disabled) return false;
@@ -530,6 +558,7 @@ export async function clearOverlays(cx) {
   for (let round = 0; round < 4; round += 1) {
     const found = await read();
     if (found.length === 0) return cleared;
+    const mayClose = countAtLastClose === null || found.length < countAtLastClose;
 
     const dialog = found.find((o) => o.kind === 'dialog');
     let escalationLeft = false;
@@ -538,10 +567,16 @@ export async function clearOverlays(cx) {
         await pressKey(cx, 'Escape');
         escaped = true;
         escalationLeft = true;
-      } else if (!closeClicked && (await tagCloseControl())) {
-        closeClicked = true;
+      } else if (mayClose && (await tagCloseControl())) {
+        countAtLastClose = found.length;
         try {
+          // CAUGHT, because this function's own contract is that a modal it cannot close is
+          // REPORTED and left alone - "rather than beaten on". A throw here did the opposite: it
+          // aborted the preflight of every check in the phase, over debris a later round or a
+          // later run would have cleared. The failure is evidence, not a reason to stop.
           await realClick(cx, `[${CLOSE}]`);
+        } catch (e) {
+          cleared.push({ kind: 'close-refused', why: e instanceof Error ? e.message.slice(0, 200) : String(e) });
         } finally {
           await evaluate(
             cx,

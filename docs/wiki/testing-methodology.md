@@ -571,6 +571,23 @@ which is the same sentence for *the picker never opened* and for *the picker ope
 list* - and those want opposite fixes (rule 16's shape again). `offeredEmojis` now names what the row
 **does** offer, so the next failure of this kind is one line to read.
 
+**AND THE DEBRIS A CHECK LEAVES DOES NOT SIT QUIETLY - IT TALKS, ON EVERY LATER RUN.**
+
+READ-10 creates a group, has the peer delete it, and asserts the owner's client sends no read
+receipt for the corpse. The corpse is the point of the check, so leaving it looked free. It is not:
+a conversation marked `removed` is a fact about what its owner was TOLD, so it survives every later
+reconciliation until a human dismisses it - and each one narrates that decision, once per row, on
+every load of every check that follows. Four had accumulated before anyone counted them, and the
+first symptom was READ-10's own verdict coming back `PASS-DIRTY` on a line its own previous runs had
+written.
+
+Two things follow, and the second is the one that generalises. A check must undo its fixture
+**through the product's own exit** - here the "delete locally" control, the only one the app offers
+that row - which turns the teardown into coverage instead of housekeeping. And the debris to look for
+is not the row: it is the LINE. Ask of every leftover what it will say on the next run, because
+litter that speaks is worse than litter that does not - it teaches the reader of a log to skip a
+line, and the next defect will arrive in the ones they have learnt to skip.
+
 #### 9. A CHECK THAT REPAIRS THE CLIENT MUST WAIT FOR ITS OWN REPAIR - a single sample right after it measures the instrument
 
 `run.mjs`'s in-run preflight repairs a client parked on `/communities` - where the PIN gate does not

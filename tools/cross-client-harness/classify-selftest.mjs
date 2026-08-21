@@ -75,6 +75,28 @@ const CASES = [
     '[Push] startPushService device=tauri-aaaaaaaa…-bbbbbbbb-cccc (platform will be confirmed by FCM token)',
     'benign',
   ],
+  // THE `removed` GUARD FIRING, AND ITS FIVE SIBLINGS NOT BEING SWALLOWED WITH IT. Every one of
+  // these lines is the SAME log statement in `discoverMissingGroups`; only the reducer's reason
+  // separates a designed keep from a keep taken because the client could not read the server. A
+  // rule on `kept - ` alone would silence the second kind, so both are pinned here: READ-10 came
+  // back PASS-DIRTY on the first, and would come back clean on the second if this ever regressed.
+  [
+    'log',
+    '[20:23:56] [DISCOVERY] UI group "READ10-mt3a2434" kept - already removed, awaiting a manual deletion',
+    'benign',
+  ],
+  [
+    'log',
+    '[20:23:56] [DISCOVERY] UI group "Equipe" kept - server status uncertain (network)',
+    'unexplained',
+  ],
+  [
+    'log',
+    '[20:23:56] [DISCOVERY] UI group "Equipe" kept - members unavailable (doubt)',
+    'unexplained',
+  ],
+  // And the dismissal that ends that row's life, which READ-10 now performs itself.
+  ['log', '[20:24:01] [DELETE_LOCAL] Local conversation deleted: 642f389a…', 'notable'],
 ];
 
 let failures = 0;

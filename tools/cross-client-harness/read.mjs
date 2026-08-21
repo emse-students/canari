@@ -753,77 +753,53 @@ async function read10() {
   // offers an existing member, so trying candidates in turn and watching the roster go 1 -> 2 is
   // the only reliable way to know, per del1.mjs's own comment on why parsing a name off the page
   // picked the wrong account there).
-  const { openGroup } = await import('./groupnav.mjs');
-  const { usernames } = await import('./accounts.mjs');
+  const { dismissLocally, openGroup } = await import('./groupnav.mjs');
+  // (`usernames` is no longer needed here - see the display-name note below.)
 
   const NAME = `READ10-${Date.now().toString(36)}`;
   const w2 = await client(W2); // the PEER: creates the group, sends, then deletes it
   const w1 = await client(W1); // the OWNER: whose read path must survive the dead conversation
 
+  // THE SHARED GESTURE, and this call site is why it exists: the six lines that used to be here
+  // waited for `#new-group-name` BEFORE clicking the "Groupe" tab that creates it, so READ-10 died
+  // on a ten-second timeout every time and had never produced a verdict. See `createGroup`.
+  const { createGroup } = await import('./groupnav.mjs');
   await goto(w2, '/chat');
-  await realClick(w2, '[aria-label="Nouvelle discussion"]');
-  await until(w2, `!!document.querySelector('#new-group-name')`, 10000);
-  await realClick(w2, 'text=Groupe');
-  await sleep(1000);
-  await realClick(w2, '#new-group-name');
-  await w2.send('Input.insertText', { text: NAME });
-  await sleep(600);
-  await realClick(w2, 'text=Créer le groupe');
-  await until(w2, `document.body.innerText.indexOf(${JSON.stringify(NAME)}) !== -1`, 25000);
-  await sleep(2000);
+  await createGroup(w2, NAME, { label: 'read10' });
   await openGroup(w2, NAME, { navigate: true, label: 'read10-create' });
 
-  await realClick(w2, '[aria-label="Paramètres du groupe"]');
-  await until(w2, `/Quitter le groupe/.test(document.body.innerText)`, 10000);
-  await sleep(1000);
-  await realClick(w2, 'text=Ajouter');
-  await sleep(1500);
-
-  const candidates = usernames();
-
-  let invited = false;
-  for (const q of candidates) {
-    await evaluate(
-      w2,
-      `(function () {
-        var i = [].slice.call(document.querySelectorAll('input')).filter(function (x) { return /rechercher/i.test(x.placeholder || ''); }).pop();
-        if (i) { i.focus(); i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); }
-      })()`
-    );
-    await w2.send('Input.insertText', { text: q });
-    await sleep(2500);
-    const hasOption = await evaluate(
-      w2,
-      `(function () {
-        var list = [].slice.call(document.querySelectorAll('ul, ol')).filter(function (e) {
-          return (e.innerText || '').length < 400 && /fixed/.test((e.className || '').toString()) && (e.innerText || '').trim();
-        })[0];
-        return !!list && !!(list.querySelector('li, button, [role=option]') || list.firstElementChild);
-      })()`
-    );
-    if (!hasOption) continue;
-    await realClick(w2, 'ul li, ol li, [role=option]').catch(() => {});
-    await sleep(1000);
-    const enabled = await evaluate(
-      w2,
-      `(function () {
-        var b = [].slice.call(document.querySelectorAll('button')).filter(function (x) { return /Envoyer l'invitation/.test(x.innerText || ''); })[0];
-        return !!b && !b.disabled;
-      })()`
-    );
-    if (!enabled) continue;
-    await realClick(w2, "text=Envoyer l'invitation");
-    await until(w2, `/MEMBRES \\(2\\)/.test(document.body.innerText)`, 20000).catch(() => {});
-    if (/MEMBRES \(2\)/.test(await evaluate(w2, 'document.body.innerText'))) {
-      invited = true;
-      break;
-    }
-  }
-  if (!invited) {
-    record('READ-10', 'ERROR', { reason: 'could not invite the peer into the throwaway group', group: NAME });
+  // THE SHARED GESTURE, and this is the call site that proves why it must be shared. What used to be
+  // here re-implemented the member picker and was missing all three of `addmember.mjs`'s lessons: it
+  // took `[0]` of any small floating list (the dropdown is PORTALLED, and the sidebar's own DM row
+  // for that person matches an unscoped search), it clicked through `realClick` on a global
+  // `'ul li, ol li'` rather than dispatching a real pointer sequence at the option's own centre
+  // (`element.click()` leaves "Envoyer l'invitation" DISABLED), and it waited for `MEMBRES (2)` -
+  // a rendering of the outcome rather than the outcome. READ-10 had never produced a verdict.
+  // DISPLAY NAMES, NOT LOGINS, and this is the second half of why READ-10 never produced a verdict.
+  // `usernames()` says in its own doc that it is "for the member pickers that search by it"; the
+  // picker offered neither login, which is what the refusal list this call now carries said in as
+  // many words. The picker renders and matches display names.
+  //
+  // Both are tried rather than the one `peerNameFor` would name, because which account is the peer
+  // is a property of the GROUP, not of the device: the picker never offers an existing member or
+  // yourself, so being accepted is what identifies them.
+  const { addAnyMember } = await import('./addmember.mjs');
+  const { OWNER_NAME, PEER_NAME } = await import('./names.mjs');
+  let peer;
+  try {
+    peer = await addAnyMember(w2, [OWNER_NAME, PEER_NAME]);
+  } catch (e) {
+    record('READ-10', 'ERROR', {
+      reason: 'could not invite the peer into the throwaway group',
+      group: NAME,
+      // THE REFUSALS, not just the fact of refusal: `addAnyMember` names what each candidate did,
+      // and a bare "could not invite" is what made this row unactionable for a fortnight.
+      why: e instanceof Error ? e.message : String(e),
+    });
     [w1, w2].forEach((c) => c.close());
     return false;
   }
+  console.log(`[read10] invited ${JSON.stringify(peer)}`);
   await realClick(w2, 'text=Fermer').catch(() => {});
 
   const m = mark('READ10');
@@ -871,9 +847,39 @@ async function read10() {
 
   const rW1 = await report(oR10);
   const exceptions = rW1.exceptions;
-  const ok = threw === null && exceptions.length === 0;
+
+  // THE CHECK CLEANS UP AFTER ITSELF, and until 2026-08-21 it did not. A row the peer deleted is
+  // kept until its owner dismisses it BY HAND - the guard at the top of `decideAbsentGroupFate` -
+  // so every run of this check left one more dead `READ10-*` conversation in W1's profile, and each
+  // of them narrated itself on every load of every later check. Four had piled up.
+  //
+  // Part of the VERDICT, not a best-effort teardown, for two reasons: the dismissal is the only exit
+  // the product offers that row, so failing it is a real defect on this check's own subject; and a
+  // teardown that may silently fail is how the four accumulated in the first place.
+  //
+  // OUTSIDE the observation window on purpose. `report` has already judged the read path; the
+  // purge's own lines belong to the DEL rows that assert them, and folding them in here would let a
+  // future unclassified line from a different mechanism decide READ-10's verdict.
+  let cleaned = 'not attempted - the row never opened';
+  if (threw === null) {
+    try {
+      await dismissLocally(w1, NAME);
+      cleaned = true;
+    } catch (e) {
+      cleaned = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  const ok = threw === null && exceptions.length === 0 && cleaned === true;
   const gated = gate(ok ? 'PASS' : 'FAIL', { W1: rW1 });
-  record('READ-10', gated.verdict, { ...gated.detail, group: NAME, marker: m, threw, exceptions });
+  record('READ-10', gated.verdict, {
+    ...gated.detail,
+    group: NAME,
+    marker: m,
+    threw,
+    exceptions,
+    cleaned,
+  });
   [w1, w2].forEach((c) => c.close());
   return ok;
 }

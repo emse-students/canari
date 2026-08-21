@@ -193,6 +193,17 @@ const BENIGN = [
   // discriminator repair both landed. Its ABSENCE is what would be the signal: a boot where these
   // do not appear is a boot where the sweep deleted the group and sending stops working.
   /^\[(SYNC|DISCOVERY)\] (WASM kept|MLS state kept for) [0-9a-f]{8}… - .*key-distribution group/,
+  // THE REDUCER DECLINING TO RE-PURGE A CONVERSATION THE USER HAS ALREADY SEEN DIE. A row marked
+  // `removed` is a fact about what its owner was TOLD, so it survives every later reconciliation
+  // until they delete it by hand - the guard at the top of `decideAbsentGroupFate`, which no server
+  // state can reach past. It is the DESIGNED path and it fires on every load for the rest of that
+  // profile's life, so it is benign; what would be the signal is its opposite, a `removed` row being
+  // purged, and that spelling is `- removing` and sits in NOTABLE.
+  //
+  // Deliberately pinned to this ONE reason and not to `kept - `: the five other reasons that reach
+  // this same line mean network doubt or an unreadable membership, and a check running while the
+  // client cannot read the server is a check whose result nobody should believe.
+  /^\[DISCOVERY\] UI group ".*" kept - already removed, awaiting a manual deletion$/,
   // A DELETE THAT CAUGHT ITS MESSAGE STILL IN THE QUEUE (2026-08-16, MUT-19's fix). This is the
   // cancellation succeeding: the frame never left, so no peer has it and no `delete_message` event
   // is owed. Deliberately NOT written as a `^\[OUTBOX\] \S+ withdrawn` prefix - the sibling branch
@@ -465,6 +476,11 @@ const NOTABLE = [
   // Seen on W2 during COMM-12, for the arm's other community, while its channel was not selected.
   /Message received for an unknown channel/i,
   /forget|revoke|reset|corrupt/i,
+  // A CONVERSATION DESTROYED AT ITS OWNER'S REQUEST - the only exit the product offers a row the
+  // peer deleted, and the sibling of the `[DISCOVERY] ... kept` line in BENIGN. Notable and never
+  // benign, on this file's own doctrine: a destruction is always shown, whoever asked for it, and
+  // a check that did not ask for one has its answer the moment this appears.
+  /^\[DELETE_LOCAL\] Local conversation deleted: [0-9a-f]{8}/,
   // THE SWEEP ACTUALLY DESTROYING SOMETHING. `[SYNC] WASM kept ...` is routine and sits in
   // `BENIGN`; this is its opposite branch, and the two must never share a rule. It fires when the
   // server confirms a group is a conversation row this device holds no membership in - correct

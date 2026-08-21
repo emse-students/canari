@@ -159,16 +159,11 @@ if ((await evaluate(W1, 'location.pathname')) !== '/chat') {
   await evaluate(W1, `location.href = '/chat'`);
   await sleep(5000);
 }
-await realClick(W1, '[aria-label="Nouvelle discussion"]');
-await sleep(1500);
-await realClick(W1, 'text=Groupe');
-await sleep(1000);
-await realClick(W1, '#new-group-name');
-await W1.send('Input.insertText', { text: NAME });
-await sleep(600);
-await realClick(W1, 'text=Créer le groupe');
-await until(W1, `document.body.innerText.indexOf(${JSON.stringify(NAME)}) !== -1`, 25000);
-await sleep(2500);
+// THE SHARED GESTURE. These lines used to click "Créer le groupe" without checking it was enabled,
+// and the button is disabled until the name lands - a click on a disabled control is discarded in
+// silence. `createGroup` carries that post-condition, and the two others its siblings had learnt.
+const { createGroup } = await import('./groupnav.mjs');
+await createGroup(W1, NAME, { label: 'del1' });
 console.log(`[del1] created ${NAME}`);
 
 // --- 2. W1 fills the group with history BEFORE the peer exists in it ---------------------------

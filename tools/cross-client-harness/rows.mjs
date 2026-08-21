@@ -34,6 +34,7 @@
  * name first, then by the part before a `/`, then - for a joint id - by each `/`-separated tail
  * pasted back onto the prefix. Anything still unmatched is a real divergence and is named as one.
  */
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -109,7 +110,14 @@ for (const line of readFileSync(LEDGER, 'utf8').split('\n')) {
   for (const row of hits) {
     const prev = latest.get(row);
     if (!prev || String(r.at) > String(prev.at)) {
-      latest.set(row, { verdict: r.verdict, build: r.build, at: r.at, recordedAs: r.id });
+      latest.set(row, {
+        verdict: r.verdict,
+        build: r.build,
+        at: r.at,
+        recordedAs: r.id,
+        check: r.check,
+        checkSha: r.checkSha,
+      });
     }
   }
 }
@@ -155,6 +163,43 @@ if (notGreen.length) {
   }
 }
 
+// A VERDICT FROM A RUNNER THAT NO LONGER EXISTS IS NOT A VERDICT, and this is the trap that cost the
+// most time in the campaign. HEAL-W2's newest word was `FAIL`, from 2026-08-11 - and `heal-w2.mjs`
+// was REWRITTEN that same day, because the old verdict required a branch four runs proved
+// unreachable. The row was reporting a failure of a script that had already been replaced, so the
+// only honest reading of it is "never run". `results.mjs` records `checkSha` for exactly this and
+// nothing consumed it.
+//
+// A row with no `checkSha` at all predates the field, which is the same answer for the same reason.
+const superseded = [];
+const shaOf = new Map();
+for (const r of rows) {
+  const e = latest.get(r);
+  if (!e || !e.check) continue;
+  const file = join(HERE, e.check);
+  if (!existsSync(file)) {
+    superseded.push([r, e, 'its runner no longer exists']);
+    continue;
+  }
+  if (!shaOf.has(e.check)) {
+    shaOf.set(e.check, createHash('sha256').update(readFileSync(file)).digest('hex').slice(0, 12));
+  }
+  if (!e.checkSha) superseded.push([r, e, 'recorded before checkSha existed']);
+  else if (e.checkSha !== shaOf.get(e.check)) superseded.push([r, e, `runner is now ${shaOf.get(e.check)}`]);
+}
+const noSha = rows.filter((r) => latest.has(r) && !latest.get(r).check);
+if (superseded.length || noSha.length) {
+  const n = superseded.length + noSha.length;
+  console.log(`\n[rows] ${n} verdict(s) taken by a runner that has since CHANGED - re-run before believing:`);
+  for (const [r, e, why] of superseded) {
+    console.log('  ' + r.padEnd(14) + String(e.verdict).padEnd(12) + String(e.check).padEnd(16) + why);
+  }
+  for (const r of noSha) {
+    const e = latest.get(r);
+    console.log('  ' + r.padEnd(14) + String(e.verdict).padEnd(12) + '(no check recorded)  predates the field entirely');
+  }
+}
+
 if (sinceBuild) {
   const stale = rows.filter((r) => latest.has(r) && !String(latest.get(r).build).startsWith(sinceBuild));
   console.log('\n[rows] ' + stale.length + ' row(s) whose newest verdict was NOT taken on ' + sinceBuild);
@@ -190,7 +235,7 @@ if (unreachable.length) {
 }
 
 if (strict) {
-  const bad = never.length + notGreen.length + divergent.size + unreachable.length;
+  const bad = never.length + notGreen.length + divergent.size + unreachable.length + superseded.length + noSha.length;
   console.log('\n[rows] --strict: ' + bad + ' owed');
   process.exit(bad > 0 ? 1 : 0);
 }

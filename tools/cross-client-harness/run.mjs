@@ -51,8 +51,19 @@ const flag = (n) => argv.includes(`--${n}`);
  * treating a flag's value as a positional. Anything added here must be listed, or it repeats.
  */
 const VALUED = ['repeat', 'file'];
-const named = argv.filter(
-  (a, i) => !a.startsWith('--') && !VALUED.includes(String(argv[i - 1]).replace(/^--/, ''))
+
+/**
+ * Phase names, and NOTHING PAST `--file`, because everything past it belongs to the script.
+ *
+ * `--file read.mjs --only 10` would otherwise read `10` as a phase name - the same class of fault
+ * `VALUED` exists for, one level out. The `--file` branch happens not to consult `named` today, so
+ * this changes no behaviour; it is here because the next reader who consults it would be right to,
+ * and would be wrong.
+ */
+const fileAt = argv.indexOf('--file');
+const positional = fileAt === -1 ? argv : argv.slice(0, fileAt);
+const named = positional.filter(
+  (a, i) => !a.startsWith('--') && !VALUED.includes(String(positional[i - 1]).replace(/^--/, ''))
 );
 
 /**
@@ -517,7 +528,9 @@ if (!named.length && !flag('all') && !flag('file')) {
   console.log(`\n  ${covered} phase(s) with a script, ${bare} with none.`);
   console.log('\n  node run.mjs MSG          run a phase');
   console.log('  node run.mjs --all        run every phase that has a script');
-  console.log('  node run.mjs --file x.mjs run one script\n');
+  console.log('  node run.mjs --file x.mjs run one script');
+  console.log('  node run.mjs --file read.mjs --only 10 --destructive   ... with its own arguments');
+  console.log('        (run.mjs\'s own flags go BEFORE --file; everything after the script is the script\'s)\n');
   process.exit(0);
 }
 
@@ -527,9 +540,24 @@ let jobs = [];
 let devices = new Set();
 
 if (flag('file')) {
-  const f = argv[argv.indexOf('--file') + 1];
+  const at = argv.indexOf('--file');
+  const f = argv[at + 1];
   if (!f) throw new Error('--file needs a script name');
-  jobs.push({ phase: '(file)', script: f });
+  // EVERYTHING AFTER THE SCRIPT NAME IS THE SCRIPT'S, and until this existed it was thrown away.
+  //
+  // A phase entry is a whole command line - `read.mjs --only 10`, `tab236.mjs 2` - and `job.script`
+  // is split on spaces where it is spawned, so a phase can pass arguments and `--file` could not.
+  // That made every opt-in check UNREACHABLE through the one entry point that preflights: READ-10
+  // exists, works, and only runs under `--destructive`, so the only way to reach it was to bypass
+  // `run.mjs` - which is how a check came to be run three minutes into a deploy on 2026-08-21 and
+  // cost a verdict. An opt-in nobody can opt into through the front door is the DEL-1 fault sitting
+  // inside the launcher.
+  //
+  // `run.mjs`'s own flags must therefore come BEFORE `--file`, and the usage line says so. This is
+  // not a parser talking itself into ambiguity: `--only` and `--destructive` belong to the script,
+  // `--no-preflight` belongs here, and nothing can tell them apart by shape alone.
+  const forwarded = argv.slice(at + 2);
+  jobs.push({ phase: '(file)', script: [f, ...forwarded].join(' ') });
   // THE DEVICES COME FROM THE SCRIPT'S OWN PHASE, NEVER FROM A DEFAULT. `--file` used to preflight
   // W1 and W2 whatever it was about to run, so `--file comm25.mjs` - the one COMM check whose whole
   // subject is a SECOND DEVICE - started against a phone nobody had looked at. `checks.mjs` already

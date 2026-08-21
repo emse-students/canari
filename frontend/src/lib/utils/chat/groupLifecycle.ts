@@ -96,7 +96,7 @@ export function decideAbsentGroupFate(input: AbsentGroupFateInput): Conversation
   // Already `removed`: stays until local MANUAL DELETION (rules 2 & 4), regardless of
   // server-side state (even after hard-purge of the tombstone). Never re-queried or re-purged.
   if (input.lifecycle === 'removed') {
-    return { action: 'keep', reason: 'deja removed (suppression manuelle)' };
+    return { action: 'keep', reason: 'already removed, awaiting a manual deletion' };
   }
 
   switch (input.serverStatus.kind) {
@@ -121,12 +121,12 @@ export function decideAbsentGroupFate(input: AbsentGroupFateInput): Conversation
         return { action: 'keep', reason: 'members unavailable (doubt)' };
       }
       if (input.isStillUserMember) {
-        return { action: 'keep', reason: 'vivant et toujours membre (snapshot perime)' };
+        return { action: 'keep', reason: 'alive and still a member (stale snapshot)' };
       }
-      // Plus membre d'un groupe vivant -> exclusion reelle (regle 4).
+      // No longer a member of a live group -> a real exclusion (rule 4).
       return input.lifecycle === 'active'
-        ? { action: 'markRemoved', reason: 'exclu (plus membre) du groupe vivant' }
-        : { action: 'keep', reason: 'placeholder exclu (pending)' };
+        ? { action: 'markRemoved', reason: 'excluded (no longer a member) from a live group' }
+        : { action: 'keep', reason: 'placeholder for an exclusion (pending)' };
   }
 }
 

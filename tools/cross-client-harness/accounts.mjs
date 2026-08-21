@@ -35,10 +35,16 @@ export function accountFor(key) {
 }
 
 /**
- * Every account's LOGIN, for the member pickers that search by it.
+ * Every account's LOGIN - for the LOGIN FORM, not for a member picker.
  *
- * A picker is searched with all of them in turn because which one is the peer depends on the group,
- * not on the file's order - the caller filters on the roster it actually observed.
+ * **THE DOC HERE USED TO SAY "for the member pickers that search by it", AND IT WAS WRONG.** Measured
+ * 2026-08-21 against the group member picker on production: NEITHER login in this file was offered
+ * for any query. The picker renders and matches DISPLAY names, which live in `names.mjs` as
+ * `OWNER_NAME` and `PEER_NAME` and are not in `test-accounts.json` at all.
+ * READ-10 believed this sentence and had never produced a verdict.
+ *
+ * A caller that wants "who is the peer" wants those display names, tried in turn - the picker never
+ * offers an existing member or yourself, so being accepted is what identifies them.
  */
 export function usernames() {
   return Object.values(accounts()).map((a) => a.username);

@@ -24,61 +24,17 @@ const cx = await client(Number(arg('port', 9223)), 'canari-emse.fr', { focus: fa
 const name = arg('name', `HEALW2-${Date.now().toString(36)}`);
 const addWho = arg('add', null);
 
-/**
- * Closes the dialog if one is open, by its OWN control.
- *
- * Escape was tried first and does not close this modal - which is worth stating rather than
- * silently working around: a check that assumed it did would leave the dialog up and every later
- * click would fail with "no stable element" for a control that is plainly in the DOM. The dialog
- * ships a "Fermer" button, so use that and assert it worked.
- */
-const closeDialog = async () => {
-  const open = await evaluate(cx, `!!document.querySelector('#new-group-name') || /Nouvelle discussion Contact Groupe/.test(document.body.innerText.replace(/\\s+/g, ' '))`);
-  if (!open) return 'already closed';
-  await realClick(cx, 'text=Fermer');
-  await sleep(1200);
-  const still = await evaluate(cx, `!!document.querySelector('#new-group-name')`);
-  if (still) throw new Error('the new-conversation dialog would not close');
-  return 'closed';
-};
-
-// A modal left open by an earlier step hides the trigger, which presents as "no stable element"
-// for a control that is plainly in the DOM. Always start from a closed dialog.
-console.log(`[newgroup] dialog: ${await closeDialog()}`);
-if ((await evaluate(cx, 'location.pathname')) !== '/chat') {
-  await evaluate(cx, `location.href = '/chat'`);
-  await sleep(5000);
-}
-
-await realClick(cx, '[aria-label="Nouvelle discussion"]');
-await sleep(1500);
-await realClick(cx, 'text=Groupe');
-await sleep(1000);
-await realClick(cx, '#new-group-name');
-await cx.send('Input.insertText', { text: name });
-await sleep(600);
-
-// POST-CONDITION before the click: "Créer le groupe" is disabled until the name lands, and a click
-// on a disabled control is discarded in silence - the same race `send` documents for the composer.
-const ready = await evaluate(
-  cx,
-  `(function () {
-    var b = [].slice.call(document.querySelectorAll('button')).filter(function (x) { return /Créer le groupe/.test(x.innerText || ''); })[0];
-    return b ? !b.disabled : null;
-  })()`
-);
-if (!ready) throw new Error(`"Créer le groupe" still disabled after typing the name (ready=${ready})`);
-
-await realClick(cx, 'text=Créer le groupe');
-
-// THE POST-CONDITION IS THE SIDEBAR ROW, NOT THE COMPOSER.
+// THE GESTURE ITSELF NOW LIVES IN `groupnav.mjs`, and all three hard-won post-conditions written out
+// here went with it: close a leftover overlay by its own control (Escape does NOT close this modal),
+// assert "Creer le groupe" is enabled before clicking it (a click on a disabled control is discarded
+// in silence), and wait for the SIDEBAR ROW rather than the composer (creating a group re-sorts the
+// list and can lose the selection). All three were correct here and absent from `del1.mjs` and
+// READ-10 - which is the whole argument for there being one copy.
 //
-// Creating a group sometimes leaves it open and sometimes does not - with several conversations in
-// the list it re-sorts and the selection is lost - so waiting for the composer made this script
-// fail on a group it had just created successfully. Wait for the thing that is actually implied by
-// "the group exists", and let the caller decide to open it.
-await until(cx, `document.body.innerText.indexOf(${JSON.stringify(name)}) !== -1`, 25000);
-await sleep(2500);
+// What stays HERE is what this script is FOR: reporting the surface that adds a member to a group,
+// which HEAL-W1 needs and no other caller wants.
+const { createGroup } = await import('./groupnav.mjs');
+await createGroup(cx, name, { label: 'newgroup' });
 console.log(`[newgroup] created "${name}" (present in the list)`);
 
 // The member surfaces live on the group PANE, which may not be open (see above), so this is a

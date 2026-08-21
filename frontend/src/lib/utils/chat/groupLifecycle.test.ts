@@ -15,16 +15,16 @@ describe('classifyServerStatus', () => {
     expect(classifyServerStatus('absent')).toEqual({ kind: 'absent' });
   });
 
-  it("'error' -> kind unknown (doute reseau)", () => {
+  it("'error' -> kind unknown (network doubt)", () => {
     expect(classifyServerStatus('error')).toEqual({ kind: 'unknown' });
   });
 
-  it('GroupMeta sans deletedAt -> active', () => {
+  it('GroupMeta with no deletedAt -> active', () => {
     const meta: GroupMeta = { groupId: 'g1', name: 'Equipe', deletedAt: null };
     expect(classifyServerStatus(meta)).toEqual({ kind: 'active', meta });
   });
 
-  it('GroupMeta avec deletedAt -> tombstone', () => {
+  it('GroupMeta with a deletedAt -> tombstone', () => {
     const meta: GroupMeta = { groupId: 'g1', deletedAt: '2026-06-20T00:00:00Z' };
     expect(classifyServerStatus(meta)).toEqual({ kind: 'tombstone', meta });
   });
@@ -43,30 +43,30 @@ describe('decideAbsentGroupFate', () => {
     meta: { groupId: 'g1', deletedAt: '2026-06-20T00:00:00Z' },
   });
 
-  // ── Gardes prioritaires (court-circuitent l'etat serveur) ──
-  it('deja removed -> keep (suppression manuelle, jamais re-purge)', () => {
+  // -- Priority guards, which short-circuit the server state --
+  it('already removed -> keep (deleted by hand only, never re-purged)', () => {
     expect(decideAbsentGroupFate(make({ lifecycle: 'removed' })).action).toBe('keep');
   });
 
-  it('removed a la priorite meme sur un serveur absent', () => {
+  it('removed wins even when the server confirms absent', () => {
     const fate = decideAbsentGroupFate(
       make({ lifecycle: 'removed', serverStatus: { kind: 'absent' } })
     );
     expect(fate.action).toBe('keep');
   });
 
-  // ── absent confirme ──
-  it('absent confirme -> purge', () => {
+  // -- confirmed absent --
+  it('confirmed absent -> purge', () => {
     expect(decideAbsentGroupFate(make({ serverStatus: { kind: 'absent' } })).action).toBe('purge');
   });
 
-  // ── doute reseau ──
-  it('unknown (reseau) -> keep (jamais de purge sur un doute)', () => {
+  // -- network doubt --
+  it('unknown (network) -> keep (a doubt never purges)', () => {
     expect(decideAbsentGroupFate(make({ serverStatus: { kind: 'unknown' } })).action).toBe('keep');
   });
 
-  // ── tombstone ──
-  it('tombstone + active -> markRemoved (banniere)', () => {
+  // -- tombstone --
+  it('tombstone + active -> markRemoved (banner)', () => {
     expect(
       decideAbsentGroupFate(make({ serverStatus: tombstone(), lifecycle: 'active' })).action
     ).toBe('markRemoved');
@@ -78,20 +78,20 @@ describe('decideAbsentGroupFate', () => {
     ).toBe('keep');
   });
 
-  // ── active (anti-race membership) ──
-  it('active + membres indisponibles (null) -> keep (doute)', () => {
+  // -- active, the membership anti-race --
+  it('active + members unavailable (null) -> keep (doubt)', () => {
     expect(
       decideAbsentGroupFate(make({ serverStatus: active(), isStillUserMember: null })).action
     ).toBe('keep');
   });
 
-  it('active + toujours membre -> keep (snapshot perime)', () => {
+  it('active + still a member -> keep (stale snapshot)', () => {
     expect(
       decideAbsentGroupFate(make({ serverStatus: active(), isStillUserMember: true })).action
     ).toBe('keep');
   });
 
-  it('active + plus membre + lifecycle active -> markRemoved (exclusion)', () => {
+  it('active + no longer a member + lifecycle active -> markRemoved (exclusion)', () => {
     expect(
       decideAbsentGroupFate(
         make({ serverStatus: active(), isStillUserMember: false, lifecycle: 'active' })
@@ -99,7 +99,7 @@ describe('decideAbsentGroupFate', () => {
     ).toBe('markRemoved');
   });
 
-  it('active + plus membre + placeholder (pending) -> keep', () => {
+  it('active + no longer a member + placeholder (pending) -> keep', () => {
     expect(
       decideAbsentGroupFate(
         make({ serverStatus: active(), isStillUserMember: false, lifecycle: 'pending' })
