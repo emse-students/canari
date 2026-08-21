@@ -329,7 +329,18 @@ export const clearLogcat = () => adb(['logcat', '-c']);
 // throws - at IMPORT time, in a module every browser-only runner imports. That is the same fault the
 // SERIAL resolution above was written to avoid, arriving through a different door.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const port = Number(process.argv[2] || PORTS.A1);
+  // THE PORT IS POSITIONAL, AND A FLAG IN ITS PLACE USED TO BECOME NaN IN SILENCE. `node phone.mjs
+  // --ensure --port 9333` read `--ensure` as the port, `Number` gave NaN, and `forwardDevtools`
+  // reported "needs a port - pass PORTS.A1" - an error about the API, raised by a mistake in the
+  // command line, which cost a cycle on 2026-08-22. There are no flags here and there is no reason
+  // for any; the only argument is a port, so an argument that is not one says so.
+  const raw = process.argv[2];
+  if (raw !== undefined && !/^\d+$/.test(raw)) {
+    console.error(`phone.mjs takes ONE optional argument, a port number - got "${raw}".`);
+    console.error(`Usage: node phone.mjs [port]   (default ${PORTS.A1})`);
+    process.exit(2);
+  }
+  const port = Number(raw || PORTS.A1);
   const state = await ensure({ port });
   console.log(JSON.stringify({ port, serial: SERIAL, ...state }, null, 1));
   if (!state.ok) process.exit(1);

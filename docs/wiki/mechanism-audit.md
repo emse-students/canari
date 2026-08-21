@@ -94,6 +94,14 @@ what the App Store has shipped locks out every iOS user it has not reached. That
 once (v0.14.0, see [legacy-compatibility](legacy-compatibility.md)). The screen that does it has no
 test at any level.
 
+**It now has a ceiling, and the ceiling is honest about what it cannot see.** A `minClientVersion`
+above the server's own deployed version is refused - that catches the typo, and nothing more. The
+defect that actually shipped was a raise to a version the App Store had not yet distributed, which
+is at or below the deployed version and therefore still accepted. Said here because it is the second
+thing this page keeps finding: a guard measured against the last incident is not a guard against the
+next one, and the only real fix for that one is the shipping order in
+[legacy-compatibility](legacy-compatibility.md), which is a procedure and not a check.
+
 **4. Moderation and follows have nothing at all.** Neither is money, neither is loud, and both are
 user-visible: a broken report queue or a follow that does not stick is a support ticket nobody can
 reproduce.

@@ -11,6 +11,29 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added
+
+- **A ceiling on `minClientVersion`, the one control that can lock out every client at once.** The
+  DTO already refused anything that was not `major.minor.patch`, and nothing checked that the
+  well-formed value was *possible*: `1.14.0` for `0.14.0` is one keystroke and demands a client newer
+  than any that has ever been built, which no user can satisfy by updating. A raise above the
+  server's own deployed version is now refused, naming both versions. A raise is also logged at
+  `warn` with its before and after - it shared a `debug` line with the payment provider, on a value
+  every client's access turns on.
+
+  Deliberately partial, and the code says so: at or below the deployed version is accepted, which
+  does not make it safe. The real hazard is a raise above what the app stores have actually shipped,
+  and no server can see App Store review state - v0.14.0's raise locked out every iOS user the store
+  had not reached. This is a typo guard, not a substitute for the shipping order in
+  `docs/wiki/legacy-compatibility.md`.
+
+  The version reader moved to `platform/deployed-version.ts` and now returns `null` on failure
+  instead of `'0.0.0'`. The old default is a real version and a legitimate answer, so a caller could
+  not tell "this build is 0.0.0" from "I could not find out" - harmless while the value was only
+  reported, and not harmless the moment a bound decides on it, where it would have turned a failed
+  file read into a refusal of every legitimate raise. Callers that report keep the default; the one
+  that decides handles `null` and logs that the guard did not run.
+
 ### Security
 
 - **Any authenticated user could mark their own form submission paid, and be granted what payment

@@ -1,8 +1,10 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PlatformConfig } from './entities/platform-config.entity';
 import { UpdatePlatformConfigDto } from './dto/update-platform-config.dto';
+import { compareSemver } from './semver';
+import { deployedVersion } from './deployed-version';
 
 export type PlatformConfigPublic = {
   maintenanceEnabled: boolean;
@@ -62,7 +64,45 @@ export class PlatformService implements OnModuleInit {
       row.maintenanceMessage = trimmed.length > 0 ? trimmed : null;
     }
     if (dto.minClientVersion !== undefined) {
-      row.minClientVersion = dto.minClientVersion.trim();
+      const wanted = dto.minClientVersion.trim();
+      // A CEILING ON THE ONE CONTROL THAT CAN LOCK OUT EVERY CLIENT AT ONCE.
+      //
+      // The DTO already refuses anything that is not `major.minor.patch`, so the value reaching here
+      // is well-formed - and well-formed is not the same as possible. `1.14.0` for `0.14.0` is a
+      // single keystroke and demands a client newer than any that has ever been built, which no user
+      // can satisfy by updating. Nothing checked it: v0.14.0's raise locked out every iOS user the
+      // App Store had not reached (see docs/wiki/legacy-compatibility.md).
+      //
+      // WHAT THIS CATCHES AND WHAT IT CANNOT. Above the deployed version is always wrong, so it is
+      // refused. AT or below is accepted, which does NOT make it safe - the real hazard is a raise
+      // above what the app stores have actually shipped, and no server can see App Store review
+      // state. This is a typo guard on a platform-wide switch, not a substitute for the shipping
+      // order that page describes.
+      const deployed = deployedVersion();
+      if (deployed === null) {
+        // ACCUSING, NOT INFORMATIONAL: the guard did not run, and the next lockout will be the first
+        // anyone hears of it. Allowing is still right - an administrator asked for this explicitly,
+        // and refusing every raise because a file could not be read would be a read failure
+        // masquerading as a policy.
+        this.logger.warn(
+          `minClientVersion set to ${wanted} WITHOUT the deployed-version bound - package.json ` +
+            `could not be read, so nothing verified that a client able to satisfy it exists`
+        );
+      } else if (compareSemver(wanted, deployed) > 0) {
+        throw new BadRequestException(
+          `minClientVersion ${wanted} is above this server's own version ${deployed}: no client ` +
+            `that can satisfy it has been built, so every client would be locked out.`
+        );
+      }
+      // THE RAISE ITSELF IS WORTH A LINE, and it used to share a `debug` with the payment provider.
+      // Every client's access turns on this value; a change to it should not need log level tuning
+      // to be found afterwards.
+      if (wanted !== row.minClientVersion) {
+        this.logger.warn(
+          `minClientVersion ${row.minClientVersion} -> ${wanted} (deployed ${deployed ?? 'unknown'})`
+        );
+      }
+      row.minClientVersion = wanted;
     }
     if (dto.paymentProvider !== undefined) {
       row.paymentProvider = dto.paymentProvider;

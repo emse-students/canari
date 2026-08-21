@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { PlatformService } from '../platform/platform.service';
+import { deployedVersion } from '../platform/deployed-version';
 
 export type AppVersionResponse = {
   version: string;
@@ -21,24 +20,13 @@ export class VersionService {
   async getVersion(): Promise<AppVersionResponse> {
     const platform = await this.platformService.getConfig();
     return {
-      version: readPackageVersion(),
+      // REPORTING, NOT DECIDING - so an unreadable version keeps its harmless default here.
+      version: deployedVersion() ?? '0.0.0',
       minClientVersion: platform.minClientVersion,
       maintenance: {
         enabled: platform.maintenanceEnabled,
         message: platform.maintenanceMessage,
       },
     };
-  }
-}
-
-function readPackageVersion(): string {
-  try {
-    const pkgPath = join(__dirname, '..', '..', 'package.json');
-    const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as {
-      version?: string;
-    };
-    return pkg.version ?? '0.0.0';
-  } catch {
-    return '0.0.0';
   }
 }
