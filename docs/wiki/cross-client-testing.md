@@ -25,7 +25,7 @@ Updated after every run.
 | 1 MSG | 12 | `e9d951d7` | **12/12 `PASS` x1** (2026-08-21), all clients clean, server clean. Four A1 rows carry no `a1Build` - the runners never recorded it; the preflight does now, so they are owed a re-run for attribution alone |
 | 2 TYPE | 5 | `e9d951d7` | **5/5 `PASS` x1** (2026-08-21), server clean. An earlier 5/5 x5 stands on superseded runner `25376b86` |
 | 3 READ | 10 | `70497810` | **9/9 runnable `PASS` x5 - 45 verdicts, CLEAN 5/5**, server clean every pass (2026-08-21), runner `2c2b83d1b748`. READ-5 `SKIPPED`: needs four readers, the estate has two accounts |
-| 4 MUT | 21 | `c115218e` | **RE-MEASURING x5, in flight 2026-08-22** on runner `4a9814f845d7`. An x1 on this build gave 22 `PASS` / 1 `FAIL` / 2 `SKIPPED`, and all three non-passes were harness faults now fixed (MUT-17 a clock, MUT-18 an undeclared device, then a mobile precondition) - so that x1 is itself on a superseded runner. **The check rows below still carry `25376b86` verdicts and are NOT to be believed**; they are rewritten in one pass when the x5 lands. MUT-17 and MUT-18 are already `PASS` on the current runner with A1 armed and stamped. MUT-20 stays `SKIPPED` - unarmable until 2026-11-09 |
+| 4 MUT | 21 | `c115218e` | **CLEAN x5 2026-08-22** on runner `4a9814f845d7`, A1 armed and stamped `67d40e3a` on all five passes: 20 of 21 `PASS` 5/5, MUT-20 `SKIPPED` (unarmable until 2026-11-09). The five-pass span - 30 464 server lines - classifies clean, after the channel hard-delete MUT-8 and MUT-9 produce was named for the first time. The x1 before it gave 1 `FAIL` and 2 `SKIPPED`, all three harness faults, all three fixed |
 | 5 SEARCH | 6 | - | `pending` |
 | 6 MENTION | 6 | - | `pending` |
 | 7 FWD | 5 | `25376b86` | 5/5 `passed` - 20 verdicts, 20 `PASS`; FWD-2 25/25 by hand |
@@ -129,31 +129,38 @@ window. Earlier x5 series on `8a3edbdd`, `e62c21f1` and `25376b86` all read 13/1
 All four are MLS system events in a DM or group and REST calls in a channel, so **every row whose
 cell says both runs twice**, once in the owner-peer DM and once in `Campagne de test`.
 
-`25376b86` x5: 19 of 21 `PASS` on every pass. **Re-run owed**: MUT-15 and MUT-19 fixed and both
-checks rewritten, and the mailbox-barrier fix touches the pipeline every row here measures.
+`4a9814f845d7` x5 on `c115218e`, phone on `67d40e3a`: **20 of 21 `PASS` on all five passes**.
+MUT-20 is the twenty-first and cannot be armed yet. Nothing here is owed a re-run.
+
+**The server window read `unexplained=2` on every pass, and the lines were MUT's own.** A channel
+message being hard-deleted (`[ChannelService] [CHANNEL] message deleted ...`, and its `(moderation)`
+form) is the one delete in the product that leaves no tombstone, MUT-8 and MUT-9 are the only checks
+that produce it, and neither had ever run in a window anybody classified. Both shapes are now
+`NOTABLE` - visible, never silenced - and pinned in `srvclassify-selftest.mjs`; the whole five-pass
+span, 30 464 lines over seven services, then reads clean with 15 notable and nothing unexplained.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| MUT-1 | **DM.** Edit a text message: both sides show the new text and an edited marker | `W1 W2` | `PASS` 5/5 - 288-935 ms |
+| MUT-1 | **DM.** Edit a text message: both sides show the new text and an edited marker | `W1 W2` | `PASS` 5/5 |
 | MUT-2 | **DM.** Edit clears `readBy` - the receipt restarts | `W1 W2` | `PASS` 5/5 |
 | MUT-3 | **DM.** Edit refused on a message with media, and on someone else's | `W1 W2` | `PASS` 5/5 |
-| MUT-4 | **DM.** Edit a message the peer has NOT yet received | `W1 W2` | `PASS` 5/5 - 0 sightings of the original, 1 copy of the edit |
+| MUT-4 | **DM.** Edit a message the peer has NOT yet received | `W1 W2` | `PASS` 5/5 - 247-356 ms, 0 sightings of the original |
 | MUT-5 | **Channel.** Edit is absent by design - assert the control is not offered | `W1 W2` | `PASS` 5/5 |
-| MUT-6 | **DM.** Delete a message: both sides show the tombstone, not a gap | `W1 W2` | `PASS` 5/5 - converges in 2 ms |
-| MUT-7 | **DM.** The tombstone WINS over a body on merge | `W1 W2` | `PASS` 5/5 - converged 308-318 ms, no resurrection |
+| MUT-6 | **DM.** Delete a message: both sides show the tombstone, not a gap | `W1 W2` | `PASS` 5/5 - converges in 1-9 ms |
+| MUT-7 | **DM.** The tombstone WINS over a body on merge | `W1 W2` | `PASS` 5/5 - 314-333 ms, no resurrection |
 | MUT-8 | **Channel.** Delete is a HARD row delete, no tombstone | `W1 W2` | `PASS` 5/5 |
-| MUT-9 | **Channel.** A moderator deletes another user's message | `W1 W2` | `PASS` 4/5 - pass 3 could not see its own marker |
-| MUT-10 | **DM.** The toolbar offers Delete to a moderator, where the handler refuses it | `W1 W2` | `PASS` 5/5 - does NOT reproduce as written |
-| MUT-11 | **Both.** React, un-react, re-react; two users; several emoji | `W1 W2` | `PASS` 5/5 both venues - 152-171 ms |
-| MUT-12 | **Both.** The 15-distinct-emoji cap, on both transports | `W1 W2` | `PASS` 5/5 DM, 4/5 channel |
-| MUT-13 | **Both.** A reaction notifies the author only, never the reactor | `W1 W2` | `PASS` 5/5 both venues - author in ~157 ms |
-| MUT-14 | **Both.** Pin and unpin, seen on the OTHER device | `+A1` | `PASS` 5/5 both venues - 313-329 ms |
-| MUT-15 | **DM.** A pin reaches a device that was OFFLINE when it was placed | `+A1` | `FAIL` 5/5 on `25376b86`; fixed 2026-08-16, check re-architected - **re-run owed** |
+| MUT-9 | **Channel.** A moderator deletes another user's message | `W1 W2` | `PASS` 5/5 |
+| MUT-10 | **DM.** The toolbar offers Delete to a moderator, where the handler refuses it | `W1 W2` | `PASS` 5/5 - does NOT reproduce: `canModerateSelectedChannel` is `false` outside a channel by construction |
+| MUT-11 | **Both.** React, un-react, re-react; two users; several emoji | `W1 W2` | `PASS` 5/5 both venues |
+| MUT-12 | **Both.** The 15-distinct-emoji cap, on both transports | `W1 W2` | `PASS` 5/5 both venues - cap holds at 15, slowest 22 ms |
+| MUT-13 | **Both.** A reaction notifies the author only, never the reactor | `W1 W2` | `PASS` 5/5 both venues - author in 158-164 ms in a channel; the push half is NOTIF's, not claimed here |
+| MUT-14 | **Both.** Pin and unpin, seen on the OTHER device | `+A1` | `PASS` 5/5 both venues - 305-341 ms |
+| MUT-15 | **DM.** A pin reaches a device that was OFFLINE when it was placed | `+A1` | `PASS` 5/5 - converges 289-385 ms after the device returns |
 | MUT-16 | **Channel.** A pin DOES survive, re-hydrated from the server | `+A1` | `PASS` 5/5 |
 | MUT-17 | **DM.** Edit, then delete, then react to the deleted message | `W1 W2` | `PASS` 5/5 |
-| MUT-18 | **DM.** Two devices of the SAME user edit the same message at once | `+A1` | `PASS` 5/5 on `25376b86`, `PASS` 1/1 on `e1d47951` with A1 on its APK bundle - converges in 12-44 ms, window clean on all three |
-| MUT-19 | **DM.** Delete a message still in the outbox: no peer sees it, and the sender keeps no row | `W1 W2` | `PASS` 5/5 on the peer half; sender half added 2026-08-16 with its fix - **re-run owed** |
-| MUT-20 | **DM.** Mutate a message older than the 90-day retention window | `W1 W2` | `SKIPPED` - unarmable until 2026-11-09 |
+| MUT-18 | **DM.** Two devices of the SAME user edit the same message at once | `+A1` | `PASS` 5/5 - converges in 4-76 ms |
+| MUT-19 | **DM.** Delete a message still in the outbox: no peer sees it, and the sender keeps no row | `W1 W2` | `PASS` 5/5 |
+| MUT-20 | **DM.** Mutate a message older than the 90-day retention window | `W1 W2` | `SKIPPED` 5/5 - unarmable until 2026-11-09 |
 | MUT-21 | **DM.** The hover action bar stays inside the pane and takes its own clicks | `W1 W2` | `PASS` 5/5 |
 
 ## 5 - SEARCH - finding a message

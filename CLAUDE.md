@@ -152,23 +152,29 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     cost and the decisions it turns on are on
     [cross-client-testing](docs/wiki/cross-client-testing.md) and
     [cross-client-campaign](docs/wiki/cross-client-campaign.md), the only copies. **Where the ladder
-    stands: rungs 1 MSG and 2 TYPE green x1, 3 READ green CLEAN 5/5, 4 MUT re-measuring x5 (in flight
-    2026-08-22). Next: 5 SEARCH, 6 MENTION, then FWD, GRP, COMM, DEL, TAB, MULTI, LIFE, NOTIF, CALL,
-    HEAL, PIN, CORRUPT.** The board carries every verdict; do not restate them here.
+    stands: rungs 1 MSG and 2 TYPE green x1, 3 READ green CLEAN 5/5, 4 MUT green CLEAN 5/5. Next: 5
+    SEARCH, 6 MENTION, then FWD, GRP, COMM, DEL, TAB, MULTI, LIFE, NOTIF, CALL, HEAL, PIN,
+    CORRUPT.** The board carries every verdict; do not restate them here.
     **THE BOARD'S FORMAT IS NOW FIXED by the user (2026-08-22): a `PASS` cell is `PASS X/X` and a time
     if the time means anything, nothing else.** Prose only for a non-clean verdict or an unresolved
     item. The rule is written at the top of the board itself.
 
 **OWED RIGHT NOW, and none of it is derivable from the code:**
 
-- **COMMITS SIT UNPUSHED.** Six local commits on `main` past `c115218e` (the release fixes, the forms
-  P1, the harness fixes, the `minClientVersion` ceiling, the audit). They were NOT pushed because a
-  check was running and the standing rule forbids pushing during one. **Push them** - background,
-  `rm -rf apps/*/dist` first.
+- **`mut.mjs` MOVED TO `9828e60640bb` AFTER ITS x5 LANDED, so the board's MUT rows stand on the
+  runner before it (`4a9814f845d7`).** The delta is three payload claims and their comments, no
+  assertion and no navigation - so **one x1 on the new sha confirms it**, and until that x1 the two
+  shas are the honest state rather than a technicality to wave through.
 - **A VERIFICATION IS OWED ON PROD.** The new `[DISMISS] ... recorded=N` / `[UNDISMISS] ... lifted=N`
   format is proven only by `srvclassify-selftest.mjs`, never against production - MUT generates no
   dismissal traffic. **Run READ-10 once** (`--destructive`, self-cleaning, 5/5) and read the window.
   Until then the fix is verified by compiling, which this repo does not accept as verified.
+- **MUT'S EVIDENCE STREAM CARRIED THREE STALE CLAIMS**, all hard-coded literals a `PASS` never reads:
+  a closed security hole still reported as open (`architecturalGapFound: true`, ten days after
+  `f924932b` closed it), MUT-18 explaining its verdict by that same absent guard, and a `filedAs`
+  pointing at a `backlog.md` entry deleted when its fix shipped. All three corrected; the rule is
+  [testing-methodology](docs/wiki/testing-methodology.md) 31. **Worth a sweep of the other runners'
+  payloads for the same shape** - nothing has checked them.
 - **THE MECHANISM AUDIT IS DONE AND SCORED**, on [mechanism-audit](docs/wiki/mechanism-audit.md): of
   five ranked findings, two produced a code change (forms P1, the `minClientVersion` ceiling), two a
   verified negative (moderation's authorisation is correct, media holds no key material), one is

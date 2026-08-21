@@ -427,6 +427,19 @@ const NOTABLE = [
   // whatever it was measuring. Found exactly that way on 2026-08-14 at 12:45:20Z.
   /^Listening on http/,
   /Nest application successfully started/,
+  // A CHANNEL MESSAGE BEING DESTROYED, WHICH IS THE ONE DELETE IN THE PRODUCT WITH NO TOMBSTONE. A
+  // DM delete leaves a row on every device; `ChannelService.deleteChannelMessage` removes the row
+  // itself, and the server is the only authority that ever saw it. So this line is the sole surviving
+  // record that a specific message ceased to exist, and whether the deleter was its author or a
+  // moderator acting on someone else is carried in the same line - which is exactly why the
+  // `(moderation)` variant is matched here rather than collapsed into the plain one.
+  //
+  // It reached `unexplained` on all five passes of MUT's x5 (2026-08-22) because MUT-8 and MUT-9 are
+  // the checks that produce it: they are the only rows in the campaign that hard-delete a channel
+  // message, and neither had ever run in a window anybody classified. NOTABLE and not BENIGN on
+  // purpose: a deletion crossing an observation window is never noise, and a window carrying more of
+  // these than the checks in it asked for is the shape a real incident would take.
+  /\[ChannelService\] \[CHANNEL\] message deleted channel=\S+ message=\S+ by=\S+( \(moderation\))?$/,
 ];
 
 /**

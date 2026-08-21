@@ -1337,6 +1337,33 @@ standing in for "does this SCRIPT need one" - is a false positive, and a false p
 spent by removing the gate. And when a run must bypass one, the bypass is the finding: name what the
 gate would have checked, and check it by hand in the same breath.
 
+#### 31. A CONSTANT IN A CHECK'S PAYLOAD IS A COMMENT WEARING A DATA FIELD'S CLOTHES
+
+Reading MUT's evidence stream after a clean x5 turned up three fields, in one runner, all asserting
+things about the product that had stopped being true - each one a literal in the source rather than
+something the run measured.
+
+- **MUT-10 emitted `architecturalGapFound: true`** with a paragraph describing `delete_message` and
+  `edit_message` applying unconditionally on receipt. That hole was real, and it was closed on
+  2026-08-12 by `mutationIsAuthorised`, with seven cases pinning it. The check went on reporting it
+  for ten days, on every pass, as a finding.
+- **MUT-18's `note` explained its own verdict by that same missing guard.** Its verdict was right and
+  its reasoning was a decade of git history out of date: both edits are admitted because the two
+  devices share the ACCOUNT, not because nothing checks.
+- **MUT-21's `filedAs` named a `backlog.md` entry** that was deleted the day the defect shipped
+  fixed - the pointer dangled while the field kept claiming a filing.
+
+Nothing failed. Every one of the three was carried by a `PASS`, which is exactly why they survived:
+**a green tally is not read for accuracy, only for colour.** And the shape is the one this file keeps
+meeting from other directions - a column that answers the question it was written for and not the one
+it is now asked, a predicate that named the last incident. Here it is the cheapest version of it: a
+value with no mechanism behind it cannot be wrong at the moment it runs, because it never runs.
+
+So: **a field in a payload is a measurement, or it is not a field.** If a check has something to say
+about the product that it did not measure, that belongs in the comment above it, in `CHANGELOG.md`,
+or on the wiki page that owns the mechanism - all three of which a reader knows to date. And a
+finding a check reports must be re-derived by the check, or deleted from it the day it is fixed.
+
 ## Observation is part of the check, not a debugging step
 
 Decided 2026-08-06, after two shipped bugs came out of the logs of **passing** checks.

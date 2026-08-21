@@ -1363,22 +1363,19 @@ async function mut10() {
     // either account holds `channel.moderate` anywhere else.
     const deletePresent = await bubbleIconPresent(a, marker, 'lucide-trash-2');
 
-    // The REAL gap, found by reading the receive path rather than the toolbar wiring:
-    // `systemMessageHandler.ts`, `event === 'delete_message'` (~line 486) and `event ===
-    // 'edit_message'` (~line 525) apply the mutation to `data.messageId` unconditionally - no check
-    // that `senderNorm` equals the target message's `senderId`. The ONLY ownership check in the
-    // entire DM delete/edit path is `isOwnMessage(target.senderId, ctx.userId)` inside
-    // `handleDeleteMessage`/`handleEditMessage` (`useMessaging.svelte.ts`, ~lines 894/919) - which
-    // runs on the SENDING device, before the system event is even broadcast. Once a `delete_message`
-    // or `edit_message` event is on the wire, addressed to a shared MLS group, EVERY member's
-    // client applies it to whatever id it names, with no re-check of who sent it and no server
-    // authority over DM/group content at all (unlike a channel, which is server-authoritative -
-    // see `ChannelService.deleteChannelMessage`'s own doc comment). This is not exploitable through
-    // the shipped UI (which never lets a well-behaved client construct such an event for someone
-    // else's message), so it is NOT something this check attempts to trigger against real peer
-    // data - doing so would mutate a message this harness did not create, which the campaign rules
-    // forbid regardless of what it might prove. It is recorded here as a source-verified
-    // architectural finding for a human to weigh.
+    // WHAT THIS ROW USED TO CARRY, and why it no longer does. Reading the receive path rather than
+    // the toolbar wiring turned up a real hole here: `delete_message` and `edit_message` were
+    // applied by message id alone, so any member of a DM or group could rewrite or remove anyone
+    // else's message on every device in it. It was fixed on 2026-08-12 (`f924932b`) -
+    // `mutationIsAuthorised` in `systemMessageHandler.ts` now authorises both mutations ON RECEIPT
+    // against the identity MLS authenticated for the frame - and pinned by seven cases in
+    // `systemMessageHandler.mutationOwnership.test.ts`. The story is in `CHANGELOG.md` and the rule
+    // in `durable-rules`.
+    //
+    // It is stated here only because this check ASSERTED that hole as `architecturalGapFound: true`
+    // for the ten days after it was closed. A constant cannot notice a fix, so it reported a
+    // defect the product no longer had, on every pass, as evidence. Evidence a check emits is
+    // measured at the moment it runs or it is a comment wearing a data field's clothes.
     const ok = deletePresent === false;
     return await finish('MUT-10/dm', ok ? 'PASS' : 'FAIL', w, {
       toolbarOffersDeleteOnPeerMessageInDm: deletePresent,
@@ -1386,9 +1383,6 @@ async function mut10() {
       verdictOnLiteralClaim: deletePresent
         ? 'reproduces: the toolbar DOES offer it'
         : 'does not reproduce: canModerateSelectedChannel is false outside a channel by construction, so Delete never renders on a peer\'s DM message',
-      architecturalGapFound: true,
-      architecturalGapDetail:
-        'systemMessageHandler.ts delete_message (~L486) and edit_message (~L525) apply unconditionally on RECEIPT with no sender===original-author check; the only ownership check (useMessaging.svelte.ts handleDeleteMessage/handleEditMessage, ~L894/L919) runs on the SENDING device only, before broadcast. DM/group mutation integrity rests entirely on well-behaved clients, never on the receiving side or a server. Not exploited here - would require mutating a message this harness did not create.',
     });
   } catch (e) {
     return await finish('MUT-10/dm', 'ERROR', w, { error: e.message });
@@ -1974,10 +1968,11 @@ async function mut17() {
  * has neither: it raises `MessageMobileActions` on a 420 ms press. `longPressBubble` + `tapSheetIcon`
  * in `chat.mjs` are that missing surface, and this is their first user.
  *
- * WHAT IT MEASURES. Both devices hold the OWNER's account, so both are allowed to edit, and
- * `handleEditMessage` checks ownership on the SENDING device only (see MUT-10): two `edit_message`
- * system events for one `messageId` therefore both go out, and every receiver applies whichever it
- * gets, in the order it gets it. The risk is not that one wins - one must - it is that the two
+ * WHAT IT MEASURES. Both devices hold the OWNER's account, so both are allowed to edit - and both
+ * still are after the receive-side guard of 2026-08-12: `mutationIsAuthorised` compares the frame's
+ * MLS-authenticated identity against the message's author, which MATCHES for either device here.
+ * Two `edit_message` events for one `messageId` therefore both go out, both are admitted, and every
+ * receiver applies whichever it gets, in the order it gets it. The risk is not that one wins - one must - it is that the two
  * devices settle on DIFFERENT winners and stay that way, with the peer holding a third answer.
  *
  * So the verdict is CONVERGENCE, not a particular text: all three clients must show the same body,
@@ -2068,9 +2063,9 @@ async function mut18() {
       convergedInMs: settled,
       bodies: { W1: bw1, A1: ba1, W2: bw2 },
       note:
-        'the verdict is CONVERGENCE, not which edit won: both devices hold the same account and ' +
-        'ownership is checked only on the sending device, so both edit_message events are legitimate ' +
-        'and the receiver applies whichever arrives.',
+        'the verdict is CONVERGENCE, not which edit won: both devices hold the same account, so the ' +
+        'receive-side author check admits both edit_message events as legitimate and each receiver ' +
+        'applies whichever arrives.',
     });
   } catch (e) {
     return await finish('MUT-18/dm', 'ERROR', w, { error: e.message });
@@ -2285,7 +2280,10 @@ async function mut21() {
     await finish('MUT-21/dm', ok ? 'PASS' : 'FAIL', w, {
       ownReach,
       peerReach,
-      filedAs: 'backlog.md - "the message hover bar is too wide on desktop, and the sidebar takes its clicks"',
+      // Not `filedAs`: the entry this used to point at ("the message hover bar is too wide on
+      // desktop, and the sidebar takes its clicks") left `backlog.md` when the fix shipped, so the
+      // pointer dangled while the field kept claiming a filing.
+      guards: 'the hover strip escaping the pane, fixed in 8e55aca8 - MessageBubbleToolbar.svelte',
       note: ok
         ? undefined
         : 'REGRESSION: the strip has left the pane again - see the fix in MessageBubbleToolbar.svelte, which anchors it above the bubble on its outer edge precisely so bubble width cannot push it out',

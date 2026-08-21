@@ -216,6 +216,11 @@ const NOTABLE_CASES = [
   '[404] HEAD /_next/webpack-hmr',
   '[404] GET /media/system/js/core.js',
   '[404] GET /language/en-GB/en-GB.xml',
+  // THE ONE DELETE IN THE PRODUCT THAT LEAVES NO TOMBSTONE, both of its forms. MUT-8 produces the
+  // plain one and MUT-9 the moderated one, and the two are separate fixtures because the difference
+  // between them - who destroyed whose message - is the whole value of the line.
+  `${NEST}[ChannelService] [CHANNEL] message deleted channel=00000000-0000-4000-8000-000000000001 message=00000000-0000-4000-8000-000000000002 by=a1b2c3d4`,
+  `${NEST}[ChannelService] [CHANNEL] message deleted channel=00000000-0000-4000-8000-000000000001 message=00000000-0000-4000-8000-000000000002 by=a1b2c3d4 (moderation)`,
 ];
 for (const l of NOTABLE_CASES) {
   const ok = matches(NOTABLE_RULES, l);
