@@ -89,6 +89,14 @@ the server. `srvlog.mjs` classifies the whole server window - `--shapes` collaps
 `notable` into distinct sentences - and `srvclassify-selftest.mjs` pins every rule against a line
 whose bucket is known.
 
+**The rig has three self-tests, and `make test-harness` is the gate.** `classify-selftest.mjs` pins
+the client-side verdict rules, `srvclassify-selftest.mjs` the server-log buckets, and
+`checks-selftest.mjs` asserts that every phase in `checks.mjs` declares the devices its scripts
+actually drive. None of the three touches a browser, a phone or production, so they run anywhere and
+in seconds: `make test` includes them, and CI runs them on any change under this directory. Run the
+target after editing `checks.mjs` or either classifier - a phase whose `needs` disagrees with its
+scripts is how MUT-18 skipped on every run it was ever asked for.
+
 ## The files
 
 **The library** - everything else imports these.

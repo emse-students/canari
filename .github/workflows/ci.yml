@@ -26,6 +26,7 @@ jobs:
       rust-matrix: ${{ steps.matrix.outputs.rust }}
       ts-matrix: ${{ steps.matrix.outputs.ts }}
       run-frontend: ${{ steps.matrix.outputs.frontend }}
+      run-harness: ${{ steps.matrix.outputs.harness }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -45,6 +46,7 @@ jobs:
             echo "rust=$ALL_RUST"    >> "$GITHUB_OUTPUT"
             echo "ts=$ALL_TS"        >> "$GITHUB_OUTPUT"
             echo "frontend=true"     >> "$GITHUB_OUTPUT"
+            echo "harness=true"      >> "$GITHUB_OUTPUT"
           }
 
           # ── Determine base commit ──
@@ -146,6 +148,14 @@ jobs:
             echo "frontend=true" >> "$GITHUB_OUTPUT"
           else
             echo "frontend=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # -- Cross-client harness self-tests --
+          # They read the rig's own sources and nothing else, so this path is the whole trigger.
+          if has '^tools/cross-client-harness/'; then
+            echo "harness=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "harness=false" >> "$GITHUB_OUTPUT"
           fi
 
   # =================================================================================================
@@ -353,3 +363,29 @@ jobs:
         with:
           name: frontend-coverage
           path: frontend/coverage/
+
+  # =================================================================================================
+  # CROSS-CLIENT HARNESS SELF-TESTS
+  # The rig's rules about itself: the two log classifiers and the phase/device declarations. None of
+  # the three touches a browser, a phone or production - they are pure assertions over source, which
+  # is why they can run here at all. Until 2026-08-22 they were invoked by nothing, and the fault
+  # `checks-selftest` catches had left MUT-18 skipping on every run it was ever asked for.
+  # =================================================================================================
+  test-harness:
+    name: Test Harness (self-tests)
+    needs: [changes]
+    if: ${{ needs.changes.outputs.run-harness == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.git_ref != '' && inputs.git_ref || github.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      # No install step: the harness has no dependencies outside the Node standard library.
+      - name: Run harness self-tests
+        run: make test-harness

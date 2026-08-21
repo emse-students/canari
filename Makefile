@@ -1,4 +1,4 @@
-.PHONY: all install install-node install-bun install-rust install-oxvelte install-wasm-pack install-frontend install-services install-hooks setup-env setup-env-prod production production-check build-frontend reload-services test test-libs test-gateway test-history test-frontend bench-mls clean run-ci lint-frontend
+.PHONY: all install install-node install-bun install-rust install-oxvelte install-wasm-pack install-frontend install-services install-hooks setup-env setup-env-prod production production-check build-frontend reload-services test test-libs test-gateway test-history test-frontend test-harness bench-mls clean run-ci lint-frontend
 
 # Cible par défaut : installation complète et déploiement LOCAL
 .DEFAULT_GOAL := all
@@ -265,7 +265,7 @@ setup-env-prod:
 	@./scripts/setup-env.sh --prod
 
 # Cible principale
-test: test-libs test-gateway test-history test-frontend
+test: test-libs test-gateway test-history test-frontend test-harness
 	@echo ""
 	@echo "${BOLD}📊 BILAN DES TESTS${RESET}"
 	@echo "---------------------------------------------------"
@@ -273,6 +273,7 @@ test: test-libs test-gateway test-history test-frontend
 	@echo "${GREEN}✅ Chat Gateway (Rust)     : PASS${RESET}"
 	@echo "${GREEN}✅ Delivery Service (TS)   : PASS${RESET}"
 	@echo "${GREEN}✅ Frontend (Vitest)       : PASS${RESET}"
+	@echo "${GREEN}✅ Harness self-tests      : PASS${RESET}"
 	@echo "---------------------------------------------------"
 	@echo ""
 
@@ -281,6 +282,24 @@ test-frontend:
 	@echo "${BLUE}🧪 Testing Frontend conversation logic…${RESET}"
 	@cd frontend && npm test
 	@echo "${GREEN}✅ Frontend tests OK${RESET}"
+
+# Harness self-tests - the three assertions the campaign rig makes about ITSELF.
+#
+# None of these touches a browser, a phone or production: they are pure assertions over the rig's own
+# rules, which is why they belong in `make test` rather than in a phase. All three existed and were
+# invoked by NOTHING until 2026-08-22 - mentioned in the wiki, run by hand, and therefore run never.
+#
+# `classify-selftest` and `srvclassify-selftest` pin every log-classification rule against a line it
+# must and must not match; a rule that matches too much has no symptom on a live window, so without
+# these a widened pattern silently stops reporting. `checks-selftest` asserts that every phase
+# DECLARES the devices its scripts actually drive - the fault that left MUT-18 skipping on every run
+# it was ever asked for, blaming the cable instead of a list one file away.
+test-harness:
+	@echo "${BLUE}🧪 Harness self-tests…${RESET}"
+	@node tools/cross-client-harness/classify-selftest.mjs
+	@node tools/cross-client-harness/srvclassify-selftest.mjs
+	@node tools/cross-client-harness/checks-selftest.mjs
+	@echo "${GREEN}✅ Harness self-tests OK${RESET}"
 
 # Criterion benchmarks for mls-core hot paths (Phase 3 baseline)
 bench-mls:

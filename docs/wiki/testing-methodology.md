@@ -21,6 +21,16 @@ MUT-18 drives the phone; `checks.mjs` said MUT needs `W1 W2`. So the preflight n
 `sameAccountAs` found nothing on 9333, and the check recorded `SKIPPED - second client not reachable`
 - true, useless, and pointing at the cable instead of at the declaration one file away. Read a skip's
 reason against the phase's `needs` before believing it names an obstacle.
+`checks-selftest.mjs` now asserts the declaration against the source of every script a phase names,
+and it is proven to fail on this exact case.
+
+**A SELF-TEST INVOKED BY NOTHING IS DOCUMENTATION.** All three of the rig's self-tests - the two log
+classifiers and the phase declarations - existed, passed, and were run by no target and no pipeline;
+the one that would have caught MUT-18 was written the same day the defect was found and would have
+gone stale beside it. They are `make test-harness`, they are inside `make test`, and CI runs them on
+any change under `tools/cross-client-harness/`. None touches a browser, a phone or production, which
+is what makes that possible: they are assertions over the rig's own source, so the gate costs seconds
+and can never be skipped for being expensive.
 
 **TWO BRANCHES OF ONE HELPER OWE THE SAME PRECONDITION, OR THE WEAKER ONE IS THE HARNESS'S FLOOR.**
 `openDM` reached `/chat` by reloading on desktop and by navigating on the phone - and the reload

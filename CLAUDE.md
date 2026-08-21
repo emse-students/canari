@@ -169,11 +169,6 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
   format is proven only by `srvclassify-selftest.mjs`, never against production - MUT generates no
   dismissal traffic. **Run READ-10 once** (`--destructive`, self-cleaning, 5/5) and read the window.
   Until then the fix is verified by compiling, which this repo does not accept as verified.
-- **`tools/cross-client-harness/checks-selftest.mjs` IS NEW AND WIRED INTO NOTHING.** It asserts that
-  every phase declares the devices its scripts actually drive - the defect that cost MUT-18 every run
-  it ever had - and it is proven to fail on that exact case. It needs a home in a gate beside
-  `classify-selftest.mjs` and `srvclassify-selftest.mjs`, which are themselves invoked from nowhere
-  found so far. **Wire all three.**
 - **THE MECHANISM AUDIT IS DONE AND SCORED**, on [mechanism-audit](docs/wiki/mechanism-audit.md): of
   five ranked findings, two produced a code change (forms P1, the `minClientVersion` ceiling), two a
   verified negative (moderation's authorisation is correct, media holds no key material), one is
