@@ -1,0 +1,196 @@
+#!/usr/bin/env node
+/**
+ * THE BOARD AND THE EVIDENCE, RECONCILED - which rows nothing has ever answered, and which answers
+ * no row asked for.
+ *
+ *   node rows.mjs             the gaps, and a per-phase count
+ *   node rows.mjs --build X   also flag rows whose newest verdict was not taken on build X
+ *   node rows.mjs --strict    exit non-zero if anything is owed
+ *
+ * WHY THIS EXISTS. `cross-client-testing.md` is the board and its row ids are the campaign's only
+ * vocabulary: a verdict is a row id plus a verdict word. Nothing checked that the two vocabularies
+ * were the same one, and they were not, twice over:
+ *
+ *   - **DEL-1 had a runner nobody could reach.** `del1.mjs` existed, worked, recorded a real board
+ *     id, and was registered in no phase - so `run.mjs` could not run it and the row read `pending`
+ *     for days while the code sat there.
+ *   - **`grp-traffic.mjs` is registered in GRP and answers no row.** It records `GRP-TRAFFIC`, an id
+ *     the board never names, while all nine GRP rows say `pending`. From `run.mjs` the phase looks
+ *     covered; from the board it is empty. The same fault as DEL-1, from the other end.
+ *
+ * Both are invisible by construction: one side is a markdown table, the other a directory of scripts
+ * and a ledger of verdicts, and nothing read both. So "everything must end green" becomes a COUNT
+ * rather than a memory.
+ *
+ * **IT READS `results.ndjson`, NOT THE RUNNERS' SOURCE, and that is the whole design.** The first
+ * draft parsed literal ids out of `record(...)` calls and was useless: sixteen runners build their
+ * id from an expression - `MUT-${n}/${kind}`, `READ-${n}` - so it reported 149 rows with no runner
+ * on the same afternoon MSG, TYPE and READ had all just run green. A static read cannot answer "what
+ * has been measured"; the ledger of verdicts is the only thing that can, and it is evidence rather
+ * than inference.
+ *
+ * **AN ARM IS NOT AN ORPHAN.** `mut.mjs` records `MUT-11/dm` and `MUT-11/channel` for one board row,
+ * and `comm910.mjs` records `COMM-9/10` for two. A recorded id is matched to the board by its own
+ * name first, then by the part before a `/`, then - for a joint id - by each `/`-separated tail
+ * pasted back onto the prefix. Anything still unmatched is a real divergence and is named as one.
+ */
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { PHASES } from './checks.mjs';
+import { STATE_DIR } from './names.mjs';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const BOARD = resolve(HERE, '..', '..', 'docs', 'wiki', 'cross-client-testing.md');
+const LEDGER = join(STATE_DIR, 'results.ndjson');
+const argv = process.argv.slice(2);
+const strict = argv.includes('--strict');
+const sinceBuild = argv.includes('--build') ? argv[argv.indexOf('--build') + 1] : null;
+
+/** Every row id the board names, in board order. */
+const rows = [];
+for (const line of readFileSync(BOARD, 'utf8').split('\n')) {
+  const m = /^\|\s*([A-Z][A-Z0-9]*-[0-9A-Za-z-]+)\s*\|/.exec(line);
+  if (m) rows.push(m[1]);
+}
+const known = new Set(rows);
+
+/**
+ * The board rows a recorded id answers - normally one, two for a joint id like `COMM-9/10`.
+ *
+ * An empty array is the divergence worth reading: either the board is missing the row, or the runner
+ * is answering under a name nobody asked about.
+ */
+function boardRowsFor(id) {
+  if (known.has(id)) return [id];
+  const slash = id.indexOf('/');
+  if (slash === -1) return [];
+  const base = id.slice(0, slash);
+  if (known.has(base)) return [base];
+  // A JOINT ID: `COMM-9/10` is one script answering two rows. The prefix is everything up to the
+  // last `-`, and every `/`-separated tail is pasted back onto it. All of them must land, or this is
+  // not the shape and the id stays a divergence.
+  const dash = base.lastIndexOf('-');
+  if (dash === -1) return [];
+  const prefix = base.slice(0, dash + 1);
+  const parts = [base.slice(dash + 1), ...id.slice(slash + 1).split('/')];
+  const hits = parts.map((t) => prefix + t).filter((r) => known.has(r));
+  return hits.length === parts.length ? hits : [];
+}
+
+if (!existsSync(LEDGER)) {
+  console.log('[rows] no ledger at ' + LEDGER + ' - nothing has been recorded on this machine');
+  process.exit(strict ? 1 : 0);
+}
+
+// THE NEWEST VERDICT PER ROW. Newest rather than best: a row that passed yesterday and failed today
+// is failing, and a tool reporting the pass would be the reason nobody looked.
+const latest = new Map();
+const divergent = new Map();
+for (const line of readFileSync(LEDGER, 'utf8').split('\n')) {
+  if (!line.trim()) continue;
+  let r;
+  try {
+    r = JSON.parse(line);
+  } catch {
+    // A TRUNCATED LAST LINE IS THE ONE THING THIS FILE DOES BADLY - every runner appends to it - so
+    // a bad line is skipped and SAID, never silently.
+    console.log('[rows] skipped an unparseable ledger line: ' + line.slice(0, 80));
+    continue;
+  }
+  if (!r || !r.id) continue;
+  const hits = boardRowsFor(r.id);
+  if (hits.length === 0) {
+    const e = divergent.get(r.id) || { check: r.check || '?', count: 0 };
+    e.count++;
+    divergent.set(r.id, e);
+    continue;
+  }
+  for (const row of hits) {
+    const prev = latest.get(row);
+    if (!prev || String(r.at) > String(prev.at)) {
+      latest.set(row, { verdict: r.verdict, build: r.build, at: r.at, recordedAs: r.id });
+    }
+  }
+}
+
+const never = rows.filter((r) => !latest.has(r));
+console.log('[rows] the board names ' + rows.length + ' rows; ' + latest.size + ' have a verdict in the ledger');
+
+console.log('\n[rows] per phase - answered / named, then the newest verdicts held');
+for (const phase of [...new Set(rows.map((r) => r.split('-')[0]))]) {
+  const mine = rows.filter((r) => r.split('-')[0] === phase);
+  const done = mine.filter((r) => latest.has(r));
+  const tally = {};
+  for (const r of done) tally[latest.get(r).verdict] = (tally[latest.get(r).verdict] || 0) + 1;
+  const gap = mine.length - done.length;
+  const words = Object.entries(tally)
+    .map(([v, n]) => n + ' ' + v)
+    .join(', ');
+  console.log(
+    '  ' +
+      phase.padEnd(9) +
+      String(done.length).padStart(3) +
+      ' / ' +
+      String(mine.length).padEnd(4) +
+      words +
+      (gap ? (words ? ' | ' : '') + gap + ' NEVER RUN' : '')
+  );
+}
+
+if (never.length) {
+  console.log('\n[rows] ' + never.length + ' row(s) with no verdict EVER - the campaign\'s remaining work:');
+  console.log('  ' + never.join(' '));
+}
+
+// NOT GREEN, WHATEVER THE REASON, because a campaign that must end green owes a line for every row
+// whose newest word is not PASS. They are listed rather than summed: SKIPPED, VACUOUS and FAIL are
+// owed three different things, and a total would hide which.
+const notGreen = rows.filter((r) => latest.has(r) && latest.get(r).verdict !== 'PASS');
+if (notGreen.length) {
+  console.log('\n[rows] ' + notGreen.length + ' row(s) whose NEWEST verdict is not PASS:');
+  for (const r of notGreen) {
+    const e = latest.get(r);
+    console.log('  ' + r.padEnd(14) + String(e.verdict).padEnd(12) + String(e.build).slice(0, 8) + '  ' + e.at);
+  }
+}
+
+if (sinceBuild) {
+  const stale = rows.filter((r) => latest.has(r) && !String(latest.get(r).build).startsWith(sinceBuild));
+  console.log('\n[rows] ' + stale.length + ' row(s) whose newest verdict was NOT taken on ' + sinceBuild);
+  if (stale.length) console.log('  ' + stale.join(' '));
+}
+
+if (divergent.size) {
+  console.log('\n[rows] ' + divergent.size + ' recorded id(s) the board does NOT name:');
+  for (const [id, e] of divergent) console.log('  ' + id.padEnd(16) + e.check + ' (' + e.count + ' row(s))');
+  console.log('  Either the board is missing the row, or the runner answers under the wrong name.');
+}
+
+// A SCRIPT NO PHASE CLAIMS CANNOT BE RUN BY `run.mjs`, whatever it records - DEL-1's fault exactly.
+// Read from the SOURCE here, because it is the only thing that can answer it: the ledger says what
+// HAS run, and this asks what CAN be.
+const claimed = new Set(
+  Object.values(PHASES).flatMap((p) => (p.scripts || []).map((s) => s.split(' ')[0]))
+);
+const unreachable = [];
+for (const file of readdirSync(HERE).filter((f) => f.endsWith('.mjs'))) {
+  // This file and `results.mjs` both quote `record('X-1', ...)` in prose; neither is a check.
+  if (claimed.has(file) || file === 'rows.mjs' || file === 'results.mjs') continue;
+  const src = readFileSync(join(HERE, file), 'utf8');
+  const ids = new Set();
+  for (const m of src.matchAll(/\b(?:record|finishObserved|finish)\(\s*['"`]([^'"`${}]+)['"`]\s*,/g)) {
+    if (boardRowsFor(m[1]).length) ids.add(m[1]);
+  }
+  if (ids.size) unreachable.push(file + ' -> ' + [...ids].join(' '));
+}
+if (unreachable.length) {
+  console.log('\n[rows] ' + unreachable.length + ' runner(s) answer a board row and NO phase claims them:');
+  for (const u of unreachable) console.log('  ' + u);
+}
+
+if (strict) {
+  const bad = never.length + notGreen.length + divergent.size + unreachable.length;
+  console.log('\n[rows] --strict: ' + bad + ' owed');
+  process.exit(bad > 0 ? 1 : 0);
+}
