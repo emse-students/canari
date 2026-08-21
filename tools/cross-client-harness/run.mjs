@@ -32,7 +32,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { PHASES } from './checks.mjs';
+import { PHASES, PHONE_SCRIPTS } from './checks.mjs';
 import { awaitQuiet } from './deploy.mjs';
 import { srvReport, srvSummary } from './srvlog.mjs';
 import { OVERLAYS, clearOverlays, client, evaluate } from './chat.mjs';
@@ -504,10 +504,20 @@ if (flag('file')) {
   // says COMM needs A1 and says why; reading it here is what makes that declaration load-bearing
   // rather than documentation. A script belonging to no phase keeps the old pair, which is the only
   // honest answer when nothing has declared what it needs.
-  const owner = Object.values(PHASES).find((p) =>
+  //
+  // BUT A PHASE'S `needs` IS THE UNION OVER ITS SCRIPTS, so read alone it refuses runs it has no
+  // reason to refuse - and an operator taught to answer that with `--no-preflight` has disarmed the
+  // gate entirely. Where a phase declares WHICH of its scripts need the phone (`PHONE_SCRIPTS`), one
+  // that does not is preflighted without it.
+  const owner = Object.entries(PHASES).find(([, p]) =>
     p.scripts.some((s) => s.split(' ')[0] === f)
   );
-  for (const d of owner?.needs ?? ['W1', 'W2']) devices.add(d);
+  const withPhone = owner ? PHONE_SCRIPTS[owner[0]] : undefined;
+  const need =
+    withPhone && !withPhone.includes(f)
+      ? owner[1].needs.filter((d) => d !== 'A1')
+      : (owner?.[1].needs ?? ['W1', 'W2']);
+  for (const d of need) devices.add(d);
 } else {
   const wanted = flag('all') ? Object.keys(PHASES).filter((p) => PHASES[p].scripts.length) : named;
   for (const name of wanted) {

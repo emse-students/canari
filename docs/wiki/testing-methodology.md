@@ -1266,6 +1266,36 @@ rig has, and every check downstream of it is then owed to a person who was never
 same evening it was written, `node pin.mjs --device A1 --stay` unlocked the phone in 4.2 s and the
 run that had been declared impossible produced the phase's first attributable verdict.
 
+#### 30. A GATE THAT REFUSES WITHOUT A REASON TEACHES ITS OPERATOR THE FLAG THAT DISARMS IT
+
+Two things happened within an hour on 2026-08-21 and they are the same mistake seen from both ends.
+
+**First, the gate was skipped.** COMM-22 was owed its eighth attempt, the phone was unauthorised, and
+`run.mjs --file comm22.mjs` refuses without A1 - so the check was started as `node comm22.mjs`
+instead, straight past the preflight. The push that deployed a backend fix was minutes old. Prod was
+mid-restart, the gateway answered 502 and 503, the community was never created, and the run recorded
+VACUOUS with `redeployedMidRun` naming the CD run by id. **The instrument was right and it saved the
+verdict** - `gate()` turned a collision into VACUOUS rather than a FAIL naming an innocent product.
+But nothing had to be saved: `deploy.mjs`'s wait-for-a-deploy-in-flight lives in the PREFLIGHT, and
+running the script directly is exactly how a run gets past it.
+
+**Second, the refusal was unfounded.** `--file` reads the owning phase's `needs`, which is the UNION
+over that phase's scripts. COMM-22 is a two-browser check; COMM needs a phone for four OTHER rows.
+So the preflight refused a run whose devices were all present and healthy, and the only way past it
+was `--no-preflight` - the flag that stops a check being refused against a LOCKED client, which is
+the failure mode most of this file exists to prevent. A gate that fires when it should not is not
+merely noisy: **it trains the one person who can disable it.**
+
+Both halves are fixed in the declaration rather than in the operator's habits. `checks.mjs` names
+which of a phase's scripts need the phone (`PHONE_SCRIPTS`), `--file` narrows to them, and the ninth
+run preflighted `W1 W2`, passed, and ran on a prod nothing was deploying to.
+
+The rule generalises past this harness: **when a check refuses, ask whether it refused about the thing
+it is guarding.** A gate answering a question adjacent to its own - "does this PHASE need a phone"
+standing in for "does this SCRIPT need one" - is a false positive, and a false positive on a gate is
+spent by removing the gate. And when a run must bypass one, the bypass is the finding: name what the
+gate would have checked, and check it by hand in the same breath.
+
 ## Observation is part of the check, not a debugging step
 
 Decided 2026-08-06, after two shipped bugs came out of the logs of **passing** checks.

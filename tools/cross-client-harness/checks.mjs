@@ -154,6 +154,29 @@ export const PHASES = {
 };
 
 /**
+ * Inside a phase, the scripts that need MORE than the two browsers - read by `--file` so ONE script's
+ * preflight asks for the devices THAT SCRIPT uses instead of the union its phase needs.
+ *
+ * A phase's `needs` is the union over its scripts. That is exactly right for running the phase and
+ * wrong for running one of them: `node run.mjs --file comm22.mjs` is a two-browser check and was
+ * refused on a phone that has nothing to do with it, because four OTHER COMM rows need one. **A
+ * preflight that refuses a run it has no reason to refuse teaches its operator `--no-preflight`**,
+ * and that flag disarms the one gate stopping a check from reporting on a locked client. Found
+ * 2026-08-21, with the phone unauthorised and COMM-22 owed a ninth attempt.
+ *
+ * Only the EXCEPTIONS are named, and only for phases where they are known. A phase absent from here
+ * keeps the union, which is the honest answer when nothing has declared per-script needs - the same
+ * reasoning `--file` already applies to a script belonging to no phase at all. Each entry below is
+ * justified beside the script itself in `PHASES`, and this list must not become the only statement of
+ * it.
+ */
+export const PHONE_SCRIPTS = {
+  // COMM-14 (a push decision reaching a tray), COMM-17 and COMM-25 (A1 as the account's SECOND
+  // device), COMM-18 (a cold start through `am start`). The other twenty are W1 + W2.
+  COMM: ['comm14.mjs', 'comm17.mjs', 'comm18.mjs', 'comm25.mjs'],
+};
+
+/**
  * `recon.mjs` is deliberately NOT a phase. It is the only instrument that can see the loss class at
  * all, and it reads the STORES rather than the screen - so it is run after a phase, over the traffic
  * that phase produced, not as one more check among them.
