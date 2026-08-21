@@ -478,7 +478,10 @@ export class InternalController {
           { id: group.id },
           { deletedAt: new Date(), distributionWorkspaceId: null, distributionChannelId: null }
         );
-      return deleteGroupOwnedRows(manager, [group.id]);
+      // SOFT: the tombstone stays. A distribution group carries no dismissal markers anyway - it is
+      // never a conversation - but the flag is passed rather than reasoned about, because the day it
+      // becomes wrong is the day somebody changes what a distribution group is.
+      return deleteGroupOwnedRows(manager, [group.id], { groupRowSurvives: true });
     });
     await deleteGroupRedisKeys(this.redis, [group.id]);
     this.logger.log(
@@ -558,7 +561,9 @@ export class InternalController {
         const counts = await this.groupRepo.manager.transaction(async (manager) => {
           // The tombstone is what lets a device detect the deletion rather than infer it.
           await manager.getRepository(Group).update({ id: In(dmIds) }, { deletedAt: new Date() });
-          return deleteGroupOwnedRows(manager, dmIds);
+          // SOFT: the tombstones stay, so the OTHER party's dismissal markers stay too. This branch
+          // deletes one user's account; a marker written by the peer is that peer's fact.
+          return deleteGroupOwnedRows(manager, dmIds, { groupRowSurvives: true });
         });
         await deleteGroupRedisKeys(this.redis, dmIds);
         this.logger.log(

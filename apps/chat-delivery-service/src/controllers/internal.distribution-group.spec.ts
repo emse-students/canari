@@ -357,6 +357,12 @@ describe('InternalController - the community distribution group', () => {
       // The list is spelled out rather than imported: the point is that this route uses the SAME
       // definition of ownership as every other death, and a hand-written subset here is exactly the
       // defect. `Group` is absent because the tombstone is the one row that stays.
+      //
+      // AND `UserDismissedGroup` IS ABSENT FOR A DIFFERENT REASON ENTIRELY - it is a fact about a
+      // PERSON, not about this group, and it is designed to outlive the group row (see its entity,
+      // and `deleteGroupOwnedRows`'s `groupRowSurvives`). This is a SOFT delete: the tombstone
+      // remains, discovery still runs against it, and the marker still answers a live question.
+      // Dropping it would show a deleted banner to the one person who had asked for silence.
       expect(purged).toEqual([
         QueuedMessage,
         GroupMember,
@@ -364,8 +370,8 @@ describe('InternalController - the community distribution group', () => {
         MlsCommitLog,
         MlsGroupInfo,
         GroupInvite,
-        UserDismissedGroup,
       ]);
+      expect(purged).not.toContain(UserDismissedGroup);
       // In one unit of work with the tombstone: two statements outside a transaction leave a window
       // where the group is dead and its rows are not.
       expect(groupRepo.manager.transaction).toHaveBeenCalledTimes(1);

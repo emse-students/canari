@@ -142,7 +142,9 @@ export class GroupsController {
 
     const counts = await this.groupRepo.manager.transaction(async (manager) => {
       await manager.getRepository(Group).update({ id: safeGroupId }, { deletedAt: new Date() });
-      return deleteGroupOwnedRows(manager, [safeGroupId]);
+      // SOFT: the tombstone stays, so the per-user dismissal markers stay with it - see
+      // `deleteGroupOwnedRows`. They are facts about people, not about this group.
+      return deleteGroupOwnedRows(manager, [safeGroupId], { groupRowSurvives: true });
     });
     await deleteGroupRedisKeys(this.redis, [safeGroupId]);
 

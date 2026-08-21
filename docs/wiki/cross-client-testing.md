@@ -216,7 +216,11 @@ were rewritten on 2026-08-20 is in
 [cross-client-campaign](cross-client-campaign.md#rows-that-named-a-mechanism-the-product-does-not-have).
 
 **Two have never run on production**: COMM-14 needs real push, and COMM-18 kills the app and follows
-a link into a cold start. **COMM-22 settled on the tenth attempt** - nine runs produced no believable
+a link into a cold start.
+
+**A1 has run a current build since 2026-08-21** - `67d40e3a`, replacing the `02ae609b` every earlier
+A1 row was read on. That does not retire those rows, it dates them: a device's build is part of its
+answer, and a row recorded on `02ae609b` says what that build did. **COMM-22 settled on the tenth attempt** - nine runs produced no believable
 verdict (seven VACUOUS, one FAIL, and one VACUOUS that collided with a deploy of the harness
 operator's own making, see rule 30) and the instrument was wrong every time, never the assertion.
 
@@ -238,7 +242,7 @@ operator's own making, see rule 30) and the instrument was wrong every time, nev
 | COMM-14 | Channel notification levels enforced server-side | `+push` | `pending` |
 | COMM-15 | Polls: create, vote, close; auto-pinned | `W1 W2` | `pending` |
 | COMM-16 | Delete a channel, then a community by typing its name: the rows are really gone and the slug is free again | `W1 W2` | `pending` |
-| COMM-17 | Reorder communities by drag and drop; survives a reload, reaches the other device | `+A1` | `PASS-DIRTY` - `29b12fee`, 2026-08-21. All six held: a real pointer drag moved it to the top, nothing else moved, `channel_members.sortOrder` held the new order, it survived a reload of W1, it reached A1, and the reverse drag restored the original. The dirt was one `[PIPELINE] Recovery attempt finished for b0192801...` - a deleted community's seed carrier, fixed in `f950c01c`; **re-run owed on a build carrying it** |
+| COMM-17 | Reorder communities by drag and drop; survives a reload, reaches the other device | `+A1` | `PASS` - `67d40e3a`, 2026-08-21, on the fourth attempt and CLEAN. All six held: a real pointer drag moved it to the top, nothing else moved, `channel_members.sortOrder` held the new order, it survived a reload of W1, it reached A1 (`a1Build` 67d40e3a - the first A1 row of the campaign read on a current build), and the reverse drag restored the original. The `PASS-DIRTY` of `29b12fee` carried one `[PIPELINE] Recovery attempt finished for b0192801...`; `f950c01c` fixed it and this run proves it. The third attempt held all six too and was VACUOUS anyway - a push of ours landed mid-run, which is rule 30's lesson from the other side |
 | COMM-18 | Deep link into a channel from a cold start | `+A1` | `pending` |
 | COMM-19 | The last admin tries to leave: refused, unless they are the last MEMBER, which deletes the community | `W1 W2` | `pending` |
 | COMM-20 | Two admins change the same role at the same moment | `W1 W2` | `pending` |

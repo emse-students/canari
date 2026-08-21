@@ -68,6 +68,36 @@ describe('deleteGroupOwnedRows', () => {
     expect(totalGroupOwnedRows(counts)).toBe(21);
   });
 
+  it('spares the per-user dismissal markers when the group row SURVIVES', async () => {
+    // `UserDismissedGroup` is not a fact about the group - it is a fact about a PERSON, recording
+    // that they asked for a conversation to be gone from all their devices. Its entity says so
+    // twice: text rather than a foreign key "so it outlives the group row", and "independent of the
+    // group's own lifecycle". Discovery reads it to tell "I dismissed this" from "somebody else
+    // deleted it", and only the first may be purged silently - so a soft delete that took the
+    // marker with it would show a deleted banner to the one person who had asked for silence.
+    //
+    // Measured the day this option was added: three delete routes had just been moved onto this
+    // list, all three soft, all three dropping the marker.
+    const { manager, asked } = makeManager();
+
+    const counts = await deleteGroupOwnedRows(manager, ['g1'], { groupRowSurvives: true });
+
+    expect(asked).toEqual(OWNED.filter((e) => e !== UserDismissedGroup));
+    expect(counts.dismissals).toBe(0);
+    // Everything else still goes: sparing one table is not softening the sweep.
+    expect(counts.queuedMessages).toBe(1);
+    expect(counts.groupInfo).toBe(1);
+  });
+
+  it('takes them when the group row goes too, because nothing will ever ask again', async () => {
+    const { manager, asked } = makeManager();
+
+    const counts = await deleteGroupOwnedRows(manager, ['g1']);
+
+    expect(asked).toContain(UserDismissedGroup);
+    expect(counts.dismissals).toBe(1);
+  });
+
   it('touches nothing when there are no groups', async () => {
     const { manager, asked } = makeManager();
 

@@ -130,23 +130,24 @@ deleted from BOTH this file and [backlog](docs/wiki/backlog.md). **Every defect 
 `CHANGELOG.md`, every rule one left is in [durable-rules](docs/wiki/durable-rules.md), every verdict
 is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the three is restated here.**
 
-1. **THE COMM RUNNERS - ALL TWENTY-FIVE WRITTEN AND REGISTERED as of 2026-08-21**, each RUN ON PROD
-    as it was written (the user's decision, 2026-08-20: writing all of them then running once is
-    verification by COMPILING). **THREE HAVE STILL NEVER RUN THERE - 14, 18, 22** - and each needs a
-    capability the harness has yet to prove: real push (COMM-14), a cold start through `adb`
-    (COMM-18), many Graine sessions at once (COMM-22, seven runs and not one believable verdict -
-    the instrument was wrong every time, never the assertion). A capability is unproven until a check
-    using it produces a result it could not have produced by accident. COMM-17 is `PASS-DIRTY` on
-    `29b12fee` with all six expectations held, and is **owed a re-run** on a build carrying
-    `f950c01c`, which fixes its only dirty line. **The phone shows a GENERIC notification body**
-    (user, 2026-08-20, on an app that is not up to date): that is COMM-14's row, an observation and
-    not a defect until the runner says so.
-2. **THE APK IS BUILT AND OWED AN INSTALL** - it carries the frontend at `f950c01c` and sits at
-    `frontend/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`
-    (**universal**, not `arm64`). **The phone is `offline` in adb and only a human can clear that** -
-    `adb reconnect` and a daemon restart both leave it there, which is the signature of an
-    unanswered "Allow USB debugging?" prompt. A1 still runs `02ae609b` until the install lands, and
-    `node pin.mjs --device A1` follows it.
+1. **THE COMM RUNNERS - ALL TWENTY-FIVE WRITTEN AND REGISTERED**, each RUN ON PROD as it was written
+    (the user's decision, 2026-08-20: writing all of them then running once is verification by
+    COMPILING). **TWO HAVE STILL NEVER RUN THERE - 14 and 18** - each needing a capability the
+    harness has yet to prove: real push (COMM-14) and a cold start through `adb` (COMM-18). A
+    capability is unproven until a check using it produces a result it could not have produced by
+    accident. **COMM-22 settled on its tenth attempt** (`PASS-DIRTY`, 12 sessions over 13 epochs) and
+    **COMM-17 on its fourth** (`PASS`, clean, `67d40e3a`); both verdicts and what the dirt led to are
+    on [cross-client-testing](docs/wiki/cross-client-testing.md). **The phone shows a GENERIC
+    notification body** (user, 2026-08-20, on an app that was not up to date): that is COMM-14's row,
+    an observation and not a defect until the runner says so - and A1 now runs a current build, so
+    the observation is owed a re-look.
+2. **A1 RUNS `67d40e3a` as of 2026-08-21** - rebuilt and installed after the two Graine fixes of that
+    day, replacing `02ae609b`. `npx tauri` does NOT resolve here (`could not determine executable to
+    run`); build with `./node_modules/.bin/tauri.exe android build --debug` from `frontend/`, and
+    install the **universal** APK, never `arm64/`. A fresh install means a new process, so
+    `phone.ensure({ port: 9333 })` before `pin.mjs --device A1` - the old devtools forward is dead
+    and `pin.mjs` alone reports `ECONNREFUSED`. **A phone `offline` in adb is a HUMAN action**: no
+    `adb reconnect` or daemon restart clears it, the screen must be unlocked and the prompt accepted.
 3. **`cleanup.mjs` before the campaign** - venues from the COMM runs, each `C<n> COMM<n>-<mark>`,
     deleted THROUGH the product so its Graine group goes with it; `--dry` to look first.
 4. **THE CAMPAIGN ITSELF - RUNNING, by the user's decision of 2026-08-21** (*"C'est parti pour la

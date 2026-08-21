@@ -46,13 +46,31 @@ export function totalGroupOwnedRows(counts: GroupOwnedRowCounts): number {
  * The deletes are sequential on purpose. A transactional `EntityManager` holds ONE query runner,
  * so issuing them through `Promise.all` would multiplex a single connection for no gain.
  *
+ * **`dismissals` IS THE ONE MEMBER OF THIS SET THAT MAY OUTLIVE THE GROUP, AND `groupRowSurvives`
+ * IS WHERE THAT IS DECIDED.** `UserDismissedGroup` is not a fact about the group at all - it is a
+ * fact about a PERSON, recording that they asked for a conversation to be gone from all their
+ * devices. Its own entity says so twice: stored as text rather than a foreign key "so it outlives
+ * the group row", and "independent of the group's own lifecycle". Discovery reads it to tell "I
+ * dismissed this" from "somebody else deleted it", and only the first of those may be purged
+ * silently; without the marker a tombstone shows the deleted banner instead.
+ *
+ * So a SOFT delete must keep it - the tombstone remains, discovery still runs against it, and the
+ * question the marker answers is still live. A HARD delete may drop it, because nothing will ever
+ * ask again. Measured the day this option was added: three delete routes had just been moved onto
+ * this list, all three soft, and all three were deleting the marker; 25 rows went with a by-hand
+ * repair of tombstoned residue before anybody noticed, which is 25 conversations that will show a
+ * banner to somebody who had asked for them to be gone.
+ *
  * @param manager entity manager, transactional when the group row goes in the same unit of work
  * @param groupIds groups whose rows are to be removed; empty is a no-op
+ * @param groupRowSurvives true for a SOFT delete, where the `dm_groups` tombstone is kept - the
+ *   per-user dismissal markers are then left alone, and `dismissals` comes back 0
  * @returns how many rows each table gave up
  */
 export async function deleteGroupOwnedRows(
   manager: EntityManager,
-  groupIds: string[]
+  groupIds: string[],
+  { groupRowSurvives = false }: { groupRowSurvives?: boolean } = {}
 ): Promise<GroupOwnedRowCounts> {
   const empty: GroupOwnedRowCounts = {
     queuedMessages: 0,
@@ -75,7 +93,9 @@ export async function deleteGroupOwnedRows(
     commitLog: (await manager.getRepository(MlsCommitLog).delete(where)).affected ?? 0,
     groupInfo: (await manager.getRepository(MlsGroupInfo).delete(where)).affected ?? 0,
     invites: (await manager.getRepository(GroupInvite).delete(where)).affected ?? 0,
-    dismissals: (await manager.getRepository(UserDismissedGroup).delete(where)).affected ?? 0,
+    dismissals: groupRowSurvives
+      ? 0
+      : ((await manager.getRepository(UserDismissedGroup).delete(where)).affected ?? 0),
   };
 }
 

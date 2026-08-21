@@ -90,10 +90,23 @@ cannot join the transaction: a crash between the two leaves keys that
 `cleanupOrphanedRedisGroups` collects, whereas the reverse order would strip a live group's history
 if the transaction then rolled back.
 
-**No foreign key enforces this**, and the reason is measured rather than assumed:
-`dm_user_dismissed_groups."groupId"` is `character varying` while `dm_groups.id` is `uuid`, so a
-uniform `ON DELETE CASCADE` is unavailable without first rewriting the type of a live table. The
-one-shot that collected the rows already there is
+**No foreign key enforces this, and for `dm_user_dismissed_groups` no foreign key MAY.** That row is
+not a fact about the group - it is a fact about a PERSON, recording that they asked for a
+conversation to be gone from all their devices, and it is BUILT to outlive the group row: its entity
+stores `groupId` as text rather than a relation, saying so in as many words ("so it outlives the
+group row", "independent of the group's own lifecycle"). A `ON DELETE CASCADE` there would delete the
+answer to a question still being asked - discovery reads the marker to tell "I dismissed this" from
+"somebody else deleted it", and only the first may be purged silently. The `character varying` type
+is the CONSEQUENCE of that design, not an obstacle to a cascade somebody would otherwise want.
+
+Which is why `deleteGroupOwnedRows` takes `groupRowSurvives`: a soft delete keeps the tombstone,
+so it keeps the marker; a hard delete may take it, because nothing will ever ask again. The three
+routes that end a group softly all pass it. **This was learnt by breaking it** - the day the three
+were unified onto the shared list, all three began dropping the marker, and a by-hand repair of
+tombstoned residue took 25 rows with it before anybody noticed. Those 25 conversations now show a
+"deleted" banner to the one person who had asked for silence.
+
+The one-shot that collected the rows already there is
 [`016_group_owned_orphans.sql`](../../../apps/chat-delivery-service/src/migrations/016_group_owned_orphans.sql).
 
 ### A row in `dm_groups` is not a place a frame can go
