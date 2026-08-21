@@ -127,8 +127,19 @@ const step = async (name, fn) => {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** Opens the salon on a client already inside the community, waiting for the row to arrive first. */
+/**
+ * Opens the salon: enters its COMMUNITY first, then clicks the row.
+ *
+ * ENTERING THE COMMUNITY IS PART OF OPENING THE SALON, and leaving it to the caller cost every one
+ * of six cycles on 2026-08-21. `leaveSalon` is `enterCommunities`, which lands on the community
+ * LIST with nothing selected - so the salon rail is empty, and the poll below waits out its whole
+ * window for a row nobody was going to draw. The failure reads `the salon never appeared in the
+ * sidebar`, which is true and says nothing whatever about the salon. Both gestures are idempotent,
+ * so doing them on every call is free and removes the class.
+ */
 async function openSalon(cx, timeoutMs = 30_000) {
+  await enterCommunities(cx);
+  await openCommunity(cx, community);
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     if ((await channelRow(cx, salon)).present) break;
@@ -278,8 +289,6 @@ for (let i = 1; i <= CYCLES && channelId; i += 1) {
     // THE PEER COMMITS ITS OWN ADD, so the gesture that moves the epoch is the peer LOADING the
     // salon, not the owner granting it. Without this the roster never changes, no send rotates, and
     // twelve messages sit under one seed.
-    await enterCommunities(w2);
-    await openCommunity(w2, community);
     await openSalon(w2);
     const joinedAt = await awaitPeerRouting(true);
 
@@ -316,8 +325,6 @@ await step('let the peer back in for good', async () => {
   // Entitlement is not routing, and the reads below are about a peer who is BOTH. Asserted here
   // rather than left to the warm read, so a peer that never got back on the roster is reported as
   // this step failing and not as the transcript being incomplete.
-  await enterCommunities(w2);
-  await openCommunity(w2, community);
   await openSalon(w2);
   return awaitPeerRouting(true);
 });
@@ -350,8 +357,7 @@ const senderRead = armed
 // -- The peer, warm: it has been in and out of this salon all run ---------------------------
 const warmRead = armed
   ? await step('the peer reads it warm', async () => {
-      await enterCommunities(w2);
-      await openCommunity(w2, community);
+      // `timeTranscript` opens the salon, and opening it enters the community.
       return timeTranscript(w2, everyMarker);
     })
   : null;
@@ -373,8 +379,6 @@ const coldRead = armed
       if (gateW2.verdict !== 'unlocked') {
         return { ms: null, seen: 0, of: everyMarker.length, gate: gateW2.verdict, pin: gateW2.said };
       }
-      await enterCommunities(w2);
-      await openCommunity(w2, community);
       const timing = await timeTranscript(w2, everyMarker);
       return { ...timing, gate: gateW2.verdict, pin: gateW2.said };
     })

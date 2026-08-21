@@ -137,10 +137,9 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     capability is unproven until a check using it produces a result it could not have produced by
     accident. **The phone shows a GENERIC notification body** (user, 2026-08-20, on an app that is
     not up to date): that is COMM-14's row, an observation and not a defect until the runner says so.
-2. **P1 WP-REGRANT-1 - a member let BACK IN to a private salon is never routed again.** Found and
-    measured on prod 2026-08-21 by COMM-22; the trace, the cause and the constraint on any fix are in
-    [backlog](docs/wiki/backlog.md), the only copy. Blocks COMM-22 and owes a re-run of every salon
-    row (COMM-8, 9/10, 11, 12, 13, 23, 24, 25).
+2. **THE APK IS OWED A REBUILD** - WP-REGRANT-1 changed the Graine client path, which ships inside
+    the Tauri bundle, and the user's launch decision is to rebuild after every fix touching mobile.
+    A1 still runs `02ae609b`; nothing else may build the frontend while it runs.
 3. **`cleanup.mjs` before the campaign** - venues from the COMM runs, each `C<n> COMM<n>-<mark>`,
     deleted THROUGH the product so its Graine group goes with it; `--dry` to look first.
 4. **THE CAMPAIGN ITSELF - RUNNING, by the user's decision of 2026-08-21** (*"C'est parti pour la

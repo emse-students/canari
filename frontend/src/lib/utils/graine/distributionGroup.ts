@@ -87,6 +87,16 @@ export async function ensureDistributionGroupFor(
     return false;
   }
 
+  // THE PAIR IS RECORDED THE MOMENT IT IS LEARNED, on every branch below.
+  //
+  // `ensureDistributionGroup` used to be the only thing that registered it, and it is reached only
+  // when a join is owed - so a device that held the group but whose registration did not name it
+  // returned true from here with `distributionGroupFor(scope)` still null. Everything keyed by
+  // SCOPE then behaved as though the group were absent: measured 2026-08-21, both clients logging
+  // `no distribution group held for <community|salon> - roster not reconciled` for every community
+  // and every salon they were in, on every load. Registering is idempotent and costs nothing.
+  mlsService.registerDistributionGroup(scope, ref.groupId);
+
   // WHAT THIS DEVICE HOLDS, AGAINST WHAT THE GROUP WOULD ACTUALLY DELIVER TO IT.
   //
   // Holding the group is this device's MEMORY of having joined, and it is not evidence of

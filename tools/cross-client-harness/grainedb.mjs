@@ -415,3 +415,26 @@ export function channelPolls(channelId) {
   // perfectly entitled to contain inside a string. Rejoined here rather than parsed field by field.
   return rows(out).map((r) => JSON.parse(r.join('|')));
 }
+
+/**
+ * The push notification level `userId` has stored for `channelId` - `all`, `mentions`, `none`, or
+ * null when the member has never set one.
+ *
+ * NULL IS NOT `all`, and the difference is the point. The server DEFAULTS an absent entry to `all`
+ * (`member.notifLevels?.[channel.id] ?? 'all'`), so a check that folded the two together could not
+ * tell "the level was written" from "the level was never written and the default happens to match" -
+ * which is exactly the assertion COMM-14 makes about its first gesture.
+ *
+ * `notifLevels` is a jsonb map keyed by channel id, on the member's ONE row per community: the
+ * level is per (member, salon) and the map is where the per-salon part lives.
+ */
+export function channelNotifLevelOf(workspaceId, channelId, userId) {
+  const out = psql(
+    `SELECT "notifLevels"->>'${channelId}' FROM channel_members ` +
+      `WHERE "workspaceId" = '${workspaceId}' AND "userId" = '${userId}'`
+  );
+  const found = rows(out);
+  if (found.length === 0) throw new Error(`channelNotifLevelOf: ${userId.slice(0, 8)} is not a member of ${workspaceId}`);
+  const value = String(found[0][0] ?? '').trim();
+  return value === '' ? null : value;
+}

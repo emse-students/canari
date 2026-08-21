@@ -25,6 +25,7 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     ensureDistributionGroup: vi.fn().mockResolvedValue(true),
     forgetDistributionGroup: vi.fn().mockReturnValue('g-1'),
     forgetDistributionGroupById: vi.fn().mockReturnValue(true),
+    registerDistributionGroup: vi.fn(),
     getDeviceId: vi.fn().mockReturnValue('dev-me'),
     ...overrides,
   };
@@ -69,6 +70,26 @@ describe('ensureCommunityDistributionGroup', () => {
     expect(channels.getDistributionGroup).toHaveBeenCalledWith(workspaceScope('ws-1'));
     expect(mls.forgetDistributionGroupById).not.toHaveBeenCalled();
     expect(mls.ensureDistributionGroup).not.toHaveBeenCalled();
+  });
+
+  it('records the scope-group pair on the branch that joins nothing', async () => {
+    // The join used to be the only thing that registered it, and the join is reached only when one
+    // is owed - so a device holding the group with a registration that did not name it returned
+    // true while every scope-keyed reader saw nothing. Measured on production 2026-08-21 as
+    // `no distribution group held for ... - roster not reconciled`, on every community, every load.
+    const mls = makeHeldMls();
+    const channels = makeChannels({
+      getDistributionGroup: vi.fn().mockResolvedValue({
+        groupId: 'g-1',
+        groupInfo: null,
+        baseEpoch: 7,
+        memberDevices: ['dev-me'],
+      }),
+    });
+
+    expect(await run(mls, channels)).toBe(true);
+    expect(mls.ensureDistributionGroup).not.toHaveBeenCalled();
+    expect(mls.registerDistributionGroup).toHaveBeenCalledWith(workspaceScope('ws-1'), 'g-1');
   });
 
   it('re-joins when the group is registered but no longer held locally', async () => {

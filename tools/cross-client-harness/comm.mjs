@@ -542,7 +542,15 @@ export async function inPanel(cx, open, body) {
   }
 }
 
-export async function openChannelAccess(cx) {
+/**
+ * Opens the selected salon's settings modal, on its default (overview) tab.
+ *
+ * SPLIT OUT OF {@link openChannelAccess} because two panels live behind the same gesture and only
+ * one of them was reachable: the access tab, and the overview tab that carries the notification
+ * levels. A second copy of the gear click and its settle would be a second place for the caption
+ * and the wait to drift.
+ */
+export async function openChannelSettings(cx) {
   await awaitAppSettled(cx);
   await realClick(cx, `[aria-label=${JSON.stringify(caption('chat_channel_settings_label'))}]`);
   await until(
@@ -550,6 +558,79 @@ export async function openChannelAccess(cx) {
     `document.body.innerText.indexOf(${JSON.stringify(caption('chat_channel_settings_title'))}) >= 0`,
     10000
   );
+}
+
+/** The three notification levels, by the caption each button carries. */
+const NOTIF_LEVEL_CAPTION = {
+  all: 'chat_channel_notif_all_label',
+  mentions: 'chat_channel_notif_mentions_label',
+  none: 'chat_channel_notif_none_label',
+};
+
+/**
+ * The notification level the open settings modal states, or null when the group is not on screen.
+ *
+ * READ FROM `aria-checked`, not from which button carries the amber classes - the same rule the
+ * access panel's toggle follows. The classes are styling and can be reworded or restyled;
+ * `aria-checked` is the control's own answer and is what assistive technology is told. Before
+ * 2026-08-21 there was no such answer to read: the three were plain buttons whose selected state
+ * lived only in Tailwind, so a screen reader announced three identical controls and this function
+ * could not have existed.
+ */
+export async function channelNotifLevel(cx) {
+  const on = JSON.parse(
+    await evaluate(
+      cx,
+      `(function () {
+         var g = document.querySelector('[role=radiogroup]');
+         if (!g) return 'null';
+         return JSON.stringify(
+           [].slice.call(g.querySelectorAll('[role=radio]'))
+             .filter(function (b) { return b.getAttribute('aria-checked') === 'true'; })
+             .map(function (b) { return (b.innerText || '').trim(); })
+         );
+       })()`
+    )
+  );
+  if (on === null) return null;
+  // EXACTLY ONE, or the control is not a radio group: two checked is as wrong as none, and a
+  // reader that returned the first would hide it.
+  if (on.length !== 1) {
+    throw new Error(`channelNotifLevel: ${on.length} of 3 buttons are checked - ${JSON.stringify(on)}`);
+  }
+  const found = Object.entries(NOTIF_LEVEL_CAPTION).find(([, key]) => on[0] === caption(key));
+  if (!found) throw new Error(`channelNotifLevel: checked button says ${JSON.stringify(on[0])}`);
+  return found[0];
+}
+
+/**
+ * Sets the open settings modal's notification level, and returns whether it had to move.
+ *
+ * IDEMPOTENT BY READING FIRST, for the reason the visibility toggle is: a check that clicks
+ * unconditionally would set the level it wanted exactly when the level was already wrong.
+ * The post-condition is the control's own `aria-checked`, not the click landing.
+ */
+export async function setChannelNotifLevel(cx, level) {
+  const key = NOTIF_LEVEL_CAPTION[level];
+  if (!key) throw new Error(`setChannelNotifLevel: unknown level ${JSON.stringify(level)}`);
+  if ((await channelNotifLevel(cx)) === level) return false;
+  await realClick(cx, control(key));
+  await until(
+    cx,
+    `(function () {
+       var g = document.querySelector('[role=radiogroup]');
+       if (!g) return false;
+       return [].slice.call(g.querySelectorAll('[role=radio]')).some(function (b) {
+         return b.getAttribute('aria-checked') === 'true' && (b.innerText || '').trim() === ${JSON.stringify(caption(key))};
+       });
+     })()`,
+    10000
+  );
+  return true;
+}
+
+export async function openChannelAccess(cx) {
+  await openChannelSettings(cx);
   await realClick(cx, control('chat_channel_access_tab'));
   await until(
     cx,

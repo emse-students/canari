@@ -1221,6 +1221,20 @@ layer agree on, and the forget is `forgetDistributionGroupById` for the same rea
 state - `memberDevices` absent, the question never put - logs, because "the roster agreed" and
 "nobody asked" reaching a run log looking identical is precisely what let the first attempt pass.
 
+**VERIFIED ON PRODUCTION, against the salon the first attempt had left stranded** - `19a58034`,
+group `b0192801`, unrouted for 53 minutes - the moment the second deployed and the peer reloaded:
+
+| UTC | Server line |
+| --- | --- |
+| 02:49:04 | `served channel=19a58034 user=b78568a3 … devices=0` |
+| 02:49:05 | the same read again, from the join's own transport |
+| 02:49:05 | `published channel=19a58034 user=b78568a3 epoch=2 stored=true` |
+| 02:49:25 | `served … devices=1` |
+
+Three rows on the group afterwards, the peer's among them. **The negative control is the first
+attempt**, on the same salon, one deploy earlier: one read, no publish, `devices=0` for three
+minutes.
+
 ## 11. A private salon's ciphertext was addressed to the whole community - FIXED 2026-08-19
 
 Found while answering a question about §4.3, and it is the second half of it. §4.3 settles how a

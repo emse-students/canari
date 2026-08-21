@@ -1202,6 +1202,46 @@ export async function armComposer(cx, text) {
   await until(cx, SEND_ENABLED, 5000, 50);
 }
 
+/** The composer chip a picked mention becomes - `mentionEditor.ts` `MENTION_CHIP_SELECTOR`. */
+export const MENTION_CHIP = '[data-mention-id].mention-editor-chip';
+
+/**
+ * The suggestion dropdown. No role or data hook exists on it, so the first match IS the top
+ * suggestion: `MentionDropdown` renders the server's order with no re-sort.
+ */
+export const MENTION_SUGGESTION = '.mention-composer ul button';
+
+/**
+ * Clears the composer, types `@<query>`, waits for the dropdown, clicks the TOP suggestion, and
+ * returns the resulting chip's `data-mention-id` - the ground truth for anything asserting WHO was
+ * mentioned.
+ *
+ * SHARED because two phases need the same gesture for two different questions: MENTION asks what
+ * the SENDER puts on the wire (`mentionedUserIds`, the one documented cleartext field), COMM-14 asks
+ * what the SERVER does with it. A second copy would be a second place for the chip selector and the
+ * dropdown's ordering assumption to drift.
+ *
+ * `query` must be specific enough that the intended person is the first hit. Against a two-account
+ * test environment a first name is - which is the harness's guarantee, not the app's.
+ */
+export async function mentionInComposer(cx, query) {
+  await realClick(cx, COMPOSER);
+  await evaluate(cx, `document.querySelector('${COMPOSER}').focus()`);
+  await evaluate(cx, `document.execCommand('selectAll')`);
+  await cx.send('Input.insertText', { text: '' }); // clear any leftover draft before arming
+  await cx.send('Input.insertText', { text: `@${query}` });
+  await until(cx, `!!document.querySelector('${MENTION_SUGGESTION}')`, 6000);
+  await realClick(cx, MENTION_SUGGESTION);
+  await until(cx, `!!document.querySelector('${MENTION_CHIP}')`, 4000);
+  return evaluate(
+    cx,
+    `(function () {
+      var chip = document.querySelector('${MENTION_CHIP}');
+      return chip ? chip.dataset.mentionId : null;
+    })()`
+  );
+}
+
 /**
  * Submit whatever {@link armComposer} left in the box. Returns the client-side timestamp.
  *

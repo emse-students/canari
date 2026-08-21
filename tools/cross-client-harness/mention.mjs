@@ -45,10 +45,13 @@
  *     chip, which does carry one. The composer chip is therefore used as ground truth throughout;
  *     the rendered one can only be located by scoping to the message bubble that carries a marker
  *     (the same convention `clickBubbleAction` in chat.mjs already uses for hover-toolbar actions).
- *   - `ChannelSettingsModal.svelte`'s three notification-level buttons (Tous/Mentions/Aucune) have no
+ *   - `ChannelSettingsModal.svelte`'s three notification-level buttons (Tous/Mentions/Aucune) had no
  *     `aria-pressed` and no `data-*` marking which one is active - only a Tailwind class
- *     (`border-amber-500`) distinguishes the selected one, found here by reading the component, not
- *     by a hook meant for this. A screen reader gets no "selected" announcement either.
+ *     (`border-amber-500`) distinguished the selected one, found here by reading the component, not
+ *     by a hook meant for this, and a screen reader got no "selected" announcement either. FIXED
+ *     2026-08-21: they are a `role="radiogroup"` of three `role="radio"` with `aria-checked`, and
+ *     `comm.mjs`'s `channelNotifLevel` / `setChannelNotifLevel` read the control's own answer
+ *     instead of a styling class. This file used to carry its own copy of that gesture.
  *
  *   node mention.mjs                 # all six
  *   node mention.mjs --only 6        # one
@@ -66,7 +69,9 @@ import {
   goto,
   COMPOSER,
   SEND_ENABLED,
+  mentionInComposer,
 } from './chat.mjs';
+import { inPanel, openChannelSettings, setChannelNotifLevel } from './comm.mjs';
 import { record, recordObserved, mark } from './results.mjs';
 import { watch } from './watch.mjs';
 import { PEER_NAME, PORTS, VENUE } from './names.mjs';
@@ -90,72 +95,21 @@ const argv = process.argv.slice(2);
 const only = argv.includes('--only') ? Number(argv[argv.indexOf('--only') + 1]) : null;
 
 // --- selectors, all taken from the source read above, not guessed --------------------------------
-// Composer-side chip - the ONE mention surface with a real hook (mentionEditor.ts MENTION_CHIP_SELECTOR).
-const MENTION_CHIP_SELECTOR = '[data-mention-id].mention-editor-chip';
-// No role/data hook exists on the dropdown (finding above) - first match IS the top suggestion,
-// because MentionDropdown renders suggestions in server response order with no re-sort.
-const MENTION_SUGGESTION = '.mention-composer ul button';
-const SETTINGS_TOGGLE = 'text=Paramètres du canal'; // ChatHeader.svelte aria-label, channel case
-// Modal.svelte: role="dialog", aria-label = its title prop - which is the SAME string as the
-// toggle's aria-label (chat_channel_settings_label and chat_channel_settings_title are both
-// "Paramètres du canal" in fr.json), so this selector only ever matches the open modal, never the
-// header button that opened it (RESOLVE's "clickable at its own centre" rule already excludes an
-// element sitting under the modal's overlay).
-const SETTINGS_MODAL = '[role="dialog"][aria-label="Paramètres du canal"]';
-const MODAL_CLOSE = 'text=Fermer'; // Modal.svelte's close button, hardcoded aria-label, icon-only
-const NOTIF_ALL = 'Tous'; // m.chat_channel_notif_all_label()
-const NOTIF_MENTIONS = 'Mentions'; // m.chat_channel_notif_mentions_label()
-const NOTIF_NONE = 'Aucune'; // m.chat_channel_notif_none_label()
-
-/** Whether the notif-level button labelled `label` currently carries the "selected" utility class -
- * the only observable signal, see the file header finding. */
-const notifButtonSelected = (label) => `(function () {
-  var b = [].filter.call(document.querySelectorAll('button'), function (e) {
-    return (e.innerText || '').trim() === ${JSON.stringify(label)};
-  })[0];
-  return !!b && b.className.indexOf('border-amber-500') !== -1;
-})()`;
-
 /**
- * Opens the channel settings modal (assumed already on the channel), picks a notification level,
- * confirms the UI reflects it, and closes the modal again. Returns whether the confirmation was
- * observed - a check that could not even prove the level took must not treat what follows as valid.
+ * Picks a notification level and CONFIRMS the control now states it, closing the modal after.
+ *
+ * A thin wrapper over the shared gesture, kept because what this phase needs from it is a boolean:
+ * a check that could not even prove the level took must not treat what follows as valid. The read
+ * and the click both live in `comm.mjs` now - this file used to carry a copy that recognised the
+ * selected button by a Tailwind class, which the `aria-checked` added on 2026-08-21 replaces.
  */
-async function setChannelNotifLevel(cx, label) {
-  await realClick(cx, SETTINGS_TOGGLE);
-  await until(cx, `!!document.querySelector('${SETTINGS_MODAL}')`, 6000);
-  await realClick(cx, `text=${label}`);
-  const confirmed = await until(cx, notifButtonSelected(label), 4000, 100)
-    .then(() => true)
-    .catch(() => false);
-  await realClick(cx, MODAL_CLOSE);
-  await until(cx, `!document.querySelector('${SETTINGS_MODAL}')`, 4000).catch(() => {});
-  return confirmed;
-}
-
-/**
- * Clears the composer, types `@<query>`, waits for the suggestion dropdown, clicks the TOP
- * suggestion, and waits for the resulting chip - returning its `data-mention-id` (ground truth for
- * every assertion below). `query` must be specific enough that the intended person is the first
- * (ideally only) hit; every check here uses the peer's first name against a two-account test
- * environment, which is the harness's own guarantee, not the app's.
- */
-async function mentionViaAutocomplete(cx, query) {
-  await realClick(cx, COMPOSER);
-  await evaluate(cx, `document.querySelector('${COMPOSER}').focus()`);
-  await evaluate(cx, `document.execCommand('selectAll')`);
-  await cx.send('Input.insertText', { text: '' }); // clear any leftover draft before arming
-  await cx.send('Input.insertText', { text: `@${query}` });
-  await until(cx, `!!document.querySelector('${MENTION_SUGGESTION}')`, 6000);
-  await realClick(cx, MENTION_SUGGESTION);
-  await until(cx, `!!document.querySelector('${MENTION_CHIP_SELECTOR}')`, 4000);
-  return evaluate(
-    cx,
-    `(function () {
-      var chip = document.querySelector('${MENTION_CHIP_SELECTOR}');
-      return chip ? chip.dataset.mentionId : null;
-    })()`
-  );
+async function pickNotifLevel(cx, level) {
+  try {
+    await inPanel(cx, openChannelSettings, () => setChannelNotifLevel(cx, level));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** The rendered chip's viewport point, found within the message bubble carrying `marker` - the
@@ -249,7 +203,7 @@ async function mention1() {
 
   const term = mark('MENTION1');
   const query = PEER_NAME.split(' ')[0];
-  const mentionId = await mentionViaAutocomplete(cx, query);
+  const mentionId = await mentionInComposer(cx, query);
   await cx.send('Input.insertText', { text: term });
   await until(cx, SEND_ENABLED, 5000, 50);
   await fireComposer(cx);
@@ -288,14 +242,14 @@ async function mention2() {
   const [cx, obs] = await observed(W1, 'MENTION-2');
   await openChannel(cx, VENUE.community, VENUE.channel);
 
-  const levelSet = await setChannelNotifLevel(cx, NOTIF_MENTIONS);
+  const levelSet = await pickNotifLevel(cx, 'mentions');
 
   await cx.send('Network.enable');
   const sinceIdx = cx.events.length;
 
   const term = mark('MENTION2');
   const query = PEER_NAME.split(' ')[0];
-  const mentionId = await mentionViaAutocomplete(cx, query);
+  const mentionId = await mentionInComposer(cx, query);
   await cx.send('Input.insertText', { text: term });
   await until(cx, SEND_ENABLED, 5000, 50);
   await fireComposer(cx);
@@ -305,7 +259,7 @@ async function mention2() {
   const mentionedUserIds = body?.mentionedUserIds ?? null;
   const containsPeer = Array.isArray(mentionedUserIds) && mentionedUserIds.includes(mentionId);
 
-  await setChannelNotifLevel(cx, NOTIF_ALL); // restore the default - do not leave the account on "mentions"
+  await pickNotifLevel(cx, 'all'); // restore the default - do not leave the account on "mentions"
 
   const clientPreconditionOk = levelSet && !!mentionId && containsPeer;
   await recordObserved('MENTION-2', clientPreconditionOk ? 'PARTIAL' : 'FAIL', {
@@ -335,14 +289,14 @@ async function mention3() {
   const [cx, obs] = await observed(W1, 'MENTION-3');
   await openChannel(cx, VENUE.community, VENUE.channel);
 
-  const levelSet = await setChannelNotifLevel(cx, NOTIF_NONE);
+  const levelSet = await pickNotifLevel(cx, 'none');
 
   await cx.send('Network.enable');
   const sinceIdx = cx.events.length;
 
   const term = mark('MENTION3');
   const query = PEER_NAME.split(' ')[0];
-  const mentionId = await mentionViaAutocomplete(cx, query);
+  const mentionId = await mentionInComposer(cx, query);
   await cx.send('Input.insertText', { text: term });
   await until(cx, SEND_ENABLED, 5000, 50);
   await fireComposer(cx);
@@ -352,7 +306,7 @@ async function mention3() {
   const mentionedUserIds = body?.mentionedUserIds ?? null;
   const stillSentClientSide = Array.isArray(mentionedUserIds) && mentionedUserIds.includes(mentionId);
 
-  await setChannelNotifLevel(cx, NOTIF_ALL); // restore the default
+  await pickNotifLevel(cx, 'all'); // restore the default
 
   const ok = levelSet && stillSentClientSide;
   await recordObserved('MENTION-3', ok ? 'PASS' : 'FAIL', {
@@ -384,7 +338,7 @@ async function mention4() {
 
   const term = mark('MENTION4');
   const query = PEER_NAME.split(' ')[0];
-  const mentionId = await mentionViaAutocomplete(cx, query);
+  const mentionId = await mentionInComposer(cx, query);
   await cx.send('Input.insertText', { text: term });
   await until(cx, SEND_ENABLED, 5000, 50);
   await fireComposer(cx);
@@ -475,7 +429,7 @@ async function mention6() {
 
   const term = mark('MENTION6');
   const query = PEER_NAME.split(' ')[0];
-  const mentionId = await mentionViaAutocomplete(cx, query);
+  const mentionId = await mentionInComposer(cx, query);
   await cx.send('Input.insertText', { text: term });
   await until(cx, SEND_ENABLED, 5000, 50);
   await fireComposer(cx);

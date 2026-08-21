@@ -178,11 +178,20 @@ The five that shipped on 2026-08-18: the mechanism is on
 the audit and its prod figures on [community-rework](services/community-rework.md), the rule in
 [durable-rules](durable-rules.md), and the story in `CHANGELOG.md`. Those six are closed; the entry
 below them, a private salon's seed being sealed to the whole community, closed on 2026-08-20.
-**One is open**, opened 2026-08-21 by the campaign: WP-REGRANT-1, immediately below.
+**Nothing is open here.** WP-REGRANT-1, opened 2026-08-21 by the campaign, shipped and was verified
+on production the same day - its entry below is kept as CLOSED because the second attempt at the fix
+is the interesting half.
 
-### P1 - a member let BACK IN to a private salon is never routed again (WP-REGRANT-1)
+### CLOSED 2026-08-21 - a member let BACK IN to a private salon was never routed again (WP-REGRANT-1)
 
-**Found 2026-08-21 on production**, by COMM-22, and measured by
+**Found and FIXED 2026-08-21**, both on production, in `7f11b50e` and `082345b7`. The mechanism and
+the second attempt are on
+[graine](protocols/channel-encryption.md#the-asymmetry-has-a-third-half-coming-back---fixed-2026-08-21-wp-regrant-1),
+the rules it left in [durable-rules](durable-rules.md), the story in `CHANGELOG.md`. Kept here for
+one reason: **the first fix was a no-op and passed every gate**, which is the part worth not
+repeating. What follows is what was measured before it.
+
+Measured by
 `scratch/graine-regrant.mjs` on venue `C22 regrant COMM22-k8qsrko`, salon `4407ec7c`:
 
 | Gesture | Salon group epoch | Delivery rows | Peer routed |
@@ -223,9 +232,23 @@ decision is made rather than let the client infer it, and it must be a durable d
 event: `channel.member.removed` reaches only the devices online when it fires, which is why the
 departure mechanism was built as a diff in the first place.
 
+**What the fix measured, on the same stranded salon** (`19a58034`, group `b0192801`, left unrouted
+for 53 minutes by the first attempt), the moment the second one deployed and the peer reloaded:
+
+| UTC | Server line |
+| --- | --- |
+| 02:49:04 | `served channel=19a58034 user=b78568a3 … devices=0` - the group holds no row for it |
+| 02:49:05 | the same read again, from the join's own transport |
+| 02:49:05 | `published channel=19a58034 user=b78568a3 epoch=2 stored=true` - **it re-joined** |
+| 02:49:25 | `served … devices=1` - the row is back |
+
+Against the same salon one deploy earlier: one read, no publish, `devices=0` for three minutes. The
+negative control is the first attempt itself.
+
 Related and NOT yet measured: the same shape at COMMUNITY level (COMM-12 passed on 2026-08-20, so
 either that path differs or the check did not reach this state), and whether a device that was
-merely OFFLINE across a legitimate removal ends up in the same stale state.
+merely OFFLINE across a legitimate removal ends up in the same stale state. Both are cheap now that
+`devices=N` is on every `served` line.
 
 ### CLOSED 2026-08-20 - a private salon now has its own distribution group
 
