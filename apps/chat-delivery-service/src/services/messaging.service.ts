@@ -1926,18 +1926,38 @@ export class MessagingService {
    * No transaction here, and that is not an oversight: the group row is ALREADY gone, so there is
    * no window this could open. The reaper, which still has one to delete, does use one.
    *
-   * @returns the set of `groupId`s still present in `dm_groups` (deliverable).
+   * PRESENCE AND DELIVERABILITY ARE TWO QUESTIONS, and this used to answer the first while its own
+   * doc named the second - "still present in `dm_groups` (deliverable)". They differ by exactly the
+   * tombstones, and a tombstone is not a destination: its members, keys and history are gone, so a
+   * frame addressed to it can never be decrypted and never be ACKed, and a client handed one asks
+   * for a Welcome no peer will answer - on every reconnection, for ever, because nothing in that
+   * loop consumes the frame. `deletedAt` is a plain column rather than a `@DeleteDateColumn`, so
+   * `find` returns tombstones and only naming them excludes them. Measured on prod 2026-08-21:
+   * seven `queued_message` rows for W1's own device, addressed to a community distribution group
+   * tombstoned five hours earlier, redelivered on every connection since.
+   *
+   * Both sets are returned, named, because the caller that filters frames has to tell the two
+   * causes apart: an absent group is one this call has just repaired, a tombstoned one is residue a
+   * delete path left behind and a defect at THAT path. A single set would make them one number.
+   *
+   * @returns `deliverable` - present in `dm_groups` AND not tombstoned, the only ids a frame may be
+   *   handed to; `tombstoned` - present but soft-deleted, undeliverable and awaiting the reaper.
    */
-  async purgeOrphanGroups(groupIds: string[]): Promise<Set<string>> {
-    if (groupIds.length === 0) return new Set();
+  async purgeOrphanGroups(
+    groupIds: string[]
+  ): Promise<{ deliverable: Set<string>; tombstoned: Set<string> }> {
+    if (groupIds.length === 0) return { deliverable: new Set(), tombstoned: new Set() };
 
     const existing = await this.groupRepo.find({
       where: { id: In(groupIds) },
-      select: { id: true },
+      select: { id: true, deletedAt: true },
     });
-    const existingIds = new Set(existing.map((g) => g.id));
-    const orphaned = groupIds.filter((id) => !existingIds.has(id));
-    if (orphaned.length === 0) return existingIds;
+    const present = new Set(existing.map((g) => g.id));
+    const deliverable = new Set(existing.filter((g) => !g.deletedAt).map((g) => g.id));
+    const tombstoned = new Set(existing.filter((g) => g.deletedAt).map((g) => g.id));
+
+    const orphaned = groupIds.filter((id) => !present.has(id));
+    if (orphaned.length === 0) return { deliverable, tombstoned };
 
     const counts = await deleteGroupOwnedRows(this.groupRepo.manager, orphaned);
     await deleteGroupRedisKeys(this.redis, orphaned);
@@ -1946,7 +1966,7 @@ export class MessagingService {
       `[ORPHAN_PURGE] purged ${orphaned.length} group(s) absent from dm_groups ` +
         `(${totalGroupOwnedRows(counts)} row(s): ${JSON.stringify(counts)}): ${orphaned.join(', ')}`
     );
-    return existingIds;
+    return { deliverable, tombstoned };
   }
 
   /**
@@ -2055,8 +2075,13 @@ export class MessagingService {
   ): Promise<Set<string>> {
     if (groupIds.length === 0) return new Set();
 
-    const existingIds = await this.purgeOrphanGroups(groupIds);
-    const deliverable = groupIds.filter((id) => existingIds.has(id));
+    // A DELETED GROUP HAS NO HISTORY TO SERVE: `deleteGroupOwnedRows` drops its `history:` stream
+    // with the rest of what it owns, so a tombstone can only ever answer an empty page. Excluding
+    // it here says so once instead of reading an absent stream per request. A client still holding
+    // the conversation locally and asking for it is ORDINARY - hence no log line: the request is
+    // not evidence of anything, unlike a queued frame (see fetchMessages).
+    const { deliverable: deliverableIds } = await this.purgeOrphanGroups(groupIds);
+    const deliverable = groupIds.filter((id) => deliverableIds.has(id));
 
     if (headerGlobalAdmin === 'true') {
       return new Set(deliverable);
@@ -2082,7 +2107,7 @@ export class MessagingService {
 
     if (rejectForbidden && groupIds.length === 1) {
       const gid = groupIds[0];
-      if (!existingIds.has(gid)) {
+      if (!deliverableIds.has(gid)) {
         return new Set();
       }
       if (!memberIds.has(gid)) {
@@ -2118,7 +2143,13 @@ export class MessagingService {
       true
     );
     if (!authorized.has(groupId)) {
-      this.logger.warn(`[HISTORY] group=${groupId} orphaned - purged, empty`);
+      // NOT A WARNING, AND NOT "ORPHANED" EITHER, which is what this used to say. Two different
+      // things land here and only one of them is a defect: a group with no row (already purged and
+      // already WARNed about, with its evidence, by `purgeOrphanGroups`) and a group deleted whose
+      // history went with it - which is a client still holding the conversation locally and asking
+      // for it, the most ordinary request there is. Naming the first cause for both made a line
+      // whose reader learns to skip it.
+      this.logger.log(`[HISTORY] group=${groupId} not deliverable (absent or deleted) - empty`);
       return { rows: [] };
     }
 
@@ -2291,18 +2322,30 @@ export class MessagingService {
       );
     }
 
-    // Drop messages addressed to a group absent from dm_groups: orphans that can never
-    // be decrypted or ACKed by the client would otherwise trigger an infinite recovery
-    // loop. purgeOrphanGroups also purges the server residue (queue, memberships, Redis
-    // keys) - see its doc.
+    // Drop messages addressed to a group that can no longer receive them - absent from `dm_groups`
+    // or tombstoned in it. Either way the client can neither decrypt nor ACK such a frame, so
+    // handing it over starts a recovery loop (welcome_request with no target) that nothing
+    // terminates: the frame stays queued and comes back on the next connection. purgeOrphanGroups
+    // also purges the residue of the absent ones - see its doc.
     const groupIds = [
       ...new Set(messages.map((m) => m.groupId).filter((id): id is string => !!id)),
     ];
-    const existingIds = await this.purgeOrphanGroups(groupIds);
-    const deliverable = messages.filter((m) => !m.groupId || existingIds.has(m.groupId));
+    const { deliverable: deliverableIds, tombstoned } = await this.purgeOrphanGroups(groupIds);
+    const deliverable = messages.filter((m) => !m.groupId || deliverableIds.has(m.groupId));
     if (deliverable.length !== messages.length) {
+      // THE TWO CAUSES ARE NAMED APART, because they accuse different code. An absent group is one
+      // this fetch has just repaired. A QUEUED FRAME FOR A TOMBSTONED GROUP IS RESIDUE A DELETE PATH
+      // LEFT: every path that ends a group sweeps `deleteGroupOwnedRows`, which takes the queue with
+      // it, so this line is the visible end of one that did not - and it is not swept from here,
+      // because a second collector would hide the first one's absence.
+      const leaked = groupIds.filter((id) => tombstoned.has(id));
       this.logger.warn(
-        `[MSG_FETCH][${traceId}] dropped ${messages.length - deliverable.length} orphaned message(s)`
+        `[MSG_FETCH][${traceId}] dropped ${messages.length - deliverable.length} undeliverable ` +
+          `message(s)` +
+          (leaked.length > 0
+            ? ` - ${leaked.length} group(s) tombstoned in dm_groups and still holding queued rows, ` +
+              `so the path that deleted them left residue: ${leaked.join(', ')}`
+            : '')
       );
     }
 

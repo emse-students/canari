@@ -18,9 +18,12 @@ import * as crypto from 'crypto';
 import Redis from 'ioredis';
 import { Group } from '../entities/group.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
-import { QueuedMessage } from '../entities/queued-message.entity';
-import { GroupMember } from '../entities/group-member.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
+import {
+  deleteGroupOwnedRows,
+  deleteGroupRedisKeys,
+  totalGroupOwnedRows,
+} from '../utils/group-purge';
 import { sanitizeQueryValue } from '../utils/sanitize';
 
 /** MLS group lifecycle: create, read, rename, delete, and epoch management. */
@@ -32,10 +35,6 @@ export class GroupsController {
     @InjectRepository(Group) private groupRepo: Repository<Group>,
     @InjectRepository(DeviceGroupMembership)
     private deviceGroupRepo: Repository<DeviceGroupMembership>,
-    @InjectRepository(QueuedMessage)
-    private queuedMessageRepo: Repository<QueuedMessage>,
-    @InjectRepository(GroupMember)
-    private groupMemberRepo: Repository<GroupMember>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis
   ) {}
 
@@ -126,19 +125,31 @@ export class GroupsController {
   @UseGuards(HeaderAuthGuard)
   @Delete('mls/groups/:groupId')
   /**
-   * Soft-deletes a group, then hard-deletes all its operational data.
+   * Soft-deletes a group, then hard-deletes everything it owns.
+   *
+   * THE TOMBSTONE AND THE RESIDUE GO IN ONE UNIT OF WORK, through the allowlist that DEFINES what a
+   * group owns ({@link deleteGroupOwnedRows}). This route used to name four tables by hand and left
+   * `mls_commit_log`, `mls_group_info`, `group_invites` and `user_dismissed_groups` behind - and
+   * because the row deliberately SURVIVES as a tombstone, the orphan sweep could never collect them:
+   * it only finds groups with no row at all, so what a soft-delete leaks is permanent until the
+   * 90-day reaper. A hand-written list here is a second definition of ownership that will drift from
+   * the first one, and it did.
+   *
+   * The Redis keys go after the commit, for the reason {@link deleteGroupRedisKeys} gives.
    */
   async deleteGroup(@Param('groupId') groupId: string) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
 
-    await this.groupRepo.update({ id: safeGroupId }, { deletedAt: new Date() });
-    await this.groupMemberRepo.delete({ groupId: safeGroupId });
-    await this.deviceGroupRepo.delete({ groupId: safeGroupId });
-    await this.queuedMessageRepo.delete({ groupId: safeGroupId });
-    await this.redis.del(`group:members:${safeGroupId}`);
-    await this.redis.del(`history:${safeGroupId}`);
+    const counts = await this.groupRepo.manager.transaction(async (manager) => {
+      await manager.getRepository(Group).update({ id: safeGroupId }, { deletedAt: new Date() });
+      return deleteGroupOwnedRows(manager, [safeGroupId]);
+    });
+    await deleteGroupRedisKeys(this.redis, [safeGroupId]);
 
-    this.logger.log(`[DELETE_GROUP] ${safeGroupId.slice(0, 8)}… soft-deleted`);
+    this.logger.log(
+      `[DELETE_GROUP] ${safeGroupId.slice(0, 8)}… soft-deleted, ` +
+        `${totalGroupOwnedRows(counts)} row(s) purged: ${JSON.stringify(counts)}`
+    );
     return { status: 'deleted' };
   }
 }

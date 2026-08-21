@@ -27,6 +27,11 @@ import { PinVerifier } from '../entities/pin-verifier.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
 import { resolveGroupInvitePreview } from '../utils/group-invite';
+import {
+  deleteGroupOwnedRows,
+  deleteGroupRedisKeys,
+  totalGroupOwnedRows,
+} from '../utils/group-purge';
 import { MessagingService } from '../services/messaging.service';
 import { RETENTION_WINDOW_MS } from '../retention.constants';
 
@@ -457,12 +462,28 @@ export class InternalController {
     // it back the group it had just retired, tombstone and all - a group `cleanupSoftDeletedGroups`
     // is counting down to reap. Clearing the scope makes the row an ordinary dead group, reaped on
     // the same schedule, and leaves the scope genuinely unoccupied.
-    await this.groupRepo.update(
-      { id: group.id },
-      { deletedAt: new Date(), distributionWorkspaceId: null, distributionChannelId: null }
-    );
+    //
+    // AND WHAT THE GROUP OWNS GOES WITH IT, in the same unit of work. This route used to write the
+    // tombstone alone, sweeping nothing: no members, no device memberships, no queued frames, no
+    // Redis keys. Because the row survives as a tombstone the orphan sweep can never collect what
+    // it left - that sweep only finds groups with NO row - so the residue was permanent until the
+    // 90-day reaper. Measured on prod 2026-08-21: seven `queued_message` rows for W1's own device,
+    // addressed to a community distribution group this route had tombstoned five hours earlier and
+    // redelivered on every connection since, each one a frame the device can neither decrypt nor
+    // ACK. A group that ends here ends the same way it ends everywhere else.
+    const counts = await this.groupRepo.manager.transaction(async (manager) => {
+      await manager
+        .getRepository(Group)
+        .update(
+          { id: group.id },
+          { deletedAt: new Date(), distributionWorkspaceId: null, distributionChannelId: null }
+        );
+      return deleteGroupOwnedRows(manager, [group.id]);
+    });
+    await deleteGroupRedisKeys(this.redis, [group.id]);
     this.logger.log(
-      `[DISTRIBUTION_GROUP] deleted scope=${label} group=${group.id} - scope released`
+      `[DISTRIBUTION_GROUP] deleted scope=${label} group=${group.id} - scope released, ` +
+        `${totalGroupOwnedRows(counts)} row(s) purged: ${JSON.stringify(counts)}`
     );
     return { deleted: true };
   }
@@ -526,21 +547,26 @@ export class InternalController {
       const multiGroups = groups.filter((g) => g.isGroup);
 
       // ── DMs: delete the entire group ─────────────────────────────────────
-      await Promise.all(
-        dmGroups.map(async (g) => {
-          // Soft-delete the group row (tombstone so devices can detect deletion)
-          await this.groupRepo.update({ id: g.id }, { deletedAt: new Date() });
-          // Hard-delete all operational data for the DM
-          await Promise.all([
-            this.groupMemberRepo.delete({ groupId: g.id }),
-            this.deviceGroupRepo.delete({ groupId: g.id }),
-            this.queuedMessageRepo.delete({ groupId: g.id }),
-            this.redis.del(`group:members:${g.id}`),
-            this.redis.del(`history:${g.id}`),
-          ]);
-          this.logger.log(`[INTERNAL_DELETE] DM deleted groupId=${g.id}`);
-        })
-      );
+      // ONE UNIT OF WORK FOR EVERY DM AT ONCE, through the allowlist that DEFINES what a group
+      // owns. This branch used to name three tables by hand and left `mls_commit_log`,
+      // `mls_group_info`, `group_invites` and `user_dismissed_groups` behind; the tombstone rows
+      // survive on purpose, so the orphan sweep - which only finds groups with no row - could never
+      // collect them. Batched rather than one transaction per DM: `Promise.all` over transactions
+      // opens N connections to do what one statement per table does.
+      if (dmGroups.length > 0) {
+        const dmIds = dmGroups.map((g) => g.id);
+        const counts = await this.groupRepo.manager.transaction(async (manager) => {
+          // The tombstone is what lets a device detect the deletion rather than infer it.
+          await manager.getRepository(Group).update({ id: In(dmIds) }, { deletedAt: new Date() });
+          return deleteGroupOwnedRows(manager, dmIds);
+        });
+        await deleteGroupRedisKeys(this.redis, dmIds);
+        this.logger.log(
+          `[INTERNAL_DELETE] ${dmIds.length} DM(s) deleted, ` +
+            `${totalGroupOwnedRows(counts)} row(s) purged: ${JSON.stringify(counts)} - ` +
+            dmIds.join(', ')
+        );
+      }
 
       // ── Multi-member groups: remove user from Redis membership sets ───────
       const deviceIds = await this.keyPackageRepo

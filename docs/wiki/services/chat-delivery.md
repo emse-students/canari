@@ -44,12 +44,31 @@ The chat-delivery-service is the MLS API layer. It:
 A group's rows live in **seven** tables, and `deleteGroupOwnedRows`
 ([`utils/group-purge.ts`](../../../apps/chat-delivery-service/src/utils/group-purge.ts)) is the only
 definition of that set: `queued_message`, `dm_group_members`, `dm_device_group_memberships`,
-`mls_commit_log`, `mls_group_info`, `group_invites`, `dm_user_dismissed_groups`. Both ways a group
-ends call it - the 90-day tombstone reaper (`cleanupSoftDeletedGroups`) and the orphan sweep
-(`purgeOrphanGroups`, reached from `cleanupOrphanedMemberRows`). Plus three Redis keys through
-`deleteGroupRedisKeys`: `history:`, `group:members:`, `pending_welcome:`. The MLS locks
+`mls_commit_log`, `mls_group_info`, `group_invites`, `dm_user_dismissed_groups`. Plus three Redis
+keys through `deleteGroupRedisKeys`: `history:`, `group:members:`, `pending_welcome:`. The MLS locks
 (`mls:addlock:`, `mls:commitlock:`) are **not** in it, and deliberately: both are written with an
 `EX` TTL, so they collect themselves.
+
+**Five call sites, and until 2026-08-21 only the two collectors were among them.** This page used to
+say "both ways a group ends call it" and name the 90-day tombstone reaper
+(`cleanupSoftDeletedGroups`) and the orphan sweep (`purgeOrphanGroups`, reached from
+`cleanupOrphanedMemberRows`) - which are the two things that COLLECT a group, not the ways one ends.
+The three routes that actually end a group each still carried a hand-written shorter list, or none at
+all:
+
+| Where a group ends | What it swept before | Missing |
+|---|---|---|
+| `DELETE /api/mls/groups/:id` (`groups.controller`) | 4 tables, 2 Redis keys | `mls_commit_log`, `mls_group_info`, `group_invites`, `dm_user_dismissed_groups`, `pending_welcome:` |
+| `DELETE /api/internal/users/:id`, DM branch | 3 tables, 2 Redis keys | the same five |
+| `DELETE /api/internal/distribution-groups/...` | **nothing at all** | everything |
+
+And what a soft-delete leaks is **permanent**, which is what made this worse than the 2026-08-18
+case: the orphan sweep only finds groups with NO row in `dm_groups`, so it can never see the residue
+of a group whose tombstone survives on purpose. Nothing collects it before the 90-day reaper.
+**Measured on prod 2026-08-21**, four community distribution groups deleted during the COMM campaign
+runs the same day: 71 `queued_message`, 28 `mls_commit_log`, 10 `dm_device_group_memberships` and 4
+`mls_group_info` rows, all four groups tombstoned between 00:08 and 05:50 that morning. All three
+routes now go through the shared list, in one transaction with the tombstone.
 
 It exists because each caller used to carry its own shorter list. **Measured on prod 2026-08-18**,
 before the fix: `mls_group_info` 21 orphan rows of 69 (30%), `mls_commit_log` 293 of 452 (65%),
@@ -76,6 +95,42 @@ if the transaction then rolled back.
 uniform `ON DELETE CASCADE` is unavailable without first rewriting the type of a live table. The
 one-shot that collected the rows already there is
 [`016_group_owned_orphans.sql`](../../../apps/chat-delivery-service/src/migrations/016_group_owned_orphans.sql).
+
+### A row in `dm_groups` is not a place a frame can go
+
+`purgeOrphanGroups` is asked, by both its callers, which of a set of groups may still be handed
+data. It used to answer **presence** while its own doc named the other question - "the set still
+present in `dm_groups` (deliverable)". The two differ by exactly the tombstones, and a tombstone is
+not a destination: its members, its keys and its history went with it, so a frame addressed to one
+can never be decrypted and never be ACKed. `deletedAt` is a plain `@Column` rather than a
+`@DeleteDateColumn`, so `find` returns tombstones and only naming them excludes them.
+
+**The loop that follows has no termination.** The client is handed a frame for a group it does not
+hold, asks for a Welcome (`welcome_request`) that no peer will answer, keeps the frame unACKed, and
+meets it again on the next connection - for ever, because nothing in the loop consumes the frame.
+Measured on prod 2026-08-21: 7 `queued_message` rows for W1's own device, addressed to a distribution
+group tombstoned five hours earlier, redelivered on every connection since, and visible from the
+client as `[BUFFER] welcome_request sent for unknown group b0192801`.
+
+The call now returns two named sets, and the distinction is not cosmetic - the two causes accuse
+different code:
+
+| Group state | Frame | Residue | Log |
+|---|---|---|---|
+| present, active | delivered | - | - |
+| **absent** from `dm_groups` | dropped | purged here, through the shared list | `[ORPHAN_PURGE]` WARN, with per-table counts |
+| **tombstoned** | dropped | **left alone** | `[MSG_FETCH] ... undeliverable` WARN naming the group |
+
+A tombstoned group's residue is deliberately **not** swept from the fetch path. It exists because a
+delete route failed to take it, the fix belongs at that route, and a second collector here would hide
+that route's failure - the tombstone is already counting down to the reaper. So the line accuses
+instead: a queued row for a tombstoned group means a delete path leaked, and it names which group.
+
+History follows the same rule and says so once: `deleteGroupOwnedRows` drops the `history:` stream
+with the rest, so a tombstone can only ever answer an empty page. `getHistory` therefore returns
+`{ rows: [] }` without a Redis round-trip - and at LOG, not WARN: a client that still holds the
+conversation locally and asks for it is the most ordinary request there is. That line used to say
+`orphaned - purged` for both causes, which is the wrong accusation for one of them.
 
 ### Dead devices are reaped, but only after 90 days
 

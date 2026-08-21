@@ -14,6 +14,9 @@ import { QueuedMessage } from '../entities/queued-message.entity';
 import { PinVerifier } from '../entities/pin-verifier.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
+import { MlsCommitLog } from '../entities/mls-commit-log.entity';
+import { MlsGroupInfo } from '../entities/mls-group-info.entity';
+import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { MessagingService } from '../services/messaging.service';
 
 /**
@@ -41,11 +44,14 @@ describe('InternalController - the community distribution group', () => {
     create: jest.Mock;
     save: jest.Mock;
     update: jest.Mock;
+    manager: { transaction: jest.Mock };
   };
+  /** Every entity the delete route asked to purge, in the order it asked, `Group` excluded. */
+  let purged: unknown[];
   let groupMemberRepo: { save: jest.Mock };
   let deviceGroupRepo: { save: jest.Mock; upsert: jest.Mock; delete: jest.Mock };
   let queuedMessageRepo: { delete: jest.Mock };
-  let redis: { smembers: jest.Mock; srem: jest.Mock };
+  let redis: { smembers: jest.Mock; srem: jest.Mock; del: jest.Mock };
   let messagingService: {
     readGroupInfo: jest.Mock;
     putGroupInfo: jest.Mock;
@@ -57,11 +63,26 @@ describe('InternalController - the community distribution group', () => {
     previousSecret = process.env.INTERNAL_SECRET;
     process.env.INTERNAL_SECRET = SECRET;
 
+    purged = [];
+    // The tombstone and the sweep of what the group owns share ONE transaction, so the fake runs the
+    // callback with a manager that hands `Group` back to this very repo - which is what keeps the
+    // assertions on `groupRepo.update` measuring the real write - and every other entity to a
+    // counting fake, so a table dropped from the sweep shows up as a missing name.
+    const transactionalManager = {
+      getRepository: jest.fn((entity: unknown) => {
+        if (entity === Group) return groupRepo;
+        purged.push(entity);
+        return { delete: jest.fn().mockResolvedValue({ affected: 1 }) };
+      }),
+    };
     groupRepo = {
       findOne: jest.fn().mockResolvedValue(null),
       create: jest.fn((x: unknown) => x),
       save: jest.fn((x: Record<string, unknown>) => Promise.resolve({ ...x, id: 'g-new' })),
       update: jest.fn().mockResolvedValue({ affected: 1 }),
+      manager: {
+        transaction: jest.fn((cb: (m: unknown) => Promise<unknown>) => cb(transactionalManager)),
+      },
     };
     groupMemberRepo = { save: jest.fn() };
     deviceGroupRepo = {
@@ -70,7 +91,11 @@ describe('InternalController - the community distribution group', () => {
       delete: jest.fn().mockResolvedValue({ affected: 2 }),
     };
     queuedMessageRepo = { delete: jest.fn().mockResolvedValue({ affected: 5 }) };
-    redis = { smembers: jest.fn().mockResolvedValue([]), srem: jest.fn().mockResolvedValue(1) };
+    redis = {
+      smembers: jest.fn().mockResolvedValue([]),
+      srem: jest.fn().mockResolvedValue(1),
+      del: jest.fn().mockResolvedValue(1),
+    };
     messagingService = {
       readGroupInfo: jest.fn().mockResolvedValue(null),
       putGroupInfo: jest.fn().mockResolvedValue({ stored: true }),
@@ -314,6 +339,42 @@ describe('InternalController - the community distribution group', () => {
       expect(groupRepo.update).toHaveBeenCalledWith(
         { id: 'g-1' },
         { deletedAt: expect.any(Date), distributionWorkspaceId: null, distributionChannelId: null }
+      );
+    });
+
+    it('takes everything the group owns with it, through the one allowlist', async () => {
+      // THIS ROUTE USED TO WRITE THE TOMBSTONE AND SWEEP NOTHING - no members, no device
+      // memberships, no queued frames, no Redis keys. And because the row deliberately SURVIVES as a
+      // tombstone, the orphan sweep could never collect what was left: that sweep only finds groups
+      // with NO row at all. The residue was therefore permanent until the 90-day reaper. Measured on
+      // production 2026-08-21: seven `queued_message` rows for one device, addressed to a community
+      // distribution group this route had tombstoned five hours earlier, redelivered on every
+      // connection since - each one a frame the device can neither decrypt nor ACK.
+      groupRepo.findOne.mockResolvedValue({ id: 'g-1' });
+
+      await controller.deleteDistributionGroup('workspace', WORKSPACE, SECRET);
+
+      // The list is spelled out rather than imported: the point is that this route uses the SAME
+      // definition of ownership as every other death, and a hand-written subset here is exactly the
+      // defect. `Group` is absent because the tombstone is the one row that stays.
+      expect(purged).toEqual([
+        QueuedMessage,
+        GroupMember,
+        DeviceGroupMembership,
+        MlsCommitLog,
+        MlsGroupInfo,
+        GroupInvite,
+        UserDismissedGroup,
+      ]);
+      // In one unit of work with the tombstone: two statements outside a transaction leave a window
+      // where the group is dead and its rows are not.
+      expect(groupRepo.manager.transaction).toHaveBeenCalledTimes(1);
+      // And the Redis keys, after the commit - `history:` above all, or the stream outlives the
+      // group and answers reads it should not.
+      expect(redis.del).toHaveBeenCalledWith(
+        'history:g-1',
+        'group:members:g-1',
+        'pending_welcome:g-1'
       );
     });
 

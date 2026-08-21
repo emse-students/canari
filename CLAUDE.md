@@ -130,16 +130,23 @@ deleted from BOTH this file and [backlog](docs/wiki/backlog.md). **Every defect 
 `CHANGELOG.md`, every rule one left is in [durable-rules](docs/wiki/durable-rules.md), every verdict
 is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the three is restated here.**
 
-1. **THE COMM RUNNERS - TWENTY of the twenty-five written, each RUN ON PROD as it was written** (the
-    user's decision, 2026-08-20: writing all twenty then running once is verification by COMPILING).
-    **Remaining: 14, 17/18, 22**, and each needs a capability the harness does not have - real push
-    (COMM-14), the phone through `adb` (COMM-17/18), many Graine sessions at once (COMM-22). A
-    capability is unproven until a check using it produces a result it could not have produced by
-    accident. **The phone shows a GENERIC notification body** (user, 2026-08-20, on an app that is
-    not up to date): that is COMM-14's row, an observation and not a defect until the runner says so.
-2. **THE APK IS OWED A REBUILD** - WP-REGRANT-1 changed the Graine client path, which ships inside
-    the Tauri bundle, and the user's launch decision is to rebuild after every fix touching mobile.
-    A1 still runs `02ae609b`; nothing else may build the frontend while it runs.
+1. **THE COMM RUNNERS - ALL TWENTY-FIVE WRITTEN AND REGISTERED as of 2026-08-21**, each RUN ON PROD
+    as it was written (the user's decision, 2026-08-20: writing all of them then running once is
+    verification by COMPILING). **THREE HAVE STILL NEVER RUN THERE - 14, 18, 22** - and each needs a
+    capability the harness has yet to prove: real push (COMM-14), a cold start through `adb`
+    (COMM-18), many Graine sessions at once (COMM-22, seven runs and not one believable verdict -
+    the instrument was wrong every time, never the assertion). A capability is unproven until a check
+    using it produces a result it could not have produced by accident. COMM-17 is `PASS-DIRTY` on
+    `29b12fee` with all six expectations held, and is **owed a re-run** on a build carrying
+    `f950c01c`, which fixes its only dirty line. **The phone shows a GENERIC notification body**
+    (user, 2026-08-20, on an app that is not up to date): that is COMM-14's row, an observation and
+    not a defect until the runner says so.
+2. **THE APK IS BUILT AND OWED AN INSTALL** - it carries the frontend at `f950c01c` and sits at
+    `frontend/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`
+    (**universal**, not `arm64`). **The phone is `offline` in adb and only a human can clear that** -
+    `adb reconnect` and a daemon restart both leave it there, which is the signature of an
+    unanswered "Allow USB debugging?" prompt. A1 still runs `02ae609b` until the install lands, and
+    `node pin.mjs --device A1` follows it.
 3. **`cleanup.mjs` before the campaign** - venues from the COMM runs, each `C<n> COMM<n>-<mark>`,
     deleted THROUGH the product so its Graine group goes with it; `--dry` to look first.
 4. **THE CAMPAIGN ITSELF - RUNNING, by the user's decision of 2026-08-21** (*"C'est parti pour la
