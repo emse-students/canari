@@ -422,6 +422,10 @@ async function search4() {
   // version of this read reported `count: 0` for a search that may well have fetched. A zero from a
   // full buffer and a zero from a request never made are the same value, which is exactly the kind
   // of evidence this campaign refuses to reason from.
+  //
+  // THE CEILING BELOW IS 60 s AND THE MEASURED SEARCH IS ~330 ms. It was 45 s while the loop was
+  // live, which was shorter than the fault and so could only ever report a timeout; it was raised to
+  // 600 s to catch that fault, and is set from the measurement now that there is one.
   await evaluate(
     cx,
     `(function () {
@@ -442,7 +446,7 @@ async function search4() {
   const elapsedMs = await until(
     cx,
     `(document.querySelector('${SEARCH_COUNT}') || {}).innerText === '1/1'`,
-    600000,
+    60000,
     150
   )
     .then((ms) => ms)
@@ -470,6 +474,33 @@ async function search4() {
       })())`
     )
   );
+  // HOW MUCH HISTORY THE SEARCH ACTUALLY WALKED, which is the claim in this row's title and was the
+  // one thing never measured. `1/1` arriving fast proves the NEWEST message was found - it says
+  // nothing about the thousand rows behind it, and the first reading above is a snapshot taken while
+  // the walk may still be running. So wait for the page count to stop moving, then report it: at 200
+  // rows a page, a channel of N messages owes ceil(N/200) pages, and materially fewer means the walk
+  // stopped early and the search answered from a corpus nobody told the user was partial.
+  const pagesWalked = await (async () => {
+    let last = -1;
+    let stableFor = 0;
+    for (let i = 0; i < 120; i++) {
+      const n = await evaluate(
+        cx,
+        `performance.getEntriesByType('resource').filter(function (e) {
+          return e.name.indexOf('/messages') !== -1;
+        }).length`
+      );
+      if (n === last) {
+        stableFor += 1;
+        if (stableFor >= 4) return n; // ~2 s with nothing new in flight
+      } else {
+        stableFor = 0;
+        last = n;
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    return last;
+  })();
   const warningShown = await bodyHasWarning(cx);
 
   const STALL_MS = 8000; // generous over the WP-PUSHHERD baseline; flagged, not failed, past this
@@ -482,6 +513,7 @@ async function search4() {
     elapsedMs,
     finalCount,
     historyPages: pages, // fetches vs decrypt loop - see the mark above
+    pagesWalked, // total /messages pages once the walk settled - coverage, not latency
     totalWallClockMs: totalMs,
     stall: elapsedMs !== null && elapsedMs > STALL_MS,
     warningShownDuringSuccessfulSearch: warningShown, // must be false - see SEARCH-2's header note

@@ -1440,6 +1440,16 @@ Two things follow, and the second is the reusable half:
 
 - **Reproduce an intermittent under a QUIET host before believing it.** The control costs one loop
   and it is the only way to tell a measurement of the product from a measurement of the laptop.
+**UPDATED 2026-08-22, and the update weakens the host explanation.** SEARCH-2 produced the same
+signature during rung 5 - a marker absent from pane and body, `fromBottomPx: 0`, one pass in five.
+That makes four sightings across two independent checks, and **every one of them is on the CHANNEL
+transport**. No DM check has ever produced it, and the DM checks vastly outnumber the channel ones,
+so the absence there is not for want of looking. Host contention is transport-agnostic: it would stall
+a DM send as readily as a channel send. So the quiet-host control still stands as the reason no defect
+was filed on one sighting, and the transport pattern is now the stronger lead. What it is owed is the
+discriminator below, which currently exists only in MUT - see the shared-helper item in
+[backlog](backlog.md).
+
 - **Carry the discriminator in the evidence, so the next occurrence settles itself.** A hole is made
   of absent lines, so no classifier bucket shows it; `longestSilence` turns it into a value and it
   was already computed for every client on every check and thrown away everywhere but MSG-10. MUT's

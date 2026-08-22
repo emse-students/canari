@@ -346,6 +346,26 @@ recorded here rather than taken while a campaign is running.
 **What would tell us it matters:** no board row covers it, and reaching it needs a device that missed
 an edit AND is later handed a bundle containing it - which is the FWD/HEAL shape, not MUT's.
 
+## The harness itself
+
+### P3 - the bubble-action and observation helpers live in one runner, and every other runner re-invents them
+
+`mut.mjs` carries `clickBubbleIcon` / `deleteBubble`, which locate a message's controls by their
+lucide icon class and prove the click was RECEIVED - its own header calls this "a pattern the rest of
+the harness could adopt". `search.mjs` did not adopt it and hand-rolled a confirm click that pressed
+the wrong button for as long as the check has existed (2026-08-22, see `CHANGELOG.md`). The same
+split exists for observation: `longestSilence` turns a hole in a client's timeline into a value, MUT's
+`finish()` attaches it to every non-PASS verdict, and no other phase does - which is exactly the
+evidence rung 5's one SEARCH-2 miss needed and did not have.
+
+**Why it is not done yet, and this is the whole reason it is written down.** The shared home is
+`chat.mjs`, and every phase consults `chat.mjs`. Moving a helper there invalidates MSG, TYPE, READ and
+MUT under [testing-methodology](testing-methodology.md) 33 - "a board row whose phase was touched
+anywhere gets re-run rather than reasoned about" - which is hours of ladder time to buy a refactor
+nothing is currently failing for. So it waits for a moment when the rig can be changed wholesale and
+the affected phases re-run together, rather than being slipped in mid-ladder where it would silently
+cost four phases their verdicts.
+
 ## Search
 
 ### P3 - `ChatArea.svelte` swallows three branches and has no logger at all

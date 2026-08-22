@@ -286,6 +286,12 @@ after its deploy - build the run that DISCRIMINATES, and assert the build id, ne
 - **A promise that has REJECTED stays rejected**, so state a retry writes must be read from OUTSIDE the thing that failed. [posts](frontend/modules/posts.md#why-the-feed-reads-postsoverride-outside-the-await)
 - **A synchronous "unknown" PLACEHOLDER is indistinguishable from an answer once stored** - return the absence, never the label. [arch](frontend/architecture.md#a-synchronous-unknown-placeholder-is-indistinguishable-from-an-answer)
 
+**Effects, and the writes that feed them**
+
+- **A BARE CALL INSIDE AN EFFECT INHERITS THE CALLEE'S READS AS DEPENDENCIES.** `$effect(() => { void q; doThing(); })` does not depend on `q` alone - it depends on everything `doThing` touches synchronously. Declare the triggers and `untrack` the call, or the effect's dependency list is whatever the callee happens to read today. [chat](frontend/modules/chat.md)
+- **A FUNCTION THAT WRITES STATE ITS OWN CALLER READS IS A LOOP WITH THE TRIGGER ALREADY ATTACHED** - and a `set` mints a new object whether or not the contents changed, so "it only writes the same value back" does not stop it. Write on CHANGE, and never let a reader be the writer of what re-invokes it. Channel search was both at once: 4956 requests for one query, no result, no error. [chat](frontend/modules/chat.md)
+- **A FILTER MUST COMPARE WHAT THE ROW DISPLAYS, NOT WHAT THE ROW IS KEYED BY.** A DM's `name` is the persisted `userId::peerId`; the label is resolved separately. Resolve once and let the filter and the render read the same value, or typing the visible name hides the row. [chat](frontend/modules/chat.md)
+
 **Strings, and who is allowed to write them**
 
 - **Nothing types a string as user-visible, so no compiler enforces Paraglide.** Default to it for ANY new user-visible string on the FIRST draft; a file's existing raw literals are not a precedent to extend. [arch](frontend/architecture.md#i18n-paraglide)

@@ -152,9 +152,8 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     cost and the decisions it turns on are on
     [cross-client-testing](docs/wiki/cross-client-testing.md) and
     [cross-client-campaign](docs/wiki/cross-client-campaign.md), the only copies. **Where the ladder
-    stands: rungs 1 MSG and 2 TYPE green x1, 3 READ green CLEAN 5/5, 4 MUT green CLEAN 5/5. Next: 5
-    SEARCH, 6 MENTION, then FWD, GRP, COMM, DEL, TAB, MULTI, LIFE, NOTIF, CALL, HEAL, PIN,
-    CORRUPT.** The board carries every verdict; do not restate them here.
+    stands: rungs 1 MSG and 2 TYPE green x1, 3 READ, 4 MUT and 5 SEARCH green CLEAN 5/5. Next: 6
+    MENTION, then FWD, GRP, COMM, DEL, TAB, MULTI, LIFE, NOTIF, CALL, HEAL, PIN, CORRUPT.** The board carries every verdict; do not restate them here.
     **THE BOARD'S FORMAT IS NOW FIXED by the user (2026-08-22): a `PASS` cell is `PASS X/X` and a time
     if the time means anything, nothing else.** Prose only for a non-clean verdict or an unresolved
     item. The rule is written at the top of the board itself.

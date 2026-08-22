@@ -26,7 +26,7 @@ Updated after every run.
 | 2 TYPE | 5 | `e9d951d7` | **5/5 `PASS` x1** (2026-08-21), server clean. An earlier 5/5 x5 stands on superseded runner `25376b86` |
 | 3 READ | 10 | `70497810` | **9/9 runnable `PASS` x5 - 45 verdicts, CLEAN 5/5**, server clean every pass (2026-08-21), runner `2c2b83d1b748`. READ-5 `SKIPPED`: needs four readers, the estate has two accounts |
 | 4 MUT | 21 | `6748f6b8` | **CLEAN x5 2026-08-22** on runner `e3e5a60bb007` (+ x1 on `fbf202d9d9d9`), fleet homogeneous on `6748f6b8`: 24 of the 25 verdict rows `PASS` 5/5 (21 checks, four of which run in both venues), MUT-20 `SKIPPED` (unarmable until 2026-11-09). MUT-18 found a real convergence defect - two devices of one account edited one message and settled on different bodies, permanently and silently - now fixed and pinned |
-| 5 SEARCH | 6 | - | `pending` |
+| 5 SEARCH | 6 | `1f396ac7` | **CLEAN x5 2026-08-22** on runner `928f8b286dac`: 6/6 `PASS` 5/5, server clean every pass. Found two real defects - a channel search that looped the client against our own server (4956 requests for one query), and a sidebar filter that hid a conversation when you typed its name - both fixed and re-measured on the build above |
 | 6 MENTION | 6 | - | `pending` |
 | 7 FWD | 5 | `25376b86` | 5/5 `passed` - 20 verdicts, 20 `PASS`; FWD-2 25/25 by hand |
 | 8 GRP | 9 | - | `pending` |
@@ -204,6 +204,46 @@ sender's is the product. See [testing-methodology](testing-methodology.md) 34.
 
 Client-side, in-conversation, substring-only: no server index, no global search.
 
+**Rung 5 found two real defects, and neither was the one this phase was built to look for.**
+
+**SEARCH-4: opening search in a channel looped the client against our own server.** One query in a
+1052-message channel sent 4956 requests to `/api/channels/:id/messages`, was still sending them ten
+minutes later, and never rendered a result - counter at `0/0`, console clean, nothing on screen. The
+effect that runs the search called it bare, so it inherited the search's own reads as dependencies,
+including the conversation; the channel branch then merged the fetched history back into that
+conversation with an unconditional write. The search was its own trigger and could not converge.
+Both halves are closed - see `CHANGELOG.md` and [durable-rules](durable-rules.md).
+
+**SEARCH-6: typing a contact's name into the sidebar filter hid that conversation.** The filter
+compared `convo.name`, which for a DM is the persisted `userId::peerId` key, while the row displays a
+separately resolved label. The presentation is resolved once now and shared by filter and row.
+
+**SEARCH-5 PASSES ON A GAP, BY DESIGN, and that is a finding rather than a green light.** Search folds
+case and NOT diacritics, in all three places that match - `useConversations.svelte.ts:438,480` for
+which messages match, `messageDisplay.ts:218 splitWithHighlight` for the highlight, and
+`ChatArea.svelte:622` for the query. Re-verified against source on 2026-08-22. On a French corpus
+"reunion" cannot find the accented spelling. The check asserts the DIRECTION (no-accent query misses,
+accented-uppercase query hits), so it would also fail if the behaviour silently changed. Whether to
+fold diacritics is a product decision and is not taken here.
+
+**And one FAIL here was the harness, not the product** - recorded because the distinction is the
+phase's whole value. SEARCH-3 reported a deleted message still findable by its original text.
+`button:last-of-type` is "last button among ITS OWN siblings", so `Modal.svelte`'s lone header
+`Fermer` qualified and preceded the footer in document order: the check pressed dismiss and never
+deleted anything. It now activates by text, asserts what it activated, and asserts the tombstone
+before asking search anything.
+
+**Channel search DOES cover the whole history, and that is a verified negative rather than an
+assumption.** After the loop was fixed SEARCH-4 settled at two `/messages` pages, which looked like a
+walk stopping early against a 1057-row channel. It is not: the server's `limit` counts NON-SILENT
+rows and then carries the reaction rows along with them, and this channel is 163 bodies to 894
+reactions. Page one takes all 163 bodies, page two comes back short, the walk ends - complete.
+`pagesWalked` is recorded on the row so the next reader measures this instead of re-deriving it.
+
+**It does sharpen the cap gap below, though.** The 2000 is a cap on ROWS, and 85% of the rows here
+are reactions - so a heavily-reacted channel reaches the cap at a small fraction of 2000 actual
+messages, and the truncation it then hides is correspondingly closer than the number suggests.
+
 **A gap no row here measures, verified on the source 2026-08-22.** A channel search asks the server
 for at most 2000 rows; when the server reports the history was capped, `searchChannelHistory`
 (`composables/useConversations.svelte.ts:448`) writes one log line and leaves `searchLimitedToLoaded`
@@ -214,12 +254,12 @@ per [testing-methodology](testing-methodology.md) 31.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| SEARCH-1 | A term in a recent message is found and highlighted; prev/next walk the hits | `W1 W2` | `pending` |
-| SEARCH-2 | A term only in OLD history: does `searchLimitedToLoaded` tell the truth? | `W1 W2` | `pending` |
-| SEARCH-3 | Deleted messages excluded; edited messages match their NEW text | `W1 W2` | `pending` |
-| SEARCH-4 | Channel search pulls up to 2000 rows and decrypts them - time it | `W1 W2` | `pending` |
-| SEARCH-5 | Accents and case: a French corpus is the real corpus here | `W1 W2` | `pending` |
-| SEARCH-6 | The sidebar filter is a DIFFERENT search - assert it does not claim more | `W1 W2` | `pending` |
+| SEARCH-1 | A term in a recent message is found and highlighted; prev/next walk the hits | `W1 W2` | `PASS` 5/5 |
+| SEARCH-2 | A term only in OLD history: does `searchLimitedToLoaded` tell the truth? | `W1 W2` | `PASS` 5/5 - one `ERROR` in the six, the channel-send intermittent of [testing-methodology](testing-methodology.md) 34, not attributed |
+| SEARCH-3 | Deleted messages excluded; edited messages match their NEW text | `W1 W2` | `PASS` 5/5 |
+| SEARCH-4 | Channel search pulls up to 2000 rows and decrypts them - time it | `W1 W2` | `PASS` 5/5 - 322-474 ms, 2 pages, 163 bodies |
+| SEARCH-5 | Accents and case: a French corpus is the real corpus here | `W1 W2` | `PASS` 5/5 - passes ON the gap, see above |
+| SEARCH-6 | The sidebar filter is a DIFFERENT search - assert it does not claim more | `W1 W2` | `PASS` 5/5 |
 
 ## 6 - MENTION - mentions and what they trigger
 
