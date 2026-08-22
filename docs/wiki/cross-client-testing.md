@@ -28,7 +28,7 @@ Updated after every run.
 | 4 MUT | 21 | `6748f6b8`, A1 `a7981206` | **`PASS` 24/24 x5** on runner `e3e5a60bb007`, + x1 on `fbf202d9d9d9`. MUT-20 `SKIPPED`: unarmable until 2026-11-09 |
 | 5 SEARCH | 6 | `1f396ac7` | **`PASS` 6/6 x5** on runner `928f8b286dac` |
 | 6 MENTION | 6 | `1f396ac7`, A1 `a7981206` | **`PASS` 6/6 x5** on runner `cdc081edabc0` |
-| 7 FWD | 5 | `25376b86` | **`passed` 5/5**; FWD-2 25/25 by hand |
+| 7 FWD | 6 | `1f396ac7`, A1 `a7981206` | **`PASS` 5/5 x5** on FWD-1 and FWD-5-repeat. FWD-3/4/5 `3/5`: `fwd345.mjs` recorded nothing in passes 2 and 3 and both captures were overwritten - re-measure owed. FWD-2 owed on a current runner |
 | 8 GRP | 9 | - | `pending` |
 | 9 COMM | 22 | - | `pending` |
 | 10 DEL | 10 | - | `pending` |
@@ -188,11 +188,12 @@ Client-side, in-conversation, substring-only: no server index, no global search.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| FWD-1 | Channel -> DM forward, the exact shape of the reported prod loss | `W1 W2` | `passed` 5/5 |
+| FWD-1 | Channel -> DM forward, the exact shape of the reported prod loss | `W1 W2` | `PASS` 5/5 - `46d392cdd788` |
 | FWD-2 | The same, 25 times in a loop - any single miss is the bug | `W1 W2` | `passed` 25/25 - `5aaa1047`, by hand (`node fwd.mjs 25`) |
-| FWD-3 | Forward while the sender goes offline mid-send | `W1 W2` | `passed` 5/5 |
-| FWD-4 | Forward from A1, backgrounded 200 ms later | `+A1` | `passed` 5/5 |
-| FWD-5 | Forward into a conversation not opened this session | `W1 W2` | `passed` 5/5 |
+| FWD-3 | Forward while the sender goes offline mid-send | `W1 W2` | `PASS` 3/5 - `31e6989802bb`; no verdict recorded in 2 of 5 passes, re-measure owed |
+| FWD-4 | Forward from A1, backgrounded 200 ms later | `+A1` | `PASS` 3/5 - `31e6989802bb`; same two passes, re-measure owed |
+| FWD-5 | Forward into a conversation not opened this session | `W1 W2` | `PASS` 3/5 - `31e6989802bb`; same two passes, re-measure owed |
+| FWD-5-repeat | The same shape N rounds from a FRESH session each - the volume FWD-5 cannot carry alone | `W1 W2` | `PASS` 5/5 - `4e27a34e7b8e` |
 
 ## 8 - GRP - group membership and invitations
 

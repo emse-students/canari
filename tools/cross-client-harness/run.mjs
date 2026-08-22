@@ -641,6 +641,19 @@ if (!flag('no-preflight')) {
 const repeat = Math.max(1, Number(argv[argv.indexOf('--repeat') + 1]) || 1);
 const passes = [];
 
+/**
+ * WHICH PASS IS SPEAKING, so its capture is not overwritten by the pass after it.
+ *
+ * `LOG_DIR` is one directory per RUN, which protects a run from the NEXT run and does nothing at all
+ * inside a `--repeat`: every pass wrote `<PHASE>-<script>.log`, so pass 5 destroyed pass 2's output.
+ * The passes that need reading are exactly the ones that fail, and a failing pass is always followed
+ * by another. Measured 2026-08-22 on FWD x5: `fwd345.mjs` recorded no verdict in passes 2 and 3, and
+ * by the time the cross-pass table said so both captures had been replaced by pass 4's and pass 5's.
+ * The phase had to be re-run to read what it had already printed once - the exact loss the
+ * whole-output write exists to prevent.
+ */
+let passLabel = '';
+
 /** One character per verdict, and the legend below the table is generated from this same map. */
 const CELL = {
   PASS: '.',
@@ -664,6 +677,7 @@ const CELL = {
 };
 
 for (let pass = 1; pass <= repeat; pass++) {
+  passLabel = repeat > 1 ? `pass${pass}-` : '';
   if (repeat > 1) console.log(`\n${'='.repeat(60)}\nPASS ${pass}/${repeat}\n${'='.repeat(60)}`);
   try {
     passes.push(await runOnce(jobs.map((j) => ({ ...j }))));
@@ -843,7 +857,7 @@ for (const job of jobs) {
        * `results.ndjson` does not cover this - it records the VERDICT and its condensed dirt, which
        * is a different question from what the clients actually said.
        */
-      job.log = `${LOG_DIR}/${String(job.phase)}-${file.replace(/\.mjs$/, '')}.log`;
+      job.log = `${LOG_DIR}/${passLabel}${String(job.phase)}-${file.replace(/\.mjs$/, '')}.log`;
       try {
         writeFileSync(job.log, tail);
       } catch (e) {
