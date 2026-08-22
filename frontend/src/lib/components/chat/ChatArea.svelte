@@ -710,6 +710,18 @@
         entering = true;
         tick().then(() => fillViewportThenPin());
         isNearBottom = true;
+      } else if (hasNewMessage && (entering || catchupActive)) {
+        // Growth while still entering/catching up is the initial page for THIS conversation
+        // still arriving late - e.g. a cold-started app landing here from a notification before
+        // local history finished loading, so `hasConversationChanged` fired on a near-empty
+        // list and pinned `windowStart` near 0. Left alone, that stale `windowStart` would go on
+        // pointing at the same small slice forever - nothing ever advances it forward as the
+        // list grows underneath it, only clamps it from going past the end. Re-run the same
+        // entry pin rather than the "only scroll if already near bottom" logic below, which is
+        // for a genuinely new live message arriving while the reader is already settled in.
+        windowStart = Math.max(0, messageGroups.length - INITIAL_RENDER_GROUPS);
+        entering = true;
+        tick().then(() => fillViewportThenPin());
       } else if (hasNewMessage && !catchupActive) {
         // Always scroll to bottom for own messages; for others only if already near bottom.
         const ownMessageAdded = c.messages.at(-1)?.isOwn === true;

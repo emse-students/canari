@@ -1107,6 +1107,34 @@ and list length, which is the assertion that fails against the old arithmetic.
 The replacement itself - the reason the window and the list could disagree at all - is gone as of
 2026-08-12, see below.
 
+### The mirror case: `windowStart` too SMALL after the list grows (mobile notification-tap)
+
+`clampWindowStart` only ever pulls a stored index DOWN to fit a list that shrank; nothing pushes it
+UP to follow a list that grew. That asymmetry was invisible until a report from a real phone:
+tapping a notification opened the conversation, but it showed the wrong (older) messages and did
+not land at the bottom.
+
+The entry effect (`ChatArea.svelte`) recomputes `windowStart` to the tail in exactly one place -
+`hasConversationChanged`, when the conversation KEY changes - and treats every later change to the
+message count as an ordinary live message, which only conditionally calls `scrollToBottom` and
+never touches `windowStart` at all. That distinction assumes the conversation's message array is
+already settled by the time the key changes. On a warm, already-open app it usually is. On a
+cold-started app landed on by a notification tap, `ChatBackgroundService` has to wait for
+`conversationsRestored` before it can even open the target - and the conversation object it opens
+into can still be near-empty at that instant, so `hasConversationChanged` fires against a tiny list
+and pins `windowStart` near 0. Moments later `loadHistoryForConversation`'s async merge (see below)
+grows the SAME conversation's message array by dozens of entries. The key has not changed, so this
+lands in the "ordinary new message" branch, which does not move `windowStart` - it stays pointing at
+the small slice from before the real page arrived, and "scroll to bottom" scrolls to the bottom of
+that stale, rendered slice rather than the true tail.
+
+The fix does not touch `clampWindowStart` - its safety invariant (a non-empty list always yields a
+non-empty window) is correct as stated and unrelated to this direction of the mismatch. Instead the
+entry effect now treats message-count growth THE SAME as a conversation change - re-running the
+same tail-pin - whenever it happens while `entering` or `catchupActive` is still true, i.e. while
+the initial page for THIS conversation could still be arriving late. A live message from a peer
+while the reader is already settled in still only conditionally scrolls, unchanged.
+
 ## A page read is merged into the list, never assigned over it
 
 `loadHistoryForConversation` used to END by assigning `getMessagesPage(id, key,
