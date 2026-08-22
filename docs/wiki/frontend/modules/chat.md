@@ -303,6 +303,39 @@ them.
 sufficient rather than advisory: a member can lie about the message id, never about who it is.
 Covered by `systemMessageHandler.mutationOwnership.test.ts`.
 
+### And then it is ORDERED, because two devices can edit at once
+
+Authorisation says whether an edit may apply. It does not say which of two edits wins, and until
+2026-08-22 nothing did: `edit_message` was applied on arrival by all three paths that apply one - the
+live handler, the history replay (`historySystemEvents.ts`) and the sending device's own optimistic
+write (`useMessaging.handleEditMessage`). "Whatever arrived last" is a different answer per device.
+Two devices of one account edited one message; each applied its own, then took the other's; they
+ended on OPPOSITE bodies and never moved again. No error, nothing on screen. The campaign's MUT-18
+exists for this and caught it.
+
+**`editSupersedes(next, held)`** (`utils/chat/editPrecedence.ts`) is the total order, and all three
+paths consult it: strictly later `editedAt` wins, a tie goes to the greater content string. A row
+carrying no `editedAt` has no edit to defend, so anything supersedes it. A refusal in the live path
+logs `[MLS] Dropped an edit of … - the row already holds a later one`.
+
+**Why a wall clock is acceptable here**, when this repo distrusts them everywhere else. Convergence
+does not need the RIGHT winner between two concurrent edits - there is no such thing - it needs the
+SAME winner on every device. `editedAt` is stamped by the editing device, so two skewed clocks change
+WHICH edit survives and cannot make two devices disagree, because each decides from the same pair of
+values. Arbitrary-but-agreed is a correct rule; arrival order is not a rule at all. The tie is broken
+on content for the same reason: two devices must reach one answer from one pair.
+
+**The same act carries ONE instant.** `editMessage` takes `editedAt` from its caller and
+`handleEditMessage` writes that same value locally. Both used to read the clock separately, so the
+sending device stored a timestamp milliseconds off the one it broadcast - invisible while the value
+was only displayed, and a device able to lose to its own frame once it decides the winner.
+`handleTogglePin` had always done this correctly and says so in place.
+
+`pinStore.supersedes` is the same pattern for the pin register, and predates this: the argument was
+written down there before it was applied here. Covered by `editPrecedence.test.ts` and
+`systemMessageHandler.editPrecedence.test.ts`, the latter asserting the convergence property by
+replaying one pair in both orders.
+
 ### Channel invitation card
 
 Inviting someone to a community sends a `channel_invitation` system event into the 1:1 MLS DM, and

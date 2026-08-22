@@ -60,6 +60,33 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **Two devices of one account edited the same message and settled on DIFFERENT bodies, permanently.**
+  W1 ended on A1's text, A1 ended on W1's, the peer agreed with W1, and nothing ever moved again -
+  both edits had succeeded, there was no error, and nothing on screen said the two devices disagreed.
+  Found by the cross-client campaign's MUT-18, which exists for exactly this and only reached it once
+  its own race was removed (see `docs/wiki/testing-methodology.md` 32).
+
+  `edit_message` was applied on arrival, unconditionally, by all three paths that apply one: the live
+  handler, the history replay, and the sending device's own optimistic write. "Whatever arrived last"
+  is not a convergence rule - each device applied its own edit and then the other's frame overwrote
+  it, so the two ended on opposite bodies BECAUSE they received in opposite orders. The pin register
+  had solved the same problem one file away and written the argument down in `pinStore.supersedes`:
+  two devices must reach the same answer from the same pair, and "keep what I had" depends on arrival
+  order.
+
+  `editSupersedes` (`utils/chat/editPrecedence.ts`) is that rule for edits - strictly later wins, tie
+  broken on the content - and all three paths consult it. Convergence does not need the RIGHT winner
+  between two concurrent edits, because there is not one; it needs the SAME winner everywhere, which
+  is what makes a sender-stamped `editedAt` sufficient: two skewed clocks change which edit survives
+  and cannot make two devices disagree, since every device decides from the same pair of values.
+
+  **And the sending device dated one act twice.** `editMessage` read the clock for the broadcast while
+  `handleEditMessage` read it again for the local apply, so a device stored a timestamp milliseconds
+  off the one it told everyone else - `handleTogglePin`, twenty lines below, has always taken the
+  instant once and says why. Harmless while the value was only displayed, and not harmless once it
+  decides the winner: a device disagreeing with its own broadcast can lose to itself. `editMessage`
+  now takes `editedAt` from its caller.
+
 - **Nobody could be made an association admin: the server refused the preset its own client sends.**
   `POST /associations/:id/members` and `PATCH .../members/:userId` answered
   `{"message":["permissions must not be greater than 1023"],"statusCode":400}` for every attempt.

@@ -182,6 +182,12 @@ The largest area here, and the one that has cost the most. `chat` = [chat](front
 `hr` = [history-reconciliation](protocols/history-reconciliation.md),
 `cd` = [chat-delivery](services/chat-delivery.md), `mob` = [mobile](frontend/mobile.md).
 
+**Converging on one answer**
+
+- **APPLYING A MUTATION ON ARRIVAL IS NOT A CONVERGENCE RULE - it is a different answer per device.** `edit_message` was applied unconditionally by all three paths that apply one, so two devices of one account editing one message each applied their own and then took the other's, ending on OPPOSITE bodies, permanently, with no error. Every mutation that two devices can issue at once needs a total order they both compute: `editSupersedes` and `pinStore.supersedes` are that, and a tie needs a rule for the same reason the ordering does. [chat](frontend/modules/chat.md)
+- **CONVERGENCE DOES NOT NEED THE RIGHT WINNER, ONLY THE SAME WINNER** - which is what makes a sender-stamped wall clock sufficient here where the repo otherwise distrusts clocks. Two skewed clocks change WHICH edit survives; they cannot make two devices disagree, because each decides from the same pair of values. State that trade-off on the function, so the next reader does not "fix" it into arrival order. [chat](frontend/modules/chat.md)
+- **ONE ACT, ONE INSTANT.** A local apply and its broadcast that each read the clock date the same act differently. Harmless while the value is only displayed, and not harmless the moment it decides a winner: a device that disagrees with its own broadcast can lose to itself. The caller takes the instant and passes it to both halves. [chat](frontend/modules/chat.md)
+
 **The queue, and cancelling what is in it**
 
 - Every step is best-effort, so **every swallowed branch logs**. [chat](frontend/modules/chat.md#outbox-outbound-delivery)
