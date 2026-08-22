@@ -357,6 +357,23 @@ body, so it cannot diverge two bodies - and it can leave a device showing a pre-
 message content is a different question), so it is recorded in [backlog](../../backlog.md) rather
 than changed.
 
+**THE FOUR APPLIERS, enumerated 2026-08-22**, because an invariant held in one of them is not held.
+Every place a message mutation is written was found by grepping the writes themselves
+(`isEdited: true`, `isDeleted: true`), not by reading the paths one expects:
+
+| Applier | Ordering | Tombstone |
+| --- | --- | --- |
+| `systemMessageHandler` live path | `editSupersedes` | refuses an edit of a deleted row |
+| `historySystemEvents` replay | `editSupersedes`, plus the deletes seen earlier in the page | same |
+| `history.ts` post-save pass | last edit in the page | `if (deletion) ... else if (edit)` - always had it |
+| `systemMessageHandler` `history_bundle` merge | n/a - never writes a body | replaces the body with the tombstone (D5) |
+
+The bundle merge is the interesting row: it takes the `isEdited` FLAG and the `editedAt`, never the
+body, so it cannot diverge two bodies - and it can leave a device showing a pre-edit body marked
+"edited". That is narrower than the other three on purpose (trusting a peer's copy of somebody else's
+message content is a different question), so it is recorded in [backlog](../../backlog.md) rather
+than changed.
+
 `pinStore.supersedes` is the same pattern for the pin register, and predates this: the argument was
 written down there before it was applied here. Covered by `editPrecedence.test.ts` and
 `systemMessageHandler.editPrecedence.test.ts`, the latter asserting the convergence property by

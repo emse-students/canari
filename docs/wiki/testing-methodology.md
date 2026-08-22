@@ -1392,6 +1392,33 @@ Generally: **name the two things you claim happen at once, and check that setup 
 in the window.** Where the two paths cost different amounts to reach the starting line, the cheap one
 finishes the whole race while the expensive one is still walking to it.
 
+#### 33. A RUN IS INVALIDATED BY A CHANGE TO ANYTHING IT CONSULTS, NOT ONLY TO THE FILE WHOSE SHA IT RECORDS
+
+`checkSha` is the sha256 of the runner, and it is the campaign's whole answer to "which code produced
+this verdict". It covers one file. A verdict also depends on `chat.mjs`, on `watch.mjs`'s classifier,
+on `checks.mjs`'s declarations - none of which move it.
+
+Met twice in one session, in both directions:
+
+- **The gap hiding a fix.** `mut.mjs`'s sha did not change when `chat.mjs`'s `openDM` was fixed, so a
+  verdict produced by the repaired code was recorded under the sha of the run that had failed.
+- **The gap corrupting a measurement.** A `NOTABLE` rule was added to `watch.mjs` DURING an x5, to
+  classify a line the run itself had just produced. Each check is a separate process, so passes 1-2
+  judged `clean` by the old rules and 3-5 would have judged it by the new ones. The tally would have
+  mixed `PASS` and `PASS-DIRTY` for a reason that had nothing to do with the product, and the board
+  cell built on it would have been wrong with nothing to show it. The run was killed and restarted.
+
+The operational rule is the cheap half and it is absolute: **while a repeated run is in flight, the
+rig is frozen.** Not the product - prod is the test server and a deploy mid-run is a known, detected
+condition - the RIG. If a classification is owed to a line the run just produced, that is a finding to
+write down and apply to the NEXT run, never to this one.
+
+The deeper half is unresolved and stated so it is not mistaken for solved: a verdict names one file's
+sha while depending on several. Hashing the whole directory would move every sha on every edit and
+make the field useless; hashing the import graph is the honest fix and nothing does it. Until then,
+**a verdict's runner sha is a necessary condition for believing it, never a sufficient one**, and a
+board row whose phase was touched anywhere gets re-run rather than reasoned about.
+
 ## Observation is part of the check, not a debugging step
 
 Decided 2026-08-06, after two shipped bugs came out of the logs of **passing** checks.

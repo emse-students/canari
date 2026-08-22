@@ -44,6 +44,31 @@ const CASES = [
     'notable',
   ],
   ['log', '[14:24:06] [MLS] Frames are being lost in 642f389a… - reconciling this conversation', 'notable'],
+  // THE THREE MUTATION REFUSALS, one fixture each because the three mean different things: a peer
+  // sending a frame it had no right to send, two edits crossing, and an edit landing on a tombstone.
+  // The middle one is verbatim from the first MUT-18 run after the convergence fix shipped, where it
+  // landed in `unexplained` and turned a PASS into PASS-DIRTY - the correct place for a line nobody
+  // had classified, and the reason this fixture exists.
+  [
+    'log',
+    '[03:52:42] [MLS] Dropped an edit of ad2d5d3b dated 1787363560648 - the row already holds a later one',
+    'notable',
+  ],
+  [
+    'log',
+    '[03:52:42] [MLS] Dropped an edit of ad2d5d3b - the message is deleted and a tombstone is final',
+    'notable',
+  ],
+  [
+    'log',
+    '[03:52:42] [MLS] Refused an edit of a message owned by a1b2c3d4 from e5f6a7b8 - only the author may mutate it',
+    'notable',
+  ],
+  [
+    'log',
+    '[03:52:42] [MLS] Refused a delete of a message owned by a1b2c3d4 from e5f6a7b8 - only the author may mutate it',
+    'notable',
+  ],
   ['log', '[14:24:09] [HISTORY_REQ] 642f389a... same state as d82cd226… (7e5952f8…) - nothing to do', 'notable'],
   ['log', '[14:26:02] [SYNC] WASM purge skipped - server list unreliable (fetchOk=false, 9 group(s))', 'notable'],
   ['log', '[14:25:41] [LIFECYCLE] Resume: already connected (flag=true, socket=false).', 'notable'],

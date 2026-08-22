@@ -468,6 +468,19 @@ const NOTABLE = [
   // dropped without being rendered or persisted, so nothing else will ever mention them. Notable and
   // not benign: whatever else a run is measuring, this line means it lost something.
   /vanished between buffering and flush/i,
+  // A MUTATION THIS DEVICE REFUSED, and each of the three reasons says something different.
+  //
+  // `Refused an edit|a delete ... only the author may mutate it` is a peer sending a frame it had no
+  // right to send - rare, and never routine. `Dropped an edit ... the row already holds a later one`
+  // is two edits of one message CROSSING, which is the whole subject of MUT-18 and used to end in
+  // permanent divergence. `a tombstone is final` is an edit arriving on a deleted row, which used to
+  // put the deleted text back on screen.
+  //
+  // All three are the ordering and authorisation rules working, so none breaks `clean` - and all
+  // three are NOTABLE rather than BENIGN because each one means two devices did something at once.
+  // The middle one appeared in `unexplained` on the first run after the fix shipped (2026-08-22),
+  // which is the correct place for a line nobody had classified yet.
+  /\[MLS\] (Refused an edit|Refused a delete|Dropped an edit)/,
   // A LIVE MESSAGE ARRIVING FOR A CHANNEL THIS DEVICE HAS NOT LOADED. `channelEventHandler` only
   // opens a bubble for a channel already in `conversations`, so the row is dropped from the LIVE
   // path and appears on the next history load instead. That is the design, and it is why this is
