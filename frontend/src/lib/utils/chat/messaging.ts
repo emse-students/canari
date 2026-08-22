@@ -232,13 +232,22 @@ export async function removeReaction(
     encodeAppMessage(mkReaction(messageId, emoji, at, true))
   );
 }
-/** Captures an "edit_message" system event in the durable outbox so all peers update the message content in their local history. */
+/**
+ * Captures an "edit_message" system event in the durable outbox so all peers update the message
+ * content in their local history.
+ *
+ * `editedAt` IS THE CALLER'S, for the same reason `setMessagePinned` takes its `at`: the local apply
+ * and the broadcast are one act and must carry one instant. This read the clock itself, so the
+ * sending device stored a timestamp a few milliseconds off the one it told everyone else - and once
+ * that timestamp decides which of two concurrent edits wins, a device disagreeing with its own
+ * broadcast is a device that can lose to itself.
+ */
 export async function editMessage(
   messageId: string,
   newContent: string,
+  editedAt: number,
   deps: MessageActionDeps
 ): Promise<void> {
-  const editedAt = Date.now();
   await enqueueControlEvent(
     deps.conversation.id,
     encodeAppMessage(mkSystem('edit_message', JSON.stringify({ messageId, newContent, editedAt })))

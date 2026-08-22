@@ -9,6 +9,7 @@ import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { applyReaction, mergeReactions } from '$lib/utils/chat/messageReactions';
+import { editSupersedes } from '$lib/utils/chat/editPrecedence';
 import { mergeHistoryFloor } from '$lib/utils/chat/historyWindow';
 import {
   mergeReadWatermark,
@@ -274,10 +275,26 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       // is read later, and that is where the claim can still be checked.
       deletedMessages.set(data.messageId, { by: senderNorm });
     } else if (parsed.system.event === 'edit_message' && data.messageId && data.newContent) {
-      const editedAt = typeof data.editedAt === 'number' ? new Date(data.editedAt) : new Date();
+      // Dated by the sender, exactly as the live path and the pin path are, so a replay cannot undo
+      // an edit this device already holds that is newer - and two devices replaying the same log in
+      // different orders reach the same body. `editSupersedes` carries the whole rule; a frame from
+      // a client too old to send `editedAt` is dated on arrival, which is the best clock a replay
+      // has for it. Without this the accumulator below kept whichever event came LAST in page
+      // order, which is not an order any two devices share.
+      const editedAtMs =
+        typeof data.editedAt === 'number'
+          ? data.editedAt
+          : (parseServerTimestampMs(msg.timestamp) ?? Date.now());
+      const editedAt = new Date(editedAtMs);
+      const incoming = { editedAt: editedAtMs, content: data.newContent };
       const convo = getConversation(contactName);
       const known = convo?.messages.find((m) => m.id === data.messageId);
       if (known && !replayMutationIsAuthorised(known, senderNorm, 'edit')) return;
+      // Both the in-memory row and anything an earlier entry of THIS page already accumulated have
+      // to be outranked: the page is walked in log order, which is not edit order.
+      const heldInPage = editedMessages.get(data.messageId);
+      if (heldInPage && !editSupersedes(incoming, heldInPage)) return;
+      if (known && !editSupersedes(incoming, known)) return;
       if (convo && known) {
         setConversation(contactName, {
           ...convo,

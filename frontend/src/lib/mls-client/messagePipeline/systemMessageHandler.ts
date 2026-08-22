@@ -8,6 +8,7 @@ import {
 } from '$lib/envelope';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { applyReaction, mergeReactions } from '$lib/utils/chat/messageReactions';
+import { editSupersedes } from '$lib/utils/chat/editPrecedence';
 import { purgeConversation, retireConversation } from '$lib/utils/chat/conversations';
 import { digestIdentity, noteProbeReceived } from '$lib/utils/chat/historyDigestRendezvous';
 import { parseHistoryDigest, selectEntryIdsForPrefixes } from '$lib/utils/chat/historyManifest';
@@ -663,7 +664,20 @@ export async function handleSystemEvent(
         return true;
       if (idx !== -1) {
         const orig = c.messages[idx];
-        const editedAt = typeof data.editedAt === 'number' ? new Date(data.editedAt) : new Date();
+        const editedAtMs = typeof data.editedAt === 'number' ? data.editedAt : Date.now();
+        // AN EDIT OLDER THAN THE ONE THIS ROW ALREADY CARRIES IS DROPPED, and dropping it is what
+        // makes two devices agree. Applying on arrival meant the answer was "whichever frame came
+        // last", which differs per device: MUT-18 crossed two edits from two devices of one account
+        // and left W1 on A1's text and A1 on W1's, permanently, with no error anywhere. See
+        // `editSupersedes` for why a sender-stamped clock is enough - convergence needs the same
+        // winner, not the right one.
+        if (!editSupersedes({ editedAt: editedAtMs, content: data.newContent }, orig)) {
+          log(
+            `[MLS] Dropped an edit of ${String(data.messageId).slice(0, 8)} dated ${editedAtMs} - the row already holds a later one`
+          );
+          return true;
+        }
+        const editedAt = new Date(editedAtMs);
         // No read state is reset here. It used to clear `readBy`, so an edited message showed as
         // read by nobody - which the watermark cannot express and should not: a watermark is
         // monotone, and a peer that never sees the edit would never agree to move back anyway.

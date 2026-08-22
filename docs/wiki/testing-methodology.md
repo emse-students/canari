@@ -1364,6 +1364,34 @@ about the product that it did not measure, that belongs in the comment above it,
 or on the wiki page that owns the mechanism - all three of which a reader knows to date. And a
 finding a check reports must be re-derived by the check, or deleted from it the day it is fixed.
 
+#### 32. PUT ONLY THE THING YOU ARE COMPARING INSIDE THE CONCURRENCY WINDOW
+
+MUT-18 crosses two edits of one message from two devices of one account. It did it by starting a
+whole desktop edit and a whole mobile edit together and awaiting both. Those are not the same length:
+the desktop path is a hover and a click; the mobile path is a 700 ms press, a sheet that animates up
+from the bottom, and a tap on it. So W1 COMMITTED while A1 was still walking its sheet, W1's edit
+reached A1 in six milliseconds, the row re-rendered, and the sheet closed under A1's own tap.
+
+It passed five times and failed the sixth. **The five passes were the same defect as the failure** -
+the window happened to close in the tolerable order. A check whose result depends on which of two
+unequal paths finishes first is not measuring concurrency, it is sampling a scheduler.
+
+The fix is not a longer timeout and not a retry. Both devices are ARMED first - form open, replacement
+typed, nothing sent - one after the other, order and duration irrelevant because no event has left
+either device. Then the two COMMITS are released together. What is inside the window is now exactly
+what the verdict talks about, and the convergence figure changed from 4-76 ms to 232-467 ms because
+the earlier number was measuring a crossing that had largely already happened.
+
+**And the verdict was wrong in the other direction too.** A1's sheet closing under its own tap was
+scored `FAIL` - the product named for a gesture that never landed. Arming is a PRECONDITION, so a
+device that could not be armed has not disagreed with anything: that is `VACUOUS`. This file already
+says a PASSING check that never armed its precondition measures nothing; the failing direction is the
+same statement and is easier to miss, because a `FAIL` looks like the check working.
+
+Generally: **name the two things you claim happen at once, and check that setup for neither of them is
+in the window.** Where the two paths cost different amounts to reach the starting line, the cheap one
+finishes the whole race while the expensive one is still walking to it.
+
 ## Observation is part of the check, not a debugging step
 
 Decided 2026-08-06, after two shipped bugs came out of the logs of **passing** checks.

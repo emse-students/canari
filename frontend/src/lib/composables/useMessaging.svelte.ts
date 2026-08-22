@@ -19,6 +19,7 @@ import {
   deleteMessage,
   setMessagePinned,
 } from '$lib/utils/chat/messaging';
+import { editSupersedes } from '$lib/utils/chat/editPrecedence';
 import { applyPin, isMessagePinned } from '$lib/stores/pinStore.svelte';
 import {
   indexMessagesById,
@@ -1089,7 +1090,12 @@ export function useMessaging() {
     const target = convo.messages.find((m) => m.id === messageId);
     if (!target || !isOwnMessage(target.senderId, ctx.userId)) return;
 
-    await editMessage(messageId, text, {
+    // ONE INSTANT FOR BOTH HALVES - see handleTogglePin below, which has always done this. Taking
+    // it twice dated the local apply and the broadcast differently for the same act, and now that
+    // the timestamp decides which of two concurrent edits survives, the difference is a device that
+    // can lose to its own frame.
+    const editedAt = Date.now();
+    await editMessage(messageId, text, editedAt, {
       mlsService: ctx.ensureMls(),
       userId: ctx.userId,
       deviceKeyB64: ctx.deviceKeyB64,
@@ -1097,8 +1103,15 @@ export function useMessaging() {
     });
     const msgs = [...convo.messages];
     const idx = msgs.findIndex((m) => m.id === messageId);
-    if (idx !== -1) {
-      msgs[idx] = { ...msgs[idx], isEdited: true, editedAt: new SvelteDate(), content: text };
+    // The row is defended against our own edit by the same rule that defends it against a peer's:
+    // if it already holds a later one, this edit lost and the broadcast above will lose everywhere.
+    if (idx !== -1 && editSupersedes({ editedAt, content: text }, msgs[idx])) {
+      msgs[idx] = {
+        ...msgs[idx],
+        isEdited: true,
+        editedAt: new SvelteDate(editedAt),
+        content: text,
+      };
       ctx.conversations.set(ctx.selectedContact, { ...convo, messages: msgs });
       await persistLocalMutation(msgs[idx], ctx);
     }

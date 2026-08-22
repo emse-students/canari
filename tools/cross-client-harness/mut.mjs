@@ -748,17 +748,23 @@ async function deleteBubble(cx, textMatch) {
 }
 
 /**
- * Fills the ALREADY OPEN inline edit form and saves it.
+ * Types the replacement into the OPEN edit form and stops there - the commit is a separate call.
  *
- * Opening the form is the caller's half because the two platforms do it differently and only
- * differently: the desktop hover toolbar's pencil, or the phone's long-press action sheet. What
- * follows is identical - `MessageEditForm.svelte` is one component - so it is written once.
+ * OPENING THE FORM IS THE CALLER'S HALF, because the two platforms differ there and only there: the
+ * desktop hover toolbar's pencil, or the phone's long-press action sheet. Everything from here is
+ * identical - `MessageEditForm.svelte` is one component - so it is written once. The textarea and
+ * the Save button carry no stable hook (see header comment); the textarea is at least uniquely
+ * locatable, since only one message can be in edit mode at a time, so only Save needs text.
  *
- * The textarea and the Save button carry no stable hook (see header comment); the textarea is at
- * least uniquely locatable (only one message can be in edit mode at a time), so only Save needs
- * text.
+ * SPLIT OUT SO THAT ONE CHECK CAN CROSS TWO COMMITS WITHOUT CROSSING TWO NAVIGATIONS. MUT-18 fired a
+ * whole desktop edit against a whole mobile edit and called the pair concurrent. It is not: the
+ * desktop path is a hover and a click, the mobile path is a 700 ms press, a sheet that slides up and
+ * a tap - so W1 COMMITTED while A1 was still walking its sheet, the edit crossed the wire in 6 ms,
+ * and the re-render of the row closed the sheet under A1's own tap. Five passes survived it and the
+ * sixth did not, which is what a race is. Arming is now outside the window and only the two commits
+ * are inside it.
  */
-async function fillAndSaveEdit(cx, newText) {
+async function fillOpenEdit(cx, newText) {
   const taExpr = `${paneExpr()}.querySelector('textarea')`;
   await until(cx, `!!${taExpr}`, 5000);
   await evaluate(
@@ -771,8 +777,12 @@ async function fillAndSaveEdit(cx, newText) {
     })()`
   );
   await cx.send('Input.insertText', { text: newText });
+}
+
+/** Commits an armed edit form and waits for it to close. The only step MUT-18 puts in its window. */
+async function commitArmedEdit(cx) {
   await saveOpenEdit(cx);
-  await until(cx, `!${taExpr}`, 5000);
+  await until(cx, `!${paneExpr()}.querySelector('textarea')`, 5000);
 }
 
 /**
@@ -818,23 +828,36 @@ async function saveOpenEdit(cx) {
   if (outcome !== 'ok') throw new Error(String(outcome));
 }
 
-/** Desktop inline edit: the hover toolbar's pencil, then the shared form. */
+/** Desktop inline edit, arm and commit in one call - what every check but MUT-18 wants. */
 async function editBubble(cx, textMatch, newText) {
-  await clickBubbleIcon(cx, textMatch, 'lucide-pencil');
-  await fillAndSaveEdit(cx, newText);
+  await armEdit(cx, textMatch, newText);
+  await commitArmedEdit(cx);
 }
 
 /**
- * The phone's inline edit: long press -> the action sheet's pencil -> the same form.
+ * Desktop: opens the edit form on a bubble and types the replacement, WITHOUT committing.
  *
- * There is no hover on a touch screen and no toolbar to hover, which is why MUT-18 was SKIPPED for
+ * The two arming helpers exist so a check can put two devices in the same state - form open, new
+ * text in it, nothing sent - and then release both commits together. Reaching this state is a
+ * PRECONDITION: a device that cannot be armed has not disagreed with anything, so a check that
+ * cannot arm one reports VACUOUS rather than FAIL.
+ */
+async function armEdit(cx, textMatch, newText) {
+  await clickBubbleIcon(cx, textMatch, 'lucide-pencil');
+  await fillOpenEdit(cx, newText);
+}
+
+/**
+ * The phone's half of the same arming: long press -> the sheet's pencil -> type, no commit.
+ *
+ * There is no hover on a touch screen and no toolbar to hover, which is why MUT-18 sat SKIPPED for
  * days: not because A1 was unreachable - it never was - but because every control in this file was
  * resolved through a surface the phone does not have.
  */
-async function editBubbleMobile(cx, textMatch, newText) {
+async function armEditMobile(cx, textMatch, newText) {
   await longPressBubble(cx, textMatch);
   await tapSheetIcon(cx, 'lucide-pencil');
-  await fillAndSaveEdit(cx, newText);
+  await fillOpenEdit(cx, newText);
 }
 
 /** Counts the `<p>` elements strictly between two sentinel markers, and how many of them carry the
@@ -1972,7 +1995,16 @@ async function mut17() {
  * still are after the receive-side guard of 2026-08-12: `mutationIsAuthorised` compares the frame's
  * MLS-authenticated identity against the message's author, which MATCHES for either device here.
  * Two `edit_message` events for one `messageId` therefore both go out, both are admitted, and every
- * receiver applies whichever it gets, in the order it gets it. The risk is not that one wins - one must - it is that the two
+ * receiver applies whichever it gets, in the order it gets it.
+ *
+ * WHAT IS ACTUALLY IN THE CONCURRENCY WINDOW, and why that had to change. This fired a whole desktop
+ * edit against a whole mobile edit. Those two are not the same length: the desktop path is a hover
+ * and a click, the mobile path is a 700 ms press, a sheet that animates up and a tap on it. So W1
+ * committed while A1 was still walking its sheet, W1's edit reached A1 in 6 ms, the row re-rendered,
+ * and the sheet closed under A1's own tap - reported as `the mobile action sheet is not open` and
+ * scored FAIL, which named the product for a gesture that never landed. It survived five passes and
+ * lost the sixth. Both devices are now ARMED first (form open, replacement typed, nothing sent) and
+ * only the two commits are released together, so the crossing is the one the verdict talks about. The risk is not that one wins - one must - it is that the two
  * devices settle on DIFFERENT winners and stay that way, with the peer holding a third answer.
  *
  * So the verdict is CONVERGENCE, not a particular text: all three clients must show the same body,
@@ -2008,12 +2040,31 @@ async function mut18() {
     const fromW1 = `${marker}-W1`;
     const fromA1 = `${marker}-A1`;
 
-    // AT ONCE, as far as two transports can be: both edits are started without awaiting the other,
-    // and each failure is kept rather than collapsing the pair into one rejection - a check that
-    // cannot say WHICH device failed to edit says nothing about a crossing of two edits.
+    // ARMING IS NOT PART OF THE CROSSING, and putting it there is what made this check flaky. Both
+    // devices are brought to "form open, new text typed, nothing sent" one after the other - order
+    // and duration do not matter here because nothing has been committed yet, so there is no event
+    // on the wire and nothing can re-render either row.
+    //
+    // A DEVICE THAT CANNOT BE ARMED HAS NOT DISAGREED WITH ANYTHING. The failure that exposed this
+    // was A1's sheet closing under its own tap, and the check called it FAIL - naming the product for
+    // a gesture that never landed. That is a precondition, so it reports VACUOUS.
+    try {
+      await armEdit(w1, row, fromW1);
+      await armEditMobile(a1, row, fromA1);
+    } catch (e) {
+      return await finish('MUT-18/dm', 'VACUOUS', w, {
+        armFailure: e.message,
+        armed: 'one of the two devices never reached an open edit form, so no crossing was attempted',
+      });
+    }
+
+    // AT ONCE, as far as two transports can be: only the two COMMITS are in the window, each started
+    // without awaiting the other, and each failure is kept rather than collapsing the pair into one
+    // rejection - a check that cannot say WHICH device failed to commit says nothing about a
+    // crossing of two edits.
     const [w1Edit, a1Edit] = await Promise.allSettled([
-      editBubble(w1, row, fromW1),
-      editBubbleMobile(a1, row, fromA1),
+      commitArmedEdit(w1),
+      commitArmedEdit(a1),
     ]);
 
     // CONVERGENCE IS THE EVENT, so it is what is waited for - there is no interval to guess at.
