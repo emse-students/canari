@@ -137,7 +137,7 @@ older build measures the mixed fleet instead of the mechanism.
 **The runner then moved to `fbf202d9d9d9`, and one x1 on it confirms the x5** - 24 `PASS`, MUT-20
 `SKIPPED`, server clean. The delta attaches `silence` to any verdict that is NOT a PASS and is a
 no-op on a green one by construction; it touches no assertion and no navigation. MUT-12 additionally
-carries 8 verdicts of its own on that sha. Recorded per
+carries 9 verdicts of its own on that sha. Recorded per
 [testing-methodology](testing-methodology.md) 33: a sha the board does not name is a run nobody can
 tie to code.
 

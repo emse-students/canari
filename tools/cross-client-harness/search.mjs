@@ -318,10 +318,25 @@ async function search3() {
   const DELETE_DIALOG = `[role="dialog"][aria-label="Supprimer le message"]`;
   await until(cx, `!!document.querySelector('${DELETE_DIALOG}')`, 5000);
   // `activate()`, not `realClick()`: this is plumbing (a confirmation dialog), and the delete-toolbar
-  // button behind it shares the same aria-label with no visible text of its own - `activate` resolves
-  // by RESOLVE's own text/visibility rules scoped to a plain CSS selector, landing on the dialog's
-  // own (last) button, which carries real innerText ("Supprimer").
-  await activate(cx, `${DELETE_DIALOG} button:last-of-type`);
+  // button behind it shares the same aria-label with no visible text of its own.
+  //
+  // THIS LINE READ `${DELETE_DIALOG} button:last-of-type` UNTIL 2026-08-22, AND IT CLICKED THE WRONG
+  // BUTTON EVERY TIME. `:last-of-type` is "last button among ITS OWN siblings", not "last button in
+  // the dialog" - and `Modal.svelte`'s header holds a lone `aria-label="Fermer"` dismiss button,
+  // which is therefore last-of-type in its own div AND earlier in document order than the footer, so
+  // `querySelector` returned the X. The dialog closed, the `until(!dialog)` below was satisfied by
+  // that, and nothing was ever deleted. SEARCH-3 then reported `deletedMessageSearch: 1/1` and read
+  // as a product defect: a deleted message still findable by its original text.
+  //
+  // The scoping was added to avoid relying on a tie-break the comment itself said was already
+  // correct. It was: RESOLVE prefers a hit whose VISIBLE TEXT carries the needle over one matching
+  // only an aria-label (so the modal's button beats the icon-only toolbar one), then the shortest
+  // innerText (so "Supprimer" beats the title "Supprimer le message"). Trust it, and ASSERT what was
+  // activated - `activate` returns the element's own text and this check was discarding it.
+  const activated = (await activate(cx, `text=${DELETE_ACTION}`)).trim();
+  if (activated !== DELETE_ACTION) {
+    throw new Error(`the delete confirmation activated "${activated}", not "${DELETE_ACTION}"`);
+  }
   await until(cx, `!document.querySelector('${DELETE_DIALOG}')`, 5000).catch(() => {});
   await new Promise((r) => setTimeout(r, 800));
 
@@ -334,6 +349,27 @@ async function search3() {
   await realClick(cx, SAVE_BUTTON);
   await until(cx, `!document.querySelector('textarea')`, 5000).catch(() => {});
   await new Promise((r) => setTimeout(r, 800));
+
+  // THE PRECONDITION THIS CHECK NEVER ASSERTED, added 2026-08-22 after its first FAIL. Everything
+  // below asks whether SEARCH can still find a DELETED message - which is only a question about
+  // search if the message is actually deleted. The confirm dialog's close is swallowed above
+  // (`.catch(() => {})`), so a delete that silently did not happen produces exactly the same
+  // `deletedMessageSearch: 1/1` as a search that ignores tombstones, and the payload could not say
+  // which. A tombstone replaces the body, so the marker leaving the page IS the delete landing.
+  const tombstoneApplied = !(await evaluate(
+    cx,
+    `document.body.innerText.indexOf(${JSON.stringify(termDeleted)}) !== -1`
+  ));
+  if (!tombstoneApplied) {
+    // VACUOUS, not FAIL: the check could not put its question, so it has no answer to report.
+    await recordObserved('SEARCH-3', 'VACUOUS', {
+      tombstoneApplied,
+      why: 'the deleted message is still rendered by its original text, so the delete did not land - '
+        + 'nothing below would be a statement about search',
+    }, { W1: obs });
+    cx.close();
+    return false;
+  }
 
   // --- search all three terms ---
   await openSearchPanel(cx);
@@ -354,6 +390,7 @@ async function search3() {
 
   const ok = deletedCount === '0/0' && oldCount === '0/0' && newCount === '1/1';
   await recordObserved('SEARCH-3', ok ? 'PASS' : 'FAIL', {
+    tombstoneApplied, // asserted above - a FAIL below is therefore about SEARCH, not about the delete
     deletedMessageSearch: deletedCount, // expect 0/0
     editedMessageOldTextSearch: oldCount, // expect 0/0 - the old text no longer exists anywhere
     editedMessageNewTextSearch: newCount, // expect 1/1
@@ -374,17 +411,65 @@ async function search4() {
   await awaitMessage(cx, term);
 
   await openSearchPanel(cx);
+  // A MARK TO MEASURE THE FETCHES AGAINST. `fetchAllChannelMessages` pages the history 200 rows at a
+  // time and THEN decrypts every row one await at a time, so "the search is slow" has two very
+  // different causes: the network pages, or the decrypt loop. Resource timings separate them - if
+  // the pages all land in the first seconds and the counter still says nothing minutes later, the
+  // time is in the loop, which is the half that grows with the conversation.
+  // CLEAR AND ENLARGE THE BUFFER FIRST, or this measures the buffer and not the app.
+  // `getEntriesByType('resource')` keeps 250 entries BY DEFAULT and silently drops every one after
+  // that - on a page this chatty the buffer is long full by the time a check runs, so the first
+  // version of this read reported `count: 0` for a search that may well have fetched. A zero from a
+  // full buffer and a zero from a request never made are the same value, which is exactly the kind
+  // of evidence this campaign refuses to reason from.
+  await evaluate(
+    cx,
+    `(function () {
+      performance.clearResourceTimings();
+      performance.setResourceTimingBufferSize(5000);
+      performance.mark('canari-search4');
+      return true;
+    })()`
+  );
   const t0 = Date.now();
   await typeInSearch(cx, term);
+  // THE CEILING IS A MEASUREMENT WINDOW, NOT THE PASS CRITERION - `STALL_MS` below is that, and it
+  // has not moved. 45 s was the ceiling until 2026-08-22 and the check reported `elapsedMs: null`
+  // with `finalCount: '0/0'`, which reads identically for "finished, found nothing" and "still
+  // decrypting". Both are answers this check must be able to give, and neither was reachable while
+  // the window was shorter than the work: the venue held 1052 rows that day and this path decrypts
+  // them one at a time. A number over budget is a finding; a timeout is only a missing number.
   const elapsedMs = await until(
     cx,
     `(document.querySelector('${SEARCH_COUNT}') || {}).innerText === '1/1'`,
-    45000,
+    600000,
     150
   )
     .then((ms) => ms)
     .catch(() => null);
   const totalMs = Date.now() - t0;
+  // WHAT THE COUNTER ACTUALLY SAID, because `elapsedMs: null` alone cannot tell "found nothing" from
+  // "found it and the assertion was too strict" from "still working". Added 2026-08-22 after the
+  // first FAIL reported a 45 s timeout and nothing else.
+  const finalCount = await searchCountText(cx);
+  // The history pages issued by THIS search, and when the last one finished relative to its start.
+  const pages = JSON.parse(
+    await evaluate(
+      cx,
+      `JSON.stringify((function () {
+        var m = performance.getEntriesByName('canari-search4')[0];
+        var from = m ? m.startTime : 0;
+        var hits = performance.getEntriesByType('resource').filter(function (e) {
+          return e.startTime >= from && e.name.indexOf('/messages') !== -1;
+        });
+        return {
+          count: hits.length,
+          lastEndedMsAfterStart: hits.length ? Math.round(hits[hits.length - 1].responseEnd - from) : null,
+          slowestMs: hits.length ? Math.round(Math.max.apply(null, hits.map(function (e) { return e.duration; }))) : null
+        };
+      })())`
+    )
+  );
   const warningShown = await bodyHasWarning(cx);
 
   const STALL_MS = 8000; // generous over the WP-PUSHHERD baseline; flagged, not failed, past this
@@ -395,6 +480,8 @@ async function search4() {
   // makes this check able to see a partial decrypt failure at all.
   await recordObserved('SEARCH-4', ok ? 'PASS' : 'FAIL', {
     elapsedMs,
+    finalCount,
+    historyPages: pages, // fetches vs decrypt loop - see the mark above
     totalWallClockMs: totalMs,
     stall: elapsedMs !== null && elapsedMs > STALL_MS,
     warningShownDuringSuccessfulSearch: warningShown, // must be false - see SEARCH-2's header note

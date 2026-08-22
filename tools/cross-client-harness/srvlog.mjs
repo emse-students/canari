@@ -335,6 +335,13 @@ const NOTABLE = [
   // exist, once PER DEVICE for a marker that is per USER. Matching the endpoint made a two-device
   // re-add print two notable lines for zero events. `recorded=0` / `lifted=0` are the no-ops and sit
   // in BENIGN; only a marker that moved reaches a reader.
+  //
+  // VERIFIED AGAINST PRODUCTION 2026-08-22, which is why this is no longer a rule proven only by its
+  // own self-test. READ-10 (`--only 10 --destructive`) is the one check that generates dismissal
+  // traffic, and one run produced both branches and nothing else: `recorded=1` once, and `lifted=0`
+  // TWICE for the same user and group - the per-device lift of a per-user marker this comment
+  // predicts, arriving exactly as described. The window classified clean, so each landed in its own
+  // bucket rather than in `unexplained`.
   /\[MembersController\] \[(DISMISS|UNDISMISS)\] user=\S+ group=\S+ (recorded|lifted)=[1-9]\d*/,
   /epoch|re-?add|revoke|forget/i,
   /retention|purge|evict/i,

@@ -484,14 +484,21 @@ export function useConversations() {
 
     // Merge the full fetched history into the conversation (union by id, keeping optimistic/pending
     // local messages) so a hit older than the loaded page is present and scrollable.
+    //
+    // WRITTEN ONLY WHEN THE MERGE ACTUALLY ADDS SOMETHING. This used to `set` unconditionally, and a
+    // `set` mints a new conversation object whether or not its contents changed - which made this
+    // function retrigger whatever was watching the conversation, including the effect that had just
+    // called it. Measured by the campaign's SEARCH-4 on 2026-08-22: one search in a 1052-message
+    // channel issued 4956 requests to `/messages` and was still going ten minutes later, never
+    // settling on a result, because every pass rewrote the object that caused the next pass.
     const current = conversations.get(channelConversationId);
     if (current) {
       const existingIds = new SvelteSet(current.messages.map((m) => m.id));
-      const merged = [
-        ...current.messages,
-        ...decodedAll.filter((m) => !existingIds.has(m.id)),
-      ].sort(compareMessageOrder);
-      conversations.set(channelConversationId, { ...current, messages: merged });
+      const added = decodedAll.filter((m) => !existingIds.has(m.id));
+      if (added.length) {
+        const merged = [...current.messages, ...added].sort(compareMessageOrder);
+        conversations.set(channelConversationId, { ...current, messages: merged });
+      }
     }
 
     if (capped) {

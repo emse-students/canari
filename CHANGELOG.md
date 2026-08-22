@@ -60,6 +60,37 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **Opening search in a channel put the client in a loop that hammered our own server.** One query
+  in a 1052-message channel issued **4956 requests to `/api/channels/:id/messages`**, was still going
+  ten minutes later, and never showed a result - the counter sat at `0/0` throughout, with no error
+  anywhere and nothing on screen to suggest anything was wrong. Measured by the cross-client
+  campaign's SEARCH-4; a full-history channel search should be at most ten paged requests.
+
+  Two mechanisms overlapped and either one alone would have been harmless. `ChatArea`'s effect called
+  `refreshSearchMatches()` bare, so every reactive value that function reads synchronously became a
+  dependency of the effect - including `chatView`, and therefore the conversation. The channel branch
+  of the search then merged the history it had just fetched back into that same conversation with an
+  unconditional `conversations.set`, which mints a new object whether or not its contents changed. So
+  the search was its own trigger: search, merge, conversation changes, effect re-runs, search again,
+  for ever. It could not converge, because the write happened even when the merge added nothing.
+
+  Both halves are closed rather than one: the merge writes only when it actually adds a message, and
+  the effect declares what should re-run a search - the query, and the conversation's identity. The
+  conversation's MESSAGES are deliberately not a dependency, so an inbound frame no longer re-fetches
+  and re-decrypts the whole channel. The overlap is deleted rather than guarded, per the standing rule
+  that a race which heals cleanly is still a defect.
+
+- **Typing a contact's name into the sidebar filter made that conversation disappear.** The filter
+  matched `convo.name`, which for a DM is the persisted key (`userId::peerId`) and not a human name -
+  the label on the row comes from `resolveConversationListPresentation`. So the one thing a user would
+  obviously type was the one thing that could never match, and a DM could only be found by the text of
+  its last message. Caught by the campaign's SEARCH-6.
+
+  The presentation is now resolved once, in the same `$derived` the filter reads, and the row renders
+  that same value - so the filter and the label agree by construction instead of by coincidence, and
+  the duplicate resolve the template was doing per row is gone. The predicate is extracted as
+  `conversationMatchesQuery` and pinned by tests, including the regression itself.
+
 - **Two devices of one account edited the same message and settled on DIFFERENT bodies, permanently.**
   W1 ended on A1's text, A1 ended on W1's, the peer agreed with W1, and nothing ever moved again -
   both edits had succeeded, there was no error, and nothing on screen said the two devices disagreed.

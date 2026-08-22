@@ -338,6 +338,12 @@ when a latency changes: a send or an open that slows as this channel grows is th
 requirement failing (*"doit marcher avec une conversation de toute les tailles"*), and it will show up
 here first, on the venue with the most history, before it shows up for any real user.
 
+**Which also means a channel timing is only comparable to another taken at the same size.** The venue
+grew from 805 rows at 02:00 on 2026-08-22 to 1052 by 03:45 - roughly 250 an hour while the ladder
+runs. Any row quoting a channel-path duration therefore has to say how large the corpus was, or it is
+a number nobody can reproduce: the same check run a day later walks a different conversation. Rows
+timing the DM path are unaffected, since those conversations are built per check.
+
 ## Measurements the board deliberately no longer carries
 
 **The board is a state table, and a `PASS` cell says `PASS X/X` and a time.** That was decided on

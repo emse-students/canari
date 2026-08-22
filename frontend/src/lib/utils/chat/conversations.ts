@@ -890,3 +890,27 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
   // Encrypted checkpoint has flushed: durable progress markers are now safe to record.
   for (const commit of pendingCommits) commit();
 }
+
+/**
+ * Does a conversation row match what was typed into the sidebar's filter?
+ *
+ * THE NAME PASSED HERE MUST BE THE ONE THE ROW DISPLAYS, and that is the whole reason this is a
+ * named function rather than two `includes` inline in the component. The sidebar filtered on
+ * `convo.name`, which for a DM is the persisted key (`userId::peerId`) and not a human name - so
+ * typing the name printed on the row removed the row. Found by the cross-client campaign's SEARCH-6
+ * on 2026-08-22: the current last message matched, the conversation's own name did not.
+ *
+ * A row is kept on an empty query: the filter narrows a list, it does not build one.
+ *
+ * @param displayName the resolved label the row shows - never the persisted conversation key
+ * @param lastMessageContent the preview text the row shows beneath the name, '' when there is none
+ */
+export function conversationMatchesQuery(
+  displayName: string,
+  lastMessageContent: string,
+  query: string
+): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  return displayName.toLowerCase().includes(q) || lastMessageContent.toLowerCase().includes(q);
+}

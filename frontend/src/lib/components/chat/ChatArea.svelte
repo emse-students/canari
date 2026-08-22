@@ -762,9 +762,24 @@
     keyboardWasOpen = kbOpen;
   });
 
+  /**
+   * Re-run the search when the QUERY changes, or when a different conversation is opened.
+   *
+   * `untrack` is load-bearing, not tidiness. Calling `refreshSearchMatches()` bare inside an effect
+   * makes every reactive value it reads synchronously into a dependency of that effect - and it
+   * reads `chatView`, hence the conversation itself. The channel branch of the search merges the
+   * history it fetched back into that conversation, so the search was its own trigger: search,
+   * merge, conversation changes, effect re-runs, search again. SEARCH-4 measured one query in a
+   * 1052-message channel firing 4956 requests to `/messages` without ever settling on a result.
+   *
+   * The conversation's MESSAGES are deliberately not a dependency. A message arriving while the
+   * panel is open does not re-run a full-history search: that would re-fetch and re-decrypt the
+   * whole channel on every inbound frame, which is the same cost the loop was paying.
+   */
   $effect(() => {
     void searchQuery;
-    void refreshSearchMatches();
+    void chatView?.conversation.id;
+    untrack(() => void refreshSearchMatches());
   });
 
   $effect(() => {

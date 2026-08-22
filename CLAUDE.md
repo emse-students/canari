@@ -159,15 +159,6 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     if the time means anything, nothing else.** Prose only for a non-clean verdict or an unresolved
     item. The rule is written at the top of the board itself.
 
-**OWED RIGHT NOW, and none of it is derivable from the code:**
-
-- **A VERIFICATION IS OWED ON PROD.** The new `[DISMISS] ... recorded=N` / `[UNDISMISS] ... lifted=N`
-  format is proven only by `srvclassify-selftest.mjs`, never against production - MUT generates no
-  dismissal traffic. **Run READ-10 once** (`--destructive`, self-cleaning, 5/5) and read the window.
-  Until then the fix is verified by compiling, which this repo does not accept as verified.
-- **THE MECHANISM AUDIT IS DONE AND SCORED** on [mechanism-audit](docs/wiki/mechanism-audit.md) -
-  five findings, two code changes, two verified negatives, one unchanged. Read it there.
-
 **The estate was swept and measured clean 2026-08-21 before the ladder started** - 22 debris salons through the product, all thirteen residue counts on prod zero afterwards. `cleanup.mjs` owns communities, salons AND throwaway groups now; the detail is on [cross-client-campaign](docs/wiki/cross-client-campaign.md).
 
 **OWED TO THE USER, NOT TO THE CODE: the MLS + Graine explanation.** For THEM, prose and diagrams, no

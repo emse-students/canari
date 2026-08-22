@@ -14,7 +14,10 @@
   import SidebarNewCommunityModal from './SidebarNewCommunityModal.svelte';
   import SidebarCommunityAdminModal from './SidebarCommunityAdminModal.svelte';
   import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
-  import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
+  import {
+    conversationMatchesQuery,
+    resolveConversationListPresentation,
+  } from '$lib/utils/chat/conversations';
   import { pullToRefresh } from '$lib/actions/pullToRefresh';
   import type { Conversation } from '$lib/types';
   import { m } from '$lib/paraglide/messages';
@@ -239,20 +242,46 @@
     channels: ChannelItem[];
   }
 
-  let filteredConversationEntries = $derived.by(() => {
-    const query = searchQuery.trim().toLowerCase();
+  /**
+   * Every DM/group row, carrying the label the user actually SEES, resolved exactly once.
+   *
+   * WHY THE PRESENTATION IS RESOLVED HERE RATHER THAN IN THE TEMPLATE. The filter below has to match
+   * what the row displays, and for a DM `convo.name` is the PERSISTED KEY (`userId::peerId`), not a
+   * human name - the name comes from `resolveConversationListPresentation`. Filtering on `convo.name`
+   * therefore matched an id string while the user typed the name printed in front of them, and the
+   * conversation they were looking at disappeared as they spelled it. Resolving once here makes the
+   * filter and the row read the same value by construction instead of agreeing by coincidence.
+   */
+  let conversationRows = $derived.by(() =>
+    [...conversations.entries()]
+      .filter(([id]) => !isChannelConversationId(id))
+      .map(([name, convo]) => ({
+        name,
+        convo,
+        resolved: resolveConversationListPresentation(
+          {
+            id: convo.id || name,
+            name: convo.name,
+            contactName: convo.contactName,
+            conversationType: convo.conversationType,
+            directPeerId: convo.directPeerId,
+          },
+          currentUserId
+        ),
+      }))
+  );
 
-    return [...conversations.entries()]
-      .filter(([id, convo]) => {
-        if (isChannelConversationId(id)) return false;
-        if (!query) return true;
-        const lastContent = convo.messages.at(-1)?.content ?? '';
-        return (
-          convo.name.toLowerCase().includes(query) || lastContent.toLowerCase().includes(query)
-        );
-      })
-      .sort(([, a], [, b]) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0));
-  });
+  let filteredConversationEntries = $derived.by(() =>
+    conversationRows
+      .filter(({ convo, resolved }) =>
+        conversationMatchesQuery(
+          resolved.displayName,
+          convo.messages.at(-1)?.content ?? '',
+          searchQuery
+        )
+      )
+      .sort((a, b) => (b.convo.lastMessageAt ?? 0) - (a.convo.lastMessageAt ?? 0))
+  );
 
   function openNewChatModal(tab: 'contact' | 'group' | 'channel' = 'contact') {
     if (tab === 'channel') {
@@ -460,17 +489,7 @@
       use:pullToRefresh={{ onRefresh: onRefresh ?? (() => Promise.resolve()) }}
     >
       {#if activeSidebarTab === 'discussions'}
-        {#each filteredConversationEntries as [name, convo] (name)}
-          {@const resolved = resolveConversationListPresentation(
-            {
-              id: convo.id || name,
-              name: convo.name,
-              contactName: convo.contactName,
-              conversationType: convo.conversationType,
-              directPeerId: convo.directPeerId,
-            },
-            currentUserId
-          )}
+        {#each filteredConversationEntries as { name, convo, resolved } (name)}
           <div class="relative">
             <ConversationTile
               contactName={resolved.contactId}
