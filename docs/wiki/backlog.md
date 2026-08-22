@@ -320,6 +320,32 @@ no backfill was written and the migration question is moot.
 
 ---
 
+## Messaging convergence
+
+### P3 - a `history_bundle` restores the EDITED flag without the edited body
+
+Found by enumerating every applier of a message mutation on 2026-08-22, after three defects in that
+seam were fixed (see `CHANGELOG.md` and [chat](frontend/modules/chat.md)). This is the fourth
+applier, and unlike the other three it is not broken - it is deliberately narrower than the others in
+a way that has a visible consequence nobody has decided about.
+
+`systemMessageHandler.ts`, the `history_bundle` merge over messages a device ALREADY holds: a
+deletion in the bundle replaces the body with the tombstone, and an edit in the bundle sets
+`isEdited: true` and fills `editedAt` when absent - but never touches `content`. So a device that
+missed an `edit_message` frame and later receives a bundle carrying the edited message ends up
+showing the PRE-EDIT text with an "edited" marker on it. It cannot diverge two bodies, because it
+never writes a body; it can present a body it knows is superseded.
+
+**Why it is not simply a bug to fix.** Taking the bundle's body means trusting a peer's copy of
+another member's message content over our own, and the comment on the deletion branch (D5) shows the
+narrowness there was reasoned rather than accidental. `editSupersedes` now gives the merge a rule it
+did not have when it was written - apply the bundle's body when its `editedAt` is strictly newer -
+which would close this without trusting anything undated. That is a trust-model decision, so it is
+recorded here rather than taken while a campaign is running.
+
+**What would tell us it matters:** no board row covers it, and reaching it needs a device that missed
+an edit AND is later handed a bundle containing it - which is the FWD/HEAL shape, not MUT's.
+
 ## Storage and retention
 
 The server side has a page already - [storage-forecast](infrastructure/storage-forecast.md) - and it
