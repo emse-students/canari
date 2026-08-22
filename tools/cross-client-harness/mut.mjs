@@ -106,7 +106,7 @@ import {
   IS_MOVING_FN,
   stablePoint,
 } from './chat.mjs';
-import { watch, report, gate, ignoringOfflineCut } from './watch.mjs';
+import { watch, report, gate, ignoringOfflineCut, longestSilence } from './watch.mjs';
 import { record, mark } from './results.mjs';
 import { OWNER_NAME, PEER_NAME, PORTS, VENUE } from './names.mjs';
 import { fileURLToPath } from 'node:url';
@@ -176,9 +176,34 @@ async function observe(w, narrow = {}) {
  * @returns {boolean} whether this counts as ok for the tally - a gated PASS, and nothing else.
  */
 async function finish(id, verdict, w, detail, narrow) {
-  const gated = gate(verdict, await observe(w, narrow));
-  record(id, gated.verdict, { ...gated.detail, ...detail });
+  const reports = await observe(w, narrow);
+  const gated = gate(verdict, reports);
+  const silence = gated.verdict === 'PASS' ? null : silenceOf(reports);
+  record(id, gated.verdict, { ...gated.detail, ...(silence ? { silence } : {}), ...detail });
   return gated.verdict === 'PASS';
+}
+
+/**
+ * The longest hole in each client's OWN timeline, attached to any verdict that is not a PASS.
+ *
+ * WHY A MISS NEEDS THIS. `awaitMessage` reports the RECEIVER's pane, so "the sender never issued the
+ * send" and "the peer never received it" arrive as the same evidence - an absent marker - and they
+ * are opposite defects. MUT-12's channel leg died three times on that ambiguity, and it was resolved
+ * by hand off the production log a day later: the server had the message two seconds before the
+ * check gave up, so nothing was lost, and the sender's own client had gone quiet for 21 seconds
+ * between rendering its optimistic bubble and asking the server for the distribution group. A hole
+ * is made of ABSENT lines, so no classifier bucket can show it - `longestSilence` is what turns it
+ * into a value, and it was already computed for every client and thrown away everywhere but MSG-10.
+ *
+ * Only on a non-PASS: on a green run the largest gap is just the check idling, which is noise.
+ */
+function silenceOf(reports) {
+  const out = {};
+  for (const [label, rep] of Object.entries(reports)) {
+    const s = longestSilence(rep.timeline ?? []);
+    if (s.ms > 0) out[label] = { ms: s.ms, after: s.after, before: s.before };
+  }
+  return Object.keys(out).length ? out : null;
 }
 
 async function setOffline(cx, offline) {

@@ -1419,6 +1419,34 @@ make the field useless; hashing the import graph is the honest fix and nothing d
 **a verdict's runner sha is a necessary condition for believing it, never a sufficient one**, and a
 board row whose phase was touched anywhere gets re-run rather than reasoned about.
 
+#### 34. THE RIG'S OWN HOST IS PART OF THE SYSTEM UNDER TEST, AND AN INTERMITTENT MUST BE CLEARED OF IT FIRST
+
+Two Chrome profiles, a phone over `adb` and the driver all run on ONE laptop, which also runs the
+greps, the `ssh` queries and a pre-commit hook that sweeps the whole frontend for two to three
+minutes. A check that measures latency measures that machine too.
+
+MUT-12's channel leg is the case. It missed three times, and the miss looked exactly like a product
+defect: the peer never saw the message. The production log said otherwise - the server had it two
+seconds before the check gave up, and the send itself took 600 ms. The 21 seconds in front of it were
+the SENDER's client making no server call at all, after `sendText` had already returned on the
+optimistic bubble. A real stall and a saturated host produce that identical shape.
+
+What settled the balance was not an argument, it was a control: **eight consecutive passes with the
+box deliberately quiet.** Both failures had fallen in stretches where the box was busy. That is not
+proof and no defect was filed on it - but it is the difference between an unattributed intermittent
+and one that has been cleared of the cheapest explanation before the expensive one is investigated.
+
+Two things follow, and the second is the reusable half:
+
+- **Reproduce an intermittent under a QUIET host before believing it.** The control costs one loop
+  and it is the only way to tell a measurement of the product from a measurement of the laptop.
+- **Carry the discriminator in the evidence, so the next occurrence settles itself.** A hole is made
+  of absent lines, so no classifier bucket shows it; `longestSilence` turns it into a value and it
+  was already computed for every client on every check and thrown away everywhere but MSG-10. MUT's
+  `finish()` now attaches it to any non-PASS verdict, per client. **A hole in EVERY client at once is
+  the host freezing; a hole in only one client's timeline is that client.** Same run, same payload,
+  and nobody has to go back to the production log by hand a day later.
+
 ## Observation is part of the check, not a debugging step
 
 Decided 2026-08-06, after two shipped bugs came out of the logs of **passing** checks.

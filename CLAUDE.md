@@ -161,23 +161,10 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
 
 **OWED RIGHT NOW, and none of it is derivable from the code:**
 
-- **`mut.mjs` MOVED TO `9828e60640bb` AFTER ITS x5 LANDED, so the board's MUT rows stand on the
-  runner before it (`4a9814f845d7`).** The delta is three payload claims and their comments, no
-  assertion and no navigation - so **one x1 on the new sha confirms it**, and until that x1 the two
-  shas are the honest state rather than a technicality to wave through.
 - **A VERIFICATION IS OWED ON PROD.** The new `[DISMISS] ... recorded=N` / `[UNDISMISS] ... lifted=N`
   format is proven only by `srvclassify-selftest.mjs`, never against production - MUT generates no
   dismissal traffic. **Run READ-10 once** (`--destructive`, self-cleaning, 5/5) and read the window.
   Until then the fix is verified by compiling, which this repo does not accept as verified.
-- **MUT'S EVIDENCE STREAM CARRIED THREE STALE CLAIMS**, all hard-coded literals a `PASS` never reads:
-  a closed security hole still reported as open (`architecturalGapFound: true`, ten days after
-  `f924932b` closed it), MUT-18 explaining its verdict by that same absent guard, and a `filedAs`
-  pointing at a `backlog.md` entry deleted when its fix shipped. All three corrected; the rule is
-  [testing-methodology](docs/wiki/testing-methodology.md) 31. **The other thirty runners were then
-  swept for the same shape and are clean**: two more in `search.mjs` (the 2000-row cap, the unpassed
-  `isHighlighted` ring), both re-verified against source that had MOVED since they were written, both
-  relocated out of the payload before the phase ran. Everything else matching the pattern is either
-  computed or names the fixture the check set up, which is what a payload is for.
 - **THE MECHANISM AUDIT IS DONE AND SCORED** on [mechanism-audit](docs/wiki/mechanism-audit.md) -
   five findings, two code changes, two verified negatives, one unchanged. Read it there.
 

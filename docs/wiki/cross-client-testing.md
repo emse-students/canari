@@ -25,7 +25,7 @@ Updated after every run.
 | 1 MSG | 12 | `e9d951d7` | **12/12 `PASS` x1** (2026-08-21), all clients clean, server clean. Four A1 rows carry no `a1Build` - the runners never recorded it; the preflight does now, so they are owed a re-run for attribution alone |
 | 2 TYPE | 5 | `e9d951d7` | **5/5 `PASS` x1** (2026-08-21), server clean. An earlier 5/5 x5 stands on superseded runner `25376b86` |
 | 3 READ | 10 | `70497810` | **9/9 runnable `PASS` x5 - 45 verdicts, CLEAN 5/5**, server clean every pass (2026-08-21), runner `2c2b83d1b748`. READ-5 `SKIPPED`: needs four readers, the estate has two accounts |
-| 4 MUT | 21 | `c115218e` | **CLEAN x5 2026-08-22** on runner `4a9814f845d7`, A1 armed and stamped `67d40e3a` on all five passes: 20 of 21 `PASS` 5/5, MUT-20 `SKIPPED` (unarmable until 2026-11-09). The five-pass span - 30 464 server lines - classifies clean, after the channel hard-delete MUT-8 and MUT-9 produce was named for the first time. The x1 before it gave 1 `FAIL` and 2 `SKIPPED`, all three harness faults, all three fixed |
+| 4 MUT | 21 | `6748f6b8` | **CLEAN x5 2026-08-22** on runner `e3e5a60bb007` (+ x1 on `fbf202d9d9d9`), fleet homogeneous on `6748f6b8`: 24 of the 25 verdict rows `PASS` 5/5 (21 checks, four of which run in both venues), MUT-20 `SKIPPED` (unarmable until 2026-11-09). MUT-18 found a real convergence defect - two devices of one account edited one message and settled on different bodies, permanently and silently - now fixed and pinned |
 | 5 SEARCH | 6 | - | `pending` |
 | 6 MENTION | 6 | - | `pending` |
 | 7 FWD | 5 | `25376b86` | 5/5 `passed` - 20 verdicts, 20 `PASS`; FWD-2 25/25 by hand |
@@ -129,15 +129,52 @@ window. Earlier x5 series on `8a3edbdd`, `e62c21f1` and `25376b86` all read 13/1
 All four are MLS system events in a DM or group and REST calls in a channel, so **every row whose
 cell says both runs twice**, once in the owner-peer DM and once in `Campagne de test`.
 
-`4a9814f845d7` x5 on `c115218e`, phone on `67d40e3a`: **20 of 21 `PASS` on all five passes**.
-MUT-20 is the twenty-first and cannot be armed yet. Nothing here is owed a re-run.
+`e3e5a60bb007` x5 on `6748f6b8`, phone on `6748f6b8`: **24 of the 25 verdict rows `PASS` 5/5** (21
+checks, four of which run in both venues), MUT-20 `SKIPPED` 5/5 (unarmable until 2026-11-09). The
+fleet is homogeneous on purpose here - MUT-18 crosses two devices of ONE account, so a phone on an
+older build measures the mixed fleet instead of the mechanism.
 
-**The server window read `unexplained=2` on every pass, and the lines were MUT's own.** A channel
-message being hard-deleted (`[ChannelService] [CHANNEL] message deleted ...`, and its `(moderation)`
-form) is the one delete in the product that leaves no tombstone, MUT-8 and MUT-9 are the only checks
-that produce it, and neither had ever run in a window anybody classified. Both shapes are now
-`NOTABLE` - visible, never silenced - and pinned in `srvclassify-selftest.mjs`; the whole five-pass
-span, 30 464 lines over seven services, then reads clean with 15 notable and nothing unexplained.
+**The runner then moved to `fbf202d9d9d9`, and one x1 on it confirms the x5** - 24 `PASS`, MUT-20
+`SKIPPED`, server clean. The delta attaches `silence` to any verdict that is NOT a PASS and is a
+no-op on a green one by construction; it touches no assertion and no navigation. MUT-12 additionally
+carries 8 verdicts of its own on that sha. Recorded per
+[testing-methodology](testing-methodology.md) 33: a sha the board does not name is a run nobody can
+tie to code.
+
+**MUT-18 caught a real convergence defect, and it is fixed.** Two devices of one account editing the
+same message settled on DIFFERENT bodies - W1 holding A1's text, A1 holding W1's - permanently, with
+no error anywhere and nothing on either screen to suggest a disagreement. `edit_message` was applied
+on arrival by every path that applies one, and "whichever frame came last" is not a rule: it is a
+different answer per device, because two devices receive in different orders. All three appliers now
+consult `editSupersedes`. The story is in `CHANGELOG.md`, the rule in
+[durable-rules](durable-rules.md), and the mechanism in
+[frontend/modules/chat](frontend/modules/chat.md).
+
+**The server window read `unexplained=2` on every pass of the x5 that preceded it, and the lines were
+MUT's own.** A channel message being hard-deleted (`[ChannelService] [CHANNEL] message deleted ...`,
+and its `(moderation)` form) is the one delete in the product that leaves no tombstone, MUT-8 and
+MUT-9 are the only checks that produce it, and neither had ever run in a window anybody classified.
+Both shapes are now `NOTABLE` - visible, never silenced - and pinned in `srvclassify-selftest.mjs`.
+That span, 30 464 lines over seven services on runner `4a9814f845d7`, then read clean with 15 notable
+and nothing unexplained; the `e3e5a60bb007` x5 above classifies clean on all five passes too.
+
+**MUT-12's channel leg has an intermittent that is NOT attributed to the product, and the reason is
+written here so nobody re-derives it.** It has missed three times ever (2026-08-16, and twice on
+2026-08-22 at 114 and 136 rendered paragraphs). The second of those was taken apart against the
+production log: the message was never lost - the server created and pushed it two seconds BEFORE the
+check gave up - and the sender's whole send took 600 ms once it started (`DISTRIBUTION_GROUP` ->
+`liveGraineSessions` -> `CHANNEL_PUSH`). What preceded it was 21 seconds in which the sender's client
+made no server call at all, having already rendered its optimistic bubble; `sendText` waits for that
+bubble, so the check's clock had been running the whole time.
+
+That leaves two causes, and the evidence available then could not separate them: a client-side stall,
+or THIS host saturating while it drives two Chrome profiles and a phone. Both failures fell in
+stretches where the box was also running greps, `ssh` and pre-commit sweeps; **eight consecutive
+passes with the box deliberately quiet did not reproduce it**. That is not proof, and it is the
+reason no defect is filed. The instrument is in place for the next occurrence instead: MUT's
+`finish()` attaches `silence` - the longest hole in each client's OWN timeline - to any non-PASS
+verdict, and a hole appearing in EVERY client at once is this host freezing while a hole in only the
+sender's is the product. See [testing-methodology](testing-methodology.md) 34.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |

@@ -346,6 +346,41 @@ recorded here rather than taken while a campaign is running.
 **What would tell us it matters:** no board row covers it, and reaching it needs a device that missed
 an edit AND is later handed a bundle containing it - which is the FWD/HEAL shape, not MUT's.
 
+## Search
+
+### P3 - `ChatArea.svelte` swallows three branches and has no logger at all
+
+Found on 2026-08-22 while verifying the SEARCH-2 gap description against source, before rung 5 ran.
+The component is 1206 lines, carries the whole in-conversation search UI, and contains **no logging
+of any kind** - no `Log.d`, no `appendLog`, nothing. It also has three branches that discard a
+failure silently:
+
+- `refreshSearchMatches`, `catch { ids = null; }` - the full-history search failing is indistinguishable
+  from a channel having no local persistence, and both land on the same `searchLimitedToLoaded = isChannel`.
+  This is the branch SEARCH-2 exercises.
+- `onRequestOlderFromPeers().catch(() => 'unavailable')` - a peer scrollback request failing is
+  reported to the UI as "unavailable" and to nobody else.
+
+A third, `searchableText`'s `catch { return message.content; }`, is listed here only to be dismissed:
+`parseEnvelope` throwing is the ordinary case for a plain-text message, so logging it would be noise
+on every search over normal history. It is named so the next reader does not re-open it.
+
+The standing rule is that every swallowed branch logs, because in a best-effort path that is all a
+loss leaves. None of these do, so a user reporting "search found nothing" leaves no trace anywhere
+that says whether the query ran, threw, or ran against a truncated corpus.
+
+**Deliberately not fixed before the phase ran.** SEARCH-2 drives the first of these branches, and a
+check is worth more against the code as it shipped than against code changed the hour before to make
+it look better. The fix is also not one line: it needs a logger introduced into a component that has
+none, which is a change worth making once and reviewing, not slipped in mid-campaign.
+
+**Related, and NOT the same item:** in-conversation search folds case but not diacritics, in all
+three places that match (`useConversations.svelte.ts:438,480` for which messages match,
+`messageDisplay.ts:218 splitWithHighlight` for the highlight, `ChatArea.svelte:622` for the query).
+On a French corpus "reunion" cannot find "reunion" spelled with an accent. SEARCH-5 predicts exactly
+this and PASSES when it holds, so it is a FINDING the board records rather than a check failure - see
+the SEARCH section of [cross-client-testing](cross-client-testing.md).
+
 ## Storage and retention
 
 The server side has a page already - [storage-forecast](infrastructure/storage-forecast.md) - and it

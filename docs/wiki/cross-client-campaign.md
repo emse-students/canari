@@ -324,6 +324,20 @@ both learnt by nearly getting them wrong:
 A cleanup script must also only ever match the harness's own name prefixes: a real user's group sits
 in the same sidebar.
 
+**The messages themselves are NOT debris, and are deliberately not swept.** `Campagne de test` /
+`general` is the standing venue nearly every channel row writes into, and nothing prunes it: measured
+2026-08-22, 805 rows since 2026-08-19, growing with every pass of every phase. That is the one large
+realistic corpus this campaign owns, and two things depend on it. SEARCH-4 times a channel search
+over what is actually there, so a swept channel would measure an empty one. And `searchChannelHistory`
+asks the server for at most 2000 rows, a cap SEARCH-2 can currently only reach through the *throwing*
+branch because manufacturing 2000 messages inside a check is impractical - at this rate the campaign
+manufactures them itself, and the capped branch becomes reachable for real rather than by proxy.
+
+So the count is a MEASUREMENT to be watched, not a mess to be cleared. What it does owe is attention
+when a latency changes: a send or an open that slows as this channel grows is the user's standing
+requirement failing (*"doit marcher avec une conversation de toute les tailles"*), and it will show up
+here first, on the venue with the most history, before it shows up for any real user.
+
 ## Measurements the board deliberately no longer carries
 
 **The board is a state table, and a `PASS` cell says `PASS X/X` and a time.** That was decided on
