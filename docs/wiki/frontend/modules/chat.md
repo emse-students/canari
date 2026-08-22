@@ -331,6 +331,15 @@ sending device stored a timestamp milliseconds off the one it broadcast - invisi
 was only displayed, and a device able to lose to its own frame once it decides the winner.
 `handleTogglePin` had always done this correctly and says so in place.
 
+**A DELETE OUTRANKS EVERY EDIT, whatever the order.** `edit_message` never checked `isDeleted`, and
+the tombstone is carried in `content` - so an edit landing on a deleted row restored the deleted text
+on screen, italic and faded, which is the one thing a delete exists to prevent. It is reachable the
+same way the ordering defect was: two devices of one account, one deleting while the other edits.
+The live path and the replay now both refuse an edit of a deleted row (`a tombstone is final` in the
+log), which is the rule the archive's post-save pass in `history.ts` has always had
+(`if (deletion) ... else if (edit)`) and the campaign asserts for merges in MUT-7. Three appliers,
+one invariant, and it was in one of them.
+
 `pinStore.supersedes` is the same pattern for the pin register, and predates this: the argument was
 written down there before it was applied here. Covered by `editPrecedence.test.ts` and
 `systemMessageHandler.editPrecedence.test.ts`, the latter asserting the convergence property by

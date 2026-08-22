@@ -117,6 +117,42 @@ describe('handleSystemEvent - edit_message precedence', () => {
     expect(msgOf(asW1).content).toBe('from-A1');
   });
 
+  it('DROPS an edit of a deleted message - a tombstone is final, whatever the order', async () => {
+    const ctx = makeCtx('peer');
+    await handleSystemEvent('delete_message', { messageId: 'm1' }, ctx as any);
+    const tombstone = msgOf(ctx).content;
+    ctx.storage.updateMessage.mockClear();
+
+    await handleSystemEvent(
+      'edit_message',
+      { messageId: 'm1', newContent: 'resurrected', editedAt: 9999 },
+      ctx as any
+    );
+
+    // The tombstone is carried in `content`, so applying the edit would put the deleted text back
+    // on screen - the one outcome a delete exists to prevent.
+    expect(msgOf(ctx).content).toBe(tombstone);
+    expect(msgOf(ctx).isDeleted).toBe(true);
+    expect(ctx.storage.updateMessage).not.toHaveBeenCalled();
+    expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('a tombstone is final'));
+  });
+
+  it('CONVERGES on the tombstone whichever of delete and edit arrives first', async () => {
+    const edit = { messageId: 'm1', newContent: 'edited', editedAt: 5000 };
+
+    const editFirst = makeCtx('peer');
+    await handleSystemEvent('edit_message', edit, editFirst as any);
+    await handleSystemEvent('delete_message', { messageId: 'm1' }, editFirst as any);
+
+    const deleteFirst = makeCtx('peer');
+    await handleSystemEvent('delete_message', { messageId: 'm1' }, deleteFirst as any);
+    await handleSystemEvent('edit_message', edit, deleteFirst as any);
+
+    expect(msgOf(editFirst).content).toBe(msgOf(deleteFirst).content);
+    expect(msgOf(editFirst).isDeleted).toBe(true);
+    expect(msgOf(deleteFirst).isDeleted).toBe(true);
+  });
+
   it('still refuses an edit from a sender who does not own the message, whatever its date', async () => {
     const ctx = makeCtx('attacker', 1000);
     await handleSystemEvent(

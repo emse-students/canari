@@ -290,6 +290,11 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       const convo = getConversation(contactName);
       const known = convo?.messages.find((m) => m.id === data.messageId);
       if (known && !replayMutationIsAuthorised(known, senderNorm, 'edit')) return;
+      // A DELETE IS ABSORBING - the tombstone wins whatever the order, exactly as the post-save
+      // pass in `history.ts` has always had it. The tombstone is carried in `content`, so an edit
+      // landing on a deleted row puts the deleted text back on screen. A delete seen earlier in
+      // THIS page counts as much as one already on the row.
+      if (known?.isDeleted || deletedMessages.has(data.messageId)) return;
       // Both the in-memory row and anything an earlier entry of THIS page already accumulated have
       // to be outranked: the page is walked in log order, which is not edit order.
       const heldInPage = editedMessages.get(data.messageId);

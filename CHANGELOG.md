@@ -87,6 +87,15 @@ which is also where every release up to and including v0.13.1 now lives.
   decides the winner: a device disagreeing with its own broadcast can lose to itself. `editMessage`
   now takes `editedAt` from its caller.
 
+  **And auditing the branch next door found a third: an edit could put a DELETED message's text back
+  on screen.** `edit_message` never checked `isDeleted`. The tombstone is carried in `content`, so an
+  edit landing on a deleted row does not merely reorder two bodies - it restores the text the user
+  deleted, italic and faded, which is the one outcome a delete exists to prevent. Reachable exactly
+  as the ordering defect was: two devices of one account, one deleting while the other edits. A
+  delete is now absorbing in the live path and the replay - the tombstone wins whatever the order -
+  which is the rule the archive's own post-save pass (`history.ts`) has always had, and the campaign
+  asserts for merges in MUT-7. It existed in one of the three places that needed it.
+
 - **Nobody could be made an association admin: the server refused the preset its own client sends.**
   `POST /associations/:id/members` and `PATCH .../members/:userId` answered
   `{"message":["permissions must not be greater than 1023"],"statusCode":400}` for every attempt.

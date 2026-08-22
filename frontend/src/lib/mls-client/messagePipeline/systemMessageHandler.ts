@@ -664,6 +664,19 @@ export async function handleSystemEvent(
         return true;
       if (idx !== -1) {
         const orig = c.messages[idx];
+        // A DELETE IS ABSORBING: THE TOMBSTONE WINS, WHATEVER THE ORDER. The tombstone lives in
+        // `content`, so an edit applied on top of it does not merely reorder two bodies - it puts
+        // the deleted text back on screen, italic and faded, which is the one outcome a delete
+        // exists to prevent. Reachable the same way the ordering defect was: two devices of one
+        // account, one deleting while the other edits. The archive's own post-save pass
+        // (`history.ts`, `if (deletion) ... else if (edit)`) has always had this rule; the live path
+        // and the replay never did.
+        if (orig.isDeleted) {
+          log(
+            `[MLS] Dropped an edit of ${String(data.messageId).slice(0, 8)} - the message is deleted and a tombstone is final`
+          );
+          return true;
+        }
         const editedAtMs = typeof data.editedAt === 'number' ? data.editedAt : Date.now();
         // AN EDIT OLDER THAN THE ONE THIS ROW ALREADY CARRIES IS DROPPED, and dropping it is what
         // makes two devices agree. Applying on arrival meant the answer was "whichever frame came
