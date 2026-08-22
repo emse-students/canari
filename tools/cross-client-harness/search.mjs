@@ -22,8 +22,16 @@
  *       `ctx.log`, never surfaced to `searchLimitedToLoaded`) is NOT that branch - the flag would
  *       stay false and the UI would give no visible sign the search missed anything past row 2000.
  *       SEARCH-2 tests the one branch that DOES fire (a forced fetch failure), because manufacturing
- *       a >2000-message channel inside a check is not practical; the cap gap is recorded from the
- *       source read, not exercised, and is called out explicitly below.
+ *       a >2000-message channel inside a check is not practical.
+ *
+ *       THE CAP GAP IS NOT MEASURED BY ANYTHING, HERE OR ANYWHERE. `searchChannelHistory`
+ *       (composables/useConversations.svelte.ts:448) asks for `cap: 2000` and, when the server says
+ *       `capped`, writes one `ctx.log` line and nothing else - `searchLimitedToLoaded` stays false,
+ *       so a channel past 2000 messages answers a search from a truncated corpus with no visible
+ *       sign of it. Verified against the source on 2026-08-22, re-checked because the file had moved
+ *       from `hooks/` to `composables/` since this was first written. It is stated HERE and on the
+ *       board rather than in SEARCH-2's payload: a field in a payload is a measurement, or it is a
+ *       comment nobody dates (testing-methodology 31).
  *   CASE/ACCENT FOLDING (`splitWithHighlight`, chat/messageDisplay.ts:218 - same function backs both
  *     the search filter and the `<mark>` highlighter): `text.toLowerCase().indexOf(needle.toLowerCase())`.
  *     Plain `String.toLowerCase()` folds CASE, not DIACRITICS - 'É'.toLowerCase() === 'é', but
@@ -273,10 +281,6 @@ async function search2() {
     foundViaFallback,
     warningShown,
     hits,
-    knownGapNotExercised:
-      'searchChannelHistory caps at 2000 rows (useConversations.svelte.ts ~440) and never sets ' +
-      'searchLimitedToLoaded when capped - only the throw path does. Not reproduced here (would need ' +
-      '>2000 messages in the channel); flagged from the source read only.',
   }, { W1: ignoringOfflineCut(await report(obs)) });
   cx.close();
   return ok;

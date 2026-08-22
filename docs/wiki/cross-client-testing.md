@@ -167,6 +167,14 @@ span, 30 464 lines over seven services, then reads clean with 15 notable and not
 
 Client-side, in-conversation, substring-only: no server index, no global search.
 
+**A gap no row here measures, verified on the source 2026-08-22.** A channel search asks the server
+for at most 2000 rows; when the server reports the history was capped, `searchChannelHistory`
+(`composables/useConversations.svelte.ts:448`) writes one log line and leaves `searchLimitedToLoaded`
+false. So a channel past 2000 messages answers from a truncated corpus and says nothing. SEARCH-2
+exercises the only branch that DOES raise the flag - a fetch that throws - because manufacturing a
+2000-message channel inside a check is not practical. Recorded here rather than in a payload field,
+per [testing-methodology](testing-methodology.md) 31.
+
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | SEARCH-1 | A term in a recent message is found and highlighted; prev/next walk the hits | `W1 W2` | `pending` |
