@@ -1135,6 +1135,34 @@ same tail-pin - whenever it happens while `entering` or `catchupActive` is still
 the initial page for THIS conversation could still be arriving late. A live message from a peer
 while the reader is already settled in still only conditionally scrolls, unchanged.
 
+### The sibling report from the same phone: "no history at all" was a silently swallowed rejection
+
+The same notification-tap report also described conversations opening with NO messages at all, not
+just the wrong ones. `loadHistoryForConversation`'s full replay path (`useConversations.svelte.ts`)
+had no `catch` anywhere in it - only a `finally` resetting `isLoadingHistory`. Every caller fires it
+with `void nav.loadHistoryForConversation(...)`, never awaited and never `.catch()`-ed, so a throw
+from `replayConversationHistory` (a network hiccup, a decrypt error, IndexedDB contention - all
+realistic among the many concurrent steps a cold start runs at once: WS connect, bulk-ingest
+observers, IndexedDB restore) became an unhandled rejection. `conversation.messages` never grew,
+and NOTHING was logged anywhere - no `ctx.log`, no console trace with any app-level context. The
+skeleton still disappeared on schedule (`isLoadingHistory` cleared via `finally` regardless), which
+is exactly what made a silently-failed load indistinguishable from a conversation that genuinely had
+no history to show.
+
+The fix wraps the replay-and-reload block in its own `try/catch`, logging
+`[HISTORY] Échec chargement historique (<id>…): <message>` on failure - mirroring the sibling
+`loadChannelHistory`'s existing `[CHANNEL]`-tagged catch a few hundred lines up, which already had
+one. Whether this exact failure mode was THE cause of the phone report, or only a plausible one
+among several, could not be settled from the code alone; the earlier silence was the actual bug
+regardless - a swallowed branch that logs nothing is unfalsifiable, and now it is not.
+
+Was this ever a missing "return to the list" mechanism? No - `ensureMobileConvoHistory` /
+`goBackToMenu` (both in this same file) already push a `historyOverlayStack` entry the moment a
+conversation is selected, through the SAME `selectConversation` call the notification-tap path uses
+(`openConversationFromId.ts`), and pop it back to the list on a hardware/gesture Back press exactly
+like any other overlay. An initial read of this report suspected that mechanism was entirely absent;
+it is not - re-verify before adding a second, parallel one.
+
 ## A page read is merged into the list, never assigned over it
 
 `loadHistoryForConversation` used to END by assigning `getMessagesPage(id, key,
@@ -1211,7 +1239,11 @@ can attribute.
 - **Sticky date**: current date label stays visible during scroll.
 - **Search**: in-chat search with prev/next navigation and highlight.
 - **Lightbox**: full-screen image/video with pinch-zoom and download.
-- **Radial menu** (mobile): long-press message -> circular action menu.
+- **Radial menu** (mobile): long-press message -> circular action menu
+  (`MessageMobileActions.svelte`). The button row has no width cap of its own and an own message
+  shows one more button than a received one (Edit), which was enough to overflow a narrow phone
+  screen on your own messages specifically - fixed with `max-w-[calc(100vw-2rem)] flex-wrap`
+  instead of a fixed-width, single-line row.
 - **Read receipts**: three states — sent / delivered / read — with distinct icons.
 - **GIFs**: an in-app picker (KLIPY) sends a GIF by URL; on Android the soft keyboard's own
   GIF/sticker button also works via `commitContent` (see below). GIFs skip canvas compression in

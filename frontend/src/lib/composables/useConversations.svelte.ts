@@ -290,47 +290,60 @@ export function useConversations() {
       // Fetch from network → decrypt → save to DB (no direct UI update).
       // The replay runs in a bulk-ingest window so an encrypted checkpoint flushes on close;
       // its progress markers are committed only afterwards (never ahead of persisted state).
-      const commit = await withMlsBulkIngest(ctx.ensureMls(), () =>
-        replayConversationHistory({
-          mlsService: ctx.ensureMls(),
-          id,
-          contactName,
-          userId: ctx.userId,
-          deviceKeyB64: ctx.deviceKeyB64,
-          storage: ctx.storage,
-          getConversation: (name) => conversations.get(name),
-          setConversation: (name, next) => conversations.set(name, next),
-          saveConversation: (name) => saveConversation(name, ctx),
-          messageReactions: ctx.messageReactions,
-          log: ctx.log,
-        })
-      );
-      commit?.();
-      // Reload from DB so display reflects the latest saved state
-      if (ctx.storage) {
-        const refreshed = await ctx.storage.getMessagesPage(
-          id,
-          ctx.deviceKeyB64,
-          INITIAL_MESSAGES_PAGE
+      try {
+        const commit = await withMlsBulkIngest(ctx.ensureMls(), () =>
+          replayConversationHistory({
+            mlsService: ctx.ensureMls(),
+            id,
+            contactName,
+            userId: ctx.userId,
+            deviceKeyB64: ctx.deviceKeyB64,
+            storage: ctx.storage,
+            getConversation: (name) => conversations.get(name),
+            setConversation: (name, next) => conversations.set(name, next),
+            saveConversation: (name) => saveConversation(name, ctx),
+            messageReactions: ctx.messageReactions,
+            log: ctx.log,
+          })
         );
-        const msgs = await retroactivelyResolveHexIds(
-          mapStoredMessagesToChatMessages(refreshed, ctx.userId),
-          ctx.storage,
-          id,
-          ctx.deviceKeyB64
-        );
-        const current = conversations.get(contactName);
-        if (current) {
-          conversations.set(contactName, {
-            ...current,
-            messages: mergeMessagePage(current.messages, msgs),
-          });
-          for (const m of msgs) {
-            if (m.reactions && m.reactions.length > 0) {
-              ctx.messageReactions.set(m.id, m.reactions);
+        commit?.();
+        // Reload from DB so display reflects the latest saved state
+        if (ctx.storage) {
+          const refreshed = await ctx.storage.getMessagesPage(
+            id,
+            ctx.deviceKeyB64,
+            INITIAL_MESSAGES_PAGE
+          );
+          const msgs = await retroactivelyResolveHexIds(
+            mapStoredMessagesToChatMessages(refreshed, ctx.userId),
+            ctx.storage,
+            id,
+            ctx.deviceKeyB64
+          );
+          const current = conversations.get(contactName);
+          if (current) {
+            conversations.set(contactName, {
+              ...current,
+              messages: mergeMessagePage(current.messages, msgs),
+            });
+            for (const m of msgs) {
+              if (m.reactions && m.reactions.length > 0) {
+                ctx.messageReactions.set(m.id, m.reactions);
+              }
             }
           }
         }
+      } catch (e) {
+        // Previously unhandled: this call is fired with `void` by every caller, so a throw here
+        // (network hiccup, decrypt error, IndexedDB contention - all realistic during a
+        // cold-started app's many concurrent init steps) left `conversation.messages` never
+        // updated, with NOTHING logged anywhere - the empty conversation this leaves behind had
+        // no trace of why. `isLoadingHistory` still clears via `finally` below, so the skeleton
+        // stops showing regardless, which is exactly what made this indistinguishable from a
+        // conversation that genuinely has no history.
+        ctx.log(
+          `[HISTORY] Échec chargement historique (${id.slice(0, 8)}…): ${e instanceof Error ? e.message : e}`
+        );
       }
     } finally {
       if (isSelected) isLoadingHistory = false;

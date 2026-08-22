@@ -128,9 +128,11 @@
         </div>
       {/if}
 
-      <!-- Action buttons row -->
+      <!-- Action buttons row. An own message can show one more button than a received one
+           (edit), which is enough to overflow a narrow phone screen at full width - wraps to a
+           second line instead, rather than spilling off both edges. -->
       <div
-        class="flex items-center gap-3 rounded-2xl border border-black/10 bg-white/90 px-4 py-3 shadow-xl dark:border-white/10 dark:bg-(--cn-surface)/95"
+        class="flex max-w-[calc(100vw-2rem)] flex-wrap items-center justify-center gap-3 rounded-2xl border border-black/10 bg-white/90 px-4 py-3 shadow-xl dark:border-white/10 dark:bg-(--cn-surface)/95"
       >
         {#if !isDeleted && canReply}
           <button
