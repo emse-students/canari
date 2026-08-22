@@ -28,10 +28,11 @@
  *     `ChannelNotificationLevel = 'all' | 'mentions' | 'none'`): a PER-USER, PER-CHANNEL setting
  *     persisted server-side (`GET/PATCH .../notification-level`). It gates what the SERVER pushes,
  *     never what the CLIENT sends - `mentionedUserIds` is attached unconditionally by the sender's
- *     own client, independent of the RECEIVER's chosen level. MENTION-2/3 read the DTO the sender
- *     issues, which is the only half of this a browser tab can see; the routing decision itself
- *     happens server-side and lands on the receiver's device, which is why the push itself is owed
- *     to the mobile verification phase for both.
+ *     own client, independent of the RECEIVER's chosen level. MENTION-2/3 assert BOTH halves - the
+ *     DTO the sender issues AND the push that does or does not reach the receiver - which is
+ *     possible here only because A1 is a second device of the OWNER's account: the owner sets their
+ *     own level on W1 and W2 mentions them, so the routing decision lands on a device this harness
+ *     holds. See the block above `armOwnerPhone`.
  *
  * MISSING HOOKS FOUND WHILE WRITING THIS (see the final report - each is a candidate fix):
  *   - `MentionDropdown.svelte`'s suggestions (`<li><button>@{name}</button></li>`) carry no
@@ -59,6 +60,7 @@
 import { randomBytes } from 'node:crypto';
 import {
   client,
+  ensureChat,
   evaluate,
   openDM,
   openChannel,
@@ -73,8 +75,10 @@ import {
 } from './chat.mjs';
 import { inPanel, openChannelSettings, setChannelNotifLevel } from './comm.mjs';
 import { record, recordObserved, mark } from './results.mjs';
-import { watch } from './watch.mjs';
-import { PEER_NAME, PORTS, VENUE } from './names.mjs';
+import { ignoringExpectedRefusal, report, watch } from './watch.mjs';
+import { srvLines } from './srvlog.mjs';
+import * as phone from './phone.mjs';
+import { OWNER_NAME, PEER_NAME, PORTS, VENUE } from './names.mjs';
 
 /**
  * A CLIENT AND THE OBSERVER THAT WATCHES IT - see the twin in `search.mjs` for why they are one call.
@@ -89,7 +93,9 @@ async function observed(port, label) {
   return [cx, await watch(cx, label)];
 }
 
-const { W1 } = PORTS;
+const { A1, W1, W2 } = PORTS;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const argv = process.argv.slice(2);
 const only = argv.includes('--only') ? Number(argv[argv.indexOf('--only') + 1]) : null;
@@ -112,27 +118,62 @@ async function pickNotifLevel(cx, level) {
   }
 }
 
-/** The rendered chip's viewport point, found within the message bubble carrying `marker` - the
- * rendered chip has no hook of its own (finding above), so it is scoped like `clickBubbleAction`
- * scopes a hover-toolbar action: to the paragraph that actually holds the marker text. */
-async function chipButtonIn(cx, marker) {
-  const raw = await evaluate(
-    cx,
-    `JSON.stringify((function () {
-      var pane = document.querySelector('${COMPOSER}').closest('section');
-      var hits = [].filter.call(pane.querySelectorAll('p'), function (e) {
-        return (e.textContent || '').indexOf(${JSON.stringify(marker)}) !== -1;
-      });
-      if (!hits.length) return null;
-      var p = hits[hits.length - 1];
-      var btn = p.querySelector('button');
-      if (!btn) return null;
-      btn.scrollIntoView({ block: 'center' });
-      var r = btn.getBoundingClientRect();
-      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), text: btn.textContent.trim() };
-    })())`
-  );
-  return raw && raw !== 'null' ? JSON.parse(raw) : null;
+/**
+ * The rendered chip inside the bubble carrying `marker`, as a point PROVEN to hit it.
+ *
+ * THE FIRST VERSION MEASURED A POINT THE SCROLL HAD NOT FINISHED MOVING. It called
+ * `btn.scrollIntoView({ block: 'center' })` and read `getBoundingClientRect()` on the next line, so
+ * when the pane actually had to scroll - which it does for a message just sent, sitting at the
+ * bottom - the rect described where the chip WAS. The click then landed on whatever had taken that
+ * place. It passed whenever the chip happened to already be near the centre and needed no scroll,
+ * which is exactly the shape of an intermittent: MENTION-1 came back `FAIL` on the x5 of 2026-08-22
+ * with `bubbleChipFound: true`, `bubbleChipText: "@<peer>"` and `navigatedPath: null` - the chip was
+ * found, its text was right, and the click reached something else.
+ *
+ * So the point is SETTLED and then CHECKED, rather than taken on the first read:
+ *
+ *   - settled: the same rect twice in a row, which a scroll still in flight cannot produce;
+ *   - on target: `document.elementFromPoint` at that point resolves to the button itself, which is
+ *     the only thing that distinguishes "the chip is here" from "something is here".
+ *
+ * Rule 27 - a gesture that is not asserted is a gesture that did not happen. The caller records both
+ * flags, so a run that could not establish the gesture says so instead of blaming the product.
+ */
+async function chipButtonIn(cx, marker, timeoutMs = 8000) {
+  const t0 = Date.now();
+  let last = null;
+  while (Date.now() - t0 < timeoutMs) {
+    const raw = await evaluate(
+      cx,
+      `JSON.stringify((function () {
+        var pane = document.querySelector('${COMPOSER}').closest('section');
+        var hits = [].filter.call(pane.querySelectorAll('p'), function (e) {
+          return (e.textContent || '').indexOf(${JSON.stringify(marker)}) !== -1;
+        });
+        if (!hits.length) return null;
+        var p = hits[hits.length - 1];
+        var btn = p.querySelector('button');
+        if (!btn) return null;
+        btn.scrollIntoView({ block: 'center' });
+        var r = btn.getBoundingClientRect();
+        var x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);
+        var at = document.elementFromPoint(x, y);
+        return {
+          x: x,
+          y: y,
+          text: (btn.textContent || '').trim(),
+          onTarget: at === btn || btn.contains(at),
+        };
+      })())`
+    );
+    const now = raw && raw !== 'null' ? JSON.parse(raw) : null;
+    if (now && now.onTarget && last && last.x === now.x && last.y === now.y) {
+      return { ...now, settled: true };
+    }
+    last = now;
+    await sleep(200);
+  }
+  return last ? { ...last, settled: false } : null;
 }
 
 /** Clicks at a page point directly - the same raw dispatch `clickBubbleAction` uses once the target
@@ -210,8 +251,11 @@ async function mention1() {
   await awaitMessage(cx, term);
 
   const bubbleChip = await chipButtonIn(cx, term);
+  // THE GESTURE HAS TO BE ESTABLISHED BEFORE THE CLAIM CAN BE MADE. A point that never settled on
+  // the chip means the check never armed, which is VACUOUS - not a product that failed to navigate.
+  const armed = !!bubbleChip?.settled && !!bubbleChip?.onTarget;
   let navigatedPath = null;
-  if (bubbleChip) {
+  if (armed) {
     await clickPoint(cx, bubbleChip);
     navigatedPath = await until(cx, `location.pathname.indexOf('/profile/') === 0`, 5000)
       .then(() => evaluate(cx, 'location.pathname'))
@@ -219,12 +263,14 @@ async function mention1() {
   }
   const navigatedId = navigatedPath ? navigatedPath.replace('/profile/', '') : null;
 
-  const ok = !!mentionId && !!bubbleChip && navigatedId === mentionId;
-  await recordObserved('MENTION-1', ok ? 'PASS' : 'FAIL', {
+  const ok = !!mentionId && armed && navigatedId === mentionId;
+  await recordObserved('MENTION-1', armed ? (ok ? 'PASS' : 'FAIL') : 'VACUOUS', {
     query,
     composerChipMentionId: mentionId, // the one hooked surface - ground truth for the rest
     bubbleChipFound: !!bubbleChip,
     bubbleChipText: bubbleChip?.text ?? null,
+    chipPointSettled: bubbleChip?.settled ?? null,
+    chipPointOnTarget: bubbleChip?.onTarget ?? null,
     navigatedPath,
     idsMatch: navigatedId === mentionId,
   }, { W1: obs });
@@ -234,93 +280,272 @@ async function mention1() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// MENTION-2 - channel, notif level "Mentions": the sender's client attaches mentionedUserIds. The
-// PUSH ITSELF cannot be observed from a browser tab - see the file header - so this can only ever
-// be PARTIAL, never PASS.
+// THE PHONE IS THE OWNER'S SECOND DEVICE, WHICH IS WHAT MAKES A PUSH CLAIM POSSIBLE AT ALL.
+//
+// MENTION-2 and MENTION-3 used to set the OWNER's notification level on W1 and then mention the
+// PEER - two halves that never met. The level that gates a push is the RECEIVER's
+// (`channel.service.ts`: `member.notifLevels?.[channel.id] ?? 'all'`, then `if (level === 'none')
+// continue` and `if (level === 'mentions' && !mentioned.has(...)) continue`), so setting the
+// sender's own level contributed nothing to either claim, and both checks could only assert the DTO
+// the sender put on the wire. MENTION-2 recorded `PARTIAL` explaining that a push "is not
+// observable from a browser tab" - true of a browser tab, and not true of this fleet.
+//
+// A1 is enrolled as a SECOND DEVICE OF THE OWNER's account, so the check inverts: the owner sets
+// THEIR OWN level on W1, W2 mentions the OWNER, and the routing decision lands on the owner's
+// phone - the receiver whose level was actually set. NOTIF-4 proved the capability on 2026-08-22
+// (a real notification, matched by marker, 11.3 s after the send), which is what a capability has
+// to be before a check may rest on it (rule 29).
 // ---------------------------------------------------------------------------------------------
-async function mention2() {
-  const [cx, obs] = await observed(W1, 'MENTION-2');
-  await openChannel(cx, VENUE.community, VENUE.channel);
 
-  const levelSet = await pickNotifLevel(cx, 'mentions');
+/**
+ * The owner's phone, WARM on the venue channel and then DEAD - the state a push claim needs.
+ *
+ * WARM because `awaitNotification` matches the MARKER, and the marker only reaches the shade in a
+ * notification the device could DECRYPT. A phone with no Graine state for this channel renders the
+ * generic body instead (`phone.GENERIC_BODIES`), which reads as "no notification arrived" and is a
+ * completely different finding from the one the check is making.
+ *
+ * DEAD because a foregrounded app handles the frame over the WebSocket and shows nothing at all
+ * (`App in foreground -> MLS handled by the foreground (WS), skip`). `am kill`, never `force-stop`:
+ * a force-stopped package sits in Android's STOPPED state and the framework cancels every FCM
+ * broadcast to it, so the check would be measuring Android's own suppression.
+ */
+async function armOwnerPhone() {
+  await phone.ensure({ port: A1 });
+  const pin = phone.unlockPin(A1);
+  const cx = await client(A1, 'tauri.localhost');
+  try {
+    await ensureChat(cx);
+    await openChannel(cx, VENUE.community, VENUE.channel);
+  } finally {
+    cx.close();
+  }
+  phone.clearLogcat();
+  return { pin, ...(await phone.killAndProveDead()) };
+}
 
-  await cx.send('Network.enable');
-  const sinceIdx = cx.events.length;
-
-  const term = mark('MENTION2');
-  const query = PEER_NAME.split(' ')[0];
-  const mentionId = await mentionInComposer(cx, query);
-  await cx.send('Input.insertText', { text: term });
-  await until(cx, SEND_ENABLED, 5000, 50);
-  await fireComposer(cx);
-  await awaitMessage(cx, term);
-
-  const body = await awaitChannelSendBody(cx, sinceIdx);
+/**
+ * A channel message from W2 that mentions the OWNER, carrying a marker only this send has.
+ *
+ * Returns what the SENDER put on the wire beside the ciphertext - the `mentionedUserIds` routing
+ * hint - because that is what separates "the server suppressed it" from "the sender never asked for
+ * it", and a check whose subject is the routing decision must not confuse the two.
+ */
+async function w2MentionsOwner(w2, label) {
+  await w2.send('Network.enable');
+  const sinceIdx = w2.events.length;
+  const term = mark(label);
+  const mentionId = await mentionInComposer(w2, OWNER_NAME.split(' ')[0]);
+  await w2.send('Input.insertText', { text: term });
+  await until(w2, SEND_ENABLED, 5000, 50);
+  await fireComposer(w2);
+  await awaitMessage(w2, term);
+  const body = await awaitChannelSendBody(w2, sinceIdx);
   const mentionedUserIds = body?.mentionedUserIds ?? null;
-  const containsPeer = Array.isArray(mentionedUserIds) && mentionedUserIds.includes(mentionId);
-
-  await pickNotifLevel(cx, 'all'); // restore the default - do not leave the account on "mentions"
-
-  const clientPreconditionOk = levelSet && !!mentionId && containsPeer;
-  await recordObserved('MENTION-2', clientPreconditionOk ? 'PARTIAL' : 'FAIL', {
-    notifLevelSet: 'mentions',
-    notifLevelUiConfirmed: levelSet,
+  return {
+    term,
     mentionId,
-    mentionedUserIdsSent: mentionedUserIds,
-    containsMentionedPeer: containsPeer,
-    pushObserved: null,
-    note:
-      'PARTIAL, never PASS: confirms only the client-side precondition (level persisted + ' +
-      'mentionedUserIds attached for a mentions-level channel). Whether the peer actually received a ' +
-      'push is not observable from a browser tab - owed to the mobile verification phase ' +
-      '(docs/wiki/device-verification.md).',
-  }, { W1: obs });
-  cx.close();
-  return clientPreconditionOk;
+    mentionedUserIds,
+    mentionsOwner: Array.isArray(mentionedUserIds) && mentionedUserIds.includes(mentionId),
+    sentAt: Date.now(),
+  };
+}
+
+/**
+ * HOW MANY RECIPIENTS THE SERVER CHOSE, from its own log, scoped to this check's own window.
+ *
+ * EVIDENCE, NEVER THE ASSERTION. The phone is what the user experiences and it is what the verdict
+ * turns on; this is the line that separates the two causes a silent phone cannot distinguish - the
+ * server selected nobody, or it selected somebody and the device showed nothing. `recipients=N`
+ * only, never the line: it carries a channel and a message uuid and this repository is public.
+ *
+ * PROD IS SHARED, so the window can catch somebody else's salon. That is exactly why this is not an
+ * assertion: an extra number here is another community's traffic, not a defect in this check.
+ */
+function serverRecipientCounts(sinceMs) {
+  const secs = Math.ceil(sinceMs / 1000) + 5;
+  return srvLines('social-service', `${secs}s`)
+    .map((l) => /\[CHANNEL_PUSH\] channel=\S+ message=\S+ recipients=(\d+)/.exec(l))
+    .filter(Boolean)
+    .map((m) => Number(m[1]));
+}
+
+/**
+ * WHAT THE DEVICE ITSELF SAW, since `armOwnerPhone` cleared its log.
+ *
+ * A silent phone has four causes and the shade cannot tell them apart: the server routed nobody, the
+ * frame never reached the device, the device received it and showed nothing, or it showed one and
+ * something cancelled it. Each of those is a different bug in a different place, and MENTION-3 came
+ * back `VACUOUS` on 2026-08-22 with no way to say which - the control was not heard, the mention was
+ * attached, the level was confirmed, and the row stopped there.
+ *
+ * `type=channel ` with the trailing space on purpose: `type=channel_read` is the cross-device read
+ * sync, a different frame answering a different question, and counting it here would report a
+ * message the device never got.
+ */
+function deviceChannelFrames() {
+  const lines = phone.adb(['logcat', '-d', '-t', '4000'], 60_000).split(/\r?\n/);
+  const count = (re) => lines.filter((l) => re.test(l)).length;
+  return {
+    received: count(/CanariFCM: onMessageReceived: type=channel /),
+    shown: count(/handleChannelMessage: showNotification/),
+    cancelled: count(/cancelConversationNotification: notif removed/),
+    reads: count(/CanariFCM: onMessageReceived: type=channel_read/),
+  };
+}
+
+/**
+ * W1 sets the OWNER's level for the venue channel, then LEAVES the channel.
+ *
+ * Leaving is part of the arrangement, not tidiness: the owner's other device sitting IN the channel
+ * reads the message as it lands, and a read from another device of the same account is exactly what
+ * makes the phone cancel its own notification (`FCM silent from self -> cancelling notification`,
+ * the mechanism NOTIF-4 asserts). A check that left W1 in the channel would be racing that cancel.
+ */
+async function setOwnerLevelAndLeave(cx, level) {
+  await openChannel(cx, VENUE.community, VENUE.channel);
+  const ok = await pickNotifLevel(cx, level);
+  await goto(cx, '/chat');
+  return ok;
 }
 
 // ---------------------------------------------------------------------------------------------
-// MENTION-3 - channel, notif level "Aucune". The deterministic claim available from here: the
-// CLIENT still attaches mentionedUserIds regardless of the receiver's level, because the level is a
-// server-side routing decision (ChannelNotificationLevel doc comment), never a client-side filter.
-// "The mention triggers nothing" for the receiver is a push claim this harness cannot make.
+// MENTION-2 - channel at level "Mentions": a mention REACHES the receiver. The owner sets their own
+// level, W2 mentions them, and the owner's phone must raise a notification carrying the marker.
+// ---------------------------------------------------------------------------------------------
+async function mention2() {
+  const [cx, obs] = await observed(W1, 'MENTION-2');
+  const levelSet = await setOwnerLevelAndLeave(cx, 'mentions');
+  const killed = await armOwnerPhone();
+
+  const [w2cx, w2obs] = await observed(W2, 'MENTION-2/W2');
+  await openChannel(w2cx, VENUE.community, VENUE.channel);
+  const sent = await w2MentionsOwner(w2cx, 'MENTION2');
+
+  const notifiedInMs = await phone.awaitNotification(sent.term, 90_000);
+  const device = deviceChannelFrames();
+  const serverRecipients = serverRecipientCounts(Date.now() - sent.sentAt);
+  // Read whether or not the marker arrived: if it did NOT, a generic body in the shade says the
+  // push landed and the device could not decrypt it - a different defect from silence, and one no
+  // later reading of this row could recover.
+  const undecrypted = phone.undecryptedInShade();
+
+  await openChannel(cx, VENUE.community, VENUE.channel);
+  await pickNotifLevel(cx, 'all'); // restore the default - never leave the account on "mentions"
+
+  const ok = levelSet && sent.mentionsOwner && notifiedInMs !== null;
+  await recordObserved(
+    'MENTION-2',
+    ok ? 'PASS' : 'FAIL',
+    {
+      notifLevelSet: 'mentions',
+      notifLevelUiConfirmed: levelSet,
+      pinOnPhone: killed.pin,
+      stateAtKill: killed.stateAtKill,
+      killedInMs: killed.deadInMs,
+      mentionId: sent.mentionId,
+      mentionedUserIdsSent: sent.mentionedUserIds,
+      containsMentionedOwner: sent.mentionsOwner,
+      notifiedInMs,
+      serverRecipients,
+      device,
+      undecryptedInShade: undecrypted,
+      verdictMeaning:
+        'PASS is a REAL PUSH: the owner set their own channel level to "mentions", the peer sent a ' +
+        'channel message mentioning them, and the owner phone - killed, out of the foreground - ' +
+        'raised a notification whose body carried this send marker, so the frame was routed AND ' +
+        'decrypted on the device.',
+    },
+    { W1: obs, W2: w2obs }
+  );
+  cx.close();
+  w2cx.close();
+  return ok;
+}
+
+// ---------------------------------------------------------------------------------------------
+// MENTION-3 - channel at level "Aucune": a mention reaches NOTHING. A negative claim, so it carries
+// its own positive control - the identical send at level "mentions", in the same run, on the same
+// fleet - and the silence window is derived from what that control MEASURED rather than chosen.
 // ---------------------------------------------------------------------------------------------
 async function mention3() {
   const [cx, obs] = await observed(W1, 'MENTION-3');
+  const [w2cx, w2obs] = await observed(W2, 'MENTION-3/W2');
+  await openChannel(w2cx, VENUE.community, VENUE.channel);
+
+  // -- the control: same shape, level "mentions", and it must be HEARD --
+  const controlLevelSet = await setOwnerLevelAndLeave(cx, 'mentions');
+  await armOwnerPhone();
+  const control = await w2MentionsOwner(w2cx, 'MENTION3C');
+  const controlMs = await phone.awaitNotification(control.term, 90_000);
+  // THE CONTROL CARRIES ITS OWN EVIDENCE, because a control that is not heard is the one case this
+  // check cannot explain from the shade alone - and it is the case that actually happened.
+  const controlDevice = deviceChannelFrames();
+  const controlRecipients = serverRecipientCounts(Date.now() - control.sentAt);
+  const controlUndecrypted = phone.undecryptedInShade();
+
+  // -- the claim: level "none", and it must be SILENT --
+  const levelSet = await setOwnerLevelAndLeave(cx, 'none');
+  const killed = await armOwnerPhone();
+  const sent = await w2MentionsOwner(w2cx, 'MENTION3');
+  // FOUR TIMES WHAT THE CONTROL TOOK, floored at 45 s. Derived, not chosen: the window has to be
+  // long enough that a notification which was going to arrive already has, and the only honest
+  // measure of that on this fleet, this hardware and this network is the one just taken. A literal
+  // would be a timeout nobody could defend; this one states what would have to be true for it to be
+  // wrong - a push four times slower than the control, on the same pair of devices, minutes later.
+  const silenceWindowMs = Math.max(4 * (controlMs ?? 0), 45_000);
+  const notifiedInMs = await phone.awaitNotification(sent.term, silenceWindowMs);
+  const device = deviceChannelFrames();
+  const serverRecipients = serverRecipientCounts(Date.now() - sent.sentAt);
+  const foregrounded = phone.foregrounded();
+
   await openChannel(cx, VENUE.community, VENUE.channel);
-
-  const levelSet = await pickNotifLevel(cx, 'none');
-
-  await cx.send('Network.enable');
-  const sinceIdx = cx.events.length;
-
-  const term = mark('MENTION3');
-  const query = PEER_NAME.split(' ')[0];
-  const mentionId = await mentionInComposer(cx, query);
-  await cx.send('Input.insertText', { text: term });
-  await until(cx, SEND_ENABLED, 5000, 50);
-  await fireComposer(cx);
-  await awaitMessage(cx, term);
-
-  const body = await awaitChannelSendBody(cx, sinceIdx);
-  const mentionedUserIds = body?.mentionedUserIds ?? null;
-  const stillSentClientSide = Array.isArray(mentionedUserIds) && mentionedUserIds.includes(mentionId);
-
   await pickNotifLevel(cx, 'all'); // restore the default
 
-  const ok = levelSet && stillSentClientSide;
-  await recordObserved('MENTION-3', ok ? 'PASS' : 'FAIL', {
-    notifLevelSet: 'none',
-    notifLevelUiConfirmed: levelSet,
-    mentionId,
-    mentionedUserIdsSent: mentionedUserIds,
-    verdictMeaning:
-      'PASS confirms the client attaches mentionedUserIds regardless of the level - suppression, if ' +
-      'any, is a server routing decision this harness cannot observe. NOT a claim that no push arrived ' +
-      'at the peer; that half is owed to the mobile phase, same as MENTION-2.',
-  }, { W1: obs });
+  // A SILENCE IS ONLY EVIDENCE IF THE SAME PIPELINE WAS JUST HEARD. Without the control this check
+  // passes on a dead phone, a lost adb link, a peer that never sent, or a channel nobody is in -
+  // every one of which is silent, and none of which is the suppression being claimed.
+  const verdict =
+    controlMs === null
+      ? 'VACUOUS'
+      : controlLevelSet && levelSet && control.mentionsOwner && sent.mentionsOwner && notifiedInMs === null
+        ? 'PASS'
+        : 'FAIL';
+
+  await recordObserved(
+    'MENTION-3',
+    verdict,
+    {
+      controlLevel: 'mentions',
+      controlLevelUiConfirmed: controlLevelSet,
+      controlNotifiedInMs: controlMs,
+      controlMentionsOwner: control.mentionsOwner,
+      controlServerRecipients: controlRecipients,
+      controlDevice,
+      controlUndecryptedInShade: controlUndecrypted,
+      notifLevelSet: 'none',
+      notifLevelUiConfirmed: levelSet,
+      stateAtKill: killed.stateAtKill,
+      mentionId: sent.mentionId,
+      mentionedUserIdsSent: sent.mentionedUserIds,
+      containsMentionedOwner: sent.mentionsOwner,
+      silenceWindowMs,
+      notifiedInMs,
+      phoneForegroundedAtEnd: foregrounded,
+      serverRecipients,
+      device,
+      verdictMeaning:
+        'PASS is a REAL SUPPRESSION: the identical send at level "mentions" reached the phone in ' +
+        'controlNotifiedInMs, and the same send at level "none" raised nothing over a window four ' +
+        'times that long - while the sender still attached mentionedUserIds both times, so the ' +
+        'suppression is the SERVER routing decision and not the client declining to ask. VACUOUS ' +
+        'means the control was not heard, so the silence proves nothing.',
+    },
+    { W1: obs, W2: w2obs }
+  );
   cx.close();
-  return ok;
+  w2cx.close();
+  return verdict === 'PASS';
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -400,6 +625,15 @@ async function mention5() {
   const sentDespiteNonMembership = Array.isArray(mentionedUserIds) && mentionedUserIds.includes(fakeId);
   const bubbleChip = await chipButtonIn(cx, term);
 
+  // THE 404 THIS CHECK GOES AND CAUSES. Mentioning a user id that belongs to nobody is the whole
+  // point of the row, and the client then asks `/api/users/<id>` to render a name for it - so the
+  // check cannot be clean and be doing its job at the same time. Forgiven as a PAIR (that path, that
+  // status) exactly like COMM's provoked 403s: forgiving the path alone would swallow a 500 from the
+  // user endpoint, forgiving 404 alone would swallow one from anywhere else on the page.
+  const narrowed = ignoringExpectedRefusal(await report(obs), [
+    { path: /^\/api\/users\/[0-9a-f]{64}$/, status: [404] },
+  ]);
+
   await recordObserved('MENTION-5', sentDespiteNonMembership ? 'PASS' : 'FAIL', {
     fakeUserId: fakeId,
     mentionedUserIdsSent: mentionedUserIds,
@@ -409,7 +643,7 @@ async function mention5() {
       'PASS here means the client neither blocks the send nor validates membership, matching the ' +
       'source read above - it is a finding about the CLIENT, not a verdict on the server: whether the ' +
       'server routes a push for a mention outside the channel is unobserved by this check.',
-  }, { W1: obs });
+  }, { W1: narrowed });
   cx.close();
   return sentDespiteNonMembership;
 }
@@ -437,7 +671,23 @@ async function mention6() {
 
   const body = await awaitChannelSendBody(cx, sinceIdx);
 
-  const KNOWN_KEYS = new Set(['ciphertext', 'nonce', 'keyVersion', 'messageId', 'poll', 'mentionedUserIds']);
+  // THE SET IS THE SOURCE'S, re-derived from `sendEncryptedChannelMessage` on 2026-08-22 rather than
+  // carried forward from when this check was written. It had `keyVersion`, which Graine removed, and
+  // lacked `senderSessionId` and `messageIndex`, which Graine added - so the check failed on two
+  // legitimate fields and would have passed a body that had quietly dropped `keyVersion`'s successor.
+  // The two new ones are now in the "what stays in the clear" table of
+  // `docs/wiki/protocols/channel-encryption.md`; they were not, and this check is what found that.
+  // `silent` is in the set because a reaction is a channel message too and takes the same path.
+  const KNOWN_KEYS = new Set([
+    'ciphertext',
+    'nonce',
+    'senderSessionId',
+    'messageIndex',
+    'messageId',
+    'poll',
+    'mentionedUserIds',
+    'silent',
+  ]);
   const bodyKeys = body ? Object.keys(body) : [];
   const unexpectedKeys = bodyKeys.filter((k) => !KNOWN_KEYS.has(k));
   const mentionedUserIds = body?.mentionedUserIds ?? null;
@@ -479,11 +729,11 @@ for (const [n, fn] of Object.entries(CHECKS)) {
 console.log(`\nMENTION: ${results.filter(([, ok]) => ok).length}/${results.length} assertions held`);
 // NO EXIT CODE HERE - see the twin note at the foot of `search.mjs`. These booleans are the assertion
 // half only; `results.mjs` derives the code from the recorded verdicts, which are the gated ones.
-// MENTION-2 makes the point sharply: it returns `clientPreconditionOk` and records PARTIAL, so this
-// loop called a run that is explicitly NOT a pass a pass, and exited 0 on it.
+// MENTION-2 USED TO MAKE THE POINT SHARPLY: it returned `clientPreconditionOk` while recording
+// PARTIAL, so this loop counted a run that was explicitly NOT a pass as one, and exited 0 on it.
 //
-// CONSEQUENCE, STATED RATHER THAN WORKED AROUND: MENTION-2 is PARTIAL by construction - whether the
-// peer's phone actually rang is not observable from a browser tab - so this phase exits non-zero
-// until the mobile half is taken. That is a standing debt reported accurately, not a false alarm,
-// and it clears the day `device-verification` covers it. Making PARTIAL exit 0 would buy silence by
-// declaring the unverified half verified, which is the trade this whole audit exists to refuse.
+// THAT DEBT IS PAID - MENTION-2 and MENTION-3 assert a real push on the owner's phone now, so the
+// phase no longer carries a standing non-zero it had taught its operator to expect. The note stays
+// because the SHAPE recurs: a boolean returned by a check is not its verdict, and only the recorded
+// verdict may decide an exit code. MENTION-3 is the live example - it returns `verdict === 'PASS'`,
+// so its VACUOUS (control not heard) is a failure here and not a quiet zero.

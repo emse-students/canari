@@ -1208,6 +1208,17 @@ export function logcatReport(lines, label = 'A1') {
     ['fcm-foreground-skip', /^App in foreground -> MLS handled by the foreground/],
     ['fcm-decrypt', /^(tryDecrypt|decryptProto): (MLS state loaded|success)/],
     ['fcm-notify', /^(showNotification|refreshBadgeSummary|thread): /],
+    // ── the silent half of the notification surface, which the list knew nothing about ──
+    // Every one of these is a DECISION, not a tick: a silent frame shows nothing, and a silent frame
+    // FROM SELF means another device of this account read the conversation, so this device's
+    // notification must go (`CanariFirebaseMessagingService` 1214-1224, 1311-1316). NOTIF-4 asserts
+    // exactly that dismissal - and then landed `PASS-DIRTY` on 2026-08-22 because its own success
+    // path was unnamed here: the classifier knew the SHOWING half and not the CANCELLING half.
+    ['fcm-silent', /^FCM silent -> MLS state updated, no notification shown$/],
+    ['fcm-cancel-self', /^FCM silent from self -> cancelling notification for group=/],
+    // Both outcomes, because "no notif for" is the same decision reaching a shade that is already
+    // clear - a cancel that finds nothing is not a different event, it is this one arriving second.
+    ['fcm-cancel', /^cancelConversationNotification: (notif removed|no notif for) group=/],
     ['fcm-cache', /^(writeFcmCache|fetchAvatar): /],
     ['outbox-drain', /^(drainOutboxBackground|sendQueuedMessagePush): /],
     ['worker-flag', /^resetFailureFlag: flag reset/],
@@ -1259,7 +1270,7 @@ export function logcatReport(lines, label = 'A1') {
     if (!tt && !br) {
       // `LOGCAT UNAVAILABLE: ...` is `logcatSince` reporting it could not read the device at all,
       // and an unreadable surface is NOT a clean one - it goes straight to `errors`.
-      if (/^LOGCAT UNAVAILABLE/.test(raw))
+      if (raw.startsWith('LOGCAT UNAVAILABLE'))
         parsed.push({ at: null, pid: null, sev: 'E', tag: 'adb', msg: raw, ours: true });
       else skipped.unparsed++;
       continue;

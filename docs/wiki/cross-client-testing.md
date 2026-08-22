@@ -22,20 +22,20 @@ Updated after every run.
 | Phase | Scripts | Last build | State |
 | --- | --- | --- | --- |
 | 0 SETUP | - | - | 5/9 `passed`; SETUP-2 skipped by decision, SETUP-7/8 owed before CORRUPT and PIN |
-| 1 MSG | 12 | `e9d951d7` | **12/12 `PASS` x1** (2026-08-21), all clients clean, server clean. Four A1 rows carry no `a1Build` - the runners never recorded it; the preflight does now, so they are owed a re-run for attribution alone |
-| 2 TYPE | 5 | `e9d951d7` | **5/5 `PASS` x1** (2026-08-21), server clean. An earlier 5/5 x5 stands on superseded runner `25376b86` |
-| 3 READ | 10 | `70497810` | **9/9 runnable `PASS` x5 - 45 verdicts, CLEAN 5/5**, server clean every pass (2026-08-21), runner `2c2b83d1b748`. READ-5 `SKIPPED`: needs four readers, the estate has two accounts |
-| 4 MUT | 21 | `6748f6b8` | **CLEAN x5 2026-08-22** on runner `e3e5a60bb007` (+ x1 on `fbf202d9d9d9`), fleet homogeneous on `6748f6b8`: 24 of the 25 verdict rows `PASS` 5/5 (21 checks, four of which run in both venues), MUT-20 `SKIPPED` (unarmable until 2026-11-09). MUT-18 found a real convergence defect - two devices of one account edited one message and settled on different bodies, permanently and silently - now fixed and pinned |
-| 5 SEARCH | 6 | `1f396ac7` | **CLEAN x5 2026-08-22** on runner `928f8b286dac`: 6/6 `PASS` 5/5, server clean every pass. Found two real defects - a channel search that looped the client against our own server (4956 requests for one query), and a sidebar filter that hid a conversation when you typed its name - both fixed and re-measured on the build above |
-| 6 MENTION | 6 | - | `pending` |
-| 7 FWD | 5 | `25376b86` | 5/5 `passed` - 20 verdicts, 20 `PASS`; FWD-2 25/25 by hand |
+| 1 MSG | 12 | `e9d951d7` | **`PASS` 12/12 x1** (2026-08-21). Four A1 rows carry no `a1Build` - re-run owed for attribution |
+| 2 TYPE | 5 | `e9d951d7` | **`PASS` 5/5 x1** (2026-08-21). An earlier x5 stands on superseded runner `25376b86` |
+| 3 READ | 10 | `70497810` | **`PASS` 9/9 x5** on runner `2c2b83d1b748` (2026-08-21). READ-5 `SKIPPED`: needs four readers, the estate has two |
+| 4 MUT | 21 | `6748f6b8`, A1 `a7981206` | **`PASS` 24/24 x5** on runner `e3e5a60bb007`, + x1 on `fbf202d9d9d9`. MUT-20 `SKIPPED`: unarmable until 2026-11-09 |
+| 5 SEARCH | 6 | `1f396ac7` | **`PASS` 6/6 x5** on runner `928f8b286dac` |
+| 6 MENTION | 6 | `1f396ac7`, A1 `a7981206` | **`PASS` 6/6 x5** on runner `cdc081edabc0` |
+| 7 FWD | 5 | `25376b86` | **`passed` 5/5**; FWD-2 25/25 by hand |
 | 8 GRP | 9 | - | `pending` |
 | 9 COMM | 22 | - | `pending` |
 | 10 DEL | 10 | - | `pending` |
 | 11 TAB | 8 | - | `pending` |
 | 12 MULTI | 6 | - | `pending` |
 | 13 LIFE | 8 | - | `pending` |
-| 14 NOTIF | 15 | - | `pending` |
+| 14 NOTIF | 21 | - | `pending` |
 | 15 CALL | 20 | - | `pending` - no script exists yet |
 | 16 HEAL | 5 | - | `pending` |
 | 17 PIN | 10 | - | `pending` |
@@ -92,7 +92,7 @@ window. Earlier x5 series on `8a3edbdd`, `e62c21f1` and `25376b86` all read 13/1
 | MSG-7 | 30 rapid sends: order preserved, no gap, no duplicate | `W1 W2` | `PASS` - 2 000 ms |
 | MSG-8 | Send to a BACKGROUNDED tab | `W1 W2` `+A1` | `PASS` |
 | MSG-8b | Same, receiver on another page: badge and unread count | `W1 W2` `+A1` | `PASS` |
-| MSG-9 | **Receiver** offline at the GATEWAY, then restored: lands once on reconnect | `W1 W2` | `PASS` - 16.9 s, nearly all the deliberate outage |
+| MSG-9 | **Receiver** offline at the GATEWAY, then restored: lands once on reconnect | `W1 W2` | `PASS` - 16.9 s |
 | MSG-10 | **Sender** offline: optimistic echo persists, outbox drains, survives a reload | `W1 W2` | `PASS` |
 
 ## 2 - TYPE - typing indicators
@@ -102,9 +102,9 @@ window. Earlier x5 series on `8a3edbdd`, `e62c21f1` and `25376b86` all read 13/1
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | TYPE-1 | Typing on W1 shows on W2 within a second, and clears on stop | `W1 W2` | `PASS` - shown 73 ms, cleared 243 ms |
-| TYPE-2 | It expires on its own after 6 s if the stop is never sent | `W1 W2` | `PASS` - expired 4 180 ms, held 5 552 ms, inside the 3 500-9 000 ms bound |
-| TYPE-3 | Killing the tab mid-typing leaves no stuck indicator on the peer | `W1 W2` | `PASS` - cleared 5 978 ms, tab restored (navigated and unlocked) |
-| TYPE-4 | An offline peer gets nothing, and nothing is replayed when it returns | `W1 W2` | `PASS` - nothing while offline, nothing on reconnect, cut acted in 995 ms, back in 877 ms, 1 socket closed |
+| TYPE-2 | It expires on its own after 6 s if the stop is never sent | `W1 W2` | `PASS` - expired 4 180 ms |
+| TYPE-3 | Killing the tab mid-typing leaves no stuck indicator on the peer | `W1 W2` | `PASS` - cleared 5 978 ms |
+| TYPE-4 | An offline peer gets nothing, and nothing is replayed when it returns | `W1 W2` | `PASS` - cut 995 ms, back 877 ms |
 | TYPE-5 | Channel typing, a different transport entirely (REST, not WS) | `W1 W2` | `PASS` - channel/HTTP, shown 65 ms, cleared 224 ms |
 
 ## 3 - READ - receipts and unread counts
@@ -117,7 +117,7 @@ window. Earlier x5 series on `8a3edbdd`, `e62c21f1` and `25376b86` all read 13/1
 | READ-2 | The SAME user's other device also clears | `+A1` | `PASS` 5/5 |
 | READ-3 | The receipt only fires with the window FOCUSED and the tab visible | `W1 W2` | `PASS` 5/5 |
 | READ-4 | The 2 s debounce batches: twenty messages send ONE watermark | `W1 W2` | `PASS` 5/5 |
-| READ-5 | "Seen by" resolves to display names, and to `+N` past three | `+user` | `SKIPPED` - needs FOUR readers and the estate has TWO accounts. The watermark is per USER, not per device (READ-3's lesson), so the phone does not make a third: two more enrolments are owed, and each costs the owner's 2FA. The `W1 W2` in this column was wrong - it said the row was runnable. |
+| READ-5 | "Seen by" resolves to display names, and to `+N` past three | `+user` | `SKIPPED` - needs FOUR readers, the estate has TWO accounts. The watermark is per USER not per device, so the phone is not a third: two enrolments owed, each costing the owner's 2FA |
 | READ-6 | Channels send no receipts at all; read state comes from the server tally | `W1 W2` | `PASS` 5/5 |
 | READ-7 | Unread count after a reload, with the receipt still in flight | `W1 W2` | `PASS` 5/5 |
 | READ-8 | Unread count on a conversation whose messages arrived while logged out | `W1 W2` | `PASS` 5/5 |
@@ -129,73 +129,33 @@ window. Earlier x5 series on `8a3edbdd`, `e62c21f1` and `25376b86` all read 13/1
 All four are MLS system events in a DM or group and REST calls in a channel, so **every row whose
 cell says both runs twice**, once in the owner-peer DM and once in `Campagne de test`.
 
-`e3e5a60bb007` x5 on `6748f6b8`, phone on `6748f6b8`: **24 of the 25 verdict rows `PASS` 5/5** (21
-checks, four of which run in both venues), MUT-20 `SKIPPED` 5/5 (unarmable until 2026-11-09). The
-fleet is homogeneous on purpose here - MUT-18 crosses two devices of ONE account, so a phone on an
-older build measures the mixed fleet instead of the mechanism.
+`e3e5a60bb007` x5 on `6748f6b8`, phone on `a7981206`: **24 of the 25 verdict rows `PASS` 5/5** (21
+checks, four of which run in both venues), MUT-20 `SKIPPED` 5/5 (unarmable until 2026-11-09).
 
-**The runner then moved to `fbf202d9d9d9`, and one x1 on it confirms the x5** - 24 `PASS`, MUT-20
-`SKIPPED`, server clean. The delta attaches `silence` to any verdict that is NOT a PASS and is a
-no-op on a green one by construction; it touches no assertion and no navigation. MUT-12 additionally
-carries 9 verdicts of its own on that sha. Recorded per
-[testing-methodology](testing-methodology.md) 33: a sha the board does not name is a run nobody can
-tie to code.
-
-**MUT-18 caught a real convergence defect, and it is fixed.** Two devices of one account editing the
-same message settled on DIFFERENT bodies - W1 holding A1's text, A1 holding W1's - permanently, with
-no error anywhere and nothing on either screen to suggest a disagreement. `edit_message` was applied
-on arrival by every path that applies one, and "whichever frame came last" is not a rule: it is a
-different answer per device, because two devices receive in different orders. All three appliers now
-consult `editSupersedes`. The story is in `CHANGELOG.md`, the rule in
-[durable-rules](durable-rules.md), and the mechanism in
-[frontend/modules/chat](frontend/modules/chat.md).
-
-**The server window read `unexplained=2` on every pass of the x5 that preceded it, and the lines were
-MUT's own.** A channel message being hard-deleted (`[ChannelService] [CHANNEL] message deleted ...`,
-and its `(moderation)` form) is the one delete in the product that leaves no tombstone, MUT-8 and
-MUT-9 are the only checks that produce it, and neither had ever run in a window anybody classified.
-Both shapes are now `NOTABLE` - visible, never silenced - and pinned in `srvclassify-selftest.mjs`.
-That span, 30 464 lines over seven services on runner `4a9814f845d7`, then read clean with 15 notable
-and nothing unexplained; the `e3e5a60bb007` x5 above classifies clean on all five passes too.
-
-**MUT-12's channel leg has an intermittent that is NOT attributed to the product, and the reason is
-written here so nobody re-derives it.** It has missed three times ever (2026-08-16, and twice on
-2026-08-22 at 114 and 136 rendered paragraphs). The second of those was taken apart against the
-production log: the message was never lost - the server created and pushed it two seconds BEFORE the
-check gave up - and the sender's whole send took 600 ms once it started (`DISTRIBUTION_GROUP` ->
-`liveGraineSessions` -> `CHANNEL_PUSH`). What preceded it was 21 seconds in which the sender's client
-made no server call at all, having already rendered its optimistic bubble; `sendText` waits for that
-bubble, so the check's clock had been running the whole time.
-
-That leaves two causes, and the evidence available then could not separate them: a client-side stall,
-or THIS host saturating while it drives two Chrome profiles and a phone. Both failures fell in
-stretches where the box was also running greps, `ssh` and pre-commit sweeps; **eight consecutive
-passes with the box deliberately quiet did not reproduce it**. That is not proof, and it is the
-reason no defect is filed. The instrument is in place for the next occurrence instead: MUT's
-`finish()` attaches `silence` - the longest hole in each client's OWN timeline - to any non-PASS
-verdict, and a hole appearing in EVERY client at once is this host freezing while a hole in only the
-sender's is the product. See [testing-methodology](testing-methodology.md) 34.
+The 207 MUT rows record `a1Build: 6748f6b8`; the phone was on `a7981206`
+([testing-methodology](testing-methodology.md) 35). The runner then moved to `fbf202d9d9d9`,
+confirmed by one x1 - 24 `PASS`, MUT-20 `SKIPPED`, server clean.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | MUT-1 | **DM.** Edit a text message: both sides show the new text and an edited marker | `W1 W2` | `PASS` 5/5 |
 | MUT-2 | **DM.** Edit clears `readBy` - the receipt restarts | `W1 W2` | `PASS` 5/5 |
 | MUT-3 | **DM.** Edit refused on a message with media, and on someone else's | `W1 W2` | `PASS` 5/5 |
-| MUT-4 | **DM.** Edit a message the peer has NOT yet received | `W1 W2` | `PASS` 5/5 - 247-356 ms, 0 sightings of the original |
+| MUT-4 | **DM.** Edit a message the peer has NOT yet received | `W1 W2` | `PASS` 5/5 - 247-356 ms |
 | MUT-5 | **Channel.** Edit is absent by design - assert the control is not offered | `W1 W2` | `PASS` 5/5 |
-| MUT-6 | **DM.** Delete a message: both sides show the tombstone, not a gap | `W1 W2` | `PASS` 5/5 - converges in 1-9 ms |
-| MUT-7 | **DM.** The tombstone WINS over a body on merge | `W1 W2` | `PASS` 5/5 - 314-333 ms, no resurrection |
+| MUT-6 | **DM.** Delete a message: both sides show the tombstone, not a gap | `W1 W2` | `PASS` 5/5 - 1-9 ms |
+| MUT-7 | **DM.** The tombstone WINS over a body on merge | `W1 W2` | `PASS` 5/5 - 314-333 ms |
 | MUT-8 | **Channel.** Delete is a HARD row delete, no tombstone | `W1 W2` | `PASS` 5/5 |
 | MUT-9 | **Channel.** A moderator deletes another user's message | `W1 W2` | `PASS` 5/5 |
-| MUT-10 | **DM.** The toolbar offers Delete to a moderator, where the handler refuses it | `W1 W2` | `PASS` 5/5 - does NOT reproduce: `canModerateSelectedChannel` is `false` outside a channel by construction |
+| MUT-10 | **DM.** The toolbar offers Delete to a moderator, where the handler refuses it | `W1 W2` | `PASS` 5/5 |
 | MUT-11 | **Both.** React, un-react, re-react; two users; several emoji | `W1 W2` | `PASS` 5/5 both venues |
-| MUT-12 | **Both.** The 15-distinct-emoji cap, on both transports | `W1 W2` | `PASS` 5/5 both venues - cap holds at 15, slowest 22 ms |
-| MUT-13 | **Both.** A reaction notifies the author only, never the reactor | `W1 W2` | `PASS` 5/5 both venues - author in 158-164 ms in a channel; the push half is NOTIF's, not claimed here |
+| MUT-12 | **Both.** The 15-distinct-emoji cap, on both transports | `W1 W2` | `PASS` 5/5 both venues - 22 ms |
+| MUT-13 | **Both.** A reaction notifies the author only, never the reactor | `W1 W2` | `PASS` 5/5 both venues - 158-164 ms |
 | MUT-14 | **Both.** Pin and unpin, seen on the OTHER device | `+A1` | `PASS` 5/5 both venues - 305-341 ms |
-| MUT-15 | **DM.** A pin reaches a device that was OFFLINE when it was placed | `+A1` | `PASS` 5/5 - converges 289-385 ms after the device returns |
+| MUT-15 | **DM.** A pin reaches a device that was OFFLINE when it was placed | `+A1` | `PASS` 5/5 - 289-385 ms |
 | MUT-16 | **Channel.** A pin DOES survive, re-hydrated from the server | `+A1` | `PASS` 5/5 |
 | MUT-17 | **DM.** Edit, then delete, then react to the deleted message | `W1 W2` | `PASS` 5/5 |
-| MUT-18 | **DM.** Two devices of the SAME user edit the same message at once | `+A1` | `PASS` 5/5 - converges in 4-76 ms |
+| MUT-18 | **DM.** Two devices of the SAME user edit the same message at once | `+A1` | `PASS` 5/5 - 4-76 ms |
 | MUT-19 | **DM.** Delete a message still in the outbox: no peer sees it, and the sender keeps no row | `W1 W2` | `PASS` 5/5 |
 | MUT-20 | **DM.** Mutate a message older than the 90-day retention window | `W1 W2` | `SKIPPED` 5/5 - unarmable until 2026-11-09 |
 | MUT-21 | **DM.** The hover action bar stays inside the pane and takes its own clicks | `W1 W2` | `PASS` 5/5 |
@@ -204,80 +164,32 @@ sender's is the product. See [testing-methodology](testing-methodology.md) 34.
 
 Client-side, in-conversation, substring-only: no server index, no global search.
 
-**Rung 5 found two real defects, and neither was the one this phase was built to look for.**
-
-**SEARCH-4: opening search in a channel looped the client against our own server.** One query in a
-1052-message channel sent 4956 requests to `/api/channels/:id/messages`, was still sending them ten
-minutes later, and never rendered a result - counter at `0/0`, console clean, nothing on screen. The
-effect that runs the search called it bare, so it inherited the search's own reads as dependencies,
-including the conversation; the channel branch then merged the fetched history back into that
-conversation with an unconditional write. The search was its own trigger and could not converge.
-Both halves are closed - see `CHANGELOG.md` and [durable-rules](durable-rules.md).
-
-**SEARCH-6: typing a contact's name into the sidebar filter hid that conversation.** The filter
-compared `convo.name`, which for a DM is the persisted `userId::peerId` key, while the row displays a
-separately resolved label. The presentation is resolved once now and shared by filter and row.
-
-**SEARCH-5 PASSES ON A GAP, BY DESIGN, and that is a finding rather than a green light.** Search folds
-case and NOT diacritics, in all three places that match - `useConversations.svelte.ts:438,480` for
-which messages match, `messageDisplay.ts:218 splitWithHighlight` for the highlight, and
-`ChatArea.svelte:622` for the query. Re-verified against source on 2026-08-22. On a French corpus
-"reunion" cannot find the accented spelling. The check asserts the DIRECTION (no-accent query misses,
-accented-uppercase query hits), so it would also fail if the behaviour silently changed. Whether to
-fold diacritics is a product decision and is not taken here.
-
-**And one FAIL here was the harness, not the product** - recorded because the distinction is the
-phase's whole value. SEARCH-3 reported a deleted message still findable by its original text.
-`button:last-of-type` is "last button among ITS OWN siblings", so `Modal.svelte`'s lone header
-`Fermer` qualified and preceded the footer in document order: the check pressed dismiss and never
-deleted anything. It now activates by text, asserts what it activated, and asserts the tombstone
-before asking search anything.
-
-**Channel search DOES cover the whole history, and that is a verified negative rather than an
-assumption.** After the loop was fixed SEARCH-4 settled at two `/messages` pages, which looked like a
-walk stopping early against a 1057-row channel. It is not: the server's `limit` counts NON-SILENT
-rows and then carries the reaction rows along with them, and this channel is 163 bodies to 894
-reactions. Page one takes all 163 bodies, page two comes back short, the walk ends - complete.
-`pagesWalked` is recorded on the row so the next reader measures this instead of re-deriving it.
-
-**It does sharpen the cap gap below, though.** The 2000 is a cap on ROWS, and 85% of the rows here
-are reactions - so a heavily-reacted channel reaches the cap at a small fraction of 2000 actual
-messages, and the truncation it then hides is correspondingly closer than the number suggests.
-
-**A gap no row here measures, verified on the source 2026-08-22.** A channel search asks the server
-for at most 2000 rows; when the server reports the history was capped, `searchChannelHistory`
-(`composables/useConversations.svelte.ts:448`) writes one log line and leaves `searchLimitedToLoaded`
-false. So a channel past 2000 messages answers from a truncated corpus and says nothing. SEARCH-2
-exercises the only branch that DOES raise the flag - a fetch that throws - because manufacturing a
-2000-message channel inside a check is not practical. Recorded here rather than in a payload field,
-per [testing-methodology](testing-methodology.md) 31.
-
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | SEARCH-1 | A term in a recent message is found and highlighted; prev/next walk the hits | `W1 W2` | `PASS` 5/5 |
-| SEARCH-2 | A term only in OLD history: does `searchLimitedToLoaded` tell the truth? | `W1 W2` | `PASS` 5/5 - one `ERROR` in the six, the channel-send intermittent of [testing-methodology](testing-methodology.md) 34, not attributed |
+| SEARCH-2 | A term only in OLD history: does `searchLimitedToLoaded` tell the truth? | `W1 W2` | `PASS` 5/5 - one `ERROR` in the six, the intermittent of [testing-methodology](testing-methodology.md) 34 |
 | SEARCH-3 | Deleted messages excluded; edited messages match their NEW text | `W1 W2` | `PASS` 5/5 |
-| SEARCH-4 | Channel search pulls up to 2000 rows and decrypts them - time it | `W1 W2` | `PASS` 5/5 - 322-474 ms, 2 pages, 163 bodies |
-| SEARCH-5 | Accents and case: a French corpus is the real corpus here | `W1 W2` | `PASS` 5/5 - passes ON the gap, see above |
+| SEARCH-4 | Channel search pulls up to 2000 rows and decrypts them - time it | `W1 W2` | `PASS` 5/5 - 322-474 ms |
+| SEARCH-5 | Accents and case: a French corpus is the real corpus here | `W1 W2` | `PASS` 5/5 |
 | SEARCH-6 | The sidebar filter is a DIFFERENT search - assert it does not claim more | `W1 W2` | `PASS` 5/5 |
 
 ## 6 - MENTION - mentions and what they trigger
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| MENTION-1 | The autocomplete inserts the `@[uuid]` token and it renders as a chip | `W1 W2` | `pending` |
-| MENTION-2 | In a CHANNEL, the mentioned user gets a push even at level `mentions` | `+push` | `pending` |
-| MENTION-3 | At level `none`, the mention gets nothing | `+push` | `pending` |
-| MENTION-4 | In a DM or group a mention triggers NOTHING extra | `W1 W2` | `pending` |
-| MENTION-5 | Mention a user who is not a member of the channel | `W1 W2` | `pending` |
-| MENTION-6 | The channel path sends `mentionedUserIds` in CLEARTEXT - confirm the documented leak and nothing more | `W1 W2` | `pending` |
+| MENTION-1 | The autocomplete inserts the `@[uuid]` token and it renders as a chip | `W1 W2` | `PASS` 5/5 |
+| MENTION-2 | In a CHANNEL at level `mentions`, the mention REACHES the receiver's phone | `+A1` | `PASS` 5/5 - 2 423-2 505 ms |
+| MENTION-3 | At level `none` it reaches nothing - carrying its own positive control | `+A1` | `PASS` 5/5 - control 2 434-2 523 ms |
+| MENTION-4 | In a DM or group a mention triggers NOTHING extra | `W1 W2` | `PASS` 5/5 |
+| MENTION-5 | Mention a user who is not a member of the channel | `W1 W2` | `PASS` 5/5 |
+| MENTION-6 | The channel path sends `mentionedUserIds` in CLEARTEXT - confirm the documented leak and nothing more | `W1 W2` | `PASS` 5/5 |
 
 ## 7 - FWD - forwarding
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | FWD-1 | Channel -> DM forward, the exact shape of the reported prod loss | `W1 W2` | `passed` 5/5 |
-| FWD-2 | The same, 25 times in a loop - any single miss is the bug | `W1 W2` | `passed` on `5aaa1047` - 25/25, 0 lost, 0 duplicated, 0 `SecretReuseError`. Run by hand: `node fwd.mjs 25` |
+| FWD-2 | The same, 25 times in a loop - any single miss is the bug | `W1 W2` | `passed` 25/25 - `5aaa1047`, by hand (`node fwd.mjs 25`) |
 | FWD-3 | Forward while the sender goes offline mid-send | `W1 W2` | `passed` 5/5 |
 | FWD-4 | Forward from A1, backgrounded 200 ms later | `+A1` | `passed` 5/5 |
 | FWD-5 | Forward into a conversation not opened this session | `W1 W2` | `passed` 5/5 |
@@ -317,26 +229,9 @@ were rewritten on 2026-08-20 is in
 **Two have never run on production**: COMM-14 needs real push, and COMM-18 kills the app and follows
 a link into a cold start.
 
-**AND THE STATE COLUMN BELOW STILL SAYS `pending` FOR TWENTY-ONE OF THEM, WHICH IS THE BOARD BEING
-BEHIND ITS OWN LEDGER.** Measured 2026-08-21 by `rows.mjs`, which reads both: twenty-two rows across
-the whole campaign have a verdict nobody wrote down, and twenty-one of them are COMM's. The rows are
-deliberately left `pending` rather than filled in now, because filling them in would record belief the
-same tool says not to hold - **twelve of the twenty-one cannot be believed as they stand**:
-
-- **ten name no runner and eight name no build.** `COMM-2, 3, 11, 13, 15, 16, 19, 21, 23, 24` were
-  recorded before `results.mjs` carried `check`/`checkSha`, and a verdict that cannot say which script
-  produced it, on which bundle, is a memory rather than a measurement.
-- **two were taken by a runner that has since been rewritten**: `COMM-4` (PASS) and `COMM-14` (FAIL).
-
-The other nine PASSes and COMM-22's `PASS-DIRTY` name a current runner AND a build, and stand. Every
-one of the twelve is re-run when the ladder reaches rung 9, and the cells are written ONCE, from
-verdicts that carry both fields - which is also why they are not written twice.
-
-**A1 has run a current build since 2026-08-21** - `67d40e3a`, replacing the `02ae609b` every earlier
-A1 row was read on. That does not retire those rows, it dates them: a device's build is part of its
-answer, and a row recorded on `02ae609b` says what that build did. **COMM-22 settled on the tenth attempt** - nine runs produced no believable
-verdict (seven VACUOUS, one FAIL, and one VACUOUS that collided with a deploy of the harness
-operator's own making, see rule 30) and the instrument was wrong every time, never the assertion.
+**Twenty-one rows read `pending` while the ledger holds a verdict for them** - twelve cannot be
+believed as they stand (ten name no runner, eight no build, two were taken by a runner since
+rewritten), and the cells are written ONCE, at rung 9, from verdicts carrying both fields.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
@@ -356,20 +251,13 @@ operator's own making, see rule 30) and the instrument was wrong every time, nev
 | COMM-14 | Channel notification levels enforced server-side | `+push` | `pending` |
 | COMM-15 | Polls: create, vote, close; auto-pinned | `W1 W2` | `pending` |
 | COMM-16 | Delete a channel, then a community by typing its name: the rows are really gone and the slug is free again | `W1 W2` | `pending` |
-| COMM-17 | Reorder communities by drag and drop; survives a reload, reaches the other device | `+A1` | `PASS` 1/1 - `67d40e3a`, all six expectations, first A1 row on a current build |
+| COMM-17 | Reorder communities by drag and drop; survives a reload, reaches the other device | `+A1` | `PASS` 1/1 - A1 `67d40e3a` |
 | COMM-18 | Deep link into a channel from a cold start | `+A1` | `pending` |
 | COMM-19 | The last admin tries to leave: refused, unless they are the last MEMBER, which deletes the community | `W1 W2` | `pending` |
 | COMM-20 | Two admins change the same role at the same moment | `W1 W2` | `pending` |
 | COMM-21 | A member is removed while composing a message in that salon | `W1 W2` | `pending` |
-| COMM-22 | A salon carrying many Graine sessions: time the first render, and the repair when one seed is missing | `W1 W2` | `PASS-DIRTY` - `f9e17e49`, tenth attempt, first believable one. 12 sessions over 13 epochs, all seven expectations held. One dirt line, identical on both clients - see below |
+| COMM-22 | A salon carrying many Graine sessions: time the first render, and the repair when one seed is missing | `W1 W2` | `PASS-DIRTY` - `f9e17e49`. One dirt line on both clients: a distribution group read as stale and rejoined on first open - under investigation |
 
-**COMM-22's dirt is a lead, not a footnote.** Both clients logged, at the moment they first opened
-the salon, `[GRAINE] salon 0a00f651 of 85d5164f: this device holds the distribution group but the
-group holds NO row for it (0 device(s) for this user) - the local group is stale, rejoining` - W1 at
-13:41:59, seconds after creating the salon, W2 at 13:42:38 on its first open. The repair fired and
-worked; **a race that heals cleanly is still a defect**, and this one names the seam WP-REGRANT-1
-was written for from the other side. Under investigation; whatever it turns out to be belongs in
-`CHANGELOG.md` and its rule in [durable-rules](durable-rules.md), not here.
 | COMM-23 | Public -> private: a group is minted, and a reader outside `allowedUsers` stops being routed | `W1 W2` | `pending` |
 | COMM-24 | Private -> public: the salon's group is tombstoned and the community's carries it again | `W1 W2` | `pending` |
 | COMM-25 | An admin's SECOND device receives the salon's seeds after the join, without a second join | `W1 A1` | `pending` |
@@ -385,7 +273,7 @@ looked for the file. The other nine are still to write.
 
 | Id | The crossing | Needs | State |
 | --- | --- | --- | --- |
-| DEL-1 | Peer deletes while a history solicitation for that group is outstanding | `W1 W2` | `pending` - no banner, marker or retried solicitation may survive. **`del1.mjs` has covered this since WP-HISTGHOST-1** and was reachable from nothing: `checks.mjs` listed DEL with no scripts, so the phase read as zero coverage, and the script printed its verdict to stdout instead of recording it. Registered and wired to `record`/`gate` on 2026-08-21 - rule 22 |
+| DEL-1 | Peer deletes while a history solicitation for that group is outstanding | `W1 W2` | `pending` - no banner, marker or retried solicitation may survive. `del1.mjs` covers it; registered and wired to `record`/`gate` 2026-08-21 |
 | DEL-2 | Peer deletes while a message from us is in the outbox | `W1 W2` | `pending` - resolves or fails LOUDLY, never a silent permanent pending |
 | DEL-3 | Both peers delete the same conversation within a second | `W1 W2` | `pending` - no error either side, neither resurrects it |
 | DEL-4 | Delete a conversation while its media is still uploading | `W1 W2` | `pending` - no orphan blob left addressable |
@@ -453,11 +341,17 @@ Sweeps every `+push` row left behind above it.
 | NOTIF-6b | "Marquer comme lu" from the shade: the banner goes AND the salon is read on the other devices | `+push` | `pending` - never verified either way |
 | NOTIF-7 | Tap -> deep link into the conversation, **backgrounded** | `+push` | `pending` |
 | NOTIF-7b | The same with the app **KILLED** | `+push` | `pending` |
+| NOTIF-7c | Tap -> deep link into a CHANNEL, **backgrounded**: the salon is on screen and holds the marker | `+push` | `pending` - 7/7b are the DM only |
+| NOTIF-7d | The same into a CHANNEL with the app **KILLED**, so the PIN gate mounts first | `+push` | `pending` - the case most likely to lose a pending deep link |
 | NOTIF-8 | Doze + message: delivered, or on wake - record which | `+push` | `pending` |
 | NOTIF-9 | Two devices of one user: exactly one notification surface behaves | `+push` | `pending` |
 | NOTIF-10 | Airplane mode 10 min, 5 messages, then reconnect | `+push` | `pending` - all five survive |
 | NOTIF-11 | Three messages into one salon: ONE notification carrying three stacked lines, not three notifications | `+push` | `pending` |
 | NOTIF-12 | Who each stacked line is attributed to inside a salon | `+push` | `pending` - RECORDED, not asserted; see below |
+| NOTIF-13 | The BODY is readable: a mention renders as a name, never as its `@[uuid]` token | `+push` | `pending` - expected to FAIL until the P2 in [backlog](backlog.md) ships |
+| NOTIF-14 | The TITLE names its conversation: community and salon for a channel, the sender's resolved display name for a DM | `+push` | `pending` |
+| NOTIF-15 | A REACTION to one of my messages notifies me on a killed device, carrying the emoji and who reacted, and no message text | `+push` | `pending` - MUT-13 asserts the in-app half and defers the push half here |
+| NOTIF-16 | A mention lands on the `canari_mentions` channel and a plain message on `canari_messages` - the importance split that bypass-DND rests on | `+push` | `pending` |
 
 **NOTIF-12 records rather than asserts**: attribution of a stacked line inside a salon is an open
 product decision, in [backlog](backlog.md).

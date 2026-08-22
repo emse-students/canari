@@ -374,5 +374,51 @@ again:
   A1 row of the campaign read on a build that was current at the time. The `PASS-DIRTY` before it
   carried one `[PIPELINE] Recovery attempt finished` line, fixed by `f950c01c`; the attempt before
   THAT held all six and was `VACUOUS` anyway, because a push of ours landed mid-run.
+- **MUT's server window read `unexplained=2` on every pass of the x5 before `e3e5a60bb007`, and the
+  lines were MUT's own.** A channel message being hard-deleted (`[ChannelService] [CHANNEL] message
+  deleted ...`, and its `(moderation)` form) is the one delete in the product that leaves no
+  tombstone; MUT-8 and MUT-9 are the only checks that produce it, and neither had ever run in a
+  window anybody classified. Both shapes are `NOTABLE` now and pinned in `srvclassify-selftest.mjs`.
+  That span - 30 464 lines over seven services on runner `4a9814f845d7` - then read clean with 15
+  notable and nothing unexplained.
+- **MUT-12's channel leg has an intermittent that is NOT attributed to the product**, written here so
+  nobody re-derives it. It has missed three times ever (2026-08-16, and twice on 2026-08-22 at 114
+  and 136 rendered paragraphs). The second was taken apart against the production log: the message
+  was never lost - the server created and pushed it two seconds BEFORE the check gave up - and the
+  sender's whole send took 600 ms once it started (`DISTRIBUTION_GROUP` -> `liveGraineSessions` ->
+  `CHANNEL_PUSH`). What preceded it was 21 seconds in which the sender's client made no server call
+  at all, having already rendered its optimistic bubble; `sendText` waits for that bubble, so the
+  check's clock had been running the whole time.
+
+  That leaves two causes the evidence could not separate: a client-side stall, or THIS host
+  saturating while it drives two Chrome profiles and a phone. Both failures fell in stretches where
+  the box was also running greps, `ssh` and pre-commit sweeps; **eight consecutive passes with the
+  box deliberately quiet did not reproduce it**. That is not proof, and it is why no defect is filed.
+  The instrument is in place for the next occurrence instead: MUT's `finish()` attaches `silence` -
+  the longest hole in each client's OWN timeline - to any non-PASS verdict, and a hole appearing in
+  EVERY client at once is this host freezing while a hole in only the sender's is the product. See
+  [testing-methodology](testing-methodology.md) 34.
+- **Channel search DOES cover the whole history - a verified negative, not an assumption.** After the
+  loop was fixed, SEARCH-4 settled at two `/messages` pages, which looked like a walk stopping early
+  against a 1057-row channel. It is not: the server's `limit` counts NON-SILENT rows and then carries
+  the reaction rows along with them, and this channel is **163 bodies to 894 reactions**. Page one
+  takes all 163 bodies, page two comes back short, the walk ends - complete. `pagesWalked` is
+  recorded on the row so the next reader measures this instead of re-deriving it.
+
+  It sharpens the 2000-row cap gap in [backlog](backlog.md) rather than closing it: the 2000 is a cap
+  on ROWS, and 85% of the rows here are reactions - so a heavily-reacted channel reaches the cap at a
+  small fraction of 2000 actual messages, and the truncation it then hides is correspondingly closer
+  than the number suggests.
+- **One SEARCH `FAIL` was the harness, not the product**, kept because the distinction is the phase's
+  whole value. SEARCH-3 reported a deleted message still findable by its original text.
+  `button:last-of-type` is "last button among ITS OWN siblings", so `Modal.svelte`'s lone header
+  `Fermer` qualified and preceded the footer in document order: the check pressed dismiss and never
+  deleted anything. It now activates by text, asserts what it activated, and asserts the tombstone
+  before asking search anything. Same family as rule 27 - a gesture that is not asserted is a gesture
+  that did not happen.
+- **SEARCH-5 passes ON a gap, by design.** Search folds case and NOT diacritics, in all three places
+  that match. The check asserts the DIRECTION (a no-accent query misses, an accented-uppercase query
+  hits), so it would also fail if the behaviour silently changed. Whether to fold diacritics is a
+  product decision, taken nowhere yet, and it is in [backlog](backlog.md).
 - **TYPE** holds a 5/5 x5 on superseded runner `25376b86` (shown 70-90 ms, cleared 245-272 ms;
   TYPE-2 expired 4 138-4 221 ms). The current-runner run is x1, and the header says so.

@@ -133,14 +133,17 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
 
 1. **THE COMM RUNNERS - ALL TWENTY-FIVE WRITTEN AND REGISTERED**, each run on prod as it was written
     (user, 2026-08-20: writing all then running once is verification by COMPILING). **TWO HAVE NEVER
-    RUN THERE - 14 and 18**, each needing a capability the harness has yet to prove: real push, and a
-    cold start through `adb`. A capability is unproven until a check using it produces a result it
-    could not have produced by accident. Verdicts are on the board and are not restated here. **The
-    phone shows a GENERIC notification body** (user, 2026-08-20, on a stale app): COMM-14's row, an
-    observation and not a defect until the runner says so - and A1 now runs a current build, so it is
-    owed a re-look.
-2. **A1 RUNS `67d40e3a` as of 2026-08-21** - rebuilt and installed after the two Graine fixes of that
-    day, replacing `02ae609b`. `npx tauri` does NOT resolve here (`could not determine executable to
+    RUN THERE - 14 and 18.** COMM-14's blocker is LIFTED: real push is proven, by NOTIF-4 on
+    2026-08-22 (`notifiedInMs: 11317`) and then asserted by MENTION-2/3, which is what a capability
+    has to be before a check rests on it. COMM-18 still needs a cold start through `adb`. Verdicts
+    are on the board and are not restated here. **The GENERIC notification body** (user, 2026-08-20,
+    on a stale app) **is answered**: on `a7981206` the body decrypts - MENTION-2 recorded
+    `undecryptedInShade: []` with the marker in the shade. What the user saw on 2026-08-22 is a
+    DIFFERENT defect and a real one: a mention renders in the notification as its raw `@[uuid]`
+    token, filed P2 in [backlog](docs/wiki/backlog.md) and deferred past the ladder by their
+    decision. NOTIF-13 is the row that will pin it.
+2. **A1 RUNS `a7981206` as of 2026-08-22** - bundle built `01:36:04.345Z`, replacing the `67d40e3a`
+    of the day before. `npx tauri` does NOT resolve here (`could not determine executable to
     run`); build with `./node_modules/.bin/tauri.exe android build --debug` from `frontend/`, and
     install the **universal** APK, never `arm64/`. A fresh install means a new process, so
     `phone.ensure({ port: 9333 })` before `pin.mjs --device A1` - the old devtools forward is dead
@@ -152,8 +155,8 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     cost and the decisions it turns on are on
     [cross-client-testing](docs/wiki/cross-client-testing.md) and
     [cross-client-campaign](docs/wiki/cross-client-campaign.md), the only copies. **Where the ladder
-    stands: rungs 1 MSG and 2 TYPE green x1, 3 READ, 4 MUT and 5 SEARCH green CLEAN 5/5. Next: 6
-    MENTION, then FWD, GRP, COMM, DEL, TAB, MULTI, LIFE, NOTIF, CALL, HEAL, PIN, CORRUPT.** The board carries every verdict; do not restate them here.
+    stands: rungs 1 MSG and 2 TYPE green x1, 3 READ, 4 MUT, 5 SEARCH and 6 MENTION green CLEAN 5/5.
+    Next: 7 FWD, then GRP, COMM, DEL, TAB, MULTI, LIFE, NOTIF, CALL, HEAL, PIN, CORRUPT.** The board carries every verdict; do not restate them here.
     **THE BOARD'S FORMAT IS NOW FIXED by the user (2026-08-22): a `PASS` cell is `PASS X/X` and a time
     if the time means anything, nothing else.** Prose only for a non-clean verdict or an unresolved
     item. The rule is written at the top of the board itself.

@@ -931,6 +931,36 @@ Two consequences, and the second is the expensive one:
 
 Same family as rule 1: `versionName` is a projection, the running code is the evidence.
 
+#### 35. A BUILD LABEL IS ONLY EVIDENCE IF IT IS RESOLVED AGAINST A HISTORY THAT CONTAINS THE BUILD
+
+Nothing a SvelteKit bundle serves names its commit; `/_app/version.json` carries a millisecond
+timestamp, and `resolveStamp` turned it into a commit by asking for the newest one on `origin/main`
+at or before it. That is exact for the DEPLOYMENT, which CD builds from a commit that is pushed by
+definition. It is not exact for the PHONE, whose APK is built HERE, from the working tree - and a
+commit reaches `origin/main` only when somebody pushes, which can be hours after the build.
+
+So the same bundle answered differently depending on WHEN it was asked. A1's bundle, built
+`2026-08-22T01:36:04.345Z` from `a7981206` (committed 03:12 local, pushed 05:27), was recorded as
+`6748f6b8` by 207 MUT rows and as `a7981206` by the NOTIF rows that followed - one bundle, one
+`builtAt`, two names, both on the board. The tell was the pair, not either half: an identical
+`builtAt` under two commits is impossible, and only a query against a MOVING ref produces it.
+
+`resolveStamp` now REQUIRES the ref and has no default, because the choice is the correctness
+argument and a default would let the next caller inherit the wrong one silently. The deployment
+passes `origin/main`; a client that serves its own bundle passes `HEAD`.
+
+Two things this does not fix, both stated rather than left to be rediscovered:
+
+- **Dating a build by a clock is still inference.** A commit that lands later carrying an EARLIER
+  date - a pull of somebody else's work, a rebase - moves the answer again. The fix that ends it is
+  the bundle carrying its own commit (`kit.version.name`), which is filed in `backlog.md` and was
+  not done mid-campaign: it changes the deployment's version identity while prod IS the test server.
+- **`builtAt` is the identity, the commit is the label.** The ledger is append-only, so the 207 rows
+  keep the name they were written with; the board carries the correction and the reason.
+
+Same family as rule 28: a device's build is part of its answer, and an answer nobody can attribute
+is not evidence. Here the field was present, populated, and wrong.
+
 ### The check itself, over time
 
 #### 18. A CHECK IS A CLAIM ABOUT A MECHANISM, AND IT ROTS WHEN THE MECHANISM MOVES
@@ -1241,6 +1271,23 @@ how this stayed invisible), a failed open, a deletion. No call site changed.
 And in the check: **the step that establishes the subject of every later step must be fatal.** COMM-12
 already returned early when it could not read its community's id; it now does the same when it could
 not open it. A swallowed failure is only safe when nothing after it depends on the thing that failed.
+
+**And the same rule reaches a click aimed at COORDINATES, which is where it bit next.** MENTION-1
+locates the rendered mention chip - a `<button>` with no hook of its own - by scoping to the bubble
+carrying its marker, then clicking the centre of its rect. The helper called
+`btn.scrollIntoView({ block: 'center' })` and read `getBoundingClientRect()` on the very next line,
+so whenever the pane actually had to scroll - which it does for a message just sent, sitting at the
+bottom - the rect described where the chip had BEEN. The click landed on whatever had taken that
+place, and the row read `bubbleChipFound: true`, `bubbleChipText: "@<peer>"`, `navigatedPath: null`:
+found, correctly named, and clicked somewhere else. It passed whenever the chip happened to need no
+scroll, which is what made it an intermittent rather than a failure (x1 green on 2026-08-22, `FAIL`
+on the x5 that followed).
+
+A point is now SETTLED before it is used - the same rect twice in a row, which a scroll still in
+flight cannot produce - and then CHECKED, `document.elementFromPoint` at that point resolving to the
+button itself. Both flags are on the row. A point that never settles makes the verdict `VACUOUS`,
+because a check that could not arm its gesture has not measured the product: the distinction the
+whole rule exists for.
 
 #### 28. A DEVICE'S BUILD IS PART OF ITS ANSWER, AND A CLASSIFIER MUST NOT EAT THE EVIDENCE IT CLASSIFIES
 

@@ -222,7 +222,18 @@ correct.
 | `authorId`, `channelId`, `createdAt` | who spoke, where, when | It routes and notifies; unavoidable |
 | `replyTo`, `pinned`, `attachments` | thread shape, that an attachment exists | Metadata; the blob and its CEK become opaque |
 | `mentionedUserIds` | **who** is mentioned | Already deliberate and documented in the DTO - it is what serves the `mentions` notification level without decrypting |
+| `senderSessionId` | which Graine SESSION sealed the message | The recipient selects the session with it; without it there is nothing to decrypt with. Marginal over `authorId`: it links a sender's messages to one device/session |
+| `messageIndex` | the ratchet position of that message | The recipient needs the step to derive the right key. It reveals how many messages that session has sealed, and makes gaps and reordering visible to the server |
 | `metadata.poll.votesByUser` | who voted for which **opaque** id | Already correct, see §4.7 |
+
+**The last two were found by MENTION-6 on 2026-08-22, not written down in advance**, which is the
+failure this table exists to prevent - it is titled "stated rather than discovered". The check asserts
+the send body carries the documented set AND NOTHING MORE, so it failed on two fields that are
+perfectly legitimate and simply undocumented; it also still expected `keyVersion`, which Graine
+removed. Both are cleartext routing metadata rather than content, and neither is avoidable: an
+encrypted payload nobody can select a key for is not a message. They belong here all the same,
+because "the server cannot read the content" and "the server learns nothing" are different claims and
+only the first one is true.
 
 ### 4.9 Notifications keep working, and the mirror gets a bound
 

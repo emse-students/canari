@@ -325,6 +325,19 @@ const NOTABLE = [
   // frame is addressed to whoever is online now, expires in 60 s, and had recipients - all offline.
   // Nothing is lost that was durable, and nothing will answer either, so it is shown and never fatal.
   /\[SEND\]\[send-[0-9a-f]+\] No message queued after validation - recipients=[1-9]\d* .* every recipient device is offline/,
+  // A CHANNEL'S NOTIFICATION LEVEL CHANGING, which decides whether a push is routed to that user at
+  // all. Rare (a person sets it and leaves it), consequential, and exactly what you want in the
+  // window when asking why somebody did or did not get notified - so it is reported, never silenced.
+  // Nothing had classified it because no check had ever set a level: MENTION-2 and MENTION-3 are the
+  // first, and they made a whole phase read SERVER NOT CLEAN for four lines of their own doing
+  // (2026-08-22).
+  /\[ChannelService\] \[CHANNEL_PUSH\] level set channel=\S+ user=\S+ level=(all|mentions|none)/,
+  // A DEVICE REGISTERING ITS PUSH TOKEN, which is what makes it reachable at all. Written on every
+  // app START, so a phase that relaunches the phone emits one per launch - MENTION-3 arms it twice
+  // and produced exactly two (2026-08-22), which is the shape to expect rather than a surprise.
+  // NOTABLE and not benign: it is the row that decides where a push can land, and when a device
+  // stops getting notifications this is the first line worth looking for in the window.
+  /\[PushController\] \[PUSH_REGISTER\] user=\S+ device=\S+ platform=\S+/,
   // A PERSON'S DISMISSAL MARKER ACTUALLY MOVING. It outlives the group deliberately (it is a fact
   // about what someone chose, not about the group), so it is the one row a group's purge must NOT
   // take - and it is worth seeing whenever it moves. Both directions, because they are opposites.

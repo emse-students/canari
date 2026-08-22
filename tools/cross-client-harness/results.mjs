@@ -34,9 +34,10 @@ const FILE = join(STATE_DIR, 'results.ndjson');
  * evidence, in the sense of rule 17 - a property of the code that is actually serving.
  *
  * THE COMMIT IS DERIVED FROM IT, and the derivation is stated rather than assumed: the newest commit
- * on `origin/main` at or before the build's timestamp. CD builds a pushed commit and finishes minutes
- * later, so this is exact unless a SECOND commit lands inside that window - in which case it names
- * the later one, which is why `builtAt` is recorded beside it and is the figure to trust.
+ * on the history THAT CONTAINS THE BUNDLE, at or before the build's timestamp. CD builds a pushed
+ * commit and finishes minutes later, so this is exact unless a SECOND commit lands inside that
+ * window - in which case it names the later one, which is why `builtAt` is recorded beside it and
+ * is the figure to trust.
  *
  * IT THROWS RATHER THAN DEGRADING. A check that cannot date its build produces a verdict nobody can
  * attribute, which is the fault this exists to close; failing at import costs a run that had not
@@ -46,20 +47,34 @@ const FILE = join(STATE_DIR, 'results.ndjson');
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 /**
- * A SvelteKit build stamp turned into the commit that produced it.
+ * A SvelteKit build stamp turned into the commit that produced it, ON A NAMED HISTORY.
  *
  * Shared by the deployment and by any CLIENT that serves its own bundle - the phone does, which is
  * the whole reason this is not inlined in `deployedBuild` any more.
+ *
+ * `ref` IS REQUIRED, AND IT IS THE WHOLE CORRECTNESS ARGUMENT. A timestamp names a commit only
+ * against a history that actually contains the bundle, and the two callers do not share one:
+ *
+ *   - the DEPLOYMENT is built by CD from a commit that is on `origin/main` by definition;
+ *   - the PHONE's APK is built HERE, from the working tree, so its commit may not be pushed yet.
+ *
+ * Resolving a locally built bundle against `origin/main` therefore names the newest commit that
+ * happened to be PUSHED when the question was asked - and answers differently later, once the real
+ * one lands. Seen 2026-08-22: A1's bundle (built 01:36:04.345Z from `a7981206`, committed 03:12
+ * local and pushed at 05:27) was read as `6748f6b8` by 207 MUT rows and as `a7981206` by the NOTIF
+ * rows after it - ONE bundle, one `builtAt`, two names, and the board carried both. `a7981206` was
+ * docs-only so no behavioural claim moved, which is luck and not a property of the mechanism.
  */
-export function resolveStamp(stamp, where) {
+export function resolveStamp(stamp, where, ref) {
+  if (!ref) throw new Error(`resolveStamp(${where}) was not told which history contains the bundle`);
   if (!Number.isFinite(stamp)) throw new Error(`${where} carries no build stamp`);
   const builtAt = new Date(stamp).toISOString();
   const commit = execFileSync(
     'git',
-    ['-C', REPO, 'log', '-1', '--format=%h', `--before=${builtAt}`, 'origin/main'],
+    ['-C', REPO, 'log', '-1', '--format=%h', `--before=${builtAt}`, ref],
     { encoding: 'utf8' }
   ).trim();
-  if (!commit) throw new Error(`no commit on origin/main at or before ${builtAt} - fetch first`);
+  if (!commit) throw new Error(`no commit on ${ref} at or before ${builtAt} - fetch first`);
   return { builtAt, commit };
 }
 
@@ -118,7 +133,7 @@ async function deployedBuild() {
   if (answer.status !== 200) {
     throw new Error(`${SITE}/_app/version.json answered ${answer.status}`);
   }
-  return resolveStamp(Number(JSON.parse(answer.body)?.version), `${SITE}/_app/version.json`);
+  return resolveStamp(Number(JSON.parse(answer.body)?.version), `${SITE}/_app/version.json`, 'origin/main');
 }
 
 /**
@@ -147,7 +162,9 @@ export async function clientBuild(cx) {
   } catch {
     throw new Error(`this client's /_app/version.json is not JSON: ${String(raw).slice(0, 80)}`);
   }
-  return resolveStamp(stamp, "the client's own /_app/version.json");
+  // `HEAD`, NOT `origin/main`: this bundle was built from the working tree, and dating it against a
+  // remote ref renames it every time a push lands. See `resolveStamp`.
+  return resolveStamp(stamp, "the client's own /_app/version.json", 'HEAD');
 }
 
 /**

@@ -7,7 +7,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { A1_WIFI, PORTS } from './names.mjs';
+import { A1_WIFI, ACCOUNT_OF, PORTS } from './names.mjs';
 
 /** The USB serial if there is one, else the wireless entry. */
 export function serial() {
@@ -249,7 +249,14 @@ export async function evictToCache(timeoutMs = 20_000) {
   let state = procState();
   while (Date.now() - t0 < timeoutMs) {
     state = procState();
-    if (state === null || /^CAC/.test(state)) break;
+    // ONLY THE CACHED FAMILY, and `LAST` was tried and reverted on 2026-08-22. MENTION-2 recorded
+    // `stateAtKill: LAST` with `killedInMs: 77`, which read as "LAST is killable" - but that state
+    // was read AFTER this poll had already spent its full 20 s, and the settling time was doing the
+    // work, not the state's name. Breaking early on LAST killed a process Android had only just
+    // demoted, and `am kill` was refused: "did not kill the app - pid 26586 is still alive".
+    // The 20 s is the price of a kill that always lands. Rule: a predicate that named the last
+    // observation is not the predicate that names the next one.
+    if (state === null || state.startsWith('CAC')) break;
     await new Promise((r) => setTimeout(r, 500));
   }
   home();
@@ -269,6 +276,63 @@ export async function kill() {
   const state = await evictToCache();
   sh(`am kill ${PKG}`);
   return state;
+}
+
+/**
+ * {@link kill}, and then PROOF the process is gone.
+ *
+ * A KILL THAT MISSED IS INDISTINGUISHABLE FROM A KILL THAT WORKED, right up until the check reads a
+ * notification the running app was never going to show - or fails to, and reports it as the product
+ * being silent. So the death is polled for rather than slept on, and a miss throws carrying the
+ * state the process was in when the kill was issued, which is the only thing that separates "the
+ * kill was refused" from "the process came straight back".
+ *
+ * Lives here rather than in a runner because both `notif.mjs` and `mention.mjs` need exactly this,
+ * and the two copies would drift on the first fix.
+ *
+ * @returns {Promise<{deadInMs: number, stateAtKill: string|null}>}
+ */
+/** This directory - `pin.mjs` is SPAWNED from here, never imported. */
+const HERE = new URL('.', import.meta.url).pathname.replace(/^\//, '');
+
+/**
+ * Unlocks the encryption PIN if the modal is up; returns what happened, never throws on "no modal".
+ *
+ * SPAWNED RATHER THAN IMPORTED, deliberately: the PIN is read by `pin.mjs` from `test-accounts.json`
+ * and must never become an argument that a check could log, print or record.
+ *
+ * NOTIF-10 needed this and did not have it: cutting the radios for ten minutes restarts the app when
+ * they come back, and a restarted app re-locks the PIN. The whole chat then sits behind the modal,
+ * so `openConversation` cannot find anything and the check refused a verdict. EVERY PHASE THAT
+ * RELAUNCHES THE APP MUST UNLOCK BEFORE IT NAVIGATES - which is why this is here and not in the
+ * three runners that each carried their own copy of it.
+ */
+export function unlockPin(port = PORTS.A1) {
+  try {
+    return execFileSync(
+      process.execPath,
+      ['pin.mjs', '--port', String(port), '--account', ACCOUNT_OF.A1, '--match', 'tauri.localhost'],
+      { cwd: HERE, encoding: 'utf8', timeout: 120_000 }
+    )
+      .trim()
+      .split('\n')
+      .pop();
+  } catch (e) {
+    if (e.status === 2) return 'no modal';
+    return `pin.mjs failed: ${String(e.stdout || e.message).slice(0, 200)}`;
+  }
+}
+
+export async function killAndProveDead(timeoutMs = 20_000) {
+  const stateAtKill = await kill();
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeoutMs) {
+    if (pid() === null) return { deadInMs: Date.now() - t0, stateAtKill };
+    await new Promise((r) => setTimeout(r, 1_000));
+  }
+  throw new Error(
+    `am kill (state at kill: ${stateAtKill}) did not kill the app - pid ${pid()} is still alive`
+  );
 }
 
 export const foregrounded = () => /fr\.emse\.canari/.test(sh('dumpsys window | grep mCurrentFocus'));
@@ -294,6 +358,34 @@ export function notifications() {
       body: (b.match(/android\.text=(?:String \()?([^\n)]*)/) || [])[1]?.trim() ?? '',
     }));
 }
+
+/**
+ * The exact bodies `CanariFirebaseMessagingService` renders when it could NOT decrypt.
+ *
+ * A NOTIFICATION THAT ARRIVED IS NOT A NOTIFICATION THAT WORKED, and no check here could tell the
+ * two apart: NOTIF-4/9/10 all asked `full.includes(marker)`, so a shade full of "Nouveau message de
+ * X" simply made the marker absent, which reads as "the notification has not arrived yet" and then
+ * as a timeout - a completely different diagnosis from "background MLS decryption failed". The user
+ * saw the generic form on the phone during a run this file called `PASS`.
+ *
+ * Kept as literals rather than a loose pattern because they are literals in the Kotlin
+ * (`buildFallbackText`, `buildChannelFallbackText`) and in `push-payload.ts` for the APNs side. A
+ * pattern would drift from them silently; a literal that stops matching is a rename, which is a
+ * change to go and look at.
+ */
+export const GENERIC_BODIES = [/^Nouveau message de /, /^Nouveau message dans #/, /^Vous avez re.u un message chiffr/, /^Nouveau message$/];
+
+/**
+ * Every notification currently in the shade that this app raised WITHOUT decrypting the message.
+ *
+ * Titles and bodies are real conversation content, so only the matched PATTERN is returned - never
+ * the line. The count is the finding; the text is on the device for whoever is holding it.
+ */
+export const undecryptedInShade = () =>
+  notifications()
+    .map((n) => GENERIC_BODIES.findIndex((re) => re.test(n.body)))
+    .filter((i) => i >= 0)
+    .map((i) => String(GENERIC_BODIES[i]));
 
 /** Waits until some notification's text contains `needle`; returns the elapsed ms or null. */
 export async function awaitNotification(needle, timeoutMs = 45_000) {

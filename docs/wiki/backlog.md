@@ -346,7 +346,97 @@ recorded here rather than taken while a campaign is running.
 **What would tell us it matters:** no board row covers it, and reaching it needs a device that missed
 an edit AND is later handed a bundle containing it - which is the FWD/HEAL shape, not MUT's.
 
+## Mentions
+
+### P2 - a mention notification shows a 64-character hex id where the name should be
+
+Found by the user on the phone, 2026-08-22, while the MENTION rung was running.
+
+The wire format of a mention is `@[<64 lowercase hex>]` (`utils/mentions.ts`), and the WEB resolves
+it at render time - `mentions.parse.ts:44` replaces `@[id]` with `@DisplayName` for bodies, previews
+and reply quotes. **The Android notification does not.** `CanariFirebaseMessagingService` READS the
+token (line 1332, `decrypted?.text?.contains("@[$myUserId]")`) to decide whether this is a mention of
+me, and then passes the decrypted text to the notification builder unchanged. Both paths are
+affected: the MLS/DM one and `handleChannelMessage`.
+
+So the notification reads `Salut @[d82cd226…64 hex…] tu peux regarder ?`.
+
+**It is worse than cosmetic.** `canari_mentions` is `IMPORTANCE_HIGH` and asks to bypass DND
+(`CanariApplication.kt:223`): the one notification designed to interrupt someone is the one that
+cannot be read. And the check that covers the path does not see it - MENTION-2 asserts that the
+notification carries the marker, which is true of a body full of hex.
+
+**THE NAME CANNOT COME FROM THE SERVER'S PUSH PAYLOAD, and that is the whole difficulty.** The
+mentioned ids already ride in cleartext for routing (the documented leak, MENTION-6), but a display
+NAME is not an opaque id: putting it in the payload sends real names of real students through FCM and
+APNs on every mention. This codebase already refused that trade once - the reaction push used to
+carry 80 characters of decrypted message text, composed server-side, and was cut back to an id, an
+emoji and who reacted, for exactly this reason.
+
+**So the resolution belongs on the device, and it has the shape to do it.** `fetchAvatar(userId)`
+already resolves a stranger's avatar from `GET /api/mls/push/avatar/:targetUserId`, authenticated by
+`requesterId` + `deviceId` + the Keystore push secret, behind a 24 h file cache. A display name wants
+the same three things:
+
+- a sibling endpoint on `push.controller.ts` (there is none today - the routes are listed at
+  `mls/push/{register,fetch-proto,avatar,media,refresh-token,…}`), returning `resolveUserDisplayName`
+  from `utils/display-name.ts`;
+- `fetchDisplayName(userId)` in the service, mirroring `fetchAvatar`'s cache-then-HTTP shape;
+- a substitution pass over the body before the notification is built.
+
+**The degrade must be decided, not defaulted.** A cache miss with no network - the exact case a
+notification arrives in - must not print hex. Replacing the token with a generic word loses who was
+mentioned; keeping the id keeps it unreadable. Not decided here.
+
+**iOS is presumed to have the same gap and cannot be checked** - no iPhone in the estate
+(`device-verification.md`). `push-payload.ts` builds the APNs half from the same fields.
+
+**Cost, stated because it is why this is not a drive-by fix:** it crosses the server (a new
+authenticated route, deployed) and the native app (Kotlin, plus an APK rebuild and install), and the
+rebuild re-bases A1's build for every phase of the ladder that follows it.
+
 ## The harness itself
+
+### P3 - a build names itself by a clock, and the commit is inferred from it
+
+`/_app/version.json` carries `Date.now()` at build time and nothing else, so `resolveStamp` derives
+the commit by asking git for the newest one at or before that instant. Rule 35 fixed the half that
+was outright wrong - a locally built bundle was being dated against `origin/main`, a ref that does
+not contain it until somebody pushes - but the derivation itself remains an inference, and it moves
+if a commit ever lands carrying an earlier date than the build that preceded it (a pull of somebody
+else's work, a rebase).
+
+**The fix is the bundle carrying its own commit**: SvelteKit takes `kit.version.name` in
+`svelte.config.js` and writes it verbatim into `version.json`. Setting it to `<builtAtMs>-<sha>`
+keeps the timestamp the `updated` store needs to distinguish two builds of the SAME commit, and adds
+the identity the harness currently guesses. `resolveStamp` then parses instead of querying git, and
+the `ref` argument disappears with it.
+
+Two constraints, both established 2026-08-22 rather than assumed:
+
+- **The Docker image does not build the frontend.** `infrastructure/local/Dockerfile.frontend` copies
+  `frontend/build/client` from an artifact the CI `build-frontend` job produced, so git availability
+  is a question about the CI job and the local Tauri build, not about the image. Both have a
+  checkout.
+- **It changes the deployment's version identity**, which is why it was not done during the campaign:
+  prod IS the test server, and a `svelte.config.js` that throws when git is absent breaks every
+  build including CD. Verify the CI job's checkout depth before relying on `git rev-parse`.
+
+### P3 - six runners carry a dead import, and fixing them now would retire green rows
+
+`oxlint tools/cross-client-harness/` reports eight warnings across `newgroup.mjs`, `msg9.mjs`,
+`ckpt.mjs`, `type.mjs`, `tabguard-selftest.mjs` and `ws1.mjs` - unused imports and one useless
+spread, nothing that changes what any of them measures.
+
+**Deliberately not fixed during the campaign.** `msg9.mjs` and `type.mjs` back MSG and TYPE, both
+green on the board, and `checkSha` hashes the runner's source: touching either supersedes its rows
+(`rows.mjs`), so the ledger would demand a re-run of two finished phases to pay for a dead import.
+Rule 33 is what makes that automatic, and it is right to be - the ledger cannot know the edit was
+cosmetic, and a human waving it through is exactly the judgement the rule exists to remove.
+
+Sweep all eight in ONE commit once the ladder is finished, when a re-run costs nothing. Note the
+harness is NOT oxfmt-formatted (`oxfmt --check` fails on files nobody has touched), so the sweep is
+`oxlint` only - running the formatter would rewrite the whole directory.
 
 ### P3 - the bubble-action and observation helpers live in one runner, and every other runner re-invents them
 

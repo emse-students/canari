@@ -65,7 +65,10 @@ export const PHASES = {
     needs: ['W1', 'W2', 'A1'],
   },
   SEARCH: { title: 'finding a message', scripts: only('search.mjs', 1, 6), needs: ['W1', 'W2'] },
-  MENTION: { title: 'mentions and what they trigger', scripts: only('mention.mjs', 1, 6), needs: ['W1', 'W2'] },
+  // A1 IS DECLARED because MENTION-2/3 assert a real push on the owner's phone - it is a second
+  // device of the OWNER's account, which is what lets the owner set their own level on W1 and have
+  // W2 mention them. Declaring it is also what makes the phase carry `CANARI_A1_BUILD`.
+  MENTION: { title: 'mentions and what they trigger', scripts: only('mention.mjs', 1, 6), needs: ['W1', 'W2', 'A1'] },
   FWD: { title: 'forwarding', scripts: ['fwd.mjs', 'fwd345.mjs', 'fwd5.mjs'], needs: ['W1', 'W2', 'A1'] },
   GRP: { title: 'group membership and invitations', scripts: ['grp-traffic.mjs'], needs: ['W1', 'W2'] },
   // `tab236.mjs` is named for the three checks it implements and selects ONE of them from `argv[2]`,

@@ -15,10 +15,8 @@ import { client, ensureChat, openConversation, countMessage, awaitMessage, send,
 import { gate, logcatReport, logcatSince, report, watch } from './watch.mjs';
 import { mark, record } from './results.mjs';
 import * as phone from './phone.mjs';
-import { execFileSync } from 'node:child_process';
-import { ACCOUNT_OF, PORTS, peerNameFor } from './names.mjs';
+import { PORTS, peerNameFor } from './names.mjs';
 
-const HERE = new URL('.', import.meta.url).pathname.replace(/^\//, '');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const which = String(process.argv[2] || '4');
@@ -32,57 +30,14 @@ const stage = (s) => console.error(`[${String((Date.now() - T0) / 1000).padStart
 const withDeadline = (p, ms, what) =>
   Promise.race([p, sleep(ms).then(() => Promise.reject(new Error(`${what} did not settle in ${ms}ms`)))]);
 
-/** Polls until the app's process is gone; throws rather than let a no-op kill become a verdict. */
-async function requireDead(what, timeoutMs = 20_000) {
-  const t0 = Date.now();
-  while (Date.now() - t0 < timeoutMs) {
-    if (phone.pid() === null) return Date.now() - t0;
-    await sleep(1_000);
-  }
-  throw new Error(`${what} did not kill the app - pid ${phone.pid()} is still alive`);
-}
-
-/** HOME, then `am kill`, then prove it died. */
-async function killPhone() {
-  // No HOME and no sleep here any more: `phone.kill` establishes its own precondition (the process
-  // must be CACHED, which HOME alone does not make it) and returns the state it killed from, so a
-  // miss carries its own evidence instead of a bare "still alive".
-  const stateAtKill = await phone.kill();
-  const deadInMs = await requireDead(`am kill (state at kill: ${stateAtKill})`);
-  return deadInMs;
-}
+/** HOME, then `am kill`, then prove it died - the shared gesture, see `phone.killAndProveDead`. */
+const killPhone = async () => (await phone.killAndProveDead()).deadInMs;
 
 /** How many of the phone's current notifications mention `needle`. */
 const shadeHits = (needle) => phone.notifications().filter((n) => n.full.includes(needle)).length;
 
-/**
- * The exact bodies `CanariFirebaseMessagingService` renders when it could NOT decrypt.
- *
- * A NOTIFICATION THAT ARRIVED IS NOT A NOTIFICATION THAT WORKED, and no check here could tell the
- * two apart: NOTIF-4/9/10 all asked `full.includes(marker)`, so a shade full of "Nouveau message de
- * X" simply made the marker absent, which reads as "the notification has not arrived yet" and then
- * as a timeout - a completely different diagnosis from "background MLS decryption failed". The user
- * saw the generic form on the phone during a run this file called `PASS`.
- *
- * Kept as literals rather than a loose pattern because they are literals in the Kotlin
- * (`buildFallbackText`, `buildChannelFallbackText`) and in `push-payload.ts` for the APNs side. A
- * pattern would drift from them silently; a literal that stops matching is a rename, which is a
- * change to go and look at.
- */
-const GENERIC_BODIES = [/^Nouveau message de /, /^Nouveau message dans #/, /^Vous avez re.u un message chiffr/, /^Nouveau message$/];
-
-/**
- * Every notification currently in the shade that this app raised WITHOUT decrypting the message.
- *
- * Titles and bodies are real conversation content, so only the matched PATTERN is returned - never
- * the line. The count is the finding; the text is on the device for whoever is holding it.
- */
-const undecryptedInShade = () =>
-  phone
-    .notifications()
-    .map((n) => GENERIC_BODIES.findIndex((re) => re.test(n.body)))
-    .filter((i) => i >= 0)
-    .map((i) => String(GENERIC_BODIES[i]));
+/** The shade's undecrypted notifications - shared, see `phone.undecryptedInShade`. */
+const undecryptedInShade = phone.undecryptedInShade;
 
 /** Waits for a notification carrying `needle` to DISAPPEAR; returns elapsed ms or null on timeout. */
 async function awaitDismissal(needle, timeoutMs = 60_000) {
@@ -94,31 +49,8 @@ async function awaitDismissal(needle, timeoutMs = 60_000) {
   return null;
 }
 
-/**
- * Unlocks the encryption PIN if the modal is up; returns what happened, never throws on "no modal".
- * Copied from `life.mjs` deliberately - the PIN is read by `pin.mjs` from `test-accounts.json` and
- * must never become an argument, so the only way to reuse it is to spawn it.
- *
- * NOTIF-10 needed this and did not have it: cutting the radios for ten minutes restarts the app when
- * they come back, and a restarted app re-locks the PIN. The whole chat then sits behind the modal,
- * so `openConversation` cannot find anything and the check refused a verdict. Every phase that
- * relaunches the app must unlock before it navigates.
- */
-function unlock(port = PORTS.A1) {
-  try {
-    return execFileSync(
-      process.execPath,
-      ['pin.mjs', '--port', String(port), '--account', ACCOUNT_OF.A1, '--match', 'tauri.localhost'],
-      { cwd: HERE, encoding: 'utf8', timeout: 120_000 }
-    )
-      .trim()
-      .split('\n')
-      .pop();
-  } catch (e) {
-    if (e.status === 2) return 'no modal';
-    return `pin.mjs failed: ${String(e.stdout || e.message).slice(0, 200)}`;
-  }
-}
+/** The PIN modal, if it is up - shared, see `phone.unlockPin`. */
+const unlock = phone.unlockPin;
 
 // ── the three clients ────────────────────────────────────────────────────────
 stage('waking and launching the phone');

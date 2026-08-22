@@ -12,33 +12,18 @@
  *
  * Usage: node life.mjs 2|3|4|5|6|7|8
  */
-import { execFileSync } from 'node:child_process';
-import { client, ensureChat, openConversation, countMessage, awaitMessage, send, evaluate } from './chat.mjs';
+import { client, ensureChat, openConversation, countMessage, awaitMessage, send } from './chat.mjs';
 import { logcatReport, logcatSince, watch } from './watch.mjs';
 import { finishObserved, mark } from './results.mjs';
 import * as phone from './phone.mjs';
-import { ACCOUNT_OF, PORTS, peerNameFor } from './names.mjs';
+import { PORTS, peerNameFor } from './names.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const HERE = new URL('.', import.meta.url).pathname.replace(/^\//, '');
 const which = String(process.argv[2] || '2');
 
 /** Unlocks the PIN if the modal is up; returns what happened, never throws on "no modal". */
-function unlock(port = PORTS.A1) {
-  try {
-    return execFileSync(
-      process.execPath,
-      ['pin.mjs', '--port', String(port), '--account', ACCOUNT_OF.A1, '--match', 'tauri.localhost'],
-      { cwd: HERE, encoding: 'utf8', timeout: 120_000 }
-    )
-      .trim()
-      .split('\n')
-      .pop();
-  } catch (e) {
-    if (e.status === 2) return 'no modal';
-    return `pin.mjs failed: ${String(e.stdout || e.message).slice(0, 200)}`;
-  }
-}
+/** The PIN modal, if it is up - shared, see `phone.unlockPin`. */
+const unlock = phone.unlockPin;
 
 /** Brings the app back, re-points devtools at the new pid, unlocks, and opens the DM. */
 async function restore() {

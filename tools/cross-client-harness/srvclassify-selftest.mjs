@@ -221,6 +221,15 @@ const NOTABLE_CASES = [
   // between them - who destroyed whose message - is the whole value of the line.
   `${NEST}[ChannelService] [CHANNEL] message deleted channel=00000000-0000-4000-8000-000000000001 message=00000000-0000-4000-8000-000000000002 by=a1b2c3d4`,
   `${NEST}[ChannelService] [CHANNEL] message deleted channel=00000000-0000-4000-8000-000000000001 message=00000000-0000-4000-8000-000000000002 by=a1b2c3d4 (moderation)`,
+  // ALL THREE LEVELS, because the rule names them and a fourth would be a product change this must
+  // notice rather than absorb. MENTION-2 and MENTION-3 set these, and until they ran no check ever
+  // had - which is why an entire phase read SERVER NOT CLEAN for its own four lines.
+  `${NEST}[ChannelService] [CHANNEL_PUSH] level set channel=00000000-0000-4000-8000-000000000001 user=a1b2c3d4 level=mentions`,
+  `${NEST}[ChannelService] [CHANNEL_PUSH] level set channel=00000000-0000-4000-8000-000000000001 user=a1b2c3d4 level=none`,
+  `${NEST}[ChannelService] [CHANNEL_PUSH] level set channel=00000000-0000-4000-8000-000000000001 user=a1b2c3d4 level=all`,
+  // ONE PER APP START, so any phase that relaunches the phone emits them - MENTION-3 arms it
+  // twice and produced exactly two. It is the row that decides where a push can land.
+  `${NEST}[PushController] [PUSH_REGISTER] user=a1b2c3d4 device=tauri-a1b2c3d4-0000 platform=android`,
 ];
 for (const l of NOTABLE_CASES) {
   const ok = matches(NOTABLE_RULES, l);
