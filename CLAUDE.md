@@ -173,12 +173,13 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
   a closed security hole still reported as open (`architecturalGapFound: true`, ten days after
   `f924932b` closed it), MUT-18 explaining its verdict by that same absent guard, and a `filedAs`
   pointing at a `backlog.md` entry deleted when its fix shipped. All three corrected; the rule is
-  [testing-methodology](docs/wiki/testing-methodology.md) 31. **Worth a sweep of the other runners'
-  payloads for the same shape** - nothing has checked them.
-- **THE MECHANISM AUDIT IS DONE AND SCORED**, on [mechanism-audit](docs/wiki/mechanism-audit.md): of
-  five ranked findings, two produced a code change (forms P1, the `minClientVersion` ceiling), two a
-  verified negative (moderation's authorisation is correct, media holds no key material), one is
-  unchanged (twenty CALL rows still never run). The negatives are recorded on purpose.
+  [testing-methodology](docs/wiki/testing-methodology.md) 31. **The other thirty runners were then
+  swept for the same shape and are clean**: two more in `search.mjs` (the 2000-row cap, the unpassed
+  `isHighlighted` ring), both re-verified against source that had MOVED since they were written, both
+  relocated out of the payload before the phase ran. Everything else matching the pattern is either
+  computed or names the fixture the check set up, which is what a payload is for.
+- **THE MECHANISM AUDIT IS DONE AND SCORED** on [mechanism-audit](docs/wiki/mechanism-audit.md) -
+  five findings, two code changes, two verified negatives, one unchanged. Read it there.
 
 **The estate was swept and measured clean 2026-08-21 before the ladder started** - 22 debris salons through the product, all thirteen residue counts on prod zero afterwards. `cleanup.mjs` owns communities, salons AND throwaway groups now; the detail is on [cross-client-campaign](docs/wiki/cross-client-campaign.md).
 

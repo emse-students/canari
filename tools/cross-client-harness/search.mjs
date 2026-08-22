@@ -47,10 +47,11 @@
  *     classes - no `data-conversation-id`, no `role="listitem"`. SEARCH-6 has to scope by the
  *     PARENT list container's utility-class combination instead, which is exactly the kind of
  *     selector this campaign avoids everywhere else.
- *   - `MessageBubble`'s `isHighlighted` prop ("pulses a ring ... as the search result",
- *     MessageBubble.svelte:121) is declared and READ (line 652) but never PASSED from anywhere in
- *     the tree (`grep isHighlighted=` across src is empty). The only visible "you are here" signal
- *     for the active hit is the transient `.chat-message-jump-highlight` class (1.8s pulse) added by
+ *   - `MessageBubble`'s `isHighlighted` prop ("pulses a ring ... as the search result") is declared
+ *     (MessageBubble.svelte:116) and READ (line 656) but never PASSED from anywhere in the tree - no
+ *     `isHighlighted=` exists in `frontend/src`. Re-verified 2026-08-22; the line numbers had moved
+ *     since this was written, the fact had not. The only visible "you are here" signal for the
+ *     active hit is the transient `.chat-message-jump-highlight` class (1.8s pulse) added by
  *     `navigateToMessage`, plus the `N/M` counter text - every match gets the same `<mark>`, not just
  *     the active one. Recorded, not treated as a fail (SEARCH-1 does not depend on the ring).
  *   - The channel search's 2000-row cap (`capped: true`) never reaches the UI - see above.
@@ -217,7 +218,9 @@ async function search1() {
     afterPrev,
     wrappedAfterPrev: wrapped,
     jumpHighlightApplied: jumpHighlighted > 0,
-    note: 'isHighlighted (per-hit ring) is declared on MessageBubble but never passed anywhere in the tree - not asserted on, see file header',
+    // Not a claim about the product: the per-hit ring is out of this check's scope and the reason
+    // is in the file header, where it carries the date it was last verified against the source.
+    ringNotAsserted: true,
   }, { W1: obs });
   cx.close();
   return ok;
