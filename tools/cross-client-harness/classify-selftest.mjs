@@ -75,6 +75,31 @@ const CASES = [
   ['log', '[14:25:41] [LIFECYCLE] Resume: already connected (flag=true, socket=true).', 'benign'],
   ['log', '[14:24:06] [HISTORY_STATE] From b78568a3… for 642f389a… - 7e5952f8…, from 2026-05-16T00:00:00.000Z', 'stateChanges'],
   ['log', '[14:24:06] [HISTORY_STATE] Sent for 642f389a… - 7e5952f8…, from 2026-05-16T00:00:00.000Z', 'stateChanges'],
+  // The third spelling, which reports the OUTCOME of that comparison rather than the exchange.
+  [
+    'log',
+    '[14:24:06] [HISTORY_STATE] b78568a3… holds something different for 642f389a… - describing our store',
+    'stateChanges',
+  ],
+  // A Welcome sent in answer to a welcome_request - the invitation-link join and every re-add.
+  // `notable`: the mechanism working, and also somebody asking to be let into a group.
+  ['log', '[14:26:09] [WELCOME_REQ] Welcome -> b78568a3…:web-b78568a3…-msglwqh6-vegy for 1bf6fefe…', 'notable'],
+  // AND THE FOUR FAILURES UNDER THE SAME TAG THAT A PREFIX RULE WOULD HAVE FORGIVEN. Each is a
+  // real refusal or a real repair; none may go quiet because its successful sibling was classified.
+  // This one lands in `notable`, claimed by the generic `re-add` rule, and it is pinned at the
+  // bucket it ACTUALLY reaches rather than the one it arguably deserves. It is the app accusing
+  // itself ("fix needed client-side"), so a case can be made that it should break `clean` - but no
+  // run has produced it, and inventing a SEVERE rule for an unobserved line would change what a
+  // future phase's verdict means on a guess. Pinned so it can never go silent, which is the part
+  // that matters; if a run ever prints it, that is the moment to decide.
+  [
+    'log',
+    '[14:26:09] [WELCOME_REQ] web-b78568a3… re-added 3x in vain on 1bf6fefe... - re-add suspended (fix needed client-side)',
+    'notable',
+  ],
+  ['log', '[14:26:09] [WELCOME_REQ] KeyPackage not found for web-b78568a3… - aborting', 'unexplained'],
+  ['log', '[14:26:09] [WELCOME_REQ] Group 1bf6fefe... not found - refusing', 'unexplained'],
+
   // The one that must NEVER be demoted: a real loss, timestamped exactly as the app writes it.
   ['log', "[14:24:06] [MLS] LOST frame for 642f389a… from d82cd226…: generation consumed but this frame was never processed - the sender's ratchet rewound (SecretReuseError, frame 5p:kq68gk)", 'severe'],
   // GROUP MEMBERSHIP, added 2026-08-23 with the rules themselves. Every `benign` line below is one

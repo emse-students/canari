@@ -530,10 +530,20 @@ export async function replayConversationHistory(params: {
      * Both facts are therefore established here, before the session exists: pinning the head is one
      * HTTP read that touches no MLS state at all, and emptying the mailbox is precisely letting the
      * drain have the mutex.
+     *
+     * AND `null` IS THEREFORE THE HONEST SECOND ARGUMENT, not `id`. That parameter answers "which
+     * group's catch-up session am I INSIDE", and the whole point of the three paragraphs above is
+     * that this line runs while there is none - the session is opened on the NEXT statement. Naming
+     * `id` here claimed a nesting that cannot exist and refused the barrier whenever a SECOND replay
+     * of the same group happened to be open, which is not a deadlock: that stack releases the mutex
+     * on its own, so waiting is exactly what was asked for. And the skip costs precisely the
+     * guarantee this call is here to buy - the mailbox is then NOT empty when the session opens, so
+     * the archive walk and the delivery queue hand MLS the same ciphertext, which is the
+     * `Duplicate delivery ... already read by the archive replay` line the paragraph above is about.
      */
     pendingPrimedPage ??= await mlsService.fetchHistory(id, fetchCursor, undefined, undefined);
     walkHead = pendingPrimedPage.head;
-    await mlsService.waitForMessageQueueIdle('archive replay', id).catch(() => {});
+    await mlsService.waitForMessageQueueIdle('archive replay', null).catch(() => {});
 
     // Paged decrypt session: the ratchet advances worker-side across pages and is committed
     // to the live client once by session.finish() (run in the outer `finally`, always).

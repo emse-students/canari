@@ -29,7 +29,7 @@ Updated after every run.
 | 5 SEARCH | 6 | `1f396ac7` | **`PASS` 6/6 x5** on runner `928f8b286dac` |
 | 6 MENTION | 6 | `1f396ac7`, A1 `a7981206` | **`PASS` 6/6 x5** on runner `cdc081edabc0` |
 | 7 FWD | 6 | `1579d5c3`, A1 `a7981206` | **`PASS` 6/6 x5** (FWD-2 x1, 25 iterations) |
-| 8 GRP | 10 | - | `pending` |
+| 8 GRP | 10 | `51dcb814` | **`PASS` 10/10 x1** (2026-08-23), pending x5. Run 4 was the first on a build where GRP-3/8/10 could pass: it turned 3 defects green and found a 4th (GRP-7, the mailbox barrier) |
 | 9 COMM | 22 | - | `pending` |
 | 10 DEL | 10 | - | `pending` |
 | 11 TAB | 8 | - | `pending` |
@@ -201,16 +201,16 @@ The first rung that moves an MLS epoch.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| GRP-1 | Create a group, add a member, both sides see the roster and the Add commit merges | `W1 W2` | `pending` |
-| GRP-2 | The picker must not offer existing members or yourself, and a no-op submission must not report success | `W1 W2` | `pending` |
-| GRP-3 | Remove a member: the Remove commit, and what the removed device can still read | `W1 W2` | `pending` |
-| GRP-4 | The group invitation LINK: generate, open it on the other account | `W1 W2` | `pending` |
-| GRP-5 | Rename a group, seen on the other side | `W1 W2` | `pending` |
-| GRP-6 | Leave a group - which deliberately commits nothing | `W1 W2` | `pending` |
-| GRP-7 | Add a member who is offline; they join on their next connection | `W1 W2` | `pending` |
-| GRP-8 | Add and remove the same member twice in a row, fast | `W1 W2` | `pending` |
-| GRP-9 | A member row rendering a raw user id instead of a display name | `W1 W2` | `pending` - observed once |
-| GRP-10 | The invitation link of one group must not appear in another group's panel | `W1 W2` | `pending` - found in source while GRP-4 was written |
+| GRP-1 | Create a group, add a member, both sides see the roster and the Add commit merges | `W1 W2` | **`PASS`** |
+| GRP-2 | The picker must not offer existing members or yourself, and a no-op submission must not report success | `W1 W2` | **`PASS`** |
+| GRP-3 | Remove a member: the Remove commit, and what the removed device can still read | `W1 W2` | **`PASS`**. Since 2026-08-23 it also asserts that the removed device learnt its eviction from the COMMIT and asked for no re-add |
+| GRP-4 | The group invitation LINK: generate, open it on the other account | `W1 W2` | `PASS-DIRTY` on `51dcb814` - assertions held; one unclassified line, the Welcome that answers the joiner's request. Classified since, re-run owed |
+| GRP-5 | Rename a group, seen on the other side | `W1 W2` | **`PASS`** |
+| GRP-6 | Leave a group - which deliberately commits nothing | `W1 W2` | **`PASS`** |
+| GRP-7 | Add a member who is offline; they join on their next connection | `W1 W2` | `PASS-DIRTY` on `51dcb814` - assertions held, and it found the mailbox-barrier defect: a guard reporting an impossible deadlock and skipping the ordering guarantee, with the reconciliation it caused beside it. Fixed, re-run owed |
+| GRP-8 | Add and remove the same member twice in a row, fast | `W1 W2` | **`PASS`** |
+| GRP-9 | A member row rendering a raw user id instead of a display name | `W1 W2` | **`PASS`** - not reproduced |
+| GRP-10 | The invitation link of one group must not appear in another group's panel | `W1 W2` | **`PASS`** - found in source while GRP-4 was written, captured as a `FAIL` on `1579d5c3`, green on the fix |
 
 ## 9 - COMM - communities, channels, roles
 

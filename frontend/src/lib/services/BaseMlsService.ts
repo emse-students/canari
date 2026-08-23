@@ -618,6 +618,23 @@ export abstract class BaseMlsService implements IMlsService {
      * deliberate imprecision: the group is a proxy for "inside", not a proof of it. Refusing costs a
      * guarantee the ledger can still catch afterwards; waiting on a session that will never close
      * costs the client until it is reloaded, and that one shipped (W2, 2026-08-15).
+     *
+     * AS OF 2026-08-23 NO CALL SITE PASSES A GROUP, AND THAT IS THE CORRECT STATE RATHER THAN A
+     * REGRESSION. The two that did read the parameter as "the group I am working on": `history.ts`
+     * named the group whose session it was about to open on the NEXT statement, and
+     * `historyReconcile.ts` named the group it was reconciling, reached from a `finally` that had
+     * already awaited `session.finish()`. Neither can be inside a session, so neither ever
+     * described a nesting - they described a CONCURRENT replay of the same group, which the arm
+     * above then reported as an unresolvable deadlock and skipped. Found by GRP-7 on 2026-08-23,
+     * where the skipped barrier is visible in the same report as the `[HISTORY_STATE] holds
+     * something different` it caused.
+     *
+     * So the guard stands unfired, which is what a guard against a shape the code no longer has
+     * should do - `createDecryptSession` is the only opener of a session, `history.ts` is its only
+     * caller, and nothing reaches a barrier from inside it. A FUTURE caller that does, and passes
+     * `null`, hangs here instead of being told: the last line it prints is the `debug` below,
+     * naming it and the session it is waiting behind, which is what makes that hang diagnosable
+     * rather than silent. Anything awaiting this barrier from inside a session must pass its group.
      */
     const nestedSession =
       catchUpGroupId !== null
@@ -681,6 +698,21 @@ export abstract class BaseMlsService implements IMlsService {
      */
     const behind = this.openCatchUps.map((s) => s.groupId);
     if (behind.length > 0) {
+      /**
+       * SAID BEFORE THE WAIT, NOT ONLY AFTER IT - because the one case this report is most needed
+       * for is the wait that never ends, and a line printed on the far side of an `await` cannot
+       * describe it. This used to be a single line after `settleBarrier()`: it accounted for the
+       * latency perfectly and went completely silent on a hang, which is the state the guard above
+       * exists to keep a caller out of and the state a FUTURE caller reaches by passing `null` from
+       * inside a session. The last thing such a client now prints names it and names the session it
+       * is stuck behind, which is the difference between a diagnosable hang and a dead tab.
+       */
+      console.debug(
+        `[QUEUE] mailbox barrier for "${caller}" is waiting behind ${behind.length} catch-up` +
+          ` session(s) on [${behind.join(', ')}] - not this caller's, so it is waited out rather` +
+          ' than refused. If this is the last line from this client, the caller was inside one of' +
+          ' those sessions and must pass its group id rather than null.'
+      );
       const waitedFrom = Date.now();
       await this.settleBarrier();
       console.debug(

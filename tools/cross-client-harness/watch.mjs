@@ -387,6 +387,12 @@ const STATE_CHANGE = [
   // the trigger under its consequences. A `[HISTORY_STATE]` with NO trigger above it would be the
   // interesting case, and `stateChanges` is exactly where a reader looks for that.
   /^\[HISTORY_STATE\] (From|Sent) /,
+  // The THIRD spelling of that same exchange, and the one that actually reports its outcome: a peer
+  // compared state keys, found ours different, and is describing its store back to us. Same
+  // reasoning as the two above - the finding is the TRIGGER, in `NOTABLE`, and burying it under its
+  // own consequences is what a rule here prevents. It sat in `unexplained` until GRP-7 produced it
+  // on 2026-08-23, on a reconciliation that a skipped mailbox barrier had made necessary.
+  /^\[HISTORY_STATE\] \S+ holds something different for \S+ - describing our store$/,
   // LEAVING AND JOINING, SEEN LOCALLY. Both are real changes to what this client holds, so they are
   // reported rather than forgiven - and neither is a defect, so neither breaks `clean`. GRP-6 and
   // GRP-4 produce them by design: a member who leaves purges the conversation locally, and a member
@@ -533,6 +539,7 @@ const NOTABLE = [
   // the line is rare, it names a cause, and a named cause is a claim worth checking every time.
   /distribution frame of kind .* is not handled by this client/i,
   /epoch|GAP|out-?of-?sync|re-?add|welcome_request/i,
+  /^\[WELCOME_REQ\] Welcome -> \S+ for \S+$/,
   // PEER RECONCILIATION, WHICH IS NOT THE SAME THING AS READING THE MAILBOX. `GET
   // /api/mls/history/<groupId>` is a client fetching its OWN ciphertexts from the server and happens
   // on every conversation open; `history_request` is a client asking ANOTHER DEVICE to resend what
@@ -545,6 +552,16 @@ const NOTABLE = [
   // The PROTOCOL's own five frame names, not the `[SYNC]` tag they are logged under: that tag also
   // carries group creation, bulk member addition and the WASM purge, so matching it would report
   // routine group work as a reconciliation and the signal would stop being read within one run.
+  // A WELCOME ACTUALLY SENT IN ANSWER TO A welcome_request. The invitation-link join (GRP-4) and
+  // every re-add come through here, so it is the mechanism WORKING - but somebody asked to be let
+  // into a group, and in a check that invited nobody that is the whole finding. Never
+  // `clean`-breaking, and deliberately in the SAME bucket as the `welcome_request` rule above that
+  // it answers: a reader asking "who asked to be let in, and were they" must find both halves in
+  // one place. It sat in `unexplained` until GRP-4 ran on 2026-08-23.
+  //
+  // Pinned to this ONE spelling and NOT written as a `^\[WELCOME_REQ\]` prefix: that tag also
+  // carries a refusal, an abort on a missing KeyPackage, a kick-and-re-add, and `re-add suspended
+  // (fix needed client-side)` - four failures a prefix rule would forgive in silence.
   /history_(request|bundle|digest|digest_request|pull)|\[HISTORY_RECONCILE\]/i,
   // A reconciliation that actually DELIVERED something, which the line above does not cover: that one
   // says a device decided it was out of sync, this one says a peer answered and the gap closed. It

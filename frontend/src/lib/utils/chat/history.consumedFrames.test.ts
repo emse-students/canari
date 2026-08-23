@@ -389,11 +389,12 @@ describe('the mailbox barrier', () => {
     const createDecryptSession = vi
       .fn()
       .mockResolvedValue({ decryptPage, finish: vi.fn().mockResolvedValue(undefined) });
+    const waitForMessageQueueIdle = vi.fn().mockReturnValue(drained);
     const mlsService = createMlsServiceStub({
       getLocalGroups: vi.fn().mockReturnValue([GROUP]),
       fetchHistory,
       createDecryptSession,
-      waitForMessageQueueIdle: vi.fn().mockReturnValue(drained),
+      waitForMessageQueueIdle,
     });
     const replay = replayConversationHistory({
       mlsService,
@@ -408,7 +409,14 @@ describe('the mailbox barrier', () => {
       log: () => undefined,
       primedFirstPage: { rows: [row], head: '9-0' },
     });
-    return { replay, openGate, fetchHistory, decryptPage, createDecryptSession };
+    return {
+      replay,
+      openGate,
+      fetchHistory,
+      decryptPage,
+      createDecryptSession,
+      waitForMessageQueueIdle,
+    };
   };
 
   it('hands MLS nothing until the mailbox is empty', async () => {
@@ -424,6 +432,32 @@ describe('the mailbox barrier', () => {
     await replay;
 
     expect(decryptPage).toHaveBeenCalled();
+  });
+
+  /**
+   * IT IS INSIDE NO SESSION WHEN IT WAITS, AND IT MUST SAY SO.
+   *
+   * `waitForMessageQueueIdle(caller, catchUpGroupId)` asks which group's catch-up session the
+   * caller is INSIDE, and the barrier refuses that one - the drain needs the mutex such a session
+   * holds for its whole life. This call site passed `id`, the group whose session it opens on the
+   * very NEXT statement, so it named a nesting that cannot exist and instead matched any CONCURRENT
+   * replay of the same group. Those were reported as unresolvable deadlocks and the barrier was
+   * SKIPPED - which is exactly the `Duplicate delivery ... already read by the archive replay`
+   * window the ordering above exists to close, reopened by the guard meant to protect it.
+   *
+   * Found by GRP-7 on 2026-08-23, on the sibling call site in `historyReconcile.ts`.
+   */
+  it('tells the barrier it is inside no session - the session opens on the next statement', async () => {
+    const { replay, openGate, waitForMessageQueueIdle, createDecryptSession } = gatedReplay();
+    openGate();
+    await replay;
+
+    expect(waitForMessageQueueIdle).toHaveBeenCalledWith('archive replay', null);
+    // The claim above is only true because of this ordering, so it is asserted beside it rather
+    // than left to the prose: the session this replay owns does not exist yet when it waits.
+    expect(waitForMessageQueueIdle.mock.invocationCallOrder[0]).toBeLessThan(
+      createDecryptSession.mock.invocationCallOrder[0]
+    );
   });
 
   it('has already pinned its upper bound when it waits, so the wait cannot widen the walk', async () => {

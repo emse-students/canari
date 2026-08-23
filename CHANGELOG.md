@@ -60,6 +60,38 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A mailbox barrier reported a deadlock that could not happen, and skipped the guarantee it exists
+  to take.** `waitForMessageQueueIdle(caller, catchUpGroupId)` asks which group's catch-up session
+  the caller is INSIDE - the barrier refuses that one, because the drain needs the MLS mutex such a
+  session holds for its whole life. Two call sites read the parameter as "the group I am working on"
+  instead: `history.ts` named the group whose session it opens on the very NEXT statement, and
+  `historyReconcile.ts` named the group it was reconciling, reached from a `finally` that has already
+  awaited `session.finish()`. `createDecryptSession` is the only opener of a session and `history.ts`
+  its only caller, so NEITHER site can ever be inside one - the group they named could only ever
+  match a CONCURRENT session, which the guard then reported at `console.error` as "this can never
+  resolve" and SKIPPED.
+
+  The accusation was false in every case it could fire, and the skip was not free. In
+  `historyReconcile` it dropped the ordering guarantee the barrier is taken for and sent the state
+  key against a mailbox that had never been emptied - reconciliation is meant to be exceptional, and
+  an ask raised on a difference the device was about to close by itself is the routine case it must
+  not become. In `history.ts` it is worse: the mailbox not being empty when the session opens is
+  exactly the window where the archive walk and the delivery queue hand MLS the same ciphertext,
+  which is the `Duplicate delivery ... already read by the archive replay` defect the ordering above
+  it was written to close.
+
+  Found by GRP-7 on 2026-08-23, with `[HISTORY_STATE] holds something different` sitting in the same
+  report as the skipped barrier that caused it. Both sites now pass `null`, and each states the three
+  facts a future caller would have to break for that to stop being true.
+
+  The guard's own report was fixed too, and for a reason worth naming: it was one `console.debug`
+  written AFTER the wait, so it accounted for the latency perfectly and went completely silent on a
+  wait that never ends - which is the single case it is most needed for, and the one a future caller
+  reaches by passing `null` from inside a session. It now says what it is about to do before doing
+  it, naming the caller, the sessions it is behind, and what to change. A hang's last line is now a
+  line that explains it.
+
+
 - **A member removed from a group asked to be re-added, and its outbox retried an encrypt that could
   never succeed.** The Remove commit NAMES the device it evicts, and applying it produced nothing: the
   merge answered "no application payload", exactly as every other structural commit does, so the only
@@ -91,6 +123,24 @@ which is also where every release up to and including v0.13.1 now lives.
 
   `outbox.ts` had grown three copies of the same permanent-failure block; they are now one
   `failPermanently`, whose `reason` is the only thing separating the two causes in the log.
+
+  **THREE PATHS REACH AN EVICTED DEVICE, and the first fix only closed two.** The third is the
+  RECEIVE path, and it is where the 403 actually came from: a frame still arrives - in flight when
+  the commit landed, or routed by the registry the removal cleans best-effort - `process_message`
+  refuses it because the group is inactive, and that refusal was a bare `Process error:`. Every
+  classifier reads that as a sender-ratchet gap, so the pipeline answered with its out-of-sync
+  policy. Now typed like the other two, and classified BEFORE the generic arm for the reason the
+  four arms above it exist: reached later it reads as retryable, and native writes a
+  `pending_mls_messages` row per frame for something that can never decrypt.
+
+  The consequences are spelled out per consumer rather than shared, because the right policy differs:
+  the pipeline ACKs and retires; `history.ts` marks the row seen and explicitly does NOT count it a
+  loss - we are not entitled to the plaintext, so there is nothing to reconcile and asking a peer for
+  it would be asking for a group's traffic after being removed from that group; `BaseMlsService` adds
+  it to the permanent set for distribution frames. The replay counts what it skipped instead of
+  logging per frame (an evicted group's whole backlog arrives one frame at a time), and a replay that
+  added nothing BECAUSE we are no longer a member says so - an empty group and a group that is no
+  longer ours are different answers, and it used to give the same one for both.
 
 - **Opening search in a channel put the client in a loop that hammered our own server.** One query
   in a 1052-message channel issued **4956 requests to `/api/channels/:id/messages`**, was still going

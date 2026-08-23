@@ -254,13 +254,23 @@ describe('waitForMessageQueueIdle', () => {
     expect(waitUntilIdle).toHaveBeenCalled();
     // And it is not a defect, so it does not accuse anybody of one.
     expect(complaint).not.toHaveBeenCalled();
-    // BUT IT SAYS IT WAITED. Without this the fix is invisible in the field and its only evidence
-    // is the absence of the old refusal - which proves nothing about a branch that fired on 2 runs
-    // in 5. The line names the caller and whose session it waited behind.
-    expect(note).toHaveBeenCalledOnce();
-    expect(String(note.mock.calls[0]?.[0])).toContain('outbox flush');
-    expect(String(note.mock.calls[0]?.[0])).toContain('g-other');
-    expect(String(note.mock.calls[0]?.[0])).toContain('waited out rather than refused');
+    // BUT IT SAYS IT WAITED, TWICE, AND THE PAIR IS THE POINT. Without any line the fix is
+    // invisible in the field and its only evidence is the absence of the old refusal - which proves
+    // nothing about a branch that fired on 2 runs in 5. Without the FIRST of the two, the report is
+    // written on the far side of an `await` and says nothing at all about the one case it is most
+    // needed for: a wait that never ends, which is what a future caller inside a session reaches by
+    // passing `null`. Both name the caller and the session.
+    expect(note).toHaveBeenCalledTimes(2);
+    const [announced, accounted] = note.mock.calls.map((c) => String(c[0]));
+    expect(announced).toContain('outbox flush');
+    expect(announced).toContain('g-other');
+    expect(announced).toContain('is waiting behind');
+    // And it tells whoever reads it in a hang what to do about it, because in a hang it is the last
+    // thing they get.
+    expect(announced).toContain('must pass its group id rather than null');
+    expect(accounted).toContain('outbox flush');
+    expect(accounted).toContain('g-other');
+    expect(accounted).toContain('waited out rather than refused');
 
     catchUp.endCatchUp('g-other');
     complaint.mockRestore();

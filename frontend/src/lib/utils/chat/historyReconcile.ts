@@ -469,7 +469,25 @@ export async function reconcileGroup(
   // AFTER the coalescing reservation above, deliberately: a burst of forty failing frames must
   // produce one waiter, not forty. And it is a BARRIER, never a delay - `waitUntilIdle` resolves on
   // the drain loop ending, so it states a fact about the queue rather than guessing at a duration.
-  await mlsService.waitForMessageQueueIdle('history ask', groupId).catch(() => {});
+  //
+  // `null`, NOT `groupId`, AND THE DIFFERENCE IS THE WHOLE POINT OF THAT PARAMETER. It does not
+  // mean "the group I am working on", it means "the group whose catch-up session I am INSIDE" -
+  // the barrier refuses that one because the drain would need the mutex that session holds for its
+  // whole life. Passing the group being reconciled claimed a nesting that never exists here, so
+  // every CONCURRENT session on the same group was reported as an unresolvable deadlock and the
+  // barrier was skipped: the ordering guarantee this call exists to take was dropped, and the ask
+  // then went out against a mailbox that had never been emptied. Measured by GRP-7 on 2026-08-23 -
+  // one `can never resolve` against a session 60 ms old, with `[HISTORY_STATE] holds something
+  // different` beside it in the same report, which is what an ask over an unsettled store looks
+  // like.
+  //
+  // THE INVARIANT THAT MAKES `null` TRUE, and it is checkable rather than hoped for:
+  // `createDecryptSession` is the only thing that opens a catch-up session, `history.ts` is its
+  // only caller, and it reaches this function from a `finally` that has already awaited
+  // `session.finish()`. No path into `reconcileGroup` is inside a session. A future one would hang
+  // here rather than be told, which is why this paragraph names the three facts a new caller has to
+  // break for that to happen.
+  await mlsService.waitForMessageQueueIdle('history ask', null).catch(() => {});
 
   // ASK THE SERVER FIRST. It elects the responder and answers `no_peer_online` immediately when
   // there is none, so electing first is what keeps the probe conditional: a state key sent before

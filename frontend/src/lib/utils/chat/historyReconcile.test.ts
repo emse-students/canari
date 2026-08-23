@@ -299,6 +299,33 @@ describe('the mailbox barrier', () => {
     expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * THE SECOND ARGUMENT IS NOT THE GROUP BEING RECONCILED, AND THAT COST A REAL GUARANTEE.
+   *
+   * `waitForMessageQueueIdle(caller, catchUpGroupId)` asks which group's catch-up session the
+   * caller is INSIDE - the barrier refuses that one, because the drain would need the mutex that
+   * session holds for its whole life. This call site passed the group it was reconciling, which is
+   * never that: `createDecryptSession` is the only opener of a session, `history.ts` its only
+   * caller, and it reaches `reconcileGroup` from a `finally` that has already awaited
+   * `session.finish()`.
+   *
+   * So the group name only ever matched a CONCURRENT session, which the barrier then reported as
+   * an unresolvable deadlock and SKIPPED - dropping the ordering guarantee this call exists to take
+   * and sending the ask against a mailbox that had never been emptied. Measured by GRP-7 on
+   * 2026-08-23, with `[HISTORY_STATE] holds something different` in the same report.
+   *
+   * Pinned on the ARGUMENT rather than on an observable effect because that is where the defect
+   * lives: every consequence of it is inside `BaseMlsService`, which has its own tests for both
+   * branches, and this is the only place that can state which branch this caller is entitled to.
+   */
+  it('tells the barrier it is inside no catch-up session, because it never is', async () => {
+    const mls = service();
+
+    await reconcileGroup(mls, GROUP, log);
+
+    expect(mls.waitForMessageQueueIdle).toHaveBeenCalledWith('history ask', null);
+  });
+
   it('holds an ANSWER until the queue is idle, and never blocks the drain it was raised from', async () => {
     const gateway = gate();
     const answer = vi.fn().mockResolvedValue(undefined);
