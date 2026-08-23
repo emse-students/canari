@@ -9,7 +9,7 @@
 - Render dynamic association forms for member submissions.
 - Support optional online payments (Stripe Checkout) or cash payments.
 - Display submission confirmation and payment status.
-- Let a form manager build and configure a form, including its member price and the cotisation a
+- Let a form manager build and configure a form, including its price grid and the cotisation a
   paid submission grants.
 
 ## Form submission flow
@@ -62,11 +62,17 @@ labelled component on the other). Everything shared now lives in one place:
 | Piece | What it owns |
 |---|---|
 | `FormSection.svelte` | The card: icon, title, optional badge, optional collapsing |
-| `FormPaymentSection.svelte` | Price, beneficiary, member price, payment methods, cash |
+| `FormPaymentSection.svelte` | Base price, beneficiary, the price grid, payment methods, cash |
 | `FormQuestionsSection.svelte` | The builder list, drag-and-drop, the type picker |
 | `FormAdvancedSettings.svelte` | The collapsed "advanced" category (today: the cotisation grant) |
 | `FormSaveBar.svelte` | The footer summary and the save button |
-| `MemberPriceFields.svelte` | The "cotisants pay less" block |
+| `FormAudienceSection.svelte` | Who may answer at all (`submitCondition`) |
+| `PriceGridEditor.svelte` | The dimensions, and the cell grid they cross into |
+| `CriterionEditor.svelte` | One dimension's buckets |
+| `AudienceConditionEditor.svelte` | One condition's criteria, used by the form AND by a question |
+| `forms/priceMatrix.ts` | The matrix state, its cross product, and the payload it becomes |
+| `forms/criteriaOptions.ts` | The promo / formation option lists a criterion offers |
+| `forms/audience.ts` | The pre-save guard against a condition with no criterion |
 | `CotisationTierPicker.svelte` | Picks a tier BY NAME |
 | `ui/controlClasses.ts` | The one class string every input and select wears |
 | `ui/Select.svelte`, `ui/Toggle.svelte` | The select and the switch, one geometry each |
@@ -74,8 +80,100 @@ labelled component on the other). Everything shared now lives in one place:
 | `forms/itemsPayload.ts` | Questions to/from the wire, euros to/from cents |
 
 Section order, top to bottom: **General** (title, description, poster), **Responses** (cap, repeat
-submissions, opening date), **Payment**, **Questions**, **Co-managers** (edit only), **Advanced
-settings** (collapsed).
+submissions, opening date), **Who may answer**, **Payment**, **Questions**, **Co-managers** (edit
+only), **Advanced settings** (collapsed). Audience sits before money on purpose: who may answer is
+read first, what they pay second.
+
+## Pricing is a MATRIX, so no priority rule exists to get wrong
+
+A price used to be one number plus an optional "cotisants pay less" second number. What managers
+actually price on is several things at once - the BDE cotisation depends on the promo, the formation
+AND the answer to a menu question. Expressed as an ordered list of rules, that needs a priority
+rule, and a priority rule is a thing to get wrong: two rules both matching one person, and whichever
+sorts first wins for reasons nobody wrote down.
+
+So the ticked "Filtrer par..." boxes declare **dimensions**, and the grid is their **cross product**.
+Exactly one cell applies to any given person, so there is nothing to prioritise, and completeness is
+a save-time invariant rather than a runtime hope.
+
+Two properties make that work:
+
+- **A dimension is a PARTITION, not a filter.** Every criterion carries the buckets a manager wrote
+  plus one generated, undeletable `others` bucket (`OTHERS_BUCKET_ID = '_others'`). Without it a
+  dimension leaves the people it does not name unpriced; with it the cross product stays small and
+  everybody lands in exactly one cell.
+- **A question used as a dimension contributes no additive `priceModifier`.** Its cell already
+  carries the choice, so a supplement on top would charge it twice. The server enforces it
+  (`pricedQuestionIds`), and the builder hides the per-option supplement fields for those questions.
+
+`pricing/price-matrix.ts` resolves a submitter to a cell, `pricing/validate.ts` refuses an
+incomplete or self-contradicting matrix at save time, and `pricing/audience.ts` holds
+`matchesCondition` plus `SubmitterFacts` - the promo, formation and cotisation facts assembled by
+`submitter-facts.service.ts`.
+
+### What the app knows about a person, and why a price may rest on it
+
+Measured on prod 2026-08-23, `auth_db.users`, 221 rows:
+
+| Attribute | Values seen | Comes from |
+|---|---|---|
+| `formation` | `ICM` 213, `ISMIN` 3, `Master` 2, null 3 | Authentik `userinfo`, refreshed at every login |
+| `promo` | 2022 (4), 2023 (15), 2024 (72), 2025 (101), 2026 (24), plus 2020, 1850, 1816, null 2 | idem |
+| cotisation tier | `AssociationProduct` rows, `type='membership'`, per association | the association's own catalogue |
+
+Three facts shape the feature:
+
+1. **Neither attribute is self-declared.** `UpdateUserDto` carries `bio` and nothing else; `promo` and
+   `formation` are written only by `findOrCreateFromOidc`. That is what makes them safe to price on -
+   the payer cannot move themselves into a cheaper cell. **If that DTO ever gains `promo`, this
+   becomes a self-service discount**, which is why the warning is written at the DTO itself.
+2. **`formation` is a small OPEN vocabulary, not an enum.** The next value arrives from Authentik with
+   no deploy, so the picker offers what EXISTS and the `others` bucket catches what it has not seen.
+3. **Both can be null**, and five rows on prod are. A null is not an error and must price.
+
+`promo` is a **graduation year**, not a study year, and "1A pays 10 EUR" is how a grid gets asked for.
+A bucket saying `promo = 2029` is a snapshot - right this year, wrong the next, exactly the mistake
+migration `050` had just finished removing from cotisation tags. So a promo bucket says which it
+means: `{ kind: 'promo', years }` for graduation years, or `{ kind: 'studyYear', years }` resolved
+against the academic year at quote time, which is what a form reused every year wants and what the UI
+offers first. The academic-year roll is the one `deriveCotisationTag` already uses.
+
+## One predicate, three uses
+
+The criteria that divide a price grid are the same criteria that gate a question and gate the form:
+
+| Where | Field | Meaning |
+|---|---|---|
+| The form | `submitCondition` | Who may submit at all |
+| A question | `showIf` | Who sees this question |
+| A price cell | the dimension buckets | What this person pays |
+
+All three are `AudienceCondition`, all three are judged by `matchesCondition`, whose keys are ANDed.
+One editor component builds all of them, so a form reserved to one promo and a price for that promo
+cannot disagree.
+
+### Conditional questions are evaluated on the SERVER now
+
+`dependsOn`/`dependsValue` used to be a browser-only rule, which had two live consequences: `submit`
+enforced `required` on hidden questions while the client sent only visible answers (so a required
+question behind a condition made the form unsubmittable for the people the condition excluded), and
+an answer to a hidden question was accepted with its price modifier charged. Both get much worse once
+an answer can select a price cell, which is why `pricing/visibility.ts` landed with the matrix rather
+than after it.
+
+`visibleItemIds` is memoised, order-independent, and resolves a dependency cycle to *hidden* - a
+question depending on itself has no defensible answer, and hidden is the reading that charges nobody.
+`normaliseCondition` folds the legacy `dependsOn` pair into `showIf.answer` so exactly one evaluator
+exists, and **ANDs the two shapes**: the builder offers both controls on one question, so "only for
+cotisants" and "only if Q1 = menu B" are two requirements of one question. `showIf.answer` wins over
+the legacy pair when both name an answer.
+
+### A condition with no criterion is refused, twice
+
+An empty condition applies to everybody, so it restricts nothing and hides nothing. The server
+refuses it (`parseAudienceCondition`), but that refusal is a developer sentence about a document -
+not what a manager should read for having flipped a switch and stopped. So `forms/audience.ts`
+catches it before the request, naming the form or the question it belongs to.
 
 ## Cotisations: a form names a TIER, never a tag
 
@@ -86,11 +184,14 @@ A form stores **which tier**, and the tag is derived at grant time:
 
 | Column | Meaning |
 |---|---|
-| `memberPriceEnabled` | The form has a member price at all. Gates `basePriceMember` AND every option's `priceModifierMember` — which is why it is not `basePriceMember != null` |
-| `memberPriceVariantKey` | Restricts the member price to one tier. **NULL = any tier** of the association |
-| `basePriceMember` | Member base price in cents; null = only the options are discounted |
 | `grantsCotisation` | A paid submission grants the association's cotisation |
-| `cotisationVariantKey` | Which tier is granted. **NULL = the base tier** — the deliberate difference from the column above: "who counts as a member" is a set, "what does payment grant" is exactly one |
+| `cotisationVariantKey` | Which tier is granted. **NULL = the base tier**, not "any tier": "who counts as a member" is a set, "what does payment grant" is exactly one |
+
+The member price is no longer a column. `memberPriceEnabled`, `memberPriceVariantKey` and
+`basePriceMember` were "cotisants pay less" spelled as three columns and one hard-coded discount
+axis; migration `051_form_price_matrix.sql` drops them, because a cotisation tier is now just one
+dimension a price grid may be divided on, alongside promo, formation and an answer. Production held
+one form, with `memberPriceEnabled` false and `basePriceMember` null, so nothing needed migrating.
 
 The predecessors — `pricingTagName`, `grantedTagName`, `tagExpiresAt` — stored a literal tag string
 typed into the admin screen, and were dropped. Three things were wrong with a literal, all silent:
@@ -122,7 +223,7 @@ derived `tagName` no screen has any use for; the tier list here is unguarded for
 on the wire only. `AssociationTagAutocomplete` and `GET :id/tag-catalog` were deleted along with the
 raw-tag UI that was their only caller.
 
-### Granting a cotisation needs MANAGE_MEMBERS, the member price does not
+### Granting a cotisation needs MANAGE_MEMBERS, pricing on one does not
 
 Creating a form needs nothing but an account. Linking it to an association needs membership. But
 `grantsCotisation` hands out association membership, and `UserTagService.grantCotisant` has always
@@ -131,8 +232,8 @@ be refused at payment time, or, worse, use the form as a side door around the fl
 roster. `assertCotisationConfigValid` now takes the caller and refuses the setting itself, and
 `mayGrant` hides the toggle so nobody picks an option the save would reject.
 
-The member price is deliberately NOT gated: offering a discount to existing cotisants grants nothing
-and changes no one's membership.
+Dividing a price grid on a cotisation tier is deliberately NOT gated: charging existing cotisants a
+different amount grants nothing and changes no one's membership.
 
 ## A form's association is chosen once, at creation
 
@@ -162,10 +263,10 @@ are unconditional because the tab itself only renders for a caller holding `MANA
 `FormsService.assertCotisationConfigValid` runs on create AND update, and rejects every setting that
 would look saved and then do nothing:
 
-- a grant or a member price with no beneficiary association;
+- a grant with no beneficiary association, or a price grid divided on a cotisation tier without one;
 - a grant on a form that does not require payment — a zero-total submission is stored `free` and
   never reaches `markPaid`, so the grant could not fire;
-- a grant or member price on an association with no cotisation;
+- either of those on an association with no cotisation;
 - a `variantKey` the association does not sell;
 - a base-tier grant on an association that sells named tiers only.
 
@@ -178,6 +279,12 @@ admin routes above.
 ## Tests
 
 `apps/social-service/src/forms/forms.service.cotisation.spec.ts` (the config refusals, the
-`MANAGE_MEMBERS` gate, link immutability, member-price eligibility, granting on payment) and
-`forms.service.list.spec.ts` (the three sources, dedup, ordering, naming). The forms module had no
-test at all before 2026-08-23.
+`MANAGE_MEMBERS` gate, link immutability, granting on payment) and `forms.service.list.spec.ts` (the
+three sources, dedup, ordering, naming). The forms module had no test at all before 2026-08-23.
+
+The matrix carries its own: `pricing/audience.spec.ts` (`matchesCondition`, every criterion shape),
+`pricing/price-matrix.spec.ts` (cell resolution, the `others` bucket, completeness), `validate.ts`'s
+refusals through `forms.service.matrix.spec.ts` (an incomplete grid, a double-counted question, a
+condition with no criterion), `pricing/visibility.spec.ts` (memoisation, cycles, the legacy pair
+ANDed with `showIf`) and `frontend/src/lib/forms/priceMatrix.test.ts` (the cross product and the
+payload).

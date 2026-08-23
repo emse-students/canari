@@ -15,6 +15,7 @@
     getForm,
     submitForm as submitFormService,
     checkSubmission,
+    type PricingView,
     getSubmission,
     cancelPendingSubmission,
     type Form,
@@ -39,6 +40,7 @@
     BellOff,
     CreditCard,
     Link,
+    Lock,
   } from '@lucide/svelte';
   import { copyPublicShareLink } from '$lib/utils/copyShareLink';
   import { m } from '$lib/paraglide/messages';
@@ -55,7 +57,19 @@
   let submitted = $state(false);
   let paymentPending = $state(false);
   let formFull = $state(false);
-  let memberPricing = $state(false);
+  /**
+   * This submitter's slice of the pricing grid, from the server. Null when the form has one price.
+   *
+   * The page derives no pricing RULE of its own: everything about who the person is has already been
+   * resolved server-side (cotisation, promo, formation - none of which a browser can be trusted
+   * with), and what is left is their own answers, which the page resolves as they click. The server
+   * recomputes the whole thing at submit and that figure is what gets charged.
+   */
+  let pricing = $state<PricingView | null>(null);
+  /** Questions a profile criterion hides from this submitter, whatever they answer. */
+  let hiddenItemIds = $state<string[]>([]);
+  /** False when a `submitCondition` excludes them from the form entirely. */
+  let maySubmit = $state(true);
   let submitting = $state(false);
   let savingCard = $state(false);
   let loading = $state(true);
@@ -138,11 +152,15 @@
         hasSubmitted,
         paymentStatus,
         formFull: full,
-        memberPricing: isMember,
+        pricing: view,
+        hiddenItemIds: hidden,
+        maySubmit: allowed,
       } = await checkSubmission(f.id);
       submitted = hasSubmitted;
       formFull = full;
-      memberPricing = isMember;
+      pricing = view;
+      hiddenItemIds = hidden ?? [];
+      maySubmit = allowed ?? true;
       paymentPending = hasSubmitted && paymentStatus === 'pending';
 
       if (!hasSubmitted && formOpensAtIso(f.opensAt)) {
@@ -198,41 +216,99 @@
     }).format(amountCents / 100);
   }
 
-  /** Questions that pass their conditional display check. */
+  /**
+   * Questions that pass their display check.
+   *
+   * The PROFILE half was already decided by the server (`hiddenItemIds`) - a browser cannot be
+   * trusted with someone's cotisation or promo, and would have to be told them to evaluate it. What
+   * is left is the answer half, which is what this page has always evaluated.
+   */
   const visibleItems = $derived.by(() => {
     if (!form) return [];
+    // Nothing to fill in when the form is not open to this person - the questions would only invite
+    // an answer the server is going to refuse.
+    if (!maySubmit) return [];
+    const hidden = new Set(hiddenItemIds);
     return form.items.filter((item) => {
-      if (!item.dependsOn) return true;
-      const dep = selections[item.dependsOn];
+      if (hidden.has(item.id)) return false;
+      const condition = item.showIf?.answer
+        ? { questionId: item.showIf.answer.questionId, optionIds: item.showIf.answer.optionIds }
+        : item.dependsOn
+          ? { questionId: item.dependsOn, optionIds: [item.dependsValue ?? ''] }
+          : null;
+      if (!condition) return true;
+      if (hidden.has(condition.questionId)) return false;
+      const dep = selections[condition.questionId];
       if (dep === undefined || dep === null || dep === '') return false;
-      if (Array.isArray(dep)) return (dep as string[]).includes(item.dependsValue ?? '');
-      return String(dep) === (item.dependsValue ?? '');
+      if (Array.isArray(dep)) return (dep as string[]).some((v) => condition.optionIds.includes(v));
+      return condition.optionIds.includes(String(dep));
     });
   });
 
-  function effectiveBasePrice(f: Form): number {
-    if (memberPricing && f.basePriceMember != null) return f.basePriceMember;
-    return f.basePrice ?? 0;
-  }
+  /**
+   * The base price for this submitter, given what they have answered so far.
+   *
+   * With a grid, it is the cell their answers land in - looked up in the slice the server sent,
+   * never computed from a rule here. Without one, the form's single price.
+   */
+  const baseCents = $derived.by(() => {
+    if (!form) return 0;
+    if (!pricing) return form.basePrice ?? 0;
+    const key = pricing.answerDimensions
+      .map((dimension) => {
+        const answer = selections[dimension.questionId];
+        const chosen = Array.isArray(answer)
+          ? (answer as string[])
+          : answer
+            ? [String(answer)]
+            : [];
+        return (
+          dimension.buckets.find((b) => chosen.some((v) => b.values.includes(v)))?.id ?? '_others'
+        );
+      })
+      .join('|');
+    return pricing.cells[key] ?? pricing.baseCents;
+  });
 
-  function optionModifier(opt: { priceModifier: number; priceModifierMember?: number }): number {
-    if (memberPricing && opt.priceModifierMember != null) return opt.priceModifierMember;
-    return opt.priceModifier;
+  /**
+   * A question the grid prices on adds no supplement: its answer already chose the cell. Adding one
+   * would charge the same choice twice - and the page would then disagree with the invoice.
+   */
+  const pricedByGrid = $derived(new Set(pricing?.ignoredModifierQuestionIds ?? []));
+
+  /**
+   * Why this price and not another - "Cotisant, ICM", from the groups the server matched.
+   *
+   * A price a person cannot account for is a support request, and this is the whole reason the
+   * server sends the labels rather than only the number.
+   */
+  const appliedPricingLabel = $derived(
+    pricing?.appliedLabels.length ? ` (${pricing.appliedLabels.join(', ')})` : ''
+  );
+
+  /**
+   * The supplement shown beside an option, in cents.
+   *
+   * Zero for a question the grid prices on: its answer selects a cell rather than adding to one, so
+   * showing a supplement there would describe a charge that does not happen.
+   */
+  function optionModifier(item: { id: string }, opt: { priceModifier: number }): number {
+    return pricedByGrid.has(item.id) ? 0 : opt.priceModifier;
   }
 
   function calculateTotal(): number {
     if (!form) return 0;
-    let total = effectiveBasePrice(form);
+    let total = baseCents;
     for (const item of visibleItems) {
       const val = selections[item.id];
-      if (!val) continue;
+      if (!val || pricedByGrid.has(item.id)) continue;
       if (['single_choice', 'dropdown'].includes(item.type)) {
         const opt = item.options?.find((o) => o.id === val);
-        if (opt) total += optionModifier(opt);
+        if (opt) total += opt.priceModifier;
       } else if (item.type === 'multiple_choice' && Array.isArray(val)) {
         for (const id of val) {
           const opt = item.options?.find((o) => o.id === id);
-          if (opt) total += optionModifier(opt);
+          if (opt) total += opt.priceModifier;
         }
       }
     }
@@ -448,14 +524,12 @@
           <div class="absolute inset-x-0 bottom-0 flex items-end gap-3 p-5">
             <div class="min-w-0 flex-1">
               <h1 class="text-2xl leading-tight font-extrabold text-white">{form.title}</h1>
-              {#if effectiveBasePrice(form) > 0}
+              {#if baseCents > 0}
                 <span
                   class="bg-cn-yellow text-cn-ink mt-1.5 inline-block rounded-full px-2.5 py-1 text-xs font-bold"
                 >
-                  {m.form_view_from_price({
-                    price: formatCurrency(effectiveBasePrice(form), form.currency),
-                  })}
-                  {#if memberPricing}{m.form_view_member_pricing()}{/if}
+                  {m.form_view_from_price({ price: formatCurrency(baseCents, form.currency) })}
+                  {#if appliedPricingLabel}{appliedPricingLabel}{/if}
                 </span>
               {/if}
             </div>
@@ -475,14 +549,12 @@
           </div>
           <div class="min-w-0 flex-1">
             <h1 class="text-text-main text-2xl leading-tight font-extrabold">{form.title}</h1>
-            {#if effectiveBasePrice(form) > 0}
+            {#if baseCents > 0}
               <span
                 class="bg-cn-yellow text-cn-ink mt-1.5 inline-block rounded-full px-2.5 py-1 text-xs font-bold"
               >
-                {m.form_view_from_price({
-                  price: formatCurrency(effectiveBasePrice(form), form.currency),
-                })}
-                {#if memberPricing}{m.form_view_member_pricing()}{/if}
+                {m.form_view_from_price({ price: formatCurrency(baseCents, form.currency) })}
+                {#if appliedPricingLabel}{appliedPricingLabel}{/if}
               </span>
             {/if}
           </div>
@@ -563,6 +635,19 @@
       </div>
     {/if}
 
+    <!-- ── Not open to this person ── -->
+    {#if !maySubmit}
+      <div class="border-cn-border mb-4 rounded-2xl border bg-(--cn-surface) px-5 py-5 text-center">
+        <div
+          class="bg-cn-border/40 text-text-muted mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-2xl"
+        >
+          <Lock size={20} />
+        </div>
+        <p class="text-text-main text-sm font-bold">{m.form_view_not_open_to_you_title()}</p>
+        <p class="text-text-muted mt-1 text-xs">{m.form_view_not_open_to_you_desc()}</p>
+      </div>
+    {/if}
+
     <!-- ── Success ── -->
     {#if successMessage}
       <div
@@ -631,10 +716,10 @@
               <option value="" disabled>{m.form_view_select_placeholder()}</option>
               {#each item.options ?? [] as opt (opt.id)}
                 <option value={opt.id}>
-                  {opt.label}{optionModifier(opt) > 0
-                    ? ` (+${formatCurrency(optionModifier(opt), form.currency)})`
-                    : optionModifier(opt) < 0
-                      ? ` (${formatCurrency(optionModifier(opt), form.currency)})`
+                  {opt.label}{optionModifier(item, opt) > 0
+                    ? ` (+${formatCurrency(optionModifier(item, opt), form.currency)})`
+                    : optionModifier(item, opt) < 0
+                      ? ` (${formatCurrency(optionModifier(item, opt), form.currency)})`
                       : ''}
                 </option>
               {/each}
@@ -658,12 +743,12 @@
                     disabled={submitted || isNotOpenYet}
                   />
                   <span class="text-text-main flex-1 text-sm font-medium">{opt.label}</span>
-                  {#if optionModifier(opt) !== 0}
+                  {#if optionModifier(item, opt) !== 0}
                     <span
                       class="text-cn-dark bg-cn-yellow/20 shrink-0 rounded-full px-2 py-0.5 text-xs font-bold"
                     >
-                      {optionModifier(opt) > 0 ? '+' : ''}{formatCurrency(
-                        optionModifier(opt),
+                      {optionModifier(item, opt) > 0 ? '+' : ''}{formatCurrency(
+                        optionModifier(item, opt),
                         form.currency
                       )}
                     </span>
@@ -689,12 +774,12 @@
                     disabled={submitted || isNotOpenYet}
                   />
                   <span class="text-text-main flex-1 text-sm font-medium">{opt.label}</span>
-                  {#if optionModifier(opt) !== 0}
+                  {#if optionModifier(item, opt) !== 0}
                     <span
                       class="text-cn-dark bg-cn-yellow/20 shrink-0 rounded-full px-2 py-0.5 text-xs font-bold"
                     >
-                      {optionModifier(opt) > 0 ? '+' : ''}{formatCurrency(
-                        optionModifier(opt),
+                      {optionModifier(item, opt) > 0 ? '+' : ''}{formatCurrency(
+                        optionModifier(item, opt),
                         form.currency
                       )}
                     </span>
@@ -871,7 +956,7 @@
         <Button
           variant="primary"
           class="shrink-0 px-6"
-          disabled={submitted || formFull || submitting || isNotOpenYet}
+          disabled={submitted || formFull || submitting || isNotOpenYet || !maySubmit}
           loading={submitting}
           onclick={handleSubmit}
         >
@@ -879,6 +964,8 @@
             <Check size={16} class="mr-1.5" />{m.form_view_pending()}
           {:else if submitted}
             <Check size={16} class="mr-1.5" />{m.form_view_sent()}
+          {:else if !maySubmit}
+            {m.form_view_not_open_to_you_title()}
           {:else if formFull}
             {m.form_view_full()}
           {:else if calculateTotal() > 0}

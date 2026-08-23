@@ -146,10 +146,13 @@ All three are enforced server-side in `products.service.ts` (`isBuyerCotisant`, 
 
 ### Form pricing fields
 
-Forms (`apps/social-service/src/forms/entities/form.entity.ts`) support member pricing and can grant
-a tag: `pricingTagName` (checked at submit for the reduced rate), `basePriceMember` (`null` = same as
-`basePrice`), and `grantedTagName` + `tagExpiresAt` for adhesion-style forms. Prefer the membership
-product for selling dues; the form path exists for adhesion forms.
+Forms (`apps/social-service/src/forms/entities/form.entity.ts`) price through a **matrix** and can
+grant a cotisation: `priceMatrix` (dimensions and their cells, one of which may be a cotisation tier)
+plus `grantsCotisation` + `cotisationVariantKey`, which names a TIER and never a tag. The literal-tag
+fields `pricingTagName`, `grantedTagName` and `tagExpiresAt` were dropped by migration `050`, and the
+hard-coded member-price columns by `051` - see
+[forms](frontend/modules/forms.md#pricing-is-a-matrix-so-no-priority-rule-exists-to-get-wrong).
+Prefer the membership product for selling dues; the form path exists for adhesion forms.
 
 ## Where it lives in the UI
 
@@ -247,17 +250,16 @@ social-service never calls Stripe directly. Online sales require completed Strip
   `:id`, not to the tag id alone: `MANAGE_MEMBERS` is granted per association, so an unscoped delete
   let an admin of any association revoke any other association's cotisant (WP-COT-9).
 
-## Member (reduced) pricing on forms
+## Cotisation-dependent pricing on forms
 
-When a form has `pricingTagName` set, submission pricing is gated on the caller holding that tag:
+A cotisation tier is one dimension a form's price grid may be divided on, alongside promo, formation
+and the answer to a question. `SubmitterFactsService` assembles the caller's facts (which tier they
+hold, their promo, their formation), `pricing/price-matrix.ts` resolves them to exactly one cell, and
+the same resolution runs in the submission-status endpoint so the form page shows the real total
+before payment. No coupon or code is involved.
 
-```
-memberPricing = userId && form.pricingTagName && hasActiveTag(userId, pricingTagName)
-baseCents     = memberPricing && form.basePriceMember != null ? basePriceMember : basePrice
-```
-
-The same check runs in the submission-status endpoint so the public form page can show the reduced
-total before payment. No coupon or code is involved.
+The predecessor was a single hard-coded "cotisants pay less" axis (`memberPriceEnabled`,
+`basePriceMember`, `priceModifierMember`), dropped by migration `051`.
 
 ## Cercle integration (outbound + inbound)
 

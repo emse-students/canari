@@ -21,6 +21,24 @@ import { AssociationPermissionFlag } from '../associations/entities/association-
 import { resolveStripeCallbackUrl } from '../common/stripe-callback-url';
 import { UserTagService } from '../users/user-tag.service';
 import { PurchaseRecordService } from '../users/purchase-record.service';
+import { SubmitterFactsService } from './submitter-facts.service';
+import {
+  bucketFor,
+  dimensionsNeedProfile,
+  matchesCondition,
+  needsProfile,
+  type AudienceCondition,
+  type SubmitterFacts,
+} from './pricing/audience';
+import {
+  pricedQuestionIds,
+  pricingViewFor,
+  resolveCellPrice,
+  type PriceMatrix,
+  type PricingView,
+} from './pricing/price-matrix';
+import { parseAudienceCondition, parsePriceMatrix, type CriteriaContext } from './pricing/validate';
+import { normaliseCondition, visibleItemIds } from './pricing/visibility';
 
 /** Generates a short random ID with the given prefix, e.g. "item_a3b9x1". */
 function makeId(prefix: string): string {
@@ -31,11 +49,15 @@ function makeId(prefix: string): string {
 function formRequiresStripeReadyAssociation(input: {
   associationId?: string;
   basePrice?: number;
-  basePriceMember?: number | null;
+  priceMatrix?: unknown;
   requiresPayment?: boolean;
 }): boolean {
   if (!input.associationId?.trim()) return false;
-  return (input.basePrice ?? 0) > 0 || (input.basePriceMember ?? 0) > 0 || !!input.requiresPayment;
+  if ((input.basePrice ?? 0) > 0 || input.requiresPayment) return true;
+  // A grid can charge while `basePrice` is 0 - that is the whole point of a cell. Any non-zero cell
+  // makes this a paid form, so the beneficiary has to be able to receive the money.
+  const cells = (input.priceMatrix as PriceMatrix | null | undefined)?.cells;
+  return !!cells && Object.values(cells).some((c) => (c ?? 0) > 0);
 }
 
 /** Dynamic form engine: creation, submission (with optional Stripe checkout), exports, and submission lifecycle. */
@@ -50,7 +72,8 @@ export class FormsService {
     private readonly configService: ConfigService,
     private readonly associationsService: AssociationsService,
     private readonly userTagService: UserTagService,
-    private readonly purchaseRecordService: PurchaseRecordService
+    private readonly purchaseRecordService: PurchaseRecordService,
+    private readonly submitterFacts: SubmitterFactsService
   ) {}
 
   /**
@@ -60,6 +83,8 @@ export class FormsService {
   private async assertPaidFormAssociationReady(input: {
     associationId?: string;
     basePrice?: number;
+    /** A grid can charge while `basePrice` is 0, so it counts towards "this form takes money". */
+    priceMatrix?: unknown;
     requiresPayment?: boolean;
   }): Promise<void> {
     if (!formRequiresStripeReadyAssociation(input)) return;
@@ -80,22 +105,59 @@ export class FormsService {
     caller: { userId: string; isGlobalAdmin: boolean }
   ): Promise<void> {
     const wantsGrant = input.grantsCotisation === true;
-    const wantsMemberPrice = input.memberPriceEnabled === true;
-    if (!wantsGrant && !wantsMemberPrice) return;
-
     const assocId = input.associationId?.trim();
+
+    const itemConditions = (input.items ?? []).filter((item: any) => item.showIf != null);
+    const hasCriteria =
+      input.priceMatrix != null || input.submitCondition != null || itemConditions.length > 0;
+    if (!wantsGrant && !hasCriteria) return;
+
+    // Fetched once and handed down, because every cotisation criterion needs it - but only when
+    // something asks for one. A plain paid form still pays for no catalogue lookup and still works
+    // on an association that has no cotisation at all.
+    const tiers = assocId ? await this.userTagService.listCotisationTiers(assocId) : [];
+    const ctx: CriteriaContext = {
+      tierKeys: tiers.map((t) => t.variantKey),
+      questions: new Map(
+        (input.items ?? []).map((item: any) => [
+          item.id,
+          new Set<string>((item.options ?? []).map((o: any) => o.id).filter(Boolean)),
+        ])
+      ),
+    };
+
+    // Validated even when nothing is granted: a grid and a submit condition are not cotisation
+    // settings, and refusing them only when a cotisation is involved would let an incomplete grid
+    // through on every other form.
+    const matrix =
+      input.priceMatrix == null ? null : parsePriceMatrix(input.priceMatrix, ctx);
+    if (matrix && !assocId && matrix.dimensions.some((d) => d.kind === 'cotisation')) {
+      throw new BadRequestException(
+        'A price that depends on a cotisation needs a beneficiary association - there is nothing to ' +
+          'be a member of otherwise.'
+      );
+    }
+    if (input.submitCondition != null) {
+      parseAudienceCondition(input.submitCondition, ctx, 'submitCondition');
+    }
+    for (const item of itemConditions) {
+      parseAudienceCondition((item as any).showIf, ctx, `items[${(item as any).id ?? '?'}].showIf`);
+    }
+
+    if (!wantsGrant) return;
+
     if (!assocId) {
       throw new BadRequestException(
-        'A beneficiary association is required to grant a cotisation or offer a member price - ' +
-          'there is nothing to be a member of otherwise.'
+        'A beneficiary association is required to grant a cotisation - there is nothing to be a ' +
+          'member of otherwise.'
       );
     }
 
     // A form that grants a cotisation on payment does exactly what the manual roster add does, so
     // it demands the same right. Creating a form needs only MEMBERSHIP of the association, and
     // without this check any member could mint cotisants of their own association through a form -
-    // a side door around MANAGE_MEMBERS. A member price is not gated: pricing grants nothing.
-    if (wantsGrant && !caller.isGlobalAdmin) {
+    // a side door around MANAGE_MEMBERS. Pricing is not gated: a price grants nothing.
+    if (!caller.isGlobalAdmin) {
       const mayGrant = await this.associationsService.callerHasFlag(
         caller.userId,
         assocId,
@@ -114,38 +176,79 @@ export class FormsService {
     // The grant only ever runs from `markPaid` or the cash validation, and neither is reached by a
     // submission whose total is zero (it is stored `free`). A grant on a form that charges nothing
     // is therefore not a policy we dislike - it is a setting that cannot fire.
-    if (wantsGrant && input.requiresPayment !== true) {
+    if (input.requiresPayment !== true) {
       throw new BadRequestException(
         'A form must require payment to grant a cotisation: a free submission never reaches the ' +
           'grant.'
       );
     }
 
-    const tiers = await this.userTagService.listCotisationTiers(assocId);
     if (tiers.length === 0) {
       throw new BadRequestException(
         'This association has no cotisation: enable it and add at least one tier before a form ' +
-          'can grant it or price it.'
+          'can grant it.'
       );
     }
-    const named = (key: string | null | undefined) => key?.trim() || null;
-    const knows = (key: string | null) => tiers.some((t) => t.variantKey === key);
+    const tier = input.cotisationVariantKey?.trim() || null;
+    if (!tiers.some((t) => t.variantKey === tier)) {
+      throw new BadRequestException(
+        tier
+          ? `Unknown cotisation tier "${tier}" for this association.`
+          : 'This association has no base tier - a tier must be chosen.'
+      );
+    }
+  }
 
-    if (wantsGrant) {
-      const tier = named(input.cotisationVariantKey);
-      if (!knows(tier)) {
-        throw new BadRequestException(
-          tier
-            ? `Unknown cotisation tier "${tier}" for this association.`
-            : 'This association has no base tier - a tier must be chosen.'
-        );
-      }
-    }
-    // `null` here means "any tier", which needs no lookup - only a named tier can be wrong.
-    const priceTier = named(input.memberPriceVariantKey);
-    if (wantsMemberPrice && priceTier && !knows(priceTier)) {
-      throw new BadRequestException(`Unknown cotisation tier "${priceTier}" for this association.`);
-    }
+  /**
+   * The facts a form's criteria are evaluated against, fetching only what the form actually asks
+   * for. A form with no profile criterion never reaches core-service.
+   */
+  private async factsFor(
+    form: Form,
+    userId: string | undefined,
+    answers: Record<string, string[]> = {}
+  ): Promise<SubmitterFacts> {
+    const conditions: (AudienceCondition | null)[] = [
+      form.submitCondition,
+      ...(form.items ?? []).map((item: any) => normaliseCondition(item)),
+    ];
+    const needProfile =
+      dimensionsNeedProfile(form.priceMatrix?.dimensions ?? []) || conditions.some(needsProfile);
+    return this.submitterFacts.build({
+      userId,
+      associationId: form.associationId,
+      answers,
+      needProfile,
+    });
+  }
+
+  /**
+   * The base price this submitter pays, in cents, and the buckets that decided it.
+   *
+   * The single answer behind both the quote shown before submitting and the amount actually
+   * charged. It was two byte-identical copies when it was one boolean; a grid makes a second copy
+   * unthinkable.
+   */
+  private priceFor(
+    form: Form,
+    facts: SubmitterFacts
+  ): { baseCents: number; appliedBuckets: { dimensionId: string; label: string }[] } {
+    if (!form.priceMatrix) return { baseCents: form.basePrice, appliedBuckets: [] };
+    const baseCents = resolveCellPrice(form.priceMatrix, facts);
+    const appliedBuckets = form.priceMatrix.dimensions.map((d) => {
+      const bucketId = bucketFor(d, facts);
+      const bucket = d.buckets.find((b) => b.id === bucketId);
+      return { dimensionId: d.id, label: bucket?.label ?? 'Autres' };
+    });
+    return { baseCents, appliedBuckets };
+  }
+
+  /** Refuses a submitter the form is not open to. Enforced here, not only by hiding the form. */
+  private assertMaySubmit(form: Form, facts: SubmitterFacts): void {
+    if (!form.submitCondition) return;
+    if (matchesCondition(form.submitCondition, facts)) return;
+    this.logger.debug(`[FORMS] submit refused by audience condition form=${form.id.slice(0, 8)}`);
+    throw new ForbiddenException('This form is not open to you.');
   }
 
   /** Creates a form and assigns stable IDs to all items and options that lack them. */
@@ -404,28 +507,6 @@ export class FormsService {
   }
 
   /**
-   * Whether this submitter pays the member price - the single answer behind both the price quote
-   * shown before submitting and the price actually charged at submit time. It was computed
-   * identically in both places; two copies of a money decision is one copy too many.
-   *
-   * Membership is asked of the beneficiary association's CURRENT cotisation tiers, so a form
-   * configured last year still recognises this year's cotisants (migration 050).
-   */
-  private async paysMemberPrice(form: Form, userId: string | undefined): Promise<boolean> {
-    if (!userId || !form.memberPriceEnabled || !form.associationId) return false;
-    // `memberPriceVariantKey` NULL means "any tier of this association" - unlike
-    // `cotisationVariantKey`, where NULL is the base tier. Who counts as a member is a set; what a
-    // payment grants is exactly one thing.
-    return form.memberPriceVariantKey
-      ? this.userTagService.holdsCotisationTier(
-          userId,
-          form.associationId,
-          form.memberPriceVariantKey
-        )
-      : this.userTagService.holdsAnyCotisation(userId, form.associationId);
-  }
-
-  /**
    * Grants the form's configured cotisation tier to a submitter whose payment just landed.
    * Shared by the Stripe webhook path (`markPaid`) and the cash validation path, which had a copy
    * each.
@@ -465,7 +546,14 @@ export class FormsService {
     }
   }
 
-  /** Returns per-user submission state and whether the form has reached its global capacity. */
+  /**
+   * Per-user submission state, capacity, and everything the fill page needs to show a price.
+   *
+   * The pricing half used to be one boolean, `memberPricing`. It is now the submitter's own SLICE of
+   * the grid: the profile criteria resolved here, the answer criteria and their prices handed over
+   * so the page can total live. The page still derives no rule of its own - it renders what this
+   * says, which is why swapping the rule underneath it has twice needed no client change.
+   */
   async hasSubmission(
     formId: string,
     userId: string
@@ -473,10 +561,20 @@ export class FormsService {
     hasSubmitted: boolean;
     paymentStatus?: string;
     formFull: boolean;
-    memberPricing: boolean;
+    pricing: PricingView | null;
+    /** Questions this submitter cannot see because of a PROFILE criterion, answers aside. */
+    hiddenItemIds: string[];
+    maySubmit: boolean;
   }> {
     const form = await this.formRepo.findOne({ where: { id: formId } });
-    if (!form) return { hasSubmitted: false, formFull: false, memberPricing: false };
+    if (!form)
+      return {
+        hasSubmitted: false,
+        formFull: false,
+        pricing: null,
+        hiddenItemIds: [],
+        maySubmit: false,
+      };
 
     // Check global capacity independently of per-user state
     let formFull = false;
@@ -492,9 +590,22 @@ export class FormsService {
       formFull = count >= form.maxSubmissions;
     }
 
-    const memberPricing = await this.paysMemberPrice(form, userId);
+    const facts = await this.factsFor(form, userId);
+    const pricing = form.priceMatrix ? pricingViewFor(form.priceMatrix, facts) : null;
+    const maySubmit = !form.submitCondition || matchesCondition(form.submitCondition, facts);
+    // Only the PROFILE half is resolved here. An answer condition stays for the page to evaluate as
+    // the person types, which it already did for `dependsOn` - so no predicate is duplicated there.
+    const hiddenItemIds = (form.items ?? [])
+      .filter((item: any) => {
+        const condition = normaliseCondition(item);
+        if (!condition) return false;
+        const { answer: _answer, ...profileOnly } = condition;
+        return Object.keys(profileOnly).length > 0 && !matchesCondition(profileOnly, facts);
+      })
+      .map((item: any) => item.id);
 
-    if (form.allowMultipleSubmissions) return { hasSubmitted: false, formFull, memberPricing };
+    if (form.allowMultipleSubmissions)
+      return { hasSubmitted: false, formFull, pricing, hiddenItemIds, maySubmit };
 
     const submission = await this.submissionRepo.findOne({
       where: [
@@ -509,7 +620,9 @@ export class FormsService {
       hasSubmitted: !!submission,
       paymentStatus: submission?.paymentStatus,
       formFull,
-      memberPricing,
+      pricing,
+      hiddenItemIds,
+      maySubmit,
     };
   }
 
@@ -536,10 +649,27 @@ export class FormsService {
       }
     }
 
-    const memberPricing = await this.paysMemberPrice(form, input.userId);
+    // Answers as option-id lists, which is what every criterion reads. A free-text answer is not a
+    // criterion input, so it contributes nothing here and keeps its place in `input.answers`.
+    const selections: Record<string, string[]> = {};
+    for (const [key, value] of Object.entries(input.answers ?? {})) {
+      selections[key] = Array.isArray(value) ? (value as string[]) : [String(value)];
+    }
 
-    const baseCents =
-      memberPricing && form.basePriceMember != null ? form.basePriceMember : form.basePrice;
+    const facts = await this.factsFor(form, input.userId, selections);
+    this.assertMaySubmit(form, facts);
+
+    // What this submitter could actually see. Computed here for the first time: `dependsOn` had only
+    // ever been evaluated in the browser, so a hidden question's answer was charged if a client sent
+    // one, and - worse - `required` below was enforced on hidden questions, which made any required
+    // conditional question unsubmittable for everyone the condition did not select.
+    const visible = visibleItemIds(form.items ?? [], facts);
+    const visibleAnswers: Record<string, string[]> = {};
+    for (const [questionId, value] of Object.entries(selections)) {
+      if (visible.has(questionId)) visibleAnswers[questionId] = value;
+    }
+    const pricedQuestions = pricedQuestionIds(form.priceMatrix);
+    const { baseCents } = this.priceFor(form, { ...facts, answers: visibleAnswers });
 
     // Validation & Price Calculation
     let totalCents = baseCents;
@@ -558,21 +688,18 @@ export class FormsService {
     }
 
     for (const item of form.items) {
+      // A question this submitter never saw neither charges them nor blocks them.
+      if (!visible.has(item.id)) continue;
       const answer = input.answers[item.id];
       if (item.required && !this.hasValue(answer)) {
         throw new BadRequestException(`Missing required field: ${item.label}`);
       }
 
-      // Calculate modifiers
-      if (answer && item.options?.length) {
-        totalCents = this.calculateModifiers(
-          item,
-          answer,
-          totalCents,
-          lineItems,
-          currency,
-          memberPricing
-        );
+      // A question the grid prices on has already been paid for by the cell it selected. Adding its
+      // modifier on top would charge the same choice twice, silently, in the direction that
+      // overcharges - so it is skipped here rather than trusted to be zero in the document.
+      if (answer && item.options?.length && !pricedQuestions.has(item.id)) {
+        totalCents = this.calculateModifiers(item, answer, totalCents, lineItems, currency);
       }
     }
 
@@ -972,22 +1099,26 @@ export class FormsService {
     return !!val;
   }
 
-  /** Adds price modifiers for each selected option to the running total and pushes matching Stripe line-item entries. */
+  /**
+   * Adds price modifiers for each selected option to the running total and pushes matching Stripe
+   * line-item entries.
+   *
+   * One modifier per option now, not one per audience: a submitter's audience is expressed by the
+   * cell of the pricing grid they land in, and a question the grid prices on is skipped by the
+   * caller entirely.
+   */
   private calculateModifiers(
     item: any,
     answer: any,
     total: number,
     lines: any[],
-    currency: string,
-    memberPricing = false
+    currency: string
   ): number {
     let currentTotal = total;
     const process = (optId: string) => {
       const opt = item.options?.find((o: any) => o.id === optId);
       if (!opt) return;
-      const modifier = memberPricing
-        ? (opt.priceModifierMember ?? opt.priceModifier)
-        : opt.priceModifier;
+      const modifier = opt.priceModifier;
       if (modifier > 0) {
         currentTotal += modifier;
         lines.push({

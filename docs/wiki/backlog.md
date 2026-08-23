@@ -830,44 +830,6 @@ would be a threshold nobody has measured against the population it would run on.
 
 ---
 
-## Forms
-
-### P2 - a form has two prices, and needs a matrix (asked 2026-08-23)
-
-*"il faut qu'on ai moyen de faire tout un tas de discriminations, via la promo, via la formation, via
-les differents types de cotisation... ca se traduit par des grilles de tarif, mais surtout mettre des
-cases a cocher 'Filtre par...'"*, then, correcting a rule-list design: *"si tu coches toutes les
-options, ca fait une matrice qui doit etre entierement remplie non ? ... le prix de ma cotisation BDE
-depend de ma reponse a une question (le choix d'un menu), de ma formation et de mon annee de
-promotion."*
-
-**The design is in [`plans/form-pricing-grid.md`](../../plans/form-pricing-grid.md) and is not
-duplicated here.** What it settles, so this entry is decidable without opening it: a matrix, not an
-ordered rule list, so there is no priority rule and no tie-break - the cells partition the population
-and completeness is a save-time invariant. A dimension is a PARTITION into buckets the manager
-declares plus a generated `others` that cannot be deleted, which is what keeps 4 criteria from
-becoming 90 cells and what guarantees nobody is unpriced. One bucket predicate serves all three uses
-the user asked for: the price, a question's visibility (extending `dependsOn` past "answer X to
-question Y"), and who may submit at all.
-
-The two attributes to price on (`promo`, `formation`) live in core-service and are written only from
-Authentik, never by the user - so a price may rest on them, and the plan names the DTO that would
-break that if it ever gained a field. Prod holds `ICM` 213, `ISMIN` 3, `Master` 2, null 3 and promos
-2022-2026 (measured 2026-08-23): a small OPEN vocabulary, so the picker offers what exists. `promo` is
-a graduation year, so a bucket stores a STUDY year where the form is meant to be reused - the same
-"store the reference, not the result" migration 050 has just applied to cotisation tags.
-
-Five phases, phase 1 (model, predicates, the two money call sites, the completeness invariant, tests)
-being behaviour-free with no matrix and therefore deployable before any UI exists. It **replaces**
-`memberPriceEnabled`/`memberPriceVariantKey`/`basePriceMember`/`priceModifierMember`; prod has one
-form with none of them set, so there is nothing to convert.
-
-**Nothing is blocked** - the three decisions were taken 2026-08-23 (matrix over rule list; the same
-predicate gates access; per-option cells folded behind a disclosure). Two more were taken inside the
-plan rather than asked, because both alternatives are defects: a question used as a pricing dimension
-contributes no additive modifier (it would charge the choice twice, overcharging), and a hidden
-question prices as its `others` bucket.
-
 ## Payments
 
 ### Flipping `payment_provider` from Stripe to Lydia (WP-LYDIA-1)

@@ -34,6 +34,35 @@ export class InternalUsersController {
     private readonly userRepo: Repository<User>
   ) {}
 
+  /**
+   * Distinct non-null `formation` values in use, with how many users carry each.
+   *
+   * Called by social-service to populate a form's "filtrer par formation" picker. It offers what
+   * EXISTS rather than a hard-coded list, because `formation` comes from Authentik and the next
+   * value arrives with no deploy - prod holds ICM, ISMIN and Master today (measured 2026-08-23),
+   * and an enum in code would silently stop matching the fourth. The counts are there so a manager
+   * can see a criterion reaches 3 people before building a price around it.
+   *
+   * Aggregate only: no id, no name, nothing about any individual.
+   */
+  @Get('users/formations')
+  async formations(
+    @Headers('x-internal-secret') secret?: string
+  ): Promise<{ value: string; count: number }[]> {
+    assertInternalSecret(secret);
+    const rows: { value: string; count: string }[] = await this.userRepo
+      .createQueryBuilder('u')
+      .select('u.formation', 'value')
+      .addSelect('COUNT(*)', 'count')
+      .where('u.formation IS NOT NULL')
+      .andWhere("u.formation <> ''")
+      .groupBy('u.formation')
+      .orderBy('COUNT(*)', 'DESC')
+      .getRawMany();
+    this.logger.debug(`internal formations listing rows=${rows.length}`);
+    return rows.map((r) => ({ value: r.value, count: Number(r.count) }));
+  }
+
   /** Display identity for a user id, for the shared-link preview. */
   @Get('users/:id/public-profile')
   async publicProfile(

@@ -70,11 +70,6 @@ export class FormOptionDto {
   @IsNumber()
   priceModifier: number;
 
-  /** Price modifier in cents for a cotisant when `memberPriceEnabled` (defaults to priceModifier). */
-  @IsNumber()
-  @IsOptional()
-  priceModifierMember?: number;
-
   @IsString()
   @IsOptional()
   id?: string;
@@ -125,15 +120,31 @@ export class FormItemDto {
   @IsOptional()
   imageUrl?: string;
 
-  /** ID of the question this question depends on (conditional display). */
+  /**
+   * Legacy conditional display: the id of the question this one depends on. Still accepted and
+   * still honoured, translated into a `showIf.answer` by `normaliseCondition` so there is one
+   * evaluator rather than two that can disagree.
+   */
   @IsString()
   @IsOptional()
   dependsOn?: string;
 
-  /** Option label that must be selected in dependsOn question for this question to appear. */
+  /** Option id that must be selected in `dependsOn` for this question to appear. */
   @IsString()
   @IsOptional()
   dependsValue?: string;
+
+  /**
+   * Show this question only to submitters matching these criteria - a cotisation tier, a promo, a
+   * formation, or an answer to another question. AND across the criteria present.
+   *
+   * The generalisation of the pair above, and the same predicate the pricing grid is built from.
+   * Validated structurally in the service (`assertAudienceConditionValid`) rather than by nested
+   * DTOs: it is a small discriminated document, and a `@ValidateNested` tree over four optional
+   * shapes reads worse than the function that has to exist anyway for the grid.
+   */
+  @IsOptional()
+  showIf?: unknown;
 }
 
 export class CreateFormDto {
@@ -194,28 +205,21 @@ export class CreateFormDto {
   associationId?: string;
 
   /**
-   * Whether cotisants of `associationId` get a reduced price. Gates `basePriceMember` and every
-   * option's `priceModifierMember`.
+   * The pricing grid: `{ dimensions, cells }`. Absent or null leaves `basePrice` the only price.
+   *
+   * Validated by `assertMatrixValid`, which refuses an incomplete grid, overlapping groups inside
+   * one criterion, and a reserved "everyone else" id - each of those being a submitter who would
+   * have had no price, or a price decided by the order of two groups.
    */
-  @IsBoolean()
   @IsOptional()
-  memberPriceEnabled?: boolean;
+  priceMatrix?: unknown;
 
   /**
-   * Restricts the member price to one cotisation tier of `associationId`; null/absent = any tier.
-   * A tier is named by its `variantKey`, validated against the association's own membership
-   * products - never by a tag string, which would freeze this year's academic year into the form.
+   * Who may submit at all, as the same criteria shape a grid's groups use. Absent or null means
+   * anybody may.
    */
-  @IsString()
   @IsOptional()
-  @MaxLength(100)
-  memberPriceVariantKey?: string | null;
-
-  /** Base price in cents for a cotisant (null = the member price only affects the options). */
-  @IsInt()
-  @Min(0)
-  @IsOptional()
-  basePriceMember?: number | null;
+  submitCondition?: unknown;
 
   /**
    * When true, a paid submission grants `associationId`'s cotisation to the submitter, through the

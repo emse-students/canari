@@ -1,6 +1,8 @@
 <script lang="ts">
   import FormBuilder from './FormBuilder.svelte';
   import FormSection from './FormSection.svelte';
+  import type { MembershipTier } from '$lib/associations/api';
+  import type { FormationOption } from '$lib/forms/criteriaOptions';
   import { QUESTION_TYPES } from '$lib/forms/questionTypes';
   import { ListChecks, Plus } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
@@ -17,8 +19,16 @@
     items: any[];
     /** Whether questions may carry a price supplement. */
     requiresPayment: boolean;
-    /** Whether questions may carry a second, member-price supplement. */
-    showMemberPriceModifier: boolean;
+    /**
+     * Ids of the questions the pricing grid discriminates on. Their per-option supplements are
+     * hidden, because the grid cell already carries the choice - adding a supplement on top would
+     * charge it twice.
+     */
+    gridQuestionIds?: string[];
+    /** Cotisation tiers of the beneficiary association, for a question's audience condition. */
+    tiers?: MembershipTier[];
+    /** Formation values in use, for a question's audience condition. */
+    formations?: FormationOption[];
     /**
      * Uploads an image for a question and returns its URL. Absent on the create screen, where
      * there is no form id to attach an upload to yet.
@@ -29,7 +39,9 @@
   let {
     items = $bindable(),
     requiresPayment,
-    showMemberPriceModifier,
+    gridQuestionIds = [],
+    tiers = [],
+    formations = [],
     imageUploadFn,
   }: Props = $props();
 
@@ -113,13 +125,15 @@
           bind:item={items[i]}
           onRemove={() => removeItem(i)}
           showPriceModifier={requiresPayment}
-          {showMemberPriceModifier}
+          pricedByGrid={gridQuestionIds.includes(items[i]?.id)}
           questionIndex={i + 1}
           onMoveUp={() => moveItem(i, 'up')}
           onMoveDown={() => moveItem(i, 'down')}
           canMoveUp={i > 0}
           canMoveDown={i < items.length - 1}
           allItems={items}
+          {tiers}
+          {formations}
           {imageUploadFn}
         />
       </div>

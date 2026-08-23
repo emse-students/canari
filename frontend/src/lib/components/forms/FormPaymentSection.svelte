@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { MembershipTier } from '$lib/associations/api';
+  import type { FormItem } from '$lib/forms/api';
   import Input from '$lib/components/ui/Input.svelte';
   import Toggle from '$lib/components/ui/Toggle.svelte';
   import {
@@ -9,43 +10,44 @@
   } from '$lib/components/ui/controlClasses';
   import StripeNetPayoutHint from '$lib/components/payments/StripeNetPayoutHint.svelte';
   import FormSection from './FormSection.svelte';
-  import MemberPriceFields from './MemberPriceFields.svelte';
-  import type { FormCotisationSettings } from '$lib/forms/cotisationSettings';
+  import PriceGridEditor from './PriceGridEditor.svelte';
+  import type { PriceMatrix } from '$lib/forms/priceMatrix';
+  import type { FormationOption } from '$lib/forms/criteriaOptions';
   import { Check, CreditCard } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
   /**
-   * Everything about money: whether the form charges, how much, what a cotisant pays, and how the
-   * payment can be made.
+   * Everything about money: whether the form charges, how much, who pays what, and how.
    *
    * WHO receives the money is not here. The association is chosen once, in the general section,
    * because a form belongs to an association whether or not it charges - and because that choice is
    * fixed at creation while everything in here can be changed forever.
    *
-   * Both screens had their own copy of this and the copies had drifted in ways a user could see: two
-   * different placeholders on the association picker, a select that had lost its focus ring, a
-   * cash-expiry field that was a bare input on one screen and a labelled component on the other,
-   * and two different toggle sizes on the same screen.
+   * The "cotisants pay less" block used to be its own component with its own tier picker. It is now
+   * one criterion of the pricing grid, because a form needs to discriminate on more than membership
+   * and two mechanisms for "some people pay less" is the gas factory this module was cleaned out of.
    */
   interface Props {
     /** Whether the form charges anything. */
     requiresPayment: boolean;
-    /** Public base price, in euros. */
+    /** The single price, in euros. Still the only price for a form with no grid. */
     basePrice: number;
     /** Whether cash is accepted alongside the card. */
     allowCashPayment: boolean;
     /** Days before an unvalidated cash submission expires. */
     cashPaymentExpiryDays: number | undefined;
-    /** The cotisation settings, for the member-price block. */
-    cotisation: FormCotisationSettings;
-    /** The linked association's cotisation tiers. */
+    /** The pricing grid; null when the form has one price for everybody. */
+    priceMatrix: PriceMatrix | null;
+    /** The linked association's cotisation tiers, for the cotisation criterion. */
     tiers: MembershipTier[];
+    /** Formation values in use, for the formation criterion. */
+    formations: FormationOption[];
+    /** The form's questions, for a criterion built on an answer. */
+    items: FormItem[];
     /** The linked association's name; '' for a personal form. */
     associationName: string;
     /** Whether that association has finished Stripe onboarding and can actually be paid. */
     associationCanBePaid: boolean;
-    /** Whether a member price can be offered (payment on, association chosen, tiers exist). */
-    canOfferMemberPrice: boolean;
   }
 
   let {
@@ -53,14 +55,13 @@
     basePrice = $bindable(),
     allowCashPayment = $bindable(),
     cashPaymentExpiryDays = $bindable(),
-    cotisation = $bindable(),
+    priceMatrix = $bindable(),
     tiers,
+    formations,
+    items,
     associationName,
     associationCanBePaid,
-    canOfferMemberPrice,
   }: Props = $props();
-
-  const showMemberPricing = $derived(requiresPayment && cotisation.memberPriceEnabled);
 
   /**
    * A paid form needs somewhere for the money to land. Said here, at the moment payment is switched
@@ -72,6 +73,13 @@
     if (!associationName) return 'no-association';
     if (!associationCanBePaid) return 'no-stripe';
     return null;
+  });
+
+  /** The cheapest and dearest cell, so the payout hint spans what the grid can actually charge. */
+  const gridRange = $derived.by(() => {
+    const values = Object.values(priceMatrix?.cells ?? {});
+    if (values.length === 0) return null;
+    return { min: Math.min(...values), max: Math.max(...values) };
   });
 </script>
 
@@ -103,20 +111,28 @@
 
     <div class="border-cn-border space-y-4 border-t-2 pt-4">
       <Input
-        label={m.form_base_price_label()}
+        label={priceMatrix ? m.form_base_price_label_with_grid() : m.form_base_price_label()}
         type="number"
         bind:value={basePrice}
         min="0"
         step="0.01"
         placeholder="0.00"
+        hint={priceMatrix ? m.form_base_price_hint_with_grid() : undefined}
       />
     </div>
 
-    <MemberPriceFields bind:settings={cotisation} {tiers} available={canOfferMemberPrice} />
+    <PriceGridEditor
+      bind:matrix={priceMatrix}
+      {basePrice}
+      {tiers}
+      {formations}
+      {items}
+      hasCotisation={tiers.length > 0}
+    />
 
     <StripeNetPayoutHint
-      grossEuros={basePrice}
-      grossEurosMember={showMemberPricing ? cotisation.basePriceMember : ''}
+      grossEuros={gridRange ? gridRange.max : basePrice}
+      grossEurosMember={gridRange && gridRange.min !== gridRange.max ? gridRange.min : ''}
       showOptionSupplementNote={true}
     />
 

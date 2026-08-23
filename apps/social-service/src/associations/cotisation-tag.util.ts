@@ -21,10 +21,22 @@ export function getAcademicYear(now: Date = new Date()): string {
 }
 
 /**
+ * The calendar year the CURRENT academic year ends in - 2027 from September 2026 to August 2027.
+ *
+ * Derived from `getAcademicYear` rather than repeating its September rule, so the two cannot drift.
+ * Used to read a promo as a distance from graduation: `promo - academicEndYear(now)` is 0 for a
+ * student graduating this academic year.
+ */
+export function academicEndYear(now: Date = new Date()): number {
+  return Number(getAcademicYear(now).split('-')[1]);
+}
+
+/**
  * Derives the canonical cotisation tag for an association (or one of its named tiers) from its
  * slug and validity mode. This is the single source of truth for the tag string - it MUST be
- * used both when provisioning membership products and when checking product/form member-gating,
- * so product pricing, gating, and forms' `pricingTagName` all stay aligned.
+ * used both when provisioning membership products and when checking product/form member-gating, so
+ * product pricing and gating stay aligned. (It once said "and forms' `pricingTagName`"; migration
+ * 050 removed that column precisely because it stored this function's OUTPUT.)
  *
  * - `lifetime`: tag `cotisant:<slug>`, never expires.
  * - `dated`: tag `cotisant:<slug>-<academicYear>` (e.g. `cotisant:bde-2026-2027`), rolled over

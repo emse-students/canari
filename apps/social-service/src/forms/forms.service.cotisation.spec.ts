@@ -21,6 +21,8 @@ describe('FormsService - cotisation configuration and granting', () => {
       submission?: Record<string, unknown> | null;
       /** Whether the caller holds MANAGE_MEMBERS - the right a cotisation grant demands. */
       mayGrant?: boolean;
+      /** Cotisation tiers the submitter holds, for the pricing tests. */
+      heldTiers?: (string | null)[];
     } = {}
   ) {
     const formRepo: any = {
@@ -51,6 +53,19 @@ describe('FormsService - cotisation configuration and granting', () => {
       namesByIds: jest.fn(() => Promise.resolve(new Map())),
     };
     const purchaseRecordService: any = { create: jest.fn(() => Promise.resolve()) };
+    // No grid and no profile criterion in this file, so the facts are the empty ones and no
+    // cross-service call is expected. `forms.service.matrix.spec.ts` exercises the fetching.
+    const submitterFacts: any = {
+      build: jest.fn((input: { answers?: Record<string, string[]> }) =>
+        Promise.resolve({
+          promo: null,
+          formation: null,
+          cotisationTiers: opts.heldTiers ?? [],
+          answers: input.answers ?? {},
+          now: new Date('2026-08-23T12:00:00Z'),
+        })
+      ),
+    };
     const service = new FormsService(
       formRepo,
       submissionRepo,
@@ -58,9 +73,10 @@ describe('FormsService - cotisation configuration and granting', () => {
       { get: jest.fn() } as any,
       associationsService,
       userTagService,
-      purchaseRecordService
+      purchaseRecordService,
+      submitterFacts
     );
-    return { service, formRepo, submissionRepo, userTagService, associationsService };
+    return { service, formRepo, submissionRepo, userTagService, associationsService, submitterFacts };
   }
 
   const CERCLE = [
@@ -134,14 +150,22 @@ describe('FormsService - cotisation configuration and granting', () => {
       ).rejects.toThrow(/no base tier/i);
     });
 
-    it('refuses a member price restricted to a tier the association does not sell', async () => {
+    it('refuses a pricing grid naming a tier the association does not sell', async () => {
       const { service } = makeService({ tiers: CERCLE });
       await expect(
         service.create(
           dto({
-            memberPriceEnabled: true,
             associationId: 'asso1',
-            memberPriceVariantKey: 'sans-alcool',
+            priceMatrix: {
+              dimensions: [
+                {
+                  id: 'd1',
+                  kind: 'cotisation',
+                  buckets: [{ id: 'b1', label: 'Cotisant', variantKeys: ['sans-alcool'] }],
+                },
+              ],
+              cells: { b1: 800, _others: 2000 },
+            },
           })
         )
       ).rejects.toThrow(/sans-alcool/);
@@ -162,16 +186,31 @@ describe('FormsService - cotisation configuration and granting', () => {
       );
     });
 
-    // A member price open to every tier needs no tier named, so there is nothing to be wrong.
-    it('accepts a member price with no tier restriction', async () => {
+    // "Any tier" is stored as a reference, so it needs no tier named and cannot go stale when the
+    // association adds a forfait.
+    it('accepts a grid whose cotisation group takes any tier', async () => {
       const { service, formRepo } = makeService({ tiers: CERCLE });
-      await service.create(dto({ memberPriceEnabled: true, associationId: 'asso1' }));
+      await service.create(
+        dto({
+          associationId: 'asso1',
+          priceMatrix: {
+            dimensions: [
+              {
+                id: 'd1',
+                kind: 'cotisation',
+                buckets: [{ id: 'b1', label: 'Cotisant', anyTier: true }],
+              },
+            ],
+            cells: { b1: 800, _others: 2000 },
+          },
+        })
+      );
       expect(formRepo.save).toHaveBeenCalled();
     });
 
-    // The cheap path stays cheap: a form that neither grants nor discounts must not pay for a
+    // The cheap path stays cheap: a form with no grant, no grid and no condition must not pay for a
     // catalogue lookup, and must not start failing because an association has no cotisation.
-    it('does not look up any catalogue when neither setting is on', async () => {
+    it('does not look up any catalogue when nothing needs one', async () => {
       const { service, userTagService } = makeService({ tiers: [] });
       await service.create(dto({ associationId: 'asso1', requiresPayment: true }));
       expect(userTagService.listCotisationTiers).not.toHaveBeenCalled();
@@ -231,12 +270,25 @@ describe('FormsService - cotisation configuration and granting', () => {
       expect(associationsService.callerHasFlag).not.toHaveBeenCalled();
     });
 
-    // Showing a reduced price grants nothing, so it stays open to any member. Gating it would stop
-    // an association's ordinary members from making a form its cotisants can afford.
-    it('does not gate the member price on MANAGE_MEMBERS', async () => {
+    // A price grants nothing, so a grid stays open to any member. Gating it would stop an
+    // association's ordinary members from making a form its cotisants can afford.
+    it('does not gate a cotisation-based PRICE on MANAGE_MEMBERS', async () => {
       const { service, formRepo } = makeService({ tiers: CERCLE, mayGrant: false });
       await service.create(
-        dto({ memberPriceEnabled: true, requiresPayment: true, associationId: 'asso1' })
+        dto({
+          requiresPayment: true,
+          associationId: 'asso1',
+          priceMatrix: {
+            dimensions: [
+              {
+                id: 'd1',
+                kind: 'cotisation',
+                buckets: [{ id: 'b1', label: 'Cotisant', anyTier: true }],
+              },
+            ],
+            cells: { b1: 800, _others: 2000 },
+          },
+        })
       );
       expect(formRepo.save).toHaveBeenCalled();
     });
@@ -303,61 +355,6 @@ describe('FormsService - cotisation configuration and granting', () => {
       expect(formRepo.save).toHaveBeenCalledWith(
         expect.objectContaining({ associationId: 'asso1' })
       );
-    });
-  });
-
-  describe('member price eligibility', () => {
-    const form = (over: Record<string, unknown> = {}) => ({
-      id: 'f1',
-      associationId: 'asso1',
-      memberPriceEnabled: true,
-      memberPriceVariantKey: null,
-      allowMultipleSubmissions: true,
-      ...over,
-    });
-
-    it('asks for any tier when no tier restriction is set', async () => {
-      const { service, userTagService } = makeService({ form: form() });
-      await service.hasSubmission('f1', 'user1');
-      expect(userTagService.holdsAnyCotisation).toHaveBeenCalledWith('user1', 'asso1');
-    });
-
-    it('asks for the named tier when the member price is restricted', async () => {
-      const { service, userTagService } = makeService({
-        form: form({ memberPriceVariantKey: 'avec-alcool' }),
-      });
-      await service.hasSubmission('f1', 'user1');
-      expect(userTagService.holdsCotisationTier).toHaveBeenCalledWith(
-        'user1',
-        'asso1',
-        'avec-alcool'
-      );
-    });
-
-    it('does not ask at all when the form has no member price', async () => {
-      const { service, userTagService } = makeService({
-        form: form({ memberPriceEnabled: false }),
-      });
-      const res = await service.hasSubmission('f1', 'user1');
-      expect(res.memberPricing).toBe(false);
-      expect(userTagService.holdsAnyCotisation).not.toHaveBeenCalled();
-      expect(userTagService.holdsCotisationTier).not.toHaveBeenCalled();
-    });
-
-    it('does not ask for an anonymous submitter', async () => {
-      const { service, userTagService } = makeService({ form: form() });
-      const res = await service.hasSubmission('f1', '');
-      expect(res.memberPricing).toBe(false);
-      expect(userTagService.holdsAnyCotisation).not.toHaveBeenCalled();
-      expect(userTagService.holdsCotisationTier).not.toHaveBeenCalled();
-    });
-
-    // A form may name an association that has since dropped its cotisation. `holdsAnyCotisation`
-    // answers false rather than throwing, so the form still works at the public price.
-    it('falls back to the public price when the answer is false', async () => {
-      const { service } = makeService({ form: form() });
-      const res = await service.hasSubmission('f1', 'user1');
-      expect(res.memberPricing).toBe(false);
     });
   });
 

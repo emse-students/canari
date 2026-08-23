@@ -45,6 +45,9 @@ describe('FormsService.list', () => {
       { get: jest.fn() } as any,
       associationsService,
       {} as any,
+      {} as any,
+      // The list never prices anything, so no facts are ever built. Present because the
+      // constructor requires it, and deliberately not a stub that would hide a call.
       {} as any
     );
     return { service, associationsService };

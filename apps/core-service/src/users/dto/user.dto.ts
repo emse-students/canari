@@ -81,7 +81,14 @@ export class CreateUserDto {
   stripeCustomerId?: string;
 }
 
-/** Payload for updating mutable user profile fields. */
+/**
+ * Payload for updating mutable user profile fields.
+ *
+ * **`promo` and `formation` must never appear here.** They are written only by
+ * `findOrCreateFromOidc`, from Authentik, at every sign-in - which is the reason a form's price grid
+ * is allowed to rest on them (see the forms wiki page). Accepting either field from the user would
+ * turn that grid into a self-service discount: the payer would move themselves into a cheaper cell.
+ */
 export class UpdateUserDto {
   /** Short user biography (max 500 chars). Multi-line: line breaks are preserved. */
   @NormalizeMultilineText()

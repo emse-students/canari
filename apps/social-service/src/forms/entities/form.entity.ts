@@ -1,3 +1,5 @@
+import type { AudienceCondition } from '../pricing/audience';
+import type { PriceMatrix } from '../pricing/price-matrix';
 import {
   Entity,
   Column,
@@ -57,25 +59,30 @@ export class Form {
   items: any[];
 
   /**
-   * Whether cotisants of `associationId` get a reduced price. Gates BOTH `basePriceMember` and
-   * every item's `priceModifierMember`, which is why it is its own column and not
-   * `basePriceMember != null`: a form may discount only its options.
+   * The pricing grid: the criteria this form discriminates on, and one price per combination.
+   * NULL means one price for everybody, `basePrice`.
+   *
+   * A MATRIX rather than an ordered list of price rules, which is the user's own correction and the
+   * reason this feature has no priority rule: the cells partition the population, so exactly one
+   * applies to anybody. Completeness is a save-time invariant (`assertMatrixValid`), and the
+   * "everyone else" bucket of each dimension is GENERATED, never stored - which is what guarantees
+   * no submitter is ever unpriced. See migration 051 and `pricing/price-matrix.ts`.
+   *
+   * A cell is the BASE price for its combination: a question used as a criterion contributes no
+   * additive option modifier, or the same choice would be charged twice.
    */
-  @Column({ default: false })
-  memberPriceEnabled: boolean;
+  @Column('jsonb', { nullable: true })
+  priceMatrix: PriceMatrix | null;
 
   /**
-   * Restricts the member price to one cotisation tier of `associationId`.
-   * NULL means ANY tier qualifies - the one deliberate difference from `cotisationVariantKey`
-   * below: "who counts as a member" is a question about a SET of tiers, while "what does payment
-   * grant" is exactly one.
+   * Who may submit at all - the same bucket predicate the grid is built from, AND-ed across the
+   * criteria present. NULL means anybody may.
+   *
+   * Enforced in `submit`, not only by hiding the form: a form that is not offered is not a form
+   * that is closed.
    */
-  @Column({ length: 100, nullable: true })
-  memberPriceVariantKey: string | null;
-
-  /** Base price in cents for a cotisant (null = the member price only affects the options). */
-  @Column({ type: 'int', nullable: true })
-  basePriceMember: number | null;
+  @Column('jsonb', { nullable: true })
+  submitCondition: AudienceCondition | null;
 
   /**
    * When true, a paid submission grants (or renews) `associationId`'s cotisation to the submitter,

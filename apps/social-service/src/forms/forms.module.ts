@@ -12,6 +12,7 @@ import { PushService } from '../push/push.service';
 import { PostsModule } from '../posts/posts.module';
 import { UserTagModule } from '../users/user-tag.module';
 import { PurchaseRecordModule } from '../users/purchase-record.module';
+import { SubmitterFactsService } from './submitter-facts.service';
 
 @Module({
   imports: [
@@ -23,7 +24,7 @@ import { PurchaseRecordModule } from '../users/purchase-record.module';
     PurchaseRecordModule,
   ],
   controllers: [FormsController],
-  providers: [FormsService, FormReminderScheduler, PushService],
+  providers: [FormsService, FormReminderScheduler, PushService, SubmitterFactsService],
   exports: [FormsService],
 })
 export class FormsModule {}

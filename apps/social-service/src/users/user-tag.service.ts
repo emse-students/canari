@@ -318,10 +318,41 @@ export class UserTagService {
       );
       return false;
     }
-    for (const tier of wanted) {
-      if (await this.hasActiveTag(userId, tier.tagName)) return true;
+    return (await this.heldVariantKeys(userId, wanted)).length > 0;
+  }
+
+  /**
+   * Every cotisation tier of `assocId` the user currently holds, by `variantKey` (`null` being the
+   * base tier). Empty when they hold none, and when the association sells none.
+   *
+   * The list, not a yes/no, because a form's pricing grid asks WHICH tier somebody is on - a
+   * cotisant "avec alcool" and a cotisant "sans alcool" land in different cells, and asking one
+   * boolean question per bucket would re-derive the same tags once per column.
+   */
+  async listHeldCotisationTiers(userId: string, assocId: string): Promise<(string | null)[]> {
+    const tiers = await this.listCotisationTiers(assocId);
+    if (tiers.length === 0) {
+      this.logger.debug(
+        `[UserTag] listHeldCotisationTiers assoc=${assocId.slice(0, 8)} has no cotisation tier - none`
+      );
+      return [];
     }
-    return false;
+    return this.heldVariantKeys(userId, tiers);
+  }
+
+  /**
+   * Which of the given tiers the user has an active tag for. The one place a tier list becomes a
+   * membership answer, so `holdsOneOfTiers` and `listHeldCotisationTiers` cannot disagree.
+   */
+  private async heldVariantKeys(
+    userId: string,
+    tiers: CotisationTierInfo[]
+  ): Promise<(string | null)[]> {
+    const held: (string | null)[] = [];
+    for (const tier of tiers) {
+      if (await this.hasActiveTag(userId, tier.tagName)) held.push(tier.variantKey);
+    }
+    return held;
   }
 
   /** Returns true when the user has an active (non-expired) tag with the given name. */

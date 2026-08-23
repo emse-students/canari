@@ -1,0 +1,215 @@
+<script lang="ts">
+  import { AlertTriangle, Grid3x3, Plus } from '@lucide/svelte';
+  import CriterionEditor from './CriterionEditor.svelte';
+  import { CONTROL_HINT_CLASS, controlClass } from '$lib/components/ui/controlClasses';
+  import type { MembershipTier } from '$lib/associations/api';
+  import type { FormItem } from '$lib/forms/api';
+  import {
+    addBucket,
+    addDimension,
+    cellKey,
+    gridLayout,
+    matrixProblem,
+    newDimension,
+    removeBucket,
+    removeDimension,
+    type DimensionKind,
+    type PriceMatrix,
+  } from '$lib/forms/priceMatrix';
+  import type { FormationOption } from '$lib/forms/criteriaOptions';
+  import { m } from '$lib/paraglide/messages';
+
+  /**
+   * The pricing grid: the criteria a form discriminates on, and one price per combination.
+   *
+   * It is a GRID rather than a list of rules because the criteria multiply: ticking "formation" and
+   * "promotion" describes a table that has to be filled, and exactly one cell then applies to any
+   * person - no priority, no tie-break, nothing to explain. That is the user's own framing and it is
+   * what makes this screen possible to read.
+   *
+   * Every cell always has a value: adding a criterion copies existing prices across, and adding a
+   * group starts it from the "everyone else" price. So the grid is complete from the first click and
+   * the manager only edits what actually differs.
+   */
+  interface Props {
+    /** Null until the first criterion is added; null again when the last one goes. */
+    matrix: PriceMatrix | null;
+    /** The single price, in euros, used for every cell of a brand-new criterion. */
+    basePrice: number;
+    tiers: MembershipTier[];
+    formations: FormationOption[];
+    items: FormItem[];
+    /** Whether the beneficiary association sells any cotisation - gates that one criterion. */
+    hasCotisation: boolean;
+  }
+
+  let {
+    matrix = $bindable(),
+    basePrice,
+    tiers,
+    formations,
+    items,
+    hasCotisation,
+  }: Props = $props();
+
+  const problem = $derived(matrixProblem(matrix));
+  const layout = $derived(matrix ? gridLayout(matrix) : { columns: [], rows: [] });
+  const usedKinds = $derived(new Set((matrix?.dimensions ?? []).map((d) => d.kind)));
+
+  /** One criterion of each kind, except `answer` - a form can price on two questions. */
+  const available = $derived(
+    (
+      [
+        {
+          kind: 'cotisation' as const,
+          label: m.form_criterion_cotisation(),
+          enabled: hasCotisation,
+        },
+        { kind: 'promo' as const, label: m.form_criterion_promo(), enabled: true },
+        { kind: 'formation' as const, label: m.form_criterion_formation(), enabled: true },
+        {
+          kind: 'answer' as const,
+          label: m.form_criterion_answer(),
+          enabled: items.some((i) => (i.options?.length ?? 0) > 0),
+        },
+      ] as const
+    ).filter((c) => c.enabled && (c.kind === 'answer' || !usedKinds.has(c.kind)))
+  );
+
+  function add(kind: DimensionKind) {
+    const current: PriceMatrix = matrix ?? { dimensions: [], cells: { '': basePrice } };
+    // A brand-new grid inherits the single price, so switching criteria on changes no total.
+    const seeded: PriceMatrix =
+      current.dimensions.length === 0 ? { dimensions: [], cells: { '': basePrice } } : current;
+    matrix = addDimension(seeded, newDimension(kind));
+  }
+
+  function remove(dimensionId: string) {
+    if (!matrix) return;
+    const next = removeDimension(matrix, dimensionId);
+    matrix = next.dimensions.length === 0 ? null : next;
+  }
+
+  /** Reassignment is what Svelte tracks, so every mutation inside a criterion comes back here. */
+  function touched() {
+    if (matrix) matrix = { ...matrix, cells: { ...matrix.cells } };
+  }
+
+  function setCell(key: string, raw: string) {
+    if (!matrix) return;
+    const value = raw === '' ? 0 : Number(raw);
+    matrix = { ...matrix, cells: { ...matrix.cells, [key]: Number.isNaN(value) ? 0 : value } };
+  }
+</script>
+
+<div class="border-cn-border space-y-4 border-t-2 pt-4">
+  <div class="flex items-start gap-2">
+    <Grid3x3 size={16} class="text-text-muted mt-0.5 shrink-0" />
+    <div>
+      <p class="text-text-main text-sm font-bold">{m.form_grid_title()}</p>
+      <p class={CONTROL_HINT_CLASS}>{m.form_grid_hint()}</p>
+    </div>
+  </div>
+
+  {#if matrix}
+    <div class="space-y-3">
+      {#each matrix.dimensions as dimension (dimension.id)}
+        <CriterionEditor
+          {dimension}
+          {tiers}
+          {formations}
+          {items}
+          onAddBucket={(bucket) => {
+            if (matrix) matrix = addBucket(matrix, dimension.id, bucket);
+          }}
+          onRemoveBucket={(bucketId) => {
+            if (matrix) matrix = removeBucket(matrix, dimension.id, bucketId);
+          }}
+          onRemove={() => remove(dimension.id)}
+          onChange={touched}
+        />
+      {/each}
+    </div>
+  {/if}
+
+  {#if available.length > 0}
+    <div class="flex flex-wrap gap-2">
+      {#each available as criterion (criterion.kind)}
+        <button
+          type="button"
+          onclick={() => add(criterion.kind)}
+          class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-xl border-2 px-3 py-2 text-xs font-bold transition-colors"
+        >
+          <Plus size={13} />
+          {m.form_grid_filter_by({ criterion: criterion.label })}
+        </button>
+      {/each}
+    </div>
+  {/if}
+
+  {#if matrix && problem}
+    <p
+      class="border-amber-warn/30 bg-amber-warn/10 flex items-start gap-2 rounded-xl border-2 px-3 py-2 text-xs font-semibold text-amber-900 dark:text-amber-100"
+    >
+      <AlertTriangle size={13} class="mt-0.5 shrink-0" />
+      {problem === 'empty_criterion'
+        ? m.form_grid_problem_empty_criterion()
+        : problem === 'unnamed_group'
+          ? m.form_grid_problem_unnamed_group()
+          : problem === 'empty_group'
+            ? m.form_grid_problem_empty_group()
+            : problem === 'no_question'
+              ? m.form_grid_problem_no_question()
+              : m.form_grid_problem_incomplete()}
+    </p>
+  {/if}
+
+  {#if matrix && !problem}
+    <!-- Wide content scrolls inside its own box; the page body never scrolls sideways. -->
+    <div class="border-cn-border overflow-x-auto rounded-2xl border-2">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="border-cn-border bg-cn-bg/40 border-b-2">
+            {#each matrix.dimensions.slice(0, -1) as dimension (dimension.id)}
+              <th
+                class="text-text-muted px-3 py-2 text-left text-xs font-bold tracking-wide uppercase"
+              >
+                {m.form_grid_group_column()}
+              </th>
+            {/each}
+            {#each layout.columns as column (column.id)}
+              <th class="text-text-main px-3 py-2 text-left text-xs font-bold whitespace-nowrap">
+                {column.label || m.form_criterion_others()}
+              </th>
+            {/each}
+          </tr>
+        </thead>
+        <tbody class="divide-cn-border/50 divide-y">
+          {#each layout.rows as row (row.ids.join('|'))}
+            <tr>
+              {#each row.labels as label, i (i)}
+                <td class="text-text-main px-3 py-2 text-xs font-semibold whitespace-nowrap">
+                  {label || m.form_criterion_others()}
+                </td>
+              {/each}
+              {#each layout.columns as column (column.id)}
+                {@const key = cellKey([...row.ids, column.id])}
+                <td class="px-2 py-1.5">
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={matrix.cells[key] ?? 0}
+                    oninput={(e) => setCell(key, e.currentTarget.value)}
+                    class="{controlClass()} w-24 py-1.5 text-sm"
+                  />
+                </td>
+              {/each}
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+    <p class={CONTROL_HINT_CLASS}>{m.form_grid_currency_hint()}</p>
+  {/if}
+</div>

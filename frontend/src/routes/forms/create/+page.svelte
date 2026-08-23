@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { createForm, type CreateFormPayload } from '$lib/forms/api';
+  import { createForm, type AudienceCondition, type CreateFormPayload } from '$lib/forms/api';
   import { POST_NEW_FORM_ID_KEY, loadPostComposerDraft } from '$lib/posts/postComposerDraft';
   import {
     canAssociationReceiveFormPayments,
@@ -12,6 +12,7 @@
   } from '$lib/associations/api';
   import FormSection from '$lib/components/forms/FormSection.svelte';
   import FormAdvancedSettings from '$lib/components/forms/FormAdvancedSettings.svelte';
+  import FormAudienceSection from '$lib/components/forms/FormAudienceSection.svelte';
   import FormPaymentSection from '$lib/components/forms/FormPaymentSection.svelte';
   import FormQuestionsSection from '$lib/components/forms/FormQuestionsSection.svelte';
   import FormSaveBar from '$lib/components/forms/FormSaveBar.svelte';
@@ -26,12 +27,14 @@
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import {
     canGrantCotisation,
-    canOfferMemberPrice,
     cotisationOptionsFor,
     cotisationPayload,
     emptyCotisationSettings,
     forgetTierSelection,
   } from '$lib/forms/cotisationSettings';
+  import { matrixPayload, type PriceMatrix } from '$lib/forms/priceMatrix';
+  import { fetchFormations, type FormationOption } from '$lib/forms/criteriaOptions';
+  import { firstEmptyCondition } from '$lib/forms/audience';
   import { toFormItemsPayload } from '$lib/forms/itemsPayload';
   import { AlertCircle, ArrowLeft, FileText, MessageSquareReply } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
@@ -51,6 +54,11 @@
   let allowCashPayment = $state(false);
   let cashPaymentExpiryDays = $state<number | undefined>(undefined);
   let cotisation = $state(emptyCotisationSettings());
+  let priceMatrix = $state<PriceMatrix | null>(null);
+  /** Formation values in use, for the formation criterion. Loaded once. */
+  let formations = $state<FormationOption[]>([]);
+  /** Who may answer at all; null means anybody. */
+  let submitCondition = $state<AudienceCondition | null>(null);
 
   const returnTo = $derived(page.url.searchParams.get('returnTo') || '/forms');
   const fromPostComposer = $derived(
@@ -91,9 +99,6 @@
     };
   });
 
-  const memberPriceOfferable = $derived(
-    canOfferMemberPrice(requiresPayment, associationId, tiers.length)
-  );
   const grantOfferable = $derived(
     canGrantCotisation(requiresPayment, associationId, tiers.length, mayGrantCotisation)
   );
@@ -107,6 +112,11 @@
       associations = await listMyAssociations();
     } catch {
       // Ignore - the user may belong to none, which simply means personal forms only.
+    }
+    try {
+      formations = await fetchFormations();
+    } catch {
+      // The formation criterion offers nothing, and says so. Every other criterion still works.
     }
   });
 
@@ -125,7 +135,12 @@
   let error = $state('');
 
   const titleMissing = $derived(!title.trim());
-  const showMemberPricing = $derived(requiresPayment && cotisation.memberPriceEnabled);
+  /** Questions the grid prices on: their per-option supplements are hidden, not ignored silently. */
+  const gridQuestionIds = $derived(
+    (priceMatrix?.dimensions ?? [])
+      .filter((d) => d.kind === 'answer' && d.questionId)
+      .map((d) => d.questionId as string)
+  );
 
   const questionCountLabel = $derived(
     items.length === 1
@@ -151,6 +166,14 @@
       error = m.form_error_association_required();
       return;
     }
+    const empty = firstEmptyCondition(submitCondition, items);
+    if (empty) {
+      error =
+        empty.scope === 'form'
+          ? m.form_error_audience_empty()
+          : m.form_error_question_condition_empty({ label: empty.label });
+      return;
+    }
     isSubmitting = true;
     error = '';
     try {
@@ -158,6 +181,8 @@
         title,
         description,
         basePrice: requiresPayment ? Math.round(basePrice * 100) : 0,
+        priceMatrix: matrixPayload(priceMatrix, requiresPayment),
+        submitCondition,
         ...cotisationPayload(cotisation, requiresPayment),
         currency: 'eur',
         submitLabel: requiresPayment ? 'Envoyer et payer' : 'Envoyer',
@@ -271,23 +296,27 @@
     </div>
   </FormSection>
 
-  <!-- 3. Money -->
+  <!-- 3. Who it is for -->
+  <FormAudienceSection bind:submitCondition {tiers} {formations} />
+
+  <!-- 4. Money -->
   <FormPaymentSection
     bind:requiresPayment
     bind:basePrice
     bind:allowCashPayment
     bind:cashPaymentExpiryDays
-    bind:cotisation
+    bind:priceMatrix
     {tiers}
+    {formations}
+    {items}
     associationName={selectedAssociation?.name ?? ''}
     {associationCanBePaid}
-    canOfferMemberPrice={memberPriceOfferable}
   />
 
-  <!-- 4. Questions -->
-  <FormQuestionsSection bind:items {requiresPayment} showMemberPriceModifier={showMemberPricing} />
+  <!-- 5. Questions -->
+  <FormQuestionsSection bind:items {requiresPayment} {gridQuestionIds} {tiers} {formations} />
 
-  <!-- 5. Rarely wanted, and folded away -->
+  <!-- 6. Rarely wanted, and folded away -->
   <FormAdvancedSettings
     bind:settings={cotisation}
     {tiers}

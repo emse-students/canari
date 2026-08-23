@@ -1,6 +1,10 @@
 <script lang="ts">
   import Input from '$lib/components/ui/Input.svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
+  import Toggle from '$lib/components/ui/Toggle.svelte';
+  import AudienceConditionEditor from './AudienceConditionEditor.svelte';
+  import type { MembershipTier } from '$lib/associations/api';
+  import type { FormationOption } from '$lib/forms/criteriaOptions';
   import { Trash2, X, Plus, GripVertical, ImagePlus, GitBranch, ChevronDown } from '@lucide/svelte';
   import { QUESTION_TYPES } from '$lib/forms/questionTypes';
   import { m } from '$lib/paraglide/messages';
@@ -9,20 +13,26 @@
     item = $bindable(),
     onRemove,
     showPriceModifier = false,
-    showMemberPriceModifier = false,
+    pricedByGrid = false,
     questionIndex,
     onMoveUp,
     onMoveDown,
     canMoveUp = false,
     canMoveDown = false,
     allItems = [],
+    tiers = [],
+    formations = [],
     imageUploadFn = undefined,
   } = $props<{
     item: any;
     onRemove: () => void;
     showPriceModifier?: boolean;
-    /** Second price column for cotisant pricing when `pricingTagName` is set on the form. */
-    showMemberPriceModifier?: boolean;
+    /**
+     * True when the pricing grid discriminates on THIS question's answer. Its per-option modifiers
+     * are then hidden rather than shown and ignored: the grid cell already carries the choice, and
+     * an input that changes no price is worse than no input.
+     */
+    pricedByGrid?: boolean;
     questionIndex?: number;
     onMoveUp?: () => void;
     onMoveDown?: () => void;
@@ -30,6 +40,10 @@
     canMoveDown?: boolean;
     /** All questions in the form - used for the conditional display picker. */
     allItems?: any[];
+    /** Cotisation tiers of the beneficiary association, for the audience condition. */
+    tiers?: MembershipTier[];
+    /** Formation values in use, for the audience condition. */
+    formations?: FormationOption[];
     /** If provided, enables image upload for this question. */
     imageUploadFn?: (file: File) => Promise<string>;
   }>();
@@ -50,7 +64,6 @@
         id: crypto.randomUUID(),
         label: '',
         priceModifier: undefined,
-        priceModifierMember: undefined,
       },
     ];
   }
@@ -87,10 +100,18 @@
       .filter((q: any) => ['single_choice', 'dropdown', 'multiple_choice'].includes(q.type))
   );
 
-  /** Returns the option labels of a given question (by id). */
-  function getOptionLabels(questionId: string): string[] {
-    const q = allItems.find((q: any) => q.id === questionId);
-    return (q?.options ?? []).map((o: any) => o.label).filter(Boolean);
+  /**
+   * The options of a given question, as `{ id, label }`.
+   *
+   * The ID is what `dependsValue` stores, because that is what an answer holds - this returned bare
+   * LABELS and bound them into `dependsValue`, so every condition compared a label against an id and
+   * no conditional question had ever displayed. Nothing was stored to migrate.
+   */
+  function getOptions(questionId: string): { id: string; label: string }[] {
+    const q = allItems.find((item: any) => item.id === questionId);
+    return (q?.options ?? [])
+      .filter((o: any) => o.id && o.label)
+      .map((o: any) => ({ id: o.id, label: o.label }));
   }
 
   let uploadingImage = $state(false);
@@ -412,15 +433,20 @@
         <h4 class="text-text-main text-xs font-bold tracking-widest uppercase opacity-80">
           {isMatrix ? m.form_builder_columns_header() : m.form_builder_options_header()}
         </h4>
-        {#if !isMatrix && showPriceModifier}
+        {#if !isMatrix && showPriceModifier && !pricedByGrid}
           <div class="text-text-muted flex gap-2 text-[0.65rem] font-semibold sm:text-xs">
             <span class="w-20 text-right">{m.form_builder_price_public_header()}</span>
-            {#if showMemberPriceModifier}
-              <span class="w-20 text-right">{m.form_builder_price_member_header()}</span>
-            {/if}
           </div>
         {/if}
       </div>
+
+      {#if !isMatrix && pricedByGrid}
+        <p
+          class="border-cn-yellow/40 bg-cn-yellow/5 text-text-muted rounded-xl border px-3 py-2 text-xs"
+        >
+          {m.form_builder_priced_by_grid()}
+        </p>
+      {/if}
 
       <div class="space-y-2 sm:space-y-2.5">
         {#each item.options as opt, idx (opt.id)}
@@ -458,7 +484,7 @@
                   bind:value={opt.label}
                 />
               </div>
-              {#if !isMatrix && showPriceModifier}
+              {#if !isMatrix && showPriceModifier && !pricedByGrid}
                 <div class="w-20 shrink-0">
                   <Input
                     type="number"
@@ -467,16 +493,6 @@
                     step="0.01"
                   />
                 </div>
-                {#if showMemberPriceModifier}
-                  <div class="w-20 shrink-0">
-                    <Input
-                      type="number"
-                      placeholder="0.00"
-                      bind:value={opt.priceModifierMember}
-                      step="0.01"
-                    />
-                  </div>
-                {/if}
               {/if}
               <button
                 class="text-text-muted shrink-0 rounded-xl p-2 transition-colors hover:bg-red-500/10 hover:text-red-500"
@@ -498,7 +514,7 @@
                   : m.form_builder_option_placeholder()}
                 class={fieldClass}
               />
-              {#if !isMatrix && showPriceModifier}
+              {#if !isMatrix && showPriceModifier && !pricedByGrid}
                 <div>
                   <label
                     for="opt-price-{opt.id}"
@@ -514,23 +530,6 @@
                     class={fieldClass}
                   />
                 </div>
-                {#if showMemberPriceModifier}
-                  <div>
-                    <label
-                      for="opt-price-member-{opt.id}"
-                      class="text-text-muted mb-1 block text-[0.65rem] font-bold"
-                      >{m.form_builder_price_member_mobile()}</label
-                    >
-                    <input
-                      id="opt-price-member-{opt.id}"
-                      type="number"
-                      bind:value={opt.priceModifierMember}
-                      step="0.01"
-                      placeholder="0.00"
-                      class={fieldClass}
-                    />
-                  </div>
-                {/if}
               {/if}
             </div>
           </div>
@@ -645,13 +644,32 @@
             bind:value={item.dependsValue}
             class="border-cn-border text-text-main focus:border-cn-yellow min-w-0 flex-1 rounded-xl border-2 bg-(--cn-surface) px-3 py-2 text-xs transition-all outline-none"
           >
-            <option value="">Valeur…</option>
-            {#each getOptionLabels(item.dependsOn) as label (label)}
-              <option value={label}>{label}</option>
+            <option value="">{m.form_builder_condition_value_placeholder()}</option>
+            {#each getOptions(item.dependsOn) as option (option.id)}
+              <option value={option.id}>{option.label}</option>
             {/each}
           </select>
         {/if}
       </div>
     </div>
   {/if}
+
+  <!-- Audience condition: shown to some people only. -->
+  <div class="mt-4 border-t border-black/5 pt-4 dark:border-white/5">
+    <Toggle
+      label={m.form_show_if_toggle()}
+      hint={m.form_show_if_hint()}
+      bind:checked={
+        () => item.showIf != null,
+        (on) => {
+          item.showIf = on ? {} : null;
+        }
+      }
+    />
+    {#if item.showIf != null}
+      <div class="mt-3">
+        <AudienceConditionEditor bind:condition={item.showIf} {tiers} {formations} />
+      </div>
+    {/if}
+  </div>
 </div>

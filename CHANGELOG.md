@@ -13,6 +13,22 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Added
 
+- **Form pricing is a MATRIX, and the same predicate now says who may answer and who sees a
+  question.** A price was one number plus an optional "cotisants pay less" second number, which
+  cannot express what managers actually price on: the BDE cotisation depends on the promo, the
+  formation AND the answer to a menu question. Ticking the "Filtrer par..." boxes now declares
+  DIMENSIONS, and the grid is their cross product - so exactly one cell applies to anybody and no
+  priority rule exists to get wrong. Each dimension is a partition rather than a filter (an
+  undeletable generated `others` bucket), so nobody is unpriced and the cross product stays small.
+  A question used as a dimension contributes no additive supplement, server-enforced, because its
+  cell already carries the choice.
+
+  The same `AudienceCondition` gates the form (`submitCondition`, "Qui peut repondre") and each
+  question (`showIf`), judged by one server predicate and built by one editor - so a form reserved
+  to one promo and a price for that promo cannot disagree. `memberPriceEnabled`,
+  `memberPriceVariantKey` and `basePriceMember` are dropped (migration `051`); production held one
+  form and it used none of them.
+
 - **The forms admin screens, rebuilt around one set of components, and a "Parametres avances"
   category.** `forms/create` and `forms/[id]/edit` were two 700-to-900-line copies of each other,
   and the copies had drifted in eight ways a user could see: two toggle geometries on the same
@@ -119,6 +135,20 @@ which is also where every release up to and including v0.13.1 now lives.
   nothing - no spec, no frontend test, no board row - watches them.
 
 ### Fixed
+
+- **A conditional question had never once been displayed.** The builder bound an option's LABEL into
+  `dependsValue`, while an answer holds an option ID, so every condition compared a label against an
+  id and matched nothing. Prod held no affected form (`with_depends: 0`), so nothing needed a shim.
+
+- **Conditional questions were a browser-only rule, with two consequences on the server.** `submit`
+  enforced `required` on every item, hidden ones included, while the client sends only the visible
+  answers - so a required question behind a condition made the form unsubmittable for exactly the
+  people the condition excluded. And an answer to a hidden question was accepted with its price
+  modifier charged. `pricing/visibility.ts` evaluates visibility server-side (memoised,
+  order-independent, a cycle resolving to hidden) and lands WITH the matrix rather than after it,
+  because both get much worse once an answer can select a price cell. `normaliseCondition` ANDs the
+  legacy `dependsOn` pair with a profile `showIf` instead of choosing between them - the builder
+  offers both controls on one question, and returning one would drop the other silently.
 
 - **A mailbox barrier reported a deadlock that could not happen, and skipped the guarantee it exists
   to take.** `waitForMessageQueueIdle(caller, catchUpGroupId)` asks which group's catch-up session

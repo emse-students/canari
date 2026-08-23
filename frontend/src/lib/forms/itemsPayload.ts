@@ -11,8 +11,8 @@ const TYPES_WITHOUT_OPTIONS = ['short_text', 'long_text', 'linear_scale'];
  * which is a poor place for a money conversion to live twice - the euro-to-cent rounding is exactly
  * the kind of thing that must not be able to differ between creating a form and editing it.
  *
- * `priceModifierMember` is omitted rather than nulled when unset, because an option with no member
- * supplement falls back to the public one; sending null would price it at zero for cotisants.
+ * There is one supplement per option, not one per audience: who somebody is decides which CELL of
+ * the pricing grid they land in, and a question the grid prices on carries no supplement at all.
  */
 export function toFormItemsPayload(items: any[]): FormItem[] {
   return items.map((item) => {
@@ -25,9 +25,6 @@ export function toFormItemsPayload(items: any[]): FormItem[] {
             .map((opt: any) => ({
               ...opt,
               priceModifier: opt.priceModifier != null ? Math.round(opt.priceModifier * 100) : 0,
-              ...(opt.priceModifierMember != null && opt.priceModifierMember !== ''
-                ? { priceModifierMember: Math.round(Number(opt.priceModifierMember) * 100) }
-                : {}),
             }))
         : [],
       rows: (item.rows ?? [])
@@ -50,10 +47,6 @@ export function fromFormItems(items: any[], requiresPayment: boolean): any[] {
       item.options?.map((opt: any) => ({
         ...opt,
         priceModifier: requiresPayment ? (opt.priceModifier ?? 0) / 100 : 0,
-        priceModifierMember:
-          requiresPayment && opt.priceModifierMember != null
-            ? opt.priceModifierMember / 100
-            : undefined,
       })) || [],
     rows: item.rows || [],
   }));

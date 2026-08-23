@@ -1,8 +1,13 @@
 export interface FormOption {
   label: string;
+  /**
+   * Price modifier in cents, added when this option is selected.
+   *
+   * One modifier, not one per audience: who somebody is decides which CELL of the pricing grid they
+   * land in, and a question the grid prices on adds no modifier at all - the cell already carries
+   * that choice. See `priceMatrix.ts`.
+   */
   priceModifier: number;
-  /** Price modifier in cents for a cotisant, when the form has a member price. */
-  priceModifierMember?: number;
   id?: string;
 }
 
@@ -25,8 +30,27 @@ export interface FormItem {
   imageUrl?: string;
   /** ID of the question this question depends on (branching logic). */
   dependsOn?: string;
-  /** Option label that must be selected in the dependsOn question to show this one. */
+  /** Option id that must be selected in the dependsOn question to show this one. */
   dependsValue?: string;
+  /**
+   * Show this question only to submitters matching these criteria - a cotisation tier, a promo, a
+   * formation, or an answer to another question. The generalisation of the pair above, and the same
+   * criteria shape the pricing grid is built from.
+   */
+  showIf?: AudienceCondition | null;
+}
+
+/**
+ * One set of criteria, ANDed across whatever is present; absent means no constraint.
+ *
+ * Mirrors the server's `forms/pricing/audience.ts`. Used for a question's visibility and for who may
+ * submit at all - one shape, because it is one predicate on the server.
+ */
+export interface AudienceCondition {
+  cotisation?: { anyTier?: boolean; variantKeys?: (string | null)[] };
+  promo?: { mode: 'graduationYear' | 'yearsToGraduation'; values: number[] };
+  formation?: { values: string[] };
+  answer?: { questionId: string; optionIds: string[] };
 }
 
 export interface CreateFormPayload {
@@ -49,18 +73,15 @@ export interface CreateFormPayload {
   /** Days after submission before an unvalidated cash payment expires (null = never). */
   cashPaymentExpiryDays?: number;
   /**
-   * Whether cotisants of `associationId` get a reduced price. Gates both `basePriceMember` and
-   * every option's `priceModifierMember`.
+   * The pricing grid: `{ dimensions, cells }` in cents, or null for one price for everybody.
+   *
+   * A matrix rather than a list of price rules, so exactly one cell applies to any person and there
+   * is no priority rule anywhere in the feature. Built and read by `priceMatrix.ts`; the server
+   * refuses an incomplete one.
    */
-  memberPriceEnabled?: boolean;
-  /**
-   * Restricts the member price to one cotisation tier; null = any tier of the association.
-   * A tier is named by its opaque `variantKey`, which is never displayed - the screen offers
-   * `MembershipTier.name` and sends this.
-   */
-  memberPriceVariantKey?: string | null;
-  /** Base price in cents for a cotisant (null = the member price only affects the options). */
-  basePriceMember?: number | null;
+  priceMatrix?: unknown;
+  /** Who may submit at all; null means anybody. Same criteria shape as a grid's groups. */
+  submitCondition?: AudienceCondition | null;
   /**
    * When true, a paid submission grants `associationId`'s cotisation to the submitter - derived
    * server-side at grant time, with the sibling tiers revoked, exactly like a boutique purchase.
@@ -207,11 +228,43 @@ export async function getSubmission(formId: string): Promise<any> {
   return res.json();
 }
 
+/** One group of a pricing criterion still to be resolved from the submitter's answers. */
+export interface AnswerDimensionView {
+  id: string;
+  questionId: string;
+  buckets: { id: string; label: string; values: string[] }[];
+}
+
+/**
+ * The submitter's own slice of the pricing grid.
+ *
+ * The server has already resolved everything about WHO they are - cotisation, promo, formation -
+ * because the page cannot know those and must not be trusted with them. What comes back is the row
+ * that applies to them: the criteria still open (their own answers), and the price each combination
+ * leads to. The page totals from this and never derives a rule of its own.
+ */
+export interface PricingView {
+  /** Price before any answer criterion is resolved. */
+  baseCents: number;
+  /** The groups that already applied, for display: "Cotisant", "ICM". */
+  appliedLabels: string[];
+  answerDimensions: AnswerDimensionView[];
+  /** Price per combination of the answer groups, keyed by their ids joined with "|". */
+  cells: Record<string, number>;
+  /** Questions whose option modifiers must NOT be added - their answer selects a cell instead. */
+  ignoredModifierQuestionIds: string[];
+}
+
 export async function checkSubmission(formId: string): Promise<{
   hasSubmitted: boolean;
   paymentStatus?: string;
   formFull: boolean;
-  memberPricing: boolean;
+  /** Null when the form has one price for everybody. */
+  pricing: PricingView | null;
+  /** Questions hidden from this submitter by a profile criterion, answers aside. */
+  hiddenItemIds: string[];
+  /** False when a `submitCondition` excludes them. */
+  maySubmit: boolean;
 }> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${formId}/check`);
   if (!res.ok) throw new Error('Failed to check submission status');
