@@ -163,12 +163,15 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
 
 4. **THREE OBSERVATIONS FROM THE USER, 2026-08-23, all deferred past the ladder**, substance in
     [backlog](docs/wiki/backlog.md) and nowhere else: the POSTS search escapes the feed's filters,
-    filters downstream and loads the whole base before answering; the EMOJI picker does not scroll
-    and opens off-screen, both traced to one hard-coded height guess (its two questions are ANSWERED:
-    the glyphs are the platform's, recents already exist); and a
-    reconnected old client restored only SOME conversations while a locally-pending deletion blocked
-    the new conversation with that peer. The third is HEAL's by the user's framing and becomes rows
-    at rung 16.
+    filters downstream and loads the whole base before answering; the EMOJI picker does not scroll and
+    opens off-screen, both traced to one hard-coded height guess (its two questions are ANSWERED, and
+    the glyph one became the decision in 5); and a reconnected old client restored only SOME
+    conversations while a locally-pending deletion blocked the new one with that peer - HEAL's, rung 16.
+
+5. **ONE BUNDLED EMOJI FONT, EVERYWHERE - decided 2026-08-23, weight explicitly not a factor.** Noto
+    Color Emoji across the whole app and site; Fluent rejected on coverage (no country flags), not on
+    licence. ONE work package with 4's picker fixes, post-ladder, owing ELEVEN rows to the SECOND
+    campaign. Matrix, measurements and a jsdelivr default found while scoping: [backlog](docs/wiki/backlog.md).
 
 **The estate was swept and measured clean 2026-08-21 before the ladder started** - 22 debris salons through the product, all thirteen residue counts on prod zero afterwards. `cleanup.mjs` owns communities, salons AND throwaway groups now; the detail is on [cross-client-campaign](docs/wiki/cross-client-campaign.md).
 
