@@ -904,6 +904,21 @@ pub(crate) async fn recevoir_message_bytes(
                     Err(err_str)
                 }
 
+                // A FRAME FOR A GROUP THIS DEVICE HAS BEEN REMOVED FROM. Never queued: a row here
+                // would be retried against a group whose Remove commit retired our leaf, which no
+                // attempt can change. Surfaced verbatim so the shared frontend classifier reaches
+                // the ONE policy that separates this from every other permanent kind above - ACK
+                // and retire, and specifically NO recovery. The out-of-sync answer this used to
+                // fall into asks to be re-added to a group we were deliberately removed from, and
+                // the commit request behind it can only ever be refused.
+                DecryptErrorKind::Evicted => {
+                    log::warn!(
+                        "[EVICT] Frame for group={} arrived after this device was evicted - handing the classification to the frontend, no repair is owed",
+                        group_id
+                    );
+                    Err(err_str)
+                }
+
                 DecryptErrorKind::Other => Err(err_str),
             }
         }

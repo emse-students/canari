@@ -39,7 +39,7 @@ jobs:
           set -euo pipefail
 
           # ── Full matrices (used as fallback) ──
-          ALL_RUST='[{"name":"Shared Rust Lib","path":"libs/shared-rust","cmd":"cargo test","check":true},{"name":"Chat Gateway","path":"apps/chat-gateway","cmd":"cargo test","check":true},{"name":"Frontend MLS Core","path":"frontend/mls-core","cmd":"cargo test --lib","check":true},{"name":"Frontend MLS WASM","path":"frontend/mls-wasm","cmd":"cargo build --target wasm32-unknown-unknown --release","wasm":true,"check":true}]'
+          ALL_RUST='[{"name":"Shared Rust Lib","path":"libs/shared-rust","cmd":"cargo test","check":true},{"name":"Chat Gateway","path":"apps/chat-gateway","cmd":"cargo test","check":true},{"name":"Frontend MLS Core","path":"frontend/mls-core","cmd":"cargo test","check":true},{"name":"Frontend MLS WASM","path":"frontend/mls-wasm","cmd":"cargo build --target wasm32-unknown-unknown --release","wasm":true,"check":true},{"name":"Frontend Native (Tauri)","path":"frontend/src-tauri","cmd":"cargo check --all-targets","tauri":true}]'
           ALL_TS='["libs/shared-ts","apps/core-service","apps/social-service","apps/chat-delivery-service","apps/media-service"]'
 
           run_all() {
@@ -101,11 +101,27 @@ jobs:
           mls_core=false
           if has '^frontend/mls-core/'; then mls_core=true; fi
           if [[ "$mls_core" == "true" ]]; then
-            rust+=('{"name":"Frontend MLS Core","path":"frontend/mls-core","cmd":"cargo test --lib","check":true}')
+            rust+=('{"name":"Frontend MLS Core","path":"frontend/mls-core","cmd":"cargo test","check":true}')
           fi
           # mls-wasm depends on mls-core
           if [[ "$mls_core" == "true" ]] || has '^frontend/mls-wasm/'; then
             rust+=('{"name":"Frontend MLS WASM","path":"frontend/mls-wasm","cmd":"cargo build --target wasm32-unknown-unknown --release","wasm":true,"check":true}')
+          fi
+          # AND SO DOES THE NATIVE CRATE, WHICH NOTHING HERE COMPILED UNTIL 2026-08-23. A variant
+          # added to `mls_core::DecryptErrorKind` broke `src-tauri`'s exhaustive match, and every
+          # gate stayed green: CI has no matrix entry for it, and the only workflows that build it
+          # are the three release ones - so the break would have surfaced at a release, which is the
+          # worst possible moment and exactly the shipping-order hazard `legacy-compatibility.md`
+          # is about. Triggered by its own sources AND by mls-core, because that is the direction
+          # the dependency runs.
+          #
+          # DELIBERATELY WITHOUT `check` - no `cargo fmt`/`clippy -D warnings` gate yet. Both were
+          # verified by hand on Windows the day this was added; neither has ever run against this
+          # crate on Linux with `--all-features`, and turning a gate on for everybody on an
+          # unverified guess is how a pipeline goes red for a reason nobody changed. `cargo check
+          # --all-targets` is the exact scope of the defect that prompted this: does it compile.
+          if [[ "$mls_core" == "true" ]] || has '^frontend/src-tauri/'; then
+            rust+=('{"name":"Frontend Native (Tauri)","path":"frontend/src-tauri","cmd":"cargo check --all-targets","tauri":true}')
           fi
 
           if [[ ${#rust[@]} -eq 0 ]]; then
@@ -208,6 +224,15 @@ jobs:
       - name: Install WASM target
         if: matrix.component.wasm == true
         run: rustup target add wasm32-unknown-unknown
+
+      # Only for the native crate: webkit2gtk and friends are a heavy install and no other
+      # component needs them, so this mirrors the WASM-target step above rather than widening the
+      # shared dependency step.
+      - name: Install Tauri system dependencies (Linux)
+        if: matrix.component.tauri == true
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev             libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev             libjavascriptcoregtk-4.1-dev
 
       - name: Check Formatting
         if: matrix.component.check == true
