@@ -22,6 +22,7 @@ import { createMlsStatePersister } from '../mlsStatePersister';
 import { installMlsStatePersisterLifecycle } from '../mlsStatePersisterLifecycle';
 import { registerMlsStatePersister } from '../mlsStatePersisterRegistry';
 import type { MessageHandlerDeps } from './deps';
+import { retireIfEvicted } from '$lib/utils/chat/eviction';
 export type { MessageHandlerDeps } from './deps';
 
 /** Short-lived message buffered while waiting for a Welcome. */
@@ -571,6 +572,7 @@ async function handleKnownGroup({
     userId,
     addMessageToChat,
     onCallSignal,
+    saveConversation,
     log,
   } = deps;
 
@@ -684,6 +686,13 @@ async function handleKnownGroup({
       // here would permanently prevent the forget+re-welcome escalation that fixes the fork (H7).
       clearEpochGap(groupId);
       statePersister.persistNow();
+      // THE COMMIT NAMED US, SO THIS IS WHERE THE EVICTION IS LEARNT. A Remove commit carrying our
+      // own leaf leaves the group inactive the instant it merges, and asking is one cheap call on a
+      // path that only runs for commits. Before this, the fact was discarded and the client found
+      // out by SENDING: the outbox saw a healthy group, encrypted, was refused, read the refusal as
+      // transient and retried it up the whole backoff ladder - learning by failing what the frame
+      // it had just applied already stated.
+      await retireIfEvicted({ mlsService, conversations, groupId, userId, saveConversation, log });
     } else {
       statePersister.scheduleDeferred();
     }

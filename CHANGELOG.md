@@ -60,6 +60,38 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A member removed from a group asked to be re-added, and its outbox retried an encrypt that could
+  never succeed.** The Remove commit NAMES the device it evicts, and applying it produced nothing: the
+  merge answered "no application payload", exactly as every other structural commit does, so the only
+  thing left that could tell an eviction from an ordinary membership change was the next send being
+  refused. That refusal then crossed the FFI boundary as `OpenMls("Encrypt error: ...
+  UseAfterEviction")`, indistinguishable from a transient encrypt failure - so the outbox backed off
+  and retried it up its whole ladder against a group that would refuse every attempt, and the
+  pipeline meanwhile ran `requestReAdd`, asking the server to undo a moderation action, and learnt
+  from a 403 what the commit it had just applied already stated.
+
+  Found by GRP-3 and GRP-8 on 2026-08-23, on the phase's first armed runs - which is why something
+  this reproducible had never been seen. One entry (`375cc054`) was observed still retrying across a
+  check boundary, stopping only when the next check's teardown deleted the group.
+
+  Fixed where the fact is KNOWN rather than where the failure surfaced. `is_group_active` reads
+  OpenMLS's own membership after a commit merges, the pipeline retires the conversation on the spot
+  (`[EVICT]`, the `removed` lifecycle the product already draws for a peer-side deletion), and the
+  outbox asks the same question BEFORE encrypting. `requestReAdd` is left for what it was written
+  for: a group this device believes it is in but cannot use. Nothing mirrors the membership into a
+  flag of our own - the group state is already durable, and a second copy could only ever be wrong in
+  the direction that matters.
+
+  The send-path refusal still exists, as the accusation it should be: it is reachable only by a device
+  that never received the commit at all, it is typed (`MlsError::Evicted`, classified on the OpenMLS
+  variant rather than by matching prose downstream), and both halves of it say so in the log. The
+  three lines that must keep breaking `clean` - membership unreadable after a commit, and OpenMLS
+  disagreeing with our own query in either direction - are pinned in `classify-selftest.mjs` beside
+  the four that must not, because a single `[EVICT]`-shaped rule would have forgiven all seven.
+
+  `outbox.ts` had grown three copies of the same permanent-failure block; they are now one
+  `failPermanently`, whose `reason` is the only thing separating the two causes in the log.
+
 - **Opening search in a channel put the client in a loop that hammered our own server.** One query
   in a 1052-message channel issued **4956 requests to `/api/channels/:id/messages`**, was still going
   ten minutes later, and never showed a result - the counter sat at `0/0` throughout, with no error

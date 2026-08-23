@@ -9,6 +9,7 @@ import { serializeEnvelope, mkMediaEnvelope } from '$lib/envelope';
 import { fromHex } from '$lib/utils/hex';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { logMlsMetric } from '$lib/mls-client/mlsRecoveryMetrics';
+import { classifyOutgoingSendError } from '$lib/mls-client/mlsSendError';
 import { syncOutboxMirror } from '$lib/utils/chat/outboxMirror';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import {
@@ -345,6 +346,29 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     return { proto, content: serializeEnvelope(mkMediaEnvelope(fullRef, media.caption)) };
   }
 
+  /**
+   * Retires an entry that can never be sent, whatever is retried and however long is waited.
+   *
+   * There are exactly two such causes and they are indistinguishable from here on: the group was
+   * deleted server-side, or this device was removed from it. Both leave the message undeliverable
+   * for good, so both take the same three steps - error status, the banner (never raised by a
+   * reaction or a read receipt, only by a user-visible send), and the row gone from the queue.
+   * `reason` is what separates them in the log, which is the only place the difference can still
+   * be read.
+   */
+  async function failPermanently(
+    entry: OutboxEntry,
+    terminalId: string,
+    reason: string
+  ): Promise<FlushOutcome> {
+    log(`[OUTBOX] ${entry.id.slice(0, 8)}… ${reason} - permanent failure`);
+    patchStatus(entry.id, 'error');
+    if (entry.kind !== 'control') deps.markDeletedRemotely?.(terminalId);
+    await storage?.deleteOutboxEntry(entry.id).catch(() => {});
+    logMlsMetric({ kind: 'outbox_permanent_error', conversationId: terminalId });
+    return 'error';
+  }
+
   /** Flush a single entry. Returns the outcome so the loop can schedule backoff/chaining. */
   async function flushOne(entry: OutboxEntry): Promise<FlushOutcome> {
     // Withdrawn after this flush read its snapshot of the queue. The row is already gone, so this
@@ -376,16 +400,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     const terminalId = entry.conversationId;
     const groupMeta = await mlsService.getGroupMeta(terminalId).catch(() => null);
 
-    // Group deleted server-side: the only permanent failure.
+    // Group deleted server-side: one of the two permanent failures.
     if (groupMeta?.deletedAt) {
-      log(`[OUTBOX] ${entry.id.slice(0, 8)}… group deleted server-side - permanent failure`);
-      patchStatus(entry.id, 'error');
-      // A control event (reaction/read-receipt) must not be what raises the "conversation
-      // deleted" banner; only a user-visible text/media send does.
-      if (entry.kind !== 'control') deps.markDeletedRemotely?.(terminalId);
-      await storage?.deleteOutboxEntry(entry.id).catch(() => {});
-      logMlsMetric({ kind: 'outbox_permanent_error', conversationId: terminalId });
-      return 'error';
+      return failPermanently(entry, terminalId, 'group deleted server-side');
     }
 
     // Group not sendable yet: trigger recovery (external join / welcome_request) and retry later.
@@ -401,6 +418,29 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           log(`[OUTBOX] Re-add request for ${terminalId.slice(0, 8)}… failed: ${String(e)}`)
         );
       return 'retry';
+    }
+
+    // EVICTED: the other permanent failure, and the reason this is a QUESTION rather than a caught
+    // refusal. A Remove commit naming this device is authoritative - signed, ordered, and applied
+    // identically by every other member - so there is nothing to confirm and nothing to repair.
+    // Asked here, one cheap call before the wire is touched, an evicted group never encrypts and
+    // never sends; the `EVICTED` arm in the catch below is left as the accusation it should be.
+    //
+    // The health gate above has already established the group is held locally, which is the only
+    // case `isGroupActive` throws for - so a throw here is a genuine read failure, and a read
+    // failure is NOT an eviction. Retried rather than guessed: the two are opposite facts and only
+    // one of them destroys a queued message.
+    let stillMember: boolean;
+    try {
+      stillMember = await mlsService.isGroupActive(terminalId);
+    } catch (e) {
+      log(
+        `[OUTBOX] ${entry.id.slice(0, 8)}… membership of ${terminalId.slice(0, 8)}… unreadable: ${String(e).slice(0, 80)} - retrying`
+      );
+      return 'retry';
+    }
+    if (!stillMember) {
+      return failPermanently(entry, terminalId, `evicted from ${terminalId.slice(0, 8)}…`);
     }
 
     patchStatus(entry.id, 'sending');
@@ -447,6 +487,17 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       log(`[OUTBOX] ${entry.id.slice(0, 8)}… sent in ${terminalId.slice(0, 8)}…`);
       return 'sent';
     } catch (e) {
+      // EVICTED: permanent, and the second place it can be learnt rather than the first. The Remove
+      // commit named this device when it merged, and `retireIfEvicted` acts on it there - so
+      // reaching here means the commit never arrived (a device offline across the whole removal,
+      // then sending before it drains). The fallback is a SIGNAL: it is logged as the miss it is,
+      // and it must never become the path eviction is normally discovered on.
+      if (classifyOutgoingSendError(e) === 'evicted') {
+        log(
+          `[OUTBOX] ${entry.id.slice(0, 8)}… send REFUSED as evicted, after isGroupActive answered that this device is still a member of ${terminalId.slice(0, 8)}… - the two disagree, and OpenMLS is the one that is right`
+        );
+        return failPermanently(entry, terminalId, 'evicted (learnt from the refused send)');
+      }
       // Transient (WrongEpoch / network): keep pending, back off. The message is never lost.
       patchStatus(entry.id, 'pending');
       const attempts = entry.attempts + 1;

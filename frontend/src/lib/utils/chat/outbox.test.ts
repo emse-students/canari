@@ -79,13 +79,23 @@ function makeStorage(seed: OutboxEntry[] = []) {
   } as any;
 }
 
-/** mlsService stub: a group is "alive" by default; `meta` overrides per-group metadata. */
-function makeMls(opts: { meta?: (id: string) => unknown; send?: () => Promise<void> } = {}) {
+/**
+ * mlsService stub: a group is "alive" by default; `meta` overrides per-group metadata and
+ * `active` overrides membership (false = this device was evicted, throw = membership unreadable).
+ */
+function makeMls(
+  opts: {
+    meta?: (id: string) => unknown;
+    send?: () => Promise<void>;
+    active?: (id: string) => Promise<boolean>;
+  } = {}
+) {
   return {
     getLocalGroups: vi.fn(() => []),
     getGroupMeta: vi.fn(async (id: string) =>
       opts.meta ? opts.meta(id) : { groupId: id, name: '', isGroup: true, deletedAt: null }
     ),
+    isGroupActive: vi.fn(opts.active ?? (async () => true)),
     sendMessage: vi.fn(opts.send ?? (async () => {})),
     waitForMessageQueueIdle: vi.fn(async () => {}),
   } as any;
@@ -424,6 +434,124 @@ describe('outbox flusher', () => {
     await outbox.flush();
 
     expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(markDeletedRemotely).toHaveBeenCalledWith('g1');
+    expect(storage._map.has('m1')).toBe(false);
+    expect(conversations.get('g1')!.messages[0].status).toBe('error');
+  });
+
+  it('never sends into a group this device was evicted from, and fails the entry for good', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    // The group is alive server-side and locally held - the ONLY thing wrong is our membership.
+    const mlsService = makeMls({ active: async () => false });
+    const markDeletedRemotely = vi.fn();
+    const requestReAdd = vi.fn();
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['m1'])]]);
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService,
+        storage,
+        conversations,
+        markDeletedRemotely,
+        requestReAdd,
+        isGroupHealthy: () => true,
+      })
+    );
+
+    await outbox.flush();
+
+    // Nothing reached the wire: the eviction is a fact read BEFORE encrypting, not a refusal caught
+    // after. This is the assertion that separates the fix from the behaviour it replaced.
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    // And the Remove commit is authoritative, so no repair is attempted: an evicted group is a
+    // correct group we are not in, never a broken one.
+    expect(requestReAdd).not.toHaveBeenCalled();
+    expect(markDeletedRemotely).toHaveBeenCalledWith('g1');
+    expect(storage._map.has('m1')).toBe(false);
+    expect(conversations.get('g1')!.messages[0].status).toBe('error');
+  });
+
+  it('does not raise the banner when the evicted entry is a control event', async () => {
+    // A reaction or a read receipt must not be what tells the user the conversation is gone: the
+    // same rule the deleted-group branch keeps, and eviction shares its code path.
+    const entry = {
+      ...textEntry('m1', 'g1', 100),
+      kind: 'control',
+      controlProto: new Uint8Array(1),
+    };
+    const storage = makeStorage([entry as never]);
+    const mlsService = makeMls({ active: async () => false });
+    const markDeletedRemotely = vi.fn();
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['m1'])]]);
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService,
+        storage,
+        conversations,
+        markDeletedRemotely,
+        isGroupHealthy: () => true,
+      })
+    );
+
+    await outbox.flush();
+
+    expect(markDeletedRemotely).not.toHaveBeenCalled();
+    expect(storage._map.has('m1')).toBe(false);
+  });
+
+  it('retries rather than destroying the message when membership cannot be read', async () => {
+    // "Unreadable" and "evicted" are opposite facts, and only one of them may delete a queued
+    // message. Reading a failed query as an eviction would discard messages on a transient fault.
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls({
+      active: async () => {
+        throw new Error('WASM client not ready');
+      },
+    });
+    const markDeletedRemotely = vi.fn();
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['m1'])]]);
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService,
+        storage,
+        conversations,
+        markDeletedRemotely,
+        isGroupHealthy: () => true,
+      })
+    );
+
+    await outbox.flush();
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(markDeletedRemotely).not.toHaveBeenCalled();
+    expect(storage._map.has('m1')).toBe(true);
+  });
+
+  it('fails permanently on an EVICTED refusal even when the membership query said otherwise', async () => {
+    // The backstop, for the device that never received the Remove commit at all: `isGroupActive`
+    // answers "still a member" because no commit ever said otherwise, and OpenMLS refuses the send.
+    // OpenMLS is the one that is right, and a retry ladder against it would never end.
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls({
+      active: async () => true,
+      send: async () => {
+        throw new Error('EVICTED: g1');
+      },
+    });
+    const markDeletedRemotely = vi.fn();
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['m1'])]]);
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService,
+        storage,
+        conversations,
+        markDeletedRemotely,
+        isGroupHealthy: () => true,
+      })
+    );
+
+    await outbox.flush();
+
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
     expect(markDeletedRemotely).toHaveBeenCalledWith('g1');
     expect(storage._map.has('m1')).toBe(false);
     expect(conversations.get('g1')!.messages[0].status).toBe('error');

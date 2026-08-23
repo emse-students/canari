@@ -932,6 +932,18 @@ export class TauriMlsService extends BaseMlsService {
   }
 
   /**
+   * Tauri-native `invoke` wrapper - `groupe_actif`. See {@link IMlsService.isGroupActive}.
+   *
+   * Read live from Rust rather than mirrored into `_knownGroups`: a cached membership flag is a
+   * second copy of a fact OpenMLS already stores durably, and the only way the two can differ is
+   * the way that matters - the cache saying we are still in a group we were removed from. It
+   * propagates the Rust error, which is what an unheld group answers.
+   */
+  async isGroupActive(groupId: string): Promise<boolean> {
+    return invoke<boolean>('groupe_actif', { groupId });
+  }
+
+  /**
    * Tauri-native `invoke` wrapper - every leaf identity (`userId:deviceId`) in the group's tree.
    *
    * Read live from Rust rather than cached: unlike the epoch, nothing here mirrors the tree, and a

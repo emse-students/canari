@@ -210,6 +210,10 @@ const BENIGN = [
   // one `if` above it in `outbox.ts` fires when the send was already in flight, means the opposite
   // (the peers DO have it), and sits in `NOTABLE`. A prefix rule would silence that one too.
   /^\[OUTBOX\] [0-9a-f]{8}… withdrawn from the queue before it was ever sent$/,
+  // AN EVICTION APPLIED TWICE. Commits are replayed - by a history drain, by a reconnect - and the
+  // second application finds the conversation already retired. Nothing happened, and saying so is
+  // what separates it from the first application, which DID something and sits in `STATE_CHANGE`.
+  /^\[EVICT\] Removed from [0-9a-f]{8}… - already retired, nothing to do$/,
   /^\[MLS\] (Disk writes deferred|Bulk ingest done|Encrypted state checkpoint persisted)/,
   // A resume finding a socket that BOTH answers agree is alive - a tab hidden and shown again, which
   // every check that touches visibility produces. The disagreeing spelling is in `NOTABLE`, and the
@@ -392,6 +396,26 @@ const STATE_CHANGE = [
   /^\[UI\] Local conversation removed \(\S+\)$/,
   /^\[DISCOVERY\] \d+ server group\(s\) missing locally: /,
   /^\[DISCOVERY\] Placeholder ".*" created\.$/,
+  // AN EVICTION, LEARNT FROM THE COMMIT THAT STATED IT. `[EVICT] Removed from ...` and the Rust WARN
+  // behind it are the mechanism WORKING: a Remove commit named this device, and the client retired
+  // the conversation on the spot instead of discovering it later by having a send refused. Real
+  // changes to what the client holds, so they are reported; not defects, so they do not break
+  // `clean`. GRP-3 and GRP-8 produce them by design, on the removed peer.
+  //
+  // Deliberately NOT written as an `^\[EVICT\]` prefix. The third line that module can emit says
+  // membership could not be READ after a commit, which is the branch that HIDES an eviction and
+  // leaves the refused send to find it - it stays unexplained, and a prefix rule would silence it.
+  /^\[EVICT\] Removed from [0-9a-f]{8}… by a Remove commit - conversation retired$/,
+  // NO RULE HERE FOR THE RUST WARN BEHIND IT. It names the epoch the removal landed at, so the
+  // generic `/epoch|GAP|out-of-sync|re-add/` rule in `NOTABLE` claims it first, and `stateChanges`
+  // excludes anything already notable - a rule here could never be reached. `notable` is the same
+  // contract for a reader anyway (surfaced, does not break `clean`), and the self-test pins the
+  // line to that bucket so the precedence is a recorded fact rather than a surprise.
+  // The queued message that eviction made undeliverable. Same family as the deleted-group spelling
+  // and equally permanent: the entry is failed, not retried. The OTHER outbox eviction line - the
+  // one saying the send was REFUSED after `isGroupActive` had answered that we are still a member -
+  // is a contradiction between OpenMLS and our own query, and is left unexplained on purpose.
+  /^\[OUTBOX\] [0-9a-f]{8}… evicted from [0-9a-f]{8}… - permanent failure$/,
   // A COMMIT CONSUMING ITS GENERATION - the ordinary outcome of every add, removal and rename, and
   // the reason a group's epoch moves at all. Only the COMMIT form is classified: the same line
   // ending "not a commit: ..." is a frame nobody could decrypt and stays unexplained, which is the

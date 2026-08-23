@@ -1101,6 +1101,18 @@ export class WebMlsService extends BaseMlsService {
   }
 
   /**
+   * WASM client wrapper - `is_group_active`. See {@link IMlsService.isGroupActive}.
+   *
+   * THROWS rather than answering `false` when the client is not ready: "not loaded yet" and "we
+   * were removed" are opposite facts, and the caller retires a conversation on the second.
+   */
+  async isGroupActive(groupId: string): Promise<boolean> {
+    if (!this.client)
+      throw new Error(`[MLS] WASM client not ready - cannot read membership of ${groupId}`);
+    return this.client.is_group_active(groupId);
+  }
+
+  /**
    * WASM client wrapper - every leaf identity (`userId:deviceId`) in the group's ratchet tree.
    *
    * THROWS rather than answering `[]` when the group is not held: an empty tree and a group this

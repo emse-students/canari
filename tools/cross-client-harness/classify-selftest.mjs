@@ -118,14 +118,65 @@ const CASES = [
     '[14:32:47] [MLS] No application payload for 4ad03375… - not a commit: stale commit already applied, or a frame older than the kept ratchet window',
     'unexplained',
   ],
-  // AND THE TWO EVICTION LINES THAT MUST NOT BE CLASSIFIED. Both are real defects GRP-3 and GRP-8
+  // AND THE TWO EVICTION LINES THAT MUST NOT BE CLASSIFIED. Both are the defects GRP-3 and GRP-8
   // found on 2026-08-23: a removed member's pipeline attempting recovery on a group it was
-  // legitimately evicted from, and its outbox retrying an encrypt that can never succeed. Pinned
-  // here so a later triage pass cannot quietly forgive them.
+  // legitimately evicted from, and its outbox retrying an encrypt that can never succeed. Both are
+  // FIXED - the Remove commit is now authoritative, so neither line can be produced any more - and
+  // they stay here as regression sentinels: their return means the fix is gone, and a later triage
+  // pass must not be able to quietly forgive them.
   ['log', '[14:10:28] [PIPELINE] Recovery attempt finished for 4ca35caf…', 'unexplained'],
   [
     'log',
     '[14:10:28] [OUTBOX] 1d9076db… transient failure (attempt 1): Crypto/OpenMLS error: Encrypt error: GroupStateError(UseAfterEviction)',
+    'unexplained',
+  ],
+  // WHAT REPLACED THEM. The eviction is learnt from the commit that stated it, so the removed
+  // device reports the change and stops - no recovery, no retry ladder. `stateChanges`, not
+  // `benign`: what this client holds really did change, and a reader must see it.
+  [
+    'log',
+    '[14:10:28] [EVICT] Removed from 4ca35caf… by a Remove commit - conversation retired',
+    'stateChanges',
+  ],
+  [
+    'log',
+    '[14:10:28] [RUST::WARN] Evicted from group 4ca35caf-1f2e-4c3d-8a9b-0e1d2c3b4a59: a Remove commit naming this device was applied at epoch 4 - the group is now inactive and nothing further can be sent',
+    // `notable`, not `stateChanges`, and pinned so the reason is recorded: the line names the epoch
+    // the removal landed at, so NOTABLE's generic epoch rule claims it and `stateChanges` excludes
+    // whatever is already notable. Same contract for a reader either way - surfaced, does not break
+    // `clean` - which is why the unreachable STATE_CHANGE rule was deleted instead of fought.
+    'notable',
+  ],
+  ['log', '[14:10:28] [OUTBOX] 1d9076db… evicted from 4ca35caf… - permanent failure', 'stateChanges'],
+  // A REPLAYED Remove COMMIT. Nothing happened the second time, which is why it is `benign` while
+  // the line above it is not. Two spellings, one rule each, deliberately: a prefix rule over
+  // `[EVICT]` would have covered both AND the two below, which must break `clean`.
+  [
+    'log',
+    '[14:10:28] [EVICT] Removed from 4ca35caf… - already retired, nothing to do',
+    'benign',
+  ],
+  // THE TWO EVICTION LINES THAT MUST STILL BREAK `clean`, pinned beside the four successes above
+  // because that is the only thing stopping an `^\[EVICT\]`-shaped rule from swallowing them.
+  //
+  // The first is the branch that HIDES an eviction: membership could not be read after a commit, so
+  // the conversation was not retired and the next refused send is what will find it. The second is
+  // OpenMLS and our own query DISAGREEING about membership - the query said we are still a member
+  // and the send was refused anyway. Neither is survivable as a forgiven line.
+  [
+    'log',
+    '[14:10:28] [EVICT] Membership of 4ca35caf… could not be read after a commit: Error: WASM client not ready',
+    'unexplained',
+  ],
+  [
+    'log',
+    '[14:10:28] [OUTBOX] 1d9076db… send REFUSED as evicted, after isGroupActive answered that this device is still a member of 4ca35caf… - the two disagree, and OpenMLS is the one that is right',
+    'unexplained',
+  ],
+  // And the Rust half of that same contradiction, which accuses from the other side of the FFI.
+  [
+    'log',
+    '[14:10:28] [RUST::ERROR] Send refused: this device was evicted from group 4ca35caf-1f2e-4c3d-8a9b-0e1d2c3b4a59 and did not learn it from the Remove commit - the commit was never received, or its `is_group_active` check did not run',
     'unexplained',
   ],
   // And one nobody has ever classified, which must land in `unexplained` and break `clean`.

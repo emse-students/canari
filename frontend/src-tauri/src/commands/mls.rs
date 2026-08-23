@@ -387,6 +387,24 @@ pub(crate) fn lister_groupes(state: tauri::State<AppState>) -> Result<Vec<String
     Ok(manager.get_known_groups())
 }
 
+/// Whether this device is still a member of the group (false once a Remove commit naming it was
+/// applied). See `MlsManager::is_group_active`: the fact that makes an eviction knowable at the
+/// commit rather than at the refused send.
+#[tauri::command]
+pub(crate) fn groupe_actif(
+    group_id: String,
+    state: tauri::State<AppState>,
+) -> Result<bool, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    manager
+        .is_group_active(&group_id)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub(crate) fn obtenir_epoch(
     group_id: String,

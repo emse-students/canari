@@ -45,6 +45,17 @@ pub enum MlsError {
     /// self-repair (remove then re-add) rather than surfacing a raw error to the user.
     #[error("ALREADY_MEMBER: {0}")]
     AlreadyMember(String),
+    /// This device is no longer a member: a Remove commit naming its leaf was applied, so the
+    /// group is inactive and NOTHING it holds can be sent again. Distinct from every other send
+    /// failure because it is PERMANENT and it is not a fault - the group is intact, we are simply
+    /// not in it. A caller that reads this as a transient error retries forever against a peer
+    /// group that will refuse every attempt (WP-EVICT-1).
+    ///
+    /// Reaching this on the SEND path is itself a defect: the Remove commit named us when it was
+    /// applied, and `is_group_active` reports it from that moment. This variant is the accusing
+    /// backstop for a device that never received the commit at all.
+    #[error("EVICTED: {0}")]
+    Evicted(String),
 }
 
 /// Classification of an incoming decryption error. THE single source of native string-matching on

@@ -550,6 +550,18 @@ export interface IMlsService {
   // Group management
   /** Returns the list of group IDs for which this device holds local MLS state. */
   getLocalGroups(): string[];
+  /**
+   * Whether this device is still a member of the group.
+   *
+   * False exactly when a Remove commit naming its own leaf has been applied. Distinct from
+   * `getLocalGroups().includes(id)`, which stays TRUE after an eviction: the state is still held,
+   * it is simply no longer usable - and reading the second as the first is what let the outbox
+   * retry an evicted group until its entries expired.
+   *
+   * THROWS when the group is not held at all: never-joined and removed-from are opposite facts,
+   * and the caller that retires a conversation on `false` must not retire one it never had.
+   */
+  isGroupActive(groupId: string): Promise<boolean>;
   /** Drops the local MLS state for a group, forcing re-synchronisation via a new Welcome.
    *  `minEpoch`: minimum epoch the new Welcome must reach (0 = no restriction). */
   forgetGroup(groupId: string, minEpoch?: number): void;

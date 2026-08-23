@@ -117,7 +117,7 @@ window. Earlier x5 series on `8a3edbdd`, `e62c21f1` and `25376b86` all read 13/1
 | READ-2 | The SAME user's other device also clears | `+A1` | `PASS` 5/5 |
 | READ-3 | The receipt only fires with the window FOCUSED and the tab visible | `W1 W2` | `PASS` 5/5 |
 | READ-4 | The 2 s debounce batches: twenty messages send ONE watermark | `W1 W2` | `PASS` 5/5 |
-| READ-5 | "Seen by" resolves to display names, and to `+N` past three | `+user` | `SKIPPED` - needs FOUR readers, the estate has TWO accounts. The watermark is per USER not per device, so the phone is not a third: two enrolments owed, each costing the owner's 2FA |
+| READ-5 | "Seen by" resolves to display names, and to `+N` past three | `+user` | `SKIPPED`, TERMINAL (user, 2026-08-23). Needs FOUR readers, the estate has TWO accounts; the watermark is per USER not per device, so the phone is not a third. The two enrolments owed cost the owner's 2FA each, which no tool here can answer - it is not deferred, it is closed |
 | READ-6 | Channels send no receipts at all; read state comes from the server tally | `W1 W2` | `PASS` 5/5 |
 | READ-7 | Unread count after a reload, with the receipt still in flight | `W1 W2` | `PASS` 5/5 |
 | READ-8 | Unread count on a conversation whose messages arrived while logged out | `W1 W2` | `PASS` 5/5 |

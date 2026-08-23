@@ -17,7 +17,23 @@ impl MlsManager {
 
         let msg_out = group
             .create_message(&self.provider, &self.keypair, message)
-            .map_err(|e| MlsError::OpenMls(format!("Encrypt error: {:?}", e)))?;
+            .map_err(|e| match e {
+                // Classified HERE, on the variant, rather than by matching `UseAfterEviction` out
+                // of a Debug string downstream: eviction is permanent and every other encrypt
+                // failure is not, so the two must not reach a caller as the same `OpenMls(String)`.
+                // The outbox read them as one and retried an evicted group on a backoff ladder for
+                // as long as the entry lived.
+                CreateMessageError::GroupStateError(MlsGroupStateError::UseAfterEviction) => {
+                    log::error!(
+                        "Send refused: this device was evicted from group {} and did not learn it \
+                         from the Remove commit - the commit was never received, or its \
+                         `is_group_active` check did not run",
+                        group_id
+                    );
+                    MlsError::Evicted(group_id.to_string())
+                }
+                other => MlsError::OpenMls(format!("Encrypt error: {:?}", other)),
+            })?;
 
         self.mark_state_dirty();
         msg_out
@@ -317,6 +333,21 @@ impl MlsManager {
                     .merge_staged_commit(provider, *staged_commit)
                     .map_err(|e| MlsError::OpenMls(format!("Merge commit error: {:?}", e)))?;
                 state_snapshot.borrow_mut().invalidate();
+                // A Remove commit naming OUR leaf leaves the group inactive, and this is the
+                // instant that becomes true. Before this line the fact was thrown away and the
+                // caller got the same `Ok(None)` as any other applied commit - so the client only
+                // ever discovered its own eviction by attempting a send and being refused, which
+                // is learning by failing what the commit had already stated. Callers read it back
+                // through `is_group_active`; the WARN is what makes it visible on every boundary,
+                // including the two (native background, batch replay) that do not.
+                if !group.is_active() {
+                    log::warn!(
+                        "Evicted from group {}: a Remove commit naming this device was applied at \
+                         epoch {} - the group is now inactive and nothing further can be sent",
+                        group_id,
+                        group.epoch()
+                    );
+                }
                 Ok(None)
             }
             // A standalone (External)Proposal queues a pending proposal in the group state,

@@ -117,6 +117,54 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(deps.addMessageToChat).not.toHaveBeenCalled();
   });
 
+  it('retires the conversation the moment a Remove commit naming this device is applied', async () => {
+    // THE POINT OF THE WHOLE MECHANISM. Before this, applying the commit that evicted us produced
+    // the same `Ok(null)` as any other structural commit, so the client only learnt it had been
+    // removed when a later send was refused - and the outbox read that refusal as transient and
+    // retried it up its full backoff ladder against a group that would refuse every attempt.
+    const deps = baseDeps();
+    const mls = deps.mlsService as any;
+    mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
+    mls.isGroupActive = vi.fn().mockResolvedValue(false);
+    setupMessageHandler(deps as any);
+    const cb = mls.onMessage.mock.calls[0][0];
+
+    const acked = await cb('peer', new Uint8Array([9, 9, 9]), groupId, false, undefined, true);
+
+    expect(acked).toBe(true);
+    expect(mls.isGroupActive).toHaveBeenCalledWith(groupId);
+    expect(deps.conversations.get(groupId)!.lifecycle).toBe('removed');
+  });
+
+  it('does not ask about membership on an application message', async () => {
+    // Only a commit can change membership. Asking on every frame would put a WASM call on the
+    // hottest path in the app for an answer that cannot have changed.
+    const deps = baseDeps();
+    const mls = deps.mlsService as any;
+    mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
+    setupMessageHandler(deps as any);
+    const cb = mls.onMessage.mock.calls[0][0];
+
+    await cb('peer', new Uint8Array([1, 2, 3]), groupId, false, undefined, false);
+
+    expect(mls.isGroupActive).not.toHaveBeenCalled();
+  });
+
+  it('leaves the conversation alone when a commit does not remove this device', async () => {
+    // Every add and every removal of SOMEBODY ELSE reaches the same line. Retiring on any commit
+    // would delete a conversation on a peer joining it.
+    const deps = baseDeps();
+    const mls = deps.mlsService as any;
+    mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
+    mls.isGroupActive = vi.fn().mockResolvedValue(true);
+    setupMessageHandler(deps as any);
+    const cb = mls.onMessage.mock.calls[0][0];
+
+    await cb('peer', new Uint8Array([4, 5, 6]), groupId, false, undefined, true);
+
+    expect(deps.conversations.get(groupId)!.lifecycle).not.toBe('removed');
+  });
+
   it('propagates channel.member.joined to callback', async () => {
     const onChannelMemberJoined = vi.fn();
     const deps = baseDeps({ onChannelMemberJoined });

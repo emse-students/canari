@@ -198,6 +198,16 @@ impl WasmMlsClient {
         Ok(epoch as f64)
     }
 
+    /// Whether this device is still a member (false once a Remove commit naming it was applied).
+    /// See `MlsManager::is_group_active`: this is the fact that makes an eviction knowable at the
+    /// commit instead of at the refused send.
+    #[wasm_bindgen]
+    pub fn is_group_active(&self, group_id: String) -> Result<bool, JsValue> {
+        self.manager
+            .is_group_active(&group_id)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
     /// Save state (returns a Uint8Array in JS).
     ///
     /// When `device_key_b64` is provided, the state is encrypted with ChaCha20-Poly1305

@@ -127,6 +127,8 @@ Deep links, system events, rosters and the channel/DM asymmetry are on those two
 
 - **A CAPABILITY REMOVED IS URGENT IN A WAY A CAPABILITY GRANTED IS NOT** - a promotion arriving late is an annoyance, a demotion arriving late leaves somebody clicking controls the server now refuses. Push the change to the subject, carrying what the role GRANTS, not its name. [backlog](backlog.md)
 
+- **A REMOVE COMMIT NAMES THE DEVICE IT EVICTS, SO EVICTION IS A FACT TO READ, NEVER A REFUSAL TO CATCH.** `is_group_active` answers it the instant the commit merges; holding a group's state and being a member of it are different questions, and `getLocalGroups().includes(id)` answers only the first. A device that learns it was removed by having a send refused treats a correct group it is not in as a broken one it must repair - so it retries an encrypt that can never succeed and asks the server to undo a moderation action. The commit is authoritative: retire the conversation, fail the queued entry, and keep `requestReAdd` for a group this device believes it is IN but cannot use. [chat](frontend/modules/chat.md)
+
 - **A permission check that runs where the action is OFFERED is not a check** - where the server cannot read the content, the RECEIVER enforces it, against the identity MLS authenticated. [chat](frontend/modules/chat.md)
 - **An answer broadcast to a group is read by every member, so it must NAME the one it answers** - at the DEVICE (`digestIdentity`), never the user. DATA is for everyone, the ANSWER is for the addressee. [mls](protocols/mls-protocol.md)
 - **A legacy frame with no addressee resolves towards the marker STAYING UP**: an extra diff is free, a marker wrongly cleared is permanent. [legacy-compatibility](legacy-compatibility.md)

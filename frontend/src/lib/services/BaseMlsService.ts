@@ -2274,6 +2274,8 @@ export abstract class BaseMlsService implements IMlsService {
     keyLen: number
   ): Promise<Uint8Array>;
   abstract getLocalGroups(): string[];
+  /** See {@link IMlsService.isGroupActive}. Platform-specific: WASM query vs Tauri `invoke`. */
+  abstract isGroupActive(groupId: string): Promise<boolean>;
   abstract getEpoch(groupId: string): number;
   abstract getGroupMemberIdentities(groupId: string): Promise<string[]>;
   abstract forgetGroup(groupId: string, minEpoch?: number): void;

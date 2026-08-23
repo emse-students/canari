@@ -138,6 +138,22 @@ impl MlsManager {
         Ok(group.epoch().as_u64())
     }
 
+    /// Whether this device is still a member of the group.
+    ///
+    /// False exactly when a Remove commit naming our own leaf has been applied. It is the fact the
+    /// eviction policy is built on: it is knowable the moment the commit merges, it never flips
+    /// back (a re-add produces a NEW group state via Welcome), and it costs nothing to ask - so no
+    /// caller has any excuse to discover an eviction by attempting a send. A group absent from the
+    /// map is NOT reported as evicted: never-joined and removed-from are different states, and
+    /// only the second one is authoritative about membership.
+    pub fn is_group_active(&self, group_id: &str) -> Result<bool, MlsError> {
+        let group = self
+            .groups
+            .get(group_id)
+            .ok_or_else(|| MlsError::GroupNotFound(group_id.to_string()))?;
+        Ok(group.is_active())
+    }
+
     /// Parse the MLS epoch from raw message bytes without decrypting anything.
     /// Both PrivateMessage and PublicMessage carry the epoch in cleartext in their header.
     /// Returns None if the bytes cannot be parsed as a valid MLS message.

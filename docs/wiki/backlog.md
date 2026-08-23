@@ -346,7 +346,7 @@ recorded here rather than taken while a campaign is running.
 **What would tell us it matters:** no board row covers it, and reaching it needs a device that missed
 an edit AND is later handed a bundle containing it - which is the FWD/HEAL shape, not MUT's.
 
-### P2 - a reconnected old client restored only SOME conversations, and a locally-pending deletion blocked the new conversation with that peer
+### P1 - a REVOKED device kept its local store, restored only SOME conversations, and a locally-pending deletion blocked the new conversation with that peer
 
 Reported by the user 2026-08-23, verbatim: *"sur un vieux PC client qui avait toujours une memoire
 locale (pourquoi, puisqu'il avait ete des appareils connectes via l'interface ?), le fait de se
@@ -357,11 +357,22 @@ barrage a la reception de la nouvelle conversation avec ce pair (ca faisait doub
 
 Three separate things, in the order they have to be answered:
 
-1. **QUESTION first: a device removed through the connected-devices UI still held its local store.**
-   Before anything is called a defect, settle what revocation is DEFINED to do - if it only stops the
-   device being routed to, then local data surviving is correct and the UI's wording is the problem;
-   if it is meant to be a wipe, the wipe never ran and that is a P1, not a P2. The answer decides the
-   severity of this whole entry.
+1. **ANSWERED, AND IT IS WHY THIS ENTRY IS A P1.** The question was what revocation is DEFINED to
+   do; the user settled it 2026-08-23, verbatim: *"Effacer ce qu'il detient (il doit devenir un
+   appareil comme neuf s'il essaie de se reconnecter, c'est a ca que sert la blacklist non ?)"*.
+   Revocation is a WIPE. A revoked device that still holds its local store is therefore a defect, not
+   a wording problem, and the wipe either never ran or was never written - which is what has to be
+   established first, because "no mechanism" and "a mechanism that did not fire" need opposite fixes.
+   The rest of that decision is not a fix but three things to VERIFY, and they are rows, not prose:
+   a revoked device really does become like-new; its first reconnection resynchronises as a NEW
+   device would, history included; and if that first pass does not catch everything up, the later
+   connections do, through the heal-on-diff mechanism - which must be shown to TRIGGER, and to
+   trigger on the right conditions rather than on any reconnection at all.
+
+   The last of those is the one a green run can most easily fake. A heal that fires on every
+   connection would make every check pass while proving nothing, so its conditions are part of the
+   assertion, not context around it - the standing rule that a predicate which named the last
+   incident is not the predicate that names the next one applies to its trigger directly.
 2. **A partial restore is worse than no restore.** Reconnecting brought back some conversations and
    not others, with nothing saying which or why. A restore that silently stops halfway looks
    complete, so the user does not know to retry - it needs to know its own expected count and report
@@ -375,61 +386,19 @@ Three separate things, in the order they have to be answered:
    its own replacement.
 
 **This is HEAL's, by the user's own framing** (*"On y reviendra au moment ou on fera la campagne
-HEAL"*). Rung 16 is where it gets armed: items 2 and 3 are both reproducible without a second human
-- a stale profile plus a peer-side delete is exactly what the HEAL runners already build - and each
-becomes a row on [cross-client-testing](cross-client-testing.md) rather than a hand-checked story.
-Item 1 needs no run at all, only the definition.
+HEAL"*). Rung 16 is where it gets armed, and item 1 now carries FOUR rows rather than needing a
+definition: the wipe on revocation, the like-new state on reconnection, the first-reconnect resync
+with history, and the heal-on-diff trigger with its conditions. Items 2 and 3 are both reproducible
+without a second human - a stale profile plus a peer-side delete is exactly what the HEAL runners
+already build - so all of it becomes rows on [cross-client-testing](cross-client-testing.md) rather
+than hand-checked stories.
 
-### P2 - a member REMOVED from a group asks to be re-added, and its outbox retries an encrypt that can never succeed
-
-Measured on `1579d5c3`, 2026-08-23, by GRP-3 and GRP-8 on their first armed runs - the phase had
-never run before, which is why a defect this reproducible was unseen. Both checks PASS on their
-assertions and are `PASS-DIRTY` on this, which is not a pass.
-
-What the removed client does, in order, after W1 removes it:
-
-```
-[MLS] Decryption error for <group>: Crypto/OpenMLS error:
-      Process error: GroupStateError(UseAfterEviction) [msg_epoch=3, group_epoch=3] -> re-add
-[PIPELINE] Recovery attempt finished for <group>
-GET /api/mls/commits/<group>?sinceEpoch=3 -> 403
-[OUTBOX] <id> transient failure (attempt 1): Crypto/OpenMLS error: Encrypt error: GroupStateError(UseAfterEviction)
-[OUTBOX] <id> transient failure (attempt 2): ... (attempt 3) ... (attempt 4) ...
-```
-
-Three faults, and they compound:
-
-1. **A legitimate removal is treated as a broken state.** `-> re-add` runs the recovery path, which
-   is what a client with a damaged tree needs. A client whose leaf was deliberately retired by a
-   Remove commit is not damaged - it is not a member. Asking the server to undo a moderation action
-   is the wrong answer to a question the client already knows the answer to.
-2. **The 403 is the design owing work to the network.** The client asks for commits since epoch 3 on
-   a group it has just been evicted from, and learns from the refusal what the eviction already told
-   it. That is the standing rule exactly: never learn by failing what a fact could have told you -
-   carry the discriminator to where the decision is made, from where it is already KNOWN.
-3. **The outbox calls `UseAfterEviction` transient.** `outbox.ts` has exactly one permanent failure
-   (`groupMeta.deletedAt`), so every other error backs off and retries. An encrypt into a tree that
-   no longer contains our leaf cannot succeed on any attempt. Observed crossing a CHECK boundary:
-   entry `375cc054` was still retrying from GRP-3 when GRP-4 started, and stopped only when GRP-3's
-   teardown deleted the group - `[OUTBOX] 375cc054 group deleted server-side - permanent failure`.
-   Absent that teardown it would have retried for as long as the tab lived.
-
-**Why this is filed rather than fixed: the fix is a product decision, not a bug with one answer.**
-`isGroupHealthy` is `getLocalGroups().includes(id) && !isInEpochGap(id)`, and an evicted group is
-still in `getLocalGroups()`, so the send is attempted. Making eviction a state is easy and mirrors
-`isInEpochGap` exactly. What it should then DO is the question:
-
-- treat a Remove commit as authoritative - conversation to `removed` with the banner the product
-  already draws for a peer-side delete, outbox entry to permanent `error`. This is almost certainly
-  right: `removeMemberAndBroadcast`'s own comment calls the commit authoritative.
-- or keep `requestReAdd`, and accept that a removed member asks to come back.
-
-The two differ in what the user SEES, so it is the user's call. Everything needed to implement the
-first is in place: `markDeletedRemotely`, the `removed` lifecycle, and the permanent-failure branch.
-
-**Related and NOT the same:** `[MLS] No application payload for X - commit or dropped frame` named
-two causes it could not separate while holding `isCommit` in scope - fixed 2026-08-23 in the same
-sweep, and the two halves are pinned in `classify-selftest.mjs`.
+**One thing to settle before writing those rows, and it is not obvious which way it goes:** a wipe is
+executed BY the device being wiped, so it can only run when that device next comes online - and a
+device that never returns is never wiped, whatever the server recorded. So the row proving "it became
+like-new" and the row proving "the wipe ran" are not the same row, and neither implies the other. The
+blacklist is what makes the first true without the second, which is exactly the reading the user's
+own phrasing points at (*"c'est a ca que sert la blacklist non ?"*).
 
 ## Mentions
 
