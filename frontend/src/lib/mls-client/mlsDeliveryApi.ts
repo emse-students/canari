@@ -30,6 +30,16 @@ export const MLS_ADD_LOCK_TTL_MS = 30_000;
 export const PENDING_PAGE_STALL_MS = 10_000;
 
 /**
+ * The largest number of groups `POST /api/mls/history/batch` will accept in one request.
+ *
+ * This MIRRORS `HISTORY_BATCH_MAX_GROUPS` in chat-delivery-service's `messaging.service.ts`, whose
+ * spec pins the value and names this constant: a client must not learn a limit by being refused,
+ * and this one is not negotiated anywhere on the wire. Lowering the server's cap without lowering
+ * this one puts every catch-up back to one request per conversation.
+ */
+export const HISTORY_BATCH_MAX_GROUPS = 50;
+
+/**
  * The delivery service refused this device id: it was explicitly deleted, and the denylist is
  * permanent. Typed rather than message-matched, because the only cure is structural - enrol under
  * a fresh device id ({@link BaseMlsService.rotateDeviceIdentity}), never a retry of the same call.
@@ -722,48 +732,69 @@ export class MlsDeliveryApi {
   }
 
   /**
-   * Fetches the first history page for multiple groups in one request (login catch-up).
-   * Falls back to sequential {@link fetchHistory} when the batch route is unavailable.
+   * Fetches the first history page for many groups, in as few round-trips as the server allows.
+   *
+   * The list is CHUNKED at {@link HISTORY_BATCH_MAX_GROUPS} because the server refuses anything
+   * larger. It used to be sent whole, which meant a client with more conversations than the cap
+   * sent one request that could only ever be refused - and the sequential re-fetch it then fell
+   * back to made the catch-up cost exactly what it cost before the route existed. Measured on
+   * production 2026-08-24: 110 conversations, one 400, 110 requests.
+   *
+   * A chunk the server refuses leaves its groups OUT of the map, and that is the whole handling.
+   * There is no second way to fetch a page here: an absent group simply arrives at
+   * `replayConversationHistory` unprimed and that replay reads its own first page, which is the
+   * ordinary path every group took before any of this existed.
    */
   async fetchHistoryBatch(
     groups: Array<{ groupId: string; afterStreamId?: string }>
   ): Promise<Map<string, import('$lib/mls-client/historyTypes').HistoryPage>> {
     const out = new Map<string, import('$lib/mls-client/historyTypes').HistoryPage>();
-    if (groups.length === 0) return out;
+    for (let i = 0; i < groups.length; i += HISTORY_BATCH_MAX_GROUPS) {
+      await this.fetchHistoryBatchChunk(groups.slice(i, i + HISTORY_BATCH_MAX_GROUPS), out);
+    }
+    return out;
+  }
 
+  /**
+   * One `POST /api/mls/history/batch`, writing what it gets into `out`.
+   *
+   * Never throws: a chunk that fails is a defect to READ, not a branch for the caller to take, so
+   * it is logged with the status AND the server's own words - a status alone cannot tell a refused
+   * request from an unreachable one, and it was a bare status that let the cap go unnoticed.
+   */
+  private async fetchHistoryBatchChunk(
+    chunk: Array<{ groupId: string; afterStreamId?: string }>,
+    out: Map<string, import('$lib/mls-client/historyTypes').HistoryPage>
+  ): Promise<void> {
     try {
       const res = await this.f(`${this.historyUrl}/api/mls/history/batch`, {
         method: 'POST',
         headers: await this.auth({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
-          groups: groups.map((g) => ({
+          groups: chunk.map((g) => ({
             groupId: g.groupId,
             after: g.afterStreamId,
           })),
         }),
       });
-      if (res.ok) {
-        const contentType = res.headers.get('content-type') ?? '';
-        if (contentType.toLowerCase().includes('application/json')) {
-          const data = (await res.json()) as {
-            histories?: Record<string, import('$lib/mls-client/historyTypes').HistoryStreamRow[]>;
-            heads?: Record<string, string>;
-          };
-          for (const [groupId, rows] of Object.entries(data.histories ?? {})) {
-            out.set(groupId, { rows: rows ?? [], head: data.heads?.[groupId] });
-          }
-          return out;
-        }
+      const contentType = res.headers.get('content-type') ?? '';
+      if (!res.ok || !contentType.toLowerCase().includes('application/json')) {
+        console.error(
+          `[History] batch of ${chunk.length} group(s) refused: ${res.status} ` +
+            `content-type=${contentType || 'unknown'} body=${(await res.text()).slice(0, 200)}`
+        );
+        return;
       }
-      console.warn(`[History] batch fetch failed (${res.status}), falling back to sequential`);
+      const data = (await res.json()) as {
+        histories?: Record<string, import('$lib/mls-client/historyTypes').HistoryStreamRow[]>;
+        heads?: Record<string, string>;
+      };
+      for (const [groupId, rows] of Object.entries(data.histories ?? {})) {
+        out.set(groupId, { rows: rows ?? [], head: data.heads?.[groupId] });
+      }
     } catch (e) {
-      console.warn('[History] batch fetch error, falling back to sequential:', e);
+      console.error(`[History] batch of ${chunk.length} group(s) could not be sent:`, e);
     }
-
-    for (const g of groups) {
-      out.set(g.groupId, await this.fetchHistory(g.groupId, g.afterStreamId));
-    }
-    return out;
   }
 
   /** Renames a group on the server. Throws on non-2xx. */

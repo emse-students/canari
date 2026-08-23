@@ -94,7 +94,7 @@ WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
 | POST | `/api/mls/welcome` | Deliver Welcome to device |
 | POST | `/api/mls/welcome-request` | Broadcast welcome_request signal |
 | DELETE | `/api/mls/welcome-request/group/:groupId` | Clear pending welcome_request queue |
-| POST | `/api/mls/history/batch` | Get message history batch |
+| POST | `/api/mls/history/batch` | Get message history batch, at most 50 groups ([why the cap is a contract](../services/chat-delivery.md#messaging)) |
 | GET | `/api/mls/history/:groupId` | Incremental Redis Stream history |
 | GET | `/api/mls/messages/:userId/:deviceId` | Fetch queued messages |
 | POST | `/api/mls/messages/ack` | Acknowledge received messages |

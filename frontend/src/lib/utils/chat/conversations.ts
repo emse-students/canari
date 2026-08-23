@@ -13,6 +13,7 @@ import {
   type MlsReplayCommit,
 } from './history';
 import { withMlsBulkIngest } from '$lib/mls-client/mlsBulkIngest';
+import { HISTORY_BATCH_MAX_GROUPS } from '$lib/mls-client/mlsDeliveryApi';
 import { buildUserGroupSyncIndex } from './groupSyncEligibility';
 import { migrateFromLocalStorage } from '../migration';
 import type { IMlsService } from '$lib/mlsService';
@@ -747,7 +748,13 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
             afterStreamId: readHistoryStreamCursor(ctx.userId, meta.id),
           }))
         );
-        ctx.log(`[CATCHUP] batch history: ${batchFirstPages.size} group(s) in 1 request`);
+        // Naming the request count, not "1 request": the list is chunked at
+        // HISTORY_BATCH_MAX_GROUPS, and a gap between asked and primed is a refused chunk.
+        const requests = Math.ceil(replayMetas.length / HISTORY_BATCH_MAX_GROUPS);
+        ctx.log(
+          `[CATCHUP] batch history: ${batchFirstPages.size}/${replayMetas.length} group(s) ` +
+            `primed in ${requests} request(s)`
+        );
       } catch (e) {
         ctx.log(
           `[WARN] batch history failed: ${e instanceof Error ? e.message : String(e)} — sequential fallback`

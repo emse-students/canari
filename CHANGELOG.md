@@ -149,6 +149,23 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **THE BATCH CATCH-UP HAD BEEN DEAD FOR EVERY CLIENT PAST FIFTY CONVERSATIONS, and the fallback is
+  why nobody noticed.** `POST /api/mls/history/batch` exists to turn one login catch-up into one
+  round-trip; it refuses more than 50 groups. The client sent its WHOLE conversation list, unchunked,
+  so past fifty it sent a request that could only ever be refused - and on the 400 it quietly fetched
+  every group sequentially, which is precisely the cost the route removes. Measured on production
+  2026-08-24 from a campaign profile: 110 conversations, one 400, 110 requests, and the only report
+  was a `console.warn` carrying a bare status - which cannot tell a refusal from an unreachable
+  server, and is the reason the message never got read. Found by the cross-client harness, which
+  flagged `POST /api/mls/history/batch -> 400` on GRP-4 and GRP-7 in all five passes.
+
+  The client now chunks at `HISTORY_BATCH_MAX_GROUPS`, mirrored from the server's constant of the
+  same name and pinned by a test on each side that names the file the other lives in - a limit that
+  is on neither the wire nor the client is one the client must be TOLD, never one it discovers by
+  being refused. The sequential re-fetch is deleted: a refused chunk leaves its groups unprimed and
+  is logged at a level that accuses, carrying the server's own words, and the replay reads those
+  first pages itself - the single path every group took before the route existed.
+
 - **THE FOURTH PATH TO AN EVICTED DEVICE, and the one the other three hid.** The receive path was
   typed and classified before the generic arm - but only for a frame at OUR epoch. The epoch-gap
   fast-fail sits above the decryption that reveals the eviction and returns first for anything ahead

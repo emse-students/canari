@@ -208,7 +208,14 @@ export interface HistoryBatchResponse {
 const HISTORY_FULL_PAGE_LIMIT = 1000;
 /** Smaller default when `after` is set (incremental catch-up). */
 const HISTORY_INCREMENTAL_DEFAULT_LIMIT = 200;
-/** Max groups per batch request (guards payload size and Redis fan-out). */
+/**
+ * Max groups per batch request (guards payload size and Redis fan-out).
+ *
+ * MIRRORED BY `HISTORY_BATCH_MAX_GROUPS` in `frontend/src/lib/mls-client/mlsDeliveryApi.ts`, which
+ * is the size the client chunks its catch-up at. Nothing on the wire negotiates it, so changing
+ * this number without changing that one puts every client past the cap back to one request per
+ * conversation - which is what it did until 2026-08-24. `messaging.history-bound.spec.ts` pins it.
+ */
 const HISTORY_BATCH_MAX_GROUPS = 50;
 
 export interface AckMessagesBody {

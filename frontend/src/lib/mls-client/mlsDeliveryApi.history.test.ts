@@ -1,4 +1,4 @@
-import { MlsDeliveryApi } from './mlsDeliveryApi';
+import { HISTORY_BATCH_MAX_GROUPS, MlsDeliveryApi } from './mlsDeliveryApi';
 
 describe('MlsDeliveryApi.fetchHistoryBatch', () => {
   it('maps batch response histories to a Map', async () => {
@@ -55,25 +55,89 @@ describe('MlsDeliveryApi.fetchHistoryBatch', () => {
     expect(out.get('g2')?.head).toBeUndefined();
   });
 
-  it('falls back to sequential fetchHistory when batch fails', async () => {
-    const fetchFn = vi
-      .fn()
-      .mockResolvedValueOnce(new Response('', { status: 503 }))
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify([{ sender_id: 'u1', content: 'x', timestamp: 't' }]), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        })
+  // THE DEFECT THIS PINS: the whole list used to go in one request, so a client with more
+  // conversations than the server's cap sent something that could only ever be refused. Measured on
+  // production with 110 conversations - one 400, then 110 sequential fetches, which is the cost the
+  // route exists to avoid. The chunk size is a FACT of the protocol, not something to discover.
+  it('never asks for more groups than the server accepts', async () => {
+    const bodies: number[] = [];
+    const fetchFn = vi.fn().mockImplementation((_url: unknown, init: { body: string }) => {
+      const sent = JSON.parse(init.body) as { groups: { groupId: string }[] };
+      bodies.push(sent.groups.length);
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            histories: Object.fromEntries(sent.groups.map((g) => [g.groupId, []])),
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
       );
+    });
     const api = new MlsDeliveryApi({
       historyUrl: 'https://example.test',
       getToken: async () => 'token',
       fetchImpl: fetchFn,
     });
 
-    const out = await api.fetchHistoryBatch([{ groupId: 'g1' }]);
-    expect(fetchFn).toHaveBeenCalledTimes(2);
-    expect(out.get('g1')?.rows).toHaveLength(1);
+    const groups = Array.from({ length: 110 }, (_, i) => ({ groupId: `g${i}` }));
+    const out = await api.fetchHistoryBatch(groups);
+
+    expect(bodies).toEqual([HISTORY_BATCH_MAX_GROUPS, HISTORY_BATCH_MAX_GROUPS, 10]);
+    // Chunking is invisible to the caller: every group asked for is a group primed.
+    expect(out.size).toBe(110);
+  });
+
+  it('sends nothing at all for an empty list', async () => {
+    const fetchFn = vi.fn();
+    const api = new MlsDeliveryApi({
+      historyUrl: 'https://example.test',
+      getToken: async () => 'token',
+      fetchImpl: fetchFn,
+    });
+
+    expect((await api.fetchHistoryBatch([])).size).toBe(0);
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  // A refused chunk must not become a second way of fetching a page. The group arrives at the
+  // replay unprimed and the replay reads its own first page - the path every group took before
+  // the batch route existed - so a retry here would only hide the refusal.
+  it('leaves a refused chunk out of the map instead of re-fetching it', async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response('{"message":"nope"}', { status: 400 }));
+    const api = new MlsDeliveryApi({
+      historyUrl: 'https://example.test',
+      getToken: async () => 'token',
+      fetchImpl: fetchFn,
+    });
+
+    const out = await api.fetchHistoryBatch([{ groupId: 'g1' }, { groupId: 'g2' }]);
+
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(out.size).toBe(0);
+  });
+
+  // A bare status cannot tell a refusal from an unreachable server, and it was a bare status that
+  // let the cap go unnoticed for as long as it did.
+  it('accuses, with the server own words, when a chunk is refused', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const fetchFn = vi.fn().mockResolvedValue(
+      new Response('{"message":"At most 50 groups per batch"}', {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+    const api = new MlsDeliveryApi({
+      historyUrl: 'https://example.test',
+      getToken: async () => 'token',
+      fetchImpl: fetchFn,
+    });
+
+    await api.fetchHistoryBatch([{ groupId: 'g1' }]);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(String(spy.mock.calls[0][0])).toContain('400');
+    expect(String(spy.mock.calls[0][0])).toContain('At most 50 groups per batch');
+    spy.mockRestore();
   });
 });
 

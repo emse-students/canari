@@ -34,6 +34,8 @@ describe('MessagingService history - the walk is bounded by the head', () => {
     xrevrange: jest.Mock;
     del: jest.Mock;
   };
+  /** Held so a case can say which groups exist - the orphan purge answers first when they do not. */
+  let groupRepo: ReturnType<typeof emptyRepo> & { find: jest.Mock };
 
   const GROUP = 'group-1';
   const ADMIN = 'true';
@@ -60,7 +62,7 @@ describe('MessagingService history - the walk is bounded by the head', () => {
       del: jest.fn(),
     };
 
-    const groupRepo = {
+    groupRepo = {
       ...emptyRepo(),
       // The group must exist, or the orphan purge answers before anything reads the stream.
       find: jest.fn().mockResolvedValue([{ id: GROUP }]),
@@ -154,5 +156,31 @@ describe('MessagingService history - the walk is bounded by the head', () => {
 
     expect(histories[GROUP]).toEqual([]);
     expect(heads[GROUP]).toBe('7-0');
+  });
+
+  /**
+   * THE CAP IS A CONTRACT, AND THE CLIENT HOLDS THE OTHER HALF OF IT.
+   *
+   * `HISTORY_BATCH_MAX_GROUPS` in `frontend/src/lib/mls-client/mlsDeliveryApi.ts` is the size the
+   * client chunks at, and nothing on the wire tells it what that size should be. These two cases
+   * pin the number here so lowering it is a deliberate act that breaks a test naming the file that
+   * has to change with it - the client learning the cap by being REFUSED is what this cost once:
+   * one 400 and one request per conversation, for every client past fifty of them.
+   */
+  it('accepts a batch of exactly the size the client chunks at', async () => {
+    const groups = Array.from({ length: 50 }, (_, i) => ({ groupId: `g${i}` }));
+    groupRepo.find.mockResolvedValue(groups.map((g) => ({ id: g.groupId })));
+
+    const { histories } = await service.getHistoryBatch(groups, undefined, ADMIN);
+
+    expect(Object.keys(histories)).toHaveLength(50);
+  });
+
+  it('refuses one more than that, and says how many it takes', async () => {
+    const groups = Array.from({ length: 51 }, (_, i) => ({ groupId: `g${i}` }));
+
+    await expect(service.getHistoryBatch(groups, undefined, ADMIN)).rejects.toThrow(
+      'At most 50 groups per batch'
+    );
   });
 });

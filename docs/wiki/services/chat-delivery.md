@@ -586,7 +586,7 @@ All routes are under `/api/mls/*` or `/api/calls/*` and require `X-User-Id` (inj
 | POST | `/api/mls/group-info/:groupId` | Refresh stored GroupInfo (membership-gated, monotonic) |
 | POST | `/api/mls/welcome` | Deliver Welcome message to a device |
 | POST | `/api/mls/welcome-request` | Broadcast welcome_request signal |
-| POST | `/api/mls/history/batch` | Get message history batch (response carries `heads`, one stream head per group) |
+| POST | `/api/mls/history/batch` | Get message history batch, **at most 50 groups** (response carries `heads`, one stream head per group) |
 | GET | `/api/mls/history/:groupId?after=&until=&limit=` | Incremental Redis Stream history; head in `X-History-Head` |
 | GET | `/api/mls/messages/:userId/:deviceId` | Fetch queued messages for device |
 | POST | `/api/mls/messages/ack` | Acknowledge received messages |
@@ -600,6 +600,18 @@ queue is about to hand over and both paths present the same ciphertext to MLS - 
 [history-reconciliation](../protocols/history-reconciliation.md#the-exchange). A malformed `after` or
 `until` is dropped rather than rejected: a client that has lost its place gets the unbounded read it
 would have had with no cursor, not a 500 it cannot act on.
+
+**The batch cap is a contract with the client, and it is not on the wire.** `history/batch` refuses
+more than `HISTORY_BATCH_MAX_GROUPS` (50) with a 400, and the client chunks at a constant of the same
+name in `frontend/src/lib/mls-client/mlsDeliveryApi.ts`. Neither side asks the other what the number
+is, so the two are pinned by `messaging.history-bound.spec.ts` on this side and by
+`mlsDeliveryApi.history.test.ts` on the other, each naming the file that has to change with it.
+Until 2026-08-24 the client sent its whole conversation list in one request and *learned the cap by
+being refused*: measured on production with 110 conversations, that was one 400 followed by a
+sequential re-fetch of all 110 - exactly the cost the route exists to remove, paid by every client
+past fifty conversations, and reported only as a `console.warn` carrying the bare status. A chunk
+refused now leaves its groups unprimed and says so with the server's own words; the replay reads
+those groups' first pages itself, which is the path every group took before the route existed.
 
 ### Invitations / device sync
 
