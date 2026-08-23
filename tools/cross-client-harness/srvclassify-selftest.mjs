@@ -344,6 +344,83 @@ const pushSplitOk =
 if (!pushSplitOk) failures++;
 console.log(`${pushSplitOk ? 'ok  ' : 'FAIL'} notable      the FCM fallback is notable, a missing token is not`);
 
+// THE INVITE-AND-JOIN FAMILY, seventeen unexplained lines on GRP's window of 2026-08-23 and the
+// first phase in the campaign to build a group by LINK. Every pair below is one tag whose two
+// spellings must land in opposite buckets - which is the only thing that can go wrong here, and it
+// cannot be seen on a live window: a swallowed refusal just makes the pile SMALLER.
+const invite = [
+  // The capability is minted, and nothing has changed for anybody yet.
+  ['an invite created is not an invite accepted', `${NEST}[InvitationsController] [GROUP_INVITE] created group=00000000-0000-4000-8000-000000000001 by=aaaaaaaa`, 'benign'],
+  // Somebody became a member. This is the line that changes who can read the group.
+  ['a join admits a person and says how many devices came with them', `${NEST}[InvitationsController] [GROUP_INVITE] accepted group=00000000-0000-4000-8000-000000000001 user=aaaaaaaa devices=2`, 'notable'],
+  // The landing page resolving a token to a group name, anonymous and read-only, at DEBUG.
+  ['an anonymous invite preview is a read', `[Nest] 1  - 08/14/2026, 12:43:51 PM   DEBUG [InternalController] internal group invite preview token=fVcgu-Y-`, 'benign'],
+  // The last step of a join...
+  ['a membership going active is the end of a join', `${NEST}[MessagingService] [MEMBERSHIP_ACTIVE] group=00000000-0000-4000-8000-000000000001 device=aaaaaaaa:web-aaaaaaaa-msglwqh6-vegy`, 'benign'],
+  // ...and the branch twenty lines above it in the same function, which wears the SAME tag and means
+  // a device that believes it joined will never be routed to.
+  ['a membership REFUSED is not a membership active', `${NEST}[MessagingService] [MEMBERSHIP_ACTIVE] REFUSED group=00000000-0000-4000-8000-000000000001 device=aaaaaaaa:web-aaaaaaaa-msglwqh6-vegy reason=no_key_package`, 'notable'],
+  // A membership destroyed. Both counts at zero is a removal that found nothing, not a quiet success.
+  ['a member removed is reported whatever the counts say', `${NEST}[MembersController] [REMOVE_MEMBER] group=00000000-0000-4000-8000-000000000001 user=aaaaaaaa redisRemoved=0 deviceMembershipsDeleted=0`, 'notable'],
+  // Rare, deliberate, and visible to every member at once.
+  ['a rename is a change every member sees', `${NEST}[GroupsController] [RENAME_GROUP] group=00000000-0000-4000-8000-000000000001 newName="a name"`, 'notable'],
+  // THE WELCOME PROTOCOL: the ask and the per-member walk are chatter...
+  ['a welcome request arriving is not an outcome', `${NEST}[MessagingService] [WELCOME_REQ][welcome-req-81fb5450] START group=00000000-0000-4000-8000-000000000001 requester=aaaaaaaa:web-aaaaaaaa-msglwqh6-vegy members=3`, 'benign'],
+  ['a candidate being weighed is not an outcome', `${NEST}[MessagingService] [WELCOME_REQ][welcome-req-81fb5450] Candidate=aaaaaaaa:web-aaaaaaaa-msglwqh6-vegy online=false`, 'benign'],
+  // ...and the four outcomes are not. `NO_PEER_ONLINE` is a device that cannot decrypt anything
+  // until somebody comes back; `REDIS_EMPTY`/`DB_FALLBACK` are the primary path having failed.
+  ['a welcome forwarded is an outcome', `${NEST}[MessagingService] [WELCOME_REQ][welcome-req-81fb5450] FORWARDED target=bbbbbbbb:web-bbbbbbbb-msglwqh6-vegy group=00000000-0000-4000-8000-000000000001 requester=aaaaaaaa:web-aaaaaaaa-msglwqh6-vegy`, 'notable'],
+  ['a welcome nobody can answer is an outcome', `${NEST}[MessagingService] [WELCOME_REQ][welcome-req-81fb5450] NO_PEER_ONLINE group=00000000-0000-4000-8000-000000000001 requester=aaaaaaaa:web-aaaaaaaa-msglwqh6-vegy - stored in Redis, FCM sent to peers`, 'notable'],
+  ['the routing cache answering nothing is a fallback, not a path', `${NEST}[MessagingService] [WELCOME_REQ][welcome-req-81fb5450] REDIS_EMPTY - falling back to DB for group=00000000-0000-4000-8000-000000000001`, 'notable'],
+];
+for (const [name, line, want] of invite) {
+  const got = matches(NOTABLE_RULES, line) ? 'notable' : matches(BENIGN_RULES, line) ? 'benign' : 'unexplained';
+  check(`${want.padEnd(11)}  ${name}`, got, want);
+}
+
+// AND THE ONE THIS FAMILY DELIBERATELY LEAVES ALONE. A member key that does not parse is corruption
+// in the routing set itself; `unexplained` breaks `clean`, which is exactly where a run should stop.
+const malformed = `${NEST}[MessagingService] [WELCOME_REQ][welcome-req-81fb5450] Malformed group member entry='nonsense' group=00000000-0000-4000-8000-000000000001`;
+const malformedOk = !matches(BENIGN_RULES, malformed) && !matches(NOTABLE_RULES, malformed);
+if (!malformedOk) failures++;
+console.log(`${malformedOk ? 'ok  ' : 'FAIL'} unexplained a malformed member entry is forgiven by nothing`);
+
+// THE NO-TOKEN RULE IS KEYED ON ITS LOG SITE, NOT ON ONE CALLER - and the pin that survives it.
+// `messaging.service.ts:414` is reached by `send-`, `welcome-send-` and `reactivate-`; the rule
+// named `send-` alone, so the same decision about the same device read benign from one caller and
+// unexplained from another. Widening the prefix must not widen `device=(web|ios)-`: a WEB device
+// has no FCM token by construction, an ANDROID one that has none is a phone nobody can reach.
+const welcomeNoToken = `${NEST}[MessagingService] [PUSH_SEND][welcome-send-81fb5450] No push token for user=aaaaaaaa device=web-aaaaaaaa-msglwqh6-vegy`;
+const androidNoToken = `${NEST}[MessagingService] [PUSH_SEND][welcome-send-81fb5450] No push token for user=aaaaaaaa device=tauri-aaaaaaaa-msglwqh6-vegy`;
+const prefixOk =
+  matches(BENIGN_RULES, welcomeNoToken) &&
+  !matches(BENIGN_RULES, androidNoToken) &&
+  !matches(NOTABLE_RULES, androidNoToken);
+if (!prefixOk) failures++;
+console.log(`${prefixOk ? 'ok  ' : 'FAIL'} benign       any caller may lack a web token, no android device may`);
+
+// THE REST OF A BOOT, and the third-party warning that rides in with it. The route table was
+// classified from a window that started mid-deploy; the deploy of 2026-08-24 landed at the top of
+// one instead and the same single boot arrived with six shapes nobody had seen.
+const boot = [
+  ['nest announcing itself', `${NEST}[NestFactory] Starting Nest application...`, 'benign'],
+  ['a module finishing its wiring', `${NEST}[InstanceLoader] TypeOrmCoreModule dependencies initialized +38ms`, 'benign'],
+  ['the kafka consumer coming up', `${NEST}[ServerKafka] INFO [Consumer] Starting {"timestamp":"2026-08-23T23:20:57.602Z","logger":"kafkajs","groupId":"chat-delivery-consumer-server"}`, 'benign'],
+  // kafkajs 2.2.4 schedules its throttle check at `this.throttledUntil - Date.now()` with
+  // `throttledUntil = -1`, so the delay is minus the wall clock. Three lines, once per process.
+  ["kafkajs's negative throttle timer", '(node:1) TimeoutNegativeWarning: -1787527257599 is a negative number.', 'benign'],
+  ['the clamp it reports', 'Timeout duration was set to 1.', 'benign'],
+  ['the hint Node prints after it', '(Use `node --trace-warnings ...` to show where the warning was created)', 'benign'],
+  // AND THE ONE THAT MUST NOT BE FORGIVEN WITH IT. The line does not carry its origin - Node prints
+  // the same sentence whoever computed the delay - so the magnitude is the only discriminator there
+  // is. A timer of ours that fires late is out by seconds, never by fifty-six years.
+  ['a negative timeout that is not the wall clock', '(node:1) TimeoutNegativeWarning: -4200 is a negative number.', 'unexplained'],
+];
+for (const [name, line, want] of boot) {
+  const got = matches(NOTABLE_RULES, line) ? 'notable' : matches(BENIGN_RULES, line) ? 'benign' : 'unexplained';
+  check(`${want.padEnd(11)}  ${name}`, got, want);
+}
+
 // And a line nobody has classified must match nothing at all, or `unexplained` can never fill.
 const stranger = `${NEST}[SomethingService] a sentence no rule has ever seen`;
 const strangerOk =

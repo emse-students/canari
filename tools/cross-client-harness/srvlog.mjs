@@ -99,7 +99,18 @@ const BENIGN = [
   // NOTABLE twin below had gone blind in the same edit, which is the half that matters: a push that
   // FAILED would have been filed as unexplained instead of as the thing a reader looks for.
   /\[InternalController\] \[INTERNAL_PUSH\] type=\S+ user=\S+ sent=\d+ failed=0\b/,
-  /\[PUSH_SEND\]\[send-[0-9a-f]+\] No push token for user=\S+ device=(web|ios)-/,
+  // ONE LOG SITE, SEVERAL CALLERS, AND A RULE THAT KNEW ONLY ONE OF THEM. The line is written once,
+  // at `messaging.service.ts:414`, on a push path `makeTraceId` labels after whoever entered it -
+  // `send`, `welcome-send`, `reactivate`. This pattern named `send-` alone, so the SAME no-token
+  // decision about the SAME kind of device read as benign when a message queued it and as
+  // unexplained when a Welcome did. One line of GRP's window on 2026-08-23 was exactly that, a
+  // `welcome-send-`. Keyed on the site's own shape now, which is what makes it caller-proof.
+  //
+  // `device=(web|ios)-` STAYS PINNED, and it is the entire discrimination this rule makes. A web
+  // device has no FCM token by construction and no iOS build here has registered one; an ANDROID
+  // device with no push token is a phone that cannot be reached, which is the finding COMM exists to
+  // make. Widening the prefix must never widen that.
+  /\[PUSH_SEND\]\[[\w-]+-[0-9a-f]+\] No push token for user=\S+ device=(web|ios)-/,
   // THE PER-DEVICE HALF OF THE SAME FAN-OUT, and it is LOAD-BEARING rather than merely benign:
   // `comm14.mjs` reads these lines as its instrument - they are how a check knows a push decision
   // was taken and for whom - so they may not be quietened, only classified. One per device that
@@ -242,6 +253,36 @@ const BENIGN = [
   /\[MembersController\] \[ADD_MEMBER\]\[add-member-[0-9a-f]+\] (START|DONE) group=/,
   /\[MessagingService\] \[WELCOME\]\[welcome-send-[0-9a-f]+\] (START|QUEUED|DONE) /,
   /\[InvitationsController\] \[INVITATION_STATUS\] device=\S+ user=\S+ group=\S+ newStatus=(active|pending)/,
+  // THE INVITE-LINK HALF OF THE SAME LIFECYCLE, unclassified until now because no phase had ever
+  // built a group by LINK: GRP is the first, and these were six of its seventeen unexplained lines
+  // on 2026-08-23. Minting an invite changes nothing for anybody - it creates a capability and waits
+  // - and the preview is the invitation landing page resolving that token to a group name so a
+  // visitor can see what they were invited to. Anonymous, read-only, at DEBUG, and the token is
+  // already truncated to eight characters where it is logged.
+  //
+  // `accepted` IS DELIBERATELY NOT HERE. That one is a person becoming a member, and it sits in
+  // NOTABLE with the rest of the membership changes.
+  /\[InvitationsController\] \[GROUP_INVITE\] created group=\S+ by=\S+$/,
+  /\[InternalController\] internal group invite preview token=\S+$/,
+  // A DEVICE'S MEMBERSHIP GOING ACTIVE - the last step of every join, one line per device. The check
+  // that caused it asserts the outcome directly: a device that is not addressable fails on its own
+  // post-condition, never on a missing log line.
+  //
+  // `\[MEMBERSHIP_ACTIVE\] group=` IS THE PIN, and the `$` with it. Twenty lines up the same tag
+  // writes `[MEMBERSHIP_ACTIVE] REFUSED group=... reason=...` - identical prefix, opposite outcome -
+  // so a rule anchored on the tag alone would have buried the refusal in here. It is in NOTABLE.
+  /\[MessagingService\] \[MEMBERSHIP_ACTIVE\] group=\S+ device=\S+$/,
+  // THE PER-REQUEST CHATTER OF THE WELCOME PROTOCOL, whose OUTCOMES are all in NOTABLE below. A
+  // device that has just been added asks the group for the Welcome that lets it decrypt anything;
+  // the service prints the ask, then walks the member list one line at a time. `HISTORY_REQ`, its
+  // twin, has neither line - it logs outcomes only - which is why this family needed rules of its
+  // own instead of the ones already written next door.
+  //
+  // `Candidate=` IS LOAD-BEARING RATHER THAN MERELY BENIGN, in the sense the SOCIAL_PUSH fan-out
+  // above is: it is the evidence `NO_PEER_ONLINE` rests on, the per-member `online=` saying whether
+  // anybody COULD have answered. Classified so a window stays readable, never quietened.
+  /\[WELCOME_REQ\]\[welcome-req-[0-9a-f]+\] START group=\S+ requester=\S+ members=\d+$/,
+  /\[WELCOME_REQ\]\[welcome-req-[0-9a-f]+\] Candidate=\S+ online=(true|false)$/,
   // A SEND WITH NOBODY TO SEND TO, which during an invite is the ordinary path: the group exists and
   // the invitee has not joined it yet, so there is no other device to queue for. Benign only in THIS
   // spelling - the sibling sentence, every recipient offline on a transport frame, is a rendezvous
@@ -283,6 +324,46 @@ const BENIGN = [
   /\[RoutesResolver\] \w+Controller \{[^}]*\}:/,
   /\[NestMicroservice\] Nest microservice successfully started/,
   /\[ServerKafka\] INFO \[ConsumerGroup\] Consumer has joined the group /,
+  // THE THREE BOOT LINES THAT COME BEFORE THE ROUTE TABLE, and they were missed for the reason the
+  // block above was written at all: the window that produced that rule started mid-deploy, so Nest's
+  // FIRST lines were outside it and only its route table was inside. The deploy of 2026-08-24 landed
+  // at the top of a window instead, and the same one boot arrived with six more shapes. Same
+  // argument, unchanged: `Nest application successfully started` in NOTABLE is how a restart under a
+  // check is SEEN, and none of these says anything the boot has not already said once.
+  /\[NestFactory\] Starting Nest application\.\.\.$/,
+  /\[InstanceLoader\] \w+ dependencies initialized \+\d+ms$/,
+  /\[ServerKafka\] INFO \[Consumer\] Starting \{/,
+  // A BUG IN KAFKAJS, READ IN KAFKAJS, AND NOT FIXABLE FROM HERE - one Node warning per boot, in
+  // three lines because that is how `process.emitWarning` prints.
+  //
+  //     (node:1) TimeoutNegativeWarning: -1787527257599 is a negative number.
+  //     Timeout duration was set to 1.
+  //
+  // ATTRIBUTED RATHER THAN GUESSED, and the arithmetic is the attribution. `requestQueue/index.js`
+  // initialises `this.throttledUntil = -1` (l.57) and schedules its throttle check at
+  // `this.throttledUntil - Date.now()` (l.312); with no request pending, nothing clamps it, so the
+  // delay IS minus the wall clock. -1787527257599 is `-1 - 1787527257598`, and 1787527257598 is
+  // 2026-08-23T23:20:57Z - the second the line was printed. Nothing else could produce that number.
+  //
+  // Harmless: Node floors the delay at 1 ms, the callback runs `checkPendingRequests()` against an
+  // empty queue, and `TimeoutNegativeWarning` is emitted ONCE PER PROCESS by Node itself, so it can
+  // never flood a window. Not fixable either - kafkajs 2.2.4 is the project's last release and has
+  // been unmaintained since 2023, so there is no version to move to. Classified here for the reason
+  // the AirControl 404 above is: the fix is not in this repository, and leaving it would make every
+  // window straddling a deploy dirty for ever.
+  //
+  // THE MAGNITUDE IS THE PIN, because the line does not carry its origin. Node prints the same
+  // sentence whoever computed the delay, so a rule on the sentence alone would forgive a negative
+  // timeout of OURS - and the only reason this one is forgiven is that somebody read where it came
+  // from. What cannot be faked is the number: `-1 - Date.now()` is minus the wall clock, thirteen
+  // digits opening `17` today and `18` from 2027-01-15. Our own code computing a delay late would be
+  // out by seconds or minutes, never by fifty-six years, so it will not match and will be read.
+  //
+  // It stops matching around 2033, when the epoch grows a digit. That is the correct failure: the
+  // line returns to `unexplained` and somebody reads it again.
+  /^\(node:\d+\) TimeoutNegativeWarning: -1[78]\d{11} is a negative number\.$/,
+  /^Timeout duration was set to 1\.$/,
+  /^\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)$/,
   // THE DISMISSAL NO-OPS, whose loud siblings are in NOTABLE above. Asking that a group not be
   // dismissed when it never was is the ordinary path through every re-add, and asking twice from two
   // devices is what one re-add looks like on an account with two. Nothing changed, so nothing is
@@ -370,6 +451,41 @@ const NOTABLE = [
   // was landing in `unexplained` instead of the bucket a reader looks at. `NO_PEER_ONLINE` is the
   // one that matters most: a device asked to be repaired and nobody could answer.
   /\[HISTORY_REQ\]\[history-req-[0-9a-f]+\] (FORWARDED|NO_PEER_ONLINE|DELIVERED|EXPIRED)/,
+  // THE OTHER HALF OF THE SAME PROTOCOL, and the same near-miss one more time. The generic rule at
+  // the top of this list matches `welcome_request` with an underscore - the payload type - while the
+  // service tags its lines `[WELCOME_REQ]`, so every forwarded and every unanswerable ask for a
+  // Welcome was landing in `unexplained` for exactly as long as `HISTORY_REQ` did. Same verbs and
+  // the same reason: `NO_PEER_ONLINE` is a device asking to be let into a group with nobody able to
+  // answer, and until someone comes back it cannot decrypt a single message.
+  //
+  // THE FALLBACK PAIR IS HERE ON PURPOSE AND IS NOT ROUTINE. `REDIS_EMPTY` says the routing cache
+  // answered nothing for a group that has members, and `DB_FALLBACK` is the repair that follows.
+  // Reaching either means the primary path failed, so they are reported every time rather than
+  // filed away as a path - neither appeared in the window that prompted these rules, and both are
+  // classified from the source rather than from a sighting.
+  //
+  // `Malformed group member entry=` IS DELIBERATELY LEFT UNCLASSIFIED. A member key that does not
+  // parse is corruption in the routing set itself, and `unexplained` - which breaks `clean` - is
+  // precisely where a run should stop on it.
+  /\[WELCOME_REQ\]\[welcome-req-[0-9a-f]+\] (FORWARDED|NO_PEER_ONLINE|REDIS_EMPTY|DB_FALLBACK)/,
+  // A MEMBERSHIP BEING DESTROYED, and the two counts that say what the removal actually reached.
+  // Unlike the dismissal no-ops in BENIGN, this is never a by-product of another path: somebody
+  // asked for a person to be taken out of a group. Both counts at zero is not a quiet success
+  // either - it is a removal that found nothing to remove - so the whole shape is reported and no
+  // part of it is pinned.
+  /\[MembersController\] \[REMOVE_MEMBER\] group=\S+ user=\S+ redisRemoved=\d+ deviceMembershipsDeleted=\d+/,
+  // THE MOMENT A PERSON BECOMES A MEMBER, the only line in the invite family that changes who can
+  // read a group. `devices=` counts the devices brought in with them, and zero is the shape worth
+  // waiting for: a join that admitted nobody.
+  /\[InvitationsController\] \[GROUP_INVITE\] accepted group=\S+ user=\S+ devices=\d+/,
+  // A DEVICE REFUSED ADDRESSABILITY - the opposite outcome to the BENIGN line it shares a tag with.
+  // It carries `reason=`, and it means a device that believes it joined will not be routed to.
+  /\[MessagingService\] \[MEMBERSHIP_ACTIVE\] REFUSED group=\S+ device=\S+ reason=/,
+  // A GROUP BEING RENAMED - rare, deliberate, and visible to every member at once. Cheap to report,
+  // and the kind of thing a reader asking what changed under their run wants named rather than
+  // inferred. The new name is user content and is logged in full; `logs/` is gitignored, which is
+  // as far as it travels.
+  /\[GroupsController\] \[RENAME_GROUP\] group=\S+ newName=/,
   // A send deliberately not persisted because its recipient is offline and its payload would go
   // stale before they returned - the rendezvous TTL. Correct by design, never routine.
   /TRANSPORT_SKIPPED_OFFLINE/,
