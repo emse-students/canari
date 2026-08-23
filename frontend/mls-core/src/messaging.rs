@@ -309,6 +309,27 @@ impl MlsManager {
                     )));
                 }
 
+                // A FRAME FOR A GROUP WE HAVE BEEN REMOVED FROM. Not a decryption failure and not a
+                // broken state: the Remove commit retired our leaf, and everything still arriving
+                // was either in flight or routed by a server registry the removal has not finished
+                // cleaning. There is no plaintext to recover, and nothing to repair.
+                //
+                // It is classified here, before the generic arm, for the reason the arms above it
+                // exist: carried as an unclassified `Process error:` it reached the frontend as
+                // "out of sync", which asked to be re-added to a group we were deliberately removed
+                // from, and then requested that group's commits and learnt from a 403 what this
+                // very frame already proved. The caller ACKs; only the diagnosis changes.
+                if !group.is_active() {
+                    log::warn!(
+                        "Frame for group {} arrived after this device was evicted - ACKed and \
+                         dropped, no repair is owed: msg_epoch={} group_epoch={}",
+                        group_id,
+                        msg_epoch,
+                        group_epoch
+                    );
+                    return Err(MlsError::Evicted(group_id.to_string()));
+                }
+
                 log::error!(
                     "MLS decryption failed: group={} msg_epoch={} group_epoch={} err={:?}",
                     group_id,

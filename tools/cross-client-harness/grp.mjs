@@ -55,7 +55,7 @@ import { addMember, openGroupSettings } from './addmember.mjs';
 import { closeOverlays, createGroup, deleteGroup, openGroup } from './groupnav.mjs';
 import { armCut, cutHard } from './net.mjs';
 import { mark, record, recordObserved } from './results.mjs';
-import { ignoringOfflineCut, report, watch } from './watch.mjs';
+import { awaitLine, consoleLines, ignoringOfflineCut, report, watch } from './watch.mjs';
 import { OWNER_NAME, PEER_NAME, PORTS } from './names.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -520,6 +520,14 @@ async function grp2() {
  *
  * The negative is a deadline, which is the only honest way to assert an absence: 30 s after a send
  * that a live member sees in about 120 ms.
+ *
+ * SINCE 2026-08-23 IT ALSO ASSERTS WHAT THE REMOVED DEVICE DOES ABOUT IT, which is where this row
+ * found a real defect on its first armed run. The removed client used to treat a legitimate removal
+ * as a broken state: it asked to be re-added, requested the group's commits, and learnt from a 403
+ * what the Remove commit had already told it. Fixed by reading membership off the commit
+ * (`is_group_active`), so the two things asserted here are that the eviction WAS learnt that way,
+ * and that nothing asked to come back. The second is the load-bearing one - a client that says
+ * `[EVICT]` and then re-adds itself anyway would satisfy the first alone.
  */
 async function grp3() {
   const [w1, o1] = await observed(W1, 'GRP-W1');
@@ -559,12 +567,27 @@ async function grp3() {
       const peerStillHasBefore = Number(await countMessage(w2, before)) > 0;
       const peerGotAfter = Number(await countMessage(w2, after)) > 0;
 
+      // WHAT THE REMOVED DEVICE DID ABOUT IT. Read from W2's own log, before `recordObserved`
+      // drains the window - `report` is the classifier and a verdict must never be computed over a
+      // projection of its own evidence (see `consoleLines`).
+      //
+      // The positive has a deadline for the same reason the negative above does: the commit travels
+      // after the click that made it, so reading the instant `removeMember` returns is a race.
+      const evictLine = await awaitLine(o2.cx, '[EVICT] Removed from', 15000);
+      // The negative needs no deadline of its own: it is read after that window AND after the
+      // 30 s negative window, so anything a removal was going to provoke has had time to appear.
+      const cameBack = consoleLines(o2.cx).filter((l) =>
+        /Recovery attempt|welcome_request|→ re-add|-> re-add/.test(l)
+      );
+
       const ok =
         both.count === 2 &&
         afterRemoval.count === 1 &&
         peerReadBefore &&
         peerStillHasBefore &&
-        !peerGotAfter;
+        !peerGotAfter &&
+        evictLine !== null &&
+        cameBack.length === 0;
       await recordObserved(
         'GRP-3',
         ok ? 'PASS' : 'FAIL',
@@ -575,6 +598,10 @@ async function grp3() {
           peerReadBeforeRemoval: peerReadBefore,
           peerStillHoldsPreRemovalMessage: peerStillHasBefore,
           peerReceivedPostRemovalMessage: peerGotAfter,
+          removedDeviceLearntFromTheCommit: evictLine !== null,
+          // The LINES, not a count: a failure here has to name what the client asked for, or the
+          // row says only that something happened and the log has to be opened to find out what.
+          removedDeviceAskedToComeBack: cameBack.slice(0, 4),
           negativeWindowMs: NEGATIVE_WINDOW_MS,
         },
         { W1: o1, W2: o2 }

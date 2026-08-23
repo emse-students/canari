@@ -10,10 +10,16 @@
 //! indistinguishable from a transient encrypt failure, so the frontend outbox retried it up its
 //! whole backoff ladder against a group that would refuse every single attempt.
 //!
-//! Two things are pinned here, and they are the two halves of the fix: the fact is readable at the
-//! commit (`is_group_active`), and the refusal - for the device that never received the commit at
-//! all - is a TYPE rather than a sentence (`MlsError::Evicted`).
-use mls_core::{MlsError, MlsManager};
+//! THREE PATHS REACH AN EVICTED DEVICE, and all three are pinned here because the fix is only a fix
+//! if all three agree:
+//!
+//!   - the COMMIT, which is where the fact becomes knowable and free (`is_group_active`);
+//!   - the SEND, for a device that never received that commit - typed, not a sentence
+//!     (`MlsError::Evicted`), so a permanent failure cannot be read as a transient one;
+//!   - the RECEIVE, for a frame still routed to a group we are out of. Unclassified it read as
+//!     "out of sync", which asked to be re-added to a group we were deliberately removed from and
+//!     then learnt from a 403 what the frame itself already proved.
+use mls_core::{DecryptErrorKind, MlsError, MlsManager};
 
 fn make_device(user_id: &str, device_id: &str) -> MlsManager {
     MlsManager::load_or_create(user_id, device_id, None)
@@ -147,5 +153,58 @@ fn a_healthy_member_sends_normally() {
     assert!(
         bob.send_message(gid, b"hello").is_ok(),
         "a member still in the group encrypts as before"
+    );
+}
+
+#[test]
+fn a_frame_arriving_after_eviction_is_typed_evicted_not_an_out_of_sync() {
+    // THE THIRD PATH, and the one that cost the most. A frame still reaches the removed device -
+    // in flight when the commit landed, or routed by the server registry the removal cleans
+    // best-effort - and `process_message` refuses it because the group is inactive.
+    //
+    // Unclassified, that refusal was a bare `Process error:`, which the frontend reads as
+    // `SenderRatchetGap`/`unknown` and answers with its out-of-sync policy: `requestReAdd`, asking
+    // the server to undo a moderation action, followed by a request for the group's commits that
+    // can only ever return 403 - learning from a refusal what this very frame already proved.
+    let gid = "g-evict-recv";
+    let (mut alice, mut bob) = pair(gid);
+    let commit = evict_bob(&mut alice, gid);
+    bob.process_incoming_message(gid, &commit).expect("applies");
+
+    // alice keeps talking to the group bob is no longer in.
+    let frame = alice
+        .send_message(gid, b"members only")
+        .expect("alice sends");
+    let err = bob
+        .process_incoming_message(gid, &frame)
+        .expect_err("bob cannot read a group he is not in");
+
+    assert!(
+        matches!(err, MlsError::Evicted(ref g) if g == gid),
+        "expected MlsError::Evicted({gid}), got {err:?}"
+    );
+    assert_eq!(
+        err.decrypt_kind(),
+        DecryptErrorKind::Evicted,
+        "native and web classify through decrypt_kind and classifyIncomingDecryptError          respectively; the two must not be able to disagree about this one"
+    );
+}
+
+#[test]
+fn eviction_is_classified_before_the_generic_process_error_arm() {
+    // Order matters here exactly as it does for the four arms already documented in
+    // `decrypt_kind`. A frame refused for eviction IS a process error, so a generic arm reached
+    // first would classify it `SenderRatchetGap` - the retryable kind - and native would write a
+    // row into `pending_mls_messages` for a frame that can never decrypt, on every frame the group
+    // still routes. This pins the precedence rather than trusting the arm order to survive edits.
+    let raw = MlsError::OpenMls("Process error: GroupStateError(UseAfterEviction)".into());
+    assert_eq!(
+        raw.decrypt_kind(),
+        DecryptErrorKind::SenderRatchetGap,
+        "the raw wording is deliberately NOT what carries the meaning - the variant is"
+    );
+    assert_eq!(
+        MlsError::Evicted("g".into()).decrypt_kind(),
+        DecryptErrorKind::Evicted
     );
 }

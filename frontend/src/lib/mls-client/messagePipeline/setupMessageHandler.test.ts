@@ -165,6 +165,34 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(deps.conversations.get(groupId)!.lifecycle).not.toBe('removed');
   });
 
+  it('ACKs a frame that arrives after eviction, and asks for no repair', async () => {
+    // The third path, and the expensive one. This frame is legitimate - in flight when the commit
+    // landed, or routed by the registry the removal cleans best-effort - and it used to fall
+    // through to the out-of-sync arm: `requestReAdd`, asking the server to undo a moderation
+    // action, then a commit request that can only return 403.
+    const deps = baseDeps();
+    const mls = deps.mlsService as any;
+    mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
+    mls.isGroupActive = vi.fn().mockResolvedValue(false);
+    mls.processIncomingMessage = vi.fn().mockRejectedValue(new Error(`EVICTED: ${groupId}`));
+    setupMessageHandler(deps as any);
+    const cb = mls.onMessage.mock.calls[0][0];
+
+    const acked = await cb('peer', new Uint8Array([7, 7, 7]), groupId, false, undefined, false);
+
+    // ACKed: leaving it queued would have the server redeliver it for ever.
+    expect(acked).toBe(true);
+    // And the frame is what taught us, so the conversation is retired here too - the commit that
+    // said so may never have reached this device, which is exactly why the frame exists.
+    expect(deps.conversations.get(groupId)!.lifecycle).toBe('removed');
+    // Nothing asked to come back. `requestReAdd` reaches the network through `recovery.ts`; the
+    // observable proof at this seam is that the recovery narration never happened.
+    const said = (deps.log as any).mock.calls.flat().join(' ');
+    expect(said).not.toContain('re-add');
+    expect(said).not.toContain('Out-of-sync');
+    expect(said).toContain('no repair owed');
+  });
+
   it('propagates channel.member.joined to callback', async () => {
     const onChannelMemberJoined = vi.fn();
     const deps = baseDeps({ onChannelMemberJoined });

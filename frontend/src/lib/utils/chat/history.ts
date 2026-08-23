@@ -431,6 +431,15 @@ export async function replayConversationHistory(params: {
      * this change removes. Reported once, and only alongside a replay that did something.
      */
     let ownFramesSkipped = 0;
+    /**
+     * Frames belonging to a group this device has been REMOVED from.
+     *
+     * Counted rather than logged per frame for the same reason as `ownFramesSkipped`: an evicted
+     * group's entire retained backlog arrives here, one frame at a time, and a line each would bury
+     * whatever else the replay found. Counted rather than ignored because zero and "all of them"
+     * are the two readings a reader needs, and only a number tells them apart.
+     */
+    let evictedFramesSkipped = 0;
     const myDeviceId = mlsService.getDeviceId();
 
     // Collect reaction mutations so we can persist them to DB in one pass after
@@ -719,6 +728,18 @@ export async function replayConversationHistory(params: {
             seenUpdated = true;
             continue;
           }
+          if (kind === 'evicted') {
+            // A frame for a group this device was REMOVED from. Unreadable for good, exactly like
+            // the two below - but it is NOT a loss and must not be counted as one: we are not
+            // entitled to the plaintext, so there is nothing for a reconciliation to recover and
+            // asking a peer for it would be asking to be handed a group's traffic after being
+            // removed from the group. Marked seen so the replay stops re-offering it, and silent
+            // past one line: an evicted group's whole backlog reaches here, one frame at a time.
+            evictedFramesSkipped++;
+            seenCipherHashes.add(rowKey);
+            seenUpdated = true;
+            continue;
+          }
           if (kind === 'secret-reuse' || kind === 'past-epoch-application') {
             // Unreadable for good, at one end of the ratchet or the other: the generation is spent
             // (`secret-reuse`), or the epoch's secrets are gone (`past-epoch-application`, what a
@@ -965,7 +986,18 @@ export async function replayConversationHistory(params: {
     if (mlsUpdated) {
       log(
         `[OK] ${addedMsg} message(s) caught up for ${contactName}.` +
-          (ownFramesSkipped > 0 ? ` ${ownFramesSkipped} own frame(s) skipped.` : '')
+          (ownFramesSkipped > 0 ? ` ${ownFramesSkipped} own frame(s) skipped.` : '') +
+          (evictedFramesSkipped > 0
+            ? ` ${evictedFramesSkipped} frame(s) skipped: removed from this group.`
+            : '')
+      );
+    }
+    // A replay that added NOTHING and skipped frames only because we are no longer a member has
+    // still done something worth saying - it is the difference between an empty group and a group
+    // that is no longer ours, and the branch above would report neither.
+    else if (evictedFramesSkipped > 0) {
+      log(
+        `[OK] Nothing caught up for ${contactName}: removed from this group, ${evictedFramesSkipped} frame(s) skipped.`
       );
     }
 

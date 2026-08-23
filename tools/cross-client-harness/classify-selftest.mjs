@@ -148,6 +148,27 @@ const CASES = [
     'notable',
   ],
   ['log', '[14:10:28] [OUTBOX] 1d9076db… evicted from 4ca35caf… - permanent failure', 'stateChanges'],
+  // THE THIRD PATH: a frame the group still routed to a device it had removed. The two spellings
+  // land in different buckets for one reason - the Rust one names the epochs, so NOTABLE's generic
+  // epoch rule claims it - and both are surfaced without breaking `clean`, which is the contract
+  // that actually matters. Pinned so the precedence is recorded rather than rediscovered.
+  [
+    'log',
+    '[14:10:28] [MLS] Frame for 4ca35caf… arrived after eviction - ACKed, no repair owed',
+    'stateChanges',
+  ],
+  [
+    'log',
+    '[14:10:28] [RUST::WARN] Frame for group 4ca35caf-1f2e-4c3d-8a9b-0e1d2c3b4a59 arrived after this device was evicted - ACKed and dropped, no repair is owed: msg_epoch=4 group_epoch=4',
+    'notable',
+  ],
+  // And the history replay's own report of the same thing. A replay that added nothing because we
+  // are no longer a member is not an empty replay, and the line exists so the two can be told apart.
+  [
+    'log',
+    '[14:10:28] [OK] Nothing caught up for Equipe: removed from this group, 12 frame(s) skipped.',
+    'stateChanges',
+  ],
   // A REPLAYED Remove COMMIT. Nothing happened the second time, which is why it is `benign` while
   // the line above it is not. Two spellings, one rule each, deliberately: a prefix rule over
   // `[EVICT]` would have covered both AND the two below, which must break `clean`.

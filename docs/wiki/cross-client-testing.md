@@ -37,7 +37,7 @@ Updated after every run.
 | 13 LIFE | 8 | - | `pending` |
 | 14 NOTIF | 21 | - | `pending` |
 | 15 CALL | 20 | - | `pending` - no script exists yet |
-| 16 HEAL | 5 | - | `pending` |
+| 16 HEAL | 11 | - | `pending` |
 | 17 PIN | 10 | - | `pending` |
 | 18 CORRUPT | 10 | - | `pending` |
 
@@ -406,6 +406,20 @@ of the row it answers.
 HEAL-W2's only ledger verdict is a `FAIL` from 2026-08-11, taken by a script **rewritten that same
 day** - so the honest reading of that row is `pending`, not failing, and it says so.
 
+**FOUR MORE ROWS SINCE 2026-08-23, ALL FOUR ON REVOCATION**, added by the user's decision that
+revocation is a WIPE (*"il doit devenir un appareil comme neuf s'il essaie de se reconnecter"*). They
+belong to this rung because the subject is a device whose local state and the server's belief about
+it have diverged, which is exactly what HEAL exists to measure - and because the user's report that
+raised them (a reconnected old PC restoring only SOME conversations) is filed against this rung in
+[backlog](backlog.md).
+
+They are deliberately FOUR rows and not one. A wipe is executed BY the device being wiped, so it can
+only run when that device next comes online: "the wipe ran" and "the device came back like-new" are
+different claims, and the blacklist is what can make the second true without the first. And
+HEAL-REVOKE-4 is the one a green run can most easily fake - a heal that fired on every connection
+would pass it while proving nothing, so its TRIGGER CONDITIONS are part of the assertion rather than
+context around it.
+
 | Id | How the group is broken | Needs | State |
 | --- | --- | --- | --- |
 | HEAL-W1 | Restore a snapshot from BEFORE a membership commit, then have the peer send | `+snapshot` | `pending` - a `healed` verdict after applying ZERO commits is a regression |
@@ -415,6 +429,10 @@ day** - so the honest reading of that row is `pending`, not failing, and it says
 | HEAL-repair | Does the history diff repair a rewound sender end to end? | `+snapshot` | `pending` - quantitative: a run whose frame rate does not fall back to the ordinary send rate has found something. Runner: `heal-web.mjs` |
 | HEAL-A1 | HEAL-repair mirrored onto the phone: **W2** is rewound and **A1** is the receiver that must detect and repair | `+A1` `+snapshot` | `pending` - W1 is parked deliberately, so the only possible history responder is W2, which holds the plaintexts because it sent them. Runner: `heal-a1.mjs` |
 | HEAL-NEXT | After an escalation has ALREADY happened, does the next message arrive? | `+A1` `+snapshot` | `pending` - the frame that caused the escalation is unrecoverable by construction, so this is the only question left: does the group work again. Runner: `heal.mjs` |
+| HEAL-REVOKE-1 | A device revoked through the connected-devices UI: is its local store actually gone? | `W1 W2` | `pending` - the user found one that kept everything (P1 in [backlog](backlog.md)). Establish first whether the wipe has no mechanism or a mechanism that did not fire: the two need opposite fixes |
+| HEAL-REVOKE-2 | The revoked device reconnects: is it like-new, holding nothing from before? | `W1 W2` | `pending` - distinct from HEAL-REVOKE-1 on purpose. A wipe runs on the device, so it needs the device online; the blacklist can make this row pass while that one fails |
+| HEAL-REVOKE-3 | First reconnection after revocation resynchronises as a NEW device would, history included | `W1 W2` | `pending` - the shortfall must be REPORTED, not silently partial. A restore that stops halfway looks complete, which is how the user's PC lost conversations without knowing to retry |
+| HEAL-REVOKE-4 | The heal-on-diff mechanism catches up what the first reconnection missed - and fires on the RIGHT conditions | `W1 W2` | `pending` - two assertions, and the second is the load-bearing one: a heal that runs on every connection would satisfy the first while proving nothing |
 
 ## 17 - PIN
 

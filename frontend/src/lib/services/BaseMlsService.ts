@@ -1917,7 +1917,11 @@ export abstract class BaseMlsService implements IMlsService {
         kind === 'own-message' ||
         kind === 'secret-reuse' ||
         kind === 'past-epoch-application' ||
-        kind === 'generation-gap';
+        kind === 'generation-gap' ||
+        // Removed from the distribution group. Permanent in the strongest sense of the four above:
+        // those are frames we may no longer READ, this is a group we are no longer IN, and no peer
+        // answering a history request can change that.
+        kind === 'evicted';
       if (permanent) {
         // ACKNOWLEDGED, and said once. The seed is gone from THIS device for good; what recovers it
         // is a peer answering `requestCommunityHistory`, never the server handing the same

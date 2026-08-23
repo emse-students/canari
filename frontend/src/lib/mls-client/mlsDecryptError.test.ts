@@ -71,3 +71,22 @@ describe('classifyIncomingDecryptError', () => {
     );
   });
 });
+
+describe('classifyIncomingDecryptError - a frame for a group we were removed from', () => {
+  it('reads the EVICTED token, and reads it FIRST', () => {
+    expect(classifyIncomingDecryptError(new Error('EVICTED: 4ca35caf'))).toBe('evicted');
+    // The native layer wraps a refusal as `GAP_QUEUED:<group>:<error>`. An evicted frame carrying
+    // both markers must still be an eviction: read as an epoch gap it goes to a commit replay that
+    // applies nothing, and the group's whole retained backlog then storms that replay one frame at
+    // a time. Same precedence bug as `TooDistantInTheFuture` (WP-PENDING-2), one kind later.
+    expect(classifyIncomingDecryptError('GAP_QUEUED:g1:EVICTED: g1')).toBe('evicted');
+  });
+
+  it('does not read the raw OpenMLS wording as an eviction', () => {
+    // Classified in Rust, on the variant. If that arm is ever removed, THIS fails rather than the
+    // classifier quietly still working through the underlying prose.
+    expect(
+      classifyIncomingDecryptError(new Error('Process error: GroupStateError(UseAfterEviction)'))
+    ).toBe('unknown');
+  });
+});

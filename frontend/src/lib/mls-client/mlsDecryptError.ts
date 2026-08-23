@@ -40,6 +40,14 @@ export type MlsDecryptErrorKind =
   | 'past-epoch-application'
   /** `WrongEpoch`: frame from an epoch not yet reached by THIS stream -> recoverable on a later load. */
   | 'wrong-epoch'
+  /**
+   * `EVICTED`: a frame for a group this device has been REMOVED from. Not a decryption failure -
+   * the Remove commit retired our leaf, and the frame was in flight or routed by a server registry
+   * the removal had not finished cleaning. ACKed and dropped, and it is the ONE kind here that must
+   * not reach the out-of-sync policy: recovery asks to be re-added to a group we were deliberately
+   * removed from, and the commit request that follows can only ever be refused.
+   */
+  | 'evicted'
   /** `out of memory` / `unreachable`: WASM panic -> fatal. */
   | 'oom'
   /** Everything else -> likely out-of-sync; the policy (re-add, log) is up to the caller. */
@@ -57,6 +65,10 @@ export type MlsDecryptErrorKind =
  */
 export function classifyIncomingDecryptError(error: unknown): MlsDecryptErrorKind {
   const s = String(error);
+  // FIRST, because it is the only kind here that is not about the frame at all but about our
+  // membership - and because the fall-through it used to take (`unknown` -> out-of-sync -> re-add)
+  // is the single most destructive answer of the set.
+  if (s.includes('EVICTED:')) return 'evicted';
   if (s.includes('CannotDecryptOwnMessage')) return 'own-message';
   if (s.includes('SecretReuseError')) return 'secret-reuse';
   if (s.includes('out of memory') || s.includes('unreachable')) return 'oom';

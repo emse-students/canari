@@ -86,6 +86,12 @@ pub enum DecryptErrorKind {
     /// (WP-ECHO-1) - so it is ACKed and, unlike `SenderRatchetGap`, never queued: it can never
     /// decrypt, and the queue is for frames a later attempt can still read.
     OwnMessage,
+    /// A frame for a group this device has been REMOVED from. Not a failure of any kind: the
+    /// Remove commit retired our leaf, and the frame was in flight or routed by a registry the
+    /// removal has not finished cleaning. ACKed and dropped - and, unlike every other kind here,
+    /// it must NOT trigger recovery: asking to be re-added is asking the server to undo a
+    /// moderation action, and the request that follows can only be refused.
+    Evicted,
     /// Unrecoverable MLS state (corruption/inconsistency): the frontend must re-bootstrap.
     Unrecoverable,
     /// Unclassified.
@@ -98,6 +104,7 @@ impl MlsError {
     pub fn decrypt_kind(&self) -> DecryptErrorKind {
         match self {
             MlsError::Unrecoverable(_) => DecryptErrorKind::Unrecoverable,
+            MlsError::Evicted(_) => DecryptErrorKind::Evicted,
             MlsError::OpenMls(s) if s.contains("SecretReuseError") => DecryptErrorKind::SecretReuse,
             // Before the generic `Process error:` arm: a too-far-ahead generation IS a process
             // error, and reading it as a retryable ratchet gap is what queued a frame that could

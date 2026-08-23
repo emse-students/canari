@@ -416,6 +416,18 @@ const STATE_CHANGE = [
   // one saying the send was REFUSED after `isGroupActive` had answered that we are still a member -
   // is a contradiction between OpenMLS and our own query, and is left unexplained on purpose.
   /^\[OUTBOX\] [0-9a-f]{8}… evicted from [0-9a-f]{8}… - permanent failure$/,
+  // A FRAME STILL ROUTED TO A DEVICE THE GROUP HAS REMOVED. Legitimate and bounded: it was in
+  // flight when the commit landed, or the server registry the removal cleans best-effort had not
+  // caught up. ACKed and dropped, no repair owed - and reported, because a run where this does not
+  // stop means the routing clean never happened, which no other line here would say.
+  //
+  // The Rust half of the same event names the epochs, so `NOTABLE`'s generic epoch rule claims it
+  // first; the self-test pins it there. Same contract for a reader either way.
+  /^\[MLS\] Frame for [0-9a-f]{8}… arrived after eviction - ACKed, no repair owed$/,
+  // A history replay for a group we are out of: it caught nothing up, and that is the correct
+  // outcome rather than an empty result. The sibling spelling, where the replay DID add messages
+  // and also skipped some, ends in "caught up" and is claimed by NOTABLE.
+  /^\[OK\] Nothing caught up for .*: removed from this group, \d+ frame\(s\) skipped\.$/,
   // A COMMIT CONSUMING ITS GENERATION - the ordinary outcome of every add, removal and rename, and
   // the reason a group's epoch moves at all. Only the COMMIT form is classified: the same line
   // ending "not a commit: ..." is a frame nobody could decrypt and stays unexplained, which is the

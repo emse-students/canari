@@ -818,6 +818,23 @@ async function handleKnownGroup({
     const kind = classifyIncomingDecryptError(e);
 
     if (kind === 'own-message') return true;
+    // EVICTED - and this arm is the whole reason the kind exists. The frame is for a group whose
+    // Remove commit retired our leaf: it was in flight, or the server registry the removal cleans
+    // best-effort had not caught up. There is no plaintext and there is nothing broken, so it is
+    // ACKed and dropped like the other unreadable-for-good kinds.
+    //
+    // What it must NOT do is fall through to the out-of-sync arm at the bottom, which is where it
+    // used to land: that runs `requestReAdd`, asking the server to undo a moderation action, and
+    // the commit request behind it then returns a 403 the client reads as news. `retireIfEvicted`
+    // is called rather than assumed - the commit may never have reached this device, which is
+    // exactly the case that produced the frame - and it is idempotent when the commit did.
+    if (kind === 'evicted') {
+      log(
+        `[MLS] Frame for ${convoKey.slice(0, 8)}… arrived after eviction - ACKed, no repair owed`
+      );
+      await retireIfEvicted({ mlsService, conversations, groupId, userId, saveConversation, log });
+      return true;
+    }
     if (kind === 'oom') {
       deps.onMlsFatalError?.('oom');
       return true;
