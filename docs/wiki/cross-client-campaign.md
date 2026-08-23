@@ -359,6 +359,18 @@ Both are open state, which is what the board is for.
 What was removed on 2026-08-22, preserved because it was measured once and is expensive to measure
 again:
 
+- **FWD's first x5, 2026-08-22, read `NOT REPRODUCIBLE` on FWD-3/4/5 - and it was the INSTRUMENT, not
+  the product.** `fwd345.mjs` recorded no verdict at all in passes 2 and 3, which is a `-` in the
+  cross-pass table and is NOT a `F`: nothing failed, nothing was written. The evidence was
+  unreadable, because `LOG_DIR` is one directory per RUN while the log filename was per SCRIPT, so
+  inside a `--repeat` every pass overwrote the one before it and the two captures worth reading had
+  already been replaced by passes 4 and 5 by the time the table said so. `run.mjs` now prefixes the
+  filename with `pass<N>-`, so the capture of a failing pass survives the passes after it - the exact
+  loss the whole-output write exists to prevent. **The re-run on 2026-08-23 came back `CLEAN 5/5`
+  with all 25 rows persisted**, so the non-recording did not recur and there is no product defect
+  behind it. It is written down because a one-off that leaves no trace is exactly what the next
+  reader will otherwise rediscover from scratch.
+
 - **COMM-22** settled on its TENTH attempt and is the campaign's only `PASS-DIRTY` that is
   nonetheless believed. Armed as intended: six grant/join/send/revoke/send cycles drove the salon's
   group through **13 epochs** and minted **12 distinct sessions** for 12 messages, one per session - a

@@ -346,6 +346,40 @@ recorded here rather than taken while a campaign is running.
 **What would tell us it matters:** no board row covers it, and reaching it needs a device that missed
 an edit AND is later handed a bundle containing it - which is the FWD/HEAL shape, not MUT's.
 
+### P2 - a reconnected old client restored only SOME conversations, and a locally-pending deletion blocked the new conversation with that peer
+
+Reported by the user 2026-08-23, verbatim: *"sur un vieux PC client qui avait toujours une memoire
+locale (pourquoi, puisqu'il avait ete des appareils connectes via l'interface ?), le fait de se
+reconnecter n'a pas charge toutes les conversations (certaines oui, certaines non). Pire : une
+conversation 1v1 avec quelqu'un [qui] avait ete en attente de suppression locale sur cet appareil (le
+pair avait supprime la conversation, mais nous elle etait toujours presente localement) a fait
+barrage a la reception de la nouvelle conversation avec ce pair (ca faisait doublon j'imagine)."*
+
+Three separate things, in the order they have to be answered:
+
+1. **QUESTION first: a device removed through the connected-devices UI still held its local store.**
+   Before anything is called a defect, settle what revocation is DEFINED to do - if it only stops the
+   device being routed to, then local data surviving is correct and the UI's wording is the problem;
+   if it is meant to be a wipe, the wipe never ran and that is a P1, not a P2. The answer decides the
+   severity of this whole entry.
+2. **A partial restore is worse than no restore.** Reconnecting brought back some conversations and
+   not others, with nothing saying which or why. A restore that silently stops halfway looks
+   complete, so the user does not know to retry - it needs to know its own expected count and report
+   the shortfall, per the standing rule that a correct mechanism with no report is found by hand a
+   day late.
+3. **A local tombstone was treated as a live conversation for de-duplication.** The peer had deleted
+   the 1v1; locally it sat pending deletion; the NEW conversation with that same peer was then
+   dropped, apparently as a duplicate of the record that was on its way out. Whatever key the dedup
+   uses must exclude anything pending deletion, or the pending state has to be resolved before the
+   new conversation is accepted - a record that exists only to be removed must not be able to refuse
+   its own replacement.
+
+**This is HEAL's, by the user's own framing** (*"On y reviendra au moment ou on fera la campagne
+HEAL"*). Rung 16 is where it gets armed: items 2 and 3 are both reproducible without a second human
+- a stale profile plus a peer-side delete is exactly what the HEAL runners already build - and each
+becomes a row on [cross-client-testing](cross-client-testing.md) rather than a hand-checked story.
+Item 1 needs no run at all, only the definition.
+
 ## Mentions
 
 ### P2 - a mention notification shows a 64-character hex id where the name should be
@@ -490,6 +524,80 @@ three places that match (`useConversations.svelte.ts:438,480` for which messages
 On a French corpus "reunion" cannot find "reunion" spelled with an accent. SEARCH-5 predicts exactly
 this and PASSES when it holds, so it is a FINDING the board records rather than a check failure - see
 the SEARCH section of [cross-client-testing](cross-client-testing.md).
+
+### P2 - the posts search escapes the feed's filters, and scans the whole base before it answers anything
+
+Reported by the user 2026-08-23, verbatim: *"La recherche dans les posts permet d'acceder a des posts
+apres notre arrivee a l'EMSE (la recherche desactive les filtres ?)"*. Three distinct things, and
+they are not the same severity.
+
+1. **The filters appear not to apply to the search.** The feed is scoped, the search is not, so the
+   search surfaces posts the scoped feed would never show. **The first task is to establish what that
+   scope IS**, because it decides everything: a scope that is a VISIBILITY rule makes this a P1
+   (search reads what the reader may not read), a scope that is only a convenience narrowing makes it
+   a P2 surprise. Do not write code before that question has an answer - `## Open questions` is where
+   an unanswered one belongs, and this entry moves there rather than growing a fix if the answer is
+   not immediate.
+2. **The order is backwards: filter, THEN search.** Filtering downstream means the search spends its
+   whole cost on rows that were never going to be displayed. Correctness aside, it is the same work
+   done against a corpus several times larger than the reachable one.
+3. **It loads everything before it answers.** A post from this week should not wait on a scan of the
+   entire base. The search should walk backwards in time and stream what it finds, so a recent hit is
+   returned early and the long tail keeps arriving - the standing requirement is that the mechanism
+   works for a corpus of ANY size, and a single up-front load is the shape that cannot.
+
+Related but NOT the same item: in-conversation (chat) search is the entry above; this one is the
+social feed. MiGallery's `fuzzyScore`/`fuzzySearch` is the reference implementation the standing
+search requirement points at.
+
+## Composer and reactions
+
+### P2 - the emoji picker cannot be scrolled, and often opens outside the screen
+
+Reported by the user 2026-08-23. Two defects and two questions, and they are listed apart because
+only the first two are known to be wrong.
+
+- **The list does not scroll.** Whatever does not fit in the panel is unreachable, so the picker
+  offers exactly one screenful of the set it claims to offer.
+- **The panel frequently renders partly off-screen.** So this is not only a scroll bug: the placement
+  has no viewport clamping, and near an edge the picker loses rows in a second, independent way.
+- **ANSWERED 2026-08-23, NO: the glyph set is the platform's.**
+  `frontend/src/lib/components/messages/MessageEmojiPicker.svelte` mounts `emoji-picker-element`,
+  which renders native codepoints in the system font - there is no bundled sprite sheet. Only the
+  DATA is self-hosted (`data-source="/emoji-data-fr.json"`, and that exists so French search keywords
+  work: `locale="fr"` alone translates the UI and not the keywords). So one codepoint, N pictures -
+  Windows, Android and iOS each draw their own, and the library even ships an
+  `emojiUnsupportedMessage` for a client with no colour emoji at all. Nothing to fix unless we decide
+  to bundle a set, which is a deliberate product choice and a large asset, not a bug.
+- **ANSWERED 2026-08-23, YES: recents exist** - `canari_recent_emojis` in `localStorage`, most-recent
+  first, capped at 12, rendered as a row above the picker. Two limits worth knowing before anyone
+  "adds" the feature: it is PER DEVICE and never synced, and it is fed only by
+  `handleEmojiClick`, so a reaction added by any path that does not go through this picker never
+  reaches the list.
+
+**The likely cause of BOTH defects is one line, and it is the same line.** The panel is
+`flex flex-col overflow-hidden` with a `max-height` written by `bindFixedPopover`
+(`frontend/src/lib/actions/fixedPopover.ts`), and the `<emoji-picker>` inside it already carries
+`min-h-0 flex-1` - which is exactly the arrangement that sizes correctly on its own. It is then
+overridden by an inline
+`style="height: min(22rem, calc(var(--popover-max-h) - {recents ? '5.5rem' : '3rem'}))"`. That
+subtraction is a HARD-CODED GUESS at the height of everything above the picker, and the recents row
+is `flex-wrap` with up to twelve 32 px buttons plus a label inside a `min(92vw,22rem)` panel - so it
+wraps to two lines well before twelve, and the guess is then short by a whole line. The picker is
+sized taller than the room actually left, the parent is `overflow-hidden`, and the bottom of the list
+- with its scroll affordance - is clipped away. **The fix is to delete the inline height, not to
+correct the constant**: the flex layout already knows the answer, and a second hard-coded number
+would be wrong again the next time the header gains a line (the reactions-at-limit banner is exactly
+such a line, and it is not in the guess either).
+
+A second, narrower placement fault is in `computeFixedPopoverPosition`: `maxHeight` is floored at
+`Math.max(160, ...)` after the side has been chosen, so on a short viewport the panel can be given
+160 px in a gap smaller than 160 px and hang off the bottom. The floor should not be able to exceed
+the space that was measured.
+
+Both defects are visible without any instrument, so this needs no campaign row to be believed - but
+the picker sits on the reaction path that DEL, MUT and MSG all drive, so fixing it mid-ladder changes
+code under checks that have already run. Schedule it after the ladder unless the user says otherwise.
 
 ## Storage and retention
 

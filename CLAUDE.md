@@ -155,11 +155,20 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     cost and the decisions it turns on are on
     [cross-client-testing](docs/wiki/cross-client-testing.md) and
     [cross-client-campaign](docs/wiki/cross-client-campaign.md), the only copies. **Where the ladder
-    stands: rungs 1 MSG and 2 TYPE green x1, 3 READ, 4 MUT, 5 SEARCH and 6 MENTION green CLEAN 5/5.
-    Next: 7 FWD, then GRP, COMM, DEL, TAB, MULTI, LIFE, NOTIF, CALL, HEAL, PIN, CORRUPT.** The board carries every verdict; do not restate them here.
+    stands: rungs 1 MSG and 2 TYPE green x1, 3 READ, 4 MUT, 5 SEARCH, 6 MENTION and 7 FWD green
+    CLEAN 5/5. Next: 8 GRP, then COMM, DEL, TAB, MULTI, LIFE, NOTIF, CALL, HEAL, PIN, CORRUPT.** The board carries every verdict; do not restate them here.
     **THE BOARD'S FORMAT IS NOW FIXED by the user (2026-08-22): a `PASS` cell is `PASS X/X` and a time
     if the time means anything, nothing else.** Prose only for a non-clean verdict or an unresolved
     item. The rule is written at the top of the board itself.
+
+4. **THREE OBSERVATIONS FROM THE USER, 2026-08-23, all deferred past the ladder**, substance in
+    [backlog](docs/wiki/backlog.md) and nowhere else: the POSTS search escapes the feed's filters,
+    filters downstream and loads the whole base before answering; the EMOJI picker does not scroll
+    and opens off-screen, both traced to one hard-coded height guess (its two questions are ANSWERED:
+    the glyphs are the platform's, recents already exist); and a
+    reconnected old client restored only SOME conversations while a locally-pending deletion blocked
+    the new conversation with that peer. The third is HEAL's by the user's framing and becomes rows
+    at rung 16.
 
 **The estate was swept and measured clean 2026-08-21 before the ladder started** - 22 debris salons through the product, all thirteen residue counts on prod zero afterwards. `cleanup.mjs` owns communities, salons AND throwaway groups now; the detail is on [cross-client-campaign](docs/wiki/cross-client-campaign.md).
 
