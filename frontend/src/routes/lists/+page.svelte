@@ -143,7 +143,7 @@
                       <div
                         class="text-text-muted mt-0.5 max-h-[2.75rem] overflow-hidden [&_.post-markdown]:text-sm [&_.post-markdown]:leading-snug [&_.post-markdown_p]:m-0 [&_.post-markdown_p+p]:mt-0"
                       >
-                        <ProfileBioMarkdown source={list.description} />
+                        <ProfileBioMarkdown source={list.description} compact />
                       </div>
                     {/if}
                     {#if myIds.has(list.id)}

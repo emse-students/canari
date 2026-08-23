@@ -225,7 +225,7 @@
                     <div
                       class="text-text-muted [&_.post-markdown]:text-xs [&_.post-markdown]:leading-snug [&_.post-markdown_p]:m-0 [&_.post-markdown_p+p]:mt-0"
                     >
-                      <ProfileBioMarkdown source={asso.description} />
+                      <ProfileBioMarkdown source={asso.description} compact />
                     </div>
                   {/if}
                 </div>

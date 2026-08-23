@@ -162,7 +162,7 @@
                     <div
                       class="text-text-muted mt-0.5 max-h-[2.75rem] overflow-hidden [&_.post-markdown]:text-sm [&_.post-markdown]:leading-snug [&_.post-markdown_p]:m-0 [&_.post-markdown_p+p]:mt-0"
                     >
-                      <ProfileBioMarkdown source={asso.description} />
+                      <ProfileBioMarkdown source={asso.description} compact />
                     </div>
                   {/if}
                   <p class="text-text-muted mt-1 text-xs">
