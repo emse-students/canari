@@ -380,6 +380,57 @@ HEAL"*). Rung 16 is where it gets armed: items 2 and 3 are both reproducible wit
 becomes a row on [cross-client-testing](cross-client-testing.md) rather than a hand-checked story.
 Item 1 needs no run at all, only the definition.
 
+### P2 - a member REMOVED from a group asks to be re-added, and its outbox retries an encrypt that can never succeed
+
+Measured on `1579d5c3`, 2026-08-23, by GRP-3 and GRP-8 on their first armed runs - the phase had
+never run before, which is why a defect this reproducible was unseen. Both checks PASS on their
+assertions and are `PASS-DIRTY` on this, which is not a pass.
+
+What the removed client does, in order, after W1 removes it:
+
+```
+[MLS] Decryption error for <group>: Crypto/OpenMLS error:
+      Process error: GroupStateError(UseAfterEviction) [msg_epoch=3, group_epoch=3] -> re-add
+[PIPELINE] Recovery attempt finished for <group>
+GET /api/mls/commits/<group>?sinceEpoch=3 -> 403
+[OUTBOX] <id> transient failure (attempt 1): Crypto/OpenMLS error: Encrypt error: GroupStateError(UseAfterEviction)
+[OUTBOX] <id> transient failure (attempt 2): ... (attempt 3) ... (attempt 4) ...
+```
+
+Three faults, and they compound:
+
+1. **A legitimate removal is treated as a broken state.** `-> re-add` runs the recovery path, which
+   is what a client with a damaged tree needs. A client whose leaf was deliberately retired by a
+   Remove commit is not damaged - it is not a member. Asking the server to undo a moderation action
+   is the wrong answer to a question the client already knows the answer to.
+2. **The 403 is the design owing work to the network.** The client asks for commits since epoch 3 on
+   a group it has just been evicted from, and learns from the refusal what the eviction already told
+   it. That is the standing rule exactly: never learn by failing what a fact could have told you -
+   carry the discriminator to where the decision is made, from where it is already KNOWN.
+3. **The outbox calls `UseAfterEviction` transient.** `outbox.ts` has exactly one permanent failure
+   (`groupMeta.deletedAt`), so every other error backs off and retries. An encrypt into a tree that
+   no longer contains our leaf cannot succeed on any attempt. Observed crossing a CHECK boundary:
+   entry `375cc054` was still retrying from GRP-3 when GRP-4 started, and stopped only when GRP-3's
+   teardown deleted the group - `[OUTBOX] 375cc054 group deleted server-side - permanent failure`.
+   Absent that teardown it would have retried for as long as the tab lived.
+
+**Why this is filed rather than fixed: the fix is a product decision, not a bug with one answer.**
+`isGroupHealthy` is `getLocalGroups().includes(id) && !isInEpochGap(id)`, and an evicted group is
+still in `getLocalGroups()`, so the send is attempted. Making eviction a state is easy and mirrors
+`isInEpochGap` exactly. What it should then DO is the question:
+
+- treat a Remove commit as authoritative - conversation to `removed` with the banner the product
+  already draws for a peer-side delete, outbox entry to permanent `error`. This is almost certainly
+  right: `removeMemberAndBroadcast`'s own comment calls the commit authoritative.
+- or keep `requestReAdd`, and accept that a removed member asks to come back.
+
+The two differ in what the user SEES, so it is the user's call. Everything needed to implement the
+first is in place: `markDeletedRemotely`, the `removed` lifecycle, and the permanent-failure branch.
+
+**Related and NOT the same:** `[MLS] No application payload for X - commit or dropped frame` named
+two causes it could not separate while holding `isCommit` in scope - fixed 2026-08-23 in the same
+sweep, and the two halves are pinned in `classify-selftest.mjs`.
+
 ## Mentions
 
 ### P2 - a mention notification shows a 64-character hex id where the name should be

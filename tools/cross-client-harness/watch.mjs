@@ -304,6 +304,40 @@ const BENIGN = [
   /^\[Push\] registerPushToken start$/,
   /^\[Push\] Token unchanged, skip backend registration$/,
   /^\[Push\] startPushService re-check \(possible token rotation\)$/,
+
+  // GROUP MEMBERSHIP NARRATING ITSELF - every line below was `unexplained` on GRP's first two runs,
+  // and every one of them fires on a perfectly healthy add, rename or departure. They had never been
+  // classified for one reason: until 2026-08-23 NO CHECK HAD EVER EXERCISED THE GROUP MEMBERSHIP
+  // PATH. `checks.mjs` listed one script for the phase, it covered none of the board's rows, and its
+  // fixed group name had been swept - so the whole vocabulary of a commit was unseen by the
+  // classifier. Five checks came back PASS-DIRTY for saying exactly what they were supposed to say.
+  //
+  // ANCHORED ONE BY ONE, and each success anchored on its OUTCOME. `[GROUP] Welcome -> x:y OK` is
+  // forgiven; the same line ending any other way is not, which is the whole difference between a
+  // rule and a prefix. A group whose Welcome does NOT land is the failure this phase exists to see.
+  /^\[GROUP\] My other devices: \d+ /,
+  /^\[GROUP\] addMembersBulk result: welcome=(true|false) \(\d+ bytes\), added=\d+ /,
+  /^\[GROUP\] Welcome -> \S+ OK$/,
+  /^\[GROUP\] Group ".*" created successfully \(id=\S+\)$/,
+  /^\[OK\] Group ".*" created\.$/,
+  /^Inviting \d+ member\(s\): \S+$/,
+  /^\[SYNC\] bulk\.addedDeviceIds: \S+$/,
+  /^\[SYNC\] Welcome -> \S+ OK$/,
+  /^\[OK\] Added: \S+ \(\d+ device\(s\)\)\. \(\d+ user\(s\) delivered\)$/,
+  /^\[SYNC\] Members added: \S+ \(\d+\/\d+ delivered\)$/,
+  /^\S+ retire du groupe\.$/,
+  /^Groupe renomme en ".*"$/,
+  /^.{0,4}\s?Group renamed to ".*" by /,
+  // The invitee's side of the same commit. `already held ... (idempotent)` is the redelivery being
+  // absorbed, which is the mechanism working - a redelivered Welcome that was NOT absorbed is what
+  // would matter, and it does not match this.
+  /^\[QUEUE\] Processing Welcome group=\S+ sender=\S+ qId=\S+$/,
+  /^\[WELCOME\] Group \S+ ready$/,
+  /^\[WELCOME\] \S+ already held - redelivered Welcome ignored \(idempotent\)$/,
+  /^\[SYNC\] Welcome processed for \S+, refreshing\.\.\.$/,
+  // A group the OWNER deleted, seen by the other side. `del1.mjs` and the GRP teardowns both produce
+  // it, and it is the discovery pass reporting a tombstone it handled correctly.
+  /^\[DISCOVERY\] UI group ".*" deleted \(tombstone\) server-side - marked removed$/,
 ];
 
 /**
@@ -321,7 +355,11 @@ const BENIGN = [
  * all naming the same URL. The UI falls back to initials, so nothing is broken. It is listed rather
  * than ignored so it still shows up under `knownBadHttp`.
  */
-const BENIGN_HTTP = [{ path: /\/api\/users\/[0-9a-f]{64}\/avatar$/, status: [404] }];
+// `system` alongside the 64-hex subjects: the platform's own Service Account has no avatar either,
+// and its 404 is the same benign case reaching the same fallback. Found 2026-08-23 on GRP-7, where
+// it was the only thing standing between a correct check and a clean run. Still an ENUMERATION, not
+// a widening - `[0-9a-f]{64}|system` cannot match an arbitrary path segment.
+const BENIGN_HTTP = [{ path: /\/api\/users\/(?:[0-9a-f]{64}|system)\/avatar$/, status: [404] }];
 
 /** True when this exact (path, status) pair is one of the understood failures. */
 const isBenignFailure = (pathname, status) =>
@@ -345,6 +383,21 @@ const STATE_CHANGE = [
   // the trigger under its consequences. A `[HISTORY_STATE]` with NO trigger above it would be the
   // interesting case, and `stateChanges` is exactly where a reader looks for that.
   /^\[HISTORY_STATE\] (From|Sent) /,
+  // LEAVING AND JOINING, SEEN LOCALLY. Both are real changes to what this client holds, so they are
+  // reported rather than forgiven - and neither is a defect, so neither breaks `clean`. GRP-6 and
+  // GRP-4 produce them by design: a member who leaves purges the conversation locally, and a member
+  // who joins through an invitation link is discovered by the next sweep and given a placeholder
+  // until its Welcome lands. Found 2026-08-23, both in `unexplained`, on checks that had asserted
+  // exactly the state the lines describe.
+  /^\[UI\] Local conversation removed \(\S+\)$/,
+  /^\[DISCOVERY\] \d+ server group\(s\) missing locally: /,
+  /^\[DISCOVERY\] Placeholder ".*" created\.$/,
+  // A COMMIT CONSUMING ITS GENERATION - the ordinary outcome of every add, removal and rename, and
+  // the reason a group's epoch moves at all. Only the COMMIT form is classified: the same line
+  // ending "not a commit: ..." is a frame nobody could decrypt and stays unexplained, which is the
+  // whole point of having split them (the wording used to be "commit or dropped frame", one string
+  // for a healthy group and a lossy one).
+  /^\[MLS\] No application payload for \S+ - commit applied, none expected$/,
 ];
 
 /**

@@ -48,6 +48,62 @@ export async function clickAt(cx, x, y) {
 }
 
 /**
+ * A POINT PROVEN TO BE ON THE ROW - scrolled into view, settled, and hit-tested.
+ *
+ * `getBoundingClientRect()` describes where an element is in the LAYOUT, and says nothing about
+ * whether that place is on screen. A sidebar with a dozen conversations puts a freshly created group
+ * below the fold, so the rect came back with `y = 953` on an 800-pixel viewport and the click went
+ * into nothing: no error, no navigation, and `openGroup` then reported three failed attempts on a
+ * row it had located perfectly. Measured 2026-08-23 while GRP was being written - GRP-7 and GRP-10
+ * both died on it, and the diagnosis was `document.elementFromPoint(224, 953) === null`.
+ *
+ * So three things the old version did none of:
+ *   - **scroll the row into view**, because a row nobody can see is a row nobody can click;
+ *   - **settle the rect**, two identical reads in a row, which a list still scrolling cannot produce;
+ *   - **hit-test the point**, because "the row is here" and "something else is here" are the two
+ *     states a coordinate cannot distinguish on its own.
+ *
+ * The same trap is documented for the mention chip in `mention.mjs`, where an unsettled point made
+ * MENTION-1 fail intermittently with every other field correct. It is the same fault twice, so this
+ * one is written where every conversation-opening call site gets it.
+ */
+const ROW_POINT = (name) => String.raw`(async function () {
+  var want = ` + JSON.stringify(name) + String.raw`;
+  var find = function () {
+    var els = [].slice.call(document.querySelectorAll('button, [role=button], a, li'));
+    var hits = els.filter(function (e) {
+      return (e.innerText || '').indexOf(want) !== -1 && e.getBoundingClientRect().width > 0;
+    });
+    hits.sort(function (a, b) { return a.innerText.length - b.innerText.length; });
+    return hits[0] || null;
+  };
+  var el = find();
+  if (!el) return JSON.stringify(null);
+  el.scrollIntoView({ block: 'center', behavior: 'instant' });
+  var last = null, settled = false, onTarget = false, hit = null, point = null;
+  for (var i = 0; i < 40; i++) {
+    el = find() || el;
+    var r = el.getBoundingClientRect();
+    var p = { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+    if (last && last.x === p.x && last.y === p.y) {
+      settled = true;
+      point = p;
+      var at = document.elementFromPoint(p.x, p.y);
+      hit = at ? (at.tagName + '.' + String(at.className || '').split(' ')[0]) : null;
+      onTarget = !!at && (at === el || el.contains(at));
+      if (onTarget) break;
+    }
+    last = p;
+    await new Promise(function (res) { setTimeout(res, 100); });
+  }
+  var q = point || last;
+  return JSON.stringify({
+    x: q.x, y: q.y, settled: settled, onTarget: onTarget, hit: hit,
+    text: (el.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 50)
+  });
+})()`;
+
+/**
  * Opens the conversation whose sidebar row CONTAINS `name`, then asserts the pane shows it.
  *
  * The post-condition is the point: a click that lands on the wrong row is exactly the failure being
@@ -57,19 +113,7 @@ export async function clickAt(cx, x, y) {
 export async function openGroup(cx, name, { navigate = false, label = 'client' } = {}) {
   if (navigate) await goto(cx, '/chat');
 
-  const locate = `(function () {
-    var els = [].slice.call(document.querySelectorAll('button, [role=button], a, li'));
-    var hits = els.filter(function (e) {
-      return (e.innerText || '').indexOf(${JSON.stringify(name)}) !== -1 && e.getBoundingClientRect().width > 0;
-    });
-    hits.sort(function (a, b) { return a.innerText.length - b.innerText.length; });
-    if (!hits.length) return null;
-    var r = hits[0].getBoundingClientRect();
-    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2),
-             text: (hits[0].innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 50) };
-  })()`;
-
-  await until(cx, `${locate} !== null`, 25000);
+  await until(cx, `${ROW_POINT(name)} !== null`, 25000);
 
   // RE-LOCATE ON EVERY ATTEMPT, because the coordinates go stale under a live list.
   //
@@ -80,8 +124,19 @@ export async function openGroup(cx, name, { navigate = false, label = 'client' }
   // because a row that will not open after three re-locations is a finding rather than noise.
   let row = null;
   for (let attempt = 1; attempt <= 3; attempt++) {
-    row = JSON.parse(await evaluate(cx, `JSON.stringify(${locate})`));
+    row = JSON.parse(await evaluate(cx, ROW_POINT(name)));
     if (!row) throw new Error(`${label}: no sidebar row for ${name}`);
+    if (!row.onTarget) {
+      // THE POINT IS NOT ON THE ROW, so clicking it would report on whatever is. Say which of the
+      // two it is - a rect that never settled is a list still moving, a settled rect that resolves
+      // to something else is a cover.
+      console.log(
+        `[groupnav] ${label}: attempt ${attempt} could not aim at ${name}` +
+          ` (settled=${row.settled}, hit=${JSON.stringify(row.hit)})`
+      );
+      await sleep(1500);
+      continue;
+    }
 
     await clickAt(cx, row.x, row.y);
     const opened = await until(cx, OPENED, 12000).catch(() => null);

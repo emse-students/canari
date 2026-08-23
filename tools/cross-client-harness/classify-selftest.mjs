@@ -77,6 +77,57 @@ const CASES = [
   ['log', '[14:24:06] [HISTORY_STATE] Sent for 642f389a… - 7e5952f8…, from 2026-05-16T00:00:00.000Z', 'stateChanges'],
   // The one that must NEVER be demoted: a real loss, timestamped exactly as the app writes it.
   ['log', "[14:24:06] [MLS] LOST frame for 642f389a… from d82cd226…: generation consumed but this frame was never processed - the sender's ratchet rewound (SecretReuseError, frame 5p:kq68gk)", 'severe'],
+  // GROUP MEMBERSHIP, added 2026-08-23 with the rules themselves. Every `benign` line below is one
+  // GRP produced on a healthy add, rename or departure; every `unexplained` line below is the SAME
+  // gesture failing, and is here because the risk in classifying a success is a prefix that forgives
+  // its failure too.
+  ['log', '[14:08:26] [GROUP] My other devices: 3 (tauri-x-y, web-x-z, web-x-w)', 'benign'],
+  [
+    'log',
+    '[14:08:26] [GROUP] addMembersBulk result: welcome=true (2115 bytes), added=3 (tauri-x-y, web-x-z, web-x-w)',
+    'benign',
+  ],
+  ['log', '[14:08:26] [GROUP] Welcome -> d82cd226…:web-d82cd226…-mq6xoj9k-b6wr OK', 'benign'],
+  // THE FAILURE OF THE LINE ABOVE, which no rule may forgive - this is what an undelivered Welcome
+  // looks like, and the whole GRP phase exists to see it.
+  ['log', '[14:08:26] [GROUP] Welcome -> d82cd226…:web-d82cd226…-mq6xoj9k-b6wr FAILED', 'unexplained'],
+  ['log', '[14:08:39] Inviting 1 member(s): b78568a3…', 'benign'],
+  ['log', '[14:08:40] [OK] Added: b78568a3… (1 device(s)). (1 user(s) delivered)', 'benign'],
+  ['log', '[14:08:40] [SYNC] Members added: b78568a3… (1/1 delivered)', 'benign'],
+  ['log', '[14:10:28] b78568a3… retire du groupe.', 'benign'],
+  ['log', '[14:12:38] Groupe renomme en "GRP5-mt5rospko89-R"', 'benign'],
+  ['log', '[14:08:40] [WELCOME] Group ee6ba569… ready', 'benign'],
+  [
+    'log',
+    '[14:15:47] [WELCOME] 110280b7… already held - redelivered Welcome ignored (idempotent)',
+    'benign',
+  ],
+  // THE TWO HALVES OF THE LINE THAT USED TO BE ONE. The commit form is the ordinary outcome of
+  // every membership change; the other form is a frame nobody could decrypt and must keep breaking
+  // `clean`. Pinned together because a single rule over the shared prefix would forgive both.
+  [
+    'log',
+    '[14:32:47] [MLS] No application payload for 4ad03375… - commit applied, none expected',
+    // `stateChanges`, not `benign`: an epoch moved, which is worth SEEING and is not a defect.
+    // `unexplained` excludes `stateChanges`, so it does not break `clean` - and unlike a BENIGN
+    // entry it stays in a bucket a reader looks at.
+    'stateChanges',
+  ],
+  [
+    'log',
+    '[14:32:47] [MLS] No application payload for 4ad03375… - not a commit: stale commit already applied, or a frame older than the kept ratchet window',
+    'unexplained',
+  ],
+  // AND THE TWO EVICTION LINES THAT MUST NOT BE CLASSIFIED. Both are real defects GRP-3 and GRP-8
+  // found on 2026-08-23: a removed member's pipeline attempting recovery on a group it was
+  // legitimately evicted from, and its outbox retrying an encrypt that can never succeed. Pinned
+  // here so a later triage pass cannot quietly forgive them.
+  ['log', '[14:10:28] [PIPELINE] Recovery attempt finished for 4ca35caf…', 'unexplained'],
+  [
+    'log',
+    '[14:10:28] [OUTBOX] 1d9076db… transient failure (attempt 1): Crypto/OpenMLS error: Encrypt error: GroupStateError(UseAfterEviction)',
+    'unexplained',
+  ],
   // And one nobody has ever classified, which must land in `unexplained` and break `clean`.
   ['log', '[14:24:06] [SOMETHING] a line no rule has ever seen', 'unexplained'],
   // THE BURN, which is the repair succeeding and must be visible without failing anything. A run that

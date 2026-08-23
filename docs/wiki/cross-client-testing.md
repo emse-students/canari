@@ -29,7 +29,7 @@ Updated after every run.
 | 5 SEARCH | 6 | `1f396ac7` | **`PASS` 6/6 x5** on runner `928f8b286dac` |
 | 6 MENTION | 6 | `1f396ac7`, A1 `a7981206` | **`PASS` 6/6 x5** on runner `cdc081edabc0` |
 | 7 FWD | 6 | `1579d5c3`, A1 `a7981206` | **`PASS` 6/6 x5** (FWD-2 x1, 25 iterations) |
-| 8 GRP | 9 | - | `pending` |
+| 8 GRP | 10 | - | `pending` |
 | 9 COMM | 22 | - | `pending` |
 | 10 DEL | 10 | - | `pending` |
 | 11 TAB | 8 | - | `pending` |
@@ -210,6 +210,7 @@ The first rung that moves an MLS epoch.
 | GRP-7 | Add a member who is offline; they join on their next connection | `W1 W2` | `pending` |
 | GRP-8 | Add and remove the same member twice in a row, fast | `W1 W2` | `pending` |
 | GRP-9 | A member row rendering a raw user id instead of a display name | `W1 W2` | `pending` - observed once |
+| GRP-10 | The invitation link of one group must not appear in another group's panel | `W1 W2` | `pending` - found in source while GRP-4 was written |
 
 ## 9 - COMM - communities, channels, roles
 

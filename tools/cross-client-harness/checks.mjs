@@ -70,7 +70,12 @@ export const PHASES = {
   // W2 mention them. Declaring it is also what makes the phase carry `CANARI_A1_BUILD`.
   MENTION: { title: 'mentions and what they trigger', scripts: only('mention.mjs', 1, 6), needs: ['W1', 'W2', 'A1'] },
   FWD: { title: 'forwarding', scripts: ['fwd.mjs', 'fwd345.mjs', 'fwd5.mjs'], needs: ['W1', 'W2', 'A1'] },
-  GRP: { title: 'group membership and invitations', scripts: ['grp-traffic.mjs'], needs: ['W1', 'W2'] },
+  // GRP WAS THE PHASE WITH A SCRIPT AND NO COVERAGE. It listed `grp-traffic.mjs` alone, which
+  // recorded a `GRP-TRAFFIC` id matching no board row and opened a group name hard-coded on
+  // 2026-08-15 that the 2026-08-21 estate sweep deleted - so the phase's only job would have thrown
+  // on its first line, and its nine board rows had never been armed at all. `grp.mjs` covers them,
+  // plus GRP-10, and that script is gone rather than kept beside it.
+  GRP: { title: 'group membership and invitations', scripts: only('grp.mjs', 1, 10), needs: ['W1', 'W2'] },
   // `tab236.mjs` is named for the three checks it implements and selects ONE of them from `argv[2]`,
   // defaulting to '2' - so the bare entry ran a third of the script its own filename advertises.
   TAB: {

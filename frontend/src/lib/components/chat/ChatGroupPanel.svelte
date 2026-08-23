@@ -160,11 +160,22 @@
   }
 
   // Reset internal state each time the panel is opened.
+  //
+  // THE SHARE-LINK FIELDS BELONG HERE AND WERE MISSING. This effect reset the rename input and the
+  // two confirmations, so opening the panel on another conversation carried `shareLink` over - and
+  // the panel then rendered the PREVIOUS group's join URL, with "Regenerer" and "Lien copie", under
+  // the new group's name. A join link is a capability to enter one specific group, so the user who
+  // copies what the panel shows hands out access to the group they just left, to an audience chosen
+  // for the one they are looking at. Clearing is the whole fix: a link the panel did not generate
+  // this session is a link it must not claim to have.
   $effect(() => {
     if (showPanel) {
       renameInput = effectiveDisplayName;
       confirmDelete = false;
       confirmLeave = false;
+      shareLink = '';
+      shareCopied = false;
+      shareError = '';
     }
   });
 

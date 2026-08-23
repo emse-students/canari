@@ -654,6 +654,27 @@ const passes = [];
  */
 let passLabel = '';
 
+/**
+ * A LOG FILENAME THAT NAMES THE JOB, not just the script it happens to run.
+ *
+ * `pass<N>-` fixed one dimension of this and left the other one whole. Ten jobs of a phase that
+ * selects its check with `--only N` all resolved to the same `<PHASE>-<script>.log`, so the file on
+ * disk was whichever job finished LAST - measured 2026-08-23 on GRP's first run, where six checks
+ * errored and one 567-byte file survived for all ten. It is not new and it is not GRP's: every
+ * phase driven by `only()` has been doing it since the manifest was written - MUT's twenty-one
+ * jobs, READ's ten, MENTION's six, SEARCH's six, TYPE's five.
+ *
+ * The rule this broke is the one about a predicate that named the LAST incident: the pass prefix
+ * was derived from the failure in front of it rather than from what actually distinguishes two
+ * captures, which is the whole invocation.
+ */
+const logSlug = (script) =>
+  script
+    .replace(/\.mjs\b/g, '')
+    .trim()
+    .replace(/[^A-Za-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+
 /** One character per verdict, and the legend below the table is generated from this same map. */
 const CELL = {
   PASS: '.',
@@ -857,7 +878,7 @@ for (const job of jobs) {
        * `results.ndjson` does not cover this - it records the VERDICT and its condensed dirt, which
        * is a different question from what the clients actually said.
        */
-      job.log = `${LOG_DIR}/${passLabel}${String(job.phase)}-${file.replace(/\.mjs$/, '')}.log`;
+      job.log = `${LOG_DIR}/${passLabel}${String(job.phase)}-${logSlug(job.script)}.log`;
       try {
         writeFileSync(job.log, tail);
       } catch (e) {

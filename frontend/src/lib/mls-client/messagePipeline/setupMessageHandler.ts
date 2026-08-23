@@ -700,7 +700,17 @@ async function handleKnownGroup({
       // `same_epoch_ratchet.rs`), so this branch is reached through the `catch` below instead - and
       // branching on the TEXT of a log line was never a contract, it was a leak. Measured on the
       // HEAL run of 2026-08-10: eleven arrivals through the thrown error, ZERO through the flag.
-      log(`[MLS] No application payload for ${convoKey.slice(0, 8)}… - commit or dropped frame`);
+      // NAME WHICH OF THE TWO IT WAS. `isCommit` is already in scope and settles the question the
+      // old wording asked and refused to answer: "commit or dropped frame" put a structural commit
+      // - the ordinary, correct case, produced by every add and every removal - and a frame nobody
+      // could decrypt behind one string, so a reader could not tell a healthy group from a lossy
+      // one without going to the ratchet. A report must carry the evidence separating the causes it
+      // cannot itself distinguish; this one HELD that evidence and dropped it.
+      log(
+        isCommit
+          ? `[MLS] No application payload for ${convoKey.slice(0, 8)}… - commit applied, none expected`
+          : `[MLS] No application payload for ${convoKey.slice(0, 8)}… - not a commit: stale commit already applied, or a frame older than the kept ratchet window`
+      );
       noteConsumed();
       return true;
     }
