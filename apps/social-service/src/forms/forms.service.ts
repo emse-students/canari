@@ -66,6 +66,88 @@ export class FormsService {
     await this.associationsService.assertPaymentsReady(input.associationId!.trim());
   }
 
+  /**
+   * Rejects a cotisation configuration the grant path could never honour. Every branch here is a
+   * setting that would look saved in the admin screen and then quietly do nothing, so each one is
+   * refused at the moment it is chosen rather than discovered by a member who is not one.
+   *
+   * A tier is validated against the association's own membership products, exactly as
+   * `grantCotisant` does - including the base-tier trap, where an association that dropped its
+   * un-suffixed product has no base tag for `null` to mean.
+   */
+  private async assertCotisationConfigValid(
+    input: CreateFormDto,
+    caller: { userId: string; isGlobalAdmin: boolean }
+  ): Promise<void> {
+    const wantsGrant = input.grantsCotisation === true;
+    const wantsMemberPrice = input.memberPriceEnabled === true;
+    if (!wantsGrant && !wantsMemberPrice) return;
+
+    const assocId = input.associationId?.trim();
+    if (!assocId) {
+      throw new BadRequestException(
+        'A beneficiary association is required to grant a cotisation or offer a member price - ' +
+          'there is nothing to be a member of otherwise.'
+      );
+    }
+
+    // A form that grants a cotisation on payment does exactly what the manual roster add does, so
+    // it demands the same right. Creating a form needs only MEMBERSHIP of the association, and
+    // without this check any member could mint cotisants of their own association through a form -
+    // a side door around MANAGE_MEMBERS. A member price is not gated: pricing grants nothing.
+    if (wantsGrant && !caller.isGlobalAdmin) {
+      const mayGrant = await this.associationsService.callerHasFlag(
+        caller.userId,
+        assocId,
+        AssociationPermissionFlag.MANAGE_MEMBERS
+      );
+      if (!mayGrant) {
+        this.logger.warn(
+          `[UserTag] refused a cotisation-granting form: user=${caller.userId.slice(0, 8)} lacks ` +
+            `MANAGE_MEMBERS on assoc=${assocId.slice(0, 8)}`
+        );
+        throw new ForbiddenException(
+          'Granting a cotisation requires the right to manage this association members.'
+        );
+      }
+    }
+    // The grant only ever runs from `markPaid` or the cash validation, and neither is reached by a
+    // submission whose total is zero (it is stored `free`). A grant on a form that charges nothing
+    // is therefore not a policy we dislike - it is a setting that cannot fire.
+    if (wantsGrant && input.requiresPayment !== true) {
+      throw new BadRequestException(
+        'A form must require payment to grant a cotisation: a free submission never reaches the ' +
+          'grant.'
+      );
+    }
+
+    const tiers = await this.userTagService.listCotisationTiers(assocId);
+    if (tiers.length === 0) {
+      throw new BadRequestException(
+        'This association has no cotisation: enable it and add at least one tier before a form ' +
+          'can grant it or price it.'
+      );
+    }
+    const named = (key: string | null | undefined) => key?.trim() || null;
+    const knows = (key: string | null) => tiers.some((t) => t.variantKey === key);
+
+    if (wantsGrant) {
+      const tier = named(input.cotisationVariantKey);
+      if (!knows(tier)) {
+        throw new BadRequestException(
+          tier
+            ? `Unknown cotisation tier "${tier}" for this association.`
+            : 'This association has no base tier - a tier must be chosen.'
+        );
+      }
+    }
+    // `null` here means "any tier", which needs no lookup - only a named tier can be wrong.
+    const priceTier = named(input.memberPriceVariantKey);
+    if (wantsMemberPrice && priceTier && !knows(priceTier)) {
+      throw new BadRequestException(`Unknown cotisation tier "${priceTier}" for this association.`);
+    }
+  }
+
   /** Creates a form and assigns stable IDs to all items and options that lack them. */
   async create(input: CreateFormDto, isGlobalAdmin = false) {
     if (input.associationId && !isGlobalAdmin) {
@@ -75,6 +157,10 @@ export class FormsService {
       }
     }
     await this.assertPaidFormAssociationReady(input);
+    await this.assertCotisationConfigValid(input, {
+      userId: input.ownerId!,
+      isGlobalAdmin,
+    });
     const { opensAt: opensAtRaw, closedAt: closedAtRaw, ...rest } = input;
     const form = this.formRepo.create({
       ...rest,
@@ -93,14 +179,30 @@ export class FormsService {
     return this.formRepo.save(form);
   }
 
-  /** Lists all forms where the user is owner or co-owner, newest first. */
+  /**
+   * Everything the user may manage, newest first: their own forms, the ones they co-manage, and the
+   * forms of associations where they hold MANAGE_FORMS.
+   *
+   * That third group is the point. `assertFormManager` has always accepted MANAGE_FORMS, so those
+   * forms were editable and exportable by API while appearing in no list on any screen - reachable
+   * only by someone who already knew the URL.
+   *
+   * Every row that carries an association also carries its NAME, so the list can say which forms
+   * are an association's and which are personal. The id is never what a screen shows.
+   */
   async list(ownerId?: string) {
     if (!ownerId) {
-      return this.formRepo.find({ order: { createdAt: 'DESC' } });
+      return this.withAssociationNames(await this.formRepo.find({ order: { createdAt: 'DESC' } }));
     }
+    const managedAssociations = await this.associationsService.associationsWhereUserHasFlag(
+      ownerId,
+      AssociationPermissionFlag.MANAGE_FORMS
+    );
+    const managedIds = managedAssociations.map((a) => a.id);
+
     // Fetch owned forms and co-owned forms in parallel without loading the entire table.
     // simple-array stores as CSV so a LIKE scan on UUID is safe (UUIDs don't overlap as substrings).
-    const [owned, coOwned] = await Promise.all([
+    const [owned, coOwned, viaAssociation] = await Promise.all([
       this.formRepo.find({ where: { ownerId }, order: { createdAt: 'DESC' } }),
       this.formRepo
         .createQueryBuilder('f')
@@ -108,10 +210,36 @@ export class FormsService {
         .andWhere('"f"."coOwners" LIKE :pattern', { pattern: `%${ownerId}%` })
         .orderBy('"f"."createdAt"', 'DESC')
         .getMany(),
+      managedIds.length === 0
+        ? Promise.resolve([])
+        : this.formRepo
+            .createQueryBuilder('f')
+            .where('"f"."associationId" IN (:...managedIds)', { managedIds })
+            .orderBy('"f"."createdAt"', 'DESC')
+            .getMany(),
     ]);
-    return [...owned, ...coOwned].sort(
+
+    // The three sets overlap - a form you own in an association you administer is in two of them -
+    // so they are merged by id rather than concatenated.
+    const byId = new Map<string, Form>();
+    for (const form of [...owned, ...coOwned, ...viaAssociation]) {
+      byId.set(form.id, form);
+    }
+    const merged = [...byId.values()].sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
+    return this.withAssociationNames(merged);
+  }
+
+  /** Attaches `associationName` to every form that names an association. */
+  private async withAssociationNames(forms: Form[]) {
+    const names = await this.associationsService.namesByIds(
+      forms.map((f) => f.associationId).filter(Boolean)
+    );
+    return forms.map((form) => ({
+      ...form,
+      associationName: form.associationId ? (names.get(form.associationId) ?? null) : null,
+    }));
   }
 
   /** Returns a single form by ID with its current submission count, or null if not found. */
@@ -153,8 +281,37 @@ export class FormsService {
   /** Updates a form's metadata and items. Only owner, co-owner, global admin, or MANAGE_FORMS flag may update. */
   async update(formId: string, input: CreateFormDto, userId: string, isGlobalAdmin: boolean) {
     const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
-    await this.assertPaidFormAssociationReady(input);
-    const { opensAt: opensAtRaw, closedAt: closedAtRaw, ownerId: _ownerId, ...rest } = input;
+
+    // THE ASSOCIATION LINK IS FIXED AT CREATION (user decision, 2026-08-23). A form is either
+    // personal or an association's, and which one it is decides who owns it: MANAGE_FORMS on the
+    // association is a right over the association's forms, so letting a manager cut the link would
+    // let them walk off with a form, and re-pointing it would hand someone else's form to a third
+    // association. Neither has an answer to "who owns it now", so neither is offered.
+    //
+    // An attempt is refused rather than ignored: a silently dropped field is a save that reports
+    // success and did something else. An ABSENT field is not an attempt - it means "leave it" - so
+    // only a value that is present and different is a refusal.
+    if (input.associationId !== undefined) {
+      const requested = input.associationId.trim() || null;
+      if (requested !== (form.associationId ?? null)) {
+        throw new BadRequestException(
+          'A form stays with the association it was created for. Create a new form to move it.'
+        );
+      }
+    }
+
+    await this.assertPaidFormAssociationReady({ ...input, associationId: form.associationId });
+    await this.assertCotisationConfigValid(
+      { ...input, associationId: form.associationId },
+      { userId, isGlobalAdmin }
+    );
+    const {
+      opensAt: opensAtRaw,
+      closedAt: closedAtRaw,
+      ownerId: _ownerId,
+      associationId: _associationId,
+      ...rest
+    } = input;
     Object.assign(form, {
       ...rest,
       currency: 'eur',
@@ -246,6 +403,63 @@ export class FormsService {
     });
   }
 
+  /**
+   * Whether this submitter pays the member price - the single answer behind both the price quote
+   * shown before submitting and the price actually charged at submit time. It was computed
+   * identically in both places; two copies of a money decision is one copy too many.
+   *
+   * Membership is asked of the beneficiary association's CURRENT cotisation tiers, so a form
+   * configured last year still recognises this year's cotisants (migration 050).
+   */
+  private async paysMemberPrice(form: Form, userId: string | undefined): Promise<boolean> {
+    if (!userId || !form.memberPriceEnabled || !form.associationId) return false;
+    return this.userTagService.holdsCotisation(
+      userId,
+      form.associationId,
+      form.memberPriceVariantKey ?? 'any'
+    );
+  }
+
+  /**
+   * Grants the form's configured cotisation tier to a submitter whose payment just landed.
+   * Shared by the Stripe webhook path (`markPaid`) and the cash validation path, which had a copy
+   * each.
+   *
+   * Best-effort by design: the payment is a fact by the time this runs, so a failure here must not
+   * unwind it - but it is logged as an error, because a paid cotisation that granted nothing is a
+   * user who will be told they are not a member.
+   */
+  private async grantCotisationIfConfigured(
+    form: Pick<Form, 'grantsCotisation' | 'cotisationVariantKey' | 'associationId'>,
+    userId: string,
+    grantedBy: string,
+    metadata: Record<string, unknown>
+  ): Promise<void> {
+    if (!form.grantsCotisation) return;
+    if (!form.associationId) {
+      this.logger.error(
+        '[UserTag] Form grants a cotisation but names no beneficiary association - nothing to be ' +
+          'a member of. The create/update DTO must reject this pairing.'
+      );
+      return;
+    }
+    try {
+      await this.userTagService.grantCotisant(
+        form.associationId,
+        userId,
+        grantedBy,
+        form.cotisationVariantKey,
+        metadata
+      );
+    } catch (e) {
+      this.logger.error(
+        `[UserTag] Failed to grant cotisation tier "${form.cotisationVariantKey ?? 'base'}" of ` +
+          `assoc=${form.associationId.slice(0, 8)} to user=${userId.slice(0, 8)}`,
+        e
+      );
+    }
+  }
+
   /** Returns per-user submission state and whether the form has reached its global capacity. */
   async hasSubmission(
     formId: string,
@@ -273,10 +487,7 @@ export class FormsService {
       formFull = count >= form.maxSubmissions;
     }
 
-    const memberPricing =
-      !!userId &&
-      !!form.pricingTagName &&
-      (await this.userTagService.hasActiveTag(userId, form.pricingTagName));
+    const memberPricing = await this.paysMemberPrice(form, userId);
 
     if (form.allowMultipleSubmissions) return { hasSubmitted: false, formFull, memberPricing };
 
@@ -320,10 +531,7 @@ export class FormsService {
       }
     }
 
-    const memberPricing =
-      !!input.userId &&
-      !!form.pricingTagName &&
-      (await this.userTagService.hasActiveTag(input.userId, form.pricingTagName));
+    const memberPricing = await this.paysMemberPrice(form, input.userId);
 
     const baseCents =
       memberPricing && form.basePriceMember != null ? form.basePriceMember : form.basePrice;
@@ -564,11 +772,6 @@ export class FormsService {
   }
 
   /**
-   * Marks a submission as paid (called from the frontend after Stripe redirect).
-   * Requires the caller to be the submitter or a form manager.
-   * If the parent form has a `grantedTagName`, grants or renews the tag for the submitter.
-   */
-  /**
    * Records that a submission has been paid, and grants everything that payment buys.
    *
    * THE CALLER IS THE AUTHORISATION, WHICH IS WHY THIS TAKES NO CALLER. Its only route is the
@@ -585,30 +788,22 @@ export class FormsService {
     if (sessionId) submission.stripeSessionId = sessionId;
     await this.submissionRepo.save(submission);
 
-    // Grant cotisation tag if configured on the form + log purchase record
+    // Grant the configured cotisation tier if any + log purchase record
     const form = await this.formRepo.findOne({
       where: { id: submission.formId },
       select: {
         id: true,
         title: true,
-        grantedTagName: true,
-        tagExpiresAt: true,
+        grantsCotisation: true,
+        cotisationVariantKey: true,
         associationId: true,
       },
     });
-    if (form?.grantedTagName) {
-      try {
-        await this.userTagService.grantOrRenew({
-          userId: submission.userId,
-          tagName: form.grantedTagName,
-          issuingAssocId: form.associationId ?? null,
-          grantedBy: 'system',
-          expiresAt: form.tagExpiresAt ?? null,
-          metadata: { submissionId, sessionId: sessionId ?? null },
-        });
-      } catch (e) {
-        this.logger.error(`[UserTag] Failed to grant tag for submission ${submissionId}`, e);
-      }
+    if (form) {
+      await this.grantCotisationIfConfigured(form, submission.userId, 'system', {
+        submissionId,
+        sessionId: sessionId ?? null,
+      });
     }
     if (form?.associationId && submission.totalPaid > 0) {
       try {
@@ -692,33 +887,23 @@ export class FormsService {
     await this.submissionRepo.save(submission);
     this.logger.log(`[Forms] Cash validated for submission ${submissionId} by ${validatedBy}`);
 
-    // Grant tag if form is configured + log purchase record
+    // Grant the configured cotisation tier if any + log purchase record
     const form = await this.formRepo.findOne({
       where: { id: formId },
       select: {
         id: true,
         title: true,
-        grantedTagName: true,
-        tagExpiresAt: true,
+        grantsCotisation: true,
+        cotisationVariantKey: true,
         associationId: true,
       },
     });
-    if (form?.grantedTagName) {
-      try {
-        await this.userTagService.grantOrRenew({
-          userId: submission.userId,
-          tagName: form.grantedTagName,
-          issuingAssocId: form.associationId ?? null,
-          grantedBy: validatedBy,
-          expiresAt: form.tagExpiresAt ?? null,
-          metadata: { submissionId, validatedBy, paymentMethod: 'cash' },
-        });
-      } catch (e) {
-        this.logger.error(
-          `[UserTag] Failed to grant tag after cash validation for ${submissionId}`,
-          e
-        );
-      }
+    if (form) {
+      await this.grantCotisationIfConfigured(form, submission.userId, validatedBy, {
+        submissionId,
+        validatedBy,
+        paymentMethod: 'cash',
+      });
     }
     if (form?.associationId && submission.totalPaid > 0) {
       try {

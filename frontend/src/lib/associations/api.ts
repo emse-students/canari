@@ -910,17 +910,6 @@ export async function listAssociationTags(associationId: string): Promise<UserTa
   return request<UserTag[]>(`/api/associations/${encodeURIComponent(associationId)}/tags`);
 }
 
-/** Searches distinct tag names for an association (products, forms, grants). */
-export async function searchAssociationTagCatalog(
-  associationId: string,
-  query = ''
-): Promise<string[]> {
-  const params = query.trim() ? `?q=${encodeURIComponent(query.trim())}` : '';
-  return request<string[]>(
-    `/api/associations/${encodeURIComponent(associationId)}/tag-catalog${params}`
-  );
-}
-
 /** Manually grants a cotisation tag to a user (requires MANAGE_MEMBERS). */
 export async function grantAssociationTag(
   associationId: string,
@@ -997,6 +986,37 @@ export interface CotisationTier {
 export async function listCotisationTiers(associationId: string): Promise<CotisationTier[]> {
   return request<CotisationTier[]>(
     `/api/associations/${encodeURIComponent(associationId)}/cotisation-tiers`
+  );
+}
+
+/** A cotisation tier as a form configurator sees it: a name to choose between, and nothing else. */
+export interface MembershipTier {
+  /** Names the tier on the wire; never shown to anyone. `null` is the base, un-suffixed tier. */
+  variantKey: string | null;
+  /** The tier's display name, e.g. "Avec alcool" - the ONLY part a screen may render. */
+  name: string;
+}
+
+/** What the caller may do with an association's cotisations, from the forms admin's point of view. */
+export interface CotisationOptions {
+  /** The tiers the association sells, base tier first. Empty when it runs no cotisation. */
+  tiers: MembershipTier[];
+  /**
+   * Whether the caller may hand one of them out (MANAGE_MEMBERS) - the same right the manual roster
+   * add needs, because a form that grants a cotisation on payment does the same thing.
+   */
+  mayGrant: boolean;
+}
+
+/**
+ * Reads an association's cotisation tiers, and whether the caller may grant them.
+ *
+ * Deliberately not `listCotisationTiers`: that one requires MANAGE_MEMBERS, which a form manager
+ * (MANAGE_FORMS) need not hold, and it carries the derived tag - which no screen has any use for.
+ */
+export async function fetchCotisationOptions(associationId: string): Promise<CotisationOptions> {
+  return request<CotisationOptions>(
+    `/api/associations/${encodeURIComponent(associationId)}/cotisation-options`
   );
 }
 

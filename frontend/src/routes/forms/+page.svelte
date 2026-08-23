@@ -214,7 +214,26 @@
               {#if form.description}
                 <p class="text-text-muted mt-0.5 truncate text-sm">{form.description}</p>
               {/if}
-              <p class="text-text-muted/60 mt-1.5 truncate font-mono text-xs">{form.id}</p>
+              <!-- Whose form this is, by NAME. The list covers association forms reachable
+                   through MANAGE_FORMS, so a row that only said its title would leave the
+                   caller guessing. This line used to print the raw form id, which told a
+                   person nothing and leaked an internal handle. -->
+              <p class="mt-1.5 flex items-center gap-1.5 text-xs font-semibold">
+                {#if form.associationName}
+                  <span
+                    class="bg-cn-yellow/15 text-cn-dark inline-flex items-center gap-1 rounded-full px-2 py-0.5"
+                  >
+                    <Users size={11} />
+                    {m.form_list_association_badge({ association: form.associationName })}
+                  </span>
+                {:else}
+                  <span
+                    class="bg-cn-border/40 text-text-muted inline-flex rounded-full px-2 py-0.5"
+                  >
+                    {m.form_list_personal_badge()}
+                  </span>
+                {/if}
+              </p>
             </div>
             <div class="flex flex-shrink-0 flex-wrap gap-2">
               <a

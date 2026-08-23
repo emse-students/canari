@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { CONTROL_LABEL_CLASS, controlClass } from './controlClasses';
+
   interface Props {
     /** HTML id attribute; auto-generated if omitted. */
     id?: string;
@@ -51,7 +53,7 @@
 
 <div class={className}>
   {#if label}
-    <label for={uniqueId} class="text-text-main mb-2 ml-1 block text-sm font-bold">
+    <label for={uniqueId} class={CONTROL_LABEL_CLASS}>
       {label}
       {#if required}<span class="text-red-500">*</span>{/if}
     </label>
@@ -65,9 +67,7 @@
     {required}
     aria-invalid={isInvalid || undefined}
     aria-errormessage={error ? `${uniqueId}-error` : undefined}
-    class="text-text-main placeholder:text-text-muted/50 disabled:bg-cn-border/20 w-full rounded-2xl border-2 bg-(--cn-surface) px-4 py-3 text-base transition-all outline-none focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)] disabled:opacity-50 {isInvalid
-      ? 'border-red-err focus:border-red-err'
-      : 'border-cn-border focus:border-cn-yellow'}"
+    class={controlClass(isInvalid)}
     {oninput}
     {onkeydown}
     {...rest}

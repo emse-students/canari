@@ -1036,6 +1036,40 @@ export class AssociationsService {
     return (m.permissions & flag) !== 0;
   }
 
+  /**
+   * Resolves association ids to their display names, in one query.
+   *
+   * For labelling rows that carry an association id - a form list, say - where the name is the only
+   * part a screen may show. Ids absent from the result simply have no name: the association was
+   * deleted, and the caller renders the row without a label rather than failing.
+   */
+  async namesByIds(ids: string[]): Promise<Map<string, string>> {
+    const unique = [...new Set(ids.filter(Boolean))];
+    if (unique.length === 0) return new Map();
+    const rows = await this.assoRepo
+      .createQueryBuilder('a')
+      .select(['a.id', 'a.name'])
+      .where('a.id IN (:...ids)', { ids: unique })
+      .getMany();
+    return new Map(rows.map((a) => [a.id, a.name]));
+  }
+
+  /**
+   * The associations where `userId` holds `flag`, as `{ id, name }`.
+   *
+   * Reuses `listByUser`, so it inherits its exclusion of archived associations - a form of an
+   * archived association must not surface in a "what can I manage" list.
+   */
+  async associationsWhereUserHasFlag(
+    userId: string,
+    flag: AssociationPermissionFlag
+  ): Promise<{ id: string; name: string }[]> {
+    const mine = await this.listByUser(userId);
+    return mine
+      .filter((a) => (a.permissions & flag) !== 0)
+      .map((a) => ({ id: a.id, name: a.name }));
+  }
+
   /** Returns true if userId is a member of the given association (any role). */
   async isMember(userId: string, associationId: string): Promise<boolean> {
     const m = await this.memberRepo.findOne({ where: { associationId, userId } });
@@ -1912,48 +1946,6 @@ export class AssociationsService {
         createdAt: true,
       },
     });
-  }
-
-  /**
-   * Distinct tag names known for an association (products, forms, granted tags).
-   * Used by the frontend tag autocomplete when configuring cotisation pricing.
-   */
-  async searchTagCatalog(associationId: string, query?: string): Promise<string[]> {
-    await this.findById(associationId);
-    const limit = 30;
-    const names = new Set<string>();
-
-    const products = await this.productRepo.find({
-      where: { associationId },
-      select: { grantedTagName: true },
-    });
-    for (const p of products) {
-      if (p.grantedTagName?.trim()) names.add(p.grantedTagName.trim());
-    }
-
-    const forms = await this.formRepo.find({
-      where: { associationId },
-      select: { pricingTagName: true, grantedTagName: true },
-    });
-    for (const f of forms) {
-      if (f.pricingTagName?.trim()) names.add(f.pricingTagName.trim());
-      if (f.grantedTagName?.trim()) names.add(f.grantedTagName.trim());
-    }
-
-    for (const tagName of await this.userTagService.listDistinctNamesForAssoc(associationId)) {
-      names.add(tagName);
-    }
-
-    let list = [...names].sort((a, b) => a.localeCompare(b, 'fr'));
-    const q = query?.trim().toLowerCase();
-    if (q) {
-      list = list.filter((n) => n.toLowerCase().includes(q));
-    }
-
-    this.logger.debug(
-      `[TagCatalog] assoc=${associationId.slice(0, 8)} q=${q ?? ''} hits=${list.length}`
-    );
-    return list.slice(0, limit);
   }
 
   // ── Stripe helpers ────────────────────────────────────────────────────────

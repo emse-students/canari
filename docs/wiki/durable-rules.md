@@ -528,10 +528,15 @@ Signing, the bump script, the secrets and every compile-check trick are on [cicd
 
 - **A second surface for an existing action mirrors the SERVER's rule, not the first surface's** - a `VALIDATE_EVENTS` holder had the right and nowhere to use it.
 - **What a modal hides because it is redundant is a decision of the PAGE, never of `canEdit`.**
+- **A RIGHT THE SERVER ACCEPTS AND NO LIST SHOWS IS REACHABLE ONLY BY SOMEONE WHO ALREADY KNOWS THE URL.** `assertFormManager` accepted `MANAGE_FORMS` on the linked association for months while `/forms` listed only what the caller owned. When a permission is added to a server-side check, enumerate the screens that must then show its subjects. [forms](frontend/modules/forms.md)
+- **A DISABLED CONTROL CLAIMS SOMEONE WITH MORE RIGHTS COULD USE IT.** For a value that is immutable by DESIGN rather than by permission, render text, not a greyed-out picker.
 
 ## Cotisations (Cercle) -> [cotisations](cotisations.md)
 
 - **The tier XOR has ONE implementation** (`UserTagService.revokeSiblingTierTags`), and a tag revoke MUST be scoped to `issuingAssocId` or it is a cross-tenant IDOR.
+- **STORE THE REFERENCE, NEVER THE RESULT OF A DERIVATION SOMETHING ELSE OWNS.** A cotisation tag is derived from the slug, the mode and the DATE; a row that stored the derived string was a snapshot of one instant, could not be resynced because it no longer said what it meant, and bypassed the invariant the deriving call enforces. If a value has a function that computes it, persist that function's INPUTS. [forms](frontend/modules/forms.md), migration `050`
+- **THE FLAG THAT GUARDS AN EFFECT MUST GUARD SAVING THE SETTING THAT CAUSES IT** - otherwise the setting is a side door with the effect's own permission checked at a moment when the actor is no longer the caller. `grantsCotisation` runs at payment time, so it demands `MANAGE_MEMBERS` at CONFIGURATION time. Ask of every stored setting: whose rights does it spend, and when? [forms](frontend/modules/forms.md)
+- **AN OPTION A SCREEN OFFERS AND THE SAVE REFUSES IS A DEFECT, NOT A GUARD WORKING.** Ship the caller's own capability with the choices (`cotisation-options` returns `mayGrant`), so nothing is offered that cannot be saved.
 - **A product entity carries `webhookSecret` and `/products/all` answers every logged-in user** - same lesson as `Channel.masterSecret`. `toSafeProduct` is the one seam, and a guard is a decorator nothing type-checks, so assert the metadata.
 
 ## Working in the Cercle repo -> `../le-cercle/AGENTS.md`

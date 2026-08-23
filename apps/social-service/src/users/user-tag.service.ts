@@ -216,7 +216,8 @@ export class UserTagService {
     assocId: string,
     userId: string,
     grantedBy: string,
-    variantKey: string | null = null
+    variantKey: string | null = null,
+    metadata: Record<string, unknown> = {}
   ): Promise<UserTag> {
     const rows: { slug: string; cotisationMode: CotisationMode | null }[] =
       await this.repo.manager.query(
@@ -252,12 +253,53 @@ export class UserTagService {
     );
     return this.repo.manager.transaction(async (manager) => {
       const tag = await this.grantOrRenew(
-        { userId, tagName, issuingAssocId: assocId, grantedBy, expiresAt },
+        { userId, tagName, issuingAssocId: assocId, grantedBy, expiresAt, metadata },
         manager
       );
       await this.revokeSiblingTierTags(assocId, userId, variantKey, manager);
       return tag;
     });
+  }
+
+  /**
+   * Whether the user currently holds one of `assocId`'s cotisation tiers.
+   *
+   * `variantKey` is the tier to require; pass `'any'` to accept any tier the association sells.
+   * The two are separate answers and the caller always knows which it wants, so they are one
+   * parameter with an explicit sentinel rather than an overloaded `null` - `null` already means
+   * "the base tier" everywhere else in this service, and reusing it for "any tier" would make the
+   * member-price gate silently accept the base tier only.
+   *
+   * Derives the tier tags through `listCotisationTiers`, so the answer follows the association's
+   * current slug, mode and academic year. Returns false when cotisations are not enabled, and when
+   * `variantKey` names a tier the association does not (or no longer) sells - an unknown tier
+   * grants nothing, so it must not qualify anyone.
+   */
+  async holdsCotisation(
+    userId: string,
+    assocId: string,
+    variantKey: string | null | 'any'
+  ): Promise<boolean> {
+    const tiers = await this.listCotisationTiers(assocId);
+    if (tiers.length === 0) {
+      this.logger.debug(
+        `[UserTag] holdsCotisation assoc=${assocId.slice(0, 8)} has no cotisation tier - false`
+      );
+      return false;
+    }
+    const wanted = variantKey === 'any' ? tiers : tiers.filter((t) => t.variantKey === variantKey);
+    if (wanted.length === 0) {
+      this.logger.warn(
+        `[UserTag] holdsCotisation assoc=${assocId.slice(0, 8)} was asked for tier ` +
+          `"${variantKey}", which this association does not sell - nobody qualifies. A form or ` +
+          'product still names a tier that was renamed or deleted.'
+      );
+      return false;
+    }
+    for (const tier of wanted) {
+      if (await this.hasActiveTag(userId, tier.tagName)) return true;
+    }
+    return false;
   }
 
   /** Returns true when the user has an active (non-expired) tag with the given name. */
@@ -335,17 +377,6 @@ export class UserTagService {
       map.set(tier.tagName, tier.name);
     }
     return map;
-  }
-
-  /** Distinct tag names ever issued by an association (including expired). */
-  async listDistinctNamesForAssoc(assocId: string): Promise<string[]> {
-    const rows = await this.repo
-      .createQueryBuilder('t')
-      .select('DISTINCT t.tagName', 'tagName')
-      .where('t.issuingAssocId = :assocId', { assocId })
-      .orderBy('t.tagName', 'ASC')
-      .getRawMany<{ tagName: string }>();
-    return rows.map((r) => r.tagName).filter(Boolean);
   }
 
   /**

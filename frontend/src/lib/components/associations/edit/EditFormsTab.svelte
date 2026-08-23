@@ -9,10 +9,11 @@
     listPendingCashSubmissions,
     validateCashSubmission,
     cancelCashSubmission,
+    deleteForm,
     type PendingCashSubmission,
   } from '$lib/forms/api';
   import { showConfirm } from '$lib/stores/confirm.svelte';
-  import { ClipboardList, AlertTriangle } from '@lucide/svelte';
+  import { ClipboardList, AlertTriangle, Pencil, Trash2 } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
@@ -33,6 +34,7 @@
   let formsLoading = $state(false);
   let formsError = $state('');
   let pendingCash = $state<Record<string, PendingCashSubmission[]>>({});
+  let deletingId = $state<string | null>(null);
   /** True when at least one association form requires online payment (basePrice > 0). */
   let hasPaidForms = $derived(forms.some((f) => f.basePrice > 0));
 
@@ -92,6 +94,33 @@
       };
     } catch (e) {
       formsError = e instanceof Error ? e.message : 'Error';
+    }
+  }
+
+  /**
+   * Removes a form belonging to this association.
+   *
+   * This tab is only ever rendered to a caller holding MANAGE_FORMS on the association (or owning
+   * it, or a global admin), which is exactly the set the server accepts here - so the actions are
+   * unconditional. Before this, such a caller could edit and delete these forms by API and had no
+   * screen offering it: the tab linked to the public page and stopped there.
+   */
+  async function removeForm(form: AssociationForm) {
+    if (
+      !(await showConfirm(m.asso_forms_delete_confirm({ title: form.title }), {
+        danger: true,
+        confirmLabel: m.common_delete_button(),
+      }))
+    )
+      return;
+    deletingId = form.id;
+    try {
+      await deleteForm(form.id);
+      forms = forms.filter((f) => f.id !== form.id);
+    } catch (e) {
+      formsError = e instanceof Error ? e.message : 'Error';
+    } finally {
+      deletingId = null;
     }
   }
 </script>
@@ -168,12 +197,30 @@
                 {/if}
               </p>
             </div>
-            <a
-              href="/forms/{form.id}"
-              class="text-cn-yellow shrink-0 text-xs font-semibold hover:underline"
-              target="_blank"
-              rel="noopener noreferrer">{m.asso_forms_view_link()}</a
-            >
+            <div class="flex shrink-0 items-center gap-2">
+              <a
+                href="/forms/{form.id}"
+                class="text-cn-yellow text-xs font-semibold hover:underline"
+                target="_blank"
+                rel="noopener noreferrer">{m.asso_forms_view_link()}</a
+              >
+              <a
+                href="/forms/{form.id}/edit"
+                class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors"
+              >
+                <Pencil size={12} />
+                {m.asso_forms_edit_action()}
+              </a>
+              <button
+                type="button"
+                onclick={() => removeForm(form)}
+                disabled={deletingId === form.id}
+                class="border-red-err/30 bg-red-err/10 text-red-err hover:bg-red-err/20 inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50"
+              >
+                <Trash2 size={12} />
+                {m.asso_forms_delete_action()}
+              </button>
+            </div>
           </div>
 
           {#if pendingCash[form.id]?.length}

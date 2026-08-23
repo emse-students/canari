@@ -1,7 +1,7 @@
 export interface FormOption {
   label: string;
   priceModifier: number;
-  /** Price modifier in cents when submitter has `pricingTagName`. */
+  /** Price modifier in cents for a cotisant, when the form has a member price. */
   priceModifierMember?: number;
   id?: string;
 }
@@ -48,20 +48,41 @@ export interface CreateFormPayload {
   allowCashPayment?: boolean;
   /** Days after submission before an unvalidated cash payment expires (null = never). */
   cashPaymentExpiryDays?: number;
-  /** Tag checked at submit for member pricing (e.g. cotisation from the boutique). */
-  pricingTagName?: string | null;
-  /** Base price in cents when submitter has `pricingTagName`. */
+  /**
+   * Whether cotisants of `associationId` get a reduced price. Gates both `basePriceMember` and
+   * every option's `priceModifierMember`.
+   */
+  memberPriceEnabled?: boolean;
+  /**
+   * Restricts the member price to one cotisation tier; null = any tier of the association.
+   * A tier is named by its opaque `variantKey`, which is never displayed - the screen offers
+   * `MembershipTier.name` and sends this.
+   */
+  memberPriceVariantKey?: string | null;
+  /** Base price in cents for a cotisant (null = the member price only affects the options). */
   basePriceMember?: number | null;
-  /** Tag name automatically granted upon successful payment (e.g. "cotisant:bde-2026"). */
-  grantedTagName?: string;
-  /** ISO 8601 - when the granted tag expires (omit for permanent). */
-  tagExpiresAt?: string;
+  /**
+   * When true, a paid submission grants `associationId`'s cotisation to the submitter - derived
+   * server-side at grant time, with the sibling tiers revoked, exactly like a boutique purchase.
+   * The frontend never computes a tag: see migration 050 for what a stored one cost.
+   */
+  grantsCotisation?: boolean;
+  /** Which tier `grantsCotisation` grants; null = the base tier. */
+  cotisationVariantKey?: string | null;
 }
 
 export interface Form extends CreateFormPayload {
   id: string;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Display name of the linked association, resolved server-side for the list.
+   *
+   * The list covers forms reachable through MANAGE_FORMS as well as one's own, so a row has to say
+   * whose form it is - and it says it by NAME. Null for a personal form, and also for a form whose
+   * association has since been deleted.
+   */
+  associationName?: string | null;
   /** Banner/header image URL (public, served via media-service). */
   imageUrl?: string | null;
   /** Additional user IDs that can manage this form and view submissions. */

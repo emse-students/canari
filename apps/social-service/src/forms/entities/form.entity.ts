@@ -57,26 +57,46 @@ export class Form {
   items: any[];
 
   /**
-   * Tag checked at submit time for member pricing (e.g. cotisation bought in the boutique).
-   * Format: `"<category>:<issuer-slug>-<year>"`, e.g. `"cotisant:bde-2026-2027"`.
+   * Whether cotisants of `associationId` get a reduced price. Gates BOTH `basePriceMember` and
+   * every item's `priceModifierMember`, which is why it is its own column and not
+   * `basePriceMember != null`: a form may discount only its options.
+   */
+  @Column({ default: false })
+  memberPriceEnabled: boolean;
+
+  /**
+   * Restricts the member price to one cotisation tier of `associationId`.
+   * NULL means ANY tier qualifies - the one deliberate difference from `cotisationVariantKey`
+   * below: "who counts as a member" is a question about a SET of tiers, while "what does payment
+   * grant" is exactly one.
    */
   @Column({ length: 100, nullable: true })
-  pricingTagName: string | null;
+  memberPriceVariantKey: string | null;
 
-  /** Base price in cents when the submitter has `pricingTagName` (null = same as basePrice). */
+  /** Base price in cents for a cotisant (null = the member price only affects the options). */
   @Column({ type: 'int', nullable: true })
   basePriceMember: number | null;
 
   /**
-   * When set, a paid submission grants (or renews) this tag to the submitter.
-   * Prefer granting tags via boutique membership products instead.
+   * When true, a paid submission grants (or renews) `associationId`'s cotisation to the submitter,
+   * through the same `grantCotisant` path as a boutique purchase or a manual add - so the tag is
+   * derived at grant time and the sibling-tier XOR is enforced.
+   *
+   * A boolean is required because `cotisationVariantKey: null` is the BASE tier, not "no grant"
+   * (migration 050).
+   */
+  @Column({ default: false })
+  grantsCotisation: boolean;
+
+  /**
+   * Which tier `grantsCotisation` grants. NULL = the base, un-suffixed tier, matching
+   * `grantCotisant`'s own `variantKey` parameter. Meaningless when `grantsCotisation` is false.
+   *
+   * This stores the REFERENCE, never the resulting tag: a stored tag string would keep granting
+   * last academic year's cotisation forever (migration 050).
    */
   @Column({ length: 100, nullable: true })
-  grantedTagName: string | null;
-
-  /** When the granted tag expires (null = permanent). */
-  @Column({ type: 'timestamptz', nullable: true })
-  tagExpiresAt: Date | null;
+  cotisationVariantKey: string | null;
 
   /** When true, a user can submit the form multiple times (e.g. product orders). */
   @Column({ default: false })

@@ -70,7 +70,7 @@ export class FormOptionDto {
   @IsNumber()
   priceModifier: number;
 
-  /** Price modifier in cents when submitter has `pricingTagName` (defaults to priceModifier). */
+  /** Price modifier in cents for a cotisant when `memberPriceEnabled` (defaults to priceModifier). */
   @IsNumber()
   @IsOptional()
   priceModifierMember?: number;
@@ -193,27 +193,43 @@ export class CreateFormDto {
   @IsOptional()
   associationId?: string;
 
-  /** Tag checked at submit for member pricing (e.g. cotisation from the boutique). */
+  /**
+   * Whether cotisants of `associationId` get a reduced price. Gates `basePriceMember` and every
+   * option's `priceModifierMember`.
+   */
+  @IsBoolean()
+  @IsOptional()
+  memberPriceEnabled?: boolean;
+
+  /**
+   * Restricts the member price to one cotisation tier of `associationId`; null/absent = any tier.
+   * A tier is named by its `variantKey`, validated against the association's own membership
+   * products - never by a tag string, which would freeze this year's academic year into the form.
+   */
   @IsString()
   @IsOptional()
   @MaxLength(100)
-  pricingTagName?: string;
+  memberPriceVariantKey?: string | null;
 
-  /** Base price in cents when submitter has `pricingTagName` (null = same as basePrice). */
+  /** Base price in cents for a cotisant (null = the member price only affects the options). */
   @IsInt()
   @Min(0)
   @IsOptional()
   basePriceMember?: number | null;
 
-  /** When set, grants or renews this tag to the user after a successful payment. */
+  /**
+   * When true, a paid submission grants `associationId`'s cotisation to the submitter, through the
+   * same path as a boutique purchase (tag derived at grant time, sibling tiers revoked).
+   */
+  @IsBoolean()
+  @IsOptional()
+  grantsCotisation?: boolean;
+
+  /** Which tier `grantsCotisation` grants; null/absent = the base tier. */
   @IsString()
   @IsOptional()
   @MaxLength(100)
-  grantedTagName?: string;
-
-  @IsDateString()
-  @IsOptional()
-  tagExpiresAt?: string;
+  cotisationVariantKey?: string | null;
 
   /** Allow the same user to submit multiple times (e.g. product orders). */
   @IsBoolean()

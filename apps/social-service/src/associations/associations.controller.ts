@@ -822,25 +822,6 @@ export class AssociationsController {
 
   // ── Cotisation tags (MANAGE_MEMBERS flag) ────────────────────────────────
 
-  /**
-   * Searches distinct tag names for an association (products, forms, grants).
-   * Any association member may call this when configuring forms or products.
-   */
-  @UseGuards(NginxAuthGuard)
-  @Get(':id/tag-catalog')
-  async searchTagCatalog(
-    @Param('id') id: string,
-    @Headers('x-user-id') userId: string,
-    @Headers('x-global-admin') globalAdmin: string,
-    @Query('q') q?: string
-  ) {
-    const isGlobalAdmin = globalAdmin === 'true';
-    if (!isGlobalAdmin && !(await this.service.isMember(userId, id))) {
-      throw new ForbiddenException('Access restricted to association members.');
-    }
-    return this.service.searchTagCatalog(id, q);
-  }
-
   /** Lists active tags issued by this association (admins with MANAGE_MEMBERS only). */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
@@ -907,6 +888,32 @@ export class AssociationsController {
   @Get(':id/cotisation-tiers')
   listCotisationTiers(@Param('id') id: string) {
     return this.userTagService.listCotisationTiers(id);
+  }
+
+  /**
+   * What the caller may do with this association's cotisations, for the forms admin: the tiers it
+   * sells, by name, and whether this caller may hand one out.
+   *
+   * Not the roster endpoint above: that one requires MANAGE_MEMBERS, which a form manager
+   * (MANAGE_FORMS) need not hold, and it carries the derived tag, which no screen has a use for.
+   *
+   * `mayGrant` is MANAGE_MEMBERS, the same right the manual roster add needs - a form that grants a
+   * cotisation on payment does exactly what that button does, so it cannot be a cheaper way in. The
+   * tier list itself is readable by any signed-in user, because a membership tier's NAME is already
+   * public on the association page.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get(':id/cotisation-options')
+  async cotisationOptions(
+    @Param('id') id: string,
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') globalAdmin: string | undefined
+  ) {
+    const tiers = await this.userTagService.listCotisationTiers(id);
+    const mayGrant =
+      globalAdmin === 'true' ||
+      (await this.service.callerHasFlag(userId, id, AssociationPermissionFlag.MANAGE_MEMBERS));
+    return { tiers: tiers.map(({ variantKey, name }) => ({ variantKey, name })), mayGrant };
   }
 
   /**

@@ -424,4 +424,103 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       expect(repo.manager.query.mock.calls[1][0]).not.toContain('"isActive"');
     });
   });
+
+  // `holdsCotisation` is the predicate behind the forms member price. It derives the tier tags on
+  // every call rather than comparing against a stored string, which is the whole point: a form
+  // configured last year must recognize this year's cotisants (migration 050). Every case here
+  // uses `lifetime`, whose tags carry no year, so nothing in this block depends on the wall clock.
+  describe('holdsCotisation', () => {
+    /** Makes exactly `held` the set of tag names the user holds, all non-expiring. */
+    function holds(repo: { findOne: jest.Mock }, held: string[]) {
+      repo.findOne.mockImplementation(({ where }: { where: { tagName: string } }) =>
+        Promise.resolve(held.includes(where.tagName) ? { tagName: where.tagName, expiresAt: null } : null)
+      );
+    }
+
+    it('answers false when the association has no cotisation at all', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'bde', cotisationMode: null }, []);
+      holds(repo, ['cotisant:bde']);
+
+      // The user even holds a plausible tag - it is the association that sells no tier, so there
+      // is no membership to hold. Answering true here would give a member price to everyone.
+      expect(await service.holdsCotisation('user1', 'asso1', 'any')).toBe(false);
+    });
+
+    it('accepts any tier when asked for "any"', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, [
+        { name: 'Cotisation', variantKey: null },
+        { name: 'Avec alcool', variantKey: 'avec-alcool' },
+      ]);
+      holds(repo, ['cotisant:cercle-avec-alcool']);
+
+      expect(await service.holdsCotisation('user1', 'asso1', 'any')).toBe(true);
+    });
+
+    it('answers false for "any" when the user holds none of the tiers', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, [
+        { name: 'Cotisation', variantKey: null },
+        { name: 'Avec alcool', variantKey: 'avec-alcool' },
+      ]);
+      holds(repo, ['cotisant:bde', 'staff']);
+
+      expect(await service.holdsCotisation('user1', 'asso1', 'any')).toBe(false);
+    });
+
+    it('requires the named tier, and refuses a sibling', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, [
+        { name: 'Cotisation', variantKey: null },
+        { name: 'Avec alcool', variantKey: 'avec-alcool' },
+      ]);
+      holds(repo, ['cotisant:cercle']);
+
+      expect(await service.holdsCotisation('user1', 'asso1', 'avec-alcool')).toBe(false);
+      expect(await service.holdsCotisation('user1', 'asso1', null)).toBe(true);
+    });
+
+    // `null` is the BASE tier here, never "any tier" - the sentinel `'any'` exists precisely so
+    // that the two can never be confused. A member-price gate that read null as the base tier
+    // would quietly exclude every buyer of a named forfait.
+    it('reads null as the base tier and not as "any tier"', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, [
+        { name: 'Cotisation', variantKey: null },
+        { name: 'Avec alcool', variantKey: 'avec-alcool' },
+      ]);
+      holds(repo, ['cotisant:cercle-avec-alcool']);
+
+      expect(await service.holdsCotisation('user1', 'asso1', null)).toBe(false);
+      expect(await service.holdsCotisation('user1', 'asso1', 'any')).toBe(true);
+    });
+
+    // A renamed or deleted tier still named by a form: nobody qualifies, and the log has to say so
+    // rather than leave an admin wondering why the member price stopped applying.
+    it('answers false and warns when asked for a tier the association does not sell', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, [
+        { name: 'Cotisation', variantKey: null },
+      ]);
+      holds(repo, ['cotisant:cercle', 'cotisant:cercle-ancien-forfait']);
+      const warn = jest.spyOn((service as unknown as { logger: { warn: jest.Mock } }).logger, 'warn');
+
+      expect(await service.holdsCotisation('user1', 'asso1', 'ancien-forfait')).toBe(false);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('ancien-forfait'));
+    });
+
+    it('does not count an expired tag', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'bde', cotisationMode: 'lifetime' }, [
+        { name: 'Cotisation', variantKey: null },
+      ]);
+      repo.findOne.mockResolvedValue({
+        tagName: 'cotisant:bde',
+        expiresAt: new Date('2000-01-01T00:00:00Z'),
+      });
+
+      expect(await service.holdsCotisation('user1', 'asso1', 'any')).toBe(false);
+    });
+  });
 });

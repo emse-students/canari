@@ -13,6 +13,32 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Added
 
+- **The forms admin screens, rebuilt around one set of components, and a "Parametres avances"
+  category.** `forms/create` and `forms/[id]/edit` were two 700-to-900-line copies of each other,
+  and the copies had drifted in eight ways a user could see: two toggle geometries on the same
+  screen, a select that had lost its focus ring, two different placeholders on the same picker, and
+  a cash-expiry field that was a bare input on one page and a labelled component on the other. One
+  `FormSection` card primitive, one `controlClasses.ts` every input and select wears, one `Select`
+  and one `Toggle`, and the payment, questions, save-bar and cotisation blocks each extracted once.
+  The euro/cent conversion and the questions payload had a copy inside each page's `handleSave`;
+  they are now `forms/itemsPayload.ts`.
+
+  The cotisation grant - the setting the whole change started from, wired server-side and reachable
+  from no screen - lives in the collapsed advanced section, which is what it deserves.
+
+- **`/forms` lists the forms a caller manages through an association, not only their own, and says
+  whose each one is.** `assertFormManager` has always accepted `MANAGE_FORMS` on the linked
+  association, so those forms were editable and exportable by API while appearing in no list on any
+  screen - reachable only by someone who already knew the URL. Three sources now merge by id
+  (owned, co-owned, managed-via-association) and each row carries the association's NAME. That line
+  used to print the raw form id, which told a person nothing. `EditFormsTab` gained edit and delete
+  for the same set, from the association's own space.
+
+  A form's association is chosen once and `update` refuses to change it: moving a form between
+  personal and association ownership asks who owns it afterwards, and no answer avoids surprising
+  someone. The edit screen shows it as read-only text, not a disabled picker - a disabled control
+  suggests someone with more rights could change it, and there is no such someone.
+
 - **A ceiling on `minClientVersion`, the one control that can lock out every client at once.** The
   DTO already refused anything that was not `major.minor.patch`, and nothing checked that the
   well-formed value was *possible*: `1.14.0` for `0.14.0` is one keystroke and demands a client newer
@@ -34,7 +60,41 @@ which is also where every release up to and including v0.13.1 now lives.
   file read into a refusal of every legitimate raise. Callers that report keep the default; the one
   that decides handles `null` and logs that the guard did not run.
 
+### Changed
+
+- **A form names a cotisation TIER; the tag is derived when payment lands.** `pricingTagName`,
+  `grantedTagName` and `tagExpiresAt` stored a literal tag typed into the admin screen. Three things
+  were wrong with a literal, all silent: a dated cotisation's tag carries the academic year, so a
+  form configured in June granted `cotisant:bde-2025-2026` to someone submitting in October, for a
+  year already over, and nothing could resync it because the form never recorded which tier it
+  meant; a multi-tier association got the base tag or a hand-typed guess, which is the "cotisant
+  nobody can see" that `grantCotisant` refuses to mint; and granting a raw tag through
+  `grantOrRenew` skipped `revokeSiblingTierTags`, so buying one tier in the boutique and another
+  through a form left a user holding both. Migration `050` replaces them with
+  `grantsCotisation`/`cotisationVariantKey` and `memberPriceEnabled`/`memberPriceVariantKey`, and
+  every grant goes through `grantCotisant` - the same call the boutique and the manual roster add
+  use. No shim: prod held one form, with no granted tag and no member-price tag (measured
+  2026-08-23).
+
+  `memberPriceEnabled` is a column rather than `basePriceMember != null` because it also gates every
+  option's `priceModifierMember` - deriving it would have silently dropped the member price of a form
+  that discounts only its options.
+
+  The forms module got its first tests with this: 38, over the money and membership paths.
+
 ### Security
+
+- **A form was a side door around `MANAGE_MEMBERS`.** `grantsCotisation` hands out association
+  membership, and `UserTagService.grantCotisant` has always required `MANAGE_MEMBERS` - but nothing
+  checked the caller when the setting was *saved*. A plain member holding only `MANAGE_FORMS` could
+  configure a form that grants a cotisation, and the grant then ran as the payment path, not as
+  them. `assertCotisationConfigValid` now takes the caller and refuses the setting, and
+  `GET /api/associations/:id/cotisation-options` returns `mayGrant` so the toggle is not offered to
+  someone the save would reject. The member price is deliberately not gated: a discount for existing
+  cotisants grants nothing.
+
+  Found by asking whether a form's options vary with the caller's rights - a question the audit had
+  not asked of forms.
 
 - **Any authenticated user could mark their own form submission paid, and be granted what payment
   buys.** `POST /api/forms/submissions/:id/mark-paid` was guarded by `NginxAuthGuard` and then by

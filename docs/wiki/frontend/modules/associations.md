@@ -25,7 +25,6 @@
 | `AssociationMembersSection.svelte` | Member list with role display |
 | `AssociationCalendarSection.svelte` | Calendar events for an association |
 | `AssociationDocumentManager.svelte` | Upload/download/delete documents |
-| `AssociationTagAutocomplete.svelte` | Tag input with autocomplete (used on post creation) |
 | `edit/EditProfileTab.svelte` | Edit name, description, logo, color |
 | `edit/EditMembersTab.svelte` | Manage members and roles |
 | `edit/EditFormsTab.svelte` | Manage forms, view pending cash submissions |
