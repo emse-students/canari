@@ -425,11 +425,11 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
     });
   });
 
-  // `holdsCotisation` is the predicate behind the forms member price. It derives the tier tags on
+  // These two are the predicate behind the forms member price. They derive the tier tags on
   // every call rather than comparing against a stored string, which is the whole point: a form
   // configured last year must recognize this year's cotisants (migration 050). Every case here
   // uses `lifetime`, whose tags carry no year, so nothing in this block depends on the wall clock.
-  describe('holdsCotisation', () => {
+  describe('holdsAnyCotisation, holdsCotisationTier', () => {
     /** Makes exactly `held` the set of tag names the user holds, all non-expiring. */
     function holds(repo: { findOne: jest.Mock }, held: string[]) {
       repo.findOne.mockImplementation(({ where }: { where: { tagName: string } }) =>
@@ -444,7 +444,7 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
 
       // The user even holds a plausible tag - it is the association that sells no tier, so there
       // is no membership to hold. Answering true here would give a member price to everyone.
-      expect(await service.holdsCotisation('user1', 'asso1', 'any')).toBe(false);
+      expect(await service.holdsAnyCotisation('user1', 'asso1')).toBe(false);
     });
 
     it('accepts any tier when asked for "any"', async () => {
@@ -455,7 +455,7 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       ]);
       holds(repo, ['cotisant:cercle-avec-alcool']);
 
-      expect(await service.holdsCotisation('user1', 'asso1', 'any')).toBe(true);
+      expect(await service.holdsAnyCotisation('user1', 'asso1')).toBe(true);
     });
 
     it('answers false for "any" when the user holds none of the tiers', async () => {
@@ -466,7 +466,7 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       ]);
       holds(repo, ['cotisant:bde', 'staff']);
 
-      expect(await service.holdsCotisation('user1', 'asso1', 'any')).toBe(false);
+      expect(await service.holdsAnyCotisation('user1', 'asso1')).toBe(false);
     });
 
     it('requires the named tier, and refuses a sibling', async () => {
@@ -477,8 +477,8 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       ]);
       holds(repo, ['cotisant:cercle']);
 
-      expect(await service.holdsCotisation('user1', 'asso1', 'avec-alcool')).toBe(false);
-      expect(await service.holdsCotisation('user1', 'asso1', null)).toBe(true);
+      expect(await service.holdsCotisationTier('user1', 'asso1', 'avec-alcool')).toBe(false);
+      expect(await service.holdsCotisationTier('user1', 'asso1', null)).toBe(true);
     });
 
     // `null` is the BASE tier here, never "any tier" - the sentinel `'any'` exists precisely so
@@ -492,8 +492,8 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       ]);
       holds(repo, ['cotisant:cercle-avec-alcool']);
 
-      expect(await service.holdsCotisation('user1', 'asso1', null)).toBe(false);
-      expect(await service.holdsCotisation('user1', 'asso1', 'any')).toBe(true);
+      expect(await service.holdsCotisationTier('user1', 'asso1', null)).toBe(false);
+      expect(await service.holdsAnyCotisation('user1', 'asso1')).toBe(true);
     });
 
     // A renamed or deleted tier still named by a form: nobody qualifies, and the log has to say so
@@ -506,7 +506,7 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       holds(repo, ['cotisant:cercle', 'cotisant:cercle-ancien-forfait']);
       const warn = jest.spyOn((service as unknown as { logger: { warn: jest.Mock } }).logger, 'warn');
 
-      expect(await service.holdsCotisation('user1', 'asso1', 'ancien-forfait')).toBe(false);
+      expect(await service.holdsCotisationTier('user1', 'asso1', 'ancien-forfait')).toBe(false);
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('ancien-forfait'));
     });
 
@@ -520,7 +520,7 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
         expiresAt: new Date('2000-01-01T00:00:00Z'),
       });
 
-      expect(await service.holdsCotisation('user1', 'asso1', 'any')).toBe(false);
+      expect(await service.holdsAnyCotisation('user1', 'asso1')).toBe(false);
     });
   });
 });

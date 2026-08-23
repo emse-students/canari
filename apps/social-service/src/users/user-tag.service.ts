@@ -262,23 +262,45 @@ export class UserTagService {
   }
 
   /**
-   * Whether the user currently holds one of `assocId`'s cotisation tiers.
+   * Whether the user holds ANY of `assocId`'s cotisation tiers.
    *
-   * `variantKey` is the tier to require; pass `'any'` to accept any tier the association sells.
-   * The two are separate answers and the caller always knows which it wants, so they are one
-   * parameter with an explicit sentinel rather than an overloaded `null` - `null` already means
-   * "the base tier" everywhere else in this service, and reusing it for "any tier" would make the
-   * member-price gate silently accept the base tier only.
-   *
-   * Derives the tier tags through `listCotisationTiers`, so the answer follows the association's
-   * current slug, mode and academic year. Returns false when cotisations are not enabled, and when
-   * `variantKey` names a tier the association does not (or no longer) sells - an unknown tier
-   * grants nothing, so it must not qualify anyone.
+   * This is the "is a member" question - the one a member price asks, since a discount for
+   * cotisants means all of them.
    */
-  async holdsCotisation(
+  async holdsAnyCotisation(userId: string, assocId: string): Promise<boolean> {
+    return this.holdsOneOfTiers(userId, assocId, null, true);
+  }
+
+  /**
+   * Whether the user holds `assocId`'s cotisation at one SPECIFIC tier; `null` is the base tier,
+   * exactly as everywhere else in this service.
+   *
+   * Kept separate from `holdsAnyCotisation` rather than folded into one parameter: the two are
+   * different questions, the caller always knows which it is asking, and any sentinel value
+   * expressing "any" inside a `string` parameter is a type that cannot be trusted - a tier could
+   * be named it.
+   */
+  async holdsCotisationTier(
     userId: string,
     assocId: string,
-    variantKey: string | null | 'any'
+    variantKey: string | null
+  ): Promise<boolean> {
+    return this.holdsOneOfTiers(userId, assocId, variantKey, false);
+  }
+
+  /**
+   * The one implementation behind both questions above.
+   *
+   * Derives the tier tags through `listCotisationTiers`, so the answer follows the association's
+   * current slug, mode and academic year - a tag is never read from a stored literal. Returns false
+   * when cotisations are not enabled, and when `variantKey` names a tier the association does not
+   * (or no longer) sell: an unknown tier grants nothing, so it must not qualify anyone.
+   */
+  private async holdsOneOfTiers(
+    userId: string,
+    assocId: string,
+    variantKey: string | null,
+    anyTier: boolean
   ): Promise<boolean> {
     const tiers = await this.listCotisationTiers(assocId);
     if (tiers.length === 0) {
@@ -287,7 +309,7 @@ export class UserTagService {
       );
       return false;
     }
-    const wanted = variantKey === 'any' ? tiers : tiers.filter((t) => t.variantKey === variantKey);
+    const wanted = anyTier ? tiers : tiers.filter((t) => t.variantKey === variantKey);
     if (wanted.length === 0) {
       this.logger.warn(
         `[UserTag] holdsCotisation assoc=${assocId.slice(0, 8)} was asked for tier ` +

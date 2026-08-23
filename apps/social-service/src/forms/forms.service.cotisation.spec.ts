@@ -35,7 +35,8 @@ describe('FormsService - cotisation configuration and granting', () => {
     };
     const userTagService: any = {
       listCotisationTiers: jest.fn(() => Promise.resolve(opts.tiers ?? [])),
-      holdsCotisation: jest.fn(() => Promise.resolve(false)),
+      holdsAnyCotisation: jest.fn(() => Promise.resolve(false)),
+      holdsCotisationTier: jest.fn(() => Promise.resolve(false)),
       grantCotisant: jest.fn(() => Promise.resolve({})),
       grantOrRenew: jest.fn(() => Promise.resolve({})),
       hasActiveTag: jest.fn(() => Promise.resolve(false)),
@@ -318,7 +319,7 @@ describe('FormsService - cotisation configuration and granting', () => {
     it('asks for any tier when no tier restriction is set', async () => {
       const { service, userTagService } = makeService({ form: form() });
       await service.hasSubmission('f1', 'user1');
-      expect(userTagService.holdsCotisation).toHaveBeenCalledWith('user1', 'asso1', 'any');
+      expect(userTagService.holdsAnyCotisation).toHaveBeenCalledWith('user1', 'asso1');
     });
 
     it('asks for the named tier when the member price is restricted', async () => {
@@ -326,7 +327,11 @@ describe('FormsService - cotisation configuration and granting', () => {
         form: form({ memberPriceVariantKey: 'avec-alcool' }),
       });
       await service.hasSubmission('f1', 'user1');
-      expect(userTagService.holdsCotisation).toHaveBeenCalledWith('user1', 'asso1', 'avec-alcool');
+      expect(userTagService.holdsCotisationTier).toHaveBeenCalledWith(
+        'user1',
+        'asso1',
+        'avec-alcool'
+      );
     });
 
     it('does not ask at all when the form has no member price', async () => {
@@ -335,17 +340,19 @@ describe('FormsService - cotisation configuration and granting', () => {
       });
       const res = await service.hasSubmission('f1', 'user1');
       expect(res.memberPricing).toBe(false);
-      expect(userTagService.holdsCotisation).not.toHaveBeenCalled();
+      expect(userTagService.holdsAnyCotisation).not.toHaveBeenCalled();
+      expect(userTagService.holdsCotisationTier).not.toHaveBeenCalled();
     });
 
     it('does not ask for an anonymous submitter', async () => {
       const { service, userTagService } = makeService({ form: form() });
       const res = await service.hasSubmission('f1', '');
       expect(res.memberPricing).toBe(false);
-      expect(userTagService.holdsCotisation).not.toHaveBeenCalled();
+      expect(userTagService.holdsAnyCotisation).not.toHaveBeenCalled();
+      expect(userTagService.holdsCotisationTier).not.toHaveBeenCalled();
     });
 
-    // A form may name an association that has since dropped its cotisation. `holdsCotisation`
+    // A form may name an association that has since dropped its cotisation. `holdsAnyCotisation`
     // answers false rather than throwing, so the form still works at the public price.
     it('falls back to the public price when the answer is false', async () => {
       const { service } = makeService({ form: form() });

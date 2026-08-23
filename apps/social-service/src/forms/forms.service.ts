@@ -413,11 +413,16 @@ export class FormsService {
    */
   private async paysMemberPrice(form: Form, userId: string | undefined): Promise<boolean> {
     if (!userId || !form.memberPriceEnabled || !form.associationId) return false;
-    return this.userTagService.holdsCotisation(
-      userId,
-      form.associationId,
-      form.memberPriceVariantKey ?? 'any'
-    );
+    // `memberPriceVariantKey` NULL means "any tier of this association" - unlike
+    // `cotisationVariantKey`, where NULL is the base tier. Who counts as a member is a set; what a
+    // payment grants is exactly one thing.
+    return form.memberPriceVariantKey
+      ? this.userTagService.holdsCotisationTier(
+          userId,
+          form.associationId,
+          form.memberPriceVariantKey
+        )
+      : this.userTagService.holdsAnyCotisation(userId, form.associationId);
   }
 
   /**
