@@ -1703,6 +1703,7 @@
   "form_view_response_sent": "Réponse envoyée",
   "form_view_total_to_pay": "Total à payer",
   "form_view_pending": "En attente",
+  "form_view_submit": "Envoyer",
   "form_view_sent": "Envoyé",
   "form_view_full": "Complet",
   "form_view_pay_button": "Payer {amount}",

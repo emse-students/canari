@@ -185,7 +185,6 @@
         submitCondition,
         ...cotisationPayload(cotisation, requiresPayment),
         currency: 'eur',
-        submitLabel: requiresPayment ? 'Envoyer et payer' : 'Envoyer',
         items: toFormItemsPayload(items),
         maxSubmissions,
         allowMultipleSubmissions,

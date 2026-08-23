@@ -950,7 +950,7 @@
               </p>
             </div>
           {:else}
-            <span class="text-text-muted text-sm">{form.submitLabel || 'Envoyer'}</span>
+            <span class="text-text-muted text-sm">{m.form_view_submit()}</span>
           {/if}
         </div>
         <Button
@@ -973,7 +973,7 @@
               amount: formatCurrency(calculateTotal(), form.currency),
             })}
           {:else}
-            <Check size={16} class="mr-1.5" />{form.submitLabel || 'Envoyer'}
+            <Check size={16} class="mr-1.5" />{m.form_view_submit()}
           {/if}
         </Button>
       </div>

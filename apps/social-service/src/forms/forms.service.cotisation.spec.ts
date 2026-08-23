@@ -93,7 +93,6 @@ describe('FormsService - cotisation configuration and granting', () => {
       title: 'Inscription',
       basePrice: 1500,
       currency: 'eur',
-      submitLabel: 'Envoyer',
       items: [],
       ownerId: 'user1',
       ...over,

@@ -158,10 +158,6 @@ export class FormInputDto {
   @IsString()
   currency: string;
 
-  @IsString()
-  @IsNotEmpty()
-  submitLabel: string;
-
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => FormItemInputDto)

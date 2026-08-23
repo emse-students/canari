@@ -29,7 +29,6 @@ export interface PostForm {
   eventId: string;
   basePrice: number;
   currency: string;
-  submitLabel: string;
   items: FormItem[];
 }
 

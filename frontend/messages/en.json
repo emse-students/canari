@@ -1682,6 +1682,7 @@
   "form_view_response_sent": "Response sent",
   "form_view_total_to_pay": "Total to pay",
   "form_view_pending": "Pending",
+  "form_view_submit": "Send",
   "form_view_sent": "Sent",
   "form_view_full": "Full",
   "form_view_pay_button": "Pay {amount}",

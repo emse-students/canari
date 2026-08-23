@@ -31,9 +31,6 @@ export class Form {
   @Column({ default: 'eur' })
   currency: string;
 
-  @Column({ default: 'Submit' })
-  submitLabel: string;
-
   @Column({ nullable: true })
   maxSubmissions: number;
 

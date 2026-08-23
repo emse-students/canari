@@ -164,10 +164,6 @@ export class CreateFormDto {
   @IsNotEmpty()
   currency: string;
 
-  @IsString()
-  @IsNotEmpty()
-  submitLabel: string;
-
   @IsNumber()
   @IsOptional()
   @Min(1)

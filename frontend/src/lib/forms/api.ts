@@ -58,7 +58,6 @@ export interface CreateFormPayload {
   description?: string;
   basePrice: number;
   currency: string;
-  submitLabel: string;
   items: FormItem[];
   maxSubmissions?: number;
   /** ISO 8601 - submissions blocked until this instant. */

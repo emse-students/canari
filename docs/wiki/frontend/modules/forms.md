@@ -168,6 +168,15 @@ exists, and **ANDs the two shapes**: the builder offers both controls on one que
 cotisants" and "only if Q1 = menu B" are two requirements of one question. `showIf.answer` wins over
 the legacy pair when both name an answer.
 
+### The submit button says what the catalogue says
+
+`submitLabel` looked like a manager's setting and never was one: no screen has ever offered a field
+for it, both admin pages wrote a hard-coded French literal computed from `requiresPayment`, and the
+fill page rendered it raw with `|| 'Envoyer'` behind it for the rows the entity default had left as
+`'Submit'`. An English viewer read French. Migration `052` drops the column; the label is a Paraglide
+message derived from `requiresPayment` at render time. If a per-form label is ever wanted, it comes
+back as a message KEY or a translated map, never as one language's sentence in a column.
+
 ### A condition with no criterion is refused, twice
 
 An empty condition applies to everybody, so it restricts nothing and hides nothing. The server

@@ -148,6 +148,13 @@ which is also where every release up to and including v0.13.1 now lives.
   tests pin it, the eviction AND the genuine gap of a member who merely missed a commit, because
   hoisting the check is only correct if a recoverable gap stays recoverable.
 
+- **A form's submit button was a French sentence stored in the database.** `submitLabel` looked like
+  a setting and never was one: no screen has ever offered a field for it, both admin pages wrote a
+  hard-coded literal computed from `requiresPayment`, and the fill page rendered it raw. So a column
+  held two French strings derived from another column, shown to an English viewer in French, and
+  invisible to Paraglide because nothing types a stored string as user-visible. Migration `052` drops
+  it; the label comes from the message catalogue like every other word on that page.
+
 - **A conditional question had never once been displayed.** The builder bound an option's LABEL into
   `dependsValue`, while an answer holds an option ID, so every condition compared a label against an
   id and matched nothing. Prod held no affected form (`with_depends: 0`), so nothing needed a shim.
