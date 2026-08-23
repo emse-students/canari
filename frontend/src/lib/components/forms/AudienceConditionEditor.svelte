@@ -1,14 +1,10 @@
 <script lang="ts">
   import CheckboxGroup from '$lib/components/ui/CheckboxGroup.svelte';
-  import Select from '$lib/components/ui/Select.svelte';
   import { CONTROL_HINT_CLASS } from '$lib/components/ui/controlClasses';
   import type { MembershipTier } from '$lib/associations/api';
   import type { AudienceCondition } from '$lib/forms/api';
-  import {
-    graduationYearOptions,
-    yearsToGraduationOptions,
-    type FormationOption,
-  } from '$lib/forms/criteriaOptions';
+  import PromoPicker from './PromoPicker.svelte';
+  import type { FormationOption } from '$lib/forms/criteriaOptions';
   import { m } from '$lib/paraglide/messages';
 
   /**
@@ -48,12 +44,6 @@
     condition = next;
   }
 
-  const promoMode = $derived(condition?.promo?.mode ?? 'yearsToGraduation');
-  const promoOptions = $derived(
-    promoMode === 'graduationYear'
-      ? graduationYearOptions().map((o) => ({ ...o, hint: undefined }))
-      : yearsToGraduationOptions()
-  );
   const isEmpty = $derived(Object.keys(condition ?? {}).length === 0);
 
   const tierSelection = $derived.by(() => {
@@ -90,33 +80,11 @@
     />
   {/if}
 
-  <div class="space-y-2">
-    <Select
-      label={m.form_criterion_promo_mode_label()}
-      value={promoMode}
-      options={[
-        { value: 'yearsToGraduation', label: m.form_criterion_promo_mode_relative() },
-        { value: 'graduationYear', label: m.form_criterion_promo_mode_absolute() },
-      ]}
-      hint={m.form_criterion_promo_mode_hint()}
-      onValueChange={(v) => {
-        // A year means a different thing in each mode, so nothing carries across.
-        if (!condition?.promo) return;
-        update({ promo: { mode: v as 'graduationYear' | 'yearsToGraduation', values: [] } });
-      }}
-    />
-    <CheckboxGroup
-      label={m.form_condition_promo_label()}
-      options={promoOptions}
-      bind:selected={
-        () => (condition?.promo?.values ?? []).map(String),
-        (next) => {
-          if (next.length === 0) return drop('promo');
-          update({ promo: { mode: promoMode, values: next.map(Number) } });
-        }
-      }
-    />
-  </div>
+  <PromoPicker
+    label={m.form_condition_promo_label()}
+    selected={condition?.promo?.values ?? []}
+    onChange={(next) => (next.length === 0 ? drop('promo') : update({ promo: { values: next } }))}
+  />
 
   <CheckboxGroup
     label={m.form_condition_formation_label()}

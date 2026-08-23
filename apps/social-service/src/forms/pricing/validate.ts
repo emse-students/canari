@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { OTHERS_BUCKET_ID, type AudienceCondition, type Dimension, type PromoMode } from './audience';
+import { OTHERS_BUCKET_ID, type AudienceCondition, type Dimension } from './audience';
 import { assertMatrixValid, type PriceMatrix } from './price-matrix';
 
 /**
@@ -21,8 +21,6 @@ export interface CriteriaContext {
   /** The form's questions and the option ids each offers. */
   questions: Map<string, Set<string>>;
 }
-
-const PROMO_MODES: PromoMode[] = ['graduationYear', 'yearsToGraduation'];
 
 function asRecord(value: unknown, where: string): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -58,19 +56,29 @@ function asTierKeys(value: unknown, where: string, ctx: CriteriaContext): (strin
   return keys;
 }
 
-function asPromoValues(value: unknown, where: string): number[] {
+/**
+ * A promo is an ENTRY year, bounded by the school's founding year and today.
+ *
+ * The bounds are not decoration: a promo outside them matches nobody, for ever, and a criterion
+ * that silently matches nobody is exactly what this module refuses. `2O24` typed for `2024` is the
+ * realistic way one is written, and it would price a whole cohort as "everyone else" in silence.
+ */
+export const FIRST_PROMO_YEAR = 1816;
+
+function asPromoValues(value: unknown, where: string, now: Date = new Date()): number[] {
   if (!Array.isArray(value) || value.some((v) => !Number.isInteger(v))) {
     throw new BadRequestException(`${where} must be a list of whole years.`);
   }
   if (value.length === 0) throw new BadRequestException(`${where} cannot be empty.`);
-  return value as number[];
-}
-
-function asPromoMode(value: unknown, where: string): PromoMode {
-  if (typeof value !== 'string' || !PROMO_MODES.includes(value as PromoMode)) {
-    throw new BadRequestException(`${where} must be one of: ${PROMO_MODES.join(', ')}.`);
+  const lastYear = now.getFullYear();
+  for (const year of value as number[]) {
+    if (year < FIRST_PROMO_YEAR || year > lastYear) {
+      throw new BadRequestException(
+        `${where} holds ${year}, which is not a promo: they run from ${FIRST_PROMO_YEAR} to ${lastYear}.`
+      );
+    }
   }
-  return value as PromoMode;
+  return value as number[];
 }
 
 /** A cotisation criterion needs the association to actually sell a cotisation. */
@@ -83,7 +91,11 @@ function assertSellsCotisation(ctx: CriteriaContext, where: string): void {
 }
 
 /** Validates and normalises one condition - a question's visibility, or who may submit. */
-export function parseAudienceCondition(raw: unknown, ctx: CriteriaContext, where: string): AudienceCondition {
+export function parseAudienceCondition(
+  raw: unknown,
+  ctx: CriteriaContext,
+  where: string
+): AudienceCondition {
   const doc = asRecord(raw, where);
   const condition: AudienceCondition = {};
 
@@ -98,10 +110,7 @@ export function parseAudienceCondition(raw: unknown, ctx: CriteriaContext, where
   }
   if (doc.promo !== undefined) {
     const p = asRecord(doc.promo, `${where}.promo`);
-    condition.promo = {
-      mode: asPromoMode(p.mode, `${where}.promo.mode`),
-      values: asPromoValues(p.values, `${where}.promo.values`),
-    };
+    condition.promo = { values: asPromoValues(p.values, `${where}.promo.values`) };
   }
   if (doc.formation !== undefined) {
     const f = asRecord(doc.formation, `${where}.formation`);
@@ -117,7 +126,9 @@ export function parseAudienceCondition(raw: unknown, ctx: CriteriaContext, where
     const optionIds = asStringArray(a.optionIds, `${where}.answer.optionIds`);
     for (const id of optionIds) {
       if (!options.has(id)) {
-        throw new BadRequestException(`${where}.answer names an option that question does not offer.`);
+        throw new BadRequestException(
+          `${where}.answer names an option that question does not offer.`
+        );
       }
     }
     condition.answer = { questionId, optionIds };
@@ -174,14 +185,16 @@ function parseDimension(raw: unknown, ctx: CriteriaContext, index: number): Dime
       };
     }
     case 'promo': {
-      const mode = asPromoMode(doc.mode, `${where}.mode`);
       return {
         id,
         kind: 'promo',
-        mode,
         buckets: doc.buckets.map((raw, i) => {
           const { doc: b, id: bucketId, label } = base(raw, i);
-          return { id: bucketId, label, values: asPromoValues(b.values, `${where}.buckets[${i}].values`) };
+          return {
+            id: bucketId,
+            label,
+            values: asPromoValues(b.values, `${where}.buckets[${i}].values`),
+          };
         }),
       };
     }

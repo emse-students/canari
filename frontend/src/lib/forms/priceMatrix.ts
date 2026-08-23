@@ -13,9 +13,6 @@
 /** The generated group every criterion ends with. Never stored, never editable, always last. */
 export const OTHERS_BUCKET_ID = '_others';
 
-/** How a promo criterion reads its numbers. */
-export type PromoMode = 'graduationYear' | 'yearsToGraduation';
-
 /** The four things a form can discriminate on. */
 export type DimensionKind = 'cotisation' | 'promo' | 'formation' | 'answer';
 
@@ -35,8 +32,6 @@ export interface Dimension {
   kind: DimensionKind;
   /** `answer` only. */
   questionId?: string;
-  /** `promo` only. */
-  mode?: PromoMode;
   buckets: Bucket[];
 }
 
@@ -160,7 +155,6 @@ export function newDimension(kind: DimensionKind, opts: { questionId?: string } 
     id: makeId('d'),
     kind,
     ...(kind === 'answer' ? { questionId: opts.questionId } : {}),
-    ...(kind === 'promo' ? { mode: 'yearsToGraduation' as PromoMode } : {}),
     buckets: [],
   };
 }

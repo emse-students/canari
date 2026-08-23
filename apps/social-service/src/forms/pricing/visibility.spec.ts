@@ -15,7 +15,6 @@ describe('question visibility', () => {
     formation: null,
     cotisationTiers: [],
     answers: {},
-    now: new Date('2026-08-23T12:00:00Z'),
     ...over,
   });
 

@@ -433,7 +433,9 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
     /** Makes exactly `held` the set of tag names the user holds, all non-expiring. */
     function holds(repo: { findOne: jest.Mock }, held: string[]) {
       repo.findOne.mockImplementation(({ where }: { where: { tagName: string } }) =>
-        Promise.resolve(held.includes(where.tagName) ? { tagName: where.tagName, expiresAt: null } : null)
+        Promise.resolve(
+          held.includes(where.tagName) ? { tagName: where.tagName, expiresAt: null } : null
+        )
       );
     }
 
@@ -504,7 +506,10 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
         { name: 'Cotisation', variantKey: null },
       ]);
       holds(repo, ['cotisant:cercle', 'cotisant:cercle-ancien-forfait']);
-      const warn = jest.spyOn((service as unknown as { logger: { warn: jest.Mock } }).logger, 'warn');
+      const warn = jest.spyOn(
+        (service as unknown as { logger: { warn: jest.Mock } }).logger,
+        'warn'
+      );
 
       expect(await service.holdsCotisationTier('user1', 'asso1', 'ancien-forfait')).toBe(false);
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('ancien-forfait'));

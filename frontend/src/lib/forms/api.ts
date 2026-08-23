@@ -48,7 +48,8 @@ export interface FormItem {
  */
 export interface AudienceCondition {
   cotisation?: { anyTier?: boolean; variantKeys?: (string | null)[] };
-  promo?: { mode: 'graduationYear' | 'yearsToGraduation'; values: number[] };
+  /** Promos (ENTRY years) accepted - the promo 2024 entered the school in 2024. */
+  promo?: { values: number[] };
   formation?: { values: string[] };
   answer?: { questionId: string; optionIds: string[] };
 }

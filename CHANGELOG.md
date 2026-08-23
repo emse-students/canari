@@ -29,6 +29,19 @@ which is also where every release up to and including v0.13.1 now lives.
   `memberPriceVariantKey` and `basePriceMember` are dropped (migration `051`); production held one
   form and it used none of them.
 
+  **A promo is an ENTRY year** - la promo 2024 entered the school in 2024 - and this shipped, before
+  release, reading it as a graduation year. On that reading a bucket needed a second relative mode,
+  `yearsToGraduation` = `promo - academicEndYear`, so that "1A" would not go stale each September.
+  It matched NOBODY it was ever set for: for the promo 2025 evaluated in 2026 the expression yields
+  -1, and the editor only offered 0..4. The absolute mode was no better, offering a six-year window
+  that contained no cohort on prod and omitted the three largest that do. A relative mode cannot be
+  repaired either - it needs a cursus length, and nothing here records one (ICM and ISMIN run three
+  years, Master two). So there is one reading and no mode: a group names its years, the manager
+  names the group. Promos go in one at a time through a box that is both a list and a free entry -
+  pick a recent one, type an old one - and a `+`. The domain is bounded at both ends (1816, the
+  school's founding year, to the current year) on the client AND the server, because `2O24` typed
+  for `2024` would price a whole cohort as "everyone else" in silence.
+
 - **The forms admin screens, rebuilt around one set of components, and a "Parametres avances"
   category.** `forms/create` and `forms/[id]/edit` were two 700-to-900-line copies of each other,
   and the copies had drifted in eight ways a user could see: two toggle geometries on the same

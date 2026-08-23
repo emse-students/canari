@@ -6,12 +6,9 @@
   import { CONTROL_HINT_CLASS, controlClass } from '$lib/components/ui/controlClasses';
   import type { MembershipTier } from '$lib/associations/api';
   import type { FormItem } from '$lib/forms/api';
-  import type { Bucket, Dimension, PromoMode } from '$lib/forms/priceMatrix';
-  import {
-    graduationYearOptions,
-    yearsToGraduationOptions,
-    type FormationOption,
-  } from '$lib/forms/criteriaOptions';
+  import type { Bucket, Dimension } from '$lib/forms/priceMatrix';
+  import PromoPicker from './PromoPicker.svelte';
+  import type { FormationOption } from '$lib/forms/criteriaOptions';
   import { m } from '$lib/paraglide/messages';
 
   /**
@@ -65,19 +62,13 @@
 
   const chosenQuestion = $derived(items.find((i) => i.id === dimension.questionId) ?? null);
 
-  const promoOptions = $derived(
-    dimension.mode === 'graduationYear'
-      ? graduationYearOptions().map((o) => ({ ...o, hint: undefined }))
-      : yearsToGraduationOptions()
-  );
-
-  /** Bound as strings, because that is what a checkbox list carries; stored as the criterion wants. */
+  /** Formation values and option ids, the two criteria a checkbox list drives. */
   function valuesAsStrings(bucket: Bucket): string[] {
     return (bucket.values ?? []).map(String);
   }
 
   function setValues(bucket: Bucket, next: string[]) {
-    bucket.values = dimension.kind === 'promo' ? next.map(Number) : next;
+    bucket.values = next;
     onChange();
   }
 
@@ -134,24 +125,6 @@
     />
   {/if}
 
-  {#if dimension.kind === 'promo'}
-    <Select
-      label={m.form_criterion_promo_mode_label()}
-      value={dimension.mode ?? 'yearsToGraduation'}
-      options={[
-        { value: 'yearsToGraduation', label: m.form_criterion_promo_mode_relative() },
-        { value: 'graduationYear', label: m.form_criterion_promo_mode_absolute() },
-      ]}
-      hint={m.form_criterion_promo_mode_hint()}
-      onValueChange={(v) => {
-        dimension.mode = v as PromoMode;
-        // A year means a different thing in each mode, so nothing carries across.
-        for (const b of dimension.buckets) b.values = [];
-        onChange();
-      }}
-    />
-  {/if}
-
   <div class="space-y-3">
     {#each dimension.buckets as bucket (bucket.id)}
       <div class="border-cn-border/60 space-y-3 rounded-xl border bg-(--cn-surface) p-3">
@@ -192,9 +165,12 @@
             />
           {/if}
         {:else if dimension.kind === 'promo'}
-          <CheckboxGroup
-            options={promoOptions}
-            bind:selected={() => valuesAsStrings(bucket), (v) => setValues(bucket, v)}
+          <PromoPicker
+            selected={(bucket.values ?? []) as number[]}
+            onChange={(next) => {
+              bucket.values = next;
+              onChange();
+            }}
           />
         {:else if dimension.kind === 'formation'}
           <CheckboxGroup

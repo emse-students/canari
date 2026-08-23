@@ -10,13 +10,11 @@ import {
 import { OTHERS_BUCKET_ID, type Dimension, type SubmitterFacts } from './audience';
 
 describe('price matrix', () => {
-  const NOW = new Date('2026-08-23T12:00:00Z');
   const facts = (over: Partial<SubmitterFacts> = {}): SubmitterFacts => ({
     promo: null,
     formation: null,
     cotisationTiers: [],
     answers: {},
-    now: NOW,
     ...over,
   });
 
@@ -72,7 +70,9 @@ describe('price matrix', () => {
 
   describe('resolution', () => {
     it('prices each of the four corners', () => {
-      expect(resolveCellPrice(twoByTwo, facts({ cotisationTiers: [null], formation: 'ICM' }))).toBe(800);
+      expect(resolveCellPrice(twoByTwo, facts({ cotisationTiers: [null], formation: 'ICM' }))).toBe(
+        800
+      );
       expect(resolveCellPrice(twoByTwo, facts({ cotisationTiers: [null] }))).toBe(1000);
       expect(resolveCellPrice(twoByTwo, facts({ formation: 'ICM' }))).toBe(1500);
       expect(resolveCellPrice(twoByTwo, facts())).toBe(2000);
@@ -94,7 +94,9 @@ describe('price matrix', () => {
     });
 
     it('refuses a grid with no criterion', () => {
-      expect(() => assertMatrixValid({ dimensions: [], cells: {} })).toThrow(/at least one criterion/i);
+      expect(() => assertMatrixValid({ dimensions: [], cells: {} })).toThrow(
+        /at least one criterion/i
+      );
     });
 
     it('refuses a criterion with no group', () => {
@@ -124,7 +126,11 @@ describe('price matrix', () => {
       expect(() =>
         assertMatrixValid({
           dimensions: [
-            { id: 'd', kind: 'formation', buckets: [{ id: OTHERS_BUCKET_ID, label: 'x', values: ['ICM'] }] },
+            {
+              id: 'd',
+              kind: 'formation',
+              buckets: [{ id: OTHERS_BUCKET_ID, label: 'x', values: ['ICM'] }],
+            },
           ],
           cells: {},
         })
@@ -168,14 +174,18 @@ describe('price matrix', () => {
           values: [`V${i}_${j}`],
         })),
       }));
-      expect(() => assertMatrixValid({ dimensions: many, cells: {} }, 400)).toThrow(/1000 prices to fill/);
+      expect(() => assertMatrixValid({ dimensions: many, cells: {} }, 400)).toThrow(
+        /1000 prices to fill/
+      );
     });
   });
 
   // A question the grid prices on has already been paid for by the cell it selected.
   describe('pricedQuestionIds', () => {
     it('names the questions used as criteria, and nothing else', () => {
-      expect([...pricedQuestionIds({ dimensions: [cotisation, menu], cells: {} })]).toEqual(['q_menu']);
+      expect([...pricedQuestionIds({ dimensions: [cotisation, menu], cells: {} })]).toEqual([
+        'q_menu',
+      ]);
       expect([...pricedQuestionIds({ dimensions: [cotisation], cells: {} })]).toEqual([]);
       expect([...pricedQuestionIds(null)]).toEqual([]);
     });

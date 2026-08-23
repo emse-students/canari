@@ -47,9 +47,7 @@ export class SubmitterFactsService {
     associationId?: string | null;
     answers?: Record<string, string[]>;
     needProfile: boolean;
-    now?: Date;
   }): Promise<SubmitterFacts> {
-    const now = input.now ?? new Date();
     const answers = input.answers ?? {};
 
     const cotisationTiers =
@@ -58,7 +56,7 @@ export class SubmitterFactsService {
         : [];
 
     if (!input.needProfile || !input.userId) {
-      return { promo: null, formation: null, cotisationTiers, answers, now };
+      return { promo: null, formation: null, cotisationTiers, answers };
     }
 
     const profile = await this.fetchProfile(input.userId);
@@ -67,7 +65,6 @@ export class SubmitterFactsService {
       formation: profile.formation,
       cotisationTiers,
       answers,
-      now,
     };
   }
 
@@ -82,7 +79,9 @@ export class SubmitterFactsService {
    * A 404 IS an answer: core-service has no such user, so there is no promo and no formation, and
    * the submitter belongs in the "everyone else" bucket. That is the one status treated as data.
    */
-  private async fetchProfile(userId: string): Promise<{ promo: number | null; formation: string | null }> {
+  private async fetchProfile(
+    userId: string
+  ): Promise<{ promo: number | null; formation: string | null }> {
     const url = `${this.coreUrl}/api/internal/users/${encodeURIComponent(userId)}/public-profile`;
     let res: Response;
     try {
@@ -137,11 +136,15 @@ export class SubmitterFactsService {
       this.logger.error(
         `[FORMS] formations listing failed: ${e instanceof Error ? e.message : String(e)}`
       );
-      throw new ServiceUnavailableException('Cannot list formations right now. Try again in a moment.');
+      throw new ServiceUnavailableException(
+        'Cannot list formations right now. Try again in a moment.'
+      );
     }
     if (!res.ok) {
       this.logger.error(`[FORMS] formations listing returned ${res.status}`);
-      throw new ServiceUnavailableException('Cannot list formations right now. Try again in a moment.');
+      throw new ServiceUnavailableException(
+        'Cannot list formations right now. Try again in a moment.'
+      );
     }
     return (await res.json()) as { value: string; count: number }[];
   }

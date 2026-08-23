@@ -1,31 +1,17 @@
 import { apiFetch } from '$lib/utils/apiFetch';
 import { socialUrl } from '$lib/utils/apiUrl';
-import { m } from '$lib/paraglide/messages';
 
 /**
  * The values a criterion can be built from, and how each is offered to a manager.
  *
- * Nothing here is a hard-coded list of formations or promos. `formation` comes from Authentik and
- * the next value arrives with no deploy, so the picker offers what EXISTS; promos are computed from
- * the academic year, so a relative bucket can show which cohort it means today.
+ * `formation` comes from Authentik and the next value arrives with no deploy, so the picker offers
+ * what EXISTS. A promo is a year and needs nothing fetched: the domain is fixed and known.
  */
 
 /** A formation in use, with how many people carry it. */
 export interface FormationOption {
   value: string;
   count: number;
-}
-
-/**
- * The calendar year the current academic year ends in - 2027 from September 2026 to August 2027.
- *
- * The same September rule as the server's `academicEndYear`, which it has to be: a relative promo
- * bucket resolved one way here and another way there would show a manager a cohort that is not the
- * one being charged. Duplicated deliberately rather than fetched - one integer, one rule, and a
- * round trip to learn the date would be worse.
- */
-export function academicEndYear(now: Date = new Date()): number {
-  return now.getMonth() >= 8 ? now.getFullYear() + 1 : now.getFullYear();
 }
 
 /** Formation values in use. Throws when the listing cannot be read - the caller shows the error. */
@@ -36,30 +22,39 @@ export async function fetchFormations(): Promise<FormationOption[]> {
 }
 
 /**
- * The relative promo choices: "graduating this year" out to four years away, each labelled with the
- * promo it means today.
+ * The school's founding year, and therefore the oldest promo there can be.
  *
- * A study year ("1A") is deliberately NOT offered, because it cannot be derived: it needs a cursus
- * length, and nothing in this platform records one - ICM and ISMIN run three years, Master two. The
- * manager names the group itself, which is the honest division of labour.
+ * The server holds the same bound (`FIRST_PROMO_YEAR` in `pricing/validate.ts`) and refuses a year
+ * outside it, because a promo outside the range matches nobody FOR EVER - `2O24` typed for `2024`
+ * would price a whole cohort as "everyone else", in silence.
  */
-export function yearsToGraduationOptions(
-  now: Date = new Date()
-): { value: string; label: string; hint: string }[] {
-  const end = academicEndYear(now);
-  return [0, 1, 2, 3, 4].map((n) => ({
-    value: String(n),
-    label:
-      n === 0 ? m.form_criterion_promo_final_year() : m.form_criterion_promo_in_years({ count: n }),
-    hint: m.form_criterion_promo_resolves({ promo: end + n }),
-  }));
+export const FIRST_PROMO_YEAR = 1816;
+
+/**
+ * Every promo, most recent first.
+ *
+ * A promo is an ENTRY year - "la promo 2024" entered the school in 2024 - so the last one is the
+ * current calendar year and the list needs no round trip. It used to be a five-year window computed
+ * from the academic year on the graduation reading, which offered six cohorts nobody belonged to
+ * and omitted the three largest that do.
+ */
+export function promoYears(now: Date = new Date()): number[] {
+  const last = lastPromoYear(now);
+  return Array.from({ length: last - FIRST_PROMO_YEAR + 1 }, (_, i) => last - i);
 }
 
-/** Absolute promo choices: last year through five years out, which covers every live cohort. */
-export function graduationYearOptions(now: Date = new Date()): { value: string; label: string }[] {
-  const end = academicEndYear(now);
-  return [-1, 0, 1, 2, 3, 4, 5].map((n) => ({
-    value: String(end + n),
-    label: String(end + n),
-  }));
+/**
+ * The newest promo there can be: nobody has entered the school in a year that has not started.
+ *
+ * Named rather than inlined because three things need it - the list, the guard, and the message
+ * telling a manager what they may type - and a fourth reading of "the current year" is how they
+ * would come to disagree.
+ */
+export function lastPromoYear(now: Date = new Date()): number {
+  return now.getFullYear();
+}
+
+/** True when a year is a promo the server will accept. */
+export function isPromoYear(year: number, now: Date = new Date()): boolean {
+  return Number.isInteger(year) && year >= FIRST_PROMO_YEAR && year <= lastPromoYear(now);
 }

@@ -129,8 +129,7 @@ export class FormsService {
     // Validated even when nothing is granted: a grid and a submit condition are not cotisation
     // settings, and refusing them only when a cotisation is involved would let an incomplete grid
     // through on every other form.
-    const matrix =
-      input.priceMatrix == null ? null : parsePriceMatrix(input.priceMatrix, ctx);
+    const matrix = input.priceMatrix == null ? null : parsePriceMatrix(input.priceMatrix, ctx);
     if (matrix && !assocId && matrix.dimensions.some((d) => d.kind === 'cotisation')) {
       throw new BadRequestException(
         'A price that depends on a cotisation needs a beneficiary association - there is nothing to ' +

@@ -76,7 +76,14 @@ describe('FormsService - cotisation configuration and granting', () => {
       purchaseRecordService,
       submitterFacts
     );
-    return { service, formRepo, submissionRepo, userTagService, associationsService, submitterFacts };
+    return {
+      service,
+      formRepo,
+      submissionRepo,
+      userTagService,
+      associationsService,
+      submitterFacts,
+    };
   }
 
   const CERCLE = [

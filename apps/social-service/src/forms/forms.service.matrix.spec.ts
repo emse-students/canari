@@ -79,7 +79,6 @@ describe('FormsService pricing, through submit', () => {
           formation: null,
           cotisationTiers: [],
           answers: input.answers ?? {},
-          now: new Date('2026-08-23T12:00:00Z'),
           ...opts.facts,
         });
       }),
@@ -216,7 +215,9 @@ describe('FormsService pricing, through submit', () => {
       const { service, saved } = makeService({
         form: form({ items: [MENU_QUESTION, conditional] }),
       });
-      await expect(submit(service, { q_menu: 'opt_veg' })).rejects.toThrow(/Missing required field/);
+      await expect(submit(service, { q_menu: 'opt_veg' })).rejects.toThrow(
+        /Missing required field/
+      );
       await submit(service, { q_menu: 'opt_veg', q_extra: 'opt_extra' });
       expect(saved[0].totalPaid).toBe(2000 + 300);
     });
@@ -310,7 +311,11 @@ describe('FormsService pricing, through submit', () => {
         form: form({
           priceMatrix: {
             dimensions: [
-              { id: 'f', kind: 'formation', buckets: [{ id: 'icm', label: 'ICM', values: ['ICM'] }] },
+              {
+                id: 'f',
+                kind: 'formation',
+                buckets: [{ id: 'icm', label: 'ICM', values: ['ICM'] }],
+              },
             ],
             cells: { icm: 1000, [OTHERS_BUCKET_ID]: 2000 },
           },
@@ -326,7 +331,15 @@ describe('FormsService pricing, through submit', () => {
       const { service, submitterFacts } = makeService({
         form: form({
           priceMatrix: null,
-          items: [{ id: 'q', label: 'q', required: false, type: 'text', showIf: { promo: { mode: 'graduationYear', values: [2028] } } }],
+          items: [
+            {
+              id: 'q',
+              label: 'q',
+              required: false,
+              type: 'text',
+              showIf: { promo: { values: [2028] } },
+            },
+          ],
         }),
       });
       await submit(service, {});

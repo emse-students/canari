@@ -131,12 +131,28 @@ Three facts shape the feature:
    no deploy, so the picker offers what EXISTS and the `others` bucket catches what it has not seen.
 3. **Both can be null**, and five rows on prod are. A null is not an error and must price.
 
-`promo` is a **graduation year**, not a study year, and "1A pays 10 EUR" is how a grid gets asked for.
-A bucket saying `promo = 2029` is a snapshot - right this year, wrong the next, exactly the mistake
-migration `050` had just finished removing from cotisation tags. So a promo bucket says which it
-means: `{ kind: 'promo', years }` for graduation years, or `{ kind: 'studyYear', years }` resolved
-against the academic year at quote time, which is what a form reused every year wants and what the UI
-offers first. The academic-year roll is the one `deriveCotisationTag` already uses.
+`promo` is an **ENTRY year**: la promo 2024 is the cohort that entered the school in 2024. That is
+the whole definition, and the prod distribution above corroborates it - 2025 is the largest cohort
+and 2026 already exists, which no graduation reading explains.
+
+**It was read as a graduation year here, and that was wrong.** On that reading a bucket needed a
+second, relative mode - `yearsToGraduation`, computed as `promo - academicEndYear` - so that "1A"
+would not go stale every September. The mode shipped and matched NOBODY it was ever set for: for the
+promo 2025 evaluated in 2026 the expression yields -1, while the editor only ever offered 0..4. The
+absolute mode was no better off, offering a six-year window (`end-1..end+5`) that contained no cohort
+on prod and omitted the three largest that do.
+
+A relative mode cannot be repaired, either: it needs a cursus length, and nothing in this platform
+records one (ICM and ISMIN run three years, Master two). So there is **one reading and no mode**. A
+group names its years and the manager names the group - `{ id, label: '2A', values: [2024] }` - and
+"les anciens" is a group naming several years. What a manager re-types once a year is a number they
+can see, which is strictly better than a mode that silently priced a cohort as "everyone else".
+
+The years a manager may pick run from **1816** (the school's founding year, and therefore the oldest
+promo there can be) to the current calendar year. The bound is enforced on BOTH sides - `promoYears`
+in `criteriaOptions.ts`, `FIRST_PROMO_YEAR` in `pricing/validate.ts` - because `2O24` typed for
+`2024` matches nobody for ever, and a criterion that silently matches nobody is what this module
+refuses everywhere else.
 
 ## One predicate, three uses
 

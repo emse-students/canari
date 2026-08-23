@@ -11,21 +11,16 @@ import {
 /**
  * The one predicate behind a price, a question's visibility and who may submit.
  *
- * Every test here fixes `now`, so nothing depends on the day it runs - which matters most for
- * `yearsToGraduation`, whose answer changes every September.
+ * NOTHING HERE READS A CLOCK, and that is a property rather than an omission: a promo is an entry
+ * year and names one cohort for ever, so no answer below can change with the day it is run. The
+ * predicate used to take a `now` for `yearsToGraduation`, which is gone.
  */
 describe('audience predicate', () => {
-  /** 23 August 2026: still academic year 2025-2026, so the year it ENDS in is 2026. */
-  const BEFORE_ROLL = new Date('2026-08-23T12:00:00Z');
-  /** 23 September 2026: academic year 2026-2027, ending 2027. */
-  const AFTER_ROLL = new Date('2026-09-23T12:00:00Z');
-
   const facts = (over: Partial<SubmitterFacts> = {}): SubmitterFacts => ({
     promo: null,
     formation: null,
     cotisationTiers: [],
     answers: {},
-    now: BEFORE_ROLL,
     ...over,
   });
 
@@ -64,38 +59,36 @@ describe('audience predicate', () => {
     });
   });
 
+  // A promo is an ENTRY year: "la promo 2024" is the cohort that entered the school in 2024. The
+  // manager names the group ("2A"), the group names its years, and neither goes stale on its own.
   describe('promo', () => {
-    const graduation: Dimension = {
+    const dimension: Dimension = {
       id: 'd1',
       kind: 'promo',
-      mode: 'graduationYear',
-      buckets: [{ id: 'p2028', label: 'Promo 2028', values: [2028] }],
-    };
-    const relative: Dimension = {
-      id: 'd1',
-      kind: 'promo',
-      mode: 'yearsToGraduation',
-      buckets: [{ id: 'first', label: '1A', values: [2] }],
+      buckets: [
+        { id: 'p2024', label: '2A', values: [2024] },
+        { id: 'anciens', label: 'Anciens', values: [2022, 2023] },
+      ],
     };
 
-    it('matches an absolute promo', () => {
-      expect(bucketFor(graduation, facts({ promo: 2028 }))).toBe('p2028');
-      expect(bucketFor(graduation, facts({ promo: 2029 }))).toBe(OTHERS_BUCKET_ID);
+    it('matches the entry year a group names', () => {
+      expect(bucketFor(dimension, facts({ promo: 2024 }))).toBe('p2024');
     });
 
-    // The reason the relative mode exists: the same bucket picks the next cohort a year later,
-    // where "promo 2028" would have gone stale. Two dates, one bucket, two different promos.
-    it('rolls a relative bucket over in September', () => {
-      expect(bucketFor(relative, facts({ promo: 2028, now: BEFORE_ROLL }))).toBe('first');
-      expect(bucketFor(relative, facts({ promo: 2028, now: AFTER_ROLL }))).toBe(OTHERS_BUCKET_ID);
-      expect(bucketFor(relative, facts({ promo: 2029, now: AFTER_ROLL }))).toBe('first');
+    // A group is a SET of years, which is how "les 3A et plus" is expressed without a relative mode.
+    it('matches any of the years a group names', () => {
+      expect(bucketFor(dimension, facts({ promo: 2022 }))).toBe('anciens');
+      expect(bucketFor(dimension, facts({ promo: 2023 }))).toBe('anciens');
+    });
+
+    it('places a promo no group names in "everyone else"', () => {
+      expect(bucketFor(dimension, facts({ promo: 2025 }))).toBe(OTHERS_BUCKET_ID);
     });
 
     // 5 users on prod have no promo. Treating a missing value as a year would price somebody on the
     // strength of a blank field.
-    it('places a submitter with no promo in "everyone else", in both modes', () => {
-      expect(bucketFor(graduation, facts({ promo: null }))).toBe(OTHERS_BUCKET_ID);
-      expect(bucketFor(relative, facts({ promo: null }))).toBe(OTHERS_BUCKET_ID);
+    it('places a submitter with no promo in "everyone else"', () => {
+      expect(bucketFor(dimension, facts({ promo: null }))).toBe(OTHERS_BUCKET_ID);
     });
   });
 
@@ -143,14 +136,16 @@ describe('audience predicate', () => {
     });
 
     it('matches when one of several selections is in the group', () => {
-      expect(bucketFor(dimension, facts({ answers: { q_menu: ['opt_x', 'opt_veg'] } }))).toBe('veg');
+      expect(bucketFor(dimension, facts({ answers: { q_menu: ['opt_x', 'opt_veg'] } }))).toBe(
+        'veg'
+      );
     });
   });
 
   describe('a condition ANDs its criteria', () => {
     const condition = {
       formation: { values: ['ICM'] },
-      promo: { mode: 'graduationYear' as const, values: [2028] },
+      promo: { values: [2028] },
     };
 
     it('accepts a submitter matching every criterion', () => {
@@ -164,9 +159,9 @@ describe('audience predicate', () => {
 
     // An absent criterion is no constraint - not an empty one that matches nobody.
     it('ignores a criterion that is not present', () => {
-      expect(matchesCondition({ formation: { values: ['ICM'] } }, facts({ formation: 'ICM' }))).toBe(
-        true
-      );
+      expect(
+        matchesCondition({ formation: { values: ['ICM'] } }, facts({ formation: 'ICM' }))
+      ).toBe(true);
     });
   });
 
@@ -174,7 +169,7 @@ describe('audience predicate', () => {
   // need, so the question is asked before any fetch.
   describe('needsProfile', () => {
     it('is true only for a promo or formation criterion', () => {
-      expect(needsProfile({ promo: { mode: 'graduationYear', values: [2028] } })).toBe(true);
+      expect(needsProfile({ promo: { values: [2028] } })).toBe(true);
       expect(needsProfile({ formation: { values: ['ICM'] } })).toBe(true);
       expect(needsProfile({ cotisation: { anyTier: true } })).toBe(false);
       expect(needsProfile({ answer: { questionId: 'q', optionIds: ['o'] } })).toBe(false);

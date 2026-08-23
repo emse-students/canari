@@ -1,5 +1,3 @@
-import { academicEndYear } from '../../associations/cotisation-tag.util';
-
 /**
  * The audience predicate: who a person is, and whether they fall in a given bucket.
  *
@@ -11,7 +9,7 @@ import { academicEndYear } from '../../associations/cotisation-tag.util';
 
 /** Everything a criterion may look at. Assembled once per request, never re-fetched per bucket. */
 export interface SubmitterFacts {
-  /** Graduation year from the identity provider; null when unset (5 rows on prod) or anonymous. */
+  /** ENTRY year from the identity provider - "la promo 2024" entered in 2024. Null when unset. */
   promo: number | null;
   /** Formation/track from the identity provider; null when unset. */
   formation: string | null;
@@ -22,8 +20,6 @@ export interface SubmitterFacts {
   cotisationTiers: (string | null)[];
   /** Answers, by question id, as the option ids selected. A free-text answer contributes nothing. */
   answers: Record<string, string[]>;
-  /** Evaluation instant, so a study-year bucket and a test are both deterministic. */
-  now: Date;
 }
 
 interface BucketBase {
@@ -44,7 +40,7 @@ export interface CotisationBucket extends BucketBase {
   variantKeys?: (string | null)[];
 }
 
-/** Promo bucket: a set of graduation years, or a set of distances from graduation. */
+/** Promo bucket: a set of entry years. */
 export interface PromoBucket extends BucketBase {
   values: number[];
 }
@@ -55,24 +51,22 @@ export interface StringBucket extends BucketBase {
 }
 
 /**
- * How a promo bucket reads its numbers.
+ * A PROMO IS AN ENTRY YEAR, not a graduation year: "la promo 2024" is the cohort that entered the
+ * school in 2024. It names one cohort for ever, so there is exactly one way to express it and no
+ * mode to choose.
  *
- * - `graduationYear`: absolute promos. Means one cohort for ever ("la promo 2024 fete ses 5 ans"),
- *   and goes stale as a way of saying "first years".
- * - `yearsToGraduation`: `promo - academicEndYear`. 0 is graduating this academic year, 1 the year
- *   after. Stays true every year, which is what a form reused annually needs.
- *
- * There is deliberately no `studyYear` mode. "1A" is `cursusLength - yearsToGraduation - 1` and
- * NOTHING in this platform knows a cursus length: ICM and ISMIN run three years, Master two, and no
- * column records it. A mode that guessed would be wrong for one formation in three on prod, so the
- * manager names the bucket ("1A") and the editor shows which promos it resolves to today.
+ * There was a second way, `yearsToGraduation`, read as `promo - academicEndYear`. It rested on the
+ * graduation reading and was therefore wrong for EVERYBODY: for the promo 2025 evaluated in 2026 it
+ * yielded -1, and the editor only ever offered 0..4, so that mode matched nobody it was ever set
+ * for. A relative mode cannot be made correct either - it needs a cursus length and nothing in this
+ * platform records one (ICM and ISMIN run three years, Master two). So a bucket names its years and
+ * the manager names the bucket ("1A").
  */
-export type PromoMode = 'graduationYear' | 'yearsToGraduation';
 
 /** A dimension of the price matrix: a partition of the population into buckets. */
 export type Dimension =
   | { id: string; kind: 'cotisation'; buckets: CotisationBucket[] }
-  | { id: string; kind: 'promo'; mode: PromoMode; buckets: PromoBucket[] }
+  | { id: string; kind: 'promo'; buckets: PromoBucket[] }
   | { id: string; kind: 'formation'; buckets: StringBucket[] }
   | { id: string; kind: 'answer'; questionId: string; buckets: StringBucket[] };
 
@@ -94,7 +88,7 @@ export const OTHERS_BUCKET_ID = '_others';
  */
 export interface AudienceCondition {
   cotisation?: Pick<CotisationBucket, 'anyTier' | 'variantKeys'>;
-  promo?: { mode: PromoMode; values: number[] };
+  promo?: { values: number[] };
   formation?: { values: string[] };
   /** The generalisation of `dependsOn`/`dependsValue`: this question has one of these options. */
   answer?: { questionId: string; optionIds: string[] };
@@ -112,15 +106,13 @@ function matchesCotisation(
 }
 
 /**
- * True when the submitter's promo falls in the bucket.
+ * True when the submitter's entry year is one of the bucket's.
  *
- * A null promo matches nothing, in either mode - it is not a year, and treating it as one would put
- * somebody in a priced cell on the strength of a missing value.
+ * A null promo matches nothing - it is not a year, and treating it as one would put somebody in a
+ * priced cell on the strength of a missing value.
  */
-function matchesPromo(mode: PromoMode, values: number[], facts: SubmitterFacts): boolean {
-  if (facts.promo === null) return false;
-  if (mode === 'graduationYear') return values.includes(facts.promo);
-  return values.includes(facts.promo - academicEndYear(facts.now));
+function matchesPromo(values: number[], facts: SubmitterFacts): boolean {
+  return facts.promo !== null && values.includes(facts.promo);
 }
 
 /** True when the submitter's formation is one of the bucket's values. Case-sensitive, as stored. */
@@ -146,16 +138,13 @@ function matchesAnswer(questionId: string, optionIds: string[], facts: Submitter
 export function bucketFor(dimension: Dimension, facts: SubmitterFacts): string {
   switch (dimension.kind) {
     case 'cotisation':
-      return (
-        dimension.buckets.find((b) => matchesCotisation(b, facts))?.id ?? OTHERS_BUCKET_ID
-      );
+      return dimension.buckets.find((b) => matchesCotisation(b, facts))?.id ?? OTHERS_BUCKET_ID;
     case 'promo':
-      return (
-        dimension.buckets.find((b) => matchesPromo(dimension.mode, b.values, facts))?.id ??
-        OTHERS_BUCKET_ID
-      );
+      return dimension.buckets.find((b) => matchesPromo(b.values, facts))?.id ?? OTHERS_BUCKET_ID;
     case 'formation':
-      return dimension.buckets.find((b) => matchesFormation(b.values, facts))?.id ?? OTHERS_BUCKET_ID;
+      return (
+        dimension.buckets.find((b) => matchesFormation(b.values, facts))?.id ?? OTHERS_BUCKET_ID
+      );
     case 'answer':
       return (
         dimension.buckets.find((b) => matchesAnswer(dimension.questionId, b.values, facts))?.id ??
@@ -167,8 +156,7 @@ export function bucketFor(dimension: Dimension, facts: SubmitterFacts): string {
 /** True when the submitter satisfies every criterion present in the condition. */
 export function matchesCondition(condition: AudienceCondition, facts: SubmitterFacts): boolean {
   if (condition.cotisation && !matchesCotisation(condition.cotisation, facts)) return false;
-  if (condition.promo && !matchesPromo(condition.promo.mode, condition.promo.values, facts))
-    return false;
+  if (condition.promo && !matchesPromo(condition.promo.values, facts)) return false;
   if (condition.formation && !matchesFormation(condition.formation.values, facts)) return false;
   if (
     condition.answer &&
