@@ -830,6 +830,35 @@ would be a threshold nobody has measured against the population it would run on.
 
 ---
 
+## Forms
+
+### P2 - a form has two prices, and needs a grid (asked 2026-08-23)
+
+*"il faut qu'on ai moyen de faire tout un tas de discriminations, via la promo, via la formation, via
+les differents types de cotisation... ca se traduit par des grilles de tarif, mais surtout mettre des
+cases a cocher 'Filtre par...'"*
+
+**The design is in [`plans/form-pricing-grid.md`](../../plans/form-pricing-grid.md) and is not
+duplicated here.** What it establishes, briefly, so this entry is decidable without opening it: the
+two attributes to price on (`promo`, `formation`) live in core-service and are written only from
+Authentik, never by the user - so a price may rest on them, and the plan names the DTO that would
+break that if it ever gained a field. Prod holds `ICM` 213, `ISMIN` 3, `Master` 2, null 3, and promos
+2022-2026 (measured 2026-08-23), so `formation` is a small OPEN vocabulary and the picker offers what
+exists rather than a hard-coded enum. `promo` is a graduation year, so a segment stores a STUDY year
+where the form is meant to be reused - the same "store the reference, not the result" that migration
+050 has just finished applying to cotisation tags.
+
+Ships in four phases, phase 1 (model, matching, the two money call sites, tests) being behaviour-free
+with an empty grid and therefore deployable before any UI exists. It **replaces**
+`memberPriceEnabled`/`memberPriceVariantKey`/`basePriceMember`/`priceModifierMember` with a segment
+rather than sitting beside them; prod has one form with none of them set, so there is nothing to
+convert, and folding them in a year from now would cost a shim.
+
+**Blocked on three decisions from the user**, listed at the bottom of the plan: the resolution rule
+when a submitter matches several segments (first-match-in-order recommended), whether the same
+predicate also gates WHO MAY SUBMIT rather than only what they pay, and whether phase 2 draws
+per-option cells or the base price alone.
+
 ## Payments
 
 ### Flipping `payment_provider` from Stripe to Lydia (WP-LYDIA-1)

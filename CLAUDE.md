@@ -173,6 +173,15 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     licence. ONE work package with 4's picker fixes, post-ladder, owing ELEVEN rows to the SECOND
     campaign. Matrix, measurements and a jsdelivr default found while scoping: [backlog](docs/wiki/backlog.md).
 
+6. **FORM PRICING GRIDS - PLANNED, BLOCKED ON THREE DECISIONS FROM THE USER** (asked 2026-08-23,
+    while the forms admin UI was being rebuilt). Prices discriminated by promo, formation and
+    cotisation tier, with "Filtrer par..." checkboxes. Design in
+    [`plans/form-pricing-grid.md`](plans/form-pricing-grid.md), queue substance in
+    [backlog](docs/wiki/backlog.md), neither restated here. The three: the resolution rule when a
+    submitter matches several segments, whether the same predicate also gates WHO MAY SUBMIT, and
+    whether phase 2 draws per-option cells. Phase 1 is behaviour-free with an empty grid, so it can
+    ship before the UI - but not before the answers, since the first decides the data model's order.
+
 **The estate was swept and measured clean 2026-08-21 before the ladder started** - 22 debris salons through the product, all thirteen residue counts on prod zero afterwards. `cleanup.mjs` owns communities, salons AND throwaway groups now; the detail is on [cross-client-campaign](docs/wiki/cross-client-campaign.md).
 
 **OWED TO THE USER, NOT TO THE CODE: the MLS + Graine explanation.** For THEM, prose and diagrams, no
