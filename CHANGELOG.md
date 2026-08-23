@@ -136,6 +136,18 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **THE FOURTH PATH TO AN EVICTED DEVICE, and the one the other three hid.** The receive path was
+  typed and classified before the generic arm - but only for a frame at OUR epoch. The epoch-gap
+  fast-fail sits above the decryption that reveals the eviction and returns first for anything ahead
+  of us, and a group does not stop committing when it loses a member: being ahead is the NORMAL state
+  of every frame that still reaches the removed device, so the classified path was the exception and
+  "gap" was the answer in practice. Gap reads as out-of-sync, which is `requestReAdd` against a
+  deliberate removal plus a commit request that can only 403 - the exact loop the third fix was
+  written to end, still reachable by the commonest road. `!group.is_active()` is local state and
+  already false, so nothing had to be attempted to know better: it is now read before the gap. Two
+  tests pin it, the eviction AND the genuine gap of a member who merely missed a commit, because
+  hoisting the check is only correct if a recoverable gap stays recoverable.
+
 - **A conditional question had never once been displayed.** The builder bound an option's LABEL into
   `dependsValue`, while an answer holds an option ID, so every condition compared a label against an
   id and matched nothing. Prod held no affected form (`with_depends: 0`), so nothing needed a shim.

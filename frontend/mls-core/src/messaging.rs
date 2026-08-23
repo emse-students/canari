@@ -169,6 +169,31 @@ impl MlsManager {
         let msg_content_type = protocol_message.content_type();
         let group_epoch = group.epoch();
 
+        // A FRAME FOR A GROUP WE HAVE BEEN REMOVED FROM. Not a decryption failure and not a broken
+        // state: the Remove commit retired our leaf, and everything still arriving was either in
+        // flight or routed by a server registry the removal has not finished cleaning. There is no
+        // plaintext to recover, and nothing to repair.
+        //
+        // It is decided BEFORE the epoch gap below, because an evicted device is the commonest way
+        // to hold a future-epoch frame: the group keeps committing after the removal, so every
+        // frame that follows is ahead of the epoch this device is frozen at, and the gap arm would
+        // claim all of them. Carried as a gap - or as an unclassified `Process error:` - it reached
+        // the frontend as "out of sync", which asked to be re-added to a group we were deliberately
+        // removed from, then requested that group's commits and learnt from a 403 what this very
+        // frame already proved. `is_active()` is local state, not a guess: the discriminator is read
+        // where the decision is made, from where it was already known. The caller ACKs either way;
+        // only the diagnosis changes.
+        if !group.is_active() {
+            log::warn!(
+                "Frame for group {} arrived after this device was evicted - ACKed and \
+                 dropped, no repair is owed: msg_epoch={} group_epoch={}",
+                group_id,
+                msg_epoch,
+                group_epoch
+            );
+            return Err(MlsError::Evicted(group_id.to_string()));
+        }
+
         // Epoch-gap fast-fail: a future epoch means we missed at least one commit.
         // Returning early avoids consuming any ratchet key material needlessly and
         // lets the caller queue the message for gap recovery.
@@ -307,27 +332,6 @@ impl MlsManager {
                         "Process error: CannotDecryptOwnMessage [msg_epoch={}, group_epoch={}]",
                         msg_epoch, group_epoch
                     )));
-                }
-
-                // A FRAME FOR A GROUP WE HAVE BEEN REMOVED FROM. Not a decryption failure and not a
-                // broken state: the Remove commit retired our leaf, and everything still arriving
-                // was either in flight or routed by a server registry the removal has not finished
-                // cleaning. There is no plaintext to recover, and nothing to repair.
-                //
-                // It is classified here, before the generic arm, for the reason the arms above it
-                // exist: carried as an unclassified `Process error:` it reached the frontend as
-                // "out of sync", which asked to be re-added to a group we were deliberately removed
-                // from, and then requested that group's commits and learnt from a 403 what this
-                // very frame already proved. The caller ACKs; only the diagnosis changes.
-                if !group.is_active() {
-                    log::warn!(
-                        "Frame for group {} arrived after this device was evicted - ACKed and \
-                         dropped, no repair is owed: msg_epoch={} group_epoch={}",
-                        group_id,
-                        msg_epoch,
-                        group_epoch
-                    );
-                    return Err(MlsError::Evicted(group_id.to_string()));
                 }
 
                 log::error!(

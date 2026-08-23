@@ -10,15 +10,19 @@
 //! indistinguishable from a transient encrypt failure, so the frontend outbox retried it up its
 //! whole backoff ladder against a group that would refuse every single attempt.
 //!
-//! THREE PATHS REACH AN EVICTED DEVICE, and all three are pinned here because the fix is only a fix
-//! if all three agree:
+//! FOUR PATHS REACH AN EVICTED DEVICE, and all four are pinned here because the fix is only a fix
+//! if all four agree:
 //!
 //!   - the COMMIT, which is where the fact becomes knowable and free (`is_group_active`);
 //!   - the SEND, for a device that never received that commit - typed, not a sentence
 //!     (`MlsError::Evicted`), so a permanent failure cannot be read as a transient one;
 //!   - the RECEIVE, for a frame still routed to a group we are out of. Unclassified it read as
 //!     "out of sync", which asked to be re-added to a group we were deliberately removed from and
-//!     then learnt from a 403 what the frame itself already proved.
+//!     then learnt from a 403 what the frame itself already proved;
+//!   - the RECEIVE OF A LATER EPOCH, which is the SAME frame arriving after the group has committed
+//!     again - and the commonest shape of it, because a group does not stop moving when it loses a
+//!     member. The epoch-gap fast-fail sits before the decryption that would reveal the eviction,
+//!     so this path answered "gap" and reached the same out-of-sync policy by a different road.
 use mls_core::{DecryptErrorKind, MlsError, MlsManager};
 
 fn make_device(user_id: &str, device_id: &str) -> MlsManager {
@@ -186,7 +190,8 @@ fn a_frame_arriving_after_eviction_is_typed_evicted_not_an_out_of_sync() {
     assert_eq!(
         err.decrypt_kind(),
         DecryptErrorKind::Evicted,
-        "native and web classify through decrypt_kind and classifyIncomingDecryptError          respectively; the two must not be able to disagree about this one"
+        "native and web classify through decrypt_kind and classifyIncomingDecryptError \
+         respectively; the two must not be able to disagree about this one"
     );
 }
 
@@ -206,5 +211,90 @@ fn eviction_is_classified_before_the_generic_process_error_arm() {
     assert_eq!(
         MlsError::Evicted("g".into()).decrypt_kind(),
         DecryptErrorKind::Evicted
+    );
+}
+
+#[test]
+fn a_later_epoch_frame_after_eviction_is_evicted_not_an_epoch_gap() {
+    // THE FOURTH PATH, and the one the other three hid. The receive arm above is reached only for a
+    // frame at OUR epoch: the epoch-gap fast-fail returns first for anything ahead of it, before
+    // any decryption that could reveal the eviction. And a group keeps committing after it drops a
+    // member, so being ahead is the NORMAL state of every frame that still reaches the removed
+    // device - the classified path was the exception, not the rule.
+    //
+    // "Gap" then read as out-of-sync, which is `requestReAdd` against a deliberate removal plus a
+    // commit request that can only 403. `is_active()` is local state and already false, so nothing
+    // had to be attempted to know better.
+    let gid = "g-evict-later-epoch";
+    let (mut alice, mut bob) = pair(gid);
+    let commit = evict_bob(&mut alice, gid);
+    bob.process_incoming_message(gid, &commit).expect("applies");
+
+    // The group moves on without bob: one more commit, so alice is now an epoch ahead of him.
+    let carol = make_device("carol", "dev1");
+    let kp = carol.generate_key_package().expect("kp");
+    alice
+        .add_members_bulk(gid, &[kp.as_slice()])
+        .expect("add carol");
+    alice
+        .merge_pending_commit_for(gid)
+        .expect("merge add carol");
+
+    let frame = alice
+        .send_message(gid, b"members only, one epoch later")
+        .expect("alice sends");
+    let err = bob
+        .process_incoming_message(gid, &frame)
+        .expect_err("bob cannot read a group he is not in");
+
+    assert!(
+        matches!(err, MlsError::Evicted(ref g) if g == gid),
+        "a frame from a LATER epoch is still an eviction, not a gap to recover from: {err:?}"
+    );
+    assert_eq!(
+        err.decrypt_kind(),
+        DecryptErrorKind::Evicted,
+        "an epoch gap is the retryable kind; charging this frame to it asks the server to undo a          moderation action, once per frame the group still routes"
+    );
+}
+
+#[test]
+fn a_later_epoch_frame_in_a_group_we_are_still_in_is_still_a_gap() {
+    // The other half, and the one that keeps the hoist honest: eviction is now decided before the
+    // gap, so a genuine gap must survive that. A member who simply missed a commit is exactly the
+    // case the fast-fail exists for, and misreading it as an eviction would retire a live
+    // conversation on a recoverable condition.
+    let gid = "g-gap-still-member";
+    let (mut alice, mut bob) = pair(gid);
+
+    // alice commits without bob hearing about it, then talks at the new epoch.
+    let carol = make_device("carol", "dev1");
+    let kp = carol.generate_key_package().expect("kp");
+    alice
+        .add_members_bulk(gid, &[kp.as_slice()])
+        .expect("add carol");
+    alice
+        .merge_pending_commit_for(gid)
+        .expect("merge add carol");
+    let frame = alice
+        .send_message(gid, b"bob missed a commit")
+        .expect("send");
+
+    let err = bob
+        .process_incoming_message(gid, &frame)
+        .expect_err("bob is an epoch behind");
+
+    assert!(
+        bob.is_group_active(gid).expect("bob still holds it"),
+        "missing a commit does not remove anybody"
+    );
+    assert!(
+        !matches!(err, MlsError::Evicted(_)),
+        "a member who missed a commit has a gap to recover, not an eviction: {err:?}"
+    );
+    assert_eq!(
+        err.decrypt_kind(),
+        DecryptErrorKind::SenderRatchetGap,
+        "the gap is the retryable kind, and must stay retryable"
     );
 }
