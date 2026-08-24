@@ -157,6 +157,12 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     [cross-client-campaign](docs/wiki/cross-client-campaign.md), the only copies. **Where the ladder
     stands: rungs 1 MSG and 2 TYPE green x1, 3 READ, 4 MUT, 5 SEARCH, 6 MENTION and 7 FWD green
     CLEAN 5/5. Next: 8 GRP, then COMM, DEL, TAB, MULTI, LIFE, NOTIF, CALL, HEAL, PIN, CORRUPT.** The board carries every verdict; do not restate them here.
+    **GRP x5 IS ARMED AND OWED, nothing before it:** `node run.mjs GRP --repeat 5` (W1+W2, no
+    `a1Build`). Its first attempt was killed at pass 1 on 2026-08-24 - a stale browser, not a defect -
+    and `8c248131` closed that hole in the preflight, which now reloads a stale client itself
+    (methodology rule 36; story in `CHANGELOG.md`). **Rungs 9-18 are a WRITING job, not a running one:
+    129 rows, 46 with a runner** - the bill per phase, and the two rows that gate a rung, are on
+    [cross-client-campaign](docs/wiki/cross-client-campaign.md).
     **THE BOARD'S FORMAT IS NOW FIXED by the user (2026-08-22): a `PASS` cell is `PASS X/X` and a time
     if the time means anything, nothing else.** Prose only for a non-clean verdict or an unresolved
     item. The rule is written at the top of the board itself.

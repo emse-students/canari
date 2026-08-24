@@ -155,6 +155,33 @@ worth. They hold for the whole campaign and are not re-litigated inside it.
   would restart the ladder from the top on every defect. The end of a phase is the seam that has
   both properties.
 
+### What the rest of the ladder costs, measured 2026-08-24
+
+The bullet above says the empty phases get their runners written as the ladder reaches them. This is
+what that bill actually is, counted from the board's rows against `checks.mjs`'s `PHASES` - so it is a
+measurement and not an estimate, and it is re-countable in two `grep`s. **Rungs 9 to 18 carry 129
+rows and 46 of them have an instrument**, which means the remaining campaign is dominated by WRITING
+runners, not by running them. Whoever plans a session on this should read the third column, not the
+first.
+
+| Rung | Rows | With a runner | Owed | What the gap is |
+| --- | --- | --- | --- | --- |
+| 9 COMM | 25 | 25 | 0 | fully armed, and armed for the first time only now the phone answers: 4 of the 25 need A1 (`PHONE_SCRIPTS`) |
+| 10 DEL | 10 | 1 | 9 | `del1.mjs` alone, WP-HISTGHOST-1's regression check |
+| 11 TAB | 8 | 5 | 3 | TAB-1, TAB-3b, TAB-7 |
+| 12 MULTI | 6 | 0 | 6 | zero coverage by declaration |
+| 13 LIFE | 8 | 6 | 2 | LIFE-1, and LIFE-5 which is a HUMAN check by design - it needs the unlock pattern after a reboot, so it belongs on [device-verification](device-verification.md) and will never have a runner |
+| 14 NOTIF | 21 | 5 | 16 | `notif.mjs` answers 4/9/10 and `notif7.mjs` answers 7/7b; the other sixteen have nothing |
+| 15 CALL | 20 | 0 | 20 | the largest single hole on the ladder, and the only rung whose subject (WebRTC media) no existing runner touches at all |
+| 16 HEAL | 11 | 4 | 7 | HEAL-W1/W3/W4 and the four `HEAL-REVOKE-*` |
+| 17 PIN | 10 | 0 | 10 | zero coverage; SETUP-7 is owed before it |
+| 18 CORRUPT | 10 | 0 | 10 | zero coverage; SETUP-8 is owed before it |
+
+Two consequences worth stating once. **SETUP-7 and SETUP-8 both need A1 and both gate a rung**, so
+they are owed before 17 and 18 and not at the end. And **LIFE-5 is the one row on the whole ladder
+that cannot end green through this rig** - it is not a hole to fill but a check that belongs to a
+human, which is exactly the distinction `device-verification.md` exists to hold.
+
 ## Pre-flight, and none of it is a check
 
 A run that skips this measures the previous build.
