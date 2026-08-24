@@ -428,6 +428,12 @@ const BENIGN = [
   // claimed - but the request is still named here rather than dropped from the rules, so that the
   // day these outnumber the lifts by a factor nobody expected, the count is in the window.
   /\[MembersController\] \[(DISMISS|UNDISMISS)\] user=\S+ group=\S+ (recorded|lifted)=0/,
+  // A SERVICE THE CAMPAIGN NEVER TOUCHES, ANSWERING SOMEBODY ELSE. `core-service` produced three
+  // lines in the whole of GRP's first pass and one of them was this: a DEBUG row count on an
+  // internal formations listing, which is the cross-service read the portal makes and which no chat
+  // check can cause or prevent. Named rather than dropped, so that the day the count changes shape -
+  // an error beside it, or one per second - it is a line in the window and not an absence.
+  /\[InternalUsersController\] internal formations listing rows=\d+/,
 ];
 
 /**
@@ -446,6 +452,14 @@ const BENIGN = [
  */
 const NOTABLE = [
   /welcome_request|history_request|history_bundle|history_digest/i,
+  // A USER'S PIN VERIFIER INVALIDATED, ON PURPOSE, ONCE. `legacy=true` says a row existed with a
+  // null salt, so the verifier it held was derived from the old predictable one and could never
+  // match a verifier derived from the new random salt - the row is replaced and that user re-registers
+  // their PIN. Correct, and never routine: it is user-visible, and it is a migration, so the number
+  // that matters is per user. ONE line for an account is the migration doing its job; a SECOND for
+  // the same account means the row is not sticking and every PIN that account sets is being thrown
+  // away, which is a defect and would show here as a repeat rather than as anything louder.
+  /\[SecurityController\] \[PIN_SALT\] new salt generated for \S+ \(legacy=(true|false)\)/,
   // A LOCK THAT WAS GONE BEFORE ITS HOLDER RELEASED IT. The other half of the failed-lock split in
   // BENIGN, and the half that is NOT routine: `releaseAddLock`'s Lua script deletes the key only if
   // this device still owns it, so `released=false` means the value changed underneath - the 30 s TTL

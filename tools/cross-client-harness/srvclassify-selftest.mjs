@@ -352,6 +352,33 @@ const repairedOk = !matches(BENIGN_RULES, repaired) && !matches(NOTABLE_RULES, r
 if (!repairedOk) failures++;
 console.log(`${repairedOk ? 'ok  ' : 'FAIL'} unexplained  a routing set that HAD to be repaired is forgiven by nothing`);
 
+// A REPAIR OF THE SAME FAMILY, and the reason it gets no rule either. `kick-stale-device` resets a
+// device's membership to pending because its leaf is in the MLS tree and its local state is gone -
+// the client only calls it on a DuplicateSignature. GRP's first pass of 2026-08-24 produced exactly
+// one, for W2's own device, and no runner claims to arm that shape: until a row names it as its
+// subject, it is a loss the server had to repair and it must keep stopping the run. Forgiving it here
+// is how it would become invisible.
+const kicked = `${NEST}[InvitationsController] [KICK] Reset device web-aaaaaaaaaaaaaaaa-msglwqh6-vegy of user aaaaaaaaaaaaaaaa in group 00000000-0000-4000-8000-000000000001 to pending`;
+const kickedOk = !matches(BENIGN_RULES, kicked) && !matches(NOTABLE_RULES, kicked);
+if (!kickedOk) failures++;
+console.log(`${kickedOk ? 'ok  ' : 'FAIL'} unexplained  a stale leaf the server HAD to kick is forgiven by nothing`);
+
+// A PIN VERIFIER THROWN AWAY ON PURPOSE, WHICH IS STILL NOT A THING TO HIDE. The legacy salt
+// migration is correct and it costs the user a re-registration, so it is reported; what a rule cannot
+// do is make the SECOND one for an account look like the first, which is why the pattern keeps the
+// account in the line rather than collapsing to the sentence.
+const pinSalt = `${NEST}[SecurityController] [PIN_SALT] new salt generated for aaaaaaaaaaaaaaaa (legacy=true)`;
+const pinOk = matches(NOTABLE_RULES, pinSalt) && !matches(BENIGN_RULES, pinSalt);
+if (!pinOk) failures++;
+console.log(`${pinOk ? 'ok  ' : 'FAIL'} notable      a legacy PIN salt migration is reported, never waved through`);
+
+// AND THE ONE SERVICE THE CAMPAIGN CANNOT CAUSE. Filed benign because no chat check reaches it, but
+// filed at all so a change in its shape is a line somebody reads.
+const formations = `[Nest] 1  - 08/14/2026, 12:43:51 PM   DEBUG [InternalUsersController] internal formations listing rows=3`;
+const formationsOk = matches(BENIGN_RULES, formations) && !matches(NOTABLE_RULES, formations);
+if (!formationsOk) failures++;
+console.log(`${formationsOk ? 'ok  ' : 'FAIL'} benign       an internal listing from a service no check touches`);
+
 // AND THE SHARPEST OF THEM ALL, because the two lines come out of the SAME function twelve lines
 // apart and differ only in wording. One says a concurrent refresh was tolerated; the other says a
 // session was DELETED. A rule written to the service name rather than to the sentence would forgive
