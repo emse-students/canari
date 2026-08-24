@@ -1,6 +1,9 @@
 import { currentUserId, fetchUserProfile, getSavedDisplayName } from '$lib/stores/user';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { m } from '$lib/paraglide/messages';
+// The sentinel is imported rather than restated: that a notice carries this sender id, and that no
+// display name resolves for it, are one fact. This file held a private second copy of it.
+import { SYSTEM_SENDER_ID } from '$lib/utils/chat/messageUtils';
 
 const displayNameCache = new Map<string, string>();
 const inFlight = new Map<string, Promise<string | null>>();
@@ -76,13 +79,6 @@ function shouldSkipRetry(userId: string): boolean {
   const ts = failedAt.get(userId);
   return typeof ts === 'number' && Date.now() - ts < FAILURE_BACKOFF_MS;
 }
-
-/**
- * The sentinel senderId the chat gives its own system messages (`addMessageToChat('system', ...)`,
- * `isSystem: m.senderId === 'system'`). It is not a user id, so resolving it can only ever be a
- * request that 404s - `GET /api/users/system` was doing exactly that on every chat open.
- */
-const SYSTEM_SENDER_ID = 'system';
 
 /**
  * Format a user display name with priority: firstName+lastName > displayName > id

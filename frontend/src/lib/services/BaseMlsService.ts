@@ -11,7 +11,11 @@ import {
   type MlsDecryptSession,
   createSequentialDecryptSession,
 } from '$lib/mls-client/mlsDecryptSession';
-import { DeviceRevokedError, type MlsDeliveryFetch } from '$lib/mls-client/mlsDeliveryApi';
+import {
+  DeviceRevokedError,
+  NotAGroupMemberError,
+  type MlsDeliveryFetch,
+} from '$lib/mls-client/mlsDeliveryApi';
 import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import { scheduleOutboundMlsPersist } from '$lib/mls-client/mlsStatePersisterRegistry';
 import {
@@ -2055,17 +2059,36 @@ export abstract class BaseMlsService implements IMlsService {
    * standard epoch gate. On an epoch-race reject it discards the group and retries with a fresher
    * GroupInfo (this replaces the CAS/successor dance - no peer liveness required).
    *
-   * Returns true on success. Returns false when no GroupInfo is available (never stored, or the
-   * caller is not an authorized member), or the build fails, or the epoch race is lost repeatedly -
-   * the caller then falls back to the legacy welcome_request path.
+   * Returns true on success. Returns false when no GroupInfo is available, or the build fails, or
+   * the epoch race is lost repeatedly - the caller then falls back to the legacy welcome_request
+   * path.
+   *
+   * THROWS {@link NotAGroupMemberError} when the server says we hold no membership row, and that is
+   * the one outcome a caller must not treat as "try again later". This method used to return `false`
+   * for it too, folded in with "nothing stored yet" - so its caller sent a welcome_request, and the
+   * watchdog came back a minute later to do it all again, for as long as the group existed. A
+   * distribution group cannot reach this branch: {@link groupInfoChannel} routes those to their own
+   * transport, so a 403 here is always a chat group we are genuinely outside of.
    */
   async externalJoin(groupId: string): Promise<boolean> {
     const excludeSelf = [`${this.userId}:${this.deviceId}`];
     for (let attempt = 0; attempt < 3; attempt++) {
+      // THE REFUSAL HAS TO SURVIVE THIS CATCH, which flattened every outcome into `null` and cost
+      // the caller the only discriminator it needed. `NotAGroupMemberError` is the server answering
+      // the question recovery is asking; anything else says nothing about membership and leaves the
+      // welcome_request fallback the right next move. And it is logged now: this was a swallowed
+      // branch on the path a real outage would take.
       const gi = await this.groupInfoChannel(groupId)
         .fetch()
-        .catch(() => null);
-      if (!gi) return false; // nothing stored / not a member -> fall back to welcome_request
+        .catch((e) => {
+          if (e instanceof NotAGroupMemberError) throw e;
+          console.warn(
+            `[MLS] externalJoin GroupInfo fetch failed for ${groupId.slice(0, 8)}...:`,
+            String(e).slice(0, 120)
+          );
+          return null;
+        });
+      if (!gi) return false; // nothing stored yet -> fall back to welcome_request
 
       let joined: { groupId: string; commit: Uint8Array };
       try {

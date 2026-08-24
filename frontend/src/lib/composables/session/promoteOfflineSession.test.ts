@@ -9,6 +9,7 @@ const startPushService = vi.hoisted(() => vi.fn(async () => {}));
 const runGroupDiscoveryImpl = vi.hoisted(() => vi.fn());
 const startConnectionWatchdogImpl = vi.hoisted(() => vi.fn());
 const startSyncWatchdogImpl = vi.hoisted(() => vi.fn());
+const bindCurrentSessionDevice = vi.hoisted(() => vi.fn(async () => {}));
 
 vi.mock('$lib/stores/auth', async (orig) => ({
   ...(await orig<typeof import('$lib/stores/auth')>()),
@@ -23,6 +24,13 @@ vi.mock('$lib/services/PushNotificationService', () => ({ startPushService }));
 vi.mock('$lib/utils/openExternal', () => ({ isTauriRuntime: () => true }));
 vi.mock('./sessionConnection', () => ({ runGroupDiscoveryImpl, startConnectionWatchdogImpl }));
 vi.mock('./sessionWatchdogs', () => ({ startSyncWatchdogImpl }));
+// NOT OPTIONAL ISOLATION. The promotion fires this at the real module, `void`-ed and caught, so an
+// unmocked run reached PRODUCTION - five live `PUT /api/auth/sessions/current/device` per suite run,
+// each dragging a token refresh behind it, and all of it invisible because the caller swallows the
+// rejection. A test that talks to prod is not a test: it depends on reachability, it writes against
+// a real deployment if a cookie ever exists here, and its console noise is what the next real
+// warning would hide behind.
+vi.mock('$lib/services/authSessions', () => ({ bindCurrentSessionDevice }));
 
 const { promoteOfflineSession, registerOfflinePromotion, unregisterOfflinePromotion } =
   await import('./promoteOfflineSession');
@@ -87,6 +95,9 @@ describe('promoteOfflineSession', () => {
       'fresh-token',
       'device-1'
     );
+    // A promotion is the first moment an offline session can name its own device, so the binding
+    // belongs here and nowhere else - and it is asserted rather than merely silenced.
+    expect(bindCurrentSessionDevice).toHaveBeenCalledWith('device-1');
   });
 
   it('flushes the outbox only AFTER the connection is open', async () => {
@@ -128,6 +139,8 @@ describe('promoteOfflineSession', () => {
     expect(state.offlineSession).toBe(true);
     expect(initializeConnection).not.toHaveBeenCalled();
     expect(flushOutbox).not.toHaveBeenCalled();
+    // And no session is stamped with a device when there is no session left to stamp.
+    expect(bindCurrentSessionDevice).not.toHaveBeenCalled();
   });
 
   it('stays offline, without signing out, when the network is still down', async () => {

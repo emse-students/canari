@@ -149,6 +149,55 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A GROUP WE HAD LEFT WAS CHASED ONCE A MINUTE, FOR EVER, AND THE SERVER WAS ANSWERING THE QUESTION
+  THE WHOLE TIME.** `requestReAdd` runs on the SYNC_WATCHDOG's cadence for any group flagged not-ready,
+  and it has exits: the group is absent server-side, the group is gone from local state, the group is
+  tombstoned, the join succeeded. For one state - *the group exists and we are not a member of it* -
+  it had NONE. `getGroupMeta` answers `ok`, so the absent arm cannot fire; the group is in local state,
+  so that arm cannot either; `deletedAt` is empty because nobody deleted anything; and the join is
+  refused. So it fell through to the welcome_request fallback, broadcast a request nobody could honour,
+  and came back sixty seconds later - a 403 and a broadcast per minute, per left group, per client,
+  terminating only if somebody else happened to delete the group. GRP-6 caught it because it watches a
+  leaver for thirty seconds.
+
+  The discriminator existed and was thrown away. `GET /api/mls/group-info/:id` is gated on a
+  `dm_group_members` row and answers `403` when there is none - the exact question the recovery asks -
+  and `externalJoin` was flattening that into the same `null` as *no base published yet*, which is the
+  one state whose correct response IS to retry. Both ends of the chain were right; the middle hop
+  dropped the distinction. The 403 is now `NotAGroupMemberError` **at the throw** (the type already
+  existed, for the twin endpoint), it propagates through `externalJoin` instead of being swallowed by a
+  `.catch(() => null)`, and it terminates the recovery through one seam, `stopRecovering`, shared with
+  the tombstone branch. Termination is now a PROOF - the conversation is `removed`, so step 1 returns
+  immediately, and `clearGroupNotReady` drops the group from what the watchdog enumerates - where
+  before the only thing containing the loop was a 60-second throttle. The decisive test says exactly
+  that: it clears the cooldown between two calls and asserts the second does nothing at all.
+
+  The narrowing is tested from both sides, because over-reaching here is worse than the bug: 401, 404,
+  500, 502 and 503 stay unclassified, a 503 still returns `false` and still reaches the fallback, and a
+  `200` carrying `null` still retries. A deploy hiccup read as "not a member" would retire live
+  conversations.
+
+- **A RESTORED GROUP NOTICE CAME BACK AS AN ORDINARY MESSAGE BUBBLE FROM "Utilisateur".** `ChatMessage`
+  carries `isSystem`, and nothing durable does: `StoredMessage` has no such column and neither does the
+  encrypted payload a history bundle is built from. So every read path - a reload out of IndexedDB, a
+  bundle copied from a peer - had to DERIVE the flag from the sentinel sender, and the paths that did
+  not rendered a "X a rejoint le groupe" notice as a chat bubble whose author no display name resolves,
+  which is the unknown-user string. The sentinel is now one exported constant with one predicate
+  (`SYSTEM_SENDER_ID` / `isSystemSender`, previously duplicated privately in `displayName.ts`), and
+  both read paths derive through it. The test pins the load-bearing half too: the sentinel survives
+  into `toMessagePayload`, and no flag does - so a receiver waiting to be TOLD was waiting for
+  something the wire never sends.
+
+- **THE FRONTEND TEST SUITE WAS CALLING PRODUCTION.** `promoteOfflineSession.test.ts` mocks everything
+  the promotion drives except one: the fire-and-forget `void bindCurrentSessionDevice(...).catch(...)`
+  reached the real module, so every run sent five live `PUT /api/auth/sessions/current/device` at
+  `canari-emse.fr`, each dragging a token refresh behind it, and a `happy-dom` `AbortError` at teardown
+  from the fetch still in flight. The caller swallows the rejection, so nothing failed and nothing was
+  asserted - the only trace was console noise in a 215-file run, which is precisely where the next real
+  warning would have hidden. The module is mocked, the binding is now ASSERTED (with the device id on
+  the success path, and not called at all when the session is dead), and that file went from
+  network-bound to 1.9 seconds.
+
 - **WIDENING A CI GATE BROKE IT, BECAUSE WHAT MAKES A TEST ELIGIBLE WAS A PROPERTY NOBODY COULD SEE.**
   `make test-harness` went from three harness self-tests to seven, and two of the four added could not
   run on a fresh checkout: `names.mjs` is gitignored deliberately - it holds real display names and

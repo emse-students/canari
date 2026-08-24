@@ -15,6 +15,7 @@ import { chat_system_message_deleted } from '$lib/paraglide/messages';
 import {
   appMsgToEnvelope,
   isOwnMessage,
+  isSystemSender,
   resolveMessageTimestamp,
 } from '$lib/utils/chat/messageUtils';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
@@ -262,7 +263,15 @@ export function resetSeenCipherCacheForTests(): void {
   seenFlushScheduled = false;
 }
 
-/** Converts raw StoredMessage rows (from IndexedDB) to ChatMessage objects, flagging each as isOwn based on senderId. */
+/**
+ * Converts raw StoredMessage rows (from IndexedDB, or out of a peer's history bundle) to ChatMessage
+ * objects, deriving BOTH sender-relative flags - `isOwn` and `isSystem` - from `senderId`.
+ *
+ * `isSystem` is derived here and not read, because there is nothing to read: `StoredMessage` has no
+ * such column and neither does the encrypted payload. A group notice is recognised by its sentinel
+ * sender and by nothing else, so a read path that waited to be told would render every restored
+ * notice as an ordinary bubble from an unresolvable author.
+ */
 export function mapStoredMessagesToChatMessages(storedMessages: StoredMessage[], userId: string) {
   return storedMessages.map((m) => {
     return {
@@ -271,7 +280,7 @@ export function mapStoredMessagesToChatMessages(storedMessages: StoredMessage[],
       content: m.content,
       timestamp: toValidDate(readStoredTimestampMs(m.timestamp)),
       isOwn: isOwnMessage(m.senderId, userId),
-      isSystem: m.senderId === 'system',
+      isSystem: isSystemSender(m.senderId),
       reactions: m.reactions,
       serverTimestamp: m.serverTimestamp,
       ...(m.isDeleted ? { isDeleted: true } : {}),
@@ -471,7 +480,17 @@ export async function replayConversationHistory(params: {
     let historyIngestSeq = 0;
     /** Queues a decoded message into the page batch (assigns ingest order, bumps the count). */
     const pushPendingMessage = (entry: Omit<PendingHistoryMessage, 'ingestSequence'>): void => {
-      pendingMessages.push({ ...entry, ingestSequence: historyIngestSeq++ });
+      pendingMessages.push({
+        ...entry,
+        // DERIVED HERE, ONCE, FOR EVERY WRITER THAT REACHES THIS SEAM. Two of them do: the system
+        // events this replay renders itself, which pass the flag, and the history_bundle loop, which
+        // copies a peer's rows verbatim and never did. The second produced a duplicated group notice
+        // rendered as an ordinary bubble from "Utilisateur" - the same event the stream had already
+        // replayed as a centred pill, under a different id. The flag is not the bundle's to carry:
+        // the sender id already says it, and saying it twice is how the two answers came apart.
+        isSystem: entry.isSystem === true || isSystemSender(entry.senderId),
+        ingestSequence: historyIngestSeq++,
+      });
       addedMsg++;
     };
 

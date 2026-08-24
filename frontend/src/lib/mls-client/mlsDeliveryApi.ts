@@ -523,12 +523,23 @@ export class MlsDeliveryApi {
    * External-join base (Phase 4): fetches the latest stored GroupInfo for `groupId` so an authorized
    * member lacking MLS state can build an external commit to (re)join. Membership-gated server-side.
    * Returns null when no GroupInfo has been stored yet (caller falls back to a peer welcome_request).
+   *
+   * A 403 IS RAISED AS {@link NotAGroupMemberError}, for the reason it is on `getGroupMembers` next
+   * door and with a sharper consequence. This endpoint is gated on a `dm_group_members` row, so the
+   * status is the server answering the question the recovery seam is actually asking - and until it
+   * was typed, that answer was flattened into `null` by the one caller and read as "nothing stored
+   * yet", which is the state you retry. A group we had LEFT was therefore chased for as long as it
+   * existed: one 403 and one broadcast asking to be re-added, every minute, terminating only if
+   * somebody else happened to delete the group (GRP-6, 2026-08-24).
+   *
+   * Every other non-2xx stays unclassified, because none of them says anything about membership.
    */
   async fetchGroupInfo(groupId: string): Promise<{ groupInfo: string; baseEpoch: number } | null> {
     const res = await this.f(
       `${this.historyUrl}/api/mls/group-info/${encodeURIComponent(groupId)}`,
       { headers: await this.auth() }
     );
+    if (res.status === 403) throw new NotAGroupMemberError(groupId);
     if (!res.ok) {
       throw new Error(`GroupInfo fetch HTTP error: ${res.status}`);
     }

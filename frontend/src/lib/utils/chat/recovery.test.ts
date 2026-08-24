@@ -3,6 +3,7 @@ vi.mock('$lib/utils/hex', () => ({
 }));
 
 import { requestReAdd, cancelReAdd, recoverForkedGroup, resetReAddCooldowns } from './recovery';
+import { NotAGroupMemberError } from '$lib/mls-client/mlsDeliveryApi';
 import { saveMlsState } from '$lib/utils/hex';
 import { resetHistoryReconciliation, setHistoryProbeSender } from './historyReconcile';
 
@@ -161,6 +162,71 @@ describe('requestReAdd', () => {
     expect(deps.conversations.get('tomb')?.lifecycle).toBe('removed');
     expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
     expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
+  });
+
+  // ── The refusal that used to be a retry ────────────────────────────────────
+  //
+  // THREE CASES, AND THE LAST TWO ARE WHY THE FIRST ONE IS TRUSTWORTHY. A 403 on the GroupInfo read
+  // is the server saying we hold no membership row, which no retry and no peer can change - so it
+  // ends the recovery. Before it was typed it arrived as a bare `false`, went to the welcome_request
+  // fallback, and came back every minute for as long as the group existed. The negative cases pin
+  // the fix from over-reaching: a failure that says NOTHING about membership must still fall back,
+  // and a group that simply has no base published yet must still ask a peer.
+
+  it('server refuses the GroupInfo read as a non-member -> retires the conversation and stops', async () => {
+    const deps = makeDeps({
+      mlsService: makeMls({
+        externalJoin: vi.fn().mockRejectedValue(new NotAGroupMemberError('left')),
+      }),
+      conversations: makeConversations([
+        ['left', { id: 'left', name: 'A group we are out of', lifecycle: 'active' }],
+      ]),
+    });
+    const timers = new Map<string, ReturnType<typeof setTimeout>>();
+
+    await requestReAdd('left', deps, timers);
+
+    expect(deps.conversations.get('left')?.lifecycle).toBe('removed');
+    // The whole point: nobody is asked to re-add us to a group whose roster refused us.
+    expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
+    // And the watchdog must stop enumerating it, or the cadence outlives the answer.
+    expect(localStorage.getItem('mls_not_ready_since:user-a:left')).toBeNull();
+  });
+
+  it('and a second call then does nothing at all - terminated by a proof, not by the throttle', async () => {
+    const deps = makeDeps({
+      mlsService: makeMls({
+        externalJoin: vi.fn().mockRejectedValue(new NotAGroupMemberError('left')),
+      }),
+      conversations: makeConversations([['left', { id: 'left', lifecycle: 'active' }]]),
+    });
+    const timers = new Map<string, ReturnType<typeof setTimeout>>();
+
+    await requestReAdd('left', deps, timers);
+    // The cooldown is what USED to be the only thing containing this loop, so clearing it is exactly
+    // how to tell a real termination from a throttled one: a proof survives the cooldown going away.
+    resetReAddCooldowns();
+    await requestReAdd('left', deps, timers);
+
+    expect(deps.mlsService.externalJoin).toHaveBeenCalledTimes(1);
+    expect(deps.mlsService.getGroupMeta).toHaveBeenCalledTimes(1);
+    expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
+  });
+
+  it('a failure that says nothing about membership still falls back to a welcome_request', async () => {
+    const deps = makeDeps({
+      mlsService: makeMls({
+        externalJoin: vi.fn().mockRejectedValue(new Error('GroupInfo fetch HTTP error: 503')),
+      }),
+      conversations: makeConversations([['g1', { id: 'g1', lifecycle: 'active' }]]),
+    });
+    const timers = new Map<string, ReturnType<typeof setTimeout>>();
+
+    await requestReAdd('g1', deps, timers);
+
+    expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1');
+    expect(deps.conversations.get('g1')?.lifecycle).toBe('active');
+    expect(localStorage.getItem('mls_not_ready_since:user-a:g1')).not.toBeNull();
   });
 
   it('already-removed conversation -> immediate no-op', async () => {

@@ -11,6 +11,36 @@ import {
 export function isOwnMessage(senderId: string, userId: string): boolean {
   return senderId.toLowerCase() === userId.toLowerCase();
 }
+
+/**
+ * The sender id every system notice carries.
+ *
+ * This is the DURABLE form of "this row is a notice": `StoredMessage` has no `isSystem` column, so
+ * a row read back from IndexedDB is recognised by this id and nothing else. `ChatMessage.isSystem`
+ * is the DERIVED, in-memory form, and it is what the renderer reads.
+ *
+ * IT IS NOT A USER ID, so anything that resolves senders must refuse it rather than look it up:
+ * `GET /api/users/system` was issued on every chat open and could only ever 404. That refusal lives
+ * in `resolveDisplayNames`, which imports this constant instead of spelling it a second time.
+ */
+export const SYSTEM_SENDER_ID = 'system';
+
+/**
+ * Is this row a system notice?
+ *
+ * ONE BELIEF, ONE DERIVATION. `isSystem` and `senderId === SYSTEM_SENDER_ID` are the same fact in
+ * two forms, and any writer that set one without the other produced a notice rendered as an
+ * ORDINARY BUBBLE - labelled "Utilisateur", because no display name resolves for the sentinel and
+ * the sender label falls back to the unknown-user string. The history bundle did exactly that: it
+ * carries reactions, deletions, edits and the edit instant from the source device, and never
+ * carried this flag, so a notice restored onto a second device arrived as a message from nobody.
+ *
+ * Every seam that MATERIALISES a row derives it from here instead of restating it, because an
+ * invariant held in some of the places that build a row is not held.
+ */
+export function isSystemSender(senderId: string): boolean {
+  return senderId.toLowerCase() === SYSTEM_SENDER_ID;
+}
 import { mediaKindToType, type IAppMessage } from '$lib/proto/codec';
 import { bytesToHex } from '$lib/utils/hex';
 import type { AddMessageToChatOptions, ChatMessage, MessageReference } from '$lib/types';

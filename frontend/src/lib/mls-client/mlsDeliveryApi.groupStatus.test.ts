@@ -97,6 +97,55 @@ describe('getGroupMembers - a status code is an answer, a transport failure is n
 
     expect(await api.getGroupMembers('g1')).toEqual([{ userId: 'u1', deviceId: 'd1' }]);
   });
+});
+
+/**
+ * THE SAME REFUSAL, ON THE ENDPOINT WHERE MISREADING IT COST A LOOP. `GET mls/group-info/:id` is
+ * gated on a `dm_group_members` row (`messaging.service.ts` throws `ForbiddenException` when there
+ * is none), so its 403 is the server answering the exact question the recovery seam asks. Until it
+ * was typed, `externalJoin` flattened it into the same `null` as "nothing published yet" - the one
+ * state whose correct response is to try again - so a group we had LEFT was chased once a minute,
+ * with a 403 and a broadcast asking to be re-added, terminating only if somebody deleted the group.
+ *
+ * The negative cases are half the point: a 503 read as "not a member" would retire live
+ * conversations on a bad deploy, which is a worse failure than the one being fixed.
+ */
+describe('fetchGroupInfo - a refused base is a membership answer', () => {
+  it('raises a typed refusal on 403, carrying the group', async () => {
+    const api = makeApi(async () =>
+      response('{"message":"User u is not a member of group g1"}', { status: 403 })
+    );
+
+    const err = await api.fetchGroupInfo('g1').catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(NotAGroupMemberError);
+    expect((err as NotAGroupMemberError).groupId).toBe('g1');
+  });
+
+  it.each([401, 404, 500, 502, 503])('leaves %i unclassified', async (status) => {
+    const api = makeApi(async () => response('{}', { status }));
+
+    const err = await api.fetchGroupInfo('g1').catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(NotAGroupMemberError);
+  });
+
+  // NOT THE SAME THING AS A REFUSAL, and keeping the two apart is the whole fix: a member whose
+  // group has no base published yet gets a 200 and a null body, and that caller SHOULD retry.
+  it('returns null on 200 with nothing stored', async () => {
+    const api = makeApi(async () => response('null', { status: 200 }));
+
+    expect(await api.fetchGroupInfo('g1')).toBeNull();
+  });
+
+  it('returns the stored base on 200', async () => {
+    const api = makeApi(async () =>
+      response('{"groupInfo":"Z2k=","baseEpoch":7}', { status: 200 })
+    );
+
+    expect(await api.fetchGroupInfo('g1')).toEqual({ groupInfo: 'Z2k=', baseEpoch: 7 });
+  });
 
   // An empty list is a genuine answer and must not be confused with a refusal.
   it('returns an empty list on a 200 with no member', async () => {

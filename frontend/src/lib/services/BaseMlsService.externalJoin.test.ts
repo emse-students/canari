@@ -4,6 +4,7 @@ vi.mock('$lib/services/TauriMlsService', () => ({ TauriMlsService: class {} }));
 vi.mock('$lib/services/WebMlsService', () => ({ WebMlsService: class {} }));
 
 import { BaseMlsService } from './BaseMlsService';
+import { NotAGroupMemberError } from '$lib/mls-client/mlsDeliveryApi';
 
 /**
  * Unit-tests the external-join ORCHESTRATION (Phase 4a) in isolation: fetch GroupInfo -> build the
@@ -48,6 +49,51 @@ describe('BaseMlsService.externalJoin', () => {
 
     expect(await externalJoin(ctx, 'g')).toBe(false);
     expect(ctx.joinByExternalCommit).not.toHaveBeenCalled();
+  });
+
+  // ── The refusal that must not become a `false` ──────────────────────────────
+  //
+  // THE MIDDLE LINK OF THE CHAIN. `fetchGroupInfo` types its 403 and `requestReAdd` terminates on
+  // the type; between them sat a `.catch(() => null)` that turned the answer into "nothing stored
+  // yet" - the one state whose correct response is to retry. Both ends can be green while this hop
+  // silently drops the distinction, which is exactly the shape the bug had.
+
+  it('lets a membership refusal through instead of reporting no base', async () => {
+    const ctx = makeCtx();
+    ctx.delivery.fetchGroupInfo.mockRejectedValue(new NotAGroupMemberError('g'));
+
+    const err = await externalJoin(ctx, 'g').catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(NotAGroupMemberError);
+    // And it does not spend three attempts on an answer that cannot change.
+    expect(ctx.delivery.fetchGroupInfo).toHaveBeenCalledTimes(1);
+    expect(ctx.joinByExternalCommit).not.toHaveBeenCalled();
+  });
+
+  it('still reports no base for a failure that says nothing about membership', async () => {
+    const ctx = makeCtx();
+    ctx.delivery.fetchGroupInfo.mockRejectedValue(new Error('GroupInfo fetch HTTP error: 503'));
+
+    // The welcome_request fallback lives on this `false`, so an outage must keep reaching it.
+    expect(await externalJoin(ctx, 'g')).toBe(false);
+    expect(ctx.joinByExternalCommit).not.toHaveBeenCalled();
+  });
+
+  // The claim `externalJoin`'s doc makes about its own blast radius, tested rather than asserted:
+  // a distribution group is routed to its own transport by the REAL `groupInfoChannel` this harness
+  // installs, so it never touches the membership-gated endpoint and cannot raise that refusal.
+  it('routes a distribution group away from the membership-gated endpoint entirely', async () => {
+    const ctx = makeCtx({
+      distributionScopeByGroup: new Map([['g', 'community']]),
+      distributionGroupInfo: {
+        fetch: vi.fn().mockResolvedValue({ groupInfo: 'AA==', baseEpoch: 3 }),
+        publish: vi.fn().mockResolvedValue({ stored: true }),
+      },
+    });
+    ctx.delivery.submitCommit.mockResolvedValue({ accepted: true });
+
+    expect(await externalJoin(ctx, 'g')).toBe(true);
+    expect(ctx.delivery.fetchGroupInfo).not.toHaveBeenCalled();
   });
 
   it('joins, submits against the base epoch, merges and succeeds on accept', async () => {

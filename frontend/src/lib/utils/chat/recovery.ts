@@ -1,4 +1,5 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
+import { NotAGroupMemberError } from '$lib/mls-client/mlsDeliveryApi';
 import type { IStorage } from '$lib/db';
 import type { Conversation } from '$lib/types';
 import type { SvelteMap } from 'svelte/reactivity';
@@ -76,6 +77,41 @@ async function purgePhantomConversation(groupId: string, deps: RecoveryDeps): Pr
 }
 
 /**
+ * THE TERMINATION OF A RECOVERY, and the only seam that performs one.
+ *
+ * Exactly two server answers END a recovery instead of deferring it: the group was TOMBSTONED, and
+ * the server says WE HOLD NO MEMBERSHIP ROW. Neither can be changed by trying again, so both retire
+ * the conversation - and retiring it is what makes the loop terminate on a PROOF rather than on a
+ * throttle. Step 1 of {@link requestReAdd} returns immediately for a `removed` conversation, and
+ * `clearGroupNotReady` drops the group from what the SYNC_WATCHDOG enumerates, so nothing re-arms it.
+ *
+ * Written once because the SECOND caller is the whole point. The not-a-member answer had no branch
+ * at all: it arrived as a bare `false` from `externalJoin`, indistinguishable from "no GroupInfo
+ * published yet", fell through to the welcome_request fallback, and was re-asked every minute for as
+ * long as the group existed - a 403 and a broadcast per minute, ending only if somebody else deleted
+ * the group. GRP-6 caught it on 2026-08-24 because it watches for thirty seconds after a leave.
+ */
+async function stopRecovering(
+  groupId: string,
+  reason: string,
+  deps: RecoveryDeps,
+  timers: Map<string, ReturnType<typeof setTimeout>>
+): Promise<void> {
+  cancelReAdd(groupId, timers);
+  clearGroupNotReady(deps.userId, groupId);
+  const convo = deps.conversations.get(groupId);
+  if (!convo || convo.lifecycle === 'removed') return;
+  deps.log(`[READD] ${groupId.slice(0, 8)}... ${reason} - marking removed`);
+  await retireConversation({
+    conversations: deps.conversations,
+    key: groupId,
+    groupId,
+    saveConversation: deps.saveConversation,
+    patch: { id: groupId },
+  });
+}
+
+/**
  * Recovers `groupId` when the local MLS state is absent or out of sync. Single recovery ACTION seam,
  * self-throttled via {@link RECOVERY_TIMEOUT_MS}; the SYNC_WATCHDOG drives the cadence, reactive
  * paths call it on demand. No private timer, no reboot/successor - the self-service external-commit
@@ -87,8 +123,12 @@ async function purgePhantomConversation(groupId: string, deps: RecoveryDeps): Pr
  *  3. Group CONFIRMED ABSENT server-side -> purge the local phantom, stop.
  *  4. Group already in local WASM -> nothing to recover (caller must forgetGroup first if forked).
  *  5. Group tombstoned (`deletedAt`) -> mark the conversation removed, stop.
- *  6. Try the self-service external-commit join (Phase 4); on failure, fall back to a single
- *     welcome_request (a reachable member re-adds us). The watchdog re-invokes on its cadence.
+ *  6. Try the self-service external-commit join (Phase 4).
+ *  7. The server REFUSED it as a non-member (`NotAGroupMemberError`) -> mark the conversation
+ *     removed, stop. This is a terminating ANSWER and not a failed attempt, which is the difference
+ *     between this seam terminating on a proof and terminating only when the group gets deleted.
+ *  8. Any other failure -> fall back to a single welcome_request (a reachable member re-adds us).
+ *     The watchdog re-invokes on its cadence.
  */
 export async function requestReAdd(
   groupId: string,
@@ -154,17 +194,7 @@ export async function requestReAdd(
 
   // Tombstoned server-side: mark the conversation removed, stop recovering.
   if (meta?.deletedAt) {
-    clearGroupNotReady(deps.userId, groupId);
-    const convo = deps.conversations.get(groupId);
-    if (!convo || convo.lifecycle === 'removed') return;
-    deps.log(`[READD] ${groupId.slice(0, 8)}... deleted server-side - marking removed`);
-    await retireConversation({
-      conversations: deps.conversations,
-      key: groupId,
-      groupId,
-      saveConversation: deps.saveConversation,
-      patch: { id: groupId },
-    });
+    await stopRecovering(groupId, 'deleted server-side', deps, timers);
     return;
   }
 
@@ -176,10 +206,24 @@ export async function requestReAdd(
   // Self-service external-commit join first (Phase 4): fetch the stored GroupInfo and rejoin at the
   // current epoch without a peer. On success, clear the recovery bookkeeping and return.
   deps.log(`[READD] ${groupId.slice(0, 8)}... externalJoin…`);
-  const joined = await deps.mlsService.externalJoin(groupId).catch((e) => {
+  let joined: boolean;
+  try {
+    joined = await deps.mlsService.externalJoin(groupId);
+  } catch (e) {
+    // A STATUS CODE IS AN ANSWER. The server holds no membership row for us, so there is no base to
+    // join and no point asking a member to re-add us - the group's own roster is what refused. This
+    // is the proof this loop never had: the refusal used to arrive as a bare `false`, land in the
+    // welcome_request fallback below, and come back every minute until the group was deleted.
+    if (e instanceof NotAGroupMemberError) {
+      await stopRecovering(groupId, 'server holds no membership row for us', deps, timers);
+      return;
+    }
+    // Anything else says NOTHING about membership, so it must not retire a conversation: the
+    // fallback below stays the right next move, and the log is what keeps the branch from being
+    // silent on the path a real outage would take.
     deps.log(`[READD] ${groupId.slice(0, 8)}... externalJoin threw: ${String(e).slice(0, 120)}`);
-    return false;
-  });
+    joined = false;
+  }
   deps.log(`[READD] ${groupId.slice(0, 8)}... externalJoin -> ${joined}`);
   if (joined) {
     deps.log(`[READD] ${groupId.slice(0, 8)}... rejoined via external commit (self-service)`);
@@ -203,8 +247,14 @@ export async function requestReAdd(
     return;
   }
 
-  // Fallback: no GroupInfo stored yet (or not an authorized member) -> ask a reachable member to
-  // re-add us via a Welcome. The SYNC_WATCHDOG re-invokes this on its cadence until we rejoin.
+  // Fallback: no GroupInfo stored yet -> ask a reachable member to re-add us via a Welcome. The
+  // SYNC_WATCHDOG re-invokes this on its cadence until we rejoin. "Or not an authorized member" used
+  // to be in this sentence, and it was the bug: that case cannot be answered by any member and now
+  // exits at step 7 instead of arriving here.
+  //
+  // WHAT REACHES HERE IS THEREFORE BOUNDED BY SOMETHING: a group whose base is unpublished has a
+  // member who will publish one, or a peer who can send a Welcome. Nothing that reaches this line
+  // any longer has a server-side answer proving the request is hopeless.
   deps.log(`[READD] ${groupId.slice(0, 8)}... sendWelcomeRequest…`);
   await deps.mlsService
     .sendWelcomeRequest(groupId)
