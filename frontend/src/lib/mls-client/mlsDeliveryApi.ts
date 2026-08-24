@@ -70,6 +70,32 @@ export class NotAGroupMemberError extends Error {
   }
 }
 
+/**
+ * A group EXIT the server answered with a refusal - the answer being the point.
+ *
+ * `DELETE /api/mls/groups/:id` and `DELETE /api/mls/groups/:id/members/:user` are the two calls that
+ * take this device out of a group, and both are replayed by
+ * {@link $lib/utils/chat/pendingGroupExits.drainPendingGroupExits} after a link comes back. That
+ * drain has exactly one decision to make - is the exit still owed - and only a STATUS answers it: a
+ * 404 or a 403 says the group is gone or this user is already out, which is the end state the exit
+ * was asking for, while a 500 says the server is there and unhappy and the call must be kept.
+ *
+ * Typed, and carrying `status` as a NUMBER, for the reason `NotAGroupMemberError` states: the drain
+ * used to have `Delete failed: ${status}` and nothing else, and a distinction carried in prose is a
+ * distinction exactly one call site will ever make - by parsing a sentence, which is how the next
+ * message edit breaks it silently.
+ */
+export class GroupExitRefusedError extends Error {
+  constructor(
+    readonly groupId: string,
+    readonly status: number,
+    readonly operation: 'delete' | 'leave'
+  ) {
+    super(`Group ${operation} refused for ${groupId}: ${status}`);
+    this.name = 'GroupExitRefusedError';
+  }
+}
+
 export type MlsDeliveryApiOptions = {
   historyUrl: string;
   getToken: () => Promise<string>;
@@ -854,7 +880,7 @@ export class MlsDeliveryApi {
       headers: await this.auth(),
     });
     if (res.status === 404) return false;
-    if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+    if (!res.ok) throw new GroupExitRefusedError(groupId, res.status, 'delete');
     return true;
   }
 
@@ -864,7 +890,10 @@ export class MlsDeliveryApi {
       method: 'DELETE',
       headers: await this.auth(),
     });
-    if (!res.ok) throw new Error(`Remove member failed: ${res.status}`);
+    // A 404 (no such group) and a 403 (not a member of it) are both the server ANSWERING that this
+    // user is already out - which is what a leave asks for - and they reach the caller as a status it
+    // can act on rather than as a sentence it would have to read.
+    if (!res.ok) throw new GroupExitRefusedError(groupId, res.status, 'leave');
   }
 
   /**

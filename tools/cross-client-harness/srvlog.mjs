@@ -460,6 +460,17 @@ const NOTABLE = [
   // proved (COMM-14), so the line that says the Admin SDK came up is the only positive evidence in
   // any window that push COULD have worked. An absence is unnoticeable unless the presence is shown.
   /\[AppController\] \[FIREBASE\] Admin SDK initialized/,
+  // A DEVICE TELLING THE SERVER WHICH OF ITS ONE-TIME PREKEYS ARE SPENT, and the count is the
+  // point. `pruneOneTimePrekeys` is client-driven: the device names ids it has consumed and the
+  // server deletes exactly those (`devices.controller.ts:536`), so the line is expected on a client
+  // that has been away and is reconciling - DEL-7's cold start printed `deleted=12`, one per Welcome
+  // the phone had processed while it was the only thing running.
+  //
+  // NOTABLE RATHER THAN BENIGN, because a prekey pool is CONSUMED and must be refilled: the failure
+  // this number leads to is a device nobody can add to a group any more, and it arrives as a silence
+  // rather than as an error. A prune with no `[REGISTER_PREKEYS]` behind it is the shape of that,
+  // and only a reported count lets a reader see the two together.
+  /\[DevicesController\] \[PRUNE_PREKEYS\] user=\S+ device=\S+ deleted=\d+/,
   // A DESTRUCTIVE SWEEP RUNNING INSIDE AN OBSERVATION WINDOW. Every container start replays every GC
   // job once, a minute in - message cleanup, soft-deleted group purge, orphaned member rows, stale
   // invitations. Each is age-gated, so a boot-time run deletes only what was already eligible and the
@@ -628,6 +639,23 @@ const NOTABLE = [
   // whatever it was measuring. Found exactly that way on 2026-08-14 at 12:45:20Z.
   /^Listening on http/,
   /Nest application successfully started/,
+  // THE SAME BOOT, THREE LINES FURTHER DOWN - core-service stating what it came up WITH. They reached
+  // `unexplained` on 2026-08-24 because DEL-2's window opened seconds after the v0.14.4 deploy, while
+  // `Nest application successfully started` beside them was already classified.
+  //
+  // NOTABLE, AND WITH THE VALUE PINNED TO WHAT WAS READ - which is the whole point and the reason
+  // these are not `(yes|no)`. `Lydia configured: no` is LITERALLY the line that changes the day
+  // WP-LYDIA-1 lands, and `Stripe configured: yes` is the line that changes if payments quietly lose
+  // their configuration on a deploy. A rule spanning both values would forgive the flip along with
+  // the boot and delete the only evidence either event ever produces; pinned, the flip lands in
+  // `unexplained` where a configuration change belongs. The homologation URL is pinned for the same
+  // reason - moving to Lydia's production endpoint is an event, not noise.
+  /\[StripePaymentProvider\] Stripe configured: yes$/,
+  /\[LydiaPaymentProvider\] Lydia configured: no \(https:\/\/homologation\.lydia-app\.com\)$/,
+  // No value to pin: an extension check either reports ready or the service does not start. Its
+  // ABSENCE is the finding, and an absence cannot be classified - which is what the boot banner above
+  // is for.
+  /\[UsersService\] unaccent \+ pg_trgm extensions ready$/,
   // A CHANNEL MESSAGE BEING DESTROYED, WHICH IS THE ONE DELETE IN THE PRODUCT WITH NO TOMBSTONE. A
   // DM delete leaves a row on every device; `ChannelService.deleteChannelMessage` removes the row
   // itself, and the server is the only authority that ever saw it. So this line is the sole surviving

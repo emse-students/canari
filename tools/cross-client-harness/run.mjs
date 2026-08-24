@@ -708,8 +708,14 @@ if (flag('file')) {
     console.log(`  note ${f} belongs to no phase in checks.mjs - preflighting W1 W2 by default`);
   }
   const withPhone = owner ? PHONE_SCRIPTS[owner[0]] : undefined;
+  // A FILE IS NOT ALWAYS A ROW, and reading this map by NAME ALONE could not say so. `del.mjs` holds
+  // eight of them and exactly one - `--only 7` - touches the phone, so a name-only entry would demand
+  // a phone for `del.mjs --only 2`: the refusal-with-no-reason this whole block exists to prevent,
+  // arriving through the map meant to prevent it. An entry may therefore name the ARGUMENTS too,
+  // exactly as `PHASES.scripts` already does, and the INVOCATION is matched against both forms.
+  const invocation = [f, ...forwarded].join(' ');
   const need =
-    withPhone && !withPhone.includes(f)
+    withPhone && !withPhone.includes(f) && !withPhone.includes(invocation)
       ? owner[1].needs.filter((d) => d !== 'A1')
       : (owner?.[1].needs ?? ['W1', 'W2']);
   for (const d of need) devices.add(d);

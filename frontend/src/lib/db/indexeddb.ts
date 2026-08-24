@@ -12,6 +12,7 @@ import type {
   EncryptedMessageRow,
   IStorage,
   OutboxEntry,
+  PendingGroupExit,
   StoredGraineSession,
   StoredMessage,
   StoredMessagePatch,
@@ -97,7 +98,8 @@ export class IndexedDbStorage implements IStorage {
       // Version 6: PBKDF2+salt → deviceKeyB64 (direct AES-256-GCM). Drops all encrypted
       //            messages/outbox rows — they will be re-fetched from the server.
       // Version 7: adds the `graine` store (community-channel session seeds).
-      const request = indexedDB.open(this.dbName, 7);
+      // Version 8: adds the `pendingGroupExits` store (a delete/leave the server has not answered).
+      const request = indexedDB.open(this.dbName, 8);
 
       request.onerror = () =>
         reject(new StorageOpenError(this.dbName, false, { cause: request.error }));
@@ -191,6 +193,16 @@ export class IndexedDbStorage implements IStorage {
             const graineStore = db.createObjectStore('graine', { keyPath: 'sessionId' });
             graineStore.createIndex('byChannel', 'channelId', { unique: false });
             graineStore.createIndex('byWorkspace', 'workspaceId', { unique: false });
+          }
+        }
+
+        if (oldVersion < 8) {
+          // Group exits decided locally and not yet answered by the server. Purely additive, and
+          // EMPTY on every existing database, which is the honest state: a delete lost to a transport
+          // failure before this store existed left nothing behind to recover from, and inventing
+          // rows here would be guessing at intentions no column ever recorded.
+          if (!db.objectStoreNames.contains('pendingGroupExits')) {
+            db.createObjectStore('pendingGroupExits', { keyPath: 'groupId' });
           }
         }
 
@@ -719,6 +731,42 @@ export class IndexedDbStorage implements IStorage {
     });
   }
 
+  // -- Pending group exits -------------------------------------------------
+
+  /** Record that this device owes the server an exit for `entry.groupId`. */
+  async savePendingGroupExit(entry: PendingGroupExit): Promise<void> {
+    const db = this.ensureDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('pendingGroupExits', 'readwrite');
+      tx.objectStore('pendingGroupExits').put(entry);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  /** Every exit still owed, oldest first. */
+  async getPendingGroupExits(): Promise<PendingGroupExit[]> {
+    const db = this.ensureDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('pendingGroupExits', 'readonly');
+      const req = tx.objectStore('pendingGroupExits').getAll();
+      req.onsuccess = () =>
+        resolve((req.result as PendingGroupExit[]).sort((a, b) => a.requestedAt - b.requestedAt));
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  /** Forget the exit owed for `groupId`. A groupId that names nothing is not an error. */
+  async deletePendingGroupExit(groupId: string): Promise<void> {
+    const db = this.ensureDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('pendingGroupExits', 'readwrite');
+      tx.objectStore('pendingGroupExits').delete(groupId);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
   // -- Graine sessions -----------------------------------------------------
 
   /**
@@ -873,11 +921,18 @@ export class IndexedDbStorage implements IStorage {
     invalidateAllHistoryStateKeys();
     const db = this.ensureDb();
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(['conversations', 'messages', 'outbox', 'graine'], 'readwrite');
+      const tx = db.transaction(
+        ['conversations', 'messages', 'outbox', 'graine', 'pendingGroupExits'],
+        'readwrite'
+      );
       tx.objectStore('conversations').clear();
       tx.objectStore('messages').clear();
       tx.objectStore('outbox').clear();
       tx.objectStore('graine').clear();
+      // AN ACCOUNT RESET TAKES THE OWED EXITS WITH IT, and that is the right answer rather than a
+      // loss: the exits name groups this device is wiping its membership of anyway, and a drain
+      // firing afterwards would be acting on a decision taken by an account that is no longer here.
+      tx.objectStore('pendingGroupExits').clear();
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });

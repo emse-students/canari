@@ -541,6 +541,23 @@ nothing is currently failing for. So it waits for a moment when the rig can be c
 the affected phases re-run together, rather than being slipped in mid-ladder where it would silently
 cost four phases their verdicts.
 
+### P3 - eight runners open IndexedDB by hand, and `idb.mjs` exists
+
+`idb.mjs` (2026-08-24) is the one reader that ITERATES the databases a profile holds, filters
+`CanariDB_` while excluding `CanariDBMls*`, and never decrypts. It was written because `recon.mjs`
+takes the FIRST database it finds, which on a two-account Chrome profile is a coin toss, and because
+reaching into `CanariDBMls*` by prefix returns an empty result that reads exactly like "nothing
+queued". Counted 2026-08-24, `indexedDB.databases` appears in nine files and one of them is `idb.mjs`: EIGHT
+call sites still carry their own copy of the preamble (`del1`, `dismiss`, `grainestore`, `grp`,
+`identity`, `mlsdb`, `mut`, `recon`), and `del.mjs` is the only phase reading through the module.
+
+**Why the copies are deliberately still there.** Converting a caller changes what that caller READS,
+and every one of them belongs to a phase already green on the board - so the conversion invalidates
+those rows under [testing-methodology](testing-methodology.md) 33, exactly as the
+bubble-helper entry above does. The duplication costs nothing while it is identical; it costs a phase
+the day one copy is fixed and ten are not, which is the shape `recon.mjs`'s first-database bug already
+had. So this waits for the same wholesale moment: convert all eight, re-run the phases together.
+
 ## Search
 
 ### P3 - `ChatArea.svelte` swallows three branches and has no logger at all

@@ -233,6 +233,26 @@ for the whole process. That triple is the `O(|mls.bin| + N)` shape observed rath
 and the keystore-load count is the one that would have caught a regression back to the per-message
 entry point, because that regression is fast per call and only the *number* of loads betrays it.
 
+#### 37. A REQUEST SENT IS NOT A REQUEST ANSWERED, AND ONLY ONE OF THE TWO IS EVIDENCE
+
+DEL-10's predicate counted `Network.requestWillBeSent` for a `DELETE` matching the group URL, and
+called the count "the deletion reached the server". With the radios cut, the browser fires that event
+and the request goes nowhere - so the check's central claim, "nothing was sent while offline", was
+being tested against a stream in which the offline send is indistinguishable from an answered one.
+The check was verifying the wrong half of the mechanism it was written for.
+
+The fix is the correlation CDP already gives: keep the `requestId` of each matching
+`requestWillBeSent`, then count only the `Network.responseReceived` whose `requestId` is in that set,
+and record the STATUS with it. An attempt and an answer are then separate numbers in the row, which is
+what lets the verdict say "sent once while offline, answered zero times" - a sentence the old row
+could not express.
+
+**And the answer the client saw is still not the state of the world.** A 200 to the DELETE says the
+server accepted it; whether the row is really gone is a question only the database answers.
+`del10` now reads `dm_groups."deletedAt"` over `psql` after the run, so the row carries
+`onServerAfter` beside the request counts. That is the check's real subject - the defect WAS a group
+surviving server-side - and no amount of network evidence substitutes for it.
+
 ### Reaching the thing under test
 
 #### 5. RESOLVE A TARGET BY IDENTITY, NEVER BY GEOMETRY - and the DEVICE is part of the identity

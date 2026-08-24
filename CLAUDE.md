@@ -142,13 +142,17 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     DIFFERENT defect and a real one: a mention renders in the notification as its raw `@[uuid]`
     token, filed P2 in [backlog](docs/wiki/backlog.md) and deferred past the ladder by their
     decision. NOTIF-13 is the row that will pin it.
-2. **A1 RUNS `a7981206` as of 2026-08-22** - bundle built `01:36:04.345Z`, replacing the `67d40e3a`
-    of the day before. `npx tauri` does NOT resolve here (`could not determine executable to
-    run`); build with `./node_modules/.bin/tauri.exe android build --debug` from `frontend/`, and
-    install the **universal** APK, never `arm64/`. A fresh install means a new process, so
-    `phone.ensure({ port: 9333 })` before `pin.mjs --device A1` - the old devtools forward is dead
-    and `pin.mjs` alone reports `ECONNREFUSED`. **A phone `offline` in adb is a HUMAN action**: no
-    `adb reconnect` or daemon restart clears it, the screen must be unlocked and the prompt accepted.
+2. **A1 RUNS `c6eb7b20` (v0.14.4) as of 2026-08-24**, bundle built `18:49:07.934Z`, rebuilt and
+    `install -r`'d at the user's request so all three clients sit at the latest version. **THAT
+    RETIRES THE MIXED-FLEET PREMISE, and the loss is stated rather than discovered later:** A1's APK
+    used to predate the deployment on purpose, so every row naming `a1Build` beside `build` was
+    exercising an OLD client against a NEW server. Those two stamps are now the same commit, so the
+    phone tests the current code - what nothing tests any more is the old-client question, and a row
+    that needs it must arm it deliberately by NOT rebuilding. How to build and install one, and the
+    three details that have each cost a session, are in the harness
+    [README](tools/cross-client-harness/README.md) under "Building for it" - not restated here.
+    **A phone `offline` in adb is a HUMAN action**: no `adb reconnect` or daemon restart clears it,
+    the screen must be unlocked and the prompt accepted.
 3. **THE CAMPAIGN ITSELF - RUNNING, by the user's decision of 2026-08-21** (*"C'est parti pour la
     campagne"*, in autonomy). The ladder, top to bottom, everything must end green, so every phase
     runs - including the six that had no runner, written as the ladder reaches them. The design, the
@@ -198,27 +202,21 @@ sixth is owed to the user, not to the code:** is a MiGallery application worth b
 
 ### CANARI - what is open
 
-**Release status:** v0.14.3 cut 2026-08-22. Android, AppImage and prod CD all succeeded; the iOS
-build itself succeeded too, but the TestFlight upload step failed with *"Invalid Export Compliance
-Code... the key value [] in the app's Info.plist doesn't match... the app's export compliance
-documentation."* `ITSAppUsesNonExemptEncryption=true` alone is not enough - Apple also needs
-`ITSEncryptionExportComplianceCode`, whose value exists only in the App Store Connect account, and
-the plist had no such key at all.
-
-**Now wired, not yet unblocked.** `ios-release.yml`'s new "Set export compliance code in
-Info.plist" step (before the archive build) adds the key from a GitHub secret,
-`APP_STORE_CONNECT_EXPORT_COMPLIANCE_CODE` - kept as a secret rather than committed since this is a
-public repo and the value is Apple-account-specific, matching every other Apple credential this
-workflow already treats that way. **Owed to the user: create that repository secret with the code
-from App Store Connect, then cut the next release** - nothing else in the pipeline needs to change,
-and the step already skips harmlessly (leaving `Info.plist` as committed) when the secret is unset,
-so this did not regress the green paths (archive, GitHub Release, Android, AppImage) in the
-meantime.
+**Release status:** v0.14.4 cut 2026-08-24, and **the iOS path is green end to end for the first
+time**: Android, AppImage, prod CD, the archive, the GitHub Release and the TestFlight upload all
+succeeded (run `32763104909`). v0.14.3's blocker is gone - the
+`APP_STORE_CONNECT_EXPORT_COMPLIANCE_CODE` secret exists as of 2026-08-24 18:25Z, the "Set export
+compliance code in Info.plist" step took its SET branch (`ITSEncryptionExportComplianceCode set in
+Info.plist`) and Apple accepted the build. The value stays out of the tree, which is what this repo
+being public requires. Nothing here is owed any more; the story is in `CHANGELOG.md`.
 
 `minClientVersion` still lives in `platform_config`, is still raised by hand from `/admin/platform`
-so no deploy touches it - and **the App Store half was never verified, so a raise locks out any iOS
-user it has not reached** ([legacy-compatibility](docs/wiki/legacy-compatibility.md) carries the
-shipping order it violated). That gap closes only once a release actually reaches TestFlight.
+so no deploy touches it - and **half of the old gap is closed, the other half is not, and the
+difference IS the risk.** A release can now REACH App Store Connect, which had never been proven.
+But TestFlight is the BETA channel: nothing yet shows a build reaching an ordinary iOS user, so a
+raise still locks out anyone the release has not actually reached, and the shipping order stands -
+ship the client, verify it arrived, THEN raise
+([legacy-compatibility](docs/wiki/legacy-compatibility.md)).
 
 ### CANARI - the test campaign
 

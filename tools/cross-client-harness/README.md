@@ -363,8 +363,19 @@ run.
 
 **Building for it**
 
-- `bun tauri android build --target aarch64 --debug`, then install
-  `.../apk/universal/debug/app-universal-debug.apk` - **not** `arm64/`, which is stale.
+- `./node_modules/.bin/tauri.exe android build --debug` from `frontend/`, then
+  `adb install -r .../apk/universal/debug/app-universal-debug.apk` - **not** `arm64/`, which is
+  stale. Three details, each of which has cost a session:
+  - **`npx tauri` does not resolve on this box** (`could not determine executable to run`), and
+    `bun tauri` shells out the same way. Call the binary in `node_modules/.bin` directly.
+  - **`install -r`, never an uninstall.** It keeps the app data, which is the enrolment and the MLS
+    store; an uninstall costs a re-enrolment and SETUP-4's 2FA, the one step no tool here answers.
+  - **`--target aarch64` is not needed and its absence is not a warning to fix.** A full build prints
+    "There are no .so files available to package in the APK for armeabi-v7a, x86, x86_64" and
+    packages arm64 alone, which is what the Pixel 6a runs. Measured 2026-08-24 on v0.14.4.
+- A fresh install is a NEW PROCESS, so the old devtools forward is dead and `pin.mjs --device A1`
+  alone reports `ECONNREFUSED`. `node run.mjs --preflight A1` forwards, foregrounds, sends the app to
+  `/chat` (the PIN gate does not mount on `/posts`) and unlocks - use it rather than the pieces.
 - A Kotlin-only change does **not** need the Tauri build: `gradlew :app:assembleUniversalDebug` in
   `gen/android` packages the assets already on disk. The unit-test variants are
   `testUniversalDebugUnitTest` / `testArmDebugUnitTest` - `:app:testDebugUnitTest` is ambiguous, and

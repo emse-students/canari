@@ -415,3 +415,97 @@ describe('discoverMissingGroups orphan cleanup', () => {
     expect(mlsService.forgetGroup).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * DEL-10's second half. The deletion that never reached the server left the group standing there,
+ * and the very next discovery saw a server group with no local row - which is exactly what phase 1
+ * is built to repair - and re-created it as a placeholder. The user's deletion was undone by the
+ * reconciler meant to serve it.
+ *
+ * On the wire the two cases are identical: a server group this client does not hold. The owed-exit
+ * row is the only thing that tells them apart, which is why the guard reads it rather than guessing.
+ */
+describe('discoverMissingGroups - a group with an exit still owed', () => {
+  const OWED = 'a0000000-0000-4000-8000-00000000000a';
+  const FRESH = 'b0000000-0000-4000-8000-00000000000b';
+
+  function serverGroups() {
+    return [
+      { groupId: OWED, name: 'Groupe supprime', isGroup: true },
+      { groupId: FRESH, name: 'Groupe legitime', isGroup: true },
+    ];
+  }
+
+  function storageOwing(ids: string[]) {
+    return {
+      getPendingGroupExits: vi.fn(async () =>
+        ids.map((groupId) => ({ groupId, kind: 'delete' as const, requestedAt: 1 }))
+      ),
+    } as never;
+  }
+
+  it('is not re-created as a placeholder, and the reason is logged', async () => {
+    const conversations = new Map<string, Conversation>();
+    const log = vi.fn();
+    const mlsService = makeMls({
+      getUserGroups: vi.fn().mockResolvedValue(serverGroups()),
+    });
+
+    await discoverMissingGroups({
+      mlsService,
+      userId: 'user-a',
+      deviceKeyB64: '1234',
+      conversations,
+      log,
+      storage: storageOwing([OWED]),
+    });
+
+    expect(conversations.has(OWED)).toBe(false);
+    // The other group proves the guard is a filter and not an outage: discovery still does its job.
+    expect(conversations.has(FRESH)).toBe(true);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('owes the server an exit'));
+  });
+
+  it('re-creates it again once nothing is owed - the guard is the row, not the group', async () => {
+    const conversations = new Map<string, Conversation>();
+    const mlsService = makeMls({
+      getUserGroups: vi.fn().mockResolvedValue(serverGroups()),
+    });
+
+    await discoverMissingGroups({
+      mlsService,
+      userId: 'user-a',
+      deviceKeyB64: '1234',
+      conversations,
+      log: vi.fn(),
+      storage: storageOwing([]),
+    });
+
+    expect(conversations.has(OWED)).toBe(true);
+  });
+
+  // An unreadable table must not hide real groups from a user who never asked to leave them: the
+  // cost of guessing empty is one placeholder the drain deletes a moment later.
+  it('re-creates placeholders when the owed rows cannot be read at all', async () => {
+    const conversations = new Map<string, Conversation>();
+    const mlsService = makeMls({
+      getUserGroups: vi.fn().mockResolvedValue(serverGroups()),
+    });
+
+    await discoverMissingGroups({
+      mlsService,
+      userId: 'user-a',
+      deviceKeyB64: '1234',
+      conversations,
+      log: vi.fn(),
+      storage: {
+        getPendingGroupExits: vi.fn(async () => {
+          throw new Error('store closed');
+        }),
+      } as never,
+    });
+
+    expect(conversations.has(OWED)).toBe(true);
+    expect(conversations.has(FRESH)).toBe(true);
+  });
+});

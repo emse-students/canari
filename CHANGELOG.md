@@ -12,7 +12,7 @@ which is also where every release up to and including v0.13.1 now lives.
 ## [Unreleased]
 
 ### Added
-- **The iOS release pipeline now writes the App Store Connect export compliance code into `Info.plist` at build time.** v0.14.3's TestFlight upload failed with "Invalid Export Compliance Code": `ITSAppUsesNonExemptEncryption=true` was already correctly committed, but Apple also requires `ITSEncryptionExportComplianceCode` - the code generated once in App Store Connect's own compliance documentation for this app - and the plist had no such key at all. `ios-release.yml` now patches it in from a new `APP_STORE_CONNECT_EXPORT_COMPLIANCE_CODE` GitHub secret, right before the archive build, rather than committing the value: this is a public repo, and while the code isn't a credential that grants access to anything, it's still an Apple-account-specific value with no reason to be baked into a public file when every other Apple-account value here already isn't. The step skips harmlessly when the secret is unset, so it doesn't regress the pipeline while the secret itself is still owed
+- **The iOS release pipeline now writes the App Store Connect export compliance code into `Info.plist` at build time.** v0.14.3's TestFlight upload failed with "Invalid Export Compliance Code": `ITSAppUsesNonExemptEncryption=true` was already correctly committed, but Apple also requires `ITSEncryptionExportComplianceCode` - the code generated once in App Store Connect's own compliance documentation for this app - and the plist had no such key at all. `ios-release.yml` now patches it in from a new `APP_STORE_CONNECT_EXPORT_COMPLIANCE_CODE` GitHub secret, right before the archive build, rather than committing the value: this is a public repo, and while the code isn't a credential that grants access to anything, it's still an Apple-account-specific value with no reason to be baked into a public file when every other Apple-account value here already isn't. The step skips harmlessly when the secret is unset, so it didn't regress the pipeline while the secret was still owed - and on 2026-08-24 the secret was created and v0.14.4 cut: the step took its set branch and **the TestFlight upload succeeded**, which is the first time an iOS build of this app has reached App Store Connect. What that proves is the pipeline, not the audience: TestFlight is the beta channel, so `minClientVersion` still may not be raised past a release before that release has actually reached the users it would lock out
 
 - **Form pricing is a MATRIX, and the same predicate now says who may answer and who sees a
   question.** A price was one number plus an optional "cotisants pay less" second number, which
@@ -149,6 +149,36 @@ which is also where every release up to and including v0.13.1 now lives.
   nothing - no spec, no frontend test, no board row - watches them.
 
 ### Fixed
+
+- **A CONVERSATION DELETED OFFLINE CAME BACK, AND THE GROUP HAD NEVER BEEN DELETED ANYWHERE.**
+  `exitGroupAndCleanup` wrapped the whole server half of a delete-or-leave in one `try/catch` and then
+  purged the local MLS state unconditionally, so "the server answered 404, it is already gone" and
+  "there was no server at all" ended identically: the local state destroyed and nothing remembering
+  that a DELETE was ever owed. The group stayed live in `dm_groups`, and the next
+  `discoverMissingGroups` did exactly what it exists for - found a server group with no local row and
+  handed it back as a placeholder. Measured on `c6eb7b20`: one DELETE attempted with the radios cut,
+  zero on the first reconnect, zero on the second, the group still listed server-side.
+
+  The purge stays unconditional, deliberately - a user who deleted a conversation must not see it -
+  and what the fix adds is the record that was missing: a durable row per `groupId` in a new
+  `pendingGroupExits` store (IndexedDB v8, SQLite schema 10), written BEFORE the call and cleared only
+  by an ANSWER. Idempotence comes from the primary key, termination from the server's reply (a
+  success, or a 403/404 saying it is already done) and never from an attempt count or a clock, and the
+  trigger is `connectivity.onReconnect` plus one startup pass for an app killed while offline that
+  will never see an `online` edge - registered at login beside the outbox, unregistered at logout. A
+  reachable server that REFUSES keeps the row and logs at a level that accuses, because that is a
+  server bug and dropping the row would hide it. One exported `classifyExitFailure` is the only place
+  403/404/transport are read, so the drain and the composable cannot come to disagree - that
+  disagreement being the same defect with its halves swapped - and discovery now declines to
+  re-create a group whose exit this device still owes, logging the skip, because the row alone would
+  not have stopped the placeholder.
+
+  **The check that was supposed to catch this could not have.** `del10` counted
+  `Network.requestWillBeSent`, which the browser fires with the radios cut - so an offline send read
+  as an arrival, and the assertion "nothing was sent while offline" was being made against evidence
+  that cannot distinguish the two. It now correlates `Network.responseReceived` by `requestId` and
+  records the statuses, and reads `dm_groups."deletedAt"` over `psql` after the run, because whether
+  the row is really gone is a question no amount of network evidence answers
 
 - **THE PREFLIGHT READ THE PHONE'S BUILD AND ASSUMED THE BROWSERS'.** A browser left open across a
   deploy keeps executing the old bundle, and its console is indistinguishable from a reloaded one -

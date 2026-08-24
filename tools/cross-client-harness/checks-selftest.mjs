@@ -16,10 +16,15 @@
  * WHAT IT CANNOT SEE, stated because the gap is the interesting part. This reads the SOURCE for the
  * ways a runner reaches the phone (`PORTS.A1`, `sameAccountAs`, `a1SameAccountAs`,
  * `tauri.localhost`). A runner that reached it some other way would pass here and fail on the rig,
- * so a new door into the phone belongs in `A1_DOORS` below the day it is opened. It also works at
- * FILE granularity: the twenty-one MUT checks are all `mut.mjs`, so "does this phase touch the
- * phone" is answerable and "which of its checks do" is not - `PHONE_SCRIPTS` is where a phase says
- * that, and it can only say it about phases whose checks live in separate files.
+ * so a new door into the phone belongs in `A1_DOORS` below the day it is opened.
+ *
+ * IT READS FILES, AND A FILE IS NOT ALWAYS A ROW. The twenty-one MUT checks are all `mut.mjs`, so
+ * "does this phase touch the phone" is answerable here and "which of its checks do" is not.
+ * `PHONE_SCRIPTS` is where a phase says that, and since 2026-08-24 it may say it as a whole
+ * INVOCATION (`del.mjs --only 7`) rather than only as a file name - which is what let DEL declare the
+ * phone for one row out of eight. What this file can then verify is that the invocation is really one
+ * of the phase's, and that its file has a door to the phone; that `--only 7` is the row USING that
+ * door is beyond a source scan, and is stated in `del.mjs` beside the check itself.
  *
  * Run: `node tools/cross-client-harness/checks-selftest.mjs`
  */
@@ -85,15 +90,20 @@ for (const [name, phase] of Object.entries(PHASES)) {
     if (!declared) {
       problems.push(`${name} lists PHONE_SCRIPTS but does not declare A1 in needs - the narrowing has nothing to narrow.`);
     }
+    // BOTH SPELLINGS, because `run.mjs` matches both: a bare file name, and a whole invocation for a
+    // file holding several rows of which only one takes the phone.
+    const fileOf = (s) => s.split(' ')[0];
     for (const s of narrowed) {
-      if (!files.includes(s)) {
-        problems.push(`${name} PHONE_SCRIPTS names ${s}, which is not one of its scripts.`);
-      } else if (!phoneFiles.includes(s)) {
+      if (!files.includes(s) && !phase.scripts.includes(s)) {
+        problems.push(
+          `${name} PHONE_SCRIPTS names ${s}, which is neither one of its scripts nor one of their files.`
+        );
+      } else if (!phoneFiles.includes(fileOf(s))) {
         problems.push(`${name} PHONE_SCRIPTS names ${s}, which contains no door to the phone.`);
       }
     }
     for (const s of phoneFiles) {
-      if (!narrowed.includes(s)) {
+      if (!narrowed.some((n) => fileOf(n) === s)) {
         problems.push(
           `${name} drives the phone from ${s}, which PHONE_SCRIPTS omits - so a --file run of it ` +
             `would be preflighted WITHOUT A1.`

@@ -34,6 +34,11 @@ import {
   historyRangeStartFor,
   sendHistoryRangeRequest,
 } from '$lib/utils/chat/groupActions';
+import {
+  clearPendingGroupExit,
+  classifyExitFailure,
+  recordPendingGroupExit,
+} from '$lib/utils/chat/pendingGroupExits';
 import { membershipIsDurablyLost, readLocalMembership } from '$lib/utils/chat/eviction';
 import { NotAGroupMemberError } from '$lib/mls-client/mlsDeliveryApi';
 import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
@@ -1007,12 +1012,24 @@ export function useConversations() {
    *
    * The UI reset moves up for the same reason and one more: the "removed" banner offers a
    * delete-locally button, and it must not appear under a conversation the user is already leaving.
+   *
+   * AND THE SERVER CALL IS WRITTEN DOWN BEFORE IT IS MADE, for the same class of reason one rung
+   * further out. Retiring first closed the window where the LOCAL row disagreed with the decision;
+   * `recordPendingGroupExit` closes the window where the SERVER does. DEL-10 caught the second on
+   * 2026-08-24: with the link cut, the delete was attempted, the failure was caught and logged, and
+   * the purge ran anyway - so the group survived on the server with no client able to open it, and
+   * `discoverMissingGroups` handed it back as a placeholder. The decision now outlives the failed
+   * attempt, and {@link drainPendingGroupExits} completes it on the next reconnect.
+   *
+   * `exitKind` is PASSED, never inferred from `label`: the drain has to make the same call the
+   * caller meant, and a verb read back out of a display string is a verb one edit away from wrong.
    */
   async function exitGroupAndCleanup(
     contactKey: string,
     convo: Conversation,
     serverAction: (mlsService: IMlsService) => Promise<void>,
     label: string,
+    exitKind: 'delete' | 'leave',
     ctx: ConversationContext
   ) {
     const mlsService = ctx.ensureMls();
@@ -1028,6 +1045,13 @@ export function useConversations() {
     sendError = '';
     groupMembers = [];
     ctx.log(`[${label}] ${convo.id.slice(0, 8)}… retired locally before the server action`);
+    // THE SERVER CALL IS OWED BEFORE IT IS ATTEMPTED, and that row is what DEL-10 was missing. The
+    // purge below is unconditional by design - the user has left, and a conversation they cannot
+    // leave because the network is down would be worse than any of this - but before this row the
+    // purge was also the END of the story: a delete that never reached the server left the group
+    // standing, the MLS state destroyed, and `discoverMissingGroups` handing the group back.
+    // See `pendingGroupExits` for the whole reasoning; the drain replays this on reconnect.
+    await recordPendingGroupExit(ctx.storage, convo.id, exitKind, ctx.log);
     try {
       const onServer = await isGroupActiveOnServer(mlsService, ctx.userId, convo.id);
       if (onServer !== false) {
@@ -1035,16 +1059,37 @@ export function useConversations() {
       } else {
         ctx.log(`[${label}] Groupe ${convo.id} absent du serveur - purge MLS/UI locale`);
       }
+      // MANUAL delete/leave: record the per-user dismiss so the conversation also disappears from
+      // the user's OTHER devices (rules 3 & 5) - their discovery purges it instead of showing the
+      // "deleted" banner (reserved for peer deletions / exclusions). Best-effort: the local purge
+      // below happens either way.
+      await mlsService.dismissGroup(convo.id).catch(() => {});
+      // ANSWERED - the group is gone, or was never there. Either way nothing is owed.
+      await clearPendingGroupExit(ctx.storage, convo.id, ctx.log);
     } catch (e) {
-      ctx.log(
-        `[${label}] Erreur serveur (${e instanceof Error ? e.message : String(e)}) - purge MLS/UI locale`
-      );
+      // TWO OUTCOMES WEARING ONE CATCH UNTIL NOW, and they are not the same fact. A status is the
+      // server ANSWERING; a transport failure is the absence of an answer, and only the second
+      // leaves something owed. `isGroupActiveOnServer` returns `null` rather than throwing on a
+      // failed probe, so what lands here is the serverAction itself.
+      const failure = classifyExitFailure(e);
+      if (failure === 'already-gone') {
+        ctx.log(`[${label}] Deja fait cote serveur - purge MLS/UI locale`);
+        await mlsService.dismissGroup(convo.id).catch(() => {});
+        await clearPendingGroupExit(ctx.storage, convo.id, ctx.log);
+      } else if (failure === 'refused') {
+        // Reachable and refusing. The exit is KEPT, because a server that is up and saying no is a
+        // defect to find, never a decision to forget.
+        ctx.log(
+          `[${label}] Serveur joignable mais REFUS (${e instanceof Error ? e.message : String(e)}) - sortie conservee, purge locale`
+        );
+      } else {
+        // NO ANSWER. Not "an error to log and move past" - this is the one branch that leaves work
+        // behind, so it accuses, and the row it kept is what the next reconnect replays.
+        ctx.log(
+          `[${label}] Serveur INJOIGNABLE (${e instanceof Error ? e.message : String(e)}) - sortie CONSERVEE, rejouee a la reconnexion`
+        );
+      }
     }
-    // MANUAL delete/leave: record the per-user dismiss so the conversation also disappears from
-    // the user's OTHER devices (rules 3 & 5) - their discovery purges it instead of showing the
-    // "deleted" banner (reserved for peer deletions / exclusions). Best-effort: the local purge
-    // below happens either way.
-    await mlsService.dismissGroup(convo.id).catch(() => {});
     await purgeOrphanGroup({
       conversations,
       mlsService,
@@ -1183,6 +1228,7 @@ export function useConversations() {
           deviceKeyB64: ctx.deviceKeyB64,
         }),
       'DELETE',
+      'delete',
       ctx
     );
   }
@@ -1226,6 +1272,7 @@ export function useConversations() {
           deviceKeyB64: ctx.deviceKeyB64,
         }),
       'LEAVE',
+      'leave',
       ctx
     );
   }

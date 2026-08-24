@@ -1356,6 +1356,37 @@ const CUT_REACTION =
   /WebSocket connection to '?wss?:|\[WS\] WebSocket error|\[WS\] Gateway connection failed|Connection lost\. Retrying|\[OUTBOX\] \S+ transient failure|Gateway inaccessible: WebSocket connection failed/i;
 
 /**
+ * WHAT A COLD START SAYS, AND WHY IT IS FORGIVEN PER ROW RATHER THAN GLOBALLY BENIGN.
+ *
+ * An app relaunched from nothing re-registers its push token and drains whatever the push layer
+ * cached for it while the process was gone. Both are the correct behaviour and neither is a defect -
+ * but neither may be waved through everywhere either, because OUTSIDE a deliberate kill they mean
+ * something quite different: a token registering in a window where nobody restarted anything is a
+ * process that died on its own, and an FCM pre-injection with no cold start behind it is the push
+ * cache replaying a frame the socket should already have delivered. Both are findings there.
+ *
+ * So they are needles, not rules: a check that KILLS the app hands them to
+ * {@link ignoringExpectedLog} and owns the forgiveness, and every other phase keeps them as dirt.
+ * DEL-7 is the first caller; COMM-18, LIFE and NOTIF each own a cold start and will be the next.
+ *
+ * The injection count is deliberately part of the shape (`Injection done: N/M`). It is the only
+ * evidence in the capture that the frame the check queued for a dead device actually arrived, so a
+ * pattern that dropped the numbers would forgive the line AND destroy the reason it was worth
+ * reading - which is how a forgiveness turns into a blindfold.
+ *
+ * The per-message line begins with a U+2713 check mark, matched as `.` on purpose: this file is
+ * ASCII, and a literal glyph here would be one an editor or a re-encode could silently mangle into a
+ * pattern that matches nothing - a forgiveness that has stopped forgiving looks exactly like new
+ * dirt.
+ */
+export const COLD_START_NARRATION = [
+  /\[Push\] FCM token registered successfully/,
+  /\[FCM_CACHE\] \d+ message\(s\) to pre-inject from the FCM cache/,
+  /\[FCM_CACHE\] . id=\S+ group=\S+ type=\S+/,
+  /\[FCM_CACHE\] Injection done: \d+\/\d+ message\(s\) injected/,
+];
+
+/**
  * THE PHONE'S NATIVE HALF, CLASSIFIED - the third surface, which had a `grep` where the other two
  * have classifiers.
  *

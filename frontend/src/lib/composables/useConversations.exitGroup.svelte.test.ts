@@ -15,6 +15,7 @@
  */
 import { SvelteMap } from 'svelte/reactivity';
 import type { Conversation } from '$lib/types';
+import { GroupExitRefusedError } from '$lib/mls-client/mlsDeliveryApi';
 
 const isGroupActiveOnServer = vi.hoisted(() => vi.fn());
 const leaveGroupAndBroadcast = vi.hoisted(() => vi.fn());
@@ -60,7 +61,29 @@ function conversation(): Conversation {
   } as unknown as Conversation;
 }
 
-function makeCtx() {
+/**
+ * The pending-exit table, in memory. Only the three methods this path uses, because a row that
+ * SURVIVES is the whole assertion: DEL-10 lost a deletion precisely by clearing it on no answer.
+ */
+function makeExitStorage() {
+  const rows = new Map<string, unknown>();
+  return {
+    rows,
+    // The exit path persists the retired row and deletes it on purge. Present here because a
+    // storage that is non-null must answer everything this path asks it, not only the new table.
+    saveConversation: vi.fn(async () => undefined),
+    deleteConversation: vi.fn(async () => undefined),
+    savePendingGroupExit: vi.fn(async (e: { groupId: string }) => {
+      rows.set(e.groupId, e);
+    }),
+    getPendingGroupExits: vi.fn(async () => [...rows.values()]),
+    deletePendingGroupExit: vi.fn(async (groupId: string) => {
+      rows.delete(groupId);
+    }),
+  };
+}
+
+function makeCtx(storage: ReturnType<typeof makeExitStorage> | null = null) {
   const log = vi.fn();
   const mls = {
     dismissGroup: vi.fn().mockResolvedValue(undefined),
@@ -71,7 +94,7 @@ function makeCtx() {
     log,
     mls,
     ctx: {
-      storage: null,
+      storage,
       ensureMls: () => mls,
       userId: 'u1',
       deviceKeyB64: 'k',
@@ -179,5 +202,117 @@ describe('exitGroupAndCleanup - the departure is recorded before it is performed
     expect(leaveGroupAndBroadcast).not.toHaveBeenCalled();
     expect(convs.conversations.get(CONTACT)?.lifecycle).toBe('removed');
     expect(convs.selectedContact).toBeNull();
+  });
+});
+
+/**
+ * DEL-10, the other half: what the exit does when the server never answers.
+ *
+ * The row purge above is deliberate and stays - the user is out locally the moment they ask. What
+ * used to be wrong is what happened to the SERVER side of the exit: a `try/catch` read "the server
+ * said 404" and "there was no server" as one outcome and purged either way, so a deletion attempted
+ * offline was lost, the group survived server-side, and discovery handed it straight back.
+ */
+describe('exitGroupAndCleanup - an exit the server never answered stays owed', () => {
+  const NET = new TypeError('Failed to fetch');
+
+  async function exitWith(
+    broadcast: typeof leaveGroupAndBroadcast,
+    impl: (storage: ReturnType<typeof makeExitStorage>) => Promise<void>,
+    run: 'leave' | 'delete'
+  ) {
+    const convs = useConversations();
+    convs.conversations.set(CONTACT, conversation());
+    convs.selectConversation(CONTACT);
+    const storage = makeExitStorage();
+    // Handed to the implementation rather than closed over: a closure over the caller's `const`
+    // would sit in its TDZ and throw from inside the server action, which the exit would then
+    // classify as a refusal - a failure with nothing to do with the code under test.
+    broadcast.mockImplementation(() => impl(storage));
+    const { ctx, log } = makeCtx(storage);
+    if (run === 'leave') await convs.handleLeaveGroup(ctx);
+    else await convs.handleDeleteGroup(ctx);
+    return { storage, log, convs };
+  }
+
+  it('writes the row BEFORE the call, which is what makes the loss recoverable', async () => {
+    let owedDuringCall: unknown[] = [];
+    const { storage } = await exitWith(
+      deleteGroupAndBroadcast,
+      async (s) => {
+        owedDuringCall = await s.getPendingGroupExits();
+        throw NET;
+      },
+      'delete'
+    );
+    // Recorded before the request went out - a row written afterwards would never exist for the one
+    // call that fails.
+    expect(owedDuringCall).toEqual([
+      expect.objectContaining({ groupId: GROUP_ID, kind: 'delete' }),
+    ]);
+    // Deliberately declared after the assertion above so the closure order is the tested one.
+    expect(storage.savePendingGroupExit).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the row when the server was unreachable, and accuses in the log', async () => {
+    const { storage, log } = await exitWith(
+      deleteGroupAndBroadcast,
+      async () => {
+        throw NET;
+      },
+      'delete'
+    );
+    expect(storage.rows.has(GROUP_ID)).toBe(true);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('INJOIGNABLE'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('rejouee a la reconnexion'));
+  });
+
+  it('clears the row once the server has answered', async () => {
+    const { storage } = await exitWith(deleteGroupAndBroadcast, async () => {}, 'delete');
+    expect(storage.rows.size).toBe(0);
+    expect(storage.deletePendingGroupExit).toHaveBeenCalledWith(GROUP_ID);
+  });
+
+  it('clears the row when the server says the exit already happened', async () => {
+    const { storage, log } = await exitWith(
+      leaveGroupAndBroadcast,
+      async () => {
+        throw new GroupExitRefusedError(GROUP_ID, 403, 'leave');
+      },
+      'leave'
+    );
+    expect(storage.rows.size).toBe(0);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Deja fait cote serveur'));
+  });
+
+  // A reachable server refusing is a defect to find, not a decision to forget - so the row stays,
+  // and the line says which of the two failures it was rather than blaming the link.
+  it('keeps the row when a reachable server refuses', async () => {
+    const { storage, log } = await exitWith(
+      leaveGroupAndBroadcast,
+      async () => {
+        throw new GroupExitRefusedError(GROUP_ID, 500, 'leave');
+      },
+      'leave'
+    );
+    expect(storage.rows.has(GROUP_ID)).toBe(true);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('REFUS'));
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('INJOIGNABLE'));
+  });
+
+  // The local exit is NOT conditional on the server: the user asked, and the row they see must go
+  // whatever the network did. Only the server half is owed afterwards.
+  it('retires and purges locally even when nothing reached the server', async () => {
+    const { convs } = await exitWith(
+      deleteGroupAndBroadcast,
+      async () => {
+        throw NET;
+      },
+      'delete'
+    );
+    expect(purgeOrphanGroup).toHaveBeenCalledWith(
+      expect.objectContaining({ contactKey: CONTACT, groupId: GROUP_ID })
+    );
+    expect(convs.conversations.get(CONTACT)?.lifecycle).toBe('removed');
   });
 });

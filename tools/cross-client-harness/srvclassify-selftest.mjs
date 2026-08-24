@@ -195,6 +195,11 @@ const NOTABLE_CASES = [
   // THE ONE LINE A RESTART IS WORTH. Its 106 companions are BENIGN above; if this ever moved with
   // them, a service could restart under a check and no bucket would say so.
   `${NEST}[NestApplication] Nest application successfully started +1ms`,
+  // THE REST OF THAT BOOT - core-service saying what it came up WITH. Notable for the restart line's
+  // reason and dirty until 2026-08-24, when the v0.14.4 deploy landed seconds before DEL-2's window.
+  `${NEST}[StripePaymentProvider] Stripe configured: yes`,
+  `${NEST}[LydiaPaymentProvider] Lydia configured: no (https://homologation.lydia-app.com)`,
+  `${NEST}[UsersService] unaccent + pg_trgm extensions ready`,
   // THE OTHER HALF of the `No message queued` warning: recipients existed and every one was offline,
   // so a 60-second rendezvous will expire with nothing answering it. Shown, never fatal.
   `${NEST}[MessagingService] [SEND][send-65d68721] No message queued after validation - recipients=2 durable=false - every recipient device is offline and this frame is transport-only`,
@@ -248,6 +253,23 @@ for (const l of NOTABLE_CASES) {
   const ok = matches(NOTABLE_RULES, l);
   if (!ok) failures++;
   console.log(`${ok ? 'ok  ' : 'FAIL'} notable      ${l.slice(-72)}`);
+}
+
+// A CONFIGURATION THAT FLIPPED IS NOT THE BOOT THAT ANNOUNCED IT, and this is the assertion those
+// three rules exist to survive. Each pins the VALUE it was read with, so the boot is forgiven and a
+// CHANGE of it is not: `Lydia configured: yes` is the event WP-LYDIA-1 consists of, and `Stripe
+// configured: no` is payments silently losing their configuration across a deploy. Both are announced
+// exactly once per restart, in one line, with no other record anywhere - so a rule spanning both
+// values would delete the only evidence either event will ever produce. Asserted in both directions
+// because the comment on the rule claims it, and a claim in a comment is not a property of the code.
+for (const [what, line] of [
+  ['a payment provider that lost its configuration', `${NEST}[StripePaymentProvider] Stripe configured: no`],
+  ['the Lydia flip this repo is waiting for', `${NEST}[LydiaPaymentProvider] Lydia configured: yes (https://lydia-app.com)`],
+  ['the same flip still on homologation', `${NEST}[LydiaPaymentProvider] Lydia configured: yes (https://homologation.lydia-app.com)`],
+]) {
+  const ok = !matches(NOTABLE_RULES, line) && !matches(BENIGN_RULES, line);
+  if (!ok) failures++;
+  console.log(`${ok ? 'ok  ' : 'FAIL'} unexplained  ${what} is not the boot that announced the old value`);
 }
 
 // A SCANNER PATH THAT ANSWERED IS NOT A SCANNER PATH THAT 404ed, and the rule's whole safety
@@ -385,6 +407,16 @@ const invite = [
   ['a welcome forwarded is an outcome', `${NEST}[MessagingService] [WELCOME_REQ][welcome-req-81fb5450] FORWARDED target=bbbbbbbb:web-bbbbbbbb-msglwqh6-vegy group=00000000-0000-4000-8000-000000000001 requester=aaaaaaaa:web-aaaaaaaa-msglwqh6-vegy`, 'notable'],
   ['a welcome nobody can answer is an outcome', `${NEST}[MessagingService] [WELCOME_REQ][welcome-req-81fb5450] NO_PEER_ONLINE group=00000000-0000-4000-8000-000000000001 requester=aaaaaaaa:web-aaaaaaaa-msglwqh6-vegy - stored in Redis, FCM sent to peers`, 'notable'],
   ['the routing cache answering nothing is a fallback, not a path', `${NEST}[MessagingService] [WELCOME_REQ][welcome-req-81fb5450] REDIS_EMPTY - falling back to DB for group=00000000-0000-4000-8000-000000000001`, 'notable'],
+  // THE PREKEY POOL, BOTH DIRECTIONS, AND THEY ARE NOT THE SAME KIND OF EVENT. Publishing refills
+  // the pool and is high-volume chatter; pruning EMPTIES it, one id per Welcome the device consumed,
+  // and the failure it leads to - a device nobody can add to a group any more - arrives as a
+  // silence. DEL-7's cold start printed `deleted=12` and it was the only unexplained line in the
+  // window, 2026-08-24.
+  ['refilling the prekey pool is chatter', `${NEST}[DevicesController] [REGISTER_PREKEYS] user=aaaaaaaa device=web-aaaaaaaa-msglwqh6-vegy count=50`, 'benign'],
+  ['spending the prekey pool is reported, with its count', `${NEST}[DevicesController] [PRUNE_PREKEYS] user=aaaaaaaa device=tauri-aaaaaaaa-msglwqh6-vegy deleted=12`, 'notable'],
+  // A prune that deleted NOTHING is still the shape worth seeing: the device named ids the server
+  // did not have, which is the two sides disagreeing about what was spent.
+  ['a prune that found nothing is reported too', `${NEST}[DevicesController] [PRUNE_PREKEYS] user=aaaaaaaa device=tauri-aaaaaaaa-msglwqh6-vegy deleted=0`, 'notable'],
 ];
 for (const [name, line, want] of invite) {
   const got = matches(NOTABLE_RULES, line) ? 'notable' : matches(BENIGN_RULES, line) ? 'benign' : 'unexplained';

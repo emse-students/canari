@@ -13,6 +13,7 @@ import type {
   EncryptedMessageRow,
   IStorage,
   OutboxEntry,
+  PendingGroupExit,
   StoredGraineSession,
   StoredMessage,
   StoredMessagePatch,
@@ -205,6 +206,17 @@ export class SqliteStorage implements IStorage {
       'CREATE INDEX IF NOT EXISTS idx_graine_workspace ON graine(workspace_id)'
     );
 
+    // Pending group exits: a delete/leave this device DECIDED and the server has not answered.
+    // Every column is clear, and that is deliberate - the drain runs at start-up, before any PIN,
+    // and a row it could not read would be a decision it could not honour. See `PendingGroupExit`.
+    await this.db.execute(`
+            CREATE TABLE IF NOT EXISTS pending_group_exits (
+                group_id     TEXT PRIMARY KEY,
+                kind         TEXT NOT NULL,
+                requested_at INTEGER NOT NULL
+            )
+        `);
+
     // A database created by the statements above has no history to migrate. Stamp it at the
     // current version and skip every branch below: they are written against schemas this file
     // never had, and running them is how "no such column: salt" broke every fresh install.
@@ -314,6 +326,17 @@ export class SqliteStorage implements IStorage {
         await this.db.execute('ALTER TABLE graine ADD COLUMN distribution_epoch INTEGER');
       }
       await this.db.execute('PRAGMA user_version = 9');
+    }
+
+    if (currentVersion < 10) {
+      // v9->v10: `pending_group_exits`, created unconditionally by the statement above (it runs for
+      // every database, fresh or not), so this branch has only to record that it happened. Additive,
+      // and EMPTY on every existing database: an exit lost to a transport failure before this table
+      // existed left nothing behind, and inventing rows would be guessing at an intention no column
+      // ever recorded.
+      //
+      // Stamped at 10, NOT at SCHEMA_VERSION, for the reason spelled out in the v6 branch.
+      await this.db.execute('PRAGMA user_version = 10');
     }
   }
 
@@ -712,6 +735,39 @@ export class SqliteStorage implements IStorage {
     await this.db.execute('DELETE FROM outbox WHERE id = $1', [id]);
   }
 
+  // -- Pending group exits -------------------------------------------------
+
+  /** Record that this device owes the server an exit for `entry.groupId`. */
+  async savePendingGroupExit(entry: PendingGroupExit): Promise<void> {
+    await this.db.execute(
+      'INSERT OR REPLACE INTO pending_group_exits (group_id, kind, requested_at) VALUES ($1, $2, $3)',
+      [entry.groupId, entry.kind, entry.requestedAt]
+    );
+  }
+
+  /** Every exit still owed, oldest first. */
+  async getPendingGroupExits(): Promise<PendingGroupExit[]> {
+    const rows: any[] = await this.db.select(
+      'SELECT * FROM pending_group_exits ORDER BY requested_at ASC'
+    );
+    // `kind` is narrowed rather than cast: the column is TEXT, so a row written by a future version
+    // (or by hand) can hold a verb this build has no call for, and running the WRONG exit is worse
+    // than leaving the row alone. Anything unrecognised is skipped, which keeps the row for a build
+    // that does know it.
+    return rows
+      .filter((r) => r.kind === 'delete' || r.kind === 'leave')
+      .map((r) => ({
+        groupId: String(r.group_id),
+        kind: r.kind as 'delete' | 'leave',
+        requestedAt: Number(r.requested_at) || 0,
+      }));
+  }
+
+  /** Forget the exit owed for `groupId`. A groupId that names nothing is not an error. */
+  async deletePendingGroupExit(groupId: string): Promise<void> {
+    await this.db.execute('DELETE FROM pending_group_exits WHERE group_id = $1', [groupId]);
+  }
+
   // -- Graine sessions -----------------------------------------------------
 
   /** The clear columns of a `graine` row, named as callers know them. */
@@ -876,5 +932,8 @@ export class SqliteStorage implements IStorage {
     await this.db.execute('DELETE FROM conversations');
     await this.db.execute('DELETE FROM outbox');
     await this.db.execute('DELETE FROM graine');
+    // See the IndexedDB twin: an account reset takes the owed exits with it, because a drain firing
+    // afterwards would act on a decision taken by an account that is no longer here.
+    await this.db.execute('DELETE FROM pending_group_exits');
   }
 }

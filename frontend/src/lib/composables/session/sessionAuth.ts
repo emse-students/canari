@@ -22,6 +22,11 @@ import { getToken, clearAuth, SessionExpiredError } from '$lib/stores/auth';
 import { bindCurrentSessionDevice } from '$lib/services/authSessions';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { registerOfflinePromotion, unregisterOfflinePromotion } from './promoteOfflineSession';
+import {
+  flushPendingGroupExits,
+  registerPendingGroupExitDrain,
+  unregisterPendingGroupExitDrain,
+} from '$lib/utils/chat/pendingGroupExits';
 import { m } from '$lib/paraglide/messages';
 import { saveUserLocally, clearUserLocally, currentUserId, isGlobalAdmin } from '$lib/stores/user';
 import { requestReAdd } from '$lib/utils/chat/recovery';
@@ -659,6 +664,16 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     // deciding whether a listener exists.
     registerOfflinePromotion(ctx, cb, () => makeConnectionDeps(ctx, cb));
 
+    // Group exits this device decided and the server never answered. Same lifecycle and the same
+    // seam as the one above: a delete or a leave that met no server is owed until one answers, and
+    // the answer cannot be waited for with a timer (see `pendingGroupExits`).
+    registerPendingGroupExitDrain({
+      getStorage: () => ctx.getStorage(),
+      ensureMls: () => ctx.ensureMls(),
+      getUserId: () => ctx.getUserId(),
+      log: cb.log,
+    });
+
     // THE INBOUND PIPELINE IS REGISTERED BEFORE ANYTHING CAN PULL, and that ordering is load-
     // bearing rather than tidy. The startup archive replay takes the mailbox barrier, the barrier
     // PULLS the delivery queue, and `processQueue` cannot drain a single frame until
@@ -1090,6 +1105,10 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       // Connection established and groups reconciled: drain the outbox (covers reconnection,
       // which re-runs initializeConnection).
       flushOutbox();
+
+      // Same moment, and NOT covered by the reconnect listener: an app killed while offline comes
+      // back with the link already up, so no `online` edge ever fires for the exit it still owes.
+      void flushPendingGroupExits();
     }
 
     const STALE_SESSION_MS = 90 * 24 * 60 * 60 * 1_000;
@@ -1468,6 +1487,9 @@ export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void 
   // Detach the reconnect listener too, or a regained network would promote a session that no
   // longer exists - reopening a WebSocket for the user who just signed out.
   unregisterOfflinePromotion();
+  // Same reason: an exit owed by the user who just signed out must not be replayed with the next
+  // one's token. The row survives in storage, and that user's next login replays it.
+  unregisterPendingGroupExitDrain();
   resetHistoryReconciliation();
   // The probe sender closes over this session's storage and device key, so it must not outlive it:
   // a reconciliation from the next login would otherwise describe the previous user's store.

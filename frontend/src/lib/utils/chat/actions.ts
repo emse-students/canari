@@ -27,6 +27,7 @@ import {
   isEmptyHistoryDiff,
   selectEntryIdsForPrefixes,
 } from '$lib/utils/chat/historyManifest';
+import { pendingGroupExitIds } from '$lib/utils/chat/pendingGroupExits';
 import { resolveDirectPeerId, retireConversation } from '$lib/utils/chat/conversations';
 import {
   classifyServerStatus,
@@ -512,7 +513,26 @@ export async function discoverMissingGroups(params: {
   // the same pending entry on each login. Only active groups get placeholders
   // (soft-deleted tombstones are skipped via activeServerGroups above).
   const localGroupIds = new Set([...conversations.values()].map((c) => c.id));
-  const missing = activeServerGroups.filter((g) => !localGroupIds.has(g.groupId));
+
+  // A GROUP THIS DEVICE HAS ALREADY DECIDED TO LEAVE IS NOT "MISSING LOCALLY", IT IS ON ITS WAY OUT.
+  // Without this, DEL-10's group came back: the delete met no server, the local state was purged,
+  // and the very next discovery saw a server group with no local row and helpfully re-created it as
+  // a placeholder - so the user's deletion was undone by the reconciler that is supposed to serve
+  // it. The owed-exit row is the only thing that can tell the two apart, because on the wire they
+  // are identical: a server group this client does not have.
+  const owedExits = await pendingGroupExitIds(params.storage);
+  const missing = activeServerGroups.filter((g) => {
+    if (localGroupIds.has(g.groupId)) return false;
+    if (owedExits.has(g.groupId)) {
+      // Never silent: this is the branch that makes a server group invisible, and the reader who
+      // wonders where a group went must find the reason rather than deduce it.
+      log(
+        `[DISCOVERY] ${g.groupId.slice(0, 8)}... not re-created - this device owes the server an exit for it`
+      );
+      return false;
+    }
+    return true;
+  });
 
   if (missing.length > 0) {
     log(

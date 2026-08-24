@@ -1059,6 +1059,49 @@ the only thing that may write that lifecycle - and lock it with a test that read
 (`conversations.retire.test.ts`), because no unit test can observe a seventh path that does not
 exist yet.
 
+### An exit is owed to the SERVER, and the local purge is not what pays it (DEL-10)
+
+Deleting a group is two halves - tell the server, then destroy the local MLS state - and
+`exitGroupAndCleanup` wrapped the whole server half in ONE `try/catch` and then purged
+unconditionally. So "the server said 404, the group is already gone" and "there was no server, the
+radios are off" ended in exactly the same place: the MLS state destroyed, the group still live in
+`dm_groups`, and nothing anywhere remembering that a DELETE was ever intended. The next
+`discoverMissingGroups` then found a server group with no local row and did what it is for - handed
+it back as a placeholder. The user deleted a conversation offline and watched it return.
+
+The purge staying unconditional is deliberate: a user who deleted a conversation must not see it, and
+the MLS state of a group they have left is not something to keep on the chance the network returns.
+What was missing is the other record - that the SERVER has not been told yet. That is now a durable
+row, one per `groupId`, in the `pendingGroupExits` store (IndexedDB v8, SQLite schema 10), written
+BEFORE the call and cleared only by an ANSWER.
+
+Three properties, and none of them is a timer:
+
+- **Idempotence from the row**, not from a guard. The primary key is the `groupId`, so deciding twice
+  cannot queue two calls, and the newer decision (a `leave` after a `delete`) is the one that
+  survives.
+- **Termination from a PROOF.** The row is cleared when the server answers - a success, or a 403/404
+  saying it is already done - and never on an attempt count or an elapsed time. A server that is
+  reachable and REFUSES (a 500) keeps the row and logs at a level that accuses, because that is a
+  server bug and dropping the row would hide it.
+- **The trigger is an EVENT**: `connectivity.onReconnect`, plus exactly one pass at startup, for an
+  app killed while offline that will never see an `online` edge. Registered at login beside
+  `registerOutbox` and `registerOfflinePromotion`, unregistered in `logoutImpl` - no flag deciding
+  whether a listener exists.
+
+**One classifier, or the defect comes back with its halves swapped.** The drain and
+`exitGroupAndCleanup` both have to read a failure, and if they disagreed about a 403 the composable
+would keep a row the drain would clear, or worse. `classifyExitFailure` in
+`utils/chat/pendingGroupExits.ts` is the only reading of it: `'already-gone'` for 403/404,
+`'refused'` for any other status, `'unreachable'` only when `isTransportFailure` - the same predicate
+`apiFetch` uses to decide the server is unreachable - says so. Note what that means for a
+PROGRAMMING error thrown inside the call: it classifies as `refused`, not `unreachable`. That is the
+choice we want, because a bug must not be able to keep a row for ever while blaming the link.
+
+And discovery now consults what is owed: a server group whose exit this device still owes is NOT
+re-created, and the skip is logged. Without that the row alone would not be enough - the drain would
+eventually delete the group, but the placeholder would have already appeared.
+
 ## The render window is a pointer into an array the component does not own (WP-EMPTYVIEW-1)
 
 `ChatArea` never renders a whole conversation. It renders a WINDOW - `messageGroups.slice(start,

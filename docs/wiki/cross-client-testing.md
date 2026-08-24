@@ -275,16 +275,16 @@ looked for the file. The other nine are still to write.
 
 | Id | The crossing | Needs | State |
 | --- | --- | --- | --- |
-| DEL-1 | Peer deletes while a history solicitation for that group is outstanding | `W1 W2` | `pending` - no banner, marker or retried solicitation may survive. `del1.mjs` covers it; registered and wired to `record`/`gate` 2026-08-21 |
-| DEL-2 | Peer deletes while a message from us is in the outbox | `W1 W2` | `pending` - resolves or fails LOUDLY, never a silent permanent pending |
-| DEL-3 | Both peers delete the same conversation within a second | `W1 W2` | `pending` - no error either side, neither resurrects it |
-| DEL-4 | Delete a conversation while its media is still uploading | `W1 W2` | `pending` - no orphan blob left addressable |
-| DEL-5 | Delete, then the peer sends into it anyway | `W1 W2` | `pending` - dropped without a decrypt-failure marker |
-| DEL-6 | Delete while a drain is in flight for that group | `W1 W2` | `pending` - `Drain start` still gets its `Drain complete` |
-| DEL-7 | Delete on W1 while A1 is killed, then wake A1 | `+push` | `pending` - converges to deleted, no row re-created from a queued frame |
-| DEL-8 | Delete a group, then restore an MLS snapshot from BEFORE the deletion | `+snapshot` | `pending` - purged as an orphan, never left soliciting for ever |
-| DEL-9 | Delete the conversation currently OPEN on screen | `W1 W2` | `pending` - the view leaves cleanly |
-| DEL-10 | Delete while offline, then reconnect | `W1 W2` | `pending` - reaches the server once, no re-broadcast on later reconnects |
+| DEL-1 | Peer deletes while a history solicitation for that group is outstanding | `W1 W2` | `VACUOUS` on `c6eb7b20` - the check armed nothing. Its probe asserted a `localStorage` marker that no longer exists; the live mechanism is `history.ts`'s `past-epoch-application` branch plus `historyReconcile.ts`, and the probe is owed a rewrite against those before this row can mean anything |
+| DEL-2 | Peer deletes while a message from us is in the outbox | `W1 W2` | `PASS 1/1` |
+| DEL-3 | Both peers delete the same conversation within a second | `W1 W2` | `PASS 1/1` |
+| DEL-4 | Delete a conversation while its media is still uploading | `W1 W2` | `PASS 1/1` |
+| DEL-5 | Delete, then the peer sends into it anyway | `W1 W2` | `PASS 1/1` |
+| DEL-6 | Delete while a drain is in flight for that group | `W1 W2` | `PASS 1/1` |
+| DEL-7 | Delete on W1 while A1 is killed, then wake A1 | `+push` | `PASS 1/1` |
+| DEL-8 | Delete a group, then restore an MLS snapshot from BEFORE the deletion | `+snapshot` | `pending` - purged as an orphan, never left soliciting for ever. **RUNS LAST of the whole phase**: it restores an MLS snapshot over W1's real state |
+| DEL-9 | Delete the conversation currently OPEN on screen | `W1 W2` | `PASS 1/1` |
+| DEL-10 | Delete while offline, then reconnect | `W1 W2` | **`FAIL` on `c6eb7b20`, and it was a real defect** - one DELETE attempted offline, zero on the first reconnect, zero on the second, the group still live in `dm_groups`. Fixed (durable `pendingGroupExits` row, drained on reconnect); the check itself was also wrong - it counted requests SENT, which the browser fires with the radios cut. Re-run owed on the deployed fix |
 
 ## 11 - TAB - tabs and windows
 

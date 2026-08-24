@@ -163,6 +163,37 @@ export interface OutboxEntry {
 }
 
 /**
+ * A group exit this device has DECIDED but not yet had answered by the server.
+ *
+ * WHY IT IS DURABLE, AND WHY IT IS NOT THE OUTBOX. Deleting or leaving a group is one HTTP call, and
+ * a call made with no link fails. Before this store the failure was caught, logged and then followed
+ * by the local purge anyway: the server kept the group, the device destroyed its MLS state, and
+ * `discoverMissingGroups` handed the group straight back as a placeholder nobody could open. The
+ * decision has to outlive the process that took it, and it cannot live in {@link OutboxEntry} - that
+ * flusher needs a healthy MLS group to send through, which is exactly what the purge takes away.
+ *
+ * NOTHING HERE IS SENSITIVE, so nothing here is encrypted: a group UUID this device is a member of,
+ * a verb, and a timestamp. The absence of a cipher column is deliberate rather than an omission -
+ * the drain has to run at start-up, before any PIN has been entered, and a row it could not read
+ * would be a decision it could not honour.
+ *
+ * ONE ROW PER GROUP, keyed on `groupId`: a second delete of the same group is the same decision, and
+ * re-recording it must not queue a second call.
+ */
+export interface PendingGroupExit {
+  /** MLS groupId of the group being left or deleted. Primary key. */
+  groupId: string;
+  /**
+   * Which call is owed. `delete` destroys the group for everyone (owner only); `leave` removes just
+   * this user. They are NOT interchangeable, and the drain cannot infer one from the other after the
+   * local state that distinguished them is gone - which is why the verb is stored and not derived.
+   */
+  kind: 'delete' | 'leave';
+  /** When the user asked (Unix ms). Reported by the drain, never used to decide anything. */
+  requestedAt: number;
+}
+
+/**
  * One Graine session as this device holds it.
  *
  * A session belongs to one SENDER in one CHANNEL. `sessionId` is unique across every sender and is
@@ -357,6 +388,20 @@ export interface IStorage {
   updateOutboxEntry(id: string, patch: Partial<OutboxEntry>, deviceKeyB64: string): Promise<void>;
   /** Remove a queued entry (after a confirmed send or a permanent failure). */
   deleteOutboxEntry(id: string): Promise<void>;
+
+  // Pending group exits (a delete/leave decided locally and not yet answered by the server; clear
+  // columns - see PendingGroupExit for why nothing here is encrypted)
+
+  /** Record that this device owes the server an exit for `groupId`. Re-recording the same group overwrites. */
+  savePendingGroupExit(entry: PendingGroupExit): Promise<void>;
+  /** Every exit still owed, oldest first, so a drain replays them in the order they were decided. */
+  getPendingGroupExits(): Promise<PendingGroupExit[]>;
+  /**
+   * Forget the exit owed for `groupId`. Called ONLY when the server has answered - success, or
+   * "already gone" - so a transport failure leaves the row where it is. A groupId that names nothing
+   * is not an error: the caller is asking for an end state, and no row IS that end state.
+   */
+  deletePendingGroupExit(groupId: string): Promise<void>;
 
   // Graine sessions (seed encrypted with the device key; everything else clear so a session can be
   // listed, ordered and pruned without it)
