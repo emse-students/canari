@@ -171,6 +171,14 @@ Two **named** provisioning profiles must exist and match `PROVISIONING_PROFILE_S
 one for the `Canari` app, one for the `CanariNotifications` notification-service extension. Team is
 "Les Rootz" (`4CLNB8SR6L`); the profiles expire **2027-07-11**.
 
+`ios-release.yml` also patches `ITSEncryptionExportComplianceCode` into `Info.plist` at build time
+from the `APP_STORE_CONNECT_EXPORT_COMPLIANCE_CODE` secret (App Store Connect's own compliance
+documentation code for this app - distinct from `ITSAppUsesNonExemptEncryption`, which is committed
+since it's not account-specific). Kept as a secret rather than committed: this is a public repo, and
+every other Apple-account value here is already handled that way. The step skips, not fails, when
+the secret is unset - `Info.plist` stays as committed, and the TestFlight upload step fails with a
+409 explaining exactly why.
+
 ## Version bump
 
 `scripts/bump-app-version.sh` must patch the NSE's `MARKETING_VERSION` and

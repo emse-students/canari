@@ -12,6 +12,7 @@ which is also where every release up to and including v0.13.1 now lives.
 ## [Unreleased]
 
 ### Added
+- **The iOS release pipeline now writes the App Store Connect export compliance code into `Info.plist` at build time.** v0.14.3's TestFlight upload failed with "Invalid Export Compliance Code": `ITSAppUsesNonExemptEncryption=true` was already correctly committed, but Apple also requires `ITSEncryptionExportComplianceCode` - the code generated once in App Store Connect's own compliance documentation for this app - and the plist had no such key at all. `ios-release.yml` now patches it in from a new `APP_STORE_CONNECT_EXPORT_COMPLIANCE_CODE` GitHub secret, right before the archive build, rather than committing the value: this is a public repo, and while the code isn't a credential that grants access to anything, it's still an Apple-account-specific value with no reason to be baked into a public file when every other Apple-account value here already isn't. The step skips harmlessly when the secret is unset, so it doesn't regress the pipeline while the secret itself is still owed
 
 - **Form pricing is a MATRIX, and the same predicate now says who may answer and who sees a
   question.** A price was one number plus an optional "cotisants pay less" second number, which

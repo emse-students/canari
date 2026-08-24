@@ -172,6 +172,30 @@ jobs:
           printf '%s' "$GOOGLE_SERVICE_INFO_PLIST" > "$PLIST_DIR/GoogleService-Info.plist"
           echo "✅ GoogleService-Info.plist written to $PLIST_DIR"
 
+      - name: Set export compliance code in Info.plist
+        env:
+          EXPORT_COMPLIANCE_CODE: ${{ secrets.APP_STORE_CONNECT_EXPORT_COMPLIANCE_CODE }}
+        run: |
+          # Apple rejects the TestFlight upload with "Invalid Export Compliance Code" unless this
+          # code - generated once in App Store Connect's own compliance documentation for this
+          # app - is present alongside ITSAppUsesNonExemptEncryption (already committed, true).
+          # Kept as a secret rather than committed to Info.plist: this is a public repo, and
+          # while the code itself is not a credential that grants access to anything, it is still
+          # an Apple-account-specific value tied to one developer's compliance record, with no
+          # reason to be permanently baked into a public file when every other Apple-account
+          # value here already isn't. Skips (does not fail) when unset, matching the TestFlight
+          # upload step below, which already tolerates the other App Store Connect secrets being
+          # absent - Info.plist is simply left as committed, and that step's own 409 explains why.
+          PLIST="src-tauri/gen/apple/canari_iOS/Info.plist"
+          if [ -z "$EXPORT_COMPLIANCE_CODE" ]; then
+            echo "::warning::APP_STORE_CONNECT_EXPORT_COMPLIANCE_CODE not set; Info.plist left unchanged"
+          else
+            /usr/libexec/PlistBuddy -c "Delete :ITSEncryptionExportComplianceCode" "$PLIST" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :ITSEncryptionExportComplianceCode string ${EXPORT_COMPLIANCE_CODE}" "$PLIST"
+            echo "✅ ITSEncryptionExportComplianceCode set in Info.plist"
+          fi
+        working-directory: frontend
+
       - name: Create frontend .env
         working-directory: frontend
         env:

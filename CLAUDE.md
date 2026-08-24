@@ -198,29 +198,27 @@ sixth is owed to the user, not to the code:** is a MiGallery application worth b
 
 ### CANARI - what is open
 
-**Release status:** v0.14.1 cut 2026-08-21 by the user, carrying their
-`ITSAppUsesNonExemptEncryption=true` in the iOS `Info.plist` (App Store Connect compliance; the app
-does MLS end-to-end encryption, so `true` is the honest declaration). **Two of its four pipelines
-failed and were repaired in place** - the runs were re-run rather than a version burnt, because both
-release workflows check out `ref: main` and `gh run rerun` keeps the `workflow_run` event context the
-upload and TestFlight steps are gated on. Both defects are in `CHANGELOG.md`; the second one, a
-`-D warnings` that escaped its step through `$GITHUB_ENV` and only bit on a WASM cache MISS, is why a
-release pipeline could be green one week and red the next with no commit between.
+**Release status:** v0.14.3 cut 2026-08-22. Android, AppImage and prod CD all succeeded; the iOS
+build itself succeeded too, but the TestFlight upload step failed with *"Invalid Export Compliance
+Code... the key value [] in the app's Info.plist doesn't match... the app's export compliance
+documentation."* `ITSAppUsesNonExemptEncryption=true` alone is not enough - Apple also needs
+`ITSEncryptionExportComplianceCode`, whose value exists only in the App Store Connect account, and
+the plist had no such key at all.
+
+**Now wired, not yet unblocked.** `ios-release.yml`'s new "Set export compliance code in
+Info.plist" step (before the archive build) adds the key from a GitHub secret,
+`APP_STORE_CONNECT_EXPORT_COMPLIANCE_CODE` - kept as a secret rather than committed since this is a
+public repo and the value is Apple-account-specific, matching every other Apple credential this
+workflow already treats that way. **Owed to the user: create that repository secret with the code
+from App Store Connect, then cut the next release** - nothing else in the pipeline needs to change,
+and the step already skips harmlessly (leaving `Info.plist` as committed) when the secret is unset,
+so this did not regress the green paths (archive, GitHub Release, Android, AppImage) in the
+meantime.
 
 `minClientVersion` still lives in `platform_config`, is still raised by hand from `/admin/platform`
 so no deploy touches it - and **the App Store half was never verified, so a raise locks out any iOS
 user it has not reached** ([legacy-compatibility](docs/wiki/legacy-compatibility.md) carries the
-shipping order it violated). **v0.14.1 IS COMPLETE AS A GITHUB RELEASE** - AAB, APK, IPA and AppImage all attached. **TestFlight
-is the one thing blocked, and it is blocked ON THE USER** (their decision, 2026-08-22: leave it).
-App Store Connect refuses the upload: *"Invalid Export Compliance Code... the key value [] in the
-app's Info.plist doesn't match... the app's export compliance documentation."* Apple holds compliance
-docs carrying a code, so `ITSAppUsesNonExemptEncryption=true` alone is not enough - the plist also
-needs `ITSEncryptionExportComplianceCode`, whose value exists ONLY in the user's App Store Connect
-account. The alternative is deleting the key, which restores the per-build questionnaire. Not
-decidable from this repository.
-
-So **the App Store half of `minClientVersion` is still unverified and still locks out any iOS user a
-release has not reached** - v0.14.1 did not close that gap and will not until TestFlight accepts it.
+shipping order it violated). That gap closes only once a release actually reaches TestFlight.
 
 ### CANARI - the test campaign
 
