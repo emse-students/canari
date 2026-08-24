@@ -24,7 +24,7 @@
  * runners mint, never by relaxing a shape.
  */
 import { isGroupDebris } from './debris.mjs';
-import { mark } from './results.mjs';
+import { mark } from './marker.mjs';
 
 const problems = [];
 const swept = (name, why) => {

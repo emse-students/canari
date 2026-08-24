@@ -301,9 +301,18 @@ test-harness:
 	@node tools/cross-client-harness/checks-selftest.mjs
 	@node tools/cross-client-harness/logcatclassify-selftest.mjs
 	@node tools/cross-client-harness/devices-selftest.mjs
-	@node tools/cross-client-harness/tabguard-selftest.mjs
 	@node tools/cross-client-harness/debris-selftest.mjs
+	@node tools/cross-client-harness/gate-selftest.mjs
 	@echo "${GREEN}✅ Harness self-tests OK${RESET}"
+
+# THE SELF-TESTS THAT NEED THE RIG UP, and therefore not the CI gate. `test-harness` runs on a fresh
+# checkout with no devices and no `names.mjs`; this one drives a real browser on W2, so it is run by
+# hand when `tabs.mjs`, `chat.mjs` or the preflight's tab repair changes. `gate-selftest.mjs` is what
+# stops one of these being added back to the gate, where it can only fail.
+test-harness-device:
+	@echo "${BLUE}🧪 Harness self-tests needing a live rig…${RESET}"
+	@node tools/cross-client-harness/tabguard-selftest.mjs
+	@echo "${GREEN}✅ Device self-tests OK${RESET}"
 
 # Criterion benchmarks for mls-core hot paths (Phase 3 baseline)
 bench-mls:

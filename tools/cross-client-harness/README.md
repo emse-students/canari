@@ -89,21 +89,35 @@ the server. `srvlog.mjs` classifies the whole server window - `--shapes` collaps
 `notable` into distinct sentences - and `srvclassify-selftest.mjs` pins every rule against a line
 whose bucket is known.
 
-**The rig has seven self-tests, and `make test-harness` is the gate.** `classify-selftest.mjs` pins
+**The rig has eight self-tests, and they run in TWO targets, because they are not one kind of thing.**
+`make test-harness` is the CI gate and holds the seven that need nothing: `classify-selftest.mjs` pins
 the client-side verdict rules, `srvclassify-selftest.mjs` the server-log buckets,
 `logcatclassify-selftest.mjs` the phone's, `checks-selftest.mjs` asserts that every phase in
-`checks.mjs` declares the devices its scripts actually drive, `devices-selftest.mjs` and
-`tabguard-selftest.mjs` pin the device panel and the tab guard, and `debris-selftest.mjs` pins the
-allowlist that decides what may be DELETED. None of them touches a browser, a phone or production, so
-they run anywhere and in seconds: `make test` includes them, and CI runs them on any change under this
-directory. Run the target after editing `checks.mjs`, any classifier or `debris.mjs` - a phase whose
-`needs` disagrees with its scripts is how MUT-18 skipped on every run it was ever asked for.
+`checks.mjs` declares the devices its scripts actually drive, `devices-selftest.mjs` pins the device
+panel, `debris-selftest.mjs` the allowlist that decides what may be DELETED, and `gate-selftest.mjs`
+the gate itself. `make test-harness-device` holds the one that needs a live rig,
+`tabguard-selftest.mjs`, which makes W2 ambiguous on purpose to prove the tab guard refuses it - run
+it by hand after editing `tabs.mjs`, `chat.mjs` or the preflight's tab repair. Run the gate after
+editing `checks.mjs`, any classifier or `debris.mjs` - a phase whose `needs` disagrees with its
+scripts is how MUT-18 skipped on every run it was ever asked for.
 
-**Four of them were on disk and outside the gate until 2026-08-24** - `logcatclassify`, `devices`,
-`tabguard` and the new `debris` - so the file said three and the Makefile ran three while six existed.
-A self-test nobody runs is the plainest form of a correct mechanism with no report: it passes forever,
+**Four were on disk and outside the gate until 2026-08-24** - `logcatclassify`, `devices`, `tabguard`
+and the new `debris` - so the file said three and the Makefile ran three while six existed. A
+self-test nobody runs is the plainest form of a correct mechanism with no report: it passes forever,
 including on the day it would have failed. All four passed when they were added, which is the reason
 this went unnoticed and not a reason it was harmless.
+
+**AND ADDING THEM BROKE CI, WHICH IS THE REASON `gate-selftest.mjs` EXISTS.** Two of the four could
+not run on a fresh checkout at all: `names.mjs` is gitignored on purpose - it holds real display names
+and this repository is PUBLIC - so anything importing it, directly or three modules down, dies with
+`ERR_MODULE_NOT_FOUND`. `tabguard-selftest.mjs` imports it for W2's port, and `debris-selftest.mjs`
+reached it through `results.mjs`. The CD run of `74e9e1ec` failed exactly there, and it was invisible
+locally because the file EXISTS here. So the marker vocabulary moved to `marker.mjs` - pure string
+work has no business needing a machine to import, and `results.mjs` re-exports it so no runner
+changed - the browser-driving one moved to its own target, and `gate-selftest.mjs` now reads the
+Makefile recipe, walks each gated script's imports and fails if any of them is not tracked by git.
+What it still cannot see is a script that imports only tracked files and needs a device anyway; only
+running the gate somewhere with no rig proves that, which is what CI does on every push.
 
 ## The files
 

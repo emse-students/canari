@@ -149,6 +149,21 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **WIDENING A CI GATE BROKE IT, BECAUSE WHAT MAKES A TEST ELIGIBLE WAS A PROPERTY NOBODY COULD SEE.**
+  `make test-harness` went from three harness self-tests to seven, and two of the four added could not
+  run on a fresh checkout: `names.mjs` is gitignored deliberately - it holds real display names and
+  this repository is public - so anything importing it, directly or three modules down, dies with
+  `ERR_MODULE_NOT_FOUND`. `tabguard-selftest.mjs` imports it for a port, and `debris-selftest.mjs`
+  reached it through `results.mjs`. It was invisible locally, where the file exists, and took the CD
+  run of `74e9e1ec` red.
+
+  The marker vocabulary (`mark`, `markSeq`, `MARKER_RE`, `markerStamp`) is now `marker.mjs`: pure
+  string work must not need a machine to import, and `results.mjs` re-exports it so no runner changed.
+  `tabguard-selftest.mjs` drives a real browser and can never be a CI test, so it has its own target,
+  `make test-harness-device`. And the property is asserted rather than remembered - `gate-selftest.mjs`
+  reads the `test-harness` recipe, walks each script's transitive imports and fails on any file git
+  does not track. It found both faults immediately, plus a third: `marker.mjs` itself, still unstaged.
+
 - **THE SAME 403, THROUGH THE OTHER DOOR: FIXING A CALL SITE IS NOT FIXING A SEAM.** The membership
   check stopped asking the members-only endpoint on a removed device (entry below), and GRP-3
   recorded the identical `GET /api/mls/groups/:id/members -> 403` the next day. Both conversation
