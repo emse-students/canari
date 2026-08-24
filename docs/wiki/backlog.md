@@ -346,6 +346,37 @@ recorded here rather than taken while a campaign is running.
 **What would tell us it matters:** no board row covers it, and reaching it needs a device that missed
 an edit AND is later handed a bundle containing it - which is the FWD/HEAL shape, not MUT's.
 
+### P3 - a deleted group leaves every OTHER member a dead row, for ever, clearable only one at a time
+
+Found on 2026-08-24 while clearing the campaign's own debris off W2, and the retention itself is NOT
+the finding - it is deliberate and right. `initializeConnection.ts:171` forgets the member's WASM
+state, so she can no longer send, and then calls `onGroupDeletedRemotely` so the conversation is
+marked `removed` and shown with a banner "instead of removing it silently". `decideAbsentGroupFate`'s
+first guard then makes that state unreachable by any later reconciliation, because it records what
+its owner was TOLD. Removing a conversation from under someone without telling them would be the
+worse behaviour, and the design says so.
+
+**What has no answer is the ACCUMULATION, and the fact that the only exit is per-row.** "Supprimer
+localement" acts on the OPEN conversation, so N dead rows cost N navigations and N clicks; there is
+no bulk gesture, no "clear the deleted ones", and nothing ages them out - a `removed` row is
+permanent by construction. The rig measured the extreme: W2 held **189** of them, from one phase of
+one campaign, and clearing them needed a purpose-built sweep (`dismiss.mjs`) driving the button 189
+times. A real user's number is not 189, but it is not zero either and it only ever grows: a promo
+with a group per project, deleted at the end of each year, accumulates a dozen dead rows that no
+gesture can clear together.
+
+**Why it is a product decision rather than a bug to fix.** Any bulk control has to decide what it may
+touch, and the only honest allowlist is "conversations already marked `removed`" - which is
+exactly the set whose whole purpose is to have been SEEN by its owner first. A control that clears
+them wholesale re-introduces, by the owner's own hand, the silent removal the banner exists to
+prevent. So the question is a UX one and belongs to the user: is the exit a bulk action, an
+age-out for a row whose banner has been seen, or nothing at all.
+
+**What would tell us it matters:** no board row covers it, and no rung would ever notice - every
+runner either creates and deletes its own group (so it is the CREATOR, whose copy `deleteGroup`
+purges) or leaves the debris behind for the next run to inherit. That asymmetry is why it went
+unseen for the whole campaign: W1 measured clean at 9 conversations on the same day W2 held 189.
+
 ### P1 - a REVOKED device kept its local store, restored only SOME conversations, and a locally-pending deletion blocked the new conversation with that peer
 
 Reported by the user 2026-08-23, verbatim: *"sur un vieux PC client qui avait toujours une memoire

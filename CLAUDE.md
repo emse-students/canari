@@ -173,7 +173,11 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     licence. ONE work package with 4's picker fixes, post-ladder, owing ELEVEN rows to the SECOND
     campaign. Matrix, measurements and a jsdelivr default found while scoping: [backlog](docs/wiki/backlog.md).
 
-**The estate was swept and measured clean 2026-08-21 before the ladder started** - 22 debris salons through the product, all thirteen residue counts on prod zero afterwards. `cleanup.mjs` owns communities, salons AND throwaway groups now; the detail is on [cross-client-campaign](docs/wiki/cross-client-campaign.md).
+6. **A DELETED GROUP LEAVES EVERY OTHER MEMBER A DEAD ROW, FOR EVER, CLEARABLE ONLY ONE AT A TIME** -
+    found 2026-08-24, P3, deferred with 4 and 5. The retention is right; the accumulation and the
+    per-row-only exit are a UX decision owed to the user. [backlog](docs/wiki/backlog.md).
+
+**The estate was swept and measured clean 2026-08-21 before the ladder started** - 22 debris salons through the product, all thirteen residue counts on prod zero afterwards. **A deleted group is TWO estates**: `cleanup.mjs` owns the server side, `dismiss.mjs` the copy each MEMBER's client keeps (W1 clean at 9 rows on 2026-08-24, W2 holding 189). One allowlist for both, `debris.mjs`. Detail on [cross-client-campaign](docs/wiki/cross-client-campaign.md).
 
 **OWED TO THE USER, NOT TO THE CODE: the MLS + Graine explanation.** For THEM, prose and diagrams, no
 code (user, 2026-08-20). Post-campaign; scope and the two audiences declined are on
