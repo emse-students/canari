@@ -47,6 +47,7 @@ import {
   findConversationKeyByGroupId,
   loadExistingConversations,
   purgeConversation,
+  retireConversation,
   toConversationMeta,
   INITIAL_MESSAGES_PAGE,
 } from '$lib/utils/chat/conversations';
@@ -980,8 +981,32 @@ export function useConversations() {
   // ── Group operations ──────────────────────────────────────────────────────
 
   /**
-   * Shared cleanup for delete and leave: calls an optional server action, then purges the
-   * local MLS + UI state regardless of whether the server call succeeds.
+   * Shared cleanup for delete and leave: records the departure locally, calls an optional server
+   * action, then purges the local MLS + UI state regardless of whether the server call succeeds.
+   *
+   * THE DEPARTURE IS RECORDED BEFORE IT IS ACTED ON, AND THAT ORDERING IS THE POINT. The row used
+   * to be purged at the very END, so for the whole span of the server action, the WASM forget and
+   * the state persist that follow it - hundreds of milliseconds to seconds - a conversation this
+   * device had irrevocably given up still looked exactly like a live one. `loadGroupMembers` is
+   * fired by a `$effect` over the conversations map, so ANY write inside that span - the
+   * `memberLeft` system message this very path adds - re-ran it against a group whose server-side
+   * membership had just been revoked, and asked a members-only endpoint the one question it is
+   * certain to refuse. That is a `GET /api/mls/groups/:id/members -> 403` in the leaver's console,
+   * intermittent by nature, and GRP-6 recorded it on 2026-08-24.
+   *
+   * A guard on the asker would have been the THIRD door patched on this one endpoint (audit S5,
+   * `membershipIsDurablyLost`), so this closes the seam instead: `lifecycle: 'removed'` is the
+   * durable local statement "this device is out", every reader of it already behaves correctly on
+   * that answer - no roster, no send, no recovery - and the purge below then removes the row. The
+   * only overlap there ever was is the window where the row disagreed with the decision, and it is
+   * gone rather than reconciled.
+   *
+   * A crash inside the window is IMPROVED by this, not risked: it now leaves a row the UI can
+   * explain and the user can clear in one click, where before it left a live-looking conversation
+   * with no MLS state behind it - unusable, and refused by the server on every selection.
+   *
+   * The UI reset moves up for the same reason and one more: the "removed" banner offers a
+   * delete-locally button, and it must not appear under a conversation the user is already leaving.
    */
   async function exitGroupAndCleanup(
     contactKey: string,
@@ -991,6 +1016,18 @@ export function useConversations() {
     ctx: ConversationContext
   ) {
     const mlsService = ctx.ensureMls();
+    await retireConversation({
+      conversations,
+      key: contactKey,
+      groupId: convo.id,
+      saveConversation: (key) => saveConversation(key, ctx),
+    });
+    membershipCache.delete(convo.id);
+    selectedContact = null;
+    isConversationDrawerOpen = false;
+    sendError = '';
+    groupMembers = [];
+    ctx.log(`[${label}] ${convo.id.slice(0, 8)}… retired locally before the server action`);
     try {
       const onServer = await isGroupActiveOnServer(mlsService, ctx.userId, convo.id);
       if (onServer !== false) {
@@ -1018,11 +1055,6 @@ export function useConversations() {
       deleteConversation: ctx.storage ? (key) => ctx.storage!.deleteConversation(key) : undefined,
       log: ctx.log,
     });
-    membershipCache.delete(convo.id);
-    selectedContact = null;
-    isConversationDrawerOpen = false;
-    sendError = '';
-    groupMembers = [];
   }
 
   /** Creates a new named MLS group, persists it, and selects it in the UI. */

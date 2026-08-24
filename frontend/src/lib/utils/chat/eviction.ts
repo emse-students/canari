@@ -104,6 +104,14 @@ export async function retireIfEvicted(deps: EvictionCheckDeps): Promise<boolean>
  * guard of any kind - so a removed device selecting its retired conversation still logged the same
  * 403, and GRP-3 still recorded it on 2026-08-24. Fixing a call site is not fixing a seam.
  *
+ * IT COVERS A DEPARTURE THIS DEVICE CHOSE, and only because the departure states the fact before
+ * it acts. A leave and a delete are not learnt from a commit - the device decides - and they used
+ * to record that decision LAST, after the server call and the WASM forget, which left a window in
+ * which the row still read as live while the membership behind it was already gone. `$effect`s over
+ * the conversations map fire inside that window, so the same 403 came back a third time (GRP-6,
+ * 2026-08-24). `exitGroupAndCleanup` now retires first and purges last; this predicate did not have
+ * to widen, and a third call-site guard was not what was missing.
+ *
  * A retired conversation has no roster this device is entitled to know, so `false` here is the
  * ANSWER and not a fallback: the absence is what the UI should render.
  *

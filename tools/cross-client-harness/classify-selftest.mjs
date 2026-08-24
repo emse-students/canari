@@ -18,7 +18,7 @@
  * this campaign actually saw, kept verbatim WITH its `[HH:MM:SS]` prefix, because the prefix is what
  * the first bug turned on.
  */
-import { report } from './watch.mjs';
+import { ignoringExpectedLog, report } from './watch.mjs';
 
 /** A fake CDP buffer: one `Runtime.consoleAPICalled` per line, dated so the timeline is orderable. */
 function cxOf(entries) {
@@ -338,6 +338,25 @@ const CASES = [
     '[14:10:28] [OUTBOX] 1d9076db… transient failure (attempt 1): Crypto/OpenMLS error: Encrypt error: GroupStateError(UseAfterEviction)',
     'unexplained',
   ],
+  // THE DEPARTURE THIS DEVICE CHOSE, stated before it is performed - the third time that same 403
+  // came back and the last. A leave and a delete are not learnt from a commit, so the two above do
+  // not cover them: the device decides, and it used to record the decision LAST, after the server
+  // call and the WASM forget. Anything reading the conversations map inside that window still saw a
+  // live group whose membership was already gone, and asked the members-only endpoint about it.
+  //
+  // `stateChanges` for its neighbours' reason, and it must be SOME bucket: the line is emitted on
+  // every leave and every delete the campaign performs, so leaving it unclassified would put four
+  // GRP rows into PASS-DIRTY on the sentence that proves the defect is fixed.
+  [
+    'log',
+    '[14:10:28] [DELETE] 4ca35caf… retired locally before the server action',
+    'stateChanges',
+  ],
+  [
+    'log',
+    '[14:10:28] [LEAVE] 4ca35caf… retired locally before the server action',
+    'stateChanges',
+  ],
   // WHAT REPLACED THEM. The eviction is learnt from the commit that stated it, so the removed
   // device reports the change and stops - no recovery, no retry ladder. `stateChanges`, not
   // `benign`: what this client holds really did change, and a reader must see it.
@@ -617,5 +636,62 @@ for (const [what, url, status, failed, shouldBreak] of HTTP_CASES) {
   if (!ok) console.log(`       badHttp=${JSON.stringify(rep.badHttp)} clean=${rep.clean}`);
 }
 
+
+/**
+ * THE FORGIVENESS, TESTED FOR WHAT IT MUST NOT FORGIVE.
+ *
+ * `ignoringExpectedLog` exists so DEL-2 can name the one sentence the classifier refuses to classify
+ * - a `text` entry dying on `group-deleted`, a message the user wrote and will never see sent. A
+ * helper like that is dangerous in exactly one direction: too wide, and it silences the signal it
+ * was written to let a single check through. Nothing about that is visible from a green run, so the
+ * cases below are the ones that would go quiet - a needle over-matching a NEIGHBOURING sentence, and
+ * dirt of another kind sitting beside a forgiven line.
+ */
+const FORGIVE_CASES = [
+  [
+    'the DEL-2 sentence, forgiven by its own needle',
+    [['log', '[09:14:02] [OUTBOX] a721e695… text entry in 472df672…, group-deleted - permanent failure']],
+    [/^\[OUTBOX\] [0-9a-f]{8}… (text|reply|media) entry in [0-9a-f]{8}…, group-deleted - permanent failure$/],
+    { clean: true, unmatched: 0 },
+  ],
+  [
+    'a needle that matched nothing is REPORTED, and forgives nothing',
+    [['log', '[09:14:02] [DELETE] Group 472df672... not found on server (already deleted?)']],
+    ['[DELETE] Group', 'a line this run never produced'],
+    { clean: true, unmatched: 1 },
+  ],
+  [
+    'the evicted-late spelling is NOT swallowed by the group-deleted needle',
+    [['log', '[09:14:02] [OUTBOX] a721e695… text entry in 472df672…, evicted-late - permanent failure']],
+    [/^\[OUTBOX\] [0-9a-f]{8}… (text|reply|media) entry in [0-9a-f]{8}…, group-deleted - permanent failure$/],
+    { clean: false, unmatched: 1 },
+  ],
+  [
+    'a lost frame beside a forgiven line still breaks clean',
+    [
+      ['log', '[09:14:02] [OUTBOX] a721e695… text entry in 472df672…, group-deleted - permanent failure'],
+      ['log', '[09:14:03] MLS decryption failed: generation out of bounds'],
+    ],
+    [/group-deleted - permanent failure$/],
+    { clean: false, unmatched: 0 },
+  ],
+  [
+    'a console error beside a forgiven line still breaks clean',
+    [
+      ['log', '[09:14:02] [OUTBOX] a721e695… text entry in 472df672…, group-deleted - permanent failure'],
+      ['error', 'Uncaught (in promise) TypeError: x is not a function'],
+    ],
+    [/group-deleted - permanent failure$/],
+    { clean: false, unmatched: 0 },
+  ],
+];
+for (const [what, lines, needles, want] of FORGIVE_CASES) {
+  const rep = ignoringExpectedLog(await report({ cx: cxOf(lines), label: 'selftest' }), needles);
+  const got = { clean: rep.clean, unmatched: rep.ignoredAsExpectedLog.unmatched.length };
+  const ok = got.clean === want.clean && got.unmatched === want.unmatched;
+  if (!ok) failures++;
+  console.log(`${ok ? 'ok  ' : 'FAIL'} ${'forgive'.padEnd(12)} ${what}`);
+  if (!ok) console.log(`       want=${JSON.stringify(want)} got=${JSON.stringify(got)} rep=${JSON.stringify({ severe: rep.severe, errors: rep.errors, unexplained: rep.unexplained })}`);
+}
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall good');
 process.exit(failures ? 1 : 0);

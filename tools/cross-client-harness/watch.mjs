@@ -440,6 +440,17 @@ const STATE_CHANGE = [
   // membership could not be READ after a commit, which is the branch that HIDES an eviction and
   // leaves the refused send to find it - it stays unexplained, and a prefix rule would silence it.
   /^\[EVICT\] Removed from [0-9a-f]{8}… by a Remove commit - conversation retired$/,
+  // THE DEPARTURE STATED BEFORE IT IS PERFORMED, on every leave and every delete. The conversation
+  // used to be purged at the END of `exitGroupAndCleanup`, so for the whole span of the server call,
+  // the WASM forget and the persist behind it, a group this device had irrevocably given up still
+  // read as live - and a `$effect` over the conversations map fired a roster request at a
+  // members-only endpoint for it, which is the intermittent 403 GRP-6 recorded on 2026-08-24. The
+  // fix retires first, so the line is the seam closing, and it is emitted by BOTH exits.
+  //
+  // IT NEEDS A RULE BECAUSE IT IS NEW AND UNIVERSAL. Without one, every GRP row that leaves or
+  // deletes a group - 4, 6, 7, 10 - would read PASS-DIRTY on the sentence that proves the defect is
+  // gone. `stateChanges`, not `BENIGN`: the row really did change state, and that is worth seeing.
+  /^\[(DELETE|LEAVE)\] [0-9a-f]{8}… retired locally before the server action$/,
   // NO RULE HERE FOR THE RUST WARN BEHIND IT. It names the epoch the removal landed at, so the
   // generic `/epoch|GAP|out-of-sync|re-add/` rule in `NOTABLE` claims it first, and `stateChanges`
   // excludes anything already notable - a rule here could never be reached. `notable` is the same
@@ -1760,6 +1771,86 @@ export function ignoringExpectedRefusal(rep, expected) {
     ignoredAsExpectedRefusal: {
       badHttp: rep.badHttp.length - badHttp.length,
       errors: rep.errors.length - errors.length,
+    },
+  };
+}
+
+/**
+ * The same report with LOG LINES THIS CHECK WENT AND PROVOKED removed, and `clean` recomputed.
+ *
+ * THE THIRD FORGIVENESS, AND THE ONE THE CLASSIFIER DELIBERATELY REFUSES TO GRANT ITSELF.
+ * {@link ignoringExpectedRefusal} forgives a request and {@link ignoringOfflineCut} forgives an
+ * outage; neither can forgive a SENTENCE. And one sentence in this app is unclassifiable on purpose:
+ * `[OUTBOX] <id>... text entry in <group>..., group-deleted - permanent failure` is a message the
+ * user WROTE and will never see sent, and the comment beside its deliberately missing rule says so -
+ * "if a check produces one it owes an explanation, not a rule". DEL-2 is the check that produces
+ * one, by design, as its entire subject. So the explanation is owed HERE, at the call site that
+ * caused it, and never by widening `BENIGN` - which would silence the line for every other check in
+ * the campaign, including the ones where it would be the finding.
+ *
+ * NARROW BY CONSTRUCTION: `severe`, `exceptions`, `badHttp`, `notable` and `wsEvents` are untouched
+ * and every one of them still breaks `clean`. A provoked log line explains a log line. A lost frame,
+ * an unhandled rejection, a 500 or a socket dying beside it is no more expected for having been
+ * mentioned - and `severe` is where a decrypt failure nobody classified lands, which is the one
+ * thing this gate exists to catch.
+ *
+ * IT REPORTS WHAT IT DID NOT FIND, AND THE CALLER DECIDES WHAT THAT MEANS. A needle matching nothing
+ * has two opposite readings: DEL-3 races two clients to delete the same group and only the loser can
+ * emit `[DELETE] Group ... not found on server`, so a dry needle there is a legitimate outcome; a dry
+ * needle for a line the check's own premise requires is a check measuring nothing at all. This cannot
+ * tell the two apart, so it names the dry needles and refuses to guess - `unmatched` is that
+ * statement, and a check whose premise depends on a line must assert on that line itself.
+ *
+ * @param rep the `report()` of the client whose console is being forgiven
+ * @param needles RegExp or string, matched against the SENTENCE - the level prefix `unexplained`
+ *   renders and BOTH timestamp stamps the app writes are stripped first, so `^` anchors work here
+ *   exactly as they do in the classifier's own lists
+ */
+export function ignoringExpectedLog(rep, needles) {
+  // THE SAME TEXT EVERY LIST IS TESTED AGAINST - see the comment over `t` in `report`, written after
+  // one list silently compared a different string from the others and every `^`-anchored rule in it
+  // stopped firing. `unexplained` renders as `level: text`, `errors` and `warnings` render bare, and
+  // the app stamps its own lines two different ways; all of it is normalised before anything is
+  // compared.
+  const sentence = (line) =>
+    line
+      .replace(/^(?:log|info|debug|verbose|warning|warn|error|assert):\s*/, '')
+      .replace(/^\[\d\d:\d\d:\d\d\]\s*/, '')
+      .replace(/^\[\d{4}-\d\d-\d\dT[\d:.]+Z\]\s*/, '');
+  const matched = new Set();
+  /** True to KEEP the line - and records, on the way past, which needles claimed it. */
+  const keep = (line) => {
+    const s = sentence(line);
+    const hits = needles.filter((n) => (typeof n === 'string' ? s.includes(n) : n.test(s)));
+    hits.forEach((n) => matched.add(n));
+    return hits.length === 0;
+  };
+
+  const errors = rep.errors.filter(keep);
+  const warnings = rep.warnings.filter(keep);
+  const unexplained = rep.unexplained.filter(keep);
+  return {
+    ...rep,
+    errors,
+    warnings,
+    unexplained,
+    // `wsEvents` IS IN THIS GATE, unlike the one in `ignoringExpectedRefusal`. `report` counts a
+    // socket close against `clean`, and a forgiven sentence is no reason to stop counting it: a
+    // check that provoked a log line has said nothing at all about the link underneath it.
+    clean:
+      errors.length === 0 &&
+      rep.badHttp.length === 0 &&
+      rep.exceptions.length === 0 &&
+      rep.severe.length === 0 &&
+      rep.wsEvents.length === 0 &&
+      unexplained.length === 0,
+    ignoredAsExpectedLog: {
+      errors: rep.errors.length - errors.length,
+      warnings: rep.warnings.length - warnings.length,
+      unexplained: rep.unexplained.length - unexplained.length,
+      // NAMED, not counted: the reader of a row has to see WHICH expectation went unmet without
+      // going back to a stdout dump the run has long scrolled past.
+      unmatched: needles.filter((n) => !matched.has(n)).map(String),
     },
   };
 }

@@ -11,6 +11,11 @@
  *   - `cutHard()` - the above AND the live socket closed, so the gateway really has no connection.
  *                  Required for a RECEIVER, because delivery goes down the socket: MSG-9's whole
  *                  premise is a device the server cannot reach. Needs `armCut()` first.
+ *
+ * `throttleUpload()` is NOT a third cut and is kept apart from both on purpose: nothing fails, the
+ * app enters no offline path, and the only thing it changes is how long a request this client is
+ * SENDING stays in flight. A check that needs to act while something is still uploading needs that
+ * and not an outage - see DEL-4.
  */
 import { evaluate, until } from './cdp.mjs';
 import { awaitGatewayConnected } from './chat.mjs';
@@ -58,6 +63,40 @@ export async function cut(cx, timeoutMs = 15000) {
   return {
     severed,
     msToSever: Date.now() - t0,
+    restore: async () => {
+      await cx.send('Network.emulateNetworkConditions', ONLINE);
+    },
+  };
+}
+
+/**
+ * Caps the client's UPLOAD rate, and returns the function that lifts the cap.
+ *
+ * A CHECK THAT NEEDS AN OPERATION STILL IN FLIGHT MUST NOT RACE IT. DEL-4 deletes a conversation
+ * while its media is uploading, and on a real link a small file is finished before the next gesture
+ * lands - so the honest way to hold the request open is to make it slow BY CONSTRUCTION, not to
+ * attach a bigger file and hope the timing falls the right way. `uploadThroughput` does exactly
+ * that, and the window it opens is arithmetic a check can state before it runs: bytes / rate.
+ *
+ * DOWNLOAD AND LATENCY ARE LEFT ALONE, deliberately. The subject is a request this client is still
+ * SENDING; throttling delivery as well would slow the peer's reaction to the very deletion under
+ * test, and the measurement would then be about the harness. For the same reason this is NOT a cut:
+ * `navigator.onLine` stays true, no request fails, and nothing in the app's offline path is entered -
+ * so a check using it is measuring the upload, not the reconnect logic.
+ *
+ * @param cx a connected client
+ * @param bytesPerSecond the ceiling, in bytes per second
+ */
+export async function throttleUpload(cx, bytesPerSecond) {
+  await cx.send('Network.enable');
+  await cx.send('Network.emulateNetworkConditions', {
+    offline: false,
+    latency: 0,
+    downloadThroughput: -1,
+    uploadThroughput: bytesPerSecond,
+  });
+  return {
+    bytesPerSecond,
     restore: async () => {
       await cx.send('Network.emulateNetworkConditions', ONLINE);
     },
