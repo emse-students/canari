@@ -299,6 +299,10 @@ test-harness:
 	@node tools/cross-client-harness/classify-selftest.mjs
 	@node tools/cross-client-harness/srvclassify-selftest.mjs
 	@node tools/cross-client-harness/checks-selftest.mjs
+	@node tools/cross-client-harness/logcatclassify-selftest.mjs
+	@node tools/cross-client-harness/devices-selftest.mjs
+	@node tools/cross-client-harness/tabguard-selftest.mjs
+	@node tools/cross-client-harness/debris-selftest.mjs
 	@echo "${GREEN}✅ Harness self-tests OK${RESET}"
 
 # Criterion benchmarks for mls-core hot paths (Phase 3 baseline)

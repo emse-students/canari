@@ -89,13 +89,21 @@ the server. `srvlog.mjs` classifies the whole server window - `--shapes` collaps
 `notable` into distinct sentences - and `srvclassify-selftest.mjs` pins every rule against a line
 whose bucket is known.
 
-**The rig has three self-tests, and `make test-harness` is the gate.** `classify-selftest.mjs` pins
-the client-side verdict rules, `srvclassify-selftest.mjs` the server-log buckets, and
-`checks-selftest.mjs` asserts that every phase in `checks.mjs` declares the devices its scripts
-actually drive. None of the three touches a browser, a phone or production, so they run anywhere and
-in seconds: `make test` includes them, and CI runs them on any change under this directory. Run the
-target after editing `checks.mjs` or either classifier - a phase whose `needs` disagrees with its
-scripts is how MUT-18 skipped on every run it was ever asked for.
+**The rig has seven self-tests, and `make test-harness` is the gate.** `classify-selftest.mjs` pins
+the client-side verdict rules, `srvclassify-selftest.mjs` the server-log buckets,
+`logcatclassify-selftest.mjs` the phone's, `checks-selftest.mjs` asserts that every phase in
+`checks.mjs` declares the devices its scripts actually drive, `devices-selftest.mjs` and
+`tabguard-selftest.mjs` pin the device panel and the tab guard, and `debris-selftest.mjs` pins the
+allowlist that decides what may be DELETED. None of them touches a browser, a phone or production, so
+they run anywhere and in seconds: `make test` includes them, and CI runs them on any change under this
+directory. Run the target after editing `checks.mjs`, any classifier or `debris.mjs` - a phase whose
+`needs` disagrees with its scripts is how MUT-18 skipped on every run it was ever asked for.
+
+**Four of them were on disk and outside the gate until 2026-08-24** - `logcatclassify`, `devices`,
+`tabguard` and the new `debris` - so the file said three and the Makefile ran three while six existed.
+A self-test nobody runs is the plainest form of a correct mechanism with no report: it passes forever,
+including on the day it would have failed. All four passed when they were added, which is the reason
+this went unnoticed and not a reason it was harmless.
 
 ## The files
 
@@ -167,6 +175,19 @@ and are not: W1, which creates and then deletes, was measured **clean** on 2026-
 is only a member, held **189** rows from the GRP phase alone. They share ONE allowlist (`debris.mjs`),
 and `dismiss.mjs` refuses to dismiss a group whose server row is still alive - a local dismissal there
 would hide it from this device while every other member kept theirs, which is not cleaning up.
+
+**THE SWEEP IS NOT A GESTURE ANY MORE.** `run.mjs` calls `sweepDismissed` on every client it drove at
+the end of every pass, so a pass's debris is gone before the next one starts. It is deliberately NOT
+the phase's job, and the reason is the one `dismissOverlay` already carries: the runs that need a
+teardown are the ones that DIED, and a script that throws never reaches its own last line - `finish`
+compounds it by exiting on the verdict. `grp.mjs` does delete its groups, in a `finally`, and still
+left 189 rows. So the phase DECLARES, through `debris.mjs`, and the process no script can crash
+EXECUTES. It is unconditional rather than opted into per phase, because a flag is one more thing to
+keep in sync and would be wrong the first time a phase nobody thought about creates a group - DEL,
+HEAL and MULTI all do. With nothing to clear it costs one store read per client and makes no request.
+The SERVER half stays manual: `cleanup.mjs` deletes live groups and generates real traffic, which is a
+decision about the estate rather than a tidy-up of one pass, and a row the sweep must spare because
+its group is still alive is printed by name so the gesture that is owed is never inferred.
 
 The 189 also measured the allowlist itself: 22 were `GRP5-<mark>-R`, from the rename GRP-5 performs,
 and the pattern matched neither them nor the tombstones they leave. The server-side sweep would

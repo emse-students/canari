@@ -34,6 +34,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { PHASES, PHONE_SCRIPTS } from './checks.mjs';
 import { awaitQuiet } from './deploy.mjs';
+import { groupTombstones, sweepDismissed } from './dismiss.mjs';
 import { srvReport, srvSummary } from './srvlog.mjs';
 import { OVERLAYS, clearOverlays, client, evaluate } from './chat.mjs';
 import * as phone from './phone.mjs';
@@ -233,6 +234,59 @@ async function dismissOverlay(d) {
       console.log(`       ${d} ${o.stuck ? 'STUCK' : 'cleared'} ${o.kind}${o.label ? ` (${o.label})` : ''}`);
   } finally {
     cx.close();
+  }
+}
+
+/**
+ * Clears the dead conversation rows this pass left on every client it drove, and NAMES what it
+ * cleared - the same contract as `dismissOverlay`, in the same place, for the same reason.
+ *
+ * WHY IT CANNOT BELONG TO THE PHASE THAT MADE THE MESS, which is the obvious place for it. `grp.mjs`
+ * knows exactly which groups it minted and does delete them server-side - and it still left 189 dead
+ * rows in the member's store by 2026-08-24. Because the runs that need a teardown are the ones that
+ * DIED, and a script that throws never reaches its own last line; `finish` compounds it by exiting on
+ * the verdict, so anything after it is unreachable by construction. So the phase DECLARES - and it
+ * does: `debris.mjs` is that declaration, enumerated from the runners themselves - while this
+ * process, which no script can crash, EXECUTES.
+ *
+ * WHY IT IS UNCONDITIONAL RATHER THAN OPTED INTO PER PHASE. A per-phase flag is one more thing to
+ * keep in sync, and it would be wrong the first time a phase nobody thought about creates a group:
+ * DEL, HEAL and MULTI all do. With nothing to clear it costs one store read per client and makes no
+ * request at all, so asking first buys nothing.
+ *
+ * WHY IT RUNS BEFORE THE SERVER REPORT AND CANNOT DIRTY IT: a local dismissal is a purge of this
+ * client's own IndexedDB with no request behind it. The SERVER-side half stays a deliberate manual
+ * gesture (`cleanup.mjs`) - it DELETES live groups and generates real traffic, which is a decision
+ * about the estate rather than a tidy-up of one pass. A row this sweep must spare because its group
+ * is still alive server-side is reported by name, so the gesture that is owed is never inferred.
+ *
+ * A FAILED SWEEP IS REPORTED AND NEVER FATAL. It is housekeeping, not a verdict: debris left behind
+ * is debris the next pass's sweep names again, whereas a throw here would take a pass that had
+ * already answered its question.
+ */
+async function sweepDebris() {
+  let tombstoned;
+  try {
+    tombstoned = groupTombstones();
+  } catch (e) {
+    console.log(`       debris NOT swept - the tombstone query failed: ${String(e.message || e).slice(0, 120)}`);
+    return;
+  }
+  for (const d of devices) {
+    let cx = null;
+    try {
+      cx = await client(PORTS[d], null, { focus: false });
+      const r = await sweepDismissed(cx, { port: PORTS[d], tombstoned });
+      if (r.dismissed) console.log(`       ${d} dismissed ${r.dismissed} dead conversation row(s)`);
+      for (const n of r.failed) console.log(`       ${d} STUCK ${n} - still in the store after the click`);
+      for (const row of r.live)
+        console.log(`       ${d} LIVE ${row.name} - server-side delete owed, run cleanup.mjs`);
+      if (r.remaining) console.log(`       ${d} ${r.remaining} dead row(s) STILL THERE after the sweep`);
+    } catch (e) {
+      console.log(`       ${d} debris NOT swept: ${String(e.message || e).slice(0, 120)}`);
+    } finally {
+      cx?.close();
+    }
   }
 }
 
@@ -915,6 +969,10 @@ for (const job of jobs) {
     console.log(`      full output: ${job.log}`);
   }
 }
+
+// ---------------------------------------------------------------------------- teardown
+
+await sweepDebris();
 
 // ---------------------------------------------------------------------------- report
 

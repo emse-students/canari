@@ -17,7 +17,17 @@
 export const GROUP_DEBRIS = [
   /^READ10-[0-9a-z]+$/,
   /^DEL\d*-[0-9a-z]+$/,
-  /^HGRP[0-9a-z]{4,6}$/,
+  // The tail is `Math.random().toString(36).slice(2, 7)` (heal-w2.mjs:38), which is five characters
+  // almost always and FEWER when the base-36 form is short: `(0.5).toString(36)` is `0.i`, so the
+  // group is named `HGRPi`. The old floor of 4 spared those, and a spared row is a row that comes
+  // back on every load for ever - the failure this list exists to prevent, hidden behind a bound
+  // nobody had reason to doubt. Found by `debris-selftest.mjs`, which builds its names from the
+  // minting expression rather than from the shape the name usually has.
+  //
+  // The bare `HGRP` - `Math.random()` returning exactly 0 - is deliberately NOT covered. It is the
+  // one value of that tail a PERSON could also type, and a destructive predicate does not buy a
+  // 2^-52 event with a name a human might own.
+  /^HGRP[0-9a-z]{1,6}$/,
   /^HEALW2-[0-9a-z]+$/,
   // `-R` is GRP-5's, and it is the reason this list was measured rather than copied: that check
   // RENAMES its group to `<name>-R` (grp.mjs:702) to prove a rename is a broadcast, and the pattern
