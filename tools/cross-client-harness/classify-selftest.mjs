@@ -192,9 +192,11 @@ const CASES = [
   // THE `[QUEUE]` WELCOME BUFFER AND THE FRAMES LEFT BEHIND, every spelling of the site pinned at
   // once (2026-08-25). GRP pass 5 landed the first two in `unexplained` on GRP-1; the rest were
   // placed with them, and are pinned here so a later widening of one rule cannot forgive another.
+  // The first two are VERBATIM from GRP-1 pass 5, redacted id and all - the rig truncates a group
+  // id before the classifier ever sees it, so that is the spelling the rules are matched against.
   [
     'log',
-    '[01:40:12] [QUEUE] Buffering message for group b6a425af-1111-2222-3333-444455556666 (Welcome in progress)',
+    '[01:40:12] [QUEUE] Buffering message for group b6a425af… (Welcome in progress)',
     'notable',
   ],
   // The three ways the window closes, pinned SEPARATELY though one rule matches all three: they
@@ -202,7 +204,7 @@ const CASES = [
   // the sweep), and the risk in a shared rule is exactly that one of the three later drifts.
   [
     'log',
-    '[01:40:12] [QUEUE] Welcome complete: re-queued 1 buffered message(s) for b6a425af-1111-2222-3333-444455556666',
+    '[01:40:12] [QUEUE] Welcome complete: re-queued 1 buffered message(s) for b6a425af…',
     'notable',
   ],
   [

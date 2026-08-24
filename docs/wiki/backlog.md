@@ -271,6 +271,30 @@ precisely the transition being managed right now for `Welcome -> ... pour ...` (
 2026-08-25, both spellings pinned). Doing two of those at once during the ladder buys nothing. It is
 one edit plus one rule swap once the ladder is done.
 
+### P3 - the seam that forgets a conversation forgets it silently
+
+Found on 2026-08-25 in the same reading. `historyReconcile.ts:756` is `forgetGroupReconciliation`,
+the one seam every deletion path calls so that state describing a conversation cannot outlive one -
+`conversations.ts:193` and `:228`, `groupActions.ts:151` and `:362`. Its own doc comment says why it
+is one seam and not a line in each path: *"the old registry learnt the hard way: state describing a
+conversation may not outlive one, and three separate pieces of it once did, one of them
+user-visible."*
+
+It clears three maps - `asked`, `deferred`, `coverageStated` - and logs nothing at all. So the
+mechanism that exists BECAUSE this state once leaked past a deletion leaves no evidence that it ran,
+which is the one thing a reader would want when it leaks again. Every rule this project has about
+observation says the same: a correct mechanism with no report is found by hand, a day late.
+
+**One line at entry, naming the group and what it held** (`asked`/`deferred`/`coverageStated` all
+carry a value worth printing - a deferred reason, a peer count), plus the rule to classify it. Two
+sibling exports read the same maps and are called only by `historyReconcile.test.ts` -
+`deferredReconciliations()` and `statedCoverage()`. That is a legitimate test seam, not dead code,
+and it stays.
+
+**Why it is deferred.** Same reason as the entry above and filed with it: a product log line changes
+what the classifier sees on four deletion paths at once, so it lands after the ladder, with its rule
+written in the same commit.
+
 ### CLOSED 2026-08-21 - a member let BACK IN to a private salon was never routed again (WP-REGRANT-1)
 
 **Found and FIXED 2026-08-21**, both on production, in `7f11b50e` and `082345b7`. The mechanism and
