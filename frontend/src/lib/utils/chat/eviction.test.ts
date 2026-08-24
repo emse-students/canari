@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { readLocalMembership, retireIfEvicted } from './eviction';
+import { membershipIsDurablyLost, readLocalMembership, retireIfEvicted } from './eviction';
 import type { Conversation } from '$lib/types';
 
 /** Minimal conversation row: only the fields the retire path reads. */
@@ -143,5 +143,47 @@ describe('readLocalMembership - three answers, and the third is the point', () =
     });
 
     expect(log.mock.calls.flat().join(' ')).toContain('could not be read after a commit');
+  });
+});
+
+describe('membershipIsDurablyLost - the guard on the members-only endpoint', () => {
+  /**
+   * THIS IS THE PREDICATE THAT DECIDES WHETHER A REQUEST IS MADE AT ALL, so what it must defend is
+   * not its own truth table but its AGREEMENT WITH THE WRITER of the fact. Asserting
+   * `lifecycle === 'removed'` twice - here and in the source - would be one belief written twice,
+   * and would still pass on the day `retireConversation` starts recording eviction some other way.
+   * So the eviction is produced by `retireIfEvicted` and the predicate is asked about the row it
+   * actually left behind.
+   */
+  it('answers yes about a row that retireIfEvicted has just retired', async () => {
+    const conversations = new Map([['g1', convo('g1')]]);
+    expect(membershipIsDurablyLost(conversations.get('g1'))).toBe(false);
+
+    await retireIfEvicted({
+      mlsService: { isGroupActive: vi.fn(async () => false) },
+      conversations,
+      groupId: 'g1',
+      userId: 'u1',
+      saveConversation: vi.fn(async () => {}),
+      log: vi.fn(),
+    });
+
+    expect(membershipIsDurablyLost(conversations.get('g1'))).toBe(true);
+  });
+
+  it('answers no while this device is still a member', () => {
+    expect(membershipIsDurablyLost(convo('g1', 'active'))).toBe(false);
+  });
+
+  // A conversation still being established is not one we were thrown out of, and its roster is the
+  // thing the caller is waiting for. Suppressing the request here would stall the invite it needs.
+  it('answers no about a pending conversation', () => {
+    expect(membershipIsDurablyLost(convo('g1', 'pending'))).toBe(false);
+  });
+
+  // A group id naming no row records NOTHING, so it cannot record a loss. Answering yes would
+  // silently suppress the request and turn a lookup bug into an empty roster nobody investigates.
+  it('answers no about a row it cannot find, rather than suppressing the request', () => {
+    expect(membershipIsDurablyLost(undefined)).toBe(false);
   });
 });

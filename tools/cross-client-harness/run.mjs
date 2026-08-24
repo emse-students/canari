@@ -276,7 +276,7 @@ async function sweepDebris() {
     let cx = null;
     try {
       cx = await client(PORTS[d], null, { focus: false });
-      const r = await sweepDismissed(cx, { port: PORTS[d], tombstoned });
+      const r = await sweepDismissed(cx, { tombstoned });
       if (r.dismissed) console.log(`       ${d} dismissed ${r.dismissed} dead conversation row(s)`);
       for (const n of r.failed) console.log(`       ${d} STUCK ${n} - still in the store after the click`);
       for (const row of r.live)

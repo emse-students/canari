@@ -109,7 +109,6 @@ export const groupTombstones = () =>
  * Dismisses every dead throwaway conversation this client still holds, and reports what it could not.
  *
  * @param cx a CDP client already attached to the client to sweep
- * @param port which device that is - only used to recognise A1, whose page may not be navigated
  * @param tombstoned the map from `groupTombstones()`
  * @param dry classify and report, click nothing
  * @param limit stop after this many dismissals, leaving the rest for a later pass
@@ -119,24 +118,27 @@ export const groupTombstones = () =>
  */
 export async function sweepDismissed(
   cx,
-  { port, tombstoned, dry = false, limit = Infinity, log = null } = {}
+  { tombstoned, dry = false, limit = Infinity, log = null } = {}
 ) {
   const say = log || (() => {});
 
   /**
-   * A1 IS SWEPT WITHOUT NAVIGATING, and the check that it is already on `/chat` is the point.
+   * NOTHING IS SWEPT BY NAVIGATING, on any device, and the phone is why that is now one path.
    *
    * `goto` REFUSES A1 outright, for two reasons it documents: a reload re-locks the encryption PIN,
    * so the run hangs on a modal it never expected and prints nothing, and it replaces the document
-   * under Tauri's own IPC. So the phone is taken as it was left, and a phone left somewhere else is
-   * said out loud rather than navigated - which would be the same reload wearing a different name.
+   * under Tauri's own IPC. So the phone was taken as it was left - which PROVED the sweep needs no
+   * navigation at all, because A1 was swept that way. W1 and W2 kept a `navigate` on the first row
+   * regardless, and it cost exactly what the A1 comment predicted: the user found W2 sitting on the
+   * PIN modal on 2026-08-24, put there by this sweep's own reload. A reload the phone may not have
+   * and the desktops do not need is not a device difference, it is a leftover.
+   *
+   * A client left somewhere other than `/chat` is therefore said out loud on every device rather
+   * than navigated, since navigating is the same reload wearing a different name.
    */
-  const canNavigate = port !== PORTS.A1;
-  if (!canNavigate) {
-    const here = await evaluate(cx, 'location.pathname');
-    if (here !== '/chat')
-      throw new Error(`A1 is on ${here} rather than /chat, and goto() there re-locks the PIN`);
-  }
+  const here = await evaluate(cx, 'location.pathname');
+  if (here !== '/chat')
+    throw new Error(`the client is on ${here} rather than /chat, and goto() there re-locks the PIN`);
 
   const rows = await readStore(cx);
   const eligible = [];
@@ -189,7 +191,7 @@ export async function sweepDismissed(
   const failed = [];
   for (const [i, r] of targets.entries()) {
     try {
-      await openGroup(cx, r.name, { navigate: canNavigate && i === 0, label: 'dismiss' });
+      await openGroup(cx, r.name, { navigate: false, label: 'dismiss' });
       await dismissLocally(cx, r.name);
       // THE STORE IS THE POST-CONDITION, not the sidebar: `dismissLocally` proves the name left the
       // screen, and only the row's absence BY ID proves the purge actually ran.
@@ -229,7 +231,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const tombstoned = groupTombstones();
   console.log(`[dismiss] server knows ${tombstoned.size} group(s)`);
 
-  const r = await sweepDismissed(cx, { port, tombstoned, dry, limit, log: console.log });
+  const r = await sweepDismissed(cx, { tombstoned, dry, limit, log: console.log });
   if (dry) {
     for (const n of r.eligible.slice(0, 12)) console.log(`[dismiss] --dry would dismiss ${n}`);
     if (r.eligible.length > 12)

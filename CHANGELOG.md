@@ -149,6 +149,22 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **THE SAME 403, THROUGH THE OTHER DOOR: FIXING A CALL SITE IS NOT FIXING A SEAM.** The membership
+  check stopped asking the members-only endpoint on a removed device (entry below), and GRP-3
+  recorded the identical `GET /api/mls/groups/:id/members -> 403` the next day. Both conversation
+  selection paths fire `loadGroupMembers` ONE LINE ABOVE that check, and it had no membership guard
+  of any kind - so the fix had closed one of two doors onto the same endpoint. The guard is now a
+  predicate on the fact rather than a line in a function, `membershipIsDurablyLost`, reading the
+  durable `lifecycle` the Remove commit already wrote; a retired conversation has no roster this
+  device is entitled to know, so the empty list is the answer and not a fallback. Its test asserts
+  agreement with `retireIfEvicted`, the writer of that fact, rather than restating the comparison -
+  which would have been one belief written twice, and would still pass the day eviction is recorded
+  some other way.
+
+  The re-registration branch in the same function swallowed its error with
+  `catch { /* Non-blocking */ }`. It now logs: it is where a repair that never works would sit
+  silently for ever.
+
 - **A 403 IN THE CONSOLE OF EVERY REMOVED DEVICE, ASKING A MEMBERS-ONLY ENDPOINT WHETHER IT WAS
   STILL A MEMBER.** `verifyCurrentUserMembership` went straight to
   `GET /api/mls/groups/:id/members`, which is members-only by design (audit S5: the device list

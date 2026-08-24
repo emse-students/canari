@@ -85,3 +85,33 @@ export async function retireIfEvicted(deps: EvictionCheckDeps): Promise<boolean>
   );
   return retired;
 }
+
+/**
+ * Whether the row itself already records that this device is OUT of the group - so the delivery
+ * service must not be asked anything that only a member may ask.
+ *
+ * WHY A SECOND READER OF THE SAME FACT. `readLocalMembership` answers the question for a caller
+ * that can afford an async round-trip into OpenMLS and that has something to do with all three of
+ * its answers. The roster loader has neither: it runs on every conversation SELECTION, it wants one
+ * cheap yes/no, and the only thing it can do with "no" is show no roster. `lifecycle === 'removed'`
+ * is that yes/no, it is durable, it is already in the row the caller is holding, and it is written
+ * in exactly one place (`retireConversation`) from the Remove commit that is authoritative.
+ *
+ * IT EXISTS BECAUSE THE GUARD WAS PUT ON ONE OF TWO DOORS. On 2026-08-23 the membership check
+ * stopped asking `GET /api/mls/groups/:id/members` on a device holding a Remove commit, because
+ * that endpoint is members-only BY DESIGN and could only refuse. `loadGroupMembers` reaches the
+ * same endpoint, is fired by the same two selection paths one line above that check, and had no
+ * guard of any kind - so a removed device selecting its retired conversation still logged the same
+ * 403, and GRP-3 still recorded it on 2026-08-24. Fixing a call site is not fixing a seam.
+ *
+ * A retired conversation has no roster this device is entitled to know, so `false` here is the
+ * ANSWER and not a fallback: the absence is what the UI should render.
+ *
+ * `undefined` - a group id naming no row - is deliberately not "lost". Nothing is recorded about
+ * it, and suppressing a request on the strength of a missing row would hide a real lookup bug.
+ */
+export function membershipIsDurablyLost(
+  convo: Pick<Conversation, 'lifecycle'> | undefined
+): boolean {
+  return convo?.lifecycle === 'removed';
+}

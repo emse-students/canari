@@ -34,7 +34,7 @@ import {
   historyRangeStartFor,
   sendHistoryRangeRequest,
 } from '$lib/utils/chat/groupActions';
-import { readLocalMembership } from '$lib/utils/chat/eviction';
+import { membershipIsDurablyLost, readLocalMembership } from '$lib/utils/chat/eviction';
 import { NotAGroupMemberError } from '$lib/mls-client/mlsDeliveryApi';
 import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
 import {
@@ -44,6 +44,7 @@ import {
 } from '$lib/utils/chat/groupCreation';
 import { requestReAdd } from '$lib/utils/chat/recovery';
 import {
+  findConversationKeyByGroupId,
   loadExistingConversations,
   purgeConversation,
   toConversationMeta,
@@ -790,11 +791,29 @@ export function useConversations() {
 
   // ── Group members ─────────────────────────────────────────────────────────
 
-  /** Fetches the deduplicated list of member userIds for an MLS group and stores them in groupMembers. No-op for channel conversations. */
+  /**
+   * Fetches the deduplicated list of member userIds for an MLS group and stores them in
+   * groupMembers. No-op for channel conversations, and for one this device is no longer in.
+   *
+   * THE ROSTER OF A RETIRED CONVERSATION IS NOT OURS TO ASK FOR. `GET /api/mls/groups/:id/members`
+   * is members-only by design, so on a device holding a Remove commit the request has exactly one
+   * possible outcome, and it is a 403 in the console of every removed device. Both selection paths
+   * fire this one line above `verifyCurrentUserMembership`, which was taught the same fact on
+   * 2026-08-23 - this call site was not, which is why GRP-3 still recorded the 403 the next day.
+   * The discriminator is durable, local and already in the row (see `membershipIsDurablyLost`).
+   *
+   * An empty roster is the ANSWER here rather than a fallback: there is no membership to show.
+   */
   async function loadGroupMembers(id: string, ctx: ConversationContext | null) {
     if (!ctx) return;
     if (isChannelConversationId(id)) {
       groupMembers = [];
+      return;
+    }
+    const key = findConversationKeyByGroupId(conversations, id);
+    if (membershipIsDurablyLost(key ? conversations.get(key) : undefined)) {
+      groupMembers = [];
+      ctx.log(`[VERIFY] Roster of ${id.slice(0, 8)}… not requested - conversation retired`);
       return;
     }
     try {
@@ -900,8 +919,10 @@ export function useConversations() {
           cacheMembership(convo.id, true);
           return true;
         }
-      } catch {
-        // Non-blocking: fallback behavior below
+      } catch (e) {
+        // Non-blocking - the repair below is what answers. But a swallowed branch logs: this is
+        // where a re-registration that never works would sit silently for ever.
+        ctx.log(`[SYNC] Server re-registration of ${convo.id.slice(0, 8)}… failed: ${String(e)}`);
       }
 
       if (convo.conversationType === 'direct') {

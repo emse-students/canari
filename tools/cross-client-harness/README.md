@@ -189,6 +189,14 @@ The SERVER half stays manual: `cleanup.mjs` deletes live groups and generates re
 decision about the estate rather than a tidy-up of one pass, and a row the sweep must spare because
 its group is still alive is printed by name so the gesture that is owed is never inferred.
 
+**AND IT NAVIGATES NOTHING, ON ANY DEVICE.** A1 had to be swept as it was left, because `goto` there
+re-locks the PIN and replaces the document under Tauri's IPC - which PROVED the sweep needs no
+navigation, since the phone was swept without one. W1 and W2 kept a `navigate` on their first row
+anyway, and it cost exactly what A1's comment predicted: the user found W2 sitting on the PIN modal
+on 2026-08-24, put there by the sweep's own reload. A reload the phone may not have and the desktops
+do not need is not a device difference, it is a leftover. All three now read `location.pathname` and
+say so out loud if the client is somewhere other than `/chat`.
+
 The 189 also measured the allowlist itself: 22 were `GRP5-<mark>-R`, from the rename GRP-5 performs,
 and the pattern matched neither them nor the tombstones they leave. The server-side sweep would
 equally have spared a LIVE `GRP5-*-R`. Widen such a list by ENUMERATING what the runners mint -
