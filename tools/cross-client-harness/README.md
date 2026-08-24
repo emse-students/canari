@@ -154,10 +154,24 @@ reload that skips the PIN gate initialises before a session can attach, and on t
 line was missed entirely while the repair had plainly happened. The reload is gated on the ledger
 actually showing a deficit, because a fixed delay cannot reliably enter a window ~58 ms wide on web.
 
-**Tools** - `launch.mjs` `reload.mjs` `cleanup.mjs` `shot.mjs` `state.mjs` `results.mjs` operate the
-rig; `purge-devices.mjs` drives the real device panel (not the database); `ladder.mjs` `wsidle.mjs`
+**Tools** - `launch.mjs` `reload.mjs` `cleanup.mjs` `dismiss.mjs` `shot.mjs` `state.mjs` `results.mjs`
+operate the rig; `purge-devices.mjs` drives the real device panel (not the database); `ladder.mjs` `wsidle.mjs`
 `navclose.mjs` `synboot.mjs` `synopen.mjs` `synwatch.mjs` `ckpt.mjs` `burn.mjs` are the probes that
 took a specific measurement and were kept because the measurement is repeatable.
+
+**A DELETED GROUP IS TWO ESTATES, AND THE SWEEP OF ONE IS NOT THE SWEEP OF THE OTHER.** `cleanup.mjs`
+deletes the group; `dismiss.mjs` clears the copy each MEMBER'S CLIENT keeps afterwards, because the
+product deliberately keeps it - the conversation is marked `removed` and shown with a banner
+"instead of removing it silently", and only its owner may clear it. So the two sweeps look identical
+and are not: W1, which creates and then deletes, was measured **clean** on 2026-08-24 while W2, which
+is only a member, held **189** rows from the GRP phase alone. They share ONE allowlist (`debris.mjs`),
+and `dismiss.mjs` refuses to dismiss a group whose server row is still alive - a local dismissal there
+would hide it from this device while every other member kept theirs, which is not cleaning up.
+
+The 189 also measured the allowlist itself: 22 were `GRP5-<mark>-R`, from the rename GRP-5 performs,
+and the pattern matched neither them nor the tombstones they leave. The server-side sweep would
+equally have spared a LIVE `GRP5-*-R`. Widen such a list by ENUMERATING what the runners mint -
+`grep -n renameGroup *.mjs` is the whole enumeration - never by relaxing a shape until it fits.
 
 Three exist because a run once measured something other than what it claimed to, and each closes that
 hole with an assertion rather than a habit:

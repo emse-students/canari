@@ -302,6 +302,29 @@ swept. Three such existed (`g3-priv-a` and two `rep-repair-<mark>`, from hand-ma
 the repo mints) and were deleted BY NAME, not by widening the shape: a pattern loose enough to reach
 them is loose enough to reach a real salon.
 
+**AND A DELETED GROUP IS TWO ESTATES.** Deleting it server-side clears it from the CREATOR's client
+and from nobody else's: `initializeConnection.ts:171` forgets the member's WASM state - so she can no
+longer send - and then calls `onGroupDeletedRemotely`, which marks the conversation `removed` and
+shows it with a banner "instead of removing it silently". That state is a fact about what its owner
+was TOLD, so no later reconciliation may reach past it (`decideAbsentGroupFate`'s first guard), and
+the only exit is the owner clicking **"Supprimer localement"**. Correct for a person, wrong for a rig:
+measured 2026-08-24, W1 - which creates and deletes - was clean at 9 conversations, while W2, which is
+only ever a member, held **189** tombstoned rows from the GRP phase alone, each emitting a
+`[DISCOVERY] ... kept` line on every load of every later check. `dismiss.mjs` sweeps that estate, from
+`ConversationMeta.lifecycle` rather than from the row's caption - the sidebar preview of one of those
+rows announces a member ADDITION, the last message from before the deletion, which describes the
+conversation's state no better than any other message would.
+
+It shares ONE allowlist with `cleanup.mjs` ([debris.mjs](../../tools/cross-client-harness/debris.mjs)),
+because two lists disagreeing about what may be destroyed is the same defect with a longer fuse - and
+it refuses to dismiss a group whose server row is still ALIVE, since hiding it from one device while
+every other member keeps theirs is not cleaning up. **The 189 also measured the allowlist itself:** 22
+were `GRP5-<mark>-R`, from the rename GRP-5 performs to prove a rename is a broadcast, and the pattern
+matched neither them nor their tombstones - the server-side sweep would equally have spared a LIVE
+`GRP5-*-R` left by a run that died between the rename and its teardown. Widened by ENUMERATING what
+the runners mint (`grep -n renameGroup *.mjs` is the whole enumeration), never by relaxing a shape
+until it fits.
+
 **Delete test groups through the UI, never by SQL.** `DELETE /api/mls/groups/:groupId` emits nothing
 to clients: the notice is an E2EE MLS `groupDeleted` system message the CLIENT sends *before* calling
 the server, precisely because the server call hard-deletes `dm_group_members` and strips the routing a

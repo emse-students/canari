@@ -37,6 +37,7 @@
  */
 import { client, openChannel } from './chat.mjs';
 import { deleteChannel, deleteCommunity, enterCommunities, openCommunity } from './comm.mjs';
+import { isGroupDebris } from './debris.mjs';
 import { deleteGroup } from './groupnav.mjs';
 import { psql } from './ssh.mjs';
 import { PORTS } from './names.mjs';
@@ -67,30 +68,21 @@ const SALON_DEBRIS = /^c\d+(-[a-z]+)?-comm\d+-[0-9a-z]+$/;
 
 /** The community every check that does not build its own venue works inside. Never deleted. */
 /**
- * THE THIRD ESTATE: the throwaway DM GROUPS checks build, enumerated from the runners that mint them.
+ * THE THIRD ESTATE: the throwaway DM GROUPS checks build, whose allowlist now lives in
+ * `debris.mjs` because `dismiss.mjs` sweeps the CLIENT-SIDE half of the same estate and the two
+ * must never disagree about what may be destroyed.
  *
- * Every one of these deletes its own group as its last act, so debris here is a check that DIED - and
- * for READ-10 the deletion IS the stimulus, which makes a mid-run death leave a LIVE group rather
- * than a tombstone. Measured on prod 2026-08-21: twenty-five throwaway groups from every phase that
- * has ever built one, twenty-three of them tombstoned as designed, and TWO alive - both `READ10-*`,
- * from the two runs that died at the invite step while that check was being repaired.
+ * Every one of these deletes its own group as its last act, so debris here is a check that DIED -
+ * and for READ-10 the deletion IS the stimulus, which makes a mid-run death leave a LIVE group
+ * rather than a tombstone. Measured on prod 2026-08-21: twenty-five throwaway groups from every
+ * phase that has ever built one, twenty-three of them tombstoned as designed, and TWO alive - both
+ * `READ10-*`, from the two runs that died at the invite step while that check was being repaired.
  *
- * A TOMBSTONE IS NOT DEBRIS AND IS NOT TOUCHED. It is what a deleted group is supposed to look like,
- * the 90-day reaper owns it, and a sweep that "cleaned up" tombstones would be destroying the record
- * of every check that worked. Only `deletedAt IS NULL` is eligible.
- *
- * Enumerated, never widened by relaxing: `READ10-<mark>` (read.mjs), `DEL1-<mark>` (del1.mjs),
- * `HGRP<5>` (heal-w2.mjs), `HEALW2-<mark>` (newgroup.mjs's default), `GRP<n>-<mark>`
- * (grp-traffic.mjs). Nothing a person would type can collide with a `Date.now()` base-36 mark.
+ * A TOMBSTONE IS NOT DEBRIS AND IS NOT TOUCHED HERE. It is what a deleted group is supposed to look
+ * like, the 90-day reaper owns it, and a sweep that "cleaned up" tombstones would be destroying the
+ * record of every check that worked. Only `deletedAt IS NULL` is eligible. The copy a tombstone
+ * leaves on each MEMBER'S CLIENT is a different estate with a different owner - `dismiss.mjs`.
  */
-const GROUP_DEBRIS = [
-  /^READ10-[0-9a-z]+$/,
-  /^DEL\d*-[0-9a-z]+$/,
-  /^HGRP[0-9a-z]{4,6}$/,
-  /^HEALW2-[0-9a-z]+$/,
-  /^GRP\d+-[0-9a-z]+$/,
-];
-const isGroupDebris = (name) => GROUP_DEBRIS.some((r) => r.test(name));
 
 const SHARED = 'Campagne de test';
 
