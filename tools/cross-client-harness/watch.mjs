@@ -711,6 +711,18 @@ const NOTABLE = [
   /^\[PENDING\] \d+ pending invitation\(s\) to process$/,
   /^\[RUST::WARN\] Skipping KeyPackage already a member of the group$/,
   /^\[PENDING\] \S+ already a member of \S+ - invitation fulfilled, marked active$/,
+  // THE SAME DRIFT SEEN FROM THE TREE INSTEAD OF THE REGISTRY, and the third spelling of "the guard
+  // held" this family has cost a pass. `actions.ts:225` asks `leafIsInLocalTree` - deliberately the
+  // TREE and not the server's device list - and skips the Add when the leaf is already there,
+  // because re-adding invalidates the queued Welcome and produces the kick+re-add churn its own
+  // comment was written to end. There is a unit test on it
+  // (`actions.pendingInvitations.test.ts`), so this is a guaranteed path, not an accident.
+  //
+  // `notable` for the family's reason: the skip is correct, but reaching it means a `pending` row
+  // outlived the tree membership it describes, and a reader should see that. Landed in
+  // `unexplained` on GRP-5, pass 3 of 5, 2026-08-24 - the intermittence is just whether such a row
+  // happens to be pending when the sweep runs, which is why it read as non-reproducible.
+  /^\[PENDING\] \S+ already in tree for \S+ - skip \(will join via queued Welcome\)$/,
   // THE POST-WELCOME COOLDOWN DECLINING TO DO HARM. A `welcome_request` arrived for a device we
   // served seconds ago; it is still decrypting the Welcome and its history bundle, and kicking now
   // would evict a freshly-added leaf into `UseAfterEviction` on its first send. So it skips.

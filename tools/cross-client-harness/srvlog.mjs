@@ -60,6 +60,22 @@ const BENIGN = [
   // and is deliberately not matched here.
   /\[COMMIT\]\[commit-[0-9a-f]+\] Lock released for group=/,
   /\[(ADD_LOCK|RELEASE_LOCK)\] group=\S+ owner=\S+ (acquired|released)=true/,
+  // AND THE FAILED ACQUISITION, WHICH THE RULE ABOVE DELIBERATELY LEFT OPEN. Decided here with
+  // both ends read rather than by widening that pattern to `(true|false)`, because the two failures
+  // are not the same event and only one of them is routine.
+  //
+  // `acquired=false` IS THE LOCK DOING ITS JOB. `locks.controller.ts` is a plain `SET NX EX`, and
+  // its only caller is the pending-invitation sweep (`actions.ts:170`), which on a false logs
+  // `lock held by another device - skip` and CONTINUES - no alternative path, no retry storm, the
+  // holder completes the Add and the loser picks it up on its next sweep. Every owner runs that
+  // sweep on every device it has, so an owner with three devices in one group produces two of these
+  // by construction. That is mutual exclusion, not contention to investigate; GRP's window on
+  // 2026-08-24 carried three, on three different groups, all from one owner's two web devices.
+  //
+  // WHAT WOULD BE THE REAL SIGNAL IS A RATE, NOT A LINE: the same group failing to be acquired for
+  // longer than the 30 s TTL means the holder died mid-Add. No single line can say that, so nothing
+  // here pretends to - it is what the queue-depth report and `[COMMIT]` in NOTABLE are for.
+  /\[ADD_LOCK\] group=\S+ owner=\S+ acquired=false ttl=\d+s/,
   // A membership read. It answers a question; it changes nothing.
   /\[MembersController\] \[GET_USER_MEMBERS\] group=\S+ count=\d+/,
   // Presence, which every connected client refreshes continuously. CASE-INSENSITIVE because the
@@ -123,6 +139,11 @@ const BENIGN = [
   /\[MessagingService\] \[SOCIAL_PUSH\]\[social-push-[0-9a-f]+\] No token for user=\S+/,
   // Housekeeping and one real user playing the anti-bot minesweeper. Neither is about this campaign.
   /\[AuthSessionsService\] Swept \d+ expired session\(s\)/,
+  // A SESSION BEING OPENED, which is what a login IS. Every phase that starts, reloads or reconnects
+  // a client mints one, so a campaign window without these would be the surprising result. Benign
+  // here does not weaken the security signal: the line that MATTERS on this service is
+  // `Refresh token replay detected`, which is in SEVERE and not adjacent to this pattern.
+  /\[AuthSessionsService\] Session opened sid=\S+ user=\S+/,
   /\[MinesweeperService\] minesweeper (challenge started|score ok) /,
   // THE CLIENT BOOTSTRAP, server side. Every one of these is a client coming up and asking for what
   // it needs: its groups, one page of each group's history, its pending mailbox, its key package,
@@ -388,6 +409,13 @@ const BENIGN = [
  */
 const NOTABLE = [
   /welcome_request|history_request|history_bundle|history_digest/i,
+  // A LOCK THAT WAS GONE BEFORE ITS HOLDER RELEASED IT. The other half of the failed-lock split in
+  // BENIGN, and the half that is NOT routine: `releaseAddLock`'s Lua script deletes the key only if
+  // this device still owns it, so `released=false` means the value changed underneath - the 30 s TTL
+  // expired mid-Add, or another device overwrote it. Either way an Add ran longer than the window
+  // sized for the worst-case mobile path, which is the shape a stuck or very slow commit takes.
+  // Shown, never fatal: one is a slow phone, a run of them on one group is the thing to chase.
+  /\[RELEASE_LOCK\] group=\S+ owner=\S+ released=false/,
   // TWO THINGS A BOOT DOES THAT ITS ROUTE TABLE DOES NOT, and they are the reason the banner above
   // was demoted to BENIGN rather than the whole boot being waved through.
   //

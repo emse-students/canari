@@ -156,6 +156,14 @@ const BENIGN_CASES = [
   `${NEST}[MessagingService] [COMMIT][commit-789135f0] Lock released for group=00000000-0000-4000-8000-000000000001`,
   `${NEST}[LocksController] [ADD_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b acquired=true ttl=30s`,
   `${NEST}[LocksController] [RELEASE_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b released=true`,
+  // A FAILED ACQUISITION, WHICH IS THE LOCK WORKING. Its only caller skips and retries on the next
+  // sweep, and every owner sweeps on every device it owns, so an owner with two devices in a group
+  // produces one of these by construction. Three landed in GRP's window on 2026-08-24 from one
+  // owner's two web devices. The NOTABLE case below is its twin and must NOT match here.
+  `${NEST}[LocksController] [ADD_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b acquired=false ttl=30s`,
+  // A LOGIN. Every phase that starts, reloads or reconnects a client mints one; the security signal
+  // on this service is `Refresh token replay detected`, which is SEVERE and asserted apart.
+  `${NEST}[AuthSessionsService] Session opened sid=00000000-0000-4000-8000-000000000001 user=aaaaaaaaaaaaaaaa`,
   `${NEST}[MembersController] [GET_USER_MEMBERS] group=00000000-0000-4000-8000-000000000001 count=5`,
   // The two icons that are SERVED. Both statuses need a fixture: a conditional request answers 304
   // and a rule matching only 200 would break a clean window on a second visit.
@@ -174,6 +182,11 @@ for (const l of BENIGN_CASES) {
 }
 
 const NOTABLE_CASES = [
+  // THE FAILED RELEASE, WHICH IS NOT THE FAILED ACQUISITION. The Lua script deletes the key only if
+  // this device still owns it, so a false means the value changed underneath - the 30 s TTL expired
+  // mid-Add, or another device took it. That is a slow or stuck commit, and it must not ride into
+  // BENIGN on the back of its `acquired=false` twin: the two share a tag and nothing else.
+  `${NEST}[LocksController] [RELEASE_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b released=false`,
   // THE TWO BOOT LINES THAT ARE NOT THE ROUTE TABLE: a capability whose absence nothing else would
   // reveal, and a deletion pass crossing whatever window it lands in.
   `${NEST}[AppController] [FIREBASE] Admin SDK initialized`,

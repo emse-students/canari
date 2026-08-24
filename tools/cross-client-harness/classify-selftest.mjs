@@ -128,6 +128,16 @@ const CASES = [
     '[01:40:12] [PENDING] tauri-d82cd226… already a member of 8325af55… - invitation fulfilled, marked active',
     'notable',
   ],
+  // THE FOURTH SPELLING OF THE SAME DRIFT, taken from the TREE rather than the server's registry.
+  // `actions.ts:225` skips the Add when the leaf is already a leaf, because re-adding invalidates
+  // the queued Welcome and causes the kick+re-add churn the guard exists to end. Raised
+  // `unexplained` on GRP-5, pass 3 of 5, 2026-08-24 - and only on pass 3, because the intermittence
+  // is whether such a row happens to be pending when the sweep runs.
+  [
+    'log',
+    '[11:57:26] [PENDING] tauri-d82cd226…-msgnk8nf-gyb2 already in tree for 5b186d04… - skip (will join via queued Welcome)',
+    'notable',
+  ],
   // Plural, because the count is a count and a rule pinned to `1` would forgive the interesting case.
   ['log', '[01:40:12] [PENDING] 4 pending invitation(s) to process', 'notable'],
   // AND THE LINE THE SAME TAG PRINTS WHEN THERE IS NOTHING TO DO, which must stay out of `notable`:
