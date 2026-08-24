@@ -32,7 +32,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PHASES, PHONE_SCRIPTS } from './checks.mjs';
+import { PHASES, PHONE_SCRIPTS, devicesFor } from './checks.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -110,6 +110,39 @@ for (const [name, phase] of Object.entries(PHASES)) {
         );
       }
     }
+  }
+}
+
+// ---------------------------------------------------------------------------- devicesFor, by case
+//
+// The checks above verify the DECLARATIONS agree with the scripts. This block verifies the function
+// that READS them, because that is what a `--file` run actually calls and the two can be right
+// separately: a correct `PHONE_SCRIPTS` read by a matcher that only understands bare file names
+// demands a phone for `del.mjs --only 2`, which is the refusal-with-no-reason the narrowing exists to
+// prevent, arriving through the mechanism meant to prevent it.
+const cases = [
+  // One row in eight takes the phone, and the entry that says so is a whole invocation.
+  { file: 'del.mjs', args: ['--only', '7'], phase: 'DEL', a1: true },
+  { file: 'del.mjs', args: ['--only', '2'], phase: 'DEL', a1: false },
+  { file: 'del.mjs', args: ['--only', '10'], phase: 'DEL', a1: false },
+  // A file whose whole subject IS the second device, and the case that started all of this.
+  { file: 'comm25.mjs', args: [], phase: 'COMM', a1: true },
+  // A name in no phase: the two browsers, and `phase: null` so the caller can SAY it defaulted.
+  { file: 'nosuchscript.mjs', args: [], phase: null, a1: false },
+];
+for (const c of cases) {
+  const got = devicesFor(c.file, c.args);
+  const label = [c.file, ...c.args].join(' ');
+  if (got.phase !== c.phase) {
+    problems.push(`devicesFor(${label}) resolved phase ${got.phase}, expected ${c.phase}.`);
+  }
+  if (got.devices.includes('A1') !== c.a1) {
+    problems.push(
+      `devicesFor(${label}) -> ${got.devices.join(' ')}; A1 ${c.a1 ? 'expected' : 'not expected'}.`
+    );
+  }
+  if (!got.devices.includes('W1') || !got.devices.includes('W2')) {
+    problems.push(`devicesFor(${label}) -> ${got.devices.join(' ')}; both browsers are always owed.`);
   }
 }
 

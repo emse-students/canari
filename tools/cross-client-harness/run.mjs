@@ -32,7 +32,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { PHASES, PHONE_SCRIPTS } from './checks.mjs';
+import { PHASES, devicesFor } from './checks.mjs';
 import { awaitQuiet } from './deploy.mjs';
 import { groupTombstones, sweepDismissed } from './dismiss.mjs';
 import { srvReport, srvSummary } from './srvlog.mjs';
@@ -677,21 +677,16 @@ if (flag('file')) {
   // `--no-preflight` belongs here, and nothing can tell them apart by shape alone.
   const forwarded = argv.slice(at + 2);
   jobs.push({ phase: '(file)', script: [f, ...forwarded].join(' ') });
-  // THE DEVICES COME FROM THE SCRIPT'S OWN PHASE, NEVER FROM A DEFAULT. `--file` used to preflight
-  // W1 and W2 whatever it was about to run, so `--file comm25.mjs` - the one COMM check whose whole
-  // subject is a SECOND DEVICE - started against a phone nobody had looked at. `checks.mjs` already
-  // says COMM needs A1 and says why; reading it here is what makes that declaration load-bearing
-  // rather than documentation. A script belonging to no phase keeps the old pair, which is the only
-  // honest answer when nothing has declared what it needs.
+  // THE DEVICES COME FROM THE SCRIPT'S OWN PHASE, NEVER FROM A DEFAULT, and the reading of that is
+  // `devicesFor` in `checks.mjs` - beside the declaration it reads, and the only copy. `--file` used
+  // to preflight W1 and W2 whatever it was about to run, so `--file comm25.mjs` - the one COMM check
+  // whose whole subject is a SECOND DEVICE - started against a phone nobody had looked at.
   //
-  // BUT A PHASE'S `needs` IS THE UNION OVER ITS SCRIPTS, so read alone it refuses runs it has no
-  // reason to refuse - and an operator taught to answer that with `--no-preflight` has disarmed the
-  // gate entirely. Where a phase declares WHICH of its scripts need the phone (`PHONE_SCRIPTS`), one
-  // that does not is preflighted without it.
   // A SCRIPT NAME WITH A SPACE IN IT IS A QUOTED ARGUMENT, AND IT USED TO COST THE PREFLIGHT ITS
   // TEETH IN SILENCE. `--file "mut.mjs --only 18"` makes `f` the whole string, which matches no
-  // phase, so `owner` fell through to the `['W1','W2']` default - the exact outcome the block below
-  // exists to prevent. It happened on 2026-08-22 and MUT-18 ran with A1 unarmed and unstamped.
+  // phase, so it fell through to the `['W1','W2']` default - the exact outcome `devicesFor` exists to
+  // prevent. It happened on 2026-08-22 and MUT-18 ran with A1 unarmed and unstamped. The guard stays
+  // HERE because it is about this parser's own input, not about what a phase declares.
   if (f.includes(' ')) {
     throw new Error(
       `--file takes ONE script name; "${f}" is a quoted argument list. ` +
@@ -699,26 +694,14 @@ if (flag('file')) {
         `--file ${f.split(' ')[0]} ${f.split(' ').slice(1).join(' ')}`
     );
   }
-  const owner = Object.entries(PHASES).find(([, p]) =>
-    p.scripts.some((s) => s.split(' ')[0] === f)
-  );
-  // AND A NAME BELONGING TO NO PHASE SAYS SO. Falling back to the pair is the honest answer, but a
-  // silent fallback is indistinguishable from a phase that really does need only two browsers.
-  if (!owner) {
+  const chosen = devicesFor(f, forwarded);
+  // A NAME BELONGING TO NO PHASE SAYS SO. Falling back to the pair is the honest answer, but a silent
+  // fallback is indistinguishable from a phase that really does need only two browsers - which is why
+  // `devicesFor` returns the phase it resolved rather than only the devices.
+  if (chosen.phase === null) {
     console.log(`  note ${f} belongs to no phase in checks.mjs - preflighting W1 W2 by default`);
   }
-  const withPhone = owner ? PHONE_SCRIPTS[owner[0]] : undefined;
-  // A FILE IS NOT ALWAYS A ROW, and reading this map by NAME ALONE could not say so. `del.mjs` holds
-  // eight of them and exactly one - `--only 7` - touches the phone, so a name-only entry would demand
-  // a phone for `del.mjs --only 2`: the refusal-with-no-reason this whole block exists to prevent,
-  // arriving through the map meant to prevent it. An entry may therefore name the ARGUMENTS too,
-  // exactly as `PHASES.scripts` already does, and the INVOCATION is matched against both forms.
-  const invocation = [f, ...forwarded].join(' ');
-  const need =
-    withPhone && !withPhone.includes(f) && !withPhone.includes(invocation)
-      ? owner[1].needs.filter((d) => d !== 'A1')
-      : (owner?.[1].needs ?? ['W1', 'W2']);
-  for (const d of need) devices.add(d);
+  for (const d of chosen.devices) devices.add(d);
 } else {
   const wanted = flag('all') ? Object.keys(PHASES).filter((p) => PHASES[p].scripts.length) : named;
   for (const name of wanted) {
