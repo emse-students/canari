@@ -574,6 +574,13 @@ async function grp3() {
       // The positive has a deadline for the same reason the negative above does: the commit travels
       // after the click that made it, so reading the instant `removeMember` returns is a race.
       const evictLine = await awaitLine(o2.cx, '[EVICT] Removed from', 15000);
+      // EVIDENCE, NOT AN ASSERTION, and the difference is the point. The guard added on 2026-08-24
+      // fires only when the removed device SELECTS its retired conversation, which this check does
+      // not control - the 403 it replaces was intermittent for exactly that reason. Asserting the
+      // line would make a correct run fail whenever the selection did not happen; omitting it
+      // entirely would leave a clean GRP-3 unable to say whether it was clean because the guard held
+      // or clean because the path was never walked. So it is recorded, and the row separates them.
+      const rosterGuard = consoleLines(o2.cx).some((l) => /\[VERIFY\] Roster of .* not requested/.test(l));
       // The negative needs no deadline of its own: it is read after that window AND after the
       // 30 s negative window, so anything a removal was going to provoke has had time to appear.
       const cameBack = consoleLines(o2.cx).filter((l) =>
@@ -599,6 +606,9 @@ async function grp3() {
           peerStillHoldsPreRemovalMessage: peerStillHasBefore,
           peerReceivedPostRemovalMessage: peerGotAfter,
           removedDeviceLearntFromTheCommit: evictLine !== null,
+          // false means the removed device never selected the conversation on this run, NOT that
+          // the guard failed - the 403's absence is then unproven rather than disproven.
+          rosterRequestSuppressed: rosterGuard,
           // The LINES, not a count: a failure here has to name what the client asked for, or the
           // row says only that something happened and the log has to be opened to find out what.
           removedDeviceAskedToComeBack: cameBack.slice(0, 4),

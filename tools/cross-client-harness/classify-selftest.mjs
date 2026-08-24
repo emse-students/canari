@@ -453,6 +453,27 @@ const CASES = [
   ],
   // And the dismissal that ends that row's life, which READ-10 now performs itself.
   ['log', '[20:24:01] [DELETE_LOCAL] Local conversation deleted: 642f389a…', 'notable'],
+  // THE TWO SIDES OF THE 2026-08-24 MEMBERSHIP FIX, pinned together because they are opposite kinds
+  // of line emitted by the same function, and the temptation was to allowlist both.
+  //
+  // The first REPLACES an error: `loadGroupMembers` asked a members-only endpoint for the roster of a
+  // conversation this device had been removed from, so GRP-3 kept recording
+  // `GET /api/mls/groups/:id/members -> 403`. A line whose whole job is to stand where a 403 stood
+  // must not itself count as dirt - it is expected AND necessary, since without it a clean GRP-3
+  // cannot be told from one that never selected the conversation.
+  [
+    'log',
+    '[12:41:03] [VERIFY] Roster of f3f2dc35… not requested - conversation retired',
+    'benign',
+  ],
+  // The second is the visible end of something upstream: a server re-registration that failed. It
+  // was a `catch {}` with no log at all until the same change, and it stays UNEXPLAINED on purpose -
+  // it fires only when a repair did not work, and that is a thing somebody must come and look at.
+  [
+    'log',
+    '[12:41:03] [SYNC] Server re-registration of f3f2dc35… failed: Error: NetworkError',
+    'unexplained',
+  ],
 ];
 
 let failures = 0;

@@ -235,6 +235,14 @@ const BENIGN = [
   /^\[PENDING\] No pending MLS messages/,
   /^\[HISTORY\]/,
   /^\[READ\]/,
+  // A REQUEST DELIBERATELY NOT MADE, which is the positive evidence of the 2026-08-24 fix and would
+  // otherwise be dirt for announcing itself. `loadGroupMembers` reached a members-only endpoint with
+  // no membership guard, so every removed device selecting its retired conversation logged a 403 -
+  // the very dirt GRP-3 kept recording. The guard now says so instead, and a line whose whole job is
+  // to replace an error must not be counted as one. Expected AND necessary: without it a clean GRP-3
+  // cannot be told from one that never selected the conversation, which is why the check records
+  // whether this fired rather than asserting it - the selection is not deterministic.
+  /^\[VERIFY\] Roster of [0-9a-f]{8}… not requested - conversation retired$/,
   /^\[appLink\] In-app navigation/,
   // A message being decrypted and handed to the chat is the SUCCESS path of every check in this
   // campaign, and it was landing in `unexplained` - so a clean run reported dirt and every verdict
