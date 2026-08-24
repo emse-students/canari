@@ -443,5 +443,48 @@ const strangerOk =
 if (!strangerOk) failures++;
 console.log(`${strangerOk ? 'ok  ' : 'FAIL'} unexplained an unknown line matches no rule`);
 
+// THE ASSOCIATION CMS, twenty-three unexplained lines across a GRP-6 window on 2026-08-24 and the
+// reason its server verdict was dirty on five passes out of six while every check inside it passed.
+// The rules that forgive them are admitted only because prod is the test server, and the pairs below
+// are what keeps that admission narrow: the two spellings that must stay UNEXPLAINED cannot be
+// caught on a live window, because a rule grown too wide only makes the pile SMALLER.
+const cms = [
+  // Reads by an admin, at DEBUG, on routes the campaign owns no subject for.
+  ['listing categories is a read', `${NEST}[AssociationCategoriesService] list categories`, 'benign'],
+  ['listing poster projects is a read', `${NEST}[PosterService] list poster projects`, 'benign'],
+  ['loading one poster layout is a read', `${NEST}[PosterService] get poster project a533b4f1-9c08-48e6-9a23-488be49207b2`, 'benign'],
+  // Edits to the same layout. Forgiven because they name a poster, never one of our subjects.
+  ['editing a poster layout changes nothing we measure', `${NEST}[PosterService] update poster project a533b4f1-9c08-48e6-9a23-488be49207b2`, 'benign'],
+  ['publishing one is the same', `${NEST}[PosterService] publish poster project a533b4f1-9c08-48e6-9a23-488be49207b2`, 'benign'],
+  ['and so is withdrawing it', `${NEST}[PosterService] unpublish poster project a533b4f1-9c08-48e6-9a23-488be49207b2`, 'benign'],
+  ['reordering an association members is a mutation on an association', `${NEST}[AssociationsService] reorderMembers: 3 members reordered in bcdac607-eed0-4d94-b4f3-f44882897f52`, 'benign'],
+  // THE TWO NEAR-MISSES, and the point of this table. `create` names a SUBJECT and `remove` destroys
+  // one; both share every other word with the six lines above, so a rule anchored on the service
+  // rather than the sentence would have swallowed them silently. Neither has appeared in a window
+  // yet, and the day either does it must be a finding and not a forgiven line.
+  ['creating a poster names the person who did it', `${NEST}[PosterService] create poster project by aaaaaaaa`, 'unexplained'],
+  ['destroying one is never routine', `${NEST}[PosterService] remove poster project a533b4f1-9c08-48e6-9a23-488be49207b2`, 'unexplained'],
+];
+
+// THE SESSION/DEVICE PAIR, one function in `auth-sessions.service.ts` writing both, seven lines
+// apart, and they must NOT share a bucket. The DEBUG one is the ordinary end of a login and was the
+// last unexplained line in the GRP-6 window of 2026-08-24. The WARN one is sessions being DESTROYED
+// because two of them claimed one device, and it reaches a reader through the broad `revoke` rule in
+// NOTABLE - which is where this pair earns its keep: the new benign rule is spelt to the sentence,
+// so widening it to the service would have moved a real revocation into the silent bucket and left
+// only the harmless half visible.
+const sessionDevice = [
+  ['a session learning its device is the end of a login', `${NEST}[AuthSessionsService] Session sid=5d3174de-c729-40f1-8239-8b5005af27f7 bound to device web-aaaaaaaa-msg9s7q3-pvaj`, 'benign'],
+  ['a session revoked for claiming a device reaches a reader', `${NEST}[AuthSessionsService] Revoked 2 unreachable session(s) claiming device web-aaaaaaaa-msg9s7q3-pvaj for user=aaaaaaaa - kept sid=5d3174de-c729-40f1-8239-8b5005af27f7`, 'notable'],
+];
+for (const [name, line, want] of sessionDevice) {
+  const got = matches(NOTABLE_RULES, line) ? 'notable' : matches(BENIGN_RULES, line) ? 'benign' : 'unexplained';
+  check(`${want.padEnd(11)}  ${name}`, got, want);
+}
+for (const [name, line, want] of cms) {
+  const got = matches(NOTABLE_RULES, line) ? 'notable' : matches(BENIGN_RULES, line) ? 'benign' : 'unexplained';
+  check(`${want.padEnd(11)}  ${name}`, got, want);
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall good');
 process.exit(failures ? 1 : 0);

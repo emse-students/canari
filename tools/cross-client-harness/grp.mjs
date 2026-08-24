@@ -789,6 +789,30 @@ async function grp6() {
       const roster = await panelOf(w1);
       await closeOverlays(w1);
 
+      // THE EVIDENCE THE 403 NEEDED AND DID NOT CARRY. A `GET /api/mls/group-info/<id> -> 403`
+      // on the leaver has exactly ONE caller in the app - `externalJoin`, reached only from
+      // `requestReAdd`, which arms a PERSISTENT not-ready marker one line before calling it. Yet
+      // the leaver held no such marker after the run, so the only path that can emit the request
+      // is contradicted by the state it must leave behind, and the five-line record could not
+      // separate the candidates: recovery chasing the group we just left, a refused re-publish,
+      // or a re-add honoured and later undone. The recovery seam narrates every step it takes;
+      // a verdict reporting the symptom while dropping that narration is a verdict whose reader
+      // has to reproduce it by hand to learn anything. This is that narration, kept on the
+      // leaver, bounded, and recorded whatever the outcome - an ABSENCE of these lines beside a
+      // 403 is itself the finding, and it is only assertable if the field is always present.
+      const recoveryOnLeaver = consoleLines(o2.cx)
+        // Literal `includes`, not a regex: the bracketed tags a regex would have to escape are
+        // the shape `rawcheck.mjs` exists to catch, and it eats the escape SILENTLY - `[READD]`
+        // survives as a character class matching R, E, A or D, which matches nearly every line.
+        // This form cannot be mangled, and reads as what it means.
+        .filter(
+          (l) =>
+            l.includes('[READD]') ||
+            l.includes('[SYNC_WATCHDOG]') ||
+            l.includes('externalJoin') ||
+            l.includes('welcome_request')
+        )
+        .slice(-14);
       const ok = leaverReadBefore && leaverStillLists === false && !leaverGotAfter;
       await recordObserved(
         'GRP-6',
@@ -799,6 +823,7 @@ async function grp6() {
           leaverStillListsGroup: leaverStillLists,
           leaverReceivedPostDepartureMessage: leaverGotAfter,
           rosterOnRemainingMember: roster.count, // EVIDENCE: a leave issues no Remove commit
+          recoveryOnLeaver, // EVIDENCE: which seam, if any, reached for the group after the leave
           negativeWindowMs: NEGATIVE_WINDOW_MS,
         },
         { W1: o1, W2: o2 }

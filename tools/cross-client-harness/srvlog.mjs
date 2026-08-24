@@ -144,6 +144,18 @@ const BENIGN = [
   // here does not weaken the security signal: the line that MATTERS on this service is
   // `Refresh token replay detected`, which is in SEVERE and not adjacent to this pattern.
   /\[AuthSessionsService\] Session opened sid=\S+ user=\S+/,
+  // AND THE STEP RIGHT AFTER IT: the session being stamped with the device it belongs to, once, the
+  // first time that pair is seen. Every login by a client the box has not carried before writes one,
+  // so W1 and W2 produce them all through a campaign - and this was the LAST unexplained line in the
+  // GRP-6 window of 2026-08-24, dirtying a server verdict on its own.
+  //
+  // ITS SIBLING IS DELIBERATELY LEFT OUT, and it is the reason this rule is spelt to the sentence
+  // rather than the tag. Seven lines above it in the same function, the same service writes
+  // `Revoked N unreachable session(s) claiming device ... - kept sid=...` at WARN: a session really
+  // being destroyed because two of them claimed one device. That one reaches a reader through the
+  // broad `revoke` rule in NOTABLE, and a rule anchored on `AuthSessionsService` would have pulled
+  // it down here into the silent bucket instead. The self-test pins the pair for that reason.
+  /\[AuthSessionsService\] Session sid=\S+ bound to device \S+$/,
   /\[MinesweeperService\] minesweeper (challenge started|score ok) /,
   // THE CLIENT BOOTSTRAP, server side. Every one of these is a client coming up and asking for what
   // it needs: its groups, one page of each group's history, its pending mailbox, its key package,
@@ -323,6 +335,31 @@ const BENIGN = [
   // it appears in one of our windows we want to see it.
   /\[PartnershipsService\] \[PARTNERSHIP\] create card: association=[0-9a-f]{8} mode=\S+/,
   /\[PartnershipsService\] \[PARTNERSHIP\] added \d+ code\(s\) to card=[0-9a-f]{8}/,
+  // THE ASSOCIATION CMS BEING USED BY AN ADMIN WHILE THE CAMPAIGN RAN - the same story as the two
+  // partnership lines above, one feature further along, and the reason a GRP-6 window was reported
+  // NOT CLEAN on five passes out of six on 2026-08-24 while every check inside it passed.
+  //
+  // ATTRIBUTION IS CERTAIN HERE, WHICH IS WHY THESE ARE ALLOWED AT ALL. Every poster route sits
+  // behind `GlobalAdminOrBdeSuperAdminGuard`, so the caller is a global admin or a BDE super-admin,
+  // and the campaign owns no such subject and has no row for a poster layout. The shape of the run
+  // says the same thing on its own: get, update, get, update, unpublish, publish, inside twenty-one
+  // seconds, which is a person in an editor and not a fixture.
+  //
+  // THEY EXIST BECAUSE PROD IS THE TEST SERVER, and they stop existing when that stops being true:
+  // `dev.canari-emse.fr` becomes a real second environment after the campaign (CLAUDE.md, decided
+  // 2026-08-17), and this whole block should be DELETED with that move rather than carried across
+  // it. It buys a readable server verdict for the campaign running now, and nothing more.
+  //
+  // NARROW, PER MESSAGE, AND ONLY WHAT WAS READ - the rule this file states about itself. Two
+  // spellings of the same family are deliberately absent: `create poster project by <user>` names a
+  // subject, and `remove poster project` destroys one. Neither has appeared in a window yet, and the
+  // day either does we want to see it.
+  /\[AssociationCategoriesService\] list categories$/,
+  /\[PosterService\] list poster projects$/,
+  /\[PosterService\] (get|update|publish|unpublish) poster project [0-9a-f-]{36}$/,
+  // One association's member list being reordered - a mutation, forgiven for its neighbours' reason:
+  // it names an ASSOCIATION, never one of our subjects, and no check reads a member order.
+  /\[AssociationsService\] reorderMembers: \d+ members reordered in [0-9a-f-]{36}$/,
   // A CONTAINER'S BOOT BANNER - ONE BOOT SAID A HUNDRED AND SIX TIMES.
   //
   // A redeploy landing inside an observation window put 106 unexplained lines into the READ phase on
