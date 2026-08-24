@@ -434,6 +434,22 @@ const BENIGN = [
   // check can cause or prevent. Named rather than dropped, so that the day the count changes shape -
   // an error beside it, or one per second - it is a line in the window and not an absence.
   /\[InternalUsersController\] internal formations listing rows=\d+/,
+  // AND THE OTHER PRODUCT ASKING A QUESTION ABOUT OUR USERS. `GET /api/public/cotisant-status` is Le
+  // Cercle's INBOUND check - its own wiki names when it fires, "sign-in, and every session
+  // rotation" (`le-cercle/src/lib/server/canari/memberships.ts`) - so the caller is a different
+  // application on a public endpoint, and no chat check can cause it or prevent it. That is the
+  // `internal formations listing` case again, and it earns the same disposition rather than a new
+  // argument.
+  //
+  // It was the ONE unexplained server line in the whole of GRP's first pass on 2026-08-25, and it
+  // read as a flake because it appeared in that pass alone - which is exactly what "somebody else's
+  // traffic" looks like from inside a five-pass run. Named rather than dropped, for the reason the
+  // line above gives: the day it arrives once a second, or with an error beside it, the count is in
+  // the window instead of the silence being mistaken for absence.
+  //
+  // The `sub` is truncated to eight characters where it is logged (`public.controller.ts:179`), so
+  // the rule can be written tightly without the pattern itself naming anybody.
+  /\[PublicController\] \[CERCLE\] cotisant-status assoSlug=\S+ sub=[0-9a-f]{8}/,
 ];
 
 /**

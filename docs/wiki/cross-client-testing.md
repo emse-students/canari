@@ -275,7 +275,7 @@ looked for the file. The other nine are still to write.
 
 | Id | The crossing | Needs | State |
 | --- | --- | --- | --- |
-| DEL-1 | Peer deletes while a history solicitation for that group is outstanding | `W1 W2` | `VACUOUS` on `c6eb7b20` - the check armed nothing. Its probe asserted a `localStorage` marker that no longer exists; the live mechanism is `history.ts`'s `past-epoch-application` branch plus `historyReconcile.ts`, and the probe is owed a rewrite against those before this row can mean anything |
+| DEL-1 | Peer deletes while a history solicitation for that group is outstanding | `W1 W2` | `VACUOUS` on `c6eb7b20` - the check armed nothing. Its probe asserted a `localStorage` marker and a banner the product no longer has, so both assertions were absences no build could make present. **Rewritten in `a343797f`**: it arms on `[HISTORY_RECONCILE]` lines naming the group, and asserts their absence across a real socket cut on the same page - the state is in memory, so an absence read after a reload is free. Re-run owed |
 | DEL-2 | Peer deletes while a message from us is in the outbox | `W1 W2` | `PASS 1/1` |
 | DEL-3 | Both peers delete the same conversation within a second | `W1 W2` | `PASS 1/1` |
 | DEL-4 | Delete a conversation while its media is still uploading | `W1 W2` | `PASS 1/1` |
@@ -290,14 +290,14 @@ looked for the file. The other nine are still to write.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| TAB-1 | Backgrounded tab receives; title/badge updates | `W1 W2` | `pending` - largely subsumed by MSG-8/8b |
+| TAB-1 | Backgrounded tab receives; title/badge updates | `W1 W2` | `pending` - RE-SCOPED 2026-08-24, because half the subject is absent from the product: the title and the favicon never move for an unread message (MSG-8b's own evidence, four runs), and the in-page badge cannot be seen by a backgrounded user. The real out-of-page signal is a web `Notification`, which MSG-8b's DOM probe structurally cannot observe - so `tab1.mjs` asserts THAT: exactly one while hidden, NONE while visible and focused, tag naming the conversation. The permission-gated gap it cannot assert is filed P3 in [backlog](backlog.md) |
 | TAB-2 | Tab closed, message arrives, tab reopened: present exactly once | `W1 W2` | `pending` |
 | TAB-3 | Whole browser killed and relaunched: all arrive, no re-login | `W1 W2` | `pending` |
-| TAB-3b | Cold-start timing, five runs | `W1 W2` | `pending` - one unexplained 77.7 s run stands on the record, not reproduced in four further runs |
+| TAB-3b | Cold-start timing, five runs | `W1 W2` | `pending` - one unexplained 77.7 s run stands on the record, not reproduced in four further runs. `tab3b.mjs` now arms it: five cold starts, each timed in FOUR phases (process, render, PIN, catch-up) rather than one total, so an outlier names the phase it lived in - which a single total cannot, and which is why the 77.7 s is still unexplained |
 | TAB-4 | Two tabs of the SAME account: no double-send, no epoch fight | `W1 W2` | `pending` |
 | TAB-5 | Reload fired under 100 ms after submit: sent once or clearly queued, never lost | `W1 W2` | `pending` |
 | TAB-6 | Delete the refresh cookie, then act: clean re-login, not a silent empty list | `+user` | `pending` - the re-login costs the 2FA |
-| TAB-7 | Offline -> act -> online, tab never reloaded | `W1 W2` | `pending` |
+| TAB-7 | Offline -> act -> online, tab never reloaded | `W1 W2` | `pending` - `tab7.mjs` written 2026-08-24, never run. It asserts "never reloaded" with a `window` beacon rather than assuming it, and proves its own cut with `awaitSevered` |
 
 ## 12 - MULTI - one user, two devices
 

@@ -1603,6 +1603,43 @@ recovery: it destroys the evidence it was meant to recover.** Each check listing
 how they drift apart from the definition of `clean`, so they are listed once, next to it: `dirtOf()`
 returns every clean-breaking bucket that is non-empty, and checks record that.
 
+### Classify the SITE, not the line - a run finds spellings ONE AT A TIME
+
+Written 2026-08-25, out of GRP x5. Three of its five passes came back `PASS-DIRTY`, on three
+different rows, for three different lines - and all three were the SAME log site saying the same
+thing in a spelling the classifier had not met: pass 2 the pending sweep's `local conversation not
+ready`, pass 3 its `lock held by another device - skip`, pass 5 the welcome buffer's `Buffering
+message for group X`. Each cost a dirty verdict, an investigation and an edit to `watch.mjs`.
+
+**And each edit landed MID-RUN, which disqualifies the run that produced it.** Passes measured
+against different rule sets are not five passes of one check; the instrument changed between them, so
+the five together cannot support "clean 5/5" however many of them were clean. That is the real cost,
+and it is paid once per spelling.
+
+So when a line lands in `unexplained`, the unit of work is its SITE, never the line:
+
+1. **Enumerate every log call under that tag, in the file, in one pass** - `[PENDING]` was 19 calls,
+   `[QUEUE]` 23. Read the templates exactly, including the ones built from a `reason` or `trigger`
+   variable, and enumerate that variable's values from its type or its call sites rather than
+   writing `\S+` and hoping. `UnackedReason` has exactly two members; the rule names both, so a
+   third one appearing lands in `unexplained` where it belongs.
+2. **Measure where each spelling ALREADY lands** - a throwaway probe reusing `classify-selftest`'s
+   `cxOf` shape, printing the buckets for every line. Never assume: half of `[QUEUE]` was already
+   classified by generic rules, one of them by accident of a word (`socket closed, the reconnect
+   pull covers it` reached `stateChanges` because it says "reconnect").
+3. **Pin every spelling in `classify-selftest.mjs`**, including the ones already correct. The rule
+   that classifies them today is not the rule that will exist after the next widening.
+4. **Name the ones left deliberately ruleless, and why**, in the block itself - the `console.error`
+   siblings that must keep breaking `clean`, the fallback whose whole meaning is that the primary
+   path failed. A reader who cannot tell "not yet classified" from "classified as a finding" will
+   eventually classify it.
+
+**And check the LEVEL the app writes it at.** `console.warn` has its own bucket, reported but
+non-breaking by design, so a line that names a defect and is written at `warn` is silent until a
+`SEVERE` rule claims it. `[QUEUE] endBulkIngest without a matching beginBulkIngest - ignored` sat
+there: an unpaired close means an observer's window shut against a phase it did not open, which the
+code's own comment describes as stranding the message pipeline for the rest of the session.
+
 ### AND IT APPLIES TO EVERY CHECK OF EVERY PHASE - which was measured, and was not true
 
 Set by the user on 2026-08-16, after `NOTIF-10` reported `PASS` over a phone that had been raising

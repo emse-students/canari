@@ -18,6 +18,11 @@ const BENIGN = [
   /^\[API\] (→|←)/,
   /^\[WS (RCV|SND)\]/,
   /^\[QUEUE\] (Drain (start|complete)|Processing message|messageCallback)/,
+  // THE DRAIN'S RE-ENTRANCY GUARD, benign and load-bearing: a WebSocket frame arriving while a
+  // drain runs is routine, and this refusal is what keeps ONE drain open at a time - which is
+  // what keeps `beginBulkIngest`/`endBulkIngest` paired. The unpaired close is `severe` below;
+  // this is the mechanism that makes it unreachable.
+  /^\[QUEUE\] Drain already running - skipped$/,
   // The barrier waiting out ANOTHER group's catch-up (2026-08-16). Benign by construction - it is
   // the barrier doing exactly its job - and added here deliberately rather than left to surface as
   // unexplained, because it replaces a refusal that WAS a defect and the two must not be confused.
@@ -522,6 +527,15 @@ const SEVERE = [
   /\[MLS\] Decryption error/i,
   /\[History\] frame never read here and unreadable for good/i,
   /\[History\] permanently undecryptable/i,
+  // AN `endBulkIngest` WITH NO OPEN PHASE - a pairing defect, and the only line here the app
+  // writes at `warn` rather than `error`, so without this rule it sat in `warnings` and never
+  // broke `clean`. It is not reachable benignly: the sole pair is `onDrainStart`/`onDrainEnd`
+  // on one drain, kept single by the guard above. Reaching it means some earlier close popped a
+  // phase it did not open, so an observer's window closed against the wrong phase - which is
+  // exactly the state the code's own comment describes as stranding the pipeline for the rest
+  // of the session (`bulkIngestActive` raised, every later message buffered then discarded).
+  // `- ignored` is the disposition that makes it silent; this rule is what makes it audible.
+  /^\[QUEUE\] endBulkIngest without a matching beginBulkIngest - ignored$/,
 ];
 
 /** The raw, lower-layer decrypt failure - evidence for a finding, never a finding by itself. */
@@ -752,6 +766,118 @@ const NOTABLE = [
   // `unexplained` on GRP-5, pass 3 of 5, 2026-08-24 - the intermittence is just whether such a row
   // happens to be pending when the sweep runs, which is why it read as non-reproducible.
   /^\[PENDING\] \S+ already in tree for \S+ - skip \(will join via queued Welcome\)$/,
+  // THE SWEEP DECLINING TO ACT ON A GROUP WHOSE LOCAL STATE IS NOT THERE YET, which is the fourth
+  // spelling of "the guard held" in this family. `actions.ts:164` reaches it when the conversation
+  // EXISTS locally but is not `active`, or is missing from local WASM: an `active:false` placeholder
+  // means a Welcome is already in transit from the queue, so re-sending a `welcome_request` would
+  // invalidate the one in flight. The branch above it - conversation absent ENTIRELY - is the one
+  // that does send it, and that asymmetry is the whole point of the line.
+  //
+  // `notable`, not benign: the skip is correct and self-limiting (the next sweep finds the group
+  // ready), but reaching it means a pending invitation and the local group state disagreed about
+  // whether this device is in yet, and a reader should see that. Landed in `unexplained` on GRP-8,
+  // pass 2 of 5, 2026-08-25 - intermittent for the family's usual reason: it depends on whether a
+  // sweep happens to run inside the window where a Welcome is queued but not yet applied.
+  /^\[PENDING\] Group \S+: local conversation not ready - skip$/,
+  // THE REST OF THE `[PENDING]` SWEEP, ENUMERATED ONCE, FOR THE REASON THE BLOCK BELOW ALREADY
+  // LEARNED. `processPendingInvitations` has EIGHTEEN log lines under this tag and this campaign was
+  // meeting them one spelling per run: `already in tree` on GRP-5 pass 3, `local conversation not
+  // ready` on GRP-8 pass 2, `lock held by another device` on GRP-4 pass 3 - three passes spent
+  // reporting three spellings of "the guard held". So the site was read whole (actions.ts:119-336)
+  // and every line placed deliberately, its CURRENT bucket measured rather than assumed:
+  //
+  //   notable      - the seven below, plus `N pending invitation(s)`, `already a member`, `already
+  //                  in tree` and `local conversation not ready` above, plus `absent locally ->
+  //                  welcome_request sent` and `WrongEpoch ... - checking...`, which the generic
+  //                  `/epoch|...|welcome_request/` rule already claims. A guard that held, a
+  //                  convergent repair, or the sweep's own success line.
+  //   unexplained  - four, deliberately ruleless and pinned that way in classify-selftest.mjs:
+  //                  `Error fetching pending invitations` (the sweep returned having processed
+  //                  NOTHING), `KeyPackage retrieved via fallback (> 30 days)` (a fallback reached
+  //                  is a signal the primary path failed - same decision as the WELCOME_REQ site's
+  //                  identical line), `Kick error` (an error inside a destructive repair) and `Add
+  //                  error` (the catch-all: an unknown error class that left a device unadded).
+  //
+  // ONE ACCIDENT IS INHERITED RATHER THAN FIXED, and it is the one the WELCOME_REQ block's own
+  // comment names: `Non-recoverable error for X: <errStr>` reaches `notable` only because the
+  // generic `epoch` rule matches words the error carried, and `errStr.slice(0, 100)` can cut them
+  // off. Both spellings are pinned in the selftest. The line also LIES about itself - it is the
+  // WrongEpoch branch, whose own comment says the next cycle retries - filed P3 in backlog.md.
+  //
+  // A DEFINITE `false` FROM THE SERVER, then a bounded cleanup of that group's invitation rows.
+  // `notable`: the retention is correct, but a group the server disowns while invitations for it are
+  // still pending is exactly what a DEL row wants to see.
+  /^\[PENDING\] Group \S+ deleted or absent from server - cleaning up invitations$/,
+  // THE ADD LOCK HELD BY THE OTHER DEVICE. Two clients swept the same group at once and one of them
+  // stood down rather than racing a second Add commit into the same epoch - which is the lock doing
+  // precisely its job (MLS_ADD_LOCK_TTL_MS). Self-limiting: the loser's next sweep finds the work
+  // done. `notable` because in a two-client rig it names a real concurrency, and a check that
+  // invited nobody should not be seeing it at all. Landed in `unexplained` on GRP-4, pass 3 of 5,
+  // 2026-08-25.
+  /^\[PENDING\] Group \S+: lock held by another device - skip$/,
+  // A PENDING ROW FOR A DEVICE THAT NO LONGER EXISTS. Both device lookups came back empty, so the
+  // membership row is deleted instead of retried for ever. `notable`, like every repair in this
+  // family: correct, convergent, and evidence that a row outlived its device.
+  /^\[PENDING\] Device \S+ not found \(deregistered\) -> cleanup$/,
+  // THE SWEEP'S SUCCESS LINE - a Welcome actually served to a pending device. Not benign: nothing
+  // logs it unless the sweep did real MLS work, and a phase that invited nobody wants to see it.
+  //
+  // `pour` IS BEING SPELT IN ENGLISH AS OF 2026-08-25 (dev-facing strings are English, CLAUDE.md);
+  // both spellings match here because the fix reaches W1/W2 only on the next deploy, and the
+  // classifier has to be right on both sides of it.
+  /^\[PENDING\] Welcome \u2192 \S+ \(user: \S+\) (?:pour|for) \S+$/,
+  // THE FIFTH SPELLING OF "THE GUARD HELD", reached from the ERROR path rather than a pre-check:
+  // the Add threw `DuplicateSignatur`, so the leaf was already in the tree. It is the heaviest of
+  // the five - `handleDuplicateLeafError` follows and that KICKS - but the kick's own outcome lines
+  // carry their own verdicts (`[KICK]` has no rule at all, deliberately), so this line is `notable`
+  // and the repair behind it is judged on its own.
+  /^\[PENDING\] \S+ already in MLS tree of \S+$/,
+  // THE WrongEpoch RACE RESOLVING ITSELF: the concurrent commit had already added this device, so
+  // the membership reads `active` and the sweep stops. `notable` - the race is real and self-
+  // healing, which is a thing to see rather than a thing to fail on.
+  /^\[PENDING\] \S+ already active - skip$/,
+  // THE SWEEP'S TALLY, guarded on `totalWelcomes > 0`, so it prints only when Welcomes really went
+  // out. `notable` for that reason: it is never routine.
+  /^\[PENDING\] \d+ Welcome\(s\) sent\.$/,
+  // -- THE `[QUEUE]` WELCOME BUFFER AND THE FRAMES LEFT BEHIND, read whole (2026-08-25) ----------
+  //
+  // Read the same way `[PENDING]` above was: every line of the site placed in one pass, because a
+  // run finds spellings ONE AT A TIME and each one costs a PASS-DIRTY before it is placed. GRP pass
+  // 5 landed the first two of these in `unexplained` on GRP-1; the other five were placed with them
+  // rather than left for the next five passes to discover.
+  //
+  // The site is `mlsPerGroupScheduler.ts` (the buffer) and `BaseMlsService.refetchFramesLeftBehind`
+  // (the frames the server still holds). Everything here is a frame that arrived before the group
+  // could read it - which is routine on a Welcome, and a finding in a check that joined nobody.
+  //
+  // Deliberately ruleless, so they stay `unexplained` and break `clean`: the four `console.error`
+  // siblings (`Error processing message`, `Welcome failed for group=... - NOT ACKed`, and the two
+  // bulk-ingest observer failures) already break it as `errors`, which is the bucket that names a
+  // loss. Nothing below is allowed to forgive them.
+  //
+  // A frame arriving while its Welcome is still in flight. The buffer is what stops it being
+  // decrypted against a group the client does not hold yet, so this is the mechanism working -
+  // `notable` because it can only happen while a join is open, and a check that opened none has a
+  // finding here.
+  /^\[QUEUE\] Buffering message for group \S+ \(Welcome in progress\)$/,
+  // THE THREE WAYS THAT WINDOW CLOSES, and they are the complete set: `Welcome complete` and
+  // `Welcome failed` from the handler, `stranded buffer` from the sweep that refuses to leave a
+  // bucket nobody will drain. One rule, because all three mean "the buffer gave its frames back";
+  // the `reason` word is what says which, and it is kept in the line rather than in three rules.
+  //
+  // `notable`, not benign, for the count: a re-queue of N frames is N messages that did not render
+  // when they arrived, and the number is the thing worth reading.
+  /^\[QUEUE\] (?:Welcome complete|Welcome failed|stranded buffer): re-queued \d+ buffered message\(s\) for \S+$/,
+  // THE FRAMES EARLIER DRAINS LEFT UNACKNOWLEDGED, asked for again now that the reason they could
+  // not be read is gone. Both trigger/reason pairs are enumerated rather than left to `\S+`: the
+  // reasons are the whole of `UnackedReason` (`unknown-group`, `absent-conversation`) and the
+  // triggers are its only two call sites. A third pair appearing must land in `unexplained`.
+  /^\[QUEUE\] (?:conversations restored|welcome processed): re-fetching for \d+ group\(s\) left behind as (?:unknown-group|absent-conversation) \[[^\]]*\]$/,
+  // THE SAME RE-FETCH DECLINING TO RUN, because the socket is closed and the reconnect pull covers
+  // it. `notable` deliberately: the fetch that was owed did NOT happen, and the thing that makes
+  // that safe is a pull in another mechanism entirely. It already reached `stateChanges` through
+  // the generic reconnect rule, which is an accident of the word - the rule here is the intent.
+  /^\[QUEUE\] (?:conversations restored|welcome processed): socket closed, the reconnect pull covers it$/,
   // THE POST-WELCOME COOLDOWN DECLINING TO DO HARM. A `welcome_request` arrived for a device we
   // served seconds ago; it is still decrypting the Welcome and its history bundle, and kicking now
   // would evict a freshly-added leaf into `UseAfterEviction` on its first send. So it skips.

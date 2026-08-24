@@ -35,6 +35,32 @@ const ONLINE = {
 };
 
 /**
+ * Waits until a same-origin request from this page actually FAILS, and says whether it ever did.
+ *
+ * THE ONLY PROOF A CUT TOOK. `navigator.onLine` flips instantly while an already-open WebSocket keeps
+ * delivering - MSG-9 first "failed" because the message arrived at a receiver the check believed was
+ * disconnected - and `Network.emulateNetworkConditions` returning is the driver acknowledging an
+ * order, not the page losing its link. What the app's reconnect logic responds to is a request that
+ * does not arrive, so that is what is observed here.
+ *
+ * Extracted from `cut` so `cutHard` can be proven the same way: it closes the sockets, which is the
+ * half `cut` lacks, and until now the two halves came with different amounts of evidence. A check
+ * built on the stronger cut had the weaker proof, which is the wrong way round.
+ */
+export async function awaitSevered(cx, timeoutMs = 15000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeoutMs) {
+    const reachable = await evaluate(
+      cx,
+      `fetch('/api/version', { cache: 'no-store' }).then(function () { return true; }, function () { return false; })`
+    );
+    if (!reachable) return { severed: true, msToSever: Date.now() - t0 };
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  return { severed: false, msToSever: Date.now() - t0 };
+}
+
+/**
  * Takes the client offline; returns a function restoring it.
  *
  * PROVE THE CUT, do not assume it. `navigator.onLine` flips instantly while an ALREADY OPEN
@@ -45,24 +71,11 @@ const ONLINE = {
 export async function cut(cx, timeoutMs = 15000) {
   await cx.send('Network.enable');
   await cx.send('Network.emulateNetworkConditions', OFFLINE);
-
-  const t0 = Date.now();
-  let severed = false;
-  while (Date.now() - t0 < timeoutMs) {
-    const reachable = await evaluate(
-      cx,
-      `fetch('/api/version', { cache: 'no-store' }).then(function () { return true; }, function () { return false; })`
-    );
-    if (!reachable) {
-      severed = true;
-      break;
-    }
-    await new Promise((r) => setTimeout(r, 300));
-  }
+  const { severed, msToSever } = await awaitSevered(cx, timeoutMs);
 
   return {
     severed,
-    msToSever: Date.now() - t0,
+    msToSever,
     restore: async () => {
       await cx.send('Network.emulateNetworkConditions', ONLINE);
     },

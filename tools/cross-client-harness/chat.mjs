@@ -399,6 +399,28 @@ export const APP_READY = `(function () {
 })()`;
 
 /**
+ * True when the client is asking to LOG IN, which is a different loss from asking for the PIN.
+ *
+ * The distinction is the whole point of every cold-start check: a PIN prompt means the profile kept
+ * its session and only the encryption key is locked, while a login form means the session itself did
+ * not survive - so the `#encryption-pin` test comes FIRST and short-circuits, or a locked client on a
+ * page that happens to say "connexion" would be read as logged out.
+ *
+ * AND THE FIRST VERSION GOT IT BACKWARDS, which is why the order is written down here: the unlock
+ * field is `#encryption-pin`, an `input[type=password]`, so "a password field is on screen" scored
+ * the PIN modal as a re-login and failed a check that had actually passed.
+ *
+ * Lived in `tab236.mjs` until TAB-3b needed the same question asked the same way.
+ */
+export const LOGIN_SHOWING = `(function () {
+  if (document.querySelector('#encryption-pin')) return false;
+  if (document.querySelector('input[type=email], input[name=email], input[autocomplete=username]')) return true;
+  if (/^\\/(auth|login)/.test(location.pathname)) return true;
+  var t = document.body ? document.body.innerText : '';
+  return /se connecter|connexion avec|identifiant/i.test(t) && !document.querySelector('.chat-composer-editor');
+})()`;
+
+/**
  * Waits for a reloaded or relaunched client to be usable, and FAILS on the deadline.
  *
  * Every caller of this used to be `await sleep(6000)` - or 10 000, or 12 000, each number a guess

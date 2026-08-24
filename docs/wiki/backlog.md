@@ -235,6 +235,42 @@ publishes a seed and reads back what the server fanned out, which is a different
 COMM runners - so it waits for a gap in the ladder rather than for a decision. `comm22.mjs` records
 `pastEpochFrames` verbatim on every run, so every future run says whether it is back.
 
+### P3 - a log line calls a routine race "Non-recoverable", and its own comment says otherwise
+
+Found on 2026-08-25 while classifying the whole `[PENDING]` site for `watch.mjs`, so it is a reading
+of the code and not a symptom anyone reported. `actions.ts:312-323` handles an Add that failed on
+`WrongEpoch` or `epoch_mismatch`. Its comment is explicit about what that means - *"Transient
+concurrent race (gap 1): another device committed simultaneously. Check if the invitation is already
+fulfilled; otherwise let the next cycle retry"* - and the retry really happens: the missing commit
+arrives through the queue and the sweep runs again. Then, on the path where the membership does not
+yet read `active`, it logs:
+
+    [PENDING] Non-recoverable error for <device>: <errStr sliced to 100>
+
+**Every word of that is wrong about the branch it sits in.** It is recoverable, by the mechanism the
+comment describes, and nothing about it is an error the reader can act on. A line that overstates
+its own severity is the same defect as one that understates it: it teaches its reader to discount
+the tag, and `[PENDING]` has seventeen other lines that need to be read.
+
+**It also costs the classifier its determinism, and that is the part that made it visible.** The
+line reaches `notable` only because `NOTABLE`'s generic `/epoch|GAP|out-?of-?sync|re-?add|welcome_request/i`
+rule happens to match words the ERROR TEXT carried - and `errStr.slice(0, 100)` can cut them off, at
+which point the identical event lands in `unexplained` and breaks `clean`. So one log call has two
+buckets, chosen by how long an error string was. Both spellings are pinned in
+`classify-selftest.mjs` for exactly that reason, with the seam named rather than smoothed over; that
+is the correct handling of an accident, not a fix for it.
+
+**THE FIX IS THE LINE, NOT THE RULE.** Say what the branch knows - the epoch moved under us, the
+invitation is still pending, the next sweep retries - and drop the raw `errStr` interpolation that is
+carrying the classifier. Then the rule matching it can be anchored and exact like the other
+fourteen, and the `notable`/`unexplained` coin-flip disappears with it.
+
+**Why it is deferred.** It is a product-code string change, so W1 and W2 only see it after a deploy,
+and for the run that straddles that deploy the classifier has to accept both spellings - which is
+precisely the transition being managed right now for `Welcome -> ... pour ...` (fixed to `for` on
+2026-08-25, both spellings pinned). Doing two of those at once during the ladder buys nothing. It is
+one edit plus one rule swap once the ladder is done.
+
 ### CLOSED 2026-08-21 - a member let BACK IN to a private salon was never routed again (WP-REGRANT-1)
 
 **Found and FIXED 2026-08-21**, both on production, in `7f11b50e` and `082345b7`. The mechanism and
@@ -430,6 +466,39 @@ device that never returns is never wiped, whatever the server recorded. So the r
 like-new" and the row proving "the wipe ran" are not the same row, and neither implies the other. The
 blacklist is what makes the first true without the second, which is exactly the reading the user's
 own phrasing points at (*"c'est a ca que sert la blacklist non ?"*).
+
+### P3 - the web has exactly ONE out-of-page unread signal, it needs a permission, and the first message is spent asking for it
+
+Measured 2026-08-24 while writing TAB-1, which is how the row got re-scoped: its stated subject was
+"backgrounded tab receives; title/badge updates", and the second half turned out not to exist.
+
+**What the product does.** `useMessaging.svelte.ts:485` posts a web `Notification` for an inbound
+message when `document.visibilityState !== 'visible' || !document.hasFocus()`. That is the only thing
+a user who has switched to another window can perceive. `document.title` and the favicon are never
+touched for an unread message - MSG-8b has measured that four times over and its own recorded
+evidence says so plainly (`title` is `'Communautes - Canari'` before, during and after; the favicon
+never changes). The only other signal is the in-page badge (`'1 non lus'`), which requires the tab to
+be in front to be read - so for a backgrounded user it is not a signal at all.
+
+**Where that leaves a user who has not granted the permission.** `sendSystemNotification` checks
+`Notification.permission !== 'granted'`, calls `requestSystemNotificationPermission()` and RETURNS -
+so the first message that arrives while the tab is away is not delivered as a signal at all: it is
+spent on the prompt. And a user who denied once is in a permanent state where a backgrounded tab has
+no unread signal whatsoever, with nothing to fall back on.
+
+**Why the title and the favicon are the right answer if this is fixed.** They need no permission, no
+service worker and no user decision, they cost one line each, and they are what every other chat on
+the web does. This is not a fallback in the sense the durable rules forbid - there is no primary path
+failing silently here; it is a second, unconditional surface for a signal that currently has exactly
+one conditional one.
+
+**Not decided, and it is the user's call:** whether the permission-less case is worth serving at all,
+given that the Tauri desktop build has its own notification path and the phone has FCM. The web tab
+is the case with no floor under it.
+
+TAB-1 (`tab1.mjs`) now asserts the mechanism that DOES exist - exactly one notification while hidden,
+none while in front, the tag naming the conversation - so this entry is about the gap the row cannot
+assert, not about a defect in what it covers.
 
 ## Mentions
 

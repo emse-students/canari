@@ -14,7 +14,16 @@
  * looks to a user exactly like every conversation having been deleted.
  */
 import { execFileSync } from 'node:child_process';
-import { client, ensureChat, openConversation, countMessage, awaitMessage, send, evaluate } from './chat.mjs';
+import {
+  client,
+  ensureChat,
+  openConversation,
+  countMessage,
+  awaitMessage,
+  send,
+  evaluate,
+  LOGIN_SHOWING,
+} from './chat.mjs';
 import { listTargets, connect, until } from './cdp.mjs';
 import { watch } from './watch.mjs';
 import { mark, recordObserved } from './results.mjs';
@@ -57,21 +66,6 @@ function unlock(port, account) {
     return `pin.mjs failed: ${String(e.stdout || e.message).slice(0, 200)}`;
   }
 }
-
-/**
- * True when the page is showing a LOGIN form - which the PIN unlock modal is not.
- *
- * The distinction is the whole point of TAB-3, and the first version got it backwards: the unlock
- * field is `#encryption-pin`, an `input[type=password]`, so "a password field is on screen" scored
- * the modal as a re-login and failed a check that had actually passed.
- */
-const LOGIN_SHOWING = `(function () {
-  if (document.querySelector('#encryption-pin')) return false;
-  if (document.querySelector('input[type=email], input[name=email], input[autocomplete=username]')) return true;
-  if (/^\\/(auth|login)/.test(location.pathname)) return true;
-  var t = document.body ? document.body.innerText : '';
-  return /se connecter|connexion avec|identifiant/i.test(t) && !document.querySelector('.chat-composer-editor');
-})()`;
 
 // ── TAB-2: the tab is closed, a message arrives, the tab is reopened ──────────
 if (which === '2') {

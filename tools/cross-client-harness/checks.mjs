@@ -80,7 +80,16 @@ export const PHASES = {
   // defaulting to '2' - so the bare entry ran a third of the script its own filename advertises.
   TAB: {
     title: 'tabs and windows',
-    scripts: ['tab236.mjs 2', 'tab236.mjs 3', 'tab236.mjs 6', 'tab4.mjs', 'tab5.mjs'],
+    scripts: [
+      'tab1.mjs',
+      'tab236.mjs 2',
+      'tab236.mjs 3',
+      'tab3b.mjs',
+      'tab236.mjs 6',
+      'tab4.mjs',
+      'tab5.mjs',
+      'tab7.mjs',
+    ],
     needs: ['W1', 'W2'],
   },
   // `life.mjs` implements seven states (2-8) and defaulted to '2', so the LIFE phase covered one of

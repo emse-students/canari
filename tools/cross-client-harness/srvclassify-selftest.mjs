@@ -379,6 +379,15 @@ const formationsOk = matches(BENIGN_RULES, formations) && !matches(NOTABLE_RULES
 if (!formationsOk) failures++;
 console.log(`${formationsOk ? 'ok  ' : 'FAIL'} benign       an internal listing from a service no check touches`);
 
+// AND THE SAME DISPOSITION FOR A DIFFERENT PRODUCT'S QUESTION. Le Cercle asks Canari whether a user
+// is a cotisant on every sign-in and session rotation; the campaign neither causes it nor can stop
+// it. Pinned as benign - and pinned as NOT notable, because a rule keyed on `[CERCLE]` rather than
+// on this sentence would also forgive whatever else that integration ever logs.
+const cercle = `${NEST}[PublicController] [CERCLE] cotisant-status assoSlug=cercle sub=aaaaaaaa`;
+const cercleOk = matches(BENIGN_RULES, cercle) && !matches(NOTABLE_RULES, cercle);
+if (!cercleOk) failures++;
+console.log(`${cercleOk ? 'ok  ' : 'FAIL'} benign       another product's inbound cotisant check`);
+
 // AND THE SHARPEST OF THEM ALL, because the two lines come out of the SAME function twelve lines
 // apart and differ only in wording. One says a concurrent refresh was tolerated; the other says a
 // session was DELETED. A rule written to the service name rather than to the sentence would forgive

@@ -138,12 +138,118 @@ const CASES = [
     '[11:57:26] [PENDING] tauri-d82cd226…-msgnk8nf-gyb2 already in tree for 5b186d04… - skip (will join via queued Welcome)',
     'notable',
   ],
+  // THE FOURTH SPELLING OF "the guard held" in the pending-invitation family, and the one whose
+  // asymmetry matters: the conversation EXISTS locally but is not usable yet, so the sweep must NOT
+  // send a welcome_request - the branch for a conversation that is absent entirely is the one that
+  // does. Landed in `unexplained` on GRP-8, pass 2 of 5, 2026-08-25.
+  ['log', '[23:56:26] [PENDING] Group 941d7236…: local conversation not ready - skip', 'notable'],
   // Plural, because the count is a count and a rule pinned to `1` would forgive the interesting case.
   ['log', '[01:40:12] [PENDING] 4 pending invitation(s) to process', 'notable'],
   // AND THE LINE THE SAME TAG PRINTS WHEN THERE IS NOTHING TO DO, which must stay out of `notable`:
   // it fires on every connect, and a rule that could not tell the two apart would report the sweep
   // as a finding on every single run.
   ['log', '[01:40:12] [PENDING] No pending MLS messages', 'benign'],
+  // THE OTHER FOURTEEN LINES OF THE SAME SWEEP, PINNED IN ONE GO ON 2026-08-25, after three passes
+  // had each reported a different spelling of "the guard held" (GRP-5 pass 3, GRP-8 pass 2, GRP-4
+  // pass 3). The whole site was read (actions.ts:119-336) and every line's bucket MEASURED against
+  // the classifier rather than assumed; the reasoning per line is in watch.mjs beside its rule.
+  // Pinned here because the value of enumerating a site is lost the moment a later prefix rule can
+  // quietly widen over it.
+  ['log', '[01:40:12] [PENDING] Group 941d7236… deleted or absent from server - cleaning up invitations', 'notable'],
+  ['log', '[01:40:12] [PENDING] Group 941d7236… absent locally -> welcome_request sent', 'notable'],
+  ['log', '[01:40:12] [PENDING] Group 416ce9d6…: lock held by another device - skip', 'notable'],
+  ['log', '[01:40:12] [PENDING] Device web-b78568a3…-msgnk8nf-gyb2 not found (deregistered) -> cleanup', 'notable'],
+  ['log', '[01:40:12] [PENDING] web-b78568a3… already in MLS tree of 941d7236…', 'notable'],
+  ['log', '[01:40:12] [PENDING] WrongEpoch for web-b78568a3… in 941d7236… - checking...', 'notable'],
+  ['log', '[01:40:12] [PENDING] web-b78568a3… already active - skip', 'notable'],
+  ['log', '[01:40:12] [PENDING] 2 Welcome(s) sent.', 'notable'],
+  // THE SUCCESS LINE IN BOTH SPELLINGS. `pour` was French in a dev-facing log (CLAUDE.md: those are
+  // English) and was fixed on 2026-08-25, but W1 and W2 serve prod and will keep emitting the old
+  // word until the next deploy. Both are pinned so the classifier is provably right on both sides of
+  // it, and the French one can be deleted once no client can still produce it.
+  ['log', '[01:40:12] [PENDING] Welcome → web-b78568a3… (user: b78568a3…) pour 941d7236…', 'notable'],
+  ['log', '[01:40:12] [PENDING] Welcome → web-b78568a3… (user: b78568a3…) for 941d7236…', 'notable'],
+  // AND THE FOUR THAT ARE DELIBERATELY RULELESS, pinned in `unexplained` so a later widening cannot
+  // forgive them. The sweep aborting before it processed anything; a FALLBACK reached, which is by
+  // definition the primary path having failed (the identical WELCOME_REQ line is pinned the same way
+  // above); an error inside a destructive repair; and the catch-all that leaves a device unadded.
+  ['log', '[01:40:12] [PENDING] Error fetching pending invitations: TypeError: fetch failed', 'unexplained'],
+  ['log', '[01:40:12] [PENDING] KeyPackage retrieved via fallback for web-b78568a3… (> 30 days)', 'unexplained'],
+  ['log', '[01:40:12] [PENDING] Kick error for web-b78568a3… in 941d7236…: GroupNotFound', 'unexplained'],
+  ['log', '[01:40:12] [PENDING] Add error for web-b78568a3… to 941d7236…: TypeError: undefined', 'unexplained'],
+  // THE INHERITED ACCIDENT, IN BOTH SPELLINGS, exactly as the WELCOME_REQ catch-all is pinned below.
+  // One log call, two buckets: `Non-recoverable error` reaches `notable` only when the generic
+  // `epoch` rule happens to match words the error carried, and `errStr.slice(0, 100)` can cut them
+  // off. The seam is the classifier's, not the app's, and either bucket reports the line. The name
+  // is also wrong - it is the WrongEpoch branch, whose own comment says the next cycle retries -
+  // filed P3 in backlog.md rather than renamed mid-ladder.
+  ['log', '[01:40:12] [PENDING] Non-recoverable error for web-b78568a3…: WrongEpoch', 'notable'],
+  [
+    'log',
+    '[01:40:12] [PENDING] Non-recoverable error for web-b78568a3…: Error: the server refused the commit and the reason it gave ran l',
+    'unexplained',
+  ],
+  // THE `[QUEUE]` WELCOME BUFFER AND THE FRAMES LEFT BEHIND, every spelling of the site pinned at
+  // once (2026-08-25). GRP pass 5 landed the first two in `unexplained` on GRP-1; the rest were
+  // placed with them, and are pinned here so a later widening of one rule cannot forgive another.
+  [
+    'log',
+    '[01:40:12] [QUEUE] Buffering message for group b6a425af-1111-2222-3333-444455556666 (Welcome in progress)',
+    'notable',
+  ],
+  // The three ways the window closes, pinned SEPARATELY though one rule matches all three: they
+  // mean different things about the frames (given back, given back after a failure, given back by
+  // the sweep), and the risk in a shared rule is exactly that one of the three later drifts.
+  [
+    'log',
+    '[01:40:12] [QUEUE] Welcome complete: re-queued 1 buffered message(s) for b6a425af-1111-2222-3333-444455556666',
+    'notable',
+  ],
+  [
+    'log',
+    '[01:40:12] [QUEUE] Welcome failed: re-queued 2 buffered message(s) for b6a425af-1111-2222-3333-444455556666',
+    'notable',
+  ],
+  [
+    'log',
+    '[01:40:12] [QUEUE] stranded buffer: re-queued 3 buffered message(s) for b6a425af-1111-2222-3333-444455556666',
+    'notable',
+  ],
+  // Both trigger/reason pairs, which are the whole of `UnackedReason` and its only two call sites.
+  [
+    'log',
+    '[01:40:12] [QUEUE] welcome processed: re-fetching for 2 group(s) left behind as unknown-group [b6a425af, c7b53610]',
+    'notable',
+  ],
+  [
+    'log',
+    '[01:40:12] [QUEUE] conversations restored: re-fetching for 1 group(s) left behind as absent-conversation [b6a425af]',
+    'notable',
+  ],
+  // The same re-fetch declining to run. `notable` on purpose - the fetch that was owed did not
+  // happen, and only the reconnect pull makes that safe. It reached `stateChanges` by accident of
+  // the word "reconnect" before it had a rule; this pins the intent, not the accident.
+  [
+    'log',
+    '[01:40:12] [QUEUE] welcome processed: socket closed, the reconnect pull covers it',
+    'notable',
+  ],
+  // The control frame nobody acts on, in both spellings of its group.
+  [
+    'log',
+    '[01:40:12] [QUEUE] group_reset (control) ignored - group=b6a425af-1111-2222-3333-444455556666',
+    'notable',
+  ],
+  ['log', '[01:40:12] [QUEUE] group_reset (control) ignored - group=unknown', 'notable'],
+  // The drain's re-entrancy guard: benign, and the mechanism that keeps the bulk-ingest pair single.
+  ['log', '[01:40:12] [QUEUE] Drain already running - skipped', 'benign'],
+  // AND THE PAIRING DEFECT IT PREVENTS. The app writes this one at `warn`, so before it had a rule
+  // it sat in `warnings` and never broke `clean` - a silent close against the wrong phase. `severe`.
+  [
+    'warning',
+    '[01:40:12] [QUEUE] endBulkIngest without a matching beginBulkIngest - ignored',
+    'severe',
+  ],
   // A Welcome sent in answer to a welcome_request - the invitation-link join and every re-add.
   // `notable`: the mechanism working, and also somebody asking to be let into a group.
   ['log', '[14:26:09] [WELCOME_REQ] Welcome -> b78568a3…:web-b78568a3…-msglwqh6-vegy for 1bf6fefe…', 'notable'],

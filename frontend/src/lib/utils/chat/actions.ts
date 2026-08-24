@@ -252,7 +252,7 @@ export async function processPendingInvitations(params: {
               result.ratchetTree
             );
             totalWelcomes++;
-            log(`[PENDING] Welcome → ${inv.deviceId} (user: ${inv.userId}) pour ${groupId}`);
+            log(`[PENDING] Welcome → ${inv.deviceId} (user: ${inv.userId}) for ${groupId}`);
           }
 
           // Save MLS state after the merged commit (crash-safety).
