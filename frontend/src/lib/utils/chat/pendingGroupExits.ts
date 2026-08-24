@@ -86,9 +86,16 @@ export function classifyExitFailure(error: unknown): ExitFailure {
 /**
  * Write down that this device owes the server an exit for `groupId`, before attempting it.
  *
- * Best-effort by necessity - a storage that refuses must not stop the user leaving a group - but
- * never silent: without this row the exit is exactly as recoverable as it was before DEL-10, so the
- * failure is the one thing a reader needs to see if the deletion later comes back.
+ * Best-effort by necessity - a storage that refuses must not stop the user leaving a group - but a
+ * FAILURE to record is never silent: without this row the exit is exactly as recoverable as it was
+ * before DEL-10, so that loss is the one thing a reader needs if the deletion later comes back.
+ *
+ * WRITING THE ROW LOGS NOTHING, and that is deliberate. It happens on every single leave and delete,
+ * and the obligation it announced is discharged a moment later by a `clearPendingGroupExit` that is
+ * silent too - so the line said "owed to the server" about something that was not owed by the time
+ * anyone read it. A reader learns to skip a line like that, and then skips the next one. Every
+ * branch that leaves work behind still accuses, here and at the call site, so an `[EXIT]` line in a
+ * log is now always an event: something could not be recorded, kept, or replayed.
  */
 export async function recordPendingGroupExit(
   storage: IStorage | null | undefined,
@@ -105,7 +112,6 @@ export async function recordPendingGroupExit(
   }
   try {
     await storage.savePendingGroupExit({ groupId, kind, requestedAt: Date.now() });
-    log(`[EXIT] ${groupId.slice(0, 8)}... ${kind} recorded as owed to the server`);
   } catch (e) {
     log(
       `[EXIT] ${groupId.slice(0, 8)}... ${kind} could NOT be recorded (${String(e)}) - a transport ` +

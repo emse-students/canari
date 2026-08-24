@@ -88,6 +88,15 @@ describe('recording and reading what is owed', () => {
     expect(await pendingGroupExitIds(storage)).toEqual(new Set([G1]));
   });
 
+  // GRP-6 read this line as dirt on 2026-08-24 and was right to: it fired on every leave, said the
+  // exit was "owed to the server", and the clear that discharged it a moment later said nothing. The
+  // happy path is silent now, so an `[EXIT]` line is always an event worth reading.
+  it('says nothing when the row is written, because that is the ordinary case', async () => {
+    const lines: string[] = [];
+    await recordPendingGroupExit(makeStorage(), G1, 'leave', (m) => lines.push(m));
+    expect(lines).toEqual([]);
+  });
+
   it('says so in the log when there is no storage to record into', async () => {
     const lines: string[] = [];
     await recordPendingGroupExit(null, G1, 'delete', (m) => lines.push(m));
