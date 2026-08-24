@@ -515,6 +515,26 @@ const CASES = [
     '[12:41:03] [SYNC] Server re-registration of f3f2dc35… failed: Error: NetworkError',
     'unexplained',
   ],
+  // ── THE LINE THE 403 FIX ADDED, pinned before it is ever measured ──────────────────────────────
+  //
+  // A FIX THAT INVENTS A SENTENCE CAN DIRTY THE VERY CHECK IT REPAIRS. GRP-6 watches a leaver for
+  // thirty seconds, and the leaver is now exactly where this line is emitted, so it lands in that
+  // window on the first pass after the deploy. It is claimed by NOTABLE's broad `re-?add` rule -
+  // asserted here rather than assumed, because "a broad rule probably covers it" is how a sentence
+  // nobody chose to allowlist ends up silenced.
+  [
+    'log',
+    '[15:56:39] [READD] ca436926... server holds no membership row for us - marking removed',
+    'notable',
+  ],
+  // Its sibling, unchanged by the fix and now reserved for failures that say NOTHING about
+  // membership. Same bucket, and that is the point: a reader sees both, neither breaks `clean`, and
+  // the distinction between them is carried by the sentence rather than by the bucket.
+  [
+    'log',
+    '[15:56:39] [READD] ca436926... externalJoin threw: GroupInfo fetch HTTP error: 503',
+    'notable',
+  ],
 ];
 
 let failures = 0;
