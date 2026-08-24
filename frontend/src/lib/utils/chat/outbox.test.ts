@@ -439,6 +439,73 @@ describe('outbox flusher', () => {
     expect(conversations.get('g1')!.messages[0].status).toBe('error');
   });
 
+  // THE SAME EVENT, THE OPPOSITE SEVERITY, AND ONE LINE FOR BOTH. GRP-7 logged a permanent failure
+  // on 2026-08-24 and the line did not say what died - so telling "a message the user wrote is gone
+  // for ever" from "a read receipt lost a race to a deletion" meant going and finding the entry by
+  // hand. The code already knew: the very next statement exempts `control` from marking the
+  // conversation deleted. It just was not saying so.
+  it('names the entry kind on a permanent failure, and spares the conversation for a control one', async () => {
+    const control: OutboxEntry = {
+      id: 'c1',
+      conversationId: 'g1',
+      sentAt: 100,
+      kind: 'control',
+      controlProto: new Uint8Array([1, 2, 3]),
+      status: 'pending',
+      attempts: 0,
+      createdAt: 100,
+    };
+    const storage = makeStorage([control]);
+    const mlsService = makeMls({
+      meta: (id) => ({ groupId: id, name: '', isGroup: true, deletedAt: '2020-01-01' }),
+    });
+    const markDeletedRemotely = vi.fn();
+    const lines: string[] = [];
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService,
+        storage,
+        markDeletedRemotely,
+        log: (m: string) => lines.push(m),
+        isGroupHealthy: () => true,
+      })
+    );
+
+    await outbox.flush();
+
+    // A reader must be able to classify this line WITHOUT the entry: kind, group, cause.
+    const line = lines.find((l) => l.includes('permanent failure'));
+    expect(line).toContain('control entry');
+    expect(line).toContain('group-deleted');
+    expect(line).toContain('nothing the user wrote is lost');
+    // And the exemption is the point of the distinction, not a detail of it: a receipt dying must
+    // not retire the conversation the way a lost message does.
+    expect(markDeletedRemotely).not.toHaveBeenCalled();
+    expect(storage._map.has('c1')).toBe(false);
+  });
+
+  it('and says "text entry" for the one that really is a loss', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls({
+      meta: (id) => ({ groupId: id, name: '', isGroup: true, deletedAt: '2020-01-01' }),
+    });
+    const lines: string[] = [];
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService,
+        storage,
+        log: (m: string) => lines.push(m),
+        isGroupHealthy: () => true,
+      })
+    );
+
+    await outbox.flush();
+
+    const line = lines.find((l) => l.includes('permanent failure'));
+    expect(line).toContain('text entry');
+    expect(line).not.toContain('nothing the user wrote is lost');
+  });
+
   it('never sends into a group this device was evicted from, and fails the entry for good', async () => {
     const storage = makeStorage([textEntry('m1', 'g1', 100)]);
     // The group is alive server-side and locally held - the ONLY thing wrong is our membership.

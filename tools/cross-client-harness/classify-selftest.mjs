@@ -355,7 +355,48 @@ const CASES = [
     // `clean` - which is why the unreachable STATE_CHANGE rule was deleted instead of fought.
     'notable',
   ],
-  ['log', '[14:10:28] [OUTBOX] 1d9076db… evicted from 4ca35caf… - permanent failure', 'stateChanges'],
+  // ── THE OUTBOX ENTRY THAT DIED WITH ITS GROUP: SIX LINES, TWO VERDICTS ────────────────────────
+  //
+  // The report used to name neither the kind nor the cause, so one sentence covered a read receipt
+  // losing a race and a message the user wrote being lost for ever - and the `group-deleted`
+  // spelling had no rule at all, which is why it came back unexplained in GRP-4, GRP-6 and GRP-7.
+  // These six cases exist because the SPLIT is the whole value: if the classifier ever widens to
+  // cover the two at the bottom, three checks go green while a user's message quietly disappears.
+  [
+    'log',
+    '[14:10:28] [OUTBOX] 1d9076db… control entry in 4ca35caf…, group-deleted - permanent failure (control: nothing the user wrote is lost)',
+    'stateChanges',
+  ],
+  [
+    'log',
+    '[14:10:28] [OUTBOX] 1d9076db… control entry in 4ca35caf…, evicted - permanent failure (control: nothing the user wrote is lost)',
+    'stateChanges',
+  ],
+  // A real message lost to an EVICTION is by design on the removed peer of GRP-3 and GRP-8.
+  [
+    'log',
+    '[14:10:28] [OUTBOX] 1d9076db… text entry in 4ca35caf…, evicted - permanent failure',
+    'stateChanges',
+  ],
+  [
+    'log',
+    '[14:10:28] [OUTBOX] 1d9076db… media entry in 4ca35caf…, evicted - permanent failure',
+    'stateChanges',
+  ],
+  // A real message lost because somebody DELETED the group under us is not by design anywhere: it
+  // owes an explanation on the row that produced it, so it must stay unexplained.
+  [
+    'log',
+    '[14:10:28] [OUTBOX] 1d9076db… text entry in 4ca35caf…, group-deleted - permanent failure',
+    'unexplained',
+  ],
+  // And the eviction learnt from a REFUSED SEND stays unexplained whatever it was carrying: it
+  // means the fact-based path missed the removal, which is the branch that hides an eviction.
+  [
+    'log',
+    '[14:10:28] [OUTBOX] 1d9076db… control entry in 4ca35caf…, evicted-late - permanent failure (control: nothing the user wrote is lost)',
+    'unexplained',
+  ],
   // THE THIRD PATH: a frame the group still routed to a device it had removed. The two spellings
   // land in different buckets for one reason - the Rust one names the epochs, so NOTABLE's generic
   // epoch rule claims it - and both are surfaced without breaking `clean`, which is the contract

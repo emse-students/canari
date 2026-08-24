@@ -445,11 +445,21 @@ const STATE_CHANGE = [
   // excludes anything already notable - a rule here could never be reached. `notable` is the same
   // contract for a reader anyway (surfaced, does not break `clean`), and the self-test pins the
   // line to that bucket so the precedence is a recorded fact rather than a surprise.
-  // The queued message that eviction made undeliverable. Same family as the deleted-group spelling
-  // and equally permanent: the entry is failed, not retried. The OTHER outbox eviction line - the
-  // one saying the send was REFUSED after `isGroupActive` had answered that we are still a member -
-  // is a contradiction between OpenMLS and our own query, and is left unexplained on purpose.
-  /^\[OUTBOX\] [0-9a-f]{8}… evicted from [0-9a-f]{8}… - permanent failure$/,
+  // THE QUEUED ENTRY THAT DIED WITH ITS GROUP, SPLIT BY WHAT WAS ACTUALLY LOST. The line used to
+  // name neither the kind nor the cause, so the two spellings needed two rules and the deleted-group
+  // one had NONE - it came back unexplained in GRP-4, GRP-6 and GRP-7, three separate rows dirtied
+  // by one unclassifiable sentence. It now says `<kind> entry in <group>…, <cause>`, which is what
+  // lets the classifier do what a reader had to do by hand: a `control` entry is a read receipt or a
+  // reaction that lost a race to a deletion or a removal, expected on any check that deletes a group
+  // out from under a peer, and it costs nobody anything. The evicted spelling is classified for
+  // EVERY kind because GRP-3 and GRP-8 produce it by design on the removed peer.
+  /^\[OUTBOX\] [0-9a-f]{8}… control entry in [0-9a-f]{8}…, (group-deleted|evicted) - permanent failure \(control: nothing the user wrote is lost\)$/,
+  /^\[OUTBOX\] [0-9a-f]{8}… (text|reply|media) entry in [0-9a-f]{8}…, evicted - permanent failure$/,
+  // AND NO RULE FOR THE TWO THAT MATTER, deliberately. A `text`, `reply` or `media` entry dying on
+  // `group-deleted` is a message the user WROTE and will never see sent - if a check produces one it
+  // owes an explanation, not a rule. And `evicted-late` is the eviction learnt from a REFUSED SEND
+  // after `isGroupActive` had answered that we are still a member: a contradiction between OpenMLS
+  // and our own query, which is the branch that hides an eviction. Both stay unexplained.
   // A FRAME STILL ROUTED TO A DEVICE THE GROUP HAS REMOVED. Legitimate and bounded: it was in
   // flight when the commit landed, or the server registry the removal cleans best-effort had not
   // caught up. ACKed and dropped, no repair owed - and reported, because a run where this does not

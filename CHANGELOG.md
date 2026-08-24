@@ -149,6 +149,24 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **ONE SENTENCE COVERED "A READ RECEIPT LOST A RACE" AND "A MESSAGE THE USER WROTE IS GONE FOR
+  EVER".** `[OUTBOX] <id>… group deleted server-side - permanent failure` named neither what died nor
+  why, so a reader meeting it had to go and find the entry by hand - and the classifier could not
+  place it at all, which is why it came back `unexplained` in GRP-4, GRP-6 and GRP-7: three campaign
+  rows dirtied by one unclassifiable line. The code already knew the difference. The statement
+  immediately after the log exempts a `control` entry from marking the conversation deleted, because
+  a reaction or a read receipt dying with its group costs nobody anything; a `text`, `reply` or
+  `media` entry dying is a message that will never be sent.
+
+  The line now reads `<kind> entry in <group>…, <cause> - permanent failure`, and the metric carries
+  `entryKind` and `cause` - a metric that cannot separate the two cannot be alerted on either. The
+  two eviction causes stay apart for the same reason: `evicted` learnt the removal from a FACT
+  (`isGroupActive`), `evicted-late` learnt it from a REFUSED SEND, which means the fact-based path
+  missed it, so a rate on the second measures that miss. The harness rules split on exactly that
+  boundary and the self-test pins all six spellings - including the two that must remain
+  unexplained, because a classifier widened to cover them would turn three checks green while a
+  user's message quietly disappeared.
+
 - **A GROUP WE HAD LEFT WAS CHASED ONCE A MINUTE, FOR EVER, AND THE SERVER WAS ANSWERING THE QUESTION
   THE WHOLE TIME.** `requestReAdd` runs on the SYNC_WATCHDOG's cadence for any group flagged not-ready,
   and it has exits: the group is absent server-side, the group is gone from local state, the group is

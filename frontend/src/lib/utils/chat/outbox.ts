@@ -359,13 +359,27 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   async function failPermanently(
     entry: OutboxEntry,
     terminalId: string,
-    reason: string
+    cause: 'group-deleted' | 'evicted' | 'evicted-late'
   ): Promise<FlushOutcome> {
-    log(`[OUTBOX] ${entry.id.slice(0, 8)}… ${reason} - permanent failure`);
+    // THE KIND IS THE SEVERITY, and this line used to omit the one thing that decides it. A
+    // `control` entry dying with its group is a read receipt or a reaction that lost a race to a
+    // deletion - expected, harmless, and the reason the very next line exempts it from marking the
+    // conversation deleted. A `text`, `reply` or `media` entry dying is a message the user WROTE
+    // and will never see sent. Both printed the same sentence, so a reader meeting one had to go
+    // and find the entry by hand to learn which had happened. GRP-7 did exactly that on 2026-08-24.
+    log(
+      `[OUTBOX] ${entry.id.slice(0, 8)}… ${entry.kind} entry in ${terminalId.slice(0, 8)}…, ${cause} - permanent failure` +
+        (entry.kind === 'control' ? ' (control: nothing the user wrote is lost)' : '')
+    );
     patchStatus(entry.id, 'error');
     if (entry.kind !== 'control') deps.markDeletedRemotely?.(terminalId);
     await storage?.deleteOutboxEntry(entry.id).catch(() => {});
-    logMlsMetric({ kind: 'outbox_permanent_error', conversationId: terminalId });
+    logMlsMetric({
+      kind: 'outbox_permanent_error',
+      conversationId: terminalId,
+      entryKind: entry.kind,
+      cause,
+    });
     return 'error';
   }
 
@@ -402,7 +416,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
 
     // Group deleted server-side: one of the two permanent failures.
     if (groupMeta?.deletedAt) {
-      return failPermanently(entry, terminalId, 'group deleted server-side');
+      return failPermanently(entry, terminalId, 'group-deleted');
     }
 
     // Group not sendable yet: trigger recovery (external join / welcome_request) and retry later.
@@ -440,7 +454,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       return 'retry';
     }
     if (!stillMember) {
-      return failPermanently(entry, terminalId, `evicted from ${terminalId.slice(0, 8)}…`);
+      return failPermanently(entry, terminalId, 'evicted');
     }
 
     patchStatus(entry.id, 'sending');
@@ -496,7 +510,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         log(
           `[OUTBOX] ${entry.id.slice(0, 8)}… send REFUSED as evicted, after isGroupActive answered that this device is still a member of ${terminalId.slice(0, 8)}… - the two disagree, and OpenMLS is the one that is right`
         );
-        return failPermanently(entry, terminalId, 'evicted (learnt from the refused send)');
+        return failPermanently(entry, terminalId, 'evicted-late');
       }
       // Transient (WrongEpoch / network): keep pending, back off. The message is never lost.
       patchStatus(entry.id, 'pending');

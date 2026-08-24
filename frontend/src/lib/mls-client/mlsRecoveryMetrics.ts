@@ -5,6 +5,8 @@
  * In development, metrics also log when `import.meta.env.DEV` is true.
  */
 
+import type { OutboxEntry } from '$lib/db/types';
+
 export type MlsMetricEvent =
   | {
       kind: 'queue_ack';
@@ -48,6 +50,20 @@ export type MlsMetricEvent =
   | {
       kind: 'outbox_permanent_error';
       conversationId: string;
+      /**
+       * What was lost. A `control` entry dying with its group is a read receipt or a reaction losing
+       * a race to a deletion and costs nobody anything; a `text`, `reply` or `media` entry dying is
+       * a message the user WROTE and will never see sent. Same event, opposite severity - so the
+       * discriminator belongs ON the event, or nothing downstream can tell the two apart.
+       */
+      entryKind: OutboxEntry['kind'];
+      /**
+       * Why it is permanent. None is retryable, and `evicted-late` is not the same incident as
+       * `evicted`: the first learnt the eviction from a FACT (`isGroupActive`), the second learnt it
+       * from a REFUSED SEND, which means the fact-based path missed it. A rate on the second is a
+       * measurement of that miss, and it is the reason the two are not one bucket.
+       */
+      cause: 'group-deleted' | 'evicted' | 'evicted-late';
     };
 
 function isMetricsVerbose(): boolean {
