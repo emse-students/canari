@@ -1,42 +1,42 @@
 #!/usr/bin/env node
 /**
- * Proves a browser is running the CURRENTLY DEPLOYED bundle, not a warm old one.
+ * Reports which build each web client is running, and refuses the run when one is stale.
  *
- * "W1 and W2 must be RELOADED onto the current bundle before any repair check" has been a rule of
- * this campaign for days, and it has never had an assertion behind it - a reload that silently
- * served from cache is indistinguishable from one that did not, and the whole verdict then measures
- * the old code. SvelteKit's per-build id is the discriminator that already exists: the shell writes
- * `__sveltekit_<id>` as a GLOBAL, so the running page carries its build id in `window`, and the
- * origin serves the current one in the shell it renders.
+ *   node bundle-id.mjs             - compare every client served by the deployment
  *
- *   node bundle-id.mjs             - compare 9224 and 9223 against https://canari-emse.fr/
+ * THE DETECTION AND THE REASONING BOTH LIVE IN `bundle.mjs`. This file is the operator's entry
+ * point and nothing else; it existed with its own copy of the comparison until 2026-08-24, and
+ * `reload.mjs` held a third - so the rule "W1 and W2 must be on the deployed bundle before any
+ * measurement" had two implementations and no caller. The preflight now asks the same question
+ * through the same function, which is what makes this command a diagnostic rather than the gate.
  */
 import { client, evaluate } from './chat.mjs';
+import { PORTS } from './names.mjs';
+import { deployedBundleId, isOnTheDeployment, runningBundleId } from './bundle.mjs';
 
-const ORIGIN = 'https://canari-emse.fr';
-const ID = /__sveltekit_[a-z0-9]+/;
-
-const deployed = (await (await fetch(`${ORIGIN}/`, { redirect: 'follow' })).text()).match(ID)?.[0];
-if (!deployed) {
-  console.log('[bundle] the origin shell carries no __sveltekit_<id> - cannot compare, fix this check');
+let deployed;
+try {
+  deployed = await deployedBundleId();
+} catch (e) {
+  console.log(`[bundle] ${e instanceof Error ? e.message : String(e)}`);
   process.exit(2);
 }
 console.log(`[bundle] deployed: ${deployed}`);
 
 let allMatch = true;
-for (const [port, label] of [
-  [9224, 'W1'],
-  [9223, 'W2'],
-]) {
-  const cx = await client(port, null, { focus: false });
-  const running = await evaluate(
-    cx,
-    `(Object.keys(window).filter(function (k) { return k.indexOf('__sveltekit_') === 0 && k !== '__sveltekit_sw'; })[0] || 'none')`
-  );
-  const href = await evaluate(cx, 'location.href');
-  const ok = running === deployed;
-  allMatch &&= ok;
-  console.log(`[bundle] ${label} (${port}): ${running} ${ok ? 'OK' : '<-- STALE, reload it'}  ${href}`);
+for (const d of Object.keys(PORTS).filter(isOnTheDeployment)) {
+  const cx = await client(PORTS[d], null, { focus: false });
+  try {
+    const running = await runningBundleId(cx);
+    const href = await evaluate(cx, 'location.href');
+    const ok = running === deployed;
+    allMatch &&= ok;
+    console.log(`[bundle] ${d} (${PORTS[d]}): ${running} ${ok ? 'OK' : '<-- STALE, reload it'}  ${href}`);
+  } finally {
+    // CLOSE IT. An open CDP socket keeps node alive for ever, so the process never exits and a
+    // script that worked is indistinguishable from one that hung.
+    cx.close();
+  }
 }
-console.log(`[bundle] ${allMatch ? 'both browsers are on the deployed bundle' : 'DO NOT MEASURE - a browser is stale'}`);
-process.exit(allMatch ? 0 : 1);
+console.log(`[bundle] ${allMatch ? 'every web client is on the deployed bundle' : 'DO NOT MEASURE - a client is stale'}`);
+process.exitCode = allMatch ? 0 : 1;

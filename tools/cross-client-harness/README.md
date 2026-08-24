@@ -130,6 +130,7 @@ running the gate somewhere with no rig proves that, which is what CI does on eve
 | `watch.mjs` | Continuous observation: console, page errors, HTTP, WebSocket. Attached by every runner. |
 | `srvlog.mjs` | The server observer, held to the same bar as the two clients: the whole window is classified, and it partitions by SUBJECT because production is shared. |
 | `deploy.mjs` | Whether production was REDEPLOYED under the run - the one cause of transport failure that is ours. The preflight waits for a deploy in flight; `gate()` turns an overlap into VACUOUS, never FAIL. |
+| `bundle.mjs` | Which bundle a client is actually EXECUTING, and the reload that fixes it - the other half of `deploy.mjs`'s question. A browser open across a deploy keeps the old code and looks identical to a fresh one, so the preflight compares `__sveltekit_<id>` in the page against the shell the origin serves. The web/phone split comes from `ORIGIN[device] === SITE`, because an APK is never on the deployment. |
 | `comm.mjs` | Community and salon gestures, and the panels behind them - `openChannelSettings` and `openChannelAccess` share one modal-open, `setChannelNotifLevel` reads the radio group's `aria-checked` rather than a styling class. |
 | `grainedb.mjs` | The questions a SCREEN cannot answer, asked of production's database: what a device is routed, what sessions a salon holds, what notification level a member stored, what order a member put their communities in. Read-only, always. |
 | `names.mjs` / `accounts.mjs` | The only two readers of machine-local truth. Every other file goes through them. |
@@ -176,7 +177,7 @@ reload that skips the PIN gate initialises before a session can attach, and on t
 line was missed entirely while the repair had plainly happened. The reload is gated on the ledger
 actually showing a deficit, because a fixed delay cannot reliably enter a window ~58 ms wide on web.
 
-**Tools** - `launch.mjs` `reload.mjs` `cleanup.mjs` `dismiss.mjs` `shot.mjs` `state.mjs` `results.mjs`
+**Tools** - `launch.mjs` `reload.mjs` `bundle-id.mjs` `cleanup.mjs` `dismiss.mjs` `shot.mjs` `state.mjs` `results.mjs`
 operate the rig; `purge-devices.mjs` drives the real device panel (not the database); `ladder.mjs` `wsidle.mjs`
 `navclose.mjs` `synboot.mjs` `synopen.mjs` `synwatch.mjs` `ckpt.mjs` `burn.mjs` are the probes that
 took a specific measurement and were kept because the measurement is repeatable.
@@ -219,12 +220,19 @@ equally have spared a LIVE `GRP5-*-R`. Widen such a list by ENUMERATING what the
 Three exist because a run once measured something other than what it claimed to, and each closes that
 hole with an assertion rather than a habit:
 
-- **`bundle-id.mjs` - run it before believing any verdict about a fix.** "Reload the browsers onto the
-  new build" was a rule for days with nothing behind it, and a reload served from cache is
+- **`bundle-id.mjs` - the diagnostic; THE PREFLIGHT IS THE GATE.** "Reload the browsers onto the new
+  build" was a rule for days with nothing behind it, and a reload served from cache is
   indistinguishable from one that was not. SvelteKit stamps a per-build `__sveltekit_<id>` as a
   global, so the running page carries its build id while the origin serves the current one: comparing
   them turns the rule into a check that exits non-zero. **A navigation does not pick up a deploy -
   only `Page.reload {ignoreCache:true}` does.**
+
+  Until 2026-08-24 this file and `reload.mjs` each held their own copy of that comparison and neither
+  had a caller - the rule was enforced by remembering to type one of them. `run.mjs`'s preflight now
+  asks it before EVERY job, reloads a stale client and refuses to measure one that will not move, so
+  running this by hand is a diagnostic rather than the protection. The comparison and the repair both
+  live in `bundle.mjs`, shared by all three. Rule 36 of
+  [testing-methodology](../../docs/wiki/testing-methodology.md) carries the run this cost.
 - **`ssh.mjs` - the single door to production.** `ssh` resolves to **Git's** binary under Bash, which
   mangles the backslashes in the cloudflared `ProxyCommand`, so the same gateway probe answered
   differently depending on which shell launched the run. It picks Windows OpenSSH explicitly.
@@ -280,8 +288,14 @@ Four properties worth keeping:
 
 ### The other instruments, and what each was wrong about first
 
-- **`reload.mjs`** is the other half of `bundle-id.mjs`: it detects staleness AND repairs it, then
-  re-asserts the build id rather than assuming the reload took.
+- **`reload.mjs`** is the operator's entry point to the repair `bundle.mjs` performs: it reloads past
+  the cache and re-asserts the build id rather than assuming the reload took. Run through `run.mjs`
+  the preflight does this itself, and puts the PIN gate back down afterwards - by hand, `pin.mjs` is
+  owed straight after, which is why the command says so on its last line.
+- **`bundle.mjs`** is the one implementation of "which bundle is this client running", and it takes
+  the web/phone split from `ORIGIN[device] === SITE` instead of a device-name list of its own. The
+  phone is never on the deployment, so its build is read from its own APK asset; a browser's has to be
+  compared against what the origin serves, because pointing at production is not running it.
 - **`unlock.mjs`** resolves which account owns which port from `test-accounts.json`, navigates to a
   route where the gate actually MOUNTS, and spawns `pin.mjs` - so the recurring "you forgot the PIN"
   costs one idempotent command, and no real first name is typed into a shell line.

@@ -30,7 +30,7 @@ Updated after every run.
 | 6 MENTION | 6 | `1f396ac7`, A1 `a7981206` | **`PASS` 6/6 x5** on runner `cdc081edabc0` |
 | 7 FWD | 6 | `1579d5c3`, A1 `a7981206` | **`PASS` 6/6 x5** (FWD-2 x1, 25 iterations) |
 | 8 GRP | 10 | `51dcb814` | **`PASS` 10/10 x1** (2026-08-23), pending x5. Run 4 was the first on a build where GRP-3/8/10 could pass: it turned 3 defects green and found a 4th (GRP-7, the mailbox barrier) |
-| 9 COMM | 22 | - | `pending` |
+| 9 COMM | 25 | - | `pending` |
 | 10 DEL | 10 | - | `pending` |
 | 11 TAB | 8 | - | `pending` |
 | 12 MULTI | 6 | - | `pending` |
@@ -47,7 +47,7 @@ Updated after every run.
 | --- | --- |
 | `PASS` / `passed` | ran, assertions held, run was clean - and the row names the build |
 | `PASS-DIRTY` | ran, assertions held, and a client logged something no rule classifies - `gate()` demotes it, and the row NAMES the line. Not a pass: the campaign ends green or it does not end |
-| `VACUOUS` | ran and proved nothing - never armed, or production was redeployed under it (`deploy.mjs`) |
+| `VACUOUS` | ran and proved nothing - never armed, production was redeployed under it (`deploy.mjs`), or a client was still executing a bundle the deployment had replaced (`bundle.mjs`) |
 | `pending` | not run against the current build |
 | `FAIL` | ran and did not hold - paired with a Work Package carrying the log, or with a fixed commit |
 | `SKIPPED` | cannot be armed with two accounts, or needs `--destructive` |

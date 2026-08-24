@@ -41,6 +41,7 @@ import * as phone from './phone.mjs';
 import { closeExtraAppTabs } from './tabs.mjs';
 import { ORIGIN, PORTS } from './names.mjs';
 import { all, clientBuild } from './results.mjs';
+import { deployedBundleId, isOnTheDeployment, reloadOntoBundle } from './bundle.mjs';
 
 const argv = process.argv.slice(2);
 const flag = (n) => argv.includes(`--${n}`);
@@ -369,6 +370,35 @@ async function preflight(devices, { quiet = false } = {}) {
   else if (quietProd.waitedFor.length)
     console.log(`  ok   production is quiet again after ${Math.round(quietProd.waitedMs / 1000)} s`);
 
+  // WHICH BUNDLE THE WEB CLIENTS ARE RUNNING, asked ONCE and repaired per device below.
+  //
+  // THE PREFLIGHT READS A1's BUILD AND USED TO ASSUME THE WEB ONES. The block at the end of this
+  // function goes to real trouble for the phone, and says why: "the alternative is a whole phase of
+  // rows that quietly stop naming the build they ran on". That harm is identical for W1 and W2 - a
+  // browser left open across a deploy keeps executing the old bundle - and nothing watched it. On
+  // 2026-08-24 it cost a run: two minutes into `GRP --repeat 5`, GRP-3 came back `PASS-DIRTY` on an
+  // `[OUTBOX] … evicted from …` line whose spelling had been REPLACED four commits earlier and
+  // appears nowhere in the served bundle. The correction looked broken; the client was old.
+  //
+  // `bundle-id.mjs` HAD DETECTED THIS SINCE THE DAY IT WAS WRITTEN, and its only caller in the whole
+  // rig was a sentence in a comment in `reload.mjs`. A detector nothing calls is rule 22 exactly:
+  // the file existed, the rule "W1 and W2 must be on the deployed bundle before any measurement" had
+  // been stated for days, and the one gate every phase passes through never asked.
+  //
+  // IT REPAIRS RATHER THAN REFUSING, like every other repair here, and for the same reason: the
+  // ladder runs unattended, and a phase abandoned because a browser needed a reload costs the run
+  // for nothing. What it will not do is measure - a client that would not move is a `problem`.
+  let deployedBundle = null;
+  if ([...devices].some(isOnTheDeployment)) {
+    try {
+      deployedBundle = await deployedBundleId();
+    } catch (e) {
+      // NOT A SHRUG, for the same reason A1's build is not. Losing the comparison means every
+      // browser reads as current for ever, which is worse than having never had the check.
+      problems.push(`the deployed bundle id could not be read, so no web client can be told from a stale one: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   for (const d of devices) {
     // ONE APP TAB, AND BEFORE ANY PROBE. Every read below resolves a client by its position among
     // the browser's tabs, so an extra tab is not noise - it is a second device wearing this one's
@@ -392,6 +422,41 @@ async function preflight(devices, { quiet = false } = {}) {
     if (d === 'A1') {
       const revived = await reviveThePhone();
       if (revived) console.log(`  fix  A1  ${revived}`);
+    }
+
+    // ONTO THE DEPLOYED BUNDLE BEFORE ANYTHING IS READ, and before the repair loop below - a reload
+    // re-mounts the app, so the PIN gate comes back, and that loop is what puts it away again. Doing
+    // it after would leave the gate up and read the client as broken.
+    //
+    // A CLIENT ALREADY CURRENT PAYS ONE CDP CONNECT AND ONE `evaluate`, which is why this can run
+    // before every job in a phase rather than once per phase - and it has to, because staleness is a
+    // PER-CHECK property: SvelteKit reloads on the next navigation when `version.json` changed, so a
+    // client left open across a deploy is stale for an unpredictable PREFIX of a run and correct
+    // afterwards. One stamp over two builds is a row that cannot say which check got which.
+    if (deployedBundle && isOnTheDeployment(d)) {
+      let r = null;
+      try {
+        const cx = await client(PORTS[d], null, { focus: false });
+        try {
+          r = await reloadOntoBundle(cx, deployedBundle);
+        } finally {
+          cx.close();
+        }
+      } catch (e) {
+        // LOGGED, NOT SWALLOWED, AND NOT TRANSLATED. `client()` refuses a browser that is closed and
+        // one holding several pages, and `readiness(d)` just below distinguishes those two properly
+        // and pushes the authoritative problem - so this says what it could not do and defers.
+        console.log(`  ??   ${d.padEnd(3)} could not be asked which bundle it runs: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      if (r?.tookMs === 0) {
+        if (!quiet) console.log(`  ok   ${d.padEnd(3)} runs the deployed bundle ${deployedBundle}`);
+      } else if (r?.ok) {
+        console.log(`  fix  ${d.padEnd(3)} was on ${r.before}, reloaded onto ${deployedBundle} in ${Math.round(r.tookMs / 1000)} s - the PIN gate is back up`);
+      } else if (r) {
+        problems.push(
+          `${d}: stuck on ${r.before} while the deployment serves ${deployedBundle} - it would measure code that is not deployed`
+        );
+      }
     }
 
     let s;

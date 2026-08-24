@@ -961,6 +961,52 @@ Two things this does not fix, both stated rather than left to be rediscovered:
 Same family as rule 28: a device's build is part of its answer, and an answer nobody can attribute
 is not evidence. Here the field was present, populated, and wrong.
 
+#### 36. A CLIENT'S BUILD MUST BE READ FROM THE CLIENT, AND POINTING AT PRODUCTION IS NOT RUNNING IT
+
+The phone was never on the deployment and the rig knew it: `ORIGIN` reads
+`{ W1: SITE, W2: SITE, A1: 'http://tauri.localhost' }`, and every runner that touches A1 stamps
+`a1Build` beside `build` precisely because a deploy cannot reach an APK. The web clients got the
+opposite treatment - they point at production, so their build was taken to BE the deployed one, and
+`clientBuild()` read it with a same-origin `fetch('/_app/version.json')`. For A1 that is the APK's own
+asset and the answer is true. For W1 and W2 it is a network round trip to production, which answers
+with what production serves NOW whatever the tab is executing. One function, two questions, and only
+the phone's is the one the function's own doc claims.
+
+**A browser left open across a deploy keeps executing the old bundle, and its console is
+indistinguishable from a reloaded one.** On 2026-08-24, two minutes into `GRP --repeat 5`, GRP-3 came
+back `PASS-DIRTY` on `[OUTBOX] … evicted from … - permanent failure` - a spelling REPLACED four
+commits earlier, absent from all 205 chunks production was serving, and present in exactly one place
+in the source: a test name. The classifier was right, the correction was right, the client was old.
+
+Three things make this rule rather than an anecdote:
+
+- **The stamp cannot be repaired after the fact.** A web row records production's build at the
+  runner's import, so a phase that measured a stale client produces rows that are not merely
+  unattributed but CONFIDENTLY MISATTRIBUTED. There is no retroactive audit: the client's own build
+  was never captured, so `results.ndjson` cannot be re-read to find which rows were affected.
+- **Staleness is a PER-CHECK property, not a per-run one.** SvelteKit polls `version.json` and
+  reloads on the next navigation once it has changed, so a client is stale for an unpredictable
+  PREFIX of a run and correct afterwards - W2 printed the old line at 15:22 and read as current when
+  asked by hand nine minutes later, having healed itself in between. A one-shot check at the top of a
+  phase would therefore have passed while the phase still measured two builds under one stamp. The
+  gate belongs before every job, which costs one CDP connect for a client already current.
+- **The discriminator has to come from the same place the decision is made.** `ORIGIN[device] ===
+  SITE` already says which clients the deployment serves, so the web/phone split is a lookup and not
+  a device-name list kept somewhere else.
+
+The proof for the web half is the one SvelteKit already hands over: the shell writes
+`__sveltekit_<id>` as a **global**, baked into the bundle rather than fetched, so a running page
+carries its own build id in `window` while the origin serves the current one in the shell it renders.
+Comparing the two is a property of the code that is actually executing, which is what rule 17 asks of
+evidence.
+
+And the reason this went unseen for days is rules 21 and 22 together. "W1 and W2 must be reloaded onto
+the current bundle before any repair check" was a campaign rule **in prose**; `bundle-id.mjs` detected
+the violation and `reload.mjs` repaired it, both written and both correct - and the only caller either
+had in the whole rig was a sentence in a comment inside the other. A detector nothing executes reads
+as coverage on every review, and the seam that can refuse a run is the preflight, so that is where the
+question now lives.
+
 ### The check itself, over time
 
 #### 18. A CHECK IS A CLAIM ABOUT A MECHANISM, AND IT ROTS WHEN THE MECHANISM MOVES

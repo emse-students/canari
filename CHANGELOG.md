@@ -149,6 +149,24 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **THE PREFLIGHT READ THE PHONE'S BUILD AND ASSUMED THE BROWSERS'.** A browser left open across a
+  deploy keeps executing the old bundle, and its console is indistinguishable from a reloaded one -
+  so a phase measured code that was no longer deployed while every row still named the deployed
+  build. `clientBuild()` read a client's build with a same-origin `fetch('/_app/version.json')`,
+  which is the APK's own asset for the phone and a network round trip to production for W1 and W2:
+  one function, two questions, and only the phone's was the one its doc claimed. Caught two minutes
+  into `GRP --repeat 5` on 2026-08-24, when GRP-3 reported `PASS-DIRTY` on an `[OUTBOX] … evicted
+  from …` line whose spelling had been replaced four commits earlier and appeared in none of the 205
+  chunks production was serving.
+
+  `bundle-id.mjs` had detected exactly this since the day it was written and `reload.mjs` had
+  repaired it, and the only caller either had in the whole rig was a sentence in a comment inside the
+  other - a detector nothing executes, enforcing a rule that lived in prose. Both now share one
+  implementation (`bundle.mjs`), and the preflight asks the question before every job, because
+  staleness is a per-check property: SvelteKit reloads on the next navigation once `version.json`
+  changed, so a client is stale for an unpredictable prefix of a run and correct afterwards. A client
+  already current pays one CDP connect; one that will not move is refused rather than measured.
+
 - **ONE SENTENCE COVERED "A READ RECEIPT LOST A RACE" AND "A MESSAGE THE USER WROTE IS GONE FOR
   EVER".** `[OUTBOX] <id>… group deleted server-side - permanent failure` named neither what died nor
   why, so a reader meeting it had to go and find the entry by hand - and the classifier could not
