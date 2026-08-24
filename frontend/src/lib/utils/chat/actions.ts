@@ -37,6 +37,50 @@ import {
 import { saveBlobAs } from '$lib/utils/fileDownload';
 
 /**
+ * Whether `userId:deviceId`'s leaf is in OUR copy of `groupId`'s ratchet tree.
+ *
+ * THE TREE IS THE AUTHORITY ON WHO IS IN A GROUP, and the two callers of this used to ask the
+ * delivery service instead - `getGroupMembers`, which is the ROUTING table. `member_identities`'
+ * own Rustdoc names that exact misuse: "a reconciliation deciding whether a leaf still belongs
+ * must read this, never the routing table", and both callers are precisely such a reconciliation.
+ *
+ * The two answers diverge on the case both callers exist to handle. A device fresh-start clears
+ * its routing rows while the tree stays full, so the routing table reports "not a member" of a
+ * leaf that is sitting right there. The Add then goes out, OpenMLS declines the duplicate leaf,
+ * and the caller learns by failing what the tree could have told it for free - which is the
+ * `[RUST::WARN] Skipping KeyPackage already a member of the group` the campaign saw on GRP-5
+ * (2026-08-23) and GRP-3 (2026-08-24), both times looking like a 1-in-5 flake. It is also a
+ * network round-trip on a question whose answer is local, durable and already loaded.
+ *
+ * THREE ANSWERS, NOT TWO, for the same reason as {@link readLocalMembership}. `null` is "we cannot
+ * say": this device does not hold the group, so the tree that would answer does not exist here.
+ * Neither caller may read that as "not a leaf" without saying so out loud, so the branch logs -
+ * under the CALLER's tag, because which decision it was about to inform is the useful part.
+ */
+async function leafIsInLocalTree(deps: {
+  mlsService: Pick<IMlsService, 'getGroupMemberIdentities'>;
+  groupId: string;
+  userId: string;
+  deviceId: string;
+  /** The caller's log tag, so the line reads in the sequence it belongs to. */
+  tag: string;
+  log: (message: string) => void;
+}): Promise<boolean | null> {
+  const { mlsService, groupId, userId, deviceId, tag, log } = deps;
+  try {
+    const identities = await mlsService.getGroupMemberIdentities(groupId);
+    // The WHOLE identity, never a bare device id: leaves are `userId:deviceId`, so a suffix or
+    // substring test would let one id answer for another's.
+    return identities.includes(`${userId}:${deviceId}`);
+  } catch (e) {
+    log(
+      `${tag} Tree of ${groupId.slice(0, 8)}... unreadable, cannot say whether ${deviceId.slice(0, 12)}... is a leaf: ${String(e).slice(0, 100)}`
+    );
+    return null;
+  }
+}
+
+/**
  * Process pending device-group invitations.
  *
  * New paradigm: ANY online device of ANY group member can add a pending device.
@@ -167,16 +211,22 @@ export async function processPendingInvitations(params: {
           // -> re-welcome_request -> churn) and resends the history bundle for nothing. This
           // was the cause of repeated kick+re-add cycles on every reconnect for offline peer
           // devices (status stuck at 'pending' because they never confirm 'active').
-          try {
-            const members = await mlsService.getGroupMembers(groupId);
-            if (members.some((m) => m.deviceId === inv.deviceId)) {
-              log(
-                `[PENDING] ${inv.deviceId} already in tree for ${groupId} - skip (will join via queued Welcome)`
-              );
-              continue;
-            }
-          } catch {
-            /* proceed with add attempt */
+          // Read the TREE, not the routing table - see `leafIsInLocalTree`. `=== true` because a
+          // tree we could not read is not a "no": it falls through to the Add exactly as the
+          // swallowed catch here used to, but says so first.
+          const alreadyALeaf = await leafIsInLocalTree({
+            mlsService,
+            groupId,
+            userId: inv.userId,
+            deviceId: inv.deviceId,
+            tag: '[PENDING]',
+            log,
+          });
+          if (alreadyALeaf === true) {
+            log(
+              `[PENDING] ${inv.deviceId} already in tree for ${groupId} - skip (will join via queued Welcome)`
+            );
+            continue;
           }
 
           // One staged transaction (C7-A): stage the Add, validate the epoch server-side, then
@@ -883,10 +933,20 @@ export async function handleWelcomeRequest(params: {
     // WASM state (restart, fresh-install, NoMatchingKeyPackage), it resends a
     // welcome_request while already marked 'active' server-side.
     // -> always kick + re-add when the leaf is present in the tree.
-    try {
-      const currentMembers = await mlsService.getGroupMembers(groupId);
-      if (currentMembers.some((m) => m.deviceId === requesterDeviceId)) {
-        log(`[WELCOME_REQ] ${requesterDeviceId.slice(0, 12)}... leaf in MLS tree - kick + re-add`);
+    // Read the TREE, not the routing table - see `leafIsInLocalTree`. This decides a KICK, and the
+    // Rustdoc on `member_identities` is explicit that a decision to remove a leaf reads the tree.
+    // `=== true` keeps the old fall-through: on an unreadable tree the Add is still attempted.
+    const leafPresent = await leafIsInLocalTree({
+      mlsService,
+      groupId,
+      userId: requesterUserId,
+      deviceId: requesterDeviceId,
+      tag: '[WELCOME_REQ]',
+      log,
+    });
+    if (leafPresent === true) {
+      log(`[WELCOME_REQ] ${requesterDeviceId.slice(0, 12)}... leaf in MLS tree - kick + re-add`);
+      try {
         await kickStaleLeaf(groupId, requesterUserId, requesterDeviceId, mlsService, log);
 
         // Save MLS state after the remove commit
@@ -902,9 +962,18 @@ export async function handleWelcomeRequest(params: {
         }
         // Update the reference for the add below
         targetDevice.keyPackage = freshDevice.keyPackage;
+      } catch (e) {
+        // BEHAVIOUR UNCHANGED - the Add is still attempted - but no longer silent. Whatever failed
+        // here, the leaf the Add is about to collide with may still be in the tree, so the
+        // DuplicateSignature that follows used to be the only trace this branch left.
+        //
+        // IT DOES NOT SAY "the kick failed", because `kickStaleLeaf` cannot throw - it reports its
+        // own two halves and returns. Persisting the post-kick state is what reaches here, and
+        // naming the kick instead would send a reader to the one call that had already spoken.
+        log(
+          `[WELCOME_REQ] Post-kick repair of ${requesterDeviceId.slice(0, 12)}... did not complete: ${String(e).slice(0, 100)} - attempting the add anyway`
+        );
       }
-    } catch {
-      // On verification error, still attempt the add
     }
 
     // ── Add the device to the MLS group (staged transaction, C7-A) ─────

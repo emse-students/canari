@@ -51,6 +51,25 @@ export class DeviceRevokedError extends Error {
   }
 }
 
+/**
+ * The delivery service refused a read of a group's member list because this caller is not in it.
+ *
+ * `GET /api/mls/groups/:id/members` is members-only by design (audit S5: the device list leaks
+ * social graph and device topology), so for the ONE case where the honest answer is "you are not a
+ * member" the call is CERTAIN to be refused. That makes the 403 an ANSWER, not a failure - and the
+ * distinction has to survive the throw, because the caller that asks this question retires a
+ * conversation on "no" and must keep operating on "could not tell".
+ *
+ * Typed rather than message-matched, for the same reason as {@link DeviceRevokedError}: a
+ * distinction carried in prose is one exactly one call site will make.
+ */
+export class NotAGroupMemberError extends Error {
+  constructor(readonly groupId: string) {
+    super(`Caller is not a member of group ${groupId}`);
+    this.name = 'NotAGroupMemberError';
+  }
+}
+
 export type MlsDeliveryApiOptions = {
   historyUrl: string;
   getToken: () => Promise<string>;
@@ -841,11 +860,16 @@ export class MlsDeliveryApi {
    * Returns the current device-level member list (dm_device_group_memberships) for `groupId`.
    * THROWS on transport/HTTP failure: a `[]` must not mask a network failure (audit S2).
    * Returns `[]` only for a genuine 200 with no member. Tolerant callers opt in via `.catch`.
+   *
+   * A 403 is raised as {@link NotAGroupMemberError} and NOT as a generic failure: the endpoint is
+   * members-only, so that status is the server stating the very fact the caller asked about. Every
+   * other non-2xx stays unclassified, because none of them says anything about membership.
    */
   async getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]> {
     const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/members`, {
       headers: await this.auth(),
     });
+    if (res.status === 403) throw new NotAGroupMemberError(groupId);
     if (!res.ok) throw new Error(`getGroupMembers failed: ${res.status}`);
     return await res.json();
   }

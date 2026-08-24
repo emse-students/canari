@@ -149,6 +149,62 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A 403 IN THE CONSOLE OF EVERY REMOVED DEVICE, ASKING A MEMBERS-ONLY ENDPOINT WHETHER IT WAS
+  STILL A MEMBER.** `verifyCurrentUserMembership` went straight to
+  `GET /api/mls/groups/:id/members`, which is members-only by design (audit S5: the device list
+  leaks social graph and device topology). So on the one question worth asking - "am I still in?" -
+  the request could only ever be refused, and the refusal was the answer being sought. GRP-3 caught
+  it on 2026-08-23.
+
+  The local MLS state is asked FIRST, and on `false` it is the whole answer: a Remove commit is a
+  signed, ordered statement by a member entitled to make it, already applied and already durable, so
+  a device holding one has nothing left to ask anybody. The server is now asked only about what the
+  local state cannot see - server-side drift while we ARE still a member.
+
+  **NOTHING FAILED BEFORE, WHICH IS WHY IT LASTED.** The two paths did not disagree, they
+  OVERLAPPED: the eviction was also learnt from the commit and `convo.lifecycle` already carried it.
+  The overlap is deleted rather than reconciled. The 403 is additionally typed as
+  `NotAGroupMemberError` at the throw, because it is an ANSWER and not a transport failure, and the
+  one caller that acts on it retires a conversation on "no" while it must keep operating on "could
+  not tell" - a distinction that cannot survive as prose in a message. `readLocalMembership` returns
+  THREE answers for the same reason: `null` is "this device does not hold the group", and no caller
+  may read it as a "no".
+
+- **TWO RECONCILIATIONS ASKED THE DELIVERY SERVICE WHO WAS IN THE MLS TREE, and the routing table is
+  not the tree.** `processPendingInvitations` and `handleWelcomeRequest` both decide "is this leaf
+  already in the group?" and both read `getGroupMembers` - `dm_device_group_memberships`, which is
+  who the delivery service will ROUTE to. The authority is the local ratchet tree, and
+  `member_identities`' own Rustdoc already named this exact misuse: *a reconciliation deciding
+  whether a leaf still belongs must read this, never the routing table*.
+
+  The two answers diverge on precisely the case both callers exist to handle. A device fresh-start
+  clears its routing rows while the tree stays full, so the routing table reports "not a member" of
+  a leaf sitting right there; the Add goes out, OpenMLS declines the duplicate, and the caller learns
+  by failing what the tree could have told it for free, over a network round-trip, on a question
+  whose answer was already local and loaded. That is the
+  `[RUST::WARN] Skipping KeyPackage already a member of the group` the campaign saw on GRP-5
+  (2026-08-23) and GRP-3 (2026-08-24), looking like a 1-in-5 flake both times because a stale row
+  reconciles ONCE and then never again. At the second site the answer gates a KICK, which is the
+  decision the Rustdoc is most explicit about. Both sites now read the tree; an unreadable tree is
+  not a "no", so the Add is still attempted exactly as the swallowed `catch` allowed - it just says
+  which fact it was missing. The whole identity `userId:deviceId` is compared, never a bare device
+  id, because those are client-generated and two users can hold the same one.
+
+- **A KICK THAT REMOVED NOTHING CLAIMED THE REMOVAL ANYWAY.** `kickStaleLeaf` swallowed BOTH of its
+  calls - `removeMemberDevice` in a bare `catch {}`, `kickStaleDevice` in a `.catch(() => {})` - and
+  then logged `[KICK] ... removed` unconditionally. Neither could throw, so a reader following that
+  line had no way to learn the leaf was still in the tree, and the only evidence the branch had
+  failed was the `DuplicateSignature` produced later by the caller's Add, under a different tag: one
+  symptom standing in for two unrelated causes. Best-effort was doing the work of silent.
+
+  Both failures report, and the success line is emitted only when both halves actually succeeded -
+  otherwise the summary names WHICH half survived. They are separate facts: the tree decides who can
+  read the group, the routing row decides who the delivery service ships to, they fail
+  independently, and a leaf out of the tree with a routing row still shipping to it is a different
+  estate from the reverse. Neither is promoted to a throw - the callers' fall-through is deliberate,
+  the silence was not. The four spellings are pinned in `classify-selftest.mjs`: `[KICK]` gets no
+  classifier rule, because a kick is a REPAIR and reaching one at all is the finding.
+
 - **THE BATCH CATCH-UP HAD BEEN DEAD FOR EVERY CLIENT PAST FIFTY CONVERSATIONS, and the fallback is
   why nobody noticed.** `POST /api/mls/history/batch` exists to turn one login catch-up into one
   round-trip; it refuses more than 50 groups. The client sent its WHOLE conversation list, unchunked,

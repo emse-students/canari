@@ -28,6 +28,37 @@ export interface EvictionCheckDeps {
 }
 
 /**
+ * Reads this device's membership of `groupId` from OpenMLS - the authoritative fact.
+ *
+ * THREE ANSWERS, NOT TWO, and the third is the point. `true` we are a member, `false` a Remove
+ * commit named us, `null` the local state could not say - a group this device does not hold throws
+ * here, and collapsing that into `false` would retire conversations it had merely not loaded yet.
+ * Every caller must decide what to do about `null` for itself; none of them may treat it as a "no".
+ *
+ * This is the fact `verifyCurrentUserMembership` consults before it asks the delivery service, and
+ * the reason it can: the answer is local, durable and free, and the server's own membership
+ * endpoint is members-only - so on the one question that matters it is certain to refuse.
+ *
+ * The swallowed branch logs, and names its caller through `context`: it is the branch that would
+ * hide an eviction, so a run must be able to see which decision it was about to inform.
+ */
+export async function readLocalMembership(deps: {
+  mlsService: Pick<IMlsService, 'isGroupActive'>;
+  groupId: string;
+  /** What was about to be decided, spliced into the log line ("after a commit"). */
+  context: string;
+  log: (message: string) => void;
+}): Promise<boolean | null> {
+  const { mlsService, groupId, context, log } = deps;
+  try {
+    return await mlsService.isGroupActive(groupId);
+  } catch (e) {
+    log(`[EVICT] Membership of ${groupId.slice(0, 8)}… could not be read ${context}: ${String(e)}`);
+    return null;
+  }
+}
+
+/**
  * Retires the conversation if this device is no longer a member of the group.
  *
  * Returns true when this call performed the transition, false when the device is still a member,
@@ -40,19 +71,11 @@ export interface EvictionCheckDeps {
  */
 export async function retireIfEvicted(deps: EvictionCheckDeps): Promise<boolean> {
   const { mlsService, conversations, groupId, userId, saveConversation, log } = deps;
-  let active: boolean;
-  try {
-    active = await mlsService.isGroupActive(groupId);
-  } catch (e) {
-    // Swallowed because a membership query is not the point of the path it runs on - but never
-    // silently: this is the branch that would hide an eviction, and the send-path backstop in the
-    // outbox is what would then find it, one refused message later.
-    log(
-      `[EVICT] Membership of ${groupId.slice(0, 8)}… could not be read after a commit: ${String(e)}`
-    );
-    return false;
-  }
-  if (active) return false;
+  // `null` is NOT an eviction: a membership query is not the point of the path this runs on, and the
+  // send-path backstop in the outbox is what would find a missed eviction, one refused message
+  // later. `readLocalMembership` owns the log for that branch.
+  const active = await readLocalMembership({ mlsService, groupId, context: 'after a commit', log });
+  if (active !== false) return false;
 
   const retired = markConversationDeletedRemotely(conversations, groupId, userId, saveConversation);
   log(

@@ -252,7 +252,21 @@ const BENIGN = [
   // itself in order: auth, WASM, the vault key path, IndexedDB, push, the catch-up, the tab lock.
   // None is a decision, none can fail silently (each failure path logs at `error` and is caught
   // above), and a check that deliberately reloads must not be permanently dirty for doing so.
-  /^\[A\] (token→refresh|refresh→|ws\+|refresh✓)/,
+  //
+  // THE AUTH LINE OF THAT SEQUENCE HAS FOUR SPELLINGS AND THIS RULE KNEW THREE. `auth.ts` logs the
+  // access-token refresh as `refresh→ <endpoint>`, `refresh✓ <ms>ms exp=<n>s`, `token→refresh`
+  // and - when the token in hand has under 60 s left - `token exp=<n>s→refresh`. Only the last was
+  // missing, so the SAME renewal read as benign when there was no token to start from and as
+  // unexplained when there was one about to expire. GRP-8 landed it on 2026-08-24, on a run that
+  // simply outlived a token.
+  //
+  // `exp=` takes a SIGN: `remaining` is a subtraction against the wall clock and goes negative on a
+  // token already past its expiry, which is still this same renewal.
+  //
+  // NOT widened to `^\[A\]`. The other lines that prefix wears are `clear` (a logout) and
+  // `login ...` (a fresh authentication), and either one inside a check that did neither is a
+  // finding. They stay unclassified on purpose.
+  /^\[A\] (token( exp=-?\d+s)?→refresh|refresh→|ws\+|refresh✓)/,
   /^Initialised in (WEB|TAURI) mode/,
   /^(Verifying PIN\.\.\.|Local database initialised\.)/,
   /^(MLS state loaded from IndexedDB|Initialising MLS \(vault device key path\)|MLS identity initialised)/,
@@ -393,6 +407,12 @@ const STATE_CHANGE = [
   // own consequences is what a rule here prevents. It sat in `unexplained` until GRP-7 produced it
   // on 2026-08-23, on a reconciliation that a skipped mailbox barrier had made necessary.
   /^\[HISTORY_STATE\] \S+ holds something different for \S+ - describing our store$/,
+  // THE FOURTH SPELLING, and the asker's own side of it: our state key differed from a peer's, so we
+  // asked that ONE peer to describe its store. Same reasoning as the three above - the finding is the
+  // TRIGGER, which stays in `NOTABLE`, and reporting the exchange on top of its trigger buries it.
+  // Sighted in `unexplained` from GRP-7 on 2026-08-24, on a reconnect where the batch-primed history
+  // gave the two devices something real to compare for the first time.
+  /^\[HISTORY_STATE\] Keys differ for \S+ - asked \S+ to describe$/,
   // LEAVING AND JOINING, SEEN LOCALLY. Both are real changes to what this client holds, so they are
   // reported rather than forgiven - and neither is a defect, so neither breaks `clean`. GRP-6 and
   // GRP-4 produce them by design: a member who leaves purges the conversation locally, and a member
@@ -664,6 +684,60 @@ const NOTABLE = [
   // notable, because in a delivery check the exchange should not have been needed at all - a run
   // full of these is a run where something keeps deciding it is out of sync (WP-FALSELOSS-2).
   /^\[HISTORY_REQ\] .* (same state as|nothing to do)/,
+  // THE SAME ANSWER WHEN THE STORES ARE NOT IDENTICAL: what this device will send, and what it must
+  // pull. Classified from the site (`actions.ts`, one template) rather than from the sighting, so
+  // both of its variants land here - the trailing `(identical stores)` is the good outcome and reads
+  // like the rule above it. NOTABLE for the reason that one is: in a delivery check the exchange
+  // should not have been needed at all, and a run full of these is a run where something keeps
+  // deciding it is out of sync (WP-FALSELOSS-2). It never breaks `clean` - a real diff is the
+  // mechanism doing its job - but it is never routine either.
+  /^\[HISTORY_REQ\] \S+\.\.\. diff with \S+: \d+ to send, \d+ to pull( \(identical stores\))?$/,
+  // A STALE `pending` INVITATION ROW BEING RECONCILED, IN THE THREE LINES IT TAKES. The server still
+  // lists a device as invited whose leaf is ALREADY in the MLS tree, so the sweep tries the Add,
+  // OpenMLS declines it (`members.rs`, `any_already_member` -> `ALREADY_MEMBER`), and the caller
+  // promotes the row to `active` so the server stops re-serving it on every login. Convergent and
+  // self-limiting: once per stale row, then never again - which is exactly why it appeared 1-in-5
+  // twice (GRP-5 on 2026-08-23, GRP-3 on 2026-08-24) and looked non-reproducible both times.
+  //
+  // `notable`, all three: the header only prints when there IS work (`length === 0` returns early),
+  // so none of them is routine, and a run should be able to see a membership row that had drifted.
+  // They do not break `clean` - the repair is the mechanism working.
+  //
+  // THE RUST WARN IS THE ONE WORTH READING, and it is classified rather than quietened because it
+  // names something real: the JS pre-check ahead of it asks the SERVER's device list whether the
+  // leaf is in the tree, while the fact it wants is local to OpenMLS. Filed P2 in
+  // docs/wiki/backlog.md; classified here because the repair itself is correct and must not fail a
+  // phase that merely inherited a drifted row.
+  /^\[PENDING\] \d+ pending invitation\(s\) to process$/,
+  /^\[RUST::WARN\] Skipping KeyPackage already a member of the group$/,
+  /^\[PENDING\] \S+ already a member of \S+ - invitation fulfilled, marked active$/,
+  // THE POST-WELCOME COOLDOWN DECLINING TO DO HARM. A `welcome_request` arrived for a device we
+  // served seconds ago; it is still decrypting the Welcome and its history bundle, and kicking now
+  // would evict a freshly-added leaf into `UseAfterEviction` on its first send. So it skips.
+  //
+  // `notable` rather than benign: reaching it means a device asked to be let into a group it was
+  // already being let into, and in a check that invited nobody that is the finding. Landed in
+  // `unexplained` on GRP-4, 2026-08-24.
+  /^\[WELCOME_REQ\] \S+ Welcome sent \d+s ago - still joining, skip$/,
+  // THE REST OF THE GUARDS AT THAT SITE, ENUMERATED ONCE. `handleWelcomeRequest` has NINETEEN log
+  // lines under this one tag and a run finds them one at a time, which is how GRP-4 spent two
+  // passes reporting a different spelling of "the guard held". So the site was read whole
+  // (actions.ts:753-975 plus sessionAuth.ts:987) and every line placed deliberately:
+  //
+  //   notable      - the six below plus `Welcome -> `, `leaf in MLS tree - kick + re-add` (claimed
+  //                  by the generic `re-?add` rule) and `re-add suspended`. A guard that held.
+  //   unexplained  - the ten that are a refusal, an abort, an error, or the >30-day KeyPackage
+  //                  FALLBACK. Deliberately ruleless, and pinned that way in classify-selftest.mjs
+  //                  so a later prefix rule cannot forgive them: a fallback reached is a signal
+  //                  that the primary path failed, and a device left unserved is a finding.
+  //
+  // Enumerated rather than taken as a `^\[WELCOME_REQ\]` prefix, for exactly that reason.
+  /^\[WELCOME_REQ\] Request from self \(\S+\.\.\.\) - ignored$/,
+  /^\[WELCOME_REQ\] No ready conversation for \S+\.\.\. - deferring$/,
+  /^\[WELCOME_REQ\] \S+\.\.\. not ready yet - deferred$/,
+  /^\[WELCOME_REQ\] Already in progress for \S+ - skip$/,
+  /^\[WELCOME_REQ\] Lock busy for \S+ - another device in progress, skip$/,
+  /^\[WELCOME_REQ\] \S+ already a member of \S+\.\.\. - skip$/,
   // A DESTRUCTIVE ACTION CORRECTLY REFUSED - the durable rule working, not a fault. The purge is
   // gated on knowing the server list is trustworthy, and `fetchOk=false` says it is not, so nothing
   // is deleted. Reported rather than silenced: outside a deliberate cut, a client that cannot fetch

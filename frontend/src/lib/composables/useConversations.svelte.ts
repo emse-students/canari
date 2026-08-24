@@ -34,6 +34,8 @@ import {
   historyRangeStartFor,
   sendHistoryRangeRequest,
 } from '$lib/utils/chat/groupActions';
+import { readLocalMembership } from '$lib/utils/chat/eviction';
+import { NotAGroupMemberError } from '$lib/mls-client/mlsDeliveryApi';
 import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
 import {
   createNewGroup as createGroup,
@@ -803,7 +805,51 @@ export function useConversations() {
     }
   }
 
-  /** Checks whether the current user is still a member of the given conversation. Caches the result for 30 s. Attempts server re-registration and direct-conversation repair before surfacing a removal notice. */
+  /** Remembers a membership verdict for 30 s, so a re-selected conversation does not re-ask. */
+  function cacheMembership(groupId: string, isMember: boolean) {
+    membershipCache.set(groupId, { isMember, expiresAt: Date.now() + 30_000 });
+  }
+
+  /**
+   * Surfaces the removal notice for a conversation this device is no longer a member of, and
+   * answers `false`.
+   *
+   * Extracted so the LOCAL verdict and the SERVER verdict share one presentation: they are the same
+   * conclusion reached from two places, and a second copy of the notice logic is a second chance for
+   * them to disagree about what the user sees.
+   */
+  async function surfaceRemoval(
+    contactName: string,
+    convo: Conversation,
+    ctx: ConversationContext
+  ): Promise<false> {
+    const notice = chat_system_removed_from_group();
+    console.warn(`[VERIFY] User no longer member of ${convo.id} - showing removal notice`);
+    if (!convo.messages.some((m) => m.isSystem && m.content === notice)) {
+      await ctx.addMessageToChat('system', notice, contactName, { isSystem: true });
+    }
+    if (selectedContact === contactName) sendError = notice;
+    return false;
+  }
+
+  /**
+   * Checks whether the current user is still a member of the given conversation. Caches the result
+   * for 30 s. Attempts server re-registration and direct-conversation repair before surfacing a
+   * removal notice.
+   *
+   * THE LOCAL MLS STATE IS ASKED FIRST, AND ON `false` IT IS THE WHOLE ANSWER. A Remove commit is a
+   * signed, ordered statement by a member entitled to make it, already applied and already durable
+   * (see `eviction.ts`) - so a device that has one has nothing left to ask anybody. Asking anyway
+   * sent `GET /api/mls/groups/:id/members` to an endpoint that is members-only BY DESIGN, which is
+   * to say: on the one question worth asking, the request could only ever be refused. That is a
+   * 403 in the console of every removed device, and it is learning by failing what a fact already
+   * told us. GRP-3 caught it on 2026-08-23.
+   *
+   * The two paths overlapped rather than disagreed, which is why nothing failed: the eviction was
+   * ALSO learnt from the commit, and `convo.lifecycle` carried it. This deletes the overlap instead
+   * of reconciling it - the local fact decides, and the server is asked only about what the local
+   * state cannot see, which is server-side drift while we ARE still a member.
+   */
   async function verifyCurrentUserMembership(
     contactName: string,
     ctx: ConversationContext
@@ -815,16 +861,29 @@ export function useConversations() {
     const cached = membershipCache.get(convo.id);
     if (cached && cached.expiresAt > Date.now()) return cached.isMember;
 
+    const mlsService = ctx.ensureMls();
+    const localMembership = await readLocalMembership({
+      mlsService,
+      groupId: convo.id,
+      context: 'before verifying against the server',
+      log: ctx.log,
+    });
+    // Only `false` short-circuits. `null` means the local state could not say - a conversation whose
+    // MLS group this device does not hold - and that is exactly the case the server can still answer.
+    if (localMembership === false) {
+      cacheMembership(convo.id, false);
+      return await surfaceRemoval(contactName, convo, ctx);
+    }
+
     try {
-      const mlsService = ctx.ensureMls();
       const members = await fetchUniqueGroupMembers(mlsService, convo.id);
       if (members.length === 0) {
-        membershipCache.set(convo.id, { isMember: true, expiresAt: Date.now() + 30_000 });
+        cacheMembership(convo.id, true);
         return true;
       }
       const stillMember = members.some((m) => m.toLowerCase() === ctx.userId.toLowerCase());
       if (stillMember) {
-        membershipCache.set(convo.id, { isMember: true, expiresAt: Date.now() + 30_000 });
+        cacheMembership(convo.id, true);
         return true;
       }
 
@@ -838,7 +897,7 @@ export function useConversations() {
         );
         if (backInGroup) {
           ctx.log(`[SYNC] Server re-registration succeeded for ${convo.id}.`);
-          membershipCache.set(convo.id, { isMember: true, expiresAt: Date.now() + 30_000 });
+          cacheMembership(convo.id, true);
           return true;
         }
       } catch {
@@ -879,14 +938,20 @@ export function useConversations() {
           // Recovery failed - fall through to show removal notice
         }
       }
-      const notice = chat_system_removed_from_group();
-      console.warn(`[VERIFY] User no longer member of ${convo.id} - showing removal notice`);
-      if (!convo.messages.some((m) => m.isSystem && m.content === notice)) {
-        await ctx.addMessageToChat('system', notice, contactName, { isSystem: true });
+      return await surfaceRemoval(contactName, convo, ctx);
+    } catch (e) {
+      // A STATUS CODE IS AN ANSWER, A TRANSPORT FAILURE IS NOT - and this `catch` used to make no
+      // such distinction: it answered `true` to everything, so the server saying "you are not a
+      // member" in the clearest way it has was read as "still a member". It failed in the unsafe
+      // direction, on the exact input it was most likely to see.
+      if (e instanceof NotAGroupMemberError) {
+        cacheMembership(convo.id, false);
+        return await surfaceRemoval(contactName, convo, ctx);
       }
-      if (selectedContact === contactName) sendError = notice;
-      return false;
-    } catch {
+      // Anything else - unreachable, 5xx, a refused token - says NOTHING about membership, so it
+      // must not retire a conversation. `true` keeps the client working; the log is what stops the
+      // branch from being silent, since this is where a real outage would hide.
+      ctx.log(`[VERIFY] Membership of ${convo.id.slice(0, 8)}… could not be checked: ${String(e)}`);
       return true;
     }
   }

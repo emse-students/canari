@@ -81,6 +81,59 @@ const CASES = [
     '[14:24:06] [HISTORY_STATE] b78568a3… holds something different for 642f389a… - describing our store',
     'stateChanges',
   ],
+  // THE FOURTH SPELLING, and the asker's own side: our key differed from a peer's, so we asked that
+  // one peer to describe its store. `stateChanges` with the other three - the finding is the TRIGGER,
+  // which stays in `notable`. Verbatim from GRP-7 on 2026-08-24, where it landed in `unexplained`.
+  [
+    'log',
+    '[01:40:12] [HISTORY_STATE] Keys differ for 6bd37588… - asked b78568a3…:web-b78568a3…-msglwqh6-vegy to describe',
+    'stateChanges',
+  ],
+  // THE SAME EXCHANGE REPORTING A REAL DIFF, the sibling of the `nothing to do` case above. Both
+  // variants of the one template are pinned, because a rule written from the sighting alone would
+  // have covered the first and left `(identical stores)` in `unexplained` for the next run to find.
+  [
+    'log',
+    '[01:40:12] [HISTORY_REQ] 6bd37588... diff with b78568a3…:web-b78568a3…-msglwqh6-vegy: 0 to send, 1 to pull',
+    'notable',
+  ],
+  [
+    'log',
+    '[01:40:12] [HISTORY_REQ] 6bd37588... diff with b78568a3…:web-b78568a3…-msglwqh6-vegy: 3 to send, 0 to pull (identical stores)',
+    'notable',
+  ],
+  // THE ACCESS-TOKEN REFRESH, ALL FOUR SPELLINGS OF ONE SITE. The fourth is the one GRP-8 landed in
+  // `unexplained` on 2026-08-24; the others are pinned beside it because widening a rule is exactly
+  // how the spellings that already worked stop working.
+  ['log', '[01:40:12] [A] token exp=59s→refresh', 'benign'],
+  // `remaining` is a subtraction against the wall clock: a token already expired gives a NEGATIVE
+  // one, and it is the same renewal.
+  ['log', '[01:40:12] [A] token exp=-3s→refresh', 'benign'],
+  ['log', '[01:40:12] [A] token→refresh', 'benign'],
+  ['log', '[01:40:12] [A] refresh→ /api/auth/refresh', 'benign'],
+  ['log', '[01:40:12] [A] refresh✓ 214ms exp=3599s', 'benign'],
+  // AND THE TWO `[A]` LINES THAT MUST NOT BE FORGIVEN, which is the whole reason the rule enumerates
+  // spellings instead of taking the prefix. A logout or a fresh authentication inside a check that
+  // did neither is a finding, and `unexplained` is what makes somebody read it.
+  ['log', '[01:40:12] [A] clear', 'unexplained'],
+  ['log', '[01:40:12] [A] login returnTo=/chat uri=https://canari-emse.fr flow=default', 'unexplained'],
+  // A STALE `pending` INVITATION ROW BEING RECONCILED, IN THE THREE LINES IT TAKES, in order. The
+  // server offers a device that is ALREADY in the tree, Rust declines the duplicate leaf, and the
+  // row is promoted to `active` so the offer stops coming back. `notable`, all three: the header
+  // only prints when there IS work to do, so seeing it means a membership row had drifted.
+  ['log', '[01:40:12] [PENDING] 1 pending invitation(s) to process', 'notable'],
+  ['log', '[01:40:12] [RUST::WARN] Skipping KeyPackage already a member of the group', 'notable'],
+  [
+    'log',
+    '[01:40:12] [PENDING] tauri-d82cd226… already a member of 8325af55… - invitation fulfilled, marked active',
+    'notable',
+  ],
+  // Plural, because the count is a count and a rule pinned to `1` would forgive the interesting case.
+  ['log', '[01:40:12] [PENDING] 4 pending invitation(s) to process', 'notable'],
+  // AND THE LINE THE SAME TAG PRINTS WHEN THERE IS NOTHING TO DO, which must stay out of `notable`:
+  // it fires on every connect, and a rule that could not tell the two apart would report the sweep
+  // as a finding on every single run.
+  ['log', '[01:40:12] [PENDING] No pending MLS messages', 'benign'],
   // A Welcome sent in answer to a welcome_request - the invitation-link join and every re-add.
   // `notable`: the mechanism working, and also somebody asking to be let into a group.
   ['log', '[14:26:09] [WELCOME_REQ] Welcome -> b78568a3…:web-b78568a3…-msglwqh6-vegy for 1bf6fefe…', 'notable'],
@@ -99,6 +152,126 @@ const CASES = [
   ],
   ['log', '[14:26:09] [WELCOME_REQ] KeyPackage not found for web-b78568a3… - aborting', 'unexplained'],
   ['log', '[14:26:09] [WELCOME_REQ] Group 1bf6fefe... not found - refusing', 'unexplained'],
+  // THE POST-WELCOME COOLDOWN, a fifth line under the tag and the only one that is neither a
+  // success nor a failure: a device asked to be let into a group it is still joining, so the kick
+  // that would evict its fresh leaf is declined. `notable` - in a check that invited nobody, a
+  // second welcome_request is the finding.
+  [
+    'log',
+    '[14:26:09] [WELCOME_REQ] web-b78568a3… Welcome sent 7s ago - still joining, skip',
+    'notable',
+  ],
+  // THE WHOLE OF THAT SITE, PINNED IN ONE PLACE. Nineteen lines carry this tag and a run surfaces
+  // them one at a time - GRP-4 spent two passes on two different spellings of "the guard held".
+  // So every one is pinned here, at the bucket it reaches, and the ten `unexplained` ones are the
+  // point of the exercise: they have no rule ON PURPOSE, and this table is what stops a later
+  // `^\[WELCOME_REQ\]` prefix from quietly forgiving them.
+  //
+  // The six guards that held. Each means a request was declined for a reason the design intends.
+  ['log', '[14:26:09] [WELCOME_REQ] Request from self (web-b78568a3...) - ignored', 'notable'],
+  ['log', '[14:26:09] [WELCOME_REQ] No ready conversation for 1bf6fefe... - deferring', 'notable'],
+  ['log', '[14:26:09] [WELCOME_REQ] 1bf6fefe... not ready yet - deferred', 'notable'],
+  ['log', '[14:26:09] [WELCOME_REQ] Already in progress for 1bf6fefe-aaaa - skip', 'notable'],
+  [
+    'log',
+    '[14:26:09] [WELCOME_REQ] Lock busy for 1bf6fefe-aaaa - another device in progress, skip',
+    'notable',
+  ],
+  // The ALREADY_MEMBER catch: convergent, the device joins via the Welcome already queued for it.
+  // Same family as the `[PENDING]` trio above, and classified the same way.
+  [
+    'log',
+    '[14:26:09] [WELCOME_REQ] web-b78568a3\u2026 already a member of 1bf6fefe... - skip',
+    'notable',
+  ],
+  // A kick followed by a re-add, claimed by the generic `re-?add` rule rather than a rule of its own.
+  [
+    'log',
+    '[14:26:09] [WELCOME_REQ] web-b78568a3... leaf in MLS tree - kick + re-add',
+    'notable',
+  ],
+  // AND THE REFUSALS, ABORTS AND ERRORS, WHICH MUST STAY UNEXPLAINED. `Group ... not found` and
+  // `KeyPackage not found ... - aborting` are pinned above already; these are the rest.
+  ['log', '[14:26:09] [WELCOME_REQ] Group 1bf6fefe... deleted - refusing', 'unexplained'],
+  [
+    'log',
+    '[14:26:09] [WELCOME_REQ] Members of 1bf6fefe\u2026 unavailable - refused (requester will retry)',
+    'unexplained',
+  ],
+  // The security guard: somebody REMOVED from a group asked to be re-added into it. Reaches
+  // `notable` via the generic `re-?add` rule, not a rule of its own - reported on every run, and it
+  // does not break `clean` because the refusal IS the correct outcome.
+  [
+    'log',
+    '[14:26:09] [WELCOME_REQ] 6bd37588-aaaa not a member of 1bf6fefe\u2026 (removed) - re-add refused',
+    'notable',
+  ],
+  // A FALLBACK REACHED IS A SIGNAL, NEVER A PATH - so the one fallback at this site is the one
+  // "success" line here that must break `clean`. It means fetchUserDevices' 30-day window did not
+  // hold the requester, and that is a fact about the estate somebody has to read.
+  [
+    'log',
+    '[14:26:09] [WELCOME_REQ] KeyPackage retrieved via fallback for web-b78568a3\u2026 (> 30 days)',
+    'unexplained',
+  ],
+  // A repair abandoned halfway: the leaf was kicked and the re-add never happened, so the device
+  // is now in NEITHER state. The worst outcome at this site, and it may never go quiet.
+  [
+    'log',
+    '[14:26:09] [WELCOME_REQ] KeyPackage not found after kick for web-b78568a3\u2026 - skip',
+    'unexplained',
+  ],
+  ['log', '[14:26:09] [WELCOME_REQ] Kick error for web-b78568a3\u2026: GroupNotFound', 'unexplained'],
+  // THE CATCH-ALL ERROR BRANCH, AND THE ACCIDENT IN HOW IT IS BUCKETED. Both lines below are the
+  // same log call; they part company only because the generic `epoch` rule happens to match the
+  // words the error carried. Pinned in both spellings rather than smoothed over: the seam is real,
+  // it is the classifier's and not the app's, and either bucket reports the line - `notable` on the
+  // board, `unexplained` breaking `clean`. Whichever a run produces, it is visible.
+  ['log', '[14:26:09] [WELCOME_REQ] Error for web-b78568a3\u2026: epoch mismatch', 'notable'],
+  ['log', '[14:26:09] [WELCOME_REQ] Error for web-b78568a3\u2026: GroupNotFound', 'unexplained'],
+
+  // THE KICK ITSELF, ALL FOUR SPELLINGS, PINNED SO THE BUCKET IS A DECISION AND NOT AN OVERSIGHT.
+  // `[KICK]` has no rule in watch.mjs and gets none here: a kick is a REPAIR, so reaching one at
+  // all is the finding, and `unexplained` breaking `clean` is the correct reading of a run that had
+  // to remove a leaf. The three failure spellings were added 2026-08-24 with the logging itself -
+  // before that the function swallowed both of its calls and then claimed the removal anyway, so
+  // the FIRST line below was emitted on runs where nothing at all had been removed.
+  ['log', '[14:26:09] [KICK] Stale leaf b78568a3\u2026:web-b78568a3\u2026 removed from 642f389a\u2026', 'unexplained'],
+  [
+    'log',
+    "[14:26:09] [KICK] Leaf b78568a3\u2026:web-b78568a3\u2026 still in 642f389a\u2026's tree - remove refused: Error: GroupNotFound",
+    'unexplained',
+  ],
+  [
+    'log',
+    '[14:26:09] [KICK] Routing row for b78568a3\u2026:web-b78568a3\u2026 still listed on 642f389a\u2026 - clear refused: Error: 503 Service Unavailable',
+    'unexplained',
+  ],
+  // The summary naming WHICH half survived - the line a reader acts on, and the one that has to stay
+  // legible whichever half failed, because a leaf out of the tree with a routing row still shipping
+  // to it is a different estate from the reverse.
+  [
+    'log',
+    '[14:26:09] [KICK] Stale leaf b78568a3\u2026:web-b78568a3\u2026 only PARTIALLY removed from 642f389a\u2026 - tree=still present, routing=still listed',
+    'unexplained',
+  ],
+  // AND THE SAME SEAM AS THE TWO `WELCOME_REQ` ERROR LINES ABOVE, TWICE. This failure carries the
+  // server's OWN WORDS, so the bucket depends on what those words happen to say: `epoch` is claimed
+  // by the generic reconciliation rule and `DuplicateSignature` by the rule for that condition, both
+  // landing in `notable`, while `GroupNotFound` above matches nothing and breaks `clean`. All three
+  // are pinned rather than smoothed over, because the seam is the CLASSIFIER's and not the app's -
+  // one log call, one meaning, three buckets - and either bucket reports the line: `notable` on the
+  // board, `unexplained` breaking `clean`. Whichever a run produces, it is visible.
+  [
+    'log',
+    "[14:26:09] [KICK] Leaf b78568a3\u2026:web-b78568a3\u2026 still in 642f389a\u2026's tree - remove refused: Error: epoch moved under us",
+    'notable',
+  ],
+  [
+    'log',
+    "[14:26:09] [KICK] Leaf b78568a3\u2026:web-b78568a3\u2026 still in 642f389a\u2026's tree - remove refused: Error: DuplicateSignature",
+    'notable',
+  ],
 
   // The one that must NEVER be demoted: a real loss, timestamped exactly as the app writes it.
   ['log', "[14:24:06] [MLS] LOST frame for 642f389a… from d82cd226…: generation consumed but this frame was never processed - the sender's ratchet rewound (SecretReuseError, frame 5p:kq68gk)", 'severe'],

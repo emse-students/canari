@@ -24,6 +24,7 @@ function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
     acquireAddLock: vi.fn().mockResolvedValue(true),
     releaseAddLock: vi.fn().mockResolvedValue(undefined),
     getGroupMembers: vi.fn().mockResolvedValue([]),
+    getGroupMemberIdentities: vi.fn().mockResolvedValue([]),
     fetchUserDevices: vi.fn().mockResolvedValue([]),
     fetchDeviceKeyPackage: vi.fn().mockResolvedValue(null),
     removeMemberDevice: vi.fn().mockResolvedValue(undefined),
@@ -57,7 +58,7 @@ describe('processPendingInvitations - leaf already in tree', () => {
         .mockResolvedValue([
           { id: 'i1', userId: 'peer', deviceId: 'peer-dev', groupId: 'g1', status: 'pending' },
         ]),
-      getGroupMembers: vi.fn().mockResolvedValue([{ userId: 'peer', deviceId: 'peer-dev' }]),
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['peer:peer-dev']),
       fetchUserDevices: vi
         .fn()
         .mockResolvedValue([{ deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) }]),
@@ -80,6 +81,141 @@ describe('processPendingInvitations - leaf already in tree', () => {
     expect(mlsService.addMember).not.toHaveBeenCalled();
     expect(mlsService.sendWelcome).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(expect.stringContaining('already in tree'));
+    // AND THE ROUTING TABLE IS NEVER ASKED. It answers a different question, and this one is local.
+    expect(mlsService.getGroupMembers).not.toHaveBeenCalled();
+  });
+
+  // THE DEFECT THIS PINS, and the reason the two sources cannot be swapped for one another: a
+  // device fresh-start clears its routing rows while the ratchet tree stays full. Read the routing
+  // table and you get "not a member" of a leaf sitting right there, so the Add goes out and OpenMLS
+  // declines it - `[RUST::WARN] Skipping KeyPackage already a member of the group`, seen on GRP-5
+  // (2026-08-23) and GRP-3 (2026-08-24) and mistaken for a flake both times.
+  it('skips a leaf the tree holds even when the routing table has lost its row', async () => {
+    const mlsService = makeMls({
+      getPendingInvitations: vi
+        .fn()
+        .mockResolvedValue([
+          { id: 'i1', userId: 'peer', deviceId: 'peer-dev', groupId: 'g1', status: 'pending' },
+        ]),
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['self:self-device', 'peer:peer-dev']),
+      // Empty, as a fresh-start leaves it. The old check read THIS and re-added over a live leaf.
+      getGroupMembers: vi.fn().mockResolvedValue([]),
+      fetchUserDevices: vi
+        .fn()
+        .mockResolvedValue([{ deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) }]),
+    });
+    const log = vi.fn();
+
+    await processPendingInvitations({
+      mlsService,
+      storage: null,
+      userId: 'self',
+      deviceKeyB64: 'pin',
+      conversations: new Map([['g1', readyConversation('g1')]]),
+      log,
+    });
+
+    expect(mlsService.addMember).not.toHaveBeenCalled();
+  });
+
+  // The converse divergence, which is the stale `pending` row: the server still lists a device it
+  // never got into the tree. The invitation is NOT fulfilled and must be honoured - a check that
+  // read the routing table would have skipped it and left the device outside forever.
+  it('adds a device the routing table lists but the tree does not hold', async () => {
+    const addMember = vi
+      .fn()
+      .mockResolvedValue({ welcome: new Uint8Array([9]), ratchetTree: null });
+    const mlsService = makeMls({
+      getPendingInvitations: vi
+        .fn()
+        .mockResolvedValue([
+          { id: 'i1', userId: 'peer', deviceId: 'peer-dev', groupId: 'g1', status: 'pending' },
+        ]),
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['self:self-device']),
+      getGroupMembers: vi.fn().mockResolvedValue([{ userId: 'peer', deviceId: 'peer-dev' }]),
+      fetchUserDevices: vi
+        .fn()
+        .mockResolvedValue([{ deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) }]),
+      addMember,
+    });
+
+    await processPendingInvitations({
+      mlsService,
+      storage: null,
+      userId: 'self',
+      deviceKeyB64: 'pin',
+      conversations: new Map([['g1', readyConversation('g1')]]),
+      log: vi.fn(),
+    });
+
+    expect(addMember).toHaveBeenCalled();
+  });
+
+  // A LEAF IS `userId:deviceId` AND THE WHOLE OF IT IS THE KEY. Two users can hold the same device
+  // id - it is client-generated - so a suffix or substring test would let one answer for the other
+  // and silently drop a real invitation.
+  it('does not let another user leaf answer for this one', async () => {
+    const addMember = vi
+      .fn()
+      .mockResolvedValue({ welcome: new Uint8Array([9]), ratchetTree: null });
+    const mlsService = makeMls({
+      getPendingInvitations: vi
+        .fn()
+        .mockResolvedValue([
+          { id: 'i1', userId: 'peer', deviceId: 'peer-dev', groupId: 'g1', status: 'pending' },
+        ]),
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['someone-else:peer-dev']),
+      fetchUserDevices: vi
+        .fn()
+        .mockResolvedValue([{ deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) }]),
+      addMember,
+    });
+
+    await processPendingInvitations({
+      mlsService,
+      storage: null,
+      userId: 'self',
+      deviceKeyB64: 'pin',
+      conversations: new Map([['g1', readyConversation('g1')]]),
+      log: vi.fn(),
+    });
+
+    expect(addMember).toHaveBeenCalled();
+  });
+
+  // THREE ANSWERS, AND THE THIRD IS NOT A "NO". An unreadable tree falls through to the Add exactly
+  // as the swallowed `catch` here used to - but it says so first, which is the whole change: this
+  // branch was the one place a lost group could hide.
+  it('falls through to the add on an unreadable tree, and logs that it could not tell', async () => {
+    const addMember = vi
+      .fn()
+      .mockResolvedValue({ welcome: new Uint8Array([9]), ratchetTree: null });
+    const mlsService = makeMls({
+      getPendingInvitations: vi
+        .fn()
+        .mockResolvedValue([
+          { id: 'i1', userId: 'peer', deviceId: 'peer-dev', groupId: 'g1', status: 'pending' },
+        ]),
+      getGroupMemberIdentities: vi.fn().mockRejectedValue(new Error('GroupNotFound')),
+      fetchUserDevices: vi
+        .fn()
+        .mockResolvedValue([{ deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) }]),
+      addMember,
+    });
+    const log = vi.fn();
+
+    await processPendingInvitations({
+      mlsService,
+      storage: null,
+      userId: 'self',
+      deviceKeyB64: 'pin',
+      conversations: new Map([['g1', readyConversation('g1')]]),
+      log,
+    });
+
+    expect(addMember).toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Tree of g1'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('GroupNotFound'));
   });
 
   it('normally adds a device absent from the tree', async () => {

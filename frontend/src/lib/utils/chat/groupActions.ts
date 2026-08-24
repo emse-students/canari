@@ -429,8 +429,23 @@ export async function handleDuplicateLeafError(params: {
 }
 
 /**
- * Silently removes the stale leaf of a device from the MLS tree (best-effort).
+ * Removes the stale leaf of a device from the MLS tree AND its routing row (best-effort, never throws).
+ *
  * Wraps removeMemberDevice + kickStaleDevice to avoid duplication.
+ *
+ * **BEST-EFFORT IS NOT THE SAME AS SILENT, AND THIS USED TO BE BOTH.** Neither call could throw, so
+ * a kick that removed nothing left no trace of its own: the only evidence was the
+ * `DuplicateSignature` produced later by whatever the caller did next, under a different tag - one
+ * symptom standing in for two unrelated causes. And the closing line asserted the removal
+ * unconditionally, so a reader following `[KICK] ... removed` had no way to learn the leaf was still
+ * sitting in the tree. Both failures are reported now; neither is promoted to a throw, because the
+ * callers' fall-through is deliberate (see below).
+ *
+ * **THE TWO HALVES ARE REPORTED SEPARATELY BECAUSE THEY ARE DIFFERENT FACTS.** The tree decides who
+ * can read the group, the routing row decides who the delivery service ships to, and they fail
+ * independently: a tree cleaned while the routing row survives, or the reverse, are different
+ * estates needing different repairs. One line saying "partially" without naming which half would
+ * leave the reader exactly where the silence did.
  */
 export async function kickStaleLeaf(
   groupId: string,
@@ -444,13 +459,27 @@ export async function kickStaleLeaf(
   // clears the staged commit without advancing the local epoch, so there is no fork to surface -
   // the remove is genuinely best-effort. Rung-1 replay heals any lag on the next sync. Other
   // errors (leaf already absent, etc.) are equally best-effort.
+  let treeCleared = true;
   try {
     await mlsService.removeMemberDevice(groupId, [deviceIdentity]);
-  } catch {
-    /* best-effort: no fork possible under the staged-commit regime */
+  } catch (e) {
+    treeCleared = false;
+    log(
+      `[KICK] Leaf ${deviceIdentity} still in ${groupId}'s tree - remove refused: ${String(e).slice(0, 120)}`
+    );
   }
-  await mlsService.kickStaleDevice(targetDeviceId, targetUserId, groupId).catch(() => {});
-  log(`[KICK] Stale leaf ${targetUserId}:${targetDeviceId} removed from ${groupId}`);
+  let routingCleared = true;
+  await mlsService.kickStaleDevice(targetDeviceId, targetUserId, groupId).catch((e: unknown) => {
+    routingCleared = false;
+    log(
+      `[KICK] Routing row for ${deviceIdentity} still listed on ${groupId} - clear refused: ${String(e).slice(0, 120)}`
+    );
+  });
+  log(
+    treeCleared && routingCleared
+      ? `[KICK] Stale leaf ${deviceIdentity} removed from ${groupId}`
+      : `[KICK] Stale leaf ${deviceIdentity} only PARTIALLY removed from ${groupId} - tree=${treeCleared ? 'cleared' : 'still present'}, routing=${routingCleared ? 'cleared' : 'still listed'}`
+  );
 }
 
 /**
