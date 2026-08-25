@@ -133,6 +133,18 @@ const step = async (name, fn) => {
   }
 };
 
+/**
+ * `step`'s counterpart for a phase that CANNOT be armed because an earlier one failed.
+ *
+ * It records that the phase was not attempted and why, rather than running it into a state it was
+ * not written for and recording the selector error that follows. A skip is a fact about the run and
+ * belongs in `failures` beside the cause, not omitted from it.
+ */
+const skipped = async (name) => {
+  failures.push(`${name}: not attempted - the churn did not complete`);
+  return null;
+};
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
@@ -352,12 +364,25 @@ for (let i = 1; i <= CYCLES && channelId; i += 1) {
 
     return { i, withPeer, withoutPeer, joinedAt, leftAt };
   });
-  if (cycle) cycles.push(cycle);
+  if (!cycle) {
+    // STOP AT THE FIRST BROKEN CYCLE. A cycle that fails leaves the salon in a state the NEXT cycle's
+    // gestures were not written for - a peer granted but unrouted is already in `allowedUsers`, so
+    // the access panel stops offering "Ajouter" and every later cycle fails on a selector instead of
+    // on the product. That is what the 2026-08-25 run recorded: four failures, of which three
+    // described this check's own wreckage and only the first named anything real. `armed` is false
+    // either way, so nothing is lost by stopping - what is gained is a record whose first line is
+    // the finding.
+    failures.push(`cycle ${i}: stopping the churn here - every later cycle would measure this state`);
+    break;
+  }
+  cycles.push(cycle);
 }
 
 // THE PEER ENDS UP INSIDE, which is the state the second half is about: entitled to everything,
 // holding only what was delivered while they were on the roster.
-await step('let the peer back in for good', async () => {
+// SKIPPED IF THE CHURN BROKE, for the same reason the loop stops: this grant would be asking a panel
+// that is already in the state it wants, and its failure would be one more line about the wreckage.
+await (cycles.length === CYCLES ? step : skipped)('let the peer back in for good', async () => {
   await openSalon(w1);
   await openChannelAccess(w1);
   await grantChannelAccess(w1, PEER_NAME);
