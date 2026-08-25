@@ -149,6 +149,27 @@ which is also where every release up to and including v0.13.1 now lives.
   nothing - no spec, no frontend test, no board row - watches them.
 
 ### Fixed
+- **The answer to a seed request was thrown away because the device that had just asked for it had
+  no socket yet.** A device joining a group after a message was sealed cannot open that message, by
+  construction, and asking a peer for the seed is the mechanism that exists for it. COMM-18 measured
+  the ask working and the ANSWER being discarded: the reply went out as `DELIVERY.transport`, which
+  the server delivers only to recipients Redis presence reports online, and a client that cold-starts
+  has authenticated HTTP long before it has a WebSocket. Across sixteen seconds in which the gateway
+  logged no connection for the phone, that phone registered for push, landed an accepted commit and
+  published a GroupInfo - demonstrably alive, truthfully absent from presence. Both answers were
+  dropped, permanently, and nothing asked again.
+  **The presence read was not the error; the classification was.** `DELIVERY.transport` is justified
+  by circularity - reconciliation traffic only restates state held elsewhere, so replaying it from
+  the shared log would be circular. That is true of a REQUEST and false of the seed itself.
+  `DELIVERY.keyMaterial` (silent AND durable) already exists for precisely this payload on precisely
+  this group, and `seedDistribution` already sends the ordinary distribution of a seed that way -
+  only the answer to an ask did not. An answer carrying seeds now travels as key material, so it is
+  queued for a recipient regardless of what presence says, while a bundle of pure declines stays
+  transport: it holds no key material and restates a fact the requester can derive, and a
+  distribution group's capped log is spent on seeds alone. No timer, no retry, no new wire field -
+  the reachability of a requester is carried by the request that arrived, and is no longer
+  re-derived from a socket at answer time. The answer's log line now names which class it used,
+  because a run log that omits it cannot tell a drop from a silence
 - **A salon whose access list was edited told nobody, so being let in was a database row and
   nothing else.** `updateChannelAccess` computed who a save DROPS - and cut them off one line later -
   and had no counterpart for the people it ADDS. Every other grant in that file publishes

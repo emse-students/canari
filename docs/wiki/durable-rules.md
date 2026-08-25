@@ -596,6 +596,7 @@ number on `main` before naming a file. Its CI is verified running:
 
 - **The presence key is per DEVICE and every event that removes it is per CONNECTION** - two tabs are one device, so any deleter must discount its own connection and check for survivors. `AppState::remove_session` / `has_other_sessions` are the only two forms of that question; a third call site writing its own is the bug.
 - **A connection is identified by its `conn_id`, never by `is_closed()`** - an aborted send task still reports `false` until the runtime drops its receiver.
+- **PRESENCE ANSWERS "IS A SOCKET OPEN", AND THAT IS NOT "CAN THIS DEVICE BE GIVEN WHAT IT ASKED FOR".** A cold-started client has authenticated HTTP well before it has a WebSocket: measured 2026-08-25 (COMM-18), the phone registered for push, landed an accepted commit and published a GroupInfo across sixteen seconds in which the gateway logged no reconnect for it, so the presence key was truthfully absent while the device was demonstrably alive. The answer to its own seed request was discarded in that window, permanently, because a transport-only frame is dropped for recipients presence reports offline. **The reachability of a rendezvous's requester is carried by the REQUEST - which arrived, and named its answerer - and must never be re-derived from a socket at answer time.** The fix for such a read is to delete it, not to make it more accurate: a more accurate liveness clock is still the wrong question. [cd](services/chat-delivery.md)
 
 ## Sessions, in every app -> [sessions](sessions.md)
 

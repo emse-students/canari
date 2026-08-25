@@ -1,5 +1,6 @@
 import type { IStorage, StoredGraineSession } from '$lib/db/types';
 import { canari } from '$lib/proto/canari';
+import { DELIVERY } from '$lib/mls-client/frameDelivery';
 import { workspaceScope } from '$lib/mls-client/distributionScope';
 import {
   decodeAppMessage,
@@ -304,6 +305,49 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
     // this is what stops a repair from widening access.
     expect(Number(answer?.graineBundle?.seeds?.[0].firstIndex)).toBe(12);
     expect(answer?.graineBundle?.truncated).toBeFalsy();
+  });
+
+  it('sends an answer that CARRIES SEEDS as key material, so no presence read can drop it', async () => {
+    // THE DEFECT THIS ROW EXISTS FOR, measured by COMM-18 on 2026-08-25. The answer went out as
+    // `DELIVERY.transport`, which the server delivers only to recipients presence reports online -
+    // and a device that cold-starts has authenticated HTTP long before it has a socket, so it asks
+    // in a window where it is unreachable by that measure. The answer was dropped for good.
+    const { storage } = fakeStorage([heldSeed('sess-1', 0)]);
+    const sendMessage = wireWithMls(storage);
+
+    await handleDistributionFrame(
+      requestFrame({
+        workspaceId: 'ws-1',
+        kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS,
+        sessionIds: ['sess-1'],
+        answererUserId: 'alice',
+        requestId: 'r-1',
+      })
+    );
+
+    expect(sendMessage.mock.calls[0][3]).toBe(DELIVERY.keyMaterial);
+  });
+
+  it('sends an answer that carries only declines as transport, keeping the capped log for seeds', async () => {
+    // The other half of the same rule. A decline restates a fact the requester can derive and holds
+    // no key material, so it must not spend a distribution group's log - the argument that makes
+    // the seed above durable is the argument that keeps this one transport.
+    const { storage } = fakeStorage();
+    const sendMessage = wireWithMls(storage);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(
+      requestFrame({
+        workspaceId: 'ws-1',
+        kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS,
+        sessionIds: ['sess-9'],
+        answererUserId: 'alice',
+        requestId: 'r-1',
+      })
+    );
+
+    expect(sendMessage.mock.calls[0][3]).toBe(DELIVERY.transport);
+    warn.mockRestore();
   });
 
   it('says which sessions it does not hold, rather than answering an empty hand with silence', async () => {

@@ -134,12 +134,12 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
 1. **THE COMM RUNNERS - ALL TWENTY-FIVE WRITTEN AND REGISTERED**, each run on prod as it was written
     (user, 2026-08-20: writing all then running once is verification by COMPILING). **ONE HAS NEVER
     RUN THERE - 14**, and its blocker is LIFTED (real push proven by NOTIF-4 on 2026-08-22,
-    `notifiedInMs: 11317`, then asserted by MENTION-2/3). **COMM-18: APK rebuilt, installed and RE-RUN
-    on 2026-08-25 - the fix is proven and the row still fails, one step further along.** The phone now
-    asks its own laptop for the seed, which the old build could not do, and the salon opens; the seed
-    request is then DROPPED as transport-only for a peer that was online, and nothing asks again. New
-    P1 in [backlog](docs/wiki/backlog.md), two candidate causes, and the skip line now names the
-    devices that settle it. **The GENERIC notification body is ANSWERED** - MENTION-2 recorded
+    `notifiedInMs: 11317`, then asserted by MENTION-2/3). **COMM-18 has now found FOUR distinct product
+    defects, each further along the same path; the fourth is NAMED AND REPAIRED (2026-08-25) and owes
+    a SIXTH run on the deploy carrying it.** A cold-started device has HTTP before it has a socket, so
+    the ANSWER to its seed request was dropped for a peer presence called offline; the fix deletes
+    that read here by classifying a seed-bearing answer as key material. Story in `CHANGELOG.md`, rule
+    in [durable-rules](docs/wiki/durable-rules.md), case left in [backlog](docs/wiki/backlog.md). **The GENERIC notification body is ANSWERED** - MENTION-2 recorded
     `undecryptedInShade: []`. What the user saw on 2026-08-22 is a DIFFERENT, real defect: a mention
     rendered as its raw `@[uuid]` token, P2 in [backlog](docs/wiki/backlog.md), deferred past the
     ladder by their decision; NOTIF-13 pins it.

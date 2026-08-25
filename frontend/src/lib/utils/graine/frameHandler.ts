@@ -202,10 +202,27 @@ async function answerSeedRequest(
     })
   );
   const seeds = gathered.seeds;
-  await mlsService.sendMessage(frame.groupId, bundle, undefined, DELIVERY.transport);
+  // A bundle CARRYING SEEDS is key material on a key-distribution group, and travels as such. It
+  // was `DELIVERY.transport` until 2026-08-25, when COMM-18 measured what that costs: a device
+  // that cold-starts has authenticated HTTP long before it has a socket, so it can ask - and did,
+  // and landed a commit and published a GroupInfo in the same seconds - while presence truthfully
+  // reports no socket for it. A transport-only frame is dropped for a recipient presence reports
+  // offline, so the ANSWER to a request that had just arrived was discarded, permanently.
+  // The classification, not the presence read, was the error. `DELIVERY.transport`'s argument is
+  // that reconciliation traffic only restates state held elsewhere, so replaying it from the log
+  // would be circular - true of a REQUEST, and false of the seed itself. `DELIVERY.keyMaterial`
+  // exists for exactly this payload on exactly this group, and `seedDistribution` already sends
+  // the ordinary distribution of it that way; only the answer to an ask did not.
+  // A bundle of pure declines stays transport: it carries no seed, it does restate a fact both
+  // sides can derive, and the capped log of a distribution group is spent on seeds alone.
+  const delivery = seeds.length > 0 ? DELIVERY.keyMaterial : DELIVERY.transport;
+  await mlsService.sendMessage(frame.groupId, bundle, undefined, delivery);
   console.info(
     `[GRAINE] answered ${frame.sender} with ${seeds.length} seed(s)` +
-      (gathered.missing.length > 0 ? `, declining ${gathered.missing.length}` : '')
+      (gathered.missing.length > 0 ? `, declining ${gathered.missing.length}` : '') +
+      // Named in the line because it decides whether this answer survives a requester with no
+      // socket, and a run log that omits it cannot tell a drop from a silence.
+      ` as ${delivery.durable ? 'key material' : 'transport'}`
   );
 }
 

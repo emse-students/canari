@@ -134,6 +134,13 @@ which moves a finite buffer at most once per Welcome because it deletes the entr
 loop strictly decreases over the work the scheduler holds, plus whatever genuinely NEW work arrives
 while it runs.
 
+**That clause was re-read against the code on 2026-08-25, because `5d7fac13` touched this path and a
+proof whose load-bearing sentence is only asserted is worth what the assertion is worth.** It holds,
+and by two independent facts rather than one: the entry is deleted BEFORE the frames are moved, and
+the frames are pushed straight into `bucket.messages` past `enqueue`, so the release cannot re-enter
+the scheduler's admission path and cannot manufacture work. A NEGATIVE, recorded because the next
+person to touch the scheduler will ask the same question.
+
 **That last clause is why elapsed time is not evidence.** A drain running ten minutes under sustained
 traffic is doing its job; a drain running ten minutes on one message is frozen. Nothing outside the
 loop can tell those apart, which is exactly why the deadline may only report - and why a watchdog

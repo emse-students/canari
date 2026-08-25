@@ -444,7 +444,17 @@ carried back as a type through `externalJoin` and `ensureDistributionGroup`, whi
 FIVE outcomes into `false` (`NotAGroupMemberError`, a null GroupInfo, a build failure, an exhausted
 epoch race, and a network failure whose `reason: 'network'` discriminator is produced and then never
 read). Then "not entitled" stops and says so, while a transient failure is left to the next existing
-trigger. **The check that measures it already exists** - COMM-22 is exactly this scenario and it is
+trigger.
+
+**And that last one is not merely under-reported - it is DESTRUCTIVE, found by reading the loop on
+2026-08-25.** `submitCommit`'s `.catch` returns `{accepted: false, reason: 'network'}`, and because
+nobody reads `reason`, a transport failure falls into the branch written for the server's answer "a
+newer commit landed" - which calls `forgetGroup` and retries. So three lost packets discard this
+device's local MLS state for the group three times and then return `false`, and the group was never
+stale. This is the project's first rule on the one path where breaking it costs key material: a
+status code is an ANSWER, a transport failure is not. The fix is ordered - stop treating it as a
+reject BEFORE carrying the type back, because the type is what a caller reads while the forget is
+what it cannot undo. **The check that measures it already exists** - COMM-22 is exactly this scenario and it is
 the row that failed, so nothing new has to be written to know whether a fix works: four cycles green
 is the proof.
 
@@ -485,30 +495,71 @@ the mechanism that exists for it, and it fired correctly.
 60 s, and the responder is elected only among devices Redis reports ONLINE, so queueing for an
 offline device writes a row and wakes a device for an exchange it cannot join.
 
-**Two candidate causes remain, and they call for opposite fixes.**
+**THE CAUSE IS NAMED, measured on the FIFTH run (2026-08-25, `24d38f21`), and it is neither of the
+two candidates as they were written.** The re-run existed to read the device ids the drop was keyed
+on, and they inverted the reading: the dropped frames are not A1's REQUESTS, they are **W1's ANSWERS
+to them**. `isSender` in the MLS send path excludes the sender by userId AND deviceId, so a target
+that is A1's device proves the sender was the other device of the same user. A1's requests reached
+W1; W1 replied 1 s and 0 s later; both replies were discarded.
 
-1. A connected client had no presence key. W1's socket was never reported down (the only gateway
-   incident in the window is A1's kill, 2 s before the deep link and 14 s before the drop), it pings
-   every 8 s against a 20 s TTL, and it was re-measured `ONLINE, TTL 13s` minutes later while still
-   idle and backgrounded. On this reading `user:online:*` is refreshed by traffic and read as
-   reachability - a liveness clock not written by the thing it measures.
-2. The group named a device that is not the live one. The roster reconciliation compares USER ids, so
-   a leaf naming a dead device of the same user is kept and counted among the "2 leaf/leaves" the
-   phone reported as agreeing.
+**And A1's socket really was down - the presence read was CORRECT about the socket and WRONG about
+reachability.**
 
-**Neither could be settled**, because the line printed a count and no device id - fixed the same day,
-so the re-run reads the ids the presence lookup was keyed on and the cause is then a fact. The two
-online device ids at the time are known (`onlineDevicesOf`) and both match the committers in the log,
-which is what makes cause 2 checkable rather than speculative.
+| UTC | What |
+| --- | --- |
+| 18:46:50 | gateway: `WebSocket Error … Connection reset without closing handshake` - the test's kill |
+| 18:46:55 | phone: deep link received |
+| 18:47:02 | `PUSH_REGISTER` from A1 - its HTTP is back |
+| 18:47:03 | `[COMMIT] ACCEPT newEpoch=1` from A1 - an authenticated write |
+| 18:47:04 | `[DISTRIBUTION_GROUP] group-info … publisher=…:tauri-…` - another |
+| 18:47:05, 18:47:06 | both of W1's answers dropped, `devices=<A1>` |
+| through 18:47:06 | **no gateway reconnect line for A1 at all** |
 
-**And whichever it is, the second half stands on its own: nothing asked again.** The comment
-defending the drop says "a device that comes back probes on its own connection" - A1 never left, so
-nothing brought it back, and the ask is a one-shot whose success depends on a coincidence of timing.
-Per the standing directive this is not a timer: the requester must re-ask on an EXISTING trigger (the
-peer becoming reachable is already an event the gateway knows), or the answer must not depend on a
-peer at all. Decide that only after the ids name the cause - a re-ask that repeats a request to a
-device that is not the live one repeats a wrong answer faster.
+So for sixteen seconds A1 was performing authenticated writes over HTTP while its WebSocket had not
+reconnected. The presence key is written when the socket opens, so its absence was truthful - and it
+was read to answer a question it was never written for. That is this repo's own rule, on the path
+where breaking it costs a seed: **a liveness clock must be written by the thing whose liveness it
+measures**, and "is a socket open right now" is not "can this device be given the answer it asked
+for".
 
+**Candidate 2 is REFUTED, by reading rather than by another run.** The group naming a stale device of
+the same user cannot produce this: the exclusion is device-level, and the target was the live phone.
+
+**The fix is to delete the predicate, not to make it more accurate.** The drop is defended by "the
+rendezvous would expire first", which is sound for an unsolicited transport frame to a device that
+may be gone. It is never sound for an ANSWER: the request is itself proof that the requester exists
+and is waiting, it arrived seconds earlier, and it named the answerer. So the reachability of a
+rendezvous's requester must be carried by the rendezvous rather than re-derived from a socket at
+answer time. A timer is explicitly NOT the fix (the standing directive), and neither is a retry: the
+request already happened, and what must change is that its answer is not thrown away.
+
+**The second half stands on its own and is now sharper: nothing re-asks, and the window that swallows
+the answer is created by the test's own success path.** A cold start is exactly when a device has
+HTTP before it has a socket, so the one scenario COMM-18 exists to prove is the one guaranteed to
+land inside the window.
+
+**FIXED 2026-08-25 for the case that was measured, and the fix is a CLASSIFICATION, not a mechanism.**
+The predicate is deleted for this frame rather than made more accurate: an answer carrying seeds now
+leaves `answerSeedRequest` as `DELIVERY.keyMaterial` (silent AND durable) instead of
+`DELIVERY.transport`, so the server queues it for its recipient without consulting presence at all.
+Nothing was added to get there - `keyMaterial` already existed for this exact payload on this exact
+group, and `seedDistribution` already sent the ordinary distribution of a seed that way. What was
+wrong is that `DELIVERY.transport`'s justification was applied to something it does not describe:
+transport is defended by circularity, "it only restates state held elsewhere, so replaying it from
+the log would be circular", which is true of a REQUEST and false of the seed itself. Two tests pin
+both directions, and the mutation was checked - reverting the line fails exactly one of them. The log
+line now names the class it used, because a run log that omits it cannot tell a drop from a silence.
+
+**WHAT IS LEFT, and it is smaller but the same shape.** A bundle of PURE DECLINES still goes out as
+transport, deliberately: it carries no key material and restates a fact the requester can derive, and
+a distribution group's log is capped and spent on seeds alone. But a dropped decline strands a
+requester exactly as permanently as a dropped seed did - it is the fact that sends them to the next
+member, and nothing re-asks. That case needs what this one did not: the ability to deliver a frame to
+a device presence reports offline WITHOUT appending it to the group's log, which is the fourth
+combination `DELIVERY` does not have (`silent` and `durable` were one boolean until 2026-08-12, and
+`durable` still gates both the presence filter and the history append on the server). Splitting them
+is a wire-level change, so it waits for a measurement that needs it rather than being guessed at now:
+the decline path has never been observed dropping anything.
 ### CLOSED 2026-08-21 - a member let BACK IN to a private salon was never routed again (WP-REGRANT-1)
 
 **Found and FIXED 2026-08-21**, both on production, in `7f11b50e` and `082345b7`. The mechanism and

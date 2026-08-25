@@ -228,21 +228,34 @@ twenty-five checks, and the count in its own comment is what makes an omission v
 were rewritten on 2026-08-20 is in
 [cross-client-campaign](cross-client-campaign.md#rows-that-named-a-mechanism-the-product-does-not-have).
 
-**One has never run on production**: COMM-14, which needs real push. **COMM-18 ran FOUR times on
+**One has never run on production**: COMM-14, which needs real push. **COMM-18 ran FIVE times on
 2026-08-25 and every FAIL was the product's.** The first three shared one cause: the repair path
 excluded the asking user by name, so a device could not ask its OWN other device for a seed that
 device had minted. That was fixed the same day (`e96bfa12`, `CHANGELOG.md`), an APK was rebuilt, and
 the fourth run PROVED the fix while failing further along - the phone asked its laptop for the seed,
 which the old build could not do, and the salon now opens too.
 
-**The fourth failure is a second, distinct defect, and it is a ROUTING one.** A seed request is a
-transport-only frame, so the delivery service addresses it to whoever Redis reports online and drops
-it otherwise: `TRANSPORT_SKIPPED_OFFLINE count=1 - no row, no push`. The one device it could have
-meant was answering pings before, during and after (`ONLINE, TTL 13s`, re-measured minutes later
-while idle), so either a connected client had no presence key or the group named a device that is not
-the live one - **and the line could not say which, because it printed a count and no device id.** It
-now prints the ids it skipped, which is the evidence that separates the two; the re-run reads them.
-Nothing here is a rig fault: the request went out once, was dropped, and nothing asked again.
+**The fifth run named the remaining cause, which is what it was run for, and it was neither candidate
+as they had been written.** The fourth run's line printed a count and no device id, so it could not
+say whether a connected client had lost its presence key or the group named a device that is not the
+live one. Printing the ids inverted the reading: the dropped frames are not the phone's REQUESTS but
+**the laptop's ANSWERS to them**, since the send path excludes the sender by userId AND deviceId, so
+a target that is the phone proves the sender was the other device. The requests arrived; the answers
+were thrown away. And the phone's socket genuinely was down - killed at 18:46:50, no reconnect logged
+through 18:47:06 - while it registered for push, landed an accepted commit and published a GroupInfo
+in that same window. So presence was truthful about the socket and was read as reachability, on the
+one path where a cold start GUARANTEES the two disagree. The second candidate is refuted by the
+device-level exclusion. Nothing here is a rig fault: the request went out once, its answer was
+discarded, and nothing asked again. Rule in [durable-rules](durable-rules.md), repair and what it
+left in [backlog](backlog.md).
+
+**The repair shipped the same day and a SIXTH run is owed.** It deletes the presence read for this
+frame rather than making it accurate: an answer carrying seeds is key material on a key-distribution
+group and now travels as `DELIVERY.keyMaterial`, which the server queues without consulting presence.
+Nothing was invented - that mode already existed for this payload on this group. **This is the fourth
+distinct product defect COMM-18 has found**, each one further along the same path, and that is the
+row's whole value: nothing else in the ladder cold-starts a real device into a salon it has no seed
+for.
 
 **Twenty-one rows read `pending` while the ledger holds a verdict for them** - twelve cannot be
 believed as they stand (ten name no runner, eight no build, two were taken by a runner since
@@ -267,7 +280,7 @@ rewritten), and the cells are written ONCE, at rung 9, from verdicts carrying bo
 | COMM-15 | Polls: create, vote, close; auto-pinned | `W1 W2` | `pending` |
 | COMM-16 | Delete a channel, then a community by typing its name: the rows are really gone and the slug is free again | `W1 W2` | `pending` |
 | COMM-17 | Reorder communities by drag and drop; survives a reload, reaches the other device | `+A1` | `PASS` 1/1 - A1 `67d40e3a` |
-| COMM-18 | Deep link into a channel from a cold start | `+A1` | `FAIL` x4 - the cold start, the deep link, the landing and the salon all work on the rebuilt APK, and the phone now asks its own laptop for the seed. The request is dropped as transport-only for an offline recipient that was online; the skip line now names its devices, re-run owed |
+| COMM-18 | Deep link into a channel from a cold start | `+A1` | `FAIL` x5 - the cold start, the deep link, the landing and the salon all work on the rebuilt APK, and the phone asks its own laptop for the seed. The ANSWER was dropped: a cold-started device has HTTP before it has a socket, and presence was read as reachability. Cause named AND repaired 2026-08-25 (a seed-bearing answer is key material, not transport) - **a SIXTH run is owed on the deploy that carries it** |
 | COMM-19 | The last admin tries to leave: refused, unless they are the last MEMBER, which deletes the community | `W1 W2` | `pending` |
 | COMM-20 | Two admins change the same role at the same moment | `W1 W2` | `pending` |
 | COMM-21 | A member is removed while composing a message in that salon | `W1 W2` | `pending` |
