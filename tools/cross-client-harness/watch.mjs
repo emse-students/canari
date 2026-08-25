@@ -347,6 +347,13 @@ const BENIGN = [
   // resumes without asking again. Named individually rather than by a `startup` catch-all - a step
   // that FAILS to complete has to stay visible, and only its success is being forgiven here.
   /^\[hooks\] Deep-link listener registered$/,
+  // THE OTHER HALF OF THAT SENTENCE, and it fires only on a start that WAS a deep link: the launch
+  // URL was read, on which attempt of the retry ladder, and how long after the bundle ran. Forgiven
+  // because it is a success; kept because the attempt number is the only evidence saying whether
+  // that ladder is load-bearing. The sibling line - a launch URL refused as already handled - is
+  // deliberately left unclassified: it is the visible end of a WebView reload replaying the intent,
+  // and a row that hits it should say so.
+  /^\[hooks\] launch URL read on attempt \d+, \d+ms after the bundle ran$/,
   /^\[Cookies\] flushed after refresh$/,
   /^\[PIN\] Device key restored from PinVault - auto-login/,
   // The rest of the same cold start, on the native side. `MLS state loaded from mls.bin` is the one

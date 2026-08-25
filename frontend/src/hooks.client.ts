@@ -264,12 +264,38 @@ if (isTauriRuntime()) {
       // foreground resume, and a permanent failure would otherwise bury the log it belongs in.
       let lastGetCurrentError: string | null = null;
 
-      const checkCurrentUrl = () =>
-        getCurrent()
+      // WHICH ATTEMPT SAW THE URL, because the retry ladder below is a CLOCK and a clock is only
+      // ever as right as the machine it was timed on. COMM-18 recorded `landedOn: "/posts"` on
+      // 2026-08-25 with the deep-link listener registered and `processUrls` never called - the same
+      // build had passed two hours earlier - and nothing in the log could separate "the intent never
+      // arrived" from "it arrived at attempt four" from "a reload replayed it and the claim held".
+      // The two branches below returned silently, so all three read identically.
+      //
+      // A start that is NOT a deep link is the common case and stays silent: no URL, no line.
+      const startedAt = Date.now();
+      let attempt = 0;
+
+      const checkCurrentUrl = () => {
+        const n = ++attempt;
+        return getCurrent()
           .then((urls) => {
             if (!urls) return;
             const first = Array.isArray(urls) ? urls[0] : String(urls);
-            if (!deepLinkClaims.claim(first)) return; // already handled by this session
+            if (!deepLinkClaims.claim(first)) {
+              // NOT AN ERROR - the guard doing its job. But it is the only thing that distinguishes
+              // "the app ignored my link" from "the app already acted on it", and a WebView reload
+              // makes the two look the same from outside.
+              console.log(
+                `[hooks] launch URL already acted on by this start, ignoring the replay: ${first}`
+              );
+              return;
+            }
+            // A LAUNCH URL EXISTS, so this start WAS a deep link and the number is the whole point:
+            // if it is always 1 the ladder underneath is dead weight and the fix is to delete it,
+            // and if it is ever 4 the ladder is load-bearing and the next start is a coin toss.
+            console.log(
+              `[hooks] launch URL read on attempt ${n}, ${Date.now() - startedAt}ms after the bundle ran`
+            );
             processUrls(Array.isArray(urls) ? urls : [urls]);
           })
           .catch((err) => {
@@ -288,6 +314,7 @@ if (isTauriRuntime()) {
               msg
             );
           });
+      };
 
       // Handles deep link that cold-started the app (fired before listener could register).
       // Retry a few times: on Android the intent can land after the WebView boots.

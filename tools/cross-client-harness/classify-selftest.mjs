@@ -631,6 +631,10 @@ const CASES = [
   // The cold start, which only a check that reloads on purpose ever sees. Each is a step reporting
   // that it completed; a step that fails says something else and must stay unexplained.
   ['log', '[hooks] Deep-link listener registered', 'benign'],
+  ['log', '[hooks] launch URL read on attempt 1, 42ms after the bundle ran', 'benign'],
+  // NOT forgiven, on purpose: a replayed launch URL means the WebView reloaded under the app, which
+  // is the visible end of something upstream and has to reach the row that met it.
+  ['log', '[hooks] launch URL already acted on by this start, ignoring the replay: fr.emse.canari://chat/x', 'unexplained'],
   ['debug', '[Cookies] flushed after refresh', 'benign'],
   ['log', '[21:31:56] [PIN] Device key restored from PinVault - auto-login…', 'benign'],
   ['log', '[21:36:45] MLS state loaded from mls.bin (native).', 'benign'],
