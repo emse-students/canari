@@ -18,7 +18,7 @@
  * this campaign actually saw, kept verbatim WITH its `[HH:MM:SS]` prefix, because the prefix is what
  * the first bug turned on.
  */
-import { ignoringExpectedLog, report } from './watch.mjs';
+import { EVICTED_REJOIN_NARRATION, ignoringExpectedLog, report } from './watch.mjs';
 
 /** A fake CDP buffer: one `Runtime.consoleAPICalled` per line, dated so the timeline is orderable. */
 function cxOf(entries) {
@@ -703,6 +703,30 @@ const CASES = [
     '[15:56:39] [READD] ca436926... externalJoin threw: GroupInfo fetch HTTP error: 503',
     'notable',
   ],
+  // THE SINGLE-FLIGHT JOIN GUARD, both scope shapes, verbatim from COMM-11, COMM-13, COMM-21 and
+  // COMM-22 on 2026-08-25 where all four landed in `unexplained` and dirtied four passing rows. The
+  // community spelling is pinned beside the salon one although no run has produced it yet: it comes
+  // from the same `scopeLabel` call and a rule that covered one and not the other is exactly the
+  // half-written pattern this file exists to catch.
+  [
+    'log',
+    '[14:23:35] [GRAINE] salon 079878d3 of 15f60f8d: a join is already in flight for this scope - awaiting it',
+    'benign',
+  ],
+  [
+    'log',
+    '[14:23:35] [GRAINE] community 15f60f8d: a join is already in flight for this scope - awaiting it',
+    'benign',
+  ],
+  // AND THE EVICTION IT MUST NOT BE CONFUSED WITH, pinned at `unexplained` ON PURPOSE. A device that
+  // holds a group the server routes nothing to was thrown out by somebody's commit, and outside a
+  // check that did the throwing that is a finding - COMM-22 forgives it per row with
+  // `EVICTED_REJOIN_NARRATION` and nothing else may. Verbatim from COMM-22's W2 on 2026-08-25.
+  [
+    'log',
+    '[14:40:08] [GRAINE] salon 495b56cb of d4075a25: this device holds the distribution group but the group holds NO row for it (0 device(s) for this user) - the local group is stale, rejoining',
+    'unexplained',
+  ],
 ];
 
 let failures = 0;
@@ -823,6 +847,33 @@ const FORGIVE_CASES = [
     ],
     [/group-deleted - permanent failure$/],
     { clean: false, unmatched: 0 },
+  ],
+  // COMM-22'S OWN NEEDLES, AGAINST THE LINE THEY WERE WRITTEN FROM. The list is exported and used at
+  // one call site, so nothing else would ever notice it having stopped matching - and a needle that
+  // no longer matches looks exactly like new dirt on the next run. The non-zero device count is the
+  // case that matters: the same sentence with a routed device is a different defect, and this asserts
+  // the pattern does NOT reach it.
+  [
+    "the evicted peer rejoining, forgiven by COMM-22's own needles",
+    [
+      [
+        'log',
+        '[14:40:08] [GRAINE] salon 495b56cb of d4075a25: this device holds the distribution group but the group holds NO row for it (0 device(s) for this user) - the local group is stale, rejoining',
+      ],
+    ],
+    EVICTED_REJOIN_NARRATION,
+    { clean: true, unmatched: 0 },
+  ],
+  [
+    'the same sentence with a ROUTED device is not forgiven',
+    [
+      [
+        'log',
+        '[14:40:08] [GRAINE] salon 495b56cb of d4075a25: this device holds the distribution group but the group holds NO row for it (2 device(s) for this user) - the local group is stale, rejoining',
+      ],
+    ],
+    EVICTED_REJOIN_NARRATION,
+    { clean: false, unmatched: 1 },
   ],
   [
     'a console error beside a forgiven line still breaks clean',

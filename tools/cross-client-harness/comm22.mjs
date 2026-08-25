@@ -88,7 +88,14 @@ import { seedsForChannel } from './grainestore.mjs';
 import { ACCOUNT_OF, PEER_NAME, PORTS } from './names.mjs';
 import { unlockClient } from './pingate.mjs';
 import { mark, record } from './results.mjs';
-import { consoleLines, gate, report, watch } from './watch.mjs';
+import {
+  EVICTED_REJOIN_NARRATION,
+  consoleLines,
+  gate,
+  ignoringExpectedLog,
+  report,
+  watch,
+} from './watch.mjs';
 
 const arg = (name, fallback) => {
   const i = process.argv.indexOf(`--${name}`);
@@ -531,7 +538,15 @@ const verdict =
       ? 'FAIL'
       : 'PASS';
 
-const gated = gate(verdict, { W1: await report(wa), W2: await report(wb) });
+// THIS ROW EVICTS ITS PEER SIX TIMES, so it owns what the peer says on the way back in: a device
+// removed by somebody else's commit never processes that commit, keeps the local group, and finds it
+// unrouted the next time it opens the salon. Forgiven ON W2 ONLY - W1 is the client doing the
+// revoking and has no eviction to recover from, so the same sentence there would be a device thrown
+// out by something nobody asked for, which is a finding. See `EVICTED_REJOIN_NARRATION`.
+const gated = gate(verdict, {
+  W1: await report(wa),
+  W2: ignoringExpectedLog(await report(wb), EVICTED_REJOIN_NARRATION),
+});
 
 record('COMM-22', gated.verdict, {
   ...gated.detail,

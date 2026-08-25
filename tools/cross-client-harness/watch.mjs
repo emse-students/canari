@@ -49,6 +49,25 @@ const BENIGN = [
   // The FIRST device into a salon's group initialises it - exactly once per salon, by construction,
   // and every COMM check that creates a private salon produces it.
   /^\[GRAINE\] no base published for .+ - creating group [0-9a-f]{8}\.\.\.$/,
+  // THE SINGLE-FLIGHT JOIN GUARD, and the same shape as the drain's re-entrancy guard above: benign,
+  // load-bearing, and classified here deliberately rather than left to surface as unexplained,
+  // because it REPLACED a defect and the two must not be confused. Three call sites reach
+  // `ensureDistributionGroupFor` for one salon and two of them fire on a single gesture, so the
+  // second caller awaiting the first is the mechanism working - the alternative, measured on
+  // production during COMM-22 on 2026-08-21, was two calls publishing epoch 0 for the same group a
+  // second apart and the second one then reading its own half-built tree as an eviction.
+  //
+  // It is BENIGN AND NOT FORGIVEN PER ROW because there is no check for which it would be a finding:
+  // it says two callers wanted one postcondition, which is true of every open of every private
+  // salon. It stays in the capture, and its RATE is the thing worth reading - a scope emitting it
+  // many times over is callers multiplying, not a guard failing.
+  //
+  // BOTH SCOPE SHAPES ARE SPELLED OUT, because `scopeLabel` writes two - `community <8 hex>` for a
+  // workspace and `salon <8 hex> of <8 hex>` for a private channel - and a pattern covering only the
+  // one this campaign happened to see first would leave the other in `unexplained` on the run that
+  // finally produced it. Spelled out rather than `.+` for the reason every rule here is: a
+  // permissive middle silences the next sentence to appear in that position.
+  /^\[GRAINE\] (?:community [0-9a-f]{8}|salon [0-9a-f]{8} of [0-9a-f]{8}): a join is already in flight for this scope - awaiting it$/,
   // A SEED ARRIVING, which is what every salon with two people in it does on every message. It was
   // landing in `unexplained` on runs where nothing was wrong, and a verdict that is PASS-DIRTY for a
   // healthy salon is a verdict nobody reads twice.
@@ -1551,6 +1570,32 @@ export const COLD_START_NARRATION = [
   /\[FCM_CACHE\] \d+ message\(s\) to pre-inject from the FCM cache/,
   /\[FCM_CACHE\] . id=\S+ group=\S+ type=\S+/,
   /\[FCM_CACHE\] Injection done: \d+\/\d+ message\(s\) injected/,
+];
+
+/**
+ * WHAT AN EVICTED DEVICE SAYS WHEN IT COMES BACK, forgiven per row for the same reason a cold start
+ * is.
+ *
+ * A DEVICE CANNOT LEAVE A TREE IT WAS THROWN OUT OF. A revoke is committed by a REMAINING member -
+ * the leaver cannot remove themselves - so the evicted device never processes the commit that
+ * removes it and necessarily keeps the local group. The next time it opens the salon it holds a
+ * group the server names no row for, which is precisely the state this line reports, and rejoining
+ * is the only correct answer. There is no overlap to delete: the two paths are one client's memory
+ * and another client's commit, and nothing this side can make them meet.
+ *
+ * SO IT IS A HEAL, AND IT STILL DOES NOT PASS UNNOTICED. Outside a revoke it means a device was
+ * evicted by something nobody asked for, which is the loudest thing in this list and a finding in
+ * every phase that did not revoke anything. COMM-22 revokes its peer six times as its entire
+ * subject, so it hands these needles over and owns them; everywhere else they stay dirt.
+ *
+ * The device count is part of the shape on purpose. `0 device(s) for this user` is the eviction; a
+ * NON-zero count beside the same sentence would mean the server routes this user somewhere while
+ * denying this device, which is a different defect and must not be forgiven by a pattern written
+ * for this one.
+ */
+export const EVICTED_REJOIN_NARRATION = [
+  // Both scope shapes, for the reason given over the in-flight rule in `BENIGN`.
+  /^\[GRAINE\] (?:community [0-9a-f]{8}|salon [0-9a-f]{8} of [0-9a-f]{8}): this device holds the distribution group but the group holds NO row for it \(0 device\(s\) for this user\) - the local group is stale, rejoining$/,
 ];
 
 /**
