@@ -1284,7 +1284,7 @@ export class MessagingService {
   async getGroupInfo(
     groupId: string,
     requesterUserId: string
-  ): Promise<{ groupInfo: string; baseEpoch: number } | null> {
+  ): Promise<{ groupInfo: string; baseEpoch: number; activeEpoch: number } | null> {
     const membership = await this.groupMemberRepo.findOne({
       where: { groupId, userId: requesterUserId },
     });
@@ -1297,11 +1297,36 @@ export class MessagingService {
   /**
    * The stored GroupInfo with NO authorization of its own - the read half of the split described on
    * {@link putGroupInfo}. Null when nothing has been published yet.
+   *
+   * `activeEpoch` IS SERVED BESIDE IT BECAUSE THE TWO CAN DISAGREE FOR EVER, AND ONLY THIS SIDE
+   * KNOWS BOTH. The base is published by a follow-up call from the device whose commit was just
+   * accepted; that call can be lost (offline, killed tab, refused refresh) and nothing else ever
+   * mints one, so `dm_groups.activeEpoch` advances while `mls_group_info.baseEpoch` stays behind.
+   * A joiner handed the stale base builds an external commit the strict gate is GUARANTEED to
+   * refuse, learning by failing what this row could have told it - and for a distribution group,
+   * which has no peer-Welcome fallback, that is a member permanently locked out of a salon they
+   * are entitled to. Serving both numbers lets a joiner skip the doomed attempt and lets a HOLDER
+   * (the only party able to export a fresh base) repair it on its next ordinary read.
    */
-  async readGroupInfo(groupId: string): Promise<{ groupInfo: string; baseEpoch: number } | null> {
+  async readGroupInfo(
+    groupId: string
+  ): Promise<{ groupInfo: string; baseEpoch: number; activeEpoch: number } | null> {
     const row = await this.groupInfoRepo.findOne({ where: { groupId } });
     if (!row) return null;
-    return { groupInfo: row.groupInfo, baseEpoch: row.baseEpoch };
+    const group = await this.groupRepo.findOne({
+      where: { id: groupId },
+      select: { id: true, activeEpoch: true },
+    });
+    const activeEpoch = group?.activeEpoch ?? row.baseEpoch;
+    if (row.baseEpoch < activeEpoch) {
+      // ACCUSING, NOT INFORMATIVE: every read of a stale base is a joiner that cannot get in until
+      // a member republishes. Silent, this cost a private salon its second member on 2026-08-25.
+      this.logger.warn(
+        `[GROUP_INFO] STALE base group=${groupId} baseEpoch=${row.baseEpoch} activeEpoch=${activeEpoch}` +
+          ` - the published external-join base is unusable and only a member holding the tree can refresh it`
+      );
+    }
+    return { groupInfo: row.groupInfo, baseEpoch: row.baseEpoch, activeEpoch };
   }
 
   /**

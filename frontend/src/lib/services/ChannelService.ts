@@ -66,6 +66,17 @@ export interface DistributionGroupDto {
   /** The epoch `groupInfo` was exported at, or null when `groupInfo` is. */
   baseEpoch: number | null;
   /**
+   * The group's REAL epoch server-side, whatever epoch the published base was exported at.
+   *
+   * **`baseEpoch < activeEpoch` means the published base CANNOT be joined from.** The commit gate
+   * accepts a base equal to the active epoch and nothing else, so an external commit built on an
+   * older one is refused every time - not raced, refused for good. The two separate whenever the
+   * republish that follows an accepted commit is lost, and only a device already HOLDING the tree
+   * can mint a fresh base; a device without one has no way back in on its own. So this field tells
+   * a joiner not to burn attempts, and tells a holder that the repair is its job.
+   */
+  activeEpoch: number;
+  /**
    * This user's device ids that the group actually holds a membership row for - the SERVER's answer
    * to "would anything be delivered to me here".
    *
@@ -397,7 +408,13 @@ export class ChannelService {
   async getDistributionGroup(scope: DistributionScope): Promise<DistributionGroupDto> {
     const res = await this.fetchWithAuth(this.distributionGroupUrl(scope));
     await this.handleError(res);
-    return res.json() as Promise<DistributionGroupDto>;
+    const dto = (await res.json()) as DistributionGroupDto;
+    // Defaulted to the base, not to 0: a server build that predates the field must read as "nothing
+    // known to be stale", where 0 would declare every published base ahead of its group.
+    return {
+      ...dto,
+      activeEpoch: typeof dto.activeEpoch === 'number' ? dto.activeEpoch : (dto.baseEpoch ?? 0),
+    };
   }
 
   /**

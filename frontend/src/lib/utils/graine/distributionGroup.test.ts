@@ -23,7 +23,11 @@ function makeMls(overrides: Record<string, unknown> = {}) {
   return {
     distributionGroupFor: vi.fn().mockReturnValue(null),
     getLocalGroups: vi.fn().mockReturnValue([]),
-    ensureDistributionGroup: vi.fn().mockResolvedValue(true),
+    ensureDistributionGroup: vi.fn().mockResolvedValue({ joined: true }),
+    // The published base matches the group's epoch in every case here, so nothing republishes; the
+    // stale-base repair has its own describe block below and sets these itself.
+    getEpoch: vi.fn().mockReturnValue(7),
+    refreshGroupInfo: vi.fn().mockResolvedValue(undefined),
     forgetDistributionGroup: vi.fn().mockReturnValue('g-1'),
     forgetDistributionGroupById: vi.fn().mockReturnValue(true),
     registerDistributionGroup: vi.fn(),
@@ -49,7 +53,7 @@ function makeChannels(overrides: Record<string, unknown> = {}) {
   return {
     getDistributionGroup: vi
       .fn()
-      .mockResolvedValue({ groupId: 'g-1', groupInfo: 'c29j', baseEpoch: 7 }),
+      .mockResolvedValue({ groupId: 'g-1', groupInfo: 'c29j', baseEpoch: 7, activeEpoch: 7 }),
     ...overrides,
   };
 }
@@ -78,7 +82,13 @@ describe('ensureCommunityDistributionGroup - concurrent callers share one join',
     const channels = makeChannels({
       getDistributionGroup: vi.fn(async () => {
         await gate;
-        return { groupId: 'g-1', groupInfo: 'c29j', baseEpoch: 7, memberDevices: [] };
+        return {
+          groupId: 'g-1',
+          groupInfo: 'c29j',
+          baseEpoch: 7,
+          activeEpoch: 7,
+          memberDevices: [],
+        };
       }),
     });
 
@@ -100,7 +110,13 @@ describe('ensureCommunityDistributionGroup - concurrent callers share one join',
     const channels = makeChannels({
       getDistributionGroup: vi.fn(async () => {
         await gate;
-        return { groupId: 'g-1', groupInfo: 'c29j', baseEpoch: 7, memberDevices: [] };
+        return {
+          groupId: 'g-1',
+          groupInfo: 'c29j',
+          baseEpoch: 7,
+          activeEpoch: 7,
+          memberDevices: [],
+        };
       }),
     });
 
@@ -120,9 +136,13 @@ describe('ensureCommunityDistributionGroup - concurrent callers share one join',
     // not be skipped.
     const mls = makeMls();
     const channels = makeChannels({
-      getDistributionGroup: vi
-        .fn()
-        .mockResolvedValue({ groupId: 'g-1', groupInfo: 'c29j', baseEpoch: 7, memberDevices: [] }),
+      getDistributionGroup: vi.fn().mockResolvedValue({
+        groupId: 'g-1',
+        groupInfo: 'c29j',
+        baseEpoch: 7,
+        activeEpoch: 7,
+        memberDevices: [],
+      }),
     });
 
     await run(mls, channels);
@@ -140,7 +160,13 @@ describe('ensureCommunityDistributionGroup - concurrent callers share one join',
       getDistributionGroup: vi.fn(async () => {
         attempts += 1;
         if (attempts === 1) throw new ChannelApiError(503, null, 'the gateway is down');
-        return { groupId: 'g-1', groupInfo: 'c29j', baseEpoch: 7, memberDevices: [] };
+        return {
+          groupId: 'g-1',
+          groupInfo: 'c29j',
+          baseEpoch: 7,
+          activeEpoch: 7,
+          memberDevices: [],
+        };
       }),
     });
 
@@ -158,6 +184,7 @@ describe('ensureCommunityDistributionGroup', () => {
         groupId: 'g-1',
         groupInfo: null,
         baseEpoch: 7,
+        activeEpoch: 7,
         memberDevices: ['dev-me'],
       }),
     });
@@ -181,6 +208,7 @@ describe('ensureCommunityDistributionGroup', () => {
         groupId: 'g-1',
         groupInfo: null,
         baseEpoch: 7,
+        activeEpoch: 7,
         memberDevices: ['dev-me'],
       }),
     });
@@ -200,6 +228,7 @@ describe('ensureCommunityDistributionGroup', () => {
       groupId: 'g-1',
       groupInfo: 'c29j',
       baseEpoch: 7,
+      activeEpoch: 7,
     });
   });
 
@@ -234,7 +263,11 @@ describe('ensureCommunityDistributionGroup', () => {
 
   it('reports a join that failed, rather than returning success', async () => {
     const log = vi.fn();
-    const mls = makeMls({ ensureDistributionGroup: vi.fn().mockResolvedValue(false) });
+    const mls = makeMls({
+      ensureDistributionGroup: vi
+        .fn()
+        .mockResolvedValue({ joined: false, reason: 'refused', serverReason: 'epoch_mismatch' }),
+    });
 
     expect(await run(mls, makeChannels(), log)).toBe(false);
     expect(log.mock.calls.flat().join(' ')).toMatch(/could not join/);
@@ -252,9 +285,13 @@ describe('ensureCommunityDistributionGroup', () => {
 describe('ensureCommunityDistributionGroup - a held group the server routes nothing to', () => {
   const heldButUnrouted = () =>
     makeChannels({
-      getDistributionGroup: vi
-        .fn()
-        .mockResolvedValue({ groupId: 'g-1', groupInfo: 'c29j', baseEpoch: 7, memberDevices: [] }),
+      getDistributionGroup: vi.fn().mockResolvedValue({
+        groupId: 'g-1',
+        groupInfo: 'c29j',
+        baseEpoch: 7,
+        activeEpoch: 7,
+        memberDevices: [],
+      }),
     });
 
   it('forgets it and re-joins, so the rows are written back', async () => {
@@ -270,6 +307,7 @@ describe('ensureCommunityDistributionGroup - a held group the server routes noth
       groupId: 'g-1',
       groupInfo: 'c29j',
       baseEpoch: 7,
+      activeEpoch: 7,
       memberDevices: [],
     });
   });
@@ -290,6 +328,7 @@ describe('ensureCommunityDistributionGroup - a held group the server routes noth
         groupId: 'g-1',
         groupInfo: 'c29j',
         baseEpoch: 7,
+        activeEpoch: 7,
         memberDevices: ['dev-other'],
       }),
     });
@@ -304,9 +343,13 @@ describe('ensureCommunityDistributionGroup - a held group the server routes noth
     // Measured on production 2026-08-25: the heal fired on a salon the same run had just created.
     const mls = makeHeldMls();
     const channels = makeChannels({
-      getDistributionGroup: vi
-        .fn()
-        .mockResolvedValue({ groupId: 'g-1', groupInfo: null, baseEpoch: null, memberDevices: [] }),
+      getDistributionGroup: vi.fn().mockResolvedValue({
+        groupId: 'g-1',
+        groupInfo: null,
+        baseEpoch: null,
+        activeEpoch: 0,
+        memberDevices: [],
+      }),
     });
 
     expect(await run(mls, channels)).toBe(true);
@@ -316,9 +359,13 @@ describe('ensureCommunityDistributionGroup - a held group the server routes noth
   it('says why it left it alone, so the race is not repaired in silence', async () => {
     const log = vi.fn();
     const channels = makeChannels({
-      getDistributionGroup: vi
-        .fn()
-        .mockResolvedValue({ groupId: 'g-1', groupInfo: null, baseEpoch: null, memberDevices: [] }),
+      getDistributionGroup: vi.fn().mockResolvedValue({
+        groupId: 'g-1',
+        groupInfo: null,
+        baseEpoch: null,
+        activeEpoch: 0,
+        memberDevices: [],
+      }),
     });
 
     expect(await run(makeHeldMls(), channels, log)).toBe(true);
@@ -394,7 +441,11 @@ describe('ensureCommunityDistributionGroup - reconciling the tree with the roste
   });
 
   it('reconciles nothing when the group could not be joined', async () => {
-    const mls = makeMls({ ensureDistributionGroup: vi.fn().mockResolvedValue(false) });
+    const mls = makeMls({
+      ensureDistributionGroup: vi
+        .fn()
+        .mockResolvedValue({ joined: false, reason: 'refused', serverReason: 'epoch_mismatch' }),
+    });
 
     expect(await run(mls, makeChannels())).toBe(false);
     expect(reconcile).not.toHaveBeenCalled();
@@ -432,9 +483,13 @@ describe('ensureCommunityDistributionGroup - a tree that moved is written to dis
   /** Published, and naming no device of this user: the signature of an eviction. */
   const evicted = () =>
     makeChannels({
-      getDistributionGroup: vi
-        .fn()
-        .mockResolvedValue({ groupId: 'g-1', groupInfo: 'c29j', baseEpoch: 7, memberDevices: [] }),
+      getDistributionGroup: vi.fn().mockResolvedValue({
+        groupId: 'g-1',
+        groupInfo: 'c29j',
+        baseEpoch: 7,
+        activeEpoch: 7,
+        memberDevices: [],
+      }),
     });
 
   /** Published, and naming this device: nothing to repair. */
@@ -444,6 +499,7 @@ describe('ensureCommunityDistributionGroup - a tree that moved is written to dis
         groupId: 'g-1',
         groupInfo: 'c29j',
         baseEpoch: 7,
+        activeEpoch: 7,
         memberDevices: ['dev-me'],
       }),
     });
@@ -463,7 +519,11 @@ describe('ensureCommunityDistributionGroup - a tree that moved is written to dis
   afterEach(() => setGraineRuntime(null));
 
   it('writes the forget to disk when the re-join then fails - the state that used to strand a device', async () => {
-    const mls = makeHeldMls({ ensureDistributionGroup: vi.fn().mockResolvedValue(false) });
+    const mls = makeHeldMls({
+      ensureDistributionGroup: vi
+        .fn()
+        .mockResolvedValue({ joined: false, reason: 'refused', serverReason: 'epoch_mismatch' }),
+    });
 
     expect(await run(mls, evicted())).toBe(false);
 
@@ -475,7 +535,11 @@ describe('ensureCommunityDistributionGroup - a tree that moved is written to dis
   });
 
   it('says what the checkpoint bought, so the give-up line is not the last word on a dead salon', async () => {
-    const mls = makeHeldMls({ ensureDistributionGroup: vi.fn().mockResolvedValue(false) });
+    const mls = makeHeldMls({
+      ensureDistributionGroup: vi
+        .fn()
+        .mockResolvedValue({ joined: false, reason: 'refused', serverReason: 'epoch_mismatch' }),
+    });
     const lines: string[] = [];
 
     await run(mls, evicted(), (m) => lines.push(m));
@@ -519,7 +583,11 @@ describe('ensureCommunityDistributionGroup - a tree that moved is written to dis
    * holds nothing - which is already the truth, and already the state the next trigger repairs.
    */
   it('does not checkpoint a failed first join', async () => {
-    const mls = makeMls({ ensureDistributionGroup: vi.fn().mockResolvedValue(false) });
+    const mls = makeMls({
+      ensureDistributionGroup: vi
+        .fn()
+        .mockResolvedValue({ joined: false, reason: 'refused', serverReason: 'epoch_mismatch' }),
+    });
 
     expect(await run(mls, makeChannels())).toBe(false);
 
@@ -532,12 +600,105 @@ describe('ensureCommunityDistributionGroup - a tree that moved is written to dis
    */
   it('says so when there is no session to checkpoint through', async () => {
     setGraineRuntime(null);
-    const mls = makeHeldMls({ ensureDistributionGroup: vi.fn().mockResolvedValue(false) });
+    const mls = makeHeldMls({
+      ensureDistributionGroup: vi
+        .fn()
+        .mockResolvedValue({ joined: false, reason: 'refused', serverReason: 'epoch_mismatch' }),
+    });
     const lines: string[] = [];
 
     expect(await run(mls, evicted(), (m) => lines.push(m))).toBe(false);
 
     expect(mls.persistCheckpoint).not.toHaveBeenCalled();
     expect(lines.some((l) => l.includes('changed in memory only'))).toBe(true);
+  });
+});
+
+/**
+ * The repair for COMM-8, measured on production 2026-08-25.
+ *
+ * The external-join base is minted by the device whose commit was just accepted, in a follow-up
+ * call, and NOTHING else ever mints one. Lose that call and the group's epoch advances while the
+ * published base does not - and the commit gate accepts a base equal to the active epoch and
+ * nothing else, so from that moment every device without local MLS state is refused, for ever. A
+ * distribution group has no peer-Welcome fallback by construction, so that is a permanent lockout
+ * from a salon the user is entitled to.
+ *
+ * The trigger pinned here is a HOLDER's ordinary read - not a timer, not a sweep - and the
+ * termination condition is the server's own `baseEpoch >= activeEpoch`.
+ */
+describe('ensureCommunityDistributionGroup - a published base the group has outrun', () => {
+  /** Published at 5 while the group is at 7: no stateless device can get in. */
+  const stale = () =>
+    makeChannels({
+      getDistributionGroup: vi.fn().mockResolvedValue({
+        groupId: 'g-1',
+        groupInfo: 'c29j',
+        baseEpoch: 5,
+        activeEpoch: 7,
+        memberDevices: ['dev-me'],
+      }),
+    });
+
+  it('republishes from the tree this device holds', async () => {
+    const mls = makeHeldMls({ getEpoch: vi.fn().mockReturnValue(7) });
+
+    expect(await run(mls, stale())).toBe(true);
+
+    expect(mls.refreshGroupInfo).toHaveBeenCalledWith('g-1');
+    // The repair rides an early return that joins nothing, so it must not perturb the rest of it.
+    expect(mls.ensureDistributionGroup).not.toHaveBeenCalled();
+  });
+
+  it('accuses when it repairs, because the rate is what says whether the loss is rare', async () => {
+    const mls = makeHeldMls({ getEpoch: vi.fn().mockReturnValue(7) });
+    const lines: string[] = [];
+
+    await run(mls, stale(), (m) => lines.push(m));
+
+    const said = lines.find((l) => l.includes('external-join base is at epoch 5'));
+    expect(said).toContain('group is at 7');
+    expect(said).toContain('republishing');
+  });
+
+  it('publishes nothing from a device whose own tree is behind the group', async () => {
+    // Its export would be refused by the same gate, so publishing it would replace one unusable
+    // base with another and report success. Some other member will be current.
+    const mls = makeHeldMls({ getEpoch: vi.fn().mockReturnValue(6) });
+    const lines: string[] = [];
+
+    expect(await run(mls, stale(), (m) => lines.push(m))).toBe(true);
+
+    expect(mls.refreshGroupInfo).not.toHaveBeenCalled();
+    expect(lines.find((l) => l.includes('own tree is at 6'))).toContain(
+      'cannot mint a usable base'
+    );
+  });
+
+  it('sends nothing in the common case, where the two epochs already agree', async () => {
+    const mls = makeHeldMls();
+
+    expect(await run(mls, makeChannels())).toBe(true);
+
+    expect(mls.refreshGroupInfo).not.toHaveBeenCalled();
+  });
+
+  it('leaves an UNPUBLISHED base alone - absent is not stale', async () => {
+    // `activeEpoch` defaults to the base on an older build, and a group with no base at all has
+    // nothing to republish: the first device in publishes it through the create path instead.
+    const mls = makeHeldMls();
+    const channels = makeChannels({
+      getDistributionGroup: vi.fn().mockResolvedValue({
+        groupId: 'g-1',
+        groupInfo: null,
+        baseEpoch: null,
+        activeEpoch: 0,
+        memberDevices: ['dev-me'],
+      }),
+    });
+
+    await run(mls, channels);
+
+    expect(mls.refreshGroupInfo).not.toHaveBeenCalled();
   });
 });

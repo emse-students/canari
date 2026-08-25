@@ -51,14 +51,19 @@ export function createMlsServiceStub(
       .fn()
       .mockResolvedValue({ commits: [], activeEpoch: 0, belowFloor: false }),
     refreshGroupInfo: vi.fn().mockResolvedValue(undefined),
-    externalJoin: vi.fn().mockResolvedValue(false),
+    // The DEFAULT outcome is the one a test that does not care should get: no base published, so
+    // nothing joined. A bare `false` no longer type-checks, and that is the point - every caller
+    // reads the reason.
+    externalJoin: vi.fn().mockResolvedValue({ joined: false, reason: 'no_base_published' }),
     // Default: NOT a key-distribution group. The inbound pipeline asks this of every frame before
     // anything else, so the default has to be the ordinary case; a test about seeds overrides it.
     registerDistributionGroup: vi.fn(),
     isDistributionGroup: vi.fn().mockReturnValue(false),
     distributionGroupFor: vi.fn().mockReturnValue(null),
     distributionScopes: vi.fn().mockReturnValue([]),
-    ensureDistributionGroup: vi.fn().mockResolvedValue(false),
+    ensureDistributionGroup: vi
+      .fn()
+      .mockResolvedValue({ joined: false, reason: 'no_base_published' }),
     routeDistributionFrame: vi.fn().mockResolvedValue(true),
     setDistributionGroupInfoTransport: vi.fn(),
     onDistributionFrame: vi.fn(),

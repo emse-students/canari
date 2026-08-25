@@ -560,7 +560,9 @@ export class MlsDeliveryApi {
    *
    * Every other non-2xx stays unclassified, because none of them says anything about membership.
    */
-  async fetchGroupInfo(groupId: string): Promise<{ groupInfo: string; baseEpoch: number } | null> {
+  async fetchGroupInfo(
+    groupId: string
+  ): Promise<{ groupInfo: string; baseEpoch: number; activeEpoch: number } | null> {
     const res = await this.f(
       `${this.historyUrl}/api/mls/group-info/${encodeURIComponent(groupId)}`,
       { headers: await this.auth() }
@@ -571,7 +573,14 @@ export class MlsDeliveryApi {
     }
     const data = await res.json();
     // The server returns null (no body content) when nothing is stored.
-    return data && typeof data.groupInfo === 'string' ? data : null;
+    if (!data || typeof data.groupInfo !== 'string') return null;
+    // `activeEpoch` defaults to the base, never to 0: an older server that does not send it must
+    // read as "nothing known to be stale", where 0 would call every published base stale.
+    return {
+      groupInfo: data.groupInfo,
+      baseEpoch: data.baseEpoch,
+      activeEpoch: typeof data.activeEpoch === 'number' ? data.activeEpoch : data.baseEpoch,
+    };
   }
 
   /**

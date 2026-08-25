@@ -220,6 +220,7 @@ describe('ChannelService - the community distribution group', () => {
         groupId: 'g-1',
         groupInfo: null,
         baseEpoch: null,
+        activeEpoch: 0,
       });
     });
 
@@ -237,6 +238,34 @@ describe('ChannelService - the community distribution group', () => {
         groupId: 'g-1',
         groupInfo: 'Z2k=',
         baseEpoch: 3,
+        // Absent from the answer -> it reads as the base, never as 0: "nothing known to be stale"
+        // is the only safe reading of an older delivery build, because 0 would mark every base
+        // ahead of its group and stop every joiner instead of the doomed ones.
+        activeEpoch: 3,
+      });
+    });
+
+    it('carries a base the group has outrun through as TWO epochs', async () => {
+      const { service, workspaceRepo, memberRepo } = makeService();
+      workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE });
+      memberRepo.findOne.mockResolvedValue({ workspaceId: WORKSPACE, userId: USER });
+      global.fetch = answerWith({
+        groupId: 'g-1',
+        groupInfo: 'Z2k=',
+        baseEpoch: 3,
+        activeEpoch: 5,
+      }) as unknown as typeof fetch;
+
+      // COLLAPSING THESE INTO ONE NUMBER IS THE DEFECT (COMM-8, production 2026-08-25). A base at 3
+      // under a group at 5 is refused by the commit gate every time, so a client told only "there
+      // is a base" builds a tree, submits, is refused, and repeats - for ever, because nothing but
+      // a member holding the tree can republish. Both numbers travel, or the client cannot tell
+      // "joinable" from "permanently unjoinable" without asking.
+      expect(await service.getDistributionGroupForMember(WORKSPACE, USER)).toEqual({
+        groupId: 'g-1',
+        groupInfo: 'Z2k=',
+        baseEpoch: 3,
+        activeEpoch: 5,
       });
     });
 
@@ -617,7 +646,7 @@ describe('ChannelService - the community distribution group', () => {
 
       await expect(
         repos.service.getChannelDistributionGroupForMember(CHANNEL, USER)
-      ).resolves.toEqual({ groupId: 'g-chan', groupInfo: 'Z2k=', baseEpoch: 3 });
+      ).resolves.toEqual({ groupId: 'g-chan', groupInfo: 'Z2k=', baseEpoch: 3, activeEpoch: 3 });
       expect(String((global.fetch as jest.Mock).mock.calls[0][0])).toContain(
         'distribution-groups/channel/' + CHANNEL
       );

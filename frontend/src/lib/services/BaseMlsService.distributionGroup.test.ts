@@ -4,6 +4,7 @@ vi.mock('$lib/services/TauriMlsService', () => ({ TauriMlsService: class {} }));
 vi.mock('$lib/services/WebMlsService', () => ({ WebMlsService: class {} }));
 
 import { BaseMlsService } from './BaseMlsService';
+import type { ExternalJoinOutcome } from '$lib/mls-client/IMlsService';
 import {
   channelScope,
   workspaceScope,
@@ -33,13 +34,18 @@ const proto = BaseMlsService.prototype as unknown as {
   distributionGroupFor(scope: DistributionScope): string | null;
   distributionScopes(): DistributionScope[];
   groupInfoChannel(groupId: string): {
-    fetch(): Promise<{ groupInfo: string; baseEpoch: number } | null>;
+    fetch(): Promise<{ groupInfo: string; baseEpoch: number; activeEpoch: number } | null>;
     publish(groupInfo: string, baseEpoch: number): Promise<{ stored: boolean }>;
   };
   ensureDistributionGroup(
     scope: DistributionScope,
-    ref: { groupId: string; groupInfo: string | null; baseEpoch: number | null }
-  ): Promise<boolean>;
+    ref: {
+      groupId: string;
+      groupInfo: string | null;
+      baseEpoch: number | null;
+      activeEpoch: number;
+    }
+  ): Promise<ExternalJoinOutcome>;
   routeDistributionFrame(groupId: string, sender: string, ciphertext: Uint8Array): Promise<boolean>;
 };
 
@@ -51,7 +57,9 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     userId: 'u',
     deviceId: 'd',
     delivery: {
-      fetchGroupInfo: vi.fn().mockResolvedValue({ groupInfo: 'ZGVs', baseEpoch: 3 }),
+      fetchGroupInfo: vi
+        .fn()
+        .mockResolvedValue({ groupInfo: 'ZGVs', baseEpoch: 3, activeEpoch: 3 }),
       storeGroupInfo: vi.fn().mockResolvedValue({ stored: true }),
       submitCommit: vi.fn(),
     },
@@ -60,7 +68,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     // for a salon whose community this session has not loaded.
     knownDistributionGroups: new Set<string>(),
     distributionGroupInfo: {
-      fetch: vi.fn().mockResolvedValue({ groupInfo: 'c29j', baseEpoch: 7 }),
+      fetch: vi.fn().mockResolvedValue({ groupInfo: 'c29j', baseEpoch: 7, activeEpoch: 7 }),
       publish: vi.fn().mockResolvedValue({ stored: true }),
     },
     distributionFrameHandler: vi.fn().mockResolvedValue(undefined),
@@ -70,7 +78,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     exportGroupInfo: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3])),
     getEpoch: vi.fn().mockReturnValue(0),
     forgetGroup: vi.fn(),
-    externalJoin: vi.fn().mockResolvedValue(true),
+    externalJoin: vi.fn().mockResolvedValue({ joined: true }),
     processIncomingMessage: vi.fn().mockResolvedValue(new Uint8Array([9, 9])),
     registerDistributionGroup: proto.registerDistributionGroup,
     groupInfoChannel: proto.groupInfoChannel,
@@ -137,7 +145,7 @@ describe('where a group-info base is read and written', () => {
     proto.registerDistributionGroup.call(ctx, WS, 'g-1');
 
     const channel = proto.groupInfoChannel.call(ctx, 'g-1');
-    expect(await channel.fetch()).toEqual({ groupInfo: 'c29j', baseEpoch: 7 });
+    expect(await channel.fetch()).toEqual({ groupInfo: 'c29j', baseEpoch: 7, activeEpoch: 7 });
     await channel.publish('QUFB', 9);
 
     // Never chat-delivery: it gates on a `dm_group_members` row this group has none of.
@@ -171,13 +179,13 @@ describe('where a group-info base is read and written', () => {
 });
 
 describe('joining on first use', () => {
-  const REF_PUBLISHED = { groupId: 'g-1', groupInfo: 'c29j', baseEpoch: 7 };
-  const REF_FRESH = { groupId: 'g-1', groupInfo: null, baseEpoch: null };
+  const REF_PUBLISHED = { groupId: 'g-1', groupInfo: 'c29j', baseEpoch: 7, activeEpoch: 7 };
+  const REF_FRESH = { groupId: 'g-1', groupInfo: null, baseEpoch: null, activeEpoch: 0 };
 
   it('registers the group even when it is already held locally', async () => {
     const ctx = makeCtx({ getLocalGroups: vi.fn().mockReturnValue(['g-1']) });
 
-    expect(await ensure(ctx, WS, REF_PUBLISHED)).toBe(true);
+    expect(await ensure(ctx, WS, REF_PUBLISHED)).toEqual({ joined: true });
     // Registration is not a side effect of joining: the frame router needs it on every start,
     // including the one where there was nothing to join.
     expect(proto.isDistributionGroup.call(ctx, 'g-1')).toBe(true);
@@ -188,7 +196,7 @@ describe('joining on first use', () => {
   it('external-joins a published base rather than creating anything', async () => {
     const ctx = makeCtx();
 
-    expect(await ensure(ctx, WS, REF_PUBLISHED)).toBe(true);
+    expect(await ensure(ctx, WS, REF_PUBLISHED)).toEqual({ joined: true });
     expect(ctx.externalJoin).toHaveBeenCalledWith('g-1');
     expect(ctx.createGroup).not.toHaveBeenCalled();
   });
@@ -196,7 +204,7 @@ describe('joining on first use', () => {
   it('creates the group and publishes the base when this device is the first one in', async () => {
     const ctx = makeCtx();
 
-    expect(await ensure(ctx, WS, REF_FRESH)).toBe(true);
+    expect(await ensure(ctx, WS, REF_FRESH)).toEqual({ joined: true });
     expect(ctx.createGroup).toHaveBeenCalledWith('g-1');
     expect(ctx.distributionGroupInfo.publish).toHaveBeenCalledWith(WS, expect.any(String), 0, 'd');
     expect(ctx.externalJoin).not.toHaveBeenCalled();
@@ -207,7 +215,7 @@ describe('joining on first use', () => {
     const ctx = makeCtx();
     ctx.distributionGroupInfo.publish.mockResolvedValue({ stored: false });
 
-    expect(await ensure(ctx, WS, REF_FRESH)).toBe(true);
+    expect(await ensure(ctx, WS, REF_FRESH)).toEqual({ joined: true });
     // Keeping it would fork the community: two MLS groups under one id, each holding half the
     // seeds, with nothing on either side ever reporting it.
     expect(ctx.forgetGroup).toHaveBeenCalledWith('g-1');
@@ -218,7 +226,7 @@ describe('joining on first use', () => {
     const ctx = makeCtx();
     ctx.distributionGroupInfo.publish.mockRejectedValue(new Error('offline'));
 
-    expect(await ensure(ctx, WS, REF_FRESH)).toBe(false);
+    expect(await ensure(ctx, WS, REF_FRESH)).toEqual({ joined: false, reason: 'unreachable' });
     // A group held locally that nobody can join is worse than no group: the next call would find
     // it in `getLocalGroups` and return early, for ever.
     expect(ctx.forgetGroup).toHaveBeenCalledWith('g-1');

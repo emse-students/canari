@@ -53,7 +53,17 @@ import { fromBase64, toBase64 } from '$lib/utils/hex';
 import type {
   DistributionFrameHandler,
   DistributionGroupInfoTransport,
+  ExternalJoinOutcome,
 } from '$lib/mls-client/IMlsService';
+
+/**
+ * How many times {@link BaseMlsService.externalJoin} may re-read the base and resubmit.
+ *
+ * A BOUND, NOT THE TERMINATION CONDITION. The only refusal it exists for is `concurrent_commit`,
+ * where the commit lock was busy and the base may legitimately have moved by the next read; a base
+ * that is behind the group's epoch ends the loop on that fact, whatever this number is.
+ */
+const EXTERNAL_JOIN_MAX_ATTEMPTS = 3;
 
 /**
  * Abstract base class shared by WebMlsService (WASM) and TauriMlsService (Rust native).
@@ -1890,19 +1900,19 @@ export abstract class BaseMlsService implements IMlsService {
       };
     });
     // The commit advanced the epoch: refresh the external-join base so a member lacking state can
-    // self-join at the new epoch. Best-effort, off the critical path; skipped on reject (the closure
-    // above throws before we get here, so the epoch never moved). [[Phase 4]]
+    // self-join at the new epoch. Skipped on reject (the closure above throws before we get here, so
+    // the epoch never moved). [[Phase 4]]
+    //
+    // FIRE-AND-FORGET, AND WHAT IT COSTS IS NOT NOTHING. This is the ONLY thing that mints a base,
+    // so losing it strands the group's published base one epoch behind - permanently, and every
+    // stateless joiner is refused for as long as it lasts. It stays off the critical path (a commit
+    // that succeeded must not be reported as failed because a follow-up did not land) and the repair
+    // lives where a device that CAN mint a base already reads the group: `republishStaleBase` in
+    // [distributionGroup](../utils/graine/distributionGroup.ts).
     void this.refreshGroupInfo(groupId);
     return out;
   }
 
-  /**
-   * Exports the current GroupInfo and pushes it to the delivery service (external-join base, Phase 4).
-   * Refreshed after every commit (a new group's first member-add is itself a commit) so an authorized
-   * member lacking MLS state can self-join at the current epoch. Best-effort: never throws (a failed
-   * refresh only means a joiner
-   * may momentarily get a one-epoch-stale base and retry).
-   */
   /**
    * Declares `groupId` to be the Graine key-distribution group of `scope`.
    *
@@ -2122,7 +2132,7 @@ export abstract class BaseMlsService implements IMlsService {
    * problem and send the next reader to entirely the wrong place.
    */
   protected groupInfoChannel(groupId: string): {
-    fetch(): Promise<{ groupInfo: string; baseEpoch: number } | null>;
+    fetch(): Promise<{ groupInfo: string; baseEpoch: number; activeEpoch: number } | null>;
     publish(groupInfoBase64: string, baseEpoch: number): Promise<{ stored: boolean }>;
   } {
     const scope = this.distributionScopeByGroup.get(groupId);
@@ -2144,6 +2154,19 @@ export abstract class BaseMlsService implements IMlsService {
     };
   }
 
+  /**
+   * Exports the current GroupInfo and pushes it to the delivery service (external-join base, Phase 4)
+   * so an authorized member lacking MLS state can self-join at the current epoch.
+   *
+   * NEVER THROWS, AND THE LOSS IS NOT MOMENTARY - which is what the doc that used to sit here
+   * claimed ("a joiner may momentarily get a one-epoch-stale base and retry"). Nothing else ever
+   * publishes a base, so a refresh lost here leaves the published one behind the group's epoch until
+   * some unrelated member happens to commit; the strict gate refuses every external commit built on
+   * it in the meantime, and a distribution group has no peer-Welcome fallback to take instead. On
+   * production 2026-08-25 that locked a member out of a private salon for the rest of the session.
+   * The repair is `republishStaleBase` in
+   * [distributionGroup](../utils/graine/distributionGroup.ts), driven by any HOLDER's ordinary read.
+   */
   async refreshGroupInfo(groupId: string): Promise<void> {
     try {
       const groupInfo = await this.exportGroupInfo(groupId);
@@ -2160,24 +2183,36 @@ export abstract class BaseMlsService implements IMlsService {
   /**
    * Attempts to (re)join `groupId` via an external commit built from the server-stored GroupInfo,
    * WITHOUT a peer Welcome. This is the self-service recovery seam (Phase 4): a member with no local
-   * MLS state fetches the current GroupInfo, builds an external commit, and submits it under the
-   * standard epoch gate. On an epoch-race reject it discards the group and retries with a fresher
-   * GroupInfo (this replaces the CAS/successor dance - no peer liveness required).
+   * MLS state fetches the published base, builds an external commit, and submits it under the strict
+   * epoch gate (no peer liveness required, which is what makes a distribution group joinable at all).
    *
-   * Returns true on success. Returns false when no GroupInfo is available, or the build fails, or
-   * the epoch race is lost repeatedly - the caller then falls back to the legacy welcome_request
-   * path.
+   * EVERY OUTCOME IS A TYPE, and that is the whole shape of this method. Five different things can
+   * stop a join and exactly one of them is worth retrying; flattened into `false` they were
+   * indistinguishable to every caller, so the one retry-forever loop was taken for all five.
+   *
+   * **A stale base is not a race, and no number of attempts wins it.** The gate accepts a base equal
+   * to `activeEpoch` and nothing else. That base is published by a follow-up call from the device
+   * whose commit was just accepted, and NOTHING else ever mints one - so when that call is lost the
+   * two numbers separate for good, and every commit built on the published base is refused, for
+   * ever. The server now serves both numbers, so this is READ rather than discovered by submitting:
+   * we answer {@link ExternalJoinOutcome} `stale_base` and let a device that HOLDS the tree repair
+   * it (see `joinDistributionGroup`). Found on production 2026-08-25, when it cost a private salon
+   * its second member: three refusals in one second, the freshly built tree discarded each time, and
+   * the same doomed base still being submitted twenty minutes later.
+   *
+   * **Termination is a proof, not a count.** The bound below only covers `concurrent_commit` - the
+   * commit lock being busy, where the base genuinely may move. A refusal whose refetch shows the
+   * base behind the group's epoch exits on that fact instead of burning the remaining attempts.
    *
    * THROWS {@link NotAGroupMemberError} when the server says we hold no membership row, and that is
-   * the one outcome a caller must not treat as "try again later". This method used to return `false`
-   * for it too, folded in with "nothing stored yet" - so its caller sent a welcome_request, and the
-   * watchdog came back a minute later to do it all again, for as long as the group existed. A
-   * distribution group cannot reach this branch: {@link groupInfoChannel} routes those to their own
-   * transport, so a 403 here is always a chat group we are genuinely outside of.
+   * the one outcome a caller must not treat as "try again later". A distribution group cannot reach
+   * that branch: {@link groupInfoChannel} routes those to their own transport, so a 403 here is
+   * always a chat group we are genuinely outside of.
    */
-  async externalJoin(groupId: string): Promise<boolean> {
+  async externalJoin(groupId: string): Promise<ExternalJoinOutcome> {
     const excludeSelf = [`${this.userId}:${this.deviceId}`];
-    for (let attempt = 0; attempt < 3; attempt++) {
+    const short = groupId.slice(0, 8);
+    for (let attempt = 0; attempt < EXTERNAL_JOIN_MAX_ATTEMPTS; attempt++) {
       // THE REFUSAL HAS TO SURVIVE THIS CATCH, which flattened every outcome into `null` and cost
       // the caller the only discriminator it needed. `NotAGroupMemberError` is the server answering
       // the question recovery is asking; anything else says nothing about membership and leaves the
@@ -2188,12 +2223,28 @@ export abstract class BaseMlsService implements IMlsService {
         .catch((e) => {
           if (e instanceof NotAGroupMemberError) throw e;
           console.warn(
-            `[MLS] externalJoin GroupInfo fetch failed for ${groupId.slice(0, 8)}...:`,
+            `[MLS] externalJoin GroupInfo fetch failed for ${short}...:`,
             String(e).slice(0, 120)
           );
           return null;
         });
-      if (!gi) return false; // nothing stored yet -> fall back to welcome_request
+      if (!gi) return { joined: false, reason: 'no_base_published' };
+
+      // NEVER LEARN BY FAILING WHAT A FACT COULD HAVE TOLD YOU. A base behind the group's epoch is
+      // refused by the gate with certainty, and the refusal costs a round trip and the tree we would
+      // build to make it. Only a member already holding the tree can publish a usable one.
+      if (gi.baseEpoch < gi.activeEpoch) {
+        console.warn(
+          `[MLS] externalJoin STALE base for ${short}... (published ${gi.baseEpoch}, group at ${gi.activeEpoch})` +
+            ` - not attempting; a member holding the tree must republish it`
+        );
+        return {
+          joined: false,
+          reason: 'stale_base',
+          baseEpoch: gi.baseEpoch,
+          serverEpoch: gi.activeEpoch,
+        };
+      }
 
       let joined: { groupId: string; commit: Uint8Array };
       try {
@@ -2202,18 +2253,35 @@ export abstract class BaseMlsService implements IMlsService {
         );
       } catch (e) {
         // Build failed (e.g. the group is already held locally) -> fall back.
-        console.warn(
-          `[MLS] externalJoin build failed for ${groupId.slice(0, 8)}...:`,
-          String(e).slice(0, 120)
-        );
-        return false;
+        console.warn(`[MLS] externalJoin build failed for ${short}...:`, String(e).slice(0, 120));
+        return { joined: false, reason: 'build_failed' };
       }
 
       // Submit under the epoch gate against the GroupInfo's base epoch. The server fans the external
       // commit out to existing members (excluding this device, which already applied it).
-      const validation = await this.delivery
-        .submitCommit(joined.groupId, gi.baseEpoch, toBase64(joined.commit), excludeSelf)
-        .catch(() => ({ accepted: false, reason: 'network' as const }));
+      let validation: { accepted: boolean; reason?: string; currentEpoch?: number };
+      try {
+        validation = await this.delivery.submitCommit(
+          joined.groupId,
+          gi.baseEpoch,
+          toBase64(joined.commit),
+          excludeSelf
+        );
+      } catch (e) {
+        // A TRANSPORT FAILURE IS NOT AN ANSWER, and this used to be relabelled an epoch race: the
+        // staged commit was discarded, the base refetched, and the whole thing retried against a
+        // server that had never been reached. We claim NOTHING about membership here. The group is
+        // still dropped, because an external commit cannot be cleared and a pending one left
+        // unmerged breaks every later operation on it - and if the server DID accept the commit we
+        // never saw acknowledged, its base is now stale and a holder's republish is what fixes it.
+        this.forgetGroup(joined.groupId);
+        console.warn(
+          `[MLS] externalJoin could not reach the commit gate for ${short}... (base ${gi.baseEpoch}) -` +
+            ` nothing is claimed about membership:`,
+          String(e).slice(0, 120)
+        );
+        return { joined: false, reason: 'unreachable' };
+      }
 
       if (validation.accepted) {
         await this.runUnderMlsLock(() => this.mergePendingCommit(joined.groupId));
@@ -2221,17 +2289,31 @@ export abstract class BaseMlsService implements IMlsService {
         console.log(
           `[MLS] externalJoin succeeded for ${joined.groupId.slice(0, 8)}... (base epoch ${gi.baseEpoch})`
         );
-        return true;
+        return { joined: true };
       }
 
-      // Rejected: a newer commit landed since we fetched the GroupInfo. An external commit cannot be
-      // cleared, so discard the group and retry with a fresher GroupInfo.
+      // REFUSED, and the server said WHY - both fields used to be dropped and the line called every
+      // refusal an epoch race. An external commit cannot be cleared, so the group goes; the next
+      // pass re-reads the base and exits on the stale-base fact above if nobody republished.
       this.forgetGroup(joined.groupId);
-      console.log(
-        `[MLS] externalJoin epoch race for ${joined.groupId.slice(0, 8)}... (base ${gi.baseEpoch}) - retrying`
+      console.warn(
+        `[MLS] externalJoin REFUSED for ${joined.groupId.slice(0, 8)}... (base ${gi.baseEpoch},` +
+          ` reason ${validation.reason ?? 'unspecified'}, group at ${validation.currentEpoch ?? '?'})` +
+          ` - attempt ${attempt + 1}/${EXTERNAL_JOIN_MAX_ATTEMPTS}`
       );
+      if (attempt === EXTERNAL_JOIN_MAX_ATTEMPTS - 1) {
+        return {
+          joined: false,
+          reason: 'refused',
+          serverReason: validation.reason ?? 'unspecified',
+          ...(validation.currentEpoch !== undefined
+            ? { serverEpoch: validation.currentEpoch }
+            : {}),
+        };
+      }
     }
-    return false;
+    // Unreachable - the last attempt returns above. Typed rather than asserted.
+    return { joined: false, reason: 'refused', serverReason: 'unspecified' };
   }
 
   /**
@@ -2251,17 +2333,23 @@ export abstract class BaseMlsService implements IMlsService {
    * winner's. Nothing was built on the discarded group - this runs before any seed is sent - so
    * discarding it costs nothing, and no peer has to be online for any of it.
    *
-   * @param ref what social-service answered: the group id, and the published base or null
-   * @returns true when this device holds the group afterwards
+   * @param ref what social-service answered: the group id, the published base or null, and the
+   *   group's real epoch - which the base can be permanently behind (see {@link externalJoin})
+   * @returns the outcome, distinguishable: a stale base is not a lost race
    */
   async ensureDistributionGroup(
     scope: DistributionScope,
-    ref: { groupId: string; groupInfo: string | null; baseEpoch: number | null }
-  ): Promise<boolean> {
+    ref: {
+      groupId: string;
+      groupInfo: string | null;
+      baseEpoch: number | null;
+      activeEpoch: number;
+    }
+  ): Promise<ExternalJoinOutcome> {
     const { groupId } = ref;
     this.registerDistributionGroup(scope, groupId);
 
-    if (this.getLocalGroups().includes(groupId)) return true;
+    if (this.getLocalGroups().includes(groupId)) return { joined: true };
 
     if (ref.groupInfo !== null) {
       return this.externalJoin(groupId);
@@ -2287,10 +2375,10 @@ export abstract class BaseMlsService implements IMlsService {
         `[GRAINE] publishing the base for ${groupId.slice(0, 8)}... failed - group discarded:`,
         String(e).slice(0, 120)
       );
-      return false;
+      return { joined: false, reason: 'unreachable' };
     }
 
-    if (published.stored) return true;
+    if (published.stored) return { joined: true };
 
     // Lost the race: another device published first and its base is what everyone else will join
     // from. Ours would fork the community in two.

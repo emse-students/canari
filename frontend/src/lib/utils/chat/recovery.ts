@@ -1,4 +1,4 @@
-import type { IMlsService } from '$lib/mls-client/IMlsService';
+import type { ExternalJoinOutcome, IMlsService } from '$lib/mls-client/IMlsService';
 import { NotAGroupMemberError } from '$lib/mls-client/mlsDeliveryApi';
 import type { IStorage } from '$lib/db';
 import type { Conversation } from '$lib/types';
@@ -206,9 +206,9 @@ export async function requestReAdd(
   // Self-service external-commit join first (Phase 4): fetch the stored GroupInfo and rejoin at the
   // current epoch without a peer. On success, clear the recovery bookkeeping and return.
   deps.log(`[READD] ${groupId.slice(0, 8)}... externalJoin…`);
-  let joined: boolean;
+  let outcome: ExternalJoinOutcome;
   try {
-    joined = await deps.mlsService.externalJoin(groupId);
+    outcome = await deps.mlsService.externalJoin(groupId);
   } catch (e) {
     // A STATUS CODE IS AN ANSWER. The server holds no membership row for us, so there is no base to
     // join and no point asking a member to re-add us - the group's own roster is what refused. This
@@ -222,10 +222,16 @@ export async function requestReAdd(
     // fallback below stays the right next move, and the log is what keeps the branch from being
     // silent on the path a real outage would take.
     deps.log(`[READD] ${groupId.slice(0, 8)}... externalJoin threw: ${String(e).slice(0, 120)}`);
-    joined = false;
+    outcome = { joined: false, reason: 'unreachable' };
   }
-  deps.log(`[READD] ${groupId.slice(0, 8)}... externalJoin -> ${joined}`);
-  if (joined) {
+  // The REASON is logged, not just the verdict. A chat group falls back to welcome_request for every
+  // refusal - a peer can Welcome us where a distribution group has nobody to ask - so the branch
+  // does not fork here; what it must not do is leave the five causes indistinguishable in the log,
+  // which is where `stale_base` (a base no retry can ever use) hid as an ordinary lost race.
+  deps.log(
+    `[READD] ${groupId.slice(0, 8)}... externalJoin -> ${outcome.joined ? 'joined' : outcome.reason}`
+  );
+  if (outcome.joined) {
     deps.log(`[READD] ${groupId.slice(0, 8)}... rejoined via external commit (self-service)`);
     clearGroupNotReady(deps.userId, groupId);
     cancelReAdd(groupId, timers);

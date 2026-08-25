@@ -694,7 +694,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       fetch: async (scope) => {
         const ref = await distributionChannels.getDistributionGroup(scope);
         return ref.groupInfo !== null && ref.baseEpoch !== null
-          ? { groupInfo: ref.groupInfo, baseEpoch: ref.baseEpoch }
+          ? { groupInfo: ref.groupInfo, baseEpoch: ref.baseEpoch, activeEpoch: ref.activeEpoch }
           : null;
       },
       publish: (scope, groupInfo, baseEpoch, deviceId) =>

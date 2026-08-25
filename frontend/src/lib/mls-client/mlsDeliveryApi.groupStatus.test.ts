@@ -141,10 +141,43 @@ describe('fetchGroupInfo - a refused base is a membership answer', () => {
 
   it('returns the stored base on 200', async () => {
     const api = makeApi(async () =>
+      response('{"groupInfo":"Z2k=","baseEpoch":7,"activeEpoch":7}', { status: 200 })
+    );
+
+    expect(await api.fetchGroupInfo('g1')).toEqual({
+      groupInfo: 'Z2k=',
+      baseEpoch: 7,
+      activeEpoch: 7,
+    });
+  });
+
+  // THE FACT THAT REPLACES A DOOMED ROUND TRIP (COMM-8, production 2026-08-25). A base behind the
+  // group's epoch is refused by the commit gate every time, so the joiner has to be able to read
+  // that here rather than learn it by building a tree and being told no.
+  it('carries a base the group has outrun as two numbers', async () => {
+    const api = makeApi(async () =>
+      response('{"groupInfo":"Z2k=","baseEpoch":3,"activeEpoch":6}', { status: 200 })
+    );
+
+    expect(await api.fetchGroupInfo('g1')).toEqual({
+      groupInfo: 'Z2k=',
+      baseEpoch: 3,
+      activeEpoch: 6,
+    });
+  });
+
+  it('reads a missing active epoch as the base, never as zero', async () => {
+    // An older delivery build does not send the field. Defaulting to 0 would mark EVERY base ahead
+    // of its group and refuse every join; the base itself means "nothing known to be stale".
+    const api = makeApi(async () =>
       response('{"groupInfo":"Z2k=","baseEpoch":7}', { status: 200 })
     );
 
-    expect(await api.fetchGroupInfo('g1')).toEqual({ groupInfo: 'Z2k=', baseEpoch: 7 });
+    expect(await api.fetchGroupInfo('g1')).toEqual({
+      groupInfo: 'Z2k=',
+      baseEpoch: 7,
+      activeEpoch: 7,
+    });
   });
 
   // An empty list is a genuine answer and must not be confused with a refusal.

@@ -111,6 +111,7 @@ async function joinDistributionGroup(
     groupId: string;
     groupInfo: string | null;
     baseEpoch: number | null;
+    activeEpoch: number;
     memberDevices?: string[];
   };
   try {
@@ -209,6 +210,7 @@ async function joinDistributionGroup(
     // Already in the group - but not necessarily holding anything. A device that joined while its
     // answerer was offline would never ask again if the ask lived only on the joining branch, and
     // the request is exactly what decides whether it is needed.
+    await republishStaleBase(mlsService, ref, scope, log);
     await reconcileRoster(channelService, scope, log);
     await askForHistory(scope, log);
     return true;
@@ -229,18 +231,28 @@ async function joinDistributionGroup(
     staleForgotten = mlsService.forgetDistributionGroupById(ref.groupId);
   }
 
-  const joined = await mlsService.ensureDistributionGroup(scope, ref);
+  const outcome = await mlsService.ensureDistributionGroup(scope, ref);
 
   // THE TREE MOVED, SO THE DISK MOVES WITH IT - on the failing outcome as much as the happy one.
   // See {@link persistDistributionTreeChange}: the checkpoint is what makes the difference between
   // a failed re-join this device retries on its next load and one it is stranded by for ever.
-  if (staleForgotten || joined) await persistDistributionTreeChange(mlsService, scope, log);
+  if (staleForgotten || outcome.joined) await persistDistributionTreeChange(mlsService, scope, log);
 
-  if (!joined) {
+  if (!outcome.joined) {
     // NAMING THE RECOVERY, because this line used to be the last thing said about a salon that then
     // went unreadable for the rest of the session. What makes the claim true is the checkpoint above.
+    //
+    // AND NAMING THE CAUSE. Every refusal used to arrive here as one bare `false`, so a base no
+    // retry can ever use read exactly like a race we lost - which is how a private salon's second
+    // member was left resubmitting the same doomed commit for twenty minutes (production,
+    // 2026-08-25). `stale_base` is not this device's to repair: it needs a member that HOLDS the
+    // tree to republish, which the branch above does on its own next ordinary read of the salon.
     log(
-      `[GRAINE] could not join the distribution group of ${scopeLabel(scope)}` +
+      `[GRAINE] could not join the distribution group of ${scopeLabel(scope)} (${outcome.reason})` +
+        (outcome.reason === 'stale_base'
+          ? ` - the published base is at epoch ${outcome.baseEpoch} while the group is at ${outcome.serverEpoch},` +
+            ' so no attempt from here can be accepted until a member holding the tree republishes it'
+          : '') +
         (staleForgotten
           ? ' - the stale tree is gone from disk too, so the next load asks again instead of restoring it'
           : '')
@@ -251,6 +263,54 @@ async function joinDistributionGroup(
   await reconcileRoster(channelService, scope, log);
   await askForHistory(scope, log);
   return true;
+}
+
+/**
+ * Republishes a scope's external-join base when the published one is behind the group's real epoch.
+ *
+ * THE REPAIR OF A DEFECT THAT HAS NO OTHER CURE, and only a device holding the tree can perform it.
+ * The base is minted by the device whose commit was just accepted, in a follow-up call, and nothing
+ * else ever mints one - so when that call is lost (offline, closed tab, a refused refresh) the
+ * group's epoch advances and the published base stays where it was, for ever. The commit gate
+ * accepts a base equal to the active epoch and nothing else, so from that moment every device
+ * without local MLS state is refused, every time. A distribution group has no peer-Welcome fallback
+ * by construction: that device is locked out of a salon it is entitled to, permanently. Measured on
+ * production 2026-08-25 (COMM-8) on a two-member private salon.
+ *
+ * NOT A TIMER, AND NOT A SWEEP. The trigger is this device's ordinary read of a scope it is already
+ * in - the same read every member performs on every load - and the termination condition is a proof
+ * the server itself hands over: `baseEpoch >= activeEpoch`. Idempotent, because the far side is
+ * monotonic, and free in the common case, where the two numbers already agree and nothing is sent.
+ *
+ * A DEVICE BEHIND THE GROUP CANNOT MINT THE BASE EITHER, and says so rather than publishing an
+ * equally unusable one: its own tree is at an older epoch, so the GroupInfo it could export would be
+ * refused by the same gate. Some other member will be current - it is the receiving half of the
+ * fan-out that leaves them so - and this line is what names the wait.
+ */
+async function republishStaleBase(
+  mlsService: IMlsService,
+  ref: { groupId: string; baseEpoch: number | null; activeEpoch: number },
+  scope: DistributionScope,
+  log: (message: string) => void
+): Promise<void> {
+  if (ref.baseEpoch === null || ref.baseEpoch >= ref.activeEpoch) return;
+
+  const localEpoch = mlsService.getEpoch(ref.groupId);
+  if (localEpoch < ref.activeEpoch) {
+    log(
+      `[GRAINE] ${scopeLabel(scope)}: the published external-join base is at epoch ${ref.baseEpoch} while the group is at ` +
+        `${ref.activeEpoch}, and this device's own tree is at ${localEpoch} - it cannot mint a usable base either`
+    );
+    return;
+  }
+
+  // AT A LEVEL THAT ACCUSES: reaching this means at least one device is currently unable to enter a
+  // scope it belongs to, and the rate of this line is what says whether lost republishes are rare.
+  log(
+    `[GRAINE] ${scopeLabel(scope)}: the published external-join base is at epoch ${ref.baseEpoch} while the group is at ` +
+      `${ref.activeEpoch} - no device without the tree can get in; republishing from the tree this one holds`
+  );
+  await mlsService.refreshGroupInfo(ref.groupId);
 }
 
 /** {@link ensureDistributionGroupFor} for a whole community. */

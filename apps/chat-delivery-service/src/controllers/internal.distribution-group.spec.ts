@@ -204,23 +204,64 @@ describe('InternalController - the community distribution group', () => {
 
   describe('reading', () => {
     it('reports a group with nothing published as a group, not as an absence', async () => {
-      groupRepo.findOne.mockResolvedValue({ id: 'g-1' });
+      groupRepo.findOne.mockResolvedValue({ id: 'g-1', activeEpoch: 0 });
 
       const got = await controller.getDistributionGroup('workspace', WORKSPACE, SECRET);
 
       // The distinction the caller acts on: this community has a group and is waiting for its
       // first member to initialise the MLS state, which is not the same as having no group at all.
-      expect(got).toEqual({ groupId: 'g-1', groupInfo: null, baseEpoch: null });
+      expect(got).toEqual({ groupId: 'g-1', groupInfo: null, baseEpoch: null, activeEpoch: 0 });
     });
 
     it('returns the published GroupInfo when there is one', async () => {
-      groupRepo.findOne.mockResolvedValue({ id: 'g-1' });
-      messagingService.readGroupInfo.mockResolvedValue({ groupInfo: 'Z2k=', baseEpoch: 4 });
+      groupRepo.findOne.mockResolvedValue({ id: 'g-1', activeEpoch: 4 });
+      messagingService.readGroupInfo.mockResolvedValue({
+        groupInfo: 'Z2k=',
+        baseEpoch: 4,
+        activeEpoch: 4,
+      });
 
       expect(await controller.getDistributionGroup('workspace', WORKSPACE, SECRET)).toEqual({
         groupId: 'g-1',
         groupInfo: 'Z2k=',
         baseEpoch: 4,
+        activeEpoch: 4,
+      });
+    });
+
+    // WHAT `published` COULD NOT SAY (COMM-8, production 2026-08-25). The base is minted by a
+    // fire-and-forget follow-up from the device whose commit was just accepted, and nothing else
+    // ever mints one; lose it and the group's epoch advances while the base stays behind, so the
+    // commit gate refuses every join built on it, for ever. A client told only "there is a base"
+    // discovers that by being refused - and a distribution group has no Welcome fallback, so the
+    // device is locked out of a salon it is entitled to until a HOLDER republishes.
+    it('serves the group epoch beside the base, so a stale base is visible without a commit', async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g-1', activeEpoch: 6 });
+      messagingService.readGroupInfo.mockResolvedValue({
+        groupInfo: 'Z2k=',
+        baseEpoch: 3,
+        activeEpoch: 6,
+      });
+
+      expect(await controller.getDistributionGroup('workspace', WORKSPACE, SECRET)).toEqual({
+        groupId: 'g-1',
+        groupInfo: 'Z2k=',
+        baseEpoch: 3,
+        activeEpoch: 6,
+      });
+    });
+
+    // The group row is the authority for the ACTIVE epoch, not the GroupInfo row: with nothing
+    // published there is no GroupInfo row to ask, and that is exactly the state where a caller
+    // must still be able to tell "waiting for its first member" from "outrun".
+    it('reads the active epoch from the group even when nothing is published', async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g-1', activeEpoch: 6 });
+
+      expect(await controller.getDistributionGroup('workspace', WORKSPACE, SECRET)).toEqual({
+        groupId: 'g-1',
+        groupInfo: null,
+        baseEpoch: null,
+        activeEpoch: 6,
       });
     });
 

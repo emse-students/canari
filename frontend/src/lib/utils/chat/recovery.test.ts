@@ -40,7 +40,7 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     isDistributionGroup: vi.fn().mockReturnValue(false),
     waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
     // Default = external join unavailable, so tests exercise the welcome_request fallback.
-    externalJoin: vi.fn().mockResolvedValue(false),
+    externalJoin: vi.fn().mockResolvedValue({ joined: false, reason: 'no_base_published' }),
     forgetGroup: vi.fn(),
     getDeviceId: vi.fn().mockReturnValue('self-device'),
     ...overrides,
@@ -72,7 +72,7 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
 describe('requestReAdd', () => {
   it('external join success short-circuits the welcome_request fallback', async () => {
     const deps = makeDeps();
-    deps.mlsService.externalJoin = vi.fn().mockResolvedValue(true);
+    deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
     const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
     await requestReAdd('g1', deps, timers);

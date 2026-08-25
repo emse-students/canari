@@ -1761,3 +1761,73 @@ later join - the one a revoke makes necessary - runs for real.
 Four tests hold it: two concurrent callers produce one read, one join and one reconciliation; the
 caller that waited SAYS it waited, so it is not indistinguishable from the one that worked; nothing
 survives the call; and a rejection is shared without poisoning the next attempt.
+
+### Nobody owned the base every joiner depends on - FIXED 2026-08-26
+
+Found by COMM-8, on production 2026-08-25: a web client submitted the same external commit to the
+same private salon for twenty minutes, refused `epoch_mismatch` every time, and would have gone on
+for ever.
+
+**The gate is correct and the publisher was not.** `submitCommit` accepts a commit whose base epoch
+equals `dm_groups.activeEpoch` and nothing else - anything looser accepts a commit built on a tree
+that has moved. But the base it compares against is minted in exactly one place:
+`runCommitTransaction` advances `activeEpoch`, then fires
+
+```ts
+void this.refreshGroupInfo(groupId);
+```
+
+from the single device whose commit was just accepted. Only two call sites invoke `refreshGroupInfo`
+at all - that one and `externalJoin`'s success path - so if that follow-up is lost (a closed tab, an
+offline moment, a refused refresh), `mls_group_info.baseEpoch` stays behind `activeEpoch` **for
+ever**, and nothing in the system republishes.
+
+For an ordinary conversation that would be recoverable: `requestReAdd` asks a peer for a Welcome. A
+distribution group is entered ONLY by external commit, by construction - it holds seeds, not a
+conversation, and `getCommitsSince` gates on `dm_group_members`, which it has none of. So a member
+entitled to a private salon, holding no local MLS state, is refused on every attempt, permanently.
+
+**Five causes arrived at every caller as one `false`.** `externalJoin` returned a boolean, so "no
+base published yet" (retry), "the base is behind the group" (retrying is futile), "the commit could
+not be built locally", "the gate was never reached" (nothing is known about membership) and "the gate
+refused us" were one value - and the bounded retry loop written for the ONE cause that can change ran
+for the four that cannot, building and discarding a fresh tree per attempt. It now returns
+`ExternalJoinOutcome`, a discriminated union, and each arm is acted on differently. The bound
+(`EXTERNAL_JOIN_MAX_ATTEMPTS`) exists for `concurrent_commit` alone; every other exit is a fact.
+
+**Both epochs are served from where they are already known together.** `MessagingService.readGroupInfo`
+reads `mls_group_info` and `dm_groups` - it is the one place holding both numbers - and returns
+`activeEpoch` beside `baseEpoch`, warning when the base is behind. `activeEpoch` then travels
+unchanged through `internal/mls/distribution-groups/...`, `DistributionGroupRef`, `ChannelService`,
+`mlsDeliveryApi.fetchGroupInfo` and `groupInfoChannel` to `externalJoin`, which now declines before
+building anything when `baseEpoch < activeEpoch`. `published=true` answered "is there a base" and
+never "is that base usable"; the client used to learn the difference by being refused, which is the
+standing rule against learning by failing what a fact could have told you. An answer with no
+`activeEpoch` - an older delivery build - reads as the base, never as 0: 0 would mark every base ahead
+of its group and refuse every joiner.
+
+**The repair is a holder's ordinary read.** `republishStaleBase` runs on the branch of
+`ensureDistributionGroupFor` that joins nothing - the early return every member takes on every load
+of a scope it is already in - and republishes from the tree it holds when the published base is
+behind. Not a timer and not a sweep:
+
+- the **trigger** is a read that already happens, for its own reasons;
+- the **termination condition** is a proof the server hands over, `baseEpoch >= activeEpoch`;
+- it is **idempotent** because `putGroupInfo` is monotonic;
+- it is **free** in the common case, where the two numbers agree and nothing is sent.
+
+**A device behind the group declines to publish**, and says so. Its own export would be refused by the
+same gate, so publishing it would replace one unusable base with another and report success. Some
+other member will be current - it is the receiving half of the fan-out that leaves them so.
+
+Both new lines accuse rather than inform: reaching either means somebody is right now unable to enter
+a scope they belong to, and the RATE of them is what says whether a lost republish is rare.
+`[GROUP_INFO] STALE base` on the server, `[GRAINE] ... republishing from the tree this one holds` on
+the client.
+
+Eight tests hold it. On the joiner: a stale base is not attempted at all (no build, no submit, no
+forget, one read), a base that goes stale between the read and the submit ends the loop on that fact
+rather than on the attempt count, and an unreachable gate claims nothing about membership. On the
+holder: it republishes, it accuses when it does, it publishes nothing from a tree behind the group,
+and it sends nothing when the epochs agree or when no base exists at all. On the wire: the two epochs
+survive each hop, and a missing `activeEpoch` reads as the base.

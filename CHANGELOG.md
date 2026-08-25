@@ -149,6 +149,34 @@ which is also where every release up to and including v0.13.1 now lives.
   nothing - no spec, no frontend test, no board row - watches them.
 
 ### Fixed
+- **The external-join base of a private salon was minted by a fire-and-forget call from one device,
+  and nothing else ever minted another - so losing that one call locked every other device out of
+  the salon for ever.** COMM-8 measured a web client submitting the same external commit to the same
+  salon for twenty minutes, refused `epoch_mismatch` every time. The commit gate accepts a base whose
+  epoch equals the group's active epoch and nothing else, which is correct; what was wrong is who
+  publishes that base. `runCommitTransaction` advanced `dm_groups.activeEpoch` and then fired
+  `void this.refreshGroupInfo(...)` from the one participant whose acknowledgement may never arrive -
+  a closed tab, an offline moment, a refused refresh - and `mls_group_info.baseEpoch` stayed behind
+  permanently. A distribution group is entered ONLY by external commit; it has no peer-Welcome
+  fallback by construction. So a member entitled to the salon, holding no local MLS state, was
+  refused on every attempt, for ever, with a retry loop making it look like a transient race.
+  **Five distinct causes arrived at every caller as one `false`**, which is why the loop written for
+  the one that can change was taken for the four that cannot. `externalJoin` now returns a TYPE -
+  `no_base_published`, `stale_base` (with both epochs), `build_failed`, `unreachable`, `refused`
+  (with the server's own reason) - and each is acted on differently. `readGroupInfo` and the internal
+  distribution-group route serve `activeEpoch` beside `baseEpoch`, so the fact travels to the client
+  from where it is already known: a joiner reading a base behind its group now declines before
+  building anything, instead of learning it by being refused. A commit-gate call that never landed is
+  `unreachable` and claims nothing about membership, where it used to be relabelled an epoch race and
+  retried against a server it had never reached.
+  **The repair is a HOLDER's ordinary read, not a timer and not a sweep.** Every member's normal load
+  of a scope it is already in compares the two epochs the server now hands over, and republishes from
+  the tree it holds when the base is behind - idempotent because the far side is monotonic, free in
+  the common case where the numbers agree, and terminating on a proof the server itself supplies
+  rather than on an attempt count. A device whose own tree is behind the group declines and says so
+  instead of publishing an equally unusable base. Both new lines accuse: reaching either means
+  somebody is currently locked out of a scope they belong to, and their rate is what says whether a
+  lost republish is rare
 - **The answer to a seed request was thrown away because the device that had just asked for it had
   no socket yet.** A device joining a group after a message was sealed cannot open that message, by
   construction, and asking a peer for the seed is the mechanism that exists for it. COMM-18 measured

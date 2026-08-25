@@ -268,6 +268,7 @@ export class InternalController {
     groupId: string;
     groupInfo: string | null;
     baseEpoch: number | null;
+    activeEpoch: number;
     memberDevices?: string[];
   } | null> {
     this.assertInternalSecret(headerSecret);
@@ -298,14 +299,20 @@ export class InternalController {
         ).map((row) => row.deviceId)
       : undefined;
 
+    // `published` ALONE WAS A LIE THE CLIENT ACTED ON. It answered "is there a base", never "is
+    // that base usable", and a base behind `activeEpoch` is refused by the commit gate every time
+    // (see {@link MessagingService.readGroupInfo}). Both epochs travel to the client so it can tell
+    // the two apart instead of discovering it through a rejected commit.
     this.logger.log(
       `[DISTRIBUTION_GROUP] read scope=${label} group=${group.id} published=${!!info}` +
+        ` base=${info?.baseEpoch ?? 'none'} active=${group.activeEpoch}` +
         (asked ? ` user=${asked.slice(0, 8)} devices=${memberDevices?.length ?? 0}` : '')
     );
     return {
       groupId: group.id,
       groupInfo: info?.groupInfo ?? null,
       baseEpoch: info?.baseEpoch ?? null,
+      activeEpoch: group.activeEpoch,
       ...(memberDevices ? { memberDevices } : {}),
     };
   }

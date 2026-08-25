@@ -16,8 +16,16 @@ export type { IncomingDeliveryMeta };
  * keyed by the scope whose roster the group carries - a community, or ONE private salon.
  */
 export interface DistributionGroupInfoTransport {
-  /** The published base, or null when no client has initialised the MLS group yet. */
-  fetch(scope: DistributionScope): Promise<{ groupInfo: string; baseEpoch: number } | null>;
+  /**
+   * The published base, or null when no client has initialised the MLS group yet.
+   *
+   * `activeEpoch` travels with it because the two can disagree PERMANENTLY, and only the server
+   * knows both: a base behind the group's epoch is refused by the commit gate every time, so a
+   * joiner handed one must be able to tell that apart from a fresh base before it builds anything.
+   */
+  fetch(
+    scope: DistributionScope
+  ): Promise<{ groupInfo: string; baseEpoch: number; activeEpoch: number } | null>;
   /**
    * Publishes a committed base. Monotonic on the far side: `stored: false` is a base that was not
    * newer, or a first publish lost to a concurrent one - legitimate outcomes, not errors.
@@ -39,6 +47,33 @@ export interface DistributionGroupInfoTransport {
     deviceId: string
   ): Promise<{ stored: boolean }>;
 }
+
+/**
+ * Why an external-commit join did not happen - or that it did.
+ *
+ * A TYPE BECAUSE THE CALLERS DIFFER, and while this was a bare `false` they could not. "Nothing is
+ * published yet" is a state to act on (create the group, or ask a peer to Welcome us); "the
+ * published base is behind the group's epoch" is a state no caller can act on by retrying, because
+ * only a device holding the tree can mint a fresh base; "the server was never reached" says nothing
+ * at all and must not retire anything. Flattened together, the loop written for one was taken for
+ * all of them - which is how the same doomed commit was resubmitted for twenty minutes on
+ * production (2026-08-25).
+ */
+export type ExternalJoinOutcome =
+  | { joined: true }
+  /** No base has been published on the group yet - nobody has initialised its MLS group. */
+  | { joined: false; reason: 'no_base_published' }
+  /**
+   * The published base is BEHIND the group's real epoch, so the commit gate refuses anything built
+   * on it. Terminal for a joiner: the repair is a republish, which only a holder can perform.
+   */
+  | { joined: false; reason: 'stale_base'; baseEpoch: number; serverEpoch: number }
+  /** The external commit could not be built locally (e.g. the group is already held). */
+  | { joined: false; reason: 'build_failed' }
+  /** The commit gate was never reached. Nothing is claimed about membership. */
+  | { joined: false; reason: 'unreachable' }
+  /** The gate refused every bounded attempt; `serverReason` is its own classification. */
+  | { joined: false; reason: 'refused'; serverReason: string; serverEpoch?: number };
 
 /** A decrypted frame that arrived on a key-distribution group. */
 export interface DistributionFrame {
@@ -446,10 +481,10 @@ export interface IMlsService {
   refreshGroupInfo(groupId: string): Promise<void>;
   /**
    * Attempts to (re)join `groupId` via an external commit built from the stored GroupInfo, without a
-   * peer Welcome (self-service recovery). Returns true on success; false when unavailable (no stored
-   * GroupInfo, not a member, or the epoch race is lost) so the caller falls back to welcome_request.
+   * peer Welcome (self-service recovery). The outcome is a TYPE, not a boolean: see
+   * {@link ExternalJoinOutcome} for why each refusal has to reach its caller distinguishable.
    */
-  externalJoin(groupId: string): Promise<boolean>;
+  externalJoin(groupId: string): Promise<ExternalJoinOutcome>;
   /**
    * Declares `groupId` to be the Graine key-distribution group of `scope`, so every later decision
    * that differs for it is taken from a registered fact rather than rediscovered.
@@ -495,13 +530,21 @@ export interface IMlsService {
   onDistributionFrame(handler: DistributionFrameHandler | null): void;
   /**
    * Joins the scope's key-distribution group whatever state it is in - held already, published and
-   * joinable, or not yet initialised (this device then creates it). Returns true when the group is
-   * held afterwards.
+   * joinable, or not yet initialised (this device then creates it).
+   *
+   * `activeEpoch` is required, not optional: a published base behind it cannot be joined from at all
+   * and the caller has to be able to tell that apart from a lost race. The answer is the same
+   * {@link ExternalJoinOutcome} for the same reason.
    */
   ensureDistributionGroup(
     scope: DistributionScope,
-    ref: { groupId: string; groupInfo: string | null; baseEpoch: number | null }
-  ): Promise<boolean>;
+    ref: {
+      groupId: string;
+      groupInfo: string | null;
+      baseEpoch: number | null;
+      activeEpoch: number;
+    }
+  ): Promise<ExternalJoinOutcome>;
   /**
    * Decrypts a frame that arrived on a key-distribution group and hands it to the Graine handler.
    * Returns whether the frame may be acknowledged.

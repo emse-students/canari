@@ -1149,7 +1149,7 @@ export class ChannelService {
     }
 
     this.logger.log(
-      `[DISTRIBUTION_GROUP] served workspace=${workspaceId} user=${userId.slice(0, 8)} group=${ref.groupId} published=${ref.groupInfo !== null} devices=${ref.memberDevices?.length ?? '?'}`
+      `[DISTRIBUTION_GROUP] served workspace=${workspaceId} user=${userId.slice(0, 8)} group=${ref.groupId} published=${ref.groupInfo !== null} base=${ref.baseEpoch ?? 'none'} active=${ref.activeEpoch} devices=${ref.memberDevices?.length ?? '?'}`
     );
     return ref;
   }
@@ -1254,7 +1254,7 @@ export class ChannelService {
     }
 
     this.logger.log(
-      `[CHANNEL_GRAINE] served channel=${channelId} user=${userId.slice(0, 8)} group=${ref.groupId} published=${ref.groupInfo !== null} devices=${ref.memberDevices?.length ?? '?'}`
+      `[CHANNEL_GRAINE] served channel=${channelId} user=${userId.slice(0, 8)} group=${ref.groupId} published=${ref.groupInfo !== null} base=${ref.baseEpoch ?? 'none'} active=${ref.activeEpoch} devices=${ref.memberDevices?.length ?? '?'}`
     );
     return ref;
   }

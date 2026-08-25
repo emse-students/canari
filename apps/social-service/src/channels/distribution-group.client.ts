@@ -65,6 +65,16 @@ export interface DistributionGroupRef {
   /** Epoch the GroupInfo above was published at; null exactly when `groupInfo` is. */
   baseEpoch: number | null;
   /**
+   * The group's REAL epoch on the server, whatever was published.
+   *
+   * `baseEpoch < activeEpoch` means the published base is unusable: the commit gate accepts only a
+   * base equal to the active epoch, so an external join built on it is refused every time. The two
+   * numbers separate for good whenever the republish that follows an accepted commit is lost, and
+   * only a device HOLDING the tree can mint a fresh base - so this is the fact that tells a joiner
+   * not to try and tells a holder to repair. Never null: a group always has an epoch.
+   */
+  activeEpoch: number;
+  /**
    * Device ids of the reader this was read FOR that the group holds a membership row for.
    *
    * Undefined when the read did not name a reader - "nobody asked", which a client must not read as
@@ -79,6 +89,7 @@ interface DeliveryGroupPayload {
   groupId?: unknown;
   groupInfo?: unknown;
   baseEpoch?: unknown;
+  activeEpoch?: unknown;
   memberDevices?: unknown;
 }
 
@@ -142,10 +153,14 @@ export async function readDistributionGroup(
     ? payload.memberDevices.filter((d): d is string => typeof d === 'string')
     : undefined;
 
+  const baseEpoch = typeof payload?.baseEpoch === 'number' ? payload.baseEpoch : null;
   return {
     groupId,
     groupInfo: typeof payload?.groupInfo === 'string' ? payload.groupInfo : null,
-    baseEpoch: typeof payload?.baseEpoch === 'number' ? payload.baseEpoch : null,
+    baseEpoch,
+    // Falls back to the base rather than to 0: an older delivery build that does not send the field
+    // must read as "nothing known to be stale", never as "every base is ahead of the group".
+    activeEpoch: typeof payload?.activeEpoch === 'number' ? payload.activeEpoch : (baseEpoch ?? 0),
     ...(devices ? { memberDevices: devices } : {}),
   };
 }

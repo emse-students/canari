@@ -57,6 +57,12 @@ describe('MessagingService - group-info (external-join base)', () => {
    * another spec it surfaced as a failure, which is why this read as cross-file pollution and was
    * not - the fixture was simply lying about what a repository does.
    */
+  /**
+   * The group row, which is where the ACTIVE epoch lives - the GroupInfo row carries only the epoch
+   * the published base was exported at, and the whole COMM-8 defect is the gap between the two.
+   */
+  let groupRepo: ReturnType<typeof emptyRepo>;
+
   const emptyRepo = () => ({
     find: jest.fn().mockResolvedValue([]),
     findOne: jest.fn().mockResolvedValue(null),
@@ -67,6 +73,7 @@ describe('MessagingService - group-info (external-join base)', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    groupRepo = emptyRepo();
     // Re-armed AFTER the clear, which drops the implementation set at definition time. The default
     // is winning the race; the test that cares about losing it says so.
     execute.mockResolvedValue({ raw: [{ groupId: 'g1' }] });
@@ -80,7 +87,7 @@ describe('MessagingService - group-info (external-join base)', () => {
         MessagingService,
         { provide: getRepositoryToken(QueuedMessage), useValue: emptyRepo() },
         { provide: getRepositoryToken(GroupMember), useValue: groupMemberRepo },
-        { provide: getRepositoryToken(Group), useValue: emptyRepo() },
+        { provide: getRepositoryToken(Group), useValue: groupRepo },
         { provide: getRepositoryToken(KeyPackage), useValue: emptyRepo() },
         {
           provide: getRepositoryToken(OneTimeKeyPackage),
@@ -179,9 +186,47 @@ describe('MessagingService - group-info (external-join base)', () => {
         groupInfo: 'Z2k=',
         baseEpoch: 7,
       });
+      groupRepo.findOne.mockResolvedValue({ id: 'g1', activeEpoch: 7 });
+
       expect(await service.getGroupInfo('g1', 'member-1')).toEqual({
         groupInfo: 'Z2k=',
         baseEpoch: 7,
+        activeEpoch: 7,
+      });
+    });
+
+    // ── The fact the client used to learn by being refused (COMM-8) ─────────
+    //
+    // The base is minted by a fire-and-forget follow-up from the device whose commit was just
+    // accepted, and NOTHING else ever mints one. Lose that call and `activeEpoch` advances while
+    // `baseEpoch` stays put, and the commit gate - which accepts equality and nothing else - refuses
+    // every join built on that base, for ever. A distribution group has no Welcome fallback, so the
+    // joiner is locked out of a salon it is entitled to. The two numbers are known HERE, together,
+    // and this is the only place they are.
+
+    it('serves the group epoch beside the base, so a stale base needs no rejected commit to find', async () => {
+      groupMemberRepo.findOne.mockResolvedValue({ id: 'm' });
+      groupInfoRepo.findOne.mockResolvedValue({ groupId: 'g1', groupInfo: 'Z2k=', baseEpoch: 3 });
+      groupRepo.findOne.mockResolvedValue({ id: 'g1', activeEpoch: 6 });
+
+      expect(await service.getGroupInfo('g1', 'member-1')).toEqual({
+        groupInfo: 'Z2k=',
+        baseEpoch: 3,
+        activeEpoch: 6,
+      });
+    });
+
+    it('reads a missing group row as "nothing known to be stale", never as epoch 0', async () => {
+      groupMemberRepo.findOne.mockResolvedValue({ id: 'm' });
+      groupInfoRepo.findOne.mockResolvedValue({ groupId: 'g1', groupInfo: 'Z2k=', baseEpoch: 4 });
+      groupRepo.findOne.mockResolvedValue(null);
+
+      // Answering 0 would mark EVERY published base as ahead of its group and stop every joiner,
+      // turning a missing row into a total outage. The base itself is the only safe reading.
+      expect(await service.getGroupInfo('g1', 'member-1')).toEqual({
+        groupInfo: 'Z2k=',
+        baseEpoch: 4,
+        activeEpoch: 4,
       });
     });
   });
