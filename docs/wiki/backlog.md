@@ -469,6 +469,63 @@ cycle 3's revoke, and `memberships=1 queued=0 routes=1` is the whole of what a r
 reading of this log blamed the owner's roster reconciler for cutting a member it was merely behind
 on; the epochs table above is what refutes that, and it cost one query to check.
 
+### P1 - a group joined by invitation link INTERMITTENTLY never reaches the inviter's roster (measured 2026-08-25)
+
+**GRP-4 passed 40+ consecutive times across ten builds, up to `b04e26d9` at 09:29, and then failed
+twice and passed once on `d6f61539`.** The ledger is the evidence: every verdict from `ba0979df`
+through `b04e26d9` is a clean `PASS`, and the three runs at 20:37, 20:49 and 21:06 on `d6f61539`
+read
+
+| Run | `rosterAtOpen` | `rosterWaitMs` | `rosterAfterJoin` | Server rows |
+| --- | --- | --- | --- | --- |
+| 20:37 | - (field did not exist) | - | **1** | not read |
+| 20:49 | **1** | **`null`** - 60 000 ms, no change | **1** | not read |
+| 21:06 | 2 | **2 ms** | 2 | `dm_group_members` 2, `dm_device_group_memberships` 3 |
+
+So this is an INTERMITTENT, not a break: two failures and one success on one build, against 40+
+successes on the ten builds before it. The join half is right every time - the link generates, its
+shape and 24-character token are right, the invitation page names the group, and the joiner's own
+sidebar lists it in **2115-2362 ms**. What varies is whether the INVITER ever learns.
+
+**Two readings were ruled out before the product was accused.**
+
+- *An instrument race.* `grp4()` read the count as an instant, which is the mistake `removeMember`
+  has documented since it was written - a roster change is a commit plus a round trip. The window
+  was added (`panelReaches`, the growing counterpart of `removeMember`'s shrinking one). On the
+  20:49 run the count did not move once in a minute; on the 21:06 run it was there in 2 ms. A window
+  that wide separating those two answers is what makes the intermittency a product fact. The
+  assertion was not softened: it is still `=== 2`.
+- *A stale render.* `selectConversation` has no early return on the same conversation name
+  (`useConversations.svelte.ts:710-721`): every click re-runs `loadGroupMembers`. So the `1` is the
+  SERVER's current answer, not a view that missed an update.
+
+The chain, end to end: `ChatGroupPanel.svelte:404` renders `groupMembers.length` <-
+`MainChatPage.svelte:897` <- `useConversations.svelte.ts:813 loadGroupMembers` <-
+`groupActions.ts:92 fetchUniqueGroupMembers` <- `GET /api/mls/groups/:id/members`.
+
+**AND THE COUNT ALONE CANNOT NAME THE CAUSE, which is written into the endpoint.**
+`IMlsService.ts:589-599` says it in as many words: `getGroupMembers` answers who the delivery service
+will ROUTE to, not who is in the MLS tree. So a roster stuck at one is equally consistent with an
+entitlement carrying no routing - the exact shape `24d38f21` fixed on the private-salon path, here on
+the invitation-link path, in which case the panel is RIGHT and the join is broken - and with the
+routing rows existing and the panel not showing them, in which case the group works. The row
+therefore now records `serverUserMembers` and `serverDeviceRoutes` beside the count, and the one
+successful run says both are right when the roster is right.
+
+**The suspect range is `b04e26d9..d6f61539`, and it is four commits wide**: `5d7fac13` (a delivery
+deduplicated by its server queue id, `BaseMlsService`), `e96bfa12` and `d6f61539` (the seed path),
+and `24d38f21` (entitlement plus routing). `24d38f21`'s only delivery-service change is a log line,
+so it is not it. `5d7fac13` is the one that touches every inbound frame.
+
+**ONE FIELD ON THAT ROW IS TO BE IGNORED FOR THE 21:06 RUN, and it was the harness's fault.** The
+`messageReachedTheJoiner` assertion added at 20:55 - one message sent by the inviter after the join,
+because a member the owner cannot REACH is worse than one it cannot see - recorded `false` there, and
+that value said nothing about delivery: `awaitMessage` reads the OPEN conversation's message pane,
+and `grp4()` only waited for the group to be LISTED on the joiner. `openConversation(w2, name)` now
+runs before the send, so the field is evidence from the next run onwards and from no run before it.
+Counts only ever reach the row: the ids are a real group's real members and this repository is
+public.
+
 ### P1 - a seed request is dropped for an offline peer that was online, and nothing ever asks again (measured 2026-08-25)
 
 **Found by COMM-18's FOURTH run**, on the rebuilt APK carrying `e96bfa12`. That fix is proven by this

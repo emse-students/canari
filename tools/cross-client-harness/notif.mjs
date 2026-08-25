@@ -1,15 +1,15 @@
 /**
- * NOTIF-4 / NOTIF-9 / NOTIF-10 - the notification surface, one check per run.
+ * NOTIF-4 / NOTIF-4b / NOTIF-9 / NOTIF-10 / NOTIF-11 - the notification surface, one check per run.
  *
- * These three are the ones the LIFE phase did NOT already answer. NOTIF-1 and NOTIF-8 were measured
- * by LIFE-8 (`am kill`, decrypted text in 4.7 s) and LIFE-4 (doze, decrypted text in 4.6 s), so
+ * These five are ones the LIFE phase did NOT already answer. NOTIF-1 and NOTIF-8 were measured by
+ * LIFE-8 (`am kill`, decrypted text in 4.7 s) and LIFE-4 (doze, decrypted text in 4.6 s), so
  * re-running them here would only re-measure the same transition under another name.
  *
  * The app must be OUT of the foreground for any of this to mean anything, and `am force-stop` is
  * not available to us: a force-stopped package sits in Android's STOPPED state and the framework
  * cancels every FCM broadcast to it. So the kill is always `am kill` from HOME, asserted.
  *
- * Usage: node notif.mjs 4|9|10
+ * Usage: node notif.mjs 4|4b|9|10|11
  */
 import { client, ensureChat, openConversation, countMessage, awaitMessage, send, evaluate, COMPOSER } from './chat.mjs';
 import { gate, logcatReport, logcatSince, report, watch } from './watch.mjs';
@@ -77,9 +77,17 @@ stage('attaching W1');
 const w1 = await withDeadline(client(9224, 'canari-emse.fr'), 60_000, 'W1 attach');
 await withDeadline(ensureChat(w1), 60_000, 'W1 ensureChat');
 await withDeadline(openConversation(w1, peerNameFor('W1')), 90_000, 'W1 openConversation (pre-flight)');
-stage('W1 can reach the DM; parking it on the chat list');
-await evaluate(w1, `history.pushState({}, '', '/chat'); dispatchEvent(new PopStateEvent('popstate'))`).catch(() => null);
-await sleep(2_500);
+// NOTIF-4b IS THE ONE ROW THAT WANTS W1 LEFT IN THE CONVERSATION. Every other check parks it so the
+// phone's notification survives long enough to be asserted; 4b asks what happens when the other
+// device was ALREADY reading, which is the state parking exists to avoid. So the gesture is
+// conditional and says which row it is for, rather than being commented out by whoever runs that row.
+if (which === '4b') {
+  stage('W1 stays IN the DM - that is NOTIF-4b s premise');
+} else {
+  stage('W1 can reach the DM; parking it on the chat list');
+  await evaluate(w1, `history.pushState({}, '', '/chat'); dispatchEvent(new PopStateEvent('popstate'))`).catch(() => null);
+  await sleep(2_500);
+}
 
 phone.clearLogcat();
 // The instant the phone's window opens, so `logcatSince` can be asked for exactly this check's
@@ -128,6 +136,102 @@ if (which === '4') {
       ? 'PASS'
       : 'FAIL';
   out.marker = m;
+} else if (which === '4b') {
+  // NOTIF-4 WITH NOTHING FOR AN UNREAD COUNTER TO SEE. There, W1 was on the chat list and opening the
+  // DM took its unread from one to zero, so a dismissal driven by that transition would pass. Here W1
+  // is already inside the conversation when the message lands: it is read on arrival, the counter
+  // never leaves zero, and a phone whose shade is cleared by watching that counter will keep a
+  // notification for a message the account has demonstrably already read.
+  stage('killing the phone (W1 is already in the DM)');
+  out.killedInMs = await killPhone();
+  out.w1Focus = await evaluate(w1, `JSON.stringify({ hasFocus: document.hasFocus(), vis: document.visibilityState })`);
+  stage(`W1 focus gate: ${out.w1Focus}`);
+  // The read receipt is gated on a focused, visible window (MainChatPage.svelte:435), exactly as in
+  // NOTIF-4. Unfocused, W1 reads nothing, and this row would be measuring a device that is not
+  // looking - which is NOTIF-4's setup, not this one.
+  if (!JSON.parse(out.w1Focus).hasFocus) throw new Error('W1 is not focused - it can never emit a read receipt');
+  const m = mark('NOTIF4B');
+  stage(`sending ${m} into a conversation W1 already has open`);
+  await send(w2, `${m} read on arrival by the other device`);
+
+  // W1 first: the message must actually land there, or "it was already read" is an assumption.
+  await awaitMessage(w1, m, 60_000).catch(() => null);
+  await sleep(6_000); // the receipt is debounced 2 s and then rides the outbox
+  out.readOnW1 = await countMessage(w1, m);
+  stage(`W1 holds ${out.readOnW1} copy`);
+
+  // THEN the shade, and BOTH acceptable outcomes are named. A phone that never notified because the
+  // read receipt beat the push is CORRECT, and so is one that notified and then cleared. Only a
+  // notification still sitting there for a message the account has read is a defect - so the
+  // assertion is on what REMAINS, and `notifiedInMs` is recorded to say which of the two paths ran.
+  // Asserting `notifiedInMs !== null` here would fail a phone for being fast.
+  out.notifiedInMs = await phone.awaitNotification(m, 45_000);
+  out.dismissedInMs = await awaitDismissal(m, 90_000);
+  out.shadeAfter = shadeHits(m);
+  out.undecrypted = undecryptedInShade();
+  out.path = out.notifiedInMs === null ? 'never notified (read beat the push)' : 'notified, then cleared';
+  stage(`${out.path}; shade holds ${out.shadeAfter}`);
+  out.verdict =
+    out.shadeAfter === 0 && out.readOnW1 === 1 && out.undecrypted.length === 0 ? 'PASS' : 'FAIL';
+  out.marker = m;
+} else if (which === '11') {
+  // THREE MESSAGES, ONE NOTIFICATION. Android stacks a conversation's messages into a single record;
+  // three records for three messages is the failure, and so is one record that carries only the last
+  // line - a shade that says "1 new message" when three arrived is a lie about how much is waiting.
+  stage('killing the phone');
+  out.killedInMs = await killPhone();
+  const markers = [];
+  for (let i = 0; i < 3; i++) {
+    const m = mark(`NOTIF11-${i}`);
+    markers.push(m);
+    stage(`sending ${i + 1}/3`);
+    await send(w2, `${m} stacked (${i + 1}/3)`);
+    // Spaced so they are three deliveries rather than one batch, and so the second and third arrive
+    // while the first is already in the shade - which is the state the stacking is done in.
+    await sleep(6_000);
+  }
+  out.markers = markers;
+  stage('waiting for the last of the three to reach the shade');
+  out.notifiedInMs = await phone.awaitNotification(markers[2], 90_000);
+  // Settle on the same principle as NOTIF-9: the extra records this is looking for arrive AFTER the
+  // one that was awaited, and the failure is the moment to stop rather than to keep waiting.
+  out.settleWindowMs = Math.max(8_000, (out.notifiedInMs ?? 4_000) * 2);
+  const settleDeadline = Date.now() + out.settleWindowMs;
+  const recordsFor = () =>
+    phone.notifications().filter((n) => markers.some((m) => n.full.includes(m)));
+  while (Date.now() < settleDeadline) {
+    if (recordsFor().length > 1) break;
+    await sleep(1_000);
+  }
+  const records = recordsFor();
+  out.recordCount = records.length;
+  // WHICH markers the single record carries, not how many - a record holding the first and third but
+  // not the second is a different defect from one holding only the last, and the count cannot say so.
+  out.markersInRecord = records.length === 1 ? markers.map((m) => records[0].full.includes(m)) : null;
+  out.shade = phone.notifications().map((n) => `${n.title} | ${n.body}`.slice(0, 120));
+  out.undecrypted = undecryptedInShade();
+  stage(`${out.recordCount} record(s), markers present: ${JSON.stringify(out.markersInRecord)}`);
+
+  // AND ALL THREE MUST EXIST, which is what stops this row passing on a lost message: two messages
+  // dropped on the floor also produce exactly one notification record. W1 is the account's other
+  // device and is enough to prove three distinct messages were delivered; the shade above is the
+  // part that is this row's actual subject.
+  stage('opening the DM on W1 to prove all three were really delivered');
+  await withDeadline(openConversation(w1, peerNameFor('W1')), 60_000, 'openConversation(W1)');
+  for (const m of markers) await awaitMessage(w1, m, 60_000).catch(() => null);
+  await sleep(2_000);
+  out.onW1 = [];
+  for (const m of markers) out.onW1.push(await countMessage(w1, m));
+  stage(`W1 holds ${JSON.stringify(out.onW1)}`);
+  out.verdict =
+    out.notifiedInMs !== null &&
+    out.recordCount === 1 &&
+    out.markersInRecord !== null &&
+    out.markersInRecord.every(Boolean) &&
+    out.onW1.every((c) => c === 1) &&
+    out.undecrypted.length === 0
+      ? 'PASS'
+      : 'FAIL';
 } else if (which === '9') {
   // Two devices of one user, one message: the phone must raise exactly ONE notification for it,
   // and the browser must hold exactly one copy. The failure this is looking for is a second

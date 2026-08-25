@@ -92,14 +92,25 @@ export const PHASES = {
     ],
     needs: ['W1', 'W2'],
   },
-  // `life.mjs` implements seven states (2-8) and defaulted to '2', so the LIFE phase covered one of
-  // them. LIFE-5 is deliberately NOT here and that is the only omission: it REBOOTS the phone, and
+  // `life.mjs` implements eight states (1-8) and defaulted to '2', so the LIFE phase covered one of
+  // them. LIFE-1 RUNS FIRST because it is the control the other seven are read against: it enters no
+  // state, so a failure there says the ordinary foreground path is broken and every verdict below it
+  // would be measuring that instead of its own transition.
+  // LIFE-5 is deliberately NOT here and that is the only omission: it REBOOTS the phone, and
   // the unlock after a reboot needs the pattern, which no adb call can answer - it is a human check
   // and belongs on the device-verification ladder, not in an automated phase. LIFE-6 must run over
   // USB: the wireless transport rides the wifi that check switches off.
   LIFE: {
     title: 'Android lifecycle',
-    scripts: ['life.mjs 2', 'life.mjs 3', 'life.mjs 4', 'life.mjs 6', 'life.mjs 7', 'life.mjs 8'],
+    scripts: [
+      'life.mjs 1',
+      'life.mjs 2',
+      'life.mjs 3',
+      'life.mjs 4',
+      'life.mjs 6',
+      'life.mjs 7',
+      'life.mjs 8',
+    ],
     needs: ['W1', 'W2', 'A1'],
   },
   // EVERY RUN IS SPELT OUT, because both scripts here select ONE check from an argument and default
@@ -110,7 +121,19 @@ export const PHASES = {
   // felt like doing, not what the phase claims.
   NOTIF: {
     title: 'notifications',
-    scripts: ['notif.mjs 4', 'notif.mjs 9', 'notif.mjs 10', 'notif7.mjs bg', 'notif7.mjs killed'],
+    scripts: [
+      'notif.mjs 4',
+      // 4b IMMEDIATELY AFTER 4, because it is the same gesture with the one precondition that makes
+      // an unread-driven dismissal look correct removed - reading the two verdicts side by side is
+      // what distinguishes a dismissal from a counter reaching zero.
+      'notif.mjs 4b',
+      'notif.mjs 9',
+      'notif.mjs 11',
+      // TEN MINUTES OF DELIBERATE OUTAGE, so it goes after every row that only needs seconds.
+      'notif.mjs 10',
+      'notif7.mjs bg',
+      'notif7.mjs killed',
+    ],
     needs: ['W1', 'W2', 'A1'],
   },
   HEAL: {
@@ -179,7 +202,23 @@ export const PHASES = {
     ],
     needs: ['W1', 'W2', 'A1'],
   },
-  MULTI: { title: 'one user, two devices', scripts: [], needs: ['W1', 'W2', 'A1'] },
+  // EVERY ROW SPELT OUT, and MULTI-6 LAST because it kills the app. Four of the six are automated and
+  // the other two are recorded as `SKIPPED` by the script itself with the reason on the row - a phase
+  // that simply omitted them would read as six-of-six covered. All four automated rows drive A1: the
+  // phase's subject is the ACCOUNT, so there is no MULTI row that two browsers alone can answer, and
+  // `PHONE_SCRIPTS` therefore has no entry narrowing it.
+  MULTI: {
+    title: 'one user, two devices',
+    scripts: [
+      'multi.mjs --only 1',
+      'multi.mjs --only 2',
+      'multi.mjs --only 3',
+      'multi.mjs --only 4',
+      'multi.mjs --only 5',
+      'multi.mjs --only 6',
+    ],
+    needs: ['W1', 'W2', 'A1'],
+  },
   CALL: { title: 'audio and video', scripts: [], needs: ['W1', 'W2', 'A1'] },
   CORRUPT: { title: 'deliberate store damage', scripts: [], needs: ['W1', 'W2'] },
   // ONE OF TEN, AND IT WAS WRITTEN BEFORE THIS MANIFEST EXISTED. `del1.mjs` covers DEL-1

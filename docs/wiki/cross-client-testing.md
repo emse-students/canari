@@ -31,7 +31,7 @@ Updated after every run.
 | 7 FWD | 6 | `1579d5c3`, A1 `a7981206` | **`PASS` 6/6 x5** (FWD-2 x1, 25 iterations) |
 | 8 GRP | 10 | `b04e26d9` | **`PASS` 9/10 x1** + GRP-3 `PASS-DIRTY`, accepted by the user 2026-08-25. x5 abandoned - the rig, never the product. GRP-3 dirt = one unexplained socket close, P2 in [backlog](backlog.md) |
 | 9 COMM | 25 | `5d7fac13`, COMM-18 on `d6f61539` / A1 `e96bfa12` | 23 `PASS`, COMM-4 `PASS-DIRTY`, COMM-22 `VACUOUS`. Three re-runs owed (COMM-4, COMM-22, COMM-24) |
-| 10 DEL | 10 | - | `pending` |
+| 10 DEL | 10 | `c6eb7b20`, A1 `c6eb7b20` | 7 `PASS`, DEL-1 `VACUOUS`, DEL-10 `FAIL` (fixed), DEL-8 never run. Every verdict predates the current `del.mjs` - the phase owes a re-run |
 | 11 TAB | 8 | - | `pending` |
 | 12 MULTI | 6 | - | `pending` |
 | 13 LIFE | 8 | - | `pending` |

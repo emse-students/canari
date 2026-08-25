@@ -237,7 +237,18 @@
           />
         </div>
       {:else}
-        <div class="flex gap-2.5 {msg.isOwn ? 'justify-end' : 'justify-start'} w-full">
+        <!--
+          `data-own` EXPOSES THE AUTHORSHIP THE ROW ALREADY RENDERS, so it can be read rather than
+          inferred. Own-ness reaches the DOM only as a layout class (`justify-end`), and a check that
+          asserts on that is asserting on styling: a Tailwind change would break it while the product
+          still rendered authorship perfectly. MULTI-1 asks whether a message sent from one device
+          shows up as OWN on the account's other device, which is a question about this exact bit.
+          Same role and same convention as `data-mention-id` on a mention chip.
+        -->
+        <div
+          data-own={msg.isOwn}
+          class="flex gap-2.5 {msg.isOwn ? 'justify-end' : 'justify-start'} w-full"
+        >
           <!-- Sender avatar (received messages only). -->
           {#if !msg.isOwn}
             <div class="flex w-8 shrink-0 flex-col justify-end pb-1">

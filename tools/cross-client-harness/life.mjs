@@ -1,5 +1,5 @@
 /**
- * LIFE-2..8 - the phone in every state an OS can put it in, one check per run.
+ * LIFE-1..8 - the phone in every state an OS can put it in, one check per run.
  *
  * The shape is always the same, and the two assertions are deliberately different in kind:
  *
@@ -10,7 +10,7 @@
  * A check that only looked at the conversation would pass on a phone that notified nothing, and a
  * check that only looked at the shade would pass on a phone that then showed the message twice.
  *
- * Usage: node life.mjs 2|3|4|5|6|7|8
+ * Usage: node life.mjs 1|2|3|4|5|6|7|8
  */
 import { client, ensureChat, openConversation, countMessage, awaitMessage, send } from './chat.mjs';
 import { logcatReport, logcatSince, watch } from './watch.mjs';
@@ -41,6 +41,21 @@ async function restore() {
 }
 
 const STATES = {
+  1: {
+    // THE CONTROL EVERY OTHER ROW IS READ AGAINST, and the only one that enters no state at all: the
+    // setup below already launches the app to the foreground and opens the conversation, which IS
+    // this check's precondition. `enter` is empty on purpose rather than absent, so the machine below
+    // stays uniform and nothing has to ask whether this row is special.
+    name: 'LIFE-1 foreground baseline',
+    enter: () => {},
+    processDies: false,
+    // RECORDED, NOT ASSERTED, and the board says why: this row is marked `+A1`, alone among the
+    // eight, while LIFE-2..8 are `+push`. Push is not in its scope. Whether an app holding the
+    // conversation ON SCREEN should also raise a shade entry is a product question no decision in
+    // this repository has settled, and asserting either answer here would be inventing one - so the
+    // shade is reported and NOTIF, which owns the notification surface, is where it is asserted.
+    expectNotification: 'record',
+  },
   2: { name: 'LIFE-2 backgrounded (HOME)', enter: () => phone.home(), processDies: false },
   3: {
     name: 'LIFE-3 killed (force-stop)',
@@ -187,7 +202,10 @@ const pidDuring = phone.pid();
 // ── the message ──────────────────────────────────────────────────────────────
 const m = mark(`LIFE${which}`);
 const sentAt = await send(w2, `${m} sent while ${state.name}`);
-const notifiedInMs = await phone.awaitNotification(m, state.expectNotification === false ? 20_000 : 60_000);
+const wantNotification = state.expectNotification === undefined || state.expectNotification === true;
+// A row that does not expect a notification still LOOKS for one - an unexpected shade entry is a
+// finding - but it does not pay a minute for the answer it already predicts.
+const notifiedInMs = await phone.awaitNotification(m, wantNotification ? 60_000 : 20_000);
 const shade = phone.notifications().map((n) => `${n.title} | ${n.body}`.slice(0, 120));
 
 // ── back to life ─────────────────────────────────────────────────────────────
@@ -218,7 +236,16 @@ const notable = phoneConsole.filter((l) =>
  */
 const phoneReport = logcatReport(await logcatSince(phoneWindowFrom), 'A1');
 
-const wantNotification = state.expectNotification !== false;
+// THREE ANSWERS, NOT TWO. `true`/absent demands a notification, `false` demands an empty shade, and
+// `'record'` demands nothing because the row's scope excludes push - see LIFE-1 above. Collapsing
+// `'record'` into either of the other two would make this phase state a product rule that no
+// decision in this repository has taken.
+const notificationHolds =
+  state.expectNotification === 'record'
+    ? true
+    : wantNotification
+      ? notifiedInMs !== null
+      : notifiedInMs === null;
 // The lifecycle transition is an ASSERTION, not a note printed beside the verdict: a check whose
 // state was never entered can still satisfy every other condition, and then reads as a real result
 // about a state the phone was never in.
@@ -227,7 +254,7 @@ const asserted =
   count === 1 &&
   arrivedInMs !== null &&
   diedAsExpected &&
-  (wantNotification ? notifiedInMs !== null : notifiedInMs === null)
+  notificationHolds
     ? 'PASS'
     : 'FAIL';
 
@@ -243,7 +270,11 @@ await finishObserved(`LIFE-${which}`, asserted, {
   check: state.name,
   marker: m,
   pid: { before: pidBefore, during: pidDuring, after: phone.pid(), diedAsExpected },
-  notification: { expected: wantNotification, afterMs: notifiedInMs, shade },
+  notification: {
+    expected: state.expectNotification === 'record' ? 'recorded, not asserted' : wantNotification,
+    afterMs: notifiedInMs,
+    shade,
+  },
   conversation: { arrivedInMs, afterRestoreMs, count },
   pin: pinResult,
   phoneWebviewNotable: notable.slice(-12),

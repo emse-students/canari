@@ -47,11 +47,14 @@ import {
   ensureChat,
   evaluate,
   goto,
+  openConversation,
   realClick,
   send,
   until,
 } from './chat.mjs';
 import { addMember, openGroupSettings } from './addmember.mjs';
+import { groupIdByName } from './idb.mjs';
+import { psql } from './ssh.mjs';
 import { closeOverlays, createGroup, deleteGroup, openGroup } from './groupnav.mjs';
 import { armCut, cutHard } from './net.mjs';
 import { mark, record, recordObserved } from './results.mjs';
@@ -66,6 +69,15 @@ const only = argv.includes('--only') ? Number(argv[argv.indexOf('--only') + 1]) 
 
 /** How long an absence is watched before it is called an absence. */
 const NEGATIVE_WINDOW_MS = 30_000;
+
+/**
+ * How long one message is given to cross between two web devices.
+ *
+ * A crossing is a socket round trip through the delivery service, not a render, so a minute is
+ * generous on purpose: this budget exists to fail a message that never arrives, never to hurry one
+ * that is merely slow.
+ */
+const CROSS_MS = 60_000;
 
 /**
  * A CLIENT AND THE OBSERVER THAT WATCHES IT, in one call - the twin of `mention.mjs`'s.
@@ -124,6 +136,29 @@ async function panelOf(cx) {
     await openGroupSettings(cx);
   }
   return JSON.parse(await evaluate(cx, PANEL));
+}
+
+/**
+ * Waits for the OPEN group panel to show `want` members, and returns how long it took, or null.
+ *
+ * `removeMember` below has carried the post-condition rule since it was written - a roster change is
+ * a commit and a network round trip - and it is the SHRINKING half. This is the growing half, and
+ * GRP-4 was reading the count as an instant for want of it: measured 2026-08-25, W2's sidebar listed
+ * the group 2037 ms after the join click and W1's panel still said one member, which the row recorded
+ * as a product FAIL for a window the check had never opened.
+ *
+ * IT DOES NOT SOFTEN ANYTHING. The caller still asserts the exact count; all this decides is how long
+ * the roster is given to arrive, and a roster that never grows still fails - with the time it was
+ * given on the row beside it.
+ */
+async function panelReaches(cx, want, timeoutMs = 60000) {
+  const t0 = Date.now();
+  try {
+    await until(cx, `/MEMBRES\\s*\\(${want}\\)/i.test(document.body.innerText)`, timeoutMs);
+    return Date.now() - t0;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -731,6 +766,8 @@ async function grp4() {
       let invitationNamesGroup = null;
       let joinedMs = null;
       let rosterAfterJoin = null;
+      let rosterAtOpen = null;
+      let rosterWaitMs = null;
       if (shapeOk) {
         await goto(w2, url.replace('https://canari-emse.fr', ''));
         // THE LINK OPENS AN INVITATION, IT DOES NOT JOIN. The page reads "Vous avez ete invite(e) a
@@ -746,11 +783,62 @@ async function grp4() {
         await ensureChat(w2);
         joinedMs = (await awaitListed(w2, name, 60000)) === null ? null : Date.now() - t0;
         await openGroup(w1, name, { navigate: false, label: 'grp4-w1' });
+        // THE INVITER LEARNS OF THE JOIN AFTER THE JOINER DOES, so the count is read across a window
+        // rather than at the moment the panel opens - see `panelReaches`. Both ends are recorded: the
+        // count the panel opened with, and how long the second member took to appear.
+        rosterAtOpen = (await panelOf(w1)).count;
+        rosterWaitMs = await panelReaches(w1, 2, 60000);
         rosterAfterJoin = (await panelOf(w1)).count;
         await closeOverlays(w1);
       }
 
-      const ok = shapeOk && invitationNamesGroup === true && joinedMs !== null && rosterAfterJoin === 2;
+      // WHOSE TRUTH IS THE ROSTER? `IMlsService` answers it in as many words: `getGroupMembers` - the
+      // call behind this panel - says who the delivery service will ROUTE to, not who is in the MLS
+      // tree. So a roster stuck at one is consistent with two completely different systems, and a row
+      // that reported only the count would accuse the wrong one:
+      //
+      //   - the joiner is in the tree and the server holds no routing row for it: an entitlement with
+      //     no routing, the shape `24d38f21` fixed on the private-salon path, here on the invitation
+      //     -link path. The panel is then RIGHT and the join is broken.
+      //   - the routing rows are there and the panel does not show them: a display fault, and the
+      //     group works.
+      //
+      // The two server tables say which, and ONE MESSAGE says whether it matters. Counts only - the
+      // ids are a real group's real members and this repository is public.
+      //
+      // Only when the link path actually got as far as a join: with no link there is no group to
+      // count and no message worth sending, and a row that reported a zero here would be blaming
+      // the roster for a failure that happened two steps earlier.
+      const measurable = shapeOk && joinedMs !== null;
+      const gid = measurable ? await groupIdByName(w1, name) : null;
+      const serverUserMembers = gid
+        ? Number(psql(`SELECT count(*) FROM dm_group_members WHERE "groupId" = '${gid}'`).trim())
+        : null;
+      const serverDeviceRoutes = gid
+        ? Number(psql(`SELECT count(*) FROM dm_device_group_memberships WHERE "groupId" = '${gid}'`).trim())
+        : null;
+
+      // THE ASSERTION THAT OUTRANKS THE COUNT. A member the owner cannot see is a defect; a member
+      // the owner cannot REACH is a different and worse one, and until now this row sent nothing at
+      // all - so a join that routed nowhere would have been recorded as a cosmetic roster fault.
+      let crossed = null;
+      if (measurable) {
+        // THE JOINER MUST HAVE THE GROUP OPEN, or this measures the check and not the product.
+        // `awaitMessage` reads the OPEN conversation's message pane; the join above only waits for
+        // the group to be LISTED in the sidebar. Recorded `false` on the 21:06 run of 2026-08-25
+        // for exactly that reason, and a delivery conclusion was nearly drawn from it.
+        await openConversation(w2, name);
+        const crossing = mark('GRP4X');
+        await send(w1, `${crossing} after a join by link`);
+        crossed = await awaitMessage(w2, crossing, CROSS_MS).then(() => true, () => false);
+      }
+
+      const ok =
+        shapeOk &&
+        invitationNamesGroup === true &&
+        joinedMs !== null &&
+        rosterAfterJoin === 2 &&
+        crossed === true;
       await recordObserved(
         'GRP-4',
         ok ? 'PASS' : 'FAIL',
@@ -763,6 +851,11 @@ async function grp4() {
           invitationPageNamesGroup: invitationNamesGroup,
           joinedAfterClickMs: joinedMs,
           rosterAfterJoin,
+          rosterAtOpen,
+          rosterWaitMs,
+          serverUserMembers,
+          serverDeviceRoutes,
+          messageReachedTheJoiner: crossed,
           redactionNote:
             'the join token is a capability for a real group on production and is never recorded.',
         },
