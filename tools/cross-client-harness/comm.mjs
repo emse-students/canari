@@ -660,12 +660,23 @@ export async function openChannelAccess(cx) {
  * `allowed` is the DISPLAYED members of the allowlist, which are display names and not ids: the
  * panel renders `<UserName>` and never shows an id. A check that needs ids reads them from the
  * database - which is where COMM-8 reads them anyway, since what it asks is what a device was sent.
+ *
+ * IT REFUSES OFF A CLOSED PANEL, for the reason {@link saveChannelAccess} does and one worse:
+ * `{isPrivate: null, allowed: [], writePolicy: null}` is EXACTLY what a private salon whose panel
+ * has been closed reports, and it is also a perfectly plausible reading, so it travels all the way
+ * into a verdict. COMM-23/24 recorded it on every run and failed a switch that had worked - the
+ * assertion compared null with a boolean. The refusal is on the panel's TITLE, not on the toggle,
+ * because those are two different findings: no title means nobody opened it, whereas a title with no
+ * toggle is a control the app failed to render and must stay reportable as `isPrivate: null`.
  */
 export async function channelAccessState(cx) {
-  return JSON.parse(
+  const state = JSON.parse(
     await evaluate(
       cx,
       `(function () {
+         if (document.body.innerText.indexOf(${JSON.stringify(caption('chat_channel_access_title'))}) < 0) {
+           return JSON.stringify({ up: false });
+         }
          var sw = document.querySelector('button[role=switch][aria-checked]');
          var list = document.querySelector('ul');
          var allowed = list
@@ -675,6 +686,7 @@ export async function channelAccessState(cx) {
            : [];
          var sel = document.querySelector('select');
          return JSON.stringify({
+           up: true,
            isPrivate: sw ? sw.getAttribute('aria-checked') === 'true' : null,
            allowed: allowed,
            writePolicy: sel ? sel.value : null,
@@ -682,6 +694,14 @@ export async function channelAccessState(cx) {
        })()`
     )
   );
+  if (!state.up) {
+    throw new Error(
+      'channelAccessState: the access panel is not open - three nulls are a plausible reading of a ' +
+        'private salon, so this refuses instead: reopen it with openChannelAccess (or inPanel)'
+    );
+  }
+  const { up: _up, ...panel } = state;
+  return panel;
 }
 
 /**

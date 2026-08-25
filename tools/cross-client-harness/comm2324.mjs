@@ -28,6 +28,7 @@ import {
   channelAccessState,
   createChannel,
   enterCommunities,
+  inPanel,
   openChannelAccess,
   openCommunity,
   saveChannelAccess,
@@ -79,15 +80,26 @@ const before = await step('read the salon before the switch', () =>
   channelId ? salonDistribution(channelId) : null
 );
 
-const panel = await step('flip the visibility', async () => {
+await step('flip the visibility', async () => {
   await realClick(w1, `[aria-label*=${JSON.stringify(salon)}]`);
   if ((await selectedChannel(w1)) !== salon) throw new Error('the salon did not open');
   await openChannelAccess(w1);
   const moved = await setChannelPrivate(w1, !startPrivate);
   if (!moved) throw new Error('the toggle was already where the check wanted it');
-  await saveChannelAccess(w1);
-  return channelAccessState(w1);
+  return saveChannelAccess(w1);
 });
+
+// A FRESH PANEL, BECAUSE THE SAVE CLOSED THE OLD ONE. Reading the state at the end of the flip
+// answered `{isPrivate: null, allowed: [], writePolicy: null}` on every run: `saveChannelAccess`
+// ends with `clearOverlays`, deliberately, so the read found no toggle and reported the instrument
+// rather than the app - and `panelAgrees` then compared null with a boolean and failed a switch that
+// had worked. Reading BEFORE the save would have been worse than useless: it would have echoed the
+// click this check just made, not the app's answer. A reopened panel refetches, so what it states is
+// the SERVER's view arriving on a screen - the same reason COMM-14 waits for the radiogroup instead
+// of seeding a level. `inPanel` hands the screen back either way, including when the read throws.
+const panel = await step('read the visibility back off a fresh panel', () =>
+  inPanel(w1, openChannelAccess, () => channelAccessState(w1))
+);
 
 const after = await step('read the salon after the switch', () =>
   channelId ? salonDistribution(channelId) : null

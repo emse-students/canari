@@ -25,9 +25,20 @@
  * screen, not instead of it: the line says the handler ran, the transcript says the person arrived,
  * and a run with the line and no transcript is a different defect from a run with neither.
  *
+ * AND IT IS READ FROM LOGCAT. The line is written while the client initialises, so it is already
+ * gone by the time a cold-started process has a devtools socket to attach to: read from the
+ * attached console, this row reported the handler as never having run WHILE the salon was open -
+ * not a defect, an instrument arriving after its event. `attachConsole` mirrors the console into
+ * logcat, and that buffer existed before the launch.
+ *
  * THE MARKER IS POSTED BEFORE THE APP IS EVEN STOPPED. A cold start that has to receive a live
  * message as well would be measuring two things and blaming this one; what this row asks is whether
  * the LANDING is right, so the salon already holds its message when the link is followed.
+ *
+ * AND IT OWNS WHAT THE KILL MAKES THE APP SAY. A cold start narrates itself - an FCM token
+ * re-registered, the cached frames pre-injected - and those sentences are dirt in every phase that
+ * did NOT kill the app, which is why `COLD_START_NARRATION` is a needle list handed over by the
+ * check that did rather than a rule in the classifier.
  *
  * `am force-stop` IS THE RIGHT KILL HERE AND IS WRONG ELSEWHERE. It puts the app in Android's
  * STOPPED state, which cancels FCM broadcasts - fatal for a push check (see
@@ -50,7 +61,14 @@ import { ACCOUNT_OF, PORTS } from './names.mjs';
 import * as phone from './phone.mjs';
 import { unlockClient } from './pingate.mjs';
 import { clientBuild, mark, record } from './results.mjs';
-import { consoleLines, gate, report, watch } from './watch.mjs';
+import {
+  COLD_START_NARRATION,
+  consoleLines,
+  gate,
+  ignoringExpectedLog,
+  report,
+  watch,
+} from './watch.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -122,6 +140,9 @@ const landing = armed
       if (stopped) throw new Error(`the app is still running after force-stop (pid ${stopped}) - this would be a warm start`);
 
       phone.wake();
+      // CLEARED HERE, NOT EARLIER: what follows is the only cold start in this run, so the buffer
+      // below holds this launch and nothing that came before it - including the previous run's.
+      phone.clearLogcat();
       const said = phone.sh(
         `am start -a android.intent.action.VIEW -d ${JSON.stringify(link)} ${phone.PKG}`
       );
@@ -157,6 +178,16 @@ const landing = armed
         }
         const url = await evaluate(a1, 'location.pathname').catch(() => null);
         const seen = await countMessage(a1, marker).catch(() => 0);
+        // FROM LOGCAT, NOT FROM THE ATTACHED CONSOLE, and that is the whole reason this row read
+        // `theDeepLinkReachedTheHandler: false` beside `theSalonIsOpen: true` - a contradiction
+        // that accused the native chain of failing while the person was demonstrably standing in
+        // the salon. `hooks.client.ts` writes the line during client init, which is BEFORE the
+        // process has a devtools socket to forward, so `watch()` here cannot attach until after
+        // the event it was asked to witness. `attachConsole` mirrors the app's console into
+        // logcat, whose buffer predates the launch, so the line was never missing - the
+        // instrument was late, and an instrument that cannot see an event must not report it
+        // absent.
+        const shell = phone.console_(4000);
         const lines = consoleLines(wb.cx);
         return {
           gate: gateA1.verdict,
@@ -164,9 +195,18 @@ const landing = armed
           url,
           seen,
           // The one line that says the native half worked, and the ones around it if it did not.
-          handlerSaid: lines.filter((l) => /\[notifNav\] deep link received/.test(l)),
-          hooksSaid: lines.filter((l) => /\[hooks\]/.test(l)).slice(0, 12),
-          report: await report(wb),
+          handlerSaid: shell.filter((l) => /\[notifNav\] deep link received/.test(l)),
+          hooksSaid: shell.filter((l) => /\[hooks\]/.test(l)).slice(0, 12),
+          // Kept beside them: a line in logcat and none here is this row's NORMAL shape, because
+          // the app started before the attachment. The reverse would mean logcat was cleared
+          // under us, and the two sources disagreeing is itself worth reading.
+          attachedConsoleLines: lines.length,
+          // THIS CHECK PERFORMED THE COLD START, so it owns its narration and nothing else: the
+          // token the app re-registers and the frames it pre-injects from the FCM cache are this
+          // row's own gesture talking. Four needles, not a phase-wide amnesty - anything else a
+          // resurrected app says is still dirt, and `COLD_START_NARRATION` keeps the injection
+          // counts inside the shape so forgiving the line cannot forgive a wrong count.
+          report: ignoringExpectedLog(await report(wb), COLD_START_NARRATION),
         };
       } finally {
         a1.close();
