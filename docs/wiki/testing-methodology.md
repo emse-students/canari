@@ -2014,6 +2014,20 @@ by anyone who has not met them.
   a process with no WebView (the background push handler) is *also* a valid `pidof` answer that has
   no devtools socket at all. Re-derive it (`a1forward.mjs`), and treat "no targets" as "re-forward",
   never as "the app is down".
+- **THE TEST ACCOUNT IS A REAL ACCOUNT, AND ITS OTHER SESSIONS JOIN EVERY GROUP A CHECK MAKES.** The
+  rig drives W1, W2 and A1; nothing said the campaign user owned only those. Measured 2026-08-25:
+  three web devices of W1's user were heartbeating on the gateway at once, two of them elsewhere and
+  driven by nobody. Every device of a group's creator is fanned in at creation, so those two were
+  added to each throwaway group, were slow to process their Welcome, and one asked for it again -
+  reaching the repair that kicks the stale leaf and re-adds it. That is GRP-8's `PASS-DIRTY` of
+  2026-08-24, and `[KICK] Stale leaf ... removed` is `unexplained` **by design**
+  (`actions.welcomeRequest.test.ts`), so the row was correct dirt about a real device. **The defect
+  was that nothing could SEE the device**: attributing one line cost a session. The pre-flight now
+  diffs `user:online:<user>:*` against the devices it drives and prints `FLEET #tag: N device(s)
+  online that this run does not drive`, by install tag. It is a NOTE and never fails the run - an
+  uncontrolled device is not broken, and refusing to start would block the ladder on somebody closing
+  a browser. Enumerate the fleet before blaming the product; and a phase whose verdict turns on the
+  creator's device set should say which devices were present.
 
 ---
 

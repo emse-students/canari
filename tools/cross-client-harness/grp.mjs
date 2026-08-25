@@ -203,10 +203,32 @@ async function withGroup(cx, n, fn) {
  * it did not open. Six `no stable element for selector: text=Ajouter` errors, all of them the
  * harness. `panelOf` already normalises that state - it opens the panel only if it is not up - so
  * the precondition is established rather than assumed, once, here.
+ *
+ * AND IT RETURNS ONLY ONCE THE ROSTER HAS GROWN, which `removeMember` has always done and this had
+ * never done. `addmember.mjs` stops deliberately at the picker CLOSING and is right to: for a shared
+ * module a roster count is a rendering of the outcome, one panel rearrangement away from being
+ * wrong. But every caller HERE asserts on that rendering, so the post-condition belongs at this
+ * seam - and without it the add had none at all while the remove beside it did, which is the
+ * symmetry `grp8`'s docstring already claimed.
+ *
+ * Measured 2026-08-25, one instrument race reported as two different product failures: GRP-1 pass 5
+ * read `MEMBRES (1)` with `Invitation en cours...` still on screen while the PEER already listed two
+ * and both directions delivered, and GRP-8 pass 4 threw `could not identify the peer after the add`
+ * from the same read one gesture earlier. Four of five passes were green, which is what a race looks
+ * like from the outside.
+ *
+ * AN EXPIRED DEADLINE DOES NOT THROW. The caller then reads the panel as it really stands and fails
+ * on that evidence - a finding about the product, rather than the instrument deciding for it.
  */
 async function addPeer(cx) {
-  await panelOf(cx);
-  return addMember(cx, PEER_NAME, { openSettings: false });
+  const before = (await panelOf(cx)).count;
+  await addMember(cx, PEER_NAME, { openSettings: false });
+  // `null` means the panel had no `MEMBRES (n)` to read at all, which is not a count this can wait
+  // on - the caller's own assertion is what must speak to that.
+  if (before === null) return;
+  await until(cx, `/MEMBRES\\s*\\(${before + 1}\\)/i.test(document.body.innerText)`, 25000).catch(
+    () => {}
+  );
 }
 
 /**

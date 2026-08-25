@@ -555,6 +555,14 @@ async function preflight(devices, { quiet = false } = {}) {
     // The LAST attempt only: printing every sample would report a client as absent and present in
     // the same preflight, and the reader has no way to tell which line the verdict rests on.
     for (const line of String(r.stdout || '').trim().split('\n').filter(Boolean)) {
+      // A FLEET LINE IS NOT A CLIENT LINE. It names devices of the subject accounts that this run
+      // does NOT drive, carries no `ONLINE`, and would otherwise print as `STOP` - reading as a
+      // dead client when it is a note about a live stranger. Never quiet: it is the line that makes
+      // an `unexplained` `[KICK]` attributable in one read instead of one session.
+      if (line.startsWith('FLEET ')) {
+        console.log(`  note ${line}`);
+        continue;
+      }
       const online = /ONLINE/.test(line);
       if (!online || !quiet) console.log(`  ${online ? 'ok  ' : 'STOP'} ${line}`);
       // WHO THIS RUN IS ABOUT, taken from the one place that already knows. The gateway answers with

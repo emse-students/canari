@@ -217,6 +217,21 @@ const CASES = [
     '[01:40:12] [QUEUE] stranded buffer: re-queued 3 buffered message(s) for b6a425af-1111-2222-3333-444455556666',
     'notable',
   ],
+  // THE TWO DEFERRAL SITES THAT FEED THAT RE-FETCH, one per `UnackedReason`. They are pinned
+  // TOGETHER because only one of them ever had a rule: `unknown-group`'s line carries the word
+  // `welcome_request` and was claimed by a generic keyword, while `absent-conversation`'s says the
+  // same thing without the word and broke `clean` twice on 2026-08-25 (GRP-7 pass 3, GRP-8 pass 5).
+  // Same event, same bucket - and pinning the pair is what stops the halves drifting apart again.
+  [
+    'log',
+    '[01:40:12] [BUFFER] welcome_request sent for unknown group b6a425af…',
+    'notable',
+  ],
+  [
+    'log',
+    '[01:40:12] [MLS] Message for absent conversation b6a425af… - retry after restore',
+    'notable',
+  ],
   // Both trigger/reason pairs, which are the whole of `UnackedReason` and its only two call sites.
   [
     'log',

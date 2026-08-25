@@ -271,6 +271,62 @@ precisely the transition being managed right now for `Welcome -> ... pour ...` (
 2026-08-25, both spellings pinned). Doing two of those at once during the ladder buys nothing. It is
 one edit plus one rule swap once the ladder is done.
 
+### P2 - the notification path ships raw literals, and answers the same caller in two languages
+
+Found 2026-08-25 while reading `useMessaging.svelte.ts:485` for TAB-1's re-scope. Every user-visible
+string on the notification and forward paths is an inline literal, which the standing rule forbids
+outright (*"User-visible strings use Paraglide - no inline literals, ALWAYS, even in a plain `.ts`
+util, and even when a nearby call site already has raw strings"*):
+
+- `useNotifications.svelte.ts:226-227` - `'Appel entrant'`, `` `${callerName} vous appelle` ``,
+  `'Un contact vous appelle'`, and the `'Canari'` title fallback at `:202`.
+- `useMessaging.svelte.ts:496` - `'Nouveau message'`, the body of every message notification whose
+  preview is empty.
+
+**The half that is worse than untranslated is INCONSISTENTLY translated.** One function hands its
+caller a French failure and an English one through the same field:
+
+- `useMessaging.svelte.ts:1173` - `error: 'Conversation introuvable.'`
+- `useMessaging.svelte.ts:1205` - `error: 'Nothing to forward.'`
+- `useMessaging.svelte.ts:1227` - `error: 'Conversation not ready.'`
+
+Whatever renders `error` shows whichever it got, so a French user meets English on two of the three
+forward failures. That is not a missing translation but a visible defect, which is why this is P2 and
+its siblings above are not. Nothing types a string as user-visible, so no gate catches any of it -
+the reason the rule says to reach for Paraglide on the FIRST draft.
+
+Not fixed on sight: a frontend change redeploys prod, and prod is the test server - a push during a
+run makes the phase VACUOUS. It belongs to the first work package after the ladder.
+
+### P3 - a Welcome is repaired by kick + re-add, and nothing records which of the two causes it was
+
+Found 2026-08-25, while attributing GRP-8's `PASS-DIRTY` of 2026-08-24 (the run is on the
+[board](cross-client-testing.md); the environment half is a methodology rule and is not repeated
+here). A device of the group's creator was fanned into a new group, then sent a `welcome_request`
+for a group whose leaf was ALREADY in the MLS tree. `actions.ts:956` handles that the documented way
+- read the tree, kick the stale leaf, re-add - and logs `[KICK] Stale leaf ... removed`.
+
+**The repair is right; what is missing is which situation it repaired.** Two reach this line and they
+are not the same event:
+
+- the Welcome was **lost or never delivered**, and the device's request is the retry that recovers
+  it. The mechanism working exactly as intended.
+- the Welcome was **still in flight**, and the device asked before it arrived. Then the push and the
+  pull overlap, the repair is reconciling two paths that produced the same leaf, and the standing
+  rule applies: *a race that heals cleanly is still a defect - name what makes the two paths overlap
+  and delete the overlap; a ledger that reconciles them afterwards is a witness, never a fix.*
+
+Nothing at the kick site can tell them apart, and the client that would know is the one being
+repaired. **What would distinguish them:** the requesting device's own log - whether it had received
+and failed to process a Welcome for that group, or had never seen one - and the elapsed time between
+`sendWelcome` for that (group, device) and the `welcome_request` arriving. Neither is recorded today.
+Carry the discriminator to the decision from where it is already known, rather than learning by
+failing: the handler knows when the Welcome was sent, so the line can say which case it is.
+
+Not raised above P3 because the repair is correct either way and no user-visible loss has been
+observed - but it is the reason a group-creating check can go dirty on a device nobody touched, so
+whoever reads the next `[KICK]` needs this page.
+
 ### P3 - the seam that forgets a conversation forgets it silently
 
 Found on 2026-08-25 in the same reading. `historyReconcile.ts:756` is `forgetGroupReconciliation`,

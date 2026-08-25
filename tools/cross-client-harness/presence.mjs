@@ -28,6 +28,7 @@
 import { client, evaluate } from './chat.mjs';
 import { PORTS } from './names.mjs';
 import { redis } from './ssh.mjs';
+import { installTag, userTag } from './devices.mjs';
 
 const flag = (n, f) => {
   const i = process.argv.indexOf(`--${n}`);
@@ -60,6 +61,29 @@ export async function whoIs(cx) {
  */
 export function ttlOf(user, device) {
   return Number(redis(`TTL 'user:online:${user}:${device}'`));
+}
+
+/**
+ * EVERY device of one user that is talking to the gateway right now, whether or not this rig drives
+ * it.
+ *
+ * WHY THE INVERSE QUESTION IS ITS OWN FUNCTION. `ttlOf` asks "is the client I drive up", which is
+ * the pre-flight's question and answers nothing about who ELSE is holding the same account open. A
+ * campaign account is not a fleet by decree: on 2026-08-24 GRP-8 went PASS-DIRTY on a `[KICK] Stale
+ * leaf`, and the cause was two live web sessions of the test user that no runner drives - they were
+ * fanned into the group like any other device of the creator, were slow to process their Welcome,
+ * and one asked for it again through the path that repairs by kick + re-add. Nothing in the rig
+ * could see them, so the row cost a session to attribute instead of a line to read.
+ *
+ * The scan is anchored on the user id and a PREFIX is enough, which is what the pre-flight holds.
+ */
+export function onlineDevicesOf(userId) {
+  return redis(`--scan --pattern 'user:online:${userId}*'`)
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((k) => k.slice(k.indexOf(':', 'user:online:'.length) + 1))
+    .filter(Boolean);
 }
 
 /**
@@ -106,6 +130,8 @@ export async function awaitOnline(user, device, timeoutMs = 60000) {
 if (/presence\.mjs$/.test(process.argv[1] || '')) {
   const cut = (s) => (s ? s.slice(0, 8) : '?');
   let bad = 0;
+  /** Full device ids this rig is driving, per full user id - the other half of the fleet diff. */
+  const driven = new Map();
 
   for (const [label, port] of Object.entries(PORTS)) {
     if (wanted && !wanted.includes(port)) continue;
@@ -126,6 +152,9 @@ if (/presence\.mjs$/.test(process.argv[1] || '')) {
       continue;
     }
 
+    if (!driven.has(who.user)) driven.set(who.user, new Set());
+    driven.get(who.user).add(who.device);
+
     let seconds;
     try {
       seconds = ttlOf(who.user, who.device);
@@ -143,6 +172,35 @@ if (/presence\.mjs$/.test(process.argv[1] || '')) {
       seconds > 0 ? `ONLINE (TTL ${seconds}s)` : seconds === -2 ? 'OFFLINE' : `SUSPECT (TTL ${seconds})`;
     if (seconds <= 0) bad += 1;
     console.log(`${label} (${port}): ${verdict} - user=${cut(who.user)} device=${cut(who.device)}`);
+  }
+
+  // WHOEVER ELSE IS HOLDING THIS ACCOUNT OPEN, named before a check starts rather than after a
+  // verdict has to be explained.
+  //
+  // IT IS A NOTE, NOT A FAILURE, and deliberately does not touch the exit code. An uncontrolled
+  // device is not broken and not always avoidable - the campaign account is a real account - so
+  // refusing to start would block the ladder on someone closing a browser. What it must never do
+  // again is stay INVISIBLE: every device of the creator is fanned into every group a check makes,
+  // and one that is slow to process its Welcome reaches the kick + re-add repair, whose `[KICK]`
+  // line is `unexplained` BY DESIGN. That is a legitimate dirty row about a real device, and the
+  // only thing missing was the line saying the device was there.
+  for (const [user, mine] of driven) {
+    let online;
+    try {
+      online = onlineDevicesOf(user);
+    } catch {
+      // A gateway that cannot be asked is already reported by the per-client lines above, and
+      // guessing here would turn one unreachable read into a fleet nobody can trust.
+      continue;
+    }
+    const extra = online.filter((d) => !mine.has(d));
+    if (extra.length) {
+      console.log(
+        `FLEET ${userTag(user)}: ${extra.length} device(s) online that this run does not drive - ${extra
+          .map(installTag)
+          .join(', ')}`
+      );
+    }
   }
 
   if (bad > 0) process.exitCode = 5;
