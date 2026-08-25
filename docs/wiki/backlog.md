@@ -631,6 +631,53 @@ rebuild re-bases A1's build for every phase of the ladder that follows it.
 
 ## The harness itself
 
+### P2 - `purge-devices.mjs` is a destructive control keyed on a string the product never renders
+
+**Found 2026-08-25, and found by being unable to run it rather than by it doing damage.** W1's account
+had accumulated two dead web devices (two Firefox logins from 2026-08-22, neither the running client),
+and they were a material confound rather than clutter: W1 CREATES every group the GRP phase makes, so
+the creator's own devices are fanned into each one and a device that will never process its Welcome
+sits in every roster the phase measures ([durable-rules](durable-rules.md), on a revoked device keeping
+its store). The user deleted both by hand the same day, which is why nothing is blocked - the tool that
+was supposed to do it is what remains open.
+
+**Three predicates in it are stale, and the third is the dangerous one.**
+
+1. The panel-settled wait tests `/APPAREIL(S) CONNECT/i`. The product renders
+   `4 APPAREIL(S) ENREGISTRE(S)` - `chat_devices_count_label` is `"{devices} appareil(s) enregistre(s)"`.
+   So the wait times out after 45 s on a panel that has been fully loaded the whole time, which is how
+   this was found at all.
+2. `READ_PANEL` and `TAG_TARGET` identify a row by walking up to `/Appareil\s*\d/`. **That string is
+   absent from the render.** Every row therefore reads as the empty string.
+3. Because every row is `''`, `--keep` matches nothing and the tool falls through to clicking the
+   first deletable button in DOM order. On the fleet as it stood that is a Firefox row, but nothing in
+   the tool makes that true - `--keep 'Tauri'` does not match either, because the phone's row shows
+   `tauri-d8` lowercase and `Android`/`ANDROID`, never the `"Desktop (Tauri)"` label
+   (`DeviceManagementPanel.svelte`) that only the detail view uses. One reorder and it deletes A1,
+   which costs a re-enrolment plus SETUP-4's 2FA - the one step no tool here can answer.
+
+`shortDeviceId` is `deviceId.slice(0, 8)`, so every web device of one user renders the same short id.
+**The id cannot discriminate between them**; the only per-row text that does is `Derniere activite` and
+the `Connecte le <date>` line.
+
+**The repair, which is a rewrite of what it is allowed to touch, not a selector fix:**
+
+- **An allowlist, `--only`, never `--keep`** ([durable-rules](durable-rules.md): a destructive control
+  needs an allowlist of what it may touch). Nothing is deleted unless it was named.
+- **`--expect N`, and a refusal if the panel does not hold exactly N rows.** A fleet that changed
+  shape since the caller looked at it is a reason to stop, not to proceed on ordinal position.
+- **Row identity from `Connecte le <date>` bounded to ONE occurrence**
+  ([testing-methodology](testing-methodology.md) 24), because that is the only rendered string that
+  separates two web logins of the same account.
+- **The load-error state reported, not waited on.** `chat_devices_load_error` ("Impossible de charger
+  les appareils lies a votre compte.") is currently not accepted by the wait, so a failed load spends
+  45 s and then reports a timeout - the same confusion between "the question could not be asked" and
+  "the answer is no" that [testing-methodology](testing-methodology.md) 38 is about.
+
+**Until that lands the tool must not be run**, and a device that has to go is a click the user offered
+to make (*"Pour les choses qui ne se font qu'une fois, tu peux me demander de les faire hein"*,
+2026-08-25).
+
 ### P3 - a build names itself by a clock, and the commit is inferred from it
 
 `/_app/version.json` carries `Date.now()` at build time and nothing else, so `resolveStamp` derives
@@ -983,6 +1030,42 @@ an observation.
   emoji font - which on Android is Noto anyway, so the picture is unchanged. `minClientVersion` is not
   the lever for this.
 
+
+### P3 - the two controls on a device row do not look like the same kind of thing (reported 2026-08-25)
+
+**Reported by the user with a screenshot**: *"Petite note graphique, il faudrait homogeneiser la
+corbeille et la modification."* On a device row the delete control is a filled rounded square and the
+rename control is a bare pencil floating under the text, so two controls of equal standing read as one
+button and one decoration.
+
+The divergence is entirely in two class lists in `DeviceManagementPanel.svelte`, and it is every axis
+at once rather than a single oversight:
+
+| | rename (`Edit2`) | delete (`Trash2`) |
+| --- | --- | --- |
+| resting background | none | `bg-black/5` / `dark:bg-white/5` |
+| radius | `rounded-lg` | `rounded-xl` |
+| padding | `p-1.5` | `p-2.5` |
+| icon | `size={14} strokeWidth={2}` | `size={18} strokeWidth={2.5}` |
+| press feedback | none | `active:scale-95` |
+
+**Where they may legitimately still differ: colour.** The destructive one hovers red, the rename one
+amber, and that is the distinction worth keeping - a trash can and a pencil should differ by INTENT,
+not by whether they look clickable.
+
+Two things to settle before touching it, because neither is answerable from the row alone:
+
+- **The same pair exists elsewhere.** A homogenisation that only fixes this panel trades one
+  inconsistency for another, so the fix is a shared class (or a `.btn-glass` modifier - `app.css` is
+  the single source of truth for tokens and `--radius-*`, CLAUDE.md) applied at every site, and the
+  audit of those sites is part of the work.
+- **The rename control also sits in a different place in the layout** - inside the text block, after
+  the version line - while the delete button is a sibling of the whole row. Matching their appearance
+  without settling their POSITION will just move the question.
+
+Grouped with the emoji-picker geometry and the bundled-font work above: all three are user-reported
+appearance items, all three are post-ladder, and all three want the same pass over `app.css` rather
+than three local patches.
 
 ## Storage and retention
 

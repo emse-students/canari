@@ -136,23 +136,21 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     RUN THERE - 14 and 18.** COMM-14's blocker is LIFTED: real push is proven, by NOTIF-4 on
     2026-08-22 (`notifiedInMs: 11317`) and then asserted by MENTION-2/3, which is what a capability
     has to be before a check rests on it. COMM-18 still needs a cold start through `adb`. Verdicts
-    are on the board and are not restated here. **The GENERIC notification body** (user, 2026-08-20,
-    on a stale app) **is answered**: on `a7981206` the body decrypts - MENTION-2 recorded
-    `undecryptedInShade: []` with the marker in the shade. What the user saw on 2026-08-22 is a
-    DIFFERENT defect and a real one: a mention renders in the notification as its raw `@[uuid]`
-    token, filed P2 in [backlog](docs/wiki/backlog.md) and deferred past the ladder by their
-    decision. NOTIF-13 is the row that will pin it.
-2. **A1 RUNS `c6eb7b20` (v0.14.4) as of 2026-08-24**, bundle built `18:49:07.934Z`, rebuilt and
-    `install -r`'d at the user's request so all three clients sit at the latest version. **THAT
-    RETIRES THE MIXED-FLEET PREMISE, and the loss is stated rather than discovered later:** A1's APK
-    used to predate the deployment on purpose, so every row naming `a1Build` beside `build` was
-    exercising an OLD client against a NEW server. Those two stamps are now the same commit, so the
-    phone tests the current code - what nothing tests any more is the old-client question, and a row
-    that needs it must arm it deliberately by NOT rebuilding. How to build and install one, and the
-    three details that have each cost a session, are in the harness
-    [README](tools/cross-client-harness/README.md) under "Building for it" - not restated here.
-    **A phone `offline` in adb is a HUMAN action**: no `adb reconnect` or daemon restart clears it,
-    the screen must be unlocked and the prompt accepted.
+    are on the board and are not restated here. **The GENERIC notification body is ANSWERED** -
+    MENTION-2 recorded `undecryptedInShade: []`. What the user saw on 2026-08-22 is a DIFFERENT and
+    real defect: a mention rendered as its raw `@[uuid]` token, P2 in
+    [backlog](docs/wiki/backlog.md), deferred past the ladder by their decision; NOTIF-13 pins it.
+2. **A1 RUNS `c6eb7b20` (v0.14.4) as of 2026-08-24**, rebuilt and `install -r`'d at the user's
+    request so all three clients sit at the latest version. **THAT RETIRES THE MIXED-FLEET PREMISE,
+    and the loss is stated rather than discovered later:** every row naming `a1Build` beside `build`
+    used to exercise an OLD client against a NEW server; the two stamps are now the same commit, so a
+    row that needs the old-client question must arm it deliberately by NOT rebuilding. **A deploy
+    still cannot reach an APK** (`frontendDist` is `../build`), so a phase arming the phone still
+    stamps EVERY row, by construction: the preflight reads the phone once and hands it down through
+    `CANARI_A1_BUILD`. A phase with no phone carries no stamp. Building and installing one, and the
+    three details that have each cost a session: harness
+    [README](tools/cross-client-harness/README.md), "Building for it". **A phone `offline` in adb is
+    a HUMAN action** - the screen must be unlocked and the prompt accepted; no `adb reconnect` clears it.
 3. **THE CAMPAIGN ITSELF - RUNNING, by the user's decision of 2026-08-21** (*"C'est parti pour la
     campagne"*, in autonomy). The ladder, top to bottom, everything must end green, so every phase
     runs - including the six that had no runner, written as the ladder reaches them. The design, the
@@ -164,7 +162,14 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     **GRP x5 IS ARMED AND OWED, nothing before it:** `node run.mjs GRP --repeat 5` (W1+W2, no
     `a1Build`). Its first attempt was killed at pass 1 on 2026-08-24 - a stale browser, not a defect -
     and `8c248131` closed that hole in the preflight, which now reloads a stale client itself
-    (methodology rule 36; story in `CHANGELOG.md`). **Rungs 9-18 are a WRITING job, not a running one:
+    (methodology rule 36; story in `CHANGELOG.md`). **Attempt two, 2026-08-25: 49/50, then stopped at
+    pass 2 on GRP-8 - the instrument, not the product.** `d7c68c1d` turned both GRP peer-identification
+    throws into recorded findings (methodology rule 38) and GRP-8 reproduced 3/3 clean alone; its
+    intermittent (2 in ~12) is NOT explained, and the lead to read first is that `key_package` is
+    `UNIQUE (userId, deviceId)`, so a re-Add reuses the same KeyPackage - which RFC 9420 forbids.
+    `--repeat` now stops at the first pass that is not clean (user, 2026-08-25); **that stop path has
+    never fired, so nothing asserts it.** Its blocker is LIFTED - the user deleted W1's two dead web
+    devices by hand on 2026-08-25, so **GRP x5 is owed and nothing precedes it.** **Rungs 9-18 are a WRITING job, not a running one:
     129 rows, 46 with a runner** - the bill per phase, and the two rows that gate a rung, are on
     [cross-client-campaign](docs/wiki/cross-client-campaign.md).
     **THE BOARD'S FORMAT IS NOW FIXED by the user (2026-08-22): a `PASS` cell is `PASS X/X` and a time
@@ -187,6 +192,18 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     found 2026-08-24, P3, deferred with 4 and 5. The retention is right; the accumulation and the
     per-row-only exit are a UX decision owed to the user. [backlog](docs/wiki/backlog.md).
 
+7.  **`purge-devices.mjs` WOULD DELETE THE PHONE - a destructive control keyed on a string the
+    product never renders.** Found 2026-08-25 by being unable to run it; the two dead web devices that
+    exposed it are gone (user, by hand). **Do not run it until it takes an `--only` allowlist**;
+    repair and evidence in [backlog](docs/wiki/backlog.md).
+8.  **THE TRASH AND THE PENCIL ON A DEVICE ROW DO NOT LOOK LIKE THE SAME KIND OF CONTROL** (user,
+    2026-08-25, *"il faudrait homogeneiser"*), P3, deferred with 4, 5 and 6 - it wants one pass over
+    `app.css`, not three local patches. [backlog](docs/wiki/backlog.md).
+
+**ONE-OFF ACTIONS GO TO THE USER** (2026-08-25, verbatim): *"Pour les choses qui ne se font qu'une
+fois, tu peux me demander de les faire hein, on economisera en temps et en token."* Building a tool for
+a single click is the waste that rule names - `purge-devices.mjs` in 7 is exactly it.
+
 **The estate was swept and measured clean 2026-08-21 before the ladder started** - 22 debris salons through the product, all thirteen residue counts on prod zero afterwards. **A deleted group is TWO estates**: `cleanup.mjs` owns the server side, `dismiss.mjs` the copy each MEMBER's client keeps (W1 clean at 9 rows on 2026-08-24, W2 holding 189). One allowlist for both, `debris.mjs`. Detail on [cross-client-campaign](docs/wiki/cross-client-campaign.md).
 
 **OWED TO THE USER, NOT TO THE CODE: the MLS + Graine explanation.** For THEM, prose and diagrams, no
@@ -202,13 +219,8 @@ sixth is owed to the user, not to the code:** is a MiGallery application worth b
 
 ### CANARI - what is open
 
-**Release status:** v0.14.4 cut 2026-08-24, and **the iOS path is green end to end for the first
-time**: Android, AppImage, prod CD, the archive, the GitHub Release and the TestFlight upload all
-succeeded (run `32763104909`). v0.14.3's blocker is gone - the
-`APP_STORE_CONNECT_EXPORT_COMPLIANCE_CODE` secret exists as of 2026-08-24 18:25Z, the "Set export
-compliance code in Info.plist" step took its SET branch (`ITSEncryptionExportComplianceCode set in
-Info.plist`) and Apple accepted the build. The value stays out of the tree, which is what this repo
-being public requires. Nothing here is owed any more; the story is in `CHANGELOG.md`.
+**Release status:** v0.14.4 cut 2026-08-24, every platform green including TestFlight - the iOS path
+ran end to end for the first time and nothing there is owed any more (story in `CHANGELOG.md`).
 
 `minClientVersion` still lives in `platform_config`, is still raised by hand from `/admin/platform`
 so no deploy touches it - and **half of the old gap is closed, the other half is not, and the
@@ -220,23 +232,15 @@ ship the client, verify it arrived, THEN raise
 
 ### CANARI - the test campaign
 
-Four files, four jobs, no overlap, all four listed in WHERE THINGS LIVE above: the board is state,
-the campaign page is design, the methodology page is how a result earns belief, the harness README is
-the operating manual. **Read them rather than re-deriving state here, and keep no second copy.**
+Four files, four jobs, all four in WHERE THINGS LIVE above: board = state, campaign page = design,
+methodology = how a result earns belief, README = operating manual. **Read them rather than
+re-deriving state here, and keep no second copy.**
 
 **The rig lives in the repo at `tools/cross-client-harness/`; its STATE lives outside at
 `../canari-harness`** - `test-accounts.json`, the debug APK, A1's baseline, `results.ndjson`, and
 `chrome-w1` / `chrome-w2`, which ARE the W1 and W2 devices. Losing a profile costs a re-enrolment and
 SETUP-4's 2FA, the one step no tool here can answer. Outside the work tree a credential CANNOT be
 committed and `git clean -xdf` cannot reach a profile.
-
-**A1's APK predates the deployment on purpose** - `frontendDist` is `../build`, so the phone serves
-what is inside its APK and a deploy never reaches it. That is a real mixed-fleet state, so every row
-of a phase that arms the phone names `a1Build` beside `build`. **That is now true by construction and
-was not before**: the preflight reads the phone once and hands the stamp down through
-`CANARI_A1_BUILD`, because only four runners out of thirty had ever recorded it themselves - `msg2`,
-`msg5`, `msg8` and `msg8b` all drive the phone and all landed rows without it, found while MSG was
-running on 2026-08-21. A phase with no phone carries no stamp at all.
 
 **MUT-20 is unarmable until a campaign message reaches 90 days** (earliest 2026-11-09).
 
