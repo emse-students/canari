@@ -148,8 +148,11 @@ finishes.
 
 Three paths used to close it wrongly, and none of them logged a line - which is what made them
 survivable, since a dropped frame and a frame that never arrived are identical on screen. **Every
-frame at risk is one carrying no `queuedMessageId`: a live WebSocket frame, which the server holds no
-row for and no re-fetch can bring back.**
+frame at risk is one carrying no `queuedMessageId`, since nothing can re-fetch it** - and that is a
+property of the FRAME, not of the channel it came in on. A live WebSocket frame need not carry an id,
+but it often does: the gateway forwards the queue row's id when it persisted one, which COMM-4
+measured on 2026-08-25 (`[WS RCV] JSON frame` and `[PENDING] Fetched 1 pending messages` handing back
+the same `qId`). Read the field; never infer it from the arrival path.
 
 | Path | What it did | Why it is ordinary, not exotic |
 | --- | --- | --- |
@@ -178,6 +181,46 @@ Welcome, the stranded buffer with two negative controls) and
 `BaseMlsService.welcomeBuffer.test.ts`, which proves the parked frame actually **reaches**
 `messageCallback` - a frame re-queued into a bucket nobody drains again is dropped just as
 thoroughly as one deleted.
+
+### Two channels, one row - a delivery's identity (2026-08-25)
+
+An inbound frame reaches this client by two independent routes, and **nothing about either makes them
+one event**: the gateway pushes it live, and `/pending` returns everything not yet acknowledged. Both
+end at `enqueueMessage`, and until COMM-4 both were free to hand the drain the same server row twice.
+
+That is not a wasted cycle. **An MLS ratchet secret is single-use**, so the second decrypt of one row
+fails with `SecretReuseError` - a duplicated DELIVERY is indistinguishable, at the decrypt, from a
+corrupt MESSAGE. The client then took the only branch it had: declared a perfectly good frame
+unreadable for good, acknowledged it, and healed. The user lost the message and the log said the loss
+was handled. Measured in full on 2026-08-25:
+
+```
+[WS RCV] JSON frame: senderId=d82cd226…, groupId=56215a1b…, isWelcome=false, protoLen=472
+[QUEUE] Processing message group=56215a1b… sender=d82cd226… qId=d4ecf0fe…
+[GRAINE] absorbed 1/1 seed(s) …                      <- the frame was fine
+[PENDING] Fetched 1 pending messages (1 so far)
+[QUEUE] Processing message group=56215a1b… sender=d82cd226… qId=d4ecf0fe…   <- the SAME row
+	SecretReuseError
+[GRAINE] frame on 56215a1b... is unreadable for good (secret-reuse) - acknowledged
+```
+
+**The fix names the row's identity and puts the check at the one seam both routes pass through.** A
+delivery is identified by its `queuedMessageId` - the server's queue id, which is exactly what makes
+two arrivals the same row - and `admitDelivery` refuses a repeat inside `enqueueMessage`, before any
+bucket. The classifier was deliberately NOT widened: `SecretReuseError` stays `severe` in the harness,
+so if the failure ever arrives by a route this does not cover, it is still a defect and still says so.
+
+Four properties, each of which would be a defect if dropped:
+
+| Property | Why |
+| --- | --- |
+| A frame with **no** id is always admitted | the server holds no row for it, so nothing can be a repeat of it |
+| `queued` and `done` are kept apart | different answers to a repeat: the other route is mid-flight, versus it is settled and should be ACKed again (the peer channel is still asking) |
+| A delivery the drain left **unacknowledged** is FORGOTTEN | a Welcome that could not be processed yet must come back, or `refetchFramesLeftBehind` becomes a lie |
+| The memory is bounded (512 ids, oldest evicted) | a per-tab Map that only grows is a leak on a long-lived session |
+
+`BaseMlsService.deliveryIdentity.test.ts` pins all four plus the base case, driving the real drain
+through `enqueueMessage` rather than asserting on the Map.
 
 ## Outbox (outbound delivery)
 

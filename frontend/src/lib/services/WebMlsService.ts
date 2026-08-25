@@ -529,7 +529,7 @@ export class WebMlsService extends BaseMlsService {
             }
           } else if (msg.proto && !this.messageCallback) {
             console.warn(
-              `[WS RCV] proto reçu mais messageCallback non initialisé. Message ignoré.`
+              `[WS RCV] a frame carried a proto but no messageCallback is registered - the frame is DROPPED`
             );
           } else if (frameType) {
             // A TYPED FRAME THAT REACHED NO BRANCH IS THE ONE FAILURE THIS LAYER CANNOT OTHERWISE

@@ -330,7 +330,7 @@ export class TauriMlsService extends BaseMlsService {
             }
           } else if (parsed.proto && !this.messageCallback) {
             console.warn(
-              `[WS RCV] proto reçu mais messageCallback non initialisé. Message ignoré.`
+              `[WS RCV] a frame carried a proto but no messageCallback is registered - the frame is DROPPED`
             );
           } else if (msgType) {
             // See the same branch in `WebMlsService`: a typed frame that reached no handler is the

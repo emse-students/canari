@@ -176,7 +176,39 @@ export abstract class BaseMlsService implements IMlsService {
   /** Per-conversation queues with round-robin scheduling and a global MLS mutex. */
   protected readonly messageScheduler: MlsPerGroupScheduler;
 
+  /**
+   * Deliveries taken in, by the server's queue id, and whether this device is finished with them.
+   *
+   * TWO CHANNELS CARRY THE SAME ROW AND ONE OF THEM IS ALWAYS LATE. A frame is pushed live over the
+   * socket and it is also listed by the pull, and the acknowledgement that removes it server-side
+   * cannot land before the pull that was already in flight. Measured on production during COMM-4 on
+   * 2026-08-25, at boot, one second apart: `qId=d4ecf0fe` drained from the socket and absorbed, then
+   * `[PENDING] Fetched 1 pending messages` handed the identical row back and the second decrypt
+   * reported `SecretReuseError` on generation 0 of an epoch already read - which is the ratchet
+   * refusing to spend a secret twice, and correct.
+   *
+   * SO THE DELIVERY IS IDENTIFIED, AND ENTERS ONCE. The queue id is the row's identity, given by the
+   * server, and this map is the state that makes taking it in idempotent - not a flag saying a frame
+   * "was handled", which would answer a different question and lag the ratchet. Deduplicating here
+   * rather than at either caller is deliberate: both channels are legitimate, neither can know what
+   * the other received, and the overlap is deleted at the ONE seam they share.
+   *
+   * `queued` AND `done` ARE DIFFERENT ANSWERS TO A REPEAT. A row this device has acknowledged is
+   * acknowledged AGAIN and not decrypted, because the only way it can be offered after an ack is
+   * that the ack never arrived, and dropping it silently would leave it pending for ever. A row still
+   * in the queue needs nothing: the copy already there will ack it.
+   *
+   * A ROW LEFT DELIBERATELY UNACKNOWLEDGED IS FORGOTTEN, which is the case this must not break. A
+   * frame for an unknown group is processed, not acked, and re-fetched when its Welcome lands - so
+   * remembering it would make that re-fetch a no-op. The entry is dropped exactly where the ack
+   * decision says no.
+   */
+  private readonly deliveries = new Map<string, 'queued' | 'done'>();
+
   /** Persistence-only window: no UI buffering, no overlay (default for {@link withMlsBulkIngest}). */
+  /** How many delivery ids {@link rememberDelivery} keeps. See its doc for why it is bounded. */
+  private static readonly DELIVERY_MEMORY = 512;
+
   private static readonly PERSIST_ONLY_PHASE: BulkIngestPhase = {
     bufferUi: false,
     showOverlay: false,
@@ -769,7 +801,70 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /** Enqueues a message and starts the per-group fair drain loop if idle. */
+  /**
+   * True when this delivery has never been taken in, so it may enter the queue.
+   *
+   * A frame with NO queue id is always admitted: it is a live socket frame the server never
+   * persisted, there is nothing to acknowledge and nothing can re-offer it, so there is no second
+   * copy to recognise. See {@link deliveries} for the race this closes and for why a repeat of an
+   * acknowledged row is acknowledged again instead of dropped.
+   */
+  private admitDelivery(queuedMessageId: string | undefined): boolean {
+    if (!queuedMessageId) return true;
+    const known = this.deliveries.get(queuedMessageId);
+    if (!known) {
+      this.rememberDelivery(queuedMessageId, 'queued');
+      return true;
+    }
+    // NOT A FALLBACK AND NOT SILENT. Reaching this means the socket and the pull crossed, which is
+    // routine at boot and says nothing is wrong - but its RATE is the reading that matters, because
+    // many of these for one group is a pull firing on something other than an event.
+    console.log(
+      `[QUEUE] delivery ${queuedMessageId.slice(0, 8)}... arrived twice (${known}) - the live frame` +
+        ` and the pull crossed; not decrypting it again` +
+        (known === 'done' ? ', acknowledging it once more' : '')
+    );
+    if (known === 'done') {
+      void this.delivery
+        .ackMessages([queuedMessageId])
+        .catch((e) => console.warn('[ACK] re-ack of a repeated delivery failed:', e));
+    }
+    return false;
+  }
+
+  /**
+   * Records what the drain decided about a delivery: acknowledged, or owed a re-delivery.
+   *
+   * @param acked whether this drain acknowledged the row. False FORGETS it, because an unacked row
+   *   is one the server must be able to hand back - see {@link deliveries}.
+   */
+  private settleDelivery(queuedMessageId: string | undefined, acked: boolean): void {
+    if (!queuedMessageId) return;
+    if (acked) this.rememberDelivery(queuedMessageId, 'done');
+    else this.deliveries.delete(queuedMessageId);
+  }
+
+  /**
+   * Remembers one delivery, evicting the oldest entry past {@link DELIVERY_MEMORY}.
+   *
+   * BOUNDED BECAUSE A SESSION IS NOT. The window a repeat can arrive in is one boot - a pull already
+   * in flight against an ack already sent - so a few hundred entries covers it many times over, and
+   * the cost of an eviction is that a repeat of a very old row is decrypted twice and acknowledged,
+   * which is exactly what happened before this map existed. Insertion order is the eviction order:
+   * a `Map`'s first key is its oldest, and a re-`set` of a known id is a state change, not a
+   * refresh, so nothing here can keep an entry alive by touching it.
+   */
+  private rememberDelivery(queuedMessageId: string, state: 'queued' | 'done'): void {
+    this.deliveries.set(queuedMessageId, state);
+    while (this.deliveries.size > BaseMlsService.DELIVERY_MEMORY) {
+      const oldest = this.deliveries.keys().next().value;
+      if (oldest === undefined) break;
+      this.deliveries.delete(oldest);
+    }
+  }
+
   protected enqueueMessage(msg: MlsQueuedMessage): void {
+    if (!this.admitDelivery(msg.queuedMessageId)) return;
     this.messageScheduler.enqueue(msg);
     if (!this.messageScheduler.draining) {
       void this.processQueue();
@@ -833,9 +928,11 @@ export abstract class BaseMlsService implements IMlsService {
         // The WebSocket reconnect is sufficient to re-sync state.
         if (msg.type === 'group_reset') {
           console.log(`[QUEUE] group_reset (control) ignored - group=${groupId ?? 'unknown'}`);
-          if (shouldAckGroupResetControl({ hasQueuedId: Boolean(msg.queuedMessageId) })) {
-            ackIds.push(msg.queuedMessageId!);
-          }
+          const ackedReset = shouldAckGroupResetControl({
+            hasQueuedId: Boolean(msg.queuedMessageId),
+          });
+          if (ackedReset) ackIds.push(msg.queuedMessageId!);
+          this.settleDelivery(msg.queuedMessageId, ackedReset);
           return;
         }
 
@@ -878,8 +975,10 @@ export abstract class BaseMlsService implements IMlsService {
             isCommit: msg.isCommit,
             hasQueuedId: Boolean(msg.queuedMessageId),
           };
-          if (shouldAckAfterSuccess(cbResult, flags) && msg.queuedMessageId) {
-            ackIds.push(msg.queuedMessageId);
+          const acked = shouldAckAfterSuccess(cbResult, flags) && !!msg.queuedMessageId;
+          this.settleDelivery(msg.queuedMessageId, acked);
+          if (acked) {
+            ackIds.push(msg.queuedMessageId!);
           } else if (flags.hasQueuedId && cbResult === false) {
             // The handler already recorded WHY, against the group, in `unackedFrames`. Nothing to
             // note here: what discharges it is an event, not this drain ending.
@@ -912,6 +1011,10 @@ export abstract class BaseMlsService implements IMlsService {
             console.error(
               `[QUEUE] Welcome failed for group=${groupId} - NOT ACKed, retry on reconnect`
             );
+            // FORGOTTEN, so "retry on reconnect" stays true. The row was not acknowledged, so the
+            // server will offer it again, and an id still remembered here would make the pull that
+            // re-offers it drop the frame instead of retrying it.
+            this.settleDelivery(msg.queuedMessageId, false);
             // The window closes either way, and what it held is RE-QUEUED rather than dropped.
             // Dropping assumed the server would re-deliver, which is true only of a frame carrying
             // a `queuedMessageId`; a live WebSocket frame need not carry one. Re-queued, the group
@@ -924,8 +1027,10 @@ export abstract class BaseMlsService implements IMlsService {
               isCommit: msg.isCommit,
               hasQueuedId: Boolean(msg.queuedMessageId),
             };
-            if (shouldAckAfterException(exFlags) && msg.queuedMessageId) {
-              ackIds.push(msg.queuedMessageId);
+            const ackedAfterThrow = shouldAckAfterException(exFlags) && !!msg.queuedMessageId;
+            this.settleDelivery(msg.queuedMessageId, ackedAfterThrow);
+            if (ackedAfterThrow) {
+              ackIds.push(msg.queuedMessageId!);
             } else if (exFlags.hasQueuedId) {
               logMlsMetric({
                 kind: 'queue_skip_ack',

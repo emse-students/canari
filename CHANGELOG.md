@@ -150,6 +150,26 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **ONE SERVER ROW WAS DECRYPTED TWICE AND THE SECOND DECRYPT SPENT A SECRET ALREADY CONSUMED.** A
+  frame reaches the client by two independent channels - the live WebSocket pushes it, and
+  `/pending` hands back everything not yet acknowledged - and nothing made them the same event. On
+  2026-08-25 COMM-4 measured exactly that: `qId=d4ecf0fe` drained from the socket and absorbed, then
+  `[PENDING] Fetched 1 pending messages` returning the identical row, then `SecretReuseError` and the
+  heal that acknowledges the frame as unreadable for good. The frame was fine; the second read of it
+  was not. MLS ratchet secrets are single-use by design, so a duplicated delivery is not a wasted
+  cycle, it is a message the client then declares permanently undecryptable and drops - the user
+  loses it and the heal makes the loss look handled.
+
+  Fixed at the seam both channels share rather than by widening any classifier: `enqueueMessage` now
+  admits a delivery by its server queue id, which is that row's identity, and a repeat is logged and
+  re-acknowledged instead of decrypted. `queued` and `done` are kept apart because they are different
+  answers to a repeat - one is "the other channel is mid-flight", the other "it is settled, ack it
+  again" - and a delivery the drain deliberately left UNacknowledged (a Welcome that could not be
+  processed yet) is forgotten, so `refetchFramesLeftBehind` still brings it back on reconnect. A
+  frame the server never persisted carries no id and is always admitted. The memory is bounded at 512
+  ids. The raw failure is deliberately still `severe` in the harness if it ever arrives by another
+  route.
+
 - **A CLOSED CHANNEL POLL STAYED OPEN FOR EVER ON EVERY SCREEN, because two clocks answered one
   question.** Closing a poll writes `endsAt = new Date()` - the SERVER's now - and the card decided
   "is this over?" with `new Date(endsAt).getTime() <= Date.now()`, its OWN now. Production's clock is
