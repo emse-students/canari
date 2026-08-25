@@ -182,7 +182,9 @@ export function paneIs(cx, name) {
 export function overlayOn(cx) {
   return evaluate(
     cx,
-    `(function () {
+    // String.raw - see `rawcheck.mjs`. Plain, the page receives `/s+/` and this branch never fires,
+    // so an open new-conversation dialog without `#new-group-name` reported as no overlay at all.
+    String.raw`(function () {
       var t = document.body.innerText;
       if (document.querySelector('#new-group-name')) return 'new-conversation';
       if (/Nouvelle discussion Contact Groupe/.test(t.replace(/\s+/g, ' '))) return 'new-conversation';

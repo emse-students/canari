@@ -296,6 +296,7 @@ test-frontend:
 # it was ever asked for, blaming the cable instead of a list one file away.
 test-harness:
 	@echo "${BLUE}🧪 Harness self-tests…${RESET}"
+	@node tools/cross-client-harness/rawcheck.mjs
 	@node tools/cross-client-harness/classify-selftest.mjs
 	@node tools/cross-client-harness/srvclassify-selftest.mjs
 	@node tools/cross-client-harness/checks-selftest.mjs

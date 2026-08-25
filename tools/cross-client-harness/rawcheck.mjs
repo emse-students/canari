@@ -26,6 +26,18 @@
  * Usage: `node rawcheck.mjs [files...]` - every `.mjs` beside it when given none.
  */
 import { readdirSync, readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+/**
+ * ITS OWN DIRECTORY, NEVER THE CWD.
+ *
+ * `make test-harness` runs every self-test from the repository ROOT, so a default of `readdirSync('.')`
+ * would have swept the root's `.mjs` files - none - and reported `clean` for a rig it never opened.
+ * A guard that answers "clean" from the wrong directory is worse than no guard: it is a green light
+ * with no measurement behind it.
+ */
+const HERE = dirname(fileURLToPath(import.meta.url));
 
 const BS = String.fromCharCode(92);
 
@@ -40,8 +52,16 @@ const BENIGN_ESCAPES = 'nt';
  * a `${...}` holding real code, a `\n` in a console banner - and a check that reports those is a
  * check whose reader learns to skip it. These two shapes are the only ones where an eaten escape
  * changes what runs, and all four mangled sites found on 2026-08-20 are of them.
+ *
+ * **`async` WAS THE HOLE, AND IT HID THE FIFTH.** The opener was matched as `(function (` alone, so
+ * `del1.mjs`'s whole page script - which opens `(async function () {` - was invisible to this file,
+ * and the `/\s+/` inside it reached the page as `/s+/`: every letter `s` in the document became a
+ * space, so `Cette conversation a ete supprimee.` could never be found and DEL-1 recorded a product
+ * FAIL for a defect that was entirely its own. A guard narrow enough to be read must still be
+ * measured against the shapes actually written here.
  */
-const SENT_ELSEWHERE = (line) => /\(function\s*\(/.test(line) || /document\./.test(line) || /RegExp\s*\(\s*`/.test(line);
+const SENT_ELSEWHERE = (line) =>
+  /\((?:async\s+)?function\s*\(/.test(line) || /document\./.test(line) || /RegExp\s*\(\s*`/.test(line);
 
 /** A JSDoc or `//` line. Backticks there are prose about code, not code. */
 const IS_COMMENT = (line) => /^\s*(\*|\/\/|\/\*)/.test(line);
@@ -120,14 +140,16 @@ const basename = (p) => p.split(BS).pop().split('/').pop();
 
 if (import.meta.url.endsWith(basename(process.argv[1]))) {
   const files = process.argv.slice(2).length
-    ? process.argv.slice(2)
-    : readdirSync('.').filter((f) => f.endsWith('.mjs'));
+    ? process.argv.slice(2).map((f) => resolve(f))
+    : readdirSync(HERE)
+        .filter((f) => f.endsWith('.mjs'))
+        .map((f) => join(HERE, f));
 
   let hits = 0;
   for (const f of files) {
     for (const s of suspects(readFileSync(f, 'utf8'))) {
       hits++;
-      console.log(`${f}:${s.line}  ${s.escape} in a template that is not String.raw`);
+      console.log(`${basename(f)}:${s.line}  ${s.escape} in a template that is not String.raw`);
       console.log(`    ${s.text}`);
     }
   }

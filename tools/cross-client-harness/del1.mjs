@@ -145,7 +145,11 @@ const historyState = async (cx, groupId) =>
   JSON.parse(
     await evaluate(
       cx,
-      `(async function () {
+      // String.raw, because `/\s+/` is a PAGE-side pattern: a plain template hands the page `/s+/`,
+      // which replaces every letter `s` with a space - so the notice this check exists to find read
+      // back as "Cette conver ation a ete  upprimee." and `deletedNotice` could never be true. It
+      // was not, on 2026-08-25, and DEL-1 recorded a product FAIL for its own defect.
+      String.raw`(async function () {
         var gid = ${JSON.stringify(groupId)};
         var body = document.body.innerText.replace(/\s+/g, ' ');
         var open = (n) => new Promise((res) => { var r = indexedDB.open(n); r.onsuccess = () => res(r.result); r.onerror = () => res(null); setTimeout(() => res(null), 4000); });

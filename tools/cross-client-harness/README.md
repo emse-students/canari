@@ -89,13 +89,13 @@ the server. `srvlog.mjs` classifies the whole server window - `--shapes` collaps
 `notable` into distinct sentences - and `srvclassify-selftest.mjs` pins every rule against a line
 whose bucket is known.
 
-**The rig has eight self-tests, and they run in TWO targets, because they are not one kind of thing.**
-`make test-harness` is the CI gate and holds the seven that need nothing: `classify-selftest.mjs` pins
-the client-side verdict rules, `srvclassify-selftest.mjs` the server-log buckets,
-`logcatclassify-selftest.mjs` the phone's, `checks-selftest.mjs` asserts that every phase in
-`checks.mjs` declares the devices its scripts actually drive, `devices-selftest.mjs` pins the device
-panel, `debris-selftest.mjs` the allowlist that decides what may be DELETED, and `gate-selftest.mjs`
-the gate itself. `make test-harness-device` holds the one that needs a live rig,
+**The rig has nine self-tests, and they run in TWO targets, because they are not one kind of thing.**
+`make test-harness` is the CI gate and holds the eight that need nothing: `rawcheck.mjs` reads every
+page-side template for an escape Node eats, `classify-selftest.mjs` pins the client-side verdict
+rules, `srvclassify-selftest.mjs` the server-log buckets, `logcatclassify-selftest.mjs` the phone's,
+`checks-selftest.mjs` asserts that every phase in `checks.mjs` declares the devices its scripts
+actually drive, `devices-selftest.mjs` pins the device panel, `debris-selftest.mjs` the allowlist that
+decides what may be DELETED, and `gate-selftest.mjs` the gate itself. `make test-harness-device` holds the one that needs a live rig,
 `tabguard-selftest.mjs`, which makes W2 ambiguous on purpose to prove the tab guard refuses it - run
 it by hand after editing `tabs.mjs`, `chat.mjs` or the preflight's tab repair. Run the gate after
 editing `checks.mjs`, any classifier or `debris.mjs` - a phase whose `needs` disagrees with its
@@ -244,6 +244,14 @@ hole with an assertion rather than a habit:
   `ensureConversation` threw on every call - and `comm8`'s pattern for "the peer announced a seed",
   which could not say yes. Write them `String.raw`; this exits non-zero when one is not, and it was
   validated as a negative control against all four before its clean verdict was believed.
+  **IT WAS ON DISK AND IN NO TARGET UNTIL 2026-08-26**, and on that day it was carrying two live
+  findings nobody had read: `groupnav.mjs`'s overlay probe, and `del1.mjs`'s history probe - which it
+  could not even see, because its opener was matched as `(function (` alone and that template opens
+  `(async function () {`. So DEL-1 asked the page for `Cette conversation a ete supprimee.` inside a
+  body where every letter `s` had been replaced by a space, could never find it, and recorded a
+  product FAIL that was entirely its own. It is now the first line of the gate, it scans its OWN
+  directory rather than the CWD - run from the repository root it used to find nothing and say
+  `clean` - and its opener matches `async` too.
 
 `scratch/` is gitignored and is where one-shot probes go. Before it existed they accumulated beside
 the real checks until **285 of 362 files were residue** and nobody could tell an instrument from a
