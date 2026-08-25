@@ -131,14 +131,12 @@ deleted from BOTH this file and [backlog](docs/wiki/backlog.md). **Every defect 
 `CHANGELOG.md`, every rule one left is in [durable-rules](docs/wiki/durable-rules.md), every verdict
 is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the three is restated here.**
 
-1. **THE COMM RUNNERS - ALL TWENTY-FIVE WRITTEN AND REGISTERED**, each run on prod as it was written
-    (user, 2026-08-20: writing all then running once is verification by COMPILING). **ONE HAS NEVER
-    RUN THERE - 14**, and its blocker is LIFTED (real push proven by NOTIF-4 on 2026-08-22,
-    `notifiedInMs: 11317`, then asserted by MENTION-2/3). **COMM-18 has now found FOUR distinct product
-    defects, each further along the same path; the fourth is NAMED AND REPAIRED (2026-08-25) and owes
-    a SIXTH run on the deploy carrying it.** A cold-started device has HTTP before it has a socket, so
+1. **THE COMM RUNNERS - ALL TWENTY-FIVE WRITTEN, REGISTERED AND SWEPT ON PROD** (2026-08-25, build
+    `5d7fac13`), every verdict carrying a build and an `a1Build`. COMM-14 has now run there too, its
+    blocker lifted. **COMM-18 FOUND FOUR distinct product defects, each further along the same path,
+    and is now a clean PASS (`d6f61539`).** A cold-started device has HTTP before it has a socket, so
     the ANSWER to its seed request was dropped for a peer presence called offline; the fix deletes
-    that read here by classifying a seed-bearing answer as key material. Story in `CHANGELOG.md`, rule
+    that read by classifying a seed-bearing answer as key material. Story in `CHANGELOG.md`, rule
     in [durable-rules](docs/wiki/durable-rules.md), case left in [backlog](docs/wiki/backlog.md). **The GENERIC notification body is ANSWERED** - MENTION-2 recorded
     `undecryptedInShade: []`. What the user saw on 2026-08-22 is a DIFFERENT, real defect: a mention
     rendered as its raw `@[uuid]` token, P2 in [backlog](docs/wiki/backlog.md), deferred past the
@@ -148,9 +146,9 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     had no runner, written as the ladder reaches them. Design, cost and the decisions it turns on are
     on [cross-client-testing](docs/wiki/cross-client-testing.md) and
     [cross-client-campaign](docs/wiki/cross-client-campaign.md), the only copies. **Where the ladder
-    stands: rungs 1-8 taken, 9 COMM at 21 PASS / 1 PASS-DIRTY, blocked on the two rows in item 3 and
-    on COMM-18's re-run once the fix of item 1 is deployed. THEN DEL, TAB, MULTI, LIFE, NOTIF, CALL,
-    HEAL, PIN, CORRUPT.** The board carries every verdict and the format of a cell; do not restate
+    stands: rungs 1-8 taken, 9 COMM at 23 PASS, and THREE re-runs owed - COMM-4 (dirty), COMM-22
+    (`VACUOUS`, runner changed) and COMM-24 (runner changed). THEN DEL, TAB, MULTI, LIFE, NOTIF,
+    CALL, HEAL, PIN, CORRUPT.** The board carries every verdict and the format of a cell; do not restate
     either here. **A `PASS-DIRTY` NO LONGER STOPS A RUNG BY ITSELF (user, 2026-08-25)** - what the
     class of the dirt decides, and the first application of it, are on
     [cross-client-campaign](docs/wiki/cross-client-campaign.md), the only copy.
@@ -167,9 +165,9 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     a refusal that must be carried back as a TYPE rather than flattened into `false` with five other
     outcomes; and **P2** - the recovery the 2026-08-19 decision documented does not exist, because
     `GET access` guards on readability while `PATCH` guards on `MANAGE_CHANNEL` and the panel then
-    renders its error box alone. **COMM-22 and COMM-23 are now measurable and owe a re-run** (both
-    web-only, no phone); the post-load walk that "did not run" was found by reading and its silent
-    skip now logs.
+    renders its error box alone. **COMM-22 is measurable now and owes a re-run** (web-only, no
+    phone; COMM-23 passed on the 2026-08-25 sweep); the post-load walk that "did not run" was found by
+    reading and its silent skip now logs.
 
 4. **DEFERRED PAST THE LADDER - six UX and rendering items, substance in
     [backlog](docs/wiki/backlog.md) and NOWHERE else.** One line each, in the order they were raised:

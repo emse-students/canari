@@ -446,15 +446,21 @@ epoch race, and a network failure whose `reason: 'network'` discriminator is pro
 read). Then "not entitled" stops and says so, while a transient failure is left to the next existing
 trigger.
 
-**And that last one is not merely under-reported - it is DESTRUCTIVE, found by reading the loop on
-2026-08-25.** `submitCommit`'s `.catch` returns `{accepted: false, reason: 'network'}`, and because
-nobody reads `reason`, a transport failure falls into the branch written for the server's answer "a
-newer commit landed" - which calls `forgetGroup` and retries. So three lost packets discard this
-device's local MLS state for the group three times and then return `false`, and the group was never
-stale. This is the project's first rule on the one path where breaking it costs key material: a
-status code is an ANSWER, a transport failure is not. The fix is ordered - stop treating it as a
-reject BEFORE carrying the type back, because the type is what a caller reads while the forget is
-what it cannot undo. **The check that measures it already exists** - COMM-22 is exactly this scenario and it is
+**And that last one is a MISREADING OF THE CAUSE, found by reading the loop on 2026-08-25.**
+`submitCommit`'s `.catch` returns `{accepted: false, reason: 'network'}`, and because nobody reads
+`reason`, a transport failure falls into the branch written for the server's answer "a newer commit
+landed" - which calls `forgetGroup`, logs "epoch race, retrying", and tries twice more. So a lost
+packet is reported as a cause nobody established, and the retry's premise - the epoch moved - is
+exactly what a network error does not support. This is the project's first rule on the one path where
+being wrong about it touches key material: a status code is an ANSWER, a transport failure is not.
+
+**What that forget does NOT do is destroy pre-existing state, and an earlier reading here said it
+did.** `join_by_external_commit` refuses to overwrite a group already held locally
+(`frontend/mls-core/src/welcome.rs`, the concurrent-Welcome guard), so the only thing this attempt
+can have staged is its own join, moments earlier, and the only thing the forget discards is that. The
+defect is the false diagnosis and the retry built on it, not lost key material. The fix is still
+ordered - stop treating it as a reject BEFORE carrying the type back, because the type is what a
+caller reads. **The check that measures it already exists** - COMM-22 is exactly this scenario and it is
 the row that failed, so nothing new has to be written to know whether a fix works: four cycles green
 is the proof.
 

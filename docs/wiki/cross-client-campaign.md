@@ -537,3 +537,40 @@ again:
   product decision, taken nowhere yet, and it is in [backlog](backlog.md).
 - **TYPE** holds a 5/5 x5 on superseded runner `25376b86` (shown 70-90 ms, cleared 245-272 ms;
   TYPE-2 expired 4 138-4 221 ms). The current-runner run is x1, and the header says so.
+
+What was removed on 2026-08-25, when the board was swept a second time:
+
+- **COMM-18 cost five FAILs and they were four distinct product defects**, each one further along the
+  same path - which is the row's whole value: nothing else in the ladder cold-starts a real device
+  into a salon it has no seed for. The first three shared one cause (the repair path excluded the
+  asking user by name, so a device could not ask its OWN other device for a seed that device had
+  minted); the fourth proved that fix while failing further along; the fifth named the last cause,
+  which was neither candidate as written. **The sixth is a clean PASS on `d6f61539`**: both replies
+  print `as key material` - the two frames run 5 recorded as dropped - and the marker rendered 135 ms
+  after the deep link resolved. That 135 ms is also why the row does not claim WHICH route fed the
+  seed: it is too fast to separate the two from outside, and `why` is only populated on a miss. What
+  is asserted is what was measured - the identical geometry that lost both answers now keeps them.
+  Stories in `CHANGELOG.md`.
+- **Three GRP rows carried their own provenance in the cell.** GRP-4's `PASS` followed a re-run owed
+  after `51dcb814` dirt (one unclassified Welcome line, classified since). GRP-7's followed the
+  mailbox-barrier fix - a guard reporting an impossible deadlock and skipping the ordering guarantee
+  it exists for. GRP-10 was found in SOURCE while GRP-4 was being written, captured as a `FAIL` on
+  `1579d5c3`, and is green on the fix: a check written from reading, which is the cheapest kind.
+- **HEAL had four runners for eleven rows and two of them were older than the rows they answer.**
+  `heal-a1.mjs` and `heal.mjs` had existed, worked and recorded verdicts throughout - the phone mirror
+  of HEAL-repair, and the "does the next message arrive" question after an escalation - under ids no
+  row had ever named, so nothing reconciled them and nothing could report them missing. `rows.mjs`
+  named all three faults at once, the third being `heal-web.mjs` answering HEAL-repair under
+  `HEAL-WEB`. Every runner now records the id of the row it answers.
+- **The four HEAL-REVOKE rows are four and not one, and the reasoning is load-bearing for two of
+  them.** HEAL-REVOKE-3's shortfall must be REPORTED rather than silently partial - a restore that
+  stops halfway looks complete, which is how the user's PC lost conversations without knowing to
+  retry. HEAL-REVOKE-4 is the row a green run can most easily fake: a heal firing on every connection
+  would satisfy "it caught up" while proving nothing, so its TRIGGER CONDITIONS are part of the
+  assertion rather than context around it.
+- **`rows.mjs` read seventeen answered rows as `unstated` and reported them as unrecorded work.** The
+  board writes some verdicts bold (`**`PASS`**`) and some with the count inside the code span
+  (`` `PASS 1/1` ``), and the reader anchored on a bare backtick followed by letters alone - so all of
+  GRP and most of DEL fell through. Third instrument fault of this shape in this file, found the same
+  way each time: a gap that large about phases already known green is a gap in the reader, not in the
+  campaign. Both spellings are read now.

@@ -305,6 +305,18 @@ const verdict =
       ? 'FAIL'
       : 'PASS';
 
+// THE ANSWERER'S OWN ACCOUNT, read before the gate drains nothing and recorded either way. W1 is
+// the device that holds the seed A1 is missing, and until 2026-08-25 its reply left as
+// `DELIVERY.transport` - which the server drops for a recipient presence reports offline, so a
+// cold-started phone with HTTP but no socket yet lost the answer to a question it had just asked.
+// The line now names the class it used, and this is where a run puts that on the record.
+//
+// CONTEXT, NEVER AN ASSERTION. This row's question is the landing, and a run where the phone joined
+// the group in time needs no repair at all - asserting the repair fired would fail a row for
+// succeeding by an easier route. What it buys is that a PASS says WHY it passed, and a FAIL says
+// whether the answer was even sent.
+const answeredAs = consoleLines(wa.cx).filter((l) => /\[GRAINE\] answered /.test(l));
+
 const gated = gate(verdict, { W1: await report(wa), A1: landing?.report ?? null });
 
 record('COMM-18', gated.verdict, {
@@ -318,6 +330,7 @@ record('COMM-18', gated.verdict, {
   // Context, never an assertion: this row's question is the landing, and a roster is how a miss
   // gets attributed rather than guessed at.
   distAtSend,
+  answeredAs,
   // A1's build is named beside its answer: its APK is deliberately not the deployment.
   a1Build: a1Before?.commit ?? null,
   a1BuiltAt: a1Before?.builtAt ?? null,

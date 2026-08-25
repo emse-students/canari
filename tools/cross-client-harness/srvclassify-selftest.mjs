@@ -23,6 +23,7 @@
 // everything that decides its answer offline: `shapeOf`, and the rule lists themselves. The bucket
 // arithmetic around them is exercised on a real window by `run.mjs`, once per pass.
 import {
+  settleFirstLooks,
   shapeOf,
   BENIGN_RULES,
   NOTABLE_RULES,
@@ -623,6 +624,35 @@ for (const [name, line, want] of comm) {
   const got = matches(NOTABLE_RULES, line) ? 'notable' : matches(BENIGN_RULES, line) ? 'benign' : 'unexplained';
   check(`${want.padEnd(11)}  ${name}`, got, want);
 }
+
+// --- settleFirstLooks: the rule whose predicate is a COUNT, not a line ------------------------
+// The one rule in this file that no per-line list can express, and therefore the one that would
+// otherwise be untestable. Both directions are pinned, because forgiving the singleton is worthless
+// if it also forgives the pair - that pair is the concurrent-join race, and the ONLY thing that has
+// ever caught it.
+const READ = (g) =>
+  `${NEST}[InternalController] [DISTRIBUTION_GROUP] read scope=workspace:00000000-0000-4000-8000-000000000001 group=${g} published=false user=aaaaaaaa devices=0`;
+const G1 = '11111111-1111-4111-8111-111111111111';
+const G2 = '22222222-2222-4222-8222-222222222222';
+const OTHER = `${NEST}[MessagingService] something nobody has classified`;
+
+check('one first look per group is narration', settleFirstLooks([READ(G1)]), [READ(G1)]);
+check('two groups looked at once are two narrations, not a race', settleFirstLooks([READ(G1), READ(G2)]), [
+  READ(G1),
+  READ(G2),
+]);
+// THE WHOLE POINT. Two reads of the SAME group is the shape the rule exists for, and it has to
+// survive its own relaxation.
+check('TWO first looks at the SAME group is the race, and stays', settleFirstLooks([READ(G1), READ(G1)]), []);
+check('the race is not forgiven by a third party being present', settleFirstLooks([READ(G1), READ(G1), READ(G2)]), [
+  READ(G2),
+]);
+// A count-based rule that swept up its neighbours would be worse than the noise it removes.
+check('it touches nothing else in the bucket', settleFirstLooks([OTHER]), []);
+check('a published=true read is not its business', settleFirstLooks([READ(G1).replace('published=false', 'published=true')]), []);
+// `devices=0` is load-bearing: a read reporting devices means somebody has already joined, which is
+// a different sentence and not this rule's to move.
+check('nor is a read that found devices', settleFirstLooks([READ(G1).replace('devices=0', 'devices=2')]), []);
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall good');
 process.exit(failures ? 1 : 0);

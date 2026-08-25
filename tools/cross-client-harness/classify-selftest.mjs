@@ -727,6 +727,43 @@ const CASES = [
     '[14:40:08] [GRAINE] salon 495b56cb of d4075a25: this device holds the distribution group but the group holds NO row for it (0 device(s) for this user) - the local group is stale, rejoining',
     'unexplained',
   ],
+  // THE TWO LINES COMM-18's FIFTH RUN DIRTIED A ROW WITH, and both dirtied it the same way: the
+  // PRODUCT re-worded a sentence and left the rule behind. That is the failure mode this whole file
+  // exists for, met twice in one run, so both spellings are pinned verbatim from that run.
+  [
+    'info',
+    '[GRAINE] community 47da4ca1 has no other member and no other device of ours to ask for history',
+    'benign',
+  ],
+  // AND THE WORDING IT REPLACED, PINNED AT `unexplained` ON PURPOSE. `e96bfa12` widened the sentence
+  // when the repair path learnt to ask another device of the same user, so only a STALE BUNDLE can
+  // still print the short form - and a stale bundle unproves every verdict the run it appears in
+  // took. Forgiving it would turn the loudest possible warning into routine.
+  ['info', '[GRAINE] community 47da4ca1 has no other member to ask for history', 'unexplained'],
+  // THE ANSWER TO A SEED REQUEST, WHICH NOW NAMES ITS DELIVERY CLASS. Both tails are routine here -
+  // what decides which is correct is `frameHandler.test.ts`, and this file's job is only that
+  // neither dirties a row. The declining variant is pinned beside them because the suffix follows an
+  // optional clause, which is the exact place a hand-written regex stops matching.
+  ['info', '[GRAINE] answered alice with 1 seed(s) as key material', 'benign'],
+  ['info', '[GRAINE] answered alice with 0 seed(s), declining 1 as transport', 'benign'],
+  // ...AND THE SUFFIX-LESS FORM, `unexplained` for the same reason as the short history line above:
+  // after 2026-08-25 only a client on an old bundle can print it, and on this campaign that is the
+  // single most important thing a log can tell us.
+  ['info', '[GRAINE] answered alice with 1 seed(s)', 'unexplained'],
+  // A PRIVATE SALON THE WALK DECLINED TO ENTER - `notable`, not `benign`: correct on a community
+  // holding salons this viewer may not read, and THE finding in any row about being let into one.
+  [
+    'log',
+    '[20:46:31] [GRAINE] private salon bea8c230 of 9b34e540 not entered: the server says this viewer has no access to it, so its GroupInfo would be refused',
+    'notable',
+  ],
+  // Its sibling tail, `unexplained` because it is a different claim: not "may not read this" but
+  // "could not have read anything". One sentence, two tails, two buckets - by design.
+  [
+    'log',
+    '[20:46:31] [GRAINE] private salon bea8c230 of 9b34e540 not entered: no MLS client on this load',
+    'unexplained',
+  ],
 ];
 
 let failures = 0;

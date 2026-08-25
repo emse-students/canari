@@ -102,7 +102,15 @@ for (const line of readFileSync(BOARD, 'utf8').split('\n')) {
   // verdict read alike. Knowing only the older set reported sixty-seven disagreements on the day
   // MSG, TYPE, READ, MUT and FWD were all green, which is the shape of an instrument fault: a
   // finding that large about a state just measured is about the instrument.
-  const w = /^`([A-Za-z-]+)`/.exec(cell);
+  // AND THE BOARD BOLDS SOME OF THEM. A cell may open `**`PASS`**` rather than `` `PASS` ``, which an
+  // anchor on the backtick alone cannot see: on 2026-08-25 that read seventeen answered rows - all of
+  // GRP and most of DEL - as `unstated`, and reported them as work the ledger had answered and the
+  // board had not. Same instrument-fault shape as the two vocabularies above, and found the same way:
+  // a gap that large about phases already known green is a gap in the reader.
+  // AND SOME CARRY THEIR COUNT INSIDE THE BACKTICKS - `` `PASS 1/1` `` - so the word is not the whole
+  // of the code span either. Both are read the same way: the FIRST word of the first code span,
+  // whatever follows it in there.
+  const w = /^\*{0,2}`([A-Za-z-]+)[^`]*`/.exec(cell);
   boardState.set(m[1], w ? CLAIM[w[1]] || 'unstated' : 'unstated');
 }
 const known = new Set(rows);

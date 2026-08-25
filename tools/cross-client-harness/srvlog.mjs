@@ -640,6 +640,13 @@ const NOTABLE = [
   // read a group. `devices=` counts the devices brought in with them, and zero is the shape worth
   // waiting for: a join that admitted nobody.
   /\[InvitationsController\] \[GROUP_INVITE\] accepted group=\S+ user=\S+ devices=\d+/,
+  // A KEY-DISTRIBUTION GROUP COMING INTO EXISTENCE, once per community or salon by construction.
+  // `notable` rather than `benign` for the reason every line in this list is: a check that creates a
+  // community produces exactly one and it is narration, while a check that creates NONE and prints
+  // this has had a scope built under it, which is the finding. Its siblings - `published`,
+  // `group-info`, `deleted` - are already here; this was the one spelling with no rule at all, and
+  // it sat in `unexplained` through all six COMM-18 runs.
+  /\[InternalController\] \[DISTRIBUTION_GROUP\] created scope=(?:workspace|channel):\S+ group=\S+/,
   // A DEVICE REFUSED ADDRESSABILITY - the opposite outcome to the BENIGN line it shares a tag with.
   // It carries `reason=`, and it means a device that believes it joined will not be routed to.
   /\[MessagingService\] \[MEMBERSHIP_ACTIVE\] REFUSED group=\S+ device=\S+ reason=/,
@@ -915,6 +922,46 @@ function linesOf(service, since) {
  * @param {string[]} [opts.subjects] campaign user-id prefixes; omit to leave the window unpartitioned
  * @returns {{clean: boolean, since: string} & Record<string, object>}
  */
+/**
+ * The `published=false devices=0` reads that are NARRATION rather than the concurrent-join race.
+ *
+ * THE PREDICATE THAT NAMED THE LAST INCIDENT IS NOT THE PREDICATE THAT NAMES THE NEXT ONE, and this
+ * is where that gets fixed rather than argued about. A read answering `published=false devices=0` is
+ * deliberately NOT in `BENIGN` - see the comment on its `published=true` sibling - because it is the
+ * exact shape that found the concurrent-join race, where two callers both read an unpublished group
+ * and both go on to create it.
+ *
+ * But THE RACE IS A PAIR. One such read is the ordinary first look at a group nobody has joined yet,
+ * which every check that creates a community produces exactly once. So the per-line rule was
+ * reporting the whole population in order to catch the outlier, and COMM-18 carried it as server
+ * dirt across all six of its runs.
+ *
+ * The COUNT decides, per group: exactly one first look is narration and belongs in `notable`, where
+ * it stays visible and breaks nothing; two or more for the SAME group stay where the rule put them,
+ * which is what it was written for. Nothing it caught is forgiven, and the noise it also caught is
+ * gone.
+ *
+ * SEPARATE FROM `srvReport` ON PURPOSE. That function reaches production and cannot be the thing
+ * under test, which is the whole argument of `srvclassify-selftest.mjs`; a count-based rule buried
+ * inside it would be the one rule in this file nothing could pin.
+ *
+ * @param {string[]} unexplained the bucket as the per-line rules left it
+ * @returns {string[]} the lines to move to `notable` - singletons only, in input order
+ */
+export function settleFirstLooks(unexplained) {
+  const FIRST_LOOK =
+    /\[DISTRIBUTION_GROUP\] read scope=(?:workspace|channel):\S+ group=(\S+) published=false user=\S+ devices=0/;
+  const seen = new Map();
+  for (const l of unexplained) {
+    const m = FIRST_LOOK.exec(l);
+    if (m) seen.set(m[1], (seen.get(m[1]) ?? 0) + 1);
+  }
+  return unexplained.filter((l) => {
+    const m = FIRST_LOOK.exec(l);
+    return !!m && seen.get(m[1]) === 1;
+  });
+}
+
 export function srvReport(since = '10m', { raw = false, shapes = false, subjects = [] } = {}) {
 const result = {};
 let clean = true;
@@ -1023,6 +1070,11 @@ for (const service of SERVICES) {
       !warnings.includes(l) &&
       !notable.includes(l)
   );
+
+  // A group's FIRST LOOK is narration; a SECOND one is the race. See `settleFirstLooks`.
+  for (const l of settleFirstLooks(unexplained)) {
+    notable.push(...unexplained.splice(unexplained.indexOf(l), 1));
+  }
 
   const ok = severe.length === 0 && errors.length === 0 && unexplained.length === 0;
   clean &&= ok;

@@ -94,7 +94,17 @@ const BENIGN = [
   /^(Channel|Community) deleted\.$/,
   /^\[GRAINE\] left \d+ distribution group\(s\) of community /,
   /^\[GRAINE\] community \S+ forgotten - \d+ seed\(s\)/,
-  /^\[GRAINE\] community \S+ has no other member to ask for history/,
+  // WIDENED 2026-08-25, and the reason is a rule of this repo: the PRODUCT re-worded this line when
+  // `e96bfa12` taught the repair path to ask another device of the same user, so the rule stopped
+  // matching the sentence it was written for and a benign line landed in `unexplained` on COMM-18's
+  // fifth run. A classifier keyed on prose is keyed on something the product may edit; the mitigation
+  // is that every spelling this list depends on is pinned in `classify-selftest.mjs`.
+  //
+  // MATCHED AS THE PRODUCT SPELLS IT TODAY, not as a pattern tolerant of both. The old wording no
+  // longer exists in the source, so accepting it would be tolerance for a line only a STALE BUNDLE
+  // can produce - and on this campaign a stale bundle unproves every verdict a run takes, so it must
+  // surface as `unexplained` rather than be forgiven.
+  /^\[GRAINE\] community \S+ has no other member and no other device of ours to ask for history/,
   // AND WHAT A JOIN CORRECTLY SAYS, which COMM-2 needed. Three lines, one per layer, all on the
   // path of somebody accepting an invitation:
   //
@@ -122,7 +132,12 @@ const BENIGN = [
   // how COMM-12 found the twentieth defect: a community set to `joined` refused the history bundle
   // in one line and answered the same past, seed by seed, in the next.
   /^\[GRAINE\] asked \S+ for \d+ seed\(s\) in community [0-9a-f]+$/,
-  /^\[GRAINE\] answered \S+ with \d+ seed\(s\)(, declining \d+)?$/,
+  // The suffix is not optional and is not a wildcard: the answer now NAMES the delivery class it
+  // used, because a run log that omits it cannot tell a drop from a silence, and the whole COMM-18
+  // defect was an answer sent on the presence-gated class. Matching both spellings here keeps the
+  // line out of `unexplained`; what pins the CHOICE is `frameHandler.test.ts`, and COMM-18 asserts
+  // the seed-bearing one end to end.
+  /^\[GRAINE\] answered \S+ with \d+ seed\(s\)(, declining \d+)? as (key material|transport)$/,
   // THE THIRD SIDE OF THAT EXCHANGE, added 2026-08-20 because it was missing from the product.
   // `asked` and `answered` were both audible and the ABSORB was not, so a repair that worked and a
   // repair whose seeds were all refused produced identical logs - COMM-8 found it by asserting a
@@ -703,6 +718,23 @@ const NOTABLE = [
   // member lose a real salon and the line went straight back to `unexplained`, one commit after
   // this entry was added to stop exactly that. The quiet sibling in BENIGN has used `.+` all along.
   /^\[GRAINE\] (community|salon) .+: \d+ member\(s\) left but still hold a leaf - removing/,
+  // A PRIVATE SALON THE VIEWER MAY NOT READ, SKIPPED RATHER THAN ATTEMPTED. Correct and necessary:
+  // entering would publish a GroupInfo the server refuses, so the walk declines instead of learning
+  // by failing what the access list already told it. It sat in `unexplained` on COMM-18's fifth run,
+  // where W1 walks a campaign community holding private salons from earlier rows.
+  //
+  // `NOTABLE`, DELIBERATELY, AND NOT `BENIGN`. In a check whose whole subject is being let into a
+  // private salon - COMM-22, COMM-23, every regrant row - this exact line naming the salon under
+  // test IS the finding, and a rule that filed it as routine would have hidden WP-REGRANT-1 twice
+  // over. So it is never `clean`-breaking and never silent, and its reader is expected to compare
+  // the salon it names against the one the check is about.
+  //
+  // ITS SIBLING BRANCH IS DELIBERATELY NOT MATCHED. The same line ends `no MLS client on this load`
+  // when the walk ran without one, and that is a different fact entirely - not "may not read this"
+  // but "could not have read anything" - so it belongs in `unexplained` where a walk that decided
+  // nothing belongs. The product prints one sentence with two tails precisely so the two cannot be
+  // confused, and a rule stopping at the shared prefix would undo that.
+  /^\[GRAINE\] private salon [0-9a-f]{8} of [0-9a-f]{8} not entered: the server says this viewer has no access to it/,
   // A COMMIT BEING APPLIED - the group's membership moved, which is the one thing this campaign
   // watches hardest. `[QUEUE] Processing message` is routine and sits in BENIGN; a Commit is not the
   // same claim and must never share its rule. Never `clean`-breaking, because a join or a departure
