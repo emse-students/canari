@@ -149,6 +149,35 @@ which is also where every release up to and including v0.13.1 now lives.
   nothing - no spec, no frontend test, no board row - watches them.
 
 ### Fixed
+- **A second device of your own could never obtain a seed your first device had minted, so its
+  messages stayed permanently unreadable.** The Graine repair path - the mechanism a device uses
+  when it meets a message whose session it holds no seed for - excluded the asking user by name, on
+  the reasoning that "a request addressed to us reaches only us, who are asking precisely because we
+  do not hold it". That reads a USER as a DEVICE. A request carries an `answererUserId`, the frame
+  handler matches it against the reader's user id, and MLS never hands a sender its own message
+  back: addressed to ourselves it reaches our OTHER devices and nobody else - which is exactly where
+  the seed is when our own laptop minted it. Both halves of the repair had the same hole
+  (`resolveAnswerer` for a named session, `requestCommunityHistory` for a joiner's catch-up, whose
+  "no other member to ask for history" was reached for any community whose only member is you), so a
+  community you are alone in had no candidate answerer at all and a newly installed device read
+  nothing in it, for ever.
+
+  Measured on production 2026-08-25 by COMM-18: a phone cold-started into a community its own owner
+  had just created, landed in the right salon, and rendered zero messages - the message on the
+  server, `seeds: {held: 0, received: 0}` on the phone, `no reachable holder` in its log, and the
+  laptop that held the seed online in the same distribution group. Nothing was wrong with the deep
+  link, the landing or the rendering; the seed simply had no route, because MLS forward secrecy
+  correctly denies a device that joined at a later epoch the frames of an earlier one, and repair is
+  the only route there is.
+
+  We are now a candidate answerer whenever another device of ours is on the distribution group -
+  FIRST when one of them minted the session, LAST when a named member might hold it, because a
+  device that merely happened to be online is a weaker guess than any member. The fact comes from
+  the server's `memberDevices`, which answers exactly this question and is the only authority on it;
+  the read fails OPEN, like the sibling bandwidth decision it sits next to, since a wasted frame
+  costs one transport message and refusing to ask costs a message nobody can ever open. The walk
+  still terminates on a proof: a decline is recorded per user id, so our own devices are a finite
+  candidate like any other, and the give-up line now says WHICH exhaustion it is.
 
 - **ONE SERVER ROW WAS DECRYPTED TWICE AND THE SECOND DECRYPT SPENT A SECRET ALREADY CONSUMED.** A
   frame reaches the client by two independent channels - the live WebSocket pushes it, and

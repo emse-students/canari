@@ -347,12 +347,34 @@ that later runs then measure - and cannot tell from real traffic. Clearing it is
 ladder, after CORRUPT's rollback.
 
 **IT IS ALSO THE FIRST STEP, because debris does not merely get measured - it BREAKS the instrument.**
-Most checks build a salon inside the shared `Campagne de test` venue, which is never deleted, so a
+Most checks build a salon inside the shared `Campagne de test` venue, which no runner deletes, so a
 crashed runner's salon stays for ever. Measured 2026-08-21: 25 salons in that one community, 23 of
 them debris, and at that length the community's own "add a channel" control sat at y=1149 in a
 944-tall viewport - below the fold and unclickable. COMM-14 failed on it. The check could not build
 its venue, in a community whose only problem was the debris of the checks before it. So `cleanup.mjs`
 owns BOTH estates now, salons first, and it runs before the ladder as well as after it.
+
+**AND THE VENUE ITSELF IS NOT PERMANENT - it is a FIXTURE, so it is asserted rather than assumed.**
+It went missing twice on 2026-08-25, and both times the estate had been cleared by hand by the user
+(*"Ah oui, j'ai tout supprime"*) - a legitimate action on their own production data, and one no
+runner can be made to survive by being more careful. What made the two occasions different is all
+that matters here:
+
+- The FIRST time nothing asserted it. Rung 9 discovered it one row at a time - COMM-5, COMM-8,
+  COMM-9/10, COMM-14, COMM-25 came back `VACUOUS` and COMM-23/24 `FAIL`, seven rows and a full cycle
+  each, every one of them reporting "the community was never listed", which reads like a sidebar
+  defect and was a missing fixture. Then it cost an afternoon of attribution: the culprit could not be
+  found because the only log window covering the gesture had been destroyed by a deploy.
+- The SECOND time, fourteen minutes after `venue.mjs --dry` had reported the fixture whole, the
+  preflight refused the run outright and named the command that rebuilds it. Cost: one line of
+  output, and the run started three minutes later.
+
+So the rule is not "do not delete the venue" - it is that **`run.mjs`'s preflight reads
+`channel_workspaces`, `channels` and `channel_members` before every phase**, and `venue.mjs` rebuilds
+what is owed, idempotently, through the product and never through the database (a community inserted
+as rows carries no key-distribution group, and every check posting into it would then be measuring a
+venue no real gesture could have produced). Neither has a destructive path at all, so neither needs an
+allowlist; the estate's destructive half stays in `cleanup.mjs`.
 
 Its allowlist for salons is enumerated from what the runners mint - `c<n>-comm<n>-<mark>`, plus
 COMM-12's `c12-<arm>-comm12-<mark>` - and a name outside that shape is listed for a human rather than

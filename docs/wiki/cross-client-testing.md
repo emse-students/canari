@@ -228,8 +228,12 @@ twenty-five checks, and the count in its own comment is what makes an omission v
 were rewritten on 2026-08-20 is in
 [cross-client-campaign](cross-client-campaign.md#rows-that-named-a-mechanism-the-product-does-not-have).
 
-**Two have never run on production**: COMM-14 needs real push, and COMM-18 kills the app and follows
-a link into a cold start.
+**One has never run on production**: COMM-14, which needs real push. **COMM-18 ran three times on
+2026-08-25 and its FAIL is the product's**: the cold start, the deep link, the landing and the salon
+all worked, and the phone rendered nothing because no seed could reach it - the repair path excluded
+the asking user by name, so a device could not ask its OWN other device for a seed that device had
+minted. Fixed the same day (`CHANGELOG.md`); the row can only turn green on a REBUILT APK, since the
+fix is client code and A1 carries its own build.
 
 **Twenty-one rows read `pending` while the ledger holds a verdict for them** - twelve cannot be
 believed as they stand (ten name no runner, eight no build, two were taken by a runner since
@@ -254,12 +258,11 @@ rewritten), and the cells are written ONCE, at rung 9, from verdicts carrying bo
 | COMM-15 | Polls: create, vote, close; auto-pinned | `W1 W2` | `pending` |
 | COMM-16 | Delete a channel, then a community by typing its name: the rows are really gone and the slug is free again | `W1 W2` | `pending` |
 | COMM-17 | Reorder communities by drag and drop; survives a reload, reaches the other device | `+A1` | `PASS` 1/1 - A1 `67d40e3a` |
-| COMM-18 | Deep link into a channel from a cold start | `+A1` | `pending` |
+| COMM-18 | Deep link into a channel from a cold start | `+A1` | `FAIL` - the landing works; no seed could reach the phone. Cause fixed 2026-08-25, owed a rebuilt APK and one re-run |
 | COMM-19 | The last admin tries to leave: refused, unless they are the last MEMBER, which deletes the community | `W1 W2` | `pending` |
 | COMM-20 | Two admins change the same role at the same moment | `W1 W2` | `pending` |
 | COMM-21 | A member is removed while composing a message in that salon | `W1 W2` | `pending` |
 | COMM-22 | A salon carrying many Graine sessions: time the first render, and the repair when one seed is missing | `W1 W2` | `PASS-DIRTY` - `f9e17e49`. One dirt line on both clients: a distribution group read as stale and rejoined on first open - under investigation |
-
 | COMM-23 | Public -> private: a group is minted, and a reader outside `allowedUsers` stops being routed | `W1 W2` | `pending` |
 | COMM-24 | Private -> public: the salon's group is tombstoned and the community's carries it again | `W1 W2` | `pending` |
 | COMM-25 | An admin's SECOND device receives the salon's seeds after the join, without a second join | `W1 A1` | `pending` |

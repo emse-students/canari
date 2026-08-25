@@ -1,7 +1,11 @@
 import { canari } from '$lib/proto/canari';
 import { encodeAppMessage, mkGraineRequest } from '$lib/proto/codec';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
-import { workspaceScope } from '$lib/mls-client/distributionScope';
+import {
+  type DistributionScope,
+  scopeLabel,
+  workspaceScope,
+} from '$lib/mls-client/distributionScope';
 import { ChannelService } from '$lib/services/ChannelService';
 import { requireGraineRuntime, scopeForChannel } from './runtime';
 import { historyFloorFor, withinHistoryFloor } from './historyBoundary';
@@ -161,6 +165,8 @@ interface RepairTargets {
   groupId: string;
   /** Who is in the community, lower-cased - the population an answerer is chosen from. */
   roster: Set<string>;
+  /** Whether another device of OURS sits on the group - see {@link ownDevicesOnTheGroup}. */
+  ownOtherDevices: boolean;
 }
 
 /** Resolves the community, the group carrying the salon's seeds, and the roster to ask. */
@@ -179,14 +185,68 @@ async function resolveRepairTargets(channelId: string): Promise<RepairTargets> {
   const members = (await channels().listMembers(channelId, memberScope)).map((m) =>
     String(m.userId).toLowerCase()
   );
-  return { workspaceId, groupId, roster: new Set(members) };
+  return {
+    workspaceId,
+    groupId,
+    roster: new Set(members),
+    ownOtherDevices: await ownDevicesOnTheGroup(scope),
+  };
+}
+
+/**
+ * Whether another DEVICE of ours sits on this scope's distribution group.
+ *
+ * THE ONE FACT THAT MAKES US A CANDIDATE ANSWERER, and the reason a request addressed to our own
+ * user id is not the round trip that answers nothing {@link resolveAnswerer} used to call it. A
+ * request names a USER (`frameHandler` compares `answererUserId` against the reader's user id, never
+ * against a device), and MLS never hands a sender its own message back - so a request we address to
+ * ourselves reaches every OTHER device of ours and only them. When the seed was minted by one of
+ * them, that is the surest holder in the whole roster.
+ *
+ * Measured on production 2026-08-25 (COMM-18): a phone that cold-started into a community whose only
+ * member was its own user met one unreadable message, asked nobody, and stayed blank for ever -
+ * `no other member to ask for history`, then `no reachable holder`, while the laptop that had
+ * minted the seed sat online in the same group.
+ *
+ * **The server is the only authority, and it answers exactly this question.** `memberDevices` is
+ * which of THIS user's devices the group holds a membership row for; a client knows only that it
+ * once joined. Delivery rows are not MLS leaves, so a row can outlive the ability to answer - which
+ * is why this decides whether to ASK and never what to conclude from silence.
+ *
+ * **Fail-OPEN, like {@link withheldFromUs} and for the same reason:** this is a bandwidth decision,
+ * not an entitlement one. A wasted frame costs one transport message; refusing to ask because a read
+ * failed costs a message nobody can ever open. Every branch says which it took.
+ */
+async function ownDevicesOnTheGroup(scope: DistributionScope): Promise<boolean> {
+  const { mlsService } = requireGraineRuntime('cannot tell our own devices apart');
+  let devices: string[] | undefined;
+  try {
+    devices = (await channels().getDistributionGroup(scope)).memberDevices;
+  } catch (e) {
+    console.warn(
+      `[GRAINE] could not read our own devices on the distribution group of ${scopeLabel(scope)} ` +
+        `(${e instanceof Error ? e.message : String(e)}) - asking ourselves anyway rather than ` +
+        `stranding a seed`
+    );
+    return true;
+  }
+  if (!Array.isArray(devices)) {
+    // An older delivery service, or a read that did not name the reader. `undefined` is "the
+    // question was never put", never "no devices" - so it may not be read as a negative answer.
+    console.info(
+      `[GRAINE] the server named no devices of ours on the distribution group of ${scopeLabel(scope)} - ` +
+        `treating our other devices as reachable`
+    );
+    return true;
+  }
+  return devices.some((deviceId) => deviceId !== mlsService.getDeviceId());
 }
 
 /** Sends one request per answerer for `sessions` of `channelId`. */
 async function requestSeedsForChannel(
   channelId: string,
   sessions: Map<string, MissingSeed>,
-  { workspaceId, groupId, roster }: RepairTargets
+  { workspaceId, groupId, roster, ownOtherDevices }: RepairTargets
 ): Promise<void> {
   const { mlsService, userId } = requireGraineRuntime('cannot ask for a missing seed');
 
@@ -213,7 +273,13 @@ async function requestSeedsForChannel(
   // missing session.
   const byAnswerer = new Map<string, string[]>();
   for (const [sessionId, { senderId }] of sessions) {
-    const answerer = resolveAnswerer(senderId, roster, userId, declined.get(sessionId));
+    const answerer = resolveAnswerer(
+      senderId,
+      roster,
+      userId,
+      declined.get(sessionId),
+      ownOtherDevices
+    );
     if (!answerer) {
       // The roster is exhausted: everyone who could have held it has been asked and has said no.
       // That is the walk TERMINATING on a proof, so the want is dropped rather than left to be
@@ -221,7 +287,11 @@ async function requestSeedsForChannel(
       // message every time the salon is opened.
       console.warn(
         `[GRAINE] session ${sessionId} of channel ${channelId.slice(0, 8)} has no reachable holder - ` +
-          `its sender ${senderId} is gone or does not hold it, and every other member has declined`
+          `its sender ${senderId} is gone or does not hold it, and every other member has declined` +
+          // WHICH EXHAUSTION THIS IS. "Nobody left to ask" and "we have no second device and the
+          // community has no second member" are different situations with the same silence, and only
+          // the first is the walk terminating on a proof.
+          (ownOtherDevices ? ', our own other device(s) included' : ' (we have no other device)')
       );
       wants.delete(sessionId);
       declined.delete(sessionId);
@@ -298,9 +368,19 @@ async function withheldFromUs(
  * talking to any other - so it is the lowest id, which is a total order every device already has.
  * No clock, no election, nothing for a race to decide.
  *
- * **Never ourselves.** The sender of a session can be this very user - another device of theirs
- * minted it - and a request addressed to us reaches only us, who are asking precisely because we do
- * not hold it. It would cost a round trip and answer nothing.
+ * **OURSELVES, BUT ONLY WITH ANOTHER DEVICE TO REACH.** The sender of a session is very often this
+ * very user - another device of theirs minted it - and this used to exclude them by name, on the
+ * reasoning that "a request addressed to us reaches only us, who are asking precisely because we do
+ * not hold it". That reads a USER as a DEVICE. A request names a user id, `frameHandler` matches it
+ * against the reader's user id, and MLS never hands a sender its own message back: addressed to
+ * ourselves it reaches our OTHER devices and nobody else. The exclusion therefore skipped the one
+ * holder it could name with certainty, and a person whose community has no second MEMBER had no
+ * candidate at all - measured on production 2026-08-25, a phone left permanently unable to read a
+ * message its owner's laptop had just sent (COMM-18).
+ *
+ * So we are a candidate exactly when {@link ownDevicesOnTheGroup} says there is another device of
+ * ours to reach - FIRST when one of them minted the session, LAST otherwise, because a device that
+ * merely happened to be online is a weaker guess than any named member.
  *
  * **Never someone who has said no.** Determinism is what makes the choice safe and is also what
  * would make it a dead end: a member elected by the rule but holding nothing would be elected again
@@ -309,19 +389,26 @@ async function withheldFromUs(
  *
  * @param senderId Who minted the session; the first candidate whenever they are still a member.
  * @param roster Community members, lower-cased.
- * @param self This user, never a candidate.
+ * @param self This user - a candidate only through another device, see above.
  * @param tried Members who have already answered that they do not hold it.
+ * @param ownOtherDevices Whether another device of ours is on the group to receive the request.
  */
 export function resolveAnswerer(
   senderId: string,
   roster: Set<string>,
   self: string,
-  tried?: ReadonlySet<string>
+  tried?: ReadonlySet<string>,
+  ownOtherDevices = false
 ): string | null {
   const sender = senderId.toLowerCase();
   const me = self.toLowerCase();
-  if (sender !== me && roster.has(sender) && !tried?.has(sender)) return sender;
-  return lowestOtherMember(roster, me, tried);
+  const reachable = (id: string) => (id === me ? ownOtherDevices : true) && !tried?.has(id);
+  if (roster.has(sender) && reachable(sender)) return sender;
+  const other = lowestOtherMember(roster, me, tried);
+  if (other) return other;
+  // Every named member is exhausted. One of our own devices may still have been online when the
+  // seed went out, and asking is the difference between one frame and a message nobody can open.
+  return reachable(me) ? me : null;
 }
 
 /**
@@ -364,13 +451,19 @@ export async function requestCommunityHistory(workspaceId: string): Promise<void
   const roster = new Set(
     (await channels().listWorkspaceMembers(workspaceId)).map((m) => String(m.userId).toLowerCase())
   );
-  const answerer = lowestOtherMember(roster, userId);
+  // OUR OWN OTHER DEVICES ARE MEMBERS TOO. A community whose only MEMBER is us is not a community
+  // with nobody to ask: the seeds are held by whichever device of ours minted them, and that device
+  // is on this very group. Read as "nothing to ask for", this line was the whole of COMM-18's
+  // failure on 2026-08-25 - a phone that had just joined a solo community, sitting in front of a
+  // message its owner's laptop held the seed for, having asked no one.
+  const answerer =
+    lowestOtherMember(roster, userId) ?? ((await ownDevicesOnTheGroup(scope)) ? userId : null);
   if (!answerer) {
-    // A community whose only member is us. Nothing to ask for and nobody to ask; said once rather
-    // than retried on every load.
+    // Genuinely nobody: no second member, and no second device of ours on the group. Said once
+    // rather than retried on every load.
     historyAsked.add(workspaceId);
     console.info(
-      `[GRAINE] community ${workspaceId.slice(0, 8)} has no other member to ask for history`
+      `[GRAINE] community ${workspaceId.slice(0, 8)} has no other member and no other device of ours to ask for history`
     );
     return;
   }

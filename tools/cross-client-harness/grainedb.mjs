@@ -16,6 +16,7 @@
  * IDS, NOT NAMES. The salon is named by its uuid because that is what every table joins on; the
  * caller gets it from `channelIdOf`, which is the one place a display name is turned into one.
  */
+import { pollFact } from './chat.mjs';
 import { psql } from './ssh.mjs';
 
 /** Splits psql's tuples-only output into rows of fields, dropping the trailing blank line. */
@@ -95,6 +96,42 @@ export function salonDistribution(channelId) {
     allowedUsers: allowed ? allowed.split(',') : [],
     devices,
   };
+}
+
+/**
+ * Waits until a user's devices either HOLD or do not hold delivery rows on a salon's own group.
+ *
+ * THE DELIVERY ROSTER IS THE POST-CONDITION OF EVERY MEMBERSHIP GESTURE, and it is the only thing
+ * that is: a grant is entitlement and a revoke is an intention, while `dm_device_group_memberships`
+ * is what a seed frame is actually fanned out to. Polling it turns each gesture into an assertion -
+ * a gesture that carries on without the roster having moved is one that mints no session, and a
+ * sleep in this place could not tell that apart from a slow one.
+ *
+ * IT DOES NOT MATTER WHOSE MEMBERSHIP IT IS, which is why this is not the peer's helper it started
+ * as. THE MEMBER COMMITS ITS OWN ADD, so the gesture that moves the roster is that member LOADING
+ * the salon - as true of the owner granting itself on a flip to private (COMM-23) as of a peer being
+ * granted (COMM-22). Neither caller may assume the grant alone did anything.
+ *
+ * A DEADLINE IS A RESULT, NEVER A THROW, per `pollFact`: only the caller knows whether a roster that
+ * never settled is the product's answer or its own missing gesture.
+ *
+ * @param {string} channelId the salon
+ * @param {string} userId whose devices to look for; matched case-insensitively
+ * @param {boolean} wanted whether they should be on the roster by the end
+ * @returns {Promise<{ok: boolean, elapsedMs: number, dist: ReturnType<typeof salonDistribution>}>}
+ */
+export async function awaitUserRouting(channelId, userId, wanted, timeoutMs = 60_000) {
+  if (!channelId || !userId) throw new Error('awaitUserRouting needs a salon and a user');
+  const mine = userId.toLowerCase();
+  let dist = null;
+  const outcome = await pollFact(
+    () => {
+      dist = salonDistribution(channelId);
+      return (dist?.devices ?? []).some((d) => d.userId.toLowerCase() === mine) === wanted;
+    },
+    { timeoutMs, everyMs: 2000 }
+  );
+  return { ok: outcome.ok, elapsedMs: outcome.elapsedMs, dist };
 }
 
 /**

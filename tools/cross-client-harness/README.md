@@ -373,6 +373,14 @@ run.
   - **`--target aarch64` is not needed and its absence is not a warning to fix.** A full build prints
     "There are no .so files available to package in the APK for armeabi-v7a, x86, x86_64" and
     packages arm64 alone, which is what the Pixel 6a runs. Measured 2026-08-24 on v0.14.4.
+- **A DEPLOY CANNOT REACH AN APK.** `frontendDist` is `../build`, so the phone keeps whatever was
+  installed on it and drifts from the fleet the moment anything ships. That is why a verdict carries
+  `a1Build` beside `build`: a phase that arms the phone stamps EVERY row by construction, because the
+  preflight reads the phone once and hands it down through `CANARI_A1_BUILD`, and a phase with no
+  phone carries no stamp. **A row whose question is not skew needs the APK rebuilt and installed
+  first**; a row that WANTS an old client against a new server arms itself by not rebuilding.
+- **A phone `offline` in adb is a HUMAN action, and no `adb reconnect` clears it.** The screen has to
+  be unlocked and the authorisation prompt accepted on the device itself.
 - A fresh install is a NEW PROCESS, so the old devtools forward is dead and `pin.mjs --device A1`
   alone reports `ECONNREFUSED`. `node run.mjs --preflight A1` forwards, foregrounds, sends the app to
   `/chat` (the PIN gate does not mount on `/posts`) and unlocks - use it rather than the pieces.

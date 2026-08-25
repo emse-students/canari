@@ -77,6 +77,7 @@ import {
   setHistoryVisibility,
 } from './comm.mjs';
 import {
+  awaitUserRouting,
   channelIdOf,
   channelSessions,
   messageCount,
@@ -173,20 +174,17 @@ async function openSalon(cx, timeoutMs = 30_000) {
  */
 async function awaitPeerRouting(wanted, timeoutMs = 60_000) {
   if (!channelId || !peerId) throw new Error('awaitPeerRouting needs the salon and the peer');
-  const deadline = Date.now() + timeoutMs;
-  const mine = peerId.toLowerCase();
-  for (;;) {
-    const dist = salonDistribution(channelId);
-    const on = (dist?.devices ?? []).some((d) => d.userId.toLowerCase() === mine);
-    if (on === wanted) return dist?.epoch ?? null;
-    if (Date.now() > deadline) {
-      throw new Error(
-        `the peer is ${on ? 'still' : 'not'} on the salon's delivery roster after ${timeoutMs} ms ` +
-          `(wanted ${wanted ? 'on' : 'off'}, epoch ${dist?.epoch ?? '?'}, ${dist?.devices?.length ?? 0} device rows)`
-      );
-    }
-    await sleep(2000);
+  const { ok, dist } = await awaitUserRouting(channelId, peerId, wanted, timeoutMs);
+  // A ROSTER THAT NEVER SETTLED IS THIS CHECK'S FAILURE, so the shared helper's result becomes a
+  // throw HERE: every call site in the churn below is a gesture whose post-condition this is, and a
+  // cycle carrying on without it would measure the wrong session.
+  if (!ok) {
+    throw new Error(
+      `the peer is ${wanted ? 'not' : 'still'} on the salon's delivery roster after ${timeoutMs} ms ` +
+        `(wanted ${wanted ? 'on' : 'off'}, epoch ${dist?.epoch ?? '?'}, ${dist?.devices?.length ?? 0} device rows)`
+    );
   }
+  return dist?.epoch ?? null;
 }
 
 /**

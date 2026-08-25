@@ -28,6 +28,7 @@ const SENT_AT = Date.parse('2026-08-20T12:00:00Z');
 
 const listMembers = vi.fn();
 const listWorkspaceMembers = vi.fn();
+const getDistributionGroup = vi.fn();
 vi.mock('$lib/services/ChannelService', () => ({
   ChannelService: class {
     listMembers(...args: unknown[]) {
@@ -36,12 +37,23 @@ vi.mock('$lib/services/ChannelService', () => ({
     listWorkspaceMembers(...args: unknown[]) {
       return listWorkspaceMembers(...args);
     }
+    getDistributionGroup(...args: unknown[]) {
+      return getDistributionGroup(...args);
+    }
   },
 }));
 
 let sendMessage: ReturnType<typeof vi.fn>;
 /** What the fake store answers for the community - empty means "this device has no history". */
 let heldSessions: StoredGraineSession[];
+/**
+ * Which of OUR devices the group holds a row for, as the server would answer it.
+ *
+ * Defaults to this device alone, which is the state in which we are not a candidate answerer - so
+ * every test that is not about our own devices keeps asking exactly what it asked before, and a test
+ * that IS about them says so by naming a second one.
+ */
+let ownDevices: string[];
 
 beforeEach(() => {
   resetGraineRepairState();
@@ -49,6 +61,13 @@ beforeEach(() => {
   listMembers.mockResolvedValue(roster);
   listWorkspaceMembers.mockResolvedValue(roster);
   heldSessions = [];
+  ownDevices = ['device-1'];
+  getDistributionGroup.mockImplementation(async () => ({
+    groupId: 'dist-group',
+    groupInfo: null,
+    baseEpoch: null,
+    memberDevices: ownDevices,
+  }));
   sendMessage = vi.fn().mockResolvedValue(undefined);
   setGraineRuntime({
     storage: {
@@ -59,6 +78,7 @@ beforeEach(() => {
     mlsService: {
       sendMessage,
       distributionGroupFor: () => 'dist-group',
+      getDeviceId: () => 'device-1',
     } as never,
   });
   registerChannelWorkspace('chan-1', 'ws-1', false);
@@ -90,6 +110,22 @@ describe('noteMissingSeed', () => {
     expect(request?.answererUserId).toBe('bob');
     expect(request?.sessionIds).toEqual(['sess-1']);
     expect(request?.kind).toBe(canari.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS);
+  });
+
+  it('asks our own other device for a seed our own other device minted', async () => {
+    // THE WHOLE OF COMM-18, END TO END: a salon in a community whose only member is us, one message
+    // sent by our laptop, met by a phone that holds no seed for it. Before 2026-08-25 this asked
+    // nobody at all and the message stayed unreadable for good.
+    listMembers.mockResolvedValue([{ userId: 'alice' }]);
+    ownDevices = ['device-1', 'device-2'];
+
+    noteMissingSeed('chan-1', 'sess-1', 'alice', SENT_AT);
+    await settle();
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const request = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineRequest;
+    expect(request?.answererUserId).toBe('alice');
+    expect(request?.sessionIds).toEqual(['sess-1']);
   });
 
   it('never asks for the same session twice', async () => {
@@ -185,13 +221,31 @@ describe('requestCommunityHistory (WP-34)', () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  it("says so rather than asking when we are the community's only member", async () => {
+  it("asks our own other device when we are the community's only member", async () => {
+    // COMM-18, 2026-08-25: a phone cold-started into a solo community, met one unreadable message
+    // and asked nobody, while the laptop holding the seed sat online in the same group. A community
+    // with no second MEMBER still has a second DEVICE, and a request names a user - so it reaches
+    // our other devices and only them.
+    listMembers.mockResolvedValue([{ userId: 'alice' }]);
+    listWorkspaceMembers.mockResolvedValue([{ userId: 'alice' }]);
+    ownDevices = ['device-1', 'device-2'];
+
+    await requestCommunityHistory('ws-1');
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(decodeAppMessage(sendMessage.mock.calls[0][1])?.graineRequest?.answererUserId).toBe(
+      'alice'
+    );
+  });
+
+  it('says so rather than asking when we are alone with a single device', async () => {
     listMembers.mockResolvedValue([{ userId: 'alice' }]);
     listWorkspaceMembers.mockResolvedValue([{ userId: 'alice' }]);
     const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
 
     await requestCommunityHistory('ws-1');
 
+    // Nobody to ask and nothing to ask for: the only case where silence is the right answer.
     expect(sendMessage).not.toHaveBeenCalled();
     expect(info).toHaveBeenCalled();
     info.mockRestore();
@@ -208,16 +262,36 @@ describe('resolveAnswerer', () => {
     expect(resolveAnswerer('dave', new Set(['carol', 'alice', 'bob']), 'zoe')).toBe('alice');
   });
 
-  it('never addresses ourselves, even when the session was minted by our own other device', () => {
-    // A request reaches only the member it names. Naming ourselves costs a round trip and answers
-    // nothing: we are asking precisely because this device does not hold the seed.
+  it('does not address ourselves with no second device to reach', () => {
+    // A request reaches the USER it names, so naming ourselves reaches our other devices - and with
+    // none, only the device that is asking precisely because it does not hold the seed.
     expect(resolveAnswerer('alice', new Set(['alice', 'bob']), 'alice')).toBe('bob');
     expect(resolveAnswerer('dave', new Set(['alice', 'bob']), 'alice')).toBe('bob');
+  });
+
+  it('addresses our own other device FIRST when it minted the session', () => {
+    // The sender always holds the seed, and a sender that is our own user is another device of ours:
+    // the surest holder in the roster, excluded by name until 2026-08-25 (COMM-18).
+    expect(resolveAnswerer('alice', new Set(['alice', 'bob']), 'alice', undefined, true)).toBe(
+      'alice'
+    );
+  });
+
+  it('addresses our own other device LAST when a named member could hold it', () => {
+    // A device that merely happened to be online is a weaker guess than any named member, so it is
+    // the end of the walk rather than the start of it.
+    const roster = new Set(['alice', 'bob', 'carol']);
+    expect(resolveAnswerer('dave', roster, 'alice', undefined, true)).toBe('bob');
+    expect(resolveAnswerer('dave', roster, 'alice', new Set(['bob', 'carol']), true)).toBe('alice');
   });
 
   it('answers null when nobody is left who could hold the seed', () => {
     expect(resolveAnswerer('dave', new Set(), 'alice')).toBeNull();
     expect(resolveAnswerer('dave', new Set(['alice']), 'alice')).toBeNull();
+    // Our own devices are a finite candidate too: asked and declined, the walk still ENDS.
+    expect(
+      resolveAnswerer('alice', new Set(['alice']), 'alice', new Set(['alice']), true)
+    ).toBeNull();
   });
 
   it('walks past everyone who has already declined, sender included', () => {

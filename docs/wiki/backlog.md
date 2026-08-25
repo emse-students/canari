@@ -351,6 +351,142 @@ and it stays.
 what the classifier sees on four deletion paths at once, so it lands after the ladder, with its rule
 written in the same commit.
 
+### P2 - `updateChannelAccess` has no ADDED path, so a flip to private routes only the device that flipped it (measured 2026-08-25)
+
+**Found by COMM-23 on `5d7fac13`**, not as its verdict but as the roster it had never looked at: the
+row asserted a group into existence for four sessions of the campaign and never once asked whether
+anybody was on it. It is the same missing seam [WP-REGRANT-2](#p1---a-re-granted-member-never-asks-again-and-a-refused-re-join-is-never-retried-wp-regrant-2-measured-2026-08-25)
+sits on, seen from the other side, and the two should be fixed together.
+
+**The two paths into "private", measured minutes apart on the same account and the same community:**
+
+| how the salon became private | `dm_device_group_memberships` rows | `activeEpoch` |
+| --- | --- | --- |
+| created private (COMM-24's `before`) | 2 - the phone AND the web client, both `active` | 1 |
+| flipped private (COMM-23's `after`) | 1 - only the web client that performed the flip | 0 |
+
+The phone was ONLINE throughout - the preflight names it in as many words, `1 device(s) online that
+this run does not drive` - and it holds the same account, which is on `allowedUsers`. It is entitled
+and it is not routed.
+
+**WHY, in one line of the server.** `updateChannelAccess` handles `dropped` before it saves and
+retires the group after; there is no counterpart for the users it has just ADDED. The create path
+goes through `addGroupMember`, which upserts a `DeviceGroupMembership` for every device of the
+member whose key package is inside the retention window - hence two rows and, because the second
+device's join is a commit, epoch 1. The flip path enrols nobody, and what fills the roster instead is
+the entitled device's own `ensureDistributionGroupFor` the next time it LOADS the salon. The device
+that flipped the switch is looking at the salon, so it joins in about two seconds (measured: 1 991
+ms). No other device of that member has any reason to look.
+
+**WHAT IT COSTS, and why a repair is not an answer.** Seeds minted in that window never reach the
+unrouted device, so the phone opens the salon later and finds a transcript it must repair - and
+`history_visibility` being `shared` is exactly what makes the repair succeed, which is what has kept
+this invisible. The standing rule names that: a race that heals cleanly is still a defect, and a
+ledger that reconciles two paths afterwards is a witness rather than a fix. The device is knowably
+entitled at the moment of the save, from the server, where the decision is already made - handing it
+to a load that may never happen is learning by failing what a fact could have told us.
+
+**WHAT IS OWED.** An added path in `updateChannelAccess`, calling what the create path already calls,
+so that entitlement and routing are one act rather than two. Then COMM-23 gains the assertion it
+cannot honestly make today: EVERY device of every allowed user, not just the actor's.
+
+**NOT an epoch defect.** The first draft of the fixed COMM-23 asserted the epoch moved past 0 and
+failed a switch that was correct: the owner's client CREATES the group with its own leaf already in
+it, so epoch 0 is right and COMM-24's epoch 1 was the second device joining. The check now records
+the epoch and asserts the roster, and says so where the assertion used to be.
+
+### P2 - the documented recovery from an empty allowlist is unreachable through the product (measured 2026-08-25)
+
+**Found by COMM-23's original failure on `5d7fac13`**, `GET /api/channels/<id>/access -> 403`, with
+every database fact about the switch already correct. The 403 is not the defect - it is the
+2026-08-19 decision working, an admin no longer reading a private salon they have not joined. What
+that decision left behind is its own escape hatch: "an admin sees it exists and may add themselves in
+one act". Through the UI, they cannot.
+
+**THE TWO GUARDS ON ONE PANEL DISAGREE, AND THE READ IS THE STRICTER ONE.** `GET :channelId/access`
+guards on `canAccessChannel` - readability - while `PATCH :channelId/access` guards on
+`MANAGE_CHANNEL`. The actor holds MANAGE_CHANNEL and would be allowed to write the very list that
+would let them back in; they are refused the read that has to come first.
+
+**AND THE SCREEN HAS NO OTHER PATH.** `loadChannelAccess` catches, sets `accessError`, and leaves
+`accessLoaded` false; the access tab then renders `{:else if accessError}` - the error box ALONE. No
+visibility toggle, no allowlist, no add control. Nothing on that tab can be operated, so the one act
+the decision promised has no gesture behind it.
+
+**REACHED IN ONE ORDINARY SAVE.** Flipping a public salon private submits the allowlist the panel is
+holding, which for a salon that was public is EMPTY. The app does warn - `chat_no_allowed_members_warning`,
+"Aucun membre autorise - le canal sera inaccessible." - so this is a warned state and not a silent
+trap, and the salon can still be deleted from the general tab. But a warning is not a recovery, and
+the recovery the decision documented does not exist.
+
+**WHAT IS OWED, one of two.** Either the read guard admits MANAGE_CHANNEL - the actor may already
+write it, so refusing the read protects nothing it does not already hand over - or the panel stops
+depending on that read to offer the one gesture the decision named. The first is the smaller change
+and the one that makes the guards agree.
+
+### P1 - a re-granted member never asks again, and a refused re-join is never retried (WP-REGRANT-2, measured 2026-08-25)
+
+**Found by COMM-22 on `5d7fac13`, verdict `VACUOUS`** - the rung-9 row that churns a salon's roster
+to multiply its sessions. It is the THIRD state of the asymmetry WP-REGRANT-1 closed below, and the
+fix that closed that one is what makes this one visible: the re-join exists now, it fires, and
+nothing anywhere covers it FAILING.
+
+**Three cycles of grant/revoke were textbook, and the fourth grant stranded the peer for good.** The
+runner records the epoch either side of every cycle, and the product moved it every time:
+
+| Cycle | Peer joins | Peer leaves |
+| --- | --- | --- |
+| 1 | epoch 2 | epoch 3 |
+| 2 | epoch 4 | epoch 5 |
+| 3 | epoch 6 | epoch 7 |
+| **4** | **never - 60 000 ms, epoch 7, 2 device rows** | - |
+
+Salon `5b08828d` of community `99db8d1c`, group `9a8d1b03`, peer `b78568a3`, owner `d82cd226`. The
+peer's own console and the delivery service's log, side by side, with the gesture that produced each:
+
+| UTC | Where | Line |
+| --- | --- | --- |
+| 14:23:02 | server | `read scope=channel:5b08828d … user=b78568a3 devices=0` |
+| 14:23:02 | server | `group-info … epoch=6 publisher=b78568a3` - the peer joins, cycle 3 |
+| 14:23:10 | server | `evict … user=b78568a3 memberships=1 queued=0 routes=1` - cycle 3's revoke |
+| 14:23:13 | server | `group-info … epoch=7 publisher=d82cd226` - the owner commits the removal |
+| ~14:23:30 | rig | cycle 4 grants the peer again, and `openSalon(w2)` opens the salon on it |
+| 14:23:32 | peer | `the local group is stale, rejoining` then **`could not join the distribution group of salon 5b08828d`** |
+| 14:23:33 | peer | `[SYNC] WASM kept 9a8d1b03…` - the tree the forget dropped is BACK |
+| 14:23:33 | peer | three rows `unreadable … no seed for session … (repairable)` |
+| 14:23:33 -> 14:25:10 | server | **every read of that group is the OWNER's. The peer never asks again.** |
+
+**Two defects, and the second is what makes it permanent.**
+
+1. **A refused re-join is a dead end.** `ensureDistributionGroupFor` forgets the stale tree, calls
+   `ensureDistributionGroup`, and on `false` logs one line and returns. Nothing retries, nothing
+   escalates, and the caller cannot tell "not entitled" from "entitled and it did not work" - the
+   distinction the standing rule says must be carried as a type from where it is already known.
+2. **The forget is not durable, so a reload undoes it.** `forgetDistributionGroupById` drops the tree
+   in memory and leaves the checkpoint to its caller; the caller checkpoints on the join's success
+   path only. A join that fails therefore leaves the dropped group on disk, and the next load
+   restores exactly the stale belief the forget existed to destroy - `WASM kept 9a8d1b03` one second
+   later is that restore.
+
+And then the reloaded session put no question at all, which is the fact with no explanation yet: it
+held the tree, the salon was open on screen (`openSalon` asserts it, and would have thrown), the peer
+was entitled - and no `read scope=channel:5b08828d … user=b78568a3` reaches the server for the next
+97 seconds. **Whatever walks the salons after a load did not walk this one**, and that is the first
+thing to instrument, because it is upstream of both defects above: with that walk running, a retry
+would have come for free.
+
+**What is owed.** Not a timer and not a heal. A re-join's refusal must be classified where it is
+known - the server already separates "not entitled" from "conflict" - and carried back as a type; the
+forget must be durable, or must not happen until the join has succeeded; and the post-load walk over
+a community's salons must be found and asserted. **The check that measures it already exists** -
+COMM-22 is exactly this scenario and it is the row that failed, so nothing new has to be written to
+know whether a fix works: four cycles green is the proof.
+
+**Not to be confused with the eviction it looks like.** The `evict` at 14:23:10 is CORRECT - it is
+cycle 3's revoke, and `memberships=1 queued=0 routes=1` is the whole of what a revoke owes. The first
+reading of this log blamed the owner's roster reconciler for cutting a member it was merely behind
+on; the epochs table above is what refutes that, and it cost one query to check.
+
 ### CLOSED 2026-08-21 - a member let BACK IN to a private salon was never routed again (WP-REGRANT-1)
 
 **Found and FIXED 2026-08-21**, both on production, in `7f11b50e` and `082345b7`. The mechanism and

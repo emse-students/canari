@@ -56,7 +56,8 @@ import {
   openCommunity,
   selectedChannel,
 } from './comm.mjs';
-import { channelIdOf, workspaceIdOf } from './grainedb.mjs';
+import { channelIdOf, messageCount, salonDistribution, workspaceIdOf } from './grainedb.mjs';
+import { seedsForChannel } from './grainestore.mjs';
 import { ACCOUNT_OF, PORTS } from './names.mjs';
 import * as phone from './phone.mjs';
 import { unlockClient } from './pingate.mjs';
@@ -112,6 +113,24 @@ const channelId = await step('read the salon id', () =>
 // THE CONVERSATION ID, NOT THE CHANNEL ID. `channel_<uuid>` is the form every chat surface uses for
 // a community salon, and it is what `chatDeepLinkRoute` reads to decide the route - a bare uuid would
 // be taken for a DM group and routed to `/chat`, where this salon does not exist.
+// WHO THE SALON WOULD DELIVER TO, READ BEFORE THE PHONE EVER OPENS IT. A salon's seed travels its
+// distribution group, and a device puts its own leaf in that group when it LOADS the salon - so a
+// roster read after the landing has already been changed by the landing, and cannot answer whether
+// the phone was routed when the message was SENT. Read here it can: this is the last moment before
+// the kill, and the phone has never seen this salon.
+//
+// It exists because of what this row reported on 2026-08-25 - the message on the server, the salon
+// open on screen, and `seeds: {held: 0, received: 0}` on the phone, with the client saying the
+// session had "no reachable holder". That sentence is the repair path speaking, and the repair path
+// asks the OTHER members: here the sender is the phone's own user and the salon has no other member,
+// so there was nobody to ask and the seed had to have arrived at send time. Whether it could have is
+// exactly this roster.
+const distAtSend = channelId
+  ? await step('read the salon delivery roster before the phone sees it', () =>
+      salonDistribution(channelId)
+    )
+  : null;
+
 const target = channelId ? `channel_${channelId}` : null;
 const link = target ? `fr.emse.canari://chat/${target}` : null;
 
@@ -193,6 +212,31 @@ const landing = armed
           (e) => (e instanceof Error ? e.message : String(e))
         );
         const seen = await countMessage(a1, marker).catch(() => 0);
+
+        // WHY THE TRANSCRIPT IS ABSENT, CAPTURED WHILE THE SALON STILL EXISTS. This row deletes its
+        // own venue a few lines below, so a missed marker investigated afterwards has nothing left
+        // to look at: on 2026-08-25 it reported `hasPane: true, renderedParagraphs: 0` in a salon it
+        // had just proved open, and there was no way to tell an undelivered message from an
+        // undecryptable one from a rendering that never ran. Three readings separate them, and only
+        // the first is free of the phone: the SERVER's row count says whether there was anything to
+        // read at all, the SEEDS say whether this device could open it, and the lines say whether
+        // the client knew it could not. Taken only on a miss - a passing row pays nothing for it.
+        const why = missed
+          ? {
+              onServer: channelId ? messageCount(channelId) : null,
+              seeds: await seedsForChannel(a1, channelId).catch((e) => ({
+                error: e instanceof Error ? e.message : String(e),
+              })),
+              // Read AGAIN here, so the pair says whether the landing itself enrolled the phone: a
+              // roster that gained its leaf between the two reads means the load did its half and
+              // the seed was simply already gone.
+              roster: channelId ? salonDistribution(channelId) : null,
+              said: phone
+                .console_(4000)
+                .filter((l) => /\[GRAINE\]|unreadable|no seed for session/.test(l))
+                .slice(0, 20),
+            }
+          : null;
         // FROM LOGCAT, NOT FROM THE ATTACHED CONSOLE, and that is the whole reason this row read
         // `theDeepLinkReachedTheHandler: false` beside `theSalonIsOpen: true` - a contradiction
         // that accused the native chain of failing while the person was demonstrably standing in
@@ -214,6 +258,7 @@ const landing = armed
           // PASS/FAIL, but it is the number the next person will want, so it is never dropped.
           markerMs: missed ? null : Date.now() - t0,
           markerMissed: missed,
+          why,
           // The one line that says the native half worked, and the ones around it if it did not.
           handlerSaid: shell.filter((l) => /\[notifNav\] deep link received/.test(l)),
           hooksSaid: shell.filter((l) => /\[hooks\]/.test(l)).slice(0, 12),
@@ -270,6 +315,9 @@ record('COMM-18', gated.verdict, {
   channelId,
   link,
   armed,
+  // Context, never an assertion: this row's question is the landing, and a roster is how a miss
+  // gets attributed rather than guessed at.
+  distAtSend,
   // A1's build is named beside its answer: its APK is deliberately not the deployment.
   a1Build: a1Before?.commit ?? null,
   a1BuiltAt: a1Before?.builtAt ?? null,
@@ -279,6 +327,8 @@ record('COMM-18', gated.verdict, {
   markerSeen: landing?.seen ?? null,
   markerMs: landing?.markerMs ?? null,
   markerMissed: landing?.markerMissed ?? null,
+  // Null on a pass, and the whole account of the failure otherwise.
+  why: landing?.why ?? null,
   handlerSaid: landing?.handlerSaid ?? null,
   // Recorded whether or not the handler line came: when it did not, these are the only account of
   // how far the chain got.

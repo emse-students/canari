@@ -1,8 +1,8 @@
 /**
  * COMM-23 and COMM-24: a salon's visibility switch, in both directions, read from the database.
  *
- *   node comm2324.mjs 23    a PUBLIC salon becomes private: a group is minted, and a reader outside
- *                           `allowedUsers` stops being routed
+ *   node comm2324.mjs 23    a PUBLIC salon becomes private: a group is minted, the owner it grants
+ *                           is routed onto it, and a reader outside `allowedUsers` is not
  *   node comm2324.mjs 24    a PRIVATE salon becomes public: its group is tombstoned, its scope is
  *                           released, and the community's group carries the salon again
  *
@@ -28,6 +28,7 @@ import {
   channelAccessState,
   createChannel,
   enterCommunities,
+  grantChannelAccess,
   inPanel,
   openChannelAccess,
   openCommunity,
@@ -35,8 +36,15 @@ import {
   selectedChannel,
   setChannelPrivate,
 } from './comm.mjs';
-import { channelIdOf, groupState, salonDistribution, workspaceIdOf } from './grainedb.mjs';
-import { PORTS, VENUE } from './names.mjs';
+import {
+  awaitUserRouting,
+  channelIdOf,
+  groupState,
+  salonDistribution,
+  userIdOf,
+  workspaceIdOf,
+} from './grainedb.mjs';
+import { OWNER_NAME, PORTS, VENUE } from './names.mjs';
 import { mark, record } from './results.mjs';
 import { consoleLines, gate, report, watch } from './watch.mjs';
 
@@ -64,6 +72,10 @@ const step = async (name, fn) => {
 
 const workspaceId = await step('read the community id', () => workspaceIdOf(VENUE.community));
 
+// WHOSE ACCESS THE FLIP TO PRIVATE HAS TO PRESERVE. Read from the database rather than assumed,
+// because `allowedUsers` holds ids and the only thing this rig knows is a display name.
+const ownerId = await step('read the owner id', () => userIdOf(OWNER_NAME));
+
 await step('create the salon', async () => {
   await enterCommunities(w1);
   await openCommunity(w1, VENUE.community);
@@ -80,14 +92,43 @@ const before = await step('read the salon before the switch', () =>
   channelId ? salonDistribution(channelId) : null
 );
 
+// THE FLIP TO PRIVATE GRANTS THE OWNER, AND THAT IS THE PRODUCT'S RULE RATHER THAN THIS CHECK'S
+// CONVENIENCE. The access panel submits the allowlist it is holding, and for a salon that was public
+// that list is EMPTY - so a save with nobody added produces the state the app warns about in as many
+// words (`chat_no_allowed_members_warning`: "le canal sera inaccessible"), and since the 2026-08-19
+// removal of ambient admin access it locks the actor out too. This check used to do exactly that and
+// then assert a panel read-back the design forbids: measured 2026-08-25, `GET :channelId/access ->
+// 403` with every database fact about the switch already correct. Granting the owner is also the
+// MIRROR of the state COMM-24 starts from - creating a salon private grants its creator - so the two
+// halves of the switch now begin and end in the same shape.
 await step('flip the visibility', async () => {
   await realClick(w1, `[aria-label*=${JSON.stringify(salon)}]`);
   if ((await selectedChannel(w1)) !== salon) throw new Error('the salon did not open');
   await openChannelAccess(w1);
   const moved = await setChannelPrivate(w1, !startPrivate);
   if (!moved) throw new Error('the toggle was already where the check wanted it');
+  // A grant is staged and committed by the save, so it belongs INSIDE the open panel and before it.
+  if (!startPrivate) await grantChannelAccess(w1, OWNER_NAME);
   return saveChannelAccess(w1);
 });
+
+// THE MEMBER COMMITS ITS OWN ADD, so the entitlement above buys nothing until the owner LOADS the
+// salon - and the salon has been open throughout, opened BEFORE the group existed. Leaving and
+// coming back is what gives the client a reason to look. Without it the new group would sit at epoch
+// 0 with an empty delivery roster, and the check would call a mint a success while nothing was
+// routed anywhere - the shape COMM-22 paid a whole run to learn.
+const routed = !startPrivate
+  ? await step('route the owner onto the new group', async () => {
+      // The community LIST, not a sibling channel: landing on the list is what unmounts the pane,
+      // and re-entering the community is part of opening a salon rather than the caller's business -
+      // COMM-22 lost six cycles to that exact omission.
+      await enterCommunities(w1);
+      await openCommunity(w1, VENUE.community);
+      await realClick(w1, `[aria-label*=${JSON.stringify(salon)}]`);
+      if ((await selectedChannel(w1)) !== salon) throw new Error('the salon did not re-open');
+      return channelId && ownerId ? awaitUserRouting(channelId, ownerId, true) : null;
+    })
+  : null;
 
 // A FRESH PANEL, BECAUSE THE SAVE CLOSED THE OLD ONE. Reading the state at the end of the flip
 // answered `{isPrivate: null, allowed: [], writePolicy: null}` on every run: `saveChannelAccess`
@@ -140,6 +181,25 @@ const expectations = startPrivate
       nowPrivate: after?.isPrivate === true,
       groupMinted: !!after?.groupId && after?.retired === false,
       linkedToIt: after?.linkedGroupId === after?.groupId,
+      // THE MIRROR OF COMM-24's `rosterEmptied`, and until 2026-08-25 this half asserted NOTHING
+      // about the roster in any form: it read a group into existence and never asked whether anybody
+      // was on it. Three separate facts, for the same reason COMM-24 keeps its three apart. The
+      // allowlist is the ENTITLEMENT, and it is asserted EXACTLY - a flip that granted more than it
+      // was asked to is as wrong as one that granted nobody.
+      ownerAllowed:
+        !!ownerId &&
+        after?.allowedUsers.length === 1 &&
+        after.allowedUsers[0].toLowerCase() === ownerId.toLowerCase(),
+      // The delivery roster is what a seed frame is actually fanned out to, so this is the fact that
+      // says the switch DID something: the salon's seeds now travel on a group somebody is on.
+      ownerRouted: routed?.ok === true,
+      // THERE IS DELIBERATELY NO EPOCH ASSERTION ON THIS PATH, and the first draft of this check
+      // got it wrong: it demanded the epoch move past 0 and failed a switch that was correct. THE
+      // CREATOR'S OWN LEAF COSTS NO COMMIT - the owner's client CREATES the group with itself
+      // already in it, which is epoch 0 by construction. Measured 2026-08-25 next to COMM-24's
+      // `before`, where the same account's salon sat at epoch 1: that 1 was the SECOND device
+      // joining, not the first. An epoch here would therefore be asserting how many devices the
+      // owner happens to own. `after.epoch` is recorded instead, and `ownerRouted` is the fact.
       panelAgrees: panel?.isPrivate === true,
     };
 
@@ -159,6 +219,9 @@ record(`COMM-${which}`, gated.verdict, {
   after,
   differentGroup,
   retiredGroup,
+  // RECORDED, NEVER ASSERTED - there is no budget for this in the product, and inventing one here
+  // would be the check deciding a requirement.
+  ownerRoutedInMs: routed?.elapsedMs ?? null,
   panel,
   ...expectations,
   failures,

@@ -132,31 +132,25 @@ deleted from BOTH this file and [backlog](docs/wiki/backlog.md). **Every defect 
 is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the three is restated here.**
 
 1. **THE COMM RUNNERS - ALL TWENTY-FIVE WRITTEN AND REGISTERED**, each run on prod as it was written
-    (user, 2026-08-20: writing all then running once is verification by COMPILING). **TWO HAVE NEVER
-    RUN THERE - 14 and 18.** COMM-14's blocker is LIFTED (real push proven by NOTIF-4 on 2026-08-22,
-    `notifiedInMs: 11317`, then asserted by MENTION-2/3); COMM-18 still needs a cold start through
-    `adb`. **The GENERIC notification body is ANSWERED** - MENTION-2 recorded `undecryptedInShade:
+    (user, 2026-08-20: writing all then running once is verification by COMPILING). **ONE HAS NEVER
+    RUN THERE - 14**, and its blocker is LIFTED (real push proven by NOTIF-4 on 2026-08-22,
+    `notifiedInMs: 11317`, then asserted by MENTION-2/3). **COMM-18 ran three times on 2026-08-25 and
+    earned its FAIL against the product, not the rig:** the cold start, the deep link and the landing
+    all work, and the phone rendered nothing because the seed had no route to it. Cause found, fixed
+    and in `CHANGELOG.md`; the rule it left is in [durable-rules](docs/wiki/durable-rules.md). **It
+    can only go green on a REBUILT APK** - the fix is client code and A1 carries its own build - so
+    what is owed is a rebuild, an install and one re-run. **The GENERIC notification body is ANSWERED** - MENTION-2 recorded `undecryptedInShade:
     []`. What the user saw on 2026-08-22 is a DIFFERENT, real defect: a mention rendered as its raw
     `@[uuid]` token, P2 in [backlog](docs/wiki/backlog.md), deferred past the ladder by their
     decision; NOTIF-13 pins it.
-2. **A1 STILL RUNS `c6eb7b20` (v0.14.4) AND THE FLEET HAS MOVED SINCE** - 14 `frontend/src` files,
-    `SCHEMA_VERSION` 9 vs 10, plus the COMM-14/15 fixes, so the phone is again an OLD client against a
-    NEW server: exactly what `a1Build` beside `build` records. **A row whose question is not skew needs
-    the APK rebuilt and installed first** (owed before DEL); one that wants it arms it by not rebuilding.
-    **A deploy cannot reach an APK** (`frontendDist` is `../build`), so a phase arming the phone
-    stamps EVERY row by construction - the preflight reads the phone once and hands it down through
-    `CANARI_A1_BUILD`; a phase with no phone carries no stamp. Building and installing one, and the
-    three details that have each cost a session: harness
-    [README](tools/cross-client-harness/README.md), "Building for it". **A phone `offline` in adb is a
-    HUMAN action** - the screen must be unlocked and the prompt accepted; no `adb reconnect` clears it.
-3. **THE CAMPAIGN ITSELF - RUNNING, by the user's decision of 2026-08-21** (*"C'est parti pour la
+2. **THE CAMPAIGN ITSELF - RUNNING, by the user's decision of 2026-08-21** (*"C'est parti pour la
     campagne"*, in autonomy). The ladder, top to bottom, so every phase runs - including the six that
     had no runner, written as the ladder reaches them. Design, cost and the decisions it turns on are
     on [cross-client-testing](docs/wiki/cross-client-testing.md) and
     [cross-client-campaign](docs/wiki/cross-client-campaign.md), the only copies. **Where the ladder
-    stands: rungs 1 MSG and 2 TYPE green x1; 3 READ, 4 MUT, 5 SEARCH, 6 MENTION and 7 FWD green CLEAN
-    5/5; 8 GRP `PASS` 9/10 x1 with GRP-3 `PASS-DIRTY` accepted. NEXT: 9 COMM, then DEL, TAB, MULTI,
-    LIFE, NOTIF, CALL, HEAL, PIN, CORRUPT.** The board carries every verdict; do not restate them here.
+    stands: rungs 1-8 taken, 9 COMM at 21 PASS / 1 PASS-DIRTY, blocked on the two rows in item 3 and on COMM-18's APK rebuild.
+    THEN DEL, TAB, MULTI, LIFE, NOTIF, CALL, HEAL, PIN, CORRUPT.** The board carries every verdict;
+    do not restate them here.
     **A `PASS-DIRTY` NO LONGER STOPS A RUNG BY ITSELF (user, 2026-08-25):** dirt that shows a fallback
     or a heal being taken still stops it, so does unclassified dirt and dirt touching the assertion;
     dirt of a class already read and named is RECORDED - the row stays `PASS-DIRTY`, never promoted -
@@ -171,6 +165,17 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     **THE BOARD'S FORMAT IS FIXED by the user (2026-08-22): a `PASS` cell is `PASS X/X` and a time if
     the time means anything, nothing else.** Prose only for a non-clean verdict or an unresolved item.
     The rule is written at the top of the board itself.
+
+3. **THE PRIVATE-SALON ACCESS SEAM - ONE MISSING PATH, THREE DEFECTS, AND IT BLOCKS RUNG 9.**
+    `updateChannelAccess` handles the users a save DROPS and has no counterpart for the ones it ADDS,
+    so entitlement and routing are two acts instead of one. All three faces are in
+    [backlog](docs/wiki/backlog.md), the only copy: **WP-REGRANT-2 (P1)** - a re-granted member never
+    asks again and a refused re-join is never retried, which is COMM-22's `VACUOUS`; **P2** - a flip
+    to private routes only the device that flipped it, measured against the create path enrolling
+    every device (COMM-23: 1 row and epoch 0, against 2 rows and epoch 1); **P2** - the recovery the
+    2026-08-19 decision documented does not exist, because `GET access` guards on readability while
+    `PATCH` guards on `MANAGE_CHANNEL` and the panel then renders its error box alone. **COMM-22
+    cannot be measured until the first is fixed**, so this is the rung's work, not deferred UX.
 
 4. **DEFERRED PAST THE LADDER - six UX and rendering items, substance in
     [backlog](docs/wiki/backlog.md) and NOWHERE else.** One line each, in the order they were raised:
