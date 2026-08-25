@@ -1570,6 +1570,45 @@ discriminator below, which currently exists only in MUT - see the shared-helper 
   the host freezing; a hole in only one client's timeline is that client.** Same run, same payload,
   and nobody has to go back to the production log by hand a day later.
 
+#### 38. A THROW IS NOT A VERDICT - a precondition that did not hold is a FAIL WITH EVIDENCE
+
+`grp3` and `grp8` both established the same precondition - the peer is in the roster - and both
+enforced it the same way:
+
+```js
+const peerId = both.removableIds.find((id) => !ownerIds.includes(id)) ?? null;
+if (!peerId) throw new Error('grp3: could not identify the peer among the removable ids');
+```
+
+The throw looks like rigour and is the opposite of it. `removableIds` is built from the panel's
+`Retirer <id>` controls, so an id exists only once the peer is a MEMBER; an invitation still in
+flight renders `Invitation en cours...` and no control at all. "No id outside the owner's" therefore
+means one of exactly two things and **both are findings about the product** - the Add did not land,
+or it landed and the roster has not rendered it.
+
+Telling those apart needs the two clients' consoles, and the throw is precisely what never gets
+them: it skips `recordObserved`, which is the only thing that drains the observers into the row.
+GRP-8 pass 2 of 2026-08-25 threw `round 2 could not identify the peer after the add` and left a
+**five-line log** - the verdict tail and nothing else. The check had to be re-run by hand to read
+what it had already seen once, which is the exact loss the runner's whole-output write exists to
+prevent, reintroduced one layer above it.
+
+- **A failed precondition is recorded, not raised.** `identifyPeer` returns null, prints the roster
+  count it read, and the caller records a `FAIL` through `recordObserved` so both consoles land in
+  the row. The assertion is untouched - GRP-8's already required `afterAdd === 2`.
+- **Capture the discriminator while it is still readable.** `invitationPending` can only be read with
+  the panel open, and every caller closes its overlays on the way to recording, so the helper reads
+  it at the seam rather than leaving the caller to remember.
+- **An early exit must be visible in the assertion.** GRP-8's loop now `break`s instead of throwing,
+  so `rounds.length === 2` had to join the conjunction: a loop that ended after one round would
+  otherwise have satisfied `rounds.every(...)` vacuously and passed.
+- **Member rows are never printed.** They are display names of real production accounts and this
+  repository is public. The count and the pending flag carry the diagnosis without them.
+
+The general form: a check may only raise for something that makes the QUESTION unaskable - a client
+that will not attach, a selector the product no longer has. Anything the product could plausibly have
+done, however wrong, is a verdict, and a verdict has to carry its evidence.
+
 ## Observation is part of the check, not a debugging step
 
 Decided 2026-08-06, after two shipped bugs came out of the logs of **passing** checks.
@@ -1766,6 +1805,25 @@ the last four classifier additions were near-misses on an existing rule, not new
 - **A crawler's `[404] GET /sitemap.xml.gz`**, the same family as the `/sitemap_index.xml` guess
   already classified. Spelt out per path deliberately, with an assertion that a 404 on a route we DO
   serve stays unexplained - an allowlist of what may be forgiven, never a pattern for what to ignore.
+
+#### A hand-run instrument reproduces the automated one only with the automated one's arguments
+
+Found 2026-08-25, chasing a contradiction that did not exist - and worth the chase, because two
+instruments disagreeing about one line would make every `server clean` on the board suspect. GRP
+pass 3 reported the server clean; `node srvlog.mjs --since <that pass's window>`, run by hand
+afterwards over the same window, reported two `unexplained` lines timestamped inside it.
+
+Neither was wrong. `run.mjs` calls `srvReport(window, { subjects: [...SUBJECTS] })`, and
+`isThirdParty` opens with `if (!subjects.length) return false` - so the two `No push token for
+user=<a user the run does not drive>` lines the pass had correctly filed as `third-party` had nowhere
+to go but `unexplained` for a CLI invocation that named no subjects.
+
+**The difference is invisible in the output.** Both reports print the same bucket names, and neither
+states the subject list it was given, so the hand-run copy reads as a stricter second opinion when it
+is in fact a differently-configured one. The pass's own summary already carried the answer -
+`third-party=30`, printed at the time - and the general rule is the one the campaign keeps
+re-learning in new clothes: **a number is only evidence for the question its instrument was
+configured to ask.** Re-run a window with the subjects that pass had, or read the pass's line.
 
 ---
 

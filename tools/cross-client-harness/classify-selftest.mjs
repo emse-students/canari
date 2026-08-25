@@ -102,6 +102,32 @@ const CASES = [
     '[01:40:12] [HISTORY_REQ] 6bd37588... diff with b78568a3…:web-b78568a3…-msglwqh6-vegy: 3 to send, 0 to pull (identical stores)',
     'notable',
   ],
+  // AND THE REMAINING FIVE SPELLINGS OF THE SAME SITE, pinned in one edit for the reason the two
+  // above exist: `actions.ts` writes eight `[HISTORY_REQ]` lines, two had rules, and the campaign was
+  // meeting the rest one PASS-DIRTY at a time (GRP-10, pass 2 of 2026-08-25, on `no probe`).
+  // Identities here are the rig's own, reused from the cases above rather than copied from the
+  // sighting - the device that produced it is a real one and this file is public.
+  ['log', '[01:40:12] [HISTORY_REQ] 6bd37588... not local - cannot serve history, skip', 'notable'],
+  ['log', '[01:40:12] [HISTORY_REQ] 6bd37588... not active locally - skip', 'notable'],
+  [
+    'log',
+    '[01:40:12] [HISTORY_REQ] no probe from b78568a3…:web-b78568a3…-msglwqh6-vegy for 6bd37588... - nothing to answer',
+    'notable',
+  ],
+  [
+    'log',
+    '[01:40:12] [HISTORY_REQ] 6bd37588... asked b78568a3…:web-b78568a3…-msglwqh6-vegy to describe itself, no digest came',
+    'notable',
+  ],
+  // THE FIFTH IS PINNED AT `unexplained` ON PURPOSE - the assertion is that it still BREAKS `clean`.
+  // It is the fallback branch: this device could not read its own history store and declined a repair
+  // it was elected to perform. Written here so that completing the tag "for consistency" fails the
+  // selftest instead of quietly retiring the one line under it that accuses.
+  [
+    'log',
+    '[01:40:12] [HISTORY_REQ] 6bd37588... store unreadable - staying silent so another member answers',
+    'unexplained',
+  ],
   // THE ACCESS-TOKEN REFRESH, ALL FOUR SPELLINGS OF ONE SITE. The fourth is the one GRP-8 landed in
   // `unexplained` on 2026-08-24; the others are pinned beside it because widening a rule is exactly
   // how the spellings that already worked stop working.

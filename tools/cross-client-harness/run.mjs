@@ -758,6 +758,28 @@ const repeat = Math.max(1, Number(argv[argv.indexOf('--repeat') + 1]) || 1);
 const passes = [];
 
 /**
+ * IS THIS PASS PERFECT? Deliberately the SAME notion the cross-pass table below calls `settled`, so
+ * a run can never stop on a pass that the table would then print as fine.
+ *
+ * `bad` could not be reused even though it exists two hundred lines down and looks like the answer:
+ * it counts `verdict !== 'PASS'`, and READ-5 and READ-10 are `SKIPPED` BY CONSTRUCTION - one needs a
+ * fourth reader, the other `--destructive`. Reusing it would abort every `READ --repeat` at pass 1
+ * with forty of forty checks passing above the stop, which is exactly the red a reader learns to
+ * skip.
+ */
+const passClean = (p) =>
+  !p.aborted &&
+  !p.blocked?.length &&
+  !p.crashed &&
+  !p.silent?.length &&
+  p.server?.clean === true &&
+  p.rows.length > 0 &&
+  p.rows.every((r) => r.verdict === 'PASS' || r.verdict === 'SKIPPED');
+
+/** The pass that ended the run early, or 0 - the difference between a stop and a full disagreement. */
+let stoppedAt = 0;
+
+/**
  * WHICH PASS IS SPEAKING, so its capture is not overwritten by the pass after it.
  *
  * `LOG_DIR` is one directory per RUN, which protects a run from the NEXT run and does nothing at all
@@ -841,6 +863,32 @@ for (let pass = 1; pass <= repeat; pass++) {
       aborted: true,
     });
   }
+
+  /**
+   * FAIL-FAST: THE FIRST IMPERFECT PASS ENDS THE RUN (user, 2026-08-25 - "il faut arreter ce run des
+   * qu'il y a une erreur, le but c'est de valider parfaitement").
+   *
+   * A repeat exists to answer "is this reproducible", and one imperfect pass has ALREADY answered the
+   * only question the ladder asks of this build: the phase does not pass, so it will be fixed and
+   * re-run from pass 1 whatever the remaining passes say. What those passes buy is negative. A check
+   * that threw mid-scenario leaves whatever state it was holding - `GRP --repeat 5` on 2026-08-25 ran
+   * pass 3 after GRP-8 threw between an add and its cleanup, so pass 3 measured an estate with a
+   * leftover group in it and its verdicts describe a fleet nobody configured. The minutes are the
+   * smaller half of the cost; the debris is charged to whatever runs next.
+   *
+   * The table still prints, over the passes that DID run, with `-` for the ones that never did. A
+   * stop must name the pass that caused it and must never read as a clean `N/N`.
+   */
+  if (!passClean(passes.at(-1))) {
+    stoppedAt = pass;
+    if (pass < repeat) {
+      console.log('');
+      console.log(
+        `  STOPPING AT PASS ${pass}/${repeat} - it was not clean, and the remaining ${repeat - pass} pass(es) would measure a fleet this one left in an unknown state.`
+      );
+    }
+    break;
+  }
 }
 
 if (repeat > 1) {
@@ -886,7 +934,11 @@ if (repeat > 1) {
       .map(([v, c]) => `${c} = ${v}`)
       .join('   ')}   S = server not clean   ? = unknown verdict   - = no verdict recorded`
   );
-  console.log(`\n  ${allClean ? `CLEAN ${repeat}/${repeat}` : 'NOT REPRODUCIBLE - see the rows above'}\n`);
+  console.log(`\n  ${allClean
+        ? `CLEAN ${repeat}/${repeat}`
+        : stoppedAt && stoppedAt < repeat
+          ? `STOPPED AT PASS ${stoppedAt}/${repeat} - see the row(s) above`
+          : 'NOT REPRODUCIBLE - see the rows above'}\n`);
   process.exit(allClean ? 0 : 1);
 }
 

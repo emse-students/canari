@@ -735,6 +735,34 @@ const NOTABLE = [
   // deciding it is out of sync (WP-FALSELOSS-2). It never breaks `clean` - a real diff is the
   // mechanism doing its job - but it is never routine either.
   /^\[HISTORY_REQ\] \S+\.\.\. diff with \S+: \d+ to send, \d+ to pull( \(identical stores\))?$/,
+  // THE FOUR WAYS THE ANSWER ENDS WITHOUT SENDING ANYTHING, classified from the SITE and all at once.
+  // `actions.ts` writes eight `[HISTORY_REQ]` spellings and exactly two of them had a rule - the two
+  // above - so the campaign was meeting the other six one run at a time and paying a triage for each.
+  // GRP-10 was the sighting that made it worth reading the whole tag: pass 2 of 2026-08-25 went
+  // PASS-DIRTY on `no probe`, with its own assertion held.
+  //
+  // The first two are the responder declining a group it cannot speak for: not in the local MLS tree,
+  // or locally deleted. Correct refusals, and they must stay visible - a device asked for history
+  // about a group it does not have is a routing statement, not a delivery one.
+  /^\[HISTORY_REQ\] \S+\.\.\. not local - cannot serve history, skip$/,
+  /^\[HISTORY_REQ\] \S+\.\.\. not active locally - skip$/,
+  // The other two are a RENDEZVOUS THAT TIMED OUT: the election named this device, and the peer never
+  // sent the probe (or the digest asked of it) inside `DIGEST_TTL_MS`. Forgiven because the responder
+  // cannot invent a probe and the asker re-asks on its next edge - `awaitProbe` returns null only
+  // after 60 s with nothing set aside, and giving up is the correct end of the exchange.
+  //
+  // FORGIVEN, NOT UNREAD, and the distinction this bucket cannot draw is named rather than buried: a
+  // THROTTLED background tab and a DRIVEN client that failed to probe write the same line. What
+  // separates them is not in the line - it is the identity the line carries, read against the
+  // preflight's `FLEET` note, which lists the devices online that the run does not drive. The
+  // 2026-08-25 sighting resolved that way in seconds and had cost a session before the note existed.
+  /^\[HISTORY_REQ\] no probe from \S+ for \S+\.\.\. - nothing to answer$/,
+  /^\[HISTORY_REQ\] \S+\.\.\. asked \S+ to describe itself, no digest came$/,
+  // THE EIGHTH SPELLING IS DELIBERATELY RULELESS, and it is named here so nobody completes the set by
+  // accident: `[HISTORY_REQ] ... store unreadable - staying silent so another member answers` (two
+  // sites, one spelling) is a FALLBACK, and a fallback is a signal, never a path. Reaching it means
+  // this device could not read its OWN history store, and the repair it declines is then owed to some
+  // other member who may not have the messages. It must break `clean`, and it never has yet.
   // A STALE `pending` INVITATION ROW BEING RECONCILED, IN THE THREE LINES IT TAKES. The server still
   // lists a device as invited whose leaf is ALREADY in the MLS tree, so the sweep tries the Add,
   // OpenMLS declines it (`members.rs`, `any_already_member` -> `ALREADY_MEMBER`), and the caller

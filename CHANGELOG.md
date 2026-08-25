@@ -150,6 +150,32 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **THE TEST RIG TURNED A FINDING ABOUT THE PRODUCT INTO A HARNESS ERROR WITH NO EVIDENCE BEHIND IT,
+  AND KEPT MEASURING AFTER IT.** Two GRP checks established the same precondition - the peer is in the
+  roster after an Add - by throwing when they could not find it. The throw skips `recordObserved`,
+  which is the only thing that drains the two clients' consoles into the row, so GRP-8's pass 2 of
+  2026-08-25 left a **five-line log**: the verdict tail and nothing else, for the one failure whose
+  cause could only be in those consoles. It also read as the harness's fault when it is not - the
+  panel's `Retirer <id>` controls only exist once the peer is a MEMBER, so "no id outside the owner's"
+  means either the Add never landed or it landed and the roster has not rendered it, and both are
+  findings. They are now recorded, not raised: `identifyPeer` returns null, prints the roster count,
+  and captures `Invitation en cours` while the panel is still open - which is the discriminator
+  between the two. GRP-8 `break`s instead of throwing, so `rounds.length === 2` joined its assertion,
+  a loop that ended early having satisfied `every()` vacuously until now. The 25 s post-condition
+  added to `addPeer` the day before had reduced this failure's rate without closing it, since it ends
+  in a swallowed timeout - the claim that it was fixed was too strong.
+
+- **`--repeat` ran every pass after the one that had already answered the question.** The first
+  imperfect pass settles the only thing the ladder asks - the phase does not pass, so it will be
+  fixed and re-run from pass 1 whatever the rest say - and what the remaining passes buy is negative:
+  a check that throws mid-scenario leaves the state it was holding, so `GRP --repeat 5` ran pass 3
+  against an estate with a leftover group in it and its verdicts describe a fleet nobody configured.
+  It now stops at the first pass that is not clean, prints the cross-pass table over the passes that
+  did run, and says `STOPPED AT PASS n/N` - which is neither `CLEAN N/N` nor "not reproducible",
+  nothing having been repeated. Cleanliness is deliberately the table's own notion (`PASS` or
+  `SKIPPED`) rather than the `bad` counter beside it, which counts `verdict !== 'PASS'` and would
+  have aborted every `READ --repeat` at pass 1 on two rows that are skipped by construction.
+
 - **A CONVERSATION DELETED OFFLINE CAME BACK, AND THE GROUP HAD NEVER BEEN DELETED ANYWHERE.**
   `exitGroupAndCleanup` wrapped the whole server half of a delete-or-leave in one `try/catch` and then
   purged the local MLS state unconditionally, so "the server answered 404, it is already gone" and

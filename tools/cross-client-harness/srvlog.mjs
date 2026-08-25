@@ -225,6 +225,19 @@ const BENIGN = [
   // Spelt out per path for its neighbours' reason - a general `[404] GET /*.txt` would forgive
   // `/robots.txt`, which this site really does serve.
   /^\[404\] GET \/app-ads\.txt$/,
+  // A VULNERABILITY SCAN PROBING FOR SYMFONY'S DEBUG PROFILER, which exposes configuration and
+  // environment to anyone who can reach it. Canari is not PHP and has never routed `/_profiler`, so
+  // 404 is the correct answer and there is nothing behind it to protect. Classified rather than
+  // silenced: 2 hits in the 24 h to 2026-08-25, which is what an opportunistic scanner looks like
+  // and what a defect does not - our own code cannot request a path it never emits.
+  /^\[404\] GET \/_profiler\/phpinfo$/,
+  // A MALFORMED URI FROM SOMETHING CRAWLING THE PUBLIC SITE - `about:` is a browser SCHEME, not a
+  // path, and a client that turns it into one is guessing. VERIFIED before forgiving, because this
+  // one is the near-miss the bucket must never hide: `frontend/src/routes/` has no `about` route at
+  // all, and nothing in the bundle or the SSR output emits the string, so this is not a broken link
+  // of ours arriving one colon wrong. 5 hits in the 24 h to 2026-08-25 - sparse and irregular, where
+  // a route the application really owned would fire on every page load.
+  /^\[404\] GET \/about:$/,
   // A BROWSER FETCHING THE TAB ICON, and AN iOS DEVICE FETCHING THE HOME-SCREEN ICON. Both files are
   // SERVED now (2026-08-17), which is what makes these rules narrow: only a SUCCESS is benign.
   //

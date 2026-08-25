@@ -232,6 +232,43 @@ async function addPeer(cx) {
 }
 
 /**
+ * THE PEER'S ID AS THE PANEL ACTUALLY SHOWS IT - and, when there is none, WHY, on the record.
+ *
+ * TWO CALL SITES USED TO THROW HERE and a throw was the wrong verdict for what this cannot find.
+ * `removableIds` is built from the `Retirer <id>` controls, so an id exists only once the peer is a
+ * MEMBER: an invitation still in flight renders `Invitation en cours...` and no control at all. "No
+ * id outside the owner's" therefore means one of exactly two things, and BOTH are findings about the
+ * product - the add did not land, or it landed and the roster has not rendered it.
+ *
+ * Telling them apart needs the two clients' consoles, and a throw is precisely what never gets them:
+ * it skips `recordObserved`, which is the only thing that drains the observers into the row. GRP-8
+ * pass 2 of 2026-08-25 threw `round 2 could not identify the peer after the add` and left a
+ * five-line log - a verdict with no evidence, so the check had to be re-run by hand to learn what it
+ * had already seen once. That is the same loss the runner's whole-output write exists to prevent,
+ * reintroduced one layer up.
+ *
+ * So it returns null, PRINTS what it read, and reads the one discriminator that is only available
+ * while the panel is still open - `invitationPending` separates "the commit never landed" from "the
+ * Welcome is still in flight", and it has to be captured here because every caller closes the
+ * overlays on its way to recording.
+ *
+ * THE MEMBER ROWS ARE DELIBERATELY NOT PRINTED. They are display names of real accounts on
+ * production and this repository is public; the count and the pending flag carry the diagnosis
+ * without them.
+ */
+async function identifyPeer(cx, ownerIds, where) {
+  const panel = await panelOf(cx);
+  const peerId = panel.removableIds.find((id) => !ownerIds.includes(id)) ?? null;
+  // `null`, not `false`: the question was never asked on the path where it has no meaning.
+  if (peerId) return { panel, peerId, invitationPending: null };
+  const invitationPending = await evaluate(cx, `/Invitation en cours/i.test(document.body.innerText)`);
+  console.log(
+    `[grp] ${where}: no peer among ${panel.removableIds.length} removable id(s) - MEMBRES(${panel.count}), invitation pending: ${invitationPending}`
+  );
+  return { panel, peerId: null, invitationPending };
+}
+
+/**
  * Whether a SIDEBAR ROW names this group - which is what "the group reached this client" means.
  *
  * `document.body.innerText.indexOf(name)` is not that, and GRP-4 proved it: the invitation page at
@@ -560,10 +597,26 @@ async function grp3() {
     return await withGroup(w1, 3, async (name) => {
       const ownerIds = (await panelOf(w1)).removableIds;
       await addPeer(w1);
-      const both = await panelOf(w1);
+      const { panel: both, peerId, invitationPending } = await identifyPeer(w1, ownerIds, 'grp3');
       await closeOverlays(w1);
-      const peerId = both.removableIds.find((id) => !ownerIds.includes(id)) ?? null;
-      if (!peerId) throw new Error('grp3: could not identify the peer among the removable ids');
+      if (!peerId) {
+        // THE ADD IS THIS CHECK'S PRECONDITION, and a precondition that did not hold is a FAIL WITH
+        // EVIDENCE, never a throw. Everything below asserts on a member who is not in the roster, so
+        // the scenario stops - but it stops THROUGH `recordObserved`, which drains both consoles into
+        // the row. A refused commit or an unrendered roster says which it was there and nowhere else.
+        await recordObserved(
+          'GRP-3',
+          'FAIL',
+          {
+            group: name,
+            rosterBeforeRemoval: both.count,
+            peerAmongRemovableIds: false,
+            invitationStillPending: invitationPending,
+          },
+          { W1: o1, W2: o2 }
+        );
+        return false;
+      }
 
       await awaitListed(w2, name);
       await openGroup(w2, name, { navigate: false, label: 'grp3-w2' });
@@ -943,12 +996,33 @@ async function grp8() {
       const ownerIds = (await panelOf(w1)).removableIds;
       const rounds = [];
       for (let i = 1; i <= 2; i++) {
+        // ONE LINE PER ROUND, because this check's capture used to be its verdict and nothing else.
+        // Four commits happen inside this loop and a failure in any of them landed a log that could
+        // not say which round was speaking.
+        console.log(`[grp8] round ${i}/2`);
         await closeOverlays(w1);
         await openGroup(w1, name, { navigate: false, label: 'grp8' });
         await addPeer(w1);
-        const added = await panelOf(w1);
-        const peerId = added.removableIds.find((id) => !ownerIds.includes(id)) ?? null;
-        if (!peerId) throw new Error(`grp8: round ${i} could not identify the peer after the add`);
+        const { panel: added, peerId, invitationPending } = await identifyPeer(w1, ownerIds, `grp8 round ${i}`);
+        if (!peerId) {
+          // THE ROUND IS RECORDED AS IT HAPPENED AND THE LOOP STOPS - it used to throw, which turned
+          // a finding about a re-Add against a leaf the previous Remove had not retired (the exact
+          // state this check exists to reach) into a harness error with no evidence behind it. The
+          // assertion below already covers it: `afterAdd` is not 2, and `rounds.length` is now
+          // asserted too so a loop that ended early can never read as two clean rounds.
+          rounds.push({
+            round: i,
+            afterAdd: added.count,
+            afterRemove: null,
+            peerIdentified: false,
+            invitationStillPending: invitationPending,
+          });
+          // `identifyPeer` left the settings panel UP, and the end-state assertion below opens the
+          // group and sends into it. Leaving the overlay open would make the next two gestures fail
+          // for a reason the row does not name.
+          await closeOverlays(w1);
+          break;
+        }
         await removeMember(w1, peerId);
         const removed = await panelOf(w1);
         rounds.push({ round: i, afterAdd: added.count, afterRemove: removed.count });
@@ -966,7 +1040,10 @@ async function grp8() {
       await closeOverlays(w1);
 
       const ok =
-        rounds.every((r) => r.afterAdd === 2 && r.afterRemove === 1) && final.count === 1 && !peerGot;
+        rounds.length === 2 &&
+        rounds.every((r) => r.afterAdd === 2 && r.afterRemove === 1) &&
+        final.count === 1 &&
+        !peerGot;
       await recordObserved(
         'GRP-8',
         ok ? 'PASS' : 'FAIL',
