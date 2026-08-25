@@ -292,6 +292,14 @@ record('COMM-14', gated.verdict, {
   armed,
   venueBuilt: !!channelId,
   casesMeasured: measured,
+  // THE THREE HALVES OF `armed`, EACH NAMED. `armed: false` beside `failures: []` is what this row
+  // recorded on 2026-08-25, and it accounts for nothing: `workspaceIdOf` answers null for a venue
+  // that is not there rather than throwing, so the step that asked had nothing to report and the
+  // conjunction had nowhere to say which of its three terms was the empty one. The shared venue had
+  // been deleted; the row could only say it was unarmed. A conjunction that is recorded as one
+  // boolean is an instrument reporting its own verdict instead of its reading.
+  ownerResolved: !!ownerId,
+  venueOnTheServer: !!workspaceId,
   phoneRunning: !!phoneUp,
   // WHICH BUILD THE PHONE READ. The filter is server-side, so a stale APK does not invalidate the
   // four cases - but it is exactly what the body observation below is about, and a reader needs it.

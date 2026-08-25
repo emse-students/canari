@@ -177,6 +177,21 @@ const landing = armed
           await sleep(2000);
         }
         const url = await evaluate(a1, 'location.pathname').catch(() => null);
+        // THE TRANSCRIPT IS NOT ON SCREEN THE MOMENT THE SALON IS. Read as though it were, this
+        // reported `markerSeen: 0` on 2026-08-25 in a salon the same run had just proved open, and
+        // called a landing that worked a failure. A cold-started process reaches the right PLACE
+        // first and rebuilds its store from disk after: the landing is a navigation, the messages
+        // are a decryption, and nothing makes them simultaneous. An absence read the instant the
+        // selection lands is an instrument that never waited for what it was looking for.
+        //
+        // WAITED FOR HERE RATHER THAN BY WIDENING THE SELECTION POLL ABOVE, because the two are
+        // different claims: `theSalonIsOpen` has to stay answerable on its own for the case where
+        // the person arrives and the transcript is the half that fails.
+        const t0 = Date.now();
+        const missed = await awaitMessage(a1, marker, 60_000).then(
+          () => null,
+          (e) => (e instanceof Error ? e.message : String(e))
+        );
         const seen = await countMessage(a1, marker).catch(() => 0);
         // FROM LOGCAT, NOT FROM THE ATTACHED CONSOLE, and that is the whole reason this row read
         // `theDeepLinkReachedTheHandler: false` beside `theSalonIsOpen: true` - a contradiction
@@ -194,6 +209,11 @@ const landing = armed
           open,
           url,
           seen,
+          // HOW LONG THE TRANSCRIPT TOOK, and what the pane looked like if it never came. A cold
+          // start that lands correctly and shows its messages a minute later is not this row's
+          // PASS/FAIL, but it is the number the next person will want, so it is never dropped.
+          markerMs: missed ? null : Date.now() - t0,
+          markerMissed: missed,
           // The one line that says the native half worked, and the ones around it if it did not.
           handlerSaid: shell.filter((l) => /\[notifNav\] deep link received/.test(l)),
           hooksSaid: shell.filter((l) => /\[hooks\]/.test(l)).slice(0, 12),
@@ -257,6 +277,8 @@ record('COMM-18', gated.verdict, {
   openedChannel: landing?.open ?? null,
   landedOn: landing?.url ?? null,
   markerSeen: landing?.seen ?? null,
+  markerMs: landing?.markerMs ?? null,
+  markerMissed: landing?.markerMissed ?? null,
   handlerSaid: landing?.handlerSaid ?? null,
   // Recorded whether or not the handler line came: when it did not, these are the only account of
   // how far the chain got.

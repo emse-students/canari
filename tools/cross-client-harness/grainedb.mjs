@@ -272,6 +272,26 @@ export function isCommunityMember(workspaceId, userId) {
 }
 
 /**
+ * Every user id holding a membership row in a community, oldest first.
+ *
+ * NAMED FOR ITS IDS, because `comm.mjs` exports a `communityMembers` that reads the MEMBERS PANEL on
+ * a client. Two readers of "the members" answering from a screen and from a table would be one
+ * import line away from being mistaken for each other.
+ *
+ * THE ROSTER, NOT A YES/NO, and it is separate from {@link isCommunityMember} because that one can
+ * only answer about an id the caller already holds IN FULL. The preflight holds PREFIXES: the
+ * gateway names each client by a truncated user id and nothing else on the rig knows the whole one,
+ * so the only question it can ask is "is one of these in the roster", which needs the roster.
+ */
+export function communityMemberIds(workspaceId) {
+  return rows(
+    psql(
+      `SELECT "userId" FROM channel_members WHERE "workspaceId" = '${workspaceId}' ORDER BY "createdAt"`
+    )
+  ).map(([userId]) => userId);
+}
+
+/**
  * Everything a community owns, counted per table - what a DELETE must leave at zero.
  *
  * COUNTED RATHER THAN LOOKED AT. Deletion became a real delete on 2026-08-18, and "the sidebar

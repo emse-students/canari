@@ -39,7 +39,8 @@ import { srvReport, srvSummary } from './srvlog.mjs';
 import { OVERLAYS, clearOverlays, client, evaluate } from './chat.mjs';
 import * as phone from './phone.mjs';
 import { closeExtraAppTabs } from './tabs.mjs';
-import { ORIGIN, PORTS } from './names.mjs';
+import { ORIGIN, PORTS, VENUE } from './names.mjs';
+import { channelIdOf, communityMemberIds, workspaceIdOf } from './grainedb.mjs';
 import { all, clientBuild } from './results.mjs';
 import { deployedBundleId, isOnTheDeployment, reloadOntoBundle } from './bundle.mjs';
 
@@ -353,6 +354,78 @@ async function reviveThePhone() {
   return notes.join('; ');
 }
 
+/**
+ * Whether the campaign's SHARED venue is still on production, with its channel and this run's people
+ * in it - and it is a PREFLIGHT question because it was not one, and that cost six rows.
+ *
+ * `Campagne de test` / `general` is a FIXTURE. Twenty-odd runners build their salon inside it rather
+ * than minting a community of their own, so it is not one row's setup but the ground every one of
+ * them stands on. On 2026-08-25 it was gone from production - cleanly, through the product, by a
+ * gesture no log window still covers - and rung 9 discovered it one row at a time: COMM-5, COMM-8,
+ * COMM-9/10 and COMM-14 each spent a full cycle to report "the community was never listed", a
+ * sentence that reads as a sidebar defect and was a missing fixture. Six rows, forty minutes, and
+ * one `SELECT` would have said it before the first click.
+ *
+ * IT ASKS THE DATABASE, NOT THE SIDEBAR, and the distinction is the whole point. The screen is what
+ * the four rows already read, and what it says - an absent row - has three causes it cannot tell
+ * apart: the community is gone, this account is not in it, or the list did not load. The table
+ * separates the first two outright, and a venue the table confirms while no client can see it is a
+ * product defect worth a verdict rather than a rig fault worth refusing over.
+ *
+ * MEMBERSHIP IS CHECKED AGAINST WHOEVER THIS RUN IS ABOUT, from `SUBJECTS` - which the presence
+ * probe above has just filled with the ids the gateway named. An empty set is the `--no-preflight`
+ * shape and asserts existence only: a membership claim resting on a list nobody filled would pass
+ * for exactly the wrong reason.
+ *
+ * @returns `{ ok, said }` - `said` is one line for the preflight to print either way, and it names
+ *   ids by their first eight characters only, as everything else on this rig does.
+ */
+function sharedVenue() {
+  let workspaceId;
+  try {
+    workspaceId = workspaceIdOf(VENUE.community);
+  } catch (e) {
+    // A QUERY THAT DID NOT RUN IS NOT A VENUE THAT IS GONE. Reported as a problem all the same - a
+    // preflight that cannot reach the database cannot clear a phase whose rows all read it.
+    return { ok: false, said: `the shared venue could not be looked up: ${e instanceof Error ? e.message : String(e)}` };
+  }
+  if (!workspaceId) {
+    return {
+      ok: false,
+      said:
+        `the shared venue "${VENUE.community}" IS NOT ON PRODUCTION - every runner that builds its ` +
+        'salon inside it will report an unlisted community. Recreate it with its ' +
+        `"${VENUE.channel}" channel and both accounts in it before running anything`,
+    };
+  }
+  const channelId = channelIdOf(workspaceId, VENUE.channel);
+  if (!channelId) {
+    return {
+      ok: false,
+      said:
+        `the shared venue ${workspaceId.slice(0, 8)} exists but has no "${VENUE.channel}" channel - ` +
+        'the community survived and its channel did not, which is what a sweep over its salons looks like',
+    };
+  }
+  const roster = communityMemberIds(workspaceId);
+  const absent = [...SUBJECTS].filter((id) => !roster.some((member) => member.startsWith(id)));
+  if (absent.length > 0) {
+    return {
+      ok: false,
+      said:
+        `the shared venue ${workspaceId.slice(0, 8)} has ${roster.length} member(s) and ` +
+        `${absent.length} of this run's account(s) are not among them (${absent.join(', ')}) - ` +
+        'they must be invited back before any row can open it',
+    };
+  }
+  return {
+    ok: true,
+    said:
+      `${VENUE.community}/${VENUE.channel} is there (${workspaceId.slice(0, 8)}/${channelId.slice(0, 8)}), ` +
+      `${roster.length} member(s)`,
+  };
+}
+
 async function preflight(devices, { quiet = false } = {}) {
   const problems = [];
 
@@ -575,6 +648,12 @@ async function preflight(devices, { quiet = false } = {}) {
     }
     if (r.status !== 0) problems.push('at least one client is not connected to the gateway - see the lines above');
   }
+
+  // THE FIXTURE EVERY PHASE STANDS ON, asked once here rather than discovered row by row. See
+  // `sharedVenue` for the six rows that paid for this line.
+  const venue = sharedVenue();
+  if (!venue.ok || !quiet) console.log(`  ${venue.ok ? 'ok  ' : 'STOP'} ${venue.said}`);
+  if (!venue.ok) problems.push(venue.said);
 
   // WHICH BUILD THE PHONE IS RUNNING, read ONCE here and handed to every script this run spawns.
   //
