@@ -293,6 +293,36 @@ describe('ensureCommunityDistributionGroup - a held group the server routes noth
     expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith('g-1');
   });
 
+  it('leaves an UNPUBLISHED group alone, because its empty roster is not an eviction', async () => {
+    // `groupInfo: null` is "the row exists but no client has initialised the MLS group yet", so no
+    // delivery row has been written for anyone and an empty roster is the state before an answer.
+    // Measured on production 2026-08-25: the heal fired on a salon the same run had just created.
+    const mls = makeHeldMls();
+    const channels = makeChannels({
+      getDistributionGroup: vi
+        .fn()
+        .mockResolvedValue({ groupId: 'g-1', groupInfo: null, baseEpoch: null, memberDevices: [] }),
+    });
+
+    expect(await run(mls, channels)).toBe(true);
+    expect(mls.forgetDistributionGroupById).not.toHaveBeenCalled();
+  });
+
+  it('says why it left it alone, so the race is not repaired in silence', async () => {
+    const log = vi.fn();
+    const channels = makeChannels({
+      getDistributionGroup: vi
+        .fn()
+        .mockResolvedValue({ groupId: 'g-1', groupInfo: null, baseEpoch: null, memberDevices: [] }),
+    });
+
+    expect(await run(makeHeldMls(), channels, log)).toBe(true);
+    const said = log.mock.calls.flat().join(' ');
+    expect(said).toMatch(/not published yet/);
+    // AND NOT THE ACCUSING ONE: the whole point is that this is no longer read as an eviction.
+    expect(said).not.toMatch(/holds NO row for it/);
+  });
+
   it('changes nothing when the server did not answer the question, and SAYS so', async () => {
     // `undefined` is "nobody asked" and never "no devices" - an older server, or a caller that did
     // not pass the reader. Reading it as an eviction would forget a healthy group on every load.

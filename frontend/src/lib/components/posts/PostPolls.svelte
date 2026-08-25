@@ -14,9 +14,18 @@
     onVoteClick: (pollId: string, optionId: string, multipleChoice: boolean) => void;
     /** Called when the user clicks the "Voter" button (multiple-choice polls only). */
     onSubmitVote: (pollId: string) => void;
+    /**
+     * WHETHER A POLL IS OVER, DECIDED BY THE CALLER - never by this component's clock.
+     *
+     * The answer depends on WHOSE clock, and only the caller knows whose: a channel poll's deadline
+     * is an instant on the server's clock and the server states its own verdict, while a post's is
+     * an author-chosen date hours or days out. Deriving it here compared a server instant to the
+     * browser's own and lost by a few hundred milliseconds, permanently (COMM-15, 2026-08-25).
+     */
+    isOver: (poll: Poll) => boolean;
   }
 
-  let { polls, selectedOptions, onVoteClick, onSubmitVote }: Props = $props();
+  let { polls, selectedOptions, onVoteClick, onSubmitVote, isOver }: Props = $props();
 
   // Tooltip state
   let tooltipOptionId = $state<string | null>(null);
@@ -79,9 +88,14 @@
     }
   }
 
+  /**
+   * The remaining time, for a poll the caller has said is NOT over.
+   *
+   * A non-positive remainder is this clock disagreeing with that statement, so it is clamped rather
+   * than dressed up as "terminé" - that branch used to contradict the footer on the same card.
+   */
   function pollCountdown(endsAt: string): string {
-    const diff = new Date(endsAt).getTime() - Date.now();
-    if (diff <= 0) return m.post_poll_ended_label();
+    const diff = Math.max(0, new Date(endsAt).getTime() - Date.now());
     const days = Math.floor(diff / 86400000);
     if (days > 0) return m.post_poll_days_remaining({ count: days });
     const hours = Math.floor(diff / 3600000);
@@ -126,7 +140,7 @@
                 <span
                   class="text-[0.65rem] font-bold text-amber-600 opacity-90 dark:text-amber-400"
                 >
-                  ⏱ {pollCountdown(poll.endsAt)}
+                  ⏱ {isOver(poll) ? m.post_poll_ended_label() : pollCountdown(poll.endsAt)}
                 </span>
               {/if}
               {#if hasVoted(poll)}
@@ -245,7 +259,7 @@
           <span class="text-text-muted text-xs font-semibold">
             {m.post_poll_total_votes_label({ count: totalVotes })}
           </span>
-          {#if poll.endsAt && new Date(poll.endsAt).getTime() <= Date.now()}
+          {#if isOver(poll)}
             <span class="text-text-muted text-xs font-bold opacity-60"
               >{m.post_poll_ended_full_label()}</span
             >

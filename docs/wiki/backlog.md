@@ -436,6 +436,36 @@ no backfill was written and the migration question is moot.
 
 ---
 
+### P3 - a poll whose deadline passes while the card is on screen flips only on reload
+
+Left behind by the COMM-15 fix of 2026-08-25, and stated here so it cannot hide behind that defect a
+second time. The closure of a channel poll is now the SERVER's statement (`ServedChannelPollMeta.closed`,
+[social-service](services/social-service.md#channel-polls-and-who-decides-one-is-over)), which fixes
+the case that mattered - a poll closed by a human, whose card used to stay open for ever because two
+clocks answered the question. It does not fix the case where the deadline simply arrives: `closed` is
+stamped when the poll is handed out, and nothing re-reads it afterwards.
+
+Two things stop at that instant, and only one of them is worth anything. The FOOTER (the vote form
+giving way to the ended label) is the one that matters, and it is wrong for as long as the card stays
+mounted - a person can still submit into a poll the server will refuse with a 403, which is the same
+class of "the server enforces a rule the client has never heard of" the write-policy work already
+named. The COUNTDOWN is cosmetic: `pollCountdown` renders whole minutes and does not tick, so it is
+already stale between renders, and it now floors at zero rather than claiming an ended poll is still
+open.
+
+**The fix is NOT a timer in the card**, which is what "make it tick" would buy, and would put a
+per-poll interval in a list that scrolls. The deadline is KNOWN, so the moment it becomes interesting
+is known too: one `setTimeout` per mounted poll, at `endsAt - now`, that flips the poll's own state
+once and never fires again for an already-closed poll (and never at all for one with no deadline).
+Even that has to state whose clock it used, so the delay is computed from the same server statement
+the card is already given rather than from a comparison this side makes. Alternatively - and cheaper -
+the vote submission's own 403 is a fact the card can act on, which is the one path where being wrong
+actually costs a person something.
+
+**Why it is deferred.** It is a rendering item behind a defect that is fixed, nothing on the ladder
+asserts a deadline arriving live (the campaign closes polls with the close control), and MUT-20 aside
+no check waits on wall-clock time at all. It belongs with the rendering pass, not with a rung.
+
 ## Messaging convergence
 
 ### P3 - a `history_bundle` restores the EDITED flag without the edited body

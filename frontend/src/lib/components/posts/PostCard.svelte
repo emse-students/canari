@@ -484,11 +484,17 @@
       onReactionClick={handleReaction}
     />
 
+    <!--
+      A post poll's deadline is a date its author picked, hours or days out, so comparing it to this
+      clock is sound - and stating that here is the point: the renderer no longer decides for callers
+      whose deadline came from a different clock (see PostPolls.isOver).
+    -->
     <PostPolls
       polls={localPost.polls}
       {selectedOptions}
       onVoteClick={handleVoteClick}
       onSubmitVote={submitVote}
+      isOver={(poll) => !!poll.endsAt && new Date(poll.endsAt).getTime() <= Date.now()}
     />
 
     {#if pendingAttachedFormIds.length > 0}

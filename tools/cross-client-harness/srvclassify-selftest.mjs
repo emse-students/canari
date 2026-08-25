@@ -581,5 +581,48 @@ for (const [name, line, want] of cms) {
   check(`${want.padEnd(11)}  ${name}`, got, want);
 }
 
+// THE COMMUNITY SURFACE, twelve unexplained lines on every COMM window until 2026-08-25 - the whole
+// phase's server traffic, unclassified, because no earlier rung creates a community, invites anybody
+// into one, polls in it or deletes it. Read once, named here, and pinned for the two ways it can rot:
+// a spelling nobody re-reads, and a rule widened past the sentence it was written for.
+const comm = [
+  // THE ESTATE. A creation is the line every later sweep descends from; the group it is given is that
+  // creation's own chatter, and the read a client does afterwards is one line per workspace load.
+  ['a community coming into existence is the line an estate descends from', `${NEST}[ChannelService] [WORKSPACE] create name="A Name With Spaces" slug="a-name" (requested="a-name") by=aaaaaaaa`, 'notable'],
+  ['the key group a creation is given is that creation talking', `${NEST}[ChannelService] [WORKSPACE] distribution group workspace=00000000-0000-4000-8000-000000000001 group=00000000-0000-4000-8000-000000000002`, 'benign'],
+  // BOTH SPELLINGS OF `published=`, because the unpublished one is the state BEFORE an answer and
+  // filing it as dirty would make the ordinary case break `clean` (COMM-22, 74 of them in one run).
+  ['an unpublished group with no devices is the ordinary state before an answer', `${NEST}[ChannelService] [DISTRIBUTION_GROUP] served workspace=00000000-0000-4000-8000-000000000001 user=aaaaaaaa group=00000000-0000-4000-8000-000000000002 published=false devices=0`, 'benign'],
+  ['and so is a published one with a roster', `${NEST}[ChannelService] [DISTRIBUTION_GROUP] served workspace=00000000-0000-4000-8000-000000000001 user=aaaaaaaa group=00000000-0000-4000-8000-000000000002 published=true devices=3`, 'benign'],
+  // THE GRANT PAIR, the community twin of `[GROUP_INVITE]` above and split the same way: the preview
+  // is an anonymous read, the acceptance is a person who can now read the community's traffic.
+  ['a channel invite preview is a read', `[Nest] 1  - 08/14/2026, 12:43:51 PM   DEBUG [InternalInvitesController] internal channel invite preview token=fVcgu-Y-`, 'benign'],
+  ['an invite minted says what it revoked', `${NEST}[ChannelService] [INVITE] created workspace=00000000-0000-4000-8000-000000000001 by=aaaaaaaa expiresAt=never maxUses=unlimited replaced=0`, 'notable'],
+  ['an invite with a limit is the same event, not a new one', `${NEST}[ChannelService] [INVITE] created workspace=00000000-0000-4000-8000-000000000001 by=aaaaaaaa expiresAt=2026-09-01T00:00:00.000Z maxUses=5 replaced=2`, 'notable'],
+  ['a join admits a person to everything the community says', `${NEST}[ChannelService] [INVITE] accepted workspace=00000000-0000-4000-8000-000000000001 user=aaaaaaaa`, 'notable'],
+  // THE POLL TRIPLET. Two are content; the third ends the thing and turns every further vote into a
+  // 403, which is the whole subject of COMM-15.
+  ['posting a poll is content', `${NEST}[ChannelService] [POLL] created channel=00000000-0000-4000-8000-000000000003 message=00000000-0000-4000-8000-000000000004 options=3 endsAt=none`, 'benign'],
+  ['voting in one is a write into that content', `${NEST}[ChannelService] [POLL] vote channel=00000000-0000-4000-8000-000000000003 message=00000000-0000-4000-8000-000000000004 user=aaaaaaaa options=1`, 'benign'],
+  ['retracting a vote is still a vote', `${NEST}[ChannelService] [POLL] vote channel=00000000-0000-4000-8000-000000000003 message=00000000-0000-4000-8000-000000000004 user=aaaaaaaa options=0`, 'benign'],
+  ['closing one is an authority acting on a message', `${NEST}[ChannelService] [POLL] closed channel=00000000-0000-4000-8000-000000000003 message=00000000-0000-4000-8000-000000000004 by=aaaaaaaa`, 'notable'],
+  // THE DESTRUCTION PAIR, and the reason the four reasons are spelt out rather than matched loosely.
+  ['a community destroyed states what went with it', `${NEST}[ChannelService] [WORKSPACE] hard delete workspace=00000000-0000-4000-8000-000000000001 channels=2 privateGroups=0 reason=admin_deleted`, 'notable'],
+  ['the last member leaving destroys it too', `${NEST}[ChannelService] [WORKSPACE] hard delete workspace=00000000-0000-4000-8000-000000000001 channels=2 privateGroups=1 reason=last_member_left`, 'notable'],
+  // A FIFTH REASON WOULD BE A NEW CALLER NOBODY HAS CLASSIFIED, and that is a finding, not noise.
+  ['a reason no caller writes is unexplained on purpose', `${NEST}[ChannelService] [WORKSPACE] hard delete workspace=00000000-0000-4000-8000-000000000001 channels=2 privateGroups=0 reason=something_new`, 'unexplained'],
+  ['and the act names who asked and how many lost a room', `${NEST}[ChannelService] [WORKSPACE] delete workspace=00000000-0000-4000-8000-000000000001 slug="a-name" by=aaaaaaaa members=2`, 'notable'],
+  // THE TWO SCANNER FAMILIES ADDED WITH THEM, and the near-miss that keeps the second one honest:
+  // `/api/` is a namespace this application OWNS, so only the fingerprinted path itself is forgiven.
+  ['a GeoServer probe is a scanner, like its five neighbours', '[404] GET /geoserver/web/', 'notable'],
+  ['so is the version endpoint it tries next', '[404] GET /api/v1/version', 'notable'],
+  ['but a 404 anywhere else under /api is ours to explain', '[404] GET /api/v1/channels', 'unexplained'],
+  ['and a 200 on a scanned path is not a scanner finding nothing', '[200] GET /geoserver/web/', 'unexplained'],
+];
+for (const [name, line, want] of comm) {
+  const got = matches(NOTABLE_RULES, line) ? 'notable' : matches(BENIGN_RULES, line) ? 'benign' : 'unexplained';
+  check(`${want.padEnd(11)}  ${name}`, got, want);
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall good');
 process.exit(failures ? 1 : 0);

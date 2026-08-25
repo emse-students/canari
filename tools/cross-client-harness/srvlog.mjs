@@ -322,6 +322,37 @@ const BENIGN = [
   // NOTABLE with the rest of the membership changes.
   /\[InvitationsController\] \[GROUP_INVITE\] created group=\S+ by=\S+$/,
   /\[InternalController\] internal group invite preview token=\S+$/,
+  // THE COMMUNITY TWIN OF THE PAIR ABOVE, from a different controller and about a different object -
+  // a channel invite rather than a DM group's. `accepted` is likewise NOT here: it is a person
+  // becoming a member of a community, and it sits in NOTABLE with `created`.
+  /\[InternalInvitesController\] internal channel invite preview token=\S+$/,
+  // THE KEY GROUP A NEW COMMUNITY IS GIVEN, printed by the creation that made it. One line per
+  // `[WORKSPACE] create`, always, and never on its own - so it is the creation's chatter and the
+  // creation is the event, which is in NOTABLE. The OUTCOME this pair leads to,
+  // `[DISTRIBUTION_GROUP] published`, is in NOTABLE too; this is the middle of that sentence.
+  /\[ChannelService\] \[WORKSPACE\] distribution group workspace=\S+ group=\S+$/,
+  // A CLIENT ASKING WHERE A COMMUNITY'S KEYS LIVE - one line per GET, which is one per workspace
+  // load and one per join, on every device. Measured: 74 of them in a single COMM run of 2026-08-25.
+  //
+  // BOTH VALUES OF `published=` ARE ORDINARY, and that is the whole point of not pinning one.
+  // `published=false devices=0` is what a community looks like between the row being written and the
+  // first client initialising the MLS group - the state BEFORE an answer, not a negative one - and a
+  // client that read it as an eviction is the defect fixed on 2026-08-25 (COMM-22). Filing either
+  // spelling as unexplained would make the ordinary case dirty and teach a reader to skip the tag.
+  //
+  // Its FREQUENCY is the thing worth a second look, not its existence, and a rule cannot carry a
+  // rate. Nothing here forgives the refusal twin: `[DISTRIBUTION_GROUP] refused` is in NOTABLE.
+  /\[ChannelService\] \[DISTRIBUTION_GROUP\] served workspace=\S+ user=\S+ group=\S+ published=(true|false) devices=(\d+|\?)$/,
+  // A POLL BEING POSTED AND VOTED IN, which is content and not an event: the send is an ordinary
+  // channel message that happens to carry `metadata.poll`, and a vote is a write into it. Every
+  // check that produces these asserts the OUTCOME on the two clients' screens, so a missing line
+  // here could never be the finding.
+  //
+  // `options=0` on a vote is a RETRACTION and is deliberately inside the same rule - it is still a
+  // vote write, and the campaign's own checks retract on purpose (COMM-15). What is NOT here is the
+  // closure: `[POLL] closed` ends the thing early, unpins it, and is in NOTABLE.
+  /\[ChannelService\] \[POLL\] created channel=\S+ message=\S+ options=\d+ endsAt=\S+$/,
+  /\[ChannelService\] \[POLL\] vote channel=\S+ message=\S+ user=\S+ options=\d+$/,
   // A DEVICE'S MEMBERSHIP GOING ACTIVE - the last step of every join, one line per device. The check
   // that caused it asserts the outcome directly: a device that is not addressable fails on its own
   // post-condition, never on a missing log line.
@@ -703,7 +734,19 @@ const NOTABLE = [
   // what `unexplained` is for, and this file's own sitemap rules say why a blanket `[404] GET` may
   // never exist. Ten of the eleven are classified; the eleventh costs one glance and keeps the
   // bucket honest.
-  /^\[404\] (GET|HEAD) \/(wp-[\w./-]*|administrator(\/[\w./-]*)?|_next\/[\w./-]*|_ignition\/[\w./-]*|media\/system\/[\w./-]*|language\/[\w-]+\/[\w.-]+)$/,
+  /^\[404\] (GET|HEAD) \/(wp-[\w./-]*|administrator(\/[\w./-]*)?|_next\/[\w./-]*|_ignition\/[\w./-]*|geoserver(\/[\w./-]*)?|media\/system\/[\w./-]*|language\/[\w-]+\/[\w.-]+)$/,
+  // A SIXTH STACK IN THE SAME FAMILY, added 2026-08-25 after `/geoserver/web/` and `/geoserver/wfs`
+  // came back 404 inside a COMM window: GeoServer, probed for its well-known unauthenticated RCEs.
+  // Keyed on the prefix like its five neighbours, and safe for their reason - Canari is SvelteKit and
+  // owns no `/geoserver`.
+  //
+  // `/api/v1/version`, from the same window, is SPELT LITERALLY instead, and the difference matters.
+  // `/api/` IS a namespace this application owns, so a rule shaped like the ones above would forgive
+  // a real route of ours answering 404 - which is a defect and belongs in `unexplained`. What the
+  // scanner is fingerprinting is a Docker/Kubernetes/Prometheus-style version endpoint; this app has
+  // no versioned API prefix at all, and the day it grows one, this pin is the line that has to be
+  // re-read rather than the bucket that hides it.
+  /^\[404\] (GET|HEAD) \/api\/v1\/version$/,
   // A SERVICE STARTING INSIDE THE WINDOW - which means the window straddles a deploy, and every
   // client-side disconnection in it has an explanation that is not the application's fault. Never
   // benign: a run that does not know it was redeployed under itself will attribute the fallout to
@@ -739,6 +782,42 @@ const NOTABLE = [
   // message, and neither had ever run in a window anybody classified. NOTABLE and not BENIGN on
   // purpose: a deletion crossing an observation window is never noise, and a window carrying more of
   // these than the checks in it asked for is the shape a real incident would take.
+  // A COMMUNITY COMING INTO EXISTENCE, which is the one line that explains an estate. Everything the
+  // campaign later has to sweep - salons, distribution groups, the row each member keeps - descends
+  // from here, so a window holding more creations than the checks in it asked for is the shape a
+  // debris problem takes, and a window holding none is a phase that never armed.
+  //
+  // `(requested="...")` IS PART OF THE SHAPE RATHER THAN NOISE: it differs from `slug=` exactly when
+  // the slug collided and the service disambiguated, which is a fact about the estate and reads at a
+  // glance. `[^"]*` and not `\S+`, because a community name legitimately contains spaces.
+  /\[ChannelService\] \[WORKSPACE\] create name="[^"]*" slug="[^"]*" \(requested="[^"]*"\) by=\S+$/,
+  // AN INVITE IS A GRANT, AND `replaced=N` SAYS WHAT IT REVOKED. Both lines are membership events -
+  // the same reason `[GROUP_INVITE] accepted` is notable while its `created` twin's preview is not -
+  // and `accepted` is the moment a second person can read a community's traffic at all.
+  //
+  // `expiresAt=` and `maxUses=` are matched loosely on purpose: the campaign creates unlimited
+  // never-expiring invites, but an invite with a limit is not a different event, and a rule that
+  // pinned this run's shape would file the next one as unexplained for being ordinary.
+  /\[ChannelService\] \[INVITE\] created workspace=\S+ by=\S+ expiresAt=\S+ maxUses=\S+ replaced=\d+$/,
+  /\[ChannelService\] \[INVITE\] accepted workspace=\S+ user=\S+$/,
+  // A POLL BEING ENDED, which is destructive in the small: it forces the deadline, unpins the
+  // message and makes every further vote a 403. Its `created` and `vote` siblings are BENIGN because
+  // they are content; this one is an authority acting on somebody else's message - `closePoll` takes
+  // the author OR `channel.moderate` - and it is the event COMM-15 exists to observe.
+  /\[ChannelService\] \[POLL\] closed channel=\S+ message=\S+ by=\S+$/,
+  // A WHOLE COMMUNITY BEING DESTROYED, for every member at once, and the two lines are one act: the
+  // `hard delete` states what went with it, the `delete` states who asked and how many people lost a
+  // room. Notable for the reason the message deletion below is - the server is the only authority
+  // that saw the ciphertexts, so these lines are the sole surviving record - and doubly so because
+  // the campaign's own sweep produces them: a window carrying more than its checks asked for is a
+  // sweep that reached something it should not have.
+  //
+  // THE FOUR REASONS ARE PINNED, and that is the point. `hardDeleteWorkspace` has exactly four
+  // callers - an admin deleting it, the last member leaving, the last member being kicked, and an
+  // account deletion emptying it - so a fifth spelling means a new caller nobody has classified, and
+  // `unexplained` is where that belongs. A rule spanning `reason=\S+` would forgive it silently.
+  /\[ChannelService\] \[WORKSPACE\] hard delete workspace=\S+ channels=\d+ privateGroups=\d+ reason=(admin_deleted|last_member_left|last_member_kicked|account_deletion_left_no_members)$/,
+  /\[ChannelService\] \[WORKSPACE\] delete workspace=\S+ slug="[^"]*" by=\S+ members=\d+$/,
   /\[ChannelService\] \[CHANNEL\] message deleted channel=\S+ message=\S+ by=\S+( \(moderation\))?$/,
 ];
 

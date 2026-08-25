@@ -55,7 +55,10 @@
   // reassignable so the user can toggle options before submitting.
   let selectedOptions = $derived<string[]>([...(meta.votesByUser?.[currentUserId] ?? [])]);
 
-  const isClosed = $derived(!!meta.endsAt && new Date(meta.endsAt).getTime() <= Date.now());
+  // THE SERVER'S OWN STATEMENT, not a comparison against this clock. `endsAt` is an instant on the
+  // server's clock; a poll closed *now* reaches us stamped with a time our clock has not caught up
+  // to, so the comparison this used to make came out false and nothing ever re-ran it (COMM-15).
+  const isClosed = $derived(meta.closed);
 
   /**
    * Single-choice: toggle then submit immediately. Multiple-choice: just toggle;
@@ -98,6 +101,7 @@
   {selectedOptions}
   onVoteClick={handleVoteClick}
   onSubmitVote={submitVote}
+  isOver={() => isClosed}
 />
 
 {#if canClose && !isClosed}

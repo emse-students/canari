@@ -227,7 +227,14 @@
   }
 
   // Personal per-channel push notification level (all | mentions | none).
-  let notifLevel = $state<ChannelNotificationLevel>('all');
+  //
+  // `null` UNTIL THE SERVER HAS SAID, and it is not a formality. Seeded to `all`, this control
+  // showed `all` checked from the instant the modal opened - and kept the PREVIOUS channel's value
+  // across a reopen - so a member stored at `mentions` was shown `all`, and choosing `all` then
+  // changed nothing (`level === notifLevel` returns early). The screen and the column disagreed and
+  // nothing said so. `all` is the server's default for an unset channel; it is not this side's
+  // answer to give.
+  let notifLevel = $state<ChannelNotificationLevel | null>(null);
   let notifLoading = $state(false);
   let notifSaving = $state(false);
   let notifLoadedFor = $state('');
@@ -243,10 +250,14 @@
 
   async function loadNotifLevel() {
     notifLoading = true;
+    notifLevel = null;
     try {
       notifLevel = await channelService.getNotificationLevel(selectedChannelId);
-    } catch {
-      notifLevel = 'all';
+    } catch (e) {
+      // A FAILED READ IS NOT THE VALUE `all`. It used to be, silently, which made a broken request
+      // and a member who really is on `all` the same screen and different facts. Nothing is checked
+      // instead: the choice stays offered, and a click writes an authoritative value.
+      console.error('[CHANNEL] notification level unreadable - the control shows no level', e);
     } finally {
       notifLoading = false;
     }
@@ -411,55 +422,67 @@
               is the control's own answer to that question, it is what assistive technology is told,
               and it outlives any restyling.
             -->
-            <div
-              class="grid grid-cols-3 gap-2"
-              role="radiogroup"
-              aria-labelledby="channel-notif-heading"
-              aria-busy={notifLoading || notifSaving}
-            >
-              <button
-                type="button"
-                role="radio"
-                aria-checked={notifLevel === 'all'}
-                onclick={() => setNotifLevel('all')}
-                disabled={notifLoading}
-                class="flex flex-col items-center gap-1.5 rounded-xl border px-2 py-3 text-xs font-bold transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-50 {notifLevel ===
-                'all'
-                  ? 'border-amber-500 bg-amber-500/10 text-amber-700 dark:text-amber-400'
-                  : 'text-text-muted border-black/10 hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/5'}"
+            <!--
+              NOT DRAWN WHILE THE ANSWER IS IN FLIGHT. A radio group is a statement that one of its
+              options is in force, so rendering one before the server has answered states something
+              nobody knows - and that is exactly how a level silently failed to change. Its presence
+              now MEANS the question has been answered, one way or the other.
+            -->
+            {#if notifLoading}
+              <div class="text-text-muted px-1 text-xs" aria-busy="true">
+                {m.common_loading_label()}
+              </div>
+            {:else}
+              <div
+                class="grid grid-cols-3 gap-2"
+                role="radiogroup"
+                aria-labelledby="channel-notif-heading"
+                aria-busy={notifSaving}
               >
-                <Bell size={18} strokeWidth={2.5} />
-                {m.chat_channel_notif_all_label()}
-              </button>
-              <button
-                type="button"
-                role="radio"
-                aria-checked={notifLevel === 'mentions'}
-                onclick={() => setNotifLevel('mentions')}
-                disabled={notifLoading}
-                class="flex flex-col items-center gap-1.5 rounded-xl border px-2 py-3 text-xs font-bold transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-50 {notifLevel ===
-                'mentions'
-                  ? 'border-amber-500 bg-amber-500/10 text-amber-700 dark:text-amber-400'
-                  : 'text-text-muted border-black/10 hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/5'}"
-              >
-                <AtSign size={18} strokeWidth={2.5} />
-                {m.chat_channel_notif_mentions_label()}
-              </button>
-              <button
-                type="button"
-                role="radio"
-                aria-checked={notifLevel === 'none'}
-                onclick={() => setNotifLevel('none')}
-                disabled={notifLoading}
-                class="flex flex-col items-center gap-1.5 rounded-xl border px-2 py-3 text-xs font-bold transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-50 {notifLevel ===
-                'none'
-                  ? 'border-amber-500 bg-amber-500/10 text-amber-700 dark:text-amber-400'
-                  : 'text-text-muted border-black/10 hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/5'}"
-              >
-                <BellOff size={18} strokeWidth={2.5} />
-                {m.chat_channel_notif_none_label()}
-              </button>
-            </div>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={notifLevel === 'all'}
+                  onclick={() => setNotifLevel('all')}
+                  disabled={notifSaving}
+                  class="flex flex-col items-center gap-1.5 rounded-xl border px-2 py-3 text-xs font-bold transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-50 {notifLevel ===
+                  'all'
+                    ? 'border-amber-500 bg-amber-500/10 text-amber-700 dark:text-amber-400'
+                    : 'text-text-muted border-black/10 hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/5'}"
+                >
+                  <Bell size={18} strokeWidth={2.5} />
+                  {m.chat_channel_notif_all_label()}
+                </button>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={notifLevel === 'mentions'}
+                  onclick={() => setNotifLevel('mentions')}
+                  disabled={notifSaving}
+                  class="flex flex-col items-center gap-1.5 rounded-xl border px-2 py-3 text-xs font-bold transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-50 {notifLevel ===
+                  'mentions'
+                    ? 'border-amber-500 bg-amber-500/10 text-amber-700 dark:text-amber-400'
+                    : 'text-text-muted border-black/10 hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/5'}"
+                >
+                  <AtSign size={18} strokeWidth={2.5} />
+                  {m.chat_channel_notif_mentions_label()}
+                </button>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={notifLevel === 'none'}
+                  onclick={() => setNotifLevel('none')}
+                  disabled={notifSaving}
+                  class="flex flex-col items-center gap-1.5 rounded-xl border px-2 py-3 text-xs font-bold transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-50 {notifLevel ===
+                  'none'
+                    ? 'border-amber-500 bg-amber-500/10 text-amber-700 dark:text-amber-400'
+                    : 'text-text-muted border-black/10 hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/5'}"
+                >
+                  <BellOff size={18} strokeWidth={2.5} />
+                  {m.chat_channel_notif_none_label()}
+                </button>
+              </div>
+            {/if}
           </div>
 
           <!-- Zone de danger (Visible uniquement sur mobile dans cet onglet) -->

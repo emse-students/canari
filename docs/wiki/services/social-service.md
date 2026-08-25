@@ -145,7 +145,7 @@ The numbers and what they imply are in
 | DELETE | `/api/channels/:channelId/messages/:messageId` | Delete a channel message: own always, someone else's with `channel.moderate` |
 | POST | `/api/channels/:channelId/messages/:messageId/pin` | Pin message (own always, someone else's with `channel.moderate`) |
 | POST | `/api/channels/:channelId/messages/:messageId/poll/vote` | Vote on a poll (empty = retract) |
-| PATCH | `/api/channels/:channelId/messages/:messageId/poll/close` | Close a poll now (author or moderator); forces the deadline + unpins |
+| PATCH | `/api/channels/:channelId/messages/:messageId/poll/close` | Close a poll now (author or moderator); forces the deadline + unpins. Answers the poll with `closed: true` - see "Channel polls" |
 | GET | `/api/channels/:channelId/notification-level` | Caller's push level for the channel |
 | PATCH | `/api/channels/:channelId/notification-level` | Set push level (`all` \| `mentions` \| `none`) |
 
@@ -212,6 +212,32 @@ Deletion drops the row (the content is a ciphertext the server cannot read, so t
 worth tombstoning) and broadcasts `channel.message.deleted` (`{ channelId, messageId, deletedBy }`)
 to the workspace, which is how other members' clients replace the bubble with the local
 "deleted message" placeholder.
+
+#### Channel polls, and who decides one is over
+
+A poll lives in its message's `metadata.poll` (`ChannelPollMeta`): the question, the options, the
+per-option voter lists and an optional `endsAt`. Voting is `POST .../poll/vote` (an empty selection
+retracts), closing is `PATCH .../poll/close`, which stamps `endsAt = now`, unpins the message and
+broadcasts the new state on `channel.poll.vote` - the same frame a vote publishes, because both say
+the same thing: here is the poll as it now stands.
+
+**What a client is served is not what is stored.** `ServedChannelPollMeta` adds one field,
+`closed`, and it is the server's own answer to "is this over?" rather than the input a client would
+need to compute it. `endsAt` is an instant on the SERVER's clock; a client comparing it to `Date.now()`
+is asking the question with a different clock, and the margin is zero exactly when it matters. A poll
+closed *now* carries the server's now and is read a few hundred milliseconds later against a client
+clock a little behind it, so the comparison comes out false - and since the comparison lives in a
+`$derived`, which is not reactive to time, nothing ever re-runs it. Measured on production on
+2026-08-25 (COMM-15): both clients rendered a freshly closed poll as "0 min restante(s)"
+indefinitely while this service refused every vote into it with a 403. The service already had to
+decide closedness to issue those 403s, with the clock that wrote the field; `closed` is that decision
+carried to where it is rendered.
+
+`closed` is stamped at every hand-out site - the history page, the `channel.message.created`
+broadcast, and the vote and close responses and their broadcasts - by one helper, `servedPoll`. It is
+**never persisted**: it is true of an instant, not of the row, and the durable fact stays `endsAt`.
+The opportunistic auto-unpin uses the same predicate, so a poll cannot be unpinned for being over
+while being served as open.
 
 #### Message reactions
 

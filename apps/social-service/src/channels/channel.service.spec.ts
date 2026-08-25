@@ -287,6 +287,80 @@ describe('ChannelService security hardening', () => {
     );
   });
 
+  /*
+   * WHOSE CLOCK ANSWERS "IS IT OVER". A deadline is an instant on THIS clock, so a client comparing
+   * it to its own decides with the wrong one - and the margin is zero exactly when it matters. A
+   * poll closed *now* was read a few hundred milliseconds later against a client clock half a second
+   * behind, the comparison came out false, and nothing re-ran it: the card stayed open for ever
+   * while this side answered 403 to every vote (COMM-15, measured on production 2026-08-25).
+   *
+   * So the answer travels as a statement. These three pin the statement, its delivery, and the fact
+   * that it is never written down.
+   */
+  it('closePoll STATES the closure rather than leaving a deadline to be compared', async () => {
+    const { service, channelRepo, memberRepo, messageRepo, redis } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    const msg = {
+      id: 'm1',
+      channelId: 'ch1',
+      authorId: 'u1',
+      pinned: true,
+      metadata: {
+        poll: { optionIds: ['a', 'b'], multipleChoice: false, endsAt: null, votesByUser: {} },
+      },
+    };
+    lockMessage(messageRepo, msg);
+
+    const result = await service.closePoll('ch1', 'm1', 'u1');
+    expect(result.closed).toBe(true);
+
+    // AND EVERY MEMBER IS TOLD THE SAME THING the closer was: one poll, one verdict.
+    const calls = redis.publishChannelEvent.mock.calls as unknown as [
+      string,
+      { poll: { closed: boolean } },
+    ][];
+    const frame = calls.find((c) => c[0] === 'channel.poll.vote');
+    expect(frame?.[1].poll.closed).toBe(true);
+  });
+
+  it('does not persist the statement, which is true of an instant and not of the row', async () => {
+    const { service, channelRepo, memberRepo, messageRepo } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    const msg = {
+      id: 'm1',
+      channelId: 'ch1',
+      authorId: 'u1',
+      pinned: true,
+      metadata: {
+        poll: { optionIds: ['a', 'b'], multipleChoice: false, endsAt: null, votesByUser: {} },
+      },
+    };
+    lockMessage(messageRepo, msg);
+
+    await service.closePoll('ch1', 'm1', 'u1');
+    // A stored `closed` would be a boolean nothing keeps true - the deadline is the durable fact.
+    expect(Object.keys(msg.metadata.poll)).not.toContain('closed');
+  });
+
+  it('says an open poll is open, so `closed` is an answer and not a marker of the close route', async () => {
+    const { service, channelRepo, memberRepo, messageRepo } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    lockMessage(messageRepo, {
+      id: 'm1',
+      channelId: 'ch1',
+      metadata: {
+        poll: {
+          optionIds: ['a', 'b'],
+          multipleChoice: false,
+          endsAt: new Date(Date.now() + 3_600_000).toISOString(),
+          votesByUser: {},
+        },
+      },
+    });
+
+    expect((await service.votePoll('ch1', 'm1', 'u1', ['b'])).closed).toBe(false);
+  });
+
   it('closePoll rejects a non-author without a moderation permission', async () => {
     const { service, channelRepo, memberRepo, messageRepo } = makeService();
     arrangePollAccess(channelRepo, memberRepo);

@@ -231,6 +231,14 @@ const voteAfterClose =
 
 const cardAfterClose = armed ? await step('the peer sees it ended', () => cardSettles(w2, (c) => c.ended)) : null;
 
+// THE AUTHOR'S OWN CARD, and it is the discriminator rather than a second copy of the same
+// question: the author learns the new deadline from the close call's OWN response, the peer only
+// from the broadcast. So the pair separates the two causes a single "the peer does not see it
+// ended" cannot - a closure that never travels, from a card that never re-reads the clock.
+const cardOnAuthorAfterClose = armed
+  ? await step('the author sees it ended', () => cardSettles(w1, (c) => c.ended))
+  : null;
+
 // -- Its own debris goes ------------------------------------------------------------------
 await step('delete the community', async () => {
   if (!workspaceId) return;
@@ -283,6 +291,8 @@ const expectations = {
   // The server refuses a vote afterwards, whatever any screen offers.
   theServerRefusedAVoteAfterClosing: voteAfterClose?.status === 403,
   thePeerSeesItEnded: cardAfterClose?.ended === true,
+  // The author closed it from this very screen, so their own card owes the answer first.
+  theAuthorSeesItEnded: cardOnAuthorAfterClose?.ended === true,
 };
 
 const verdict = !armed
@@ -320,6 +330,7 @@ record('COMM-15', gated.verdict, {
   afterClose,
   voteAfterClose,
   cardAfterClose,
+  cardOnAuthorAfterClose,
   ...expectations,
   failures,
 });

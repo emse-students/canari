@@ -558,6 +558,13 @@ export async function openChannelSettings(cx) {
     `document.body.innerText.indexOf(${JSON.stringify(caption('chat_channel_settings_title'))}) >= 0`,
     10000
   );
+  // THE RADIO GROUP, not the title - the same rule {@link openChannelAccess} follows for its
+  // toggle. The modal renders its heading while the stored level is still being fetched, and until
+  // 2026-08-25 it filled that gap by ASSERTING `all`: a member stored at `mentions` was shown
+  // `all`, so asking for `all` read the level as already right and clicked nothing (COMM-14). The
+  // group now mounts only once the server has answered, so its presence IS the answer having
+  // arrived, and waiting for it is what makes the level a fact rather than a placeholder.
+  await until(cx, `!!document.querySelector('[role=radiogroup]')`, 15000);
 }
 
 /** The three notification levels, by the caption each button carries. */
@@ -1601,8 +1608,14 @@ export async function composePoll(cx, { question, options, multiple = false }) {
  * (`aria-pressed`), and whether the poll is over - so a runner never has to re-derive a percentage.
  *
  * `closable` is the author's / moderator's "Cloturer le sondage" being offered, which is a
- * permission statement rather than a styling one. It sits OUTSIDE the card, beside it, so it is
- * looked for in the parent.
+ * permission statement rather than a styling one. `ChannelPoll` draws it as a SIBLING of the poll
+ * presentation, so it is looked for among the buttons that share the presentation's own parent -
+ * reading `card.parentElement` made it always false, because that parent is still inside the
+ * presentation, and an observation that cannot be true is worse than an absent one.
+ *
+ * `text` is the card as it reads, verbatim. It is what separates "the state never reached the
+ * component" from "the component rendered it and the condition is wrong" - the pair COMM-15 could
+ * not tell apart from `ended` alone.
  */
 export async function pollCard(cx, question) {
   return JSON.parse(
@@ -1629,13 +1642,19 @@ export async function pollCard(cx, question) {
            };
          });
          var text = card.innerText || '';
-         var around = card.parentElement ? card.parentElement.innerText || '' : text;
+         // The presentation's root is the card's parent; the close button is that root's sibling.
+         var host = card.parentElement ? card.parentElement.parentElement : null;
+         var siblings = host ? [].slice.call(host.children) : [];
+         var closeLabel = ${JSON.stringify(caption('channel_poll_close_button'))};
          return {
            present: true,
            cards: heads.length,
            options: options,
            ended: text.indexOf(${JSON.stringify(caption('post_poll_ended_full_label'))}) >= 0,
-           closable: around.indexOf(${JSON.stringify(caption('channel_poll_close_button'))}) >= 0,
+           closable: siblings.some(function (e) {
+             return e.tagName === 'BUTTON' && (e.innerText || '').indexOf(closeLabel) >= 0;
+           }),
+           text: text,
          };
        })())`
     )

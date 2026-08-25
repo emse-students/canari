@@ -150,6 +150,52 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A CLOSED CHANNEL POLL STAYED OPEN FOR EVER ON EVERY SCREEN, because two clocks answered one
+  question.** Closing a poll writes `endsAt = new Date()` - the SERVER's now - and the card decided
+  "is this over?" with `new Date(endsAt).getTime() <= Date.now()`, its OWN now. Production's clock is
+  0.2 to 1.1 s ahead of a client here, so at the one instant the card recomputes, the freshly written
+  deadline is still in the client's future and the comparison comes out false. `Date.now()` inside a
+  `$derived` is not reactive to time, so nothing ever re-runs it: measured on 2026-08-25 (COMM-15),
+  both the author's client and the peer's rendered "0 min restante(s)" indefinitely while the server
+  refused every vote into that same poll with a 403. A sub-second skew is enough, which is what makes
+  this architecture and not NTP - and no timer would fix it, because a card that re-read the wrong
+  clock would merely be wrong later.
+
+  The server already decides closedness, with the clock that wrote the field, in order to refuse
+  those votes. It now SAYS so: `ServedChannelPollMeta` adds `closed`, stamped at every hand-out site
+  (history, the creation broadcast, the vote and close responses and their broadcasts) and never
+  persisted, because it is true of an instant and not of the row. `PostPolls` correspondingly stops
+  owning the decision - `isOver` is now an input, since only the caller knows whose clock its
+  deadline came from: a channel poll takes the server's statement, a post poll compares an
+  author-chosen date that is hours out. Three server tests pin it, including that the statement is
+  not written to the row and that an open poll answers `closed: false` (so `closed` is an answer,
+  not a marker of the close route). The countdown still does not tick, so a poll whose deadline
+  passes while the card is on screen flips only on reload - a rendering item, deferred and recorded
+  in [`backlog`](docs/wiki/backlog.md), and no longer able to hide behind this defect.
+
+- **THE CHANNEL NOTIFICATION PANEL ASSERTED AN ANSWER IT DID NOT HAVE, so setting a level could
+  silently set nothing.** `notifLevel` was seeded `'all'` and kept its previous value across
+  reopens, so a member stored at `mentions` was SHOWN `all` while the read was in flight - and any
+  caller that skips a click when the level already looks right therefore skipped it. That is exactly
+  what COMM-14 measured on 2026-08-25: `asked=all stored=mentions`, a check unable to arm its own
+  case. The same seed made a failed read indistinguishable from a real `all`, because `catch`
+  substituted `'all'` for the value it had not obtained - and `notifLevels` is jsonb where an absent
+  channel genuinely defaults to `all`, so the invented value was not even implausible. The level is
+  now `null` until the server answers, the radiogroup mounts only once it has, and a failed read
+  logs and shows nothing rather than choosing on the member's behalf. The harness's
+  `openChannelSettings` waits for that group, which makes its presence mean the answer arrived.
+
+- **AN UNPUBLISHED DISTRIBUTION GROUP HAS NO ROSTER TO DISAGREE WITH, and reading its emptiness as
+  an eviction handed a race a destructive repair.** `joinDistributionGroup` treated "the roster does
+  not list this device" as the server having forgotten it, and rebuilt the group. But `groupInfo` is
+  null exactly while no client has initialised the MLS group, which is also before any delivery row
+  exists - so the empty roster was the state BEFORE an answer, not a negative one. One COMM run on
+  2026-08-25 hit `published=false devices=0` 74 times, on a salon that same run had created minutes
+  earlier. The server derives its own `published=` from that very field, so the discriminator was
+  already on the wire; the predicate simply did not carry it to the decision. It does now, and the
+  branch that used to repair destructively logs instead - a roster that agreed and a roster that
+  could not answer yet must not reach a run log looking identical.
+
 - **ONE LOG SITE, FOUR CALLERS, AND THE CLASSIFIER KNEW ONE OF THEM - so a 5-pass run stopped on
   thirteen pushes that all left correctly.** `srvlog.mjs` filed `[PUSH_SEND][...] FCM sent` as
   `notable` through a rule keyed on `send-`, but that line is written at one place

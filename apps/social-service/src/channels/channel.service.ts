@@ -48,6 +48,7 @@ import {
   SendChannelMessageDto,
   type ChannelNotificationLevel,
   type ChannelPollMeta,
+  type ServedChannelPollMeta,
   type ChannelWritePolicy,
   type HistoryVisibility,
   type WorkspaceInviteDto,
@@ -2707,6 +2708,29 @@ export class ChannelService {
   // ================= MESSAGES =================
 
   /**
+   * WHETHER A POLL IS OVER, decided with the clock that wrote the deadline.
+   *
+   * `endsAt` is an instant on THIS clock, so this is the only side entitled to compare it. Every
+   * consumer asks here - the vote refusal, the close refusal, the opportunistic auto-unpin, and what
+   * a client is served - so a poll cannot be closed for one of them and open for another.
+   */
+  private pollIsOver(meta: Pick<ChannelPollMeta, 'endsAt'>): boolean {
+    return !!meta.endsAt && new Date(meta.endsAt).getTime() <= Date.now();
+  }
+
+  /**
+   * A poll as a client is told it: {@link ServedChannelPollMeta}, stamped with {@link pollIsOver}.
+   *
+   * Every route that hands a poll out goes through here, because the alternative is a client
+   * re-deriving closedness from `endsAt` against its own clock - which is the defect this stamp
+   * exists to remove (see the DTO for what that cost).
+   */
+  private servedPoll(meta: ChannelPollMeta | null | undefined): ServedChannelPollMeta | null {
+    if (!meta) return null;
+    return { ...meta, closed: this.pollIsOver(meta) };
+  }
+
+  /**
    * Validates a poll descriptor and returns the initial server-side poll state.
    * Rejects fewer than 2 options, duplicate IDs, or a deadline already in the past.
    */
@@ -2820,7 +2844,7 @@ export class ChannelService {
             createdAt: savedMsg.createdAt,
             silent: savedMsg.silent,
             // Poll descriptor (no labels) so peers render the card live without refetch.
-            poll: pollMeta,
+            poll: this.servedPoll(pollMeta),
             pinned: savedMsg.pinned,
           },
           audience
@@ -3131,7 +3155,7 @@ export class ChannelService {
     messageId: string,
     userId: string,
     optionIds: string[]
-  ): Promise<ChannelPollMeta> {
+  ): Promise<ServedChannelPollMeta> {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
 
@@ -3156,7 +3180,7 @@ export class ChannelService {
       const meta = (msg.metadata as { poll?: ChannelPollMeta } | null)?.poll;
       if (!meta) throw new BadRequestException('This message is not a poll');
 
-      if (meta.endsAt && new Date(meta.endsAt).getTime() <= Date.now()) {
+      if (this.pollIsOver(meta)) {
         throw new ForbiddenException('This poll is closed');
       }
       const unknown = selected.filter((id) => !meta.optionIds.includes(id));
@@ -3187,18 +3211,20 @@ export class ChannelService {
     });
 
     this.logger.log(
-      `[POLL] vote channel=${channelId} message=${messageId} user=${userId} options=${selected.length}`
+      `[POLL] vote channel=${channelId} message=${messageId} user=${userId.slice(0, 8)} options=${selected.length}`
     );
 
-    // Broadcast the updated tally so every member's card refreshes live.
+    // Broadcast the updated tally so every member's card refreshes live. The same value the caller
+    // gets back, so no member can be told a different poll from the voter.
+    const served = this.servedPoll(poll)!;
     const audience = await this.channelAudience(channel);
     await this.redis.publishChannelEvent(
       'channel.poll.vote',
-      { channelId, messageId, poll },
+      { channelId, messageId, poll: served },
       audience
     );
 
-    return poll;
+    return served;
   }
 
   /**
@@ -3206,7 +3232,11 @@ export class ChannelService {
    * The poll author can always close their own poll; any other member needs a
    * moderation/management permission. Rejects a non-poll message or an already-closed poll.
    */
-  async closePoll(channelId: string, messageId: string, userId: string): Promise<ChannelPollMeta> {
+  async closePoll(
+    channelId: string,
+    messageId: string,
+    userId: string
+  ): Promise<ServedChannelPollMeta> {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
 
@@ -3234,7 +3264,7 @@ export class ChannelService {
         throw new ForbiddenException('Only the poll author or a moderator can close this poll');
       }
 
-      if (meta.endsAt && new Date(meta.endsAt).getTime() <= Date.now()) {
+      if (this.pollIsOver(meta)) {
         throw new BadRequestException('This poll is already closed');
       }
 
@@ -3245,13 +3275,18 @@ export class ChannelService {
       poll = meta;
     });
 
-    this.logger.log(`[POLL] closed channel=${channelId} message=${messageId} by=${userId}`);
+    this.logger.log(
+      `[POLL] closed channel=${channelId} message=${messageId} by=${userId.slice(0, 8)}`
+    );
 
-    // Refresh every member's card (now shows as closed) and clear the pinned banner.
+    // Refresh every member's card (now shows as closed) and clear the pinned banner. `closed` is
+    // what makes this frame READABLE as a closure: the deadline alone left the peer comparing a
+    // server instant to its own clock, and losing.
+    const served = this.servedPoll(poll)!;
     const audience = await this.channelAudience(channel);
     await this.redis.publishChannelEvent(
       'channel.poll.vote',
-      { channelId, messageId, poll },
+      { channelId, messageId, poll: served },
       audience
     );
     await this.redis.publishChannelEvent(
@@ -3260,7 +3295,7 @@ export class ChannelService {
       audience
     );
 
-    return poll;
+    return served;
   }
 
   /**
@@ -3385,11 +3420,10 @@ export class ChannelService {
 
     // Lazily auto-unpin polls past their deadline so closed polls stop cluttering
     // the pin list (no scheduler: this runs opportunistically on channel open).
-    const now = Date.now();
     const expiredPollIds = msgs
       .filter((m) => {
         const poll = (m.metadata as { poll?: ChannelPollMeta } | null)?.poll;
-        return m.pinned && poll?.endsAt && new Date(poll.endsAt).getTime() <= now;
+        return m.pinned && !!poll && this.pollIsOver(poll);
       })
       .map((m) => m.id);
     if (expiredPollIds.length > 0) {
@@ -3412,7 +3446,7 @@ export class ChannelService {
       createdAt: m.createdAt,
       pinned: m.pinned,
       // Poll state (label-free) so the client can render results on load.
-      poll: (m.metadata as { poll?: ChannelPollMeta } | null)?.poll ?? null,
+      poll: this.servedPoll((m.metadata as { poll?: ChannelPollMeta } | null)?.poll),
       silent: m.silent,
     }));
   }

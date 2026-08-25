@@ -537,14 +537,33 @@ optimistic echo to reconcile (`sendChatMessage` returns straight after the POST 
 `channel.message.created` broadcast render the bubble), so keying on it only made a live message
 unaddressable until the next reload.
 
+### The channel notification level is shown only once the server states it
+
+`ChannelSettingsModal` holds `notifLevel: ChannelNotificationLevel | null`, and the radiogroup does
+not mount while it is null. That is not caution about a spinner: the control used to be seeded `all`
+and to keep its previous value across reopens, so a member stored at `mentions` was SHOWN `all`
+before the read landed. Anything that skips a click because the level already looks right then
+skipped it - COMM-14 measured `asked=all stored=mentions` on production on 2026-08-25 - and since
+`channel_members.notifLevels` is jsonb where an absent channel genuinely defaults to `all`, the same
+seed also made a FAILED read indistinguishable from a real answer, because `catch` substituted `all`
+for the value it had not obtained. A failed read now logs and leaves the control unmounted, so
+nothing is chosen on the member's behalf, and the group's PRESENCE means the server answered.
+
 ### Reactions: two mechanisms
 
 | | DM / group | Community channel |
 |---|---|---|
-| Transport | encrypted MLS system message (`add_reaction`/`remove_reaction`) | `POST .../messages/:id/reactions` |
+| Transport | encrypted MLS system message (`add_reaction`/`remove_reaction`) | encrypted channel message, sealed under the sender's Graine session (WP-40, 2026-08-18) |
 | State | `useMessaging.messageReactions` | `stores/reactionStore.svelte.ts` |
-| Server sees | nothing | the tally (cleartext, it does the counting) |
-| Live update | replayed to every member by MLS | `channel.reaction` broadcast |
+| Server sees | nothing | nothing - it stores one boolean, `silent`, saying whether the row may ring a phone |
+| Live update | replayed to every member by MLS | the ordinary `channel.message.created` fan-out |
+
+**The cleartext tally is GONE**, endpoint, `channel.reaction` broadcast and
+`channel_messages.reactions` column alike: a server that could not read "j'arrive" could still see
+that eight people put a heart on it. Both sides now merge frames with the same convergent rule
+(`applyReaction`, last-write-wins per `(user, emoji)` pair on the sender's `at`), so the order a page
+is read in cannot change the result and a frame seen twice changes nothing. Full reasoning:
+[channel-encryption](../../protocols/channel-encryption.md).
 
 `MainChatPage` picks the map per conversation type; below that, the component chain is identical,
 so a reaction pill looks and behaves the same on both sides. Toggling is optimistic and rolled

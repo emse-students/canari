@@ -139,9 +139,10 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     []`. What the user saw on 2026-08-22 is a DIFFERENT, real defect: a mention rendered as its raw
     `@[uuid]` token, P2 in [backlog](docs/wiki/backlog.md), deferred past the ladder by their
     decision; NOTIF-13 pins it.
-2. **A1 RUNS `c6eb7b20` (v0.14.4) since 2026-08-24**, so all three clients sit at the same commit and
-    **the mixed-fleet premise is RETIRED**: rows naming `a1Build` beside `build` used to pit an OLD
-    client against a NEW server, and a row needing that question must now arm it by NOT rebuilding.
+2. **A1 STILL RUNS `c6eb7b20` (v0.14.4) AND THE FLEET HAS MOVED SINCE** - 14 `frontend/src` files,
+    `SCHEMA_VERSION` 9 vs 10, plus the COMM-14/15 fixes, so the phone is again an OLD client against a
+    NEW server: exactly what `a1Build` beside `build` records. **A row whose question is not skew needs
+    the APK rebuilt and installed first** (owed before DEL); one that wants it arms it by not rebuilding.
     **A deploy cannot reach an APK** (`frontendDist` is `../build`), so a phase arming the phone
     stamps EVERY row by construction - the preflight reads the phone once and hands it down through
     `CANARI_A1_BUILD`; a phase with no phone carries no stamp. Building and installing one, and the

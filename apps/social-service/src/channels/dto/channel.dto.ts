@@ -148,6 +148,25 @@ export interface ChannelPollMeta {
 }
 
 /**
+ * A poll as a client is TOLD it: the persisted state plus the one fact only this side can state.
+ *
+ * `endsAt` is an instant on the SERVER's clock, so a client comparing it to its own decides the
+ * question with the wrong clock - and the margin is zero exactly when it matters. A poll closed
+ * *now* is stamped with the server's now and read a few hundred milliseconds later against a client
+ * clock that is behind it, so the comparison comes out FALSE; nothing re-runs it, and the card stays
+ * open for ever. Measured on production 2026-08-25 (COMM-15): both clients rendered the freshly
+ * closed poll as "0 min restante(s)" while the server refused every vote into it with a 403.
+ *
+ * The server already decides this to refuse those votes, with the clock that wrote the field.
+ * `closed` is that same decision, carried to where it is rendered instead of re-derived from its
+ * input. NEVER persisted: it is true of an instant, not of the row.
+ */
+export interface ServedChannelPollMeta extends ChannelPollMeta {
+  /** Whether the poll is over. The server's statement, never a client's comparison. */
+  closed: boolean;
+}
+
+/**
  * Per-channel push notification level a member can set for themselves.
  * - `all`: notify on every message (default when unset).
  * - `mentions`: notify only when the member is in a message's `mentionedUserIds`.

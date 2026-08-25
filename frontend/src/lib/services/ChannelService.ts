@@ -169,6 +169,17 @@ export interface ChannelPollMeta {
   endsAt: string | null;
   /** userId -> selected optionIds. */
   votesByUser: Record<string, string[]>;
+  /**
+   * WHETHER THE POLL IS OVER, AS THE SERVER STATES IT - never re-derived here.
+   *
+   * `endsAt` is an instant on the server's clock, and this side's clock is not it. A poll closed
+   * *now* carries a deadline stamped with the server's now and reaches us a few hundred milliseconds
+   * later against a clock that is behind it, so `endsAt <= Date.now()` comes out FALSE - and since
+   * nothing re-evaluates a wall clock, the card stays open for ever. That is what COMM-15 measured
+   * on 2026-08-25: both clients showed "0 min restante(s)" on a poll the server was already
+   * answering 403 to.
+   */
+  closed: boolean;
 }
 
 /**

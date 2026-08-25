@@ -224,6 +224,10 @@
         multipleChoice: pollEnvelope.multipleChoice,
         endsAt: pollEnvelope.endsAt,
         votesByUser: {},
+        // THE MESSAGE'S OWN DEFINITION, before the server has stated anything - and a poll nobody
+        // has answered about yet is not one this side may declare over. The server's `closed`
+        // replaces this whole object the moment it lands.
+        closed: false,
       }
     );
   });

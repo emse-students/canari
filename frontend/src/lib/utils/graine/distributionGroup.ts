@@ -171,8 +171,19 @@ async function joinDistributionGroup(
   // server and the MLS layer agree on.
   const holdsTheGroup = mlsService.getLocalGroups().includes(ref.groupId);
   const roster = ref.memberDevices;
-  const serverForgotThisDevice =
-    Array.isArray(roster) && !roster.includes(mlsService.getDeviceId());
+  const rosterOmitsThisDevice = Array.isArray(roster) && !roster.includes(mlsService.getDeviceId());
+
+  // AN UNPUBLISHED GROUP HAS NO ROSTER TO DISAGREE WITH, and reading one as an eviction is how a
+  // race got a repair. `groupInfo` and `baseEpoch` are null together and only together, and they
+  // mean "the row exists but no client has initialised the MLS group yet" - so the delivery rows
+  // are not written yet either, and an empty roster is the state BEFORE an answer rather than a
+  // negative one. Measured on production 2026-08-25: `published=false devices=0` 74 times in one
+  // COMM run, and the salon COMM-22 repaired had been created by that same run minutes earlier.
+  //
+  // The server derives its own `published=` from exactly this field, so the discriminator was
+  // already here; the predicate simply did not carry it to where the decision is taken.
+  const published = ref.groupInfo !== null;
+  const serverForgotThisDevice = published && rosterOmitsThisDevice;
 
   if (holdsTheGroup && !Array.isArray(roster)) {
     // NOT A NEGATIVE ANSWER, AND NOT A SILENT ONE EITHER. `undefined` means the question was never
@@ -180,6 +191,15 @@ async function joinDistributionGroup(
     // unchanged, and this line is what separates "the roster agreed" from "nobody asked".
     log(
       `[GRAINE] ${scopeLabel(scope)}: the server named no devices for this user - the group this device holds cannot be checked against the delivery roster`
+    );
+  }
+
+  if (holdsTheGroup && !published && rosterOmitsThisDevice) {
+    // THE BRANCH THAT USED TO BE A DESTRUCTIVE REPAIR, so it is not allowed to become silence. This
+    // is the old heal's condition minus publication: without this line, "the roster agreed" and
+    // "the roster could not answer yet" reach a run log looking identical.
+    log(
+      `[GRAINE] ${scopeLabel(scope)}: the distribution group is not published yet, so its ${roster?.length ?? 0}-device roster is not an eviction - keeping the group this device holds`
     );
   }
 
