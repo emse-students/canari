@@ -149,6 +149,65 @@ which is also where every release up to and including v0.13.1 now lives.
   nothing - no spec, no frontend test, no board row - watches them.
 
 ### Fixed
+- **A salon whose access list was edited told nobody, so being let in was a database row and
+  nothing else.** `updateChannelAccess` computed who a save DROPS - and cut them off one line later -
+  and had no counterpart for the people it ADDS. Every other grant in that file publishes
+  `channel.member.joined` immediately after the row changes, and for a precise reason: that event is
+  the only one which both puts the salon on the recipient's screen and, when it is private, enters
+  their device into its key-distribution group. Without it a re-granted member waited for their next
+  full page load, and a private salon they had been let back into delivered nothing until then.
+
+  **Three populations hear about it, for two different reasons, and only one of them is a diff.**
+  A private-to-private edit announces the users named now and not before. A public salon turning
+  PRIVATE announces its WHOLE roster, because `allowedUsers` is evidence about who could SEE a salon
+  and never about who is on its group - that group was minted seconds earlier by the same request and
+  holds only the flipper's leaf, so diffing the rosters there answers a question nobody asked.
+  Measured on production 2026-08-25 (COMM-23): one delivery row and epoch 0, against two rows and
+  epoch 1 on the create path. A private salon turning PUBLIC announces the community members who
+  could not see it before: there is no group to enter, but `channel.updated` maps over the rows a
+  client already holds and creates none, so the salon simply was not on their screen at all until a
+  reload. That mirror image was found by reading the client's handler rather than assumed, and one
+  mechanism covers all three.
+
+  The event deliberately carries no `invitedBy`/`joinedBy`: a receiving client writes an "X added Y"
+  line into the transcript when both are present, and this is a settings-panel roster edit rather
+  than an invitation - carrying them would have written one line per member into the transcript of a
+  salon nobody had joined.
+
+- **A device that dropped a stale distribution group and then failed to re-join reloaded straight
+  back into it, and never read that salon again** (WP-REGRANT-2). The re-join path forgets the tree
+  the server no longer routes to and joins afresh. Neither half was ever written to disk - the walk
+  that loads a community does not checkpoint, the MLS layer's join path does not, and the roster
+  reconciliation that runs immediately afterwards persists only when it actually removed a leaf,
+  while its own comment claimed to be persisting "for the same reason the join is". So the failure
+  mode was never the join failing: it was the FORGET not surviving. Measured on production
+  2026-08-25, one second after `could not join the distribution group of salon 5b08828d`, the same
+  device logged `[SYNC] WASM kept` for the group it had just forgotten - the checkpoint restored
+  exactly the belief the forget existed to destroy, and from there the device held a group nothing
+  was routed to, took the early return on every later pass, and stayed silent for the rest of the
+  session.
+
+  One checkpoint now sits where the tree actually moves, on BOTH outcomes. The failing one is why it
+  exists: a forget followed by a failed join is the only state where memory and disk disagree about a
+  belief that is WRONG, and a reload resolved that disagreement in favour of the wrong side.
+  Persisted, the same failure leaves a device holding nothing for the scope - which is the state
+  every existing trigger already repairs, so this is durability rather than a retry, and there is no
+  new timer and no heal. It is conditioned on the tree having changed rather than run
+  unconditionally, because a load whose salons are all already joined takes the early return above
+  and must not pay an Argon2 pass per salon for a tree nothing touched. A converged join was not
+  durable either, so every reload had been paying for a fresh external commit and leaving its
+  previous leaf standing.
+
+- **A dropped transport frame reported a COUNT and no device, so the two causes it has could not be
+  told apart.** The delivery service addresses a transport-only frame to whoever Redis reports
+  online and drops it for everyone else, which is right - the rendezvous it belongs to expires in
+  60 s. But "that device really was offline" and "the group named a device that is not the live one"
+  both arrive as `count=1`, they call for opposite fixes, and separating them meant reading Redis by
+  hand against a group the run had already deleted. Measured on 2026-08-25 (COMM-18): a phone's seed
+  request was dropped for one offline recipient while the only device it could have meant was
+  answering pings throughout. The line now names the device ids it skipped - the same ids the
+  presence lookup was keyed on, so they are the evidence it owed.
+
 - **A second device of your own could never obtain a seed your first device had minted, so its
   messages stayed permanently unreadable.** The Graine repair path - the mechanism a device uses
   when it meets a message whose session it holds no seed for - excluded the asking user by name, on

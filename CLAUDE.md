@@ -134,48 +134,42 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
 1. **THE COMM RUNNERS - ALL TWENTY-FIVE WRITTEN AND REGISTERED**, each run on prod as it was written
     (user, 2026-08-20: writing all then running once is verification by COMPILING). **ONE HAS NEVER
     RUN THERE - 14**, and its blocker is LIFTED (real push proven by NOTIF-4 on 2026-08-22,
-    `notifiedInMs: 11317`, then asserted by MENTION-2/3). **COMM-18 ran three times on 2026-08-25 and
-    earned its FAIL against the product, not the rig:** the cold start, the deep link and the landing
-    all work, and the phone rendered nothing because the seed had no route to it. Cause found, fixed
-    and in `CHANGELOG.md`; the rule it left is in [durable-rules](docs/wiki/durable-rules.md). **It
-    can only go green on a REBUILT APK** - the fix is client code and A1 carries its own build - so
-    what is owed is a rebuild, an install and one re-run. **The GENERIC notification body is ANSWERED** - MENTION-2 recorded `undecryptedInShade:
-    []`. What the user saw on 2026-08-22 is a DIFFERENT, real defect: a mention rendered as its raw
-    `@[uuid]` token, P2 in [backlog](docs/wiki/backlog.md), deferred past the ladder by their
-    decision; NOTIF-13 pins it.
+    `notifiedInMs: 11317`, then asserted by MENTION-2/3). **COMM-18: APK rebuilt, installed and RE-RUN
+    on 2026-08-25 - the fix is proven and the row still fails, one step further along.** The phone now
+    asks its own laptop for the seed, which the old build could not do, and the salon opens; the seed
+    request is then DROPPED as transport-only for a peer that was online, and nothing asks again. New
+    P1 in [backlog](docs/wiki/backlog.md), two candidate causes, and the skip line now names the
+    devices that settle it. **The GENERIC notification body is ANSWERED** - MENTION-2 recorded
+    `undecryptedInShade: []`. What the user saw on 2026-08-22 is a DIFFERENT, real defect: a mention
+    rendered as its raw `@[uuid]` token, P2 in [backlog](docs/wiki/backlog.md), deferred past the
+    ladder by their decision; NOTIF-13 pins it.
 2. **THE CAMPAIGN ITSELF - RUNNING, by the user's decision of 2026-08-21** (*"C'est parti pour la
     campagne"*, in autonomy). The ladder, top to bottom, so every phase runs - including the six that
     had no runner, written as the ladder reaches them. Design, cost and the decisions it turns on are
     on [cross-client-testing](docs/wiki/cross-client-testing.md) and
     [cross-client-campaign](docs/wiki/cross-client-campaign.md), the only copies. **Where the ladder
-    stands: rungs 1-8 taken, 9 COMM at 21 PASS / 1 PASS-DIRTY, blocked on the two rows in item 3 and on COMM-18's APK rebuild.
-    THEN DEL, TAB, MULTI, LIFE, NOTIF, CALL, HEAL, PIN, CORRUPT.** The board carries every verdict;
-    do not restate them here.
-    **A `PASS-DIRTY` NO LONGER STOPS A RUNG BY ITSELF (user, 2026-08-25):** dirt that shows a fallback
-    or a heal being taken still stops it, so does unclassified dirt and dirt touching the assertion;
-    dirt of a class already read and named is RECORDED - the row stays `PASS-DIRTY`, never promoted -
-    and its cause is worked in parallel. Nothing is relaxed and no gate gains a disarming flag; the
-    criterion and its first application are on
-    [cross-client-campaign](docs/wiki/cross-client-campaign.md), the only copy. **GRP's x5 is
-    abandoned rather than owed:** four attempts, and all three failures were the RIG - a stale
-    browser, two instrumentation throws, then a classifier blind to `welcome-send-` (methodology 40).
+    stands: rungs 1-8 taken, 9 COMM at 21 PASS / 1 PASS-DIRTY, blocked on the two rows in item 3 and
+    on COMM-18's re-run once the fix of item 1 is deployed. THEN DEL, TAB, MULTI, LIFE, NOTIF, CALL,
+    HEAL, PIN, CORRUPT.** The board carries every verdict and the format of a cell; do not restate
+    either here. **A `PASS-DIRTY` NO LONGER STOPS A RUNG BY ITSELF (user, 2026-08-25)** - what the
+    class of the dirt decides, and the first application of it, are on
+    [cross-client-campaign](docs/wiki/cross-client-campaign.md), the only copy.
     **Rungs 9-18 are a WRITING job, not a running one: 129 rows, 46 with a runner** - the bill per
-    phase, and the two rows that gate a rung, are on
-    [cross-client-campaign](docs/wiki/cross-client-campaign.md).
-    **THE BOARD'S FORMAT IS FIXED by the user (2026-08-22): a `PASS` cell is `PASS X/X` and a time if
-    the time means anything, nothing else.** Prose only for a non-clean verdict or an unresolved item.
-    The rule is written at the top of the board itself.
+    phase, and the two rows that gate a rung, are there too.
 
-3. **THE PRIVATE-SALON ACCESS SEAM - ONE MISSING PATH, THREE DEFECTS, AND IT BLOCKS RUNG 9.**
-    `updateChannelAccess` handles the users a save DROPS and has no counterpart for the ones it ADDS,
-    so entitlement and routing are two acts instead of one. All three faces are in
-    [backlog](docs/wiki/backlog.md), the only copy: **WP-REGRANT-2 (P1)** - a re-granted member never
-    asks again and a refused re-join is never retried, which is COMM-22's `VACUOUS`; **P2** - a flip
-    to private routes only the device that flipped it, measured against the create path enrolling
-    every device (COMM-23: 1 row and epoch 0, against 2 rows and epoch 1); **P2** - the recovery the
-    2026-08-19 decision documented does not exist, because `GET access` guards on readability while
-    `PATCH` guards on `MANAGE_CHANNEL` and the panel then renders its error box alone. **COMM-22
-    cannot be measured until the first is fixed**, so this is the rung's work, not deferred UX.
+3. **THE PRIVATE-SALON ACCESS SEAM - THE MISSING PATH IS IN, TWO FACES LEFT, AND IT STILL GATES RUNG
+    9.** `updateChannelAccess` had no counterpart for the users a save ADDS, so entitlement and
+    routing were two acts and only one happened; **that path SHIPPED 2026-08-25** for all three
+    populations a save can let in, and with it WP-REGRANT-2's durability half - a forgotten stale tree
+    is now written to disk, so a failed re-join no longer strands a device for ever. Stories in
+    `CHANGELOG.md`, rules in [durable-rules](docs/wiki/durable-rules.md). What is left, in
+    [backlog](docs/wiki/backlog.md) and nowhere else: **WP-REGRANT-2 (P1)** now reduces to ONE defect,
+    a refusal that must be carried back as a TYPE rather than flattened into `false` with five other
+    outcomes; and **P2** - the recovery the 2026-08-19 decision documented does not exist, because
+    `GET access` guards on readability while `PATCH` guards on `MANAGE_CHANNEL` and the panel then
+    renders its error box alone. **COMM-22 and COMM-23 are now measurable and owe a re-run** (both
+    web-only, no phone); the post-load walk that "did not run" was found by reading and its silent
+    skip now logs.
 
 4. **DEFERRED PAST THE LADDER - six UX and rendering items, substance in
     [backlog](docs/wiki/backlog.md) and NOWHERE else.** One line each, in the order they were raised:
@@ -190,16 +184,13 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     The last three want ONE pass over `app.css` and the emoji work package, not seven local patches.
 
 5.  **`purge-devices.mjs` WOULD DELETE THE PHONE - a destructive control keyed on a string the
-    product never renders.** Found 2026-08-25 by being unable to run it; the two dead web devices that
-    exposed it are gone (user, by hand). **Do not run it until it takes an `--only` allowlist**;
-    repair and evidence in [backlog](docs/wiki/backlog.md).
+    product never renders.** **Do not run it until it takes an `--only` allowlist**; repair and
+    evidence in [backlog](docs/wiki/backlog.md).
 6.  **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** - asked by the user 2026-08-25
     (*"le meme point de depart, independamment de ce qui a pu se passer avant"*). **It no longer gates
-    rung 9 COMM:** the PHASE-level half exists already - `run.mjs`'s preflight puts each web client on
-    the deployed bundle, on `/chat`, unlocked, presence confirmed - and the gap left is per-STEP
-    granularity, a refactor of 23 runners (15 of 23 sampled assert NOTHING at their start, because
-    `client()` guarantees only a CDP attachment). Worked in parallel, pulled forward the moment a rung
-    is blocked by an inherited state. Design, the audit and the seven-file PIN predicate it fixes:
+    rung 9 COMM:** the PHASE-level half is `run.mjs`'s preflight, and what is left is per-STEP
+    granularity. Worked in parallel, pulled forward the moment a rung is blocked by an inherited
+    state. The contract, the audit behind it and the seven-file PIN predicate it fixes are in
     [backlog](docs/wiki/backlog.md); diagnosis order is
     [testing-methodology](docs/wiki/testing-methodology.md) 39.
 

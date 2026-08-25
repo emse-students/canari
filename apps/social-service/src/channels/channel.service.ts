@@ -491,6 +491,43 @@ export class ChannelService {
   }
 
   /**
+   * Announces a salon to the people a save just let in, so the grant routes them as well as name them.
+   *
+   * THE COUNTERPART {@link updateChannelAccess} NEVER HAD. That method computes who a save DROPS and
+   * cuts them off one line later, and had no symmetric act for the people it ADDS - so entitlement
+   * and routing were two events, one of which nobody ever sent. Every other grant in this file
+   * publishes exactly this, immediately after the row changes, and for exactly this reason: the
+   * client registers the salon on receipt and, when it is private, enters its distribution group
+   * there and then. Without it a grant was a database row and nothing else until the recipient's
+   * next full load.
+   *
+   * `invitedBy` and `joinedBy` ARE DELIBERATELY ABSENT. A receiving client writes an "X added Y"
+   * system message into the transcript when both are present, and this is a settings-panel roster
+   * edit rather than an invitation - carrying them would have written one line per member into the
+   * transcript of a salon nobody had joined.
+   */
+  private async announceChannelAccessGranted(channel: Channel, userIds: string[]): Promise<void> {
+    if (userIds.length === 0) return;
+    const workspace = await this.workspaceRepo.findOne({ where: { id: channel.workspaceId } });
+    await this.redis.publishChannelEvent(
+      'channel.member.joined',
+      {
+        channelId: channel.id,
+        channelName: channel.name,
+        workspaceId: channel.workspaceId,
+        workspaceSlug: workspace?.slug,
+        workspaceName: workspace?.name,
+        visibility: channel.isPrivate ? 'private' : 'public',
+      },
+      userIds
+    );
+    this.logger.log(
+      `[CHANNEL] access granted channel=${channel.id} private=${channel.isPrivate} ` +
+        `announced=${userIds.length}`
+    );
+  }
+
+  /**
    * Takes one user out of EVERY private salon of a community they are leaving - roster and routing
    * both.
    *
@@ -1991,6 +2028,31 @@ export class ChannelService {
     // worse. The community's group takes over from here.
     if (!isPrivate && wasPrivate) await this.retireChannelDistributionGroup(channel, 'made_public');
 
+    // WHO THIS SAVE LET IN. Not simply the roster's diff: three populations have to hear about it,
+    // for two different reasons, and only the first of them is a diff at all.
+    //
+    //  - private -> private: the users named now and not before. They gain sight of the salon AND a
+    //    group to enter.
+    //  - public -> private: EVERY user named now. They could all see the salon already, so in access
+    //    terms nothing was gained - but the group is BRAND NEW (`ensureChannelDistributionGroup`
+    //    minted it above) and not one of them is on it. `previousAllowed` is evidence about who
+    //    could SEE the salon and never about who is on a group that did not exist, so diffing
+    //    against it here would answer a question nobody asked. COMM-23 measured the omission: one
+    //    delivery row and epoch 0, against two rows and epoch 1 on the create path.
+    //  - private -> public: everyone in the community who could not see it before. There is no group
+    //    to enter - the community's own carries a public salon's seeds and they are all on that
+    //    already - but the salon is absent from their screen entirely, because `channel.updated`
+    //    maps over the rows a client already holds and creates none.
+    const audience = await this.channelAudience(channel);
+    const gained = isPrivate
+      ? wasPrivate
+        ? nextAllowed.filter((u) => !previousAllowed.has(u))
+        : nextAllowed
+      : wasPrivate
+        ? audience.filter((u) => !previousAllowed.has(u))
+        : [];
+    await this.announceChannelAccessGranted(channel, gained);
+
     // THE RULE CHANGED FOR PEOPLE WHO ARE ALREADY LOOKING AT THE SALON, and until 2026-08-20 they
     // learned of it only on their next full load: COMM-7 found a member still holding a composer in
     // a salon that had just been reserved for administrators, typing into it and collecting a 403.
@@ -1999,7 +2061,6 @@ export class ChannelService {
     // THE DECISION TRAVELS, NEVER THE POLICY, so the audience is SPLIT BY THE ANSWER and each half
     // is sent its own: one payload cannot carry a per-viewer verdict, and a client holds none of the
     // roles it would need to derive one. Two publishes at most, whatever the community's size.
-    const audience = await this.channelAudience(channel);
     const decisions = await this.writeDecisionsFor(channel, audience);
     for (const mayWrite of [true, false]) {
       const half = audience.filter((u) => (decisions.get(u) ?? true) === mayWrite);

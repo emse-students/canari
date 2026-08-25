@@ -5,8 +5,10 @@ import {
   type DistributionScope,
 } from '$lib/mls-client/distributionScope';
 import { ChannelApiError, type ChannelService } from '$lib/services/ChannelService';
+import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
 import { requestCommunityHistory } from './repair';
 import { reconcileDistributionGroupRoster } from './rosterReconcile';
+import { isGraineReady, requireGraineRuntime } from './runtime';
 
 /**
  * Joining a Graine key-distribution group, on first use - a community's, or a private salon's.
@@ -212,6 +214,7 @@ async function joinDistributionGroup(
     return true;
   }
 
+  let staleForgotten = false;
   if (holdsTheGroup) {
     // AT A LEVEL THAT ACCUSES. Reaching this means the two sides had drifted apart and a member was
     // sitting in a salon receiving nothing; the re-join below repairs it, and this line is the only
@@ -223,12 +226,25 @@ async function joinDistributionGroup(
     log(
       `[GRAINE] ${scopeLabel(scope)}: this device holds the distribution group but the group holds NO row for it (${roster?.length ?? 0} device(s) for this user) - the local group is stale, rejoining`
     );
-    mlsService.forgetDistributionGroupById(ref.groupId);
+    staleForgotten = mlsService.forgetDistributionGroupById(ref.groupId);
   }
 
   const joined = await mlsService.ensureDistributionGroup(scope, ref);
+
+  // THE TREE MOVED, SO THE DISK MOVES WITH IT - on the failing outcome as much as the happy one.
+  // See {@link persistDistributionTreeChange}: the checkpoint is what makes the difference between
+  // a failed re-join this device retries on its next load and one it is stranded by for ever.
+  if (staleForgotten || joined) await persistDistributionTreeChange(mlsService, scope, log);
+
   if (!joined) {
-    log(`[GRAINE] could not join the distribution group of ${scopeLabel(scope)}`);
+    // NAMING THE RECOVERY, because this line used to be the last thing said about a salon that then
+    // went unreadable for the rest of the session. What makes the claim true is the checkpoint above.
+    log(
+      `[GRAINE] could not join the distribution group of ${scopeLabel(scope)}` +
+        (staleForgotten
+          ? ' - the stale tree is gone from disk too, so the next load asks again instead of restoring it'
+          : '')
+    );
     return false;
   }
 
@@ -245,6 +261,52 @@ export function ensureCommunityDistributionGroup(
   log: (message: string) => void = () => {}
 ): Promise<boolean> {
   return ensureDistributionGroupFor(mlsService, channelService, workspaceScope(workspaceId), log);
+}
+
+/**
+ * Writes a distribution-group join or forget to disk, so a reload cannot walk back into it.
+ *
+ * MEASURED ON PRODUCTION 2026-08-25 (COMM-22, WP-REGRANT-2). A re-granted member re-joined its
+ * salon three times and was stranded on the fourth. One second after
+ * `could not join the distribution group of salon 5b08828d` its own console said
+ * `[SYNC] WASM kept 9a8d1b03` - the checkpoint still held the tree the forget had just dropped, so
+ * the reload restored exactly the belief the forget existed to destroy. From there the device held a
+ * group the server routed nothing to, took the early return above on every later pass, and read
+ * nothing from that salon for the remaining 97 seconds of the run.
+ *
+ * BOTH OUTCOMES, AND THE FAILING ONE IS WHY THIS EXISTS. A forget followed by a failed join is the
+ * state that must survive: it is the only one where memory and disk disagree ABOUT A BELIEF THAT IS
+ * WRONG, and the disagreement is resolved by the reload in favour of the wrong side. Persisting it
+ * turns a permanent strand into a device that holds nothing for the scope - which is the state every
+ * existing trigger already knows how to repair.
+ *
+ * NOTHING ELSE COVERED IT, in any of the three places it could have: the walk that loads a community
+ * does not checkpoint, the MLS layer's join path does not, and the roster reconciliation that runs
+ * immediately after a join persists only when it actually removed a leaf. So a CONVERGED join was
+ * never durable either, and every reload paid for a fresh external commit and left its previous leaf
+ * standing in the tree.
+ *
+ * NOT A TIMER AND NOT A HEAL. There is no retry loop here and no clock: the next ordinary trigger -
+ * a workspace load, the `online` event, opening the salon - finds no group held and joins from a
+ * consistent state. What was missing was never a retry, it was the durability that makes one honest.
+ *
+ * Degrades rather than throws, and says so when it does: this runs inside a load that has already
+ * decided what it is doing, and a checkpoint that cannot be written must not fail the join it
+ * describes.
+ */
+async function persistDistributionTreeChange(
+  mlsService: IMlsService,
+  scope: DistributionScope,
+  log: (message: string) => void
+): Promise<void> {
+  if (!isGraineReady()) {
+    log(
+      `[GRAINE] the distribution tree of ${scopeLabel(scope)} changed in memory only - no Graine runtime to checkpoint through, so a reload before the next write restores the previous state`
+    );
+    return;
+  }
+  const { userId, deviceKeyB64 } = requireGraineRuntime('checkpoint a distribution group change');
+  await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
 }
 
 /**

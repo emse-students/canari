@@ -264,6 +264,18 @@ export function useChannelWorkspaces() {
             channelScope(workspaceId, actualId),
             ctx.log
           );
+        } else if (isPrivate) {
+          // A SKIP HERE IS INDISTINGUISHABLE FROM A WALK THAT NEVER RAN, and that cost a diagnosis.
+          // WP-REGRANT-2's peer held a stale tree for a salon it was entitled to, was reloaded, and
+          // then put no question to the server for 97 seconds - and nothing said whether this loop
+          // had skipped that salon or never reached it. The two readings are opposite (a wrong
+          // `viewerHasAccess` against a walk that did not run), and this line is what separates them.
+          ctx.log(
+            `[GRAINE] private salon ${actualId.slice(0, 8)} of ${workspaceId.slice(0, 8)} not entered: ` +
+              (ctx.ensureMls
+                ? 'the server says this viewer has no access to it, so its GroupInfo would be refused'
+                : 'no MLS client on this load')
+          );
         }
 
         const channelConversationId = `channel_${actualId}`;

@@ -1,5 +1,6 @@
 import { ensureCommunityDistributionGroup } from './distributionGroup';
 import { ChannelApiError } from '$lib/services/ChannelService';
+import { setGraineRuntime } from './runtime';
 import { workspaceScope } from '$lib/mls-client/distributionScope';
 
 const reconcile = vi.fn().mockResolvedValue([]);
@@ -27,6 +28,10 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     forgetDistributionGroupById: vi.fn().mockReturnValue(true),
     registerDistributionGroup: vi.fn(),
     getDeviceId: vi.fn().mockReturnValue('dev-me'),
+    // The checkpoint's landing place: with no session persister registered, a structural checkpoint
+    // falls back to the MLS service the caller was handed - so counting calls here counts the
+    // writes to disk.
+    persistCheckpoint: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }
@@ -403,5 +408,136 @@ describe('ensureCommunityDistributionGroup - reconciling the tree with the roste
 
     expect(await run(makeMls(), makeChannels(), (m) => lines.push(m))).toBe(true);
     expect(lines.some((l) => l.includes('roster reconciliation failed'))).toBe(true);
+  });
+});
+
+/**
+ * A TREE THAT MOVED IN MEMORY ONLY IS A TREE THE NEXT LOAD WALKS BACK INTO (WP-REGRANT-2).
+ *
+ * The re-join above forgets a stale group and joins again. Neither half was ever written to disk:
+ * the walk that loads a community does not checkpoint, the MLS layer's join path does not, and the
+ * roster reconciliation that runs immediately afterwards persists only when it actually removed a
+ * leaf. So the failure mode was not the join failing - it was the FORGET not surviving. A device
+ * that forgot a stale tree and then failed to re-join reloaded straight back into the tree it had
+ * just dropped, took the early return every time after that, and read nothing from the salon again.
+ *
+ * Measured on production 2026-08-25: one second after `could not join the distribution group`, the
+ * same device logged `[SYNC] WASM kept` for the group it had just forgotten.
+ *
+ * These pin the checkpoint on both outcomes AND its absence when nothing moved - an unconditional
+ * one would cost an Argon2 pass per salon on every load, which is what the early return above
+ * exists to avoid.
+ */
+describe('ensureCommunityDistributionGroup - a tree that moved is written to disk', () => {
+  /** Published, and naming no device of this user: the signature of an eviction. */
+  const evicted = () =>
+    makeChannels({
+      getDistributionGroup: vi
+        .fn()
+        .mockResolvedValue({ groupId: 'g-1', groupInfo: 'c29j', baseEpoch: 7, memberDevices: [] }),
+    });
+
+  /** Published, and naming this device: nothing to repair. */
+  const routed = () =>
+    makeChannels({
+      getDistributionGroup: vi.fn().mockResolvedValue({
+        groupId: 'g-1',
+        groupInfo: 'c29j',
+        baseEpoch: 7,
+        memberDevices: ['dev-me'],
+      }),
+    });
+
+  /**
+   * The runtime is what the checkpoint travels through, so it is installed rather than mocked: the
+   * degrade branch is a case of its own below and must be reachable by ABSENCE, not by a stub.
+   */
+  beforeEach(() => {
+    setGraineRuntime({
+      storage: {} as never,
+      deviceKeyB64: 'device-key',
+      userId: 'alice',
+      mlsService: {} as never,
+    });
+  });
+  afterEach(() => setGraineRuntime(null));
+
+  it('writes the forget to disk when the re-join then fails - the state that used to strand a device', async () => {
+    const mls = makeHeldMls({ ensureDistributionGroup: vi.fn().mockResolvedValue(false) });
+
+    expect(await run(mls, evicted())).toBe(false);
+
+    // ONE checkpoint, and it carries the session's device key: the forget is on disk before the
+    // caller is told the join failed, so the next load finds no group held and asks again.
+    expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith('g-1');
+    expect(mls.persistCheckpoint).toHaveBeenCalledTimes(1);
+    expect(mls.persistCheckpoint).toHaveBeenCalledWith('device-key');
+  });
+
+  it('says what the checkpoint bought, so the give-up line is not the last word on a dead salon', async () => {
+    const mls = makeHeldMls({ ensureDistributionGroup: vi.fn().mockResolvedValue(false) });
+    const lines: string[] = [];
+
+    await run(mls, evicted(), (m) => lines.push(m));
+
+    const giveUp = lines.find((l) => l.includes('could not join the distribution group'));
+    expect(giveUp).toContain('the next load asks again');
+  });
+
+  it('writes a successful re-join too, so the epoch it cost is not paid again next load', async () => {
+    const mls = makeHeldMls();
+
+    expect(await run(mls, evicted())).toBe(true);
+
+    expect(mls.persistCheckpoint).toHaveBeenCalledTimes(1);
+  });
+
+  it('writes a first join, so the leaf it minted is not left behind by the next one', async () => {
+    const mls = makeMls();
+
+    expect(await run(mls, makeChannels())).toBe(true);
+
+    expect(mls.forgetDistributionGroupById).not.toHaveBeenCalled();
+    expect(mls.persistCheckpoint).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * THE COST GUARD. A device already in the group takes the early return, and on a community with
+   * twenty private salons an unconditional checkpoint would be twenty Argon2 passes per load for a
+   * tree nothing touched.
+   */
+  it('does not checkpoint a load that changed nothing', async () => {
+    const mls = makeHeldMls();
+
+    expect(await run(mls, routed())).toBe(true);
+
+    expect(mls.persistCheckpoint).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A JOIN THAT FAILED WITHOUT FORGETTING ANYTHING left memory and disk agreeing that this device
+   * holds nothing - which is already the truth, and already the state the next trigger repairs.
+   */
+  it('does not checkpoint a failed first join', async () => {
+    const mls = makeMls({ ensureDistributionGroup: vi.fn().mockResolvedValue(false) });
+
+    expect(await run(mls, makeChannels())).toBe(false);
+
+    expect(mls.persistCheckpoint).not.toHaveBeenCalled();
+  });
+
+  /**
+   * DEGRADES, AND ACCUSES. A checkpoint that cannot be written must not fail the join it describes,
+   * but silence here would mean a device stranded exactly as before with nothing saying why.
+   */
+  it('says so when there is no session to checkpoint through', async () => {
+    setGraineRuntime(null);
+    const mls = makeHeldMls({ ensureDistributionGroup: vi.fn().mockResolvedValue(false) });
+    const lines: string[] = [];
+
+    expect(await run(mls, evicted(), (m) => lines.push(m))).toBe(false);
+
+    expect(mls.persistCheckpoint).not.toHaveBeenCalled();
+    expect(lines.some((l) => l.includes('changed in memory only'))).toBe(true);
   });
 });

@@ -351,50 +351,6 @@ and it stays.
 what the classifier sees on four deletion paths at once, so it lands after the ladder, with its rule
 written in the same commit.
 
-### P2 - `updateChannelAccess` has no ADDED path, so a flip to private routes only the device that flipped it (measured 2026-08-25)
-
-**Found by COMM-23 on `5d7fac13`**, not as its verdict but as the roster it had never looked at: the
-row asserted a group into existence for four sessions of the campaign and never once asked whether
-anybody was on it. It is the same missing seam [WP-REGRANT-2](#p1---a-re-granted-member-never-asks-again-and-a-refused-re-join-is-never-retried-wp-regrant-2-measured-2026-08-25)
-sits on, seen from the other side, and the two should be fixed together.
-
-**The two paths into "private", measured minutes apart on the same account and the same community:**
-
-| how the salon became private | `dm_device_group_memberships` rows | `activeEpoch` |
-| --- | --- | --- |
-| created private (COMM-24's `before`) | 2 - the phone AND the web client, both `active` | 1 |
-| flipped private (COMM-23's `after`) | 1 - only the web client that performed the flip | 0 |
-
-The phone was ONLINE throughout - the preflight names it in as many words, `1 device(s) online that
-this run does not drive` - and it holds the same account, which is on `allowedUsers`. It is entitled
-and it is not routed.
-
-**WHY, in one line of the server.** `updateChannelAccess` handles `dropped` before it saves and
-retires the group after; there is no counterpart for the users it has just ADDED. The create path
-goes through `addGroupMember`, which upserts a `DeviceGroupMembership` for every device of the
-member whose key package is inside the retention window - hence two rows and, because the second
-device's join is a commit, epoch 1. The flip path enrols nobody, and what fills the roster instead is
-the entitled device's own `ensureDistributionGroupFor` the next time it LOADS the salon. The device
-that flipped the switch is looking at the salon, so it joins in about two seconds (measured: 1 991
-ms). No other device of that member has any reason to look.
-
-**WHAT IT COSTS, and why a repair is not an answer.** Seeds minted in that window never reach the
-unrouted device, so the phone opens the salon later and finds a transcript it must repair - and
-`history_visibility` being `shared` is exactly what makes the repair succeed, which is what has kept
-this invisible. The standing rule names that: a race that heals cleanly is still a defect, and a
-ledger that reconciles two paths afterwards is a witness rather than a fix. The device is knowably
-entitled at the moment of the save, from the server, where the decision is already made - handing it
-to a load that may never happen is learning by failing what a fact could have told us.
-
-**WHAT IS OWED.** An added path in `updateChannelAccess`, calling what the create path already calls,
-so that entitlement and routing are one act rather than two. Then COMM-23 gains the assertion it
-cannot honestly make today: EVERY device of every allowed user, not just the actor's.
-
-**NOT an epoch defect.** The first draft of the fixed COMM-23 asserted the epoch moved past 0 and
-failed a switch that was correct: the owner's client CREATES the group with its own leaf already in
-it, so epoch 0 is right and COMM-24's epoch 1 was the second device joining. The check now records
-the epoch and asserts the roster, and says so where the assertion used to be.
-
 ### P2 - the documented recovery from an empty allowlist is unreachable through the product (measured 2026-08-25)
 
 **Found by COMM-23's original failure on `5d7fac13`**, `GET /api/channels/<id>/access -> 403`, with
@@ -462,30 +418,96 @@ peer's own console and the delivery service's log, side by side, with the gestur
    `ensureDistributionGroup`, and on `false` logs one line and returns. Nothing retries, nothing
    escalates, and the caller cannot tell "not entitled" from "entitled and it did not work" - the
    distinction the standing rule says must be carried as a type from where it is already known.
-2. **The forget is not durable, so a reload undoes it.** `forgetDistributionGroupById` drops the tree
-   in memory and leaves the checkpoint to its caller; the caller checkpoints on the join's success
-   path only. A join that fails therefore leaves the dropped group on disk, and the next load
-   restores exactly the stale belief the forget existed to destroy - `WASM kept 9a8d1b03` one second
-   later is that restore.
+2. **FIXED 2026-08-25 - the forget was not durable, so a reload undid it.** `forgetDistributionGroupById`
+   drops the tree in memory and leaves the checkpoint to its caller, and the caller checkpointed on
+   no path at all: nothing persisted a distribution-group join in any of the three places it could
+   have, so the FAILING outcome left the dropped group on disk and the next load restored exactly the
+   stale belief the forget existed to destroy - `WASM kept 9a8d1b03` one second later is that
+   restore. One checkpoint now sits where the tree moves, on both outcomes, conditioned on it having
+   actually changed. Story in `CHANGELOG.md`, rule in
+   [durable-rules](durable-rules.md). **It could not have been "persist only after the join
+   succeeds"**: `joinByExternalCommit` fails when the group is still held locally, so the forget must
+   precede the join and therefore must be durable on its own.
 
-And then the reloaded session put no question at all, which is the fact with no explanation yet: it
-held the tree, the salon was open on screen (`openSalon` asserts it, and would have thrown), the peer
-was entitled - and no `read scope=channel:5b08828d … user=b78568a3` reaches the server for the next
-97 seconds. **Whatever walks the salons after a load did not walk this one**, and that is the first
-thing to instrument, because it is upstream of both defects above: with that walk running, a retry
-would have come for free.
+**THE WALK EXISTS - that paragraph was wrong and reading settled it.** This entry said "whatever
+walks the salons after a load did not walk this one" and named instrumenting it as the first task.
+`executeWorkspaceLoadAttempt` (`useChannelWorkspaces.svelte.ts`) walks every private salon of a
+community on every load and calls `ensureDistributionGroupFor` on each. What it does NOT do is say
+when it declines: it skips a salon whose DTO carries `viewerHasAccess === false`, silently, which is
+indistinguishable from a walk that never ran - and those two readings are opposite. That skip now
+logs, naming the salon and which of its two conditions declined, so the next COMM-22 answers the
+question by being read rather than by being re-derived.
 
-**What is owed.** Not a timer and not a heal. A re-join's refusal must be classified where it is
-known - the server already separates "not entitled" from "conflict" - and carried back as a type; the
-forget must be durable, or must not happen until the join has succeeded; and the post-load walk over
-a community's salons must be found and asserted. **The check that measures it already exists** -
-COMM-22 is exactly this scenario and it is the row that failed, so nothing new has to be written to
-know whether a fix works: four cycles green is the proof.
+**What is owed - one defect, not three.** Not a timer and not a heal: a re-join's refusal must be
+classified where it is known - the server already separates "not entitled" from "conflict" - and
+carried back as a type through `externalJoin` and `ensureDistributionGroup`, which today flatten
+FIVE outcomes into `false` (`NotAGroupMemberError`, a null GroupInfo, a build failure, an exhausted
+epoch race, and a network failure whose `reason: 'network'` discriminator is produced and then never
+read). Then "not entitled" stops and says so, while a transient failure is left to the next existing
+trigger. **The check that measures it already exists** - COMM-22 is exactly this scenario and it is
+the row that failed, so nothing new has to be written to know whether a fix works: four cycles green
+is the proof.
 
 **Not to be confused with the eviction it looks like.** The `evict` at 14:23:10 is CORRECT - it is
 cycle 3's revoke, and `memberships=1 queued=0 routes=1` is the whole of what a revoke owes. The first
 reading of this log blamed the owner's roster reconciler for cutting a member it was merely behind
 on; the epochs table above is what refutes that, and it cost one query to check.
+
+### P1 - a seed request is dropped for an offline peer that was online, and nothing ever asks again (measured 2026-08-25)
+
+**Found by COMM-18's FOURTH run**, on the rebuilt APK carrying `e96bfa12`. That fix is proven by this
+very run - the phone asked its OWN laptop for the seed, which the previous build could not do - and
+the row still fails, one step further along. The cold start, the deep link, the landing and the salon
+all work; `theMessageIsOnScreen: false`.
+
+**What the phone and the server said, side by side.** Community `a75fccd5`, salon `ae913738` (public,
+so its seeds ride the community's group `e90a58ba`), one user with two devices - W1 the web sender and
+A1 the phone. Their ids are in the run log and deliberately not here: a test salon is deleted at
+teardown, a device id is not, and no device id has ever entered this repo.
+
+| UTC | Where | Line |
+| --- | --- | --- |
+| 17:54:19 | server | the community and its group are created, `epoch=0 published=false devices=0` |
+| 17:54:22 | server | `[SEND] recipients=0 durable=true - the group named no other device` - **W1 sends the marker while the phone is not yet on the group** |
+| 17:54:29 | gateway | `WebSocket Error … Connection reset without closing handshake` - A1's kill, 2 s before the deep link |
+| 17:54:42 | server | `[COMMIT] ACCEPT … newEpoch=2` from A1 - the phone joins the group AFTER the message was sealed |
+| 17:54:43 | phone | `Message cdf84ae6… is unreadable … no seed for session mLvNDixq… (repairable)`, then `asked d82cd226… for the history` |
+| 17:54:43 | server | `[SEND] recipients=1 durable=false - every recipient device is offline`, `TRANSPORT_SKIPPED_OFFLINE count=1` |
+| 17:54:44 | phone | `asked d82cd226… for 1 seed(s) in community a75fccd5` |
+| 17:54:44 | server | the same drop again |
+| 17:54:44 -> 17:55:43 | phone | **nothing. One ask, dropped, and no second ask in the remaining 59 s.** `seeds: {held: 0, received: 0}` |
+
+**The scenario is legitimate and the repair path is exactly what must work.** A device that joins a
+group after a message was sealed cannot open it, by construction; obtaining the seed from a peer is
+the mechanism that exists for it, and it fired correctly.
+
+**The drop is right in principle.** A transport-only frame is half of a rendezvous that expires in
+60 s, and the responder is elected only among devices Redis reports ONLINE, so queueing for an
+offline device writes a row and wakes a device for an exchange it cannot join.
+
+**Two candidate causes remain, and they call for opposite fixes.**
+
+1. A connected client had no presence key. W1's socket was never reported down (the only gateway
+   incident in the window is A1's kill, 2 s before the deep link and 14 s before the drop), it pings
+   every 8 s against a 20 s TTL, and it was re-measured `ONLINE, TTL 13s` minutes later while still
+   idle and backgrounded. On this reading `user:online:*` is refreshed by traffic and read as
+   reachability - a liveness clock not written by the thing it measures.
+2. The group named a device that is not the live one. The roster reconciliation compares USER ids, so
+   a leaf naming a dead device of the same user is kept and counted among the "2 leaf/leaves" the
+   phone reported as agreeing.
+
+**Neither could be settled**, because the line printed a count and no device id - fixed the same day,
+so the re-run reads the ids the presence lookup was keyed on and the cause is then a fact. The two
+online device ids at the time are known (`onlineDevicesOf`) and both match the committers in the log,
+which is what makes cause 2 checkable rather than speculative.
+
+**And whichever it is, the second half stands on its own: nothing asked again.** The comment
+defending the drop says "a device that comes back probes on its own connection" - A1 never left, so
+nothing brought it back, and the ask is a one-shot whose success depends on a coincidence of timing.
+Per the standing directive this is not a timer: the requester must re-ask on an EXISTING trigger (the
+peer becoming reachable is already an event the gateway knows), or the answer must not depend on a
+peer at all. Decide that only after the ids name the cause - a re-ask that repeats a request to a
+device that is not the live one repeats a wrong answer faster.
 
 ### CLOSED 2026-08-21 - a member let BACK IN to a private salon was never routed again (WP-REGRANT-1)
 

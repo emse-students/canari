@@ -785,9 +785,20 @@ export class MessagingService {
       ? ops
       : ops.filter((q) => online.get(`${q.recipientId}:${q.deviceId}`) === true);
     if (!durable && toDeliver.length < ops.length) {
+      // NAMING THE DEVICES IT DROPPED, because the count alone cannot say which cause this was.
+      // "the device really was offline" and "the group named a device that is not the live one" both
+      // arrive here as `count=1`, they want opposite fixes, and telling them apart meant reading
+      // Redis by hand against a group the run had already deleted. Measured on 2026-08-25 (COMM-18):
+      // a phone's seed request was dropped for one offline recipient while the only device it could
+      // have meant was answering pings throughout, and this line could not settle which. The ids are
+      // exactly what the presence lookup was keyed on, so they are the evidence it owed.
+      const skipped = ops
+        .filter((q) => online.get(`${q.recipientId}:${q.deviceId}`) !== true)
+        .map((q) => q.deviceId);
       this.logger.log(
         `[SEND][${traceId}] TRANSPORT_SKIPPED_OFFLINE count=${ops.length - toDeliver.length} ` +
-          `group=${body.groupId ?? ''} - no row, no push: the rendezvous would expire first`
+          `group=${body.groupId ?? ''} devices=${skipped.join(',')} ` +
+          `- no row, no push: the rendezvous would expire first`
       );
     }
 

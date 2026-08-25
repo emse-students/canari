@@ -333,3 +333,197 @@ describe('ChannelService.createChannel - a creation is a grant', () => {
     expect(sent[0].data).toMatchObject({ visibility: 'public', channelName: 'general' });
   });
 });
+
+/**
+ * A ROSTER EDIT IS A GRANT TOO, and it was the one grant in this file that announced nothing.
+ *
+ * `updateChannelAccess` computed who a save DROPS - and cut them off one line later - with no
+ * counterpart for the people it ADDS. Entitlement and routing were therefore two acts, and only one
+ * of them ever happened: the row said the person was allowed in, and nothing told their devices.
+ *
+ * MEASURED ON PRODUCTION 2026-08-25 (COMM-23): a salon flipped to private came out with ONE delivery
+ * row at epoch 0, against two rows at epoch 1 on the create path - only the device that performed
+ * the flip was ever on the new group.
+ *
+ * THREE POPULATIONS, TWO REASONS, and only the first is a diff. What makes the flip cases different
+ * is that `allowedUsers` is evidence about who could SEE the salon and never about who is on its
+ * group: on the way in that group has just been minted and holds nobody, on the way out it is gone
+ * and the community's own takes over.
+ */
+describe('ChannelService.updateChannelAccess - a roster edit is a grant', () => {
+  const WORKSPACE = 'ws-1';
+  const CHANNEL = 'ch-1';
+  const ADMIN = 'u-admin';
+  const MEMBER = 'u-member';
+
+  const ADMIN_ROLE = {
+    id: 'r-admin',
+    workspaceId: WORKSPACE,
+    name: 'Administrateur',
+    permissions: [CHANNEL_PERMISSIONS.MANAGE_WORKSPACE, CHANNEL_PERMISSIONS.MANAGE_CHANNEL],
+  };
+
+  /** The salon as it stands BEFORE the call - the whole variable these cases turn on. */
+  function makeService(start: { isPrivate: boolean; allowedUsers: string[] }) {
+    const channel = {
+      id: CHANNEL,
+      workspaceId: WORKSPACE,
+      name: 'general',
+      isPrivate: start.isPrivate,
+      allowedUsers: [...start.allowedUsers],
+      writePolicy: 'everyone' as string,
+      distributionGroupId: start.isPrivate ? 'g-1' : (null as string | null),
+    };
+    const channelRepo = {
+      findOne: jest.fn().mockResolvedValue(channel),
+      find: jest.fn().mockResolvedValue([channel]),
+      save: jest.fn((c: Record<string, unknown>) => Promise.resolve(c)),
+    };
+    const memberRepo = {
+      findOne: jest.fn((opts: { where: { userId: string } }) =>
+        Promise.resolve({
+          workspaceId: WORKSPACE,
+          userId: opts.where.userId,
+          roleIds: [ADMIN_ROLE.id],
+        })
+      ),
+      find: jest.fn().mockResolvedValue([
+        { workspaceId: WORKSPACE, userId: ADMIN, roleIds: [ADMIN_ROLE.id] },
+        { workspaceId: WORKSPACE, userId: MEMBER, roleIds: [] },
+      ]),
+      save: jest.fn(),
+    };
+    const roleRepo = {
+      findOne: jest.fn(),
+      find: jest.fn().mockResolvedValue([ADMIN_ROLE]),
+      save: jest.fn(),
+    };
+    const workspaceRepo = {
+      findOne: jest.fn().mockResolvedValue({ id: WORKSPACE, slug: 'ws', name: 'Workspace' }),
+      find: jest.fn().mockResolvedValue([]),
+      save: jest.fn(),
+    };
+    const noop = { findOne: jest.fn(), find: jest.fn().mockResolvedValue([]) };
+    const redis = { publishChannelEvent: jest.fn().mockResolvedValue(undefined) };
+
+    const service = new ChannelService(
+      workspaceRepo as unknown as Repository<Workspace>,
+      channelRepo as unknown as Repository<Channel>,
+      roleRepo as unknown as Repository<ChannelRole>,
+      memberRepo as unknown as Repository<ChannelMember>,
+      noop as unknown as Repository<ChannelMessage>,
+      noop as unknown as Repository<WorkspaceInvite>,
+      redis as unknown as RedisService
+    );
+    jest.spyOn(service['logger'], 'log').mockImplementation(() => undefined);
+    jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
+    jest.spyOn(service['logger'], 'error').mockImplementation(() => undefined);
+    return { service, redis, channel };
+  }
+
+  const previousSecret = process.env.INTERNAL_SECRET;
+
+  beforeEach(() => {
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    // Minting and retiring a group both cross the key service. Answered here so a case about the
+    // announcement fails on the announcement.
+    process.env.INTERNAL_SECRET = 'internal-secret-for-tests';
+    global.fetch = jest.fn(() =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve(JSON.stringify({ groupId: 'g-1', created: true })),
+      } as unknown as Response)
+    ) as unknown as typeof fetch;
+  });
+  afterEach(() => {
+    jest.restoreAllMocks();
+    if (previousSecret === undefined) delete process.env.INTERNAL_SECRET;
+    else process.env.INTERNAL_SECRET = previousSecret;
+  });
+
+  /** Every `channel.member.joined` publish, as `[data, audience]` pairs. */
+  const joins = (redis: { publishChannelEvent: jest.Mock }) =>
+    redis.publishChannelEvent.mock.calls
+      .filter(([type]: [string]) => type === 'channel.member.joined')
+      .map(([, data, audience]: [string, Record<string, unknown>, string[]]) => ({
+        data,
+        audience,
+      }));
+
+  it('announces a private salon to the member a roster edit just added, and to nobody else', async () => {
+    const { service, redis } = makeService({ isPrivate: true, allowedUsers: [ADMIN] });
+
+    await service.updateChannelAccess(CHANNEL, ADMIN, true, [ADMIN, MEMBER]);
+
+    const sent = joins(redis);
+    expect(sent.length).toBe(1);
+    expect(sent[0].audience).toEqual([MEMBER]);
+    expect(sent[0].data).toMatchObject({
+      channelId: CHANNEL,
+      workspaceId: WORKSPACE,
+      visibility: 'private',
+    });
+  });
+
+  /**
+   * THE COMM-23 CASE. Both users could already see the salon, so nothing is gained in access terms
+   * and diffing the rosters would announce to nobody. The group was minted seconds ago and holds no
+   * leaf but the flipper's, which is why the whole roster is addressed rather than the difference.
+   */
+  it('announces to the WHOLE roster when a public salon becomes private', async () => {
+    const { service, redis } = makeService({ isPrivate: false, allowedUsers: [] });
+
+    await service.updateChannelAccess(CHANNEL, ADMIN, true, [ADMIN, MEMBER]);
+
+    const sent = joins(redis);
+    expect(sent.length).toBe(1);
+    expect(sent[0].audience).toEqual([ADMIN, MEMBER]);
+    expect(sent[0].data).toMatchObject({ visibility: 'private' });
+  });
+
+  /**
+   * THE MIRROR IMAGE, with no MLS consequence and a screen consequence all the same: the salon does
+   * not exist for these people, and `channel.updated` maps over the rows a client already holds
+   * without ever creating one.
+   */
+  it('announces to the community members who could not see a salon before it became public', async () => {
+    const { service, redis } = makeService({ isPrivate: true, allowedUsers: [ADMIN] });
+
+    await service.updateChannelAccess(CHANNEL, ADMIN, false, []);
+
+    const sent = joins(redis);
+    expect(sent.length).toBe(1);
+    expect(sent[0].audience).toEqual([MEMBER]);
+    expect(sent[0].data).toMatchObject({ visibility: 'public' });
+  });
+
+  /**
+   * A SAVE THAT LET NOBODY IN SENDS NOTHING. `publishChannelEvent` addresses an event by naming its
+   * recipients, so an empty list is not "nobody" to every reader downstream - and the settings panel
+   * saves whether or not the roster moved.
+   */
+  it('says nothing when the roster did not move', async () => {
+    const { service, redis } = makeService({ isPrivate: true, allowedUsers: [ADMIN] });
+
+    await service.updateChannelAccess(CHANNEL, ADMIN, true, [ADMIN], 'admins');
+
+    expect(joins(redis).length).toBe(0);
+  });
+
+  /**
+   * NOT AN INVITATION. A receiving client writes an "X added Y" system message when the event
+   * carries both `invitedBy` and `joinedBy`, so carrying them here would put one line per member
+   * into the transcript of a salon nobody had joined.
+   */
+  it('carries no inviter, so nothing is written into the transcript', async () => {
+    const { service, redis } = makeService({ isPrivate: false, allowedUsers: [] });
+
+    await service.updateChannelAccess(CHANNEL, ADMIN, true, [ADMIN, MEMBER]);
+
+    const sent = joins(redis);
+    expect(sent[0].data.invitedBy).toBeUndefined();
+    expect(sent[0].data.joinedBy).toBeUndefined();
+  });
+});
