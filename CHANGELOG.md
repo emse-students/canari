@@ -150,6 +150,31 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **ONE LOG SITE, FOUR CALLERS, AND THE CLASSIFIER KNEW ONE OF THEM - so a 5-pass run stopped on
+  thirteen pushes that all left correctly.** `srvlog.mjs` filed `[PUSH_SEND][...] FCM sent` as
+  `notable` through a rule keyed on `send-`, but that line is written at one place
+  (`messaging.service.ts:490`) reached by four entry points, each of which labels the trace after
+  itself: `send`, its own deferred retry `send-...-def`, a Welcome `welcome-send`, and a reactivation
+  catch-up `reactivate`. The same successful push therefore read as a known event from one entry
+  point and as `unexplained` from three. GRP's window of 2026-08-25 held eleven `welcome-send-` and
+  one `reactivate-`, which is what a group build with an Android member IS, and the run stopped at
+  pass 1 of 5 on them - correctly, by its own rule, on an instrument fault rather than a product
+  one. This was the THIRD consecutive GRP attempt stopped by the rig and not by the product.
+
+  The rule is now keyed on the site's shape, which is the same repair the BENIGN twin two hundred
+  lines above had already been given for exactly this reason - in an edit that missed this one. The
+  neighbouring `PUSH_DEFERRED` rule is deliberately NOT widened: `scheduleDeferredPush` has one
+  caller, so `send-` really is its site's shape and widening it would forgive an entry point that
+  cannot exist. Two lines the same window left unclassified are read and named rather than
+  quietened - `[ACTIVATION_REDELIVER][reactivate-...] redelivered=N`, notable because it means a
+  device that was `pending` is being re-notified, and `[PUSH_REFRESH]`, benign because it says a
+  token was stored and not that a notification was attempted. Seven cases are pinned in
+  `srvclassify-selftest.mjs`, including the caller a live window can never show, because a caller
+  nobody exercised does not appear as a gap - it appears as nothing at all.
+
+- **A dev-facing log line in the delivery service was in French.** `[ACTIVATION_REDELIVER] ... echec:`
+  is now `FAILED:` - the failure twin of the line above, found while classifying it.
+
 - **THE TEST RIG TURNED A FINDING ABOUT THE PRODUCT INTO A HARNESS ERROR WITH NO EVIDENCE BEHIND IT,
   AND KEPT MEASURING AFTER IT.** Two GRP checks established the same precondition - the peer is in the
   roster after an Add - by throwing when they could not find it. The throw skips `recordObserved`,

@@ -631,6 +631,109 @@ rebuild re-bases A1's build for every phase of the ladder that follows it.
 
 ## The harness itself
 
+### P2 - a LIVE socket dies in the middle of GRP-3, and no navigation explains it (measured 2026-08-25)
+
+**Accepted as a `PASS-DIRTY` by the user's decision of 2026-08-25** - *"on peut se contenter des pass
+dirty et passer a la suite"* - so this is recorded rather than blocking rung 8. The frontier drawn with
+that decision is what makes it recordable: dirt whose CLASS has been read and named may pass, dirt that
+is unclassified or that touches an assertion may not. This one is a known SHAPE with an UNKNOWN cause,
+which is the reason it is a P2 and not a note.
+
+**The measurement.** `GRP --repeat 5`, pass 1, 2026-08-25. Ten rows, nine `PASS`, and GRP-3
+`PASS-DIRTY` on exactly one line:
+
+    dirt_W1: wsEvents: ["11:28:30.944 Network.webSocketClosed {requestId 20644.93706}"]
+
+Every product assertion held - `rosterBeforeRemoval: 2`, `rosterAfterRemoval: 1`,
+`peerStillHoldsPreRemovalMessage: true`, `peerReceivedPostRemovalMessage: false`,
+`removedDeviceLearntFromTheCommit: true`, `removedDeviceAskedToComeBack: []`. The row was recorded at
+11:28:42, so the close landed ~12 s before the end of the check: inside the 30 s negative window,
+roughly 18 s AFTER `removeMember` and after the post-removal send. It is on W1, the client that did
+the removing, not W2, the one removed.
+
+**WHY THE KNOWN EXPLANATION DOES NOT APPLY, which is the whole finding.** Rule 14 of
+[testing-methodology](testing-methodology.md) established that every `goto` is a `Page.navigate`, that
+a document replacement closes its own socket, and that `1006` follows - so `ignoringNavigation`
+forgives at most `documentsReplaced` closes. This close was NOT forgiven, and GRP-3 gives it nowhere
+to come from: every `openGroup` in it passes `navigate: false`, and `ensureChat` does not reload - it
+clicks `text=Discussions`, a client-side SvelteKit route change, which fires
+`Page.navigatedWithinDocument` and replaces no document. So `documentsReplaced` is 0, the forgiveness
+budget is 0, and this is a live socket dying. `wsidle.mjs` already ruled out the other cheap reading:
+W1 and W2 left untouched for eight minutes produced **zero** closes, so nothing on the path drops an
+idle connection and the event is caused by something the check does.
+
+**What is NOT known, and must not be guessed.** No console line accompanied it - READ's instance of
+this shape came with `[WS] Disconnected. Code: 1006` beside it and this one came with nothing, though
+that may only mean the app's own line is classified BENIGN and therefore absent from the dirt
+projection rather than absent from the log. Whether the socket reopened is also unmeasured HERE:
+`watch.mjs:1121` collects `Network.webSocketFrameError` and `Network.webSocketClosed` and **not**
+`Network.webSocketCreated`, so a reconnection could never have appeared in this row. Reading its
+absence as a failure to reconnect would be exactly the inference rule 39 warns about.
+
+**The rate.** One in two recent runs: clean on the attempt of 2026-08-25 that stopped on the server
+window, dirty on the next. GRP-3's `PASS-DIRTY` of 2026-08-24 is a DIFFERENT cause and must not be
+counted here - it was an `[OUTBOX] ... evicted from ...` line from a browser left on a stale bundle,
+which is what `8c248131` closed.
+
+**How to settle it, in order, and none of it needs a new tool.** `ws1.mjs` already prints one
+interleaved timeline of every `Network.webSocket*` event and every console line on one clock, written
+for precisely this question on READ. Point it at GRP-3's sequence rather than READ-1's; add
+`Network.webSocketCreated` to the collector at `watch.mjs:1121` first, since the reconnection is half
+the answer and is currently invisible by construction. Then the discriminator is cheap: if the close
+sits at a fixed offset from `removeMember` it belongs to the Remove commit path, and if it sits at a
+fixed offset from the socket's own age it is a lifetime, which `wsidle.mjs` did not test because it
+watched a socket for eight minutes rather than an old one.
+
+### P2 - ONE NAMED STARTING POINT, reachable at every granularity (asked 2026-08-25)
+
+**The user's requirement, verbatim:** *"Le preflight doit permettre d'executer chaque phase, voire meme
+chaque etape de phase ou groupe d'etape en ayant le meme point de depart, independamment de ce qui a pu
+se passer avant"*, and before it *"tu peux recharger la page au debut de la phase au moment de l'etape
+d'initilisation, ce serait beaucoup plus simple"* and *"Si le modal de pin s'affiche, tape le pin, s'il
+ne s'affiche pas, ne le tape pas, si on est sur la mauvaise page, on peut recharger la page"*. It is
+their standing directive - deterministic, reproducible, explicable - applied to initialisation.
+
+**What is true today, measured 2026-08-25 rather than assumed.** `client()` opens a CDP connection and
+guarantees NOTHING about the application: not the route, not the lock, not whether a modal is up. Of
+23 sampled runners, **8 assert something at their start** (`ensureChat` or `goto`) and **15 assert
+nothing at all** - `msg2`, `msg3`, `msg5`, `msg67`, `msg8`, `msg9`, `msg10`, `type`, `del1`, `comm2`,
+`comm14`, `tab1` among them. They inherit whatever the previous script left, which is exactly what
+`client()`'s own comment admits: *"Seventeen call sites pass no match at all and were relying on the
+browser having one page - true after the preflight, and silently false the moment anything leaves a tab
+behind."* The preflight does the work ONCE per run, so the guarantee decays with every script after it.
+
+**The contract to write.** One exported entry point, idempotent, with an ASSERTED postcondition rather
+than a described one:
+
+- **The target state is named, not implied**: on `/chat`, unlocked, no overlay, chat mounted, on the
+  deployed bundle. The same five facts `state.mjs` already reads.
+- **It is cheap when already satisfied** - read the state first, act only on what diverges. That is
+  what makes it affordable to call between step GROUPS inside a phase, which is the granularity asked
+  for; a call that always paid a reload would be too expensive to put there.
+- **The PIN is typed only if the gate is really up** (the user's wording exactly). Detected
+  structurally: `#encryption-pin`, or a button whose text is the `U+232B` backspace glyph. Never by
+  searching the page text - see the predicate entry below, which is what made a false lock permanent.
+- **A wrong route is repaired by RELOADING, for a web client.** Not because a reload is a fallback -
+  it is a REPAIR, logged loudly, and CLAUDE.md's rule stands: a fallback is a signal, never a path.
+  Reaching it means the previous check left the client somewhere, and the log is what makes that
+  visible.
+- **A1 is excluded from the reload, by construction.** `goto` on the phone re-locks the PIN and breaks
+  Tauri's IPC callbacks into the old document; `chat.mjs` throws rather than let a caller do it by
+  accident. The phone keeps the repair path.
+- **It says what it erased, before erasing it.** The existing repairs are loud on purpose - *"the day
+  it is something else, the line is the only warning"* - and a check that leaves a modal up is a defect
+  in that check. Silent tidying would delete the only evidence of it.
+- **Then every runner calls it**, and `run.mjs`'s preflight becomes that same contract applied per
+  device plus the run-wide checks (identity, bundle, server window). One definition, not two.
+
+**Why it is worth the conversion cost.** [testing-methodology](testing-methodology.md) 33 says changing
+what a check READS invalidates its green rows, and that is the argument that has deferred other
+wholesale conversions. It does not bite here in the same way: the contract does not change what any
+assertion measures, it makes the state BEFORE the assertion known. What it removes is a class of
+failure the campaign has already paid for repeatedly - a check measuring behind a modal, on the wrong
+route, or behind a PIN gate - each of which produced a refusal or a hang, never a false PASS. The rows
+stay; the flakiness they cost goes.
+
 ### P2 - `purge-devices.mjs` is a destructive control keyed on a string the product never renders
 
 **Found 2026-08-25, and found by being unable to run it rather than by it doing damage.** W1's account

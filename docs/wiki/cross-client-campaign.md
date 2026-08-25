@@ -155,6 +155,36 @@ worth. They hold for the whole campaign and are not re-litigated inside it.
   would restart the ladder from the top on every defect. The end of a phase is the seam that has
   both properties.
 
+### What stops the ladder, and what only gets recorded - decided 2026-08-25
+
+**The user's decision, taken with three quarters of the ladder still owed:** *"on peut se contenter des
+pass dirty et passer a la suite"*, then the criterion that makes it usable: *"Rien ne t'empeche de
+corriger les causes des dirty en parallele, mais si c'est du cosmetique et pas du fonctionnement, ca ne
+doit pas etre bloquant"* - and, asked what functional means, *"une ligne de fallback ou de heal non
+voulue par exemple"*.
+
+So a `PASS-DIRTY` is no longer a stop by itself. What decides is the CLASS of the dirt:
+
+- **It STOPS the rung** when the dirt shows the application taking a REPAIR it should not have needed -
+  a fallback line, a heal, a recovery, a re-add, a reconciliation. That is the same sentence as the
+  standing rule "a fallback is a signal, never a path": the line is the visible end of a primary path
+  that failed, and the fix belongs there. It also stops when the dirt is UNCLASSIFIED, because a line
+  nobody has read is a line whose class nobody knows, and when it touches the assertion itself.
+- **It is RECORDED and the ladder moves** when the class has been read and named and the assertions
+  held. The verdict on the board stays `PASS-DIRTY` with the dirt named - never promoted to `PASS` -
+  and the cause becomes an entry in [backlog](backlog.md) worked in parallel.
+
+**This is not a relaxation of any assertion, and the distinction is the whole point.** No check is
+weakened, no gate gains a flag that disarms it, no dirt is deleted from a row: `run.mjs` still exits
+non-zero on anything that is not a clean `PASS`, and the board still says what happened. What changed
+is only who decides whether a named, non-assertional defect blocks the next rung - and that was always
+the user's call rather than the rig's.
+
+**The first application of it is GRP-3**, accepted the day the rule was written: one live
+`Network.webSocketClosed` on W1 that no navigation explains, all six assertions held, cause open as a
+P2. It sits close to the stopping side - a socket that dies makes the client reconnect, which is a heal
+- which is why it is being probed in parallel rather than merely filed.
+
 ### What the rest of the ladder costs, measured 2026-08-24
 
 The bullet above says the empty phases get their runners written as the ladder reaches them. This is

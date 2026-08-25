@@ -1519,7 +1519,7 @@ export class MessagingService {
         pendingSinceMs
       ).catch((e) =>
         this.logger.warn(
-          `[ACTIVATION_REDELIVER] group=${groupId} device=${userId}:${deviceId} echec: ${e instanceof Error ? e.message : String(e)}`
+          `[ACTIVATION_REDELIVER] group=${groupId} device=${userId}:${deviceId} FAILED: ${e instanceof Error ? e.message : String(e)}`
         )
       );
     }

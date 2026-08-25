@@ -1392,6 +1392,39 @@ evidence - and this is the same sentence one step further on. A projection that 
 makes every later question unanswerable, and the symptom is an empty log rather than a wrong one,
 which reads like a quiet run instead of a broken instrument.
 
+#### 40. A LOG CLASSIFIER'S KEY BELONGS TO THE LOG SITE, NOT TO ONE OF ITS CALLERS
+
+**Third time in a row that GRP was stopped by the rig and not by the product, 2026-08-25.** Ten
+product rows PASS, and the 5-pass run stopped at pass 1 because `chat-delivery-service` held thirteen
+`unexplained` lines. Every one of them was a push that left correctly.
+
+The line is written once, at `messaging.service.ts:490`, and reached by four entry points that each
+stamp the trace id after themselves: `send`, its own deferred retry `send-...-def`, a Welcome
+`welcome-send`, and a reactivation catch-up `reactivate`. The rule named `send-`. So the SAME
+successful push about the SAME device was a known event from one entry point and an unknown line from
+three - and which one you got depended on how the group had been built, not on what happened.
+
+**The shape of the mistake is what generalises.** A trace prefix is a fact about the CALLER; the log
+line is a fact about the SITE. Keying a rule on the prefix silently narrows it to one path through
+the code, and adding a fifth caller then adds a false finding rather than a new line - the rule does
+not become wrong, it becomes *partially* wrong, which is worse, because the half that still matches
+is the proof a reader uses to believe it. Enumerate the site's callers (`grep` the private method,
+not the tag) and key on what they all share.
+
+**A LIVE WINDOW CANNOT SHOW THIS GAP, AND THAT IS WHY THE PIN IS THE FIX.** An entry point nobody
+exercised does not appear as a hole; it appears as nothing at all - and the first phase that
+exercises it reads as new noise. `srvclassify-selftest.mjs` now pins all four callers of this site,
+including the two no phase has produced yet. The same file had ALREADY been given this exact repair
+for the sibling rule two hundred lines above, in an edit that missed this one: **a fix keyed on a
+shared cause must be applied to every rule sharing it, in the same edit, or the next one is found by
+being stopped by it.**
+
+**And the counter-half, which is not symmetry.** The neighbouring `PUSH_DEFERRED` rule is keyed on
+`send-` and stays that way: `scheduleDeferredPush` has exactly one caller, so `send-` IS its site's
+shape. Widening it would forgive an entry point that cannot exist, which is the mirror error -
+a rule that matches too much moves a real signal into a bucket that does not break `clean`. The
+number of callers is the whole argument, in both directions, and it is cheap to count.
+
 #### 29. A BLOCKER IS PROVEN AGAINST THE HARNESS, NEVER INFERRED FROM A LOG LINE
 
 COMM-25's third run left the phone saying `[PIN] No device key in vault - auto-login impossible`. I
@@ -1608,6 +1641,45 @@ prevent, reintroduced one layer above it.
 The general form: a check may only raise for something that makes the QUESTION unaskable - a client
 that will not attach, a selector the product no longer has. Anything the product could plausibly have
 done, however wrong, is a verdict, and a verdict has to carry its evidence.
+
+#### 39. LOOK AT THE CLIENT BEFORE READING THE RIG - and a stuck web client is RELOADED, not diagnosed
+
+**Measured 2026-08-25, and the cost was paid in tool calls rather than in a wrong verdict.** The
+preflight refused to start GRP with `W1: still LOCKED+overlay on /settings after 4 repair(s)`. What
+was actually on screen: the device-management modal, left open by a human who had just deleted two
+devices through the product. Two facts settled it, and neither needed a hypothesis - the page's own
+`innerText`, and a screenshot.
+
+`shot.mjs` exists for exactly this, and its first line says so: *"Saves a PNG screenshot of a client,
+so a layout claim is looked at rather than inferred."* It was not run. Instead the diagnosis went
+through the rig's source - seven files, four greps - to arrive at what one look would have given in
+one call.
+
+**So the order is fixed:**
+
+1. **Look at the client.** `node state.mjs` for the four-field health read, `node shot.mjs <port>` for
+   the screen. A claim about what a client is doing is checked against the client, never against the
+   code that describes it.
+2. **Then reload it.** A web client in an unexpected state is not a puzzle to solve: a reload is
+   idempotent, and it erases the leftover modal, the wrong route and the stale bundle in one action
+   instead of three conditional repairs. **This is what the preflight should do by default** rather
+   than repairing what it finds - see the entry in [backlog](backlog.md).
+3. **Only then read the rig.** If the client is healthy and the rig still refuses, the fault is in the
+   rig - and that is the ONE case where its source is the right place to look.
+
+**The phone is excluded from step 2, by construction.** `goto` on A1 reloads the Tauri webview, which
+re-locks the PIN and breaks Tauri's IPC callbacks into the old document; `chat.mjs` throws rather than
+let a caller do it by accident. A1 keeps the repair path.
+
+**And a reload must SAY what it erased.** The preflight's repairs are loud on purpose - *"the day it
+is something else, the line is the only warning"* - so an unconditional reload that printed nothing
+would delete the only evidence of what the previous check left behind. Read the state, log it, then
+reload.
+
+**The general form, and the reason it belongs in a methodology page rather than in a habit:**
+speculating about a live system is not merely less reliable than looking at it, it is usually SLOWER.
+The rig has a probe for every question it can be asked. Using one costs a single call; reasoning
+about which of seven copies of a predicate might be wrong cost a dozen.
 
 ## Observation is part of the check, not a debugging step
 

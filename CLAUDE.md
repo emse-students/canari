@@ -133,76 +133,73 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
 
 1. **THE COMM RUNNERS - ALL TWENTY-FIVE WRITTEN AND REGISTERED**, each run on prod as it was written
     (user, 2026-08-20: writing all then running once is verification by COMPILING). **TWO HAVE NEVER
-    RUN THERE - 14 and 18.** COMM-14's blocker is LIFTED: real push is proven, by NOTIF-4 on
-    2026-08-22 (`notifiedInMs: 11317`) and then asserted by MENTION-2/3, which is what a capability
-    has to be before a check rests on it. COMM-18 still needs a cold start through `adb`. Verdicts
-    are on the board and are not restated here. **The GENERIC notification body is ANSWERED** -
-    MENTION-2 recorded `undecryptedInShade: []`. What the user saw on 2026-08-22 is a DIFFERENT and
-    real defect: a mention rendered as its raw `@[uuid]` token, P2 in
-    [backlog](docs/wiki/backlog.md), deferred past the ladder by their decision; NOTIF-13 pins it.
-2. **A1 RUNS `c6eb7b20` (v0.14.4) as of 2026-08-24**, rebuilt and `install -r`'d at the user's
-    request so all three clients sit at the latest version. **THAT RETIRES THE MIXED-FLEET PREMISE,
-    and the loss is stated rather than discovered later:** every row naming `a1Build` beside `build`
-    used to exercise an OLD client against a NEW server; the two stamps are now the same commit, so a
-    row that needs the old-client question must arm it deliberately by NOT rebuilding. **A deploy
-    still cannot reach an APK** (`frontendDist` is `../build`), so a phase arming the phone still
-    stamps EVERY row, by construction: the preflight reads the phone once and hands it down through
-    `CANARI_A1_BUILD`. A phase with no phone carries no stamp. Building and installing one, and the
+    RUN THERE - 14 and 18.** COMM-14's blocker is LIFTED (real push proven by NOTIF-4 on 2026-08-22,
+    `notifiedInMs: 11317`, then asserted by MENTION-2/3); COMM-18 still needs a cold start through
+    `adb`. **The GENERIC notification body is ANSWERED** - MENTION-2 recorded `undecryptedInShade:
+    []`. What the user saw on 2026-08-22 is a DIFFERENT, real defect: a mention rendered as its raw
+    `@[uuid]` token, P2 in [backlog](docs/wiki/backlog.md), deferred past the ladder by their
+    decision; NOTIF-13 pins it.
+2. **A1 RUNS `c6eb7b20` (v0.14.4) since 2026-08-24**, so all three clients sit at the same commit and
+    **the mixed-fleet premise is RETIRED**: rows naming `a1Build` beside `build` used to pit an OLD
+    client against a NEW server, and a row needing that question must now arm it by NOT rebuilding.
+    **A deploy cannot reach an APK** (`frontendDist` is `../build`), so a phase arming the phone
+    stamps EVERY row by construction - the preflight reads the phone once and hands it down through
+    `CANARI_A1_BUILD`; a phase with no phone carries no stamp. Building and installing one, and the
     three details that have each cost a session: harness
-    [README](tools/cross-client-harness/README.md), "Building for it". **A phone `offline` in adb is
-    a HUMAN action** - the screen must be unlocked and the prompt accepted; no `adb reconnect` clears it.
+    [README](tools/cross-client-harness/README.md), "Building for it". **A phone `offline` in adb is a
+    HUMAN action** - the screen must be unlocked and the prompt accepted; no `adb reconnect` clears it.
 3. **THE CAMPAIGN ITSELF - RUNNING, by the user's decision of 2026-08-21** (*"C'est parti pour la
-    campagne"*, in autonomy). The ladder, top to bottom, everything must end green, so every phase
-    runs - including the six that had no runner, written as the ladder reaches them. The design, the
-    cost and the decisions it turns on are on
-    [cross-client-testing](docs/wiki/cross-client-testing.md) and
+    campagne"*, in autonomy). The ladder, top to bottom, so every phase runs - including the six that
+    had no runner, written as the ladder reaches them. Design, cost and the decisions it turns on are
+    on [cross-client-testing](docs/wiki/cross-client-testing.md) and
     [cross-client-campaign](docs/wiki/cross-client-campaign.md), the only copies. **Where the ladder
-    stands: rungs 1 MSG and 2 TYPE green x1, 3 READ, 4 MUT, 5 SEARCH, 6 MENTION and 7 FWD green
-    CLEAN 5/5. Next: 8 GRP, then COMM, DEL, TAB, MULTI, LIFE, NOTIF, CALL, HEAL, PIN, CORRUPT.** The board carries every verdict; do not restate them here.
-    **GRP x5 IS ARMED AND OWED, nothing before it:** `node run.mjs GRP --repeat 5` (W1+W2, no
-    `a1Build`). Its first attempt was killed at pass 1 on 2026-08-24 - a stale browser, not a defect -
-    and `8c248131` closed that hole in the preflight, which now reloads a stale client itself
-    (methodology rule 36; story in `CHANGELOG.md`). **Attempt two, 2026-08-25: 49/50, then stopped at
-    pass 2 on GRP-8 - the instrument, not the product.** `d7c68c1d` turned both GRP peer-identification
-    throws into recorded findings (methodology rule 38) and GRP-8 reproduced 3/3 clean alone; its
-    intermittent (2 in ~12) is NOT explained, and the lead to read first is that `key_package` is
-    `UNIQUE (userId, deviceId)`, so a re-Add reuses the same KeyPackage - which RFC 9420 forbids.
-    `--repeat` now stops at the first pass that is not clean (user, 2026-08-25); **that stop path has
-    never fired, so nothing asserts it.** Its blocker is LIFTED - the user deleted W1's two dead web
-    devices by hand on 2026-08-25, so **GRP x5 is owed and nothing precedes it.** **Rungs 9-18 are a WRITING job, not a running one:
-    129 rows, 46 with a runner** - the bill per phase, and the two rows that gate a rung, are on
+    stands: rungs 1 MSG and 2 TYPE green x1; 3 READ, 4 MUT, 5 SEARCH, 6 MENTION and 7 FWD green CLEAN
+    5/5; 8 GRP `PASS` 9/10 x1 with GRP-3 `PASS-DIRTY` accepted. NEXT: 9 COMM, then DEL, TAB, MULTI,
+    LIFE, NOTIF, CALL, HEAL, PIN, CORRUPT.** The board carries every verdict; do not restate them here.
+    **A `PASS-DIRTY` NO LONGER STOPS A RUNG BY ITSELF (user, 2026-08-25):** dirt that shows a fallback
+    or a heal being taken still stops it, so does unclassified dirt and dirt touching the assertion;
+    dirt of a class already read and named is RECORDED - the row stays `PASS-DIRTY`, never promoted -
+    and its cause is worked in parallel. Nothing is relaxed and no gate gains a disarming flag; the
+    criterion and its first application are on
+    [cross-client-campaign](docs/wiki/cross-client-campaign.md), the only copy. **GRP's x5 is
+    abandoned rather than owed:** four attempts, and all three failures were the RIG - a stale
+    browser, two instrumentation throws, then a classifier blind to `welcome-send-` (methodology 40).
+    **Rungs 9-18 are a WRITING job, not a running one: 129 rows, 46 with a runner** - the bill per
+    phase, and the two rows that gate a rung, are on
     [cross-client-campaign](docs/wiki/cross-client-campaign.md).
-    **THE BOARD'S FORMAT IS NOW FIXED by the user (2026-08-22): a `PASS` cell is `PASS X/X` and a time
-    if the time means anything, nothing else.** Prose only for a non-clean verdict or an unresolved
-    item. The rule is written at the top of the board itself.
+    **THE BOARD'S FORMAT IS FIXED by the user (2026-08-22): a `PASS` cell is `PASS X/X` and a time if
+    the time means anything, nothing else.** Prose only for a non-clean verdict or an unresolved item.
+    The rule is written at the top of the board itself.
 
-4. **THREE OBSERVATIONS FROM THE USER, 2026-08-23, all deferred past the ladder**, substance in
-    [backlog](docs/wiki/backlog.md) and nowhere else: the POSTS search escapes the feed's filters,
-    filters downstream and loads the whole base before answering; the EMOJI picker does not scroll and
-    opens off-screen, both traced to one hard-coded height guess (its two questions are ANSWERED, and
-    the glyph one became the decision in 5); and a reconnected old client restored only SOME
-    conversations while a locally-pending deletion blocked the new one with that peer - HEAL's, rung 16.
+4. **DEFERRED PAST THE LADDER - six UX and rendering items, substance in
+    [backlog](docs/wiki/backlog.md) and NOWHERE else.** One line each, in the order they were raised:
+    the POSTS search escapes the feed's filters and loads the whole base before answering; the EMOJI
+    picker neither scrolls nor stays on screen, both from one hard-coded height guess; a reconnected
+    old client restored only SOME conversations while a locally-pending deletion blocked the new one
+    with that peer (that one is HEAL's, rung 16); **ONE BUNDLED EMOJI FONT everywhere** - Noto Color
+    Emoji, decided 2026-08-23, weight explicitly not a factor, Fluent rejected on coverage not
+    licence, and it owes ELEVEN rows to the SECOND campaign; a deleted group leaves every OTHER
+    member a dead row for ever, clearable only one at a time; and the trash and the pencil on a
+    device row do not read as the same kind of control (*"il faudrait homogeneiser"*, 2026-08-25).
+    The last three want ONE pass over `app.css` and the emoji work package, not seven local patches.
 
-5. **ONE BUNDLED EMOJI FONT, EVERYWHERE - decided 2026-08-23, weight explicitly not a factor.** Noto
-    Color Emoji across the whole app and site; Fluent rejected on coverage (no country flags), not on
-    licence. ONE work package with 4's picker fixes, post-ladder, owing ELEVEN rows to the SECOND
-    campaign. Matrix, measurements and a jsdelivr default found while scoping: [backlog](docs/wiki/backlog.md).
-
-6. **A DELETED GROUP LEAVES EVERY OTHER MEMBER A DEAD ROW, FOR EVER, CLEARABLE ONLY ONE AT A TIME** -
-    found 2026-08-24, P3, deferred with 4 and 5. The retention is right; the accumulation and the
-    per-row-only exit are a UX decision owed to the user. [backlog](docs/wiki/backlog.md).
-
-7.  **`purge-devices.mjs` WOULD DELETE THE PHONE - a destructive control keyed on a string the
+5.  **`purge-devices.mjs` WOULD DELETE THE PHONE - a destructive control keyed on a string the
     product never renders.** Found 2026-08-25 by being unable to run it; the two dead web devices that
     exposed it are gone (user, by hand). **Do not run it until it takes an `--only` allowlist**;
     repair and evidence in [backlog](docs/wiki/backlog.md).
-8.  **THE TRASH AND THE PENCIL ON A DEVICE ROW DO NOT LOOK LIKE THE SAME KIND OF CONTROL** (user,
-    2026-08-25, *"il faudrait homogeneiser"*), P3, deferred with 4, 5 and 6 - it wants one pass over
-    `app.css`, not three local patches. [backlog](docs/wiki/backlog.md).
+6.  **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** - asked by the user 2026-08-25
+    (*"le meme point de depart, independamment de ce qui a pu se passer avant"*). **It no longer gates
+    rung 9 COMM:** the PHASE-level half exists already - `run.mjs`'s preflight puts each web client on
+    the deployed bundle, on `/chat`, unlocked, presence confirmed - and the gap left is per-STEP
+    granularity, a refactor of 23 runners (15 of 23 sampled assert NOTHING at their start, because
+    `client()` guarantees only a CDP attachment). Worked in parallel, pulled forward the moment a rung
+    is blocked by an inherited state. Design, the audit and the seven-file PIN predicate it fixes:
+    [backlog](docs/wiki/backlog.md); diagnosis order is
+    [testing-methodology](docs/wiki/testing-methodology.md) 39.
 
 **ONE-OFF ACTIONS GO TO THE USER** (2026-08-25, verbatim): *"Pour les choses qui ne se font qu'une
 fois, tu peux me demander de les faire hein, on economisera en temps et en token."* Building a tool for
-a single click is the waste that rule names - `purge-devices.mjs` in 7 is exactly it.
+a single click is the waste that rule names - `purge-devices.mjs` in 5 is exactly it.
 
 **The estate was swept and measured clean 2026-08-21 before the ladder started** - 22 debris salons through the product, all thirteen residue counts on prod zero afterwards. **A deleted group is TWO estates**: `cleanup.mjs` owns the server side, `dismiss.mjs` the copy each MEMBER's client keeps (W1 clean at 9 rows on 2026-08-24, W2 holding 189). One allowlist for both, `debris.mjs`. Detail on [cross-client-campaign](docs/wiki/cross-client-campaign.md).
 
@@ -222,13 +219,12 @@ sixth is owed to the user, not to the code:** is a MiGallery application worth b
 **Release status:** v0.14.4 cut 2026-08-24, every platform green including TestFlight - the iOS path
 ran end to end for the first time and nothing there is owed any more (story in `CHANGELOG.md`).
 
-`minClientVersion` still lives in `platform_config`, is still raised by hand from `/admin/platform`
-so no deploy touches it - and **half of the old gap is closed, the other half is not, and the
-difference IS the risk.** A release can now REACH App Store Connect, which had never been proven.
-But TestFlight is the BETA channel: nothing yet shows a build reaching an ordinary iOS user, so a
-raise still locks out anyone the release has not actually reached, and the shipping order stands -
-ship the client, verify it arrived, THEN raise
-([legacy-compatibility](docs/wiki/legacy-compatibility.md)).
+`minClientVersion` still lives in `platform_config` and is still raised BY HAND from
+`/admin/platform`, so no deploy touches it - and **half the old gap is closed, half is not.** A
+release can now REACH App Store Connect, which had never been proven; but TestFlight is the BETA
+channel, so nothing yet shows a build reaching an ordinary iOS user and a raise still locks out
+anyone the release has not actually reached. The shipping order stands: ship the client, verify it
+arrived, THEN raise ([legacy-compatibility](docs/wiki/legacy-compatibility.md)).
 
 ### CANARI - the test campaign
 
@@ -245,8 +241,9 @@ committed and `git clean -xdf` cannot reach a profile.
 **MUT-20 is unarmable until a campaign message reaches 90 days** (earliest 2026-11-09).
 
 **Prod IS the test server** and commit+push are authorised so it picks changes up.
-`dev.canari-emse.fr` is a proxied CNAME to the same tunnel, NOT a second environment. **Decided
-2026-08-17: it BECOMES a real second environment, after the campaign.** Scope it in
+`dev.canari-emse.fr` is a proxied CNAME to the same tunnel, NOT a second environment; it becomes one
+AFTER the campaign (decided 2026-08-17, re-confirmed 2026-08-25 - pulling it forward would need its
+own FCM project, which would unprove every push verdict already taken). Scope in
 [backlog](docs/wiki/backlog.md).
 
 **LEON PUSHES TO CANARI's `main` TOO.** `git fetch` at the START of a session and again before any
@@ -257,4 +254,3 @@ measurement, and `git pull` his work in. **It does not concern ours and owes no 
 architecturalement regle, pas mettre des pansements avec des timeouts ou autre, je veux que tout soit
 deterministe, reproductible, explicable. Et doit marcher avec une conversation de toute les
 tailles"*; *"pense factorisation, proprete, simplicite"*.
-

@@ -137,6 +137,18 @@ const BENIGN = [
   // here - they are NOTABLE below.
   /\[MessagingService\] \[SOCIAL_PUSH\]\[social-push-[0-9a-f]+\] sent user=\S+ device=\S+/,
   /\[MessagingService\] \[SOCIAL_PUSH\]\[social-push-[0-9a-f]+\] No token for user=\S+/,
+  // A DEVICE ROTATING ITS PUSH TOKEN, which is the step that makes it reachable at all - and the
+  // only shape `push.controller.ts:376` can write, since the handler rejects a body carrying neither
+  // token (`:371`) with a 400 rather than logging. So `fcm=` and `voip=` are never both `false` and
+  // there is nothing here for a reader to decide: the write already happened.
+  //
+  // BENIGN THOUGH IT IS AN FCM FACT, unlike the `PUSH_SEND` pair above, because it says a token was
+  // STORED, not that a notification was attempted - `comm14.mjs` reads the sending lines and never
+  // this one. It was the fourth shape of GRP's stopped window of 2026-08-25, and the only one the
+  // run itself already forgave: it belonged to a third party, so `subjects` partitioned it out and a
+  // CLI call with no subjects showed it. Classified rather than left to that partition, because the
+  // NEXT one will be OURS - every campaign client that boots after a token rotation writes one.
+  /\[PushController\] \[PUSH_REFRESH\] user=\S+ device=\S+ fcm=(true|false) voip=(true|false)$/,
   // Housekeeping and one real user playing the anti-bot minesweeper. Neither is about this campaign.
   /\[AuthSessionsService\] Swept \d+ expired session\(s\)/,
   // A SESSION BEING OPENED, which is what a login IS. Every phase that starts, reloads or reconnects
@@ -631,8 +643,24 @@ const NOTABLE = [
   // registered one is a fact about the device, not an event in this window. The self-test caught it,
   // which is what it is for: a rule that matches too much moves a real signal into a bucket that
   // does not break `clean`.
+  //
+  // AND THE TWO RULES BELOW ARE KEYED DIFFERENTLY ON PURPOSE, because the two log sites have a
+  // different number of callers - which is the only thing that decides how wide a trace-id key may
+  // be. `PUSH_DEFERRED` (`messaging.service.ts:546`) is reached from `scheduleDeferredPush`, whose
+  // sole caller is the `send` path, so `send-` IS its site's shape and widening it would forgive a
+  // caller that cannot exist. `FCM sent` (`:490`) is `sendFcmForQueued`, reached by FOUR callers -
+  // `send`, `send-…-def`, `welcome-send`, `reactivate` - so a key naming one of them makes the SAME
+  // push read notable from one entry point and unexplained from another. It did: GRP's window of
+  // 2026-08-25 stopped a 5-pass run at pass 1 on thirteen lines, eleven of them `welcome-send-` and
+  // one `reactivate-`, every one of them a push that left correctly. The BENIGN twin above had
+  // already been widened for this exact reason and this rule was missed in that edit.
   /\[PUSH_DEFERRED\]\[send-/,
-  /\[PUSH_SEND\]\[send-[0-9a-f-]+(?:-def)?\] FCM sent /,
+  /\[PUSH_SEND\]\[[\w-]+-[0-9a-f]+(?:-def)?\] FCM sent /,
+  // THE CATCH-UP A REACTIVATION OWES, and it is notable for the reason `FCM sent` is: nothing here
+  // failed, but a device was `pending` while messages arrived and is being re-notified for them, so
+  // a reader wants the count. `redelivered=N` is logged only when N > 0 (`:1595`), so the line's
+  // existence already means work was done. Its failure twin is a `warn` and is not matched here.
+  /\[ACTIVATION_REDELIVER\]\[reactivate-[0-9a-f]+\] group=\S+ device=\S+ redelivered=\d+$/,
   // AN INTERNET SCANNER LOOKING FOR SECRETS ON A PUBLIC HOST - reported, and never a gate.
   //
   // NOTABLE rather than BENIGN, unlike the crawler 404s above, because the answer to "was this site

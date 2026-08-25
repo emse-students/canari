@@ -415,6 +415,33 @@ const pushSplitOk =
 if (!pushSplitOk) failures++;
 console.log(`${pushSplitOk ? 'ok  ' : 'FAIL'} notable      the FCM fallback is notable, a missing token is not`);
 
+// THE SAME LOG SITE, FOUR CALLERS, AND THE RULE HAD NAMED ONE. `sendFcmForQueued`
+// (`messaging.service.ts:490`) is entered from `send`, from its own deferred retry (`send-…-def`),
+// from a Welcome (`welcome-send`) and from a reactivation catch-up (`reactivate`) - so a key spelt
+// `send-` made the SAME successful push notable from one entry point and unexplained from three.
+// It cost a 5-pass GRP run its first pass on 2026-08-25: thirteen unexplained lines, eleven
+// `welcome-send-` and one `reactivate-`, none of them a defect. The BENIGN twin below had already
+// been widened for this reason, in an edit that missed this one - which is why the pins are here and
+// not in a comment: the live window cannot show it, a caller nobody exercised just never appears.
+const fcmCallers = [
+  ['a push from a message send', `${NEST}[MessagingService] [PUSH_SEND][send-33f8f65a] FCM sent user=aaaaaaaa device=tauri-a-b platform=android inlineProto=true`, 'notable'],
+  ['a push from its own deferred retry', `${NEST}[MessagingService] [PUSH_SEND][send-33f8f65a-def] FCM sent user=aaaaaaaa device=tauri-a-b platform=android inlineProto=true`, 'notable'],
+  ['a push from a Welcome', `${NEST}[MessagingService] [PUSH_SEND][welcome-send-33f8f65a] FCM sent user=aaaaaaaa device=tauri-a-b platform=android inlineProto=true`, 'notable'],
+  ['a push from a reactivation catch-up', `${NEST}[MessagingService] [PUSH_SEND][reactivate-33f8f65a] FCM sent user=aaaaaaaa device=tauri-a-b platform=android inlineProto=true`, 'notable'],
+  // THE CATCH-UP'S OWN OUTCOME LINE, logged only when it moved something (`:1595`).
+  ['a reactivation that re-notified is reported with its count', `${NEST}[MessagingService] [ACTIVATION_REDELIVER][reactivate-33f8f65a] group=00000000-0000-4000-8000-000000000001 device=aaaaaaaa:tauri-a-b redelivered=1`, 'notable'],
+  // AND ITS FAILURE TWIN, which wears the SAME tag, carries NO trace id and is a `warn` - so it must
+  // not ride in on the rule above. A catch-up that threw is a device left un-notified.
+  ['a reactivation that threw is forgiven by nothing', `${NEST}[MessagingService] [ACTIVATION_REDELIVER] group=00000000-0000-4000-8000-000000000001 device=aaaaaaaa:tauri-a-b FAILED: boom`, 'unexplained'],
+  // A TOKEN BEING STORED IS NOT A NOTIFICATION BEING SENT. The handler 400s when the body carries
+  // neither token, so this line always means a write happened and there is nothing to decide.
+  ['a device rotating its push token is routine', `${NEST}[PushController] [PUSH_REFRESH] user=aaaaaaaa device=tauri-a-b fcm=true voip=false`, 'benign'],
+];
+for (const [name, line, want] of fcmCallers) {
+  const got = matches(NOTABLE_RULES, line) ? 'notable' : matches(BENIGN_RULES, line) ? 'benign' : 'unexplained';
+  check(`${want.padEnd(11)}  ${name}`, got, want);
+}
+
 // THE INVITE-AND-JOIN FAMILY, seventeen unexplained lines on GRP's window of 2026-08-23 and the
 // first phase in the campaign to build a group by LINK. Every pair below is one tag whose two
 // spellings must land in opposite buckets - which is the only thing that can go wrong here, and it
