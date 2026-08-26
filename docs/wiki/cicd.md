@@ -182,6 +182,14 @@ TestFlight, before the step was corrected to pass `--features tauri/custom-proto
 Android does not carry this risk: `android-release.yml` builds through `bun tauri android build`,
 the real CLI, which sets the feature itself.
 
+**Enabling the feature has a second consequence: `generate_context!()` now actually validates
+`frontendDist`.** With `custom-protocol` on, the macro embeds `../build` into the binary at compile
+time and panics if that directory is missing - it only skips the check in dev mode
+(`dev && dev_url.is_some()`, `tauri-codegen`'s `context.rs`). "Prebuild Rust static lib" runs
+**before** "Build iOS archive" - the step that actually runs `bun run build` to produce `../build` -
+an order that only worked while the build was silently compiling as dev and never looked at the
+directory. The Vite build now has its own step, "Build frontend", placed before the Rust compile.
+
 ## Signing
 
 Two **named** provisioning profiles must exist and match `PROVISIONING_PROFILE_SPECIFIER` exactly:

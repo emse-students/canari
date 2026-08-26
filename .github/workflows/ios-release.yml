@@ -238,6 +238,18 @@ jobs:
         working-directory: frontend/src-tauri/gen/apple
         run: xcodebuild -resolvePackageDependencies -project canari.xcodeproj -scheme canari_iOS
 
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          # Must run before "Prebuild Rust static lib": with `--features tauri/custom-protocol`
+          # enabled there, `generate_context!()` embeds `frontendDist` (../build) at compile
+          # time and panics if the directory doesn't exist yet - it only skips that check in
+          # dev mode (tauri-codegen's context.rs: `dev && dev_url.is_some()`), which is no
+          # longer what this build compiles as. TAURI_TARGET activates the Vite mlsWasmStub
+          # plugin, excluding WASM modules from the Tauri build (MLS is handled by native Rust
+          # code on iOS).
+          TAURI_TARGET=aarch64-apple-ios bun run build
+
       - name: Prebuild Rust static lib (libapp.a)
         working-directory: frontend/src-tauri
         env:
@@ -282,12 +294,9 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
-          # Run the Vite build first (Tauri's beforeBuildCommand normally handles this, but
-          # we bypass `tauri ios build` to avoid its broken export step).
-          # TAURI_TARGET must be set so the Vite mlsWasmStub plugin activates and excludes
-          # WASM modules from the Tauri build (MLS is handled by native Rust code on iOS).
-          TAURI_TARGET=aarch64-apple-ios bun run build
-
+          # The Vite build itself now runs earlier, in "Build frontend" - "Prebuild Rust
+          # static lib" needs `../build` to already exist by the time it compiles.
+          #
           # Tauri normally copies frontendDist (../build) into the Xcode assets folder
           # before archiving. Since we bypass `tauri ios build`, we must do this manually.
           # Use `build/.` (not `build/*`) so dotfiles like .well-known/ are included.

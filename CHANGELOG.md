@@ -373,6 +373,14 @@ which is also where every release up to and including v0.13.1 now lives.
   step now passes `--features tauri/custom-protocol` explicitly. Android never carried this risk:
   `android-release.yml` builds through the real `bun tauri android build` CLI, which sets the feature
   itself. [cicd](docs/wiki/cicd.md#a-raw-cargo-build-for-the-static-lib-must-ask-for-custom-protocol-itself)
+
+  That fix immediately surfaced a second, latent bug: with `custom-protocol` enabled, Tauri's
+  `generate_context!()` macro embeds `frontendDist` (`../build`) into the binary at compile time and
+  **panics if the directory doesn't exist** - it only skips that check in dev mode
+  (`dev && dev_url.is_some()`, `tauri-codegen`'s `context.rs`), which this build no longer compiles
+  as. "Prebuild Rust static lib" ran *before* "Build iOS archive", the step that actually runs
+  `bun run build` to produce `../build` - an ordering that only worked by accident while the build
+  was silently compiling as dev. The Vite build now runs in its own step, ahead of the Rust compile.
 - **Four backend lock files were out of sync with their `package.json`, and it had silently blocked
   every deploy for two hours.** `npm ci` refuses to install when the two disagree, so
   `Test TS Backend (apps/chat-delivery-service)` and `Check Dependencies Vulnerabilities` both died
