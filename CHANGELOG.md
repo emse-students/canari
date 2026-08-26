@@ -149,6 +149,42 @@ which is also where every release up to and including v0.13.1 now lives.
   nothing - no spec, no frontend test, no board row - watches them.
 
 ### Fixed
+
+- **A device revoked while it was offline logged straight back in and kept everything.** Revocation is
+  defined as a wipe, and the wipe was written, thorough and correct - it was simply never asked for on
+  two of the three ways into the app. `resetRequired` rides on the server PIN check, and the biometric
+  and vault paths skip that check on purpose (the keystore and the encrypted device-key vault ARE the
+  authentication factor), so they skipped the revocation question with it. The only remaining trigger
+  was a `device_revoked` control frame - sent, by definition, to a device that was not there to
+  receive it. Every login path now resolves its real device id and asks the route that already existed
+  to answer this, `/api/mls/devices/:userId/:deviceId/revoked`, before `init()`; the read decrypts
+  nothing and answers `false` when the server cannot be reached, so an offline login can never be
+  wiped by a transport failure. The consequence is now ONE function shared by all three triggers,
+  which also gave the control-frame path the MLS teardown it had been skipping - on the one path where
+  the service is still live and could write a key back mid-wipe. `isDeviceRevoked` takes its ids as
+  arguments for the same reason: a question that decides a wipe must not read fields that are still
+  `unknown`/`pending` before init. Found by reading the P1 that reported the symptom, not by a run;
+  the two candidate causes of the user's own case that survive this fix are in
+  `docs/wiki/backlog.md` and belong to HEAL rung 16.
+- **A revoked member's device reported its own revocation as a network problem, then reconciled and
+  asked for history on the salon it had just been refused.** `joinDistributionGroup` concluded from
+  local state before classifying anything, so EVERY refusal of `getDistributionGroup` reached the
+  "a held group survives a failed read" branch first - and 403 on that route is not a failed read,
+  it is the server ANSWERING, on membership of the scope, which is the whole reason a distribution
+  group's GroupInfo is served by social-service rather than by chat-delivery. A device holding the
+  tree therefore logged `keeping the one this device holds`, the sentence written for a lost packet,
+  and then spent two more round trips on a scope it had no entitlement to. The status had been
+  carried on `ChannelApiError` since that class was introduced and nothing read it - the third time
+  in this seam that the discriminator was already present at the throw and flattened one layer up.
+  The three answers are now separated BEFORE local state is consulted, and only the refusal that
+  says nothing about entitlement is allowed to fall back on what the device holds. The 403 line
+  accuses, because reaching it means two server routes disagree: the walk that gets there skips a
+  salon whose channel DTO says the viewer has no access, so a refusal here contradicts the DTO that
+  selected the salon. It deliberately does NOT drop the tree - dropping key material on one answer
+  is a destructive repair owing its own evidence, and the revoke has already deleted the delivery
+  rows that would make the tree worth holding. Found by reading WP-REGRANT-2 rather than by a run;
+  the test that required `could not read` for a 403 was pinning the defect and now asserts the
+  classification.
 - **Joining a group by INVITATION LINK evicted the joiner about half the time, because the joiner
   both asked a member for a Welcome and served itself one.** `requestReAdd`'s external-commit join
   was written for a device that had joined once and lost its local state; an invited device, whose
@@ -156,7 +192,8 @@ which is also where every release up to and including v0.13.1 now lives.
   path indistinguishably. Both parties then added the same leaf to the same tree: the member's
   `addMember` failed `DuplicateSignature`, its duplicate-leaf repair removed what it read as a stale
   leaf - the joiner's LIVE one - and the Remove evicted the device that had just got in. Measured on
-  2026-08-26 as GRP-4, from three independent logs rather than inferred: the joiner's console
+  2026-08-26 as GRP-4 on build `9553c856` - four failures and four passes over eight runs - from three
+  independent logs rather than inferred: the joiner's console
   (`externalJoin` at `baseEpoch=1`), the server (a `WELCOME_REQ` FORWARDED to a member in the same
   second, then that member's two commits and its `[KICK] Reset device ... to pending`) and the
   inviter's console, whose SILENCE was itself evidence once we confirmed the repair's own log line

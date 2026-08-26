@@ -246,6 +246,11 @@ const NOTABLE_CASES = [
   `${NEST}[ChannelService] [CHANNEL_PUSH] level set channel=00000000-0000-4000-8000-000000000001 user=a1b2c3d4 level=mentions`,
   `${NEST}[ChannelService] [CHANNEL_PUSH] level set channel=00000000-0000-4000-8000-000000000001 user=a1b2c3d4 level=none`,
   `${NEST}[ChannelService] [CHANNEL_PUSH] level set channel=00000000-0000-4000-8000-000000000001 user=a1b2c3d4 level=all`,
+  // THE RECOVERY THAT LETS A PRIVATE SALON WITH AN EMPTY ALLOWLIST BE REPAIRED. It is the one line
+  // saying the read was served to someone the allowlist does not hold, so it must never be silent -
+  // a fallback whose rate cannot be measured is a fallback nobody knows is load-bearing. COMM-23
+  // flips a public salon private, which is the gesture that produces it.
+  `${NEST}[ChannelService] [CHANNEL_ACCESS] settings served to manager a1b2c3d4 outside the allowlist of 00000000-0000-4000-8000-000000000001`,
   // ONE PER APP START, so any phase that relaunches the phone emits them - MENTION-3 arms it
   // twice and produced exactly two. It is the row that decides where a push can land.
   `${NEST}[PushController] [PUSH_REGISTER] user=a1b2c3d4 device=tauri-a1b2c3d4-0000 platform=android`,

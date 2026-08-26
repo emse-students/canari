@@ -248,7 +248,10 @@ describe('ensureCommunityDistributionGroup', () => {
     expect(mls.ensureDistributionGroup).not.toHaveBeenCalled();
   });
 
-  it('reports a refusal and a transport failure differently from that', async () => {
+  it('calls a 403 what it is - an answer - and not a read that failed', async () => {
+    // THIS TEST USED TO ASSERT THE DEFECT. It required the `could not read` line, which is the
+    // sentence written for transport, so a 403 - the one refusal that settles entitlement - was
+    // pinned as indistinguishable from a lost packet.
     const log = vi.fn();
     const channels = makeChannels({
       getDistributionGroup: vi
@@ -257,8 +260,12 @@ describe('ensureCommunityDistributionGroup', () => {
     });
 
     expect(await run(makeMls(), channels, log)).toBe(false);
-    // Not the "no group" line: this community has one and this user may not have it.
-    expect(log.mock.calls.flat().join(' ')).toMatch(/could not read/);
+    const said = log.mock.calls.flat().join(' ');
+    expect(said).toMatch(/NOT entitled/);
+    expect(said).toMatch(/no retry can help/);
+    // Neither of the two lines it must not be: this community HAS a group, and the read did answer.
+    expect(said).not.toMatch(/NO distribution group/);
+    expect(said).not.toMatch(/could not read/);
   });
 
   it('reports a join that failed, rather than returning success', async () => {
@@ -418,6 +425,26 @@ describe('ensureCommunityDistributionGroup - a held group the server routes noth
     expect(await run(mls, channels, log)).toBe(true);
     expect(mls.forgetDistributionGroupById).not.toHaveBeenCalled();
     expect(log.mock.calls.flat().join(' ')).toMatch(/keeping the one this device holds/);
+  });
+
+  it('does NOT keep a held group on the strength of a 403, which is the server answering', async () => {
+    // THE ORDER WAS THE DEFECT. This branch was reached before anything classified the refusal, so
+    // a revoked member holding the tree reported `keeping the one this device holds` - a claim about
+    // transport - and then reconciled and asked for history on a scope it had just been refused.
+    const mls = makeHeldMls();
+    const channels = makeChannels({
+      getDistributionGroup: vi
+        .fn()
+        .mockRejectedValue(new ChannelApiError(403, null, 'Not a member of this workspace')),
+    });
+    const log = vi.fn();
+
+    expect(await run(mls, channels, log)).toBe(false);
+    const said = log.mock.calls.flat().join(' ');
+    expect(said).toMatch(/NOT entitled/);
+    expect(said).not.toMatch(/keeping the one this device holds/);
+    // AND NOTHING DESTRUCTIVE EITHER: dropping key material on one answer is its own decision.
+    expect(mls.forgetDistributionGroupById).not.toHaveBeenCalled();
   });
 });
 

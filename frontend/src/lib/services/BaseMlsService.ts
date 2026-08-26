@@ -420,9 +420,9 @@ export abstract class BaseMlsService implements IMlsService {
     this.deviceRevokedCallback = callback;
   }
 
-  /** Asks the server whether this device is denylisted. `false` when the question cannot be reached. */
-  isDeviceRevoked(): Promise<boolean> {
-    return this.delivery.isDeviceRevoked();
+  /** Asks the server whether the named device is denylisted. `false` when the question cannot be reached. */
+  isDeviceRevoked(userId: string, deviceId: string): Promise<boolean> {
+    return this.delivery.isDeviceRevoked(userId, deviceId);
   }
 
   addBulkIngestObserver(observer: BulkIngestObserver): void {

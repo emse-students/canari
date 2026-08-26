@@ -1951,6 +1951,23 @@ export function dirtOf(rep) {
   const out = {};
   for (const bucket of ['severe', 'errors', 'exceptions', 'badHttp', 'wsEvents', 'unexplained'])
     if (rep?.[bucket]?.length) out[bucket] = rep[bucket];
+  // THE EXPLANATION TRAVELS WITH THE FINDING, and only when there IS one.
+  //
+  // `notable` never breaks `clean`, so it used to be dropped from every recorded row - and the lines
+  // that say WHY a severe line happened are almost all in it. GRP-8 on 2026-08-26 is the case: it
+  // recorded one severe `[History] ... past-epoch-application ... will reconcile` and nothing else,
+  // and whether that frame was a real loss or the honest consequence of a re-admission this check
+  // deliberately performs is decided by a `notable` line seconds earlier. The row could not answer
+  // it, so the attribution cost a re-run - the exact "found by hand, a day late" this rig exists to
+  // prevent.
+  //
+  // Gated on the client already being dirty (`dirtOf` is only called for those), so a clean run adds
+  // nothing. Truncated because a long window's `notable` is unbounded and the ledger is read line by
+  // line: the count says whether anything was cut.
+  if (rep?.notable?.length) {
+    out.notableCount = rep.notable.length;
+    out.notable = rep.notable.slice(0, 40);
+  }
   return out;
 }
 

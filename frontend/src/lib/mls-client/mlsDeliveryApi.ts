@@ -248,17 +248,22 @@ export class MlsDeliveryApi {
   }
 
   /**
-   * Asks the server whether this device is denylisted.
+   * Asks the server whether the named device is denylisted.
    *
    * Gates a destructive action on a server fact: the `device_revoked` control frame asks a device
    * to erase itself, and a frame is a message rather than an authority. Answers `false` when the
    * question cannot be reached - **a transport failure is not a verdict**, and erasing a device
    * because the network was down would be the worst possible reading of it.
+   *
+   * TAKES ITS IDS EXPLICITLY, unlike its neighbours that read `this.userId`, because the answer
+   * decides whether a device erases itself and the ambient fields are `'unknown'` / `'pending'`
+   * until `init()` has run. Asking about `unknown` would answer "not revoked" for a reason that
+   * has nothing to do with revocation - a wrong answer no caller could see was wrong.
    */
-  async isDeviceRevoked(): Promise<boolean> {
+  async isDeviceRevoked(userId: string, deviceId: string): Promise<boolean> {
     try {
       const res = await this.f(
-        `${this.historyUrl}/api/mls/devices/${encodeURIComponent(this.userId)}/${encodeURIComponent(this.deviceId)}/revoked`,
+        `${this.historyUrl}/api/mls/devices/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}/revoked`,
         { headers: await this.auth() }
       );
       if (!res.ok) {

@@ -803,8 +803,11 @@ export interface IMlsService {
    */
   onDeviceRevoked(callback: () => void): void;
 
-  /** Asks the server whether this device is denylisted. `false` when the question cannot be reached. */
-  isDeviceRevoked(): Promise<boolean>;
+  /**
+   * Asks the server whether the named device is denylisted. `false` when the question cannot be
+   * reached. Ids are explicit because the answer gates a wipe and must not depend on init order.
+   */
+  isDeviceRevoked(userId: string, deviceId: string): Promise<boolean>;
 
   /**
    * Ask the server to elect ONE online member to reconcile a conversation's history with us. The

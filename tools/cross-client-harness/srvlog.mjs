@@ -846,6 +846,16 @@ const NOTABLE = [
   /\[ChannelService\] \[WORKSPACE\] hard delete workspace=\S+ channels=\d+ privateGroups=\d+ reason=(admin_deleted|last_member_left|last_member_kicked|account_deletion_left_no_members)$/,
   /\[ChannelService\] \[WORKSPACE\] delete workspace=\S+ slug="[^"]*" by=\S+ members=\d+$/,
   /\[ChannelService\] \[CHANNEL\] message deleted channel=\S+ message=\S+ by=\S+( \(moderation\))?$/,
+
+  // A MANAGER READING THE SETTINGS OF A PRIVATE SALON THEY ARE NOT ON THE ALLOWLIST OF. Notable and
+  // not benign because it is a RECOVERY, and a fallback is a signal whose RATE has to be measurable
+  // against the population: it exists so a salon flipped private with an empty allowlist can be
+  // repaired from the panel, and a run where it appears often means salons keep arriving in that
+  // state. `readable` managers never emit it, so one line per repair is the expected shape.
+  //
+  // COMM-23 is the check that produces it - it flips a public salon private, which is exactly the
+  // gesture that submits the panel's empty allowlist.
+  /\[ChannelService\] \[CHANNEL_ACCESS\] settings served to manager \S+ outside the allowlist of \S+$/,
 ];
 
 /**

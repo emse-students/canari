@@ -286,6 +286,28 @@ export async function resetDeviceAsFreshImpl(
 }
 
 /**
+ * Returns a revoked device to a fresh install, whatever discovered the revocation.
+ *
+ * ONE CONSEQUENCE FOR ONE FACT. Three places learn that this device is revoked - the PIN check at
+ * login, a `device_revoked` frame on a live session, and a vault or biometric login asking the
+ * server - and the wipe must not differ between them. It did: the frame path skipped the MLS
+ * teardown that the login path performs first, and it is the frame path that runs while the
+ * service is live and could still write a key back.
+ *
+ * The five steps are ordered on purpose: tear the session down first, revoke the refresh cookie
+ * while the network context still exists, and only then delete everything local - so nothing left
+ * running can write a key back after the wipe. The PIN is cleared last because the wipe is what
+ * makes it meaningless.
+ */
+export async function wipeRevokedDevice(ctx: SessionContext, cb: ChatSessionCallbacks) {
+  ctx.resetMls();
+  await resetDeviceAsFreshImpl(ctx, ctx.getUserId(), cb);
+  await clearAuth();
+  await wipeDeviceToFactory();
+  ctx.setPin('');
+}
+
+/**
  * Full login flow: verifies the PIN against the server (unless biometric mode),
  * initialises MLS, opens IndexedDB, restores conversations, connects the WebSocket,
  * and schedules device-sync.
@@ -483,15 +505,8 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       if (pinCheckData.resetRequired === true) {
         // A REVOKED DEVICE IS RETURNED TO A FRESH INSTALL, not merely stripped of its MLS state.
         // Its owner declared it lost or stolen, so leaving its cached media, its drafts, its
-        // conversation list and its signed-in session behind answers the wrong question. The three
-        // steps are ordered on purpose: tear the session down first, revoke the refresh cookie
-        // while the network context still exists, and only then delete everything local - so
-        // nothing left running can write a key back after the wipe.
-        ctx.resetMls();
-        await resetDeviceAsFreshImpl(ctx, ctx.getUserId(), cb);
-        await clearAuth();
-        await wipeDeviceToFactory();
-        ctx.setPin('');
+        // conversation list and its signed-in session behind answers the wrong question.
+        await wipeRevokedDevice(ctx, cb);
         cb.log('[SECURITY] Revoked device: signed out and reset to a fresh install.');
         throw new LoginFailure('device_revoked', m.auth_device_revoked_reset());
       }
@@ -502,10 +517,29 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       // and it must not run before the PIN has been proven correct.
       deviceKeyB64 = await deriveDeviceKeyB64(ctx.getUserId(), pin, salt);
       ctx.setDeviceKey(deviceKeyB64);
-    } else if (isVaultLogin) {
-      cb.log('Initialising MLS (vault device key path)...');
     } else {
-      cb.log('Initialising MLS (biometric keystore path)...');
+      cb.log(
+        isVaultLogin
+          ? 'Initialising MLS (vault device key path)...'
+          : 'Initialising MLS (biometric keystore path)...'
+      );
+      // NEVER LEARN BY FAILING WHAT A FACT COULD HAVE TOLD YOU. These two paths skip the PIN check
+      // on purpose - the keystore and the vault ARE the authentication factor - but `resetRequired`
+      // was the only thing that ever asked whether this device is still allowed to exist, so they
+      // skipped that too. A device revoked while it was offline then logged straight back in and
+      // kept everything, and the only remaining trigger was a `device_revoked` frame that had
+      // already been sent to a device that was not there to receive it.
+      //
+      // The revocation is a server fact with a route of its own, so ASK IT, on every login path.
+      // `resolveDeviceId` is safe here for the same reason the PIN path calls it before `init()`:
+      // it reads the stored id and decrypts nothing. `isDeviceRevoked` answers `false` when it
+      // cannot reach the server, so an offline login is never wiped by a transport failure.
+      const deviceId = await mlsService.resolveDeviceId(ctx.getUserId());
+      if (await mlsService.isDeviceRevoked(ctx.getUserId(), deviceId)) {
+        await wipeRevokedDevice(ctx, cb);
+        cb.log('[SECURITY] Revoked device: signed out and reset to a fresh install.');
+        throw new LoginFailure('device_revoked', m.auth_device_revoked_reset());
+      }
     }
 
     // PIN verified server-side (or biometric mode) - now decrypt the local MLS state.
@@ -965,16 +999,14 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
         // be confirmed first. `isDeviceRevoked` answers false when it cannot reach the server, so a
         // transport failure can never destroy anything - a status code is an answer, a transport
         // failure is not.
-        const revoked = await mlsService.isDeviceRevoked();
+        const deviceId = await mlsService.resolveDeviceId(ctx.getUserId());
+        const revoked = await mlsService.isDeviceRevoked(ctx.getUserId(), deviceId);
         if (!revoked) {
           cb.log('[SECURITY] device_revoked frame received but the server disagrees - ignored.');
           return;
         }
         cb.log('[SECURITY] This device was revoked by its owner - signing out and resetting.');
-        await resetDeviceAsFreshImpl(ctx, ctx.getUserId(), cb);
-        await clearAuth();
-        await wipeDeviceToFactory();
-        ctx.setPin('');
+        await wipeRevokedDevice(ctx, cb);
         cb.onLoginFailed?.(m.auth_device_revoked_reset(), 'device_revoked');
       })();
     });

@@ -12,8 +12,6 @@ describe('MlsDeliveryApi.isDeviceRevoked', () => {
       getToken: async () => 'token',
       fetchImpl: fetchFn as unknown as typeof fetch,
     });
-    a.userId = 'u1';
-    a.deviceId = 'd1';
     return a;
   };
 
@@ -26,14 +24,14 @@ describe('MlsDeliveryApi.isDeviceRevoked', () => {
   it('reports a revoked device', async () => {
     const fetchFn = vi.fn().mockResolvedValue(json({ revoked: true }));
 
-    await expect(api(fetchFn).isDeviceRevoked()).resolves.toBe(true);
+    await expect(api(fetchFn).isDeviceRevoked('u1', 'd1')).resolves.toBe(true);
     expect(String(fetchFn.mock.calls[0][0])).toContain('/api/mls/devices/u1/d1/revoked');
   });
 
   it('reports a device that is not revoked', async () => {
     const fetchFn = vi.fn().mockResolvedValue(json({ revoked: false }));
 
-    await expect(api(fetchFn).isDeviceRevoked()).resolves.toBe(false);
+    await expect(api(fetchFn).isDeviceRevoked('u1', 'd1')).resolves.toBe(false);
   });
 
   it('does not read an unreachable server as a revocation', async () => {
@@ -41,18 +39,34 @@ describe('MlsDeliveryApi.isDeviceRevoked', () => {
     // worst possible reading of a transport failure.
     const fetchFn = vi.fn().mockRejectedValue(new Error('Failed to fetch'));
 
-    await expect(api(fetchFn).isDeviceRevoked()).resolves.toBe(false);
+    await expect(api(fetchFn).isDeviceRevoked('u1', 'd1')).resolves.toBe(false);
   });
 
   it('does not read a server error as a revocation either', async () => {
     const fetchFn = vi.fn().mockResolvedValue(json({}, 500));
 
-    await expect(api(fetchFn).isDeviceRevoked()).resolves.toBe(false);
+    await expect(api(fetchFn).isDeviceRevoked('u1', 'd1')).resolves.toBe(false);
+  });
+
+  it('asks about the device it was given, not about whatever init happened to leave behind', async () => {
+    // THE IDS ARE ARGUMENTS BECAUSE THE ANSWER GATES A WIPE. A vault or biometric login asks this
+    // BEFORE `init()`, when the ambient fields still hold their placeholders - and a question
+    // about `unknown`/`pending` would come back "not revoked" for a reason that has nothing to do
+    // with revocation. A wrong answer no caller could see was wrong is worse than no answer.
+    const fetchFn = vi.fn().mockResolvedValue(json({ revoked: true }));
+    const a = api(fetchFn);
+
+    await expect(a.isDeviceRevoked('other-user', 'other-device')).resolves.toBe(true);
+    expect(String(fetchFn.mock.calls[0][0])).toContain(
+      '/api/mls/devices/other-user/other-device/revoked'
+    );
+    expect(a.userId).toBe('unknown');
+    expect(a.deviceId).toBe('pending');
   });
 
   it('treats a malformed answer as not revoked', async () => {
     const fetchFn = vi.fn().mockResolvedValue(json({ revoked: 'yes' }));
 
-    await expect(api(fetchFn).isDeviceRevoked()).resolves.toBe(false);
+    await expect(api(fetchFn).isDeviceRevoked('u1', 'd1')).resolves.toBe(false);
   });
 });

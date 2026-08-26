@@ -117,10 +117,54 @@ async function joinDistributionGroup(
   try {
     ref = await channelService.getDistributionGroup(scope);
   } catch (e) {
-    // A HELD GROUP SURVIVES A FAILED READ. This fetch used to happen only when the group was NOT
-    // held, so transport could never break a healthy load; now that the answer below depends on it,
-    // a fetch that threw must leave that path exactly as it was. A failed read is not "the server
-    // says you are out" - the same rule the roster reconciliation already obeys.
+    // AN ANSWER IS CLASSIFIED, A NON-ANSWER DEFERS TO WHAT THE DEVICE HOLDS - and the order used to
+    // be the other way round, which is the whole defect. Every refusal of this read reached the
+    // `heldLocally` branch first, so a 403 - this route ANSWERING - was reported as "could not
+    // re-read ... keeping the one this device holds", the sentence written for a lost packet. The
+    // status has been on `ChannelApiError` since it was introduced; nothing here read it.
+    //
+    // So the three cases are separated BEFORE anything is concluded from local state, and only the
+    // one that says nothing about entitlement is allowed to fall back on it.
+    const refusal = e instanceof ChannelApiError ? e : null;
+
+    // A SCOPE WITH NO GROUP AT ALL is a server-side gap somebody has to fix, and no amount of local
+    // state makes it carry seeds.
+    if (
+      refusal &&
+      (refusal.code === 'WORKSPACE_HAS_NO_DISTRIBUTION_GROUP' ||
+        refusal.code === 'CHANNEL_HAS_NO_DISTRIBUTION_GROUP')
+    ) {
+      log(`[GRAINE] ${scopeLabel(scope)} has NO distribution group - it cannot carry seeds`);
+      return false;
+    }
+
+    // 403 IS THIS ROUTE ANSWERING THE QUESTION THE JOIN IS ASKING. It authorizes on membership of
+    // the scope - the fact only social-service holds, and the reason the GroupInfo is served from
+    // here rather than from chat-delivery - so it says this user may not read this scope's seeds.
+    // No retry improves that, and neither the roster reconciliation nor the history request below
+    // has anything to do on a scope we have just been refused.
+    //
+    // AT A LEVEL THAT ACCUSES, because reaching it means two server routes disagree: the walk that
+    // gets here skips a salon whose channel DTO carries `viewerHasAccess === false`, so a refusal
+    // on THIS route contradicts the DTO that selected the salon in the first place. Its rate is
+    // what says whether that disagreement is a race on a fresh grant or a durable inconsistency.
+    //
+    // WHAT IT DELIBERATELY DOES NOT DO IS DROP THE TREE. Dropping key material on one answer is a
+    // destructive repair and needs its own evidence; it is also unnecessary here, since the revoke
+    // that produces a 403 deletes the delivery rows, so an unentitled device is handed nothing to
+    // hold the group for. A later re-grant is picked up by the ordinary read, which stops failing.
+    if (refusal?.status === 403) {
+      log(
+        `[GRAINE] ${scopeLabel(scope)}: this user is NOT entitled to its distribution group (403) - no join is owed and no retry can help, but the channel that selected this scope said the access was there`
+      );
+      return false;
+    }
+
+    // A HELD GROUP SURVIVES A FAILED READ, and only from here down is the read actually failed. This
+    // fetch used to happen only when the group was NOT held, so transport could never break a
+    // healthy load; now that the answer above depends on it, a fetch that threw for a reason that
+    // says nothing about membership must leave that path exactly as it was - the same rule the
+    // roster reconciliation already obeys.
     if (heldLocally) {
       log(
         `[GRAINE] could not re-read the distribution group of ${scopeLabel(scope)} (${e instanceof Error ? e.message : String(e)}) - keeping the one this device holds`
@@ -128,17 +172,6 @@ async function joinDistributionGroup(
       await reconcileRoster(channelService, scope, log);
       await askForHistory(scope, log);
       return true;
-    }
-    // The causes need different responses and only the code tells them apart: a scope with no group
-    // at all is a server-side gap somebody has to fix, a 403 means this user may no longer read it,
-    // and anything else is transport. Never branched on the sentence.
-    if (
-      e instanceof ChannelApiError &&
-      (e.code === 'WORKSPACE_HAS_NO_DISTRIBUTION_GROUP' ||
-        e.code === 'CHANNEL_HAS_NO_DISTRIBUTION_GROUP')
-    ) {
-      log(`[GRAINE] ${scopeLabel(scope)} has NO distribution group - it cannot carry seeds`);
-      return false;
     }
     log(
       `[GRAINE] could not read the distribution group of ${scopeLabel(scope)}: ${e instanceof Error ? e.message : String(e)}`

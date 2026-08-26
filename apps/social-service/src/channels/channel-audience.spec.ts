@@ -95,7 +95,7 @@ describe('channel audience', () => {
       { findOne: jest.fn() } as unknown as Repository<WorkspaceInvite>,
       redis as unknown as RedisService
     );
-    return { service, redis, channelRepo, memberRepo, messageRepo };
+    return { service, redis, channelRepo, memberRepo, messageRepo, roleRepo };
   }
 
   /** The addressee list of the first event of `type`, or null when none was published. */
@@ -212,6 +212,39 @@ describe('channel audience', () => {
       await expect(service.getChannelAccess('ch-staff', INSIDER)).resolves.toMatchObject({
         allowedUsers: [INSIDER],
       });
+    });
+
+    it('does not spend a permission query on a member who can read it', async () => {
+      // The recovery below costs a role lookup, and it must be the RARE branch: someone on the
+      // allowlist is answered from the channel row alone.
+      const { service, roleRepo } = makeService(privateChannel);
+
+      await service.getChannelAccess('ch-staff', INSIDER);
+
+      expect(roleRepo.find).not.toHaveBeenCalled();
+    });
+
+    it('serves them to a manager who is NOT on the allowlist, because it already lets them write', async () => {
+      // THE READ MUST NOT BE STRICTER THAN THE WRITE IT PRECEDES. `updateChannelAccess` guards on
+      // MANAGE_CHANNEL, so ADMIN may already rewrite this list and put themselves on it; refusing
+      // the read protected nothing and removed the only recovery from a private salon whose
+      // allowlist was submitted empty - the panel then renders its error box alone, with no
+      // gesture behind the promised "add yourself in one act".
+      const { service } = makeService(privateChannel);
+
+      await expect(service.getChannelAccess('ch-staff', ADMIN)).resolves.toMatchObject({
+        allowedUsers: [INSIDER],
+      });
+    });
+
+    it('still refuses a member who can neither read it nor manage it', async () => {
+      // OUTSIDER holds `member.invite` and nothing else, so widening the guard to managers must
+      // not widen it to the community. This is the assertion that keeps the two apart.
+      const { service } = makeService(privateChannel);
+
+      await expect(service.getChannelAccess('ch-staff', OUTSIDER)).rejects.toThrow(
+        'Not allowed to access this channel'
+      );
     });
   });
 

@@ -53,7 +53,14 @@ the alert stays open on purpose, and the reason is here rather than in somebody'
 
 ---
 
-## Open questions - no code until they are answered
+## Open questions
+
+**They live in [open-questions](open-questions.md), not here.** An item with no severity is a
+QUESTION - its first task is to answer it, not to write code - and mixing those with scheduled defects
+is what made this file hard to read. Nothing is scheduled from that page: an answer either produces an
+entry here or closes the question.
+
+## Measurements owed
 
 ### P2 - what made the profile fetches fail on that device at that moment
 
@@ -84,62 +91,6 @@ would not appear there anyway.
 **Then decide about `FAILURE_BACKOFF_MS`.** A high rate argues the two-minute suppression is doing
 real work against a refusing server; a rate near zero argues it is a clock hiding a name for two
 minutes over a blip that the reconnection listener already handles.
-
-### QUESTION - does an iOS attachment CONSUME the avatar cache file it is handed?
-
-Found 2026-08-17 while writing the initials fallback, and it is a question rather than a defect
-because settling it needs an iPhone. `CanariShowLocalNotification` hands `attachmentPath` straight to
-`UNNotificationAttachment`, and for an avatar that path IS the durable cache file `avatar_<id>.jpg`
-that `CanariFetchAvatar` writes and later re-reads. The NSE does the opposite on purpose: its
-`attachImage` copies to a temp file first, carrying the comment *"an attachment URL is
-consumed/moved by the OS, so we never hand it a shared cache file directly"*.
-
-Both cannot be right. If the OS really moves the file, the app-process cache is emptied by its own
-first hit and every subsequent notification re-fetches - a silent, permanent cache miss that no log
-would name, since a re-fetch looks exactly like a first fetch. **What settles it is one device
-observation**: notify twice for the same person with the app alive, then look for `avatar_<id>.jpg`
-in the app container. If it is gone, the app path copies too, exactly as the extension does. The
-initials disc is unaffected either way - it writes to `NSTemporaryDirectory()` on both.
-
-### ANSWERED 2026-08-19 - what a full disk and an evicted store actually do
-
-Both questions were the same shape: five years on a device and ninety days on the web are TIME
-bounds, so nothing caps the store by SIZE, and the failure was undesigned rather than designed. Both
-were settled by INJECTION and never on the campaign phone (the user's decision, 2026-08-19): the
-appliance the campaign depends on is not the place to find out.
-
-**Two defects fell out of asking**, and both are fixed:
-
-- **Tauri caught a failed SQLite open and answered with IndexedDB in the same webview.** The MLS
-  state persister writes `mls.bin` to the filesystem and does not follow that choice, so the group
-  state would have stayed on disk while conversations and messages moved into the webview's store -
-  a client that opens, looks healthy, and whose history does not match its own ratchet. And the
-  cause it existed for is the one it cannot survive: the second store is on the same full disk.
-- **A blocked IndexedDB upgrade never settled the promise.** `onblocked` fires when another tab
-  holds an older version open - neither `onsuccess` nor `onerror` - so `init()` simply stopped, with
-  no bound and nothing logged. It now rejects and says which tabs to close. The open failure also
-  carries the browser's DOMException as `cause` instead of the string `'IndexedDB open error'`.
-
-**Eviction needs no machinery, and that is a decision.** It drops the whole origin bucket, so the
-next open finds no database and hands back an empty store - byte for byte what a browser that has
-never seen Canari does, because everything that could have told them apart was in the bucket too. An
-empty store IS a new device, the new-device path already exists, history replays from the server and
-the MLS state is re-established by enrolling. A client that claimed to know it had been evicted
-would be claiming knowledge it does not have.
-
-The shapes are on [frontend/architecture](frontend/architecture.md#when-the-local-store-fails) and
-pinned by `src/lib/db/storageFaults.test.ts`. **No SIZE cap is proposed**: a write that fails now
-reaches its caller on every backend, which is what the cap would have been protecting.
-
-### Is a MiGallery application worth it?
-
-An open question, deliberately. The Canari formula (SvelteKit + Tauri) transfers, so the cost is
-knowable - but MiGallery's value is a gallery that a browser already renders well, and the question
-is what an app would add that the web version cannot do. Answer that before estimating anything.
-
----
-
-## Measurements owed
 
 ### P2 - measure EGRESS over time, because two unrelated upstreams stalled in one window
 
@@ -182,58 +133,28 @@ WP-REGRANT-1, opened 2026-08-21 by the campaign, shipped and was verified on pro
 its entry below is kept as CLOSED because the second attempt at the fix is the interesting half. **One
 thing IS open here, and it is an observation rather than a finding:** the past-epoch seed frame below.
 
-### OBSERVED 2026-08-21 - a seed frame nobody can open, once per rotation, on every churned salon
+### P3 - an epoch-0 seed frame is delivered on every rotation, and nobody can open it (observed 2026-08-21, did not reproduce)
 
-**COMM-22, six cycles, SIX of these - one per cycle, and both clients saw the same frame at the same
-second:**
+**COMM-22, six cycles, six of these** - one per cycle, both clients seeing the same frame at the same
+second, `group_epoch` 3/5/7/9/11/13 and `msg_epoch` **0 every time**. So a frame sealed at the group's
+first epoch is presented again on every rotation.
 
-```
-[RUST::WARN] Past-epoch application frame, unreadable for good: msg_epoch=0 group_epoch=3
-  group=c274bb29 err=ValidationError(UnableToDecrypt(SecretTreeError(TooDistantInThePast)))
-[GRAINE] frame on c274bb29... is unreadable for good (past-epoch-application) - acknowledged;
-  its seed comes back through a history request, not a redelivery
-```
+**Not a loss, and the product says so:** the frame is acknowledged and the seed arrives through the
+history request instead - 12 markers of 12 warm AND cold. What is unexplained is why an epoch-0 frame is
+delivered at all: `queued_message` held no publish matching it, which points at a REPLAY rather than a
+sender sealing under a stale handle, and "points at" is not a finding.
 
-`group_epoch` was 3, 5, 7, 9, 11 and 13 - the six epochs the peer's joins produced - and `msg_epoch`
-was **0 every time**. So one frame sealed at the group's very first epoch is presented again on every
-rotation, to every member, and nobody can open it.
+**AND IT DID NOT REPRODUCE** - the next run on the same build, after `cleanup.mjs` swept three debris
+communities, recorded `pastEpochFrames: []` over six cycles. The other half of the original observation
+WAS real and is closed (a deleted community's seed carrier held for ever - see
+[graine](protocols/channel-encryption.md#a-community-deleted-left-its-seed-carrier-held-for-ever---fixed-2026-08-21)),
+and it accounts for the redelivery bursts but not for these frames, which appeared on a salon whose
+community was alive.
 
-**WHAT IS ESTABLISHED.** The product handles it correctly and says so: the frame is acknowledged, and
-the seed arrives instead through the history request - `[GRAINE] answered ... with 1 seed(s)` six
-times on the sender, `absorbed 1/1 seed(s)` six times on the peer. The transcript is whole either way:
-12 markers of 12 warm AND cold, and a seed per session in the peer's store. **This is not a loss.**
-
-**WHAT IS NOT.** Why an epoch-0 frame is delivered at all. `queued_message` for that group holds no
-publish matching it - the 39 rows it does hold are all addressed to the PHONE, which never drained
-them and whose APK predates per-salon groups - so nothing in the table accounts for the six
-deliveries, which points at a REPLAY rather than at a sender sealing under a stale handle. "Points at"
-is not a finding, and the commit log settles nothing either: only two devices ever committed on that
-group, W1 and W2, in strict epoch order.
-
-**AND IT DID NOT REPRODUCE.** The next run of the same check, on the same build, after
-`cleanup.mjs` had swept three debris communities left by the WP-REGRANT-1 probes, recorded
-`pastEpochFrames: []` - zero, over six cycles. The debris is the likeliest reason: the same session
-was logging `[GRAINE] undecryptable frame on b0192801... - not acknowledged` in bursts on every load,
-b0192801 being a salon group W1 held at epoch 0 while the server had moved on, and those frames
-stopped the moment the venue was deleted. **So this is one defect or two**: a client carrying a group
-it can no longer follow, and a frame nobody can open.
-
-**THE FIRST HALF IS NOW CLOSED, AND IT WAS REAL** - see
-[graine](protocols/channel-encryption.md#a-community-deleted-left-its-seed-carrier-held-for-ever---fixed-2026-08-21).
-`b0192801` was a distribution group whose community had been deleted through the product hours
-earlier: its `dm_groups` row was tombstoned with both distribution columns cleared, and W1 held it
-anyway, because the sweep short-circuited on a LOCAL predicate ("have I recognised this as a seed
-carrier") and never read the row - while the purge that owns forgetting such a group enumerates
-scopes, and a carrier noted without one is in none of them. It is now read, believed, and dropped
-with the note that classified it. That accounts for the redelivery bursts and for the recovery
-attempt on every load; it does NOT account for the epoch-0 seed frames, which appeared on a salon
-whose community was alive. **The second half stays open and stays unestablished.**
-
-**WHY IT IS NOT PARKED.** A frame nobody can open is a repair on the hot path of every rotation, and
-the campaign's own rule is that a fallback is a signal and never a path. It needs ONE probe that
-publishes a seed and reads back what the server fanned out, which is a different instrument from the
-COMM runners - so it waits for a gap in the ladder rather than for a decision. `comm22.mjs` records
-`pastEpochFrames` verbatim on every run, so every future run says whether it is back.
+**P3 and not higher because it may already be gone.** Settling it needs ONE probe that publishes a seed
+and reads back what the server fanned out - a different instrument from the COMM runners. `comm22.mjs`
+records `pastEpochFrames` verbatim on every run, so every future run says whether it is back, and the
+cheapest next step is to read those rows rather than to build the probe.
 
 ### P3 - a log line calls a routine race "Non-recoverable", and its own comment says otherwise
 
@@ -351,305 +272,54 @@ and it stays.
 what the classifier sees on four deletion paths at once, so it lands after the ladder, with its rule
 written in the same commit.
 
-### P2 - the documented recovery from an empty allowlist is unreachable through the product (measured 2026-08-25)
+### P1 - a re-granted member stranded by a refused re-join (WP-REGRANT-2) - CODE IS IN, THE PROOF IS OWED
 
-**Found by COMM-23's original failure on `5d7fac13`**, `GET /api/channels/<id>/access -> 403`, with
-every database fact about the switch already correct. The 403 is not the defect - it is the
-2026-08-19 decision working, an admin no longer reading a private salon they have not joined. What
-that decision left behind is its own escape hatch: "an admin sees it exists and may add themselves in
-one act". Through the UI, they cannot.
+**Every half is now shipped, and none of them has been measured together.** Kept as a P1 for exactly
+that reason: the defect was found by COMM-22 and only COMM-22 can retire it - four grant/revoke cycles
+green. The measurement, the log tables and the three wrong diagnoses this entry went through are in
+`CHANGELOG.md`, and the rules they left are in [durable-rules](durable-rules.md); none of it is
+restated here.
 
-**THE TWO GUARDS ON ONE PANEL DISAGREE, AND THE READ IS THE STRICTER ONE.** `GET :channelId/access`
-guards on `canAccessChannel` - readability - while `PATCH :channelId/access` guards on
-`MANAGE_CHANNEL`. The actor holds MANAGE_CHANNEL and would be allowed to write the very list that
-would let them back in; they are refused the read that has to come first.
-
-**AND THE SCREEN HAS NO OTHER PATH.** `loadChannelAccess` catches, sets `accessError`, and leaves
-`accessLoaded` false; the access tab then renders `{:else if accessError}` - the error box ALONE. No
-visibility toggle, no allowlist, no add control. Nothing on that tab can be operated, so the one act
-the decision promised has no gesture behind it.
-
-**REACHED IN ONE ORDINARY SAVE.** Flipping a public salon private submits the allowlist the panel is
-holding, which for a salon that was public is EMPTY. The app does warn - `chat_no_allowed_members_warning`,
-"Aucun membre autorise - le canal sera inaccessible." - so this is a warned state and not a silent
-trap, and the salon can still be deleted from the general tab. But a warning is not a recovery, and
-the recovery the decision documented does not exist.
-
-**WHAT IS OWED, one of two.** Either the read guard admits MANAGE_CHANNEL - the actor may already
-write it, so refusing the read protects nothing it does not already hand over - or the panel stops
-depending on that read to offer the one gesture the decision named. The first is the smaller change
-and the one that makes the guards agree.
-
-### P1 - a re-granted member never asks again, and a refused re-join is never retried (WP-REGRANT-2, measured 2026-08-25)
-
-**Found by COMM-22 on `5d7fac13`, verdict `VACUOUS`** - the rung-9 row that churns a salon's roster
-to multiply its sessions. It is the THIRD state of the asymmetry WP-REGRANT-1 closed below, and the
-fix that closed that one is what makes this one visible: the re-join exists now, it fires, and
-nothing anywhere covers it FAILING.
-
-**Three cycles of grant/revoke were textbook, and the fourth grant stranded the peer for good.** The
-runner records the epoch either side of every cycle, and the product moved it every time:
-
-| Cycle | Peer joins | Peer leaves |
+| Half | What it was | Where |
 | --- | --- | --- |
-| 1 | epoch 2 | epoch 3 |
-| 2 | epoch 4 | epoch 5 |
-| 3 | epoch 6 | epoch 7 |
-| **4** | **never - 60 000 ms, epoch 7, 2 device rows** | - |
+| The forget was not durable, so a reload restored the stale tree | the strand itself, permanent | shipped 2026-08-25 |
+| Five join refusals flattened into one `false` | the doomed commit resubmitted for 20 minutes | `3ec46d85` - `ExternalJoinOutcome`, six variants |
+| A transport failure relabelled "a newer commit landed" | a retry whose premise a lost packet cannot support | same commit - `reason: 'unreachable'`, claiming nothing |
+| The walk's silent skip, indistinguishable from a walk that never ran | a paragraph of this entry was wrong about it | it logs which condition declined |
+| **The READ refusal flattened the same way** | a 403 reported as `keeping the one this device holds` | 2026-08-26, below |
 
-Salon `5b08828d` of community `99db8d1c`, group `9a8d1b03`, peer `b78568a3`, owner `d82cd226`. The
-peer's own console and the delivery service's log, side by side, with the gesture that produced each:
+**The last one was found by reading this entry rather than by a run**, and it is the same defect one
+layer up. `joinDistributionGroup` classified nothing before concluding from local state, so EVERY
+refusal of `getDistributionGroup` reached the `heldLocally` branch first - and a 403 is that route
+ANSWERING, on the membership of the scope, which is the whole reason the GroupInfo is served from
+social-service at all. A revoked member holding the tree therefore logged the sentence written for a
+lost packet, then reconciled its roster and asked for history on a salon it had just been refused.
+The status had been on `ChannelApiError` since that class was introduced; nothing read it. Now the
+three answers are separated BEFORE local state is consulted, and only the refusal that says nothing
+about entitlement falls back on what the device holds. It does NOT drop the tree - that is a
+destructive repair owing its own evidence, and the revoke has already deleted the delivery rows that
+would make the tree worth anything. The test that asserted `/could not read/` for a 403 was pinning
+the defect and now asserts the classification.
 
-| UTC | Where | Line |
-| --- | --- | --- |
-| 14:23:02 | server | `read scope=channel:5b08828d … user=b78568a3 devices=0` |
-| 14:23:02 | server | `group-info … epoch=6 publisher=b78568a3` - the peer joins, cycle 3 |
-| 14:23:10 | server | `evict … user=b78568a3 memberships=1 queued=0 routes=1` - cycle 3's revoke |
-| 14:23:13 | server | `group-info … epoch=7 publisher=d82cd226` - the owner commits the removal |
-| ~14:23:30 | rig | cycle 4 grants the peer again, and `openSalon(w2)` opens the salon on it |
-| 14:23:32 | peer | `the local group is stale, rejoining` then **`could not join the distribution group of salon 5b08828d`** |
-| 14:23:33 | peer | `[SYNC] WASM kept 9a8d1b03…` - the tree the forget dropped is BACK |
-| 14:23:33 | peer | three rows `unreadable … no seed for session … (repairable)` |
-| 14:23:33 -> 14:25:10 | server | **every read of that group is the OWNER's. The peer never asks again.** |
+**What is owed: a COMM-22 run, and nothing else.** It is on the re-run list for its own reasons
+(web-only, no phone), so the proof costs no extra work.
 
-**Two defects, and the second is what makes it permanent.**
+### P2 - a bundle of pure DECLINES still goes out as transport, and a dropped decline strands a requester
 
-1. **A refused re-join is a dead end.** `ensureDistributionGroupFor` forgets the stale tree, calls
-   `ensureDistributionGroup`, and on `false` logs one line and returns. Nothing retries, nothing
-   escalates, and the caller cannot tell "not entitled" from "entitled and it did not work" - the
-   distinction the standing rule says must be carried as a type from where it is already known.
-2. **FIXED 2026-08-25 - the forget was not durable, so a reload undid it.** `forgetDistributionGroupById`
-   drops the tree in memory and leaves the checkpoint to its caller, and the caller checkpointed on
-   no path at all: nothing persisted a distribution-group join in any of the three places it could
-   have, so the FAILING outcome left the dropped group on disk and the next load restored exactly the
-   stale belief the forget existed to destroy - `WASM kept 9a8d1b03` one second later is that
-   restore. One checkpoint now sits where the tree moves, on both outcomes, conditioned on it having
-   actually changed. Story in `CHANGELOG.md`, rule in
-   [durable-rules](durable-rules.md). **It could not have been "persist only after the join
-   succeeds"**: `joinByExternalCommit` fails when the group is still held locally, so the forget must
-   precede the join and therefore must be durable on its own.
+**The measured case shipped 2026-08-25** - an answer carrying seeds is now `DELIVERY.keyMaterial`,
+silent AND durable, so the server queues it without consulting presence. Story in `CHANGELOG.md`, rule
+in [durable-rules](durable-rules.md), and COMM-18 is a clean `PASS` on it.
 
-**THE WALK EXISTS - that paragraph was wrong and reading settled it.** This entry said "whatever
-walks the salons after a load did not walk this one" and named instrumenting it as the first task.
-`executeWorkspaceLoadAttempt` (`useChannelWorkspaces.svelte.ts`) walks every private salon of a
-community on every load and calls `ensureDistributionGroupFor` on each. What it does NOT do is say
-when it declines: it skips a salon whose DTO carries `viewerHasAccess === false`, silently, which is
-indistinguishable from a walk that never ran - and those two readings are opposite. That skip now
-logs, naming the salon and which of its two conditions declined, so the next COMM-22 answers the
-question by being read rather than by being re-derived.
+**What is left is the same shape, smaller, and has never been observed.** A bundle of PURE DECLINES
+still goes out as transport, deliberately: it carries no key material and restates a fact the requester
+could derive. But a dropped decline strands a requester exactly as permanently as a dropped seed did -
+it is the fact that sends them to the NEXT member, and nothing re-asks.
 
-**What is owed - one defect, not three.** Not a timer and not a heal: a re-join's refusal must be
-classified where it is known - the server already separates "not entitled" from "conflict" - and
-carried back as a type through `externalJoin` and `ensureDistributionGroup`, which today flatten
-FIVE outcomes into `false` (`NotAGroupMemberError`, a null GroupInfo, a build failure, an exhausted
-epoch race, and a network failure whose `reason: 'network'` discriminator is produced and then never
-read). Then "not entitled" stops and says so, while a transient failure is left to the next existing
-trigger.
-
-**And that last one is a MISREADING OF THE CAUSE, found by reading the loop on 2026-08-25.**
-`submitCommit`'s `.catch` returns `{accepted: false, reason: 'network'}`, and because nobody reads
-`reason`, a transport failure falls into the branch written for the server's answer "a newer commit
-landed" - which calls `forgetGroup`, logs "epoch race, retrying", and tries twice more. So a lost
-packet is reported as a cause nobody established, and the retry's premise - the epoch moved - is
-exactly what a network error does not support. This is the project's first rule on the one path where
-being wrong about it touches key material: a status code is an ANSWER, a transport failure is not.
-
-**What that forget does NOT do is destroy pre-existing state, and an earlier reading here said it
-did.** `join_by_external_commit` refuses to overwrite a group already held locally
-(`frontend/mls-core/src/welcome.rs`, the concurrent-Welcome guard), so the only thing this attempt
-can have staged is its own join, moments earlier, and the only thing the forget discards is that. The
-defect is the false diagnosis and the retry built on it, not lost key material. The fix is still
-ordered - stop treating it as a reject BEFORE carrying the type back, because the type is what a
-caller reads. **The check that measures it already exists** - COMM-22 is exactly this scenario and it is
-the row that failed, so nothing new has to be written to know whether a fix works: four cycles green
-is the proof.
-
-**Not to be confused with the eviction it looks like.** The `evict` at 14:23:10 is CORRECT - it is
-cycle 3's revoke, and `memberships=1 queued=0 routes=1` is the whole of what a revoke owes. The first
-reading of this log blamed the owner's roster reconciler for cutting a member it was merely behind
-on; the epochs table above is what refutes that, and it cost one query to check.
-
-### P1 - a seed request is dropped for an offline peer that was online, and nothing ever asks again (measured 2026-08-25)
-
-**Found by COMM-18's FOURTH run**, on the rebuilt APK carrying `e96bfa12`. That fix is proven by this
-very run - the phone asked its OWN laptop for the seed, which the previous build could not do - and
-the row still fails, one step further along. The cold start, the deep link, the landing and the salon
-all work; `theMessageIsOnScreen: false`.
-
-**What the phone and the server said, side by side.** Community `a75fccd5`, salon `ae913738` (public,
-so its seeds ride the community's group `e90a58ba`), one user with two devices - W1 the web sender and
-A1 the phone. Their ids are in the run log and deliberately not here: a test salon is deleted at
-teardown, a device id is not, and no device id has ever entered this repo.
-
-| UTC | Where | Line |
-| --- | --- | --- |
-| 17:54:19 | server | the community and its group are created, `epoch=0 published=false devices=0` |
-| 17:54:22 | server | `[SEND] recipients=0 durable=true - the group named no other device` - **W1 sends the marker while the phone is not yet on the group** |
-| 17:54:29 | gateway | `WebSocket Error … Connection reset without closing handshake` - A1's kill, 2 s before the deep link |
-| 17:54:42 | server | `[COMMIT] ACCEPT … newEpoch=2` from A1 - the phone joins the group AFTER the message was sealed |
-| 17:54:43 | phone | `Message cdf84ae6… is unreadable … no seed for session mLvNDixq… (repairable)`, then `asked d82cd226… for the history` |
-| 17:54:43 | server | `[SEND] recipients=1 durable=false - every recipient device is offline`, `TRANSPORT_SKIPPED_OFFLINE count=1` |
-| 17:54:44 | phone | `asked d82cd226… for 1 seed(s) in community a75fccd5` |
-| 17:54:44 | server | the same drop again |
-| 17:54:44 -> 17:55:43 | phone | **nothing. One ask, dropped, and no second ask in the remaining 59 s.** `seeds: {held: 0, received: 0}` |
-
-**The scenario is legitimate and the repair path is exactly what must work.** A device that joins a
-group after a message was sealed cannot open it, by construction; obtaining the seed from a peer is
-the mechanism that exists for it, and it fired correctly.
-
-**The drop is right in principle.** A transport-only frame is half of a rendezvous that expires in
-60 s, and the responder is elected only among devices Redis reports ONLINE, so queueing for an
-offline device writes a row and wakes a device for an exchange it cannot join.
-
-**THE CAUSE IS NAMED, measured on the FIFTH run (2026-08-25, `24d38f21`), and it is neither of the
-two candidates as they were written.** The re-run existed to read the device ids the drop was keyed
-on, and they inverted the reading: the dropped frames are not A1's REQUESTS, they are **W1's ANSWERS
-to them**. `isSender` in the MLS send path excludes the sender by userId AND deviceId, so a target
-that is A1's device proves the sender was the other device of the same user. A1's requests reached
-W1; W1 replied 1 s and 0 s later; both replies were discarded.
-
-**And A1's socket really was down - the presence read was CORRECT about the socket and WRONG about
-reachability.**
-
-| UTC | What |
-| --- | --- |
-| 18:46:50 | gateway: `WebSocket Error … Connection reset without closing handshake` - the test's kill |
-| 18:46:55 | phone: deep link received |
-| 18:47:02 | `PUSH_REGISTER` from A1 - its HTTP is back |
-| 18:47:03 | `[COMMIT] ACCEPT newEpoch=1` from A1 - an authenticated write |
-| 18:47:04 | `[DISTRIBUTION_GROUP] group-info … publisher=…:tauri-…` - another |
-| 18:47:05, 18:47:06 | both of W1's answers dropped, `devices=<A1>` |
-| through 18:47:06 | **no gateway reconnect line for A1 at all** |
-
-So for sixteen seconds A1 was performing authenticated writes over HTTP while its WebSocket had not
-reconnected. The presence key is written when the socket opens, so its absence was truthful - and it
-was read to answer a question it was never written for. That is this repo's own rule, on the path
-where breaking it costs a seed: **a liveness clock must be written by the thing whose liveness it
-measures**, and "is a socket open right now" is not "can this device be given the answer it asked
-for".
-
-**Candidate 2 is REFUTED, by reading rather than by another run.** The group naming a stale device of
-the same user cannot produce this: the exclusion is device-level, and the target was the live phone.
-
-**The fix is to delete the predicate, not to make it more accurate.** The drop is defended by "the
-rendezvous would expire first", which is sound for an unsolicited transport frame to a device that
-may be gone. It is never sound for an ANSWER: the request is itself proof that the requester exists
-and is waiting, it arrived seconds earlier, and it named the answerer. So the reachability of a
-rendezvous's requester must be carried by the rendezvous rather than re-derived from a socket at
-answer time. A timer is explicitly NOT the fix (the standing directive), and neither is a retry: the
-request already happened, and what must change is that its answer is not thrown away.
-
-**The second half stands on its own and is now sharper: nothing re-asks, and the window that swallows
-the answer is created by the test's own success path.** A cold start is exactly when a device has
-HTTP before it has a socket, so the one scenario COMM-18 exists to prove is the one guaranteed to
-land inside the window.
-
-**FIXED 2026-08-25 for the case that was measured, and the fix is a CLASSIFICATION, not a mechanism.**
-The predicate is deleted for this frame rather than made more accurate: an answer carrying seeds now
-leaves `answerSeedRequest` as `DELIVERY.keyMaterial` (silent AND durable) instead of
-`DELIVERY.transport`, so the server queues it for its recipient without consulting presence at all.
-Nothing was added to get there - `keyMaterial` already existed for this exact payload on this exact
-group, and `seedDistribution` already sent the ordinary distribution of a seed that way. What was
-wrong is that `DELIVERY.transport`'s justification was applied to something it does not describe:
-transport is defended by circularity, "it only restates state held elsewhere, so replaying it from
-the log would be circular", which is true of a REQUEST and false of the seed itself. Two tests pin
-both directions, and the mutation was checked - reverting the line fails exactly one of them. The log
-line now names the class it used, because a run log that omits it cannot tell a drop from a silence.
-
-**WHAT IS LEFT, and it is smaller but the same shape.** A bundle of PURE DECLINES still goes out as
-transport, deliberately: it carries no key material and restates a fact the requester can derive, and
-a distribution group's log is capped and spent on seeds alone. But a dropped decline strands a
-requester exactly as permanently as a dropped seed did - it is the fact that sends them to the next
-member, and nothing re-asks. That case needs what this one did not: the ability to deliver a frame to
-a device presence reports offline WITHOUT appending it to the group's log, which is the fourth
-combination `DELIVERY` does not have (`silent` and `durable` were one boolean until 2026-08-12, and
-`durable` still gates both the presence filter and the history append on the server). Splitting them
-is a wire-level change, so it waits for a measurement that needs it rather than being guessed at now:
-the decline path has never been observed dropping anything.
-### CLOSED 2026-08-21 - a member let BACK IN to a private salon was never routed again (WP-REGRANT-1)
-
-**Found and FIXED 2026-08-21**, both on production, in `7f11b50e` and `082345b7`. The mechanism and
-the second attempt are on
-[graine](protocols/channel-encryption.md#the-asymmetry-has-a-third-half-coming-back---fixed-2026-08-21-wp-regrant-1),
-the rules it left in [durable-rules](durable-rules.md), the story in `CHANGELOG.md`. Kept here for
-one reason: **the first fix was a no-op and passed every gate**, which is the part worth not
-repeating. What follows is what was measured before it.
-
-Measured by
-`scratch/graine-regrant.mjs` on venue `C22 regrant COMM22-k8qsrko`, salon `4407ec7c`:
-
-| Gesture | Salon group epoch | Delivery rows | Peer routed |
-| --- | --- | --- | --- |
-| salon created | 1 | 2 | no |
-| granted, peer opens it | **2** (2 455 ms) | 3 | **yes** |
-| revoked | 2 (rows dropped in 2 002 ms) | 2 | no |
-| the owner reloads the salon | **3** | 2 | no |
-| **re-granted, peer opens it again** | **3, unchanged after 180 s** | **2** | **NO** |
-
-The peer is entitled, the panel lists them, `PATCH /api/channels/:id/access` answers 200 - and they
-receive nothing from that salon, permanently. Every message minted afterwards renders on their
-screen as `no seed for session … (repairable)` and the repair cannot succeed, because a seed is
-fanned out along `dm_device_group_memberships` and they have no row on it.
-
-**The cause is an ordering, and then a stale belief built on it.** A revoke has two halves.
-`evictFromDistributionGroup` (chat-delivery) deletes the leaver's membership rows, their queued
-frames and their Redis routes **immediately**; the MLS half - removing their LEAF from the tree - is
-committed later by a REMAINING member, when that member next loads the salon
-(`rosterReconcile`). So the commit that says "you are out" is published to a group the leaver is
-already unrouted from, and **the leaver never receives it**: their client keeps a live local MLS
-group for a group it is no longer in. `ensureDistributionGroupFor` then reads exactly that stale
-belief as its early return -
-
-```ts
-const known = mlsService.distributionGroupFor(scope);
-if (known && mlsService.getLocalGroups().includes(known)) { … return true; }
-```
-
-- so on the re-grant it reconciles, asks for history, and **never re-joins**. The join is the only
-thing that writes the delivery rows back. Confirmed in the peer's own console: on the second open it
-logs `salon 4407ec7c … agrees with its roster - 3 leaf/leaves, nobody to remove` and posts no
-`group-info` at all, while the server holds 2 rows and epoch 3.
-
-**A local group list is not evidence of membership** - it is this device's memory of having joined,
-and the authority is the server's delivery roster. The fix must carry that fact to where the
-decision is made rather than let the client infer it, and it must be a durable diff and not an
-event: `channel.member.removed` reaches only the devices online when it fires, which is why the
-departure mechanism was built as a diff in the first place.
-
-**What the fix measured, on the same stranded salon** (`19a58034`, group `b0192801`, left unrouted
-for 53 minutes by the first attempt), the moment the second one deployed and the peer reloaded:
-
-| UTC | Server line |
-| --- | --- |
-| 02:49:04 | `served channel=19a58034 user=b78568a3 … devices=0` - the group holds no row for it |
-| 02:49:05 | the same read again, from the join's own transport |
-| 02:49:05 | `published channel=19a58034 user=b78568a3 epoch=2 stored=true` - **it re-joined** |
-| 02:49:25 | `served … devices=1` - the row is back |
-
-Against the same salon one deploy earlier: one read, no publish, `devices=0` for three minutes. The
-negative control is the first attempt itself.
-
-Related and NOT yet measured: the same shape at COMMUNITY level (COMM-12 passed on 2026-08-20, so
-either that path differs or the check did not reach this state), and whether a device that was
-merely OFFLINE across a legitimate removal ends up in the same stale state. Both are cheap now that
-`devices=N` is on every `served` line.
-
-### CLOSED 2026-08-20 - a private salon now has its own distribution group
-
-Shipped, with the user's decisions of 2026-08-19 in it: an admin JOINS explicitly (member list only,
-no system message), an unjoined private salon stays VISIBLE to an admin so the join is reachable,
-and forward secrecy is decided AGAINST - the reasoning on the last one is not to be re-opened
-(Graine retains seeds so a joiner reads the past, channel messages are not persisted locally, so a
-forgotten seed would cost a member their OWN scrollback; the exposure is bounded by the retention
-window of §8 plus `history_visibility: joined`).
-
-The design, the lifecycle table, the client changes and the one defect found while writing it up (a
-discriminator `mlsDeliveryApi` dropped in transit) are on
-[graine §13](protocols/channel-encryption.md#13-one-distribution-group-per-private-salon---shipped-2026-08-20),
-which is the only copy. Production held ZERO private salons when it was measured on 2026-08-19, so
-no backfill was written and the migration question is moot.
-
----
+**Why it is not fixed with the other half.** It needs the ability to deliver a frame to a device that
+presence reports offline WITHOUT appending it to the group's log - the fourth combination `DELIVERY`
+does not have (`silent` and `durable` were one boolean until 2026-08-12, and `durable` still gates both
+the presence filter and the history append server-side). Splitting them is a wire-level change, so it
+waits for a measurement that needs it rather than being guessed at now.
 
 ### P3 - a poll whose deadline passes while the card is on screen flips only on reload
 
@@ -682,6 +352,51 @@ asserts a deadline arriving live (the campaign closes polls with the close contr
 no check waits on wall-clock time at all. It belongs with the rendering pass, not with a rung.
 
 ## Messaging convergence
+
+### P2 - a re-admitted device calls its own exclusion window a loss, and reconciles for it (measured 2026-08-26)
+
+**Found by a fix working.** GRP-8's round-2 re-admission Welcome used to be dropped as a redelivery
+(closed in `e027679a`), so the re-admission never happened on the joiner and the check passed anyway -
+it counts the INVITER's roster. With the Welcome processed, this is the honest consequence. Nine clean
+`PASS` rows before `feecfaf5`, `PASS-DIRTY` on it.
+
+**THE SAME FRAME IS JUDGED TWICE AND THE TWO ANSWERS DISAGREE**, fifteen seconds apart, on `feecfaf5`:
+
+    11:09:19  Frame arrived after this device was evicted - ACKed and dropped, no repair is owed
+              msg_epoch=3 group_epoch=3
+    11:09:34  [WELCOME] held but EVICTED - re-admission, not a redelivery   -> forget_group, epoch 4
+    11:09:34  Past-epoch application frame, unreadable for good: msg_epoch=3 group_epoch=4
+    11:09:34  [History] frame never read here and unreadable for good; will reconcile
+    11:09:34  [HISTORY_RECONCILE] asked ... whether we hold the same history
+
+`history.ts`'s `kind === 'evicted'` branch already carries the whole argument three lines above the one
+that fires - *"we are not entitled to the plaintext, so there is nothing for a reconciliation to
+recover"*. The defect is that this reasoning is keyed on the CURRENT membership state, so it stops
+applying the instant the device is re-admitted, while the frames it protects are still in the stream.
+**A column is only evidence for the question it was written to answer**: `evicted` answers "am I out
+NOW", not "was I out THEN".
+
+**What it costs:** one reconciliation per re-add over the whole exclusion window rather than one frame,
+so it scales with how long the device was out and how busy the group was - against *"doit marcher avec
+une conversation de toute les tailles"*. And it puts a repair line in a window where nothing needed
+repairing.
+
+**The fix, and the one thing blocking the obvious version.** An ENTITLEMENT FLOOR per group, written
+where the Welcome installs - which is now a named branch, `readmittedAfterEviction` in
+`setupMessageHandler.ts`. A frame below the floor is then handled exactly like `evicted`: marked seen,
+no loss, no reconciliation. **The frame's own epoch is not visible from JS** - Rust has it and prints it
+(`msg_epoch=3 group_epoch=4`) but the error reaching `classifyIncomingDecryptError` is
+`SecretTreeError(TooDistantInThePast)` with no number, and `getEpoch(groupId)` gives only the current
+epoch. So either surface the frame's epoch through the decrypt error - **never learn by failing what a
+fact could have told you** - or key the floor on the STREAM POSITION at re-admission, since the replay
+already walks rows in order and row ids are timestamps. The second needs no WASM rebuild and no APK.
+
+**A policy question sits behind it and is NOT answered here** - see
+[open-questions](open-questions.md#is-a-remove-meant-to-be-durable-against-a-later-re-add). Nothing
+should be changed on the strength of a reading of it.
+
+**How to confirm it is gone:** GRP-8 goes clean. It is the only check that re-adds a removed member.
+
 
 ### P3 - a `history_bundle` restores the EDITED flag without the edited body
 
@@ -752,9 +467,30 @@ Three separate things, in the order they have to be answered:
 1. **ANSWERED, AND IT IS WHY THIS ENTRY IS A P1.** The question was what revocation is DEFINED to
    do; the user settled it 2026-08-23, verbatim: *"Effacer ce qu'il detient (il doit devenir un
    appareil comme neuf s'il essaie de se reconnecter, c'est a ca que sert la blacklist non ?)"*.
-   Revocation is a WIPE. A revoked device that still holds its local store is therefore a defect, not
-   a wording problem, and the wipe either never ran or was never written - which is what has to be
-   established first, because "no mechanism" and "a mechanism that did not fire" need opposite fixes.
+   Revocation is a WIPE. A revoked device that still holds its local store is therefore a defect,
+   not a wording problem.
+
+   **WHICH OF THE TWO IT WAS IS NOW SETTLED, BY READING: THE MECHANISM EXISTS, SO IT DID NOT FIRE.**
+   `resetDeviceAsFreshImpl` (`sessionAuth.ts`) is thorough - MLS state, the device id, the sync-guide
+   flag, every `device-name:` key, the IndexedDB store cleared AND closed, the session's own handle
+   closed, the auth cleared, the device wiped to factory. **What was missing was a path that ASKS.**
+   Until 2026-08-26 the only two triggers were `resetRequired` on the PIN check and a
+   `device_revoked` control frame, and the first was reached only inside
+   `if (!isBiometric && !isVaultLogin)`. So a vault or biometric login never learned at login time
+   that it had been revoked, and depended entirely on a frame arriving while it was online - a frame
+   sent to a device that was not there to receive it. **Fixed 2026-08-26**: every login path now
+   resolves its real device id and asks `/api/mls/devices/:userId/:deviceId/revoked` before `init()`,
+   and the one wipe is `wipeRevokedDevice`, shared by all three triggers - which also gave the frame
+   path the MLS teardown it was skipping, on the one path where the service is still live. Story in
+   `CHANGELOG.md`, rule in [durable-rules](durable-rules.md).
+
+   **TWO CANDIDATE CAUSES SURVIVE that fix and only the user's own history separates them**, so
+   neither is worth code before rung 16 measures it: the removed panel row may have been
+   SESSION-only, since `handleRemoveRow` calls `deleteDevice` only when `row.device` exists, in which
+   case nothing was ever revoked and nothing is broken; or the device was deleted but
+   `revokeRowSessions` failed - a state the code already anticipates in as many words - leaving the
+   PC a valid refresh cookie, so it never reached a login path at all.
+
    The rest of that decision is not a fix but three things to VERIFY, and they are rows, not prose:
    a revoked device really does become like-new; its first reconnection resynchronises as a NEW
    device would, history included; and if that first pass does not catch everything up, the later
@@ -790,7 +526,10 @@ executed BY the device being wiped, so it can only run when that device next com
 device that never returns is never wiped, whatever the server recorded. So the row proving "it became
 like-new" and the row proving "the wipe ran" are not the same row, and neither implies the other. The
 blacklist is what makes the first true without the second, which is exactly the reading the user's
-own phrasing points at (*"c'est a ca que sert la blacklist non ?"*).
+own phrasing points at (*"c'est a ca que sert la blacklist non ?"*). The 2026-08-26 fix does not
+change that - a wipe still needs the device back - but it narrows "comes online" from "is online at
+the moment a frame is sent" to "logs in at all, by any path", which is the difference between a
+guarantee and a coincidence.
 
 ### P3 - the web has exactly ONE out-of-page unread signal, it needs a permission, and the first message is spent asking for it
 
@@ -875,6 +614,34 @@ authenticated route, deployed) and the native app (Kotlin, plus an APK rebuild a
 rebuild re-bases A1's build for every phase of the ladder that follows it.
 
 ## The harness itself
+
+### P3 - an internet scanner can stop a `--repeat`, and separate invocations are the way round it (2026-08-26)
+
+`GRP --repeat 5` stopped at pass 1 with `frontend-ssr NOT CLEAN ... unexplained=3`, the three lines being
+`[404] HEAD /WP`, `[404] HEAD /old`, `[404] HEAD /Old` - a scanner sweeping a public host for WordPress
+and a leftover backup directory.
+
+**`srvlog.mjs` is not wrong to leave them there.** Its 404 rules are keyed on a stack prefix the
+application provably cannot own (`/wp-*`, `/administrator/`, `/_next/`), and its own comments state twice
+why a blanket `[404]` rule may never exist: it would forgive a route we DO own answering 404. `/WP` misses
+the existing rule on case and on the absent hyphen, and `/old` is a shape a SvelteKit app could own, so
+forgiving it would break the file's criterion rather than extend it.
+
+**So the finding is not the three lines - it is that campaign throughput depends on what the internet
+does to prod during a window.** Prod IS the test server, so this recurs with every new scanner spelling,
+each time costing the remaining passes of a `--repeat`.
+
+**The route round it, used the same day, needing no change to any gate:** the stop is BETWEEN passes, not
+inside one - all ten checks of pass 1 ran and recorded their verdicts. Five separate `run.mjs GRP`
+invocations therefore give five measured passes where `--repeat 5` gives one, with nothing disarmed. It
+costs one preflight per pass.
+
+**The real fix, when it is worth the time,** is to stop enumerating spellings and read the fact instead:
+the set of paths the application owns is knowable without a build, from `frontend/src/routes/**` and
+`frontend/static/**`. A 404 on a path IN that set is a defect; a 404 outside it provably cannot be ours.
+That satisfies the file's own criterion better than any regex and closes the class instead of the
+instance - the difference [testing-methodology](testing-methodology.md) rule 42 is about.
+
 
 ### P2 - a LIVE socket dies in the middle of GRP-3, and no navigation explains it (measured 2026-08-25)
 
@@ -1420,44 +1187,6 @@ than three local patches.
 The server side has a page already - [storage-forecast](infrastructure/storage-forecast.md) - and it
 is where any measurement belongs.
 
-### Server - can occupancy be monitored, and will it hold?
-
-**The media half shipped 2026-08-18** and is documented on
-[storage-forecast](infrastructure/storage-forecast.md): `/admin/storage` now separates growth (bytes
-written per 7-day window) from a retention sweep that has stopped taking anything, and counts
-separately the objects no sweep can EVER reach. That last one was not hypothetical -
-`purgeExpiredMedia` iterates the metadata index, so an object with no entry is invisible to it for
-ever, and 7 such objects (~11 MB) were already measured.
-
-**The MLS half shipped 2026-08-19**, and this entry is closed. Postgres and Redis are no longer bare
-totals: the panel lists the eight MLS tables by size with their row counts, reports the queue as four
-figures (total, devices, oldest, and the DEEPEST single device queue - the one a total cannot show),
-counts §5.7's WP-GHOST-1 shape continuously, and breaks Redis down by key prefix from a bounded
-sample that says how much it sampled. The production baseline and the reasoning are on
-[storage-forecast](infrastructure/storage-forecast.md); do not restate them here.
-
-**Decided 2026-08-17: the panel is the whole of it, there is NO alert.** The user's call. Worth
-stating what that costs rather than pretending it costs nothing - the standing rule is that a correct
-mechanism with no report is found by hand a day late, and a panel is a report only for whoever opens
-it. The slope is what makes it survivable: a number read once a month against a trend is enough to see
-a wall coming, where a bare total is not. **§5.7's own "more than a few hundred rows" predicate is
-deliberately left unarmed**: the deepest real queue is 189, so a threshold set from the last incident
-would be a threshold nobody has measured against the population it would run on.
-
-> **Already shipped, do not re-open:** _"ne garder que les messages les plus recents (dernier mois),
-> et le reste recuperable en demandant l'historique a un appareil mobile"_ is exactly the device
-> window plus the scrollback range request delivered in the history-reconciliation rework - web keeps
-> 90 days, mobile and desktop 5 years, and reaching the top of the scrollback asks a peer for the
-> range below the window. See [history-reconciliation](protocols/history-reconciliation.md) and
-> `historyWindow.ts`.
-
-> **Already shipped, do not re-open:** _"pourquoi garder plus d'un accuse de lecture sur de vieux
-> messages ? Si le dernier message a ete lu, le precedent aussi"_ is the read watermark that replaced
-> per-message `readBy` in the same rework - read state is now ONE timestamp per (conversation, user),
-> and `readersOf` derives the per-message display from it.
-
----
-
 ## Payments
 
 ### Flipping `payment_provider` from Stripe to Lydia (WP-LYDIA-1)
@@ -1559,22 +1288,6 @@ the route, not today's problem.
 of the grid and out of `channel_roles.permissions` by migration, and `RETIRED_PERMISSIONS` keeps
 their names only so an old client's write can be told from a wrong one.
 
-### CLOSED 2026-08-20 - deleting a salon archived it, after destroying its key
-
-`DELETE /channels/:channelId` set `channels.archived = true` and, in the same call, destroyed the
-salon's key-distribution group. A private salon therefore ended as ciphertext nothing holds a seed
-for: invisible to every listing, unreachable by every route, with no un-archive anywhere in the
-service, and removable only by deleting the whole community. That is the shape `deleteWorkspace`
-had rejected on 2026-08-18, one scope up, in the same words - the fix was written as a sentence
-about a mechanism and applied to exactly one caller of it.
-
-**Found by COMM-16**, whose `channelRowGone` came back false on its first run, and very nearly lost
-by "fixing" the check to match the code. Now shipped: the salon, its `channel_messages` and its
-group are deleted, group first and allowed to abort; both `archived` columns dropped by migration
-046 (prod held zero archived rows in either); six tests in `channel-delete.spec.ts`, which the route
-had none of. No confirmation argument, deliberately - reasoning on
-[social-service](services/social-service.md#deleting-a-channel-took-no-new-argument-deliberately-2026-08-20).
-
 ### P3 - an admin who never joined a private salon is not told when it is deleted
 
 `channelAudience` is the salon's roster, and since 2026-08-19 an administrator reaches a private
@@ -1588,32 +1301,6 @@ what put every private salon's messages, typing, pins and poll tallies on the so
 same server refuses to serve them over REST, and it was closed this week. The shape that would work
 is a separate, contentless `channel.gone` addressed to the community - worth doing only if the stale
 row is ever seen to matter, since a reload clears it and nothing is wrong underneath.
-
-### DECISION OWED - naming the author of each line inside a salon's stacked notification
-
-Asked for by the user on 2026-08-20: salon notifications should read like a DM's - successive
-messages stacking one under another in a single banner. **The stacking already exists**;
-`handleChannelMessage` goes through `showNotification`, so a salon gets the stable per-conversation
-id, the `MessagingStyle` history rebuild, the badge, the clear-on-open sweep and the cross-device
-dismissal. NOTIF-11 is what will say so on a current APK.
-
-What is genuinely missing is the ATTRIBUTION. `senderName = title` and `groupName = ""`, so every
-line in a salon's stack is attributed to `<Communaute> - #<salon>` and a reader cannot tell who said
-what. The comment there is honest about why: the server sends only `senderId`, for the avatar.
-
-Two shapes, and the choice is the user's:
-
-1. **The name on the wire.** One field beside `channelName` and `workspaceName`, which already
-   travel in cleartext. Cheapest, and it puts one more piece of who-talks-to-whom through Google and
-   Apple - which is the exact cost the reaction push was rewritten in 2026 to stop paying.
-2. **A `push/display-name/:userId` lookup, beside `push/avatar/:userId`.** The phone already
-   authenticates to that route with the push secret and caches the answer for 24 h; a name would
-   ride the same shape and put NOTHING new through a third party. Costs one request per unknown
-   sender on a cold notification, cached thereafter.
-
-**Recommended: (2)**, because the avatar proved the shape and it keeps the wire where it was. Not
-started - it is a real work package, and NOTIF-12 records the current behaviour rather than failing
-on it, so nothing here blocks the campaign.
 
 ### REPORTED 2026-08-20 - quick reply from the shade does not work, and mark-as-read is unknown
 

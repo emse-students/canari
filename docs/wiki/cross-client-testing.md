@@ -201,14 +201,14 @@ either driven browser.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| GRP-1 | Create a group, add a member, both sides see the roster and the Add commit merges | `W1 W2` | **`PASS`** |
+| GRP-1 | Create a group, add a member, both sides see the roster and the Add commit merges | `W1 W2` | **`PASS`** - `feecfaf5` x4; one run `PASS-DIRTY` on the deliberately unclassified `[KICK] Stale leaf`, read and benign (the phone re-asked for a Welcome whose leaf was already in the tree) |
 | GRP-2 | The picker must not offer existing members or yourself, and a no-op submission must not report success | `W1 W2` | **`PASS`** |
 | GRP-3 | Remove a member: the Remove commit, and what the removed device can still read | `W1 W2` | `PASS-DIRTY` - all six held; one `webSocketClosed` on W1 no navigation explains, P2 in [backlog](backlog.md) |
-| GRP-4 | The group invitation LINK: generate, open it on the other account | `W1 W2` | `FAIL` - `e278f76b`, ~1 join in 2: two parties add the joiner's leaf, and the re-admission Welcome that would heal it is dropped. Both halves fixed, re-run owed |
+| GRP-4 | The group invitation LINK: generate, open it on the other account | `W1 W2` | **`PASS`** - `feecfaf5` x4 after `e027679a`; was 4 FAIL / 4 PASS before it (two parties added the joiner's leaf, the healing Welcome dropped as a redelivery) |
 | GRP-5 | Rename a group, seen on the other side | `W1 W2` | **`PASS`** |
 | GRP-6 | Leave a group - which deliberately commits nothing | `W1 W2` | **`PASS`** |
 | GRP-7 | Add a member who is offline; they join on their next connection | `W1 W2` | **`PASS`** |
-| GRP-8 | Add and remove the same member twice in a row, fast | `W1 W2` | **`PASS`** |
+| GRP-8 | Add and remove the same member twice in a row, fast | `W1 W2` | `PASS-DIRTY` - `feecfaf5` x4, identical each time: the re-admitted device calls its own exclusion window a loss and reconciles for it. P2 in [backlog](backlog.md). Clean before `e027679a`, when the re-admission never happened |
 | GRP-9 | A member row rendering a raw user id instead of a display name | `W1 W2` | **`PASS`** - not reproduced |
 | GRP-10 | The invitation link of one group must not appear in another group's panel | `W1 W2` | **`PASS`** |
 

@@ -1957,8 +1957,38 @@ export class ChannelService {
     // `allowedUsers` IS the private salon's roster. Being in the community was enough to read it,
     // which handed its membership to people who cannot open the salon - the same question
     // `listChannelMembers` already asks one method away.
-    if (!this.canAccessChannel(channel, member, actorUserId)) {
+    //
+    // BUT THE READ MUST NOT BE STRICTER THAN THE WRITE IT PRECEDES. `updateChannelAccess` guards on
+    // MANAGE_CHANNEL, so a manager may already REWRITE this list and put themselves on it; refusing
+    // them the read protects nothing it does not already hand over, and it removed the only recovery
+    // the 2026-08-19 decision promised ("an admin sees it exists and may add themselves in one
+    // act"). Measured as COMM-23's original failure: flipping a public salon private submits the
+    // panel's allowlist, which for a public salon is EMPTY, and from then on `loadChannelAccess`
+    // throws, `accessLoaded` stays false and the access tab renders its error box ALONE - no
+    // visibility toggle, no allowlist, no add control, so the promised act had no gesture behind it.
+    //
+    // This does NOT restore the ambient admin fall-through that went with the per-salon distribution
+    // group (see `canAccessChannel`). That one answered "may I read this salon" - its messages, its
+    // roster on every listing, its seeds - for every private salon in the community. This answers
+    // "may I read the SETTINGS I am already allowed to write", on one channel, from the one panel
+    // that writes them.
+    const readable = this.canAccessChannel(channel, member, actorUserId);
+    const mayManage =
+      readable ||
+      (await this.memberHasWorkspacePermission(
+        channel.workspaceId,
+        actorUserId,
+        CHANNEL_PERMISSIONS.MANAGE_CHANNEL
+      ));
+    if (!mayManage) {
       throw new ForbiddenException('Not allowed to access this channel');
+    }
+    if (!readable) {
+      // The recovery path, and the only line that says it was taken. Rare by construction: a manager
+      // who is on the allowlist is `readable` and never spends the permission query.
+      this.logger.log(
+        `[CHANNEL_ACCESS] settings served to manager ${actorUserId} outside the allowlist of ${channelId}`
+      );
     }
 
     return {

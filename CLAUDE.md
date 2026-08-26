@@ -22,6 +22,7 @@
 | The constraint for the area I am about to touch | [docs/wiki/durable-rules.md](docs/wiki/durable-rules.md) |
 | How something works, in depth | `docs/wiki/` - **search it before reading source** ([index](docs/wiki/index.md)) |
 | The substance behind a queue item | [docs/wiki/backlog.md](docs/wiki/backlog.md) |
+| A question the code cannot answer, parked deliberately | [docs/wiki/open-questions.md](docs/wiki/open-questions.md) |
 | The story of a defect that shipped | `CHANGELOG.md` |
 | Campaign board: every check, its verdict, its build | [docs/wiki/cross-client-testing.md](docs/wiki/cross-client-testing.md) |
 | Campaign design: the ladder, the scope, the preflight | [docs/wiki/cross-client-campaign.md](docs/wiki/cross-client-campaign.md) |
@@ -131,45 +132,41 @@ deleted from BOTH this file and [backlog](docs/wiki/backlog.md). **Every defect 
 `CHANGELOG.md`, every rule one left is in [durable-rules](docs/wiki/durable-rules.md), every verdict
 is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the three is restated here.**
 
-1. **THE COMM RUNNERS - ALL TWENTY-FIVE WRITTEN, REGISTERED AND SWEPT ON PROD** (2026-08-25, build
-    `5d7fac13`), every verdict carrying a build and an `a1Build`. COMM-14 has now run there too, its
-    blocker lifted. **COMM-18 FOUND FOUR distinct product defects, each further along the same path,
-    and is now a clean PASS (`d6f61539`).** A cold-started device has HTTP before it has a socket, so
-    the ANSWER to its seed request was dropped for a peer presence called offline; the fix deletes
-    that read by classifying a seed-bearing answer as key material. Story in `CHANGELOG.md`, rule
-    in [durable-rules](docs/wiki/durable-rules.md), case left in [backlog](docs/wiki/backlog.md). **The GENERIC notification body is ANSWERED** - MENTION-2 recorded
-    `undecryptedInShade: []`. What the user saw on 2026-08-22 is a DIFFERENT, real defect: a mention
-    rendered as its raw `@[uuid]` token, P2 in [backlog](docs/wiki/backlog.md), deferred past the
-    ladder by their decision; NOTIF-13 pins it.
+1. **ALL TWENTY-FIVE COMM RUNNERS ARE WRITTEN, REGISTERED AND SWEPT ON PROD** (2026-08-25, build
+    `5d7fac13`), every verdict carrying a build and an `a1Build`; COMM-14 ran there too. **COMM-18
+    found FOUR distinct product defects and is now a clean PASS** (`d6f61539`). The GENERIC
+    notification body is ANSWERED (MENTION-2). What the user saw on 2026-08-22 is a DIFFERENT, real
+    defect - a mention rendered as its raw `@[uuid]` token, P2 in [backlog](docs/wiki/backlog.md),
+    deferred past the ladder by their decision; NOTIF-13 pins it.
 2. **THE CAMPAIGN ITSELF - RUNNING, by the user's decision of 2026-08-21** (*"C'est parti pour la
     campagne"*, in autonomy). The ladder, top to bottom, so every phase runs - including the six that
     had no runner, written as the ladder reaches them. Design, cost and the decisions it turns on are
     on [cross-client-testing](docs/wiki/cross-client-testing.md) and
     [cross-client-campaign](docs/wiki/cross-client-campaign.md), the only copies. **Where the ladder
-    stands: rungs 1-7 taken, 8 GRP held on ONE row - **GRP-4 is DIAGNOSED AND FIXED, both halves, and
-    owes only its re-run**: two parties added the joiner's leaf and the Welcome that would have healed
-    it was dropped as a redelivery - 9 COMM at 23 PASS, and THREE re-runs owed - COMM-4 (dirty),
-    COMM-22 (`VACUOUS`, runner changed) and COMM-24 (runner changed). THEN DEL, TAB, MULTI, LIFE,
-    NOTIF, CALL, HEAL, PIN, CORRUPT.** The board carries every verdict and the format of a cell; do not restate
-    either here. **A `PASS-DIRTY` NO LONGER STOPS A RUNG BY ITSELF (user, 2026-08-25)** - what the
-    class of the dirt decides, and the first application of it, are on
-    [cross-client-campaign](docs/wiki/cross-client-campaign.md), the only copy.
-    **Rungs 9-18 are a WRITING job, not a running one: 129 rows, 46 with a runner** - the bill per
-    phase, and the two rows that gate a rung, are there too.
+    stands: rungs 1-8 TAKEN.** GRP closed 2026-08-26 on `feecfaf5` over four passes - GRP-4 green
+    after `e027679a`, GRP-8 `PASS-DIRTY` deterministically (its P2 is in
+    [backlog](docs/wiki/backlog.md)). **NEXT IS 9 COMM at 23 PASS, with THREE re-runs owed** -
+    COMM-4 (dirty), COMM-22 (`VACUOUS`, runner changed) and COMM-24 (runner changed) - THEN DEL, TAB,
+    MULTI, LIFE, NOTIF, CALL, HEAL, PIN, CORRUPT. The board carries every verdict and the format of a
+    cell; do not restate either here. **A `PASS-DIRTY` NO LONGER STOPS A RUNG BY ITSELF (user,
+    2026-08-25)**; what the class of the dirt decides is on
+    [cross-client-campaign](docs/wiki/cross-client-campaign.md), the only copy. **A x5 sweep of the
+    WHOLE ladder, with nothing short of `PASS` accepted, comes AFTER the campaign reaches the bottom
+    (user, 2026-08-26)** - until then one pass per rung is the target.
+    **Rungs 9-18 are a WRITING job as much as a running one: 129 rows, 46 with a runner** - the bill
+    per phase, and the two rows that gate a rung, are there too. Only CALL, CORRUPT and PIN have NO
+    runner at all; DEL, MULTI, LIFE, NOTIF and HEAL are covered.
 
-3. **THE PRIVATE-SALON ACCESS SEAM - THE MISSING PATH IS IN, TWO FACES LEFT, AND IT STILL GATES RUNG
-    9.** `updateChannelAccess` had no counterpart for the users a save ADDS, so entitlement and
-    routing were two acts and only one happened; **that path SHIPPED 2026-08-25** for all three
-    populations a save can let in, and with it WP-REGRANT-2's durability half - a forgotten stale tree
-    is now written to disk, so a failed re-join no longer strands a device for ever. Stories in
-    `CHANGELOG.md`, rules in [durable-rules](docs/wiki/durable-rules.md). What is left, in
-    [backlog](docs/wiki/backlog.md) and nowhere else: **WP-REGRANT-2 (P1)** now reduces to ONE defect,
-    a refusal that must be carried back as a TYPE rather than flattened into `false` with five other
-    outcomes; and **P2** - the recovery the 2026-08-19 decision documented does not exist, because
-    `GET access` guards on readability while `PATCH` guards on `MANAGE_CHANNEL` and the panel then
-    renders its error box alone. **COMM-22 is measurable now and owes a re-run** (web-only, no
-    phone; COMM-23 passed on the 2026-08-25 sweep); the post-load walk that "did not run" was found by
-    reading and its silent skip now logs.
+3. **THE PRIVATE-SALON ACCESS SEAM - THE CODE IS ALL IN; WHAT IS LEFT IS A RUN.**
+    `updateChannelAccess` had no counterpart for the users a save ADDS, so entitlement and routing
+    were two acts and only one happened; that path shipped 2026-08-25 for all three populations a
+    save can let in, with WP-REGRANT-2's durability half. **2026-08-26 closed the last two faces:**
+    the join's READ now classifies a 403 as the answer it is instead of reporting it as a transport
+    failure and then reconciling on a scope it had just been refused, and `GET access` no longer
+    guards more strictly than the `PATCH` it precedes - so the recovery the 2026-08-19 decision
+    promised has a gesture behind it. Stories in `CHANGELOG.md`, rules in
+    [durable-rules](docs/wiki/durable-rules.md). **WP-REGRANT-2 now owes ONE thing: a COMM-22 run**
+    (web-only, no phone; COMM-23 passed on the 2026-08-25 sweep).
 
 4. **DEFERRED PAST THE LADDER - six UX and rendering items, substance in
     [backlog](docs/wiki/backlog.md) and NOWHERE else.** One line each, in the order they were raised:
