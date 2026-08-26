@@ -184,6 +184,59 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     blocked by an inherited state. Contract, audit and the seven-file PIN predicate it fixes are in
     [backlog](docs/wiki/backlog.md); diagnosis order is [testing-methodology](docs/wiki/testing-methodology.md) 39.
 
+### CANARI - THE ECOSYSTEM CHANTIER (paused 2026-08-27, resumable from here)
+
+The user's standing mandate, verbatim: *"Je veux de l'homogeneite et les meilleurs standards de
+partout. Partout. oxlint/oxfmt ect partout, TS7 partout ou c'est possible..., Lucide derniere version
+avec tous les composants stale corriges PARTOUT, bun a la place de npm PARTOUT etc."* Its
+measurements and per-repo state live in
+[ecosystem-convergence](docs/wiki/ecosystem-convergence.md) - **section 8 is the package-manager
+half and is the only copy**; nothing here restates it.
+
+**Decisions already taken and NOT to be relitigated:** bun is the runtime everywhere it can be;
+**RENOVATE IS DROPPED** (2026-08-27) - Dependabot's bun ecosystem works and the only thing that
+breaks it is a lockfile version we control, so no GitHub App install is owed by the user; Sky keeps
+Tailwind and migrates to v4 without preflight; `bun:sqlite` replaces better-sqlite3; the `image_url`
+deletion stands.
+
+**DONE:** Portail-etu pinned and its outage closed (deploy green, site 200). Canari: one
+`.bun-version` feeding eight workflow sites; the 18 deprecated lucide names; the four NestJS
+services migrated to bun end to end - images BUILT AND STARTED locally, all four reaching
+`NestFactory`.
+
+**THE ONE MEASURED LIMIT ON "bun PARTOUT":** jest fails under the bun runtime -
+`admin-storage.controller.mls.spec.ts` passes 8/8 under node and fails under bun. CI therefore
+installs/lints/builds with bun and TESTS with node, and both call sites in `ci.yml` say so. **Do not
+collapse that to one runtime without re-running that spec.**
+
+**OPEN, in order:**
+
+1. **`libs/shared-ts` has NO consumer.** Nothing in any `src/` imports `@canari/shared-ts`; its only
+   mention is a jest `moduleNameMapper` in chat-delivery pointing at the library's SOURCE. Yet
+   `ci.yml` builds it before every backend test as "a build dependency for all TS backends", it sits
+   in the cd path filters of `cd.yml` and `cd-dev.yml`, in `dependabot.yml` and in the Makefile, and
+   its only recent commits are version bumps. **Measure once more, then delete it and the machinery,
+   or write down what it is for.** `ci.yml:87` also names a `libs/event-contracts` - check whether
+   that exists at all.
+2. **`Dockerfile.frontend-ssr` is the last `node:22` in the repo** (every other image is 24), and its
+   comments are French in a repo whose rule is English. Moving it to bun is NOT a tag swap: it runs
+   an `adapter-node` build, and the bun path is `svelte-adapter-bun` (what Portail uses), which
+   changes the SSR entry and how nginx proxies it. Decide deliberately; the node:24 bump is safe on
+   its own.
+3. **The rest of the mandate, untouched:** TS 7 where possible (Dependabot has already proposed
+   `typescript 6.0.3 -> 7.0.2` on `/frontend` and `/libs/shared-ts`); `npm run` -> `bun run` inside
+   `frontend/package.json`'s own scripts; CodeQL + secret scanning on every repo; oxlint/oxfmt/oxvelte
+   on le-cercle and MiGallery.
+4. **Sky, MiGallery, le-cercle have not been touched this session** and each still owes a
+   `.bun-version`. Sky is in a NON-BUILDABLE intermediate state from an earlier session: `bun
+   install` pending, 36 `lucide-svelte` -> `@lucide/svelte` plus ~4 deprecated names, Dockerfile in
+   bun, `ci-bun.yml`, pm2 out of `deploy.yml`, `dependabot.yml`, five docs pages, gates, then a
+   commit split into substance and a separate oxfmt reformat. MiGallery owes npm->bun, an audit of 17
+   scripts, 68 lucide icons, Tailwind PostCSS->Vite, oxlint/oxfmt/oxvelte, TS 7, 4 vulnerabilities,
+   the duplicate `.eslintrc.json`+`eslint.config.js`, a pending `code-analysis.yml` and a harmonised
+   `dependabot.yml`. le-cercle owes oxlint/oxfmt/oxvelte, TS 7 (fix the `^6.0.3` caret) and
+   Dependabot on GitLab.
+
 **ONE-OFF ACTIONS GO TO THE USER** (2026-08-25): *"Pour les choses qui ne se font qu'une fois, tu peux
 me demander de les faire hein."* Building a tool for a single click is that waste - see item 3.
 

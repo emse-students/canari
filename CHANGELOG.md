@@ -140,6 +140,51 @@ which is also where every release up to and including v0.13.1 now lives.
   three. Unrelated to `calendar_event_co_owners`, which names ASSOCIATIONS co-hosting an event.
 
 ### Changed
+- **The four NestJS services install, build and run under bun; their images no longer contain node.**
+  `oven/bun:1.3.14-alpine` replaces `node:24-alpine` in all four Dockerfiles, `bun install
+  --frozen-lockfile` replaces `npm install`, and `CMD` is `bun dist/main.js`. Each image was built
+  AND STARTED locally before this shipped - all four reach `NestFactory` and fail only on the
+  environment variables a bare `docker run` cannot supply, which is the intended outcome. That check
+  is not ceremony: a green build proved nothing on Portail-etu the day before.
+
+  Two defects surfaced on the way, both older than this change and both invisible because the images
+  ran `npm install` and never `npm ci` - so the committed `package-lock.json` was never what an image
+  built from, and every build floated to whatever was newest.
+
+  - `core-service` no longer compiled. `stripe` at `^22.2.2` floated to 22.5.0, whose SDK types
+    `apiVersion` as the string literal `'2026-07-29.dahlia'`, while three files passed
+    `'2026-06-24.dahlia'`. `stripe` is now pinned EXACTLY and the literal lives in one place,
+    `STRIPE_API_VERSION`, which documents that the two are coupled and that raising them is a
+    decision about payments - webhook payload shapes - rather than about dependencies.
+  - `core-service` then no longer STARTED: `@nestjs/core` 11.2.3 against `@nestjs/common` 11.1.19,
+    which is the drift `dependabot.yml` already described in a comment. Seven shared packages
+    diverged across the four services; all are now on one version each, `@nestjs/*` at `^11.2.3` and
+    `typeorm` at `^1.1.0`.
+
+  `media-service`'s build step was `npm run build 2>/dev/null || true` - a build that could not fail,
+  with its diagnostic discarded. It never shipped a broken compile, because the missing `dist` then
+  failed the COPY; it made a compile error surface two stages later as a confusing COPY failure with
+  the explanation already thrown away. It is now a plain `bun run build`.
+
+  `chat-delivery-service`'s image also loses a whole build stage that installed and compiled
+  `libs/shared-ts` and copied the result nowhere: nothing in that service's source imports
+  `@canari/shared-ts`. Its only mention anywhere is a jest `moduleNameMapper` pointing at the
+  library's source.
+
+  **One thing deliberately did NOT move to bun.** These suites are jest, and under the bun runtime
+  `admin-storage.controller.mls.spec.ts` fails while passing 8/8 under node. So CI installs, lints
+  and builds with bun and runs the tests with node, and both call sites say why. The five
+  `package-lock.json` files are replaced by five `bun.lock` at `lockfileVersion: 1`, `dependabot.yml`
+  moves those directories from the `npm` ecosystem to `bun`, and `.gitignore` gains the negations its
+  own rule requires - a lockfile is committed when its package ships as an artefact, and these four
+  ship as images.
+- **`make install` no longer resolves a dependency tree unrelated to the one CI builds.** The
+  Makefile called `npm install --legacy-peer-deps` in `frontend/`, ignoring the committed `bun.lock`
+  entirely, while `install-hooks` a few lines below had a four-branch ladder - `$HOME/.bun/bin/bun`,
+  then `bun`, then `npm`, then nvm+npm - each branch resolving something different for the same
+  directory, with no way to see which one fired. Every JavaScript install, test, build and lint
+  target now runs one installer, `bun install --frozen-lockfile`.
+
 
 - **One bun version, named in one file, instead of three scattered across the workflows.** Nothing in
   this repo declared which bun it wanted - no `engines`, no `packageManager`, no `.bun-version` - and

@@ -212,45 +212,34 @@ endif
 
 install-frontend:
 	@echo "${BLUE}📦 Installing frontend dependencies…${RESET}"
-	@cd frontend && npm install --legacy-peer-deps
+	@cd frontend && bun install --frozen-lockfile
 	@echo "${BLUE}🔄 Running svelte-kit sync…${RESET}"
-	@cd frontend && npx svelte-kit sync
+	@cd frontend && bunx svelte-kit sync
 	@echo "${BLUE}🔄 Generating WASM + protobuf bindings…${RESET}"
-	@cd frontend && npm run generate
+	@cd frontend && bun run generate
 	@echo "${GREEN}✅ Frontend prêt${RESET}"
 
 install-services:
 	@echo "📦 Installing shared-ts…"
-	@cd libs/shared-ts && npm install
+	@cd libs/shared-ts && bun install --frozen-lockfile
 	@echo "📦 Installing core-service…"
-	@cd apps/core-service && npm install
+	@cd apps/core-service && bun install --frozen-lockfile
 	@echo "📦 Installing social-service…"
-	@cd apps/social-service && npm install
+	@cd apps/social-service && bun install --frozen-lockfile
 	@echo "📦 Installing chat-delivery-service…"
-	@cd apps/chat-delivery-service && npm install
+	@cd apps/chat-delivery-service && bun install --frozen-lockfile
 	@echo "📦 Installing media-service…"
-	@cd apps/media-service && npm install
+	@cd apps/media-service && bun install --frozen-lockfile
 	@echo "✅ Services Node.js prêts"
 
+# One installer. The four-branch ladder this replaces (bun, then $$HOME/.bun/bin/bun,
+# then npm, then nvm+npm) resolved a DIFFERENT dependency tree per branch for the same
+# directory - and the npm branches ignored the committed bun.lock entirely, so
+# `make install` handed you a frontend unrelated to what CI builds. Which branch fired
+# was invisible. If bun is missing, that is the thing to fix, not to route around.
 install-hooks:
 	@echo "${BLUE}🪝 Installing Git hooks via Husky…${RESET}"
-ifeq ($(OS),Windows_NT)
-	@cd frontend && (bun install 2>$(NULL_DEV) || npm install --legacy-peer-deps)
-else
-	@cd frontend && ( \
-		if [ -x "$$HOME/.bun/bin/bun" ]; then \
-			$$HOME/.bun/bin/bun install; \
-		elif command -v bun >/dev/null 2>&1; then \
-			bun install; \
-		elif command -v npm >/dev/null 2>&1; then \
-			npm install --legacy-peer-deps; \
-		else \
-			export NVM_DIR="$$HOME/.nvm"; \
-			[ -s "$$NVM_DIR/nvm.sh" ] && \. "$$NVM_DIR/nvm.sh"; \
-			npm install --legacy-peer-deps; \
-		fi \
-	)
-endif
+	@cd frontend && bun install --frozen-lockfile
 	@echo "${GREEN}✅ Git hooks configurés${RESET}"
 
 # ── Environment & Secrets Management ──────────────────────────────────────────
@@ -280,7 +269,7 @@ test: test-libs test-gateway test-history test-frontend test-harness
 # Tests frontend (Vitest - logique de création de conversations)
 test-frontend:
 	@echo "${BLUE}🧪 Testing Frontend conversation logic…${RESET}"
-	@cd frontend && npm test
+	@cd frontend && bun run test
 	@echo "${GREEN}✅ Frontend tests OK${RESET}"
 
 # Harness self-tests - the three assertions the campaign rig makes about ITSELF.
@@ -334,14 +323,14 @@ test-gateway:
 # Tests Service Historique
 test-history:
 	@echo "${BLUE}🧪 Testing Chat Delivery Service…${RESET}"
-	@cd apps/chat-delivery-service && npm test -- --coverage
+	@cd apps/chat-delivery-service && bun run test -- --coverage
 
 build-frontend:
 	@echo "${BLUE}🚀 Building frontend…${RESET}"
 	@echo "${BLUE}🔄 Generating WASM + protobuf bindings…${RESET}"
-	@cd frontend && npm run generate
+	@cd frontend && bun run generate
 	@echo "${BLUE}🔄 Building SvelteKit…${RESET}"
-	@cd frontend && npm run build
+	@cd frontend && bun run build
 	@echo "${GREEN}✅ Frontend buildé${RESET}"
 
 run-services:
@@ -387,6 +376,6 @@ run-ci: lint-frontend test
 
 lint-frontend:
 	@echo "${BLUE}🧹 Type-checking & linting frontend…${RESET}"
-	@cd frontend && npm run check && npm run lint && npm run format:check
+	@cd frontend && bun run check && bun run lint && bun run format:check
 	@echo "${GREEN}✅ Frontend type-check + lint OK${RESET}"
 

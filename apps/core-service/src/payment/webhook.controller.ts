@@ -21,6 +21,7 @@ import {
   internalSubmissionPath,
   productPurchaseCompletedPath,
 } from './social-internal-client';
+import { STRIPE_API_VERSION } from './stripe-api-version';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -60,7 +61,7 @@ export class PaymentWebhookController {
   ) {
     const key = this.config.get<string>('STRIPE_SECRET_KEY');
     this.stripe = key
-      ? new Stripe(key, { apiVersion: '2026-06-24.dahlia' })
+      ? new Stripe(key, { apiVersion: STRIPE_API_VERSION })
       : (null as unknown as Stripe);
   }
 

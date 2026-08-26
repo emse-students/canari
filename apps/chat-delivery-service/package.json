@@ -12,10 +12,10 @@
     "format:check": "oxfmt -c ../../oxfmt.json --check \"src/**/*.ts\" \"test/**/*.ts\""
   },
   "dependencies": {
-    "@nestjs/common": "^11.1.19",
-    "@nestjs/core": "^11.1.19",
-    "@nestjs/microservices": "^11.1.28",
-    "@nestjs/platform-express": "^11.1.28",
+    "@nestjs/common": "^11.2.3",
+    "@nestjs/core": "^11.2.3",
+    "@nestjs/microservices": "^11.2.3",
+    "@nestjs/platform-express": "^11.2.3",
     "@nestjs/throttler": "^6.5.0",
     "@nestjs/typeorm": "^11.0.3",
     "class-transformer": "^0.5.1",
@@ -26,14 +26,14 @@
     "pg": "^8.20.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
-    "typeorm": "^1.0.6",
+    "typeorm": "^1.1.0",
     "undici": "^8.8.0",
     "uuid": "^14.0.1"
   },
   "devDependencies": {
-    "@nestjs/cli": "^11.0.21",
+    "@nestjs/cli": "^11.0.24",
     "@nestjs/schematics": "^11.1.0",
-    "@nestjs/testing": "^11.1.19",
+    "@nestjs/testing": "^11.2.3",
     "@types/jest": "^30.0.0",
     "@types/node": "^26.1.1",
     "jest": "^30.3.0",

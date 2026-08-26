@@ -16,6 +16,7 @@ import type {
   PaymentProvider,
   SavedPaymentMethod,
 } from './payment-provider.interface';
+import { STRIPE_API_VERSION } from './stripe-api-version';
 
 /** Stripe SDK implementation of PaymentProvider - pure extraction from the former PaymentService, no behavior change. */
 export class StripePaymentProvider implements PaymentProvider {
@@ -24,7 +25,7 @@ export class StripePaymentProvider implements PaymentProvider {
   private readonly logger = new Logger(StripePaymentProvider.name);
 
   constructor(secretKey: string | undefined) {
-    this.stripe = secretKey ? new Stripe(secretKey, { apiVersion: '2026-06-24.dahlia' }) : null;
+    this.stripe = secretKey ? new Stripe(secretKey, { apiVersion: STRIPE_API_VERSION }) : null;
     this.logger.log(`Stripe configured: ${secretKey ? 'yes' : 'no'}`);
   }
 

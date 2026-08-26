@@ -61,11 +61,16 @@ updates:
         dependency-type: "production"
         update-types: ["patch"]
 
-  # --- Backend services (npm) -------------------------------------------------------------------
-  # Four NestJS services plus the shared TypeScript library, each with its own package-lock.json.
+  # --- Backend services (bun) -------------------------------------------------------------------
+  # Four NestJS services plus the shared TypeScript library, each with its own bun.lock.
   # They drifted apart without this: @nestjs/core sat at 11.1.19 in two services and 11.1.28 in the
   # other two, and typeorm at 1.0.6 against 1.1.0, in one monorepo.
-  - package-ecosystem: "npm"
+  #
+  # These lockfiles MUST stay at `lockfileVersion: 1`. Dependabot bundles bun 1.3.14 and answers
+  # `UnknownLockfileVersion` on a v2 lockfile - it does not fail the run, it silently stops opening
+  # pull requests for the directory, which looks exactly like having none to open. A bun >= 1.4.0
+  # only writes v2 into a lockfile it CREATES, so the hazard is deleting a bun.lock and reinstalling.
+  - package-ecosystem: "bun"
     directories:
       - "/apps/core-service"
       - "/apps/social-service"

@@ -52,7 +52,7 @@ jobs:
         run: |
           for svc in chat-delivery-service core-service social-service media-service; do
             echo "--- $svc"
-            ( cd "apps/$svc" && npm ci --ignore-scripts )               || echo "::warning title=CodeQL install::npm ci failed for $svc; analysis continues with unresolved imports"
+            ( cd "apps/$svc" && bun install --frozen-lockfile --ignore-scripts ) || echo "::warning title=CodeQL install::bun install failed for $svc; analysis continues with unresolved imports"
           done
         continue-on-error: true
 
@@ -125,10 +125,10 @@ jobs:
           failed=""
           for svc in core-service social-service media-service chat-delivery-service; do
             echo "--- $svc"
-            ( cd "apps/$svc" && npm ci --ignore-scripts && npm audit --audit-level=moderate ) || failed="$failed $svc"
+            ( cd "apps/$svc" && bun install --frozen-lockfile --ignore-scripts && bun audit --audit-level=moderate ) || failed="$failed $svc"
           done
           if [ -n "$failed" ]; then
-            echo "::error::npm audit failed for:$failed"
+            echo "::error::bun audit failed for:$failed"
             exit 1
           fi
 

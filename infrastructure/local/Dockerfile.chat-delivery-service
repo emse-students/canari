@@ -1,23 +1,29 @@
-# ── Build stage ──────────────────────────────────────────────────────────────
-FROM node:24-alpine AS builder
+# -- Build stage ---------------------------------------------------------------
+# bun installs, compiles and serves. The tag is literal rather than read from
+# `.bun-version` because a Dockerfile cannot read a file to pick its base image -
+# and a literal is what Dependabot's docker ecosystem follows, so this line stays
+# current on its own. Bumping it past 1.4.0 is safe: a bun >= 1.4.0 only writes
+# `lockfileVersion: 2` into a lockfile it CREATES, and reads an existing v1 one
+# unchanged.
+#
+# The shared-ts build stage that used to sit here is gone: nothing in this
+# service's source imports `@canari/shared-ts`. Its only mention is a Jest
+# `moduleNameMapper` pointing straight at the library's SOURCE, which the
+# runtime image never reaches - so the stage installed and compiled a package
+# that was then copied nowhere. `--install-links` went with it.
+FROM oven/bun:1.3.14-alpine AS builder
 
 WORKDIR /app
 
-# shared-ts lib first (dependency of delivery-service)
-COPY libs/shared-ts ./libs/shared-ts
-RUN cd libs/shared-ts && npm install --legacy-peer-deps && npm run build
-
-# Delivery service
-COPY apps/chat-delivery-service/package*.json ./apps/chat-delivery-service/
-# --install-links copies file: deps (shared-ts) into node_modules instead of symlinking,
-# which is required for Docker multi-stage builds where directory depth changes.
-RUN cd apps/chat-delivery-service && npm install --legacy-peer-deps --install-links
+# Manifest and lockfile first, so a source-only change reuses the install layer.
+COPY apps/chat-delivery-service/package.json apps/chat-delivery-service/bun.lock ./apps/chat-delivery-service/
+RUN cd apps/chat-delivery-service && bun install --frozen-lockfile
 
 COPY apps/chat-delivery-service ./apps/chat-delivery-service
-RUN cd apps/chat-delivery-service && npx tsc -p tsconfig.build.json
+RUN cd apps/chat-delivery-service && bunx tsc -p tsconfig.build.json
 
-# ── Runtime stage ─────────────────────────────────────────────────────────────
-FROM node:24-alpine
+# -- Runtime stage -------------------------------------------------------------
+FROM oven/bun:1.3.14-alpine
 
 WORKDIR /app
 
@@ -27,7 +33,7 @@ COPY --from=builder /app/apps/chat-delivery-service/package.json ./
 
 EXPOSE 3010
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=50s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3010)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+# The image has no node, so the check runs under bun - the same runtime that serves.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=50s --retries=3   CMD bun -e "fetch('http://127.0.0.1:'+(process.env.PORT||3010)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-CMD ["node", "dist/main.js"]
+CMD ["bun", "dist/main.js"]
