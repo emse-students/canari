@@ -42,7 +42,7 @@
     "oxlint-tsgolint": "^7.0.2001",
     "ts-jest": "^29.4.9",
     "ts-node": "^10.9.2",
-    "typescript": "^6.0.3"
+    "typescript": "^7.0.2"
   },
   "overrides": {
     "@babel/core": "^7.29.6",
