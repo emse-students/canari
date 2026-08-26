@@ -260,22 +260,22 @@ advisory is whether `cargo tree -i` can reach the crate at all.**
 
 ### CANARI - what is open
 
-**Google Play, both mails of 2026-08-26, are worked; TWO items will never clear, ONE is decided but
-not built, TWO wait on YOUR signal.** Shipped: the four pre-launch recommendations, and the
-device-to-device transfer the app was never excluded from. Unclearable: two deprecated-window-API
-sites, inside the `enableEdgeToEdge()` Play itself asks for and inside play-services-base. Every
-threshold is measured on
+**Google Play, both mails of 2026-08-26: CLOSED on 2026-08-27 but for check R.** Both signals were
+given and are spent. Shipped, and LIVE on Play production: the four pre-launch recommendations and
+the device-to-device transfer the app was never excluded from. Two deprecated-window-API sites will
+never clear - they are inside the `enableEdgeToEdge()` Play itself asks for, and inside
+play-services-base. Every threshold is measured on
 [mobile](docs/wiki/frontend/mobile.md#plays-q3-2026-quality-requirements-measured-against-this-app),
-the only copy; the 28-day memory P90 does not exist yet, so read Android vitals from late September
-2026. **WP-RESTORE-1** (Zero-Tap Sign-In, required April 2027): principle ACCEPTED by the user
-2026-08-26, scheduled AFTER the campaign, NOT to be re-opened - the build is WebAuthn on a server
-that has none ([backlog](docs/wiki/backlog.md)). **Waiting on the user:** a `workflow_dispatch` of
-`android-release.yml`, authorised but *"attends mon signal"* - it yields the SIGNED APK check R
-needs and publishes nothing to Play (that step is gated on `workflow_run`); and the release carrying
-today's two Android fixes, deferred past the campaign, so the transfer refusal reaches nobody yet.
+the only copy; the 28-day memory P90 does not exist yet, so **read Android vitals from late
+September 2026**. **WP-RESTORE-1** (Zero-Tap Sign-In, required April 2027): principle ACCEPTED by
+the user 2026-08-26, scheduled AFTER the campaign, NOT to be re-opened - the build is WebAuthn on a
+server that has none ([backlog](docs/wiki/backlog.md)).
 
-**Release status:** v0.14.4 cut 2026-08-24, every platform green including TestFlight - the iOS path
-ran end to end for the first time and nothing there is owed any more (story in `CHANGELOG.md`).
+**Release status: v0.14.5, cut 2026-08-26, carries both Android fixes and went to Play production,
+full rollout** - so the transfer refusal has reached users, correcting the line written here the day
+before. It was cut by a CONCURRENT session hours after being deferred here; the rule that leaves is
+in [durable-rules](docs/wiki/durable-rules.md#release-and-ci--cicdcicdmd). v0.14.4 remains the
+release that first proved the iOS path end to end, TestFlight included, and nothing there is owed.
 
 `minClientVersion` still lives in `platform_config` and is still raised BY HAND from
 `/admin/platform`, so no deploy touches it - and **half the old gap is closed, half is not.** A release
