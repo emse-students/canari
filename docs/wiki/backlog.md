@@ -1475,12 +1475,15 @@ to create, an assertion to verify, and a store that keeps restore keys distingui
 passkeys. Canari's session model is an opaque refresh row plus a stateless 1 h access token
 ([sessions](sessions.md)); a successful assertion has to mint exactly that pair.
 
-**THE DECISION IS THE USER'S, AND IT IS NOT A TECHNICAL ONE.** Zero-tap means the new device is
-signed in with no password and no second factor - Google's documentation states plainly that the
-API "does not handle multi-factor authentication". Canari has 2FA, and SETUP-4 exists because
-re-enrolling a device costs one. So the question is whether a restored Google backup, itself gated
-by the account and the screen lock, is accepted as authentication to a Canari account. Answering
-"no" means pursuing an exemption before April 2027 rather than building this.
+**THE PRINCIPLE IS DECIDED - THE USER ACCEPTED IT ON 2026-08-26, AND THE WORK IS SCHEDULED AFTER
+THE CAMPAIGN.** The question put to them was not technical: zero-tap means the new device is signed
+in with no password and no second factor, and Google's documentation states plainly that the API
+"does not handle multi-factor authentication", while Canari has 2FA and SETUP-4 exists because
+re-enrolling a device costs one. It was accepted on the ground below - a restored session
+authenticates, it does not decrypt - and because the exemptions on offer (enterprise, permanently
+private, financial or healthcare regulation) do not describe a student messaging app, so refusing
+would have risked a publication block rather than bought time. **Do not re-open the principle; what
+is open is the build, and it does not start before the ladder reaches the bottom.**
 
 **What it does NOT restore, and why that is fine.** Keystore material is non-exportable, so the MLS
 device key does not travel. A zero-tap sign-in authenticates; it does not decrypt. The new device

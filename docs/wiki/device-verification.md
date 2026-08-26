@@ -459,7 +459,9 @@ can say nothing about either outcome. Reasoning and the evidence behind each cha
 
 Test the **release** artifact from `android-release.yml`, not a local build: a locally re-signed
 release cannot be installed over the existing app without an uninstall, and an uninstall costs a
-re-enrolment and SETUP-4's 2FA.
+re-enrolment and SETUP-4's 2FA. **The dispatch is authorised and WAITING ON THE USER'S SIGNAL**
+(2026-08-26, prod is moving) - it publishes nothing to Play, whose upload step is gated on
+`workflow_run`, so what it costs is a GitHub release's attached assets and nothing else.
 
 1. **The app starts on its own background, not grey.** `windowBackground` is now
    `@color/app_background`, so the gap before SvelteKit hydrates is `#070B12` dark / `#F9FBFF` light
