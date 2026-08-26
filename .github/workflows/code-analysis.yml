@@ -116,13 +116,21 @@ jobs:
           bun install --frozen-lockfile
           bun audit
 
+      # Every service is audited even after one fails. Aborting on the first would report a
+      # single service and call the rest clean by never opening them - the same failure the
+      # loop below was written to avoid.
       - name: Audit backend service dependencies
         run: |
-          set -euo pipefail
+          set -uo pipefail
+          failed=""
           for svc in core-service social-service media-service chat-delivery-service; do
             echo "--- $svc"
-            ( cd "apps/$svc" && npm ci --ignore-scripts && npm audit --audit-level=moderate )
+            ( cd "apps/$svc" && npm ci --ignore-scripts && npm audit --audit-level=moderate ) || failed="$failed $svc"
           done
+          if [ -n "$failed" ]; then
+            echo "::error::npm audit failed for:$failed"
+            exit 1
+          fi
 
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
@@ -132,8 +140,13 @@ jobs:
       # the other three clean by never opening them.
       - name: Audit Rust dependencies
         run: |
-          set -euo pipefail
+          set -uo pipefail
+          failed=""
           for crate in apps/call-service apps/chat-gateway frontend/mls-wasm frontend/src-tauri; do
             echo "--- $crate"
-            ( cd "$crate" && cargo audit )
+            ( cd "$crate" && cargo audit ) || failed="$failed $crate"
           done
+          if [ -n "$failed" ]; then
+            echo "::error::cargo audit failed for:$failed"
+            exit 1
+          fi

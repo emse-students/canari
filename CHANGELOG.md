@@ -249,6 +249,29 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Security
 
+- **The dependency audit reported one crate out of four, and called the other three clean by never
+  opening them.** `Audit Rust dependencies` loops over the four committed `Cargo.lock` files under
+  `set -euo pipefail`, so the first failing crate aborted the step - and `apps/call-service` failed,
+  which is why `chat-gateway`, `mls-wasm` and `src-tauri` had not been audited at all. Both audit
+  loops, Rust and npm, now run every target and collect the failures, reporting which ones failed
+  instead of only the first. Opening the three that had been hidden turned six known advisories into
+  eighteen.
+
+  What the measurement then fixed, all of it lockfile-only except one minor bump:
+  `webrtc` 0.10 -> 0.11 in `call-service`, which drops the whole `rustls` 0.21 stack it was dragging
+  along - `ring` 0.16.20 (RUSTSEC-2025-0009) and three `rustls-webpki` 0.101.7 advisories
+  (RUSTSEC-2026-0098, -0104, and the wildcard name-constraint one) - and compiles with no source
+  change at all; `quinn-proto` 0.11.14 -> 0.11.17 in `call-service` and `chat-gateway`
+  (RUSTSEC-2026-0185, 7.5 high, remote memory exhaustion); `h2` 0.4.14 -> 0.4.19 in `chat-gateway`
+  (RUSTSEC-2026-0258); `crossbeam-epoch` 0.9.18 -> 0.9.20 in `mls-wasm` and `src-tauri`
+  (RUSTSEC-2026-0204). `call-service` goes from six advisories to one, `chat-gateway` from three to
+  one. That one, in both, is `rsa` 0.9.10 (RUSTSEC-2023-0071) reached through `jsonwebtoken`'s
+  `rust_crypto` feature, which has no fixed version.
+
+  The failing job is why every Dependabot pull request and the CD deploy of `cefc1a0` were red:
+  `Check Dependencies Vulnerabilities` gates both, and it had been failing on advisories published
+  in April and June, not on anything a pull request changed.
+
 - **Ticking one permission box could grant a member all seven core rights.** `listMembers` returns a
   member's bitmask only to a caller holding `MANAGE_MEMBERS`; when it was absent,
   `AssociationMemberRow` invented `member.isAdmin ? ALL_CORE_FLAGS : 0` - and `toggleFlag` wrote that
