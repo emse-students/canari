@@ -1,0 +1,15 @@
+-- Drops the per-form co-manager list.
+--
+-- It was a SECOND axis for "who may manage this form", next to the association's MANAGE_FORMS
+-- permission, and the two never agreed on anything: MANAGE_FORMS covers every form of an
+-- association and is set once per member, while `coOwners` covered one form and could only be
+-- edited by its owner - not by a form manager. So the edit screen showed the section to a manager
+-- who reached the form THROUGH MANAGE_FORMS and every click came back 403.
+--
+-- Nothing is migrated because nothing used it: production held 2 forms and 0 co-owner on
+-- 2026-08-26. A form is now managed by its owner and by the form managers of the association it
+-- was created for, which is one axis, set in one place.
+--
+-- Unrelated to `calendar_event_co_owners`: an event's co-owners are ASSOCIATIONS co-hosting it,
+-- which is a different question with a different answer.
+ALTER TABLE forms DROP COLUMN IF EXISTS "coOwners";

@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { OTHERS_BUCKET_ID, type AudienceCondition, type Dimension } from './audience';
-import { assertMatrixValid, type PriceMatrix } from './price-matrix';
+import { assertMatrixValid, type CellValue, type PriceMatrix } from './price-matrix';
 
 /**
  * Turns the untyped documents a client sends into the typed criteria this module evaluates, or
@@ -260,9 +260,11 @@ export function parsePriceMatrix(raw: unknown, ctx: CriteriaContext): PriceMatri
     throw new BadRequestException('priceMatrix.dimensions must be a list.');
   }
   const cells = asRecord(doc.cells, 'priceMatrix.cells');
+  // Values are checked by `assertMatrixValid`, which is the one place that knows a cell may be a
+  // number OR the null that means "this combination does not exist".
   const matrix: PriceMatrix = {
     dimensions: doc.dimensions.map((d, i) => parseDimension(d, ctx, i)),
-    cells: cells as Record<string, number>,
+    cells: cells as Record<string, CellValue>,
   };
   assertMatrixValid(matrix);
   return matrix;

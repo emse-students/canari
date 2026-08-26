@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { AlertTriangle, Grid3x3, Plus } from '@lucide/svelte';
+  import { AlertTriangle, Ban, Grid3x3, Plus, RotateCcw } from '@lucide/svelte';
   import CriterionEditor from './CriterionEditor.svelte';
   import { CONTROL_HINT_CLASS, controlClass } from '$lib/components/ui/controlClasses';
   import type { MembershipTier } from '$lib/associations/api';
@@ -8,6 +8,7 @@
     addBucket,
     addDimension,
     cellKey,
+    emptyMatrix,
     gridLayout,
     matrixProblem,
     newDimension,
@@ -17,6 +18,7 @@
     type PriceMatrix,
   } from '$lib/forms/priceMatrix';
   import type { FormationOption } from '$lib/forms/criteriaOptions';
+  import { gridProblemMessage } from '$lib/forms/gridProblem';
   import { m } from '$lib/paraglide/messages';
 
   /**
@@ -30,9 +32,13 @@
    * Every cell always has a value: adding a criterion copies existing prices across, and adding a
    * group starts it from the "everyone else" price. So the grid is complete from the first click and
    * the manager only edits what actually differs.
+   *
+   * A cell can also be marked UNAVAILABLE, which is a decision no price can carry - 0 means free.
+   * It is how a combination that simply does not exist ("non-cotisant, formule week-end") stops
+   * being offered, and the fill page then greys out the options that would lead to it.
    */
   interface Props {
-    /** Null until the first criterion is added; null again when the last one goes. */
+    /** Non-null whenever the manager has switched the grid on, even before the first criterion. */
     matrix: PriceMatrix | null;
     /** The single price, in euros, used for every cell of a brand-new criterion. */
     basePrice: number;
@@ -77,17 +83,21 @@
   );
 
   function add(kind: DimensionKind) {
-    const current: PriceMatrix = matrix ?? { dimensions: [], cells: { '': basePrice } };
     // A brand-new grid inherits the single price, so switching criteria on changes no total.
     const seeded: PriceMatrix =
-      current.dimensions.length === 0 ? { dimensions: [], cells: { '': basePrice } } : current;
+      matrix && matrix.dimensions.length > 0 ? matrix : emptyMatrix(basePrice);
     matrix = addDimension(seeded, newDimension(kind));
   }
 
+  /**
+   * Removing the last criterion leaves the grid ON with nothing to divide on, rather than switching
+   * it off: the mode is a toggle the manager owns one block up, and flipping it back for them would
+   * restore a single public price they never asked for.
+   */
   function remove(dimensionId: string) {
     if (!matrix) return;
     const next = removeDimension(matrix, dimensionId);
-    matrix = next.dimensions.length === 0 ? null : next;
+    matrix = next.dimensions.length === 0 ? emptyMatrix(basePrice) : next;
   }
 
   /** Reassignment is what Svelte tracks, so every mutation inside a criterion comes back here. */
@@ -99,6 +109,18 @@
     if (!matrix) return;
     const value = raw === '' ? 0 : Number(raw);
     matrix = { ...matrix, cells: { ...matrix.cells, [key]: Number.isNaN(value) ? 0 : value } };
+  }
+
+  /**
+   * Flips one cell between a price and "this combination does not exist".
+   *
+   * Coming back from unavailable restores 0, not the price that was there before: that price is
+   * gone, and 0 is the one value a manager cannot mistake for a considered one.
+   */
+  function toggleAvailability(key: string) {
+    if (!matrix) return;
+    const next = matrix.cells[key] === null ? 0 : null;
+    matrix = { ...matrix, cells: { ...matrix.cells, [key]: next } };
   }
 </script>
 
@@ -152,15 +174,7 @@
       class="border-amber-warn/30 bg-amber-warn/10 flex items-start gap-2 rounded-xl border-2 px-3 py-2 text-xs font-semibold text-amber-900 dark:text-amber-100"
     >
       <AlertTriangle size={13} class="mt-0.5 shrink-0" />
-      {problem === 'empty_criterion'
-        ? m.form_grid_problem_empty_criterion()
-        : problem === 'unnamed_group'
-          ? m.form_grid_problem_unnamed_group()
-          : problem === 'empty_group'
-            ? m.form_grid_problem_empty_group()
-            : problem === 'no_question'
-              ? m.form_grid_problem_no_question()
-              : m.form_grid_problem_incomplete()}
+      {gridProblemMessage(problem)}
     </p>
   {/if}
 
@@ -194,15 +208,40 @@
               {/each}
               {#each layout.columns as column (column.id)}
                 {@const key = cellKey([...row.ids, column.id])}
+                {@const unavailable = matrix.cells[key] === null}
                 <td class="px-2 py-1.5">
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={matrix.cells[key] ?? 0}
-                    oninput={(e) => setCell(key, e.currentTarget.value)}
-                    class="{controlClass()} w-24 py-1.5 text-sm"
-                  />
+                  <div class="flex items-center gap-1.5">
+                    {#if unavailable}
+                      <span
+                        class="text-text-muted border-cn-border bg-cn-border/20 w-24 shrink-0 rounded-xl border-2 px-2 py-1.5 text-center text-xs font-semibold"
+                      >
+                        {m.form_grid_cell_unavailable()}
+                      </span>
+                    {:else}
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={matrix.cells[key] ?? 0}
+                        oninput={(e) => setCell(key, e.currentTarget.value)}
+                        class="{controlClass()} w-24 py-1.5 text-sm"
+                      />
+                    {/if}
+                    <button
+                      type="button"
+                      onclick={() => toggleAvailability(key)}
+                      class="text-text-muted hover:text-text-main hover:bg-cn-border/40 shrink-0 rounded-lg p-1.5 transition-colors"
+                      title={unavailable
+                        ? m.form_grid_cell_restore_title()
+                        : m.form_grid_cell_disable_title()}
+                    >
+                      {#if unavailable}
+                        <RotateCcw size={13} />
+                      {:else}
+                        <Ban size={13} />
+                      {/if}
+                    </button>
+                  </div>
                 </td>
               {/each}
             </tr>
@@ -211,5 +250,6 @@
       </table>
     </div>
     <p class={CONTROL_HINT_CLASS}>{m.form_grid_currency_hint()}</p>
+    <p class={CONTROL_HINT_CLASS}>{m.form_grid_unavailable_hint()}</p>
   {/if}
 </div>

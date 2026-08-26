@@ -34,6 +34,7 @@ import {
   pricedQuestionIds,
   pricingViewFor,
   resolveCellPrice,
+  type CellValue,
   type PriceMatrix,
   type PricingView,
 } from './pricing/price-matrix';
@@ -231,7 +232,7 @@ export class FormsService {
   private priceFor(
     form: Form,
     facts: SubmitterFacts
-  ): { baseCents: number; appliedBuckets: { dimensionId: string; label: string }[] } {
+  ): { baseCents: CellValue; appliedBuckets: { dimensionId: string; label: string }[] } {
     if (!form.priceMatrix) return { baseCents: form.basePrice, appliedBuckets: [] };
     const baseCents = resolveCellPrice(form.priceMatrix, facts);
     const appliedBuckets = form.priceMatrix.dimensions.map((d) => {
@@ -282,10 +283,10 @@ export class FormsService {
   }
 
   /**
-   * Everything the user may manage, newest first: their own forms, the ones they co-manage, and the
-   * forms of associations where they hold MANAGE_FORMS.
+   * Everything the user may manage, newest first: their own forms, and the forms of associations
+   * where they hold MANAGE_FORMS.
    *
-   * That third group is the point. `assertFormManager` has always accepted MANAGE_FORMS, so those
+   * That second group is the point. `assertFormManager` has always accepted MANAGE_FORMS, so those
    * forms were editable and exportable by API while appearing in no list on any screen - reachable
    * only by someone who already knew the URL.
    *
@@ -302,16 +303,8 @@ export class FormsService {
     );
     const managedIds = managedAssociations.map((a) => a.id);
 
-    // Fetch owned forms and co-owned forms in parallel without loading the entire table.
-    // simple-array stores as CSV so a LIKE scan on UUID is safe (UUIDs don't overlap as substrings).
-    const [owned, coOwned, viaAssociation] = await Promise.all([
+    const [owned, viaAssociation] = await Promise.all([
       this.formRepo.find({ where: { ownerId }, order: { createdAt: 'DESC' } }),
-      this.formRepo
-        .createQueryBuilder('f')
-        .where('"f"."ownerId" != :ownerId', { ownerId })
-        .andWhere('"f"."coOwners" LIKE :pattern', { pattern: `%${ownerId}%` })
-        .orderBy('"f"."createdAt"', 'DESC')
-        .getMany(),
       managedIds.length === 0
         ? Promise.resolve([])
         : this.formRepo
@@ -321,10 +314,10 @@ export class FormsService {
             .getMany(),
     ]);
 
-    // The three sets overlap - a form you own in an association you administer is in two of them -
-    // so they are merged by id rather than concatenated.
+    // The two sets overlap - a form you own in an association you administer is in both - so they
+    // are merged by id rather than concatenated.
     const byId = new Map<string, Form>();
-    for (const form of [...owned, ...coOwned, ...viaAssociation]) {
+    for (const form of [...owned, ...viaAssociation]) {
       byId.set(form.id, form);
     }
     const merged = [...byId.values()].sort(
@@ -360,15 +353,17 @@ export class FormsService {
   }
 
   /**
-   * Throws ForbiddenException unless the caller is the form owner, a global admin,
-   * a co-owner, or a member with MANAGE_FORMS flag in the form's linked association.
+   * Throws ForbiddenException unless the caller is the form owner, a global admin, or a member
+   * with MANAGE_FORMS in the form's linked association.
+   *
+   * There is no third, per-form grant. A form is managed by whoever owns it and by the
+   * association's form managers - one axis, set in one place. See `forms.md`.
    * Returns the form so callers can reuse it without a second query.
    */
   async assertFormManager(formId: string, userId: string, isGlobalAdmin: boolean): Promise<Form> {
     const form = await this.formRepo.findOne({ where: { id: formId } });
     if (!form) throw new NotFoundException('Form not found');
     if (isGlobalAdmin || form.ownerId === userId) return form;
-    if (Array.isArray(form.coOwners) && form.coOwners.includes(userId)) return form;
     if (form.associationId) {
       const hasFlag = await this.associationsService.callerHasFlag(
         userId,
@@ -435,47 +430,6 @@ export class FormsService {
   async delete(formId: string, userId: string, isGlobalAdmin: boolean) {
     const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
     await this.formRepo.remove(form);
-    return { ok: true };
-  }
-
-  /** Adds a co-owner to a form. Only the owner or global admin may do this. */
-  async addCoOwner(formId: string, coUserId: string, callerId: string, isGlobalAdmin: boolean) {
-    // Pessimistic write lock prevents two concurrent add/remove calls from overwriting each other.
-    await this.formRepo.manager.transaction(async (manager) => {
-      const form = await manager.findOne(Form, {
-        where: { id: formId },
-        lock: { mode: 'pessimistic_write' },
-      });
-      if (!form) throw new NotFoundException('Form not found');
-      if (!isGlobalAdmin && form.ownerId !== callerId) {
-        throw new ForbiddenException('Only the form owner can manage co-owners');
-      }
-      const coOwners = Array.isArray(form.coOwners) ? [...form.coOwners] : [];
-      if (!coOwners.includes(coUserId)) {
-        coOwners.push(coUserId);
-        await manager.update(Form, formId, { coOwners });
-      }
-    });
-    return { ok: true };
-  }
-
-  /** Removes a co-owner from a form. Only the owner or global admin may do this. */
-  async removeCoOwner(formId: string, coUserId: string, callerId: string, isGlobalAdmin: boolean) {
-    // Pessimistic write lock prevents two concurrent add/remove calls from overwriting each other.
-    await this.formRepo.manager.transaction(async (manager) => {
-      const form = await manager.findOne(Form, {
-        where: { id: formId },
-        lock: { mode: 'pessimistic_write' },
-      });
-      if (!form) throw new NotFoundException('Form not found');
-      if (!isGlobalAdmin && form.ownerId !== callerId) {
-        throw new ForbiddenException('Only the form owner can manage co-owners');
-      }
-      const coOwners = (Array.isArray(form.coOwners) ? form.coOwners : []).filter(
-        (id) => id !== coUserId
-      );
-      await manager.update(Form, formId, { coOwners });
-    });
     return { ok: true };
   }
 
@@ -591,7 +545,14 @@ export class FormsService {
 
     const facts = await this.factsFor(form, userId);
     const pricing = form.priceMatrix ? pricingViewFor(form.priceMatrix, facts) : null;
-    const maySubmit = !form.submitCondition || matchesCondition(form.submitCondition, facts);
+    // A profile row where EVERY combination is unavailable is a form this person cannot answer
+    // whatever they click, which is the same outcome as an audience condition refusing them - so it
+    // is reported the same way rather than shown as a form with no price.
+    const noCombinationAvailable =
+      !!pricing && Object.values(pricing.cells).every((cell) => cell === null);
+    const maySubmit =
+      (!form.submitCondition || matchesCondition(form.submitCondition, facts)) &&
+      !noCombinationAvailable;
     // Only the PROFILE half is resolved here. An answer condition stays for the page to evaluate as
     // the person types, which it already did for `dependsOn` - so no predicate is duplicated there.
     const hiddenItemIds = (form.items ?? [])
@@ -669,6 +630,14 @@ export class FormsService {
     }
     const pricedQuestions = pricedQuestionIds(form.priceMatrix);
     const { baseCents } = this.priceFor(form, { ...facts, answers: visibleAnswers });
+    // The cell the manager marked as not existing. A refusal, not a price of zero - and refused
+    // here rather than in `assertMaySubmit` because only the visible answers decide the cell.
+    if (baseCents === null) {
+      this.logger.debug(
+        `[FORMS] submit refused by an unavailable grid cell form=${form.id.slice(0, 8)}`
+      );
+      throw new ForbiddenException('This combination is not available on this form.');
+    }
 
     // Validation & Price Calculation
     let totalCents = baseCents;

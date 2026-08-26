@@ -2,6 +2,7 @@ import {
   allCellKeys,
   assertMatrixValid,
   expectedCellCount,
+  hasCell,
   pricedQuestionIds,
   pricingViewFor,
   resolveCellPrice,
@@ -84,6 +85,30 @@ describe('price matrix', () => {
       const broken: PriceMatrix = { dimensions: [cotisation], cells: { yes: 800 } };
       expect(() => resolveCellPrice(broken, facts())).toThrow(/no price for your situation/i);
     });
+
+    /**
+     * `null` and a missing cell are two different outcomes and must not be confused: `null` is a
+     * DECISION the manager made and the caller honours by refusing the submission, a gap is a
+     * broken invariant and throws. Returning either one for the other would turn a closed
+     * combination into a 400, or a broken grid into a silent refusal nobody can explain.
+     */
+    it('returns null for a combination marked as not existing, without throwing', () => {
+      const closed: PriceMatrix = {
+        dimensions: [cotisation],
+        cells: { yes: 800, [OTHERS_BUCKET_ID]: null },
+      };
+      expect(resolveCellPrice(closed, facts({ cotisationTiers: [null] }))).toBe(800);
+      expect(resolveCellPrice(closed, facts())).toBeNull();
+    });
+
+    // 0 is free and `null` is closed; only an absent key is a hole. This is the distinction every
+    // completeness check rests on.
+    it('tells a free cell, a closed cell and a missing cell apart', () => {
+      const cells: Record<string, number | null> = { free: 0, closed: null };
+      expect(hasCell(cells, 'free')).toBe(true);
+      expect(hasCell(cells, 'closed')).toBe(true);
+      expect(hasCell(cells, 'absent')).toBe(false);
+    });
   });
 
   describe('assertMatrixValid', () => {
@@ -163,6 +188,22 @@ describe('price matrix', () => {
       expect(() => assertMatrixValid(m)).toThrow(/whole number of cents/i);
     });
 
+    // A closed cell is a decision, so the amount check must skip it rather than read null as 0 or
+    // as a fractional price.
+    it('accepts a grid where some combinations are marked unavailable', () => {
+      const m = ok();
+      m.cells['yes|icm'] = null;
+      expect(() => assertMatrixValid(m)).not.toThrow();
+    });
+
+    // Every combination closed is a form nobody at all may answer. Saying so once, here, beats
+    // every submitter meeting the same refusal and nobody knowing why.
+    it('refuses a grid where every combination is unavailable', () => {
+      const m = ok();
+      for (const key of Object.keys(m.cells)) m.cells[key] = null;
+      expect(() => assertMatrixValid(m)).toThrow(/every combination.*unavailable/is);
+    });
+
     // The cap is what stops a manager building a grid nobody can fill; the message says the number.
     it('refuses a grid past the cell cap', () => {
       const many: Dimension[] = Array.from({ length: 3 }, (_, i) => ({
@@ -236,6 +277,35 @@ describe('price matrix', () => {
       expect(view.answerDimensions).toEqual([]);
       expect(view.baseCents).toBe(1500);
       expect(view.appliedLabels).toEqual(['ICM']);
+    });
+
+    /**
+     * A closed cell has to reach the page AS null. The page then greys the option out; a slice that
+     * dropped the key, or sent a number for it, would offer a combination the server refuses - and
+     * the old `cells[key] ?? baseCents` read on the page did exactly that.
+     */
+    it('sends a closed combination as null rather than a price', () => {
+      const closed: PriceMatrix = {
+        dimensions: [cotisation, menu],
+        cells: {
+          ...withMenu.cells,
+          [`${OTHERS_BUCKET_ID}|meat`]: null,
+        },
+      };
+      const view = pricingViewFor(closed, facts());
+      expect(view.cells).toEqual({ veg: 1700, meat: null, [OTHERS_BUCKET_ID]: 1600 });
+    });
+
+    // Their whole row closed: there is no price to quote, and the page must not read zero.
+    it('quotes no base price when the unanswered combination is closed', () => {
+      const closed: PriceMatrix = {
+        dimensions: [cotisation, menu],
+        cells: {
+          ...withMenu.cells,
+          [`${OTHERS_BUCKET_ID}|${OTHERS_BUCKET_ID}`]: null,
+        },
+      };
+      expect(pricingViewFor(closed, facts()).baseCents).toBeNull();
     });
   });
 });

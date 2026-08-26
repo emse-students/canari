@@ -15,11 +15,26 @@ import {
  * - so exactly one cell applies to anybody, and there is no priority rule to define, explain or get
  * wrong. A rule list needs a tie-break; a partition cannot have a tie.
  */
+/**
+ * One cell: a price in cents, or `null` for a combination that DOES NOT EXIST.
+ *
+ * `null` is not zero and not a missing cell. It is the manager saying nobody in that situation may
+ * answer, which no number can say - 0 means free. Completeness still holds, so exactly one cell
+ * still applies to anybody and there is still no priority rule; what changes is that the cell a
+ * person lands in may REFUSE them, and `submit` then does.
+ */
+export type CellValue = number | null;
+
 export interface PriceMatrix {
   /** Ordered. The order decides the cell key and the on-screen layout, never an outcome. */
   dimensions: Dimension[];
-  /** Cents, keyed by `cellKey`. Complete, or the form is refused at save time. */
-  cells: Record<string, number>;
+  /** Cents or `null`, keyed by `cellKey`. Complete, or the form is refused at save time. */
+  cells: Record<string, CellValue>;
+}
+
+/** Whether a key carries a decision - a price, or an explicit "does not exist". */
+export function hasCell(cells: Record<string, CellValue>, key: string): boolean {
+  return cells[key] === null || typeof cells[key] === 'number';
 }
 
 /** How many cells a complete matrix has: the product of each dimension's buckets plus its `others`. */
@@ -49,22 +64,21 @@ export function cellKeyFor(matrix: PriceMatrix, facts: SubmitterFacts): string {
 }
 
 /**
- * The price a submitter pays as a base, in cents.
+ * The price a submitter pays as a base, in cents - or `null` when their cell does not exist.
  *
- * Throws rather than falling back to `form.basePrice` when the cell is missing: the matrix is
- * complete by a save-time invariant, so a missing cell means the invariant was bypassed, and
- * charging a plausible number instead of saying so is how a wrong price ships quietly. A fallback
- * here is a signal, never a path.
+ * Two different outcomes that must not be confused. `null` is a DECISION the manager made and the
+ * caller has to honour by refusing the submission; a MISSING cell is a broken invariant and throws,
+ * because the matrix is complete at save time and charging a plausible number instead of saying so
+ * is how a wrong price ships quietly. A fallback here is a signal, never a path.
  */
-export function resolveCellPrice(matrix: PriceMatrix, facts: SubmitterFacts): number {
+export function resolveCellPrice(matrix: PriceMatrix, facts: SubmitterFacts): CellValue {
   const key = cellKeyFor(matrix, facts);
-  const price = matrix.cells[key];
-  if (typeof price !== 'number') {
+  if (!hasCell(matrix.cells, key)) {
     throw new BadRequestException(
       `This form has no price for your situation (cell "${key}"). Its manager must complete the pricing grid.`
     );
   }
-  return price;
+  return matrix.cells[key];
 }
 
 /**
@@ -122,7 +136,7 @@ export function assertMatrixValid(matrix: PriceMatrix, maxCells = 400): void {
     );
   }
   const required = allCellKeys(dimensions);
-  const missing = required.filter((k) => typeof cells[k] !== 'number');
+  const missing = required.filter((k) => !hasCell(cells, k));
   if (missing.length > 0) {
     throw new BadRequestException(
       `The pricing grid is incomplete: ${missing.length} price(s) missing, starting with "${missing[0]}".`
@@ -135,9 +149,18 @@ export function assertMatrixValid(matrix: PriceMatrix, maxCells = 400): void {
     );
   }
   for (const [key, value] of Object.entries(cells)) {
+    // `null` is a decision, checked above by `hasCell` - only a number has to be a valid amount.
+    if (value === null) continue;
     if (!Number.isInteger(value) || value < 0) {
       throw new BadRequestException(`Price "${key}" must be a whole number of cents, at least 0.`);
     }
+  }
+  // A grid where every combination is unavailable is a form nobody may answer. That is a closed
+  // form, not a priced one, and saying so here beats every submitter meeting the same refusal.
+  if (required.every((k) => cells[k] === null)) {
+    throw new BadRequestException(
+      'Every combination of this grid is marked unavailable, so nobody could answer. Close the form instead.'
+    );
   }
 }
 
@@ -175,14 +198,17 @@ export interface AnswerDimensionView {
  * profile row.
  */
 export interface PricingView {
-  /** The price before any answer dimension is resolved - every one of them at "everyone else". */
-  baseCents: number;
+  /**
+   * The price before any answer dimension is resolved - every one of them at "everyone else".
+   * `null` when that combination is unavailable, which the page shows rather than charging.
+   */
+  baseCents: CellValue;
   /** The buckets that already applied, for display: "Cotisant", "ICM". Empty when none did. */
   appliedLabels: string[];
   /** Still to resolve, in key order. */
   answerDimensions: AnswerDimensionView[];
-  /** Price per combination of the answer buckets above, keyed in their order. */
-  cells: Record<string, number>;
+  /** Price per combination of the answer buckets above, keyed in their order; `null` = unavailable. */
+  cells: Record<string, CellValue>;
   /**
    * Questions whose per-option modifiers must NOT be added: their answer already selects a cell.
    * Sent so the page shows and totals the same figure the server will charge.
@@ -223,18 +249,20 @@ export function pricingViewFor(matrix: PriceMatrix, facts: SubmitterFacts): Pric
     [[]]
   );
 
-  const cells: Record<string, number> = {};
+  const cells: Record<string, CellValue> = {};
   for (const combination of combinations) {
     const full = [...resolved];
     answerDims.forEach(({ index }, i) => {
       full[index] = combination[i];
     });
-    const price = matrix.cells[cellKey(full as string[])];
-    if (typeof price === 'number') cells[cellKey(combination)] = price;
+    const key = cellKey(full as string[]);
+    // A cell that is absent rather than null cannot happen - completeness is a save-time invariant
+    // - and is reported as unavailable, so a broken grid refuses instead of inventing a price.
+    cells[cellKey(combination)] = hasCell(matrix.cells, key) ? matrix.cells[key] : null;
   }
 
   return {
-    baseCents: cells[cellKey(answerDims.map(() => OTHERS_BUCKET_ID))] ?? 0,
+    baseCents: cells[cellKey(answerDims.map(() => OTHERS_BUCKET_ID))] ?? null,
     appliedLabels,
     answerDimensions: answerDims.map(({ dimension }) => ({
       id: dimension.id,

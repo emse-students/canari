@@ -106,8 +106,6 @@ export interface Form extends CreateFormPayload {
   associationName?: string | null;
   /** Banner/header image URL (public, served via media-service). */
   imageUrl?: string | null;
-  /** Additional user IDs that can manage this form and view submissions. */
-  coOwners?: string[];
 }
 
 import { apiFetch } from '$lib/utils/apiFetch';
@@ -203,25 +201,6 @@ export async function deleteFormImage(id: string): Promise<Form> {
   return res.json();
 }
 
-/** Adds a co-owner to a form (owner/global-admin only). */
-export async function addFormCoOwner(formId: string, userId: string): Promise<{ ok: boolean }> {
-  const res = await apiFetch(`${socialUrl()}/api/forms/${formId}/co-owners`, {
-    method: 'POST',
-    body: JSON.stringify({ userId }),
-  });
-  if (!res.ok) throw new Error('Failed to add co-owner');
-  return res.json();
-}
-
-/** Removes a co-owner from a form (owner/global-admin only). */
-export async function removeFormCoOwner(formId: string, userId: string): Promise<{ ok: boolean }> {
-  const res = await apiFetch(`${socialUrl()}/api/forms/${formId}/co-owners/${userId}`, {
-    method: 'DELETE',
-  });
-  if (!res.ok) throw new Error('Failed to remove co-owner');
-  return res.json();
-}
-
 export async function getSubmission(formId: string): Promise<any> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${formId}/submission`);
   if (!res.ok) throw new Error('Failed to fetch submission');
@@ -244,13 +223,20 @@ export interface AnswerDimensionView {
  * leads to. The page totals from this and never derives a rule of its own.
  */
 export interface PricingView {
-  /** Price before any answer criterion is resolved. */
-  baseCents: number;
+  /**
+   * Price before any answer criterion is resolved. `null` when that combination is UNAVAILABLE -
+   * the manager marked it as not existing, which is a refusal and not a price of zero. See
+   * `CellValue` in `priceMatrix.ts`.
+   */
+  baseCents: number | null;
   /** The groups that already applied, for display: "Cotisant", "ICM". */
   appliedLabels: string[];
   answerDimensions: AnswerDimensionView[];
-  /** Price per combination of the answer groups, keyed by their ids joined with "|". */
-  cells: Record<string, number>;
+  /**
+   * Price per combination of the answer groups, keyed by their ids joined with "|". Complete: every
+   * combination is present, `null` for the ones that are unavailable.
+   */
+  cells: Record<string, number | null>;
   /** Questions whose option modifiers must NOT be added - their answer selects a cell instead. */
   ignoredModifierQuestionIds: string[];
 }

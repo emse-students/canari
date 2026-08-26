@@ -129,30 +129,6 @@ export class FormsController {
     return this.service.clearImage(id, xUserId, ga === 'true');
   }
 
-  /** Adds a co-owner to a form. Only the owner or global admin may call this. */
-  @UseGuards(NginxAuthGuard)
-  @Post(':id/co-owners')
-  addCoOwner(
-    @Param('id') id: string,
-    @Body() body: { userId: string },
-    @Headers('x-user-id') xUserId: string,
-    @Headers('x-global-admin') ga?: string
-  ) {
-    return this.service.addCoOwner(id, body.userId, xUserId, ga === 'true');
-  }
-
-  /** Removes a co-owner from a form. Only the owner or global admin may call this. */
-  @UseGuards(NginxAuthGuard)
-  @Delete(':id/co-owners/:coUserId')
-  removeCoOwner(
-    @Param('id') id: string,
-    @Param('coUserId') coUserId: string,
-    @Headers('x-user-id') xUserId: string,
-    @Headers('x-global-admin') ga?: string
-  ) {
-    return this.service.removeCoOwner(id, coUserId, xUserId, ga === 'true');
-  }
-
   /** Returns the calling user's submission for a specific form. */
   @UseGuards(NginxAuthGuard)
   @Get(':id/submission')

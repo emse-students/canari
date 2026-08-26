@@ -8,11 +8,13 @@ import { AssociationPermissionFlag } from '../associations/entities/association-
  * were editable and exportable by API while appearing in no list on any screen - reachable only by
  * someone who already knew the URL. The list now covers them, and says which association each form
  * belongs to by NAME.
+ *
+ * Two sources, not three: the per-form co-manager list was deleted (migration 053), so a form is
+ * managed by its owner and by the association's form managers.
  */
 describe('FormsService.list', () => {
   function makeService(opts: {
     owned?: Record<string, unknown>[];
-    coOwned?: Record<string, unknown>[];
     viaAssociation?: Record<string, unknown>[];
     managed?: { id: string; name: string }[];
     names?: [string, string][];
@@ -20,10 +22,9 @@ describe('FormsService.list', () => {
     const queries: Record<string, unknown>[][] = [];
     const formRepo: any = {
       find: jest.fn(() => Promise.resolve(opts.owned ?? [])),
-      // Two query-builder calls in `list`: the co-owner LIKE scan, then the association scan.
-      // They are answered in order, which is the order the code writes them in.
+      // One query-builder call in `list`: the association scan.
       createQueryBuilder: jest.fn(() => {
-        const result = queries.length === 0 ? (opts.coOwned ?? []) : (opts.viaAssociation ?? []);
+        const result = opts.viaAssociation ?? [];
         queries.push(result as Record<string, unknown>[]);
         const qb: any = {
           where: () => qb,
@@ -70,10 +71,9 @@ describe('FormsService.list', () => {
     );
   });
 
-  it('includes a form the caller neither owns nor co-owns, via MANAGE_FORMS', async () => {
+  it('includes a form the caller does not own, via MANAGE_FORMS', async () => {
     const { service } = makeService({
       owned: [],
-      coOwned: [],
       managed: [{ id: 'asso1', name: 'Le Cercle' }],
       viaAssociation: [form('f01', { ownerId: 'someone-else', associationId: 'asso1' })],
       names: [['asso1', 'Le Cercle']],
@@ -83,13 +83,12 @@ describe('FormsService.list', () => {
     expect(list[0]).toMatchObject({ id: 'f01', associationName: 'Le Cercle' });
   });
 
-  // A form you own in an association you administer is in two of the three sets. Concatenating
-  // would list it twice.
+  // A form you own in an association you administer is in both sets. Concatenating would list it
+  // twice.
   it('lists a form once when it arrives from two sources', async () => {
     const linked = form('f01', { associationId: 'asso1' });
     const { service } = makeService({
       owned: [linked],
-      coOwned: [],
       managed: [{ id: 'asso1', name: 'Le Cercle' }],
       viaAssociation: [linked],
       names: [['asso1', 'Le Cercle']],
@@ -97,10 +96,9 @@ describe('FormsService.list', () => {
     expect(await service.list('user1')).toHaveLength(1);
   });
 
-  it('sorts the merged list newest first, across all three sources', async () => {
+  it('sorts the merged list newest first, across both sources', async () => {
     const { service } = makeService({
-      owned: [form('f01')],
-      coOwned: [form('f03')],
+      owned: [form('f01'), form('f03')],
       managed: [{ id: 'asso1', name: 'Le Cercle' }],
       viaAssociation: [form('f02', { associationId: 'asso1' })],
       names: [['asso1', 'Le Cercle']],

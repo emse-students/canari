@@ -35,10 +35,20 @@ export interface Dimension {
   buckets: Bucket[];
 }
 
+/**
+ * One cell: a price in euros, or `null` for a combination that DOES NOT EXIST.
+ *
+ * `null` is not zero and not a missing cell. It is the manager saying nobody in that situation may
+ * answer at all, which no number can say - 0 means free. The grid stays COMPLETE either way, so the
+ * "exactly one cell applies, no priority rule" invariant is untouched; what changes is that a cell
+ * may refuse instead of charging.
+ */
+export type CellValue = number | null;
+
 export interface PriceMatrix {
   dimensions: Dimension[];
   /** Euros in the editor, keyed by the bucket ids joined in dimension order. */
-  cells: Record<string, number>;
+  cells: Record<string, CellValue>;
 }
 
 let counter = 0;
@@ -67,9 +77,29 @@ export function allCellKeys(dimensions: Dimension[]): string[] {
   );
 }
 
-/** Whether every combination has a price. What the server checks, checked here first. */
+/**
+ * Whether a key carries a DECISION - a price, or an explicit "this does not exist".
+ *
+ * Distinct from truthiness and from `!= null` on purpose: 0 is a price and `null` is an answer, so
+ * only an absent key is a hole in the grid.
+ */
+export function hasCell(cells: Record<string, CellValue>, key: string): boolean {
+  return cells[key] === null || typeof cells[key] === 'number';
+}
+
+/** The value at a key, or free when there is none - what an inherited cell starts from. */
+function valueAt(cells: Record<string, CellValue>, key: string): CellValue {
+  return hasCell(cells, key) ? cells[key] : 0;
+}
+
+/** Whether every combination has been decided. What the server checks, checked here first. */
 export function isComplete(matrix: PriceMatrix): boolean {
-  return allCellKeys(matrix.dimensions).every((k) => typeof matrix.cells[k] === 'number');
+  return allCellKeys(matrix.dimensions).every((k) => hasCell(matrix.cells, k));
+}
+
+/** A grid switched on but not yet divided: the editor then asks for the first criterion. */
+export function emptyMatrix(basePrice: number): PriceMatrix {
+  return { dimensions: [], cells: { '': basePrice } };
 }
 
 /**
@@ -81,10 +111,10 @@ export function isComplete(matrix: PriceMatrix): boolean {
  */
 export function addDimension(matrix: PriceMatrix, dimension: Dimension): PriceMatrix {
   const dimensions = [...matrix.dimensions, dimension];
-  const cells: Record<string, number> = {};
+  const cells: Record<string, CellValue> = {};
   const previous = matrix.dimensions.length === 0 ? [''] : allCellKeys(matrix.dimensions);
   for (const prefix of previous) {
-    const inherited = matrix.dimensions.length === 0 ? 0 : (matrix.cells[prefix] ?? 0);
+    const inherited = valueAt(matrix.cells, prefix);
     for (const id of bucketIds(dimension)) {
       cells[prefix ? `${prefix}|${id}` : id] = inherited;
     }
@@ -103,11 +133,11 @@ export function removeDimension(matrix: PriceMatrix, dimensionId: string): Price
   const index = matrix.dimensions.findIndex((d) => d.id === dimensionId);
   if (index === -1) return matrix;
   const dimensions = matrix.dimensions.filter((d) => d.id !== dimensionId);
-  const cells: Record<string, number> = {};
+  const cells: Record<string, CellValue> = {};
   for (const key of allCellKeys(dimensions)) {
     const parts = key === '' ? [] : key.split('|');
     const full = [...parts.slice(0, index), OTHERS_BUCKET_ID, ...parts.slice(index)];
-    cells[key] = matrix.cells[cellKey(full)] ?? 0;
+    cells[key] = valueAt(matrix.cells, cellKey(full));
   }
   return { dimensions, cells };
 }
@@ -124,12 +154,12 @@ export function addBucket(matrix: PriceMatrix, dimensionId: string, bucket: Buck
   );
   const cells = { ...matrix.cells };
   for (const key of allCellKeys(dimensions)) {
-    if (typeof cells[key] === 'number') continue;
+    if (hasCell(cells, key)) continue;
     const parts = key.split('|');
     if (parts[index] !== bucket.id) continue;
     const from = [...parts];
     from[index] = OTHERS_BUCKET_ID;
-    cells[key] = matrix.cells[cellKey(from)] ?? 0;
+    cells[key] = valueAt(matrix.cells, cellKey(from));
   }
   return { dimensions, cells };
 }
@@ -144,8 +174,8 @@ export function removeBucket(
     d.id === dimensionId ? { ...d, buckets: d.buckets.filter((b) => b.id !== bucketId) } : d
   );
   const kept = new Set(allCellKeys(dimensions));
-  const cells: Record<string, number> = {};
-  for (const key of kept) cells[key] = matrix.cells[key] ?? 0;
+  const cells: Record<string, CellValue> = {};
+  for (const key of kept) cells[key] = valueAt(matrix.cells, key);
   return { dimensions, cells };
 }
 
@@ -200,10 +230,12 @@ export function gridLayout(matrix: PriceMatrix): {
 /** Reads a grid off a loaded form, converting cents to euros. Null when the form has no grid. */
 export function matrixOf(raw: unknown): PriceMatrix | null {
   if (!raw || typeof raw !== 'object') return null;
-  const doc = raw as { dimensions?: Dimension[]; cells?: Record<string, number> };
+  const doc = raw as { dimensions?: Dimension[]; cells?: Record<string, CellValue> };
   if (!Array.isArray(doc.dimensions) || doc.dimensions.length === 0) return null;
-  const cells: Record<string, number> = {};
-  for (const [key, cents] of Object.entries(doc.cells ?? {})) cells[key] = (cents ?? 0) / 100;
+  const cells: Record<string, CellValue> = {};
+  for (const [key, cents] of Object.entries(doc.cells ?? {})) {
+    cells[key] = cents === null ? null : (cents ?? 0) / 100;
+  }
   return { dimensions: doc.dimensions, cells };
 }
 
@@ -215,21 +247,38 @@ export function matrixOf(raw: unknown): PriceMatrix | null {
  */
 export function matrixPayload(matrix: PriceMatrix | null, requiresPayment: boolean): unknown {
   if (!matrix || !requiresPayment || matrix.dimensions.length === 0) return null;
-  const cells: Record<string, number> = {};
+  const cells: Record<string, CellValue> = {};
   for (const key of allCellKeys(matrix.dimensions)) {
-    cells[key] = Math.round((matrix.cells[key] ?? 0) * 100);
+    const value = matrix.cells[key];
+    cells[key] = value === null ? null : Math.round((value ?? 0) * 100);
   }
   return { dimensions: matrix.dimensions, cells };
 }
 
 /**
- * Why a grid cannot be saved yet, as a key for the message table - or null when it can.
+ * Why a grid cannot be saved yet - or null when it can.
  *
+ * A CODE, not a sentence: the sentence lives in `gridProblem.ts` next to the message table, so the
+ * grid editor and the two save buttons all say the same thing about the same state.
+ */
+export type GridProblem =
+  | 'no_criterion'
+  | 'empty_criterion'
+  | 'unnamed_group'
+  | 'no_question'
+  | 'empty_group'
+  | 'incomplete'
+  | 'all_unavailable';
+
+/**
  * The server refuses all of these too; saying it here means the manager is not told about cell keys
  * by a 400.
  */
-export function matrixProblem(matrix: PriceMatrix | null): string | null {
-  if (!matrix || matrix.dimensions.length === 0) return null;
+export function matrixProblem(matrix: PriceMatrix | null): GridProblem | null {
+  if (!matrix) return null;
+  // The grid is switched ON with nothing to divide on. `matrixPayload` would send null here, so a
+  // save would look accepted and quietly keep the single price - the manager must be told instead.
+  if (matrix.dimensions.length === 0) return 'no_criterion';
   for (const d of matrix.dimensions) {
     if (d.buckets.length === 0) return 'empty_criterion';
     if (d.buckets.some((b) => !b.label.trim())) return 'unnamed_group';
@@ -243,5 +292,19 @@ export function matrixProblem(matrix: PriceMatrix | null): string | null {
       return 'empty_group';
   }
   if (!isComplete(matrix)) return 'incomplete';
+  // Every combination marked unavailable is a form nobody at all may answer, which is a form that
+  // should be closed rather than priced.
+  if (allCellKeys(matrix.dimensions).every((k) => matrix.cells[k] === null)) {
+    return 'all_unavailable';
+  }
   return null;
+}
+
+/** The cheapest and dearest price the grid can charge, ignoring unavailable cells. Null when none. */
+export function priceRange(matrix: PriceMatrix | null): { min: number; max: number } | null {
+  const values = Object.values(matrix?.cells ?? {}).filter(
+    (v): v is number => typeof v === 'number'
+  );
+  if (values.length === 0) return null;
+  return { min: Math.min(...values), max: Math.max(...values) };
 }

@@ -12,6 +12,28 @@ which is also where every release up to and including v0.13.1 now lives.
 ## [Unreleased]
 
 ### Added
+
+- **A price grid cell can say the combination DOES NOT EXIST.** Some configurations are not sold:
+  "non-cotisant, formule week-end" is a case an association never offers, and the grid had no way to
+  say so. A price cannot - 0 means free - and `submitCondition` cannot either, since it is an AND of
+  criteria about a PERSON while this excludes a COMBINATION. So a cell now holds `number | null`,
+  and the three states are kept strictly apart by one predicate, `hasCell`: a number is a price (`0`
+  included, meaning free), `null` is the manager's decision that nobody in that situation may
+  answer, and an ABSENT key remains a broken invariant that throws. The completeness invariant is
+  untouched - the grid is still a cross product, exactly one cell still applies to anybody, no
+  priority rule exists - but the cell a person lands in may now refuse them.
+
+  Honoured end to end: `resolveCellPrice` returns `null` instead of throwing, and `submit` refuses
+  right after resolving the price rather than in `assertMaySubmit`, because only the VISIBLE answers
+  decide which cell applies; `hasSubmission` reports `maySubmit: false` when a submitter's whole row
+  is closed, the same outcome as an audience refusal, because a form with no reachable price would
+  otherwise show them a total of zero and a working button. The fill page greys the options that
+  lead to a closed cell rather than hiding them - an option that vanishes reads as a bug, and the
+  person needs to see the choice exists and is closed to them - and its `cells[key] ?? baseCents`
+  read is gone: that was exactly the fallback that would have charged a plausible number for a
+  combination the server refuses. A grid with EVERY cell closed is refused on both sides, since that
+  is a form nobody may answer, and saying so once at save time beats every submitter meeting the
+  same refusal with nobody able to explain it.
 - **The iOS release pipeline now writes the App Store Connect export compliance code into `Info.plist` at build time.** v0.14.3's TestFlight upload failed with "Invalid Export Compliance Code": `ITSAppUsesNonExemptEncryption=true` was already correctly committed, but Apple also requires `ITSEncryptionExportComplianceCode` - the code generated once in App Store Connect's own compliance documentation for this app - and the plist had no such key at all. `ios-release.yml` now patches it in from a new `APP_STORE_CONNECT_EXPORT_COMPLIANCE_CODE` GitHub secret, right before the archive build, rather than committing the value: this is a public repo, and while the code isn't a credential that grants access to anything, it's still an Apple-account-specific value with no reason to be baked into a public file when every other Apple-account value here already isn't. The step skips harmlessly when the secret is unset, so it didn't regress the pipeline while the secret was still owed - and on 2026-08-24 the secret was created and v0.14.4 cut: the step took its set branch and **the TestFlight upload succeeded**, which is the first time an iOS build of this app has reached App Store Connect. What that proves is the pipeline, not the audience: TestFlight is the beta channel, so `minClientVersion` still may not be raised past a release before that release has actually reached the users it would lock out
 
 - **Form pricing is a MATRIX, and the same predicate now says who may answer and who sees a
@@ -90,7 +112,59 @@ which is also where every release up to and including v0.13.1 now lives.
   file read into a refusal of every legitimate raise. Callers that report keep the default; the one
   that decides handles `null` and logs that the guard did not run.
 
+### Removed
+
+- **A form's per-form "Co-responsables" list is deleted, because it answered a question that already
+  had an answer.** Who may manage a form was settled on two axes that never agreed: `forms.coOwners`,
+  a list of user ids the owner typed in on the edit screen, and `MANAGE_FORMS`, the association
+  permission every member with the right holds. `assertFormManager` accepted both, so an association
+  form manager could edit the form - and the Co-responsables section rendered for them, with every
+  add and every remove returning 403, since only the owner could change the list. A section a person
+  can see and cannot use is worse than one that is not there, and the fix is not to hide it: two
+  places to grant the same thing is one too many, and the association permission is the one that
+  scales, survives its grantee leaving, and is auditable from the association's own screen.
+  Production held two forms and zero co-owners, so nothing is lost. Migration `053` drops the column,
+  the two endpoints and the list branch go with it, and `/forms` now merges two sources instead of
+  three. Unrelated to `calendar_event_co_owners`, which names ASSOCIATIONS co-hosting an event.
+
 ### Changed
+
+- **Payment is a MODE now: either a public base price or a grid, never both on screen.** The section
+  showed the single price and the grid together, the price relabelled "Prix par defaut" and used
+  only to seed a new cell - two amounts on screen, one of which charged nobody. One toggle picks
+  which of the two the form has. Switching the grid on seeds it from the price that was showing, so
+  no total moves; switching it off drops it; and removing the last criterion leaves the grid ON with
+  nothing to divide on, because the mode is the manager's to flip and not the editor's to infer.
+  That state is a save-time refusal rather than a silent fall back to the single price, which is
+  what `matrixPayload` sending `null` would have looked like: accepted, and not what was asked.
+
+- **The form editor has four sections instead of six, and the advanced one says when it is hiding
+  something.** A manager writing a plain free form - title, questions, save - scrolled past a
+  response cap, a repeat switch, an opening date, an audience restriction and a cotisation grant,
+  each wanted by a handful of forms a year. They now sit in "Parametres avances" as three groups
+  separated by dividers (Reponses, Qui peut repondre, Cotisation). A folded section holding a live
+  restriction is a setting nobody can see, so its header carries a badge: "Acces restreint" when an
+  audience condition is set, otherwise a count of the settings actually doing something - the
+  audience wins over the count because it is the one deciding whether a person may answer at all.
+
+- **The create and the edit page summarise a form the same way.** They had drifted again, in the one
+  line that is on screen while you save: create printed the price, edit printed only the question
+  count, so the same form described itself two ways depending on which door you came in by. One
+  `formSummary`, used by both, and a grid gets a RANGE rather than one number since it has no single
+  price. Two duplicated `_short` error keys went with it - the long sentences are the ones both
+  pages already showed.
+
+- **A product/partnership card wears its accent along its top edge, and its logo as a logo.** `CardTile`
+  drew the association's colour as a 4px slab down its left edge, printed the badge as a full-bleed
+  uppercase band, and placed the icon as a 64px watermark at 40% opacity behind a radial mask,
+  absolutely positioned in the top-right corner - which is exactly where the shop grid prints a
+  price, so the two drew over each other, and an uploaded brand logo (the one piece of art on the
+  card that carries identity) was unreadable anyway. The accent is now a 4px bar along the top edge,
+  the badge a pill, and the icon sits framed in a header row of its own, in normal flow, so it
+  cannot overlap anything a caller renders. It costs each card the height of that row and no call
+  site changed. Cards also gain an elevation that responds to hover, gated on `(hover: hover)` so a
+  tap does not leave one card in a grid permanently lit; the accent reaches the bar, the badge and
+  the hover outline through one pair of CSS variables rather than three inline copies.
 
 - **A form names a cotisation TIER; the tag is derived when payment lands.** `pricingTagName`,
   `grantedTagName` and `tagExpiresAt` stored a literal tag typed into the admin screen. Three things
@@ -149,6 +223,16 @@ which is also where every release up to and including v0.13.1 now lives.
   nothing - no spec, no frontend test, no board row - watches them.
 
 ### Fixed
+
+- **"Donner un statut avec le paiement" says which of its four conditions is missing.** The setting
+  appears only on a paid form, with a beneficiary association chosen, that runs at least one
+  cotisation tier, and only to someone holding `MANAGE_MEMBERS` on it - four conditions ANDed, of
+  which the screen named three and the fourth nothing at all. So a manager holding everything except
+  `MANAGE_MEMBERS` read "disponible sur un formulaire payant dont l'association gere une cotisation"
+  while looking at exactly that, and had no way to find out that the permission was the answer.
+  `cotisationGrantBlocker` returns which condition failed, in the order a manager fixes them, and
+  each has its own sentence; the permission one names the association, because it is that
+  association's members the right governs.
 
 - **The conversation list could not be scrolled on Android, and its pull-to-refresh spinner stood for
   nothing.** Two defects behind one gesture, and the first was not the gesture. Measured on the

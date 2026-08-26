@@ -11,7 +11,7 @@
   import StripeNetPayoutHint from '$lib/components/payments/StripeNetPayoutHint.svelte';
   import FormSection from './FormSection.svelte';
   import PriceGridEditor from './PriceGridEditor.svelte';
-  import type { PriceMatrix } from '$lib/forms/priceMatrix';
+  import { emptyMatrix, priceRange, type PriceMatrix } from '$lib/forms/priceMatrix';
   import type { FormationOption } from '$lib/forms/criteriaOptions';
   import { Check, CreditCard } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
@@ -26,6 +26,11 @@
    * The "cotisants pay less" block used to be its own component with its own tier picker. It is now
    * one criterion of the pricing grid, because a form needs to discriminate on more than membership
    * and two mechanisms for "some people pay less" is the gas factory this module was cleaned out of.
+   *
+   * A paid form is priced ONE way or the OTHER, chosen by a switch: a single public price, or the
+   * grid. Both used to be on screen at once, with the single price relabelled "prix par defaut" and
+   * used by nothing once a criterion existed - a field that looks live and decides nothing is a
+   * field a manager tunes and then wonders about.
    */
   interface Props {
     /** Whether the form charges anything. */
@@ -76,11 +81,7 @@
   });
 
   /** The cheapest and dearest cell, so the payout hint spans what the grid can actually charge. */
-  const gridRange = $derived.by(() => {
-    const values = Object.values(priceMatrix?.cells ?? {});
-    if (values.length === 0) return null;
-    return { min: Math.min(...values), max: Math.max(...values) };
-  });
+  const gridRange = $derived(priceRange(priceMatrix));
 </script>
 
 <FormSection title={m.form_section_payment()} icon={CreditCard}>
@@ -110,28 +111,44 @@
     {/if}
 
     <div class="border-cn-border space-y-4 border-t-2 pt-4">
-      <Input
-        label={priceMatrix ? m.form_base_price_label_with_grid() : m.form_base_price_label()}
-        type="number"
-        bind:value={basePrice}
-        min="0"
-        step="0.01"
-        placeholder="0.00"
-        hint={priceMatrix ? m.form_base_price_hint_with_grid() : undefined}
+      <!-- Switching the grid on seeds it from the price on screen, and switching it off drops it -
+           there is no third state where both are half-live. -->
+      <Toggle
+        label={m.form_price_mode_grid_label()}
+        hint={m.form_price_mode_grid_hint()}
+        bind:checked={
+          () => priceMatrix != null,
+          (on) => {
+            priceMatrix = on ? emptyMatrix(basePrice) : null;
+          }
+        }
       />
+
+      {#if !priceMatrix}
+        <Input
+          label={m.form_base_price_label()}
+          type="number"
+          bind:value={basePrice}
+          min="0"
+          step="0.01"
+          placeholder="0.00"
+        />
+      {/if}
     </div>
 
-    <PriceGridEditor
-      bind:matrix={priceMatrix}
-      {basePrice}
-      {tiers}
-      {formations}
-      {items}
-      hasCotisation={tiers.length > 0}
-    />
+    {#if priceMatrix}
+      <PriceGridEditor
+        bind:matrix={priceMatrix}
+        {basePrice}
+        {tiers}
+        {formations}
+        {items}
+        hasCotisation={tiers.length > 0}
+      />
+    {/if}
 
     <StripeNetPayoutHint
-      grossEuros={gridRange ? gridRange.max : basePrice}
+      grossEuros={priceMatrix ? (gridRange?.max ?? 0) : basePrice}
       grossEurosMember={gridRange && gridRange.min !== gridRange.max ? gridRange.min : ''}
       showOptionSupplementNote={true}
     />

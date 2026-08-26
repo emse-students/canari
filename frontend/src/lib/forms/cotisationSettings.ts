@@ -52,20 +52,33 @@ export function cotisationPayload(
 }
 
 /**
- * Whether the cotisation GRANT can be offered: a payment to hang it on, an association to be a
- * member of, a tier to grant, and the right to hand one out.
+ * Why the cotisation GRANT cannot be offered - or null when it can.
  *
- * `mayGrant` is MANAGE_MEMBERS, the same right the manual roster add demands - a form that grants a
- * cotisation on payment does exactly what that button does, so it must not be a cheaper way in. The
- * server enforces it; this only keeps the screen honest about what it will accept.
+ * A REASON rather than a boolean, because the four conditions are invisible from the screen and one
+ * of them (`mayGrant`, which is MANAGE_MEMBERS) is not even a form setting: a manager who is told
+ * only "unavailable" has nothing to act on, and the one sentence that used to be shown named the
+ * three cheap causes and not that one.
+ *
+ * `mayGrant` is the same right the manual roster add demands - a form that grants a cotisation on
+ * payment does exactly what that button does, so it must not be a cheaper way in. The server
+ * enforces all four; this keeps the screen honest about what it will accept.
+ *
+ * Reported in the order the manager can act on: payment first (their own switch, one section up),
+ * then the beneficiary, then that association's catalogue, then the right they do not hold.
  */
-export function canGrantCotisation(
+export type CotisationGrantBlocker = 'no-payment' | 'no-association' | 'no-cotisation' | 'no-right';
+
+export function cotisationGrantBlocker(
   requiresPayment: boolean,
   associationId: string,
   tierCount: number,
   mayGrant: boolean
-): boolean {
-  return mayGrant && requiresPayment && !!associationId && tierCount > 0;
+): CotisationGrantBlocker | null {
+  if (!requiresPayment) return 'no-payment';
+  if (!associationId) return 'no-association';
+  if (tierCount === 0) return 'no-cotisation';
+  if (!mayGrant) return 'no-right';
+  return null;
 }
 
 /** Nothing offered, nothing grantable - the answer for an association we cannot read. */

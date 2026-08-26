@@ -122,10 +122,6 @@ export class Form {
   @Column({ type: 'varchar', length: 255, nullable: true })
   imageMediaId: string | null;
 
-  /** Additional user IDs that can manage this form and view submissions. */
-  @Column('simple-array', { default: '' })
-  coOwners: string[];
-
   @CreateDateColumn()
   createdAt: Date;
 

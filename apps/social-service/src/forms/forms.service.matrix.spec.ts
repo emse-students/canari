@@ -243,6 +243,75 @@ describe('FormsService pricing, through submit', () => {
   });
 
   /**
+   * A cell can be marked as NOT EXISTING - "non-cotisant, menu viande" is a combination the
+   * association simply does not sell. That is a refusal no price can carry, since 0 means free.
+   *
+   * It is refused after the price is resolved rather than in `assertMaySubmit`, because only the
+   * VISIBLE answers decide which cell applies: a condition checked before visibility would be
+   * checking a cell the submitter is not in.
+   */
+  describe('a combination marked as not existing', () => {
+    /** Same grid, with the public meat cell closed. */
+    const closed = () => ({
+      ...MATRIX,
+      cells: { ...MATRIX.cells, [`${OTHERS_BUCKET_ID}|meat`]: null },
+    });
+
+    it('refuses the submission instead of charging zero', async () => {
+      const { service, saved } = makeService({ form: form({ priceMatrix: closed() }) });
+      await expect(submit(service, { q_menu: 'opt_meat' })).rejects.toThrow(/not available/i);
+      expect(saved).toHaveLength(0);
+    });
+
+    // The refusal is per-CELL, not per-form: the same person answering differently is priced.
+    it('still accepts every combination that does exist', async () => {
+      const { service, saved } = makeService({ form: form({ priceMatrix: closed() }) });
+      await submit(service, { q_menu: 'opt_veg' });
+      expect(saved[0].totalPaid).toBe(2000);
+    });
+
+    // A cotisant is in another row entirely and must not be caught by it.
+    it('leaves the other profile row alone', async () => {
+      const { service, saved } = makeService({
+        form: form({ priceMatrix: closed() }),
+        facts: { cotisationTiers: [null] },
+      });
+      await submit(service, { q_menu: 'opt_meat' });
+      expect(saved[0].totalPaid).toBe(1200);
+    });
+
+    // The quote carries the null, so the fill page can grey the option out rather than offer a
+    // choice the submit above is going to refuse.
+    it('quotes it as unavailable rather than as a price', async () => {
+      const { service } = makeService({ form: form({ priceMatrix: closed() }) });
+      const check = await service.hasSubmission('f1', 'user1');
+      expect(check.pricing?.cells.meat).toBeNull();
+      expect(check.pricing?.cells.veg).toBe(2000);
+      expect(check.maySubmit).toBe(true);
+    });
+
+    /**
+     * Their whole row closed: no answer they could give leads to a cell that exists. That is the
+     * same outcome as an audience refusal - the form is not open to them - and reporting it as a
+     * form with no price would show them a total of zero and a working submit button.
+     */
+    it('reports maySubmit false when their whole row is closed', async () => {
+      const allClosed = {
+        ...MATRIX,
+        cells: Object.fromEntries(
+          Object.keys(MATRIX.cells).map((key) => [
+            key,
+            key.startsWith(OTHERS_BUCKET_ID) ? null : MATRIX.cells[key],
+          ])
+        ),
+      };
+      const { service } = makeService({ form: form({ priceMatrix: allClosed }) });
+      const check = await service.hasSubmission('f1', 'user1');
+      expect(check.maySubmit).toBe(false);
+    });
+  });
+
+  /**
    * Fail closed. Both silent alternatives are wrong and neither would be noticed: the "everyone
    * else" cell overcharges a student who qualified, a guessed bucket undercharges the association.
    */

@@ -20,7 +20,9 @@
     cancelPendingSubmission,
     type Form,
     type FormItem,
+    type AnswerDimensionView,
   } from '$lib/forms/api';
+  import { OTHERS_BUCKET_ID, cellKey, hasCell, type CellValue } from '$lib/forms/priceMatrix';
   import { formatFormOpensAt, formOpensAtIso } from '$lib/posts/postComposerDraft';
   import {
     getCalendarEventLinkedToForm,
@@ -41,6 +43,7 @@
     CreditCard,
     Link,
     Lock,
+    Ban,
   } from '@lucide/svelte';
   import { copyPublicShareLink } from '$lib/utils/copyShareLink';
   import { m } from '$lib/paraglide/messages';
@@ -246,28 +249,85 @@
   });
 
   /**
+   * Which group of one answer criterion an answer falls in - `others` when it matches none.
+   *
+   * Named because the price and the per-option availability below ask the same question, and two
+   * copies of it is how an option offered here lands on a cell the server refuses.
+   */
+  function bucketIdOf(dimension: AnswerDimensionView, answer: unknown): string {
+    const chosen = Array.isArray(answer) ? (answer as string[]) : answer ? [String(answer)] : [];
+    return (
+      dimension.buckets.find((b) => chosen.some((v) => b.values.includes(v)))?.id ??
+      OTHERS_BUCKET_ID
+    );
+  }
+
+  /**
+   * One cell of this submitter's slice: a price, or `null` for a combination that does not exist.
+   *
+   * A key the slice does not carry is not a cheaper price - it is a broken invariant, since the
+   * server sends every combination and completeness is enforced when the grid is saved. So it is
+   * logged and reported as unavailable rather than falling back to a figure nobody chose: charging
+   * a plausible number is how a wrong price ships quietly.
+   */
+  function cellOf(view: PricingView, bucketIdsInOrder: string[]): CellValue {
+    const key = cellKey(bucketIdsInOrder);
+    if (!hasCell(view.cells, key)) {
+      console.error(`[FORMS] pricing slice carries no cell "${key}" - treated as unavailable`);
+      return null;
+    }
+    return view.cells[key];
+  }
+
+  /**
    * The base price for this submitter, given what they have answered so far.
    *
    * With a grid, it is the cell their answers land in - looked up in the slice the server sent,
-   * never computed from a rule here. Without one, the form's single price.
+   * never computed from a rule here. Without one, the form's single price. `null` means their
+   * combination is unavailable, which the page shows instead of a total.
    */
-  const baseCents = $derived.by(() => {
+  const baseCents = $derived.by<CellValue>(() => {
     if (!form) return 0;
     if (!pricing) return form.basePrice ?? 0;
-    const key = pricing.answerDimensions
-      .map((dimension) => {
-        const answer = selections[dimension.questionId];
-        const chosen = Array.isArray(answer)
-          ? (answer as string[])
-          : answer
-            ? [String(answer)]
-            : [];
-        return (
-          dimension.buckets.find((b) => chosen.some((v) => b.values.includes(v)))?.id ?? '_others'
-        );
+    return cellOf(
+      pricing,
+      pricing.answerDimensions.map((d) => bucketIdOf(d, selections[d.questionId]))
+    );
+  });
+
+  /**
+   * The combination they have landed on does not exist, so there is nothing to pay and nothing to
+   * submit. Distinct from `!maySubmit`, which is about who they ARE: this one moves as they answer.
+   */
+  const priceUnavailable = $derived(baseCents === null);
+
+  /** The price, once known to exist. Zero for a free form, so the display stays arithmetic. */
+  const priceCents = $derived(baseCents ?? 0);
+
+  /**
+   * Options that would land this submitter on a cell the manager marked as not existing.
+   *
+   * Computed rather than hidden: an option removed without a word reads as a bug, and the person
+   * needs to see that the combination exists but is closed to them. Only the questions the grid
+   * prices on can do this - every other answer leaves the cell where it was.
+   */
+  const unavailableOptionIds = $derived.by(() => {
+    const view = pricing;
+    if (!view) return new Set<string>();
+    const current = view.answerDimensions.map((d) => bucketIdOf(d, selections[d.questionId]));
+    return new Set(
+      view.answerDimensions.flatMap((dimension, index) => {
+        const item = form?.items.find((i) => i.id === dimension.questionId);
+        const closed: string[] = [];
+        for (const option of item?.options ?? []) {
+          if (!option.id) continue;
+          const candidate = [...current];
+          candidate[index] = bucketIdOf(dimension, option.id);
+          if (cellOf(view, candidate) === null) closed.push(option.id);
+        }
+        return closed;
       })
-      .join('|');
-    return pricing.cells[key] ?? pricing.baseCents;
+    );
   });
 
   /**
@@ -296,8 +356,15 @@
     return pricedByGrid.has(item.id) ? 0 : opt.priceModifier;
   }
 
+  /** Whether choosing this option would land on a combination the manager marked as not existing. */
+  function optionClosed(opt: { id?: string }): boolean {
+    return !!opt.id && unavailableOptionIds.has(opt.id);
+  }
+
   function calculateTotal(): number {
-    if (!form) return 0;
+    // Nothing to total on an unavailable combination: there is no price, and showing zero would
+    // read as free on a form that is going to refuse the submission.
+    if (!form || baseCents === null) return 0;
     let total = baseCents;
     for (const item of visibleItems) {
       const val = selections[item.id];
@@ -524,11 +591,11 @@
           <div class="absolute inset-x-0 bottom-0 flex items-end gap-3 p-5">
             <div class="min-w-0 flex-1">
               <h1 class="text-2xl leading-tight font-extrabold text-white">{form.title}</h1>
-              {#if baseCents > 0}
+              {#if !priceUnavailable && priceCents > 0}
                 <span
                   class="bg-cn-yellow text-cn-ink mt-1.5 inline-block rounded-full px-2.5 py-1 text-xs font-bold"
                 >
-                  {m.form_view_from_price({ price: formatCurrency(baseCents, form.currency) })}
+                  {m.form_view_from_price({ price: formatCurrency(priceCents, form.currency) })}
                   {#if appliedPricingLabel}{appliedPricingLabel}{/if}
                 </span>
               {/if}
@@ -549,11 +616,11 @@
           </div>
           <div class="min-w-0 flex-1">
             <h1 class="text-text-main text-2xl leading-tight font-extrabold">{form.title}</h1>
-            {#if baseCents > 0}
+            {#if !priceUnavailable && priceCents > 0}
               <span
                 class="bg-cn-yellow text-cn-ink mt-1.5 inline-block rounded-full px-2.5 py-1 text-xs font-bold"
               >
-                {m.form_view_from_price({ price: formatCurrency(baseCents, form.currency) })}
+                {m.form_view_from_price({ price: formatCurrency(priceCents, form.currency) })}
                 {#if appliedPricingLabel}{appliedPricingLabel}{/if}
               </span>
             {/if}
@@ -648,6 +715,21 @@
       </div>
     {/if}
 
+    <!-- The combination they answered their way into does not exist. Separate from the block above
+         on purpose: that one is about who they ARE and is fixed for the whole visit, this one moves
+         as they answer and is theirs to undo. -->
+    {#if maySubmit && priceUnavailable && !submitted}
+      <div
+        class="border-cn-border bg-cn-border/10 mb-4 flex items-start gap-3 rounded-2xl border px-5 py-4"
+      >
+        <div class="text-text-muted shrink-0 pt-0.5"><Ban size={18} /></div>
+        <div class="min-w-0">
+          <p class="text-text-main text-sm font-bold">{m.form_view_combination_closed_title()}</p>
+          <p class="text-text-muted mt-1 text-xs">{m.form_view_combination_closed_desc()}</p>
+        </div>
+      </div>
+    {/if}
+
     <!-- ── Success ── -->
     {#if successMessage}
       <div
@@ -715,12 +797,14 @@
             >
               <option value="" disabled>{m.form_view_select_placeholder()}</option>
               {#each item.options ?? [] as opt (opt.id)}
-                <option value={opt.id}>
-                  {opt.label}{optionModifier(item, opt) > 0
-                    ? ` (+${formatCurrency(optionModifier(item, opt), form.currency)})`
-                    : optionModifier(item, opt) < 0
-                      ? ` (${formatCurrency(optionModifier(item, opt), form.currency)})`
-                      : ''}
+                <option value={opt.id} disabled={optionClosed(opt)}>
+                  {opt.label}{optionClosed(opt)
+                    ? ` - ${m.form_grid_cell_unavailable()}`
+                    : optionModifier(item, opt) > 0
+                      ? ` (+${formatCurrency(optionModifier(item, opt), form.currency)})`
+                      : optionModifier(item, opt) < 0
+                        ? ` (${formatCurrency(optionModifier(item, opt), form.currency)})`
+                        : ''}
                 </option>
               {/each}
             </select>
@@ -732,7 +816,9 @@
                   {selections[item.id] === opt.id
                     ? 'border-cn-yellow bg-cn-yellow/8'
                     : 'border-cn-border hover:border-cn-yellow/60 bg-cn-bg'}
-                  {submitted || isNotOpenYet ? 'cursor-not-allowed opacity-60' : ''}"
+                  {submitted || isNotOpenYet || optionClosed(opt)
+                    ? 'cursor-not-allowed opacity-60'
+                    : ''}"
                 >
                   <input
                     type="radio"
@@ -740,10 +826,18 @@
                     value={opt.id}
                     bind:group={selections[item.id]}
                     class="accent-cn-yellow h-4 w-4 shrink-0"
-                    disabled={submitted || isNotOpenYet}
+                    disabled={submitted || isNotOpenYet || optionClosed(opt)}
                   />
                   <span class="text-text-main flex-1 text-sm font-medium">{opt.label}</span>
-                  {#if optionModifier(item, opt) !== 0}
+                  {#if optionClosed(opt)}
+                    <!-- Shown rather than hidden: an option that vanishes reads as a bug, and the
+                         person needs to see the choice exists but is closed to them. -->
+                    <span
+                      class="text-text-muted bg-cn-border/50 flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs font-bold"
+                    >
+                      <Ban size={11} />{m.form_grid_cell_unavailable()}
+                    </span>
+                  {:else if optionModifier(item, opt) !== 0}
                     <span
                       class="text-cn-dark bg-cn-yellow/20 shrink-0 rounded-full px-2 py-0.5 text-xs font-bold"
                     >
@@ -764,17 +858,27 @@
                   {(selections[item.id] ?? []).includes(opt.id)
                     ? 'border-cn-yellow bg-cn-yellow/8'
                     : 'border-cn-border hover:border-cn-yellow/60 bg-cn-bg'}
-                  {submitted || isNotOpenYet ? 'cursor-not-allowed opacity-60' : ''}"
+                  {submitted || isNotOpenYet || optionClosed(opt)
+                    ? 'cursor-not-allowed opacity-60'
+                    : ''}"
                 >
                   <input
                     type="checkbox"
                     value={opt.id}
                     bind:group={selections[item.id]}
                     class="accent-cn-yellow h-4 w-4 shrink-0 rounded"
-                    disabled={submitted || isNotOpenYet}
+                    disabled={submitted || isNotOpenYet || optionClosed(opt)}
                   />
                   <span class="text-text-main flex-1 text-sm font-medium">{opt.label}</span>
-                  {#if optionModifier(item, opt) !== 0}
+                  {#if optionClosed(opt)}
+                    <!-- Shown rather than hidden: an option that vanishes reads as a bug, and the
+                         person needs to see the choice exists but is closed to them. -->
+                    <span
+                      class="text-text-muted bg-cn-border/50 flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs font-bold"
+                    >
+                      <Ban size={11} />{m.form_grid_cell_unavailable()}
+                    </span>
+                  {:else if optionModifier(item, opt) !== 0}
                     <span
                       class="text-cn-dark bg-cn-yellow/20 shrink-0 rounded-full px-2 py-0.5 text-xs font-bold"
                     >
@@ -942,6 +1046,8 @@
             <span class="text-green-ok flex items-center gap-1.5 text-sm font-bold"
               ><Check size={16} /> {m.form_view_response_sent()}</span
             >
+          {:else if priceUnavailable}
+            <span class="text-text-muted text-sm">{m.form_view_combination_closed_title()}</span>
           {:else if calculateTotal() > 0}
             <div>
               <p class="text-text-muted text-xs font-medium">{m.form_view_total_to_pay()}</p>
@@ -956,7 +1062,12 @@
         <Button
           variant="primary"
           class="shrink-0 px-6"
-          disabled={submitted || formFull || submitting || isNotOpenYet || !maySubmit}
+          disabled={submitted ||
+            formFull ||
+            submitting ||
+            isNotOpenYet ||
+            !maySubmit ||
+            priceUnavailable}
           loading={submitting}
           onclick={handleSubmit}
         >
@@ -966,6 +1077,8 @@
             <Check size={16} class="mr-1.5" />{m.form_view_sent()}
           {:else if !maySubmit}
             {m.form_view_not_open_to_you_title()}
+          {:else if priceUnavailable}
+            {m.form_view_combination_closed_title()}
           {:else if formFull}
             {m.form_view_full()}
           {:else if calculateTotal() > 0}

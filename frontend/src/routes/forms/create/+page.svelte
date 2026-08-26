@@ -12,33 +12,28 @@
   } from '$lib/associations/api';
   import FormSection from '$lib/components/forms/FormSection.svelte';
   import FormAdvancedSettings from '$lib/components/forms/FormAdvancedSettings.svelte';
-  import FormAudienceSection from '$lib/components/forms/FormAudienceSection.svelte';
   import FormPaymentSection from '$lib/components/forms/FormPaymentSection.svelte';
   import FormQuestionsSection from '$lib/components/forms/FormQuestionsSection.svelte';
   import FormSaveBar from '$lib/components/forms/FormSaveBar.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import Select from '$lib/components/ui/Select.svelte';
-  import Toggle from '$lib/components/ui/Toggle.svelte';
-  import {
-    CONTROL_HINT_CLASS,
-    CONTROL_LABEL_CLASS,
-    controlClass,
-  } from '$lib/components/ui/controlClasses';
+  import { CONTROL_HINT_CLASS, CONTROL_LABEL_CLASS } from '$lib/components/ui/controlClasses';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import {
-    canGrantCotisation,
+    cotisationGrantBlocker,
     cotisationOptionsFor,
     cotisationPayload,
     emptyCotisationSettings,
     forgetTierSelection,
   } from '$lib/forms/cotisationSettings';
-  import { matrixPayload, type PriceMatrix } from '$lib/forms/priceMatrix';
+  import { matrixPayload, matrixProblem, type PriceMatrix } from '$lib/forms/priceMatrix';
+  import { gridProblemMessage } from '$lib/forms/gridProblem';
+  import { formSummary } from '$lib/forms/summary';
   import { fetchFormations, type FormationOption } from '$lib/forms/criteriaOptions';
   import { firstEmptyCondition } from '$lib/forms/audience';
   import { toFormItemsPayload } from '$lib/forms/itemsPayload';
-  import { AlertCircle, ArrowLeft, FileText, MessageSquareReply } from '@lucide/svelte';
+  import { AlertCircle, ArrowLeft, FileText } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
 
   // General
   let title = $state('');
@@ -99,8 +94,8 @@
     };
   });
 
-  const grantOfferable = $derived(
-    canGrantCotisation(requiresPayment, associationId, tiers.length, mayGrantCotisation)
+  const grantBlocker = $derived(
+    cotisationGrantBlocker(requiresPayment, associationId, tiers.length, mayGrantCotisation)
   );
 
   onMount(async () => {
@@ -142,20 +137,14 @@
       .map((d) => d.questionId as string)
   );
 
-  const questionCountLabel = $derived(
-    items.length === 1
-      ? m.form_questions_count_one()
-      : m.form_questions_count({ count: items.length })
+  const summary = $derived(
+    formSummary({
+      questionCount: items.length,
+      requiresPayment,
+      basePrice,
+      priceMatrix,
+    })
   );
-  const summary = $derived.by(() => {
-    if (!requiresPayment) return `${questionCountLabel} · ${m.form_free_label()}`;
-    if (basePrice <= 0) return questionCountLabel;
-    const price = basePrice.toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 2,
-    });
-    return `${questionCountLabel} · ${price} €`;
-  });
 
   async function handleSave() {
     if (titleMissing) {
@@ -172,6 +161,11 @@
         empty.scope === 'form'
           ? m.form_error_audience_empty()
           : m.form_error_question_condition_empty({ label: empty.label });
+      return;
+    }
+    const gridProblem = requiresPayment ? matrixProblem(priceMatrix) : null;
+    if (gridProblem) {
+      error = gridProblemMessage(gridProblem);
       return;
     }
     isSubmitting = true;
@@ -272,33 +266,7 @@
     <p class={CONTROL_HINT_CLASS}>{m.form_image_add_after_create()}</p>
   </FormSection>
 
-  <!-- 2. How answers are accepted -->
-  <FormSection title={m.form_section_responses()} icon={MessageSquareReply}>
-    <Input
-      label={m.form_max_responses_label()}
-      type="number"
-      bind:value={maxSubmissions}
-      placeholder={m.form_max_responses_placeholder()}
-      min="1"
-    />
-
-    <Toggle
-      bind:checked={allowMultipleSubmissions}
-      label={m.form_allow_multiple_label()}
-      hint={m.form_allow_multiple_hint()}
-    />
-
-    <div>
-      <label for="form-opens-at" class={CONTROL_LABEL_CLASS}>{m.form_opens_at_label()}</label>
-      <input id="form-opens-at" type="datetime-local" bind:value={opensAt} class={controlClass()} />
-      <p class={CONTROL_HINT_CLASS}>{m.form_opens_at_hint()}</p>
-    </div>
-  </FormSection>
-
-  <!-- 3. Who it is for -->
-  <FormAudienceSection bind:submitCondition {tiers} {formations} />
-
-  <!-- 4. Money -->
+  <!-- 2. Money -->
   <FormPaymentSection
     bind:requiresPayment
     bind:basePrice
@@ -312,14 +280,19 @@
     {associationCanBePaid}
   />
 
-  <!-- 5. Questions -->
+  <!-- 3. Questions -->
   <FormQuestionsSection bind:items {requiresPayment} {gridQuestionIds} {tiers} {formations} />
 
-  <!-- 6. Rarely wanted, and folded away -->
+  <!-- 4. Rarely wanted, and folded away -->
   <FormAdvancedSettings
+    bind:maxSubmissions
+    bind:allowMultipleSubmissions
+    bind:opensAt
+    bind:submitCondition
     bind:settings={cotisation}
     {tiers}
-    available={grantOfferable}
+    {formations}
+    {grantBlocker}
     associationName={selectedAssociation?.name ?? ''}
   />
 

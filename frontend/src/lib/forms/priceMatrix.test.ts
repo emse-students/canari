@@ -3,7 +3,9 @@ import {
   addBucket,
   addDimension,
   allCellKeys,
+  emptyMatrix,
   gridLayout,
+  hasCell,
   isComplete,
   matrixOf,
   matrixPayload,
@@ -11,6 +13,7 @@ import {
   newBucket,
   newDimension,
   OTHERS_BUCKET_ID,
+  priceRange,
   removeBucket,
   removeDimension,
   type PriceMatrix,
@@ -88,6 +91,81 @@ describe('price matrix editing', () => {
     const m = removeDimension(withCotisation(), 'cot');
     expect(m.dimensions).toEqual([]);
     expect(matrixPayload(m, true)).toBeNull();
+  });
+
+  /**
+   * `null` is a third value beside a price and a hole: the manager saying that combination does not
+   * exist. Every edit has to carry it as faithfully as it carries a number, because losing it turns
+   * a closed combination into a free one - the expensive direction to be wrong in.
+   */
+  describe('unavailable cells', () => {
+    it('counts as decided, unlike an absent key', () => {
+      const m = withCotisation();
+      m.cells.yes = null;
+      m.cells[OTHERS_BUCKET_ID] = 20;
+      expect(hasCell(m.cells, 'yes')).toBe(true);
+      expect(isComplete(m)).toBe(true);
+      delete m.cells.yes;
+      expect(hasCell(m.cells, 'yes')).toBe(false);
+      expect(isComplete(m)).toBe(false);
+    });
+
+    // A price of 0 is free and has to stay a price: it is the value `hasCell` is easiest to lose.
+    it('keeps a free cell apart from an unavailable one', () => {
+      const m = withCotisation();
+      m.cells.yes = 0;
+      m.cells[OTHERS_BUCKET_ID] = null;
+      expect(matrixPayload(m, true)).toEqual({
+        dimensions: m.dimensions,
+        cells: { yes: 0, [OTHERS_BUCKET_ID]: null },
+      });
+      expect(matrixOf(matrixPayload(m, true))?.cells).toEqual({
+        yes: 0,
+        [OTHERS_BUCKET_ID]: null,
+      });
+    });
+
+    it('spreads to the cells a new criterion splits it into', () => {
+      let m = withCotisation();
+      m.cells.yes = null;
+      m.cells[OTHERS_BUCKET_ID] = 20;
+      m = addDimension(m, { ...newDimension('formation'), id: 'f' });
+      m = addBucket(m, 'f', { id: 'icm', label: 'ICM', values: ['ICM'] });
+      expect(m.cells['yes|icm']).toBeNull();
+      expect(m.cells[`yes|${OTHERS_BUCKET_ID}`]).toBeNull();
+      expect(m.cells[`${OTHERS_BUCKET_ID}|icm`]).toBe(20);
+      expect(isComplete(m)).toBe(true);
+    });
+
+    // The surviving value is the "everyone else" column's, whatever it is - so a criterion removed
+    // above an unavailable column leaves the combination unavailable, not priced.
+    it('survives a criterion being removed', () => {
+      let m = withCotisation();
+      m.cells.yes = 8;
+      m.cells[OTHERS_BUCKET_ID] = null;
+      m = addDimension(m, { ...newDimension('formation'), id: 'f' });
+      m = addBucket(m, 'f', { id: 'icm', label: 'ICM', values: ['ICM'] });
+      m = removeDimension(m, 'f');
+      expect(m.cells).toEqual({ yes: 8, [OTHERS_BUCKET_ID]: null });
+    });
+
+    it('is left out of the price range', () => {
+      const m = withCotisation();
+      m.cells.yes = 8;
+      m.cells[OTHERS_BUCKET_ID] = null;
+      expect(priceRange(m)).toEqual({ min: 8, max: 8 });
+    });
+
+    it('has no range at all when nothing is available', () => {
+      const m = withCotisation();
+      m.cells.yes = null;
+      m.cells[OTHERS_BUCKET_ID] = null;
+      expect(priceRange(m)).toBeNull();
+    });
+
+    it('has no range on a form with no grid', () => {
+      expect(priceRange(null)).toBeNull();
+    });
   });
 
   describe('layout', () => {
@@ -189,6 +267,26 @@ describe('price matrix editing', () => {
       const m = withCotisation();
       delete m.cells.yes;
       expect(matrixProblem(m)).toBe('incomplete');
+    });
+
+    // The grid is ON and divides on nothing. `matrixPayload` sends null for it, so a save would
+    // look accepted while quietly keeping the single price - the manager has to be told.
+    it('names a grid switched on with no criterion', () => {
+      expect(matrixProblem(emptyMatrix(20))).toBe('no_criterion');
+    });
+
+    it('names a grid where every combination is unavailable', () => {
+      const m = withCotisation();
+      m.cells.yes = null;
+      m.cells[OTHERS_BUCKET_ID] = null;
+      expect(matrixProblem(m)).toBe('all_unavailable');
+    });
+
+    it('accepts a grid where only some combinations are unavailable', () => {
+      const m = withCotisation();
+      m.cells.yes = 8;
+      m.cells[OTHERS_BUCKET_ID] = null;
+      expect(matrixProblem(m)).toBeNull();
     });
 
     it('says nothing about a form with no grid', () => {

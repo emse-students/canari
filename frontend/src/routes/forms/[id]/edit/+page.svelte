@@ -8,8 +8,6 @@
     uploadFormImage,
     uploadFormItemImage,
     deleteFormImage,
-    addFormCoOwner,
-    removeFormCoOwner,
     type AudienceCondition,
     type CreateFormPayload,
     type Form,
@@ -20,43 +18,28 @@
     type Association,
     type MembershipTier,
   } from '$lib/associations/api';
-  import { fetchUserProfile } from '$lib/stores/user';
   import FormSection from '$lib/components/forms/FormSection.svelte';
   import FormAdvancedSettings from '$lib/components/forms/FormAdvancedSettings.svelte';
-  import FormAudienceSection from '$lib/components/forms/FormAudienceSection.svelte';
   import FormPaymentSection from '$lib/components/forms/FormPaymentSection.svelte';
   import FormQuestionsSection from '$lib/components/forms/FormQuestionsSection.svelte';
   import FormSaveBar from '$lib/components/forms/FormSaveBar.svelte';
   import Input from '$lib/components/ui/Input.svelte';
-  import Toggle from '$lib/components/ui/Toggle.svelte';
-  import {
-    CONTROL_HINT_CLASS,
-    CONTROL_LABEL_CLASS,
-    controlClass,
-  } from '$lib/components/ui/controlClasses';
+  import { CONTROL_HINT_CLASS, CONTROL_LABEL_CLASS } from '$lib/components/ui/controlClasses';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
-  import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
   import {
-    canGrantCotisation,
+    cotisationGrantBlocker,
     cotisationOptionsFor,
     cotisationPayload,
     cotisationSettingsOf,
     emptyCotisationSettings,
   } from '$lib/forms/cotisationSettings';
-  import { matrixOf, matrixPayload, type PriceMatrix } from '$lib/forms/priceMatrix';
+  import { matrixOf, matrixPayload, matrixProblem, type PriceMatrix } from '$lib/forms/priceMatrix';
+  import { gridProblemMessage } from '$lib/forms/gridProblem';
+  import { formSummary } from '$lib/forms/summary';
   import { fetchFormations, type FormationOption } from '$lib/forms/criteriaOptions';
   import { firstEmptyCondition } from '$lib/forms/audience';
   import { fromFormItems, toFormItemsPayload } from '$lib/forms/itemsPayload';
-  import {
-    AlertCircle,
-    ArrowLeft,
-    FileText,
-    ImagePlus,
-    MessageSquareReply,
-    Trash2,
-    Users,
-    X,
-  } from '@lucide/svelte';
+  import { AlertCircle, ArrowLeft, FileText, ImagePlus, Users, X } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
   const formId = $derived(page.params.id as string);
@@ -100,12 +83,6 @@
   let uploadingImage = $state(false);
   let imageError = $state('');
 
-  // Co-owners
-  let coOwners = $state<{ id: string; displayName: string }[]>([]);
-  let coOwnerInput = $state('');
-  let addingCoOwner = $state(false);
-  let coOwnerError = $state('');
-
   let items = $state<any[]>([]);
   let isSubmitting = $state(false);
   let error = $state('');
@@ -120,8 +97,8 @@
   let tiers = $state<MembershipTier[]>([]);
   let mayGrantCotisation = $state(false);
 
-  const grantOfferable = $derived(
-    canGrantCotisation(requiresPayment, association?.id ?? '', tiers.length, mayGrantCotisation)
+  const grantBlocker = $derived(
+    cotisationGrantBlocker(requiresPayment, association?.id ?? '', tiers.length, mayGrantCotisation)
   );
 
   function pad2(n: number) {
@@ -169,15 +146,6 @@
       allowMultipleSubmissions = f.allowMultipleSubmissions ?? false;
       cashPaymentExpiryDays = f.cashPaymentExpiryDays ?? undefined;
       imageUrl = f.imageUrl ?? null;
-      const coOwnerIds = f.coOwners ?? [];
-      const profiles = await Promise.allSettled(coOwnerIds.map((cid) => fetchUserProfile(cid)));
-      coOwners = coOwnerIds.map((cid, i) => {
-        const p = profiles[i].status === 'fulfilled' ? profiles[i].value : null;
-        const name =
-          (p?.displayName ?? `${p?.firstName ?? ''} ${p?.lastName ?? ''}`.trim()) ||
-          cid.slice(0, 8) + '…';
-        return { id: cid, displayName: name };
-      });
       items = fromFormItems(f.items ?? [], requiresPayment);
       try {
         formations = await fetchFormations();
@@ -196,19 +164,22 @@
       .filter((d) => d.kind === 'answer' && d.questionId)
       .map((d) => d.questionId as string)
   );
-  const questionCountLabel = $derived(
-    items.length === 1
-      ? m.form_questions_count_one()
-      : m.form_questions_count({ count: items.length })
+  const summary = $derived(
+    formSummary({
+      questionCount: items.length,
+      requiresPayment,
+      basePrice,
+      priceMatrix,
+    })
   );
 
   async function handleSave() {
     if (titleMissing) {
-      error = m.form_error_title_required_short();
+      error = m.form_error_title_required();
       return;
     }
     if (requiresPayment && !association) {
-      error = m.form_error_association_required_short();
+      error = m.form_error_association_required();
       return;
     }
     const empty = firstEmptyCondition(submitCondition, items);
@@ -217,6 +188,11 @@
         empty.scope === 'form'
           ? m.form_error_audience_empty()
           : m.form_error_question_condition_empty({ label: empty.label });
+      return;
+    }
+    const gridProblem = requiresPayment ? matrixProblem(priceMatrix) : null;
+    if (gridProblem) {
+      error = gridProblemMessage(gridProblem);
       return;
     }
     isSubmitting = true;
@@ -277,39 +253,6 @@
       imageError = err.message || 'Error';
     } finally {
       uploadingImage = false;
-    }
-  }
-
-  async function handleAddCoOwner(userId: string, displayName?: string) {
-    if (!userId || coOwners.some((c) => c.id === userId)) return;
-    addingCoOwner = true;
-    coOwnerError = '';
-    try {
-      await addFormCoOwner(formId, userId);
-      let name = displayName;
-      if (!name) {
-        try {
-          const p = await fetchUserProfile(userId);
-          name = p.displayName ?? `${p.firstName ?? ''} ${p.lastName ?? ''}`.trim();
-        } catch {
-          name = userId.slice(0, 8) + '…';
-        }
-      }
-      coOwners = [...coOwners, { id: userId, displayName: name || userId.slice(0, 8) + '…' }];
-      coOwnerInput = '';
-    } catch (err: any) {
-      coOwnerError = err.message || 'Error';
-    } finally {
-      addingCoOwner = false;
-    }
-  }
-
-  async function handleRemoveCoOwner(userId: string) {
-    try {
-      await removeFormCoOwner(formId, userId);
-      coOwners = coOwners.filter((c) => c.id !== userId);
-    } catch (err: any) {
-      coOwnerError = err.message || 'Error';
     }
   }
 </script>
@@ -431,38 +374,7 @@
       </div>
     </FormSection>
 
-    <!-- 2. How answers are accepted -->
-    <FormSection title={m.form_section_responses()} icon={MessageSquareReply}>
-      <Input
-        label={m.form_max_responses_label()}
-        type="number"
-        bind:value={maxSubmissions}
-        placeholder={m.form_max_responses_placeholder()}
-        min="1"
-      />
-
-      <Toggle
-        bind:checked={allowMultipleSubmissions}
-        label={m.form_allow_multiple_label()}
-        hint={m.form_allow_multiple_hint()}
-      />
-
-      <div>
-        <label for="form-opens-at" class={CONTROL_LABEL_CLASS}>{m.form_opens_at_label()}</label>
-        <input
-          id="form-opens-at"
-          type="datetime-local"
-          bind:value={opensAt}
-          class={controlClass()}
-        />
-        <p class={CONTROL_HINT_CLASS}>{m.form_opens_at_hint()}</p>
-      </div>
-    </FormSection>
-
-    <!-- 3. Who it is for -->
-    <FormAudienceSection bind:submitCondition {tiers} {formations} />
-
-    <!-- 4. Money -->
+    <!-- 2. Money -->
     <FormPaymentSection
       bind:requiresPayment
       bind:basePrice
@@ -476,7 +388,7 @@
       {associationCanBePaid}
     />
 
-    <!-- 5. Questions -->
+    <!-- 3. Questions -->
     <FormQuestionsSection
       bind:items
       {requiresPayment}
@@ -489,63 +401,23 @@
       }}
     />
 
-    <!-- 6. Who else may manage it -->
-    <FormSection title={m.form_coowners_section()} icon={Users}>
-      <p class="text-text-muted text-sm">{m.form_coowners_desc()}</p>
-      {#if coOwnerError}
-        <p class="text-red-err text-sm">{coOwnerError}</p>
-      {/if}
-      {#if coOwners.length > 0}
-        <ul class="space-y-2">
-          {#each coOwners as co (co.id)}
-            <li
-              class="border-cn-border bg-cn-bg/40 flex items-center justify-between gap-3 rounded-xl border px-3 py-2"
-            >
-              <span class="text-text-main truncate text-sm font-medium">{co.displayName}</span>
-              <button
-                type="button"
-                onclick={() => handleRemoveCoOwner(co.id)}
-                class="border-red-err/30 hover:bg-red-err/10 rounded-lg border p-1.5 text-red-500 transition-colors"
-                title={m.common_remove_label()}
-              >
-                <Trash2 size={13} />
-              </button>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-      <div class="flex gap-2">
-        <div class="min-w-0 flex-1">
-          <UserAutocomplete
-            value={coOwnerInput}
-            onValueChange={(v) => (coOwnerInput = v)}
-            placeholder={m.form_coowner_search_placeholder()}
-            onSelect={(u) => handleAddCoOwner(u.id, u.displayName ?? undefined)}
-          />
-        </div>
-        <button
-          type="button"
-          onclick={() => handleAddCoOwner(coOwnerInput.trim())}
-          disabled={addingCoOwner || !coOwnerInput.trim()}
-          class="border-cn-border hover:bg-cn-bg shrink-0 rounded-xl border px-3 py-2 text-sm font-semibold disabled:opacity-40"
-        >
-          {addingCoOwner ? '…' : m.form_coowner_add_button()}
-        </button>
-      </div>
-    </FormSection>
-
-    <!-- 7. Rarely wanted, and folded away -->
+    <!-- 4. Rarely wanted, and folded away -->
     <FormAdvancedSettings
+      bind:maxSubmissions
+      bind:allowMultipleSubmissions
+      bind:opensAt
+      bind:submitCondition
       bind:settings={cotisation}
       {tiers}
-      available={grantOfferable}
+      {formations}
+      {grantBlocker}
       associationName={association?.name ?? ''}
     />
 
     <FormSaveBar
       {titleMissing}
       {isSubmitting}
-      summary={questionCountLabel}
+      {summary}
       saveLabel={m.form_save_changes_button()}
       onSave={handleSave}
     />

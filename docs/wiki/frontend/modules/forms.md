@@ -62,11 +62,10 @@ labelled component on the other). Everything shared now lives in one place:
 | Piece | What it owns |
 |---|---|
 | `FormSection.svelte` | The card: icon, title, optional badge, optional collapsing |
-| `FormPaymentSection.svelte` | Base price, beneficiary, the price grid, payment methods, cash |
+| `FormPaymentSection.svelte` | Beneficiary, the single-price / grid toggle, payment methods, cash |
 | `FormQuestionsSection.svelte` | The builder list, drag-and-drop, the type picker |
-| `FormAdvancedSettings.svelte` | The collapsed "advanced" category (today: the cotisation grant) |
+| `FormAdvancedSettings.svelte` | The collapsed "advanced" category: responses, audience, cotisation |
 | `FormSaveBar.svelte` | The footer summary and the save button |
-| `FormAudienceSection.svelte` | Who may answer at all (`submitCondition`) |
 | `PriceGridEditor.svelte` | The dimensions, and the cell grid they cross into |
 | `CriterionEditor.svelte` | One dimension's buckets |
 | `AudienceConditionEditor.svelte` | One condition's criteria, used by the form AND by a question |
@@ -78,11 +77,42 @@ labelled component on the other). Everything shared now lives in one place:
 | `ui/Select.svelte`, `ui/Toggle.svelte` | The select and the switch, one geometry each |
 | `forms/cotisationSettings.ts` | The cotisation state, and the payload it becomes |
 | `forms/itemsPayload.ts` | Questions to/from the wire, euros to/from cents |
+| `forms/summary.ts` | The save bar's one line: question count, and what the form costs |
+| `forms/gridProblem.ts` | One sentence per `GridProblem` code, for the editor AND the save button |
 
-Section order, top to bottom: **General** (title, description, poster), **Responses** (cap, repeat
-submissions, opening date), **Who may answer**, **Payment**, **Questions**, **Co-managers** (edit
-only), **Advanced settings** (collapsed). Audience sits before money on purpose: who may answer is
-read first, what they pay second.
+Section order, top to bottom: **General** (title, description, poster), **Payment**, **Questions**,
+**Advanced settings** (collapsed). The two pages carry the SAME sections in the SAME order: a
+setting reachable only once a form exists is a setting a manager cannot plan for.
+
+### Four sections, because six of them buried the common case
+
+The screen carried six top-level cards on 2026-08-26, and a manager writing a plain free form -
+title, questions, save - scrolled past every one of them. A response cap, a repeat switch, an
+opening date, an audience restriction and a cotisation grant are each wanted by a handful of forms a
+year, so they moved into **Paramètres avancés** as three groups separated by dividers: *Réponses*
+(cap, repeats, shotgun date), *Qui peut répondre* (`submitCondition`), *Cotisation* (the grant).
+
+A folded section holding a live restriction is a setting nobody can see, so the header carries a
+**badge**: `Accès restreint` when `submitCondition` is set, otherwise a count of the settings that
+are actually doing something. The audience wins over the count because it is the one that decides
+whether a person may answer at all.
+
+**Payment is a MODE, not two half-live displays.** The section used to show the single price and the
+grid together, with the price relabelled "Prix par défaut" and used only to seed a new cell - two
+numbers on screen, one of which charged nobody. It is now one toggle: either `Prix de base public`
+or the grid, never both. Switching the grid on seeds it from the price that was on screen (so no
+total changes), switching it off drops it, and removing the last criterion leaves the grid ON with
+nothing to divide on - the mode is the manager's to flip, not the editor's.
+
+That state is a save-time refusal (`no_criterion`), because `matrixPayload` sends null for a grid
+with no dimension: the save would look accepted while quietly keeping the single price.
+
+### The save bar says the same thing on both pages
+
+`formSummary` exists because the two pages had drifted: create printed the price, edit printed only
+the question count, so one form summarised itself two ways depending on which door you came in by.
+A grid gets a RANGE (`8 - 20 €`) rather than one number, since it has no single price. Two
+duplicated `_short` error keys went the same way - the long sentences are the ones both pages use.
 
 ## Pricing is a MATRIX, so no priority rule exists to get wrong
 
@@ -110,6 +140,41 @@ Two properties make that work:
 incomplete or self-contradicting matrix at save time, and `pricing/audience.ts` holds
 `matchesCondition` plus `SubmitterFacts` - the promo, formation and cotisation facts assembled by
 `submitter-facts.service.ts`.
+
+### A cell may say the combination DOES NOT EXIST
+
+Some configurations are not sold: "non-cotisant, formule week-end" is a combination the association
+never offers. A price cannot say that - 0 means free - and `submitCondition` cannot either, since it
+is an AND of criteria and this is a *combination* being excluded, not a person. So a cell is
+`CellValue = number | null`, and `null` is the manager's decision that nobody in that situation may
+answer (added 2026-08-26, on the user's request to be able to close the grid for "tous les autres").
+
+Three states, never to be confused, and the whole design rests on telling them apart:
+
+| Cell | Meaning | Who honours it |
+|---|---|---|
+| a number | the price, `0` included = free | `submit` charges it |
+| `null` | the combination does not exist | `submit` REFUSES; the fill page greys the option out |
+| absent | broken invariant - completeness is enforced at save | `resolveCellPrice` throws |
+
+`hasCell` is the one predicate that separates them, mirrored on both sides. The invariant is
+untouched: the grid is still complete, exactly one cell still applies to anybody, and there is still
+no priority rule. What changed is that the cell a person lands in may refuse them.
+
+Where each part of that lives:
+
+- **Editor**: a cell toggles between a number and `Indisponible`; coming back restores `0`, not the
+  price that was there, because that price is gone and `0` is the one value nobody mistakes for a
+  considered one. A grid with EVERY cell unavailable is refused on both sides
+  (`all_unavailable`, `assertMatrixValid`): that is a closed form, not a priced one.
+- **Server**: `resolveCellPrice` returns `null` rather than throwing, and `submit` refuses right
+  after it - not in `assertMaySubmit`, because only the VISIBLE answers decide which cell applies.
+  `hasSubmission` reports `maySubmit: false` when the submitter's whole row is closed, the same
+  outcome as an audience refusal.
+- **Fill page**: `pricingViewFor` writes every combination explicitly, `null` included. The page's
+  old `cells[key] ?? baseCents` was exactly the fallback that would have priced an unavailable
+  combination; it now refuses instead, greys out the options that lead to a closed cell (shown, not
+  hidden - an option that vanishes reads as a bug), and disables the submit button.
 
 ### What the app knows about a person, and why a price may rest on it
 
@@ -271,10 +336,17 @@ could change it, and there is no such someone.
 
 ## What `/forms` lists
 
-Three sources, merged by id and sorted newest-first: forms the caller owns, forms they co-own, and
-forms linked to an association where they hold `MANAGE_FORMS`. `assertFormManager` has always
-accepted that third set, so those forms were editable and exportable by API while appearing in no
-list on any screen - reachable only by someone who already knew the URL.
+Two sources, merged by id and sorted newest-first: forms the caller owns, and forms linked to an
+association where they hold `MANAGE_FORMS`. `assertFormManager` has always accepted that second set,
+so those forms were editable and exportable by API while appearing in no list on any screen -
+reachable only by someone who already knew the URL.
+
+It was three until 2026-08-26: a per-form co-manager list (`forms.coOwners`) named a third set. It
+answered the same question as `MANAGE_FORMS` on a second axis and never agreed with it, so the edit
+screen offered the section to association managers whose every click 403'd - `assertFormManager`
+admitted them, but only the OWNER could change the list. Migration 053 drops the column; the answer
+to "who may manage this form" is now the owner plus the association's form managers, one axis, set
+in one place.
 
 Each row therefore says whose form it is, by NAME (`Form.associationName`, resolved server-side;
 null for a personal form and for a form whose association has since been deleted). That line used to
@@ -304,8 +376,8 @@ admin routes above.
 ## Tests
 
 `apps/social-service/src/forms/forms.service.cotisation.spec.ts` (the config refusals, the
-`MANAGE_MEMBERS` gate, link immutability, granting on payment) and `forms.service.list.spec.ts` (the
-three sources, dedup, ordering, naming). The forms module had no test at all before 2026-08-23.
+`MANAGE_MEMBERS` gate, link immutability, granting on payment) and `forms.service.list.spec.ts` (both
+sources, dedup, ordering, naming). The forms module had no test at all before 2026-08-23.
 
 The matrix carries its own: `pricing/audience.spec.ts` (`matchesCondition`, every criterion shape),
 `pricing/price-matrix.spec.ts` (cell resolution, the `others` bucket, completeness), `validate.ts`'s

@@ -225,7 +225,7 @@ describe('FormsService - cotisation configuration and granting', () => {
     it('applies the same validation on update, not only on create', async () => {
       const { service } = makeService({
         tiers: CERCLE,
-        form: { id: 'f1', ownerId: 'user1', coOwners: [], items: [], associationId: 'asso1' },
+        form: { id: 'f1', ownerId: 'user1', items: [], associationId: 'asso1' },
       });
       await expect(
         service.update(
@@ -303,7 +303,7 @@ describe('FormsService - cotisation configuration and granting', () => {
       const { service } = makeService({
         tiers: CERCLE,
         mayGrant: false,
-        form: { id: 'f1', ownerId: 'user1', coOwners: [], items: [], associationId: 'asso1' },
+        form: { id: 'f1', ownerId: 'user1', items: [], associationId: 'asso1' },
       });
       await expect(service.update('f1', grantDto(), 'user1', false)).rejects.toThrow(
         /manage this association members/i
@@ -318,7 +318,6 @@ describe('FormsService - cotisation configuration and granting', () => {
     const linked = () => ({
       id: 'f1',
       ownerId: 'user1',
-      coOwners: [],
       items: [],
       associationId: 'asso1',
     });
@@ -459,7 +458,6 @@ describe('FormsService - cotisation configuration and granting', () => {
       formRepo.findOne.mockResolvedValue({
         id: 'f1',
         ownerId: 'treasurer1',
-        coOwners: [],
         associationId: 'asso1',
         grantsCotisation: true,
         cotisationVariantKey: 'avec-alcool',
@@ -484,7 +482,6 @@ describe('FormsService - cotisation configuration and granting', () => {
       formRepo.findOne.mockResolvedValue({
         id: 'f1',
         ownerId: 'treasurer1',
-        coOwners: [],
         associationId: 'asso1',
         grantsCotisation: true,
         cotisationVariantKey: null,
