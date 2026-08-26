@@ -2232,3 +2232,45 @@ killed, and the closer a run is to finishing the more a stop costs. So: let a ru
 that the push waits. There is no third option that keeps both, because the two are competing for the
 same deployed bundle - a redeploy mid-run is what makes `gate` call a phase `VACUOUS` in the first
 place.
+
+### The board must read the ledger's NEWEST verdict, and `rows.mjs` is what says whether it does
+
+On 2026-08-26 the board claimed rung 9 COMM was swept - 23 `PASS`. The ledger's newest verdict for
+eleven of those rows was worse: 12 `PASS`, 10 `PASS-DIRTY`, 3 `FAIL`. Nobody had falsified a cell.
+The rows had genuinely passed on `5d7fac13` at 14:03, a later sweep on `d6f61539` at 21:26 had gone
+dirty, and only the rows somebody happened to look at afterwards were carried across. The board kept
+the better half of a two-sided record.
+
+**An older PASS is not evidence against a newer FAIL - it is evidence that the defect is
+intermittent, which is worse.** COMM-18 makes the point sharply: it holds a `PASS` at 19:47 and a
+`FAIL` at 22:02 on the SAME build, with the same runner. A cell that shows only the first has not
+summarised the evidence, it has selected from it. The newest verdict holds, always, and a superseded
+one survives in the cell only as prose that names it as superseded.
+
+`node rows.mjs` answers this in one command: it reads the board and the ledger and prints every row
+where they disagree, every row the board claims and the ledger cannot corroborate, and every verdict
+taken by a runner that has since changed. **Run it before believing a cell, and before writing a
+phase's summary line.** It had been reporting these fourteen divergences for a day before anyone
+ran it - a check that exists and is not run is worth exactly what no check is worth.
+
+### Dirt repeated across rows is ONE defect, and a per-row report cannot show that
+
+The same `d6f61539` sweep is the other half of the lesson. Ten consecutive COMM rows came back
+`PASS-DIRTY`, and each cell dutifully named its dirt. Read one at a time they are ten small
+blemishes, each individually arguable, none worth stopping a rung for - which is exactly how the
+rung got called swept. Read together they are one line, repeated verbatim, naming ONE salon:
+
+```
+[GRAINE] could not join the distribution group of salon 0855f9f6 of 9b34e540
+```
+
+That salon was created by COMM-8 at 21:27, whose own `FAIL` was `seedAfterTheGrant: false` on the
+same salon, and W2 was still failing to join its distribution group twenty minutes later. Eleven
+rows, one defect - the stale published base that COMM-22 measured head-on.
+
+**A report that attributes dirt to a row and never groups it across rows converts one defect into
+many acceptable ones.** So when a phase comes back with several dirty rows, sort the dirt before
+triaging the rows: identical lines, and especially identical ids inside those lines, mean one cause
+and one re-run. The corollary is a scheduling one - a defect that leaks across row boundaries makes
+every LATER row in the sweep suspect, including the ones that passed, because the estate they ran
+against was already broken.

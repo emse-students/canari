@@ -296,6 +296,22 @@ which is also where every release up to and including v0.13.1 now lives.
   nothing - no spec, no frontend test, no board row - watches them.
 
 ### Fixed
+
+- **Four backend lock files were out of sync with their `package.json`, and it had silently blocked
+  every deploy for two hours.** `npm ci` refuses to install when the two disagree, so
+  `Test TS Backend (apps/chat-delivery-service)` and `Check Dependencies Vulnerabilities` both died
+  on `Missing: @emnapi/core@1.11.3 from lock file` before running a single test or reading a single
+  advisory - and because the CD workflow gates the deploy on CI, the deploy job never appeared at
+  all. Two consecutive runs went red that way and production stayed on the bundle from 18:02 while
+  two merged fixes waited. The locks of all four services (`chat-delivery-service`, `core-service`,
+  `media-service`, `social-service`) now carry the two transitive optional packages a dependency
+  bump had introduced without regenerating them, and `npm ci` validates in each.
+
+  What made this expensive is that **the failure named a package, and the consequence was a deploy
+  that did not exist.** A missing deploy job reads as "nothing to deploy", not as "the gate refused
+  it", and neither red job's name mentions installing dependencies. The lesson is the general one:
+  when a pipeline stops producing an artefact, read the JOB LIST for what is ABSENT before reading
+  any log for what failed.
 - **An external joiner's own commit locked the next joiner out of a Graine distribution group.** A
   member with no MLS state joins a salon's key-distribution group by external commit - which advances
   the group's epoch by one, and so makes the very base it just built on stale. The base for the new

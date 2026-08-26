@@ -29,8 +29,8 @@ Updated after every run.
 | 5 SEARCH | 6 | `1f396ac7` | **`PASS` 6/6 x5** on runner `928f8b286dac` |
 | 6 MENTION | 6 | `1f396ac7`, A1 `a7981206` | **`PASS` 6/6 x5** on runner `cdc081edabc0` |
 | 7 FWD | 6 | `1579d5c3`, A1 `a7981206` | **`PASS` 6/6 x5** (FWD-2 x1, 25 iterations) |
-| 8 GRP | 10 | `b04e26d9` | **`PASS` 9/10 x1** + GRP-3 `PASS-DIRTY`, accepted by the user 2026-08-25. x5 abandoned - the rig, never the product. GRP-3 dirt = one unexplained socket close, P2 in [backlog](backlog.md) |
-| 9 COMM | 25 | `5d7fac13`, COMM-18 on `d6f61539` / A1 `e96bfa12`, COMM-4, COMM-22 and COMM-24 on `2a4297cb` | 23 `PASS`, COMM-24 `PASS-DIRTY`, **COMM-22 `FAIL`** (reproduced, two builds; cause fixed, re-run owed) |
+| 8 GRP | 10 | `feecfaf5` | **`PASS` 9/10 x4** + GRP-8 `PASS-DIRTY` deterministically, accepted by the user 2026-08-25. GRP-3's earlier socket close did not return on `feecfaf5`; both P2s in [backlog](backlog.md) |
+| 9 COMM | 25 | `d6f61539` / A1 `e96bfa12`, COMM-4, COMM-22 and COMM-24 on `2a4297cb` | 12 `PASS`, 10 `PASS-DIRTY`, **3 `FAIL`** (COMM-8, COMM-18, COMM-22). **THE WHOLE RUNG OWES A RE-RUN**: eleven of those thirteen carry ONE signature, the stale-base join fixed on 2026-08-26 |
 | 10 DEL | 10 | `2a4297cb` | 8 `PASS`, DEL-1 `PASS-DIRTY`, **DEL-10 `FAIL`** (reproduced on the deployed fix). DEL-8 ran for the first time |
 | 11 TAB | 8 | - | `pending` |
 | 12 MULTI | 6 | - | `pending` |
@@ -203,7 +203,7 @@ either driven browser.
 | --- | --- | --- | --- |
 | GRP-1 | Create a group, add a member, both sides see the roster and the Add commit merges | `W1 W2` | **`PASS`** - `feecfaf5` x4; one run `PASS-DIRTY` on the deliberately unclassified `[KICK] Stale leaf`, read and benign (the phone re-asked for a Welcome whose leaf was already in the tree) |
 | GRP-2 | The picker must not offer existing members or yourself, and a no-op submission must not report success | `W1 W2` | **`PASS`** |
-| GRP-3 | Remove a member: the Remove commit, and what the removed device can still read | `W1 W2` | `PASS-DIRTY` - all six held; one `webSocketClosed` on W1 no navigation explains, P2 in [backlog](backlog.md) |
+| GRP-3 | Remove a member: the Remove commit, and what the removed device can still read | `W1 W2` | **`PASS`** - `feecfaf5` x4. An earlier run was `PASS-DIRTY` on one `webSocketClosed` no navigation explains; it did not return, and it stays a P2 in [backlog](backlog.md) |
 | GRP-4 | The group invitation LINK: generate, open it on the other account | `W1 W2` | **`PASS`** - `feecfaf5` x4 after `e027679a`; was 4 FAIL / 4 PASS before it (two parties added the joiner's leaf, the healing Welcome dropped as a redelivery) |
 | GRP-5 | Rename a group, seen on the other side | `W1 W2` | **`PASS`** |
 | GRP-6 | Leave a group - which deliberately commits nothing | `W1 W2` | **`PASS`** |
@@ -217,12 +217,22 @@ either driven browser.
 A community is a `Workspace`, and **its membership is not MLS membership**. Every row is read against
 MSG-5's standing assertion: no `masterSecret` in any payload, ever.
 
-Twenty-five rows, all with a runner; COMM-23 and COMM-24 share `comm2324.mjs`. The whole phase swept
-on 2026-08-25, every verdict carrying a build and an `a1Build`. **COMM-22 is a `FAIL` whose cause is fixed, so the row owes a re-run** - reproduced on two builds with
-the same runner, story in `CHANGELOG.md` and the half still open in [backlog](backlog.md). COMM-24 was re-run on the current runner and holds; its dirt is one
-deliberately-unpinnable line, named in its cell.
+Twenty-five rows, all with a runner; COMM-23 and COMM-24 share `comm2324.mjs`. COMM-9 and COMM-10
+share one recorded verdict, `COMM-9/10`.
+
+**ELEVEN ROWS ARE ONE DEFECT, and the board claimed a sweep the ledger never gave it (corrected
+2026-08-26).** The cells below held the verdicts of the earlier `5d7fac13` run while the ledger's
+newest verdict for eleven of them came from the later `d6f61539` sweep and was worse - so the board
+read 23 `PASS` where the evidence read 12 `PASS`, 10 `PASS-DIRTY` and 3 `FAIL`. It now reads the
+ledger. What the correction exposed is worth more than the correction: from COMM-8 at 21:27 to
+COMM-21 at 21:47, every dirty cell carries the SAME line on W2, naming the same salon -
+`[GRAINE] could not join the distribution group of salon <id>` - a salon COMM-8 had created twenty
+minutes earlier and whose distribution group W2 never stopped failing to join. That is the stale-base
+defect COMM-22 measured head-on, fixed 2026-08-26 (`CHANGELOG.md`), and it means those ten
+`PASS-DIRTY` plus COMM-8's `FAIL` are one re-run, not eleven investigations.
 **COMM-18 cost five FAILs that were four distinct product defects** - stories in `CHANGELOG.md`, what
-they measured in [cross-client-campaign](cross-client-campaign.md).
+they measured in [cross-client-campaign](cross-client-campaign.md) - and its `FAIL` of 2026-08-25
+22:02 was never retired: a `PASS` two hours earlier on the same build does not answer it.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
@@ -232,24 +242,24 @@ they measured in [cross-client-campaign](cross-client-campaign.md).
 | COMM-4 | Direct invite: the `channel_invitation` card appears in the DM on both sides, deduped | `W1 W2` | `PASS` 1/1 - the dirt was a classifier hole, not the server |
 | COMM-5 | Roles: promote to moderator, then admin; the grid takes effect immediately | `W1 W2` | `PASS` 1/1 |
 | COMM-6 | The permission grid offers the SIX enforced permissions and no seventh, the three default roles carry exactly what is documented, and a toggle reaches the column a decision reads | `W1` | `PASS` 1/1 |
-| COMM-7 | `writePolicy` = admins only: refused server-side as well as in the UI | `W1 W2` | `PASS` 1/1 |
-| COMM-8 | A private salon: a non-member cannot see it, cannot fetch it by id, and **is never sent its seed** - `dm_device_group_memberships` for the salon's group names only its members | `W1 W2` | `PASS` 1/1 |
-| COMM-9 | Removed from a private salon: the server drops their routing rows (`evicted=true`), and the next message is sealed under a session they do not hold while the previous one still opens | `W1 W2` | `PASS` 1/1 |
-| COMM-10 | Removed from a private salon: the messages they ALREADY hold stay readable - Graine retains seeds on purpose | `W1 W2` | `PASS` 1/1 |
-| COMM-11 | Kicked from the COMMUNITY: the client purges the workspace AND leaves every private salon group it held | `W1 W2` | `PASS` 1/1 |
-| COMM-12 | Re-invited after a removal: they receive the sessions minted from now on, and the past only as `history_visibility` allows | `W1 W2` | `PASS` 1/1 |
-| COMM-13 | An admin JOINS a private salon: they see it unjoined, `distribution-group` answers 403 before and 200 after, the member list gains their name, the transcript gains NOTHING, and the row stops offering the join | `W1 W2` | `PASS` 1/1 |
-| COMM-14 | Channel notification levels enforced server-side | `+push` | `PASS` 1/1 |
+| COMM-7 | `writePolicy` = admins only: refused server-side as well as in the UI | `W1 W2` | `PASS-DIRTY` - the stale-base join on W2, one cause with ten others (see above); re-run owed |
+| COMM-8 | A private salon: a non-member cannot see it, cannot fetch it by id, and **is never sent its seed** - `dm_device_group_memberships` for the salon's group names only its members | `W1 W2` | **`FAIL`** - the three negatives all held (`403`, absent from the sidebar, no seed announced); what failed is the positive control, `seedAfterTheGrant: false`. The peer was granted the salon and never got a session, because its external join into that salon's distribution group could not land - the stale-base defect, fixed 2026-08-26. Re-run owed |
+| COMM-9 | Removed from a private salon: the server drops their routing rows (`evicted=true`), and the next message is sealed under a session they do not hold while the previous one still opens | `W1 W2` | `PASS-DIRTY` - the stale-base join on W2, one cause with ten others (see above); re-run owed |
+| COMM-10 | Removed from a private salon: the messages they ALREADY hold stay readable - Graine retains seeds on purpose | `W1 W2` | `PASS-DIRTY` - the stale-base join on W2, one cause with ten others (see above); re-run owed |
+| COMM-11 | Kicked from the COMMUNITY: the client purges the workspace AND leaves every private salon group it held | `W1 W2` | `PASS-DIRTY` - the stale-base join on W2, one cause with ten others (see above); re-run owed |
+| COMM-12 | Re-invited after a removal: they receive the sessions minted from now on, and the past only as `history_visibility` allows | `W1 W2` | `PASS-DIRTY` - the stale-base join on W2, one cause with ten others (see above); re-run owed |
+| COMM-13 | An admin JOINS a private salon: they see it unjoined, `distribution-group` answers 403 before and 200 after, the member list gains their name, the transcript gains NOTHING, and the row stops offering the join | `W1 W2` | `PASS-DIRTY` - the stale-base join on W2, one cause with ten others (see above); re-run owed |
+| COMM-14 | Channel notification levels enforced server-side | `+push` | `PASS-DIRTY` - the stale-base join on W2, one cause with ten others (see above); re-run owed |
 | COMM-15 | Polls: create, vote, close; auto-pinned | `W1 W2` | `PASS` 1/1 |
 | COMM-16 | Delete a channel, then a community by typing its name: the rows are really gone and the slug is free again | `W1 W2` | `PASS` 1/1 |
 | COMM-17 | Reorder communities by drag and drop; survives a reload, reaches the other device | `+A1` | `PASS` 1/1 |
-| COMM-18 | Deep link into a channel from a cold start | `+A1` | `PASS` 1/1 - 135 ms |
-| COMM-19 | The last admin tries to leave: refused, unless they are the last MEMBER, which deletes the community | `W1 W2` | `PASS` 1/1 |
-| COMM-20 | Two admins change the same role at the same moment | `W1 W2` | `PASS` 1/1 |
-| COMM-21 | A member is removed while composing a message in that salon | `W1 W2` | `PASS` 1/1 |
+| COMM-18 | Deep link into a channel from a cold start | `+A1` | **`FAIL`** - 2026-08-25 22:02 on `d6f61539`, the channel reached with `seeds.held: 0` and `roster.linkedGroupId: null`. A `PASS` at 135 ms two hours earlier on the SAME build does not retire it. Re-run owed, and it needs the phone |
+| COMM-19 | The last admin tries to leave: refused, unless they are the last MEMBER, which deletes the community | `W1 W2` | `PASS-DIRTY` - the stale-base join on W2, one cause with ten others (see above); re-run owed |
+| COMM-20 | Two admins change the same role at the same moment | `W1 W2` | `PASS-DIRTY` - the stale-base join on W2, one cause with ten others (see above); re-run owed |
+| COMM-21 | A member is removed while composing a message in that salon | `W1 W2` | `PASS-DIRTY` - the stale-base join on W2, one cause with ten others (see above); re-run owed |
 | COMM-22 | A salon carrying many Graine sessions: time the first render, and the repair when one seed is missing | `W1 W2` | `FAIL` - the peer ends ONE seed short of twelve, warm and cold alike, because its own external join left the base an epoch behind. Reproduced on `d6f61539` and `2a4297cb`; cause fixed 2026-08-26, re-run owed |
-| COMM-23 | Public -> private: a group is minted, and a reader outside `allowedUsers` stops being routed | `W1 W2` | `PASS` 1/1 |
-| COMM-24 | Private -> public: the salon's group is tombstoned and the community's carries it again | `W1 W2` | `PASS-DIRTY` 1/1 - the dirt is the unpublished-graine read, unpinnable without blinding the race detector |
+| COMM-23 | Public -> private: a group is minted, and a reader outside `allowedUsers` stops being routed | `W1 W2` | `PASS-DIRTY` - the stale-base join on W2, one cause with ten others (see above); re-run owed |
+| COMM-24 | Private -> public: the salon's group is tombstoned and the community's carries it again | `W1 W2` | **`PASS`** 1/1 on `2a4297cb`. The earlier `PASS-DIRTY`'s dirt was the unpublished-graine read, unpinnable without blinding the race detector |
 | COMM-25 | An admin's SECOND device receives the salon's seeds after the join, without a second join | `W1 A1` | `PASS` 1/1 |
 
 ## 10 - DEL - deleting a conversation, crossed

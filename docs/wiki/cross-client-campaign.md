@@ -479,6 +479,18 @@ again:
   behind it. It is written down because a one-off that leaves no trace is exactly what the next
   reader will otherwise rediscover from scratch.
 
+- **THE WHOLE OF RUNG 9 IS ONE RE-RUN, not thirteen investigations (decided 2026-08-26).** Correcting
+  the board against the ledger turned 23 `PASS` into 12 `PASS`, 10 `PASS-DIRTY` and 3 `FAIL` - and
+  then showed that eleven of those thirteen rows carry the SAME dirt line on W2, naming the SAME
+  salon: the one COMM-8 created at 21:27, whose own `FAIL` was `seedAfterTheGrant: false` on that
+  salon, and whose distribution group W2 was still failing to join twenty minutes later. That is the
+  stale published base COMM-22 measured head-on, fixed the same day. So the rung is re-run whole on
+  the fixed build rather than triaged row by row, and the two rows outside that signature are named
+  separately: COMM-18 (a `FAIL` at 22:02 next to a `PASS` at 19:47 on the same build - intermittent,
+  needs the phone) and COMM-24 (already re-run and green on `2a4297cb`). The methodology this cost is
+  on [testing-methodology](testing-methodology.md): the board reads the ledger's NEWEST verdict, and
+  dirt is sorted across rows before rows are triaged.
+
 - **COMM-22's believed `PASS-DIRTY` DID NOT HOLD, and what replaced it is a `FAIL`.** Read the
   paragraph below as the history of one attempt, not as the row's state: on 2026-08-26 the row
   failed on `2a4297cb` exactly as it had on `d6f61539`, with the same runner. The defect and its
