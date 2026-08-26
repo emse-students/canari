@@ -399,7 +399,12 @@ jobs:
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v3
-        if: github.event_name == 'workflow_run'
+        # TEMPORARY: also allow workflow_dispatch, to recover v0.14.5 after `gh run rerun`
+        # proved unable to pick up this file's own fix (a rerun replays the workflow
+        # definition pinned at the ORIGINAL trigger, never the current one on main) - a
+        # workflow_dispatch is the only run that resolves this file fresh. Revert to
+        # `workflow_run` only once v0.14.5 is confirmed on TestFlight.
+        if: github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch'
         with:
           tag_name: v${{ steps.release_tag.outputs.version }}
           fail_on_unmatched_files: true
@@ -408,7 +413,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload to TestFlight / App Store Connect
-        if: github.event_name == 'workflow_run'
+        # TEMPORARY: see "Upload to Release" above - revert once v0.14.5 ships.
+        if: github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch'
         env:
           ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
