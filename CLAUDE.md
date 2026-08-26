@@ -167,16 +167,10 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     notification body it was first blamed on is ANSWERED, MENTION-2). The emoji, the dead row and the
     device controls want ONE pass over `app.css` and the emoji work package, not seven local patches.
 
-3.  **THE ANDROID CONVERSATION LIST COULD NOT BE SCROLLED (P1, user 2026-08-26) - FIXED, ONE
-    RE-MEASURE OWED.** Both halves diagnosed and shipped the same day; the `fixed` bottom nav
-    reserved nothing and the chat shell had cancelled the only padding that did. The fix is proven
-    by unit tests and reading only - the phone left before a build carrying it could be installed -
-    so it owes check Q in [device-verification](docs/wiki/device-verification.md), which deletes the
-    P1 in [backlog](docs/wiki/backlog.md) when it clears.
-4.  **`purge-devices.mjs` WOULD DELETE THE PHONE - a destructive control keyed on a string the
+3.  **`purge-devices.mjs` WOULD DELETE THE PHONE - a destructive control keyed on a string the
     product never renders.** **Do not run it until it takes an `--only` allowlist**; repair and
     evidence in [backlog](docs/wiki/backlog.md).
-5.  **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** - asked by the user 2026-08-25
+4.  **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** - asked by the user 2026-08-25
     (*"le meme point de depart, independamment de ce qui a pu se passer avant"*). **It no longer gates
     rung 9 COMM:** the PHASE-level half is `run.mjs`'s preflight, and what is left is per-STEP
     granularity. Worked in parallel, pulled forward the moment a rung is blocked by an inherited

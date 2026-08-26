@@ -20,7 +20,7 @@ here and nothing else.**
 
 ## Where the pass stands
 
-**Android is done except H, K, L, M and Q.** The full ladder was run on **v0.11.7** on 2026-07-31 (log
+**Android is done except H, K, L and M.** The full ladder was run on **v0.11.7** on 2026-07-31 (log
 archived on the user's desktop) after partial runs on v0.11.5 and v0.11.6. Two defects came out of
 it, both tracked as WP-NOTIF-1 and both re-checked by **check K**. **Check H was recorded PASS and
 was not one**: the user reported on 2026-08-01 that a tapped notification still does not open the
@@ -406,35 +406,45 @@ it is confirmed server-side by a `revokedReason` of replay on the session row. I
 remedy is not a flush call (there is none): it is to stop depending on the jar's durability, e.g.
 mirroring the rotation into the keychain the way the device key already is.
 
-## Q. The conversation list scrolls clear of the bottom nav - owed on Android
+## Q. The conversation list scrolls clear of the bottom nav - CLEARED 2026-08-26 (Pixel 6a)
 
-**Proves** that the `.mobile-nav-inset` reservation reaches the built app, and not merely the CSS.
-The defect it closes was measured through CDP on the Pixel 6a on 2026-08-26 and is described on
-[mobile](frontend/mobile.md#the-bottom-nav-reserves-nothing); the fix is verified so far only by
-`pullToRefresh.test.ts` and by reading, because the phone was unplugged before a build carrying it
-could be installed. **A CSS reservation is exactly the kind of change a stale bundle hides**, so the
-re-measure has to run against a freshly installed build, never against the one already on the device.
+Ran on a freshly built and installed universal debug APK (bundle `2a4297cb`, built 15:04:49Z), which
+matters because a CSS reservation is exactly the kind of change a stale bundle hides. Kept because
+**two of its four criteria did not follow from the mechanism and one of the four turned out to be a
+dead instrument** - all three discovered by running it, and each would have returned a false verdict.
 
-Install the universal debug APK (`adb install -r`, never an uninstall - that costs a re-enrolment and
-SETUP-4's 2FA), open the conversation list, and require all four:
+| # | Criterion | Result |
+| --- | --- | --- |
+| 1 | `scrollHeight > clientHeight` on the list | **796 > 744**, where it read `744 === 744` before |
+| 2 | `paddingBottom` carries `4rem` + safe-area | **88px** = 64 + 24, so the reservation reached the bundle |
+| 3 | Scrolled to the end, the last tile clears the nav | bottom **878 -> 826**, exactly the nav top; `elementFromPoint` returns the TILE |
+| 4 | A real swipe moves the accessibility tree | **VOID - see below** |
 
-1. `document.querySelector('aside .flex-1.overflow-y-auto')` has `clientHeight` short of the viewport
-   bottom by `4rem + env(safe-area-inset-bottom)` - about 64 px more than the 744 measured before.
-2. `scrollHeight > clientHeight` with the nine conversations the account currently holds, where it
-   read `744 === 744` before.
-3. `document.elementFromPoint(centre, listRect.bottom - 8)` returns a conversation tile, not the
-   `NAV.fixed inset-x-0 bottom-0`.
-4. A real swipe (`Swipe-Tool`, 1800 -> 900) moves the accessibility tree: the tile coordinates from
-   `State-Tool` must differ before and after. **This is the assertion the original report was about**,
-   and the only one that a CSS-only check cannot fake - the previous pass returned coordinates
-   identical to the pixel.
+Geometry checks out to the pixel: 698 px of tiles + 10 px top padding + 88 px reservation = 796.
+`clientHeight` stayed 744, and the nav still sits topmost at the list's bottom edge - both as
+predicted once the box model is read correctly, and both the reason the original criteria 1 and 3
+were wrong (they asked for a shorter box and for the nav to stop being hit there; neither can happen).
 
-Then check the second half in the same session: with the socket up, pulling down the list must show
-**no spinner at all** (the gesture is declined and the list simply does not move); with the network
-cut, the same pull must show the spinner and it must persist for the duration of the reconnect rather
-than a fixed 600 ms.
+**Criterion 4 is void, and this is the important finding.** A `Swipe-Tool` gesture demonstrably drives
+the scroll - CDP read `scrollTop` 0 -> 52 -> 0 across a swipe up and a swipe back, the full range -
+and the user confirmed it by hand. The accessibility tree reported **identical tile coordinates before
+and after**, to the pixel. So the tree does not reflect an inner scroll container's offset in this
+WebView, and the criterion cannot distinguish a working scroll from a broken one: it has now been
+observed identical in BOTH states. **This retroactively voids the 2026-08-26 baseline inference that
+"a device swipe moved the accessibility tree by zero pixels, confirming the defect"** - that was an
+insensitive instrument, not evidence. The defect's real evidence was the geometry
+(`scrollHeight === clientHeight`), which was sound. The witness to use instead is CDP-read
+`scrollTop` across a real `Swipe-Tool` gesture, in both directions.
 
-Clearing this deletes the P1 from [backlog](backlog.md).
+**The spinner half is half-established.** With the list at the top, a full pull-down raised **no
+indicator at all** (a `MutationObserver` armed before the gesture saw zero insertions, so this does
+not rest on CDP round-trip timing), which is what a live socket should produce. What was NOT
+independently confirmed is that the socket was in fact up at that moment: the preflight had reported
+A1 `OFFLINE` ten minutes earlier, right after the fresh install, and the UI showed no offline banner
+by the time of the gesture. **A declined gesture is correct while connected and a DEFECT while
+offline, so "no spinner" only means what the socket state says it means.** The offline direction -
+spinner present, and persisting for the reconnect rather than a fixed 600 ms - is unrun. Worth one
+pass with `net.mjs` the next time the phone is on the bench; it is not what the P1 was about.
 
 ## Traps that outlived the work that found them
 
