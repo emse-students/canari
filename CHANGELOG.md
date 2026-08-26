@@ -164,6 +164,32 @@ which is also where every release up to and including v0.13.1 now lives.
   owed is `docs/user-guide/permissions-association.md`, and the roles table in
   `responsable-association.md` - which described the CHANNEL model as if it were this one - is gone.
 
+- **The Android release build shrinks its resources, and an unused UI library is out of the APK.**
+  Two more of Google Play's recommendations, and the second one had a trap in it.
+  `android.r8.optimizedResourceShrinking=true` had been sitting in `gradle.properties` doing nothing
+  at all, because `isShrinkResources` was never set - so R8 kept every resource and therefore every
+  class reachable from one, which is how `com.google.android.material` stayed in the DEX and put
+  Play's `MaterialDatePicker` finding there. **Dropping our own `implementation` line would not have
+  removed it**: eight modules declare that library - six Tauri plugins from the cargo registry, the
+  two local patched ones, and this app - all of it plugin-template boilerplate, since NOT ONE Kotlin
+  file in any of them names a class from it. Gradle would simply have resolved the plugins' 1.7.0
+  and kept it. So the theme parent moved to `Theme.AppCompat.DayNight.NoActionBar` - `WryActivity`
+  extends `AppCompatActivity`, which asks for nothing more, and that parent was the library's only
+  real use here - and the module is excluded from every configuration. The exclusion is an assertion
+  that it is unused, not a workaround for a conflict.
+
+  **Two of Play's four recommendations cannot be cleared, and that is now written down rather than
+  rediscovered.** The remaining deprecated-window-API call sites are `androidx.activity`'s own
+  backwards-compat path *inside* the `enableEdgeToEdge()` that Play's first recommendation asks for
+  - checked against the 1.13.0 sources, where it is unchanged, `@Suppress("DEPRECATION")`-ed, and
+  even the new `EdgeToEdgeApi35` sets `statusBarColor = TRANSPARENT`, so no upgrade silences it -
+  and play-services-base by way of Firebase. The edge-to-edge recommendation itself was already
+  answered by `enableEdgeToEdge()`, `viewport-fit=cover` and 46 `env(safe-area-inset-*)`
+  declarations; what was missing was any gate asserting the call, in a file a Tauri upgrade
+  regenerates. `androidPlayRecommendations.test.ts` and two new cases in
+  `androidWindowLayout.test.ts` hold the actionable half. **What no gate here can hold is whether the
+  shrunk APK still works** - the debug build type never minifies - so that is
+  `device-verification.md` check R, owed on hardware.
 - **Payment is a MODE now: either a public base price or a grid, never both on screen.** The section
   showed the single price and the grid together, the price relabelled "Prix par defaut" and used
   only to seed a new cell - two amounts on screen, one of which charged nobody. One toggle picks
@@ -295,6 +321,29 @@ which is also where every release up to and including v0.13.1 now lives.
   "finish the job" fails loudly instead of quietly succeeding.
 
 
+- **A notification avatar is no longer decoded at whatever resolution its owner uploaded.** Google
+  Play's release analysis flagged `BitmapFactory` without subsampling in
+  `CanariFirebaseMessagingService.fetchAvatar`, and it was right for a reason worth stating: the
+  bytes come from MiGallery, through core-service, through `/api/mls/push/avatar`, and **no hop in
+  that chain carries a size parameter** - so the decode was sized by an input nobody here bounds.
+  Worse, `circleCrop` then allocated a SECOND `ARGB_8888` bitmap at the source's own shortest edge,
+  so a 3000x3000 photo cost about 36 MB twice over, inside the FCM service process, for an icon the
+  framework draws at `notification_large_icon_width`. Running out of memory there does not soften
+  the icon - it loses the notification, which is the whole point of that process. `decodeSampled`
+  now reads the header with `inJustDecodeBounds` (no pixels allocated), picks the largest
+  `inSampleSize` still at or above that platform dimension, and `circleCrop` takes the remaining
+  factor of under two by scaling its draw to a target passed in rather than copied from the source.
+  Both call sites route through one helper, so neither carries a copy of the logic, and the initials
+  disc keeps its own 96 px - that number is a three-platform contract `initialsFallback.test.ts`
+  pins against the two Apple copies, not the avatar branch's business.
+- **The Android window background is the app's own colour, and had never been set at all.** The
+  WebView is deliberately transparent so the Activity background shows through while SvelteKit
+  hydrates - that is the startup-flash fix - but the theme declared no `windowBackground`, so what
+  showed through was the parent theme's grey `colorBackground` while `app_background` sat defined in
+  `values` and `values-night` and referenced by nothing. It is now the theme's
+  `android:windowBackground`, which is also what the Android 12+ system splash paints behind the
+  icon. `values-night/themes.xml` is deleted rather than updated: `@color/app_background` already
+  resolves per configuration, so a second identical style said nothing.
 - **"Donner un statut avec le paiement" says which of its four conditions is missing.** The setting
   appears only on a paid form, with a beneficiary association chosen, that runs at least one
   cotisation tier, and only to someone holding `MANAGE_MEMBERS` on it - four conditions ANDed, of

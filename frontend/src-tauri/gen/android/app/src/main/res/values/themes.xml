@@ -1,6 +1,21 @@
-<resources xmlns:tools="http://schemas.android.com/tools">
-    <!-- Base application theme. -->
-    <style name="Theme.mines_app" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <!-- Customize your theme here. -->
+<resources>
+    <!--
+      AppCompat, not MaterialComponents. `WryActivity` extends `AppCompatActivity`, which needs an
+      AppCompat-descended theme and nothing more. This parent was the ONLY thing pulling
+      `com.google.android.material` into the APK - eight Tauri plugin modules declare the library
+      from the plugin template and not one Kotlin file in any of them, or here, names a class from
+      it - and it is what put `MaterialDatePicker` in the DEX, which Google Play reports as a
+      deprecated `Window.setStatusBarColor` call site.
+
+      `windowBackground` is what shows through while SvelteKit hydrates (the WebView is
+      deliberately transparent - see `MainActivity.onWebViewCreate`) and what the Android 12+
+      system splash paints behind the icon. It had never been set: the flash was the parent
+      theme's own grey `colorBackground`, by luck rather than by choice, while `app_background`
+      sat defined in two configurations and referenced by nothing. There is no `values-night`
+      copy of this file: `@color/app_background` already resolves per configuration, so a second
+      identical style would say nothing.
+    -->
+    <style name="Theme.mines_app" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/app_background</item>
     </style>
 </resources>

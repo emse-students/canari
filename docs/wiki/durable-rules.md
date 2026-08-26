@@ -507,6 +507,7 @@ page. `mob` = [mobile](frontend/mobile.md), `auth` = [auth](frontend/modules/aut
 - **An app extension has its own data container** - the App Group is the only shared storage. [mob](frontend/mobile.md)
 - **A native thread has no Java frames**, so `FindClass` reaches framework classes only. [mob](frontend/mobile.md)
 - **Edge-to-edge is not guaranteed by `env(safe-area-inset-*)` alone** - call `enableEdgeToEdge()` explicitly. [mob](frontend/mobile.md)
+- **A DECODE SIZED BY ITS INPUT IS UNBOUNDED WHEN THE INPUT IS NOT YOURS.** Read the header first and sample down to the size the platform will draw - and count the SECOND allocation a crop or a scale adds. [mob](frontend/mobile.md#the-face-on-a-notification-and-what-happens-when-there-is-none)
 - **A CSS custom property consumed at two nesting depths applies its correction twice**; delete the second consumer. [mob](frontend/mobile.md)
 - **A plain system-browser launch is an ORPHANED activity on Android** - a Custom Tab shares the app's task. [mob](frontend/mobile.md)
 
@@ -537,6 +538,8 @@ page. `mob` = [mobile](frontend/mobile.md), `auth` = [auth](frontend/modules/aut
 - **A path restriction written for iOS has NO effect on Android**, so the claim lists are GENERATED from one source. [mob](frontend/mobile.md)
 - **Only user-VISIBLE native strings stay French**; everything read while debugging is English.
 - **A no-op on one platform must say WHY** - "nothing to do" and "nobody has looked" are different, and only the first is evidence. [mob](frontend/mobile.md#android--ios-parity-and-where-it-is-actually-guaranteed)
+- **REMOVING YOUR DECLARATION OF A DEPENDENCY DOES NOT REMOVE THE DEPENDENCY** - it only changes which of the other declarations wins, and the survivor is usually older. Count who declares it before believing a deletion. [mob](frontend/mobile.md#the-release-builds-shape-and-what-google-plays-analysis-asked-of-it)
+- **A FLAG THAT TUNES A MECHANISM IS INERT UNTIL THE MECHANISM IS ON**, and it reads exactly like the mechanism being on. [mob](frontend/mobile.md#the-release-builds-shape-and-what-google-plays-analysis-asked-of-it)
 
 **Parity is maintained BY CONSTRUCTION** - one shared file wherever the platforms can share one, a
 test reading both trees wherever they cannot. Every parity defect ever found has been in

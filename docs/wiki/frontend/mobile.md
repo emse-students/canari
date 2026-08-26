@@ -750,6 +750,20 @@ legitimately differs is the size - 96 px on Android, where it is a small icon be
 192 px on iOS, where an attachment is rendered at banner size. `initialsFallback.test.ts` holds the
 three together, including the size difference as a deliberate one.
 
+**The avatar branch decodes through the image HEADER first, and the reason is that its resolution is
+not ours.** The bytes come from MiGallery, through core-service, through `/api/mls/push/avatar`, and
+no hop in that chain carries a size parameter - so what arrives is whatever its owner uploaded.
+`fetchAvatar` used to hand those bytes straight to `BitmapFactory`, and `circleCrop` then allocated a
+SECOND `ARGB_8888` bitmap at the source's own shortest edge, so a 3000x3000 photo cost about 36 MB
+twice over, in the FCM service process, for an icon the framework draws at
+`notification_large_icon_width`. Running out of memory there does not soften the icon: it loses the
+notification. `decodeSampled` reads the header with `inJustDecodeBounds` (no pixels allocated), picks
+the largest `inSampleSize` still at or above that platform dimension - powers of two only, which is
+all the decoder honours - and `circleCrop` takes the remaining factor of under two by scaling its
+draw. Both call sites route through it, which is why neither carries a copy. **The initials disc
+keeps its own 96 px**: that number is a three-platform contract, pinned by `initialsFallback.test.ts`
+against the two Apple copies, and it is not the avatar branch's business.
+
 Two decisions inside it are easy to get wrong:
 
 - **the disc is the LAST resort, below the media thumbnail.** iOS renders only the first attachment,
@@ -1062,6 +1076,63 @@ Two other things the measurement settles, both worth keeping:
   keyboard comes back and the shell is never re-laid-out for it. A pure `focus()` from script
   reaches a different broken state - a large gap between the content and the keyboard - so the
   variable is mis-set in both directions and the repro that matters is the ordinary gesture.
+
+### The release build's shape, and what Google Play's analysis asked of it
+
+Play's pre-launch analysis listed four recommendations on 2026-08-26. Two were already answered, one
+was a real defect (the avatar decode above), one was a missing line. **The value of writing this down
+is knowing which parts of that list will never clear**, so nobody spends a session on them again.
+
+**Answered already: edge-to-edge.** `enableEdgeToEdge()`, `viewport-fit=cover` and 46
+`env(safe-area-inset-*)` declarations, all above. Play's advisory goes to every `targetSdk >= 35`
+app; its static analysis cannot see CSS. `androidWindowLayout.test.ts` now asserts the call, which
+nothing did before - and it lives in `gen/android`, which a Tauri upgrade regenerates from a
+template.
+
+**Will never clear: the deprecated window APIs.** Play names three call sites for
+`setStatusBarColor` / `setNavigationBarColor` / `LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES` and not
+one of them is ours.
+
+- `androidx.activity`'s `EdgeToEdgeApi23/26/29` and `EdgeToEdgeApi28`, reached **by
+  `enableEdgeToEdge()` itself** - the call Play's own first recommendation asks for. Checked against
+  the 1.13.0 sources rather than assumed: unchanged, `@Suppress("DEPRECATION")`-ed, and even the new
+  `EdgeToEdgeApi35` sets `statusBarColor = TRANSPARENT`. **No upgrade silences it**, and `minSdk` 28
+  means those branches genuinely run on Android 9-14.
+- `com.google.android.gms.common.images`, from play-services-base by way of Firebase.
+- `MaterialDatePicker`, which WAS ours to remove.
+
+**`com.google.android.material` is out of the APK, and dropping our own line would not have done
+it.** Eight modules declared it - six Tauri plugins from the cargo registry, the two local patched
+ones, and this app - and NOT ONE Kotlin file in any of them names a class from it; it is
+plugin-template boilerplate. Its only real use here was the `Theme.MaterialComponents.DayNight.NoActionBar`
+parent, now `Theme.AppCompat.DayNight.NoActionBar` (`WryActivity` extends `AppCompatActivity`, which
+asks for nothing more). Removing the `implementation` line alone would have resolved the plugins'
+1.7.0 instead and kept the library, `MaterialDatePicker` included, so `app/build.gradle.kts` also
+excludes the module from every configuration. **The exclusion is an assertion that it is unused, not
+a workaround for a conflict** - and the thing that makes it safe to state is the grep above, not the
+build, since the plugin modules compile against their own declaration either way.
+
+**Resource shrinking was off, and the flag that tunes it had been on the whole time.**
+`android.r8.optimizedResourceShrinking=true` sat in `gradle.properties` doing nothing, because
+`isShrinkResources` was never set - so R8 kept every resource, and therefore every class reachable
+from one, which is how an unused UI library stayed in the DEX. Now set on the release build type.
+Safe mode is the default, so a resource named through `Resources.getIdentifier` would still be kept;
+there is no such lookup anywhere in this app, and no `R.layout` reference either, which is why
+`activity_main.xml` - a `<merge>` whose own comment says it is not rendered - goes with it.
+
+**`windowBackground` had never been set.** `onWebViewCreate` makes the WebView transparent on
+purpose so the Activity background shows through while SvelteKit hydrates - that is the
+startup-flash fix - but the theme declared no background, so what showed through was the parent
+theme's grey `colorBackground`, while `app_background` sat defined in `values` and `values-night` and
+referenced by nothing. It is now the theme's `android:windowBackground`, which is also what the
+Android 12+ system splash paints behind the icon. `values-night/themes.xml` is deleted rather than
+updated: `@color/app_background` already resolves per configuration, so the second copy of the style
+said nothing.
+
+`androidPlayRecommendations.test.ts` holds the actionable half - the two Gradle facts, the theme
+parent, the icon size and every `BitmapFactory` call having options. **What it cannot hold is whether
+the shrunk APK still works**, since the debug build type never minifies: that is
+[device-verification check R](../device-verification.md#r-the-shrunk-release-apk-actually-runs---owed-on-android).
 
 ## Shared native code
 

@@ -10,6 +10,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
+import android.graphics.Rect
 import android.net.Uri
 import android.os.PowerManager
 import android.util.Base64
@@ -2294,18 +2295,66 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     }
 
     /**
+     * Edge length Android draws a notification large icon at, on THIS screen's density.
+     *
+     * Read from the platform instead of guessed: `notification_large_icon_width` is the dimension
+     * the framework itself scales a large icon down to, so it is the smallest decode that costs
+     * nothing visible - and it is the fact that spares us decoding an avatar at its upload
+     * resolution only to discover how big it was. The initials disc keeps its own 96 px, which
+     * `initialsFallback.test.ts` pins against the two Apple copies; this is the avatar branch.
+     */
+    private val notificationIconSizePx: Int by lazy {
+        resources.getDimensionPixelSize(android.R.dimen.notification_large_icon_width)
+    }
+
+    /**
+     * Decodes an avatar no larger than the icon it becomes.
+     *
+     * THE RESOLUTION ON THE WIRE IS NOT OURS TO BOUND. The bytes come from MiGallery, through
+     * core-service, through `/api/mls/push/avatar` - and no hop in that chain carries a size
+     * parameter, so what arrives is whatever its owner uploaded. Decoding it whole allocated
+     * width*height*4 bytes here and again in [circleCrop], inside the FCM service process, where
+     * running out of memory does not soften the icon: it loses the NOTIFICATION.
+     *
+     * Two passes. `inJustDecodeBounds` reads the header only and allocates no pixels; then
+     * `inSampleSize` - which the decoder honours in powers of two ONLY - takes the decode down to
+     * the smallest power of two still at or above [target]. [circleCrop] covers the remaining
+     * factor of under two, so the sampling never has to land exactly.
+     *
+     * @param target Edge length in pixels the icon is drawn at.
+     * @param decode Runs ONE decode pass under the given options. The same lambda serves a file
+     *   and a byte array, which is why neither call site carries a copy of this.
+     */
+    private fun decodeSampled(target: Int, decode: (BitmapFactory.Options) -> Bitmap?): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        decode(bounds)
+        val shortest = minOf(bounds.outWidth, bounds.outHeight)
+        if (shortest <= 0) {
+            // The decoder reports -1 on bytes it cannot read at all. Saying so is the point: the
+            // caller only sees a null, which is indistinguishable from "this user has no avatar".
+            Log.w(TAG, "decodeSampled: unreadable image header (${bounds.outWidth}x${bounds.outHeight})")
+            return null
+        }
+        var sample = 1
+        while (shortest / (sample * 2) >= target) sample *= 2
+        Log.d(TAG, "decodeSampled: ${bounds.outWidth}x${bounds.outHeight} -> inSampleSize=$sample, target=$target")
+        return decode(BitmapFactory.Options().apply { inSampleSize = sample })
+    }
+
+    /**
      * Downloads the sender's avatar, with a 24h file cache.
      * The cache avoids the HTTP request when the app is in the background and
      * the network is slow or PushSecretKeystore.retrieve() is unstable.
      */
     private fun fetchAvatar(userId: String): Bitmap? {
+        val target = notificationIconSizePx
         // 1. Read the file cache if recent (< 24h) - no need for the Keystore or the network
         val cacheFile = avatarCacheFile(userId)
         val now = System.currentTimeMillis()
         if (cacheFile.exists() && (now - cacheFile.lastModified()) < AVATAR_CACHE_MAX_AGE_MS) {
-            BitmapFactory.decodeFile(cacheFile.absolutePath)?.let { bmp ->
+            decodeSampled(target) { BitmapFactory.decodeFile(cacheFile.absolutePath, it) }?.let { bmp ->
                 Log.d(TAG, "fetchAvatar: from cache for ${userId.take(8)}")
-                return circleCrop(bmp)
+                return circleCrop(bmp, target)
             }
         }
 
@@ -2336,7 +2385,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     } catch (e: Exception) {
                         Log.w(TAG, "fetchAvatar: unable to save the cache: ${e.message}")
                     }
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let { circleCrop(it) }
+                    decodeSampled(target) { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, it) }
+                        ?.let { circleCrop(it, target) }
                 } else {
                     // 401/403 is NOT "this user has no avatar": it is our push secret being
                     // rejected, and the same credential guards the media proxy and the
@@ -2443,15 +2493,33 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
     }
 
-    /** Crops a bitmap into a circle (for the notification icon). */
-    private fun circleCrop(src: Bitmap): Bitmap {
-        val size   = minOf(src.width, src.height)
-        val output = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    /**
+     * Crops a bitmap into a circle at a FIXED edge length (for the notification icon).
+     *
+     * The size is a PARAMETER, where it used to be the source's own shortest edge. An avatar
+     * arrives at whatever resolution its owner uploaded (see [decodeSampled]), and taking the
+     * output size from the source carried that resolution into a SECOND ARGB_8888 allocation - so
+     * a 3000x3000 photo cost its 36 MB twice over, for an icon drawn at
+     * [notificationIconSizePx]. The centre square is scaled onto the whole target, which is the
+     * framing the previous unscaled draw already produced.
+     */
+    private fun circleCrop(src: Bitmap, target: Int): Bitmap {
+        val edge   = minOf(src.width, src.height)
+        val output = Bitmap.createBitmap(target, target, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(output)
-        val paint  = Paint(Paint.ANTI_ALIAS_FLAG)
-        canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint)
+        // FILTER_BITMAP_FLAG is new and load-bearing now that the draw SCALES: without it the
+        // downscale is nearest-neighbour and a face comes out visibly aliased.
+        val paint  = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+        canvas.drawCircle(target / 2f, target / 2f, target / 2f, paint)
         paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
-        canvas.drawBitmap(src, (size - src.width) / 2f, (size - src.height) / 2f, paint)
+        val left = (src.width - edge) / 2
+        val top  = (src.height - edge) / 2
+        canvas.drawBitmap(
+            src,
+            Rect(left, top, left + edge, top + edge),
+            Rect(0, 0, target, target),
+            paint
+        )
         src.recycle()
         return output
     }

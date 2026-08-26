@@ -56,6 +56,13 @@ android {
         }
         getByName("release") {
             isMinifyEnabled = true
+            // Without this, R8 keeps EVERY resource, and therefore every class reachable from one -
+            // which is how an unused UI library stayed in the DEX. `gradle.properties` already sets
+            // `android.r8.optimizedResourceShrinking=true`, which did nothing at all while the
+            // shrinker itself was off. Safe mode is the default: a resource named through
+            // `Resources.getIdentifier` would still be kept, and this app has no such lookup
+            // anywhere (nor any `R.layout` reference - `activity_main.xml` says so itself).
+            isShrinkResources = true
             proguardFiles(
                 *fileTree(".") { include("**/*.pro") }
                     .plus(getDefaultProguardFile("proguard-android-optimize.txt"))
@@ -87,11 +94,25 @@ rust {
     rootDirRel = "../../../"
 }
 
+/**
+ * `com.google.android.material` is dead weight, and excluding it is an assertion, not a workaround.
+ *
+ * Eight modules declare it - six Tauri plugins from the cargo registry plus the two local patched
+ * ones - all from the plugin template, and NOT ONE Kotlin file in any of them, or in this app,
+ * names a class from it. Its only real use here was the `Theme.MaterialComponents` parent in
+ * `res/values/themes.xml`, now `Theme.AppCompat`. So dropping our own `implementation` line alone
+ * would not have removed the library: Gradle would simply have resolved the plugins' 1.7.0 and
+ * kept it, `MaterialDatePicker` included - the class Google Play reports a deprecated
+ * `Window.setStatusBarColor` call from. The exclusion is what actually takes it out of the APK.
+ */
+configurations.configureEach {
+    exclude(group = "com.google.android.material", module = "material")
+}
+
 dependencies {
     implementation("androidx.webkit:webkit:1.14.0")
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("androidx.activity:activity-ktx:1.10.1")
-    implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.core:core-splashscreen:1.0.1")
     implementation("com.google.firebase:firebase-messaging-ktx:24.1.0")
     implementation("androidx.work:work-runtime-ktx:2.10.0")

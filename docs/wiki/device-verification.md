@@ -20,7 +20,7 @@ here and nothing else.**
 
 ## Where the pass stands
 
-**Android is done except H, K, L and M.** The full ladder was run on **v0.11.7** on 2026-07-31 (log
+**Android is done except H, K, L, M and R.** The full ladder was run on **v0.11.7** on 2026-07-31 (log
 archived on the user's desktop) after partial runs on v0.11.5 and v0.11.6. Two defects came out of
 it, both tracked as WP-NOTIF-1 and both re-checked by **check K**. **Check H was recorded PASS and
 was not one**: the user reported on 2026-08-01 that a tapped notification still does not open the
@@ -71,6 +71,7 @@ WP-XP-7 removal at once, which means H, I, K and the dev-panel check all ride a 
 | N | Offline unlock + promotion | owed | owed |
 | O | WP-STORE-1 (install source + version gate) | owed | n/a |
 | P | Cookie durability across a kill (the iOS half of WP-ANDROID-SESS-1) | n/a (fixed + verified) | owed |
+| R | The shrunk release APK still having what it needs | owed | n/a |
 
 For the iOS pass, install the `ios-release` artifact of the run above rather than waiting for
 TestFlight: a dispatch does not upload there, so TestFlight is still on the previous build and check
@@ -445,6 +446,39 @@ by the time of the gesture. **A declined gesture is correct while connected and 
 offline, so "no spinner" only means what the socket state says it means.** The offline direction -
 spinner present, and persisting for the reconnect rather than a fixed 600 ms - is unrun. Worth one
 pass with `net.mjs` the next time the phone is on the bench; it is not what the P1 was about.
+
+## R. The shrunk release APK actually runs - owed on Android
+
+**Proves** that enabling `isShrinkResources` and excluding `com.google.android.material` did not
+remove something the app needs at run time. **Every Android gate in this repository misses both.**
+The debug build type sets `isMinifyEnabled = false`, so a debug APK never runs R8 or the resource
+shrinker at all; a green `assembleUniversalRelease` proves the shrinker did not crash, never that
+what survived is enough; and `androidPlayRecommendations.test.ts` reads the two settings as text and
+can say nothing about either outcome. Reasoning and the evidence behind each change are on
+[mobile](frontend/mobile.md#the-release-builds-shape-and-what-google-plays-analysis-asked-of-it).
+
+Test the **release** artifact from `android-release.yml`, not a local build: a locally re-signed
+release cannot be installed over the existing app without an uninstall, and an uninstall costs a
+re-enrolment and SETUP-4's 2FA.
+
+1. **The app starts on its own background, not grey.** `windowBackground` is now
+   `@color/app_background`, so the gap before SvelteKit hydrates is `#070B12` dark / `#F9FBFF` light
+   - the colour the page settles on, where it used to be the parent theme's `colorBackground`.
+2. **A notification with a face still shows the face.** This is the only path that decodes an image,
+   so a stripped class or resource surfaces here as the initials disc. Require both: a face in the
+   shade, and `decodeSampled: <W>x<H> -> inSampleSize=<n>, target=<t>` in logcat - the log line is
+   what separates "the avatar arrived" from "the fallback looked fine".
+3. **The notification channels are still named in French.** Strings are the resources most exposed
+   to shrinking, and a stripped `values/strings.xml` entry is invisible until someone opens the
+   app's notification settings.
+4. **The two system bars still have their gap.** The theme parent changed, so re-read
+   `env(safe-area-inset-top)` and `env(safe-area-inset-bottom)` through CDP and require non-zero,
+   as measured on 2026-08-07.
+5. **A file picker and a dialog still open.** They are the only native UI this app has, and the
+   claim under test is that nothing referenced the excluded library.
+
+**A debug pass covers none of this**, which is why this check is separate from Q - cleared on a
+debug APK on 2026-08-26, on a build that by definition never ran R8.
 
 ## Traps that outlived the work that found them
 

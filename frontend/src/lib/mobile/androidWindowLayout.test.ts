@@ -24,6 +24,30 @@ const mainActivity = readFileSync(
 const manifest = readFileSync(resolve(ANDROID_MAIN, 'AndroidManifest.xml'), 'utf8');
 
 describe('Android window layout (anti-regression)', () => {
+  it('asks for edge-to-edge rather than inheriting it', () => {
+    // The web layer reads system-bar insets through env(safe-area-inset-*) on 46 declarations, and
+    // app.html asks for them with viewport-fit=cover. Both are worthless if the window does not go
+    // edge to edge. Android 15 enforces it for targetSdk >= 35, which is why losing this call
+    // would look harmless on a recent phone - and put the composer back under the navigation bar
+    // on every Android 9-14 device, and on the OEM builds that never applied it consistently.
+    expect(mainActivity).toContain('enableEdgeToEdge()');
+    expect(mainActivity).toContain('import androidx.activity.enableEdgeToEdge');
+    const appHtml = readFileSync(resolve(here, '../../app.html'), 'utf8');
+    expect(appHtml).toContain('viewport-fit=cover');
+  });
+
+  it('paints the window background the app answers with, not the theme default', () => {
+    // The WebView is transparent so that windowBackground shows through while SvelteKit hydrates.
+    // With no windowBackground of ours, that gap was the parent theme's grey colorBackground while
+    // app_background sat defined in two configurations and referenced by nothing.
+    const theme = readFileSync(resolve(ANDROID_MAIN, 'res/values/themes.xml'), 'utf8');
+    expect(theme).toContain('<item name="android:windowBackground">@color/app_background</item>');
+    for (const dir of ['values', 'values-night']) {
+      const colors = readFileSync(resolve(ANDROID_MAIN, `res/${dir}/colors.xml`), 'utf8');
+      expect(colors).toMatch(/<color name="app_background">#FF[0-9A-Fa-f]{6}<\/color>/);
+    }
+  });
+
   it('handles the IME inset itself, because adjustResize cannot', () => {
     // The manifest attribute is kept for pre-Android-15 devices, where it does work.
     expect(manifest).toContain('android:windowSoftInputMode="adjustResize"');
