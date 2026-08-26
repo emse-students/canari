@@ -175,10 +175,17 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     P2, NOTIF-13 pins it). The emoji, the dead row and the device controls want ONE pass over
     `app.css`, not seven local patches.
 
-3.  **`purge-devices.mjs` WOULD DELETE THE PHONE - a destructive control keyed on a string the
+3.  **THE SFU RUNS SIX webrtc MAJORS NOBODY HAS PLACED A CALL ON.** `apps/call-service` compiles,
+    clippy is clean under `--all-features` and its ten tests pass - none of which runs the ICE stack.
+    The CI hole that let two breaking Dependabot majors merge green is CLOSED (no crate in this repo
+    is uncompiled now), and the one known behaviour change is handled: an empty TURN credential used
+    to degrade quietly and now fails the whole ICE configuration. **What settles it is ONE relay-path
+    call**, which is rung 15 CALL and has no runner. Substance in [backlog](docs/wiki/backlog.md),
+    story in `CHANGELOG.md`; neither is restated here. **A release must not carry this unplaced.**
+4.  **`purge-devices.mjs` WOULD DELETE THE PHONE - a destructive control keyed on a string the
     product never renders.** **Do not run it until it takes an `--only` allowlist**; repair and
     evidence in [backlog](docs/wiki/backlog.md).
-4.  **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** - asked by the user 2026-08-25
+5.  **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** - asked by the user 2026-08-25
     (*"le meme point de depart, independamment de ce qui a pu se passer avant"*). The PHASE-level half
     is `run.mjs`'s preflight; what is left is per-STEP granularity, pulled forward the moment a rung is
     blocked by an inherited state. Contract, audit and the seven-file PIN predicate it fixes are in
@@ -194,43 +201,45 @@ measurements and per-repo state live in
 half and is the only copy**; nothing here restates it.
 
 **Decisions already taken and NOT to be relitigated:** bun is the runtime everywhere it can be;
+**TYPESCRIPT 7 IS REFUSED ON CANARI** (2026-08-27, measured on both halves - section 9 of
+[ecosystem-convergence](docs/wiki/ecosystem-convergence.md), the only copy) and `dependabot.yml`
+now ignores its majors, because `dependabot-auto-merge.yml` would otherwise land it unattended;
 **RENOVATE IS DROPPED** (2026-08-27) - Dependabot's bun ecosystem works and the only thing that
 breaks it is a lockfile version we control, so no GitHub App install is owed by the user; Sky keeps
 Tailwind and migrates to v4 without preflight; `bun:sqlite` replaces better-sqlite3; the `image_url`
 deletion stands.
 
-**DONE:** Portail-etu pinned and its outage closed (deploy green, site 200). Canari: one
-`.bun-version` feeding eight workflow sites; the 18 deprecated lucide names; the last `node:22`
-image, now 24; the four NestJS
-services migrated to bun end to end - images BUILT AND STARTED locally, all four reaching
-`NestFactory`; **`libs/shared-ts` DELETED** with every piece that named it (CI matrix, pre-test
-build step, two CD path filters, Dependabot directory, Makefile target, two Husky branches, the
-jest `moduleNameMapper`) - the reasoning is on [libs](docs/wiki/libs.md), the only copy, and
-`libs/event-contracts` never existed; the last `npm run` inside `frontend/package.json`'s own
-scripts; both Husky hooks rewritten to bun and to English.
+**DONE:** Portail-etu pinned and its outage closed (deploy green, site 200), and Canari's whole bun
+half - **each piece's story is in `CHANGELOG.md` and its measurement on
+[ecosystem-convergence](docs/wiki/ecosystem-convergence.md); neither is restated here.** The one
+thing a reader needs from this file is the paragraph below.
 
 **THE ONE MEASURED LIMIT ON "bun PARTOUT":** jest fails under the bun runtime -
 `admin-storage.controller.mls.spec.ts` passes 8/8 under node and fails under bun. CI therefore
 installs/lints/builds with bun and TESTS with node, and both call sites in `ci.yml` say so. **Do not
 collapse that to one runtime without re-running that spec.**
 
-**OPEN, in order:**
+**CANARI'S SIDE OF THE MANDATE IS WRITTEN, AND ONE THING IS NOT PROVEN: PROD HAS NEVER RUN A BUN
+IMAGE.** Measured 2026-08-27 - all four containers answer `node dist/main.js` while the Dockerfiles
+in this repo say `CMD ["bun", "dist/main.js"]` on `oven/bun:1.3.14-alpine`. The last GREEN deploy
+(`cd0ac343`) PREDATES the migration commit (`591a4392`), and every CD run since was red, so the
+deploy step was skipped three times running and the images that built and pushed were never pulled.
+Nothing is broken - the deploy is gated on every image, so prod was simply left alone - but **do not
+read "the four services migrated to bun" as "prod runs bun" until `docker inspect` says `bun`.** The
+cause of the three red runs is fixed (see the queue); the verification is owed the moment a CD goes
+green. Everything else here IS closed: TS 7 measured and refused with its two conditions written
+down, and CodeQL + secret scanning were ALREADY here (`code-analysis.yml`: CodeQL, TruffleHog, `bun
+audit`, `cargo audit`) - that half was only ever owed by the other repos.
 
-1. **The rest of the mandate on Canari is TS 7** - Dependabot has proposed `typescript 6.0.3 ->
-   7.0.2` on `/frontend`, and the four services declare `^6.0.3` too. It is a MEASUREMENT, not a
-   bump: `svelte-check`, `ts-jest` and `oxlint-tsgolint` all sit on top of it. Do one package, run
-   its gate, and record the limit the way the jest-under-bun one is recorded. **CodeQL and secret
-   scanning are ALREADY on Canari** (`code-analysis.yml`: CodeQL, TruffleHog, `bun audit`,
-   `cargo audit`) - that half of the mandate is owed by the OTHER repos, not this one.
-2. **Sky, MiGallery, le-cercle have not been touched this session** and each still owes a
-   `.bun-version`. Sky is in a NON-BUILDABLE intermediate state from an earlier session: `bun
-   install` pending, 36 `lucide-svelte` -> `@lucide/svelte` plus ~4 deprecated names, Dockerfile in
-   bun, `ci-bun.yml`, pm2 out of `deploy.yml`, `dependabot.yml`, five docs pages, gates, then a
-   commit split into substance and a separate oxfmt reformat. MiGallery owes npm->bun, an audit of 17
-   scripts, 68 lucide icons, Tailwind PostCSS->Vite, oxlint/oxfmt/oxvelte, TS 7, 4 vulnerabilities,
-   the duplicate `.eslintrc.json`+`eslint.config.js`, a pending `code-analysis.yml` and a harmonised
-   `dependabot.yml`. le-cercle owes oxlint/oxfmt/oxvelte, TS 7 (fix the `^6.0.3` caret) and
-   Dependabot on GitLab.
+**OPEN - the other three repos, none touched this session, each still owing a `.bun-version`:** Sky
+is in a NON-BUILDABLE intermediate state from an earlier session: `bun install` pending, 36
+`lucide-svelte` -> `@lucide/svelte` plus ~4 deprecated names, Dockerfile in bun, `ci-bun.yml`, pm2 out
+of `deploy.yml`, `dependabot.yml`, five docs pages, gates, then a commit split into substance and a
+separate oxfmt reformat. MiGallery owes npm->bun, an audit of 17 scripts, 68 lucide icons, Tailwind
+PostCSS->Vite, oxlint/oxfmt/oxvelte, TS 7, 4 vulnerabilities, the duplicate
+`.eslintrc.json`+`eslint.config.js`, a pending `code-analysis.yml` and a harmonised
+`dependabot.yml`. le-cercle owes oxlint/oxfmt/oxvelte, TS 7 (fix the `^6.0.3` caret) and Dependabot
+on GitLab. **Read section 9 before touching TS 7 on any of them.**
 
 **ONE-OFF ACTIONS GO TO THE USER** (2026-08-25): *"Pour les choses qui ne se font qu'une fois, tu peux
 me demander de les faire hein."* Building a tool for a single click is that waste.
@@ -251,22 +260,22 @@ advisory is whether `cargo tree -i` can reach the crate at all.**
 
 ### CANARI - what is open
 
-**Google Play, both mails of 2026-08-26, are worked; TWO items will never clear, ONE is decided but
-not built, TWO wait on YOUR signal.** Shipped: the four pre-launch recommendations, and the
-device-to-device transfer the app was never excluded from. Unclearable: two deprecated-window-API
-sites, inside the `enableEdgeToEdge()` Play itself asks for and inside play-services-base. Every
-threshold is measured on
+**Google Play, both mails of 2026-08-26: CLOSED on 2026-08-27 but for check R.** Both signals were
+given and are spent. Shipped, and LIVE on Play production: the four pre-launch recommendations and
+the device-to-device transfer the app was never excluded from. Two deprecated-window-API sites will
+never clear - they are inside the `enableEdgeToEdge()` Play itself asks for, and inside
+play-services-base. Every threshold is measured on
 [mobile](docs/wiki/frontend/mobile.md#plays-q3-2026-quality-requirements-measured-against-this-app),
-the only copy; the 28-day memory P90 does not exist yet, so read Android vitals from late September
-2026. **WP-RESTORE-1** (Zero-Tap Sign-In, required April 2027): principle ACCEPTED by the user
-2026-08-26, scheduled AFTER the campaign, NOT to be re-opened - the build is WebAuthn on a server
-that has none ([backlog](docs/wiki/backlog.md)). **Waiting on the user:** a `workflow_dispatch` of
-`android-release.yml`, authorised but *"attends mon signal"* - it yields the SIGNED APK check R
-needs and publishes nothing to Play (that step is gated on `workflow_run`); and the release carrying
-today's two Android fixes, deferred past the campaign, so the transfer refusal reaches nobody yet.
+the only copy; the 28-day memory P90 does not exist yet, so **read Android vitals from late
+September 2026**. **WP-RESTORE-1** (Zero-Tap Sign-In, required April 2027): principle ACCEPTED by
+the user 2026-08-26, scheduled AFTER the campaign, NOT to be re-opened - the build is WebAuthn on a
+server that has none ([backlog](docs/wiki/backlog.md)).
 
-**Release status:** v0.14.4 cut 2026-08-24, every platform green including TestFlight - the iOS path
-ran end to end for the first time and nothing there is owed any more (story in `CHANGELOG.md`).
+**Release status: v0.14.5, cut 2026-08-26, carries both Android fixes and went to Play production,
+full rollout** - so the transfer refusal has reached users, correcting the line written here the day
+before. It was cut by a CONCURRENT session hours after being deferred here; the rule that leaves is
+in [durable-rules](docs/wiki/durable-rules.md#release-and-ci--cicdcicdmd). v0.14.4 remains the
+release that first proved the iOS path end to end, TestFlight included, and nothing there is owed.
 
 `minClientVersion` still lives in `platform_config` and is still raised BY HAND from
 `/admin/platform`, so no deploy touches it - and **half the old gap is closed, half is not.** A release

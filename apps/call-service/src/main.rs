@@ -23,7 +23,6 @@ use webrtc::api::APIBuilder;
 use webrtc::ice::mdns::MulticastDnsMode;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
-use webrtc::ice_transport::ice_credential_type::RTCIceCredentialType;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration;
@@ -772,7 +771,8 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
                         continue;
                     }
                 };
-                if let Err(e) = writer_socket.send(Message::Text(text)).await {
+                // `.into()`: axum 0.8 carries text frames as `Utf8Bytes`, not `String`.
+                if let Err(e) = writer_socket.send(Message::Text(text.into())).await {
                     error!("[call] {} socket write failed on {}: {}", peer_id, msg.kind(), e);
                     end_session(&session, Disposition::SendFailed);
                     break;
@@ -1452,7 +1452,15 @@ fn schedule_renegotiate(room: Arc<Room>, target_peer_id: PeerId) {
     });
 }
 
-/// Builds an `RTCIceServer` for webrtc-rs (requires `Password` credential type for TURN URLs).
+/// Builds an `RTCIceServer` for webrtc-rs.
+///
+/// webrtc-rs 0.17 dropped `RTCIceServer::credential_type`, following the W3C spec, which removed
+/// `RTCIceCredentialType` once `password` became the only value. The rule it encoded is now enforced
+/// inside the crate: `RTCIceServer::urls()` returns `ErrNoTurnCredentials` for a `turn:`/`turns:` URL
+/// whose username or credential is empty. Before 0.17 that same input produced an `Unspecified`
+/// credential type the crate accepted, so a misconfigured TURN entry used to degrade quietly and now
+/// fails the whole peer connection - hence the warning: this is the only place that can still name
+/// WHICH server was wrong.
 fn build_rtc_ice_server(
     urls: Vec<String>,
     username: Option<String>,
@@ -1460,17 +1468,18 @@ fn build_rtc_ice_server(
 ) -> RTCIceServer {
     let username = username.unwrap_or_default();
     let credential = credential.unwrap_or_default();
-    let credential_type =
-        if urls_include_turn(&urls) && !username.is_empty() && !credential.is_empty() {
-            RTCIceCredentialType::Password
-        } else {
-            RTCIceCredentialType::Unspecified
-        };
+    if urls_include_turn(&urls) && (username.is_empty() || credential.is_empty()) {
+        warn!(
+            "[call] TURN server {:?} has no credentials (username empty: {}, credential empty: {}) - webrtc-rs rejects the whole ICE configuration for this",
+            urls,
+            username.is_empty(),
+            credential.is_empty()
+        );
+    }
     RTCIceServer {
         urls,
         username,
         credential,
-        credential_type,
     }
 }
 

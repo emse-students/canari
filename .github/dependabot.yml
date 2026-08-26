@@ -49,6 +49,13 @@ updates:
     commit-message:
       prefix: "chore(deps):"
       include: "scope"
+    # TypeScript is held at 6 ON PURPOSE, and it is not laziness - see
+    # `docs/wiki/ecosystem-convergence.md`, section 9, for the two measurements. Without this
+    # ignore, Dependabot proposes `typescript 6.0.3 -> 7.0.2` and `dependabot-auto-merge.yml` is
+    # sitting right there. Delete this block only after re-running BOTH checks.
+    ignore:
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
     labels:
       - "dependencies"
       - "frontend"
@@ -62,9 +69,9 @@ updates:
         update-types: ["patch"]
 
   # --- Backend services (bun) -------------------------------------------------------------------
-  # Four NestJS services plus the shared TypeScript library, each with its own bun.lock.
-  # They drifted apart without this: @nestjs/core sat at 11.1.19 in two services and 11.1.28 in the
-  # other two, and typeorm at 1.0.6 against 1.1.0, in one monorepo.
+  # Four NestJS services, each with its own bun.lock. They drifted apart without this:
+  # @nestjs/core sat at 11.1.19 in two services and 11.1.28 in the other two, and typeorm at 1.0.6
+  # against 1.1.0, in one monorepo.
   #
   # These lockfiles MUST stay at `lockfileVersion: 1`. Dependabot bundles bun 1.3.14 and answers
   # `UnknownLockfileVersion` on a v2 lockfile - it does not fail the run, it silently stops opening
@@ -83,6 +90,13 @@ updates:
     commit-message:
       prefix: "chore(deps):"
       include: "scope"
+    # TypeScript is held at 6 ON PURPOSE, and it is not laziness - see
+    # `docs/wiki/ecosystem-convergence.md`, section 9, for the two measurements. Without this
+    # ignore, Dependabot proposes `typescript 6.0.3 -> 7.0.2` and `dependabot-auto-merge.yml` is
+    # sitting right there. Delete this block only after re-running BOTH checks.
+    ignore:
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
     labels:
       - "dependencies"
       - "backend"

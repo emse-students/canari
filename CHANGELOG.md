@@ -471,6 +471,41 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **The SFU had not compiled on `main` since two Dependabot majors merged, and every gate was
+  green.** `apps/call-service` was in NO CI matrix. The only thing in the repository that ever built
+  it was the Docker stage in `cd.yml`, which runs AFTER the merge - so a dependency PR touching the
+  crate passed CI without the crate being compiled once, auto-merged, and broke `main` silently. Two
+  did: #222 took `webrtc` 0.11 -> 0.17, which deletes `RTCIceServer::credential_type` and the whole
+  `ice_credential_type` module; #227 took `axum` 0.7 -> 0.8, whose WebSocket text frames carry
+  `Utf8Bytes` rather than `String`. Three compile errors, and the first sign of any of it was a red
+  CD with `Deploy to Production Server` skipped.
+
+  Production was never affected - the deploy is gated on every image building, so it did not run and
+  the running containers were left alone. What WAS affected is that nothing shipped at all while this
+  stood, including the backend bun migration whose images had built and pushed successfully.
+
+  The code is adapted rather than pinned back. webrtc-rs dropped `credential_type` following the W3C
+  spec, which removed `RTCIceCredentialType` once `password` became its only value, and the rule it
+  encoded now lives inside the crate: `RTCIceServer::urls()` returns `ErrNoTurnCredentials` for a
+  `turn:` URL with an empty username or credential. That is a behaviour change, not a rename - the
+  same input used to yield an `Unspecified` credential type the crate accepted, and now fails the
+  entire ICE configuration - so `build_rtc_ice_server` keeps the test and warns, because it is the
+  only place left that can name WHICH server was misconfigured.
+
+  `apps/call-service` is now in the Rust matrix WITH the `check` flag, so `cargo fmt --check`,
+  `cargo clippy --all-targets --all-features -D warnings` and `cargo test` all run on it. All four
+  were run against the crate by hand first - the entry is not an unverified guess, which is the
+  reason the neighbouring Tauri entry deliberately omits the same flag. That leaves no crate in this
+  repository that CI does not compile.
+
+- **`core-service` carried three high advisories that its three sibling services did not.**
+  `fast-uri` sat at 3.1.2 in `apps/core-service/bun.lock` and at 3.1.6 in the other three, reached
+  through `@nestjs/cli` and `@nestjs/schematics` via `ajv`: host confusion through a backslash
+  authority introducer, through a literal backslash delimiter, and through failed IDN
+  canonicalisation. Four lockfiles for four services is exactly the drift `dependabot.yml` groups
+  against, and the grouping does not repair a resolution that was already stale. Bumped within
+  range; the audit job passes.
+
 - **A TestFlight build launched to a black screen**, failing every request with Tauri's own
   `Failed to request https://127.0.0.1:1420/: ... did you grant local network permissions?`.
   `ios-release.yml` bypasses `tauri ios build` for its own release archive step (that CLI's export
