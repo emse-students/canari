@@ -23,7 +23,7 @@
     "firebase-admin": "^14.2.0",
     "ioredis": "^5.10.1",
     "kafkajs": "^2.2.4",
-    "pg": "^8.20.0",
+    "pg": "^8.23.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
     "typeorm": "^1.1.0",
