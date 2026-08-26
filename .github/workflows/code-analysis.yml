@@ -35,19 +35,25 @@ jobs:
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.0"
 
-      - name: Install dependencies
-        run: |
-          cd frontend
-          bun install --frozen-lockfile
+      # Both install steps stay non-fatal: CodeQL analyses JavaScript and TypeScript from source
+      # and a missing node_modules costs resolution accuracy, not the run. What is NOT acceptable
+      # is silence - these carried `2>/dev/null || true` UNDER `continue-on-error`, three layers
+      # hiding the same failure, so an install that had been broken for months would read exactly
+      # like one that succeeded. The failure is now named and printed; only the job survives it.
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: bun install --frozen-lockfile
         continue-on-error: true
 
       - name: Install backend dependencies
         run: |
-          cd apps/chat-delivery-service && npm ci 2>/dev/null || true
-          cd ../../apps/core-service && npm ci 2>/dev/null || true
-          cd ../../apps/social-service && npm ci 2>/dev/null || true
-          cd ../../apps/media-service && npm ci 2>/dev/null || true
+          for svc in chat-delivery-service core-service social-service media-service; do
+            echo "--- $svc"
+            ( cd "apps/$svc" && npm ci --ignore-scripts )               || echo "::warning title=CodeQL install::npm ci failed for $svc; analysis continues with unresolved imports"
+          done
         continue-on-error: true
 
       - name: Autobuild
@@ -66,12 +72,25 @@ jobs:
         with:
           fetch-depth: 0
 
+      # `--only-verified` means TruffleHog authenticated the credential against its provider
+      # before reporting it, so a finding here is a LIVE secret in a PUBLIC repository, not a
+      # string that merely looks like one. That cannot be a warning: the step fails, and the
+      # credential is rotated before anything else happens.
       - name: TruffleHog Secret Scan
-        uses: trufflesecurity/trufflehog@main
+        uses: trufflesecurity/trufflehog@v3.97.1
         with:
           path: ./
           extra_args: --debug --only-verified
-        continue-on-error: true
+
+  # This job could not fail until 2026-08-26: every step carried `continue-on-error: true`,
+  # including the audits themselves, so a vulnerable dependency produced a green tick. It was
+  # hiding three HIGH advisories in EVERY backend service (brace-expansion, fast-uri, js-yaml) and
+  # five more in the frontend, sharp's libvips CVEs among them. All eight are fixed; the gate is
+  # armed, and the repository is at zero.
+  #
+  # It CAN now go red on a morning nobody pushed anything - that is the point. A new advisory
+  # against a dependency we already ship is exactly the event this job exists to announce, and
+  # `.github/dependabot.yml` (added the same day) opens the pull request that closes it.
   dependencies:
     name: Check Dependencies Vulnerabilities
     runs-on: ubuntu-latest
@@ -86,42 +105,35 @@ jobs:
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.0"
 
+      # `bun audit`, not `npm audit`: the frontend's committed lockfile is bun.lock, and npm audit
+      # against it audits whatever a stray package-lock.json happens to say instead.
       - name: Audit frontend dependencies
+        working-directory: frontend
         run: |
-          cd frontend
           bun install --frozen-lockfile
-          npm audit --audit-level=moderate
-        continue-on-error: true
+          bun audit
 
-      - name: Audit core-service dependencies
+      - name: Audit backend service dependencies
         run: |
-          cd apps/core-service
-          npm ci
-          npm audit --audit-level=moderate
-        continue-on-error: true
+          set -euo pipefail
+          for svc in core-service social-service media-service chat-delivery-service; do
+            echo "--- $svc"
+            ( cd "apps/$svc" && npm ci --ignore-scripts && npm audit --audit-level=moderate )
+          done
 
-      - name: Audit social-service dependencies
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      # Four committed Cargo.lock files, four audits. A loop rather than one root call: these
+      # crates are not one workspace, so a single `cargo audit` would read one lockfile and call
+      # the other three clean by never opening them.
+      - name: Audit Rust dependencies
         run: |
-          cd apps/social-service
-          npm ci
-          npm audit --audit-level=moderate
-        continue-on-error: true
-
-      - name: Audit media-service dependencies
-        run: |
-          cd apps/media-service
-          npm ci
-          npm audit --audit-level=moderate
-        continue-on-error: true
-
-      - name: Audit chat-delivery-service dependencies
-        run: |
-          cd apps/chat-delivery-service
-          npm ci
-          npm audit --audit-level=moderate
-        continue-on-error: true
-
-      - name: Check Cargo dependencies
-        run: cargo install cargo-audit && cargo audit
-        continue-on-error: true
+          set -euo pipefail
+          for crate in apps/call-service apps/chat-gateway frontend/mls-wasm frontend/src-tauri; do
+            echo "--- $crate"
+            ( cd "$crate" && cargo audit )
+          done
