@@ -24,10 +24,11 @@
  * and leaves the code's defaults wrong, and nothing would stop the next call site from omitting it.
  * Here the prefix is not the caller's to write.
  *
- * DUPLICATED IN `social-service` ON PURPOSE - see the note at the head of its copy. `libs/shared-ts`
- * is wired into `chat-delivery-service` alone, and adopting it here would add a build stage and the
- * `--install-links` trap to two more production images to save four lines. The repo already
- * duplicates `internal-secret.util.ts` the same way.
+ * DUPLICATED IN `social-service` ON PURPOSE - see the note at the head of its copy. There is no
+ * shared TypeScript package to put it in: `libs/shared-ts` existed, was imported by nothing, and was
+ * deleted on 2026-08-27. Creating one for these four lines would add a build stage and the
+ * `--install-links` trap to two more production images. The repo already duplicates
+ * `internal-secret.util.ts` the same way.
  */
 
 /** Every Nest service in this repo serves its routes under this prefix. See each `main.ts`. */

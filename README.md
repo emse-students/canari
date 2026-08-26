@@ -183,8 +183,7 @@ canari/
 │   └── src-tauri/             # Tauri 2 native app
 ├── libs/
 │   ├── proto/                 # Protobuf schema (canari.proto)
-│   ├── shared-rust/           # Shared Rust types (Kafka events)
-│   └── shared-ts/             # Shared TypeScript types
+│   └── shared-rust/           # Shared Rust types (Kafka events)
 ├── infrastructure/
 │   ├── local/                 # Docker Compose & Dockerfiles (dev)
 │   ├── docker-compose.prod.yml

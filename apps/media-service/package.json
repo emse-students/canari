@@ -12,9 +12,9 @@
     "build": "nest build"
   },
   "dependencies": {
-    "@nestjs/common": "^11.1.28",
-    "@nestjs/core": "^11.1.28",
-    "@nestjs/platform-express": "^11.1.28",
+    "@nestjs/common": "^11.2.3",
+    "@nestjs/core": "^11.2.3",
+    "@nestjs/platform-express": "^11.2.3",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
     "fs-extra": "^11.3.6",

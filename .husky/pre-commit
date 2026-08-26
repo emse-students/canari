@@ -1,5 +1,5 @@
 #!/bin/sh
-# Pre-commit hook - auto-fixe et re-stage plutot que de bloquer.
+# Pre-commit hook - auto-fixes and re-stages rather than blocking.
 
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
 export PATH="$HOME/.cargo/bin:$PATH"
@@ -10,16 +10,15 @@ if [ -z "$STAGED_FILES" ]; then
   exit 0
 fi
 
-echo "$STAGED_FILES" | grep -Eq '^(\.github/workflows/|\.husky/|Makefile|libs/shared-ts/|libs/shared-rust/)' && RUN_ALL=1 || RUN_ALL=0
+echo "$STAGED_FILES" | grep -Eq '^(\.github/workflows/|\.husky/|Makefile|libs/shared-rust/)' && RUN_ALL=1 || RUN_ALL=0
 echo "$STAGED_FILES" | grep -Eq '^frontend/' && RUN_FRONTEND=1 || RUN_FRONTEND=0
 echo "$STAGED_FILES" | grep -Eq '^apps/chat-delivery-service/' && RUN_DELIVERY=1 || RUN_DELIVERY=0
 echo "$STAGED_FILES" | grep -Eq '^apps/chat-gateway/' && RUN_GATEWAY=1 || RUN_GATEWAY=0
 echo "$STAGED_FILES" | grep -Eq '^apps/social-service/' && RUN_SOCIAL=1 || RUN_SOCIAL=0
 echo "$STAGED_FILES" | grep -Eq '^apps/core-service/' && RUN_CORE=1 || RUN_CORE=0
 echo "$STAGED_FILES" | grep -Eq '^apps/media-service/' && RUN_MEDIA=1 || RUN_MEDIA=0
-echo "$STAGED_FILES" | grep -Eq '^libs/shared-ts/' && RUN_SHARED_TS=1 || RUN_SHARED_TS=0
-# Crates Rust sous frontend/ : non couvertes par les checks JS du bloc frontend.
-# cargo fmt y est obligatoire (le job CI `cargo fmt -- --check` casse la CD sinon).
+# Rust crates under frontend/ are not covered by the JS checks of the frontend block above.
+# cargo fmt is mandatory there: the CI job `cargo fmt -- --check` breaks the CD otherwise.
 echo "$STAGED_FILES" | grep -Eq '^frontend/mls-core/' && RUN_MLS_CORE=1 || RUN_MLS_CORE=0
 echo "$STAGED_FILES" | grep -Eq '^frontend/mls-wasm/' && RUN_MLS_WASM=1 || RUN_MLS_WASM=0
 echo "$STAGED_FILES" | grep -Eq '^frontend/src-tauri/' && RUN_TAURI=1 || RUN_TAURI=0
@@ -31,7 +30,6 @@ if [ "$RUN_ALL" -eq 1 ]; then
   RUN_SOCIAL=1
   RUN_CORE=1
   RUN_MEDIA=1
-  RUN_SHARED_TS=1
   RUN_MLS_CORE=1
   RUN_MLS_WASM=1
   RUN_TAURI=1
@@ -39,21 +37,21 @@ fi
 
 if [ "$RUN_FRONTEND" -eq 1 ]; then
   (cd frontend && bun run lint:fix && bun run format) || {
-    echo "❌ Frontend lint/format échoué."
+    echo "❌ Frontend lint/format failed."
     exit 1
   }
   git diff --name-only -- frontend/ | xargs -r git add
   # Mirror exactly the CI lint job (lint + check + format:check) so nothing
   # broken can reach CD. Auto-fix already ran above; these are the strict gates.
   (cd frontend && bun run check -- --threshold warning && bun run lint && bun run format:check) || {
-    echo "❌ Frontend checks echoue (svelte-check / oxlint / oxvelte / format:check)."
+    echo "❌ Frontend checks failed (svelte-check / oxlint / oxvelte / format:check)."
     exit 1
   }
 fi
 
 if [ "$RUN_DELIVERY" -eq 1 ]; then
-  (cd apps/chat-delivery-service && npm run lint:fix) || {
-    echo "❌ chat-delivery-service lint échoué."
+  (cd apps/chat-delivery-service && bun run lint:fix) || {
+    echo "❌ chat-delivery-service lint failed."
     exit 1
   }
   git diff --name-only -- apps/chat-delivery-service/ | xargs -r git add
@@ -61,49 +59,41 @@ fi
 
 if [ "$RUN_GATEWAY" -eq 1 ]; then
   (cd apps/chat-gateway && cargo fmt) || {
-    echo "❌ chat-gateway cargo fmt échoué."
+    echo "❌ chat-gateway cargo fmt failed."
     exit 1
   }
   git diff --name-only -- apps/chat-gateway/ | xargs -r git add
 fi
 
 if [ "$RUN_SOCIAL" -eq 1 ]; then
-  (cd apps/social-service && npm run lint:fix) || {
-    echo "❌ social-service lint échoué."
+  (cd apps/social-service && bun run lint:fix) || {
+    echo "❌ social-service lint failed."
     exit 1
   }
   git diff --name-only -- apps/social-service/ | xargs -r git add
 fi
 
 if [ "$RUN_CORE" -eq 1 ]; then
-  (cd apps/core-service && npm run lint:fix) || {
-    echo "❌ core-service lint échoué."
+  (cd apps/core-service && bun run lint:fix) || {
+    echo "❌ core-service lint failed."
     exit 1
   }
   git diff --name-only -- apps/core-service/ | xargs -r git add
 fi
 
 if [ "$RUN_MEDIA" -eq 1 ]; then
-  (cd apps/media-service && npm run lint:fix) || {
-    echo "❌ media-service lint échoué."
+  (cd apps/media-service && bun run lint:fix) || {
+    echo "❌ media-service lint failed."
     exit 1
   }
   git diff --name-only -- apps/media-service/ | xargs -r git add
 fi
 
-if [ "$RUN_SHARED_TS" -eq 1 ]; then
-  (cd libs/shared-ts && npm run lint:fix) || {
-    echo "❌ shared-ts lint échoué."
-    exit 1
-  }
-  git diff --name-only -- libs/shared-ts/ | xargs -r git add
-fi
-
-# Crates Rust sous frontend/ : auto-formate (cargo fmt) puis re-stage, comme chat-gateway.
-# Detecte le probleme de format au commit au lieu de le laisser casser la CD.
+# Rust crates under frontend/: auto-format (cargo fmt) then re-stage, like chat-gateway.
+# Catches the formatting problem at commit time instead of letting it break the CD.
 if [ "$RUN_MLS_CORE" -eq 1 ]; then
   (cd frontend/mls-core && cargo fmt) || {
-    echo "❌ mls-core cargo fmt échoué."
+    echo "❌ mls-core cargo fmt failed."
     exit 1
   }
   git diff --name-only -- frontend/mls-core/ | xargs -r git add
@@ -111,7 +101,7 @@ fi
 
 if [ "$RUN_MLS_WASM" -eq 1 ]; then
   (cd frontend/mls-wasm && cargo fmt) || {
-    echo "❌ mls-wasm cargo fmt échoué."
+    echo "❌ mls-wasm cargo fmt failed."
     exit 1
   }
   git diff --name-only -- frontend/mls-wasm/ | xargs -r git add
@@ -119,7 +109,7 @@ fi
 
 if [ "$RUN_TAURI" -eq 1 ]; then
   (cd frontend/src-tauri && cargo fmt) || {
-    echo "❌ src-tauri cargo fmt échoué."
+    echo "❌ src-tauri cargo fmt failed."
     exit 1
   }
   git diff --name-only -- frontend/src-tauri/ | xargs -r git add

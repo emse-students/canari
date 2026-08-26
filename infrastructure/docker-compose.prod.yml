@@ -212,6 +212,11 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
+    # `node -e`, in images that run bun. That is NOT a leftover: `oven/bun:*-alpine` ships a
+    # `node` shim at /usr/local/bun-node-fallback-bin/node, on PATH, which dispatches to bun.
+    # Measured 2026-08-27 inside the image: `node -e` runs, `fetch` resolves, and the exit code
+    # is honoured both ways. What the shim does NOT support is a REPL or `node --version`, so do
+    # not "verify" it with either - both fail while every healthcheck here passes.
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3010/api/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"]
       interval: 30s

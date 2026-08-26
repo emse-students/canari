@@ -35,8 +35,8 @@ bun run dev
 | `make install-bun` | Installs Bun, Linux/Mac only |
 | `make install-rust` | Installs Rust >= 1.93 via rustup |
 | `make install-wasm-pack` | Installs `wasm-pack`, PINNED, via `scripts/install-wasm-pack.sh` |
-| `make install-frontend` | `npm install` + `svelte-kit sync` + `npm run generate` in `frontend/` |
-| `make install-services` | `npm install` in all NestJS service dirs + shared-ts |
+| `make install-frontend` | `bun install` + `svelte-kit sync` + `bun run generate` in `frontend/` |
+| `make install-services` | `bun install` in every NestJS service directory |
 | `make install-hooks` | Husky + pre-commit hooks |
 
 ### Build

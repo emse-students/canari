@@ -111,6 +111,10 @@ lcov-report/
 # keeps none of its own - hence no exception for those.
 # These negations must stay AFTER the `*.lock` above: the last matching pattern wins.
 !frontend/bun.lock
+!apps/core-service/bun.lock
+!apps/social-service/bun.lock
+!apps/media-service/bun.lock
+!apps/chat-delivery-service/bun.lock
 !frontend/src-tauri/Cargo.lock
 !frontend/mls-wasm/Cargo.lock
 !apps/*/Cargo.lock

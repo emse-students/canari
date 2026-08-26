@@ -19,6 +19,7 @@ import {
 } from './dto/user.dto';
 import { applyFuzzyNameSearch } from './userSearch';
 import { chatDeliveryUrl, mediaUrl, socialUrl } from '../internal/service-urls';
+import { STRIPE_API_VERSION } from '../payment/stripe-api-version';
 
 /** Service managing user persistence and OIDC upsert logic. */
 @Injectable()
@@ -361,7 +362,7 @@ export class UsersService implements OnModuleInit {
       try {
         const { default: Stripe } = await import('stripe');
         const stripe = new Stripe(process.env.STRIPE_SECRET_KEY ?? '', {
-          apiVersion: '2026-06-24.dahlia',
+          apiVersion: STRIPE_API_VERSION,
         });
         await stripe.customers.del(user.stripeCustomerId);
         this.logger.log(`[deleteUser] stripe customer deleted userId=${userId}`);

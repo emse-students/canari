@@ -40,7 +40,7 @@ jobs:
 
           # ── Full matrices (used as fallback) ──
           ALL_RUST='[{"name":"Shared Rust Lib","path":"libs/shared-rust","cmd":"cargo test","check":true},{"name":"Chat Gateway","path":"apps/chat-gateway","cmd":"cargo test","check":true},{"name":"Frontend MLS Core","path":"frontend/mls-core","cmd":"cargo test","check":true},{"name":"Frontend MLS WASM","path":"frontend/mls-wasm","cmd":"cargo build --target wasm32-unknown-unknown --release","wasm":true,"check":true},{"name":"Frontend Native (Tauri)","path":"frontend/src-tauri","cmd":"cargo check --all-targets","tauri":true}]'
-          ALL_TS='["libs/shared-ts","apps/core-service","apps/social-service","apps/chat-delivery-service","apps/media-service"]'
+          ALL_TS='["apps/core-service","apps/social-service","apps/chat-delivery-service","apps/media-service"]'
 
           run_all() {
             echo "rust=$ALL_RUST"    >> "$GITHUB_OUTPUT"
@@ -81,11 +81,6 @@ jobs:
           shared_rust=false
           if has '^libs/shared-rust/' || has '^libs/proto/'; then
             shared_rust=true
-          fi
-
-          shared_ts=false
-          if has '^libs/shared-ts/' || has '^libs/event-contracts/'; then
-            shared_ts=true
           fi
 
           # ── Rust matrix ──
@@ -132,20 +127,16 @@ jobs:
 
           # ── TypeScript backend matrix ──
           ts=()
-          # shared-ts is a build dependency for all TS backends
-          if [[ "$shared_ts" == "true" ]]; then
-            ts+=('"libs/shared-ts"')
-          fi
-          if [[ "$shared_ts" == "true" ]] || has '^apps/core-service/'; then
+          if has '^apps/core-service/'; then
             ts+=('"apps/core-service"')
           fi
-          if [[ "$shared_ts" == "true" ]] || has '^apps/social-service/'; then
+          if has '^apps/social-service/'; then
             ts+=('"apps/social-service"')
           fi
-          if [[ "$shared_ts" == "true" ]] || has '^apps/chat-delivery-service/'; then
+          if has '^apps/chat-delivery-service/'; then
             ts+=('"apps/chat-delivery-service"')
           fi
-          if [[ "$shared_ts" == "true" ]] || has '^apps/media-service/'; then
+          if has '^apps/media-service/'; then
             ts+=('"apps/media-service"')
           fi
 
@@ -156,7 +147,7 @@ jobs:
           fi
 
           # ── Frontend ──
-          if [[ "$shared_ts" == "true" ]] || has '^frontend/src/' || has '^frontend/static/' || \
+          if has '^frontend/src/' || has '^frontend/static/' || \
              has '^frontend/package\.json' || has '^frontend/svelte\.config' || \
              has '^frontend/vite\.config' || has '^frontend/vitest\.config' || \
              has '^frontend/tsconfig' || has '^frontend/\.oxlintrc' || has '^oxfmt\.json' || has '^\.oxlintrc' || has '^rust-toolchain\.toml' || has '^scripts/install-oxvelte\.sh' || \
@@ -265,22 +256,23 @@ jobs:
         with:
           ref: ${{ inputs.git_ref != '' && inputs.git_ref || github.sha }}
 
-      - name: Setup Node.js
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: ".bun-version"
+
+      # Node is still installed, for ONE step: jest. Measured 2026-08-27 - under the bun runtime
+      # `admin-storage.controller.mls.spec.ts` fails while passing 8/8 under node, so the test step
+      # below deliberately stays on node. bun installs, lints and builds; node runs the suite. Do
+      # not "simplify" this to one runtime without re-running that spec.
+      - name: Setup Node.js (jest only - see the note above)
         uses: actions/setup-node@v7
         with:
           node-version: '24'
 
-      # Build shared-ts first if it is not the current service
-      - name: Build shared-ts (dependency)
-        if: matrix.service != 'libs/shared-ts'
-        working-directory: libs/shared-ts
-        run: |
-          npm ci
-          npm run build
-
       - name: Install Dependencies
         working-directory: ${{ matrix.service }}
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       - name: Check Lint Script
         id: check_lint
@@ -295,11 +287,11 @@ jobs:
       - name: Run Lint
         if: steps.check_lint.outputs.has_lint == 'true'
         working-directory: ${{ matrix.service }}
-        run: npm run lint
+        run: bun run lint
 
       - name: Build
         working-directory: ${{ matrix.service }}
-        run: npm run build
+        run: bun run build
 
       - name: Check Test Script
         id: check_test
@@ -311,6 +303,8 @@ jobs:
             echo "has_test=false" >> $GITHUB_OUTPUT
           fi
 
+      # `npm test`, not `bun run test`: these suites are jest, and jest under the bun runtime
+      # fails a spec that passes under node (see the Setup Node.js note above).
       - name: Run Test
         if: steps.check_test.outputs.has_test == 'true'
         working-directory: ${{ matrix.service }}

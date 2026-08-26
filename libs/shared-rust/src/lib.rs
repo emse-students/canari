@@ -8,7 +8,7 @@ pub const TOPIC_MESSAGE_READ: &str = "message_read";
 pub const TOPIC_POST_CREATED: &str = "post_created";
 
 #[derive(Debug, Serialize, Deserialize, Clone, TS)]
-#[ts(export, export_to = "../../shared-ts/src/types/MessageSentEvent.ts")]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct MessageSentEvent {
     pub id: Uuid,
@@ -20,7 +20,7 @@ pub struct MessageSentEvent {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, TS)]
-#[ts(export, export_to = "../../shared-ts/src/types/MessageReadEvent.ts")]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct MessageReadEvent {
     pub message_id: Uuid,
@@ -30,7 +30,7 @@ pub struct MessageReadEvent {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, TS)]
-#[ts(export, export_to = "../../shared-ts/src/types/PostCreatedEvent.ts")]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct PostCreatedEvent {
     pub id: Uuid,
