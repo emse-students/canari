@@ -1449,6 +1449,59 @@ K2 covering the undelivered case ([device-verification](device-verification.md))
 **Owed in this order:** rebuild the APK, install it, then run NOTIF-6 and NOTIF-6b. A failure on the
 current bundle is a defect; a failure on the old one is the mixed fleet doing what it is.
 
+## Play Store compliance
+
+### P2 - WP-RESTORE-1: Zero-Tap Sign-In restoration, required by Google Play from April 2027
+
+**Play's requirement, verbatim in substance:** an app that supports user sign-in, optional or
+mandatory, must support Zero-Tap Sign-In restoration when the user moves to a new Android device.
+Mobile and tablet only. Games are exempt; Canari is not. Enforcement begins **April 2027**. Three
+exemptions exist and none obviously fits us: a Block Store integration completed by **30 September
+2026**, enterprise or permanently-private apps, and a regulatory exemption requested for
+financial/healthcare mandates.
+
+**The mechanism is the Restore Credentials API**, and a restore credential is a system-managed
+WebAuthn public key credential - a passkey the user never sees, tied to the package name, created
+silently after sign-in, backed up with the device and readable on the new one during setup. It is
+`androidx.credentials`, minimum Android 9 (our minSdk is exactly 28, so every install qualifies),
+GMS core 24220000 or higher. **It works regardless of `android:allowBackup`**, which matters here:
+the credential lives in the system credential store, not in app data, so it is orthogonal to the
+device-transfer exclusion shipped on 2026-08-26 and does not reopen it.
+
+**What this costs is a server we do not have.** `grep` over `apps/core-service/src` for `webauthn`,
+`passkey`, `publicKeyCredential` and `fido` returns NOTHING: there is no WebAuthn registration or
+assertion endpoint anywhere, and a restore key needs both - a `PublicKeyCredentialCreationOptions`
+to create, an assertion to verify, and a store that keeps restore keys distinguishable from real
+passkeys. Canari's session model is an opaque refresh row plus a stateless 1 h access token
+([sessions](sessions.md)); a successful assertion has to mint exactly that pair.
+
+**THE DECISION IS THE USER'S, AND IT IS NOT A TECHNICAL ONE.** Zero-tap means the new device is
+signed in with no password and no second factor - Google's documentation states plainly that the
+API "does not handle multi-factor authentication". Canari has 2FA, and SETUP-4 exists because
+re-enrolling a device costs one. So the question is whether a restored Google backup, itself gated
+by the account and the screen lock, is accepted as authentication to a Canari account. Answering
+"no" means pursuing an exemption before April 2027 rather than building this.
+
+**What it does NOT restore, and why that is fine.** Keystore material is non-exportable, so the MLS
+device key does not travel. A zero-tap sign-in authenticates; it does not decrypt. The new device
+still enrols as a new MLS client and is re-invited, exactly as
+[frontend/backup](frontend/backup.md) already describes for a restore onto a different device. The
+feature is therefore coherent with E2EE - it removes a password prompt, not a re-enrolment.
+
+**Three traps to carry into the work when it is scheduled:**
+
+- **The logout half is a requirement, not a nicety** - Play requires the restore key be deleted when
+  the user signs out. Canari's logout lives in TypeScript, so this needs a Tauri command down to
+  `ClearCredentialStateRequest(TYPE_CLEAR_RESTORE_CREDENTIAL)`, and it must run on the paths that
+  log out WITHOUT a user gesture too - a 401/403, a revoked session.
+- **The library is `1.7.0-alpha03` at the time of writing.** An alpha is not shippable on the
+  release track here; check for a stable line before starting, not after.
+- **`E2eeUnavailableException` is expected, not exceptional** - it fires when the user has no screen
+  lock or no Google backup, and the documented handling is to retry with `isCloudBackupEnabled =
+  false`. That is a second path, so it is logged at a level that accuses and its rate is measured
+  before anyone believes what it says.
+
+
 ## Post-campaign projects - decided, not scheduled
 
 ### The MLS + Graine explanation, written FOR THE USER - audience settled 2026-08-20

@@ -1134,6 +1134,55 @@ parent, the icon size and every `BitmapFactory` call having options. **What it c
 the shrunk APK still works**, since the debug build type never minifies: that is
 [device-verification check R](../device-verification.md#r-the-shrunk-release-apk-actually-runs---owed-on-android).
 
+### Play's Q3-2026 quality requirements, measured against this app
+
+A second Google Play mail, the same day as the pre-launch analysis, announced two requirements with
+their own enforcement dates. Three of the four thresholds are measured by Play from field data, not
+by anything here, so what follows is where this app STANDS, and the one place it did not stand at all.
+
+| Requirement | Threshold | Enforced | Where this app is |
+| --- | --- | --- | --- |
+| Dynamic memory | anon RSS + swap, 28-day P90, 2 GB foreground on a 4 GB device | Feb 2027 | **unmeasured** - only Android vitals or the Play Developer Reporting API can answer it |
+| Bitmap memory | > 200 MB backgrounded, > 400 MB cached | Feb 2027 | **bounded by construction**, see below |
+| Code optimization | >= 25% across obfuscation, optimization and shrinking, for apps over 10 MB of DEX | Feb 2027 | **out of scope by size**: the release DEX is 2.83 MB. Minified and shrunk anyway |
+| Zero-Tap Sign-In restoration | Restore Credentials API, apps with any sign-in | Apr 2027 | **NOT IMPLEMENTED** - a work package, see [backlog](../backlog.md) |
+
+**The bitmap threshold is answered by the shape of the code, not by a measurement.** Every
+`Bitmap` in the Android app is allocated in `CanariFirebaseMessagingService`, and there are exactly
+three producers: `decodeSampled`, which every `BitmapFactory` call now routes through;
+`circleCrop`, which allocates one `target x target` ARGB_8888 where `target` is
+`notification_large_icon_width`; and `generateInitialsBitmap` at a fixed 96 px. The peak is one
+sampled source plus one target-sized copy - hundreds of kilobytes, three orders of magnitude under
+the backgrounded threshold, and it is the FCM service process that would have paid for it.
+
+**The migration requirement found a hole that had always been open.** The app has always meant to
+refuse both extraction channels, and `res/xml/data_extraction_rules.xml` says so in full - `exclude
+domain="root"` under both `<cloud-backup>` and `<device-transfer>`. It was referenced by nothing.
+Its own header comment claimed the manifest referenced it; the manifest's header, in as many words,
+listed `dataExtractionRules` among the attributes never to restore, on the grounds of a merge
+conflict. So the file described a policy, the manifest forbade wiring it up, and each read as if the
+other had it covered.
+
+That gap is not equivalent to `allowBackup="false"`. That attribute is deprecated from Android 12,
+and Google's own documentation says that on some manufacturers it disables cloud backup **without**
+disabling device-to-device transfer; and where no `<device-transfer>` section is declared, that mode
+is *fully enabled* for everything outside `cache` and `no-backup`. With minSdk 28 and targetSdk 36,
+almost every install is on the side where the attribute does not reach. So both are kept: the
+attribute covers API 28-30, the rules file covers 31 and up, and `tools:replace` names both - which
+is all the merge conflict ever needed.
+
+**What a transfer would have carried is worse than a leak, it is a broken install.** Keystore
+material is non-exportable by construction, so a migrated app would arrive holding this device's MLS
+state without the key that seals it. The product already has the right answer for a new phone: enrol
+as a new MLS client and be re-invited, which is what `frontend/src/lib/backup.ts` implements and
+what a restore onto a different device already reports as `lifecycle: 'pending'`.
+
+**The instrument that found it was the resource shrinker turned on an hour earlier.** It reported
+`xml:data_extraction_rules is not reachable` and dropped the file from the APK. It now reports
+`reachable from AndroidManifest.xml`, and the file ships. That is worth keeping in mind for its own
+sake: a shrinker's reachability report is a list of everything the app declares and never consults.
+
+
 ## Shared native code
 
 Rust FFI functions shared across both platforms via `frontend/src-tauri/src/mobile/`:

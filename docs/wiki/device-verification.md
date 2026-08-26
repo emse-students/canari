@@ -476,6 +476,10 @@ re-enrolment and SETUP-4's 2FA.
    as measured on 2026-08-07.
 5. **A file picker and a dialog still open.** They are the only native UI this app has, and the
    claim under test is that nothing referenced the excluded library.
+6. **The installed package refuses a device transfer.** `adb shell dumpsys package fr.emse.canari`
+   must show `dataExtractionRules` resolved, not just `allowBackup=false` - the attribute that does
+   NOT cover device-to-device transfer on Android 12+. Asserting the merged manifest is what the
+   build already proves; this asserts the artifact Play will actually ship.
 
 **A debug pass covers none of this**, which is why this check is separate from Q - cleared on a
 debug APK on 2026-08-26, on a build that by definition never ran R8.

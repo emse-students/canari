@@ -444,6 +444,7 @@ What must not be forgotten between the pages:
 
 **Seams nothing compiles**
 
+- **A GUARDRAIL WHOSE COST IS I/O NEEDS A BOUND MEASURED UNDER LOAD, NOT A DEFAULT.** `git ls-files --eol` takes 290 ms on an idle tree and overran a 5 s timeout inside the full 225-file suite; it failed as a TIMEOUT, saying nothing at all about what it guards, and a check that reddens under load is one its reader learns to skip. [dev](development.md)
 - **A cross-process contract is only as good as its test** - pin the PATHS as well as the field names, or a writer on one OS fills a directory nothing reads. [dev](development.md#cross-language-boundaries)
 - **`Log.d` takes a TAG then a payload, and one argument makes the sentence the tag** - it prints `[[TAG] ...]`, which no reader and no log rule expects, and only an exact-match classifier ever notices. [dev](development.md#cross-language-boundaries)
 - **A payload field with no reader-side check drifts in BOTH directions, silently** - pin it with a source-reading test each way (`channelPushFields.test.ts`, twin of `fcmCacheFields.test.ts`). [channel-encryption](protocols/channel-encryption.md)
@@ -507,6 +508,8 @@ page. `mob` = [mobile](frontend/mobile.md), `auth` = [auth](frontend/modules/aut
 - **An app extension has its own data container** - the App Group is the only shared storage. [mob](frontend/mobile.md)
 - **A native thread has no Java frames**, so `FindClass` reaches framework classes only. [mob](frontend/mobile.md)
 - **Edge-to-edge is not guaranteed by `env(safe-area-inset-*)` alone** - call `enableEdgeToEdge()` explicitly. [mob](frontend/mobile.md)
+- **A POLICY FILE NOTHING REFERENCES IS NOT A POLICY, IT IS A DESCRIPTION OF ONE.** `data_extraction_rules.xml` excluded every byte from device transfer for as long as it existed, and was wired to nothing; a shrinker's reachability report is the cheapest enumeration of what an app declares and never consults. [mob](frontend/mobile.md#plays-q3-2026-quality-requirements-measured-against-this-app)
+- **`allowBackup="false"` DOES NOT STOP A DEVICE-TO-DEVICE TRANSFER** on Android 12+, and an absent `<device-transfer>` section means that mode carries EVERYTHING. Two attributes, two API ranges, both required. [mob](frontend/mobile.md#plays-q3-2026-quality-requirements-measured-against-this-app)
 - **A DECODE SIZED BY ITS INPUT IS UNBOUNDED WHEN THE INPUT IS NOT YOURS.** Read the header first and sample down to the size the platform will draw - and count the SECOND allocation a crop or a scale adds. [mob](frontend/mobile.md#the-face-on-a-notification-and-what-happens-when-there-is-none)
 - **A CSS custom property consumed at two nesting depths applies its correction twice**; delete the second consumer. [mob](frontend/mobile.md)
 - **A plain system-browser launch is an ORPHANED activity on Android** - a Custom Tab shares the app's task. [mob](frontend/mobile.md)

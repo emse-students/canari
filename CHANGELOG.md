@@ -326,6 +326,23 @@ which is also where every release up to and including v0.13.1 now lives.
   NOTHING joins on the base the joiner exported and messages converge, by three server specs, and by
   two client specs, one asserting that nothing follows the submission at all
 - **A server-log rule that had never seen the line one invitation writes.** COMM-4's window of
+- **The app was never actually excluded from an Android device-to-device transfer.** A second
+  Google Play mail on 2026-08-26 announced a migration requirement, and looking at ours found the
+  refusal had never been wired up. `res/xml/data_extraction_rules.xml` excludes `domain="root"` from
+  both `<cloud-backup>` and `<device-transfer>`, and said in its own comment that the manifest
+  referenced it - while the manifest's header listed `dataExtractionRules` among the attributes
+  never to restore, blaming a merge conflict. Each file read as though the other had it covered, and
+  nothing read the rules. **`android:allowBackup="false"` does not close that**: it is deprecated
+  from Android 12 and, per Google's own documentation, disables cloud backup on some manufacturers
+  without disabling device transfer - and where no `<device-transfer>` section is declared, that
+  mode carries everything outside `cache` and `no-backup`. Both are now set, `tools:replace` names
+  both, which is all the merge conflict ever required. What a transfer would have moved is not so
+  much a leak as a broken install: Keystore material is non-exportable, so the new phone would
+  arrive holding this device's MLS state without the key that seals it, when the product's answer
+  for a new phone is to enrol as a new MLS client and be re-invited. Found by the resource shrinker
+  switched on an hour earlier, which reported `xml:data_extraction_rules is not reachable`; it now
+  reports `reachable from AndroidManifest.xml`.
+
   2026-08-26 held a single `unexplained` line, `[INTERNAL_MLS_DEVICES] user=... count=1` - the
   count social-service asks for before a direct invitation, because it may not call the user route
   that answers the same question behind an Nginx-minted HMAC. Expected and necessary, missing only a

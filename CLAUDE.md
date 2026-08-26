@@ -207,14 +207,18 @@ sixth is owed to the user, not to the code:** is a MiGallery application worth b
 
 ### CANARI - what is open
 
-**Google Play's four release recommendations are worked (2026-08-26), and TWO WILL NEVER CLEAR** -
-the remaining deprecated-window-API sites are inside the `enableEdgeToEdge()` Play's own first item
-asks for, and inside play-services-base. What shipped, what was already answered, and why no
-dependency upgrade helps:
-[mobile](docs/wiki/frontend/mobile.md#the-release-builds-shape-and-what-google-plays-analysis-asked-of-it),
-the only copy. **OWED ON HARDWARE, check R** ([device-verification](docs/wiki/device-verification.md)):
-only a SIGNED RELEASE APK answers it, because the debug build type never minifies - so R rides the
-next release, and nothing here may claim resource shrinking works until it has run.
+**Google Play, both mails of 2026-08-26, are worked - TWO items will never clear, ONE needs a
+decision from YOU.** Shipped: the four pre-launch recommendations, and the device-to-device transfer
+the app was never actually excluded from (`allowBackup="false"` does not do that on Android 12+, and
+the rules file that would have was referenced by nothing). Unclearable: two deprecated-window-API
+sites, inside the `enableEdgeToEdge()` Play itself asks for and inside play-services-base. **Open -
+WP-RESTORE-1**: Play requires Zero-Tap Sign-In restoration from **April 2027**, signing a restored
+device in with no password and no 2FA on a server that has no WebAuthn at all; build it or seek an
+exemption, and the Block Store route closes **30 September 2026**. Thresholds measured on
+[mobile](docs/wiki/frontend/mobile.md#plays-q3-2026-quality-requirements-measured-against-this-app),
+decision in [backlog](docs/wiki/backlog.md). **OWED ON HARDWARE, check R**
+([device-verification](docs/wiki/device-verification.md)): only a SIGNED RELEASE APK answers it,
+since debug never minifies - it rides the next release.
 
 **Release status:** v0.14.4 cut 2026-08-24, every platform green including TestFlight - the iOS path
 ran end to end for the first time and nothing there is owed any more (story in `CHANGELOG.md`).

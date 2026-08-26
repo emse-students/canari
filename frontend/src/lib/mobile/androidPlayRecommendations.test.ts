@@ -3,7 +3,8 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
- * The four things Google Play's pre-launch analysis named on 2026-08-26, held here.
+ * What Google Play asked of this app, held here - the four findings of its pre-launch analysis
+ * and the Q3-2026 quality requirements that followed the same day.
  *
  * Each is invisible to every other check in this repository. Three live in files
  * `tauri android init` or a Tauri upgrade regenerates from the template - `gen/android` is
@@ -25,6 +26,11 @@ const gradle = readFileSync(resolve(ANDROID, 'app/build.gradle.kts'), 'utf8');
 const theme = readFileSync(resolve(ANDROID, 'app/src/main/res/values/themes.xml'), 'utf8');
 const fcm = readFileSync(
   resolve(ANDROID, 'app/src/main/java/fr/emse/canari/CanariFirebaseMessagingService.kt'),
+  'utf8'
+);
+const manifest = readFileSync(resolve(ANDROID, 'app/src/main/AndroidManifest.xml'), 'utf8');
+const extraction = readFileSync(
+  resolve(ANDROID, 'app/src/main/res/xml/data_extraction_rules.xml'),
   'utf8'
 );
 
@@ -83,5 +89,46 @@ describe("Google Play's release recommendations, the actionable ones", () => {
     // the file: the comment above the style names MaterialComponents to say what it stopped being.
     expect(theme).toContain('parent="Theme.AppCompat.DayNight.NoActionBar"');
     expect(theme).not.toMatch(/parent="Theme\.MaterialComponents/);
+  });
+});
+
+/**
+ * Play's Q3-2026 quality requirements, the half that is ours to assert.
+ *
+ * Three of the four thresholds are measured by Play from field data and cannot be pinned here:
+ * dynamic memory and bitmap memory are 28-day P90s off Android vitals, and the 25% code-optimization
+ * floor applies only above 10 MB of DEX - this app's release DEX is 2.83 MB, so it is out of scope
+ * by size, and minification is asserted above anyway.
+ *
+ * The fourth, "a secure and seamless migration", is where this app had a real hole, and it is the
+ * kind only a reference can close. `data_extraction_rules.xml` had sat in the tree since it was
+ * written, saying in its own comment that the manifest referenced it, while the manifest's header
+ * said in as many words NOT to add that reference. Nothing read the file. The resource shrinker
+ * named it the moment it was switched on - `xml:data_extraction_rules is not reachable` - and it
+ * now reports `reachable from AndroidManifest.xml` instead.
+ */
+describe("Play's Q3-2026 quality requirements", () => {
+  it('excludes the app from device-to-device transfer, not just from cloud backup', () => {
+    // `allowBackup="false"` is deprecated from Android 12 and, on several manufacturers, stops
+    // cloud backup while leaving D2D transfer running. A missing <device-transfer> section is not
+    // a refusal either: that mode is then fully enabled for everything outside cache/no-backup.
+    // So the two attributes are not alternatives - allowBackup covers API 28-30, the rules file
+    // covers 31+, and the app needs both.
+    expect(manifest).toContain('android:allowBackup="false"');
+    expect(manifest).toContain('android:dataExtractionRules="@xml/data_extraction_rules"');
+    expect(manifest).toMatch(/tools:replace="[^"]*android:dataExtractionRules/);
+    expect(extraction).toMatch(/<cloud-backup>\s*<exclude domain="root" \/>\s*<\/cloud-backup>/);
+    expect(extraction).toMatch(
+      /<device-transfer>\s*<exclude domain="root" \/>\s*<\/device-transfer>/
+    );
+  });
+
+  it('no longer carries the instruction that left the reference out', () => {
+    // The header listed dataExtractionRules among the things never to restore, on the grounds of a
+    // manifest merge conflict - which is what tools:replace answers, exactly as it already did for
+    // allowBackup. An instruction that forbids the fix outlives whoever wrote it, so it is asserted
+    // gone rather than merely edited.
+    expect(manifest).not.toMatch(/nor fullBackupContent\/dataExtractionRules/);
+    expect(manifest).toMatch(/dataExtractionRules\s+is IN/);
   });
 });

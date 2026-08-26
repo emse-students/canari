@@ -1,8 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Désactive toute extraction de données vers le cloud et vers un autre appareil.
-    Référencé par android:dataExtractionRules dans AndroidManifest.xml (API 31+).
-    android:allowBackup="false" couvre les appareils plus anciens (API < 31).
+    Excludes every byte this app stores from BOTH extraction channels, cloud backup and
+    device-to-device transfer.
+
+    This file existed and was referenced by NOTHING until 2026-08-26, which the resource
+    shrinker reported the moment it was turned on ("xml:data_extraction_rules is not
+    reachable"). `android:allowBackup="false"` alone does not cover the gap: it is
+    deprecated from Android 12, and on several manufacturers it stops cloud backup while
+    leaving device-to-device transfer on - and a missing <device-transfer> section means
+    that mode is fully enabled for everything outside `cache` and `no-backup`.
+
+    Excluding the app is not a convenience. A migrated install would arrive holding this
+    device's MLS state WITHOUT the Keystore key that seals it, since Keystore material is
+    non-exportable by construction - a new device is meant to enrol as a new MLS client and
+    be re-invited, which is what `frontend/src/lib/backup.ts` already implements.
 -->
 <data-extraction-rules>
     <cloud-backup>

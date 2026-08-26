@@ -12,10 +12,14 @@
     - push permissions: POST_NOTIFICATIONS, WAKE_LOCK, c2dm RECEIVE, RECEIVE_BOOT_COMPLETED
     - <receiver .CanariBootReceiver> (BOOT_COMPLETED/MY_PACKAGE_REPLACED, WP-XP-4)
     - <receiver .CanariNotificationActionReceiver> (quick actions, WP-XP-1)
-    - the AD_ID removal, networkSecurityConfig, allowBackup=false (+ tools:replace)
+    - the AD_ID removal, networkSecurityConfig, allowBackup=false AND
+      dataExtractionRules=@xml/data_extraction_rules, both in tools:replace. BOTH are
+      needed: allowBackup is deprecated from Android 12 and, on several manufacturers,
+      stops cloud backup WITHOUT stopping device-to-device transfer, which defaults to
+      copying everything when no <device-transfer> rule is declared.
   DO NOT restore android:debuggable (the ${debuggable} placeholder is not defined in
-  build.gradle.kts -> merge failure) nor fullBackupContent/dataExtractionRules (merge
-  conflicts).
+  build.gradle.kts -> merge failure). fullBackupContent stays out; dataExtractionRules
+  is IN, and the merge conflict it used to cause is what tools:replace answers.
     - FCM meta-data default_notification_icon / _channel_id (= CHANNEL_MESSAGES in Kotlin)
   CI guardrail: src/lib/mobile/androidFcmManifest.test.ts fails if any of these is dropped.
 -->
@@ -55,7 +59,8 @@
         android:networkSecurityConfig="@xml/network_security_config"
         android:usesCleartextTraffic="${usesCleartextTraffic}"
         android:allowBackup="false"
-        tools:replace="android:allowBackup">
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        tools:replace="android:allowBackup,android:dataExtractionRules">
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
             android:windowSoftInputMode="adjustResize"

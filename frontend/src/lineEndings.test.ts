@@ -26,33 +26,47 @@ import { describe, expect, it } from 'vitest';
  */
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
+/**
+ * `git ls-files --eol` has to stat and sniff every tracked file - 1966 of them here - so its cost
+ * is I/O, not computation: about 290 ms on an idle tree, but it runs inside a 225-file suite that
+ * saturates the disk, and there it overran vitest's 5 s default and failed as a TIMEOUT. A guardrail
+ * that goes red under load teaches its reader to skip it, and the next real CRLF hides behind that
+ * habit. The bound is explicit and roughly 200x the idle cost; it is a limit on a whole-repo git
+ * walk, not patience for a slow assertion.
+ */
+const GIT_LS_FILES_TIMEOUT_MS = 60_000;
+
 describe('working-tree line endings honour .gitattributes', () => {
-  it('holds no CRLF outside the files declared eol=crlf', () => {
-    // Columns: `i/<index-eol> w/<worktree-eol> attr/<resolved attributes> \t <path>`.
-    // `w/-text` is a file git detected as binary, `w/none` one with no line endings at all.
-    const report = execFileSync('git', ['ls-files', '--eol'], {
-      cwd: REPO_ROOT,
-      encoding: 'utf8',
-      maxBuffer: 32 * 1024 * 1024,
-    });
+  it(
+    'holds no CRLF outside the files declared eol=crlf',
+    () => {
+      // Columns: `i/<index-eol> w/<worktree-eol> attr/<resolved attributes> \t <path>`.
+      // `w/-text` is a file git detected as binary, `w/none` one with no line endings at all.
+      const report = execFileSync('git', ['ls-files', '--eol'], {
+        cwd: REPO_ROOT,
+        encoding: 'utf8',
+        maxBuffer: 32 * 1024 * 1024,
+      });
 
-    const offenders: string[] = [];
-    for (const line of report.split('\n')) {
-      if (!line) continue;
-      const [columns, path] = line.split('\t');
-      if (!path) continue;
-      const worktree = columns.split(/\s+/)[1];
-      if (worktree !== 'w/crlf' && worktree !== 'w/mixed') continue;
-      // A file git itself declares CRLF is the one legitimate case - Windows batch scripts.
-      if (/eol=crlf/.test(columns)) continue;
-      offenders.push(`${path} (${worktree})`);
-    }
+      const offenders: string[] = [];
+      for (const line of report.split('\n')) {
+        if (!line) continue;
+        const [columns, path] = line.split('\t');
+        if (!path) continue;
+        const worktree = columns.split(/\s+/)[1];
+        if (worktree !== 'w/crlf' && worktree !== 'w/mixed') continue;
+        // A file git itself declares CRLF is the one legitimate case - Windows batch scripts.
+        if (/eol=crlf/.test(columns)) continue;
+        offenders.push(`${path} (${worktree})`);
+      }
 
-    expect(
-      offenders,
-      'CRLF in the working tree. Git will not show these as modified - the content normalises to ' +
-        'the same blob - but tests that slice source by regex fail on them with errors naming the ' +
-        'wrong file. Rewrite them with LF; never write a repository file in text mode on Windows.'
-    ).toEqual([]);
-  });
+      expect(
+        offenders,
+        'CRLF in the working tree. Git will not show these as modified - the content normalises to ' +
+          'the same blob - but tests that slice source by regex fail on them with errors naming the ' +
+          'wrong file. Rewrite them with LF; never write a repository file in text mode on Windows.'
+      ).toEqual([]);
+    },
+    GIT_LS_FILES_TIMEOUT_MS
+  );
 });
