@@ -16,6 +16,22 @@ This document describes how the **client** recovers from MLS and delivery-queue 
 
    **Rung 2 recovery is self-service first.** The re-add seam `requestReAdd` tries **`externalJoin`** before any peer Welcome: it fetches the latest GroupInfo (**`GET /api/mls/group-info/:groupId`**, membership-gated), builds a native openmls external commit, and submits it under the standard epoch gate (**`POST /api/mls/commit`** at the GroupInfo's base epoch; on an epoch race it discards the group and retries with a fresher GroupInfo — no peer liveness required). The committer refreshes the stored GroupInfo after every accepted commit (**`POST /api/mls/group-info/:groupId`**, monotonic). Only when no GroupInfo is available does it fall back to a `welcome_request` (a reachable member re-adds us via a Welcome). The reboot/CAS/successor machinery was fully retired — external join is the self-service recovery; welcome_request is the thin fallback.
 
+   **A joiner publishes the base its OWN commit created, inside the submission (2026-08-26).** An
+   external commit advances the group by one epoch, so the base the joiner built on is stale the
+   instant its commit is accepted — and until this change the new one was minted by a SECOND
+   round-trip (`refreshGroupInfo`) made after the join returned. An external joiner reloads by
+   construction, so that call was the one certain to be lost, and nothing else ever mints a base: the
+   published one then trailed `activeEpoch` for good, the strict gate refused every later external
+   commit, and a distribution group has no peer-Welcome fallback to take instead. COMM-22 measured it
+   on production. Because an external commit is applied to the returned instance at once (unlike a
+   staged add/remove), the joiner can `export_group_info` at `base + 1` before merging; that blob
+   travels in **`POST /api/mls/commit`** as `groupInfo`, and `validateCommit` writes it with the epoch
+   advance in one transaction. The client refuses to publish unless its instance is exactly at
+   `base + 1` and abandons the join otherwise — a monotonic base stored under the wrong epoch cannot
+   be walked back. **Ordinary staged commits still mint their base by follow-up**: their commit is
+   unapplied at submit time, so the device is still at the old epoch and has nothing to export; see
+   [backlog](../backlog.md) for the openmls bundle GroupInfo that would close that half too.
+
    **A refused GroupInfo read ENDS the ladder; it does not descend it.** "Or the device is not an authorized member" used to be in the sentence above, and it was a defect: the endpoint is gated on a `dm_group_members` row, so its **403 is the roster answering** that we hold no membership — which no retry and no peer can change. It now arrives as `NotAGroupMemberError`, thrown by `fetchGroupInfo`, propagated by `externalJoin`, and terminates the recovery through the same seam as a server-side tombstone (`stopRecovering`: cancel, `clearGroupNotReady`, retire the conversation). Until then it was flattened to `null`, read as *no base published yet*, and fell to the fallback — so a group we had LEFT was chased once a minute for as long as it existed, one 403 and one broadcast per pass, contained only by the `RECOVERY_TIMEOUT_MS` throttle. Any OTHER failure (a 5xx, a transport error) says nothing about membership and must still descend to the fallback, or a bad deploy retires live conversations.
 
 5. **Stale / kick flows** — Server metadata (`DeviceGroupMembership`: `pending`, `welcome_sent`, `welcome_received`, `stale`) must match MLS reality. After remove commits, the client calls **`POST /api/mls/kick-stale-device`** (single device; used by `kickStaleDevice()` in MLS services) or **`POST /api/mls/kick-stale-user`** (all devices of a user).
@@ -31,6 +47,7 @@ This document describes how the **client** recovers from MLS and delivery-queue 
 | Metrics | `logMlsMetric` is a no-op unless dev or `canari_mls_debug` | `mlsRecoveryMetrics.test.ts` |
 | Epoch gap replay (rung 1) | Missed commits are fetched + re-applied before any destructive rung-2 forget; `belowFloor` falls to rung 2 | `commitReplay.test.ts`, `setupMessageHandler.test.ts`, `messaging.commit-log.spec.ts` |
 | External-join self-recovery (rung 2) | `requestReAdd` tries `externalJoin` first; welcome_request only as fallback; GroupInfo store is membership-gated + monotonic | `external_join.rs`, `BaseMlsService.externalJoin.test.ts`, `messaging.group-info.spec.ts`, `recovery.test.ts` |
+| A join never leaves the base behind | The joiner exports at `base + 1` before merging, the blob travels in the commit submission, and the server stores it in the same transaction as the advance; a wrong-epoch instance abandons the join | `external_join.rs` (`a_joiner_exports_the_base_its_own_commit_created_before_merging`), `BaseMlsService.externalJoin.test.ts`, `messaging.commit-log.spec.ts` |
 | A refused GroupInfo read terminates the ladder | 403 is typed at the throw, survives `externalJoin`, retires the conversation; 401/404/5xx and a `200`-with-`null` stay retryable | `mlsDeliveryApi.groupStatus.test.ts`, `BaseMlsService.externalJoin.test.ts`, `recovery.test.ts` |
 | Kick API | Authenticated clients only | `HeaderAuthGuard` on `kick-stale-device`, `kick-stale-user` |
 

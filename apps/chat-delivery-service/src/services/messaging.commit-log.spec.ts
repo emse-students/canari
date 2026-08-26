@@ -18,7 +18,36 @@ import { RevokedDevice } from '../entities/revoked-device.entity';
 describe('MessagingService - commit-log (rung-1 backbone)', () => {
   let service: MessagingService;
 
-  const groupRepo = { findOne: jest.fn(), save: jest.fn() };
+  /**
+   * The epoch advance is written through a TRANSACTION now, not `save`, because the external-join
+   * base for the epoch it creates has to land with it or not at all (COMM-22). The fake manager
+   * hands out the same two repositories the real one would, so a test can assert BOTH writes and
+   * see that they happened inside the one callback.
+   */
+  const groupUpdate = jest.fn().mockResolvedValue({ affected: 1 });
+  const txGroupInfoRepo = {
+    findOne: jest.fn().mockResolvedValue(null),
+    createQueryBuilder: jest.fn(),
+  };
+  const txInsertBuilder = {
+    insert: jest.fn().mockReturnThis(),
+    values: jest.fn().mockReturnThis(),
+    orIgnore: jest.fn().mockReturnThis(),
+    execute: jest.fn().mockResolvedValue({ raw: [{ groupId: 'group-1' }] }),
+  };
+  const txUpdateBuilder = {
+    update: jest.fn().mockReturnThis(),
+    set: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    execute: jest.fn().mockResolvedValue({}),
+  };
+  const transaction = jest.fn(async (cb: (m: unknown) => Promise<void>) =>
+    cb({
+      getRepository: (entity: unknown) =>
+        entity === Group ? { update: groupUpdate } : txGroupInfoRepo,
+    })
+  );
+  const groupRepo = { findOne: jest.fn(), save: jest.fn(), manager: { transaction } };
   const groupMemberRepo = { findOne: jest.fn() };
   const commitInsertBuilder = {
     insert: jest.fn().mockReturnThis(),
@@ -95,6 +124,11 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
     deviceGroupRepo.findOne.mockResolvedValue({ status: 'active' });
     keyPackageRepo.findOne.mockResolvedValue({ id: 'kp-1' });
     revokedDeviceRepo.findOne.mockResolvedValue(null);
+    txGroupInfoRepo.findOne.mockResolvedValue(null);
+    txGroupInfoRepo.createQueryBuilder.mockImplementation((): unknown => ({
+      ...txInsertBuilder,
+      ...txUpdateBuilder,
+    }));
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MessagingService,
@@ -124,7 +158,6 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
   describe('validateCommit stores the commit and fans it out', () => {
     it('records the accepted commit keyed by baseEpoch, then broadcasts it', async () => {
       groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });
-      groupRepo.save.mockResolvedValue(undefined);
       const fanOut = jest
         .spyOn(service, 'sendMessage')
         .mockResolvedValue({ status: 'processed', queued: 0, sent: 0 });
@@ -140,8 +173,9 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
 
       expect(res.accepted).toBe(true);
       expect(res.newEpoch).toBe(6);
-      // Epoch advanced and persisted.
-      expect(groupRepo.save).toHaveBeenCalledWith(expect.objectContaining({ activeEpoch: 6 }));
+      // Epoch advanced and persisted, inside the transaction.
+      expect(transaction).toHaveBeenCalledTimes(1);
+      expect(groupUpdate).toHaveBeenCalledWith({ id: 'group-1' }, { activeEpoch: 6 });
       // Commit stored keyed by the epoch it advances FROM.
       expect(commitInsertBuilder.values).toHaveBeenCalledWith({
         groupId: 'group-1',
@@ -161,12 +195,89 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       );
     });
 
+    // -- COMM-22: the base for the epoch a commit creates travels WITH the commit ---------------
+    //
+    // It used to be minted by a second client round-trip made after this one returned, and nothing
+    // else ever mints one. An external joiner reloads by construction, so that call was the one
+    // certain to be lost - after which the published base trailed `activeEpoch` for good and the
+    // strict gate refused every later external commit. Measured on production 2026-08-26.
+
+    it('stores the base for the new epoch in the same transaction as the advance', async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });
+      jest
+        .spyOn(service, 'sendMessage')
+        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0 });
+
+      const res = await service.validateCommit({
+        groupId: 'group-1',
+        deviceId: 'device-1',
+        baseEpoch: 5,
+        proto: 'Y29tbWl0',
+        senderId: 'user-1',
+        groupInfo: 'Z2k=',
+      });
+
+      expect(res.accepted).toBe(true);
+      // Under the epoch the commit CREATES, not the one it was built on: a base stored at 5 is the
+      // very staleness this closes.
+      expect(txInsertBuilder.values).toHaveBeenCalledWith({
+        groupId: 'group-1',
+        groupInfo: 'Z2k=',
+        baseEpoch: 6,
+      });
+      // One transaction for both writes - which is the whole claim.
+      expect(transaction).toHaveBeenCalledTimes(1);
+      expect(groupUpdate).toHaveBeenCalledWith({ id: 'group-1' }, { activeEpoch: 6 });
+    });
+
+    it('advances the epoch alone when the committer sends no base', async () => {
+      // An ordinary staged add/remove cannot export one: its commit is unapplied at submit time, so
+      // the device does not hold the resulting epoch's tree yet. Those keep the follow-up refresh
+      // and a holder's `republishStaleBase` as their repair - what must NOT happen is a base
+      // written for an epoch nobody described.
+      groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });
+      jest
+        .spyOn(service, 'sendMessage')
+        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0 });
+
+      const res = await service.validateCommit({
+        groupId: 'group-1',
+        deviceId: 'device-1',
+        baseEpoch: 5,
+        proto: 'Y29tbWl0',
+        senderId: 'user-1',
+      });
+
+      expect(res.accepted).toBe(true);
+      expect(groupUpdate).toHaveBeenCalledWith({ id: 'group-1' }, { activeEpoch: 6 });
+      expect(txInsertBuilder.values).not.toHaveBeenCalled();
+      expect(txUpdateBuilder.set).not.toHaveBeenCalled();
+    });
+
+    it('refuses to store a base for a commit the gate rejected', async () => {
+      // The base is monotonic and cannot be walked back, so publishing one for an epoch that never
+      // happened would strand the group permanently - worse than the staleness it replaces.
+      groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 7 });
+
+      const res = await service.validateCommit({
+        groupId: 'group-1',
+        deviceId: 'device-1',
+        baseEpoch: 5,
+        proto: 'Y29tbWl0',
+        senderId: 'user-1',
+        groupInfo: 'Z2k=',
+      });
+
+      expect(res).toEqual({ accepted: false, currentEpoch: 7, reason: 'epoch_mismatch' });
+      expect(transaction).not.toHaveBeenCalled();
+      expect(txInsertBuilder.values).not.toHaveBeenCalled();
+    });
+
     it('promotes the committing device to active when it has no membership row (external join)', async () => {
       // An external-commit join never receives a Welcome, so nothing else creates the row.
       // Without the promotion, recipient resolution (status='active') skips the device and it
       // receives neither the history bundle it solicits nor any later message.
       groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 1 });
-      groupRepo.save.mockResolvedValue(undefined);
       deviceGroupRepo.findOne.mockResolvedValue(null);
       jest
         .spyOn(service, 'sendMessage')
@@ -194,7 +305,6 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
 
     it('does not re-promote a device that is already an active member', async () => {
       groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });
-      groupRepo.save.mockResolvedValue(undefined);
       deviceGroupRepo.findOne.mockResolvedValue({ status: 'active' });
       jest
         .spyOn(service, 'sendMessage')
@@ -217,7 +327,6 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
     // then be messaged forever, invisible in the device list and uncollectable by the GC.
     it('refuses to promote a device on the revocation denylist', async () => {
       groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 1 });
-      groupRepo.save.mockResolvedValue(undefined);
       deviceGroupRepo.findOne.mockResolvedValue(null);
       revokedDeviceRepo.findOne.mockResolvedValue({ id: 'r1' });
       jest
@@ -241,7 +350,6 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
 
     it('refuses to promote a device with no static KeyPackage', async () => {
       groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 1 });
-      groupRepo.save.mockResolvedValue(undefined);
       deviceGroupRepo.findOne.mockResolvedValue(null);
       keyPackageRepo.findOne.mockResolvedValue(null);
       jest

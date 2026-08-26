@@ -2246,11 +2246,29 @@ export abstract class BaseMlsService implements IMlsService {
         };
       }
 
-      let joined: { groupId: string; commit: Uint8Array };
+      // BUILD THE COMMIT AND THE BASE IT CREATES IN THE SAME BREATH. An external commit is applied
+      // to the returned instance at once (unlike a staged add/remove), so this device - and for one
+      // moment ONLY this device - can export the GroupInfo for the epoch its own commit produces.
+      // That base then travels inside the submission below and is stored with the epoch advance,
+      // which is what stops an external joiner from locking the NEXT one out (COMM-22).
+      let joined: { groupId: string; commit: Uint8Array; nextBase: string };
       try {
-        joined = await this.runUnderMlsLock(() =>
-          this.joinByExternalCommit(fromBase64(gi.groupInfo))
-        );
+        joined = await this.runUnderMlsLock(async () => {
+          const built = await this.joinByExternalCommit(fromBase64(gi.groupInfo));
+          const localEpoch = this.getEpoch(built.groupId);
+          // A HARD ERROR, NOT A DEGRADED SUBMISSION. The published base is monotonic and cannot be
+          // walked back, so a blob exported at any other epoch than the one the server will record
+          // it under would strand the group for good. Nothing about this can be true and unnoticed:
+          // if the instance is not at base + 1 the join is abandoned like any other build failure,
+          // and the caller's welcome_request fallback is the right next move.
+          if (localEpoch !== gi.baseEpoch + 1) {
+            throw new Error(
+              `external join instance at epoch ${localEpoch}, expected ${gi.baseEpoch + 1}`
+            );
+          }
+          const nextBase = toBase64(await this.exportGroupInfo(built.groupId));
+          return { ...built, nextBase };
+        });
       } catch (e) {
         // Build failed (e.g. the group is already held locally) -> fall back.
         console.warn(`[MLS] externalJoin build failed for ${short}...:`, String(e).slice(0, 120));
@@ -2265,7 +2283,8 @@ export abstract class BaseMlsService implements IMlsService {
           joined.groupId,
           gi.baseEpoch,
           toBase64(joined.commit),
-          excludeSelf
+          excludeSelf,
+          joined.nextBase
         );
       } catch (e) {
         // A TRANSPORT FAILURE IS NOT AN ANSWER, and this used to be relabelled an epoch race: the
@@ -2285,9 +2304,12 @@ export abstract class BaseMlsService implements IMlsService {
 
       if (validation.accepted) {
         await this.runUnderMlsLock(() => this.mergePendingCommit(joined.groupId));
-        void this.refreshGroupInfo(joined.groupId);
+        // NO FOLLOW-UP REFRESH HERE, AND ITS ABSENCE IS THE FIX. The base for the epoch this join
+        // created was written in the same transaction as the epoch itself, so there is nothing left
+        // to mint and nothing left to lose - which is what a reload used to take with it.
         console.log(
-          `[MLS] externalJoin succeeded for ${joined.groupId.slice(0, 8)}... (base epoch ${gi.baseEpoch})`
+          `[MLS] externalJoin succeeded for ${joined.groupId.slice(0, 8)}... (base epoch ${gi.baseEpoch},` +
+            ` base for ${gi.baseEpoch + 1} stored with the commit)`
         );
         return { joined: true };
       }

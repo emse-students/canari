@@ -369,6 +369,11 @@ that matters here:
   preflight refused the run outright and named the command that rebuilds it. Cost: one line of
   output, and the run started three minutes later.
 
+- The THIRD time, 2026-08-26, the preflight caught it again and `venue.mjs` rebuilt it (`fbddc890` /
+  `general` `064ac7d2`, 2 members). Three disappearances and the CAUSE is still unrecorded on all
+  three - which is the open half of this: nothing yet says WHICH gesture removes it, only that the
+  preflight now always notices.
+
 So the rule is not "do not delete the venue" - it is that **`run.mjs`'s preflight reads
 `channel_workspaces`, `channels` and `channel_members` before every phase**, and `venue.mjs` rebuilds
 what is owed, idempotently, through the product and never through the database (a community inserted

@@ -7,7 +7,7 @@ import {
   Inject,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, MoreThanOrEqual, LessThan } from 'typeorm';
+import { Repository, In, MoreThanOrEqual, LessThan, EntityManager } from 'typeorm';
 import * as crypto from 'crypto';
 import Redis from 'ioredis';
 import { getApps } from 'firebase-admin/app';
@@ -107,6 +107,12 @@ export interface ValidateCommitBody {
   senderId?: string;
   /** userId:deviceId pairs to skip in the commit fan-out (inviter self, freshly-welcomed invitee). */
   excludeDeviceIds?: string[];
+  /**
+   * Base64 GroupInfo for the epoch this commit CREATES (`baseEpoch + 1`), exported by the
+   * committing device before it submitted. Stored in the same transaction as the epoch advance, so
+   * the published external-join base can never trail the group. See {@link validateCommit}.
+   */
+  groupInfo?: string;
 }
 
 export interface ValidateCommitResult {
@@ -1067,9 +1073,37 @@ export class MessagingService {
         };
       }
 
-      // Advance the epoch (baseEpoch == activeEpoch guaranteed by the gate above)
+      // ADVANCE THE EPOCH AND PUBLISH ITS BASE IN ONE TRANSACTION.
+      //
+      // The base an external joiner builds on is the ONE thing the strict gate above cannot be
+      // lenient about, and until 2026-08-26 it was minted by a SECOND client round-trip made after
+      // this one returned. Nothing else ever mints one, so losing that call - a tab reload is
+      // enough, and an external joiner reloads by construction - separated the two numbers for
+      // good: every later external commit was refused, and a distribution group has no
+      // peer-Welcome fallback to take instead. COMM-22 is that row (`docs/wiki/backlog.md`).
+      //
+      // THE WINDOW IS DELETED RATHER THAN NARROWED. The base travels inside the submission, and the
+      // epoch it describes is written with it or neither is: the committing device is the only one
+      // that can export a base for `baseEpoch + 1`, and it holds the tree exactly here. Its
+      // authority is the commit the gate just accepted - a stronger proof of membership than any
+      // roster row, which is why no separate check is owed. `putGroupInfo` stays monotonic, so a
+      // late refresh from an older epoch still cannot walk the base backwards.
+      //
+      // Legacy clients send no `groupInfo`; for them this is the plain advance it always was, and
+      // `republishStaleBase` on a holder remains their repair.
+      const newBase = typeof body.groupInfo === 'string' && body.groupInfo ? body.groupInfo : null;
+      await this.groupRepo.manager.transaction(async (m) => {
+        await m.getRepository(Group).update({ id: groupId }, { activeEpoch: baseEpoch + 1 });
+        if (newBase) {
+          await this.putGroupInfo(groupId, newBase, baseEpoch + 1, m);
+        }
+      });
       group.activeEpoch = baseEpoch + 1;
-      await this.groupRepo.save(group);
+      if (newBase) {
+        this.logger.log(
+          `[COMMIT][${traceId}] base published with the commit group=${groupId} epoch=${group.activeEpoch}`
+        );
+      }
 
       // Record the commit in the epoch-indexed log UNDER THE LOCK (atomic with the advance) so a
       // device that fell behind can replay it (rung-1). Keyed by baseEpoch - only one commit can
@@ -1238,16 +1272,21 @@ export class MessagingService {
   async putGroupInfo(
     groupId: string,
     groupInfo: string,
-    baseEpoch: number
+    baseEpoch: number,
+    manager?: EntityManager
   ): Promise<{ stored: boolean }> {
+    // `manager` is passed by {@link validateCommit} ONLY, to write the base inside the very
+    // transaction that advances the epoch it describes. Absent, this runs on its own connection,
+    // which is what every other caller wants.
+    const repo = manager ? manager.getRepository(MlsGroupInfo) : this.groupInfoRepo;
     // Monotonic upsert: only overwrite when the incoming epoch is newer-or-equal. `orIgnore` guards
     // the concurrent-insert race; the WHERE guards the concurrent-update race.
-    const existing = await this.groupInfoRepo.findOne({ where: { groupId } });
+    const existing = await repo.findOne({ where: { groupId } });
     if (existing && existing.baseEpoch > baseEpoch) {
       return { stored: false };
     }
     if (!existing) {
-      const inserted = await this.groupInfoRepo
+      const inserted = await repo
         .createQueryBuilder()
         .insert()
         .values({ groupId, groupInfo, baseEpoch })
@@ -1263,7 +1302,7 @@ export class MessagingService {
       const won = Array.isArray(inserted.raw) && inserted.raw.length > 0;
       return { stored: won };
     }
-    await this.groupInfoRepo
+    await repo
       .createQueryBuilder()
       .update()
       .set({ groupInfo, baseEpoch, updatedAt: () => 'now()' })

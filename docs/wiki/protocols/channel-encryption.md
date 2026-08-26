@@ -1831,3 +1831,56 @@ rather than on the attempt count, and an unreachable gate claims nothing about m
 holder: it republishes, it accuses when it does, it publishes nothing from a tree behind the group,
 and it sends nothing when the epochs agree or when no base exists at all. On the wire: the two epochs
 survive each hop, and a missing `activeEpoch` reads as the base.
+
+### The joiner's own commit was what stranded the next one - FIXED 2026-08-26
+
+The section above fixed the READER. COMM-22 found the same lockout one turn deeper, and the reason it
+survived is that the WRITER was never touched.
+
+**An external join advances the group, so the base it built on is stale the instant it is accepted.**
+The joiner is not a bystander to the staleness - it CAUSES it. And it was the joiner's own
+`void this.refreshGroupInfo(joined.groupId)` that was supposed to mint the replacement, from a device
+that reloads by construction: the check reloads the peer moments after the join, onto a clean state
+that no longer holds the tree, so the follow-up never lands and nothing can mint a base afterwards.
+Measured on production 2026-08-26, on two builds, from one run log:
+
+    19:36:12  W1  no base published for salon 58afab93 - creating group 9e46429d
+    19:36:12  W1  POST .../distribution-group/group-info        <- base published at epoch 0
+    19:36:21  W1  Processing Commit group=9e46429d sender=<peer>  <- the peer's external join, epoch -> 1
+                  ... and NO group-info POST from the peer, ever
+    19:36:26  W2  externalJoin STALE base for 9e46429d (published 0, group at 1) - not attempting
+    19:36:40  W1  the published base is at epoch 0 while the group is at 1 - republishing   <- 14 s late
+
+`republishStaleBase` did fire, three times across that run, and every time after the refused device
+had already given up: its trigger is a HOLDER's ordinary read, not the epoch change, which is exactly
+the property that makes it a good repair and a bad mechanism.
+
+**THE BASE NOW TRAVELS INSIDE THE SUBMISSION.** An external commit is applied to the returned
+instance at once - unlike a staged add or remove, which is why this works here and not there - so the
+joiner holds the tree for `base + 1` before it has submitted anything, and can export the base for the
+epoch its own commit is about to create. `POST /api/mls/commit` carries it as `groupInfo`, and
+`validateCommit` writes it with the epoch advance in ONE transaction
+(`groupRepo.manager.transaction`, `putGroupInfo(groupId, base, baseEpoch + 1)`). Its authority is the
+commit the gate just accepted, which is a stronger claim on the group than any roster row, so no
+separate check is owed. Nothing follows an accepted external join any more - the fire-and-forget
+refresh is deleted, not kept beside the new path, because keeping it would be the overlap the standing
+rule tells us to remove.
+
+**A wrong epoch abandons the join instead of publishing.** The client checks that its instance is at
+exactly `gi.baseEpoch + 1` and treats any other value as a build failure, which the `welcome_request`
+fallback already handles. `putGroupInfo` is monotonic: a base stored under an epoch nobody described
+could never be walked back, so a lockout with no repair at all is the one outcome worse than the
+staleness this replaces.
+
+**Ordinary staged commits still mint their base by follow-up**, and the window is still there - one
+round-trip wide, on a device that stays a holder and rarely reloads mid-flight. Closing it needs the
+GroupInfo openmls already builds and every call site discards (`_group_info`), carried out through
+`mls-wasm` into the `submitCommit` slot that now exists; see [backlog](../backlog.md). The server side
+is finished and takes it unchanged.
+
+Six tests hold this half. In `mls-core`, a joiner exports before merging and a fourth device holding
+NOTHING joins on that base and converges - which is the only thing that proves the blob was genuinely
+usable. On the server: the base lands under `baseEpoch + 1` in the same transaction as the advance, a
+commit with no base advances the epoch alone, and a REJECTED commit stores nothing. On the client: the
+export happens before the merge and travels as the fifth argument, and a mismatched epoch abandons the
+join without submitting.

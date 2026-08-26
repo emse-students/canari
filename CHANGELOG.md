@@ -296,6 +296,35 @@ which is also where every release up to and including v0.13.1 now lives.
   nothing - no spec, no frontend test, no board row - watches them.
 
 ### Fixed
+- **An external joiner's own commit locked the next joiner out of a Graine distribution group.** A
+  member with no MLS state joins a salon's key-distribution group by external commit - which advances
+  the group's epoch by one, and so makes the very base it just built on stale. The base for the new
+  epoch was minted by a SECOND round-trip issued after the join returned (`refreshGroupInfo`),
+  fire-and-forget by design so a successful commit is never reported as failed because a follow-up
+  did not land. But an external joiner reloads by construction, and nothing else in the system ever
+  mints a base: the published one then trailed `activeEpoch` for good, the strict commit gate
+  (`baseEpoch == activeEpoch`, nothing else) refused every later external commit, and a distribution
+  group has no peer-Welcome fallback to take instead. On 2026-08-26 the campaign's COMM-22 row
+  reproduced it on two builds: the peer read 11 of 12 messages warm AND cold, the twelfth seed simply
+  absent because the peer was never in the group at all, and the repair a holder eventually performs
+  (`republishStaleBase`) fired 14 seconds after the refused peer had already given up.
+
+  **The window is deleted rather than narrowed.** An external commit is applied to the returned
+  instance at once, unlike a staged add or remove, so for one moment the joiner holds the tree for the
+  epoch its own commit created and can export a base for it - before merging, which is the only
+  moment that base can be handed over in the same call as the commit. It now travels inside
+  `POST /api/mls/commit`, and chat-delivery writes it with the epoch advance in ONE transaction. There
+  is no follow-up call left to lose, so the reload that used to take it takes nothing; the
+  fire-and-forget refresh after an accepted external join is gone rather than kept beside it. A client
+  whose instance is not at exactly `base + 1` refuses to publish and abandons the join instead - the
+  stored base is monotonic, so one blob under the wrong epoch would strand the group permanently,
+  which is worse than the staleness it replaces. Narrowing was considered and rejected in writing: a
+  two-member salon whose other member is offline still has nobody to mint the base, and a shorter race
+  is still a race. Ordinary staged commits keep the follow-up for now - their commit is unapplied at
+  submit time, so there is nothing to export - and what would close that half is recorded in
+  `docs/wiki/backlog.md`. Proved by a new `mls-core` integration test in which a fourth device holding
+  NOTHING joins on the base the joiner exported and messages converge, by three server specs, and by
+  two client specs, one asserting that nothing follows the submission at all
 - **A server-log rule that had never seen the line one invitation writes.** COMM-4's window of
   2026-08-26 held a single `unexplained` line, `[INTERNAL_MLS_DEVICES] user=... count=1` - the
   count social-service asks for before a direct invitation, because it may not call the user route

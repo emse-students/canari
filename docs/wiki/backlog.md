@@ -358,7 +358,7 @@ no check waits on wall-clock time at all. It belongs with the rendering pass, no
 
 ## Messaging convergence
 
-### P2 - an external joiner's own commit locks the next joiner out, and COMM-22 is the row that finds it (diagnosed 2026-08-26)
+### P2 - an external joiner's own commit locked the next joiner out; FIXED for that path 2026-08-26, one half left (COMM-22)
 
 **Reproduced on two builds with one runner**, `d6f61539` (2026-08-25T21:56Z) and `2a4297cb`
 (2026-08-26T17:45Z), `armed: true`, six grant/join/send/revoke/send cycles both times. It is NOT the
@@ -417,20 +417,37 @@ hands the ask to a layer certain to refuse it, to discover a group it is not in,
 `stale_base` established exactly that. And *a race that heals cleanly is still a defect* - here it
 does not heal at all.
 
-**THE FIX IS TO DELETE THE WINDOW, NOT TO NARROW IT.** openmls already returns the GroupInfo for the
-resulting epoch from the commit it builds, and all four call sites throw it away
-(`mls-core/src/members.rs:85,121,273`, `welcome.rs:86`, each destructuring `_group_info`); the groups
-are built with `use_ratchet_tree_extension(true)`, so that GroupInfo carries the tree exactly as
-today's `export_group_info(.., true)` does. Carrying it in the commit submission lets chat-delivery
-store base and commit in the one transaction that already validates the epoch - no follow-up call to
-lose, no tree needed afterwards, and no window in which the group is unjoinable. `republishStaleBase`
-then stays as the witness it should always have been: a line whose RATE says whether this ever happens
-again. Layers: `mls-core` -> `mls-wasm` (a third slot on the returned array) -> `BaseMlsService` ->
-chat-delivery, plus `npm run generate`.
+**THE WINDOW WAS DELETED, NOT NARROWED - and it cost no Rust at all.** An external commit is applied
+to the returned instance at once, unlike a staged add/remove, so the joiner is at `base + 1` the
+moment `join_by_external_commit` returns and can export the base its own commit created *before*
+merging. That base now travels inside `POST /api/mls/commit`, and chat-delivery writes it with the
+epoch advance in ONE transaction: `putGroupInfo(groupId, base, baseEpoch + 1)` inside
+`groupRepo.manager.transaction`. There is no follow-up call left to lose, so the reload that used to
+take it takes nothing, and the `void this.refreshGroupInfo(...)` that followed an accepted external
+join is gone rather than kept alongside. The client refuses to publish at all if its instance is not
+at `gi.baseEpoch + 1` (the base is monotonic; one blob under the wrong epoch would strand the group
+for good), and abandons the join instead - `build_failed`, whose welcome_request fallback already
+exists. Proved by `mls-core/tests/external_join.rs`
+(`a_joiner_exports_the_base_its_own_commit_created_before_merging`: a fourth device holding NOTHING
+joins on the base the joiner exported, and messages converge), by three server specs in
+`messaging.commit-log.spec.ts`, and by two in `BaseMlsService.externalJoin.test.ts` - one of which
+asserts that NOTHING follows the submission.
 
 **Narrowing was considered and rejected**: republishing on *applying* a commit rather than on the next
 read would cut 14 s to under a second, but a two-member salon whose other member is offline still has
 nobody to mint the base, and a shorter race is still a race.
+
+**THE HALF THAT REMAINS, and why it is separate.** An ordinary staged commit (add/remove) cannot
+export a base at submit time: its commit is unapplied, so the device is still at the OLD epoch and
+`export_group_info` would describe the base the joiner already has. Those paths keep
+`void this.refreshGroupInfo(groupId)` after the merge (`BaseMlsService.ts:1912`) and a holder's
+`republishStaleBase` as their repair - the same window, one round-trip wide, on a device that stays a
+holder and is far less likely to reload mid-flight. Closing it needs the GroupInfo openmls already
+builds and all four call sites discard (`mls-core/src/members.rs:85,121,273`, `welcome.rs:86`, each
+destructuring `_group_info`); the groups use `use_ratchet_tree_extension(true)`, so it carries the
+tree exactly as `export_group_info(.., true)` does. Layers: `mls-core` -> `mls-wasm` (a third slot on
+the returned array) -> `BaseMlsService` -> the already-widened `submitCommit`, plus `npm run
+generate`. The server side is done and takes it unchanged.
 
 **ONE HYPOTHESIS ALREADY REFUTED, recorded so it is not re-run:** the missing session was
 `R3jf6bcWThQ2oUnLKLaKvi--`, the only one of the twelve whose id ends in `-`, which in SQL would open

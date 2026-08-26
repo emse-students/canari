@@ -140,8 +140,9 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     stands: rungs 1-8 TAKEN.** GRP closed 2026-08-26 on `feecfaf5` over four passes - GRP-4 green
     after `e027679a`, GRP-8 `PASS-DIRTY` deterministically (its P2 is in
     [backlog](docs/wiki/backlog.md)). **9 COMM IS SWEPT: 23 PASS, COMM-24 `PASS-DIRTY`, COMM-22 a
-    `FAIL` now DIAGNOSED** (an external joiner's own commit leaves the published base an epoch behind
-    and locks the next joiner out; cause, evidence and the four-layer fix are in
+    `FAIL` whose cause is now FIXED and OWES A RE-RUN** (an external joiner's own commit left the
+    published base an epoch behind; the base now travels inside the commit submission and is written
+    with the epoch advance in one transaction - story in `CHANGELOG.md`, the half still open in
     [backlog](docs/wiki/backlog.md)), and it still owes the proof WP-REGRANT-2 wants (web-only, no
     phone). **10 DEL IS SWEPT: 8 PASS, DEL-1 `PASS-DIRTY`, DEL-10 a `FAIL` on its own fix** - the
     durable row is kept and nothing replays it, and which of the two triggers is missing needs a
@@ -159,9 +160,8 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
 
     **A KILLED RUN CAN DESTROY A MEASUREMENT SECONDS FROM BEING RECORDED** - let a run finish, or
     accept that the push waits ([testing-methodology](docs/wiki/testing-methodology.md), the only
-    copy). The shared venue had been GONE again and was rebuilt with `venue.mjs` (`fbddc890` /
-    `general` `064ac7d2`, 2 members) - a second disappearance in two days, cause unrecorded both
-    times.
+    copy). The shared venue is `fbddc890` / `general` `064ac7d2`, rebuilt 2026-08-26 after a THIRD
+    disappearance whose cause is still unrecorded ([cross-client-campaign](docs/wiki/cross-client-campaign.md)).
 
 2. **DEFERRED PAST THE LADDER - seven UX and rendering items, substance in
     [backlog](docs/wiki/backlog.md) and NOWHERE else.** One line each, in the order they were raised:

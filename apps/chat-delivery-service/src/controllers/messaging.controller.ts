@@ -37,6 +37,7 @@ export class MessagingController {
       proto?: string;
       senderId?: string;
       excludeDeviceIds?: string[];
+      groupInfo?: string;
     }
   ) {
     return this.messagingService.validateCommit(body);

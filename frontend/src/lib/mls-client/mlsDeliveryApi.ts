@@ -501,12 +501,20 @@ export class MlsDeliveryApi {
    * members, skipping `excludeDeviceIds`. Returns the raw validation result so the caller merges
    * locally on accept / rolls back the staged commit on reject. Throws only on transport/HTTP
    * failure (not on a business reject). [[C7]]
+   *
+   * `groupInfoBase64` carries the external-join base for the epoch this commit CREATES
+   * (`baseEpoch + 1`), and the server stores it in the same transaction as the epoch advance. Only
+   * a caller that already holds the resulting epoch's tree can supply it - which the external-join
+   * path does, and a staged add/remove does not (its commit is unapplied at this point). Where it
+   * is absent the base is still minted by the follow-up `refreshGroupInfo`, whose loss is what
+   * COMM-22 measured; see `docs/wiki/backlog.md`.
    */
   async submitCommit(
     groupId: string,
     baseEpoch: number,
     protoBase64: string,
-    excludeDeviceIds?: string[]
+    excludeDeviceIds?: string[],
+    groupInfoBase64?: string
   ): Promise<{ accepted: boolean; reason?: string; currentEpoch?: number; newEpoch?: number }> {
     const res = await this.f(`${this.historyUrl}/api/mls/commit`, {
       method: 'POST',
@@ -518,6 +526,7 @@ export class MlsDeliveryApi {
         proto: protoBase64,
         senderId: this.userId,
         ...(excludeDeviceIds?.length ? { excludeDeviceIds } : {}),
+        ...(groupInfoBase64 ? { groupInfo: groupInfoBase64 } : {}),
       }),
     });
     if (!res.ok) {

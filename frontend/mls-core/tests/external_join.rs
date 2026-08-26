@@ -100,3 +100,69 @@ fn external_join_refuses_to_clobber_a_live_local_group() {
         "external join must refuse a group already held locally"
     );
 }
+
+/// COMM-22, in one test: the joiner's OWN commit advances the group, so the base published for the
+/// NEXT joiner has to be the one the joiner itself exports - before it merges, because the export
+/// must travel inside the commit submission and there is no second round-trip to put it in.
+///
+/// This is the invariant the atomic base store rests on: `export_group_info` on an instance holding
+/// an unmerged external commit yields a base at the RESULTING epoch, usable by a third device that
+/// holds no state at all. Without it the base stays at the pre-join epoch, the strict gate refuses
+/// every external commit built on it, and a distribution group - which has no peer-Welcome fallback
+/// - locks out every later joiner until some unrelated member commits.
+#[test]
+fn a_joiner_exports_the_base_its_own_commit_created_before_merging() {
+    let (mut alice, _bob, gid) = group_with_alice_bob();
+    let base_epoch = alice.get_epoch(gid).expect("alice epoch");
+
+    let group_info = alice.export_group_info(gid).expect("export group_info");
+    let mut carol = make_device("carol", "dev1");
+    let (_gid, carol_commit) = carol
+        .join_by_external_commit(&group_info)
+        .expect("carol external-joins");
+
+    // THE EXPORT HAPPENS HERE, with the external commit still unmerged: this is the only moment the
+    // new base can be handed to the server in the same call as the commit that created it.
+    let next_base = carol
+        .export_group_info(gid)
+        .expect("carol exports the base her own commit created");
+
+    // Server accepted -> everyone converges on base + 1.
+    alice
+        .process_incoming_message(gid, &carol_commit)
+        .expect("alice processes carol's external commit");
+    carol.merge_pending_commit_for(gid).expect("carol merges");
+    assert_eq!(
+        carol.get_epoch(gid).expect("carol epoch"),
+        base_epoch + 1,
+        "carol is at base + 1"
+    );
+
+    // A fourth device holding NOTHING joins on the base carol exported. It could not have used
+    // alice's original base: that one is a whole epoch behind and the gate refuses it.
+    let mut dave = make_device("dave", "dev1");
+    let (_gid, dave_commit) = dave
+        .join_by_external_commit(&next_base)
+        .expect("dave joins on the base carol exported");
+    assert_eq!(
+        dave.get_epoch(gid).expect("dave epoch"),
+        base_epoch + 2,
+        "dave's join builds on base + 1, which proves carol's export carried the new epoch"
+    );
+
+    alice
+        .process_incoming_message(gid, &dave_commit)
+        .expect("alice processes dave's external commit");
+    carol
+        .process_incoming_message(gid, &dave_commit)
+        .expect("carol processes dave's external commit");
+    dave.merge_pending_commit_for(gid).expect("dave merges");
+
+    // Convergence, which is the only thing that proves the base was genuinely usable.
+    let ciphertext = alice.send_message(gid, b"hello dave").expect("alice sends");
+    let plaintext = dave
+        .process_incoming_message(gid, &ciphertext)
+        .expect("dave decrypts")
+        .expect("some plaintext");
+    assert_eq!(plaintext, b"hello dave");
+}

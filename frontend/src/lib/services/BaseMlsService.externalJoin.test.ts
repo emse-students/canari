@@ -37,6 +37,11 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     distributionScopeByGroup: new Map<string, string>(),
     distributionGroupInfo: null,
     joinByExternalCommit: vi.fn().mockResolvedValue({ groupId: 'g', commit: new Uint8Array([9]) }),
+    // The epoch the fake instance reaches once the external commit is applied to it. `externalJoin`
+    // refuses to publish a base that is not for `gi.baseEpoch + 1`, so any test that builds a commit
+    // has to say which epoch it landed on; 6 matches the base-5 GroupInfo most of them serve.
+    getEpoch: vi.fn(() => 6),
+    exportGroupInfo: vi.fn().mockResolvedValue(new Uint8Array([7, 7])),
     mergePendingCommit: vi.fn().mockResolvedValue(undefined),
     refreshGroupInfo: vi.fn().mockResolvedValue(undefined),
     forgetGroup: vi.fn(),
@@ -96,6 +101,7 @@ describe('BaseMlsService.externalJoin', () => {
         fetch: vi.fn().mockResolvedValue({ groupInfo: 'AA==', baseEpoch: 3, activeEpoch: 3 }),
         publish: vi.fn().mockResolvedValue({ stored: true }),
       },
+      getEpoch: vi.fn(() => 4),
     });
     ctx.delivery.submitCommit.mockResolvedValue({ accepted: true });
 
@@ -114,7 +120,13 @@ describe('BaseMlsService.externalJoin', () => {
 
     expect(await externalJoin(ctx, 'g')).toEqual({ joined: true });
     // Submitted with the GroupInfo's base epoch and excluding our own device from the fan-out.
-    expect(ctx.delivery.submitCommit).toHaveBeenCalledWith('g', 5, expect.any(String), ['u:d']);
+    expect(ctx.delivery.submitCommit).toHaveBeenCalledWith(
+      'g',
+      5,
+      expect.any(String),
+      ['u:d'],
+      'Bwc='
+    );
     expect(ctx.mergePendingCommit).toHaveBeenCalledWith('g');
     expect(ctx.forgetGroup).not.toHaveBeenCalled();
   });
@@ -127,6 +139,8 @@ describe('BaseMlsService.externalJoin', () => {
     ctx.delivery.submitCommit
       .mockResolvedValueOnce({ accepted: false, reason: 'epoch_mismatch', currentEpoch: 6 })
       .mockResolvedValueOnce({ accepted: true, newEpoch: 7 });
+    // One epoch per attempt: the base 5 commit lands on 6, the base 6 one on 7.
+    ctx.getEpoch.mockReturnValueOnce(6).mockReturnValue(7);
 
     expect(await externalJoin(ctx, 'g')).toEqual({ joined: true });
     // The rejected external commit cannot be cleared -> the group is discarded before the retry.
@@ -214,6 +228,7 @@ describe('BaseMlsService.externalJoin', () => {
       reason: 'epoch_mismatch',
       currentEpoch: 2,
     });
+    ctx.getEpoch.mockReturnValue(2);
 
     expect(await externalJoin(ctx, 'g')).toEqual({
       joined: false,
@@ -223,6 +238,57 @@ describe('BaseMlsService.externalJoin', () => {
     });
     expect(ctx.delivery.submitCommit).toHaveBeenCalledTimes(1);
     expect(ctx.forgetGroup).toHaveBeenCalledTimes(1);
+  });
+
+  // -- COMM-22 (production 2026-08-26): the joiner's OWN commit is what strands the next one ------
+  //
+  // COMM-8 above fixed the READER: a joiner no longer burns attempts on a base that is behind. It
+  // could not fix the WRITER, and the writer is where the gap comes from - an accepted external
+  // commit advances the epoch, and the base for the new one was minted by a SEPARATE follow-up call.
+  // An external joiner reloads by construction, so that call was the one thing certain to be lost:
+  // 14 seconds later a holder's ordinary read repaired it, long after the next joiner had given up.
+  // The base now travels inside the submission, so there is no second call left to lose.
+
+  it('publishes the base its own commit creates inside the submission, not after it', async () => {
+    const ctx = makeCtx();
+    ctx.delivery.fetchGroupInfo.mockResolvedValue({
+      groupInfo: 'AA==',
+      baseEpoch: 5,
+      activeEpoch: 5,
+    });
+    ctx.delivery.submitCommit.mockResolvedValue({ accepted: true, newEpoch: 6 });
+
+    expect(await externalJoin(ctx, 'g')).toEqual({ joined: true });
+    // Exported from the instance the external commit was applied to, BEFORE the merge - the only
+    // moment this device holds the tree for epoch 6 and can describe it to a later joiner.
+    expect(ctx.exportGroupInfo).toHaveBeenCalledWith('g');
+    expect(ctx.delivery.submitCommit).toHaveBeenCalledWith(
+      'g',
+      5,
+      expect.any(String),
+      ['u:d'],
+      'Bwc='
+    );
+    // AND NOTHING FOLLOWS IT. A fire-and-forget refresh here would be the very call whose loss the
+    // defect was made of, so its absence is the assertion.
+    expect(ctx.refreshGroupInfo).not.toHaveBeenCalled();
+  });
+
+  it('abandons the join rather than publishing a base for the wrong epoch', async () => {
+    const ctx = makeCtx();
+    ctx.delivery.fetchGroupInfo.mockResolvedValue({
+      groupInfo: 'AA==',
+      baseEpoch: 5,
+      activeEpoch: 5,
+    });
+    // The instance did not land where an external commit on base 5 must land. The published base is
+    // monotonic and cannot be walked back, so a blob stored under the wrong epoch would strand the
+    // group for good: the join goes instead, and the caller's welcome_request fallback takes over.
+    ctx.getEpoch.mockReturnValue(9);
+
+    expect(await externalJoin(ctx, 'g')).toEqual({ joined: false, reason: 'build_failed' });
+    expect(ctx.delivery.submitCommit).not.toHaveBeenCalled();
+    expect(ctx.mergePendingCommit).not.toHaveBeenCalled();
   });
 
   it('claims nothing about membership when the commit gate is never reached', async () => {

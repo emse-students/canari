@@ -30,7 +30,7 @@ Updated after every run.
 | 6 MENTION | 6 | `1f396ac7`, A1 `a7981206` | **`PASS` 6/6 x5** on runner `cdc081edabc0` |
 | 7 FWD | 6 | `1579d5c3`, A1 `a7981206` | **`PASS` 6/6 x5** (FWD-2 x1, 25 iterations) |
 | 8 GRP | 10 | `b04e26d9` | **`PASS` 9/10 x1** + GRP-3 `PASS-DIRTY`, accepted by the user 2026-08-25. x5 abandoned - the rig, never the product. GRP-3 dirt = one unexplained socket close, P2 in [backlog](backlog.md) |
-| 9 COMM | 25 | `5d7fac13`, COMM-18 on `d6f61539` / A1 `e96bfa12`, COMM-4, COMM-22 and COMM-24 on `2a4297cb` | 23 `PASS`, COMM-24 `PASS-DIRTY`, **COMM-22 `FAIL`** (reproduced, two builds) |
+| 9 COMM | 25 | `5d7fac13`, COMM-18 on `d6f61539` / A1 `e96bfa12`, COMM-4, COMM-22 and COMM-24 on `2a4297cb` | 23 `PASS`, COMM-24 `PASS-DIRTY`, **COMM-22 `FAIL`** (reproduced, two builds; cause fixed, re-run owed) |
 | 10 DEL | 10 | `2a4297cb` | 8 `PASS`, DEL-1 `PASS-DIRTY`, **DEL-10 `FAIL`** (reproduced on the deployed fix). DEL-8 ran for the first time |
 | 11 TAB | 8 | - | `pending` |
 | 12 MULTI | 6 | - | `pending` |
@@ -218,8 +218,8 @@ A community is a `Workspace`, and **its membership is not MLS membership**. Ever
 MSG-5's standing assertion: no `masterSecret` in any payload, ever.
 
 Twenty-five rows, all with a runner; COMM-23 and COMM-24 share `comm2324.mjs`. The whole phase swept
-on 2026-08-25, every verdict carrying a build and an `a1Build`. **COMM-22 is a `FAIL`** - reproduced on two builds with the same runner, defect in
-[backlog](backlog.md). COMM-24 was re-run on the current runner and holds; its dirt is one
+on 2026-08-25, every verdict carrying a build and an `a1Build`. **COMM-22 is a `FAIL` whose cause is fixed, so the row owes a re-run** - reproduced on two builds with
+the same runner, story in `CHANGELOG.md` and the half still open in [backlog](backlog.md). COMM-24 was re-run on the current runner and holds; its dirt is one
 deliberately-unpinnable line, named in its cell.
 **COMM-18 cost five FAILs that were four distinct product defects** - stories in `CHANGELOG.md`, what
 they measured in [cross-client-campaign](cross-client-campaign.md).
@@ -247,7 +247,7 @@ they measured in [cross-client-campaign](cross-client-campaign.md).
 | COMM-19 | The last admin tries to leave: refused, unless they are the last MEMBER, which deletes the community | `W1 W2` | `PASS` 1/1 |
 | COMM-20 | Two admins change the same role at the same moment | `W1 W2` | `PASS` 1/1 |
 | COMM-21 | A member is removed while composing a message in that salon | `W1 W2` | `PASS` 1/1 |
-| COMM-22 | A salon carrying many Graine sessions: time the first render, and the repair when one seed is missing | `W1 W2` | `FAIL` - the peer ends ONE seed short of twelve, warm and cold alike. Reproduced on `d6f61539` and `2a4297cb` |
+| COMM-22 | A salon carrying many Graine sessions: time the first render, and the repair when one seed is missing | `W1 W2` | `FAIL` - the peer ends ONE seed short of twelve, warm and cold alike, because its own external join left the base an epoch behind. Reproduced on `d6f61539` and `2a4297cb`; cause fixed 2026-08-26, re-run owed |
 | COMM-23 | Public -> private: a group is minted, and a reader outside `allowedUsers` stops being routed | `W1 W2` | `PASS` 1/1 |
 | COMM-24 | Private -> public: the salon's group is tombstoned and the community's carries it again | `W1 W2` | `PASS-DIRTY` 1/1 - the dirt is the unpublished-graine read, unpinnable without blinding the race detector |
 | COMM-25 | An admin's SECOND device receives the salon's seeds after the join, without a second join | `W1 A1` | `PASS` 1/1 |
