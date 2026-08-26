@@ -1,14 +1,21 @@
-# ── Runtime: le serveur SvelteKit (adapter-node) qui ecrit le <head> ─────────
-# Le build Svelte est effectue en amont par le CI (job build-frontend) avec
-# BUILD_WEB=1, ce qui selectionne adapter-node au lieu d'adapter-static.
-# L'artifact compile est telecharge dans frontend/build/ avant que cette image
-# soit construite. NE PAS rebuilder ici : les secrets VITE_* ne sont pas
-# disponibles dans ce contexte.
+# -- Runtime: the SvelteKit server (adapter-node) that writes the <head> -------
+# The Svelte build happens upstream, in CI (the `build-frontend` job) with
+# BUILD_WEB=1, which selects adapter-node instead of adapter-static. The
+# compiled artifact is downloaded into frontend/build/ before this image is
+# built. DO NOT rebuild here: the VITE_* secrets are not available in this
+# context.
 #
-# Ce conteneur n'est PAS le point d'entree public : nginx (image `frontend`)
-# reste le seul a exposer un port. Il sert les navigations HTML uniquement -
-# les assets sont servis par nginx depuis le meme artifact.
-FROM node:22-alpine
+# This container is NOT the public entry point: nginx (the `frontend` image)
+# remains the only one exposing a port. It serves HTML navigations only - the
+# assets are served by nginx out of the same artifact.
+#
+# WHY node AND NOT bun, in a repo that is otherwise bun: this runs an
+# `adapter-node` build. bun would need `svelte-adapter-bun`, which changes the
+# SSR entry point and how nginx proxies to it - a deploy change, not a base-image
+# swap, and one nothing here has verified against a running site. The rule this
+# repo learned on Portail-etu is that a runtime move is proven on its target
+# host, not in CI. Until that is done, this stays on node.
+FROM node:24-alpine
 
 WORKDIR /app
 COPY frontend/build ./
@@ -17,8 +24,8 @@ ENV NODE_ENV=production
 ENV PORT=3000
 EXPOSE 3000
 
-# Le head est du bonus : si le process est mort, nginx renvoie 502 sur les
-# navigations. Le healthcheck sert a le voir dans `docker compose ps`.
+# The head is a bonus: if the process is dead, nginx answers 502 on navigations.
+# The healthcheck exists so that shows up in `docker compose ps`.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:3000/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 

@@ -172,6 +172,19 @@ which is also where every release up to and including v0.13.1 now lives.
   three. Unrelated to `calendar_event_co_owners`, which names ASSOCIATIONS co-hosting an event.
 
 ### Changed
+- **`Dockerfile.frontend-ssr` moves to `node:24-alpine`, the last `node:22` in the repository.** Its
+  comments were French in a repo whose rule is that everything dev-facing is English, and they now
+  also record why this one image is NOT on bun: it runs an `adapter-node` build, so bun would mean
+  `svelte-adapter-bun`, a different SSR entry point and a different nginx proxy target - a deploy
+  change, not a base-image swap, and one nothing has verified against a running site. The rule this
+  repo learned on Portail-etu is that a runtime move is proven on its target host.
+
+- **`docker-compose.prod.yml` records why four `node -e` healthchecks still work in images that run
+  bun.** They look like leftovers of the migration and are not: `oven/bun:*-alpine` ships a `node`
+  shim on PATH that dispatches to bun. Measured inside the image - `node -e` runs, `fetch` resolves,
+  and the exit code is honoured in both directions. What the shim does NOT support is a REPL or
+  `node --version`, so anyone "checking" it with either will conclude the opposite of the truth.
+
 - **Both Husky hooks run bun, and speak English.** They called `npm run lint:fix` for the four
   NestJS services and `npm run lint` / `npm run format:check` for `chat-delivery-service` - the last
   `npm` left in a developer's path after the backend moved to bun, and the one most likely to
