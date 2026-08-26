@@ -4,7 +4,7 @@ version = "0.14.5"
 edition = "2021"
 
 [dependencies]
-axum = { version = "0.7.5", features = ["ws", "macros"] }
+axum = { version = "0.8.9", features = ["ws", "macros"] }
 tokio = { version = "1.37.0", features = ["full"] }
 serde = { version = "1.0.197", features = ["derive"] }
 serde_json = "1.0.115"
@@ -12,10 +12,10 @@ tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "fmt"] }
 tower = { version = "0.4.13", features = ["util"] }
 tower-http = { version = "0.5.2", features = ["fs", "trace", "cors"] }
-webrtc = "0.11"
+webrtc = "0.17"
 anyhow = "1.0.81"
 uuid = { version = "1.8.0", features = ["serde", "v4"] }
-dashmap = "5.5.3"
+dashmap = "6.2.1"
 jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 # time 0.3.48+ breaks rcgen <0.14 (rustc E0119); pin until webrtc pulls rcgen >=0.14.
