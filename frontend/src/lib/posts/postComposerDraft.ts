@@ -11,7 +11,6 @@ export interface PostComposerDraft {
   selectedFormId: string;
   scheduledAt: string;
   selectedAssociationId: string;
-  selectedPaymentAssociationId: string;
   selectedLinkedCalendarEventId: string;
 }
 
@@ -56,10 +55,6 @@ export function loadPostComposerDraft(): PostComposerDraft | null {
           scheduledAt: typeof parsed.scheduledAt === 'string' ? parsed.scheduledAt : '',
           selectedAssociationId:
             typeof parsed.selectedAssociationId === 'string' ? parsed.selectedAssociationId : '',
-          selectedPaymentAssociationId:
-            typeof parsed.selectedPaymentAssociationId === 'string'
-              ? parsed.selectedPaymentAssociationId
-              : '',
           selectedLinkedCalendarEventId:
             typeof parsed.selectedLinkedCalendarEventId === 'string'
               ? parsed.selectedLinkedCalendarEventId
@@ -96,7 +91,6 @@ export function emptyPostComposerDraft(markdown = ''): PostComposerDraft {
     selectedFormId: '',
     scheduledAt: '',
     selectedAssociationId: '',
-    selectedPaymentAssociationId: '',
     selectedLinkedCalendarEventId: '',
   };
 }

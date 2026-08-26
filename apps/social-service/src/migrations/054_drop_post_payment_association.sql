@@ -1,0 +1,16 @@
+-- Drops the post-level "Encaissement (Stripe)" target.
+--
+-- The composer asked a real question - which association's Stripe account should collect on this
+-- post - the answer was validated (`isPaymentsReady`, honouring approved parent-payment delegation)
+-- and stored, and then NOTHING EVER READ IT BACK. No post ever rendered a pay or donate control,
+-- so the column recorded an intention the product had no way to act on, and every reader of a post
+-- carried a field that decided nothing.
+--
+-- Nothing is migrated because nothing was there: production held 109 posts and 0 with a payment
+-- association on 2026-08-26. Money on a post still goes through the mechanisms that actually take
+-- it - an attached paid form, or a boutique product - each of which resolves its own payment target
+-- at the moment it charges.
+--
+-- `AssociationsService.isPaymentsReady` went with it: this was its only caller. `assertPaymentsReady`
+-- and `getPaymentAccountId`, which serve forms and purchases, are untouched.
+ALTER TABLE posts DROP COLUMN IF EXISTS "paymentAssociationId";

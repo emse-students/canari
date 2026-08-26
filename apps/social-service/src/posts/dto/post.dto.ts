@@ -212,10 +212,6 @@ export class CreatePostDto {
   @IsUUID()
   linkedCalendarEventId?: string;
 
-  @IsString()
-  @IsOptional()
-  paymentAssociationId?: string;
-
   @IsDateString()
   @IsOptional()
   scheduledAt?: string;
@@ -347,11 +343,6 @@ export class UpdatePostDto {
   @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)
   @IsUUID()
   linkedCalendarEventId?: string | null;
-
-  @IsOptional()
-  @ValidateIf((_, v) => v != null && v !== '')
-  @IsString()
-  paymentAssociationId?: string | null;
 
   @IsOptional()
   @ValidateIf((_, v) => v != null && v !== '')

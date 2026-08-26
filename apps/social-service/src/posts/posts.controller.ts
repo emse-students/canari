@@ -173,12 +173,6 @@ export class PostsController {
         throw new BadRequestException('You need admin or owner role to post as this association');
       }
     }
-    if (body.paymentAssociationId) {
-      // Honors approved parent-payment delegation: a club with no own account but a ready parent passes.
-      if (!(await this.associationsService.isPaymentsReady(body.paymentAssociationId))) {
-        throw new BadRequestException('This association has not completed payment onboarding');
-      }
-    }
     return this.service.createPost({ ...body, authorId: xUserId });
   }
 

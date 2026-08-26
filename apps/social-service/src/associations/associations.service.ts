@@ -2074,13 +2074,6 @@ export class AssociationsService {
     return (await this.resolvePaymentTarget(asso)).connectAccountId;
   }
 
-  /** True when the association can receive online payments (via its own account or an approved parent). */
-  async isPaymentsReady(associationId: string): Promise<boolean> {
-    const asso = await this.assoRepo.findOne({ where: { id: associationId } });
-    if (!asso) return false;
-    return (await this.resolvePaymentTarget(asso)).ready;
-  }
-
   /**
    * Ensures payments can be taken (own account onboarded, or an approved parent's account ready)
    * before accepting paid forms/purchases.

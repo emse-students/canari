@@ -85,7 +85,6 @@
   // --- Association identity ---
   let myAssociations = $state<Association[]>([]);
   let selectedAssociationId = $state('');
-  let selectedPaymentAssociationId = $state('');
   let selectedLinkedCalendarEventId = $state('');
   let linkableCalendarEvents = $state<AssociationCalendarEvent[]>([]);
   let loadingLinkableEvents = $state(false);
@@ -96,8 +95,6 @@
   );
   /** Same set split into Associations / Listes groups for the picker. */
   let postAsGroups = $derived(groupAssociationsForSelect(postAsAssociations));
-  /** Associations with completed Stripe onboarding (eligible for payment collection). */
-  let payableAssociations = $derived(postAsAssociations.filter((a) => a.stripeOnboardingComplete));
 
   // --- UI state ---
   let publishing = $state(false);
@@ -121,7 +118,6 @@
       selectedFormId,
       scheduledAt,
       selectedAssociationId,
-      selectedPaymentAssociationId,
       selectedLinkedCalendarEventId,
     };
   }
@@ -137,7 +133,6 @@
     selectedFormId = draft.selectedFormId;
     scheduledAt = draft.scheduledAt;
     selectedAssociationId = draft.selectedAssociationId;
-    selectedPaymentAssociationId = draft.selectedPaymentAssociationId;
     selectedLinkedCalendarEventId = draft.selectedLinkedCalendarEventId;
   }
 
@@ -346,8 +341,6 @@
       if (selectedLinkedCalendarEventId.trim()) {
         payload.linkedCalendarEventId = selectedLinkedCalendarEventId.trim();
       }
-      if (selectedPaymentAssociationId) payload.paymentAssociationId = selectedPaymentAssociationId;
-
       await createPost(payload);
 
       // Reset all state after successful creation
@@ -365,7 +358,6 @@
       includeForm = false;
       scheduledAt = '';
       selectedAssociationId = '';
-      selectedPaymentAssociationId = '';
       selectedLinkedCalendarEventId = '';
       onPostCreated();
     } catch (err) {
@@ -445,45 +437,6 @@
             </div>
           </div>
         </div>
-
-        <!-- Encaissement Stripe (Affiché uniquement si une asso est sélectionnée) -->
-        {#if payableAssociations.length > 0 && selectedAssociationId}
-          <div transition:fade={{ duration: 200 }}>
-            <label
-              for="post-payment-association-select"
-              class="text-text-muted mb-1.5 ml-1 flex items-center gap-1.5 text-[0.65rem] font-extrabold tracking-wider uppercase"
-            >
-              {m.post_create_payment_account_label()}
-            </label>
-            <div class="group relative">
-              <span
-                class="pointer-events-none absolute top-1/2 left-3.5 z-[1] -translate-y-1/2 text-amber-500"
-                aria-hidden="true"
-              >
-                <Building2 size={16} strokeWidth={2.5} />
-              </span>
-              <select
-                id="post-payment-association-select"
-                bind:value={selectedPaymentAssociationId}
-                class="text-text-main w-full cursor-pointer appearance-none rounded-xl border border-black/5 bg-black/5 py-3 pr-10 pl-10 text-sm font-bold shadow-inner transition-all outline-none hover:bg-black/10 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
-              >
-                <option value="" class="bg-white font-medium dark:bg-zinc-900"
-                  >{m.post_create_no_linked_account_label()}</option
-                >
-                {#each payableAssociations as a (a.id)}
-                  <option value={a.id} class="bg-white font-medium dark:bg-zinc-900"
-                    >{a.name}</option
-                  >
-                {/each}
-              </select>
-              <div
-                class="text-text-muted pointer-events-none absolute inset-y-0 right-3.5 flex items-center transition-colors group-focus-within:text-amber-500"
-              >
-                <ChevronDown size={16} strokeWidth={2.5} />
-              </div>
-            </div>
-          </div>
-        {/if}
 
         {#if selectedAssociationId}
           <div class="sm:col-span-2" transition:fade={{ duration: 200 }}>

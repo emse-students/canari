@@ -206,7 +206,7 @@ export class PostsService {
     if (!term) return [];
     const selectBody = `posts.id,
          posts."authorId", posts.markdown, posts."createdAt", posts."updatedAt",
-         posts.mentions, posts.links, posts."attachedFormId", posts."associationId", posts."paymentAssociationId",
+         posts.mentions, posts.links, posts."attachedFormId", posts."associationId",
          posts.images, posts.polls, posts.forms, posts.reactions, posts.pinned, posts."scheduledAt",
          (jsonb_array_length(COALESCE(posts.comments, '[]'::jsonb))::integer) AS "commentCount",
          (
@@ -358,7 +358,7 @@ export class PostsService {
 
     const selectBody = `posts.id,
          posts."authorId", posts.markdown, posts."createdAt", posts."updatedAt",
-         posts.mentions, posts.links, posts."attachedFormId", posts."associationId", posts."paymentAssociationId",
+         posts.mentions, posts.links, posts."attachedFormId", posts."associationId",
          posts.images, posts.polls, posts.forms, posts.reactions, posts.pinned, posts."scheduledAt",
          (jsonb_array_length(COALESCE(posts.comments, '[]'::jsonb))::integer) AS "commentCount",
          (
@@ -636,7 +636,6 @@ export class PostsService {
       polls?: any[];
       attachedFormId?: string | null;
       linkedCalendarEventId?: string | null;
-      paymentAssociationId?: string | null;
       scheduledAt?: string | null;
     },
     isGlobalAdmin = false
@@ -680,9 +679,6 @@ export class PostsService {
         post.linkedCalendarEventId = data.linkedCalendarEventId ?? null;
       }
     }
-
-    if ('paymentAssociationId' in data)
-      post.paymentAssociationId = data.paymentAssociationId ?? null;
 
     if ('scheduledAt' in data)
       post.scheduledAt = data.scheduledAt ? new Date(data.scheduledAt) : null;

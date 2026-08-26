@@ -114,6 +114,18 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Removed
 
+- **The "Encaissement (Stripe)" selector on a post, and the column behind it.** The composer asked
+  a real question - which association's Stripe account should collect on this post - the answer was
+  validated (`isPaymentsReady`, honouring approved parent-payment delegation) and stored, and then
+  **nothing ever read it back**: no post has ever rendered a pay or donate control, so the column
+  recorded an intention the product had no way to act on. Two dispositions were put to the user -
+  finish the missing half, or delete it - and the answer was *"un composant qui ne sert a rien est
+  un composant a jeter"*. Gone end to end: both composers, the draft field, three message keys, the
+  DTO fields, the entity column and migration `054`, plus `AssociationsService.isPaymentsReady`,
+  whose only caller this was. Production held 109 posts and **0** with a payment association, so
+  nothing is lost. Money on a post still travels the mechanisms that actually take it - an attached
+  paid form, or a boutique product - each resolving its own payment target at the moment it charges.
+
 - **A form's per-form "Co-responsables" list is deleted, because it answered a question that already
   had an answer.** Who may manage a form was settled on two axes that never agreed: `forms.coOwners`,
   a list of user ids the owner typed in on the edit screen, and `MANAGE_FORMS`, the association

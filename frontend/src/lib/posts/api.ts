@@ -80,7 +80,6 @@ export interface PostEntity {
   forms?: PostForm[];
   attachedFormId?: string;
   associationId?: string;
-  paymentAssociationId?: string;
   /** Present for association posts; use instead of author fields. */
   association?: PostAssociationAuthor;
   linkedCalendarEventId?: string | null;
@@ -129,7 +128,6 @@ export interface CreatePostPayload {
   attachedFormId?: string;
   associationId?: string;
   linkedCalendarEventId?: string;
-  paymentAssociationId?: string;
 }
 
 /** Payload for PATCH /api/posts/:id. All fields except markdown are optional. */
@@ -147,7 +145,6 @@ export interface UpdatePostPayload {
   }>;
   attachedFormId?: string | null;
   linkedCalendarEventId?: string | null;
-  paymentAssociationId?: string | null;
   scheduledAt?: string | null;
 }
 

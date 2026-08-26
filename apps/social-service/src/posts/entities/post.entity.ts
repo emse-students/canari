@@ -47,9 +47,6 @@ export class Post {
   @Index()
   linkedCalendarEventId: string | null;
 
-  @Column({ type: 'uuid', nullable: true })
-  paymentAssociationId: string;
-
   @Column('jsonb', { default: {} })
   reactions: Record<string, string>; // userId -> reactionType
 

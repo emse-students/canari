@@ -10,11 +10,8 @@
     Clock,
     X,
     CircleAlert,
-    Building2,
-    CreditCard,
-    ChevronDown,
   } from '@lucide/svelte';
-  import { slide, fade } from 'svelte/transition';
+  import { slide } from 'svelte/transition';
   import { onMount, untrack } from 'svelte';
   import { MediaService, compressImage, IMAGE_COMPRESS_PRESETS } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
@@ -28,12 +25,8 @@
   import { buildCreateFormHref } from '$lib/posts/postComposerDraft';
   import {
     listLinkableValidatedCalendarEvents,
-    listAssociations,
-    listMyAssociations,
-    type Association,
     type AssociationCalendarEvent,
   } from '$lib/associations/api';
-  import { isGlobalAdmin } from '$lib/stores/user';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import { trimComposerText } from '$lib/utils/markdown/composerText';
   import { m } from '$lib/paraglide/messages';
@@ -98,16 +91,10 @@
     untrack(() => (post.scheduledAt ? new Date(post.scheduledAt).toISOString().slice(0, 16) : ''))
   );
 
-  // --- Association identity (immutable, but linked event & payment are editable) ---
+  // --- Association identity (immutable, but the linked event is editable) ---
   let selectedLinkedCalendarEventId = $state(untrack(() => post.linkedCalendarEventId ?? ''));
-  let selectedPaymentAssociationId = $state(untrack(() => post.paymentAssociationId ?? ''));
   let linkableCalendarEvents = $state<AssociationCalendarEvent[]>([]);
   let loadingLinkableEvents = $state(false);
-  /** Association data for the post's associationId, used to show the payment selector. */
-  let postAssociation = $state<Association | null>(null);
-
-  let payableForPayment = $derived(postAssociation?.stripeOnboardingComplete ?? false);
-
   // --- UI state ---
   let saving = $state(false);
   let errorMessage = $state('');
@@ -149,13 +136,6 @@
         console.error('Failed to load linkable calendar events', e);
       } finally {
         loadingLinkableEvents = false;
-      }
-
-      try {
-        const assocs = isGlobalAdmin() ? await listAssociations() : await listMyAssociations();
-        postAssociation = assocs.find((a) => a.id === post.associationId) ?? null;
-      } catch {
-        /* non-fatal */
       }
     }
   });
@@ -254,7 +234,6 @@
         scheduledAt: scheduledAt ? new Date(scheduledAt).toISOString() : null,
         attachedFormId: includeForm && selectedFormId ? selectedFormId : null,
         linkedCalendarEventId: selectedLinkedCalendarEventId || null,
-        paymentAssociationId: selectedPaymentAssociationId || null,
       };
 
       if (includePoll) {
@@ -310,7 +289,7 @@
   </div>
 
   <div class="p-4 sm:p-5">
-    <!-- Association selectors (linked event + payment) for association posts. -->
+    <!-- Association selectors (linked event) for association posts. -->
     {#if post.associationId}
       <div class="mb-5 grid gap-4 sm:grid-cols-2">
         <!-- Link to a validated event. -->
@@ -341,46 +320,6 @@
             Seuls les événements validés de l'agenda apparaissent ici.
           </p>
         </div>
-
-        <!-- Encaissement Stripe -->
-        {#if payableForPayment}
-          <div class="sm:col-span-2" transition:fade={{ duration: 200 }}>
-            <label
-              for="edit-post-payment-association"
-              class="text-text-muted mb-1.5 ml-1 flex items-center gap-1.5 text-[0.65rem] font-extrabold tracking-wider uppercase"
-            >
-              <CreditCard size={14} strokeWidth={2.5} class="text-amber-500" />
-              Encaissement (Stripe)
-            </label>
-            <div class="group relative">
-              <span
-                class="pointer-events-none absolute top-1/2 left-3.5 z-[1] -translate-y-1/2 text-amber-500"
-                aria-hidden="true"
-              >
-                <Building2 size={16} strokeWidth={2.5} />
-              </span>
-              <select
-                id="edit-post-payment-association"
-                bind:value={selectedPaymentAssociationId}
-                class="text-text-main w-full cursor-pointer appearance-none rounded-xl border border-black/5 bg-black/5 py-3 pr-10 pl-10 text-sm font-bold shadow-inner transition-all outline-none hover:bg-black/10 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
-              >
-                <option value="" class="bg-white font-medium dark:bg-zinc-900"
-                  >{m.post_edit_no_stripe_account()}</option
-                >
-                {#if postAssociation}
-                  <option value={postAssociation.id} class="bg-white font-medium dark:bg-zinc-900">
-                    {postAssociation.name}
-                  </option>
-                {/if}
-              </select>
-              <div
-                class="text-text-muted pointer-events-none absolute inset-y-0 right-3.5 flex items-center transition-colors group-focus-within:text-amber-500"
-              >
-                <ChevronDown size={16} strokeWidth={2.5} />
-              </div>
-            </div>
-          </div>
-        {/if}
       </div>
     {/if}
 
