@@ -296,6 +296,13 @@ const CASES = [
   // A Welcome sent in answer to a welcome_request - the invitation-link join and every re-add.
   // `notable`: the mechanism working, and also somebody asking to be let into a group.
   ['log', '[14:26:09] [WELCOME_REQ] Welcome -> b78568a3…:web-b78568a3…-msglwqh6-vegy for 1bf6fefe…', 'notable'],
+  // The re-admission Welcome, whose guard used to discard it. Group id redacted to 8 hex as the
+  // client logs it; no device id, deliberately.
+  [
+    'log',
+    '[14:26:09] [WELCOME] 1bf6fefe\u2026 held but EVICTED - this Welcome is a re-admission, not a redelivery',
+    'notable',
+  ],
   // AND THE FOUR FAILURES UNDER THE SAME TAG THAT A PREFIX RULE WOULD HAVE FORGIVEN. Each is a
   // real refusal or a real repair; none may go quiet because its successful sibling was classified.
   // This one lands in `notable`, claimed by the generic `re-add` rule, and it is pinned at the

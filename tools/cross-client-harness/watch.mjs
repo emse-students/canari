@@ -644,6 +644,19 @@ const NOTABLE = [
   /distribution frame of kind .* is not handled by this client/i,
   /epoch|GAP|out-?of-?sync|re-?add|welcome_request/i,
   /^\[WELCOME_REQ\] Welcome -> \S+ for \S+$/,
+  // A WELCOME THAT RE-ADMITS A DEVICE TO A GROUP IT WAS EVICTED FROM (2026-08-26, GRP-4). Added
+  // WITH the log line rather than after a run reported dirt for it, because the guard it belongs to
+  // used to drop this Welcome as a redelivery: the line exists precisely to say that held is not
+  // usable and that the re-admission was allowed through.
+  //
+  // NOTABLE and never BENIGN, and never `clean`-breaking. It is the repair working, so it must not
+  // fail a check that did not ask for it - but it is also the visible end of an EVICTION that
+  // happened earlier, and in any check that removed nobody that eviction is the finding. A reader
+  // seeing this line should go looking for who committed the Remove.
+  //
+  // Pinned to the spelling, not to the `[WELCOME]` tag: that tag also carries the silent ACK of
+  // `CannotDecryptOwnMessage` and the ordinary install, and forgiving the tag would forgive them.
+  /^\[WELCOME\] [0-9a-f]{8}. held but EVICTED/,
   // PEER RECONCILIATION, WHICH IS NOT THE SAME THING AS READING THE MAILBOX. `GET
   // /api/mls/history/<groupId>` is a client fetching its OWN ciphertexts from the server and happens
   // on every conversation open; `history_request` is a client asking ANOTHER DEVICE to resend what
