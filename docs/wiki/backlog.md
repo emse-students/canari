@@ -68,6 +68,42 @@ entry here or closes the question.
 
 ## Measurements owed
 
+### P1 - the SFU runs SIX webrtc majors it has never placed a call on (2026-08-27)
+
+**This is not a bug report. It is the absence of one, which is worse.** `apps/call-service` was
+brought back to compiling on 2026-08-27 after two Dependabot majors had merged onto `main` through a
+CI hole (story in `CHANGELOG.md`; the hole itself is closed - the crate is in the Rust matrix now).
+The bumps were `webrtc` 0.11 -> 0.17 and `axum` 0.7 -> 0.8. **What is verified is that it builds,
+that clippy is clean under `--all-features`, and that its ten unit tests pass. Not one of those runs
+the ICE stack, and not one of them places a call.** The repository's own rule names exactly this
+distance: a green gate is not a working system.
+
+**Six majors of webrtc-rs is not a version bump, it is a different library.** One behaviour change is
+already known because it caused a compile error: `RTCIceServer::credential_type` is gone, and the
+rule it carried moved inside the crate - `RTCIceServer::urls()` now returns `ErrNoTurnCredentials`
+for a `turn:`/`turns:` URL whose username or credential is empty, where 0.11 accepted the same input
+with an `Unspecified` credential type. A misconfigured TURN entry therefore used to degrade quietly
+and now fails the WHOLE ICE configuration for that peer connection. `build_rtc_ice_server` warns and
+names the offending server, which is the only thing that can be done from here without a call.
+
+That one surfaced because it broke the build. **The ones that did not break the build are the reason
+this entry exists**, and they cannot be enumerated by reading a diff - between 0.11 and 0.17 the
+crate reworked ICE gathering, DTLS and the RTP/RTCP interceptor chain, none of which this crate's
+types force it to acknowledge.
+
+**What settles it is one call, and only one call.** Two peers, audio and video, over the SFU, with
+TURN configured as production configures it - the relay path specifically, because that is the path
+the `ErrNoTurnCredentials` change sits on and the path a STUN-only test never touches. Watch for: the
+peer connection reaching `connected` at all; the terminal ICE line the crate already logs; whether
+renegotiation still lands (`main.rs` has a renegotiation path that no test covers either).
+
+**Blocked on nothing but a runner.** This is rung 15 of the ladder, CALL, and CALL is one of the
+three phases with NO runner written - so the measurement cannot be taken until that runner exists.
+Until then the honest statement is that calls are UNVERIFIED on this build, not that they are broken:
+nothing observed them failing, because nothing observed them at all. **Do not let a release carry
+this without the call being placed**, by the runner or by hand - a release is precisely the moment
+the shipping-order hazard turns an unverified change into a user-visible one.
+
 ### P2 - what made the profile fetches fail on that device at that moment
 
 **The MECHANISM is closed** (2026-08-16): the swallowed `catch` now accuses, a reconnection clears
