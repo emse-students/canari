@@ -249,6 +249,25 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Security
 
+- **A lockfile entry is not a dependency, and one open P2 rested on forgetting that.**
+  `libcrux-chacha20poly1305`'s overlong-ciphertext panic was recorded as the single alert reaching
+  attacker-controlled input on a path that matters - "it IS the HPKE half of the MLS crypto
+  provider". It is not in the binary at all. The claim came from reading `Cargo.lock`, which lists
+  what COULD resolve, optional backends included; `cargo tree -i` finds no path to
+  `libcrux-chacha20poly1305`, `libcrux-aead` or `hpke-rs-libcrux` on any target. The HPKE backend
+  actually compiled is `hpke-rs-rust-crypto` - RustCrypto's `chacha20poly1305` 0.10.1 and `aes-gcm`
+  0.10.3. Two libcrux crates ARE built, `libcrux-sha3` and `libcrux-secrets` through `hpke-rs`, and
+  those advisories are the real ones.
+
+  Every advisory with no available fix now has an entry in that crate's `.cargo/audit.toml` naming
+  why it cannot be honoured and what lifts it, rather than a red job nobody can act on: `rsa`
+  (RUSTSEC-2023-0071) in the two Rust services, where `jsonwebtoken`'s `rust_crypto` feature
+  compiles it but only `Algorithm::HS256` over `DecodingKey::from_secret` is ever built, so no RSA
+  key exists; the six libcrux IDs, pinned by `openmls_rust_crypto` 0.5.1 or not compiled at all;
+  `quick-xml` twice in `src-tauri`, arriving through `plist` and `tauri-winrt-notification`, neither
+  ours to move; and `rkyv` plus `rsa` there, which `cargo tree` cannot reach either. An ID that is
+  not listed still fails the job.
+
 - **The dependency audit reported one crate out of four, and called the other three clean by never
   opening them.** `Audit Rust dependencies` loops over the four committed `Cargo.lock` files under
   `set -euo pipefail`, so the first failing crate aborted the step - and `apps/call-service` failed,

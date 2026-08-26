@@ -1,0 +1,30 @@
+# Advisories with no fix available, each with the reason it cannot be honoured here and the
+# condition that lifts it. Nothing else is silenced: an ID not listed still fails the job, and an
+# entry whose crate has left the graph is dead weight - delete it rather than carry it.
+
+[advisories]
+ignore = [
+  # The libcrux set, identical to frontend/mls-wasm and blocked by the same pin: sha3 and secrets
+  # are compiled through hpke-rs <- openmls_rust_crypto 0.5.1, chacha20poly1305 and aesgcm are in
+  # the lockfile without being built. Lifted by a stable openmls_rust_crypto 0.6.0.
+  "RUSTSEC-2026-0207",
+  "RUSTSEC-2026-0208",
+  "RUSTSEC-2026-0212",
+  "RUSTSEC-2026-0124",
+  "RUSTSEC-2026-0209",
+  "RUSTSEC-2026-0211",
+  # quick-xml, both resolved versions, wants >=0.41.0: quadratic attribute checking, and unbounded
+  # namespace allocation. Both are compiled, and neither is ours to move - 0.39.4 arrives through
+  # plist <- tauri, 0.37.5 through tauri-winrt-notification <- notify-rust <-
+  # tauri-plugin-notification. Lifted by tauri and notify-rust bumping past 0.41.
+  "RUSTSEC-2026-0194",
+  "RUSTSEC-2026-0195",
+  # rkyv 0.7.46, wants >=0.8.17: out-of-bounds read validating archives holding Rc/Arc. NOT BUILT -
+  # it hangs off an optional feature of rust_decimal that nothing enables, so it exists only in the
+  # lockfile. Lifted by rust_decimal moving to rkyv 0.8.
+  "RUSTSEC-2026-0235",
+  # rsa 0.9.10, Marvin attack. NOT BUILT here either: it is an optional dependency of sqlx-mysql,
+  # and this app opens SQLite only, so the MySQL driver is never enabled. Unlike the two services,
+  # whose argument is that no RSA key is ever constructed, here the code is not even compiled in.
+  "RUSTSEC-2023-0071",
+]

@@ -1,0 +1,14 @@
+# Advisories with no fix available, each with the reason it cannot be honoured here and the
+# condition that lifts it. Nothing else is silenced: an ID not listed still fails the job, and an
+# entry whose crate has left the graph is dead weight - delete it rather than carry it.
+
+[advisories]
+ignore = [
+  # rsa 0.9.10, Marvin attack (timing sidechannel in RSA decryption). No fixed version exists.
+  # The crate IS compiled - jsonwebtoken's `rust_crypto` feature pulls it unconditionally, there is
+  # no finer knob - but this service only ever builds `Validation::new(Algorithm::HS256)` over
+  # `DecodingKey::from_secret`, so no RSA key is ever constructed and the vulnerable path cannot
+  # run. Lifted by jsonwebtoken gaining a feature that excludes RSA, or by moving to its
+  # `aws_lc_rs` backend (which needs cmake and a C compiler in the build image).
+  "RUSTSEC-2023-0071",
+]

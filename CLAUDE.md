@@ -192,11 +192,14 @@ me demander de les faire hein."* Building a tool for a single click is that wast
 **OWED TO THE USER, NOT TO THE CODE: the MLS + Graine explanation** - prose and diagrams, no code
 (user, 2026-08-20). Post-campaign; scope and the two audiences declined are in [backlog](docs/wiki/backlog.md).
 
-**THE SIX THAT CANNOT BE PULLED FORWARD** - none waits on us, each carrying its blocking condition in
-[backlog](docs/wiki/backlog.md), the only copy: the `libcrux-chacha20poly1305` panic (needs a stable
-`openmls_rust_crypto 0.6.0`), the iOS avatar-cache question (needs an iPhone), the Lydia flip
+**THE FIVE THAT CANNOT BE PULLED FORWARD** - none waits on us, each carrying its blocking condition in
+[backlog](docs/wiki/backlog.md), the only copy: the iOS avatar-cache question (needs an iPhone), the Lydia flip
 WP-LYDIA-1 (needs credentials Lydia owes), one MLS client in a SharedWorker, `dev.canari-emse.fr` plus
 the SECOND campaign (post-campaign), and - owed to the user - is a MiGallery application worth building?
+The sixth is gone: the `libcrux-chacha20poly1305` panic never reached this product, because the crate
+is not compiled - the HPKE backend actually built is `hpke-rs-rust-crypto`. `cargo audit` reads the
+LOCKFILE, which lists optional dependencies nothing enables, so **the first question about any
+advisory is whether `cargo tree -i` can reach the crate at all.**
 
 ### CANARI - what is open
 

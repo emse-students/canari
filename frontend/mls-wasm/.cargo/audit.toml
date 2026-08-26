@@ -1,0 +1,22 @@
+# Advisories with no fix available, each with the reason it cannot be honoured here and the
+# condition that lifts it. Nothing else is silenced: an ID not listed still fails the job, and an
+# entry whose crate has left the graph is dead weight - delete it rather than carry it.
+
+[advisories]
+ignore = [
+  # libcrux-sha3 0.0.8, wants >=0.0.10: incorrect incremental SHAKE output, and an AVX2 panic.
+  # libcrux-secrets 0.0.5, wants >=0.0.6: constant-time swap/select on aarch64.
+  # All three are COMPILED, through hpke-rs 0.6.1 <- openmls_rust_crypto 0.5.1, which pins them.
+  # Cargo cannot cross a 0.0.x bump on its own - every one is semver-breaking - so this is lifted
+  # only by a stable openmls_rust_crypto 0.6.0, the blocker already recorded for this crate.
+  "RUSTSEC-2026-0207",
+  "RUSTSEC-2026-0208",
+  "RUSTSEC-2026-0212",
+  # libcrux-chacha20poly1305 (overlong-ciphertext panic) and libcrux-aesgcm (AAD length, and a
+  # non-constant-time tag check). NEITHER CRATE IS BUILT: `cargo tree -i` finds no path to them on
+  # any target. They are in the lockfile as optional dependencies nothing enables. Lifted by the
+  # lockfile dropping them, which the same openmls bump will do.
+  "RUSTSEC-2026-0124",
+  "RUSTSEC-2026-0209",
+  "RUSTSEC-2026-0211",
+]

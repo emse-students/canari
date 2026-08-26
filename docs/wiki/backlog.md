@@ -23,33 +23,39 @@ is an entry nobody trusts to be current.
 
 ## Security - blocked upstream
 
-### P2 - `libcrux-chacha20poly1305` panic on an overlong ciphertext buffer, in the MLS path
+### ANSWERED - the `libcrux-chacha20poly1305` panic never reached this product
 
-**The only one of the 16 open Dependabot alerts that reaches attacker-controlled input on a path that
-matters.** `frontend/mls-wasm/Cargo.lock` pins 0.0.7; the advisory is fixed in 0.0.8. It arrives
-transitively as `openmls_rust_crypto` → `hpke-rs` → `hpke-rs-libcrux` → `libcrux-aead` →
-`libcrux-chacha20poly1305`, i.e. it IS the HPKE half of the MLS crypto provider, and it processes
-ciphertext supplied by whoever sends this device a frame. A panic there kills the MLS client inside
-the WASM module. Availability, not confidentiality - no key material is exposed.
+**It was filed as the one open alert reaching attacker-controlled input on a path that matters. It
+reaches nothing: the crate is not compiled.** The claim rested on reading the lockfile, where
+`libcrux-chacha20poly1305` sits under `openmls_rust_crypto` -> `hpke-rs` -> `hpke-rs-libcrux` ->
+`libcrux-aead`. A lockfile lists what COULD be resolved, including optional dependencies nothing
+turns on, so it never proves a crate is built. `cargo tree -i` does, and it finds no path to
+`libcrux-aead`, `hpke-rs-libcrux` or `libcrux-chacha20poly1305` on any target:
 
-**It cannot be bumped today, and this was tried rather than assumed.** `libcrux-aead 0.0.7` pins
-`libcrux-chacha20poly1305 = "=0.0.7"`, and a `0.0.x` requirement is exact in Cargo semver, so the
-whole chain has to move together:
+| crate                      | in the lockfile | compiled |
+| -------------------------- | --------------- | -------- |
+| `hpke-rs-rust-crypto`      | yes             | **yes**  |
+| `chacha20poly1305` 0.10.1  | yes             | **yes**  |
+| `aes-gcm` 0.10.3           | yes             | **yes**  |
+| `hpke-rs-libcrux`          | yes             | no       |
+| `libcrux-aead`             | yes             | no       |
+| `libcrux-chacha20poly1305` | yes             | no       |
 
-| crate                      | locked | needed | available                                            |
-| -------------------------- | ------ | ------ | ---------------------------------------------------- |
-| `libcrux-chacha20poly1305` | 0.0.7  | 0.0.8  | yes                                                  |
-| `libcrux-aead`             | 0.0.7  | 0.0.8  | yes                                                  |
-| `hpke-rs-libcrux`          | 0.6.1  | 0.7    | yes                                                  |
-| `hpke-rs`                  | 0.6.1  | 0.7    | yes                                                  |
-| `openmls_rust_crypto`      | 0.5.1  | 0.6    | **release candidates only** (0.6.0-rc.1, 0.6.0-rc.2) |
+The HPKE backend this build actually uses is `hpke-rs-rust-crypto`, i.e. the RustCrypto AEADs. The
+libcrux ones are the alternative backend, and nothing selects it. Two libcrux crates ARE compiled -
+`libcrux-sha3` and `libcrux-secrets`, through `hpke-rs` itself - and their advisories are the ones
+that survive; both are pinned by `openmls_rust_crypto 0.5.1`, and a `0.0.x` requirement is exact in
+Cargo semver, so only a stable `openmls_rust_crypto 0.6.0` moves them.
 
-So closing this alert means shipping a release candidate of the MLS crypto provider. That is not a
-dependency bump, it is an openmls provider upgrade with a full MLS re-verification behind it, and it
-must not ride along with anything else.
+Every one of these is now an entry in the crate's `.cargo/audit.toml`, each naming why it cannot be
+honoured and what lifts it, so `cargo audit` is green without any of them being forgotten. The
+openmls provider upgrade is still owed - it is what drops the unbuilt crates out of the lockfile and
+unpins the two real ones - but it is a scheduled dependency upgrade, not a live defect, and nothing
+about it is urgent.
 
-**Re-check when `openmls_rust_crypto 0.6.0` goes stable** - that is the whole condition. Until then
-the alert stays open on purpose, and the reason is here rather than in somebody's memory.
+**The rule this leaves: a lockfile entry is not a dependency.** `cargo audit` reads the lockfile, so
+it reports crates that are never linked; the first question about any advisory is whether
+`cargo tree -i` can reach the crate at all.
 
 ---
 
