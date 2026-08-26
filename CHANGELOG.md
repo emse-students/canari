@@ -280,6 +280,20 @@ which is also where every release up to and including v0.13.1 now lives.
   nowhere to go, which is a finding and not routine. Both halves asserted in
   `srvclassify-selftest.mjs`, on a fixture copied from that window rather than remembered.
 
+- **The four lines a salon going public writes, and the fifth that must stay unexplained.** COMM-24's
+  window held five `unexplained` social-service lines, all five of them the transition the row exists
+  to drive: a private salon's key group appearing, that group retired `reason=made_public`, and the
+  two access lines that opened the salon to everyone. Four are now NOTABLE and never benign - the
+  retirement of a key group and a change to who may read or write a salon are the loudest quiet
+  events in that service, and `reason=` is pinned so a retirement for a reason this rig has never met
+  arrives under its own name. **The fifth was left alone on purpose.**
+  `served ... published=false base=none active=0 devices=0` is the ordinary answer one second after a
+  salon is created - and also, word for word, what BOTH callers of the concurrent-join race read, a
+  race this shape is the only detector for. Nothing in the text separates them, so pinning it to
+  clean the row would have traded a detector for a cell. COMM-24 is recorded `PASS-DIRTY` with its
+  dirt named, and the selftest now ASSERTS that the shape stays unexplained, so a later pass to
+  "finish the job" fails loudly instead of quietly succeeding.
+
 
 - **"Donner un statut avec le paiement" says which of its four conditions is missing.** The setting
   appears only on a paid form, with a beneficiary association chosen, that runs at least one

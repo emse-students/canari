@@ -686,6 +686,23 @@ const NOTABLE = [
   // inferred. The new name is user content and is logged in full; `logs/` is gitignored, which is
   // as far as it travels.
   /\[GroupsController\] \[RENAME_GROUP\] group=\S+ newName=/,
+  // A PRIVATE SALON'S KEY GROUP APPEARING AND GOING AWAY. COMM-24 is the row that drives the second
+  // one on purpose - private becomes public, so the group that carried the salon's keys has no
+  // reason to exist - and both lines went `unexplained` on its window of 2026-08-26 for want of a
+  // rule. NOTABLE and not benign: outside that transition, a salon losing its key group is one of
+  // the largest things that can happen to it quietly, and it must never be a line a reader skips.
+  //
+  // `reason=made_public` IS PINNED. It is the only reason a caller writes here today, so a retirement
+  // for any OTHER reason is a sentence this rig has never seen and stays unexplained under its own
+  // name rather than arriving pre-forgiven.
+  /\[ChannelService\] \[CHANNEL_GRAINE\] group ready channel=\S+ group=\S+/,
+  /\[ChannelService\] \[CHANNEL_GRAINE\] group retired channel=\S+ group=\S+ reason=made_public/,
+  // THE ACCESS CHANGE ITSELF, the product half of the same transition. Deliberate, rare, and visible
+  // to everyone in the salon at once - which is the definition this file uses for notable rather than
+  // benign. Both spellings appear, one per side of the write: the grant that opened it and the policy
+  // it settled on.
+  /\[ChannelService\] \[CHANNEL\] access granted channel=\S+ private=(?:true|false) announced=\d+/,
+  /\[ChannelService\] \[CHANNEL\] access updated channel=\S+ private=(?:true|false) writePolicy=\S+ audience=\d+ mayWrite=\d+/,
   // A send deliberately not persisted because its recipient is offline and its payload would go
   // stale before they returned - the rendezvous TTL. Correct by design, never routine.
   /TRANSPORT_SKIPPED_OFFLINE/,

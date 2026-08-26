@@ -474,7 +474,13 @@ again:
   behind it. It is written down because a one-off that leaves no trace is exactly what the next
   reader will otherwise rediscover from scratch.
 
-- **COMM-22** settled on its TENTH attempt and is the campaign's only `PASS-DIRTY` that is
+- **COMM-22's believed `PASS-DIRTY` DID NOT HOLD, and what replaced it is a `FAIL`.** Read the
+  paragraph below as the history of one attempt, not as the row's state: on 2026-08-26 the row
+  failed on `2a4297cb` exactly as it had on `d6f61539`, with the same runner. The defect and its
+  evidence are in [backlog](backlog.md); what the tenth attempt saw is kept because the SHAPE it
+  describes - 13 epochs, 12 sessions, one message each - is what arms the row, and no message
+  count can distinguish it from an unchurned salon.
+  It settled then on its TENTH attempt and was the campaign's only `PASS-DIRTY` that was
   nonetheless believed. Armed as intended: six grant/join/send/revoke/send cycles drove the salon's
   group through **13 epochs** and minted **12 distinct sessions** for 12 messages, one per session - a
   shape no message count could distinguish from an unchurned salon, which is why the earlier nine

@@ -358,6 +358,45 @@ no check waits on wall-clock time at all. It belongs with the rendering pass, no
 
 ## Messaging convergence
 
+### P2 - one seed of twelve never reaches the peer, and the row that finds it is COMM-22 (measured 2026-08-26)
+
+**Reproduced on two builds with one runner**, `d6f61539` (2026-08-25T21:56Z) and `2a4297cb`
+(2026-08-26T17:45Z), `armed: true`, six grant/join/send/revoke/send cycles both times. It is NOT the
+wreckage path `ea8266b2` removed: that commit landed at 20:25Z, before both.
+
+The signature is narrow, and that is what makes it a defect rather than a slow window:
+
+| | value |
+| --- | --- |
+| sender reads | 12 of 12, 6 837 ms |
+| peer reads WARM | **11 of 12** |
+| peer reads COLD, after reload + PIN | **11 of 12** - the same eleven |
+| seeds the peer holds | **11**, for 12 sessions |
+| `nothingStaysUnreadable` | true |
+
+**WARM AND COLD ARE IDENTICAL, WHICH IS THE WHOLE FINDING.** A repair that had not finished yet would
+differ across a reload; the same eleven on both sides means the twelfth seed is not late, it is
+absent, and no reload will fetch it. The row it belongs to renders as explicitly unreadable
+(`no seed for session ... (repairable)`) - so the product is honest about it and the reader still
+never sees the message.
+
+**THE SENDER DID ANSWER.** `repair.senderAnswered` holds nine answers summing to twelve seeds and
+`senderWithheld` is empty, while `peerAbsorbed` records four lines summing to seven. So the loss is
+on the receiving or the requesting side, not a sender that refused - and `peerAskedForHistory` fired
+exactly once for eleven missed sessions, which is the next thing to look at.
+
+**ONE HYPOTHESIS ALREADY REFUTED, recorded so it is not re-run:** the missing session was
+`R3jf6bcWThQ2oUnLKLaKvi--`, the only one of the twelve whose id ends in `-`, which in SQL would open
+a comment. It does not: `getGraineHistoryFloors` binds the ids as an array
+(`IN (:...sessionIds)`, `channel.service.ts:1318`), so nothing is interpolated. The trailing dashes
+are a coincidence of base64url.
+
+**THE RECORD WAS INCONSISTENT ACROSS THREE FILES before this**, which is why the FAIL survived two
+sessions unnoticed: the board said `VACUOUS`, [cross-client-campaign](cross-client-campaign.md) said
+a believed `PASS-DIRTY`, and `results.ndjson` said `FAIL` twice. All three now say `FAIL`. The
+believed pass was real but on an OLDER runner, and its shape differed where it matters: the peer
+missed seven sessions there and absorbed all seven.
+
 ### P2 - a re-admitted device calls its own exclusion window a loss, and reconciles for it (measured 2026-08-26)
 
 **Found by a fix working.** GRP-8's round-2 re-admission Welcome used to be dropped as a redelivery

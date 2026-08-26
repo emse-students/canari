@@ -309,6 +309,41 @@ const devicesOk = !matches(BENIGN_RULES, noDevices) && matches(NOTABLE_RULES, no
 if (!devicesOk) failures++;
 console.log(`${devicesOk ? 'ok  ' : 'FAIL'} notable      an invitee with NO reachable device is not one with devices`);
 
+// A PRIVATE SALON BECOMING PUBLIC, the four lines COMM-24 exists to produce, taken verbatim from its
+// window of 2026-08-26. Asserted `notable` and never benign in either direction: the retirement of a
+// salon's key group and a change to who may read or write it are the loudest quiet events in this
+// service, and a rule that made them benign would erase the only record either leaves.
+for (const [what, line] of [
+  ['a key group appearing', `${NEST}[ChannelService] [CHANNEL_GRAINE] group ready channel=aaaaaaaa group=bbbbbbbb`],
+  ['the same group retired for going public', `${NEST}[ChannelService] [CHANNEL_GRAINE] group retired channel=aaaaaaaa group=bbbbbbbb reason=made_public`],
+  ['the access that opened it', `${NEST}[ChannelService] [CHANNEL] access granted channel=aaaaaaaa private=false announced=2`],
+  ['the policy it settled on', `${NEST}[ChannelService] [CHANNEL] access updated channel=aaaaaaaa private=false writePolicy=everyone audience=2 mayWrite=2`],
+]) {
+  const ok = !matches(BENIGN_RULES, line) && matches(NOTABLE_RULES, line);
+  if (!ok) failures++;
+  console.log(`${ok ? 'ok  ' : 'FAIL'} notable      ${what} is reported, never waved through`);
+}
+
+// AND THE REASON IS PINNED, because `made_public` is the only one a caller writes today. A salon
+// losing its key group for a reason this rig has never seen must arrive under its own name rather
+// than pre-forgiven by the rule written for the transition COMM-24 drives.
+const retiredOther = `${NEST}[ChannelService] [CHANNEL_GRAINE] group retired channel=aaaaaaaa group=bbbbbbbb reason=members_gone`;
+const retiredOk = !matches(BENIGN_RULES, retiredOther) && !matches(NOTABLE_RULES, retiredOther);
+if (!retiredOk) failures++;
+console.log(`${retiredOk ? 'ok  ' : 'FAIL'} unexplained  a retirement for an UNKNOWN reason is not the one going public`);
+
+// THE ONE THAT STAYS UNEXPLAINED ON PURPOSE, and this assertion is what keeps it that way. COMM-24's
+// window carries `served ... published=false base=none active=0 devices=0` one second after its salon
+// was created, where nothing has published yet and the answer is ordinary. Pinning that exact shape
+// would have closed the row's last dirt - and would also have forgiven the concurrent-join race,
+// whose two callers BOTH read an unpublished group and so produce the identical sentence. There is no
+// text separating the two, so the shape keeps costing COMM-24 a PASS-DIRTY rather than costing the
+// rig the only detector it has for the race.
+const servedFresh = `${NEST}[ChannelService] [CHANNEL_GRAINE] served channel=aaaaaaaa user=bbbbbbbb group=cccccccc published=false base=none active=0 devices=0`;
+const freshOk = !matches(BENIGN_RULES, servedFresh) && !matches(NOTABLE_RULES, servedFresh);
+if (!freshOk) failures++;
+console.log(`${freshOk ? 'ok  ' : 'FAIL'} unexplained  an UNPUBLISHED graine read stays visible, race or not`);
+
 // THE SAME SEPARATION ON THE PER-DEVICE HALF, and it needs asserting three times because the family
 // fails three different ways and the benign rule pins only the two success words. `sent ` forgives a
 // delivery; it must forgive nothing that says the delivery did not happen, the token was dead, or

@@ -139,9 +139,9 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     [cross-client-campaign](docs/wiki/cross-client-campaign.md), the only copies. **Where the ladder
     stands: rungs 1-8 TAKEN.** GRP closed 2026-08-26 on `feecfaf5` over four passes - GRP-4 green
     after `e027679a`, GRP-8 `PASS-DIRTY` deterministically (its P2 is in
-    [backlog](docs/wiki/backlog.md)). **9 COMM stands at 24 PASS, with TWO re-runs owed** -
-    COMM-22 (`VACUOUS`, runner changed - and the proof WP-REGRANT-2 owes, web-only, no phone) and
-    COMM-24 (runner changed) - THEN DEL, TAB,
+    [backlog](docs/wiki/backlog.md)). **9 COMM IS SWEPT: 23 PASS, COMM-24 `PASS-DIRTY`, and COMM-22
+    a `FAIL` reproduced on two builds** - its defect is a P2 in [backlog](docs/wiki/backlog.md), and
+    it still owes the proof WP-REGRANT-2 wants (web-only, no phone). **NEXT IS 10 DEL**, then TAB,
     MULTI, LIFE, NOTIF, CALL, HEAL, PIN, CORRUPT. The board carries every verdict and the format of a
     cell; do not restate either here. **A `PASS-DIRTY` NO LONGER STOPS A RUNG BY ITSELF (user,
     2026-08-25)**; what the class of the dirt decides is on
@@ -153,12 +153,14 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     runner at all; DEL, MULTI, LIFE, NOTIF and HEAL are covered.
 
 
-    **OWED BEFORE THE NEXT COMM RUN, from the session of 2026-08-26:** COMM-22 was killed mid-run to
-    clear the way for a push, so it left the community `859f557a` (`C22 COMM22-...`) on production -
-    `cleanup.mjs` names it and nothing else, and the sweep was refused by the sandbox rather than
-    run. Sweep it first. The shared venue had been GONE again and was rebuilt with `venue.mjs`
-    (`fbddc890` / `general` `064ac7d2`, 2 members) - a second disappearance in two days, cause
-    still unrecorded either time.
+    **KILLING A RUN CAN DESTROY A MEASUREMENT SECONDS FROM BEING RECORDED (2026-08-26).** COMM-22 was
+    stopped mid-run to make a push safe; the server log then showed its OWN teardown had already
+    fired (`[WORKSPACE] delete ... by=d82cd226 reason=admin_deleted`), so it had reached its last
+    step and the stop landed in the gap before `results.ndjson` was written. No debris and no
+    verdict: the estate was clean without a sweep, and the whole cycle was spent for nothing. Let a
+    run finish, or accept that the push waits.
+    The shared venue had been GONE again and was rebuilt with `venue.mjs` (`fbddc890` / `general`
+    `064ac7d2`, 2 members) - a second disappearance in two days, cause still unrecorded either time.
 
 2. **DEFERRED PAST THE LADDER - seven UX and rendering items, substance in
     [backlog](docs/wiki/backlog.md) and NOWHERE else.** One line each, in the order they were raised:
