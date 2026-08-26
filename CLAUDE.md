@@ -139,10 +139,14 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     [cross-client-campaign](docs/wiki/cross-client-campaign.md), the only copies. **Where the ladder
     stands: rungs 1-8 TAKEN.** GRP closed 2026-08-26 on `feecfaf5` over four passes - GRP-4 green
     after `e027679a`, GRP-8 `PASS-DIRTY` deterministically (its P2 is in
-    [backlog](docs/wiki/backlog.md)). **9 COMM IS SWEPT: 23 PASS, COMM-24 `PASS-DIRTY`, and COMM-22
-    a `FAIL` reproduced on two builds** - its defect is a P2 in [backlog](docs/wiki/backlog.md), and
-    it still owes the proof WP-REGRANT-2 wants (web-only, no phone). **NEXT IS 10 DEL**, then TAB,
-    MULTI, LIFE, NOTIF, CALL, HEAL, PIN, CORRUPT. The board carries every verdict and the format of a
+    [backlog](docs/wiki/backlog.md)). **9 COMM IS SWEPT: 23 PASS, COMM-24 `PASS-DIRTY`, COMM-22 a
+    `FAIL` now DIAGNOSED** (an external joiner's own commit leaves the published base an epoch behind
+    and locks the next joiner out; cause, evidence and the four-layer fix are in
+    [backlog](docs/wiki/backlog.md)), and it still owes the proof WP-REGRANT-2 wants (web-only, no
+    phone). **10 DEL IS SWEPT: 8 PASS, DEL-1 `PASS-DIRTY`, DEL-10 a `FAIL` on its own fix** - the
+    durable row is kept and nothing replays it, and which of the two triggers is missing needs a
+    runner that captures W1's console (P2 in [backlog](docs/wiki/backlog.md)). DEL-8 ran for the first
+    time. **NEXT IS 11 TAB**, then MULTI, LIFE, NOTIF, CALL, HEAL, PIN, CORRUPT. The board carries every verdict and the format of a
     cell; do not restate either here. **A `PASS-DIRTY` NO LONGER STOPS A RUNG BY ITSELF (user,
     2026-08-25)**; what the class of the dirt decides is on
     [cross-client-campaign](docs/wiki/cross-client-campaign.md), the only copy. **A x5 sweep of the
@@ -153,14 +157,11 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     runner at all; DEL, MULTI, LIFE, NOTIF and HEAL are covered.
 
 
-    **KILLING A RUN CAN DESTROY A MEASUREMENT SECONDS FROM BEING RECORDED (2026-08-26).** COMM-22 was
-    stopped mid-run to make a push safe; the server log then showed its OWN teardown had already
-    fired (`[WORKSPACE] delete ... by=d82cd226 reason=admin_deleted`), so it had reached its last
-    step and the stop landed in the gap before `results.ndjson` was written. No debris and no
-    verdict: the estate was clean without a sweep, and the whole cycle was spent for nothing. Let a
-    run finish, or accept that the push waits.
-    The shared venue had been GONE again and was rebuilt with `venue.mjs` (`fbddc890` / `general`
-    `064ac7d2`, 2 members) - a second disappearance in two days, cause still unrecorded either time.
+    **A KILLED RUN CAN DESTROY A MEASUREMENT SECONDS FROM BEING RECORDED** - let a run finish, or
+    accept that the push waits ([testing-methodology](docs/wiki/testing-methodology.md), the only
+    copy). The shared venue had been GONE again and was rebuilt with `venue.mjs` (`fbddc890` /
+    `general` `064ac7d2`, 2 members) - a second disappearance in two days, cause unrecorded both
+    times.
 
 2. **DEFERRED PAST THE LADDER - seven UX and rendering items, substance in
     [backlog](docs/wiki/backlog.md) and NOWHERE else.** One line each, in the order they were raised:
@@ -238,6 +239,11 @@ SETUP-4's 2FA, the one step no tool here can answer. Outside the work tree a cre
 committed and `git clean -xdf` cannot reach a profile.
 
 **MUT-20 is unarmable until a campaign message reaches 90 days** (earliest 2026-11-09).
+
+**A1 IS PAUSED (user, 2026-08-26: *"Pause pour A1. Tu peux continuer sur le reste"*).** Nothing drives
+the phone until they say otherwise, so a row needing `+push` or A1 waits and every other row runs. 11
+TAB is unaffected - all eight are `W1 W2`, TAB-6 excepted (`+user`, the 2FA). **TAB-7 is the row to
+watch**: offline -> act -> online with no reload is exactly the trigger DEL-10 says nothing honours.
 
 **Prod IS the test server** and commit+push are authorised so it picks changes up.
 `dev.canari-emse.fr` is a proxied CNAME to the same tunnel, NOT a second environment; it becomes one

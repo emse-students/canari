@@ -31,7 +31,7 @@ Updated after every run.
 | 7 FWD | 6 | `1579d5c3`, A1 `a7981206` | **`PASS` 6/6 x5** (FWD-2 x1, 25 iterations) |
 | 8 GRP | 10 | `b04e26d9` | **`PASS` 9/10 x1** + GRP-3 `PASS-DIRTY`, accepted by the user 2026-08-25. x5 abandoned - the rig, never the product. GRP-3 dirt = one unexplained socket close, P2 in [backlog](backlog.md) |
 | 9 COMM | 25 | `5d7fac13`, COMM-18 on `d6f61539` / A1 `e96bfa12`, COMM-4, COMM-22 and COMM-24 on `2a4297cb` | 23 `PASS`, COMM-24 `PASS-DIRTY`, **COMM-22 `FAIL`** (reproduced, two builds) |
-| 10 DEL | 10 | `c6eb7b20`, A1 `c6eb7b20` | 7 `PASS`, DEL-1 `VACUOUS`, DEL-10 `FAIL` (fixed), DEL-8 never run. Every verdict predates the current `del.mjs` - the phase owes a re-run |
+| 10 DEL | 10 | `2a4297cb` | 8 `PASS`, DEL-1 `PASS-DIRTY`, **DEL-10 `FAIL`** (reproduced on the deployed fix). DEL-8 ran for the first time |
 | 11 TAB | 8 | - | `pending` |
 | 12 MULTI | 6 | - | `pending` |
 | 13 LIFE | 8 | - | `pending` |
@@ -261,16 +261,16 @@ mid-flight.
 
 | Id | The crossing | Needs | State |
 | --- | --- | --- | --- |
-| DEL-1 | Peer deletes while a history solicitation for that group is outstanding | `W1 W2` | `VACUOUS` on `c6eb7b20` - armed nothing. Rewritten in `a343797f`; re-run owed |
+| DEL-1 | Peer deletes while a history solicitation for that group is outstanding | `W1 W2` | `PASS-DIRTY` 1/1 - armed at last (`armed: true`), 4/4 assertions. Dirt = 6 `[History] frame never read here and unreadable for good (past-epoch-application)` on W2, a designed line announcing loss that reconciliation then recovers |
 | DEL-2 | Peer deletes while a message from us is in the outbox | `W1 W2` | `PASS 1/1` |
 | DEL-3 | Both peers delete the same conversation within a second | `W1 W2` | `PASS 1/1` |
 | DEL-4 | Delete a conversation while its media is still uploading | `W1 W2` | `PASS 1/1` |
 | DEL-5 | Delete, then the peer sends into it anyway | `W1 W2` | `PASS 1/1` |
 | DEL-6 | Delete while a drain is in flight for that group | `W1 W2` | `PASS 1/1` |
 | DEL-7 | Delete on W1 while A1 is killed, then wake A1 | `+push` | `PASS 1/1` |
-| DEL-8 | Delete a group, then restore an MLS snapshot from BEFORE the deletion | `+snapshot` | `pending` - **RUNS LAST of the phase**, it restores a snapshot over W1's real state |
+| DEL-8 | Delete a group, then restore an MLS snapshot from BEFORE the deletion | `+snapshot` | `PASS 1/1` - first run ever. **RUNS LAST of the phase**, it restores a snapshot over W1's real state |
 | DEL-9 | Delete the conversation currently OPEN on screen | `W1 W2` | `PASS 1/1` |
-| DEL-10 | Delete while offline, then reconnect | `W1 W2` | **`FAIL` on `c6eb7b20`** - a real defect, fixed (`CHANGELOG.md`); the check was wrong too. Re-run owed on the deployed fix |
+| DEL-10 | Delete while offline, then reconnect | `W1 W2` | **`FAIL` on `2a4297cb`**, the deployed fix - reproduced, and the half that broke has moved. The row IS kept now (`listedOnDeleter`, no local purge) but nothing replays it: 1 attempt offline, `sentOnFirstReconnect=0`, `sentOnSecondReconnect=0`, group still `live`. Memory is right, the TRIGGER is missing. P2 in [backlog](backlog.md) |
 
 ## 11 - TAB - tabs and windows
 

@@ -358,7 +358,7 @@ no check waits on wall-clock time at all. It belongs with the rendering pass, no
 
 ## Messaging convergence
 
-### P2 - one seed of twelve never reaches the peer, and the row that finds it is COMM-22 (measured 2026-08-26)
+### P2 - an external joiner's own commit locks the next joiner out, and COMM-22 is the row that finds it (diagnosed 2026-08-26)
 
 **Reproduced on two builds with one runner**, `d6f61539` (2026-08-25T21:56Z) and `2a4297cb`
 (2026-08-26T17:45Z), `armed: true`, six grant/join/send/revoke/send cycles both times. It is NOT the
@@ -382,8 +382,55 @@ never sees the message.
 
 **THE SENDER DID ANSWER.** `repair.senderAnswered` holds nine answers summing to twelve seeds and
 `senderWithheld` is empty, while `peerAbsorbed` records four lines summing to seven. So the loss is
-on the receiving or the requesting side, not a sender that refused - and `peerAskedForHistory` fired
-exactly once for eleven missed sessions, which is the next thing to look at.
+on the receiving or the requesting side, not a sender that refused.
+
+**THE CAUSE, FROM THE RUN LOG OF `2a4297cb`.** The peer is not slow and it is not refused a seed: it
+is not IN the salon's distribution group at all, and it is its OWN earlier commit that put it out.
+
+    19:36:12  W1  no base published for salon 58afab93 - creating group 9e46429d
+    19:36:12  W1  POST .../distribution-group/group-info        <- base published at epoch 0
+    19:36:21  W1  Processing Commit group=9e46429d sender=<peer>  <- the peer's external join, epoch -> 1
+                  ... and NO group-info POST from the peer, ever
+    19:36:26  W2  externalJoin STALE base for 9e46429d (published 0, group at 1) - not attempting
+    19:36:31  W2  undecryptable frame on 9e46429d - not acknowledged: Group not found
+    19:36:34  W2  could not ask for 1 missing seed(s) in channel 58afab93: Group not found
+    19:36:40  W1  the published base is at epoch 0 while the group is at 1 - republishing   <- 14 s too late
+
+**AN EXTERNAL JOIN ADVANCES THE GROUP AND LEAVES THE BASE BEHIND IT.** `externalJoin` publishes the
+new base with `void this.refreshGroupInfo(joined.groupId)` (`BaseMlsService.ts:2288`) - fire-and-forget,
+by the same deliberate choice as the one after `submitCommit` (`:1912`), so a commit that succeeded is
+never reported as failed because a follow-up did not land. The check reloads the peer moments later on
+a CLEAN state, so that follow-up never lands AND the tree that could mint the base is gone with it. The
+joiner has locked itself out, and every stateless joiner after it: the commit gate accepts a base equal
+to the active epoch and nothing else, and a distribution group has no peer-Welcome fallback.
+
+**THE REPAIR EXISTS AND IS 14 SECONDS LATE, WHICH IS WHY THE LOSS IS PERMANENT.** `republishStaleBase`
+did fire, three times across the run (base 0->1, 6->7, 12->13), from the one holder with a current
+tree - but its trigger is that holder's *ordinary read* of the salon, not the epoch change, so it
+always lands after the refused peer has already given up. And the peer's giving-up is terminal twice
+over: `stale_base` is treated as a fact for the session, and the seed repair on top of it deletes its
+`outstanding` entry before the send it then loses (`repair.ts:124-160`), with `asked` never set
+(`:303-321`) and all three re-arm paths driven by an arriving answer that cannot come.
+
+**Two standing rules name it.** *Never learn by failing what a fact could have told you* - the repair
+hands the ask to a layer certain to refuse it, to discover a group it is not in, eight seconds after
+`stale_base` established exactly that. And *a race that heals cleanly is still a defect* - here it
+does not heal at all.
+
+**THE FIX IS TO DELETE THE WINDOW, NOT TO NARROW IT.** openmls already returns the GroupInfo for the
+resulting epoch from the commit it builds, and all four call sites throw it away
+(`mls-core/src/members.rs:85,121,273`, `welcome.rs:86`, each destructuring `_group_info`); the groups
+are built with `use_ratchet_tree_extension(true)`, so that GroupInfo carries the tree exactly as
+today's `export_group_info(.., true)` does. Carrying it in the commit submission lets chat-delivery
+store base and commit in the one transaction that already validates the epoch - no follow-up call to
+lose, no tree needed afterwards, and no window in which the group is unjoinable. `republishStaleBase`
+then stays as the witness it should always have been: a line whose RATE says whether this ever happens
+again. Layers: `mls-core` -> `mls-wasm` (a third slot on the returned array) -> `BaseMlsService` ->
+chat-delivery, plus `npm run generate`.
+
+**Narrowing was considered and rejected**: republishing on *applying* a commit rather than on the next
+read would cut 14 s to under a second, but a two-member salon whose other member is offline still has
+nobody to mint the base, and a shorter race is still a race.
 
 **ONE HYPOTHESIS ALREADY REFUTED, recorded so it is not re-run:** the missing session was
 `R3jf6bcWThQ2oUnLKLaKvi--`, the only one of the twelve whose id ends in `-`, which in SQL would open
@@ -607,6 +654,34 @@ is the case with no floor under it.
 TAB-1 (`tab1.mjs`) now asserts the mechanism that DOES exist - exactly one notification while hidden,
 none while in front, the tag naming the conversation - so this entry is about the gap the row cannot
 assert, not about a defect in what it covers.
+
+### P2 - an offline deletion is remembered and never replayed, and DEL-10 fails on its own fix (measured 2026-08-26)
+
+**The memory half works; the trigger half does not.** DEL-10 was `FAIL` on `c6eb7b20` because the
+deletion was LOST - attempted once with the link cut, the local state purged anyway, and the group
+handed back by `discoverMissingGroups`. `pendingGroupExits` fixed that half. On `2a4297cb` the row is
+`FAIL` again, and what broke has moved:
+
+| field | value | reading |
+| --- | --- | --- |
+| `sentWhileOffline` | 1 | the DELETE was attempted |
+| `listedOnDeleter` | true | the group was NOT purged locally - the durable row did its job |
+| `sentOnFirstReconnect` | 0 | **nothing replayed it** |
+| `sentOnSecondReconnect` | 0 | nor the second time |
+| `onServerAfter` | `live` | the deletion never happened |
+
+So the decision is written down and kept, exactly as designed, and then no one comes back for it.
+`drainPendingGroupExits` has two triggers - `ConnectivityStore.onReconnect`, and one pass at chat start
+for the app killed while offline - and the check reconnects the link WITHOUT a reload, so only the
+first applies. Either it does not fire for a link cut through CDP, or it fires and the drain finds no
+row. **Which of the two is not yet measured**, and the run log does not say: `del.mjs --only 10`
+records the verdict and the server dirt but captures no client console, so the `[EXIT]` lines that
+would separate them are not collected. The next step is a re-run with W1's console captured, and that
+is a change to the runner, not to the product.
+
+**Do not read this as the old defect returning.** The two failures share a row id and nothing else: one
+lost the decision, this one keeps it and never acts on it. The fix for the first is what makes the
+second visible at all.
 
 ## Mentions
 

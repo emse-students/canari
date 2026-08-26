@@ -459,6 +459,16 @@ an ambiguous browser, and it reads PASS on all five passes of the 2026-08-15 ser
 14:48 on 2026-08-16, `INVALID` at 15:12, and PASS again at 15:35 after the repair. `Skipping stale`
 appears nowhere else in `results.ndjson`. One run was affected; the x5 series was not.
 
+**And that reading is only sound because it named a WINDOW.** `results.ndjson` is append-only over the
+whole campaign: 731 rows for GRP's ten checks alone, holding every attempt including the aborted and
+the partial - GRP-4 carries 61 `PASS`, 12 `PASS-DIRTY`, 9 `FAIL` and 1 `ERROR`, all of them true of
+some moment. So **a tally keyed on a check id counts history, not a pass.** `run.mjs` is right today
+by construction (`all().filter((r) => r.at >= startedAt)`), and the trap is waiting for the x5 sweep,
+which is the first thing that will want to ask "did this row pass five times": it must key on five
+identified RUNS, over one build, with the rule set fixed - three properties a check id does not carry.
+Nothing in the ledger is ever deleted to make that easier; an aborted attempt is evidence, and pruning
+it is how a series comes to claim more than it measured.
+
 #### 6. A MATCHER TESTS ONE SPELLING - and one written from the success wording can only ever report success
 
 Both are the same failure of a matcher: it was written from what the author expected to see, so the outcomes it cannot spell become silence, and silence reads as health.
@@ -2208,3 +2218,17 @@ by anyone who has not met them.
 
 The campaign is not done when the tables are full. It is done when every FAIL is either a Work
 Package or a fixed commit, and the dashboard says which build produced each verdict.
+
+### A killed run can destroy a measurement seconds from being recorded
+
+COMM-22 was stopped mid-run on 2026-08-26 to make a push safe. The server log then showed its OWN
+teardown had already fired (`[WORKSPACE] delete ... reason=admin_deleted`), so the check had reached
+its last step and the stop landed in the gap before `results.ndjson` was written. No debris and no
+verdict: the estate was clean without needing a sweep, and the whole cycle - minutes of grant, join,
+send and revoke - bought nothing at all.
+
+**A verdict exists only once it is written.** Everything before that line is a process that can be
+killed, and the closer a run is to finishing the more a stop costs. So: let a run finish, or accept
+that the push waits. There is no third option that keeps both, because the two are competing for the
+same deployed bundle - a redeploy mid-run is what makes `gate` call a phase `VACUOUS` in the first
+place.
