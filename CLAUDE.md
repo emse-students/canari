@@ -202,7 +202,11 @@ deletion stands.
 **DONE:** Portail-etu pinned and its outage closed (deploy green, site 200). Canari: one
 `.bun-version` feeding eight workflow sites; the 18 deprecated lucide names; the four NestJS
 services migrated to bun end to end - images BUILT AND STARTED locally, all four reaching
-`NestFactory`.
+`NestFactory`; **`libs/shared-ts` DELETED** with every piece that named it (CI matrix, pre-test
+build step, two CD path filters, Dependabot directory, Makefile target, two Husky branches, the
+jest `moduleNameMapper`) - the reasoning is on [libs](docs/wiki/libs.md), the only copy, and
+`libs/event-contracts` never existed; the last `npm run` inside `frontend/package.json`'s own
+scripts; both Husky hooks rewritten to bun and to English.
 
 **THE ONE MEASURED LIMIT ON "bun PARTOUT":** jest fails under the bun runtime -
 `admin-storage.controller.mls.spec.ts` passes 8/8 under node and fails under bun. CI therefore
@@ -211,23 +215,15 @@ collapse that to one runtime without re-running that spec.**
 
 **OPEN, in order:**
 
-1. **`libs/shared-ts` has NO consumer.** Nothing in any `src/` imports `@canari/shared-ts`; its only
-   mention is a jest `moduleNameMapper` in chat-delivery pointing at the library's SOURCE. Yet
-   `ci.yml` builds it before every backend test as "a build dependency for all TS backends", it sits
-   in the cd path filters of `cd.yml` and `cd-dev.yml`, in `dependabot.yml` and in the Makefile, and
-   its only recent commits are version bumps. **Measure once more, then delete it and the machinery,
-   or write down what it is for.** `ci.yml:87` also names a `libs/event-contracts` - check whether
-   that exists at all.
-2. **`Dockerfile.frontend-ssr` is the last `node:22` in the repo** (every other image is 24), and its
+1. **`Dockerfile.frontend-ssr` is the last `node:22` in the repo** (every other image is 24), and its
    comments are French in a repo whose rule is English. Moving it to bun is NOT a tag swap: it runs
    an `adapter-node` build, and the bun path is `svelte-adapter-bun` (what Portail uses), which
    changes the SSR entry and how nginx proxies it. Decide deliberately; the node:24 bump is safe on
    its own.
-3. **The rest of the mandate, untouched:** TS 7 where possible (Dependabot has already proposed
-   `typescript 6.0.3 -> 7.0.2` on `/frontend` and `/libs/shared-ts`); `npm run` -> `bun run` inside
-   `frontend/package.json`'s own scripts; CodeQL + secret scanning on every repo; oxlint/oxfmt/oxvelte
-   on le-cercle and MiGallery.
-4. **Sky, MiGallery, le-cercle have not been touched this session** and each still owes a
+2. **The rest of the mandate, untouched:** TS 7 where possible (Dependabot has already proposed
+   `typescript 6.0.3 -> 7.0.2` on `/frontend`); CodeQL + secret scanning on every repo;
+   oxlint/oxfmt/oxvelte on le-cercle and MiGallery.
+3. **Sky, MiGallery, le-cercle have not been touched this session** and each still owes a
    `.bun-version`. Sky is in a NON-BUILDABLE intermediate state from an earlier session: `bun
    install` pending, 36 `lucide-svelte` -> `@lucide/svelte` plus ~4 deprecated names, Dockerfile in
    bun, `ci-bun.yml`, pm2 out of `deploy.yml`, `dependabot.yml`, five docs pages, gates, then a
@@ -238,7 +234,7 @@ collapse that to one runtime without re-running that spec.**
    Dependabot on GitLab.
 
 **ONE-OFF ACTIONS GO TO THE USER** (2026-08-25): *"Pour les choses qui ne se font qu'une fois, tu peux
-me demander de les faire hein."* Building a tool for a single click is that waste - see item 3.
+me demander de les faire hein."* Building a tool for a single click is that waste - see item 2.
 
 **A DELETED GROUP IS TWO ESTATES**: `cleanup.mjs` owns the server side, `dismiss.mjs` the copy each MEMBER's client keeps (W1 clean at 9 rows on 2026-08-24, W2 holding 189). One allowlist for both, `debris.mjs`. Detail on [cross-client-campaign](docs/wiki/cross-client-campaign.md).
 

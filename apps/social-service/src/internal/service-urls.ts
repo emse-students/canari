@@ -37,11 +37,11 @@
  * The trailing-slash and already-suffixed handling is not decoration: the variable is operator-set,
  * and an operator who "fixes" it by appending `/api` must not produce `/api/api/internal/...`.
  *
- * DUPLICATED IN `core-service` ON PURPOSE. The obvious home is `libs/shared-ts`, but that package is
- * wired into `chat-delivery-service` alone (Dockerfile + jest moduleNameMapper); adopting it here
- * would add a `file:` dependency, a build stage and the `--install-links` trap to two more
- * production images to save four lines. The repo already duplicates `internal-secret.util.ts` the
- * same way, for the same reason.
+ * DUPLICATED IN `core-service` ON PURPOSE. The obvious home would be a shared TypeScript package,
+ * and this repo has none: `libs/shared-ts` existed, was imported by nothing, and was deleted on
+ * 2026-08-27. Creating one for these four lines would add a `file:` dependency, a build stage and
+ * the `--install-links` trap to two more production images. The repo already duplicates
+ * `internal-secret.util.ts` the same way, for the same reason.
  */
 
 /** Every Nest service in this repo serves its routes under this prefix. See each `main.ts`. */

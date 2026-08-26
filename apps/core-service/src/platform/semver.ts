@@ -5,10 +5,10 @@ export const SEMVER_PATTERN = /^\d+\.\d+\.\d+$/;
  * Compares two `major.minor.patch` strings.
  *
  * The frontend carries the same function (`utils/appVersion.ts`) because there is no build seam
- * between the SvelteKit bundle and the Nest build - `libs/shared-ts` reaches `chat-delivery-service`
- * only, through a jest path mapping, and wiring it into two more build images is a deploy change
- * rather than a refactor. Both are pure arithmetic over the same three integers, and both are
- * pinned by tests; if a third copy is ever wanted, wire the shared lib instead of copying again.
+ * between the SvelteKit bundle and the Nest build: this repo has no shared TypeScript package. It
+ * had one, `libs/shared-ts`, which nothing imported; it was deleted on 2026-08-27. Both copies are
+ * pure arithmetic over the same three integers and both are pinned by tests. A THIRD copy is the
+ * signal to create a shared package deliberately, not to copy again.
  *
  * @returns negative if a < b, positive if a > b, else 0
  */

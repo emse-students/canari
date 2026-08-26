@@ -114,6 +114,38 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Removed
 
+- **`libs/shared-ts`, a package NOTHING imported, and the eight places that kept it alive.** It
+  exported three Kafka topic names, one Redis envelope builder and re-exports of three `ts-rs` types.
+  Not one `src/` file in any of the four NestJS services imported it; neither did the frontend. Its
+  only mention outside its own directory was a Jest `moduleNameMapper` in `chat-delivery-service`
+  pointing at the library's SOURCE - which no test ever resolved - and a build stage in that
+  service's Dockerfile that compiled it and copied the result nowhere. Its only commits in its last
+  year were version bumps.
+
+  What it cost while doing nothing: an entry in the CI TypeScript matrix, a `bun install` + `bun run
+  build` step run before EVERY backend test job as "a build dependency for all TS backends", a
+  `shared_ts=true` flag that forced all four services AND the frontend to re-run on any change to
+  it, path filters in `cd.yml` and `cd-dev.yml`, a Dependabot directory, a Makefile target, two
+  Husky branches and a committed lockfile. All of it is gone. `ci.yml` also tested for a
+  `libs/event-contracts` that has never existed in this repository.
+
+  Two things it really did hold have new homes. The `ts-rs` mirrors of the shared Rust event structs
+  now generate into `libs/shared-rust/bindings/` - next to the definitions they mirror, still
+  committed, so a struct change still shows up as a dirty tree in the same commit as the Rust
+  change. And the wiki page that described the package was wrong in four separate ways, which is how
+  a dead package survives this long: it claimed all four services consumed it, called a hand-written
+  JSON envelope builder "protobuf-generated types", documented a `npm run proto:gen` script the
+  package did not have, and named an export that did not exist. `docs/wiki/libs.md` now states what
+  is measured, including how many of the three "Kafka topics" any code outside the crate actually
+  names: one.
+
+  The duplication this package was the obvious cure for stays duplicated, deliberately, and the note
+  at the head of each copy now says why in terms that do not depend on a package that is gone -
+  `internal/service-urls.ts` and `internal-secret.util.ts` in `core-service` and `social-service`,
+  and `compareSemver` between `core-service` and the frontend. A shared package would add a build
+  stage and the `--install-links` trap to two more production images to save four lines each. A
+  THIRD copy is the signal to reconsider.
+
 - **The "Encaissement (Stripe)" selector on a post, and the column behind it.** The composer asked
   a real question - which association's Stripe account should collect on this post - the answer was
   validated (`isPaymentsReady`, honouring approved parent-payment delegation) and stored, and then
@@ -140,6 +172,26 @@ which is also where every release up to and including v0.13.1 now lives.
   three. Unrelated to `calendar_event_co_owners`, which names ASSOCIATIONS co-hosting an event.
 
 ### Changed
+- **Both Husky hooks run bun, and speak English.** They called `npm run lint:fix` for the four
+  NestJS services and `npm run lint` / `npm run format:check` for `chat-delivery-service` - the last
+  `npm` left in a developer's path after the backend moved to bun, and the one most likely to
+  resolve a dependency tree different from the one CI builds. `npm test` in the pre-push hook stays
+  `npm`, for the measured reason `ci.yml` gives at the same seam: jest under the bun runtime fails
+  `admin-storage.controller.mls.spec.ts` while it passes 8/8 under node. The comment at that call
+  site now says so, so the next person to "finish the migration" reads it before collapsing it.
+  Their comments and failure messages were French in a repository whose rule is that everything
+  dev-facing is English; they are English now.
+
+- **`frontend/package.json`'s own scripts stop shelling out to npm.** Seven chains inside
+  `generate`, `test`, `check`, `check:strict`, `check:watch` and `prepare` ran `npm run
+  <other-script>`. Every caller above them - the Makefile, both hooks, CI - invokes them with `bun
+  run`, so a single `bun run generate` was silently dropping back into npm halfway through, in a
+  repository whose lockfile is `bun.lock`.
+
+- **`vitest.config.ts` uses `import.meta.dirname`.** `__dirname` made Vite print a deprecation
+  warning on every single test run, local and CI. A line its reader learns to skip is the line that
+  hides the next defect.
+
 - **The four NestJS services install, build and run under bun; their images no longer contain node.**
   `oven/bun:1.3.14-alpine` replaces `node:24-alpine` in all four Dockerfiles, `bun install
   --frozen-lockfile` replaces `npm install`, and `CMD` is `bun dist/main.js`. Each image was built

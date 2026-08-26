@@ -12,7 +12,7 @@
 ### Architecture
 
 - [Architecture overview](architecture.md) — service topology, Nginx routing, auth flow
-- [Shared libraries](libs.md) — proto, shared-rust (Kafka events), shared-ts
+- [Shared libraries](libs.md) — proto, shared-rust (Kafka events)
 - [Glossary](glossary.md) — acronyms and terminology
 
 ### Protocols

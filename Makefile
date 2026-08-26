@@ -220,8 +220,6 @@ install-frontend:
 	@echo "${GREEN}✅ Frontend prêt${RESET}"
 
 install-services:
-	@echo "📦 Installing shared-ts…"
-	@cd libs/shared-ts && bun install --frozen-lockfile
 	@echo "📦 Installing core-service…"
 	@cd apps/core-service && bun install --frozen-lockfile
 	@echo "📦 Installing social-service…"

@@ -6,11 +6,9 @@
 # `lockfileVersion: 2` into a lockfile it CREATES, and reads an existing v1 one
 # unchanged.
 #
-# The shared-ts build stage that used to sit here is gone: nothing in this
-# service's source imports `@canari/shared-ts`. Its only mention is a Jest
-# `moduleNameMapper` pointing straight at the library's SOURCE, which the
-# runtime image never reaches - so the stage installed and compiled a package
-# that was then copied nowhere. `--install-links` went with it.
+# A `libs/shared-ts` build stage used to sit here, installing and compiling a
+# package whose output was then copied nowhere. Both the stage and the package
+# are gone - nothing in any service imported it. `--install-links` went too.
 FROM oven/bun:1.3.14-alpine AS builder
 
 WORKDIR /app

@@ -76,7 +76,6 @@ updates:
       - "/apps/social-service"
       - "/apps/media-service"
       - "/apps/chat-delivery-service"
-      - "/libs/shared-ts"
     rebase-strategy: auto
     schedule:
       interval: "weekly"

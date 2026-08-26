@@ -2,24 +2,38 @@
 
 **Source**: `libs/`
 
-Canari shares types and event definitions across services via three libraries in the monorepo.
+Canari shares types and event definitions across services via two libraries in the monorepo.
 
 ## libs/shared-rust
 
 **Stack**: Rust  
 **Source**: `libs/shared-rust/Cargo.toml`
 
-Defines canonical event structs shared between Rust services (`chat-gateway`, `call-service`) and TypeScript services (via `ts-rs` auto-generated TypeScript types).
+Defines the canonical event structs. One crate depends on it: `apps/chat-gateway` (`Cargo.toml`).
+`ts-rs` mirrors each struct into TypeScript so a future TS consumer cannot drift from the Rust
+definition.
 
 ### Event types
 
-| Struct | Kafka topic | Producer | Consumer |
-|---|---|---|---|
-| `MessageSentEvent` | `chat.messages` | chat-delivery-service | chat-delivery-service (push notifications) |
-| `MessageReadEvent` | `message_read` | — | — |
-| `PostCreatedEvent` | `post_created` | social-service | chat-gateway (WS broadcast) |
+| Struct | Topic constant | Where that topic name appears outside this crate |
+|---|---|---|
+| `MessageSentEvent` | `TOPIC_CHAT_MESSAGES` (`chat_messages`) | nowhere |
+| `MessageReadEvent` | `TOPIC_MESSAGE_READ` (`message_read`) | nowhere |
+| `PostCreatedEvent` | `TOPIC_POST_CREATED` (`post_created`) | `apps/chat-gateway/src/subscribers.rs`, as a literal |
 
-`ts-rs` auto-exports TypeScript equivalents to `libs/shared-ts/src/types/`.
+That third column is MEASURED, not intended, and it says these structs describe a contract only part
+of the system speaks. Read it before treating any of them as a live Kafka topic. An earlier version
+of this table named a producer and a consumer for all three; none of those routes exists in the repo.
+
+### The TypeScript mirror
+
+`cargo test` regenerates `libs/shared-rust/bindings/*.ts` through `ts-rs`, and those files are
+COMMITTED. That is the whole mechanism: change a struct, run the tests, and the drift shows up as a
+dirty working tree in the same commit as the Rust change. Nothing imports them today - they exist so
+the contract is written down in both languages, generated from one source.
+
+Until 2026-08-27 they were written into `libs/shared-ts/src/types/` instead. That package is deleted;
+see the note at the end of this page.
 
 ### Key fields
 
@@ -52,25 +66,6 @@ pub struct PostCreatedEvent {
 
 ---
 
-## libs/shared-ts
-
-**Stack**: TypeScript  
-**Source**: `libs/shared-ts/`
-
-Shared TypeScript package consumed by NestJS backend services (`chat-delivery-service`, `social-service`, `core-service`, `media-service`).
-
-### Exports
-
-| Module | Contents |
-|---|---|
-| `events/chat.events.ts` | `ChatEvents` enum, event type constants |
-| `proto/inbound.ts` | Protobuf-generated TypeScript types (`InboundMsg`, `WsEnvelope`, etc.) |
-| `types/MessageSentEvent.ts` | Auto-generated from shared-rust |
-| `types/MessageReadEvent.ts` | Auto-generated from shared-rust |
-| `types/PostCreatedEvent.ts` | Auto-generated from shared-rust |
-
----
-
 ## libs/proto
 
 **Source**: `libs/proto/canari.proto`
@@ -87,11 +82,12 @@ The canonical protobuf schema for Canari's WebSocket transport and application m
 ### Code generation
 
 ```bash
-cd libs/shared-ts
-npm run proto:gen
+cd frontend
+bun run proto:gen
 ```
 
-Generates TypeScript types from `canari.proto` into `libs/shared-ts/src/proto/inbound.ts`.
+Generates `frontend/src/lib/proto/canari.{js,d.ts}` from `canari.proto` with `pbjs`/`pbts`. Those two
+files are GENERATED and not in git; `bun run generate` builds them alongside the MLS WASM bundle.
 
 ---
 
@@ -100,3 +96,23 @@ Generates TypeScript types from `canari.proto` into `libs/shared-ts/src/proto/in
 - [`protocols/websocket-protocol.md`](protocols/websocket-protocol.md) — Full binary protocol specification
 - [`architecture.md`](architecture.md) — Kafka topic usage in context
 - [`protocols/mls-protocol.md`](protocols/mls-protocol.md) — How `AppMessage` fits into MLS encryption
+
+---
+
+## libs/shared-ts, deleted 2026-08-27
+
+There was a third library, `@canari/shared-ts`. It exported three Kafka topic names, a Redis envelope
+builder, and re-exports of the three `ts-rs` types. **Nothing imported it** - not one `src/` file in
+any of the four NestJS services, not the frontend. Its only mention outside its own directory was a
+Jest `moduleNameMapper` in `chat-delivery-service` pointing at the library's SOURCE, which no test
+ever resolved, plus a build stage in that service's Dockerfile that compiled it and copied the output
+nowhere. Its only commits in its last year were version bumps.
+
+It cost more than it looks: a CI matrix entry, a build step before EVERY backend test job, two CD
+path filters, a Dependabot directory, a Makefile target, two Husky branches and a lockfile.
+
+The two things it would have been useful for are duplicated on purpose instead, with the reason
+written at the head of each copy: `internal/service-urls.ts` and `internal-secret.util.ts`, in
+`core-service` and `social-service`. That trade is still the right one - a shared package would add a
+build stage to two more production images to save four lines each. A THIRD copy is the signal to
+reconsider, and recreating the package is a twenty-minute job.

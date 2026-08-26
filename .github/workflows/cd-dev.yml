@@ -107,7 +107,7 @@ jobs:
                 apps/call-service/*|infrastructure/local/Dockerfile.call-service)
                   add_service call-service
                   ;;
-                apps/chat-delivery-service/*|libs/shared-ts/*|infrastructure/local/Dockerfile.chat-delivery-service)
+                apps/chat-delivery-service/*|infrastructure/local/Dockerfile.chat-delivery-service)
                   add_service chat-delivery-service
                   ;;
                 frontend/*|infrastructure/local/Dockerfile.frontend)

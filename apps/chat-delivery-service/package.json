@@ -74,9 +74,6 @@
       "json",
       "ts"
     ],
-    "moduleNameMapper": {
-      "@canari/shared-ts": "<rootDir>/../../../libs/shared-ts/src/index.ts"
-    },
     "rootDir": "src",
     "testEnvironment": "node",
     "testRegex": ".*\\.spec\\.ts$",

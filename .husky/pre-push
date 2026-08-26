@@ -6,14 +6,14 @@
 export PATH="$HOME/.cargo/bin:$PATH"
 
 if ! git diff --cached --quiet; then
-  echo "❌ Push bloqué : des fichiers sont stagés mais pas commités."
-  echo "   Committez ou stashez avant de pusher."
+  echo "❌ Push blocked: files are staged but not committed."
+  echo "   Commit or stash them before pushing."
   exit 1
 fi
 
-# `|| true` : sans upstream (push -u d'une branche neuve) git rev-parse sort en 128.
-# Le wrapper husky exécute ce hook sous `sh -e`, donc une substitution qui échoue
-# tuerait le script avant tout check. On retombe alors sur le diff-tree de HEAD.
+# `|| true`: with no upstream (a `push -u` of a fresh branch) git rev-parse exits 128.
+# The husky wrapper runs this hook under `sh -e`, so a failing substitution would kill
+# the script before any check. We fall back to the diff-tree of HEAD instead.
 UPSTREAM=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || true)
 if [ -n "$UPSTREAM" ]; then
   CHANGED_FILES=$(git diff --name-only "$UPSTREAM"...HEAD)
@@ -25,7 +25,7 @@ if [ -z "$CHANGED_FILES" ]; then
   exit 0
 fi
 
-echo "$CHANGED_FILES" | grep -Eq '^(\.github/workflows/|\.husky/|Makefile|libs/shared-ts/|libs/shared-rust/)' && RUN_ALL=1 || RUN_ALL=0
+echo "$CHANGED_FILES" | grep -Eq '^(\.github/workflows/|\.husky/|Makefile|libs/shared-rust/)' && RUN_ALL=1 || RUN_ALL=0
 echo "$CHANGED_FILES" | grep -Eq '^frontend/' && RUN_FRONTEND=1 || RUN_FRONTEND=0
 echo "$CHANGED_FILES" | grep -Eq '^apps/chat-delivery-service/' && RUN_DELIVERY=1 || RUN_DELIVERY=0
 echo "$CHANGED_FILES" | grep -Eq '^apps/chat-gateway/' && RUN_GATEWAY=1 || RUN_GATEWAY=0
@@ -42,12 +42,12 @@ if [ "$RUN_ALL" -eq 1 ]; then
   RUN_TAURI=1
 fi
 
-# `bun run test` est ici et pas au pre-commit : ~2 min sur 176 fichiers, trop cher a chaque commit,
-# mais le frontend etait le SEUL projet dont aucun hook ne jouait la suite (chat-delivery-service a
-# son `npm test` ci-dessous, mls-wasm son build wasm32 reel). Un cycle d'import est passe jusqu'a la
-# CD par ce trou : il ne casse ni le lint ni svelte-check, il casse a l'EXECUTION du module, donc
-# seul un test qui importe pouvait le voir. Le pre-commit miroite le job lint de la CI ; ceci
-# miroite son job test.
+# `bun run test` sits here and not in the pre-commit hook: ~2 min over 176 files, too expensive on
+# every commit, but the frontend was the ONLY project whose hooks never ran its suite
+# (chat-delivery-service has its `npm test` below, mls-wasm its real wasm32 build). An import cycle
+# reached the CD through that hole: it breaks neither the lint nor svelte-check, it breaks at module
+# EXECUTION, so only a test that imports could see it. The pre-commit hook mirrors the CI lint job;
+# this mirrors its test job.
 if [ "$RUN_FRONTEND" -eq 1 ]; then
   (
     cd frontend && bun run lint && bun run check && bun run format:check && bun run test
@@ -57,9 +57,12 @@ if [ "$RUN_FRONTEND" -eq 1 ]; then
   }
 fi
 
+# `npm test`, not `bun run test`: this suite is jest, and jest under the bun runtime fails
+# `admin-storage.controller.mls.spec.ts` while it passes 8/8 under node (measured 2026-08-27).
+# `ci.yml` splits the same way. Do not collapse this to one runtime without re-running that spec.
 if [ "$RUN_DELIVERY" -eq 1 ]; then
   (
-    cd apps/chat-delivery-service && npm run lint && npm run format:check && npm test
+    cd apps/chat-delivery-service && bun run lint && bun run format:check && npm test
   ) || {
     echo "❌ chat-delivery-service checks failed (oxlint/format:check/test)."
     exit 1
@@ -75,7 +78,7 @@ if [ "$RUN_GATEWAY" -eq 1 ]; then
   }
 fi
 
-# Crates Rust sous frontend/ : miroir strict de la CI avant push.
+# Rust crates under frontend/: a strict mirror of the CI before pushing.
 if [ "$RUN_MLS_CORE" -eq 1 ]; then
   (
     cd frontend/mls-core && cargo fmt -- --check && cargo clippy --all-targets -- -D warnings
@@ -85,28 +88,28 @@ if [ "$RUN_MLS_CORE" -eq 1 ]; then
   }
 fi
 
-# mls-wasm : fmt + BUILD REEL pour la cible wasm32 (miroir du `wasm-pack build` de la CI). Le
-# clippy host ne couvre PAS les erreurs specifiques a wasm32 (feature getrandom/js, codegen) ;
-# sans ce build, une casse WASM n'apparaissait qu'en CD. On la rattrape maintenant au pre-push.
-# Un changement de mls-core (dependance de mls-wasm) declenche aussi ce build.
+# mls-wasm: fmt + a REAL BUILD for the wasm32 target (mirroring the CI's `wasm-pack build`). Host
+# clippy does NOT cover wasm32-specific errors (getrandom/js feature, codegen); without this build a
+# WASM breakage only appeared in CD. It is caught at pre-push now. A change to mls-core (a dependency
+# of mls-wasm) triggers this build too.
 if [ "$RUN_MLS_WASM" -eq 1 ] || [ "$RUN_MLS_CORE" -eq 1 ]; then
   (
     cd frontend/mls-wasm || exit 1
     cargo fmt -- --check || exit 1
     if ! rustup target list --installed 2>/dev/null | grep -q '^wasm32-unknown-unknown$'; then
-      echo "⚠️  Cible wasm32-unknown-unknown absente - requise pour verifier le build WASM."
-      echo "   Installez-la : rustup target add wasm32-unknown-unknown"
+      echo "⚠️  wasm32-unknown-unknown target missing - required to verify the WASM build."
+      echo "    Install it: rustup target add wasm32-unknown-unknown"
       exit 1
     fi
     cargo build --target wasm32-unknown-unknown --quiet || exit 1
   ) || {
-    echo "❌ mls-wasm checks failed (fmt / build wasm32 - miroir du wasm-pack CI)."
+    echo "❌ mls-wasm checks failed (fmt / wasm32 build - mirror of the CI's wasm-pack)."
     exit 1
   }
 fi
 
 if [ "$RUN_TAURI" -eq 1 ]; then
-  # fmt --check seul : clippy de src-tauri compile toute l'app + deps = trop lourd pour un hook.
+  # fmt --check alone: src-tauri's clippy compiles the whole app plus deps - too heavy for a hook.
   (cd frontend/src-tauri && cargo fmt -- --check) || {
     echo "❌ src-tauri fmt check failed."
     exit 1
