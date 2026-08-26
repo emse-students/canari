@@ -132,6 +132,47 @@ below them, a private salon's seed being sealed to the whole community, closed o
 WP-REGRANT-1, opened 2026-08-21 by the campaign, shipped and was verified on production the same day -
 its entry below is kept as CLOSED because the second attempt at the fix is the interesting half. **One
 thing IS open here, and it is an observation rather than a finding:** the past-epoch seed frame below.
+**A SECOND audit was asked for on 2026-08-26 and has not started** - the association permission
+flags, entry immediately below.
+
+### P2 - what each association permission flag actually gates, and a system administrator who is in no association (asked 2026-08-26)
+
+Asked by the user in three parts, and the third depends on the first two: *"il faudrait verifier ce
+que permet chacune d'elle ou non, pour reflechir a en creer de nouvelles, a en factoriser certaines"*;
+*"il faut que les administrateurs systemes aient tous les droits, qu'ils soient dans les assos ou
+non"*; then *"une fois que ce travail d'audit sera fait, il faudra en faire une documentation user,
+en francais"*.
+
+**The population.** Eleven flags, bits 0 to 10, in
+`apps/social-service/src/associations/entities/association-member.entity.ts`: `POST_AS_ASSO`,
+`PROPOSE_EVENT`, `MANAGE_MEMBERS`, `MANAGE_DOCUMENTS`, `MANAGE_FORMS`, `VALIDATE_EVENTS`,
+`MANAGE_ASSO`, `MODERATE`, `MANAGE_PRODUCTS`, `MANAGE_STRIPE_CONNECT`, `MANAGE_PARTNERSHIPS`. The
+bound is no longer a hazard - `ALL_PERMISSION_FLAGS` is derived from the enum, after a hand-raised
+`@Max(1023)` had already refused the admin preset once - and the preset itself is 1311, excluding
+`MANAGE_STRIPE_CONNECT` deliberately.
+
+**What the audit has to do, and what it must not do.** A flag IS what its guards do, so the unit of
+work is every CALL SITE of each flag, not every mention of it: the entity comment claims
+`VALIDATE_EVENTS`, `MANAGE_ASSO` and `MODERATE` are "BDE-only flags with no effect in" ordinary
+associations, and a flag with no effect is either dead or missing its check - the two look identical
+from the enum and differ completely in what is owed. The standing rule about enumerating a seam's
+consumers rather than the ones that mention it applies directly
+([durable-rules](durable-rules.md)). Only once each flag has a measured list of guards can the
+question the user actually asked - which to add, which to merge - be answered by anything better
+than taste.
+
+**The system-administrator half is a defect until proven otherwise, and its fix is one predicate.**
+Every guard found so far reads a MEMBERSHIP row: `assertFormManager` accepts the owner or
+`MANAGE_FORMS` on the linked association, so a platform administrator who is not a member is
+refused by it. The repair is a single predicate every guard calls, NOT an `|| isPlatformAdmin` added
+to each one - a second axis per guard is exactly the shape the co-responsables list was deleted for
+(2026-08-26, `CHANGELOG.md`), and eleven copies of it would drift the same way. Whether the global
+right is total or excludes the financial flag is a decision to put to the user, not to infer:
+`MANAGE_STRIPE_CONNECT` moves money and is already withheld from the association's own admin preset.
+
+**The deliverable is a user document, in French, in `docs/user-guide/`** - one page saying, per
+flag, what a member holding it can do and where they do it. It is written LAST, from the measured
+guards, because a permissions page that describes intent rather than behaviour is worse than none.
 
 ### P3 - an epoch-0 seed frame is delivered on every rotation, and nobody can open it (observed 2026-08-21, did not reproduce)
 

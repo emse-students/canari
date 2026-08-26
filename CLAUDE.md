@@ -183,6 +183,11 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     state. The contract, the audit behind it and the seven-file PIN predicate it fixes are in
     [backlog](docs/wiki/backlog.md); diagnosis order is
     [testing-methodology](docs/wiki/testing-methodology.md) 39.
+6.  **THE ASSOCIATION PERMISSION AUDIT, asked by the user 2026-08-26 and NOT STARTED.** Three parts,
+    the third depending on the first two: what each of the eleven flags actually gates (measured from
+    its call sites, not its comment), a system administrator holding every right whether or not they
+    are a member, then a FRENCH user page in `docs/user-guide/`. Substance, the population and the
+    one-predicate constraint on the admin half are in [backlog](docs/wiki/backlog.md), the only copy.
 
 **ONE-OFF ACTIONS GO TO THE USER** (2026-08-25, verbatim): *"Pour les choses qui ne se font qu'une
 fois, tu peux me demander de les faire hein, on economisera en temps et en token."* Building a tool for
