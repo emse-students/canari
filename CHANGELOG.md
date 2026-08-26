@@ -339,6 +339,18 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A TestFlight build launched to a black screen**, failing every request with Tauri's own
+  `Failed to request https://127.0.0.1:1420/: ... did you grant local network permissions?`.
+  `ios-release.yml` bypasses `tauri ios build` for its own release archive step (that CLI's export
+  step cannot express this project's two-target manual-signing profile map) and instead calls
+  `cargo build --lib --release` directly for the static lib - but `tauri ios build` is also what
+  normally enables the `tauri` crate's `custom-protocol` Cargo feature, and `tauri-build` derives its
+  `dev` cfg from exactly that feature (`dev = !has_feature("custom-protocol")`). Without it, the
+  release binary compiled as a dev build regardless of the cargo profile, and pointed the webview at
+  the Vite dev server instead of the bundled frontend - unreachable from a real device. The build
+  step now passes `--features tauri/custom-protocol` explicitly. Android never carried this risk:
+  `android-release.yml` builds through the real `bun tauri android build` CLI, which sets the feature
+  itself. [cicd](docs/wiki/cicd.md#a-raw-cargo-build-for-the-static-lib-must-ask-for-custom-protocol-itself)
 - **Four backend lock files were out of sync with their `package.json`, and it had silently blocked
   every deploy for two hours.** `npm ci` refuses to install when the two disagree, so
   `Test TS Backend (apps/chat-delivery-service)` and `Check Dependencies Vulnerabilities` both died

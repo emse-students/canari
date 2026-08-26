@@ -165,6 +165,23 @@ sitting in `src/main/kotlin` cannot be silently skipped, and the produced APK is
 thing that ever revealed a piece of dead code, its absence from the next run is what confirms the
 removal - there is nothing else to assert against.
 
+### A raw `cargo build` for the static lib must ask for `custom-protocol` itself
+
+`ios-release.yml`'s "Prebuild Rust static lib (libapp.a)" step calls `cargo build --lib --release
+--target aarch64-apple-ios` directly rather than `tauri ios build`, because that CLI's export step
+cannot express the two-target (app + NSE) manual-signing profile map this project needs. But
+`tauri ios build` is also the thing that normally enables the `tauri` crate's `custom-protocol`
+Cargo feature - and `tauri-build`'s `build.rs` derives its `dev` cfg from exactly that feature
+(`dev = !has_feature("custom-protocol")`, `tauri-2.11.1/build.rs`). Skip the feature and the release
+profile compiles as a **dev build anyway**: the webview loads from the Vite dev server
+(`WebviewUrl::App` resolving against `devUrl`, `127.0.0.1:1420`) instead of the bundled
+`frontendDist` assets, which is unreachable from a real device. The symptom is a black screen on
+launch with Tauri's own hardcoded string, `Failed to request https://127.0.0.1:1420/: ... did you
+grant local network permissions?` (`tauri-2.11.1/src/protocol/tauri.rs`) - this shipped once, to
+TestFlight, before the step was corrected to pass `--features tauri/custom-protocol` explicitly.
+Android does not carry this risk: `android-release.yml` builds through `bun tauri android build`,
+the real CLI, which sets the feature itself.
+
 ## Signing
 
 Two **named** provisioning profiles must exist and match `PROVISIONING_PROFILE_SPECIFIER` exactly:

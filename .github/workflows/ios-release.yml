@@ -256,8 +256,16 @@ jobs:
           # rust-toolchain.toml pins 1.97.0 (no `targets`), which overrides the action's
           # `stable` here - so the iOS std isn't installed for the toolchain cargo actually
           # uses. Add it to the pinned toolchain (override is active in this dir).
+          #
+          # --features tauri/custom-protocol is required here because we bypass `tauri ios
+          # build`: that CLI enables it automatically, but a raw `cargo build` does not, and
+          # without it tauri-build's build.rs bakes `dev=true` into the binary (dev =
+          # !has_feature("custom-protocol"), tauri-2.11.1/build.rs). A "dev" binary loads the
+          # webview from the Vite dev server (127.0.0.1:1420) instead of the bundled
+          # frontendDist assets - unreachable on a real device, producing a black screen with
+          # "did you grant local network permission?" (this shipped once, TestFlight v0.14.4).
           rustup target add aarch64-apple-ios
-          cargo build --lib --release --target aarch64-apple-ios
+          cargo build --lib --release --target aarch64-apple-ios --features tauri/custom-protocol
           LIB=$(find target/aarch64-apple-ios/release -maxdepth 1 -name 'libmines_app_lib.a' | head -1)
           if [ -z "$LIB" ]; then
             echo "::error::libmines_app_lib.a not produced by cargo"
