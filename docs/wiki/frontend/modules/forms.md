@@ -163,10 +163,20 @@ no priority rule. What changed is that the cell a person lands in may refuse the
 
 Where each part of that lives:
 
-- **Editor**: a cell toggles between a number and `Indisponible`; coming back restores `0`, not the
+- **Editor**: a cell toggles between a number and `Indisponible`, and the CELL is the gesture. An
+  unavailable cell has nothing to type in, so clicking it is what reopens it; an open cell owes its
+  click to the caret, so closing it is the one action left on a control that overlays the cell and
+  costs no width (`.cell-action`, shown on hover or while the cell holds the focus, and always shown
+  on a coarse pointer - the only affordance a touch screen has). Coming back restores `0`, not the
   price that was there, because that price is gone and `0` is the one value nobody mistakes for a
   considered one. A grid with EVERY cell unavailable is refused on both sides
   (`all_unavailable`, `assertMatrixValid`): that is a closed form, not a priced one.
+- **Geometry**: `.price-grid` in `app.css` owns the column sizes; the editor supplies only the two
+  counts. The total width has to be NAMED, which is the non-obvious part: `table-layout: fixed` on a
+  table of width `auto` treats column widths as PROPORTIONS, not sizes - nine columns declared at
+  8rem inside a 1020px box measured 83-91px in Chrome, and unequal. With the total named, every
+  price column is exactly its declared size and the wrapper scrolls once they no longer fit; below
+  that total each column stretches by the same factor, so they stay equal.
 - **Server**: `resolveCellPrice` returns `null` rather than throwing, and `submit` refuses right
   after it - not in `assertMaySubmit`, because only the VISIBLE answers decide which cell applies.
   `hasSubmission` reports `maySubmit: false` when the submitter's whole row is closed, the same

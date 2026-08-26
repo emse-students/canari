@@ -2476,6 +2476,7 @@
   "form_grid_cell_disable_title": "Marquer cette combinaison comme indisponible",
   "form_grid_cell_restore_title": "Rendre cette combinaison disponible",
   "form_grid_unavailable_hint": "Une case marquée indisponible n'est pas gratuite : la combinaison n'existe pas, et les personnes concernées ne peuvent pas répondre.",
+  "form_grid_toggle_hint": "Cliquez sur une case indisponible pour la rouvrir. Pour fermer une combinaison, utilisez le bouton qui apparaît dans la case.",
   "form_criterion_cotisation": "Cotisation",
   "form_criterion_promo": "Promotion",
   "form_criterion_formation": "Formation",

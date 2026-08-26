@@ -257,7 +257,8 @@
   }
 </script>
 
-<div class="mx-auto max-w-3xl px-3 py-5 sm:px-6">
+<!-- Same width as the create page: it is the same form, and it carries the same grid. -->
+<div class="mx-auto max-w-5xl px-3 py-5 sm:px-6">
   <div class="mb-8 flex items-center gap-3">
     <button
       onclick={() => goto('/forms')}

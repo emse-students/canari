@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { TriangleAlert, Ban, Grid3x3, Plus, RotateCcw } from '@lucide/svelte';
+  import { TriangleAlert, Ban, Grid3x3, Plus } from '@lucide/svelte';
   import CriterionEditor from './CriterionEditor.svelte';
   import { CONTROL_HINT_CLASS, controlClass } from '$lib/components/ui/controlClasses';
   import type { MembershipTier } from '$lib/associations/api';
@@ -36,6 +36,10 @@
    * A cell can also be marked UNAVAILABLE, which is a decision no price can carry - 0 means free.
    * It is how a combination that simply does not exist ("non-cotisant, formule week-end") stops
    * being offered, and the fill page then greys out the options that would lead to it.
+   *
+   * Availability is carried by the cell, not by a button beside it. An unavailable cell has nothing
+   * to type in, so clicking it is what reopens it; an available cell must give its click to the
+   * caret, so closing it is the one action left on a control inside the cell, which takes no width.
    */
   interface Props {
     /** Non-null whenever the manager has switched the grid on, even before the first criterion. */
@@ -181,7 +185,19 @@
   {#if matrix && !problem}
     <!-- Wide content scrolls inside its own box; the page body never scrolls sideways. -->
     <div class="border-cn-border overflow-x-auto rounded-2xl border-2">
-      <table class="w-full text-sm">
+      <!-- The counts are all `.price-grid` needs; the sizes are its own, in `app.css`. -->
+      <table
+        class="price-grid text-sm"
+        style="--group-cols: {matrix.dimensions.length - 1}; --price-cols: {layout.columns.length}"
+      >
+        <colgroup>
+          {#each matrix.dimensions.slice(0, -1) as dimension (dimension.id)}
+            <col class="group-col" />
+          {/each}
+          {#each layout.columns as column (column.id)}
+            <col class="price-col" />
+          {/each}
+        </colgroup>
         <thead>
           <tr class="border-cn-border bg-cn-bg/40 border-b-2">
             {#each matrix.dimensions.slice(0, -1) as dimension (dimension.id)}
@@ -192,7 +208,7 @@
               </th>
             {/each}
             {#each layout.columns as column (column.id)}
-              <th class="text-text-main px-3 py-2 text-left text-xs font-bold whitespace-nowrap">
+              <th class="text-text-main px-3 py-2 text-left text-xs font-bold break-words">
                 {column.label || m.form_criterion_others()}
               </th>
             {/each}
@@ -202,46 +218,43 @@
           {#each layout.rows as row (row.ids.join('|'))}
             <tr>
               {#each row.labels as label, i (i)}
-                <td class="text-text-main px-3 py-2 text-xs font-semibold whitespace-nowrap">
+                <td class="text-text-main px-3 py-2 text-xs font-semibold break-words">
                   {label || m.form_criterion_others()}
                 </td>
               {/each}
               {#each layout.columns as column (column.id)}
                 {@const key = cellKey([...row.ids, column.id])}
                 {@const unavailable = matrix.cells[key] === null}
-                <td class="px-2 py-1.5">
-                  <div class="flex items-center gap-1.5">
-                    {#if unavailable}
-                      <span
-                        class="text-text-muted border-cn-border bg-cn-border/20 w-24 shrink-0 rounded-xl border-2 px-2 py-1.5 text-center text-xs font-semibold"
-                      >
-                        {m.form_grid_cell_unavailable()}
-                      </span>
-                    {:else}
+                <td class="p-1.5">
+                  {#if unavailable}
+                    <button
+                      type="button"
+                      onclick={() => toggleAvailability(key)}
+                      title={m.form_grid_cell_restore_title()}
+                      class="text-text-muted border-cn-border bg-cn-border/20 hover:border-cn-yellow/40 hover:text-text-main w-full rounded-2xl border-2 border-dashed py-2 text-center text-xs font-semibold transition-colors"
+                    >
+                      {m.form_grid_cell_unavailable()}
+                    </button>
+                  {:else}
+                    <div class="cell-host relative">
                       <input
                         type="number"
                         min="0"
                         step="0.01"
                         value={matrix.cells[key] ?? 0}
                         oninput={(e) => setCell(key, e.currentTarget.value)}
-                        class="{controlClass()} w-24 py-1.5 text-sm"
+                        class="{controlClass(false, 'compact')} no-spinner"
                       />
-                    {/if}
-                    <button
-                      type="button"
-                      onclick={() => toggleAvailability(key)}
-                      class="text-text-muted hover:text-text-main hover:bg-cn-border/40 shrink-0 rounded-lg p-1.5 transition-colors"
-                      title={unavailable
-                        ? m.form_grid_cell_restore_title()
-                        : m.form_grid_cell_disable_title()}
-                    >
-                      {#if unavailable}
-                        <RotateCcw size={13} />
-                      {:else}
+                      <button
+                        type="button"
+                        onclick={() => toggleAvailability(key)}
+                        title={m.form_grid_cell_disable_title()}
+                        class="cell-action text-text-muted hover:text-red-err absolute inset-y-0 right-2 flex items-center"
+                      >
                         <Ban size={13} />
-                      {/if}
-                    </button>
-                  </div>
+                      </button>
+                    </div>
+                  {/if}
                 </td>
               {/each}
             </tr>
@@ -251,5 +264,6 @@
     </div>
     <p class={CONTROL_HINT_CLASS}>{m.form_grid_currency_hint()}</p>
     <p class={CONTROL_HINT_CLASS}>{m.form_grid_unavailable_hint()}</p>
+    <p class={CONTROL_HINT_CLASS}>{m.form_grid_toggle_hint()}</p>
   {/if}
 </div>

@@ -59,7 +59,12 @@
   const fromPostComposer = $derived(
     returnTo === '/posts' && page.url.searchParams.get('attach') === 'form'
   );
-  const contentMaxWidth = $derived(fromPostComposer ? 'max-w-xl' : 'max-w-3xl');
+  /**
+   * The builder is the widest screen the app has - a pricing grid is a table - so it is allowed
+   * past the `max-w-4xl` the other management pages use. The composer variant stays narrower
+   * because it is opened as a step inside a post, but it was too narrow to read a grid in at all.
+   */
+  const contentMaxWidth = $derived(fromPostComposer ? 'max-w-3xl' : 'max-w-5xl');
 
   /**
    * The associations the user belongs to - not every association there is.

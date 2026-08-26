@@ -2476,6 +2476,7 @@
   "form_grid_cell_disable_title": "Mark this combination as unavailable",
   "form_grid_cell_restore_title": "Make this combination available",
   "form_grid_unavailable_hint": "A box marked unavailable is not free: the combination does not exist, and the people it covers cannot answer.",
+  "form_grid_toggle_hint": "Click an unavailable box to reopen it. To close a combination, use the button that appears inside the box.",
   "form_criterion_cotisation": "Membership",
   "form_criterion_promo": "Class year",
   "form_criterion_formation": "Track",

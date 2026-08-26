@@ -106,7 +106,7 @@
           add();
         }
       }}
-      class="{controlClass(showError)} flex-1 py-2 text-sm"
+      class="{controlClass(showError, 'compact')} flex-1"
     />
     <datalist id={listId}>
       {#each available as year (year)}

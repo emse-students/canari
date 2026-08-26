@@ -317,6 +317,21 @@ which is also where every release up to and including v0.13.1 now lives.
   [ecosystem-convergence](docs/wiki/ecosystem-convergence.md#8-the-package-manager-and-the-version-four-repos-never-declared).
 
 
+- **The pricing grid reads at any number of columns, and a cell is its own availability control.**
+  The columns were sized by whichever header happened to be longest and had no minimum at all, so
+  the same price column came out narrow beside "AST" and wide beside a question's option label, and
+  a grid of nine got columns of 83px. The sizes now live in `.price-grid` (`app.css`) and the editor
+  supplies only the column counts; the table's total width is named, because `table-layout: fixed`
+  on a table of width `auto` treats declared column widths as proportions rather than sizes - the
+  measured trap this replaces, not a fix for it. Each cell also lost two controls: the native number
+  steppers, which cost a fifth of a narrow cell to step a price by one centime, and the permanent
+  button beside every price. Availability is carried by the cell instead - an unavailable cell has
+  nothing to type in, so clicking it reopens it, and closing an open one is a control that overlays
+  the cell and takes no width. The form builder itself went from `max-w-3xl` to `max-w-5xl`, and the
+  variant opened from the post composer from `max-w-xl` to `max-w-3xl`. `controlClass` gained a
+  `compact` density in the process: three call sites had written `py-2 text-sm` after it and none of
+  the three worked, because Tailwind emits competing utilities in scale order and the `py-3` inside
+  the shared string was always the later rule.
 - **Every association-scoped right now goes through ONE predicate, and the eleven permission flags
   have a measured table instead of a comment.** The user asked what each flag actually permits, and
   for a platform administrator to hold every association right whether or not they are a member. The

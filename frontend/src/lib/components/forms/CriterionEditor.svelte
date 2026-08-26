@@ -133,7 +133,7 @@
             bind:value={bucket.label}
             oninput={onChange}
             placeholder={m.form_criterion_group_name_placeholder()}
-            class="{controlClass(!bucket.label.trim())} flex-1 py-2 text-sm"
+            class="{controlClass(!bucket.label.trim(), 'compact')} flex-1"
           />
           <button
             type="button"

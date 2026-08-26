@@ -304,6 +304,84 @@ h6,
   background: color-mix(in srgb, var(--cn-border) 20%, transparent);
 }
 
+/**
+ * The pricing grid's geometry: every price column the same size, and never below a readable one.
+ *
+ * The sizes are declared here, and the grid supplies only `--group-cols` and `--price-cols` - the
+ * two counts it alone knows. Naming the total width is the whole point: `table-layout: fixed` on a
+ * table of width `auto` treats column widths as PROPORTIONS rather than sizes, and nine columns
+ * declared at 8rem inside a 1020px box were measured in Chrome at 83-91px, unequal - which is the
+ * illegibility this replaces, not a fix for it. With the total named, each column is exactly its
+ * declared width and the wrapper scrolls once they no longer fit; below that total, `min-width`
+ * stretches every column by the same factor, so they stay equal and the box is never half empty.
+ */
+.price-grid {
+  --group-col: 10rem;
+  --price-col: 8rem;
+  min-width: 100%;
+  table-layout: fixed;
+  width: calc(var(--group-cols) * var(--group-col) + var(--price-cols) * var(--price-col));
+}
+
+.price-grid col.group-col {
+  width: var(--group-col);
+}
+
+.price-grid col.price-col {
+  width: var(--price-col);
+}
+
+/*
+ * Room for the overlaid action. It belongs here and not on the input's class list because a
+ * `pr-8` appended after the shared control string would be settled by the order Tailwind emits
+ * `padding-right` and `padding-inline` in - a cascade race for something that is simply true of
+ * every cell in this grid.
+ */
+.price-grid input {
+  padding-right: 2rem;
+}
+
+/**
+ * A number input without its native steppers.
+ *
+ * The steppers cost about a fifth of a narrow cell and step by 0.01, which is not a gesture anybody
+ * wants for a price: the amount is typed. Removing them is what gives a grid cell its width back.
+ */
+.no-spinner {
+  appearance: textfield;
+}
+
+.no-spinner::-webkit-outer-spin-button,
+.no-spinner::-webkit-inner-spin-button {
+  appearance: none;
+  margin: 0;
+}
+
+/**
+ * An action that lives INSIDE a table cell instead of beside it.
+ *
+ * A permanent button per cell cost as much width as the price it sat next to, which is what made
+ * the pricing grid unreadable past a few columns. This one overlays the cell and takes no width at
+ * all: invisible at rest, shown on hover or when the cell it belongs to holds the focus - the only
+ * affordance a touch screen has, hence the coarse-pointer rule that keeps it always visible there.
+ */
+.cell-action {
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+
+.cell-action:focus-visible,
+.cell-host:hover .cell-action,
+.cell-host:focus-within .cell-action {
+  opacity: 1;
+}
+
+@media (pointer: coarse) {
+  .cell-action {
+    opacity: 1;
+  }
+}
+
 .chat-scrollbar::-webkit-scrollbar {
   width: 4px;
 }
