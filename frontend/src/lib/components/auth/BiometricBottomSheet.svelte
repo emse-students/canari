@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Fingerprint } from '@lucide/svelte';
+  import { FingerprintPattern } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -45,10 +45,10 @@
     <!-- Drag handle -->
     <div class="bg-text-muted/40 mx-auto mb-5 h-1 w-10 rounded-full"></div>
 
-    <!-- Fingerprint icon (animated) -->
+    <!-- FingerprintPattern icon (animated) -->
     <div class="mb-5 flex justify-center">
       <div class="relative rounded-full bg-amber-500/10 p-5">
-        <Fingerprint size={52} strokeWidth={1.5} class="text-amber-500" />
+        <FingerprintPattern size={52} strokeWidth={1.5} class="text-amber-500" />
         <!-- Pulsing ring -->
         <span class="absolute inset-0 animate-ping rounded-full border-2 border-amber-500/40"
         ></span>

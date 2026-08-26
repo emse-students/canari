@@ -10,7 +10,7 @@
     type MessageGroupMessageRow,
   } from '$lib/utils/messageGrouping';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
-  import { Loader2 } from '@lucide/svelte';
+  import { LoaderCircle } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -154,7 +154,7 @@
 
 {#if isLoadingOlder}
   <div class="flex justify-center py-3">
-    <Loader2 size={18} class="text-text-muted animate-spin" />
+    <LoaderCircle size={18} class="text-text-muted animate-spin" />
   </div>
 {/if}
 

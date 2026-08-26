@@ -4,7 +4,7 @@
   import { goto } from '$app/navigation';
   import { getGroupInvitePreview, acceptGroupInvite } from '$lib/mls/groupInvites';
   import { currentUserId } from '$lib/stores/user';
-  import { Users, Loader2, AlertCircle, Check } from '@lucide/svelte';
+  import { Users, LoaderCircle, CircleAlert, Check } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
   const token = $derived((page.params as Record<string, string>).token);
@@ -54,7 +54,7 @@
   >
     {#if loading}
       <div class="flex justify-center py-6">
-        <Loader2 size={28} class="text-cn-yellow animate-spin" />
+        <LoaderCircle size={28} class="text-cn-yellow animate-spin" />
       </div>
     {:else if joined}
       <div class="flex flex-col items-center gap-3 py-2">
@@ -76,7 +76,7 @@
       </div>
     {:else if error || !preview?.valid}
       <div class="flex flex-col items-center gap-3 py-4">
-        <AlertCircle size={36} class="text-red-500" />
+        <CircleAlert size={36} class="text-red-500" />
         <p class="text-text-main text-sm font-semibold">{m.invite_invalid_or_expired()}</p>
         {#if error}<p class="text-text-muted text-xs">{error}</p>{/if}
         <a href="/chat" class="text-cn-dark text-sm font-semibold hover:underline">

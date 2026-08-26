@@ -45,9 +45,9 @@
     RotateCcw,
     Type,
     Trash2,
-    AlignLeft,
-    AlignCenter,
-    AlignRight,
+    TextAlignStart,
+    TextAlignCenter,
+    TextAlignEnd,
     Maximize,
     Minimize,
     ZoomIn,
@@ -677,7 +677,7 @@
 
               {#if selectedTextDeco}
                 <div class="flex flex-wrap items-center gap-1.5">
-                  {#each [{ v: 'left', icon: AlignLeft, label: m.carte_align_left() }, { v: 'center', icon: AlignCenter, label: m.carte_align_center() }, { v: 'right', icon: AlignRight, label: m.carte_align_right() }] as opt (opt.v)}
+                  {#each [{ v: 'left', icon: TextAlignStart, label: m.carte_align_left() }, { v: 'center', icon: TextAlignCenter, label: m.carte_align_center() }, { v: 'right', icon: TextAlignEnd, label: m.carte_align_right() }] as opt (opt.v)}
                     <button
                       type="button"
                       aria-label={opt.label}

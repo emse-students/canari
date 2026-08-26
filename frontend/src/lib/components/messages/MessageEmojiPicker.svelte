@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Smile } from '@lucide/svelte';
+  import { FaceSlightlySmiling } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import { scale } from 'svelte/transition';
   import { bindFixedPopover } from '$lib/actions/fixedPopover';
@@ -210,7 +210,7 @@
     <div
       class="text-text-muted flex items-center gap-2 border-b border-black/5 bg-white/40 px-4 py-3 text-xs font-semibold dark:border-white/10 dark:bg-black/20"
     >
-      <Smile size={14} class="text-amber-500" />
+      <FaceSlightlySmiling size={14} class="text-amber-500" />
       {m.msg_react_to_message_label()}
     </div>
     {#if reactionsAtLimit}

@@ -9,7 +9,7 @@
     Upload,
     Loader,
     Link2,
-    History,
+    RotateCcwClock,
   } from '@lucide/svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { globalChannels } from '$lib/stores/globalChatSingleton.svelte';
@@ -114,7 +114,7 @@
   let inviteRole = $state<CanonicalRole>('member');
   let inviteLoading = $state(false);
 
-  // ── History visibility ────────────────────────────────────────────────────
+  // ── RotateCcwClock visibility ────────────────────────────────────────────────────
   // Mirrored into local state rather than read straight off the workspace, because the sidebar
   // entry is only corrected when the server's `workspace.updated` broadcast comes back - and the
   // select must not snap back to its old value while that is in flight.
@@ -732,7 +732,7 @@
               <p
                 class="text-text-muted flex items-center gap-1.5 text-xs font-bold tracking-wider uppercase"
               >
-                <History size={14} />
+                <RotateCcwClock size={14} />
                 {m.chat_community_history_visibility_label()}
               </p>
               <p class="text-text-muted text-sm">

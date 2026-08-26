@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { HardDrive, Trash2, Loader2 } from '@lucide/svelte';
+  import { HardDrive, Trash2, LoaderCircle } from '@lucide/svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import {
     getDeviceStorageUsage,
@@ -61,7 +61,7 @@
 
   {#if loading}
     <div class="text-text-muted flex items-center gap-2 text-sm sm:pl-[3.75rem]">
-      <Loader2 size={16} class="animate-spin" />
+      <LoaderCircle size={16} class="animate-spin" />
       {m.settings_storage_measuring()}
     </div>
   {:else if usage}
@@ -95,7 +95,7 @@
       class="border-cn-border text-text-main hover:border-cn-yellow/40 mt-6 inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-all active:scale-95 disabled:opacity-50 sm:ml-[3.75rem]"
     >
       {#if clearing}
-        <Loader2 size={16} class="animate-spin" />
+        <LoaderCircle size={16} class="animate-spin" />
         {m.settings_storage_clearing()}
       {:else}
         <Trash2 size={16} strokeWidth={2.5} />

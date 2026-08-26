@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { MessageCircle, Smile } from '@lucide/svelte';
+  import { MessageCircle, FaceSlightlySmiling } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
   /** Props for the PostActions bar (reaction picker + comment button). */
@@ -47,7 +47,7 @@
         >
         <span class="text-sm font-medium">{userReaction}</span>
       {:else}
-        <Smile size={20} />
+        <FaceSlightlySmiling size={20} />
         <span class="text-sm">{m.post_react()}</span>
       {/if}
     </button>

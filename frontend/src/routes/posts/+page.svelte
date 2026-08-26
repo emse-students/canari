@@ -20,7 +20,7 @@
   import Modal from '$lib/components/shared/Modal.svelte';
   import { getToken } from '$lib/stores/auth';
   import { currentUserId } from '$lib/stores/user';
-  import { RefreshCw, PenSquare, Inbox, Search, X } from '@lucide/svelte';
+  import { RefreshCw, SquarePen, Inbox, Search, X } from '@lucide/svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { m } from '$lib/paraglide/messages';
 
@@ -281,7 +281,7 @@
         </div>
         <div class="flex items-center gap-2">
           <Button onclick={() => (showCreateModal = true)} class="!rounded-xl !px-4 !py-2 !text-sm">
-            <PenSquare size={16} class="mr-1" />
+            <SquarePen size={16} class="mr-1" />
             {m.posts_publish_button()}
           </Button>
         </div>

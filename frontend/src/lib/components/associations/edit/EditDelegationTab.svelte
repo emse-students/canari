@@ -23,7 +23,7 @@
     Download,
     ChevronDown,
     ChevronUp,
-    AlertTriangle,
+    TriangleAlert,
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
@@ -242,7 +242,7 @@
         </div>
         {#if !delegation.parentReady}
           <p class="text-amber-warn flex items-start gap-2 text-sm">
-            <AlertTriangle size={16} class="mt-0.5 shrink-0" />
+            <TriangleAlert size={16} class="mt-0.5 shrink-0" />
             {m.asso_deleg_parent_not_ready()}
           </p>
         {/if}
@@ -297,7 +297,7 @@
 
       {#if !canReceiveDelegation}
         <p class="text-amber-warn flex items-start gap-2 text-sm">
-          <AlertTriangle size={16} class="mt-0.5 shrink-0" />
+          <TriangleAlert size={16} class="mt-0.5 shrink-0" />
           {m.asso_deleg_parent_not_stripe_ready()}
         </p>
       {/if}

@@ -1,6 +1,6 @@
 <script lang="ts">
   import Modal from '$lib/components/shared/Modal.svelte';
-  import { LoaderCircle, AlertTriangle, KeyRound } from '@lucide/svelte';
+  import { LoaderCircle, TriangleAlert, KeyRound } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import type { PinOperationProgress } from '$lib/utils/chat/pinChange';
   import { isValidPin } from '$lib/utils/chat/pinValidation';
@@ -190,7 +190,7 @@
 
     {#if displayError}
       <p class="flex items-center gap-2 px-1 text-sm font-medium text-red-500">
-        <AlertTriangle size={16} class="shrink-0" />
+        <TriangleAlert size={16} class="shrink-0" />
         {displayError}
       </p>
     {/if}

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { AlertTriangle, Ban, Grid3x3, Plus, RotateCcw } from '@lucide/svelte';
+  import { TriangleAlert, Ban, Grid3x3, Plus, RotateCcw } from '@lucide/svelte';
   import CriterionEditor from './CriterionEditor.svelte';
   import { CONTROL_HINT_CLASS, controlClass } from '$lib/components/ui/controlClasses';
   import type { MembershipTier } from '$lib/associations/api';
@@ -173,7 +173,7 @@
     <p
       class="border-amber-warn/30 bg-amber-warn/10 flex items-start gap-2 rounded-xl border-2 px-3 py-2 text-xs font-semibold text-amber-900 dark:text-amber-100"
     >
-      <AlertTriangle size={13} class="mt-0.5 shrink-0" />
+      <TriangleAlert size={13} class="mt-0.5 shrink-0" />
       {gridProblemMessage(problem)}
     </p>
   {/if}

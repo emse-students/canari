@@ -39,7 +39,7 @@
   import { fetchFormations, type FormationOption } from '$lib/forms/criteriaOptions';
   import { firstEmptyCondition } from '$lib/forms/audience';
   import { fromFormItems, toFormItemsPayload } from '$lib/forms/itemsPayload';
-  import { AlertCircle, ArrowLeft, FileText, ImagePlus, Users, X } from '@lucide/svelte';
+  import { CircleAlert, ArrowLeft, FileText, ImagePlus, Users, X } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
   const formId = $derived(page.params.id as string);
@@ -278,7 +278,7 @@
     <div
       class="bg-red-err/10 border-red-err/30 text-red-err mb-6 flex items-center gap-2 rounded-2xl border-2 px-4 py-3 text-sm font-medium"
     >
-      <AlertCircle size={18} class="shrink-0" />
+      <CircleAlert size={18} class="shrink-0" />
       {loadError}
     </div>
   {:else if !form}
@@ -292,7 +292,7 @@
       <div
         class="bg-red-err/10 border-red-err/30 text-red-err mb-6 flex items-center gap-2 rounded-2xl border-2 px-4 py-3 text-sm font-medium"
       >
-        <AlertCircle size={18} class="shrink-0" />
+        <CircleAlert size={18} class="shrink-0" />
         {error}
       </div>
     {/if}

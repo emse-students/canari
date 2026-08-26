@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { CreditCard, Plus, Trash2, Loader2, AlertCircle, CheckCircle2 } from '@lucide/svelte';
+  import { CreditCard, Plus, Trash2, LoaderCircle, CircleAlert, CircleCheck } from '@lucide/svelte';
   import { slide } from 'svelte/transition';
   import {
     setupPaymentMethod,
@@ -107,7 +107,7 @@
       class="text-text-main focus-visible:ring-text-muted hidden items-center gap-2 rounded-xl bg-black/5 px-4 py-2 text-sm font-bold transition-all outline-none hover:bg-black/10 focus-visible:ring-2 active:scale-95 disabled:opacity-50 sm:inline-flex dark:bg-white/10 dark:hover:bg-white/20"
     >
       {#if paymentSetupLoading}
-        <Loader2 size={16} class="animate-spin" /> {m.profile_payment_redirecting()}
+        <LoaderCircle size={16} class="animate-spin" /> {m.profile_payment_redirecting()}
       {:else}
         <Plus size={18} strokeWidth={2.5} /> {m.profile_payment_add_card()}
       {/if}
@@ -119,7 +119,7 @@
       transition:slide={{ duration: 200 }}
       class="mb-6 flex items-center gap-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-sm font-bold text-emerald-700 shadow-inner dark:text-emerald-400"
     >
-      <CheckCircle2 size={20} class="shrink-0" />
+      <CircleCheck size={20} class="shrink-0" />
       {paymentSuccess}
     </div>
   {/if}
@@ -129,14 +129,14 @@
       transition:slide={{ duration: 200 }}
       class="mb-6 flex items-center gap-3 rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-sm font-bold text-red-600 shadow-inner dark:text-red-400"
     >
-      <AlertCircle size={20} class="shrink-0" />
+      <CircleAlert size={20} class="shrink-0" />
       {paymentError}
     </div>
   {/if}
 
   {#if paymentLoading}
     <div class="text-text-muted flex items-center gap-3 py-4 text-sm font-semibold">
-      <Loader2 size={18} class="animate-spin" />
+      <LoaderCircle size={18} class="animate-spin" />
       {m.profile_payment_loading()}
     </div>
   {:else}
@@ -191,7 +191,7 @@
       class="text-text-main focus-visible:ring-text-muted flex w-full items-center justify-center gap-2 rounded-xl bg-black/5 px-4 py-3.5 text-sm font-bold transition-all outline-none focus-visible:ring-2 active:scale-[0.98] disabled:opacity-50 sm:hidden dark:bg-white/10"
     >
       {#if paymentSetupLoading}
-        <Loader2 size={18} class="animate-spin" /> {m.profile_payment_redirect_stripe()}
+        <LoaderCircle size={18} class="animate-spin" /> {m.profile_payment_redirect_stripe()}
       {:else}
         <Plus size={18} strokeWidth={2.5} /> {m.profile_payment_add_card_mobile()}
       {/if}

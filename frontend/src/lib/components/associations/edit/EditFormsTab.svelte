@@ -13,7 +13,7 @@
     type PendingCashSubmission,
   } from '$lib/forms/api';
   import { showConfirm } from '$lib/stores/confirm.svelte';
-  import { ClipboardList, AlertTriangle, Pencil, Trash2 } from '@lucide/svelte';
+  import { ClipboardList, TriangleAlert, Pencil, Trash2 } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
@@ -140,7 +140,7 @@
     <div
       class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn flex items-start gap-2.5 rounded-xl border px-4 py-3 text-sm"
     >
-      <AlertTriangle size={15} class="mt-0.5 shrink-0" />
+      <TriangleAlert size={15} class="mt-0.5 shrink-0" />
       <span>
         {#if canManageStripeConnect}
           {m.asso_forms_stripe_missing_can_manage_prefix()}<strong
@@ -191,7 +191,7 @@
                     class="text-amber-warn inline-flex items-center gap-1 font-medium"
                     title="Stripe Connect not configured - online payments inactive"
                   >
-                    <AlertTriangle size={11} />
+                    <TriangleAlert size={11} />
                     {m.asso_forms_stripe_not_configured_badge()}
                   </span>
                 {/if}
@@ -226,7 +226,7 @@
           {#if pendingCash[form.id]?.length}
             <div class="border-cn-border/50 space-y-2 border-t pt-3">
               <p class="text-amber-warn flex items-center gap-1.5 text-xs font-bold">
-                <AlertTriangle size={13} />
+                <TriangleAlert size={13} />
                 {m.asso_forms_pending_cash_label({ count: pendingCash[form.id].length })}
               </p>
               <ul class="space-y-2">

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
-  import { LoaderCircle, Fingerprint, AlertTriangle } from '@lucide/svelte';
+  import { LoaderCircle, FingerprintPattern, TriangleAlert } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { isValidPin } from '$lib/utils/chat/pinValidation';
 
@@ -129,7 +129,7 @@
         disabled={isLoading}
         class="border-cn-border/60 text-text-main flex w-full items-center justify-center gap-2 rounded-xl border bg-white/5 py-3 text-sm font-semibold transition-all hover:bg-white/10 disabled:opacity-50 dark:bg-black/20 dark:hover:bg-black/30"
       >
-        <Fingerprint size={18} />
+        <FingerprintPattern size={18} />
         {m.auth_pin_use_fingerprint()}
       </button>
 
@@ -291,7 +291,7 @@
         {#if showForgotPin}
           <div class="mt-3 space-y-3 rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3">
             <div class="flex items-start gap-2">
-              <AlertTriangle size={16} class="mt-0.5 shrink-0 text-red-500" />
+              <TriangleAlert size={16} class="mt-0.5 shrink-0 text-red-500" />
               <p class="text-text-muted text-xs leading-relaxed">
                 {m.auth_pin_forgot_p1()}<strong class="text-text-main"
                   >{m.auth_pin_forgot_never_stored()}</strong

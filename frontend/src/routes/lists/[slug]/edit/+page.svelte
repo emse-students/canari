@@ -12,7 +12,7 @@
   } from '$lib/associations/api';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
-  import { ArrowLeft, Building2, Users, AlertTriangle } from '@lucide/svelte';
+  import { ArrowLeft, Building2, Users, TriangleAlert } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import EditProfileTab from '$lib/components/associations/edit/EditProfileTab.svelte';
   import EditMembersTab from '$lib/components/associations/edit/EditMembersTab.svelte';
@@ -147,7 +147,7 @@
               ? 'bg-red-err/20 text-red-err border-red-err/30 border'
               : 'border-cn-border text-text-muted hover:text-red-err border bg-(--cn-surface)'}"
           >
-            <AlertTriangle size={17} />
+            <TriangleAlert size={17} />
             Danger
           </button>
         {/if}

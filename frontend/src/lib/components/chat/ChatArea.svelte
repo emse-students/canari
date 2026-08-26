@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ShieldCheck, TriangleAlert, Loader2, CloudOff } from '@lucide/svelte';
+  import { ShieldCheck, TriangleAlert, LoaderCircle, CloudOff } from '@lucide/svelte';
   import {
     ArrowDown,
     Search,
@@ -1024,7 +1024,12 @@
             aria-live="polite"
             aria-busy="true"
           >
-            <Loader2 size={11} class="shrink-0 animate-spin" strokeWidth={2.5} aria-hidden="true" />
+            <LoaderCircle
+              size={11}
+              class="shrink-0 animate-spin"
+              strokeWidth={2.5}
+              aria-hidden="true"
+            />
             {m.chat_mls_sync_in_progress()}
           </div>
         {/if}
@@ -1068,7 +1073,7 @@
               aria-live="polite"
               aria-busy="true"
             >
-              <Loader2 size={12} class="shrink-0 animate-spin" strokeWidth={2.5} />
+              <LoaderCircle size={12} class="shrink-0 animate-spin" strokeWidth={2.5} />
               {m.chat_scrollback_loading()}
             </div>
           {:else if scrollbackState === 'no-peer'}
