@@ -2,19 +2,12 @@
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import type { AssociationMember } from '$lib/associations/api';
   import {
-    ALL_CORE_FLAGS,
     AssociationPermissionFlag,
+    BDE_ONLY_FLAGS,
     hasPermissionFlag,
   } from '$lib/associations/api';
   import { Trash2, ChevronDown } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
-
-  /** BDE-only flags that are inert in non-BDE associations. */
-  const BDE_ONLY_FLAGS = new Set([
-    AssociationPermissionFlag.VALIDATE_EVENTS,
-    AssociationPermissionFlag.MANAGE_ASSO,
-    AssociationPermissionFlag.MODERATE,
-  ]);
 
   interface Props {
     member: AssociationMember;
@@ -23,7 +16,8 @@
     manage?: boolean;
     /** When false, BDE-only flags (VALIDATE_EVENTS, MANAGE_ASSO, MODERATE) are hidden. */
     isBDE?: boolean;
-    onRoleChange?: (userId: string, role: string, permissions: number) => void | Promise<void>;
+    /** `permissions` is omitted for a role-only rename, which leaves the bitmask untouched. */
+    onRoleChange?: (userId: string, role: string, permissions?: number) => void | Promise<void>;
     onRemove?: (userId: string) => void | Promise<void>;
   }
 
@@ -36,7 +30,13 @@
     onRemove,
   }: Props = $props();
 
-  /** Human-readable labels for each applicable permission flag, reactive across locale changes. */
+  /**
+   * Human-readable labels for each applicable permission flag, reactive across locale changes.
+   *
+   * EVERY flag the enum defines appears here. `MANAGE_PARTNERSHIPS` was missing, and this list is
+   * the only screen that grants or revokes a flag - so a right that gates eight endpoints, and that
+   * the admin preset hands out on creation, could never afterwards be seen or taken away.
+   */
   const FLAG_LABELS = $derived<{ flag: AssociationPermissionFlag; label: string }[]>(
     [
       { flag: AssociationPermissionFlag.POST_AS_ASSO, label: m.asso_flag_post_as() },
@@ -45,6 +45,10 @@
       { flag: AssociationPermissionFlag.MANAGE_DOCUMENTS, label: m.asso_flag_manage_documents() },
       { flag: AssociationPermissionFlag.MANAGE_FORMS, label: m.asso_flag_manage_forms() },
       { flag: AssociationPermissionFlag.MANAGE_PRODUCTS, label: m.asso_flag_manage_products() },
+      {
+        flag: AssociationPermissionFlag.MANAGE_PARTNERSHIPS,
+        label: m.asso_flag_manage_partnerships(),
+      },
       { flag: AssociationPermissionFlag.MANAGE_STRIPE_CONNECT, label: m.asso_flag_manage_stripe() },
       { flag: AssociationPermissionFlag.VALIDATE_EVENTS, label: m.asso_flag_validate_events() },
       { flag: AssociationPermissionFlag.MANAGE_ASSO, label: m.asso_flag_manage_asso() },
@@ -52,24 +56,36 @@
     ].filter(({ flag }) => isBDE || !BDE_ONLY_FLAGS.has(flag))
   );
 
-  /** Resolved bitmask: prefer explicit permissions, fall back to isAdmin heuristic. */
-  const effectivePermissions = $derived(
-    member.permissions !== undefined ? member.permissions : member.isAdmin ? ALL_CORE_FLAGS : 0
-  );
+  /**
+   * The bitmask as the SERVER sent it, or undefined when it withheld it - `listMembers` returns it
+   * only to a caller holding `MANAGE_MEMBERS` (plus every caller's own row).
+   *
+   * There is deliberately NO fallback. The `member.isAdmin ? ALL_CORE_FLAGS : 0` guess that stood
+   * here was WRITTEN BACK by `toggleFlag`, so ticking one box on a member whose bitmask had been
+   * withheld granted them all seven core flags. `manage` is only ever set by a caller holding
+   * `MANAGE_MEMBERS`, which is exactly the caller the server sends the bitmask to: undefined here
+   * means the two disagree, and that is reported, not repaired.
+   */
+  const permissions = $derived(member.permissions);
+  const canEditPermissions = $derived(manage && permissions !== undefined);
+
+  $effect(() => {
+    if (manage && permissions === undefined) {
+      console.error(
+        `[ASSO] member ${member.userId} is shown as manageable but the server withheld its permission bitmask - the flag editor stays closed`
+      );
+    }
+  });
 
   const permissionsCount = $derived(
-    FLAG_LABELS.reduce(
-      (n, { flag }) => n + (hasPermissionFlag(effectivePermissions, flag) ? 1 : 0),
-      0
-    )
+    FLAG_LABELS.reduce((n, { flag }) => n + (hasPermissionFlag(permissions ?? 0, flag) ? 1 : 0), 0)
   );
 
   let showPermissions = $state(false);
 
   function toggleFlag(flag: AssociationPermissionFlag): void {
-    const next = hasPermissionFlag(effectivePermissions, flag)
-      ? effectivePermissions & ~flag
-      : effectivePermissions | flag;
+    if (permissions === undefined) return;
+    const next = hasPermissionFlag(permissions, flag) ? permissions & ~flag : permissions | flag;
     onRoleChange?.(member.userId, member.role, next);
   }
 </script>
@@ -118,13 +134,14 @@
           value={member.role}
           aria-label={m.asso_member_role_label()}
           onchange={(e) =>
-            onRoleChange(member.userId, (e.target as HTMLInputElement).value, effectivePermissions)}
+            onRoleChange(member.userId, (e.target as HTMLInputElement).value, permissions)}
           class="border-cn-border w-full rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm sm:w-36"
         />
         <button
           type="button"
+          disabled={!canEditPermissions}
           onclick={() => (showPermissions = !showPermissions)}
-          class="border-cn-border text-text-main hover:border-cn-yellow/60 inline-flex items-center gap-1.5 rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm transition-colors {showPermissions
+          class="border-cn-border text-text-main hover:border-cn-yellow/60 inline-flex items-center gap-1.5 rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 {showPermissions
             ? 'border-cn-yellow/60 bg-cn-yellow/5'
             : ''}"
           aria-expanded={showPermissions}
@@ -147,7 +164,7 @@
     {/if}
   </div>
 
-  {#if manage && showPermissions}
+  {#if canEditPermissions && showPermissions}
     <div
       class="border-cn-border/40 grid grid-cols-1 gap-x-4 gap-y-2.5 border-t pt-3 sm:grid-cols-2 lg:grid-cols-3"
     >
@@ -155,7 +172,7 @@
         <label class="group flex cursor-pointer items-center gap-2">
           <input
             type="checkbox"
-            checked={hasPermissionFlag(effectivePermissions, flag)}
+            checked={hasPermissionFlag(permissions ?? 0, flag)}
             onchange={() => toggleFlag(flag)}
             class="border-cn-border accent-cn-yellow h-4 w-4 cursor-pointer rounded"
           />

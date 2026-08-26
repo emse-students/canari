@@ -28,7 +28,6 @@ import { PosterService } from './poster.service';
 import { AssociationsController } from './associations.controller';
 import { AssociationCategoriesController } from './association-categories.controller';
 import { PosterController } from './poster.controller';
-import { AssociationRoleGuard } from './guards/association-role.guard';
 import { GlobalAdminOrAssociationRoleGuard } from './guards/global-admin-or-association-role.guard';
 import { GlobalAdminOrBdeSuperAdminGuard } from './guards/global-admin-or-bde-super-admin.guard';
 import { ReviewerAccessGuard } from './guards/reviewer-access.guard';
@@ -71,7 +70,6 @@ import { PurchaseRecordModule } from '../users/purchase-record.module';
     CercleDeliveryScheduler,
     AssociationCategoriesService,
     PosterService,
-    AssociationRoleGuard,
     GlobalAdminOrAssociationRoleGuard,
     GlobalAdminOrBdeSuperAdminGuard,
     ReviewerAccessGuard,

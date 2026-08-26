@@ -21,8 +21,10 @@ import type { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
-import { PERM_FLAG_KEY } from './guards/association-role.guard';
-import { GlobalAdminOrAssociationRoleGuard } from './guards/global-admin-or-association-role.guard';
+import {
+  PERM_FLAG_KEY,
+  GlobalAdminOrAssociationRoleGuard,
+} from './guards/global-admin-or-association-role.guard';
 import { GlobalAdminOrBdeSuperAdminGuard } from './guards/global-admin-or-bde-super-admin.guard';
 import { ReviewerAccessGuard } from './guards/reviewer-access.guard';
 import { AssociationPermissionFlag } from './entities/association-member.entity';
@@ -298,15 +300,12 @@ export class AssociationsController {
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
   ) {
-    const isGlobalAdmin = ga === 'true';
-    let includePermissions = isGlobalAdmin;
-    if (!isGlobalAdmin) {
-      includePermissions = await this.service.callerHasFlag(
-        userId,
-        id,
-        AssociationPermissionFlag.MANAGE_MEMBERS
-      );
-    }
+    const includePermissions = await this.service.mayAct(
+      userId,
+      id,
+      AssociationPermissionFlag.MANAGE_MEMBERS,
+      { isGlobalAdmin: ga === 'true' }
+    );
     return this.service.listMembers(id, { includePermissions, callerId: userId });
   }
 
@@ -473,10 +472,13 @@ export class AssociationsController {
       patch.cotisationEnabled !== undefined ||
       patch.cotisationMode !== undefined ||
       patch.cotisationExpiresAt !== undefined;
-    if (touchesCotisation && !isGlobalAdmin) {
-      const canManageProducts =
-        (await this.service.isAssociationSuperAdmin(userId)) ||
-        (await this.service.callerHasFlag(userId, id, AssociationPermissionFlag.MANAGE_PRODUCTS));
+    if (touchesCotisation) {
+      const canManageProducts = await this.service.mayAct(
+        userId,
+        id,
+        AssociationPermissionFlag.MANAGE_PRODUCTS,
+        { isGlobalAdmin }
+      );
       if (!canManageProducts) {
         throw new ForbiddenException(
           'MANAGE_PRODUCTS permission required to edit cotisation settings'
@@ -597,11 +599,14 @@ export class AssociationsController {
     const isGlobalAdmin = ga === 'true';
     const isBde = isGlobalAdmin ? false : await this.service.isUserBdeAdmin(userId);
     if (!isGlobalAdmin && !isBde) {
-      // Regular admin must have PROPOSE_EVENT in this association
-      const hasPerm = await this.service.callerHasFlag(
+      // Regular admin must be granted PROPOSE_EVENT on this association. Through `mayAct`, so a
+      // cross-association super-admin may EDIT an event in an association they administer - the
+      // guard on `POST :id/events` already lets them CREATE one there.
+      const hasPerm = await this.service.mayAct(
         userId,
         id,
-        AssociationPermissionFlag.PROPOSE_EVENT
+        AssociationPermissionFlag.PROPOSE_EVENT,
+        { isGlobalAdmin }
       );
       if (!hasPerm) {
         throw new ForbiddenException('PROPOSE_EVENT flag or BDE admin required');
@@ -629,10 +634,11 @@ export class AssociationsController {
     const isGlobalAdmin = ga === 'true';
     const isBde = isGlobalAdmin ? false : await this.service.isUserBdeAdmin(userId);
     if (!isGlobalAdmin && !isBde) {
-      const hasPerm = await this.service.callerHasFlag(
+      const hasPerm = await this.service.mayAct(
         userId,
         id,
-        AssociationPermissionFlag.PROPOSE_EVENT
+        AssociationPermissionFlag.PROPOSE_EVENT,
+        { isGlobalAdmin }
       );
       if (!hasPerm) {
         throw new ForbiddenException('PROPOSE_EVENT flag or BDE admin required');
@@ -910,9 +916,12 @@ export class AssociationsController {
     @Headers('x-global-admin') globalAdmin: string | undefined
   ) {
     const tiers = await this.userTagService.listCotisationTiers(id);
-    const mayGrant =
-      globalAdmin === 'true' ||
-      (await this.service.callerHasFlag(userId, id, AssociationPermissionFlag.MANAGE_MEMBERS));
+    const mayGrant = await this.service.mayAct(
+      userId,
+      id,
+      AssociationPermissionFlag.MANAGE_MEMBERS,
+      { isGlobalAdmin: globalAdmin === 'true' }
+    );
     return { tiers: tiers.map(({ variantKey, name }) => ({ variantKey, name })), mayGrant };
   }
 

@@ -129,6 +129,29 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Changed
 
+- **Every association-scoped right now goes through ONE predicate, and the eleven permission flags
+  have a measured table instead of a comment.** The user asked what each flag actually permits, and
+  for a platform administrator to hold every association right whether or not they are a member. The
+  second half was very nearly already true - every guard honours `X-Global-Admin` - so the real
+  finding was that the same question, *may this user exercise this flag on this association*, had
+  **four** answers that disagreed: the route guard granted a BDE super-admin every flag, `canPostAs`
+  and `canManageStripeConnect` forgot that tier existed, the calendar's edit/delete pair escalated
+  through `VALIDATE_EVENTS` instead, and `GET :id/cotisation-options` answered `mayGrant: false` to
+  a super-admin whom `POST :id/cotisants` - the endpoint that button calls - would have accepted, so
+  the UI hid a control the API allowed. `AssociationsService.mayAct(userId, associationId, flag, {
+  isGlobalAdmin })` is now the whole policy, mirrored on the client by `mayActOnAssociation`, and the
+  two exclusions withheld from the super-admin tier - `MANAGE_STRIPE_CONNECT` and `POST_AS_ASSO`,
+  because pointing an association's payouts at a bank account and speaking in its name are not
+  administration - are one named set on the entity rather than an omission at each call site.
+  `AssociationRoleGuard` was deleted: dead code, and the only guard that had no administrator path at
+  all. What is deliberately NOT folded in is named on the page - `isUserBdeAdmin` is a different
+  right, the listing queries answer "which associations" rather than "may they here", and existence
+  is a 404 from whoever loads the row. Channel permissions remain a separate string-based system and
+  are described separately. The measured flag table, the four spellings and the seven findings are on
+  [association-permissions](docs/wiki/association-permissions.md), the French user page the audit
+  owed is `docs/user-guide/permissions-association.md`, and the roles table in
+  `responsable-association.md` - which described the CHANNEL model as if it were this one - is gone.
+
 - **Payment is a MODE now: either a public base price or a grid, never both on screen.** The section
   showed the single price and the grid together, the price relabelled "Prix par defaut" and used
   only to seed a new cell - two amounts on screen, one of which charged nobody. One toggle picks
@@ -187,6 +210,18 @@ which is also where every release up to and including v0.13.1 now lives.
   The forms module got its first tests with this: 38, over the money and membership paths.
 
 ### Security
+
+- **Ticking one permission box could grant a member all seven core rights.** `listMembers` returns a
+  member's bitmask only to a caller holding `MANAGE_MEMBERS`; when it was absent,
+  `AssociationMemberRow` invented `member.isAdmin ? ALL_CORE_FLAGS : 0` - and `toggleFlag` wrote that
+  guess back, so a single click on a row whose bitmask had been withheld saved the fabricated mask.
+  The fallback is gone rather than corrected: `manage` is only ever set by a caller holding
+  `MANAGE_MEMBERS`, which is exactly the caller the server sends the bitmask to, so an absent
+  bitmask means the two sides disagree - the editor stays closed and says so in the console. Two
+  reachable paths fed it, both also fixed: the super-admin tier was missing from the inline checks
+  that decide whether the editor renders at all, and `MANAGE_PARTNERSHIPS` was absent from that
+  editor's label list, so a right gating eight endpoints that the admin preset hands out on creation
+  could never afterwards be seen or revoked.
 
 - **A form was a side door around `MANAGE_MEMBERS`.** `grantsCotisation` hands out association
   membership, and `UserTagService.grantCotisant` has always required `MANAGE_MEMBERS` - but nothing

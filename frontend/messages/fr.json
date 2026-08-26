@@ -1004,6 +1004,7 @@
   "asso_flag_manage_forms": "Gérer les formulaires",
   "asso_flag_manage_products": "Gérer les paiements (boutique)",
   "asso_flag_manage_stripe": "Gérer Stripe Connect",
+  "asso_flag_manage_partnerships": "Gérer les partenariats",
   "asso_flag_validate_events": "Valider les événements",
   "asso_flag_manage_asso": "Gérer les associations",
   "asso_flag_moderate": "Modérer",

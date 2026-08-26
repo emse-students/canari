@@ -3,7 +3,7 @@
   import {
     listAssociations,
     listMyAssociations,
-    hasPermissionFlag,
+    holdsBdeFlag,
     AssociationPermissionFlag,
     type Association,
   } from '$lib/associations/api';
@@ -60,11 +60,7 @@
 
   /** Lists are created by global admins or BDE members holding MANAGE_ASSO. */
   const canCreate = $derived(
-    isGlobalAdmin() ||
-      myAssociations.some(
-        (a) =>
-          a.isBDE && hasPermissionFlag(a.permissions ?? 0, AssociationPermissionFlag.MANAGE_ASSO)
-      )
+    isGlobalAdmin() || holdsBdeFlag(myAssociations, AssociationPermissionFlag.MANAGE_ASSO)
   );
 </script>
 

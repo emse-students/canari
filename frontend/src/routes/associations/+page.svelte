@@ -4,7 +4,7 @@
     listAssociations,
     listMyAssociations,
     AssociationPermissionFlag,
-    hasPermissionFlag,
+    holdsBdeFlag,
     type Association,
   } from '$lib/associations/api';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
@@ -21,11 +21,7 @@
   let isLoggedIn = $derived(!!currentUserId());
   /** Associations are created by global admins or BDE members holding MANAGE_ASSO. */
   const canCreate = $derived(
-    isGlobalAdmin() ||
-      myAssociations.some(
-        (a) =>
-          a.isBDE && hasPermissionFlag(a.permissions ?? 0, AssociationPermissionFlag.MANAGE_ASSO)
-      )
+    isGlobalAdmin() || holdsBdeFlag(myAssociations, AssociationPermissionFlag.MANAGE_ASSO)
   );
 
   onMount(async () => {

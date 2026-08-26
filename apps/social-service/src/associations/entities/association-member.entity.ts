@@ -51,6 +51,23 @@ export const ALL_PERMISSION_FLAGS = Object.values(AssociationPermissionFlag)
   .reduce<number>((mask, flag) => mask | flag, 0);
 
 /**
+ * Flags a cross-association super-admin (a BDE member holding `MANAGE_ASSO`) does NOT inherit on
+ * an association they are not a member of.
+ *
+ * `MANAGE_ASSO` grants administration - members, documents, forms, products - and these two are
+ * not administration:
+ * - `MANAGE_STRIPE_CONNECT` points an association's payouts at a bank account, so it stays with
+ *   the association's own people and the platform admin.
+ * - `POST_AS_ASSO` speaks in the association's name, which is an identity rather than a right over
+ *   its data.
+ *
+ * This is the ONLY place the exception is written. It was previously an omission at two call sites
+ * (`canPostAs`, `canManageStripeConnect`), which is indistinguishable from a forgotten check.
+ */
+export const SUPER_ADMIN_EXCLUDED_FLAGS =
+  AssociationPermissionFlag.MANAGE_STRIPE_CONNECT | AssociationPermissionFlag.POST_AS_ASSO;
+
+/**
  * Base admin flags granted to association admins.
  * = POST_AS_ASSO | PROPOSE_EVENT | MANAGE_MEMBERS | MANAGE_DOCUMENTS | MANAGE_FORMS |
  *   MANAGE_PRODUCTS | MANAGE_PARTNERSHIPS

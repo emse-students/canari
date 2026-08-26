@@ -7,7 +7,8 @@
 
 - Browse and search association (club) directory.
 - Manage association profile, logo, colors, description.
-- Member management (add, roles, permissions).
+- Member management (add, roles, permissions) - the flag model and who may exercise a flag are on
+  [Association permissions](../../association-permissions.md); this module renders it.
 - Calendar of events.
 - Document storage (PDFs, files).
 - Boutique / shop (products, Stripe checkout).

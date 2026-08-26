@@ -6,15 +6,15 @@
 
 ## Roles et permissions
 
-Chaque membre d'une association a un role :
+Un membre d'association n'a pas de role predefini : il a une **liste de droits coches un par un**.
+Le libelle affiche a cote de son nom ("Presidente", "Tresorier") est decoratif et ne donne aucun
+droit. Chacun des onze droits ouvre une partie precise de l'interface.
 
-| Role | Permissions |
-|---|---|
-| **Membre** | Acceder aux channels, participer aux evenements, soumettre des formulaires |
-| **Moderateur** | Tout ce que le Membre peut faire + moderer les messages dans les channels |
-| **Administrateur** | Acces complet : gerer les membres, les roles, la boutique, les formulaires, les evenements, le profil de l'association |
+**Tout est detaille dans une page dediee : [Les permissions d'une association](permissions-association.md).**
+Elle liste les onze droits, ce que chacun permet, comment les cocher, et les deux niveaux
+(administrateur de la plateforme, BDE) qui agissent sans etre membres.
 
-Seuls les **Administrateurs** peuvent modifier la configuration de l'association.
+Les exemples ci-dessous nomment, a chaque fois, le droit necessaire.
 
 ---
 
@@ -24,7 +24,11 @@ Seuls les **Administrateurs** peuvent modifier la configuration de l'association
 2. Si vous avez le role Administrateur, un bouton **"Gerer"** est visible.
 3. Vous pouvez aussi acceder directement depuis le **Dashboard** (`/dashboard`).
 
-L'interface de gestion comprend quatre onglets : **Profil**, **Membres**, **Formulaires**, **Paiements**.
+Le bouton **"Gerer"** apparait des que vous avez au moins un droit de gestion. L'interface
+comprend jusqu'a dix sections - **Profil**, **Membres**, **Documents**, **Achats**,
+**Cotisations**, **Delegation**, **Formulaires**, **Partenariats**, **Paiements**, **Danger** -
+et chacune n'est visible que si vous avez le droit correspondant
+([tableau complet](permissions-association.md#4-ce-que-les-onglets-de-gestion-demandent)).
 
 ---
 
@@ -46,19 +50,25 @@ Dans l'onglet **Membres** :
 
 ### Ajouter un membre
 
+> Toute cette section demande le droit *Gerer les membres*.
+
 1. Cherchez l'utilisateur par nom ou identifiant dans le champ de recherche.
-2. Selectionnez son role (Membre, Moderateur, Administrateur).
+2. Choisissez **"Membre"** (aucun droit) ou **"Administrateur"** (tous les droits de gestion de
+   l'association, Stripe Connect inclus).
 3. Cliquez sur **"Ajouter"**.
 
-### Modifier le role d'un membre
+### Modifier les droits d'un membre
 
-Cliquez sur le role affiche a cote du membre pour le modifier via la liste deroulante.
+Le champ texte a cote du membre change son libelle de role, sans toucher a ses droits. Pour les
+droits eux-memes, cliquez sur le bouton affichant leur nombre : chaque case cochee ou decochee est
+enregistree immediatement. Voir [Les permissions d'une association](permissions-association.md).
 
 ### Retirer un membre
 
 Cliquez sur l'icone de suppression a cote du membre.
 
-> Un administrateur ne peut pas se retirer lui-meme si c'est le dernier admin de l'association.
+> Vous ne pouvez pas retirer le droit *Gerer les membres* au dernier membre qui le possede :
+> l'association se retrouverait sans personne pour gerer ses membres.
 
 ---
 
@@ -68,7 +78,7 @@ Pour publier une actualite **au nom de l'association** :
 
 1. Depuis la page **Posts**, cliquez sur **"Nouvelle publication"**.
 2. Dans le champ "Publier en tant que", selectionnez votre association
-   (visible uniquement si vous avez le droit `MANAGE_ASSO`).
+   (visible uniquement si vous avez le droit *Publier au nom de l'asso*).
 3. Redigez votre contenu (Markdown supporte).
 
 Options disponibles :
@@ -80,7 +90,8 @@ Options disponibles :
 ### Epingler une publication
 
 Depuis la liste des publications, cliquez sur "..." -> **"Epingler"** pour mettre la
-publication en tete de fil. Action reservee aux administrateurs.
+publication en tete de fil. Action reservee aux membres ayant le droit
+*Publier au nom de l'asso*.
 
 ---
 
@@ -151,7 +162,8 @@ Depuis la fiche de votre association (section Documents) :
 
 Pour accepter des paiements en ligne, votre association doit completer l'onboarding Stripe :
 
-1. Dans l'onglet **Paiements**, cliquez sur **"Configurer les paiements en ligne"**.
+1. Dans l'onglet **Paiements**, cliquez sur **"Configurer les paiements en ligne"**
+   (droit *Gerer Stripe Connect*).
 2. Vous etes redirige vers Stripe pour creer ou lier un compte de votre association.
 3. Renseignez les informations bancaires de l'association (IBAN, SIRET le cas echeant).
 4. Une fois configure, le statut affiche **"Actif"**.

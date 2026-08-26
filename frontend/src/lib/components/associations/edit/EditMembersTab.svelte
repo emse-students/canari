@@ -77,11 +77,22 @@
     }
   }
 
-  async function handleChangeRole(targetId: string, role: string, permissions: number) {
+  /**
+   * Applies a role rename and/or a new permission bitmask. `permissions` is undefined when the row
+   * only renamed the role - `updateMemberRole` then leaves the bitmask alone, so the local copy
+   * must not overwrite it with a guess either.
+   */
+  async function handleChangeRole(targetId: string, role: string, permissions?: number) {
     try {
       await updateMemberRole(asso.id, targetId, role, permissions);
       members = members.map((m) =>
-        m.userId === targetId ? { ...m, role, permissions, isAdmin: permissions > 0 } : m
+        m.userId === targetId
+          ? {
+              ...m,
+              role,
+              ...(permissions === undefined ? {} : { permissions, isAdmin: permissions > 0 }),
+            }
+          : m
       );
     } catch (err) {
       memberError = err instanceof Error ? err.message : 'Erreur';

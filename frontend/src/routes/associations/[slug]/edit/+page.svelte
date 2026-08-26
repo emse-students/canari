@@ -14,7 +14,7 @@
     fetchActivePaymentProvider,
     type StripeConnectStatusResult,
     type PaymentProviderId,
-    hasPermissionFlag,
+    mayActOnAssociation,
     ensureAssociationSuperAdmin,
     AssociationPermissionFlag,
     type Association,
@@ -90,54 +90,39 @@
     | 'danger'
   >('profile');
 
+  /**
+   * The three tiers this page gates on, gathered once. `myMembership.permissions` is always
+   * present for the caller's own row (`listMembers` returns it whatever the caller's rights), so
+   * a `undefined` here means "not a member" and nothing else.
+   */
+  let permissionContext = $derived({
+    isGlobalAdmin: isGlobalAdminUser,
+    isSuperAdmin: isSuperAdminUser,
+    memberPermissions: myMembership?.permissions,
+  });
+
   let canManageDocuments = $derived(
-    isGlobalAdminUser ||
-      isSuperAdminUser ||
-      (!!myMembership &&
-        hasPermissionFlag(
-          myMembership.permissions ?? 0,
-          AssociationPermissionFlag.MANAGE_DOCUMENTS
-        ))
+    mayActOnAssociation(AssociationPermissionFlag.MANAGE_DOCUMENTS, permissionContext)
   );
-
   let canManageMembers = $derived(
-    isGlobalAdminUser ||
-      isSuperAdminUser ||
-      (!!myMembership &&
-        hasPermissionFlag(myMembership.permissions ?? 0, AssociationPermissionFlag.MANAGE_MEMBERS))
+    mayActOnAssociation(AssociationPermissionFlag.MANAGE_MEMBERS, permissionContext)
   );
-
   let canManageProducts = $derived(
-    isGlobalAdminUser ||
-      isSuperAdminUser ||
-      (!!myMembership &&
-        hasPermissionFlag(myMembership.permissions ?? 0, AssociationPermissionFlag.MANAGE_PRODUCTS))
+    mayActOnAssociation(AssociationPermissionFlag.MANAGE_PRODUCTS, permissionContext)
   );
-
   let canManageForms = $derived(
-    isGlobalAdminUser ||
-      isSuperAdminUser ||
-      (!!myMembership &&
-        hasPermissionFlag(myMembership.permissions ?? 0, AssociationPermissionFlag.MANAGE_FORMS))
+    mayActOnAssociation(AssociationPermissionFlag.MANAGE_FORMS, permissionContext)
   );
-
   let canManagePartnerships = $derived(
-    isGlobalAdminUser ||
-      isSuperAdminUser ||
-      (!!myMembership &&
-        hasPermissionFlag(
-          myMembership.permissions ?? 0,
-          AssociationPermissionFlag.MANAGE_PARTNERSHIPS
-        ))
+    mayActOnAssociation(AssociationPermissionFlag.MANAGE_PARTNERSHIPS, permissionContext)
   );
-
+  /**
+   * The super-admin tier drops out on its own: `MANAGE_STRIPE_CONNECT` is in
+   * `SUPER_ADMIN_EXCLUDED_FLAGS`, so the exception is read from the same data the server reads it
+   * from instead of being an omission in this expression.
+   */
   let canManageStripeConnect = $derived(
-    isGlobalAdminUser ||
-      (!!myMembership &&
-        hasPermissionFlag(
-          myMembership.permissions ?? 0,
-          AssociationPermissionFlag.MANAGE_STRIPE_CONNECT
-        ))
+    mayActOnAssociation(AssociationPermissionFlag.MANAGE_STRIPE_CONNECT, permissionContext)
   );
 
   /** Paiements tab: boutique and/or Stripe Connect. */

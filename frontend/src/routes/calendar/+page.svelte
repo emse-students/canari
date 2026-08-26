@@ -11,6 +11,7 @@
     updateAssociationCalendarEvent,
     deleteAssociationCalendarEvent,
     hasPermissionFlag,
+    findBdeAssociationWithFlag,
     AssociationPermissionFlag,
     aggregatedCalendarFeedIcsAbsoluteUrl,
     icsSubscriptionRangeISO,
@@ -135,10 +136,9 @@
         canModerateAgenda = mine.some((a) => a.isAdmin);
         // A BDE validator (VALIDATE_EVENTS in a BDE association) may deposit on behalf of
         // any association; we keep their BDE association as the authorisation :id.
-        const authority = mine.find(
-          (a) =>
-            a.isBDE &&
-            hasPermissionFlag(a.permissions ?? 0, AssociationPermissionFlag.VALIDATE_EVENTS)
+        const authority = findBdeAssociationWithFlag(
+          mine,
+          AssociationPermissionFlag.VALIDATE_EVENTS
         );
         depositAuthorityAssoId = authority?.id ?? '';
         canDepositEvent = !!authority;

@@ -12,6 +12,8 @@ The social-service manages all community features:
 - **Channels**: encrypted workspaces with role-based access, HKDF-derived per-channel keys, server-assisted key distribution.
 - **Associations**: club management, members, documents, calendar events, boutique products,
   partnership cards (partner discounts, claimed by code, shared code, or a static instruction).
+  Every association-scoped right goes through one predicate, `AssociationsService.mayAct` - see
+  [Association permissions](../association-permissions.md).
 - **Forms**: dynamic form builder with optional Stripe payment, cash payment validation.
 - **Cotisations**: membership dues as time-bounded `user_tags`, granted via boutique products, manual grants, or paid forms - see [Cotisations](../cotisations.md).
 

@@ -1,33 +1,31 @@
-import {
-  CanActivate,
-  ExecutionContext,
-  ForbiddenException,
-  Injectable,
-  Logger,
-} from '@nestjs/common';
+import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import {
-  AssociationMember,
-  AssociationPermissionFlag,
-} from '../entities/association-member.entity';
-import { PERM_FLAG_KEY } from './association-role.guard';
+import { AssociationPermissionFlag } from '../entities/association-member.entity';
 import { AssociationsService } from '../associations.service';
 
 /**
- * Allows the request if `X-Global-Admin` is true or the caller is a cross-association
- * super-admin (BDE member with `MANAGE_ASSO`), else requires association membership
- * with the flag declared via `@SetMetadata(PERM_FLAG_KEY, …)` (default: 0 = any member).
+ * Metadata key naming the `AssociationPermissionFlag` a route requires.
+ *
+ * Usage:
+ *   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
+ *   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+ *
+ * Omit it and the route asks for membership alone.
+ */
+export const PERM_FLAG_KEY = 'association_perm_flag';
+
+/**
+ * Gates an association-scoped route on the flag declared via `@SetMetadata(PERM_FLAG_KEY, ...)`.
+ *
+ * It holds no policy of its own: the flag question goes to `AssociationsService.mayAct`, the one
+ * predicate that knows the platform administrator and the cross-association super-admin sit above
+ * an association's own bitmask. A route declaring no flag (the default 0) asks only for
+ * membership, which is a different question and is answered here.
  */
 @Injectable()
 export class GlobalAdminOrAssociationRoleGuard implements CanActivate {
-  private readonly logger = new Logger(GlobalAdminOrAssociationRoleGuard.name);
-
   constructor(
     private readonly reflector: Reflector,
-    @InjectRepository(AssociationMember)
-    private readonly memberRepo: Repository<AssociationMember>,
     private readonly associationsService: AssociationsService
   ) {}
 
@@ -43,30 +41,26 @@ export class GlobalAdminOrAssociationRoleGuard implements CanActivate {
       throw new ForbiddenException('Missing user or association context');
     }
 
-    if (request.headers['x-global-admin'] === 'true') {
-      return true;
-    }
+    const isGlobalAdmin = request.headers['x-global-admin'] === 'true';
 
-    // BDE super-admin (MANAGE_ASSO) administers any association like a global admin.
-    if (await this.associationsService.isAssociationSuperAdmin(userId)) {
-      this.logger.debug(
-        `BDE super-admin ${userId} granted cross-association access to ${associationId}`
-      );
-      return true;
-    }
-
-    const membership = await this.memberRepo.findOne({
-      where: { associationId, userId },
-    });
-
-    if (!membership) {
+    if (requiredFlag === 0) {
+      if (isGlobalAdmin) return true;
+      if (await this.associationsService.isAssociationSuperAdmin(userId)) return true;
+      if (await this.associationsService.isMember(userId, associationId)) return true;
       throw new ForbiddenException('You are not a member of this association');
     }
 
-    if (requiredFlag !== 0 && (membership.permissions & requiredFlag) === 0) {
-      throw new ForbiddenException('Insufficient permissions in this association');
+    if (
+      await this.associationsService.mayAct(userId, associationId, requiredFlag, { isGlobalAdmin })
+    ) {
+      return true;
     }
 
-    return true;
+    // Two causes, two messages: a stranger to the association and a member missing one right are
+    // different problems, and a single sentence for both sends the reader after the wrong one.
+    if (!(await this.associationsService.isMember(userId, associationId))) {
+      throw new ForbiddenException('You are not a member of this association');
+    }
+    throw new ForbiddenException('Insufficient permissions in this association');
   }
 }

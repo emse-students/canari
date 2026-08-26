@@ -157,21 +157,20 @@ export class FormsService {
     // it demands the same right. Creating a form needs only MEMBERSHIP of the association, and
     // without this check any member could mint cotisants of their own association through a form -
     // a side door around MANAGE_MEMBERS. Pricing is not gated: a price grants nothing.
-    if (!caller.isGlobalAdmin) {
-      const mayGrant = await this.associationsService.callerHasFlag(
-        caller.userId,
-        assocId,
-        AssociationPermissionFlag.MANAGE_MEMBERS
+    const mayGrant = await this.associationsService.mayAct(
+      caller.userId,
+      assocId,
+      AssociationPermissionFlag.MANAGE_MEMBERS,
+      { isGlobalAdmin: caller.isGlobalAdmin }
+    );
+    if (!mayGrant) {
+      this.logger.warn(
+        `[UserTag] refused a cotisation-granting form: user=${caller.userId.slice(0, 8)} lacks ` +
+          `MANAGE_MEMBERS on assoc=${assocId.slice(0, 8)}`
       );
-      if (!mayGrant) {
-        this.logger.warn(
-          `[UserTag] refused a cotisation-granting form: user=${caller.userId.slice(0, 8)} lacks ` +
-            `MANAGE_MEMBERS on assoc=${assocId.slice(0, 8)}`
-        );
-        throw new ForbiddenException(
-          'Granting a cotisation requires the right to manage this association members.'
-        );
-      }
+      throw new ForbiddenException(
+        'Granting a cotisation requires the right to manage this association members.'
+      );
     }
     // The grant only ever runs from `markPaid` or the cash validation, and neither is reached by a
     // submission whose total is zero (it is stored `free`). A grant on a form that charges nothing
@@ -353,8 +352,8 @@ export class FormsService {
   }
 
   /**
-   * Throws ForbiddenException unless the caller is the form owner, a global admin, or a member
-   * with MANAGE_FORMS in the form's linked association.
+   * Throws ForbiddenException unless the caller owns the form, or `mayAct` grants them
+   * MANAGE_FORMS on the association the form belongs to.
    *
    * There is no third, per-form grant. A form is managed by whoever owns it and by the
    * association's form managers - one axis, set in one place. See `forms.md`.
@@ -364,18 +363,21 @@ export class FormsService {
     const form = await this.formRepo.findOne({ where: { id: formId } });
     if (!form) throw new NotFoundException('Form not found');
     if (isGlobalAdmin || form.ownerId === userId) return form;
-    if (form.associationId) {
-      const hasFlag = await this.associationsService.callerHasFlag(
+    if (
+      form.associationId &&
+      (await this.associationsService.mayAct(
         userId,
         form.associationId,
-        AssociationPermissionFlag.MANAGE_FORMS
-      );
-      if (hasFlag) return form;
+        AssociationPermissionFlag.MANAGE_FORMS,
+        { isGlobalAdmin }
+      ))
+    ) {
+      return form;
     }
     throw new ForbiddenException('You are not allowed to manage this form');
   }
 
-  /** Updates a form's metadata and items. Only owner, co-owner, global admin, or MANAGE_FORMS flag may update. */
+  /** Updates a form's metadata and items. Gated by `assertFormManager`. */
   async update(formId: string, input: CreateFormDto, userId: string, isGlobalAdmin: boolean) {
     const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
 

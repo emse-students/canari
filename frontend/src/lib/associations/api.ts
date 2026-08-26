@@ -46,6 +46,69 @@ export function hasPermissionFlag(permissions: number, flag: AssociationPermissi
   return (permissions & flag) !== 0;
 }
 
+/**
+ * Flags a cross-association super-admin (a BDE member holding `MANAGE_ASSO`) does NOT inherit on
+ * an association they are not a member of. Mirrors the backend `SUPER_ADMIN_EXCLUDED_FLAGS`, which
+ * carries the reasoning: `MANAGE_ASSO` grants administration, and neither an association's bank
+ * account nor its voice is administration.
+ */
+export const SUPER_ADMIN_EXCLUDED_FLAGS =
+  AssociationPermissionFlag.MANAGE_STRIPE_CONNECT | AssociationPermissionFlag.POST_AS_ASSO;
+
+/**
+ * Flags that only mean anything inside a BDE association - the server enforces `a.isBDE = true`
+ * in every query that honours them, so granting one elsewhere is inert. Exported so the members
+ * editor hides them from non-BDE associations without re-listing them by hand.
+ */
+export const BDE_ONLY_FLAGS: ReadonlySet<AssociationPermissionFlag> = new Set([
+  AssociationPermissionFlag.VALIDATE_EVENTS,
+  AssociationPermissionFlag.MANAGE_ASSO,
+  AssociationPermissionFlag.MODERATE,
+]);
+
+/**
+ * May the current user exercise `flag` on one association? The client mirror of the server's
+ * `AssociationsService.mayAct`, and the ONLY shape any screen should use to gate an association
+ * control.
+ *
+ * Three tiers, widest first: the platform administrator, who holds every association right whether
+ * or not they are a member; the cross-association super-admin, minus `SUPER_ADMIN_EXCLUDED_FLAGS`;
+ * then the user's own bitmask in that association. `memberPermissions` is undefined for a
+ * non-member - and never for the caller's own row, which `listMembers` always returns in full.
+ *
+ * It exists because the same three-line expression was written out six times on the association
+ * edit page alone, once WITHOUT the super-admin tier - which is how a control the API accepts came
+ * to be hidden from the person allowed to use it.
+ */
+export function mayActOnAssociation(
+  flag: AssociationPermissionFlag,
+  ctx: { isGlobalAdmin: boolean; isSuperAdmin: boolean; memberPermissions?: number }
+): boolean {
+  if (ctx.isGlobalAdmin) return true;
+  if (ctx.isSuperAdmin && (flag & SUPER_ADMIN_EXCLUDED_FLAGS) === 0) return true;
+  return hasPermissionFlag(ctx.memberPermissions ?? 0, flag);
+}
+
+/**
+ * The user's BDE association granting `flag`, or undefined. The id matters as much as the verdict:
+ * a BDE-wide right is exercised through the route of the BDE association that carries it, so the
+ * caller needs to know WHICH one.
+ */
+export function findBdeAssociationWithFlag(
+  myAssociations: Association[],
+  flag: AssociationPermissionFlag
+): Association | undefined {
+  return myAssociations.find((a) => a.isBDE && hasPermissionFlag(a.permissions ?? 0, flag));
+}
+
+/** Whether any of the user's BDE associations grants `flag`. */
+export function holdsBdeFlag(
+  myAssociations: Association[],
+  flag: AssociationPermissionFlag
+): boolean {
+  return !!findBdeAssociationWithFlag(myAssociations, flag);
+}
+
 export interface AssociationMember {
   id: string;
   associationId: string;
@@ -558,10 +621,7 @@ export async function ensureAssociationSuperAdmin(force = false): Promise<boolea
   if (!superAdminProbe) {
     superAdminProbe = listMyAssociations()
       .then((assos) => {
-        const ok = assos.some(
-          (a) =>
-            a.isBDE && hasPermissionFlag(a.permissions ?? 0, AssociationPermissionFlag.MANAGE_ASSO)
-        );
+        const ok = holdsBdeFlag(assos, AssociationPermissionFlag.MANAGE_ASSO);
         setAssociationSuperAdmin(ok);
         return ok;
       })

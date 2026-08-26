@@ -16,7 +16,11 @@ import { firstValueFrom } from 'rxjs';
 import FormData from 'form-data';
 import { AxiosError } from 'axios';
 import { Association } from './entities/association.entity';
-import { AssociationMember, AssociationPermissionFlag } from './entities/association-member.entity';
+import {
+  AssociationMember,
+  AssociationPermissionFlag,
+  SUPER_ADMIN_EXCLUDED_FLAGS,
+} from './entities/association-member.entity';
 import { AssociationDocument } from './entities/association-document.entity';
 import { DocumentReviewerGrant } from './entities/document-reviewer-grant.entity';
 import { AssociationProduct } from './entities/association-product.entity';
@@ -1020,12 +1024,12 @@ export class AssociationsService {
     return n > 0;
   }
 
-  /** Returns true if the user holds a specific flag in the given association. */
-  hasPermission(permissions: number, flag: AssociationPermissionFlag): boolean {
-    return (permissions & flag) !== 0;
-  }
-
-  /** Returns true if userId holds `flag` in association `associationId`. */
+  /**
+   * Returns true if userId holds `flag` in association `associationId`.
+   *
+   * The MEMBERSHIP tier only. Callers deciding whether someone may act want `mayAct`, which adds
+   * the platform administrator and the cross-association super-admin above it.
+   */
   async callerHasFlag(
     userId: string,
     associationId: string,
@@ -1096,6 +1100,39 @@ export class AssociationsService {
    */
   async isAssociationSuperAdmin(userId: string): Promise<boolean> {
     return this.callerHasAnyBdeFlag(userId, AssociationPermissionFlag.MANAGE_ASSO);
+  }
+
+  /**
+   * THE question every association-scoped check asks: may `userId` exercise `flag` on
+   * `associationId`?
+   *
+   * Three tiers, widest first: the platform administrator, who holds every association right
+   * whether or not they are a member; the cross-association super-admin (`MANAGE_ASSO` in a BDE),
+   * minus `SUPER_ADMIN_EXCLUDED_FLAGS`; then the association's own member bitmask.
+   *
+   * It exists because the same question had four different answers in this codebase - the guard
+   * granted the super-admin everything, two inline checks forgot them entirely, and the calendar
+   * pair escalated through `VALIDATE_EVENTS` instead. A right spelled out per call site drifts per
+   * call site: a BDE super-admin was refused the member bitmask by one endpoint while the endpoint
+   * below it accepted their write. Every new check calls this and adds no second axis of its own.
+   *
+   * It answers RIGHTS, not existence: a caller acting on an association that does not exist is a
+   * 404 from whoever loads it, not a 403 from here. `canPostAs` is the exception and says why.
+   */
+  async mayAct(
+    userId: string,
+    associationId: string,
+    flag: AssociationPermissionFlag,
+    opts?: { isGlobalAdmin?: boolean }
+  ): Promise<boolean> {
+    if (opts?.isGlobalAdmin) return true;
+    if ((flag & SUPER_ADMIN_EXCLUDED_FLAGS) === 0 && (await this.isAssociationSuperAdmin(userId))) {
+      this.logger.debug(
+        `[PERM] super-admin ${userId.slice(0, 8)} granted flag=${flag} on assoc=${associationId.slice(0, 8)}`
+      );
+      return true;
+    }
+    return this.callerHasFlag(userId, associationId, flag);
   }
 
   /**
@@ -2245,36 +2282,43 @@ export class AssociationsService {
 
   // ── Post authorship check ─────────────────────────────────────────────────
 
-  /** Returns true if the user holds `POST_AS_ASSO` in the association (or is a global admin). */
+  /**
+   * Returns true if the user may publish in the association's name.
+   *
+   * The one right that also asks whether the association EXISTS: the answer decides whether a post
+   * row may name this id, and a post naming a deleted association is a row nothing can render.
+   * `POST_AS_ASSO` is in `SUPER_ADMIN_EXCLUDED_FLAGS`, so a BDE super-admin does not borrow another
+   * association's voice.
+   */
   async canPostAs(
     userId: string,
     associationId: string,
     opts?: { isGlobalAdmin?: boolean }
   ): Promise<boolean> {
-    if (opts?.isGlobalAdmin) {
-      const asso = await this.assoRepo.findOne({ where: { id: associationId } });
-      return !!asso;
+    if (!(await this.mayAct(userId, associationId, AssociationPermissionFlag.POST_AS_ASSO, opts))) {
+      return false;
     }
-    const membership = await this.memberRepo.findOne({ where: { associationId, userId } });
-    if (!membership) return false;
-    return this.hasPermission(membership.permissions, AssociationPermissionFlag.POST_AS_ASSO);
+    const asso = await this.assoRepo.findOne({ where: { id: associationId } });
+    return !!asso;
   }
 
-  /** Returns true if the user may manage Stripe Connect for the association (or is a global admin). */
+  /**
+   * Returns true if the user may manage Stripe Connect for the association.
+   *
+   * `MANAGE_STRIPE_CONNECT` is in `SUPER_ADMIN_EXCLUDED_FLAGS`: it points payouts at a bank
+   * account, so it stays with the association's own people and the platform administrator.
+   *
+   * Existence is checked for the same reason as `canPostAs`: core-service asks this before opening
+   * a Connect account against the id, so a yes on an association nobody has must not be returned.
+   */
   async canManageStripeConnect(
     userId: string,
     associationId: string,
     opts?: { isGlobalAdmin?: boolean }
   ): Promise<boolean> {
-    if (opts?.isGlobalAdmin) {
-      const asso = await this.assoRepo.findOne({ where: { id: associationId } });
-      return !!asso;
-    }
-    const membership = await this.memberRepo.findOne({ where: { associationId, userId } });
-    if (!membership) return false;
-    return this.hasPermission(
-      membership.permissions,
-      AssociationPermissionFlag.MANAGE_STRIPE_CONNECT
-    );
+    const flag = AssociationPermissionFlag.MANAGE_STRIPE_CONNECT;
+    if (!(await this.mayAct(userId, associationId, flag, opts))) return false;
+    const asso = await this.assoRepo.findOne({ where: { id: associationId } });
+    return !!asso;
   }
 }

@@ -12,8 +12,9 @@ import { UserProfileService } from './user-profile.service';
 describe('AssociationsController cotisation config gating (D5)', () => {
   function makeController() {
     const service = {
-      isAssociationSuperAdmin: jest.fn(() => Promise.resolve(false)),
-      callerHasFlag: jest.fn(() => Promise.resolve(false)),
+      // The controller asks ONE predicate now; the three tiers it folds in are tested against the
+      // real implementation in associations.service.may-act.spec.ts.
+      mayAct: jest.fn(() => Promise.resolve(false)),
       update: jest.fn((_id: string, patch: unknown) =>
         Promise.resolve({ id: 'asso1', cotisationEnabled: false, ...(patch as object) })
       ),
@@ -52,7 +53,7 @@ describe('AssociationsController cotisation config gating (D5)', () => {
 
   it('allows a cotisation config change from a member holding MANAGE_PRODUCTS and provisions the product', async () => {
     const { controller, service, productsService } = makeController();
-    service.callerHasFlag.mockResolvedValue(true);
+    service.mayAct.mockResolvedValue(true);
 
     const result = await controller.update('asso1', 'user1', undefined, {
       cotisationEnabled: true,
@@ -64,15 +65,21 @@ describe('AssociationsController cotisation config gating (D5)', () => {
     expect(result.cotisationEnabled).toBe(true);
   });
 
-  it('allows a global admin to change cotisation config without a MANAGE_PRODUCTS check', async () => {
+  it('lets a global admin change cotisation config, through the same predicate', async () => {
     const { controller, service, productsService } = makeController();
+
+    service.mayAct.mockResolvedValue(true);
 
     await controller.update('asso1', 'user1', 'true', {
       cotisationEnabled: true,
       cotisationMode: 'dated',
     });
 
-    expect(service.callerHasFlag).not.toHaveBeenCalled();
+    // The admin tier is inside the predicate, so the call still happens - what matters is that the
+    // controller hands it the header instead of branching on it first.
+    expect(service.mayAct).toHaveBeenCalledWith('user1', 'asso1', expect.any(Number), {
+      isGlobalAdmin: true,
+    });
     expect(service.update).toHaveBeenCalled();
     expect(productsService.provisionCotisationProduct).toHaveBeenCalled();
   });
@@ -82,7 +89,7 @@ describe('AssociationsController cotisation config gating (D5)', () => {
 
     await controller.update('asso1', 'user1', undefined, { name: 'New name' });
 
-    expect(service.callerHasFlag).not.toHaveBeenCalled();
+    expect(service.mayAct).not.toHaveBeenCalled();
     expect(service.update).toHaveBeenCalled();
     expect(productsService.provisionCotisationProduct).not.toHaveBeenCalled();
   });

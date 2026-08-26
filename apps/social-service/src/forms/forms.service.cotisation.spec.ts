@@ -47,8 +47,9 @@ describe('FormsService - cotisation configuration and granting', () => {
       isMember: jest.fn(() => Promise.resolve(true)),
       assertPaymentsReady: jest.fn(() => Promise.resolve()),
       // MANAGE_MEMBERS by default, so the tests below are about the cotisation config itself;
-      // the permission gate has its own block.
-      callerHasFlag: jest.fn(() => Promise.resolve(opts.mayGrant ?? true)),
+      // the permission gate has its own block. `mayAct` is the one predicate every check asks -
+      // it folds in the platform admin and the cross-association super-admin.
+      mayAct: jest.fn(() => Promise.resolve(opts.mayGrant ?? true)),
       associationsWhereUserHasFlag: jest.fn(() => Promise.resolve([])),
       namesByIds: jest.fn(() => Promise.resolve(new Map())),
     };
@@ -263,17 +264,23 @@ describe('FormsService - cotisation configuration and granting', () => {
     it('checks MANAGE_MEMBERS, not MANAGE_FORMS', async () => {
       const { service, associationsService } = makeService({ tiers: CERCLE });
       await service.create(grantDto());
-      expect(associationsService.callerHasFlag).toHaveBeenCalledWith(
+      expect(associationsService.mayAct).toHaveBeenCalledWith(
         'user1',
         'asso1',
-        AssociationPermissionFlag.MANAGE_MEMBERS
+        AssociationPermissionFlag.MANAGE_MEMBERS,
+        { isGlobalAdmin: false }
       );
     });
 
-    it('lets a global admin through without consulting the flags', async () => {
-      const { service, associationsService } = makeService({ tiers: CERCLE, mayGrant: false });
+    it('hands the admin header to the predicate rather than branching on it first', async () => {
+      const { service, associationsService } = makeService({ tiers: CERCLE, mayGrant: true });
       await expect(service.create(grantDto(), true)).resolves.toBeDefined();
-      expect(associationsService.callerHasFlag).not.toHaveBeenCalled();
+      expect(associationsService.mayAct).toHaveBeenCalledWith(
+        'user1',
+        'asso1',
+        AssociationPermissionFlag.MANAGE_MEMBERS,
+        { isGlobalAdmin: true }
+      );
     });
 
     // A price grants nothing, so a grid stays open to any member. Gating it would stop an
