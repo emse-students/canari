@@ -150,6 +150,27 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **The conversation list could not be scrolled on Android, and its pull-to-refresh spinner stood for
+  nothing.** Two defects behind one gesture, and the first was not the gesture. Measured on the
+  device: the list ran from y=170 to y=914 in a 914px viewport - the full height - while the bottom
+  nav is `fixed inset-x-0 bottom-0`, out of flow, painting over its last 4rem. With nine
+  conversations the content fitted (698px in a 744px box), so `scrollHeight === clientHeight` and the
+  browser was correct that there was nothing to scroll; the row under the bar was simply unreachable,
+  for ever. `.page-scroll-wrap` reserves the nav's height for every ordinary page, and
+  `.page-scroll-wrap:has(.app-layout)` zeroes that padding so the chat shell can be exactly one
+  viewport tall - cancelling the page scroll cancelled the only reservation that existed for a bar
+  that reserves nothing itself. A documented `.mobile-nav-inset` now carries it on the chat shell's
+  own scrollers, mirroring the nav's mount conditions so the reserved space never becomes a dead zone
+  the bar does not occupy. Second: pulling down showed a spinner whose handler slept 600 ms and
+  returned, on the reasoning that the visibility watchdog would reconnect eventually - a timeout
+  standing in for work. The list is fed by the WebSocket, so while the socket is up it is already
+  current and the gesture now declines outright rather than spin over nothing; while it is down the
+  backoff ladder can be up to 30s from its next rung and the pull is the user asking for that rung
+  now, so it calls `attemptReconnect` and the spinner lasts exactly as long as the reconnect and its
+  sync. The action gained an `enabled` gate asked once per gesture, pinned by seven tests - including
+  the one that proves an upward drag is still left to the scroller, which is the half of the report
+  this code was NOT responsible for.
+
 - **A device revoked while it was offline logged straight back in and kept everything.** Revocation is
   defined as a wipe, and the wipe was written, thorough and correct - it was simply never asked for on
   two of the three ways into the app. `resetRequired` rides on the server PIN check, and the biometric

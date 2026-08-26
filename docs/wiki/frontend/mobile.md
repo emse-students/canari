@@ -568,6 +568,55 @@ it is still on screen. The early `if (ime == 0) return ... insets` is what gives
 Verified on hardware 2026-08-17 (v0.14.0 debug build, Android 15): `IME inset: 988 -> content padding`
 in logcat with the composer focused, and the user confirmed the band is gone.
 
+#### The bottom nav reserves nothing
+
+`BottomNav` is `fixed inset-x-0 bottom-0 z-30 md:hidden`, so it is out of flow and occupies no space
+in any layout: everything that scrolls beneath it has to reserve its height (`4rem` plus
+`env(safe-area-inset-bottom)`) or lose whatever ends up underneath.
+
+`routes/+layout.svelte`'s `.page-scroll-wrap` does exactly that, for every ordinary page. **The chat
+shell does not go through it**: `.page-scroll-wrap:has(.app-layout)` in `app.css` sets
+`padding-bottom: 0` and `overflow: hidden` so the shell can be exactly one viewport tall and own its
+own scrolling. That is right about the scroll and, until 2026-08-26, silently wrong about the
+reservation - the padding was the only thing reserving the bar's height, and it went with the scroll.
+
+What that cost, measured on the Pixel 6a through CDP:
+
+| | |
+| --- | --- |
+| viewport | `innerHeight: 914` |
+| conversation list box | `top: 170`, `bottom: 914`, `clientHeight: 744` |
+| its nine tiles | span `698` px |
+| so | `scrollHeight === clientHeight === 744`, `canScroll: false` |
+| `elementFromPoint` at the list's bottom edge | `NAV.fixed inset-x-0 bottom-0 z-30` |
+
+The last tile sat at `800..878`, under a bar starting near `848`. The browser was RIGHT that there
+was nothing to scroll - the content fitted - and the hidden row was therefore unreachable by any
+gesture. A swipe changed the accessibility tree by not one pixel, which is what "scrolling is
+impossible" means from the outside. With a longer list the scroll works and the final row is still
+parked under the bar at maximum scroll; the short list only makes the same defect total.
+
+The remedy is `.mobile-nav-inset` in `app.css`, carried by the chat shell's own bottom-reaching
+scrollers (both of `Sidebar.svelte`'s). It mirrors the nav's mount conditions - `md`, plus the
+`keyboard-open` and `mobile-convo-open` classes `+layout.svelte` puts on the document element -
+because reserved space the bar does not occupy is a dead zone at the end of the list. Content still
+scrolls *under* the translucent bar, as intended; it can now be brought out from under it.
+
+The same gesture carried a second defect. The list's pull-to-refresh called a handler that slept
+600 ms and returned, trusting the visibility watchdog to reconnect - a timeout standing in for work,
+and a spinner that promised something no user could check. The list is push-fed over the WebSocket,
+so it has nothing to fetch while the socket is up: `pullToRefresh` now takes an `enabled` gate asked
+**once per gesture** (whether there is work is a property of the moment, not of the binding), and
+`MainChatPage` declines the pull while connected. While disconnected the pull calls
+`session.attemptReconnect` - the backoff ladder is armed but may be 30 s from its next rung, and the
+gesture is the user asking for that rung now. `attemptReconnect` clears the armed timer rather than
+orphaning it and no-ops for a follower tab or an in-flight attempt, so it is safe to call directly,
+and it awaits the post-connect sync, so the spinner lasts exactly as long as the work.
+
+Pinned by `pullToRefresh.test.ts` (7 tests), including the negative control that an upward drag is
+still handed to the scroller untouched - the half of the original report this code was not
+responsible for.
+
 #### Portrait is locked by a resource qualifier, not by the manifest
 
 `android:screenOrientation` takes ONE literal value, which cannot serve a phone and a tablet - so the

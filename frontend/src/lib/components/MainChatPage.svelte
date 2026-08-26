@@ -381,14 +381,23 @@
         channels.selectedChannelConversationId = '';
         convs.selectedContact = null;
       },
+      // PULL-TO-REFRESH ON THE CONVERSATION LIST, and the one thing the gesture can honestly mean.
+      //
+      // It used to sleep 600 ms and return - no reconnect, no fetch, nothing - on the reasoning
+      // that the visibility-change watchdog would get there eventually. So the spinner reported
+      // work that was not happening, and it reported it for a fixed duration unrelated to anything.
+      //
+      // The list is fed by the WebSocket, so while the socket is up it is ALREADY current and a
+      // refresh has no work at all; `canRefresh` below declines the gesture outright rather than
+      // spin over nothing. While it is down the backoff ladder is armed but may be up to 30 s from
+      // its next rung, and pulling is the user asking for that rung NOW. `attemptReconnect` is
+      // exactly that request and is safe to make directly: it clears the armed timer rather than
+      // orphaning it, no-ops if an attempt is already in flight or this tab is a follower, and
+      // awaits the full post-connect sync - so the spinner lasts precisely as long as the work.
       onRefresh: async () => {
-        // If disconnected, give the auto-reconnect mechanism a moment to kick in.
-        // The actual reconnect is triggered by the visibility-change watchdog in
-        // ChatBackgroundService; this just provides the UX feedback.
-        if (!session.isWsConnected) {
-          await new Promise<void>((r) => setTimeout(r, 600));
-        }
+        await session.attemptReconnect(sessionCb());
       },
+      canRefresh: () => !session.isWsConnected,
     };
   }
 

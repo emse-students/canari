@@ -109,6 +109,14 @@
     currentUserId?: string;
     /** Optional pull-to-refresh handler for the conversations list. */
     onRefresh?: () => Promise<void>;
+    /**
+     * Whether `onRefresh` has anything to do right now, asked once per gesture.
+     *
+     * A SPINNER IS A PROMISE THAT SOMETHING IS HAPPENING. This list is fed by the WebSocket, so
+     * when the socket is up it is already current and a refresh has no work; showing the spinner
+     * then is a lie the user cannot check. Omitted, the gesture stays off entirely.
+     */
+    canRefresh?: () => boolean;
   }
 
   let {
@@ -141,6 +149,7 @@
     onCloseDrawer,
     currentUserId = '',
     onRefresh,
+    canRefresh,
   }: Props = $props();
 
   let showNewChatModal = $state(false);
@@ -384,7 +393,7 @@
 >
   {#if viewMode === 'communities'}
     <div
-      class="no-scrollbar flex h-full w-[72px] flex-shrink-0 flex-col items-center gap-3 overflow-y-auto border-r border-white/50 bg-white/20 py-3 dark:border-white/10 dark:bg-black/10"
+      class="no-scrollbar mobile-nav-inset flex h-full w-[72px] flex-shrink-0 flex-col items-center gap-3 overflow-y-auto border-r border-white/50 bg-white/20 py-3 dark:border-white/10 dark:bg-black/10"
     >
       <div
         class="flex flex-col items-center gap-3"
@@ -485,8 +494,11 @@
 
     <!-- Conversation List -->
     <div
-      class="flex-1 overflow-y-auto p-2.5"
-      use:pullToRefresh={{ onRefresh: onRefresh ?? (() => Promise.resolve()) }}
+      class="mobile-nav-inset flex-1 overflow-y-auto p-2.5"
+      use:pullToRefresh={{
+        onRefresh: onRefresh ?? (() => Promise.resolve()),
+        enabled: canRefresh ?? (() => false),
+      }}
     >
       {#if activeSidebarTab === 'discussions'}
         {#each filteredConversationEntries as { name, convo, resolved } (name)}

@@ -8,6 +8,15 @@ export interface PullToRefreshOptions {
   onRefresh: () => Promise<void>;
   /** Vertical distance in px the user must pull before triggering refresh (default 72). */
   threshold?: number;
+  /**
+   * Asked once per gesture: has `onRefresh` anything to do right now? Defaults to always.
+   *
+   * A SPINNER IS A PROMISE THAT SOMETHING IS HAPPENING, and a caller with nothing to do had no way
+   * to decline the gesture - it could only resolve immediately, which still painted the indicator.
+   * Returning `false` here leaves the pull to the scroller, so the spinner appears if and only if
+   * work follows it.
+   */
+  enabled?: () => boolean;
 }
 
 // Inject the spinner keyframe once per document.
@@ -20,7 +29,7 @@ function ensureStyles(): void {
 }
 
 export function pullToRefresh(node: HTMLElement, options: PullToRefreshOptions) {
-  const { onRefresh, threshold = 72 } = options;
+  const { onRefresh, threshold = 72, enabled } = options;
 
   ensureStyles();
 
@@ -72,6 +81,9 @@ export function pullToRefresh(node: HTMLElement, options: PullToRefreshOptions) 
 
   function onTouchStart(e: TouchEvent) {
     if (node.scrollTop > 0 || refreshing) return;
+    // ASKED PER GESTURE, not once at mount: whether a refresh has work is a property of the moment
+    // (the socket is up, or it is not), and an action bound at mount would answer for ever.
+    if (enabled && !enabled()) return;
     startY = e.touches[0].clientY;
     active = true;
   }

@@ -20,7 +20,7 @@ here and nothing else.**
 
 ## Where the pass stands
 
-**Android is done except H, K, L and M.** The full ladder was run on **v0.11.7** on 2026-07-31 (log
+**Android is done except H, K, L, M and Q.** The full ladder was run on **v0.11.7** on 2026-07-31 (log
 archived on the user's desktop) after partial runs on v0.11.5 and v0.11.6. Two defects came out of
 it, both tracked as WP-NOTIF-1 and both re-checked by **check K**. **Check H was recorded PASS and
 was not one**: the user reported on 2026-08-01 that a tapped notification still does not open the
@@ -405,6 +405,36 @@ A failure here looks like the login screen, or the app appearing signed in with 
 it is confirmed server-side by a `revokedReason` of replay on the session row. If it fails, the
 remedy is not a flush call (there is none): it is to stop depending on the jar's durability, e.g.
 mirroring the rotation into the keychain the way the device key already is.
+
+## Q. The conversation list scrolls clear of the bottom nav - owed on Android
+
+**Proves** that the `.mobile-nav-inset` reservation reaches the built app, and not merely the CSS.
+The defect it closes was measured through CDP on the Pixel 6a on 2026-08-26 and is described on
+[mobile](frontend/mobile.md#the-bottom-nav-reserves-nothing); the fix is verified so far only by
+`pullToRefresh.test.ts` and by reading, because the phone was unplugged before a build carrying it
+could be installed. **A CSS reservation is exactly the kind of change a stale bundle hides**, so the
+re-measure has to run against a freshly installed build, never against the one already on the device.
+
+Install the universal debug APK (`adb install -r`, never an uninstall - that costs a re-enrolment and
+SETUP-4's 2FA), open the conversation list, and require all four:
+
+1. `document.querySelector('aside .flex-1.overflow-y-auto')` has `clientHeight` short of the viewport
+   bottom by `4rem + env(safe-area-inset-bottom)` - about 64 px more than the 744 measured before.
+2. `scrollHeight > clientHeight` with the nine conversations the account currently holds, where it
+   read `744 === 744` before.
+3. `document.elementFromPoint(centre, listRect.bottom - 8)` returns a conversation tile, not the
+   `NAV.fixed inset-x-0 bottom-0`.
+4. A real swipe (`Swipe-Tool`, 1800 -> 900) moves the accessibility tree: the tile coordinates from
+   `State-Tool` must differ before and after. **This is the assertion the original report was about**,
+   and the only one that a CSS-only check cannot fake - the previous pass returned coordinates
+   identical to the pixel.
+
+Then check the second half in the same session: with the socket up, pulling down the list must show
+**no spinner at all** (the gesture is declined and the list simply does not move); with the network
+cut, the same pull must show the spinner and it must persist for the duration of the reconnect rather
+than a fixed 600 ms.
+
+Clearing this deletes the P1 from [backlog](backlog.md).
 
 ## Traps that outlived the work that found them
 

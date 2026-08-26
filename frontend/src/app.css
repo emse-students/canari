@@ -417,6 +417,36 @@ h6,
   overflow: hidden;
 }
 
+/* THE BOTTOM NAV IS `fixed`, SO IT RESERVES NOTHING FOR ITSELF - whatever it covers is covered for
+   good. `.page-scroll-wrap` reserves its height for every ordinary page, and the rule directly
+   above cancels that padding for the chat shell so the shell can be exactly one viewport tall.
+   Cancelling the page scroll cancelled the reservation with it, and the chat shell's own scrollers
+   then ran to the true bottom of the viewport. Measured on the Pixel 6a: the conversation list
+   spanned y=170..914 with the viewport 914 tall, so its last tile sat under the bar - and because
+   the nine tiles fitted (698px of content in 744px of box) `scrollHeight === clientHeight` and the
+   browser was RIGHT that there was nothing to scroll. Hidden content plus a legitimately inert
+   gesture reads as "scrolling is broken". A scroller inside the chat shell that reaches the bottom
+   of the viewport carries this class instead of that reservation. */
+.mobile-nav-inset {
+  padding-bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
+}
+
+/* MIRRORS THE NAV'S OWN MOUNT CONDITIONS, because reserved space the bar does not occupy is a dead
+   zone at the end of the list. The nav is `md:hidden`, and `routes/+layout.svelte` unmounts it
+   while the keyboard is up or a conversation is open on mobile - the same two classes it sets on
+   the document element. (A conversation open on mobile also hides the sidebar outright, so that
+   half is belt and braces; the keyboard half is reached for real by focusing the search field.) */
+.keyboard-open .mobile-nav-inset,
+.mobile-convo-open .mobile-nav-inset {
+  padding-bottom: 0;
+}
+
+@media (width >= 48rem) {
+  .mobile-nav-inset {
+    padding-bottom: 0;
+  }
+}
+
 html.keyboard-open .page-scroll-wrap {
   scroll-padding-bottom: calc(
     4rem + env(safe-area-inset-bottom, 0px) + var(--keyboard-layout-inset-bottom, 0px)

@@ -1182,6 +1182,28 @@ Grouped with the emoji-picker geometry and the bundled-font work above: all thre
 appearance items, all three are post-ladder, and all three want the same pass over `app.css` rather
 than three local patches.
 
+### P1 - the conversation list could not be scrolled on Android - CODE IS IN, THE DEVICE RE-MEASURE IS OWED
+
+Reported by the user 2026-08-26 and declared P1 by them the same day (*"Probleme de scroll impossible
+dans la liste des conversations sur la version courante de l'appli android"*, then *"C'est un P1"*),
+with a second half attached: *"le scroll vers le haut marque un logo de chargement, mais je ne sais
+meme pas s'il y a une action derriere. S'il n'y en a pas, pourquoi faire ?"*
+
+**Both halves are diagnosed, fixed and pinned the same day** - the story is in `CHANGELOG.md`, the
+mechanism and the CDP measurements are on [mobile](frontend/mobile.md#the-bottom-nav-reserves-nothing),
+the three rules are in [durable-rules](durable-rules.md). In one line each: the `fixed` bottom nav
+reserves no space and the chat shell had cancelled the only padding that reserved it, so the last row
+sat under the bar and - the nine tiles fitting in the box - there was legitimately nothing to scroll;
+and the pull-to-refresh handler slept 600 ms instead of doing work.
+
+**WHAT IS LEFT IS THE RE-MEASURE, and only that.** The diagnosis is a device measurement but the fix
+is verified only by `pullToRefresh.test.ts` and by reading - the phone was unplugged before the build
+could be reinstalled. Re-run the same probe against a build carrying the fix and require, on the same
+Pixel 6a: the list's `clientHeight` down by `4rem + safe-area` from the viewport bottom,
+`scrollHeight > clientHeight` with nine conversations, `elementFromPoint` at the list's bottom edge
+returning a tile rather than the `NAV`, and a swipe that moves the accessibility tree. Then delete
+this entry. Tracked as owed hardware work in [device-verification](device-verification.md).
+
 ## Storage and retention
 
 The server side has a page already - [storage-forecast](infrastructure/storage-forecast.md) - and it

@@ -132,13 +132,7 @@ deleted from BOTH this file and [backlog](docs/wiki/backlog.md). **Every defect 
 `CHANGELOG.md`, every rule one left is in [durable-rules](docs/wiki/durable-rules.md), every verdict
 is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the three is restated here.**
 
-1. **ALL TWENTY-FIVE COMM RUNNERS ARE WRITTEN, REGISTERED AND SWEPT ON PROD** (2026-08-25, build
-    `5d7fac13`), every verdict carrying a build and an `a1Build`; COMM-14 ran there too. **COMM-18
-    found FOUR distinct product defects and is now a clean PASS** (`d6f61539`). The GENERIC
-    notification body is ANSWERED (MENTION-2). What the user saw on 2026-08-22 is a DIFFERENT, real
-    defect - a mention rendered as its raw `@[uuid]` token, P2 in [backlog](docs/wiki/backlog.md),
-    deferred past the ladder by their decision; NOTIF-13 pins it.
-2. **THE CAMPAIGN ITSELF - RUNNING, by the user's decision of 2026-08-21** (*"C'est parti pour la
+1. **THE CAMPAIGN ITSELF - RUNNING, by the user's decision of 2026-08-21** (*"C'est parti pour la
     campagne"*, in autonomy). The ladder, top to bottom, so every phase runs - including the six that
     had no runner, written as the ladder reaches them. Design, cost and the decisions it turns on are
     on [cross-client-testing](docs/wiki/cross-client-testing.md) and
@@ -146,7 +140,8 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     stands: rungs 1-8 TAKEN.** GRP closed 2026-08-26 on `feecfaf5` over four passes - GRP-4 green
     after `e027679a`, GRP-8 `PASS-DIRTY` deterministically (its P2 is in
     [backlog](docs/wiki/backlog.md)). **NEXT IS 9 COMM at 23 PASS, with THREE re-runs owed** -
-    COMM-4 (dirty), COMM-22 (`VACUOUS`, runner changed) and COMM-24 (runner changed) - THEN DEL, TAB,
+    COMM-4 (dirty), COMM-22 (`VACUOUS`, runner changed - and the proof WP-REGRANT-2 owes,
+    web-only, no phone) and COMM-24 (runner changed) - THEN DEL, TAB,
     MULTI, LIFE, NOTIF, CALL, HEAL, PIN, CORRUPT. The board carries every verdict and the format of a
     cell; do not restate either here. **A `PASS-DIRTY` NO LONGER STOPS A RUNG BY ITSELF (user,
     2026-08-25)**; what the class of the dirt decides is on
@@ -157,18 +152,8 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     per phase, and the two rows that gate a rung, are there too. Only CALL, CORRUPT and PIN have NO
     runner at all; DEL, MULTI, LIFE, NOTIF and HEAL are covered.
 
-3. **THE PRIVATE-SALON ACCESS SEAM - THE CODE IS ALL IN; WHAT IS LEFT IS A RUN.**
-    `updateChannelAccess` had no counterpart for the users a save ADDS, so entitlement and routing
-    were two acts and only one happened; that path shipped 2026-08-25 for all three populations a
-    save can let in, with WP-REGRANT-2's durability half. **2026-08-26 closed the last two faces:**
-    the join's READ now classifies a 403 as the answer it is instead of reporting it as a transport
-    failure and then reconciling on a scope it had just been refused, and `GET access` no longer
-    guards more strictly than the `PATCH` it precedes - so the recovery the 2026-08-19 decision
-    promised has a gesture behind it. Stories in `CHANGELOG.md`, rules in
-    [durable-rules](docs/wiki/durable-rules.md). **WP-REGRANT-2 now owes ONE thing: a COMM-22 run**
-    (web-only, no phone; COMM-23 passed on the 2026-08-25 sweep).
 
-4. **DEFERRED PAST THE LADDER - six UX and rendering items, substance in
+2. **DEFERRED PAST THE LADDER - seven UX and rendering items, substance in
     [backlog](docs/wiki/backlog.md) and NOWHERE else.** One line each, in the order they were raised:
     the POSTS search escapes the feed's filters and loads the whole base before answering; the EMOJI
     picker neither scrolls nor stays on screen, both from one hard-coded height guess; a reconnected
@@ -177,13 +162,21 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     Emoji, decided 2026-08-23, weight explicitly not a factor, Fluent rejected on coverage not
     licence, and it owes ELEVEN rows to the SECOND campaign; a deleted group leaves every OTHER
     member a dead row for ever, clearable only one at a time; and the trash and the pencil on a
-    device row do not read as the same kind of control (*"il faudrait homogeneiser"*, 2026-08-25).
-    The last three want ONE pass over `app.css` and the emoji work package, not seven local patches.
+    device row do not read as the same kind of control (*"il faudrait homogeneiser"*, 2026-08-25);
+    and a MENTION renders as its raw `@[uuid]` token (2026-08-22, P2, NOTIF-13 pins it - the generic
+    notification body it was first blamed on is ANSWERED, MENTION-2). The emoji, the dead row and the
+    device controls want ONE pass over `app.css` and the emoji work package, not seven local patches.
 
-5.  **`purge-devices.mjs` WOULD DELETE THE PHONE - a destructive control keyed on a string the
+3.  **THE ANDROID CONVERSATION LIST COULD NOT BE SCROLLED (P1, user 2026-08-26) - FIXED, ONE
+    RE-MEASURE OWED.** Both halves diagnosed and shipped the same day; the `fixed` bottom nav
+    reserved nothing and the chat shell had cancelled the only padding that did. The fix is proven
+    by unit tests and reading only - the phone left before a build carrying it could be installed -
+    so it owes check Q in [device-verification](docs/wiki/device-verification.md), which deletes the
+    P1 in [backlog](docs/wiki/backlog.md) when it clears.
+4.  **`purge-devices.mjs` WOULD DELETE THE PHONE - a destructive control keyed on a string the
     product never renders.** **Do not run it until it takes an `--only` allowlist**; repair and
     evidence in [backlog](docs/wiki/backlog.md).
-6.  **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** - asked by the user 2026-08-25
+5.  **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** - asked by the user 2026-08-25
     (*"le meme point de depart, independamment de ce qui a pu se passer avant"*). **It no longer gates
     rung 9 COMM:** the PHASE-level half is `run.mjs`'s preflight, and what is left is per-STEP
     granularity. Worked in parallel, pulled forward the moment a rung is blocked by an inherited
@@ -193,7 +186,7 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
 
 **ONE-OFF ACTIONS GO TO THE USER** (2026-08-25, verbatim): *"Pour les choses qui ne se font qu'une
 fois, tu peux me demander de les faire hein, on economisera en temps et en token."* Building a tool for
-a single click is the waste that rule names - `purge-devices.mjs` in 5 is exactly it.
+a single click is the waste that rule names - `purge-devices.mjs` above is exactly it.
 
 **The estate was swept and measured clean 2026-08-21 before the ladder started** - 22 debris salons through the product, all thirteen residue counts on prod zero afterwards. **A deleted group is TWO estates**: `cleanup.mjs` owns the server side, `dismiss.mjs` the copy each MEMBER's client keeps (W1 clean at 9 rows on 2026-08-24, W2 holding 189). One allowlist for both, `debris.mjs`. Detail on [cross-client-campaign](docs/wiki/cross-client-campaign.md).
 
