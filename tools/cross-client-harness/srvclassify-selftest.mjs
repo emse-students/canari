@@ -593,8 +593,27 @@ const comm = [
   ['the key group a creation is given is that creation talking', `${NEST}[ChannelService] [WORKSPACE] distribution group workspace=00000000-0000-4000-8000-000000000001 group=00000000-0000-4000-8000-000000000002`, 'benign'],
   // BOTH SPELLINGS OF `published=`, because the unpublished one is the state BEFORE an answer and
   // filing it as dirty would make the ordinary case break `clean` (COMM-22, 74 of them in one run).
-  ['an unpublished group with no devices is the ordinary state before an answer', `${NEST}[ChannelService] [DISTRIBUTION_GROUP] served workspace=00000000-0000-4000-8000-000000000001 user=aaaaaaaa group=00000000-0000-4000-8000-000000000002 published=false devices=0`, 'benign'],
-  ['and so is a published one with a roster', `${NEST}[ChannelService] [DISTRIBUTION_GROUP] served workspace=00000000-0000-4000-8000-000000000001 user=aaaaaaaa group=00000000-0000-4000-8000-000000000002 published=true devices=3`, 'benign'],
+  //
+  // AND THE EPOCH PAIR THE SERVER ADDED AFTER THESE FIXTURES WERE TAKEN, which is the reason this
+  // block is being rewritten rather than extended. The lines here were copied verbatim from
+  // production on 2026-08-14; the server started printing `base=` and `active=` later, and because
+  // the FIXTURE and the RULE both spoke the old dialect the self-test stayed green while every real
+  // seed read on prod fell into `unexplained`. A fixture is only evidence for the sentence the
+  // server is actually writing TODAY, so a rule change here is a fixture change too - always.
+  ['an unpublished group with no devices is the ordinary state before an answer', `${NEST}[ChannelService] [DISTRIBUTION_GROUP] served workspace=00000000-0000-4000-8000-000000000001 user=aaaaaaaa group=00000000-0000-4000-8000-000000000002 published=false base=none active=4 devices=0`, 'benign'],
+  ['and so is a published one with a roster', `${NEST}[ChannelService] [DISTRIBUTION_GROUP] served workspace=00000000-0000-4000-8000-000000000001 user=aaaaaaaa group=00000000-0000-4000-8000-000000000002 published=true base=4 active=4 devices=3`, 'benign'],
+  // THE STALE BASE ITSELF, which is what the epochs were printed FOR: `published=true` says a seed
+  // exists, `base < active` says the commit gate will refuse it every time (COMM-8). Forgiving this
+  // alongside its healthy twin is the exact way a rule "matches too much", so it is pinned in the
+  // one bucket that breaks `clean`.
+  ['a published seed BEHIND the active epoch is the defect, not the ordinary case', `${NEST}[ChannelService] [DISTRIBUTION_GROUP] served workspace=00000000-0000-4000-8000-000000000001 user=aaaaaaaa group=00000000-0000-4000-8000-000000000002 published=true base=3 active=4 devices=3`, 'unexplained'],
+  ['the graine half of the same read is forgiven only when its epochs agree', `${NEST}[ChannelService] [CHANNEL_GRAINE] served channel=00000000-0000-4000-8000-000000000001 user=aaaaaaaa group=00000000-0000-4000-8000-000000000002 published=true base=7 active=7 devices=2`, 'benign'],
+  ['and stays visible when they do not', `${NEST}[ChannelService] [CHANNEL_GRAINE] served channel=00000000-0000-4000-8000-000000000001 user=aaaaaaaa group=00000000-0000-4000-8000-000000000002 published=true base=6 active=7 devices=2`, 'unexplained'],
+  // THE DELIVERY-SIDE TWIN, a different service and a different field order. It carries `user=` and
+  // `devices=` AFTER the epochs, so one regex could never have covered both and the pair has to be
+  // pinned separately or half of it rots unnoticed - which is what happened.
+  ['the internal read is the same sentence from the other service', `${NEST}[InternalController] [DISTRIBUTION_GROUP] read scope=channel:00000000-0000-4000-8000-000000000001 group=00000000-0000-4000-8000-000000000002 published=true base=9 active=9 user=aaaaaaaa devices=1`, 'benign'],
+  ['and it is not forgiven with a base behind the active epoch either', `${NEST}[InternalController] [DISTRIBUTION_GROUP] read scope=channel:00000000-0000-4000-8000-000000000001 group=00000000-0000-4000-8000-000000000002 published=true base=8 active=9 user=aaaaaaaa devices=1`, 'unexplained'],
   // THE GRANT PAIR, the community twin of `[GROUP_INVITE]` above and split the same way: the preview
   // is an anonymous read, the acceptance is a person who can now read the community's traffic.
   ['a channel invite preview is a read', `[Nest] 1  - 08/14/2026, 12:43:51 PM   DEBUG [InternalInvitesController] internal channel invite preview token=fVcgu-Y-`, 'benign'],
@@ -631,7 +650,7 @@ for (const [name, line, want] of comm) {
 // if it also forgives the pair - that pair is the concurrent-join race, and the ONLY thing that has
 // ever caught it.
 const READ = (g) =>
-  `${NEST}[InternalController] [DISTRIBUTION_GROUP] read scope=workspace:00000000-0000-4000-8000-000000000001 group=${g} published=false user=aaaaaaaa devices=0`;
+  `${NEST}[InternalController] [DISTRIBUTION_GROUP] read scope=workspace:00000000-0000-4000-8000-000000000001 group=${g} published=false base=none active=1 user=aaaaaaaa devices=0`;
 const G1 = '11111111-1111-4111-8111-111111111111';
 const G2 = '22222222-2222-4222-8222-222222222222';
 const OTHER = `${NEST}[MessagingService] something nobody has classified`;
@@ -653,6 +672,15 @@ check('a published=true read is not its business', settleFirstLooks([READ(G1).re
 // `devices=0` is load-bearing: a read reporting devices means somebody has already joined, which is
 // a different sentence and not this rule's to move.
 check('nor is a read that found devices', settleFirstLooks([READ(G1).replace('devices=0', 'devices=2')]), []);
+// THE FIELDS THE SERVER ADDED BETWEEN `published=` AND `user=`. This predicate is anchored on both
+// sides of them, so it stopped matching the moment they appeared and settled nothing at all - and a
+// count-based rule fails SILENTLY in a way a per-line rule does not, because there is no bucket left
+// holding its population to look wrong. Pinned so the next field lands as a red line here.
+check(
+  'a read written in the pre-epoch dialect is no longer the sentence the server writes',
+  settleFirstLooks([READ(G1).replace(' base=none active=1', '')]),
+  []
+);
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall good');
 process.exit(failures ? 1 : 0);

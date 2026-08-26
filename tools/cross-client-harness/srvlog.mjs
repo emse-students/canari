@@ -198,9 +198,22 @@ const BENIGN = [
   // group, both creating it - so that form stays unexplained and visible. `devices=0` is left
   // classified because it is the ORDINARY answer before a first join, and pinning it would bury
   // every legitimate join in this bucket to catch a case the CLIENT already logs and accuses.
-  /\[InternalController\] \[DISTRIBUTION_GROUP\] read scope=(workspace|channel):\S+ group=\S+ published=true user=\S+ devices=\d+/,
-  /\[ChannelService\] \[CHANNEL_GRAINE\] served channel=\S+ user=\S+ group=\S+ published=true devices=\S+/,
-  /\[ChannelService\] \[DISTRIBUTION_GROUP\] served workspace=\S+ user=\S+ group=\S+ published=true devices=\S+/,
+  //
+  // `base=(\d+) active=\1` IS A BACKREFERENCE AND IT IS THE POINT OF THESE TWO RULES. `published`
+  // alone answered "is there a base", never "is that base USABLE" - the lie COMM-8 was, where a base
+  // behind `activeEpoch` is refused by the commit gate every time - so the server now prints both
+  // epochs and the classifier reads them. EQUAL is the healthy answer and is forgiven; `base <
+  // active` is the stale-base condition itself and cannot match this rule, so it lands in
+  // `unexplained` under its own name. A rule that stopped at `published=true` would forgive the
+  // defect together with the ordinary case - and worse, it stopped matching the HEALTHY line too, so
+  // between the server gaining these fields and 2026-08-26 every seed read in the estate went
+  // unexplained and no `--repeat` could reach pass 2.
+  /\[InternalController\] \[DISTRIBUTION_GROUP\] read scope=(?:workspace|channel):\S+ group=\S+ published=true base=(\d+) active=\1 user=\S+ devices=\d+/,
+  /\[ChannelService\] \[CHANNEL_GRAINE\] served channel=\S+ user=\S+ group=\S+ published=true base=(\d+) active=\1 devices=\S+/,
+  // Its `[DISTRIBUTION_GROUP] served` twin is NOT here. It lived in this block AND again further
+  // down, one line and two rules, and the pair is why the staleness above was nearly half-fixed:
+  // whoever repairs one has no reason to look for the other. The surviving copy carries both
+  // spellings of `published=`, so it subsumes what stood here.
   // The live-session census a client asks for when it opens a community. One line per load.
   /\[GRAINE\] liveGraineSessions user=\S+ asked=\d+ live=\d+/,
   // A media upload succeeding. The blob is opaque to the server by construction (the client holds
@@ -342,7 +355,14 @@ const BENIGN = [
   //
   // Its FREQUENCY is the thing worth a second look, not its existence, and a rule cannot carry a
   // rate. Nothing here forgives the refusal twin: `[DISTRIBUTION_GROUP] refused` is in NOTABLE.
-  /\[ChannelService\] \[DISTRIBUTION_GROUP\] served workspace=\S+ user=\S+ group=\S+ published=(true|false) devices=(\d+|\?)$/,
+  //
+  // THE TWO SPELLINGS CARRY DIFFERENT EPOCH PAIRS and the alternation says so rather than admitting
+  // both with one loose pattern. `published=true` must show `base` EQUAL to `active` - see the
+  // backreference argument on the `[CHANNEL_GRAINE]` rule above, which this line's other copy used
+  // to duplicate; a base behind the active epoch is the COMM-8 defect and stays unexplained.
+  // `published=false` has no base at all to be stale, and the server prints `base=none` for it, so
+  // the two branches are disjoint and neither can launder the other's failure.
+  /\[ChannelService\] \[DISTRIBUTION_GROUP\] served workspace=\S+ user=\S+ group=\S+ (?:published=true base=(\d+) active=\1|published=false base=none active=\d+) devices=(?:\d+|\?)$/,
   // A POLL BEING POSTED AND VOTED IN, which is content and not an event: the send is an ordinary
   // channel message that happens to carry `metadata.poll`, and a vote is a write into it. Every
   // check that produces these asserts the OUTCOME on the two clients' screens, so a missing line
@@ -949,8 +969,13 @@ function linesOf(service, since) {
  * @returns {string[]} the lines to move to `notable` - singletons only, in input order
  */
 export function settleFirstLooks(unexplained) {
+  // `base=none active=\d+` IS NOT DECORATION HERE. The server started printing both epochs on this
+  // line, and a predicate anchored on the fields either side of them stopped matching without ever
+  // saying so - the settling silently settled nothing, which is the failure mode a count-based rule
+  // has and a per-line rule does not (a rule that matches nothing at least leaves its population
+  // visible). `none` is what `published=false` always prints, so requiring it costs no coverage.
   const FIRST_LOOK =
-    /\[DISTRIBUTION_GROUP\] read scope=(?:workspace|channel):\S+ group=(\S+) published=false user=\S+ devices=0/;
+    /\[DISTRIBUTION_GROUP\] read scope=(?:workspace|channel):\S+ group=(\S+) published=false base=none active=\d+ user=\S+ devices=0/;
   const seen = new Map();
   for (const l of unexplained) {
     const m = FIRST_LOOK.exec(l);

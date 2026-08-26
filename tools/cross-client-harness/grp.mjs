@@ -53,7 +53,7 @@ import {
   until,
 } from './chat.mjs';
 import { addMember, openGroupSettings } from './addmember.mjs';
-import { groupIdByName } from './idb.mjs';
+import { conversationRows, groupIdByName } from './idb.mjs';
 import { psql } from './ssh.mjs';
 import { closeOverlays, createGroup, deleteGroup, openGroup } from './groupnav.mjs';
 import { armCut, cutHard } from './net.mjs';
@@ -822,15 +822,52 @@ async function grp4() {
       // the owner cannot REACH is a different and worse one, and until now this row sent nothing at
       // all - so a join that routed nowhere would have been recorded as a cosmetic roster fault.
       let crossed = null;
+      let joinerPane = null;
+      let joinerLifecycle = null;
+      let joinerSaid = null;
       if (measurable) {
         // THE JOINER MUST HAVE THE GROUP OPEN, or this measures the check and not the product.
         // `awaitMessage` reads the OPEN conversation's message pane; the join above only waits for
         // the group to be LISTED in the sidebar. Recorded `false` on the 21:06 run of 2026-08-25
         // for exactly that reason, and a delivery conclusion was nearly drawn from it.
-        await openConversation(w2, name);
-        const crossing = mark('GRP4X');
-        await send(w1, `${crossing} after a join by link`);
-        crossed = await awaitMessage(w2, crossing, CROSS_MS).then(() => true, () => false);
+        //
+        // AND A PANE THAT REFUSES A COMPOSER IS THIS ROW'S ANSWER, NEVER ITS ABORT. `openConversation`
+        // throws when the pane draws the peer-deleted notice instead - which is precisely the shape a
+        // joiner-side defect produces, so letting it escape turns the most interesting outcome this
+        // row can have into an `ERROR`, and an ERROR carries one sentence and none of the fields. It
+        // did, on 2026-08-26: a group joined by link, opened on the joiner, rendered "the peer
+        // DELETED this conversation" - and the run recorded the sentence and lost the evidence.
+        //
+        // The STORE is asked either way, because the notice is a rendering and `lifecycle` is the
+        // decision behind it: `removed` accuses the joiner's own state, `live` accuses the render.
+        joinerPane = await openConversation(w2, name).then(
+          () => 'composer',
+          (e) => (e instanceof Error ? e.message : String(e))
+        );
+        joinerLifecycle = (await conversationRows(w2, { name })).rows[0]?.lifecycle ?? 'absent';
+        // AND IN THE JOINER'S OWN WORDS. `retireConversation` is the only writer of `removed`, so
+        // the question a FAIL here raises is always the same one: WHICH of its callers ran. Most of
+        // them log a reason; `markConversationDeletedRemotely` does not, which is why the first
+        // capture of this - 2026-08-26, filtered on the removal vocabulary - showed a placeholder,
+        // a Welcome, and then a conversation already retired with nothing in between.
+        //
+        // SO THE FILTER IS THE GROUP, NOT THE VOCABULARY. Everything W2 said about THIS group, by
+        // name or by the id prefix its logs use, plus the lines that name a retirement whoever it
+        // belongs to. A vocabulary filter can only find the mechanisms someone already thought of.
+        joinerSaid = consoleLines(o2.cx).filter((l) =>
+          new RegExp(
+            `${name}|${(gid ?? name).slice(0, 8)}|marked removed|retired|Excluded from group`
+          ).test(l)
+        );
+        if (joinerPane === 'composer') {
+          const crossing = mark('GRP4X');
+          await send(w1, `${crossing} after a join by link`);
+          crossed = await awaitMessage(w2, crossing, CROSS_MS).then(() => true, () => false);
+        } else {
+          // Not `null`: the crossing did not go unmeasured, it could not be arranged, and the row
+          // must read as the failure it is rather than as a step that was skipped.
+          crossed = false;
+        }
       }
 
       const ok =
@@ -856,6 +893,11 @@ async function grp4() {
           serverUserMembers,
           serverDeviceRoutes,
           messageReachedTheJoiner: crossed,
+          // What the joiner's pane offered, and what its store said - the pair that separates a bad
+          // render from a bad state.
+          joinerPane,
+          joinerLifecycle,
+          joinerSaid,
           redactionNote:
             'the join token is a capability for a real group on production and is never recorded.',
         },
