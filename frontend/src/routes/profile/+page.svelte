@@ -17,17 +17,17 @@
   import ProfileParrainageSection from '$lib/components/profile/ProfileParrainageSection.svelte';
   import ProfileMinesweeperBadge from '$lib/components/profile/ProfileMinesweeperBadge.svelte';
   import {
-    Edit3,
+    PenLine,
     Check,
     GraduationCap,
     CalendarDays,
-    Loader2,
-    AlertCircle,
+    LoaderCircle,
+    CircleAlert,
     Camera,
     Building2,
     Users,
     UserRound,
-    History,
+    RotateCcwClock,
     Info,
     SlidersHorizontal,
   } from '@lucide/svelte';
@@ -151,7 +151,7 @@
 <div class="mx-auto max-w-3xl space-y-6 px-4 py-8 sm:px-6 md:space-y-8">
   {#if loading}
     <div class="text-text-muted flex flex-col items-center justify-center gap-4 py-32" in:fade>
-      <Loader2 size={32} class="text-cn-yellow animate-spin" strokeWidth={2.5} />
+      <LoaderCircle size={32} class="text-cn-yellow animate-spin" strokeWidth={2.5} />
       <span class="text-sm font-bold tracking-wider uppercase">{m.profile_loading()}</span>
     </div>
   {:else if error}
@@ -159,7 +159,7 @@
       class="flex items-start gap-3 rounded-2xl border border-red-500/20 bg-red-500/10 p-5 text-red-600 shadow-sm backdrop-blur-md dark:text-red-400"
       in:slide
     >
-      <AlertCircle size={20} class="mt-0.5 shrink-0" />
+      <CircleAlert size={20} class="mt-0.5 shrink-0" />
       <div>
         <h3 class="mb-1 text-sm font-bold">{m.common_generic_error_label()}</h3>
         <p class="text-sm font-medium">{error}</p>
@@ -230,7 +230,7 @@
             onclick={startEditBio}
             class="text-text-muted hover:text-cn-dark focus-visible:ring-cn-yellow inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm font-bold transition-all outline-none hover:bg-black/5 focus-visible:ring-2 active:scale-95 dark:hover:bg-white/10"
           >
-            <Edit3 size={16} strokeWidth={2.5} />
+            <PenLine size={16} strokeWidth={2.5} />
             {m.common_edit_label()}
           </button>
         {/if}
@@ -267,7 +267,7 @@
                 class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover shadow-cn-yellow/20 focus-visible:ring-cn-yellow/50 inline-flex items-center gap-2 rounded-xl px-5 py-2 text-sm font-bold shadow-md transition-all outline-none focus-visible:ring-2 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
               >
                 {#if saving}
-                  <Loader2 size={16} class="animate-spin" strokeWidth={3} />
+                  <LoaderCircle size={16} class="animate-spin" strokeWidth={3} />
                   {m.common_saving_label()}
                 {:else}
                   <Check size={16} strokeWidth={3} /> {m.common_save_button()}
@@ -310,11 +310,11 @@
     >
       <div class="mb-5 flex items-center gap-3">
         <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
-          <History size={22} strokeWidth={2.5} />
+          <RotateCcwClock size={22} strokeWidth={2.5} />
         </div>
         <h2 class="text-text-main text-lg font-extrabold">{m.profile_career_heading()}</h2>
         {#if roleHistoryLoading}
-          <Loader2 size={16} class="text-cn-yellow animate-spin" />
+          <LoaderCircle size={16} class="text-cn-yellow animate-spin" />
         {/if}
       </div>
       <ProfileRoleHistorySection
@@ -338,7 +338,7 @@
             {m.profile_public_sponsorship_heading()}
           </h2>
           {#if parrainageLoading}
-            <Loader2 size={16} class="text-cn-yellow animate-spin" />
+            <LoaderCircle size={16} class="text-cn-yellow animate-spin" />
           {/if}
         </div>
         <ProfileParrainageSection

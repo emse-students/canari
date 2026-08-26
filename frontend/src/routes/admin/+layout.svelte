@@ -16,7 +16,7 @@
     Wrench,
     Building2,
     Wallet,
-    FileCheck2,
+    FileCheckCorner,
     Map,
     HardDrive,
   } from '@lucide/svelte';
@@ -91,7 +91,11 @@
     // Document-reviewer grants + Carte de la Vie Asso: global admins and BDE super-admins.
     if (isGlobalAdminUser || isSuperAdminUser) {
       communityItems.push(
-        { href: '/admin/document-reviewers', label: m.docreview_nav_label(), icon: FileCheck2 },
+        {
+          href: '/admin/document-reviewers',
+          label: m.docreview_nav_label(),
+          icon: FileCheckCorner,
+        },
         { href: '/admin/carte', label: m.carte_card_label(), icon: Map }
       );
     }

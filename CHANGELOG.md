@@ -141,6 +141,28 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Changed
 
+- **One bun version, named in one file, instead of three scattered across the workflows.** Nothing in
+  this repo declared which bun it wanted - no `engines`, no `packageManager`, no `.bun-version` - and
+  the workflows had drifted to three answers: `1.2.18` in the five release pipelines, `1.4.0` in
+  code-analysis, and `ci.yml` with no `with:` block at all, which resolves to *latest*. That last one
+  is the path `cd.yml` already warned about in a comment (resolving "latest" goes through
+  `api.github.com/.../git/refs/tags` and can 401 with `GITHUB_TOKEN`), and it is also how a
+  `lockfileVersion: 2` could have entered the repo from CI. All eight `setup-bun` sites now read
+  `.bun-version` through `bun-version-file`, and `frontend/package.json` repeats the number in
+  `packageManager` and `engines.bun` so a human and a tool see the same thing.
+
+  The number is `1.3.14`, and it is chosen rather than latest for a measured reason: a *fresh*
+  `bun install` on bun >= 1.4.0 writes `lockfileVersion: 2`, Dependabot bundles bun 1.3.14
+  (`dependabot-core`, `bun/Dockerfile`), and 1.3.14 answers `UnknownLockfileVersion` on a v2
+  lockfile. It does not fail loudly - it stops opening pull requests for that directory, which is
+  indistinguishable from having none to open. An existing v1 lockfile is safe, because 1.4.0
+  preserves it even when rewriting it; the hazard is deleting `bun.lock` and reinstalling. The
+  committed `frontend/bun.lock` is v1 and installs under 1.3.14 unchanged (345 installs, 503
+  packages, no changes). The full measurement, and why it also drops the plan to migrate the five
+  repos to Renovate, is in
+  [ecosystem-convergence](docs/wiki/ecosystem-convergence.md#8-the-package-manager-and-the-version-four-repos-never-declared).
+
+
 - **Every association-scoped right now goes through ONE predicate, and the eleven permission flags
   have a measured table instead of a comment.** The user asked what each flag actually permits, and
   for a platform administrator to hold every association right whether or not they are a member. The

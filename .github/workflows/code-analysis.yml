@@ -36,7 +36,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: "1.4.0"
+          bun-version-file: ".bun-version"
 
       # Both install steps stay non-fatal: CodeQL analyses JavaScript and TypeScript from source
       # and a missing node_modules costs resolution accuracy, not the run. What is NOT acceptable
@@ -106,7 +106,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: "1.4.0"
+          bun-version-file: ".bun-version"
 
       # `bun audit`, not `npm audit`: the frontend's committed lockfile is bun.lock, and npm audit
       # against it audits whatever a stray package-lock.json happens to say instead.

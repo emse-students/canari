@@ -1,5 +1,12 @@
 <script lang="ts">
-  import { CreditCard, X, Loader2, CheckCircle2, AlertCircle, ChevronRight } from '@lucide/svelte';
+  import {
+    CreditCard,
+    X,
+    LoaderCircle,
+    CircleCheck,
+    CircleAlert,
+    ChevronRight,
+  } from '@lucide/svelte';
   import type { PaymentMethod } from '$lib/stores/user';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
   import { m } from '$lib/paraglide/messages';
@@ -141,7 +148,7 @@
         <div
           class="bg-red-err/10 border-red-err/30 text-red-err flex items-start gap-2 rounded-xl border px-4 py-3 text-sm"
         >
-          <AlertCircle size={16} class="mt-0.5 shrink-0" />
+          <CircleAlert size={16} class="mt-0.5 shrink-0" />
           {error}
         </div>
       {/if}
@@ -175,7 +182,7 @@
               </div>
             </div>
             {#if selectedMethodId === pm.id}
-              <CheckCircle2 size={18} class="text-cn-dark shrink-0" />
+              <CircleCheck size={18} class="text-cn-dark shrink-0" />
             {/if}
           </label>
         {/each}
@@ -187,7 +194,7 @@
         class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover flex w-full items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold transition-colors disabled:opacity-50"
       >
         {#if paying}
-          <Loader2 size={16} class="animate-spin" />
+          <LoaderCircle size={16} class="animate-spin" />
           {m.payment_modal_paying()}
         {:else}
           {formatted}

@@ -1,5 +1,14 @@
 <script lang="ts">
-  import { Reply, Forward, Pencil, Trash2, SmilePlus, Copy, Pin, PinOff } from '@lucide/svelte';
+  import {
+    Reply,
+    Forward,
+    Pencil,
+    Trash2,
+    FaceSlightlySmilingPlus,
+    Copy,
+    Pin,
+    PinOff,
+  } from '@lucide/svelte';
   import { fly, fade } from 'svelte/transition';
   import { m } from '$lib/paraglide/messages';
 
@@ -123,7 +132,7 @@
               onClose?.();
             }}
           >
-            <SmilePlus size={22} />
+            <FaceSlightlySmilingPlus size={22} />
           </button>
         </div>
       {/if}

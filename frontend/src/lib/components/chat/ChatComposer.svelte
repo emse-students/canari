@@ -1,5 +1,13 @@
 <script lang="ts">
-  import { Send, Paperclip, X, FileText, UploadCloud, Loader2, ChartColumn } from '@lucide/svelte';
+  import {
+    Send,
+    Paperclip,
+    X,
+    FileText,
+    CloudUpload,
+    LoaderCircle,
+    ChartColumn,
+  } from '@lucide/svelte';
   import PdfThumbnail from '$lib/components/shared/PdfThumbnail.svelte';
   import { untrack, tick, onMount, onDestroy } from 'svelte';
   import { slide, fade, scale } from 'svelte/transition';
@@ -564,7 +572,7 @@
           <span
             class="text-cn-ink flex items-center gap-2 rounded-full bg-amber-500 px-4 py-2.5 text-sm font-extrabold whitespace-nowrap shadow-xl shadow-amber-500/20"
           >
-            <UploadCloud size={18} strokeWidth={2.5} />
+            <CloudUpload size={18} strokeWidth={2.5} />
             {m.chat_drag_files_badge()}
           </span>
         </div>
@@ -580,7 +588,7 @@
           class="chat-composer-icon-button"
         >
           {#if isUploading}
-            <Loader2 class="h-5 w-5 animate-spin text-amber-500" strokeWidth={2.5} />
+            <LoaderCircle class="h-5 w-5 animate-spin text-amber-500" strokeWidth={2.5} />
           {:else}
             <Paperclip size={20} strokeWidth={2} />
           {/if}

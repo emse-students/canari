@@ -6,7 +6,7 @@
    * so there is nothing to hand to the keystore before it. Declining is permanent: the caller
    * persists a "dismissed" flag and never raises this sheet again.
    */
-  import { Fingerprint } from '@lucide/svelte';
+  import { FingerprintPattern } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -42,7 +42,7 @@
 
     <div class="mb-5 flex justify-center">
       <div class="rounded-full bg-amber-500/10 p-5">
-        <Fingerprint size={52} strokeWidth={1.5} class="text-amber-500" />
+        <FingerprintPattern size={52} strokeWidth={1.5} class="text-amber-500" />
       </div>
     </div>
 

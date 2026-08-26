@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Reply, Forward, Smile, Pencil, Trash2, Pin, PinOff } from '@lucide/svelte';
+  import { Reply, Forward, FaceSlightlySmiling, Pencil, Trash2, Pin, PinOff } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
   /** Quick-reaction emojis shown inline in the web hover toolbar (mirrors mobile). */
@@ -150,7 +150,7 @@
       aria-label={onReact ? m.msg_more_reactions_label() : m.msg_react_label()}
       title={onReact ? m.msg_more_reactions_label() : m.msg_react_label()}
     >
-      <Smile size={16} />
+      <FaceSlightlySmiling size={16} />
     </button>
   {/if}
   {#if !isDeleted && onPin}

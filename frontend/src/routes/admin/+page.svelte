@@ -9,13 +9,13 @@
     Activity,
     Users,
     CalendarDays,
-    PlusCircle,
+    CirclePlus,
     Bell,
     ChevronRight,
     ShieldAlert,
     UserCog,
     Wrench,
-    FileCheck2,
+    FileCheckCorner,
     BookUser,
     Map,
     HardDrive,
@@ -223,7 +223,7 @@
             {:else if card.kind === 'associations'}
               <Users size={20} />
             {:else if card.kind === 'create-association'}
-              <PlusCircle size={20} />
+              <CirclePlus size={20} />
             {:else if card.kind === 'directory'}
               <BookUser size={20} />
             {:else if card.kind === 'carte'}

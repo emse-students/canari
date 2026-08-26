@@ -7,7 +7,7 @@
     TriangleAlert,
     Loader,
     ShieldAlert,
-    Edit2,
+    Pen,
     X,
   } from '@lucide/svelte';
   import Modal from '../shared/Modal.svelte';
@@ -558,7 +558,7 @@
                           title={m.chat_rename_device_title()}
                           aria-label={m.chat_rename_device_label()}
                         >
-                          <Edit2 size={14} strokeWidth={2} />
+                          <Pen size={14} strokeWidth={2} />
                         </button>
                       {/if}
                     </div>

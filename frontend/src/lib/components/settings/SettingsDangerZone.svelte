@@ -1,6 +1,6 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
-  import { Trash2, Loader2, AlertCircle } from '@lucide/svelte';
+  import { Trash2, LoaderCircle, CircleAlert } from '@lucide/svelte';
   import { slide } from 'svelte/transition';
   import { deleteMyAccount } from '$lib/stores/user';
   import { clearAuth } from '$lib/stores/auth';
@@ -72,7 +72,7 @@
               transition:slide={{ duration: 150 }}
               class="flex items-center gap-2 text-sm font-semibold text-red-500"
             >
-              <AlertCircle size={16} />
+              <CircleAlert size={16} />
               {deletionError}
             </p>
           {/if}
@@ -93,7 +93,7 @@
               class="inline-flex items-center gap-2 rounded-xl bg-red-500 px-5 py-2.5 text-sm font-bold text-white shadow-md shadow-red-500/20 transition-all outline-none hover:bg-red-600 focus-visible:ring-2 focus-visible:ring-red-500/50 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
             >
               {#if deleting}
-                <Loader2 size={16} class="animate-spin" /> {m.profile_delete_deleting()}
+                <LoaderCircle size={16} class="animate-spin" /> {m.profile_delete_deleting()}
               {:else}
                 <Trash2 size={16} strokeWidth={2.5} /> {m.profile_delete_confirm_btn()}
               {/if}

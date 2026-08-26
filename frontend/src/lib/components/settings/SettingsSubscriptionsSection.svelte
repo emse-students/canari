@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Tag, ShoppingBag, ChevronRight, Loader2 } from '@lucide/svelte';
+  import { Tag, ShoppingBag, ChevronRight, LoaderCircle } from '@lucide/svelte';
   import { apiFetch } from '$lib/utils/apiFetch';
   import { socialUrl } from '$lib/utils/apiUrl';
   import type { UserTag } from '$lib/associations/api';
@@ -57,7 +57,7 @@
 
   {#if purchasesLoading}
     <div class="text-text-muted flex items-center gap-3 py-2 text-sm font-semibold">
-      <Loader2 size={18} class="animate-spin" />
+      <LoaderCircle size={18} class="animate-spin" />
       {m.common_loading_label()}
     </div>
   {:else if activeTags.length === 0}

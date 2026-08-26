@@ -6,7 +6,7 @@
   import Card from '$lib/components/ui/Card.svelte';
   import { getPost, type PostEntity } from '$lib/posts/api';
   import { getToken } from '$lib/stores/auth';
-  import { Loader2, FileX } from '@lucide/svelte';
+  import { LoaderCircle, FileX } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -66,7 +66,7 @@
   <div class="min-h-0 flex-1 overflow-y-auto px-1 pb-2">
     {#if loading}
       <div class="text-text-muted flex flex-col items-center justify-center gap-3 py-16">
-        <Loader2 size={32} class="animate-spin opacity-60" />
+        <LoaderCircle size={32} class="animate-spin opacity-60" />
         <p class="text-sm">{m.common_loading_label()}</p>
       </div>
     {:else if error}

@@ -7,8 +7,8 @@
   import {
     GraduationCap,
     CalendarDays,
-    Loader2,
-    AlertCircle,
+    LoaderCircle,
+    CircleAlert,
     MessageCircle,
     UserPlus,
     UserCheck,
@@ -159,7 +159,7 @@
 <div class="mx-auto max-w-3xl space-y-6 px-4 py-8 sm:px-6 md:space-y-8">
   {#if loading}
     <div class="text-text-muted flex flex-col items-center justify-center gap-4 py-32" in:fade>
-      <Loader2 size={32} class="text-cn-yellow animate-spin" strokeWidth={2.5} />
+      <LoaderCircle size={32} class="text-cn-yellow animate-spin" strokeWidth={2.5} />
       <span class="text-sm font-bold tracking-wider uppercase">{m.profile_public_loading()}</span>
     </div>
   {:else if error}
@@ -167,7 +167,7 @@
       class="flex items-start gap-3 rounded-2xl border border-red-500/20 bg-red-500/10 p-5 text-red-600 shadow-sm backdrop-blur-md dark:text-red-400"
       in:slide
     >
-      <AlertCircle size={20} class="mt-0.5 shrink-0" />
+      <CircleAlert size={20} class="mt-0.5 shrink-0" />
       <div>
         <h3 class="mb-1 text-sm font-bold">{m.common_error_heading()}</h3>
         <p class="text-sm font-medium">{error}</p>

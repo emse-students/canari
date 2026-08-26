@@ -4,7 +4,7 @@
   import { searchDirectory, type DirectoryUserRow } from '$lib/profile/api';
   import { listAssociations, type Association } from '$lib/associations/api';
   import Avatar from '$lib/components/shared/Avatar.svelte';
-  import { Search, Users, GraduationCap, Loader2 } from '@lucide/svelte';
+  import { Search, Users, GraduationCap, LoaderCircle } from '@lucide/svelte';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { currentUserId } from '$lib/stores/user';
   import { m } from '$lib/paraglide/messages';
@@ -142,7 +142,7 @@
       class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex w-full items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50 sm:w-auto"
     >
       {#if loading}
-        <Loader2 size={16} class="animate-spin" />
+        <LoaderCircle size={16} class="animate-spin" />
       {:else}
         <Search size={16} />
       {/if}

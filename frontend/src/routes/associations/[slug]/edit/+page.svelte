@@ -28,7 +28,7 @@
     CreditCard,
     ArrowLeft,
     Building2,
-    AlertTriangle,
+    TriangleAlert,
     FolderLock,
     RefreshCw,
     Clock,
@@ -485,7 +485,7 @@
               ? 'bg-red-err/20 text-red-err border-red-err/30 border'
               : 'border-cn-border text-text-muted hover:text-red-err border bg-(--cn-surface)'}"
           >
-            <AlertTriangle size={17} />
+            <TriangleAlert size={17} />
             {m.asso_edit_tab_danger()}
           </button>
         {/if}

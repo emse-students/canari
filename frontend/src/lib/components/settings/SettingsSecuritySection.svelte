@@ -1,5 +1,12 @@
 <script lang="ts">
-  import { Shield, KeyRound, Monitor, CheckCircle2, Fingerprint, LogIn } from '@lucide/svelte';
+  import {
+    Shield,
+    KeyRound,
+    Monitor,
+    CircleCheck,
+    FingerprintPattern,
+    LogIn,
+  } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import { slide } from 'svelte/transition';
   import { globalSession as session, appendLog } from '$lib/stores/globalChatSingleton.svelte';
@@ -139,7 +146,7 @@
       transition:slide={{ duration: 200 }}
       class="mb-5 flex items-center gap-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-sm font-bold text-emerald-700 shadow-inner dark:text-emerald-400"
     >
-      <CheckCircle2 size={20} class="shrink-0" />
+      <CircleCheck size={20} class="shrink-0" />
       {changePinSuccess}
     </div>
   {/if}
@@ -178,7 +185,7 @@
         >
           <div class="flex min-w-0 items-center gap-3.5">
             <div class="text-text-muted shrink-0 rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
-              <Fingerprint size={20} strokeWidth={2.5} />
+              <FingerprintPattern size={20} strokeWidth={2.5} />
             </div>
             <div class="min-w-0">
               <p class="text-text-main text-sm font-bold">{m.profile_biometric_heading()}</p>

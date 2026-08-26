@@ -234,6 +234,66 @@ did it the moment its pre-push hook was reached: 82 files failed, none of them t
 The blobs were already LF in every case, so the fix changes no committed content - it changes what a
 checkout writes to disk.
 
+## 8. The package manager, and the version four repos never declared
+
+Every one of the five runs bun, and until 2026-08-27 **not one of them said which bun**. No
+`engines`, no `packageManager`, no `.bun-version`. Whatever the machine happened to have was the
+toolchain, and nothing anywhere would notice if two machines disagreed.
+
+That is not a tidiness complaint. It took Portail-etu's production down for hours on 2026-08-26,
+and the shape of the failure is the lesson:
+
+- The deploy host is a KVM guest whose CPU advertises no AVX2, and bun's runtime cannot start there
+  from **1.3.9** onward. A CD run bisected it on the box itself - 1.3.14 through 1.3.9 all hang,
+  1.3.8 reaches user code.
+- **Every check that looked at bun still passed.** `bun --version` answers instantly, because the
+  binary loads. `bun install` succeeds. `bun run build` succeeds *too* - `bun run` honours a bin's
+  node shebang, so Vite was quietly running under Node the whole time. Only the server itself,
+  launched by pm2 as `bun ./build/index.js`, spun at 100% CPU inside its module load, before its
+  first log line and before it bound a port.
+
+So a deploy step that installed 1.4.0 over the box's working 1.3.7 was green at every stage and
+served nothing. **A version string proves a binary loads; only user code running proves a runtime
+works.** Portail-etu's install step now runs a one-line `bun -e` that writes a marker file and fails
+the deploy if the marker is absent.
+
+### The second reason to declare it: Dependabot reads the lockfile version
+
+Measured 2026-08-27, and it decides the ecosystem's bun for reasons that have nothing to do with any
+one host:
+
+| Question | Answer |
+| --- | --- |
+| What does a *fresh* `bun install` write under bun 1.4.0? | `"lockfileVersion": 2` |
+| What does bun 1.4.0 do to an EXISTING v1 lockfile? | leaves it at 1, even when it must rewrite it |
+| Which bun does Dependabot bundle? | **1.3.14** (`dependabot-core`, `bun/Dockerfile`, `ARG BUN_VERSION`) |
+| What does 1.3.14 do with a v2 lockfile? | `UnknownLockfileVersion: failed to parse lockfile` |
+
+Read together those four lines say something narrow and easy to trip over: **a repo's bun ecosystem
+updates die the day someone deletes `bun.lock` and reinstalls on bun >= 1.4.0, and never before.**
+Nothing warns. Dependabot simply stops opening pull requests for that directory, and a quiet
+Dependabot looks exactly like a repo with no updates available. Portail-etu's lockfile went to v2 on
+2026-08-26 and the next weekly run would have been the first to notice.
+
+This is also why **Renovate is not needed** and the plan to migrate all five to it is dropped.
+Dependabot's bun ecosystem works - it has been opening `/frontend` PRs on Canari for months - and the
+only thing that breaks it is a lockfile version we control. Migrating would have traded a working
+tool for a GitHub App install on every repo, to fix a problem that a pinned bun already fixes.
+
+### Where each repo stands
+
+| Repo | `.bun-version` | Why that number |
+| --- | --- | --- |
+| Canari | `1.3.14` | the newest bun Dependabot can follow |
+| Portail-etu | `1.3.8` | the newest bun its deploy host can *run* |
+| Sky / MiGallery / Le Cercle | owed | to be pinned as each is converted |
+
+Canari had the worst of it before the pin: **three different bun versions across its workflows**
+(1.2.18 in five, 1.4.0 in two) and `ci.yml` with no version at all - `setup-bun` with no `with:`
+block resolves to *latest*, which is both the 401-prone path `cd.yml` already warned about in a
+comment and the exact route by which a v2 lockfile could have entered the repo from CI. All eight
+sites now read `.bun-version` through `bun-version-file`.
+
 ---
 
 ## What the inventory says, in one paragraph

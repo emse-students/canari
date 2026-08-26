@@ -1,6 +1,6 @@
 <script lang="ts">
   import {
-    CheckCircle2,
+    CircleCheck,
     ClipboardList,
     ArrowRight,
     ExternalLink,
@@ -79,7 +79,7 @@
               : 'bg-amber-500/10 text-amber-600 group-hover:bg-amber-500/20 dark:text-amber-400'}"
           >
             {#if fi.submitted}
-              <CheckCircle2 size={20} strokeWidth={2.5} />
+              <CircleCheck size={20} strokeWidth={2.5} />
             {:else}
               <ClipboardList size={20} strokeWidth={2.5} />
             {/if}
