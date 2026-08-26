@@ -15,7 +15,7 @@
 # swap, and one nothing here has verified against a running site. The rule this
 # repo learned on Portail-etu is that a runtime move is proven on its target
 # host, not in CI. Until that is done, this stays on node.
-FROM node:24-alpine
+FROM node:26-alpine
 
 WORKDIR /app
 COPY frontend/build ./
