@@ -322,3 +322,70 @@ author to choose their own numbers, whereas
 - [durable-rules.md](durable-rules.md) - the rules these divergences were measured against
 - [search-contract.md](search-contract.md) - the contract this page's first finding turned into
 - [backlog.md](backlog.md) - where anything this page turns into work is scheduled
+
+---
+
+## 9. TypeScript 7: possible, measured, and REFUSED on both halves of Canari - for two different reasons
+
+The mandate says "TS7 partout ou c'est possible". On Canari it is not possible yet, and this section
+exists so nobody spends another evening finding that out. Measured 2026-08-27 against
+`typescript@7.0.2`, the `latest` dist-tag - a real release, the Go port, shipping a platform binary
+per target rather than a JS compiler.
+
+Both halves of the repo declare `^6.0.3` / `~6.0.3`. Both were bumped and both were reverted.
+
+### The frontend: `svelte-check` agrees with TS 6 only through a flag that says it may break
+
+`svelte-check` refuses TypeScript 7 outright unless BOTH majors are installed, the 7 aliased:
+
+```
+bun add -d typescript@~6 "@typescript/native@npm:typescript@7"
+```
+
+and then it offers two ways to use it. They do not agree with each other.
+
+| Path | Result | Wall clock |
+|---|---|---|
+| TS 6, the supported path | 7978 files, **0 errors**, 0 warnings | 17.0 s |
+| `--tsgo` (transpiles Svelte to disk) | 238 files, **7 ERRORS**, 2 files with problems | 5.8 s |
+| `--tsgo-experimental-api` (in-memory) | 230 files, **0 errors**, 0 warnings | 7.8 s |
+
+All seven `--tsgo` errors are the same shape - `Parameter 'e' implicitly has an 'any' type`, on the
+`onerror` handler and the `failed` snippet parameters of `<svelte:boundary>`, in `+layout.svelte` and
+`MainChatPage.svelte`. Svelte's own types give those parameters a type; the disk-transpile path loses
+it. They are tooling artefacts, not defects.
+
+So the only TS 7 path that tells the truth about this codebase is the one whose own help text reads
+*"Experimental feature, might break without warning."* Gating every commit and every CI run on that,
+to save nine seconds, is the opposite of the standing directive that everything be deterministic,
+reproducible and explicable. **The frontend stays on TypeScript 6.**
+
+Re-run the table above when `--tsgo` stops inventing those seven; that is the single condition.
+
+### The four NestJS services: `ts-jest` cannot run AT ALL under TypeScript 7
+
+`core-service` COMPILES clean under 7.0.2 - `bunx tsc -p tsconfig.build.json` exits 0. Then the suite:
+
+```
+Test Suites: 17 failed, 17 total
+Tests:       0 total
+
+TypeError: Cannot read properties of undefined (reading 'fileExists')
+  at ConfigSet._resolveTsConfig (ts-jest/dist/legacy/config/config-set.js:516:97)
+```
+
+Not one suite even loads. `ts-jest` reaches for a compiler-API surface (`ts.sys`) that the native
+package does not expose. Reverted, the same 17 suites pass 157 tests. **The services stay on
+TypeScript 6** until `ts-jest` ships TypeScript 7 support - that is the single condition, and it is
+somebody else's release, not our work.
+
+Note how this compounds with the OTHER measured limit on this repo: these suites already cannot run
+under the bun runtime (section 8). Jest is now the reason for two separate pins.
+
+### The guard
+
+Both conditions are somebody else's release, so both will look "ready" the day a bot proposes them.
+`dependabot.yml` therefore ignores `typescript` majors on `/frontend` and on the four service
+directories, with a pointer back here - because `dependabot-auto-merge.yml` is enabled on this repo,
+and without the ignore the path from "Dependabot opens a PR" to "every backend test suite fails to
+load on main" has no human in it.

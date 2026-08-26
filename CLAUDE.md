@@ -194,6 +194,9 @@ measurements and per-repo state live in
 half and is the only copy**; nothing here restates it.
 
 **Decisions already taken and NOT to be relitigated:** bun is the runtime everywhere it can be;
+**TYPESCRIPT 7 IS REFUSED ON CANARI** (2026-08-27, measured on both halves - section 9 of
+[ecosystem-convergence](docs/wiki/ecosystem-convergence.md), the only copy) and `dependabot.yml`
+now ignores its majors, because `dependabot-auto-merge.yml` would otherwise land it unattended;
 **RENOVATE IS DROPPED** (2026-08-27) - Dependabot's bun ecosystem works and the only thing that
 breaks it is a lockfile version we control, so no GitHub App install is owed by the user; Sky keeps
 Tailwind and migrates to v4 without preflight; `bun:sqlite` replaces better-sqlite3; the `image_url`
@@ -201,7 +204,7 @@ deletion stands.
 
 **DONE:** Portail-etu pinned and its outage closed (deploy green, site 200). Canari: one
 `.bun-version` feeding eight workflow sites; the 18 deprecated lucide names; the last `node:22`
-image, now 24; the four NestJS
+image, now 24; the `node -e` healthchecks proven to survive a bun image; the four NestJS
 services migrated to bun end to end - images BUILT AND STARTED locally, all four reaching
 `NestFactory`; **`libs/shared-ts` DELETED** with every piece that named it (CI matrix, pre-test
 build step, two CD path filters, Dependabot directory, Makefile target, two Husky branches, the
@@ -214,23 +217,20 @@ scripts; both Husky hooks rewritten to bun and to English.
 installs/lints/builds with bun and TESTS with node, and both call sites in `ci.yml` say so. **Do not
 collapse that to one runtime without re-running that spec.**
 
-**OPEN, in order:**
+**CANARI'S SIDE OF THE MANDATE IS CLOSED.** Nothing on this repo is open: bun everywhere it can
+run, TS 7 measured and refused with its two conditions written down, and CodeQL + secret scanning
+were ALREADY here (`code-analysis.yml`: CodeQL, TruffleHog, `bun audit`, `cargo audit`) - that half
+was only ever owed by the other repos.
 
-1. **The rest of the mandate on Canari is TS 7** - Dependabot has proposed `typescript 6.0.3 ->
-   7.0.2` on `/frontend`, and the four services declare `^6.0.3` too. It is a MEASUREMENT, not a
-   bump: `svelte-check`, `ts-jest` and `oxlint-tsgolint` all sit on top of it. Do one package, run
-   its gate, and record the limit the way the jest-under-bun one is recorded. **CodeQL and secret
-   scanning are ALREADY on Canari** (`code-analysis.yml`: CodeQL, TruffleHog, `bun audit`,
-   `cargo audit`) - that half of the mandate is owed by the OTHER repos, not this one.
-2. **Sky, MiGallery, le-cercle have not been touched this session** and each still owes a
-   `.bun-version`. Sky is in a NON-BUILDABLE intermediate state from an earlier session: `bun
-   install` pending, 36 `lucide-svelte` -> `@lucide/svelte` plus ~4 deprecated names, Dockerfile in
-   bun, `ci-bun.yml`, pm2 out of `deploy.yml`, `dependabot.yml`, five docs pages, gates, then a
-   commit split into substance and a separate oxfmt reformat. MiGallery owes npm->bun, an audit of 17
-   scripts, 68 lucide icons, Tailwind PostCSS->Vite, oxlint/oxfmt/oxvelte, TS 7, 4 vulnerabilities,
-   the duplicate `.eslintrc.json`+`eslint.config.js`, a pending `code-analysis.yml` and a harmonised
-   `dependabot.yml`. le-cercle owes oxlint/oxfmt/oxvelte, TS 7 (fix the `^6.0.3` caret) and
-   Dependabot on GitLab.
+**OPEN - the other three repos, none touched this session, each still owing a `.bun-version`:** Sky
+is in a NON-BUILDABLE intermediate state from an earlier session: `bun install` pending, 36
+`lucide-svelte` -> `@lucide/svelte` plus ~4 deprecated names, Dockerfile in bun, `ci-bun.yml`, pm2 out
+of `deploy.yml`, `dependabot.yml`, five docs pages, gates, then a commit split into substance and a
+separate oxfmt reformat. MiGallery owes npm->bun, an audit of 17 scripts, 68 lucide icons, Tailwind
+PostCSS->Vite, oxlint/oxfmt/oxvelte, TS 7, 4 vulnerabilities, the duplicate
+`.eslintrc.json`+`eslint.config.js`, a pending `code-analysis.yml` and a harmonised
+`dependabot.yml`. le-cercle owes oxlint/oxfmt/oxvelte, TS 7 (fix the `^6.0.3` caret) and Dependabot
+on GitLab. **Read section 9 before touching TS 7 on any of them.**
 
 **ONE-OFF ACTIONS GO TO THE USER** (2026-08-25): *"Pour les choses qui ne se font qu'une fois, tu peux
 me demander de les faire hein."* Building a tool for a single click is that waste.
