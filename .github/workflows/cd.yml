@@ -243,8 +243,11 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          # Pinned: "latest" calls api.github.com/repos/oven-sh/bun/git/refs/tags and can 401 with GITHUB_TOKEN.
-          bun-version: '1.2.18'
+          # Pinned via `.bun-version`, the one place this repo names a bun. Two reasons it must
+          # never be "latest": that resolves through api.github.com/repos/oven-sh/bun/git/refs/tags
+          # and can 401 with GITHUB_TOKEN, and any bun >= 1.4.0 writes `lockfileVersion: 2` into a
+          # `bun.lock` it creates - which Dependabot, bundling bun 1.3.14, cannot parse.
+          bun-version-file: ".bun-version"
 
       - name: Cache Bun dependencies
         uses: actions/cache@v6
