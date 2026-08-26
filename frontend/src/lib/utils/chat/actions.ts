@@ -317,8 +317,14 @@ export async function processPendingInvitations(params: {
                 log(`[PENDING] ${inv.deviceId} already active - skip`);
                 continue;
               }
-            } catch {
-              /* ignore */
+            } catch (statusErr) {
+              // The status read is what would have told us the invitation was already fulfilled;
+              // without it the WrongEpoch below is reported as non-recoverable and retried next
+              // cycle, which is correct but indistinguishable from a genuinely stuck add unless
+              // the reason the check never ran is said out loud.
+              log(
+                `[PENDING] Membership status of ${inv.deviceId} unreadable: ${String(statusErr).slice(0, 100)}`
+              );
             }
             log(`[PENDING] Non-recoverable error for ${inv.deviceId}: ${errStr.slice(0, 100)}`);
           } else {

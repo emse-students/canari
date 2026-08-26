@@ -825,6 +825,7 @@ async function grp4() {
       let joinerPane = null;
       let joinerLifecycle = null;
       let joinerSaid = null;
+      let inviterSaid = null;
       if (measurable) {
         // THE JOINER MUST HAVE THE GROUP OPEN, or this measures the check and not the product.
         // `awaitMessage` reads the OPEN conversation's message pane; the join above only waits for
@@ -854,11 +855,17 @@ async function grp4() {
         // SO THE FILTER IS THE GROUP, NOT THE VOCABULARY. Everything W2 said about THIS group, by
         // name or by the id prefix its logs use, plus the lines that name a retirement whoever it
         // belongs to. A vocabulary filter can only find the mechanisms someone already thought of.
-        joinerSaid = consoleLines(o2.cx).filter((l) =>
-          new RegExp(
-            `${name}|${(gid ?? name).slice(0, 8)}|marked removed|retired|Excluded from group`
-          ).test(l)
+        //
+        // AND BOTH SIDES, BECAUSE A REMOVE COMMIT IS SOMETHING SOMEBODY ELSE DID. The joiner's own
+        // words end at "I was evicted at epoch 3"; the sentence that explains WHY is on the device
+        // that committed it. Reading only the victim's console is how a two-party race gets
+        // diagnosed as a one-party bug - the 2026-08-26 capture named `[EVICT]` and could go no
+        // further, because the decision to kick the leaf was taken on the inviter.
+        const aboutTheGroup = new RegExp(
+          `${name}|${(gid ?? name).slice(0, 8)}|marked removed|retired|Excluded from group`
         );
+        joinerSaid = consoleLines(o2.cx).filter((l) => aboutTheGroup.test(l));
+        inviterSaid = consoleLines(o1.cx).filter((l) => aboutTheGroup.test(l));
         if (joinerPane === 'composer') {
           const crossing = mark('GRP4X');
           await send(w1, `${crossing} after a join by link`);
@@ -898,6 +905,7 @@ async function grp4() {
           joinerPane,
           joinerLifecycle,
           joinerSaid,
+          inviterSaid,
           redactionNote:
             'the join token is a capability for a real group on production and is never recorded.',
         },

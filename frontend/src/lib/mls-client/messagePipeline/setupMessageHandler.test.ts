@@ -478,6 +478,59 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(onGroupReady).toHaveBeenCalledWith(groupId);
   });
 
+  it('Welcome for a HELD but EVICTED group → re-admission: forget the old state, process it', async () => {
+    // HELD IS NOT THE SAME AS USABLE, and the guard above used to ask only the easier question. An
+    // evicted group stays in the WASM store, so every Welcome re-admitting this device was dropped
+    // as a redelivery and the device stayed out for good. This is reached by ANY legitimate
+    // kick-and-re-add - precisely the outcome the duplicate-leaf repair is designed to produce - so
+    // it outlives the GRP-4 race that exposed it. The old state is forgotten first: the new Welcome
+    // must install on nothing, and the evicted state can neither read nor send anything anyway.
+    const deps = baseDeps();
+    const mls = deps.mlsService as any;
+    mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
+    mls.isGroupActive = vi.fn().mockResolvedValue(false);
+    mls.processWelcome = vi.fn().mockResolvedValue(groupId);
+    setupMessageHandler(deps as any);
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean,
+      e?: Uint8Array
+    ) => Promise<boolean>;
+
+    const ok = await onMsg('peer', new Uint8Array([1]), groupId, true, undefined);
+
+    expect(ok).toBe(true);
+    expect(mls.forgetGroup).toHaveBeenCalledWith(groupId);
+    expect(mls.processWelcome).toHaveBeenCalled();
+  });
+
+  it('Welcome for a held group whose membership cannot be READ → stays idempotent', async () => {
+    // The third answer again: `null` is not an eviction. Treating an unreadable membership as one
+    // would forget a group this device is still a member of and hand a redelivered Welcome a
+    // KeyPackage that was consumed at the original join - turning a free no-op into a real loss.
+    const deps = baseDeps();
+    const mls = deps.mlsService as any;
+    mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
+    mls.isGroupActive = vi.fn().mockRejectedValue(new Error('store unreadable'));
+    mls.processWelcome = vi.fn().mockResolvedValue(groupId);
+    setupMessageHandler(deps as any);
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean,
+      e?: Uint8Array
+    ) => Promise<boolean>;
+
+    const ok = await onMsg('peer', new Uint8Array([1]), groupId, true, undefined);
+
+    expect(ok).toBe(true);
+    expect(mls.forgetGroup).not.toHaveBeenCalled();
+    expect(mls.processWelcome).not.toHaveBeenCalled();
+  });
+
   it('commit for unknown group → buffered + recovery seam fired immediately', async () => {
     const unknownGroupId = 'aaaaaaaa-0000-4000-8000-000000000001';
     const deps = baseDeps();

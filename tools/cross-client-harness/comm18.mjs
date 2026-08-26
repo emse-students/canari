@@ -81,12 +81,20 @@ const community = `C18 ${run}`;
 const salon = `c18-${run.toLowerCase()}`;
 const marker = `${run}-landed`;
 
-const failures = [];
+/**
+ * Steps that THREW. Not the row's failures - see `failures` below, which is what the record carries.
+ *
+ * On 2026-08-25 this row recorded `FAIL` with `failures: []` beside four expectations, three of them
+ * false. Both fields were accurate and the pair was unreadable: an empty `failures` is read as
+ * "nothing failed", and the reader who believes it goes looking for the defect somewhere else. A
+ * name that means "the steps that threw" must say so.
+ */
+const stepErrors = [];
 const step = async (name, fn) => {
   try {
     return await fn();
   } catch (e) {
-    failures.push(`${name}: ${e instanceof Error ? e.message : String(e)}`);
+    stepErrors.push(`${name}: ${e instanceof Error ? e.message : String(e)}`);
     return null;
   }
 };
@@ -301,7 +309,7 @@ const expectations = {
 const verdict =
   !armed || landing?.gate !== 'unlocked'
     ? 'VACUOUS'
-    : failures.length > 0 || Object.values(expectations).some((v) => v !== true)
+    : stepErrors.length > 0 || Object.values(expectations).some((v) => v !== true)
       ? 'FAIL'
       : 'PASS';
 
@@ -347,7 +355,15 @@ record('COMM-18', gated.verdict, {
   // how far the chain got.
   hooksSaid: landing?.hooksSaid ?? null,
   ...expectations,
-  failures,
+  // EVERYTHING THAT WENT WRONG, IN ONE LIST, so `failures: []` means exactly what it reads as. A
+  // step that threw and an expectation that came back false are the same news to whoever reads the
+  // row back, and keeping them in two fields let one of them be empty while the row said FAIL.
+  failures: [
+    ...stepErrors,
+    ...Object.entries(expectations)
+      .filter(([, v]) => v !== true)
+      .map(([k]) => `expectation not met: ${k}`),
+  ],
 });
 
 w1.close();

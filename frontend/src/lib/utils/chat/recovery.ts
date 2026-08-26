@@ -123,11 +123,13 @@ async function stopRecovering(
  *  3. Group CONFIRMED ABSENT server-side -> purge the local phantom, stop.
  *  4. Group already in local WASM -> nothing to recover (caller must forgetGroup first if forked).
  *  5. Group tombstoned (`deletedAt`) -> mark the conversation removed, stop.
- *  6. Try the self-service external-commit join (Phase 4).
- *  7. The server REFUSED it as a non-member (`NotAGroupMemberError`) -> mark the conversation
+ *  6. A member ALREADY OWES us a Welcome (membership still `pending`) -> ask one, stop. The
+ *     external join below is not ours to make while an Add is in flight for our own leaf.
+ *  7. Try the self-service external-commit join (Phase 4).
+ *  8. The server REFUSED it as a non-member (`NotAGroupMemberError`) -> mark the conversation
  *     removed, stop. This is a terminating ANSWER and not a failed attempt, which is the difference
  *     between this seam terminating on a proof and terminating only when the group gets deleted.
- *  8. Any other failure -> fall back to a single welcome_request (a reachable member re-adds us).
+ *  9. Any other failure -> fall back to a single welcome_request (a reachable member re-adds us).
  *     The watchdog re-invokes on its cadence.
  */
 export async function requestReAdd(
@@ -203,6 +205,32 @@ export async function requestReAdd(
   lastReAddAt.set(groupId, now);
   markGroupNotReady(deps.userId, groupId);
 
+  // THE FACT THAT DECIDES WHICH OF THE TWO JOIN PATHS IS OURS, READ WHERE IT IS ALREADY WRITTEN.
+  //
+  // `pending` means a member has been told to Add this device and OWES it a Welcome - the state the
+  // invitation flow writes the moment a link is accepted. `active` means this device joined once and
+  // may since have lost its local state, which is the ONLY population the self-service external
+  // join was ever written for. Both used to arrive here indistinguishable, so an invited device
+  // served itself an external commit while the Add was in flight: two parties then held the same
+  // leaf in the same tree, the member's `addMember` failed `DuplicateSignature`, and its handler
+  // kicked our LIVE leaf - a Remove commit evicting us from the group we had just joined. Measured
+  // on 2026-08-26 (GRP-4): the invitation link and this seam raced on every join by link, and the
+  // joiner lost about half of them. The overlap is deleted here rather than reconciled afterwards,
+  // because a ledger repairing two parties that wrote the same leaf is a witness, not a fix.
+  const owed = await readWelcomeOwed(groupId, deps);
+  if (owed === null) {
+    // The discriminator could not be read, so neither path is known to be ours. The watchdog owns
+    // the cadence and re-invokes; guessing here is the exact move this block exists to stop.
+    deps.log(
+      `[READD] ${groupId.slice(0, 8)}... membership status unreadable - skipping this round`
+    );
+    return;
+  }
+  if (owed) {
+    await askAMemberToReAddUs(groupId, deps, 'invited, Welcome owed by a member');
+    return;
+  }
+
   // Self-service external-commit join first (Phase 4): fetch the stored GroupInfo and rejoin at the
   // current epoch without a peer. On success, clear the recovery bookkeeping and return.
   deps.log(`[READD] ${groupId.slice(0, 8)}... externalJoin…`);
@@ -253,22 +281,65 @@ export async function requestReAdd(
     return;
   }
 
-  // Fallback: no GroupInfo stored yet -> ask a reachable member to re-add us via a Welcome. The
-  // SYNC_WATCHDOG re-invokes this on its cadence until we rejoin. "Or not an authorized member" used
-  // to be in this sentence, and it was the bug: that case cannot be answered by any member and now
-  // exits at step 7 instead of arriving here.
+  // No GroupInfo stored yet -> ask a reachable member to re-add us via a Welcome. The SYNC_WATCHDOG
+  // re-invokes this on its cadence until we rejoin. "Or not an authorized member" used to be in this
+  // sentence, and it was the bug: that case cannot be answered by any member and now exits at step 8
+  // instead of arriving here.
   //
   // WHAT REACHES HERE IS THEREFORE BOUNDED BY SOMETHING: a group whose base is unpublished has a
   // member who will publish one, or a peer who can send a Welcome. Nothing that reaches this line
   // any longer has a server-side answer proving the request is hopeless.
-  deps.log(`[READD] ${groupId.slice(0, 8)}... sendWelcomeRequest…`);
+  await askAMemberToReAddUs(groupId, deps, `external join refused: ${outcome.reason}`);
+}
+
+/**
+ * Answers "does a member already owe this device a Welcome for `groupId`?" from the server's own
+ * per-device membership row - the row the invitation flow writes and the kick path resets.
+ *
+ * THREE ANSWERS, AND THE THIRD IS NOT A "NO". `true` an Add is in flight for our leaf, `false` the
+ * server holds no pending row, `null` the question could not be asked. Collapsing `null` into
+ * `false` is precisely the mistake this seam exists to stop making: it would send the invited
+ * population back down the external-join path on exactly the network conditions where losing the
+ * race is likeliest. `getDeviceMemberships` rejects rather than answering `[]` so that this function
+ * can tell the two apart at all.
+ */
+async function readWelcomeOwed(groupId: string, deps: RecoveryDeps): Promise<boolean | null> {
+  try {
+    const rows = await deps.mlsService.getDeviceMemberships(
+      deps.userId,
+      deps.mlsService.getDeviceId()
+    );
+    return rows.find((r) => r.groupId === groupId)?.status === 'pending';
+  } catch (e) {
+    deps.log(
+      `[READD] ${groupId.slice(0, 8)}... getDeviceMemberships threw: ${String(e).slice(0, 120)}`
+    );
+    return null;
+  }
+}
+
+/**
+ * Asks a reachable member to re-add this device by Welcome, and says WHY it was asked.
+ *
+ * The single seam for the only remaining way into a group this device cannot join by itself, shared
+ * by the two callers that reach it for opposite reasons - one because a member already owes us the
+ * Welcome, one because the external join was refused. `context` is what keeps the log honest: the
+ * same request sent for those two reasons means different things, and reading "fallback" on the path
+ * that is the PRIMARY one would misdescribe a healthy join as a degraded one.
+ */
+async function askAMemberToReAddUs(
+  groupId: string,
+  deps: RecoveryDeps,
+  context: string
+): Promise<void> {
+  deps.log(`[READD] ${groupId.slice(0, 8)}... sendWelcomeRequest… (${context})`);
   await deps.mlsService
     .sendWelcomeRequest(groupId)
     .catch((e) =>
       deps.log(`[READD] welcome_request failed for ${groupId.slice(0, 8)}...: ${String(e)}`)
     );
   deps.log(
-    `[READD] welcome_request sent for ${groupId.slice(0, 8)}... (fallback, cadence ${RECOVERY_TIMEOUT_MS / 1000}s)`
+    `[READD] welcome_request sent for ${groupId.slice(0, 8)}... (cadence ${RECOVERY_TIMEOUT_MS / 1000}s)`
   );
 }
 

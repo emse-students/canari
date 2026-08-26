@@ -22,7 +22,7 @@ import { createMlsStatePersister } from '../mlsStatePersister';
 import { installMlsStatePersisterLifecycle } from '../mlsStatePersisterLifecycle';
 import { registerMlsStatePersister } from '../mlsStatePersisterRegistry';
 import type { MessageHandlerDeps } from './deps';
-import { retireIfEvicted } from '$lib/utils/chat/eviction';
+import { readLocalMembership, retireIfEvicted } from '$lib/utils/chat/eviction';
 export type { MessageHandlerDeps } from './deps';
 
 /** Short-lived message buffered while waiting for a Welcome. */
@@ -266,7 +266,35 @@ async function handleWelcome({
   // detecting GroupAlreadyExists - which would trigger a welcome_request, causing a kick +
   // re-add by the inviter. That re-add advances the epoch past us, forking us
   // permanently (group_epoch frozen < msg_epoch). We therefore treat the Welcome as idempotent.
-  if (mlsService.getLocalGroups().includes(terminalId)) {
+  //
+  // HELD IS NOT THE SAME AS USABLE, AND THIS GUARD USED TO ASK THE EASIER QUESTION. An EVICTED group
+  // stays in the WASM store as an inactive group, so `getLocalGroups().includes` answers `true` for
+  // it - and every Welcome re-admitting a device that had been kicked was dropped as a redelivery.
+  // That is the one Welcome that could not possibly be a redelivery: a kick consumes the leaf, so
+  // the re-add mints a FRESH KeyPackage, and the frame in hand is the only way back in. Dropping it
+  // strands the device in the group for ever. `isGroupActive` is the fact that separates the two,
+  // and it is the same fact the eviction policy already treats as authoritative - a group we were
+  // removed from has nothing worth keeping, which is why forgetting it below costs nothing even if
+  // this Welcome then fails to install. Measured on 2026-08-26 (GRP-4), where the kick that healed
+  // the duplicate leaf was itself made permanent here.
+  //
+  // A FAILURE TO READ MEMBERSHIP IS NOT AN EVICTION: `null` keeps the idempotent path, because
+  // treating "could not tell" as "removed" would forget the state of groups this device is still in.
+  const heldLocally = mlsService.getLocalGroups().includes(terminalId);
+  const readmittedAfterEviction =
+    heldLocally &&
+    (await readLocalMembership({
+      mlsService,
+      groupId: terminalId,
+      context: 'before treating a Welcome as a redelivery',
+      log,
+    })) === false;
+  if (readmittedAfterEviction) {
+    log(
+      `[WELCOME] ${terminalId.slice(0, 8)}… held but EVICTED - this Welcome is a re-admission, not a redelivery`
+    );
+  }
+  if (heldLocally && !readmittedAfterEviction) {
     cancelReAdd(terminalId, recoveryTimers);
     noMatchKpFailures.delete(terminalId);
     const convo = deps.conversations.get(terminalId);
@@ -302,6 +330,15 @@ async function handleWelcome({
   // failure into `deferredRecovery`; it is executed once the lock is released. [[recovery-outside-lock]]
   const deferredRecovery = await mlsService.runUnderMlsLock<DeferredRecovery | null>(async () => {
     try {
+      // The evicted group's local state cannot read or send anything, so it is not state - it is the
+      // only thing standing between this Welcome and a usable group. Forgotten HERE, under the lock
+      // and adjacent to the call that installs its replacement, so no other operation on this group
+      // can observe the gap. No `minEpoch` floor: a requeued PRE-eviction Welcome cannot install
+      // anyway (its KeyPackage was consumed at the original join), and there is no state left to
+      // protect from a fork.
+      if (readmittedAfterEviction) {
+        mlsService.forgetGroup(terminalId);
+      }
       // processWelcome returns the effective MLS groupId (may differ from the delivery envelope).
       // Fall back to the envelope groupId if WASM returns undefined (should not happen).
       const joinedGroupId =

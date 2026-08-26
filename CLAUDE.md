@@ -146,8 +146,9 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     had no runner, written as the ladder reaches them. Design, cost and the decisions it turns on are
     on [cross-client-testing](docs/wiki/cross-client-testing.md) and
     [cross-client-campaign](docs/wiki/cross-client-campaign.md), the only copies. **Where the ladder
-    stands: rungs 1-7 taken, 8 GRP holds on ONE row - GRP-4 FAILs twice on `d6f61539`, a live P1 in
-    [backlog](docs/wiki/backlog.md) - 9 COMM at 23 PASS, and THREE re-runs owed - COMM-4 (dirty),
+    stands: rungs 1-7 taken, 8 GRP held on ONE row - **GRP-4 is DIAGNOSED AND FIXED, both halves, and
+    owes only its re-run**: two parties added the joiner's leaf and the Welcome that would have healed
+    it was dropped as a redelivery - 9 COMM at 23 PASS, and THREE re-runs owed - COMM-4 (dirty),
     COMM-22 (`VACUOUS`, runner changed) and COMM-24 (runner changed). THEN DEL, TAB, MULTI, LIFE,
     NOTIF, CALL, HEAL, PIN, CORRUPT.** The board carries every verdict and the format of a cell; do not restate
     either here. **A `PASS-DIRTY` NO LONGER STOPS A RUNG BY ITSELF (user, 2026-08-25)** - what the

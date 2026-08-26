@@ -674,7 +674,12 @@ export interface IMlsService {
       status: string;
     }>
   >;
-  /** Get all device-group memberships for the current device */
+  /**
+   * Get all device-group memberships for the current device, each with its status.
+   *
+   * REJECTS when the server could not be asked - `[]` means "no row", never "I could not tell".
+   * See the implementation for why one caller cannot live with the two collapsed.
+   */
   getDeviceMemberships(
     userId: string,
     deviceId: string

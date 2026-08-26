@@ -149,6 +149,58 @@ which is also where every release up to and including v0.13.1 now lives.
   nothing - no spec, no frontend test, no board row - watches them.
 
 ### Fixed
+- **Joining a group by INVITATION LINK evicted the joiner about half the time, because the joiner
+  both asked a member for a Welcome and served itself one.** `requestReAdd`'s external-commit join
+  was written for a device that had joined once and lost its local state; an invited device, whose
+  membership is still `pending` and for whom a member ALREADY owes a Welcome, reached the same code
+  path indistinguishably. Both parties then added the same leaf to the same tree: the member's
+  `addMember` failed `DuplicateSignature`, its duplicate-leaf repair removed what it read as a stale
+  leaf - the joiner's LIVE one - and the Remove evicted the device that had just got in. Measured on
+  2026-08-26 as GRP-4, from three independent logs rather than inferred: the joiner's console
+  (`externalJoin` at `baseEpoch=1`), the server (a `WELCOME_REQ` FORWARDED to a member in the same
+  second, then that member's two commits and its `[KICK] Reset device ... to pending`) and the
+  inviter's console, whose SILENCE was itself evidence once we confirmed the repair's own log line
+  carries the group id the filter was scoped to. The overlap is deleted rather than reconciled:
+  `requestReAdd` now reads the `pending`/`active` discriminator through `getDeviceMemberships`,
+  which already carried it end to end, so no server change was needed - and a status it cannot read
+  is a THIRD answer that skips the round, never a "not pending" that would send the invited
+  population back down the racing path on exactly the conditions where it loses.
+
+  **The re-admission that should have healed it was dropped as a duplicate, and that half is a
+  defect on its own.** The Welcome idempotence guard asked whether the group was held locally, which
+  stays true for an EVICTED group still sitting in the WASM store - so every Welcome re-admitting a
+  device was discarded as a redelivery. This is reached by any legitimate kick-and-re-add, which is
+  precisely the outcome the duplicate-leaf repair is designed to produce, so it would have outlived
+  the race that exposed it. The guard now separates held from usable via `isGroupActive`, forgets the
+  evicted state before processing so the new Welcome installs on nothing, and keeps the idempotent
+  path when membership is merely UNREADABLE. `getDeviceMemberships` stopped answering `[]` for an
+  unreachable server, since a caller now decides on the difference between "no row" and "I could not
+  tell".
+
+- **The server classifier stopped matching the sentence the server writes, and the self-test that
+  should have caught it spoke the same dead dialect.** The COMM-8 fix made
+  `[DISTRIBUTION_GROUP] read`, `[DISTRIBUTION_GROUP] served` and `[CHANNEL_GRAINE] served` print
+  `base=<n> active=<n>` - the whole point being that `published=true` answered "is there a base" and
+  never "is that base usable". Four of `srvlog.mjs`'s BENIGN rules and the count-based
+  `settleFirstLooks` predicate were anchored on the fields either side of the new pair, so all five
+  stopped matching the moment it appeared. Every seed read in the estate then landed in
+  `unexplained`, the server window was never clean whatever the checks did, and `--repeat` could not
+  reach pass 2 on any phase - which is how a stale classifier stops a campaign rather than a
+  product defect. The rules now READ the epochs: `base=(\d+) active=\1` is a backreference, equal
+  is the healthy answer and is forgiven, and `base < active` - the stale-base condition itself -
+  cannot match and stays visible under its own name, so the rule cannot launder the defect it was
+  widened past. `published=false` has no base to be stale and prints `base=none`, so the two
+  spellings are disjoint branches rather than one loose pattern.
+
+  `[DISTRIBUTION_GROUP] served` had TWO rules for one line, 140 lines apart. They went stale
+  together, and repairing either gave no reason to look for the other - the duplicate is deleted and
+  the survivor carries both spellings. The self-test stayed green throughout because its fixtures
+  were copied verbatim from production in August and were never refreshed when the server moved: a
+  fixture is only evidence for the sentence the server writes TODAY. Refreshed, and the three cases
+  the epochs exist for are now pinned - a stale base in `unexplained` for both services and both
+  field orders, and a pre-epoch read proving `settleFirstLooks` settles nothing once the dialect
+  moves, which is a failure mode a count-based rule has and a per-line rule does not.
+
 - **The external-join base of a private salon was minted by a fire-and-forget call from one device,
   and nothing else ever minted another - so losing that one call locked every other device out of
   the salon for ever.** COMM-8 measured a web client submitting the same external commit to the same

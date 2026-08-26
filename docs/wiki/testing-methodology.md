@@ -659,6 +659,24 @@ never ESTABLISHED. Here the precondition was established, correctly, by the chec
 read before the system had finished responding to it. **Anything you did to the client is a
 transition; give it the same deadline you would give the application's own.**
 
+#### 41. AN UNDRIVEN DEVICE IS A PARTICIPANT, SO A "TWO-DEVICE" CHECK IS NOT TWO-DEVICE
+
+GRP-4's evictions were committed by neither browser the check drives. The commits came from a fleet
+device the run never touches - the preflight had said so on every single run, as
+`note FLEET: 1 device(s) online that this run does not drive` - and the first diagnosis blamed the
+inviter's browser because that was the only other party the check knew about. The inviter's console
+was SILENT, which was read as "the log line must not carry the group id"; it carried it, and the
+silence was the answer.
+
+A device that holds a leaf commits on its own timers whether a check drives it or not. So the
+population under test is every device ONLINE for the accounts in play, not every device the runner
+has a handle on - and the preflight note naming them is evidence, not noise. When a check's two
+parties cannot account for what the tree did, the third party is in that note.
+
+Corollary for the diagnosis order: a client's silence is only evidence once the line you expected is
+confirmed to carry the field you filtered on. Read the log SITE before reading meaning into its
+absence.
+
 ### Watching, and what a window means
 
 #### 10. FORGIVING AN EVENT MEANS TAKING IT OUT OF THE GATE, NEVER OUT OF THE RECORD
@@ -1713,6 +1731,27 @@ and stays that way. **A result you cannot read is a result you cannot believe, a
 recovery: it destroys the evidence it was meant to recover.** Each check listing buckets by hand is
 how they drift apart from the definition of `clean`, so they are listed once, next to it: `dirtOf()`
 returns every clean-breaking bucket that is non-empty, and checks record that.
+
+#### 42. A CLASSIFIER AND ITS FIXTURES SPEAK A DIALECT THE SERVER CAN LEAVE, AND A COUNT-BASED RULE LEAVES NOTHING BEHIND TO SEE IT
+
+The COMM-8 fix added `base=<n> active=<n>` to three server lines. Four of `srvlog.mjs`'s BENIGN rules
+and one count-based predicate were anchored on the fields either side of the new pair, so all five
+stopped matching the moment it appeared: every seed read in the estate landed in `unexplained`, no
+server window was ever clean, and `--repeat` could not reach pass 2 on any phase. A stale classifier
+stopped the campaign, and no product defect was involved.
+
+Two things kept it invisible. The self-test was green because its fixtures were copied verbatim from
+production in August and never refreshed when the server moved - a fixture is a RECORDING, and it
+ages exactly as fast as the code that produced it. And the predicate counted matches rather than
+judging lines, so its failure produced a number that was merely wrong instead of a population a
+reader could look at. **Prefer a rule whose failure leaves its subjects visible under their own
+name.** Where a rule must be widened past a field, widen it by READING that field - `base=(\d+)
+active=\1` forgives equality with a backreference and cannot match the stale-base condition it was
+widened past, so it can never launder the defect. Disjoint spellings get disjoint branches
+(`base=none` for an unpublished base), not one loose pattern.
+
+And two rules for one log line, 140 lines apart, go stale together while giving no reason to look for
+each other. One line, one rule, carrying every spelling.
 
 ### Classify the SITE, not the line - a run finds spellings ONE AT A TIME
 

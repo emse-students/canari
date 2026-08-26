@@ -43,8 +43,18 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     externalJoin: vi.fn().mockResolvedValue({ joined: false, reason: 'no_base_published' }),
     forgetGroup: vi.fn(),
     getDeviceId: vi.fn().mockReturnValue('self-device'),
+    // Default = the server holds no PENDING row for this device, so no member owes it a Welcome and
+    // the self-service external join is this device's to make. The rows are what separate the two
+    // populations `requestReAdd` serves, so a stub that answers nothing puts every case on the
+    // "could not tell" path and none of them reach the join at all.
+    getDeviceMemberships: vi.fn().mockResolvedValue([]),
     ...overrides,
   };
+}
+
+/** One membership row in the shape `getDeviceMemberships` returns. */
+function membership(groupId: string, status: 'pending' | 'active') {
+  return { id: `m-${groupId}`, userId: 'user-a', deviceId: 'self-device', groupId, status };
 }
 
 function makeConversations(entries: Array<[string, object]> = []) {
@@ -70,6 +80,46 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
 // ── requestReAdd ─────────────────────────────────────────────────────────────
 
 describe('requestReAdd', () => {
+  it('does not external-join a group a member already owes us a Welcome for', async () => {
+    // THE REGRESSION THIS PINS COST GRP-4 ABOUT HALF ITS JOINS. An invited device whose membership
+    // is still `pending` has an Add in flight for its own leaf; serving itself an external commit
+    // puts two parties in the same tree, and the loser of that race is evicted by the winner's
+    // duplicate-leaf repair. The welcome_request is not a fallback here - it is the whole path.
+    const deps = makeDeps();
+    deps.mlsService.getDeviceMemberships = vi.fn().mockResolvedValue([membership('g1', 'pending')]);
+    deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
+
+    await requestReAdd('g1', deps, new Map());
+
+    expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
+    expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1');
+  });
+
+  it('external-joins a group whose membership is already active', async () => {
+    // The other half of the same discriminator: `active` is a device that joined once and may since
+    // have lost its local state, which is the ONLY population external join was written for.
+    const deps = makeDeps();
+    deps.mlsService.getDeviceMemberships = vi.fn().mockResolvedValue([membership('g1', 'active')]);
+    deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
+
+    await requestReAdd('g1', deps, new Map());
+
+    expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1');
+  });
+
+  it('skips the round entirely when the membership status cannot be read', async () => {
+    // A THIRD ANSWER THAT IS NOT A "NO". Collapsing an unreadable status into "not pending" would
+    // send the invited population back down the external-join path on exactly the conditions where
+    // losing the race is likeliest. The watchdog owns the cadence, so skipping costs one cycle.
+    const deps = makeDeps();
+    deps.mlsService.getDeviceMemberships = vi.fn().mockRejectedValue(new Error('offline'));
+
+    await requestReAdd('g1', deps, new Map());
+
+    expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
+    expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
+  });
+
   it('external join success short-circuits the welcome_request fallback', async () => {
     const deps = makeDeps();
     deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });

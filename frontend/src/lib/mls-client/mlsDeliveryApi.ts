@@ -1111,7 +1111,16 @@ export class MlsDeliveryApi {
     }
   }
 
-  /** Returns device-level membership rows for a device, including status (`pending`/`active`). */
+  /**
+   * Returns this device's per-group membership rows, each with its status (`pending`/`active`).
+   *
+   * THROWS RATHER THAN ANSWERING `[]`, because the two are different facts and a caller now DECIDES
+   * on the difference. `pending` means a member has been told to Add this device and owes it a
+   * Welcome; a recovery seam that read a failed call as "no pending row" would serve itself an
+   * external-commit join into a tree an Add is already in flight for, and lose the race about half
+   * the time (GRP-4, 2026-08-26). An empty array is the server saying it holds no row; an
+   * unreachable server says nothing at all, and must not be able to impersonate an answer.
+   */
   async getDeviceMemberships(
     userId: string,
     deviceId: string
@@ -1124,18 +1133,14 @@ export class MlsDeliveryApi {
       status: string;
     }>
   > {
-    try {
-      const res = await this.f(
-        `${this.historyUrl}/api/mls/device-memberships/${userId}/${deviceId}`,
-        {
-          headers: await this.auth(),
-        }
-      );
-      if (!res.ok) return [];
-      return await res.json();
-    } catch {
-      return [];
-    }
+    const res = await this.f(
+      `${this.historyUrl}/api/mls/device-memberships/${userId}/${deviceId}`,
+      {
+        headers: await this.auth(),
+      }
+    );
+    if (!res.ok) throw new Error(`device-memberships answered ${res.status}`);
+    return await res.json();
   }
 
   /** Marks a device's group invitation as `pending` or `active`. Best-effort, non-throwing. */

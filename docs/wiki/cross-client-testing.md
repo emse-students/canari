@@ -195,14 +195,16 @@ Client-side, in-conversation, substring-only: no server index, no global search.
 
 ## 8 - GRP - group membership and invitations
 
-The first rung that moves an MLS epoch.
+The first rung that moves an MLS epoch, and the rung that proved a third device changes what a
+two-device check measures: GRP-4's evictions were committed by an undriven fleet member, not by
+either driven browser.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | GRP-1 | Create a group, add a member, both sides see the roster and the Add commit merges | `W1 W2` | **`PASS`** |
 | GRP-2 | The picker must not offer existing members or yourself, and a no-op submission must not report success | `W1 W2` | **`PASS`** |
 | GRP-3 | Remove a member: the Remove commit, and what the removed device can still read | `W1 W2` | `PASS-DIRTY` - all six held; one `webSocketClosed` on W1 no navigation explains, P2 in [backlog](backlog.md) |
-| GRP-4 | The group invitation LINK: generate, open it on the other account | `W1 W2` | **`PASS`** |
+| GRP-4 | The group invitation LINK: generate, open it on the other account | `W1 W2` | `FAIL` - `e278f76b`, ~1 join in 2: two parties add the joiner's leaf, and the re-admission Welcome that would heal it is dropped. Both halves fixed, re-run owed |
 | GRP-5 | Rename a group, seen on the other side | `W1 W2` | **`PASS`** |
 | GRP-6 | Leave a group - which deliberately commits nothing | `W1 W2` | **`PASS`** |
 | GRP-7 | Add a member who is offline; they join on their next connection | `W1 W2` | **`PASS`** |
@@ -254,7 +256,7 @@ they measured in [cross-client-campaign](cross-client-campaign.md).
 Deletion removes state while OTHER state keeps pointing at it, so each row pairs it with something
 mid-flight.
 
-**One of the ten has a runner**, `del1.mjs`; the other nine are still to write.
+**All ten have a runner** - `del1.mjs` for DEL-1, `del.mjs --only N` for the rest; the phase order and the phone row are justified in `checks.mjs` beside the list.
 
 | Id | The crossing | Needs | State |
 | --- | --- | --- | --- |
