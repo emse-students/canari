@@ -30,7 +30,7 @@ Updated after every run.
 | 6 MENTION | 6 | `1f396ac7`, A1 `a7981206` | **`PASS` 6/6 x5** on runner `cdc081edabc0` |
 | 7 FWD | 6 | `1579d5c3`, A1 `a7981206` | **`PASS` 6/6 x5** (FWD-2 x1, 25 iterations) |
 | 8 GRP | 10 | `b04e26d9` | **`PASS` 9/10 x1** + GRP-3 `PASS-DIRTY`, accepted by the user 2026-08-25. x5 abandoned - the rig, never the product. GRP-3 dirt = one unexplained socket close, P2 in [backlog](backlog.md) |
-| 9 COMM | 25 | `5d7fac13`, COMM-18 on `d6f61539` / A1 `e96bfa12` | 23 `PASS`, COMM-4 `PASS-DIRTY`, COMM-22 `VACUOUS`. Three re-runs owed (COMM-4, COMM-22, COMM-24) |
+| 9 COMM | 25 | `5d7fac13`, COMM-18 on `d6f61539` / A1 `e96bfa12`, COMM-4 on `2a4297cb` | 24 `PASS`, COMM-22 `VACUOUS`. Two re-runs owed (COMM-22, COMM-24) |
 | 10 DEL | 10 | `c6eb7b20`, A1 `c6eb7b20` | 7 `PASS`, DEL-1 `VACUOUS`, DEL-10 `FAIL` (fixed), DEL-8 never run. Every verdict predates the current `del.mjs` - the phase owes a re-run |
 | 11 TAB | 8 | - | `pending` |
 | 12 MULTI | 6 | - | `pending` |
@@ -218,8 +218,8 @@ A community is a `Workspace`, and **its membership is not MLS membership**. Ever
 MSG-5's standing assertion: no `masterSecret` in any payload, ever.
 
 Twenty-five rows, all with a runner; COMM-23 and COMM-24 share `comm2324.mjs`. The whole phase swept
-on 2026-08-25, every verdict carrying a build and an `a1Build`. **Three rows owe a re-run**: COMM-4
-(dirty), COMM-22 (`VACUOUS`, and its runner has changed since) and COMM-24 (runner changed).
+on 2026-08-25, every verdict carrying a build and an `a1Build`. **Two rows owe a re-run**: COMM-22
+(`VACUOUS`, and its runner has changed since) and COMM-24 (runner changed).
 **COMM-18 cost five FAILs that were four distinct product defects** - stories in `CHANGELOG.md`, what
 they measured in [cross-client-campaign](cross-client-campaign.md).
 
@@ -228,7 +228,7 @@ they measured in [cross-client-campaign](cross-client-campaign.md).
 | COMM-1 | Create a community, create a channel, post, both peers converge | `W1 W2` | `PASS` 1/1 |
 | COMM-2 | Invite link: create, preview, accept from the other account | `W1 W2` | `PASS` 1/1 |
 | COMM-3 | An expired link, a `maxUses`-exhausted link, a REVOKED link, a link to a deleted community - and the rotation's new link accepted, as the positive control | `W1 W2` | `PASS` 1/1 |
-| COMM-4 | Direct invite: the `channel_invitation` card appears in the DM on both sides, deduped | `W1 W2` | `PASS-DIRTY` - re-run owed |
+| COMM-4 | Direct invite: the `channel_invitation` card appears in the DM on both sides, deduped | `W1 W2` | `PASS` 1/1 - the dirt was a classifier hole, not the server |
 | COMM-5 | Roles: promote to moderator, then admin; the grid takes effect immediately | `W1 W2` | `PASS` 1/1 |
 | COMM-6 | The permission grid offers the SIX enforced permissions and no seventh, the three default roles carry exactly what is documented, and a toggle reaches the column a decision reads | `W1` | `PASS` 1/1 |
 | COMM-7 | `writePolicy` = admins only: refused server-side as well as in the UI | `W1 W2` | `PASS` 1/1 |

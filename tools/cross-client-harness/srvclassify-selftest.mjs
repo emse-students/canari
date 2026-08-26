@@ -140,6 +140,10 @@ const BENIGN_CASES = [
   // how four correctly-pushed lines reached `unexplained` on READ's run of 2026-08-21 with every
   // gate green. A fixture invented from memory can only ever confirm the rule it was written beside.
   `${NEST}[InternalController] [INTERNAL_PUSH] type=channel user=aaaaaaaaaaaaaaaa sent=1 failed=0`,
+  // The device-count question social-service asks before a direct invitation. Shape copied from
+  // COMM-4's window of 2026-08-26, where it was the run's single `unexplained`; the id is truncated
+  // to eight characters there because the log site truncates it, not because this fixture does.
+  `${NEST}[InternalController] [INTERNAL_MLS_DEVICES] user=aaaaaaaa count=1`,
   `${NEST}[MessagingService] [PUSH_SEND][send-33f8f65a] No push token for user=a device=web-a-b`,
   // The per-device half of the same fan-out, which `comm14.mjs` reads as its instrument.
   `${NEST}[MessagingService] [SOCIAL_PUSH][social-push-5a2f8d1a] sent user=aaaaaaaaaaaaaaaa device=tauri-aaaa-b-c`,
@@ -294,6 +298,16 @@ const failedPush = `${NEST}[InternalController] [INTERNAL_PUSH] type=channel use
 const pushOk = !matches(BENIGN_RULES, failedPush) && matches(NOTABLE_RULES, failedPush);
 if (!pushOk) failures++;
 console.log(`${pushOk ? 'ok  ' : 'FAIL'} notable      a push that FAILED is not the push that succeeded`);
+
+// THE SAME SEPARATION ON THE DEVICE-COUNT QUESTION, and zero is the only value that means anything:
+// the caller compares against it and nothing else. A membership still lands, and the key DM behind it
+// has nowhere to go - an invitee inside a community whose history they cannot read. Asserted both
+// ways because the benign rule pins `count=[1-9]`, and a rule written `count=\d+` would have read
+// that outcome as routine.
+const noDevices = `${NEST}[InternalController] [INTERNAL_MLS_DEVICES] user=aaaaaaaa count=0`;
+const devicesOk = !matches(BENIGN_RULES, noDevices) && matches(NOTABLE_RULES, noDevices);
+if (!devicesOk) failures++;
+console.log(`${devicesOk ? 'ok  ' : 'FAIL'} notable      an invitee with NO reachable device is not one with devices`);
 
 // THE SAME SEPARATION ON THE PER-DEVICE HALF, and it needs asserting three times because the family
 // fails three different ways and the benign rule pins only the two success words. `sent ` forgives a

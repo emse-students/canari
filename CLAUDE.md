@@ -139,9 +139,9 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     [cross-client-campaign](docs/wiki/cross-client-campaign.md), the only copies. **Where the ladder
     stands: rungs 1-8 TAKEN.** GRP closed 2026-08-26 on `feecfaf5` over four passes - GRP-4 green
     after `e027679a`, GRP-8 `PASS-DIRTY` deterministically (its P2 is in
-    [backlog](docs/wiki/backlog.md)). **NEXT IS 9 COMM at 23 PASS, with THREE re-runs owed** -
-    COMM-4 (dirty), COMM-22 (`VACUOUS`, runner changed - and the proof WP-REGRANT-2 owes,
-    web-only, no phone) and COMM-24 (runner changed) - THEN DEL, TAB,
+    [backlog](docs/wiki/backlog.md)). **9 COMM stands at 24 PASS, with TWO re-runs owed** -
+    COMM-22 (`VACUOUS`, runner changed - and the proof WP-REGRANT-2 owes, web-only, no phone) and
+    COMM-24 (runner changed) - THEN DEL, TAB,
     MULTI, LIFE, NOTIF, CALL, HEAL, PIN, CORRUPT. The board carries every verdict and the format of a
     cell; do not restate either here. **A `PASS-DIRTY` NO LONGER STOPS A RUNG BY ITSELF (user,
     2026-08-25)**; what the class of the dirt decides is on
@@ -152,6 +152,13 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     per phase, and the two rows that gate a rung, are there too. Only CALL, CORRUPT and PIN have NO
     runner at all; DEL, MULTI, LIFE, NOTIF and HEAL are covered.
 
+
+    **OWED BEFORE THE NEXT COMM RUN, from the session of 2026-08-26:** COMM-22 was killed mid-run to
+    clear the way for a push, so it left the community `859f557a` (`C22 COMM22-...`) on production -
+    `cleanup.mjs` names it and nothing else, and the sweep was refused by the sandbox rather than
+    run. Sweep it first. The shared venue had been GONE again and was rebuilt with `venue.mjs`
+    (`fbddc890` / `general` `064ac7d2`, 2 members) - a second disappearance in two days, cause
+    still unrecorded either time.
 
 2. **DEFERRED PAST THE LADDER - seven UX and rendering items, substance in
     [backlog](docs/wiki/backlog.md) and NOWHERE else.** One line each, in the order they were raised:

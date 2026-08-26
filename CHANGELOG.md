@@ -270,6 +270,16 @@ which is also where every release up to and including v0.13.1 now lives.
   nothing - no spec, no frontend test, no board row - watches them.
 
 ### Fixed
+- **A server-log rule that had never seen the line one invitation writes.** COMM-4's window of
+  2026-08-26 held a single `unexplained` line, `[INTERNAL_MLS_DEVICES] user=... count=1` - the
+  count social-service asks for before a direct invitation, because it may not call the user route
+  that answers the same question behind an Nginx-minted HMAC. Expected and necessary, missing only a
+  rule, so the row read `PASS-DIRTY` on noise that was the path working. Classified now, split the
+  way its `failed=` neighbour is: `count=[1-9]` is benign, `count=0` is NOTABLE - an invitee with
+  no device inside the retention window still gets the membership, and the key DM behind it has
+  nowhere to go, which is a finding and not routine. Both halves asserted in
+  `srvclassify-selftest.mjs`, on a fixture copied from that window rather than remembered.
+
 
 - **"Donner un statut avec le paiement" says which of its four conditions is missing.** The setting
   appears only on a paid form, with a beneficiary association chosen, that runs at least one

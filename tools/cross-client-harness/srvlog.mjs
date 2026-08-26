@@ -115,6 +115,17 @@ const BENIGN = [
   // NOTABLE twin below had gone blind in the same edit, which is the half that matters: a push that
   // FAILED would have been filed as unexplained instead of as the thing a reader looks for.
   /\[InternalController\] \[INTERNAL_PUSH\] type=\S+ user=\S+ sent=\d+ failed=0\b/,
+  // ONE LINE PER DIRECT INVITATION, and it is the only thing that says whether the invitation could
+  // carry a key at all. Social-service cannot call the user route (`HeaderAuthGuard` wants an
+  // Nginx-minted HMAC no container-to-container call has), so it asks this count instead before
+  // inviting - see `internal.controller.ts:171`. COMM-4 is the row that exercises that path, and on
+  // 2026-08-26 this line was its single `unexplained`: expected AND necessary, missing only a rule.
+  //
+  // `count=[1-9]` IS THE WHOLE DISCRIMINATION. The caller only ever compares against zero, and zero
+  // means the invitee has no usable MLS device inside the retention window - the invitation lands as
+  // a membership whose key DM can never be delivered. That is the finding, so it is NOTABLE below
+  // rather than swallowed here.
+  /\[InternalController\] \[INTERNAL_MLS_DEVICES\] user=\S+ count=[1-9]\d*\b/,
   // ONE LOG SITE, SEVERAL CALLERS, AND A RULE THAT KNEW ONLY ONE OF THEM. The line is written once,
   // at `messaging.service.ts:414`, on a push path `makeTraceId` labels after whoever entered it -
   // `send`, `welcome-send`, `reactivate`. This pattern named `send-` alone, so the SAME no-token
@@ -682,6 +693,11 @@ const NOTABLE = [
   // twin states: the field is always present, so without it this pattern matched NOTHING - between
   // the day `type=` was added and 2026-08-21, a failed push was unexplained rather than notable.
   /\[INTERNAL_PUSH\] type=\S+ user=\S+ sent=\d+ failed=[1-9]/,
+  // AN INVITEE WITH NO REACHABLE DEVICE, the zero its EXPECTED twin above pins out. The membership
+  // still lands; the key DM behind it has nowhere to go, so the invitee joins a community whose
+  // history they cannot read. A reader who sees a direct invitation "work" and no messages arrive is
+  // looking for exactly this line, and it must not be inferred from the absence of the other one.
+  /\[INTERNAL_MLS_DEVICES\] user=\S+ count=0\b/,
   // THE THREE WAYS THE PER-DEVICE PUSH GOES WRONG, each sending its reader somewhere different.
   // `FCM failed` is the send refused. `deleted invalid token` is the server pruning a token the
   // provider called dead, which is worth seeing because it explains a silent device on the NEXT run.
