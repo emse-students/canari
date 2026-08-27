@@ -3279,21 +3279,43 @@ void CanariPushSetup(void) {
   g_fcmPushDelegate = [[CanariFcmPushDelegate alloc] init];
   [FIRMessaging messaging].delegate = g_fcmPushDelegate;
   NSLog(@"[CanariPush] FCM delegate installe");
-  // Launch-time force-fetch of the current FCM token. didReceiveRegistrationToken
-  // only fires when the token CHANGES, so a token that rotated while the app was
-  // killed would otherwise never re-register until the next natural rotation. This
-  // mirrors Android MainActivity.onCreate's FirebaseMessaging.getInstance().token
-  // read: best-effort, runs once per cold start, persists + re-registers on success.
+  // THE TOKEN IS NOT FETCHED HERE, and that is the fix rather than an omission. This block used to
+  // call `tokenWithCompletion` on the spot, declaring itself the peer of Android's
+  // MainActivity.onCreate force-read - but it copied a pattern whose precondition exists only on the
+  // platform it was copied TO. Android reads its token at launch with nothing to wait for; iOS
+  // cannot produce one before APNs answers, and APNs is not even asked until
+  // `registerForRemoteNotifications` runs on DidFinishLaunching, which is AFTER this function. So
+  // the call could not succeed, failed with "No APNS token specified before fetching FCM Token",
+  // logged one line nobody could read on a device, and returned without writing. Measured
+  // 2026-08-27: `push_token` had 49 android rows and had never held one ios row.
+  // CanariSyncFcmTokenIfApnsReady below does the same work where the precondition can hold.
+#else
+  NSLog(@"[CanariPush] Firebase Messaging absent");
+#endif
+}
+
+void CanariSyncFcmTokenIfApnsReady(void) {
+#if __has_include(<FirebaseMessaging/FirebaseMessaging.h>)
+  // The guard, and the reason this needs no timer and no retry count: the APNs token either has
+  // arrived or it has not, `didBecomeActive` fires again on every foreground, and
+  // didReceiveRegistrationToken covers the first acquisition independently. Nothing here waits.
+  if ([FIRMessaging messaging].APNSToken == nil) {
+    NSLog(@"[CanariPush] APNs token not here yet - not asking FCM for one");
+    return;
+  }
   [[FIRMessaging messaging] tokenWithCompletion:^(NSString *_Nullable token,
                                                   NSError *_Nullable error) {
     if (error != nil) {
-      NSLog(@"[CanariPush] fetching the FCM token at launch failed: %@", error.localizedDescription);
+      NSLog(@"[CanariPush] fetching the FCM token failed: %@", error.localizedDescription);
       return;
     }
+    // Persisting an unchanged token is deliberate and cheap: this is the ONLY path that covers a
+    // token which rotated while the app was killed, where didReceiveRegistrationToken never fires
+    // because, from this launch's point of view, nothing changed.
     CanariPersistFcmToken(token);
-    NSLog(@"[CanariPush] FCM token synchronise au lancement");
+    NSLog(@"[CanariPush] FCM token synchronise");
   }];
 #else
-  NSLog(@"[CanariPush] Firebase Messaging absent");
+  NSLog(@"[CanariPush] Firebase Messaging absent - no FCM token to sync");
 #endif
 }

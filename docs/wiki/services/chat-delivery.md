@@ -646,6 +646,39 @@ those groups' first pages itself, which is the path every group took before the 
 | POST | `/api/mls/push/send-welcome-and-commit` | PushSecret | Send Welcome + commit from background service |
 | POST | `/api/mls/push/send` | PushSecret | Send message from background service |
 | POST | `/api/mls/push/broadcast-test` | JWT | Test push to all devices of caller |
+| POST | `/api/mls/push/unavailable` | JWT | A device reporting that it CANNOT obtain a push token (writes nothing - see below) |
+
+#### A device that cannot get a push token at all
+
+**`POST /api/mls/push/unavailable`, and it deliberately stores nothing.** A client that exhausts its
+registration retries without ever holding a token POSTs `{deviceId, platform, reason}`; the
+controller sanitises the three, logs
+`[PUSH_UNAVAILABLE] user=<uuid> device=<id> platform=<android|ios> reason=<reason>` at WARN, and
+returns `{recorded: true}`.
+
+**Why a report and not a row.** `push_token` already owns the state of a device's push chain, one row
+per `(userId, deviceId)`; a second table saying "this one has no row" would be a second source of
+truth for a fact the first table already carries, and would go stale the moment the device recovers.
+What was missing was never storage - it was that **the absence of a row is indistinguishable from a
+device nobody opened.** Measured 2026-08-27: 49 `android` rows, zero `ios` rows ever, no message
+alert or CallKit ring deliverable to an iPhone for the platform's entire life, and nothing anywhere
+said so, because the client's only witness was a `console.warn` in a WebView console that cannot be
+opened on iOS from a Windows machine. The healthy platform's rows stood in for both.
+
+**The reason is the client's classification and the server never rewrites it.** `no-token` (the OS
+never produced one) and `rejected` (the token existed and the backend refused the registration) are
+different defects with different owners, and a server that normalised an unrecognised value into a
+known one would delete the only evidence that a client had learnt something the server has not been
+taught. Unknown reasons are printed verbatim, capped at 120 characters; a missing reason prints
+`unstated`, never an empty field.
+
+**It is reported ONCE, at the end.** An early attempt can fail for a reason the next one fixes -
+which is what the retry ladder exists for on slow Android token generation - so reporting one of
+those would file a defect against a device that goes on to work. `PushNotificationService` therefore
+returns a typed `PushRegistrationOutcome` rather than a boolean, and only the exhausted ladder
+reports. Tests: `push.controller.unavailable.spec.ts` (server, including that it writes nothing) and
+`PushNotificationService.unavailable.test.ts` (client - in its own file, because `pushAttempted` is
+module state that latches).
 
 #### Transport — single gateway (FCM)
 
@@ -837,9 +870,16 @@ token until the app is manually opened. Outbox messages queued before a reboot w
      the MLS state via the JNI). Skipped silently when the device is not enrolled
      (`push_context.json` / pushSecret absent).
   `BOOT_COMPLETED` is delivered post-unlock, so credential-encrypted storage is available.
-- **iOS** — no OS boot hook exists. The equivalent is the **launch-time force-fetch** in
-  `canari_push.mm` `CanariPushSetup` (`tokenWithCompletion` → `CanariPersistFcmToken` → backend
-  refresh), which runs on every app launch and covers first-open-after-reboot.
+- **iOS** — no OS boot hook exists, and the equivalent CANNOT be a launch-time fetch. Until
+  2026-08-28 `canari_push.mm` `CanariPushSetup` called `tokenWithCompletion` at the bottom of
+  `canari_ios_bootstrap()`, as the declared mirror of Android's step 1 - but FIRMessaging cannot mint
+  an FCM token before an APNs token exists, and that only arrives after
+  `registerForRemoteNotifications`, which the same bootstrap schedules for `DidFinishLaunching`. That
+  call could only ever fail. The equivalent is now `CanariSyncFcmTokenIfApnsReady()`, called from
+  `CanariOnDidBecomeActive`: it returns with a line if `[FIRMessaging messaging].APNSToken` is nil,
+  otherwise it fetches, persists and refreshes on the backend. `didBecomeActive` fires after launch
+  completes and on every foreground, so first-open-after-reboot is still covered - see
+  [mobile](../frontend/mobile.md#the-fcm-token-an-iphone-could-never-obtain-and-the-silence-that-hid-it-for-the-platforms-life).
 
 CI guard: `src/lib/mobile/androidFcmManifest.test.ts` fails if the receiver, its actions, or the
 `RECEIVE_BOOT_COMPLETED` permission are dropped from the manifest (e.g. by `tauri android init`).
