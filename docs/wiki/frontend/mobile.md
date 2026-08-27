@@ -1323,9 +1323,13 @@ healthy Android rows stood in for both platforms. `PushNotificationService` now 
 `[PUSH_UNAVAILABLE] user=… device=… platform=… reason=…` - see
 [chat-delivery](../services/chat-delivery.md#a-device-that-cannot-get-a-push-token-at-all).
 
-**What is still owed is hardware.** The native half is not verified by compiling: an
-`ios` row in `push_token`, or a `reason=no-token` line naming `platform=ios`, is the proof. Until one
-of the two appears, this section describes a fix that has been reasoned and not observed.
+**MEASURED ON HARDWARE 2026-08-28, and the verdict is split.** On a fresh 0.14.8 install the server
+printed `[PUSH_UNAVAILABLE] ... platform=ios reason=no-token` at 01:23:39 - the first thing this
+platform has ever said about its push chain, so the reporting half is proven. But `push_token` still
+holds no `ios` row: **the ordering fix was necessary and is not sufficient.** What `no-token` cannot
+say is whether an APNs token ever arrived, which is the fork the two remaining candidates hang on -
+see [check S](../device-verification.md) for the run and [backlog](../backlog.md) for the discriminator
+the next build must carry.
 
 ## CI/CD
 

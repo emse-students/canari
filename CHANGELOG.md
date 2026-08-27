@@ -175,8 +175,11 @@ which is also where every release up to and including v0.13.1 now lives.
   end of the ladder, because an early failure the next attempt fixes would accuse a device that goes
   on to work.
 
-  Verification is hardware and is still owed: an `ios` row in `push_token`, or a `platform=ios` line
-  in chat-delivery's log. Until one appears this is reasoned and not observed.
+  **Measured on hardware the same night.** A fresh 0.14.8 install on an iPhone produced
+  `[PUSH_UNAVAILABLE] ... platform=ios reason=no-token` - the report works, and it is the first thing
+  the platform has ever said about its push chain. The token itself is still not obtained, so the
+  ordering was necessary and not sufficient; the cause is narrowed and the next step is to carry the
+  APNs state into the report rather than guess between the two candidates left.
 
 - **A refresh refusal named no client version**, so every `Refresh refused for the NATIVE app` line
   from an iPhone was ambiguous until the user stated by hand which build the device ran.

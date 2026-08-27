@@ -68,39 +68,43 @@ entry here or closes the question.
 
 ## Measurements owed
 
-### P1 - iOS has NEVER registered a push token: FIXED 2026-08-28, and the PROOF is what is owed
+### P1 - iOS still cannot obtain a push token; the REPORT now works (measured on hardware 2026-08-28)
 
-**The fix is in and the story is in `CHANGELOG.md`; the mechanism is on
-[mobile](frontend/mobile.md#the-fcm-token-an-iphone-could-never-obtain-and-the-silence-that-hid-it-for-the-platforms-life)
-and [chat-delivery](services/chat-delivery.md#a-device-that-cannot-get-a-push-token-at-all). Neither
-is restated here.** Two rules came out of it, both in
-[durable-rules](durable-rules.md#mobile-and-native): a precondition one platform does not have is
-still a precondition; and the absence of a row is not a report.
+**Split verdict, both halves measured on an iPhone running 0.14.8 - the run is
+[check S](device-verification.md), which carries the conditions and the retraction and is not
+restated here.**
 
-**WHY THIS STAYS A P1 UNTIL A DEVICE ANSWERS.** Everything native in this repo is verified by
-COMPILING, which proves nothing about running, and this entry's whole subject is a call that compiled
-perfectly and could never succeed. The ordering fix is REASONED, not observed.
+- **The instrumentation PASSES.** At 01:23:39 the server printed
+  `[PUSH_UNAVAILABLE] ... platform=ios reason=no-token`, the first thing this platform has ever said
+  about its push chain. The silence half of this P1 is closed, and closed the only way it could be.
+- **The token acquisition FAILS.** `push_token` still holds `android | 49` and no `ios` row. The
+  ordering fix (`CanariSyncFcmTokenIfApnsReady` from `didBecomeActive`) was necessary and is **not
+  sufficient**.
 
-**What closes it, either one, after the release carrying it reaches the iPhone:**
+**What `reason=no-token` does and does not say.** It says `getFcmToken()` read nothing for four
+minutes - the Rust command that reads `{app_data_dir}/fcm_token.txt` never saw a file. It says
+NOTHING about whether an APNs token ever arrived, and that is precisely the fork the two remaining
+candidates hang on:
 
-```
-ssh canari 'docker exec infrastructure-postgres-1 psql -U canari -d auth_db -c "SELECT platform, count(*) FROM push_token GROUP BY platform"'
-ssh canari 'docker logs --since 30m infrastructure-chat-delivery-service-1 2>&1 | grep PUSH_UNAVAILABLE'
-```
+1. **No APNs token, so FIRMessaging has nothing to work from.** `registerForRemoteNotifications`
+   never ran, or ran and Apple refused - a notification permission never granted would do it, and so
+   would an `aps-environment` that does not match the TestFlight distribution.
+2. **An APNs token arrived and the FCM token still never reached the file.**
+   `didReceiveRegistrationToken` never fires (the `FirebaseAppDelegateProxyEnabled` swizzle has no
+   delegate class to attach to - `main.mm` defines none, deliberately), or it fires while
+   `CanariTauriDataDir()` is nil, or it writes a path `get_fcm_token` does not read.
 
-An `ios` row means the chain works end to end. A `[PUSH_UNAVAILABLE] ... platform=ios
-reason=no-token` line means the ordering was not the only link - and that is a WIN too, because it is
-the first time the platform has said anything at all. **Neither answer arriving means the release did
-not reach the device**, not that the report is broken: check the build the phone runs before reading
-anything into silence.
+**THE NEXT STEP IS TO CARRY THE DISCRIMINATOR, NOT TO GUESS.** The device knows which of the two it
+is - `[FIRMessaging messaging].APNSToken` is nil or it is not - and `CanariSyncFcmTokenIfApnsReady`
+already branches on exactly that, writing the answer to a console no one here can open. The standing
+rule says never learn by failing what a fact could have told you: expose the APNs state through the
+existing Rust command and let the client report `no-apns-token` distinctly from `no-fcm-token`. One
+build, and the next report names the cause instead of the symptom. A Mac console or `idevicesyslog`
+would answer it tonight for anyone who has one; nobody here does, which is why the fact must travel.
 
-**If the report says `no-token`, the next question is which of the two remaining candidates it is** -
-`didReceiveRegistrationToken` never firing (the `FirebaseAppDelegateProxyEnabled` swizzle has no
-delegate class to attach to, which `main.mm` and the plist comment call intentional), or it firing
-while `CanariTauriDataDir()` is still nil, or writing a path the Rust `get_fcm_token`
-(`{app_data_dir}/fcm_token.txt`) does not read. Separating those needs a device console
-(`idevicesyslog` or a Mac), and `[CanariPush] APNs token not here yet` versus
-`[CanariPush] FCM token synchronise` names the branch directly.
+**Do not attempt a fix before that report.** Both candidates are plausible, they need opposite
+changes, and nothing in this repository can tell which one a patch fixed - everything native here is
+verified by compiling.
 
 ### The rest of what an iPhone will find, named by the user before it was looked for (2026-08-27)
 

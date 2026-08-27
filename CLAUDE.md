@@ -361,11 +361,17 @@ exhausts its retries now POSTs `/api/mls/push/unavailable` (stores nothing, logs
 and [chat-delivery](docs/wiki/services/chat-delivery.md#a-device-that-cannot-get-a-push-token-at-all),
 two rules in [durable-rules](docs/wiki/durable-rules.md#mobile-and-native), the P1 and its two
 remaining candidates in [backlog](docs/wiki/backlog.md), the hardware steps as
-[check S](docs/wiki/device-verification.md); none is restated here.** **IT STAYS A P1 UNTIL A DEVICE
-ANSWERS** - everything native here is verified by COMPILING, and the call this replaced compiled
-perfectly and could never succeed. **The one thing to do after 0.14.8 reaches the iPhone: run check S.
-An `ios` row is the pass; a `platform=ios reason=no-token` line is not a pass but IS the first word
-the platform has ever said; neither arriving means the build did not reach the phone.**
+[check S](docs/wiki/device-verification.md); none is restated here.** **A DEVICE HAS NOW ANSWERED, AND THE VERDICT IS SPLIT** (check S, run 2026-08-28 01:23 on a fresh
+0.14.8 install): the server printed `[PUSH_UNAVAILABLE] ... platform=ios reason=no-token`, so **the
+reporting half PASSES** - the first word this platform has ever said. **The token is still not
+obtained** (`android | 49`, no `ios` row), so the ordering fix was necessary and NOT sufficient, and
+the P1 stays open with a narrowed cause. **The next step is not a fix but a discriminator**:
+`no-token` cannot say whether an APNs token ever arrived, which is the exact fork the two remaining
+candidates hang on, and the device already knows the answer - carry it into the report. **Do not
+patch before that**, because both candidates need opposite changes and nothing here could tell which
+one a patch fixed. One inference made during the run was RETRACTED (the reconnection churn does not
+reset the client's module state - the ladder ran straight through it); it is written down in check S
+so it is not made again.
 
 **AND THREE OF THREE iOS DEFECTS SO FAR WERE INVISIBLE TO EVERY GATE HERE** - the CORS allowlist, the third-party refresh cookie, the FCM ordering. The user named the classes still to come before anyone looked (backgrounding, memory, a reconnection that does not happen); that expectation is recorded in [backlog](docs/wiki/backlog.md) and closes by HARDWARE, one lettered check at a time - **never by a fix written against a suspected iOS lifecycle bug nobody has seen**, because nothing here could tell whether it worked.
 
