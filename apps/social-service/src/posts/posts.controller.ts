@@ -320,26 +320,42 @@ export class PostsController {
     return this.interactions.deleteComment(postId, commentId, xUserId, xGlobalAdmin === 'true');
   }
 
-  /** Pins a post; requires global admin privileges. */
+  /**
+   * Pins a post to the top of the feed. Content moderators - a platform admin, or a BDE member
+   * holding MODERATE - which is the same tier the `canPin` field on the post is drawn from.
+   */
   @UseGuards(NginxAuthGuard)
   @Patch(':postId/pin')
-  pinPost(
+  async pinPost(
+    @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
     @Param('postId') postId: string
   ) {
-    if (xGlobalAdmin !== 'true') throw new UnauthorizedException('Global admin required');
+    await this.assertContentModerator(xUserId, xGlobalAdmin);
     return this.service.setPinned(postId, true);
   }
 
-  /** Unpins a post; requires global admin privileges. */
+  /** Unpins a post. Same tier as pinning. */
   @UseGuards(NginxAuthGuard)
   @Patch(':postId/unpin')
-  unpinPost(
+  async unpinPost(
+    @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
     @Param('postId') postId: string
   ) {
-    if (xGlobalAdmin !== 'true') throw new UnauthorizedException('Global admin required');
+    await this.assertContentModerator(xUserId, xGlobalAdmin);
     return this.service.setPinned(postId, false);
+  }
+
+  /** Refuses the caller unless they may moderate content anywhere on the platform. */
+  private async assertContentModerator(
+    userId: string,
+    globalAdminHeader: string | undefined
+  ): Promise<void> {
+    const mayModerate = await this.associationsService.isContentModerator(userId, {
+      isGlobalAdmin: globalAdminHeader === 'true',
+    });
+    if (!mayModerate) throw new UnauthorizedException('Content moderator required');
   }
 
   /** Hides a post from public feeds (moderation). Global admin only. */

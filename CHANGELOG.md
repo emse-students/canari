@@ -172,6 +172,23 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Changed
 
+- **The BDE can now moderate a post, not just the comments under it.** `MODERATE` is documented as
+  "delete posts, mute users and review content reports" and did the last two: every post-level
+  control - edit, delete, pin, hide - asked `isGlobalAdmin` and nothing else, so a BDE member
+  holding the flag could delete a reported COMMENT and not touch the post around it. The tier is now
+  one predicate, `AssociationsService.isContentModerator` (platform admin, or `MODERATE` in a BDE),
+  called by the moderation endpoints and by the post controls alike; the pin/unpin routes moved onto
+  it. Asked for on 2026-08-27: *"En tant qu'admin BDE, Justine devrait pouvoir modifier, supprimer,
+  epingler en plus de signaler ou copier le lien."*
+
+  A post therefore carries THREE served capabilities rather than one, because the controls do not
+  share a rule: `canManage` (pencil and bin - publisher, moderator or admin), `canPin` (moderator or
+  admin) and `canReport` (any logged-in reader who is not the publisher). Folding them together is
+  what put a report button on a post the reader had just published, and left the pin on
+  `isGlobalAdmin`. **Still global-admin-only, deliberately: hide/unhide and the reported/hidden
+  queues** - those are the `/admin/moderation` screen, and a right no screen exposes is reachable
+  only by someone who already knows the URL.
+
 - **A tall picture no longer owns the whole feed.** The only bound on a post's media box was the
   aspect clamp - `MIN_ASPECT = 0.25`, so four times the card's width, roughly two phone screens of
   one image - and past it the picture was cropped from its CENTRE, which on an infographic or a

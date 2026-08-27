@@ -13,7 +13,6 @@ import {
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { ModerationService } from './moderation.service';
 import { AssociationsService } from '../associations/associations.service';
-import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { CreateReportDto, MuteUserDto, ReviewReportDto } from './dto/moderation.dto';
 
 /**
@@ -29,11 +28,8 @@ export class ModerationController {
 
   /** Guard helper - throws 403 unless caller is a global admin or holds the MODERATE flag in a BDE. */
   private async assertModerator(userId: string, isGlobalAdmin: boolean): Promise<void> {
-    if (isGlobalAdmin) return;
-    const canModerate = await this.assocService.callerHasAnyBdeFlag(
-      userId,
-      AssociationPermissionFlag.MODERATE
-    );
+    // One predicate, shared with the post controls that give the same people the same reach.
+    const canModerate = await this.assocService.isContentModerator(userId, { isGlobalAdmin });
     if (!canModerate) {
       throw new ForbiddenException('BDE MODERATE permission or global admin required');
     }

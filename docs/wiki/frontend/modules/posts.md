@@ -75,20 +75,26 @@ failure and asserting the retry both fetches and renders. Verified on device: th
 its button are gone and two cards are back, against a build where the same injection left the error
 screen up after a `200`.
 
-## Who sees the pencil: `canManage`, never `authorId`
+## Who sees which control: three served booleans, never `authorId`
 
-`PostOverlayControls` draws edit, delete and report from ONE server-answered boolean,
-`post.canManage`. It is not derived on the client and must not be: an association post is served
-with its `authorId` removed, so the comparison the card used to make (`authorId === currentUserId`)
-was against a field that is absent precisely on the posts an association's officers manage - nobody
-but a platform admin could edit them, and the absence of a button raises nothing anywhere. Who the
-field says yes to, and why the association's flag rather than authorship decides it, is on
-[association-permissions](../../association-permissions.md#a-right-the-client-cannot-compute-canmanage-on-a-post).
+`PostOverlayControls` draws every gate from a boolean the SERVER answered for this reader -
+`canManage` (pencil, bin), `canPin`, `canReport` - and derives none of them. It cannot: an
+association post is served with its `authorId` removed, so the comparison the card used to make
+(`authorId === currentUserId`) was against a field that is absent precisely on the posts an
+association's officers manage - nobody but a platform admin could edit them, and the absence of a
+button raises nothing anywhere. Nothing in a post says whether its reader moderates the feed either,
+which is why the pin followed `isGlobalAdmin` and a BDE `MODERATE` holder never saw it.
+
+**Three fields rather than one, because the three controls do not share a rule**: a moderator edits,
+deletes and pins what it did not publish and may still report it; an association's officer edits and
+deletes its own, pins nothing, and has nobody to report itself to. The tiers and the predicates
+behind them are on
+[association-permissions](../../association-permissions.md#a-right-the-client-cannot-compute-the-capabilities-served-on-a-post).
 
 Consequence for any new post surface: it must fetch its posts through an endpoint that carries the
 viewer (`GET /api/posts`, `/api/posts/search`, `/api/posts/:id` all do), or every card it renders
 will be read-only. And a response that merges into a card - `onPostSaved` does exactly that - has to
-carry `canManage` too, or saving an edit removes the control that started it.
+carry the three too, or saving an edit removes the control that started it.
 
 ## Attachment layout (PostContent / PostMedia)
 

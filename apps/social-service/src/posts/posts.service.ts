@@ -16,16 +16,34 @@ import { FollowsService } from '../follows/follows.service';
 import { PostNotificationsService } from './post-notifications.service';
 
 /**
- * Who is reading, and what they may already do - resolved once per request and carried into every
- * shaping helper so each row can be stamped with `canManage`.
+ * Who is reading, and what they already hold - resolved once per request and carried into every
+ * shaping helper, so each row can be stamped with what that reader may do to it.
  */
 interface PostViewerContext {
   /** The reader, when there is one. An anonymous reader manages nothing. */
   viewerId: string | undefined;
   /** Platform administrator: manages every post, member or not. */
   isGlobalAdmin: boolean;
+  /** BDE `MODERATE` holder: curates the whole feed, whoever published what. */
+  isModerator: boolean;
   /** Associations where the reader holds `POST_AS_ASSO`, hence may manage what was said in their name. */
   managedAssociationIds: Set<string>;
+}
+
+/**
+ * What one reader may do with one post, decided by the server and rendered as-is by the client.
+ *
+ * One field per control, because the controls do not share a rule: a moderator edits, deletes and
+ * pins a post they did not publish and may still report it, while the association's own officer
+ * edits and deletes but pins nothing and has nobody to report themselves to.
+ */
+interface PostCapabilities {
+  /** The pencil and the bin. */
+  canManage: boolean;
+  /** The pin. Moderation of the feed's shape, not of one post's content. */
+  canPin: boolean;
+  /** The flag. Withheld only from the post's own publisher - reporting yourself means nothing. */
+  canReport: boolean;
 }
 
 /** Core post service: creation, listing (with Redis cache), search, scheduling, and moderation. */
@@ -85,23 +103,20 @@ export class PostsService {
     );
   }
 
-  /**
-   * Everything the shaping helpers need to answer `canManage` for one particular reader.
-   *
-   * `managedAssociationIds` is resolved ONCE per request (`viewerContext`) rather than per row:
-   * the answer is the same for every post of the same association.
-   */
+  /** The reader who holds nothing: nobody is logged in, so no control is drawn and none is owed. */
   private static readonly EMPTY_VIEWER: PostViewerContext = {
     viewerId: undefined,
     isGlobalAdmin: false,
+    isModerator: false,
     managedAssociationIds: new Set(),
   };
 
   /**
-   * Builds the per-reader context for a batch of rows, in one membership query.
+   * Builds the per-reader context for a batch of rows: two queries for a whole page, whatever its
+   * length, and none at all for a reader whose answer is already known.
    *
-   * A global administrator needs no query at all - `viewerMayManage` grants them every row before
-   * it looks at the set.
+   * A global administrator short-circuits both - `viewerCapabilities` grants them every control
+   * before it looks at either field.
    */
   private async viewerContext(
     rows: { associationId?: string | null }[],
@@ -109,24 +124,28 @@ export class PostsService {
     isGlobalAdmin: boolean
   ): Promise<PostViewerContext> {
     if (!viewerId) return PostsService.EMPTY_VIEWER;
-    if (isGlobalAdmin) return { viewerId, isGlobalAdmin: true, managedAssociationIds: new Set() };
+    if (isGlobalAdmin) {
+      return {
+        viewerId,
+        isGlobalAdmin: true,
+        isModerator: true,
+        managedAssociationIds: new Set(),
+      };
+    }
     const associationIds = rows.map((row) => row.associationId).filter((id): id is string => !!id);
-    const managedAssociationIds = await this.associationsService.mayActOnAny(
-      viewerId,
-      associationIds,
-      AssociationPermissionFlag.POST_AS_ASSO
-    );
-    return { viewerId, isGlobalAdmin: false, managedAssociationIds };
+    const [managedAssociationIds, isModerator] = await Promise.all([
+      this.associationsService.mayActOnAny(
+        viewerId,
+        associationIds,
+        AssociationPermissionFlag.POST_AS_ASSO
+      ),
+      this.associationsService.isContentModerator(viewerId),
+    ]);
+    return { viewerId, isGlobalAdmin: false, isModerator, managedAssociationIds };
   }
 
   /**
-   * May this reader edit or delete this post? THE predicate behind the pencil, the bin and the
-   * `PATCH`/`DELETE` guards alike, so a shown control and an accepted write cannot disagree.
-   *
-   * It exists as a SERVED FIELD rather than a client-side comparison because a post published in
-   * an association's name has its `authorId` stripped from every response on purpose - that
-   * anonymity is the feature - so no client can tell its own post from anyone else's. It had to ask
-   * the only party that still knows.
+   * Is this reader the post's PUBLISHER - the one whose name is on it?
    *
    * The two kinds of post answer to two different owners, and conflating them is the bug this
    * replaced:
@@ -139,23 +158,48 @@ export class PostsService {
    *   right over its data. Everyone who ever published such a post held that flag at the time -
    *   `canPostAs` is the same predicate - so this takes nothing from anyone still entitled to it.
    */
-  private viewerMayManage(
+  private viewerIsPublisher(
     post: { authorId?: string | null; associationId?: string | null },
     viewer: PostViewerContext
   ): boolean {
-    if (viewer.isGlobalAdmin) return true;
     if (!viewer.viewerId) return false;
     if (post.associationId) return viewer.managedAssociationIds.has(post.associationId);
     return !!post.authorId && post.authorId === viewer.viewerId;
   }
 
+  /**
+   * What this reader may do with this post - the answer behind every control on the card, and
+   * behind the guards that accept the matching write.
+   *
+   * These are SERVED FIELDS rather than client-side comparisons because a post published in an
+   * association's name has its `authorId` stripped from every response on purpose - that anonymity
+   * is the feature - so no client can tell its own post from anyone else's, nor the association's
+   * officers from strangers. It had to ask the only party that still knows.
+   *
+   * Three tiers reach a post, and they do not overlap tidily: the platform administrator holds
+   * everything; a BDE `MODERATE` holder curates the feed, so it may edit, delete and pin what it
+   * did not publish, while remaining entitled to report it like any other reader; the publisher
+   * corrects and withdraws its own words and pins nothing.
+   */
+  private viewerCapabilities(
+    post: { authorId?: string | null; associationId?: string | null },
+    viewer: PostViewerContext
+  ): PostCapabilities {
+    const isPublisher = this.viewerIsPublisher(post, viewer);
+    return {
+      canManage: viewer.isGlobalAdmin || viewer.isModerator || isPublisher,
+      canPin: viewer.isGlobalAdmin || viewer.isModerator,
+      canReport: !!viewer.viewerId && !isPublisher,
+    };
+  }
+
   /** Strip publisher identity and attach association display for API responses. */
   private shapeListRow(p: any, viewer: PostViewerContext): any {
-    const canManage = this.viewerMayManage(p, viewer);
+    const capabilities = this.viewerCapabilities(p, viewer);
     if (!p.associationId) {
-      return { ...p, canManage };
+      return { ...p, ...capabilities };
     }
-    const out: any = { ...p, canManage };
+    const out: any = { ...p, ...capabilities };
     delete out.authorId;
     delete out.authorDisplayName;
     delete out.authorFirstName;
@@ -185,7 +229,7 @@ export class PostsService {
     if (Array.isArray(raw.media)) {
       raw.images = raw.media;
     }
-    raw.canManage = this.viewerMayManage(post, viewer);
+    Object.assign(raw, this.viewerCapabilities(post, viewer));
     if (!raw.associationId) {
       return raw;
     }
@@ -812,14 +856,15 @@ export class PostsService {
    */
   private async assertMayManage(post: Post, userId: string, isGlobalAdmin: boolean): Promise<void> {
     if (isGlobalAdmin) return;
-    const allowed = post.associationId
-      ? !!userId &&
-        (await this.associationsService.mayAct(
+    if (!userId) throw new UnauthorizedException('Not your post');
+    const isPublisher = post.associationId
+      ? await this.associationsService.mayAct(
           userId,
           post.associationId,
           AssociationPermissionFlag.POST_AS_ASSO
-        ))
-      : !!userId && post.authorId === userId;
+        )
+      : post.authorId === userId;
+    const allowed = isPublisher || (await this.associationsService.isContentModerator(userId));
     if (!allowed) {
       this.logger.debug(
         `[PERM] ${userId?.slice(0, 8)} refused management of post ${post.id} (assoc=${post.associationId ?? 'none'})`

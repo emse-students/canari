@@ -61,7 +61,7 @@ elsewhere, which is exactly why the audit had to read call sites rather than cou
 | `MANAGE_FORMS` | 4 | 1 | `GET :id/forms`, plus `assertFormManager` on every form write and every submission read |
 | `VALIDATE_EVENTS` | 5 | 0 | BDE only. `isUserBdeAdmin` - validating, editing and deleting **any** association's events, and depositing a pre-validated one |
 | `MANAGE_ASSO` | 6 | 0 | BDE only. Creating an association, and **being the super-admin tier above** - so it grants nearly every other flag everywhere |
-| `MODERATE` | 7 | 0 | BDE only. `assertModerator` in `moderation.controller.ts` - reports, deletions, mutes |
+| `MODERATE` | 7 | 0 | BDE only. `isContentModerator` - reports, mutes and comment deletion (`moderation.controller.ts`), plus editing, deleting and PINNING any post (`assertMayManage`, `pinPost`/`unpinPost`, and the `canManage` / `canPin` fields they are drawn from) |
 | `MANAGE_PRODUCTS` | 8 | 21 | the boutique, purchases and their exports, webhook failures, the whole payment-delegation tree, and the cotisation settings on `PATCH :id` |
 | `MANAGE_STRIPE_CONNECT` | 9 | 0 | `GET :id/manage-permission`, which core-service asks before opening Connect onboarding |
 | `MANAGE_PARTNERSHIPS` | 10 | 8 | partnership cards, their icons, their codes and their claims |
@@ -70,7 +70,7 @@ Nothing is dead: every flag has at least one call site. Re-measure the table rat
 - one pass over the `@SetMetadata` decorators and one over `AssociationPermissionFlag.` references
 in `apps/social-service/src` reproduces it in seconds.
 
-## A right the client cannot compute: `canManage` on a post
+## A right the client cannot compute: the capabilities served on a post
 
 A post published in an association's name has its `authorId` **deleted from every response** - the
 whole point being that the association speaks, not a person. The feed card nevertheless drew its
@@ -81,13 +81,35 @@ Making them a platform administrator "fixed" it, which is what the report looked
 
 Two things follow, and they are the shape of the repair:
 
-1. **The capability is served, per reader.** `PostsService` stamps every post it returns with
-   `canManage`, resolved once per request: `viewerContext` asks `mayActOnAny` for the associations
-   in the page (one query for a whole feed), `viewerMayManage` decides each row. The client renders
-   the control from that field and derives nothing.
-2. **The write guard is the same predicate.** `assertMayManage` gates `PATCH`/`DELETE` with
-   `mayAct(POST_AS_ASSO)` for an association post and with authorship for a personal one, so a
-   visible control and an accepted write cannot disagree.
+1. **The capabilities are served, per reader.** `PostsService` stamps every post it returns with
+   `canManage`, `canPin` and `canReport`, resolved once per request: `viewerContext` asks
+   `mayActOnAny` for the associations on the page and `isContentModerator` for the reader, two
+   queries for a whole feed whatever its length, and `viewerCapabilities` decides each row. The
+   client renders each control from its field and derives nothing.
+2. **The write guards are the same predicates.** `assertMayManage` gates `PATCH`/`DELETE`,
+   `assertContentModerator` gates `pin`/`unpin`, so a visible control and an accepted write cannot
+   disagree.
+
+**One field per control, because the controls do not share a rule.** A moderator edits, deletes and
+pins a post it did not publish and is still entitled to report it; an association's officer edits and
+deletes its own, pins nothing, and has nobody to report itself to. Folding the three into one boolean
+is what made the report button appear on a post the reader had published and the pin button follow
+`isGlobalAdmin` alone.
+
+### The three tiers that reach a post
+
+| Tier | How it is known | Edit / delete | Pin | Report |
+| --- | --- | --- | --- | --- |
+| Platform administrator | `X-Global-Admin: true` | yes | yes | yes |
+| Content moderator | `isContentModerator` - `MODERATE` in a BDE | yes, on any post | yes | yes |
+| The post's publisher | its author, or `POST_AS_ASSO` on the association it speaks for | yes, on its own | no | no - it would be reporting itself |
+| Any other logged-in reader | - | no | no | yes |
+
+`isContentModerator` is not `mayAct`: like `isUserBdeAdmin` for the calendar, it asks "does the BDE
+curate the whole feed", which is not association-scoped. It lives on `AssociationsService` because
+two surfaces ask it - the moderation endpoints and the post controls - and the second used to say
+`isGlobalAdmin` alone, which is how a BDE holding `MODERATE` could delete a reported COMMENT and not
+touch the post around it.
 
 **An association post answers to `POST_AS_ASSO` alone** - its author holds no separate claim. Whoever
 may speak in the association's name may correct what was said; whoever lost that right may not. This

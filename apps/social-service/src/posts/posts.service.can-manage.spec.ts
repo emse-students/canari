@@ -21,8 +21,15 @@ import { PostNotificationsService } from './post-notifications.service';
 describe('PostsService post management rights', () => {
   const ASSO = 'asso-1';
 
-  /** `flagHolders` maps a user id to the associations where they hold POST_AS_ASSO. */
-  function makeService(post: Partial<Post>, flagHolders: Record<string, string[]> = {}) {
+  /**
+   * `flagHolders` maps a user id to the associations where they hold POST_AS_ASSO; `moderators`
+   * lists the users holding MODERATE in a BDE.
+   */
+  function makeService(
+    post: Partial<Post>,
+    flagHolders: Record<string, string[]> = {},
+    moderators: string[] = []
+  ) {
     const postRepo = {
       findOne: jest.fn(() => Promise.resolve(post)),
       save: jest.fn(() => Promise.resolve({ ...post } as Post)),
@@ -41,6 +48,9 @@ describe('PostsService post management rights', () => {
       ),
       mayActOnAny: jest.fn((userId: string | undefined, ids: string[]) =>
         Promise.resolve(new Set(ids.filter((id) => holds(userId, id))))
+      ),
+      isContentModerator: jest.fn((userId: string, opts?: { isGlobalAdmin?: boolean }) =>
+        Promise.resolve(opts?.isGlobalAdmin === true || moderators.includes(userId))
       ),
       findValidatedCalendarEventSummary: jest.fn(() => Promise.resolve(null)),
     };
@@ -180,6 +190,78 @@ describe('PostsService post management rights', () => {
       await expect(service.updatePost('p1', 'colleague', edit)).resolves.toMatchObject({
         canManage: true,
       });
+    });
+  });
+
+  /**
+   * The BDE curates the whole feed. Asked for explicitly on 2026-08-27: *"En tant qu'admin BDE,
+   * Justine devrait pouvoir modifier, supprimer, epingler en plus de signaler ou copier le lien."*
+   * The three verbs are three different tiers, which is why they are three fields.
+   */
+  describe('the content moderator tier (BDE MODERATE)', () => {
+    it('may manage and pin a post it did not publish, and may still report it', async () => {
+      const { service } = makeService(assoPost, {}, ['bde']);
+      await expect(service.getById('p1', { viewerId: 'bde' })).resolves.toMatchObject({
+        canManage: true,
+        canPin: true,
+        canReport: true,
+      });
+    });
+
+    it('reaches a personal post the same way', async () => {
+      const { service } = makeService(personalPost, {}, ['bde']);
+      await expect(service.getById('p2', { viewerId: 'bde' })).resolves.toMatchObject({
+        canManage: true,
+        canPin: true,
+      });
+    });
+
+    it('has its edit and its delete accepted', async () => {
+      const { service, postRepo } = makeService(assoPost, {}, ['bde']);
+      await service.updatePost('p1', 'bde', { markdown: 'corrected' });
+      expect(postRepo.save).toHaveBeenCalled();
+      await expect(service.deletePost('p1', 'bde', false)).resolves.toEqual({ ok: true });
+    });
+  });
+
+  describe('canPin and canReport, for everyone else', () => {
+    it('withholds the pin from the association officer who published the post', async () => {
+      const { service } = makeService(assoPost, { officer: [ASSO] });
+      await expect(service.getById('p1', { viewerId: 'officer' })).resolves.toMatchObject({
+        canPin: false,
+      });
+    });
+
+    it('withholds the report from that same officer - reporting yourself means nothing', async () => {
+      const { service } = makeService(assoPost, { officer: [ASSO] });
+      await expect(service.getById('p1', { viewerId: 'officer' })).resolves.toMatchObject({
+        canReport: false,
+      });
+    });
+
+    it('offers the report to a reader with no claim on the post', async () => {
+      const { service } = makeService(assoPost, {});
+      await expect(service.getById('p1', { viewerId: 'reader' })).resolves.toMatchObject({
+        canManage: false,
+        canPin: false,
+        canReport: true,
+      });
+    });
+
+    it('offers nothing at all to an anonymous reader', async () => {
+      const { service } = makeService(assoPost, {});
+      await expect(service.getById('p1')).resolves.toMatchObject({
+        canManage: false,
+        canPin: false,
+        canReport: false,
+      });
+    });
+
+    it('gives a platform administrator every control', async () => {
+      const { service } = makeService(assoPost, {});
+      await expect(
+        service.getById('p1', { viewerId: 'admin', isGlobalAdmin: true })
+      ).resolves.toMatchObject({ canManage: true, canPin: true });
     });
   });
 });

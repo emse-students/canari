@@ -24,9 +24,12 @@ describe('PostsService.getById scheduling', () => {
       postRepo as unknown as Repository<Post>,
       {} as RedisService,
       {} as FollowsService,
-      // `getById` stamps every row with `canManage`, which asks the association service for the
-      // flags the viewer holds. Not what this spec is about: answer "none".
-      { mayActOnAny: () => Promise.resolve(new Set<string>()) } as unknown as AssociationsService,
+      // `getById` stamps every row with what the viewer may do to it, which asks the association
+      // service for the flags they hold. Not what this spec is about: answer "none".
+      {
+        mayActOnAny: () => Promise.resolve(new Set<string>()),
+        isContentModerator: () => Promise.resolve(false),
+      } as unknown as AssociationsService,
       {} as PostNotificationsService
     );
     // getById shapes its result through the association-identity helper, which is not what

@@ -68,12 +68,18 @@ export interface PostEntity {
   /** Omitted when the post is published as an association (`association` is set). */
   authorId?: string;
   /**
-   * May the CALLING user edit or delete this post? Answered by the server, per reader.
+   * The pencil and the bin: the post's publisher, a content moderator, or a platform admin.
    *
-   * It cannot be derived here: `authorId` is deliberately stripped from association posts, so a
-   * client comparing ids finds no owner for the very posts an association's officers manage.
+   * This and the two below are what the CALLING user may do with this post, one field per control,
+   * answered by the server. None of them can be derived here: `authorId` is deliberately stripped
+   * from association posts, so a client comparing ids finds no owner for the very posts an
+   * association's officers manage, and nothing in a post says whether its reader moderates the feed.
    */
   canManage?: boolean;
+  /** The pin: a content moderator (BDE `MODERATE`) or a platform admin. */
+  canPin?: boolean;
+  /** The flag: any logged-in reader who is not the post's own publisher. */
+  canReport?: boolean;
   authorDisplayName?: string | null;
   authorFirstName?: string | null;
   authorLastName?: string | null;

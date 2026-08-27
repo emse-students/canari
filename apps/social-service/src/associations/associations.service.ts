@@ -1103,6 +1103,22 @@ export class AssociationsService {
   }
 
   /**
+   * May `userId` moderate CONTENT anywhere on the platform - a platform administrator, or a BDE
+   * member holding `MODERATE`?
+   *
+   * Not association-scoped, so `mayAct` cannot express it: the question is "does the BDE curate the
+   * whole feed", the same shape as `isUserBdeAdmin` for the calendar. It is here rather than inside
+   * one controller because two surfaces ask it - the moderation endpoints, and the edit / delete /
+   * pin controls on a post - and the second was previously written as `isGlobalAdmin` alone, which
+   * is how a BDE holding `MODERATE` ended up unable to touch a post it was entitled to moderate.
+   */
+  async isContentModerator(userId: string, opts?: { isGlobalAdmin?: boolean }): Promise<boolean> {
+    if (opts?.isGlobalAdmin) return true;
+    if (!userId) return false;
+    return this.callerHasAnyBdeFlag(userId, AssociationPermissionFlag.MODERATE);
+  }
+
+  /**
    * THE question every association-scoped check asks: may `userId` exercise `flag` on
    * `associationId`?
    *

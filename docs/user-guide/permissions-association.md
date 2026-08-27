@@ -97,6 +97,10 @@ volontaire : le nom affiche est celui de l'asso, donc c'est l'asso qui en repond
 A noter : un membre du BDE qui administre les autres associations (*Gerer les associations*)
 n'herite PAS de ce droit-la. Parler au nom d'une asso n'est pas l'administrer.
 
+Le droit *Moderer* du BDE, lui, porte sur tout le fil : qui le detient peut modifier, supprimer et
+epingler n'importe quelle publication, en plus de traiter les signalements et les mutes. C'est le
+seul droit qui donne l'epingle.
+
 ---
 
 ## 5. Ne pas confondre avec les roles d'un channel

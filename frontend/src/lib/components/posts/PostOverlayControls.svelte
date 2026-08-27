@@ -6,22 +6,25 @@
 
   /**
    * Props for the PostOverlayControls component.
-   * Renders the top-right overlay of a post card:
-   * - Pin/Unpin: admins only
-   * - Edit / Delete: whoever the server says may manage the post (`canManage`)
-   * - Report: any logged-in user who does not manage the post
+   * Renders the top-right overlay of a post card: share, pin, edit, delete, report.
+   *
+   * Every gate below is a boolean the SERVER answered for this reader (`canManage`, `canPin`,
+   * `canReport`); nothing here is derived from the post's contents. A card cannot tell its own
+   * association's posts from anyone else's - their author is stripped on purpose - nor whether its
+   * reader moderates the feed.
    */
   interface Props {
     /** Whether the post is currently pinned. */
     pinned: boolean;
     /**
-     * Whether the current user may edit or delete this post: its author, an officer of the
-     * publishing association, or a global admin. Answered by the server, never re-derived here -
-     * an association post carries no `authorId` to compare against.
+     * May edit or delete: the post's publisher (its author, or an officer of the association it
+     * speaks for), a content moderator, or a platform admin.
      */
     canManage: boolean;
-    /** Whether the current user is a global admin. */
-    isGlobalAdmin: boolean;
+    /** May pin or unpin: a content moderator (BDE MODERATE) or a platform admin. */
+    canPin: boolean;
+    /** May report: any logged-in reader who is not the post's own publisher. */
+    canReport: boolean;
     /** Whether any user is logged in (gates the report button). */
     isLoggedIn: boolean;
     /** Whether the report popover is currently open. */
@@ -51,7 +54,8 @@
   let {
     pinned,
     canManage,
-    isGlobalAdmin,
+    canPin,
+    canReport,
     isLoggedIn,
     reportOpen,
     reportReason,
@@ -90,7 +94,7 @@
         <Link size={14} strokeWidth={2.5} />
       {/if}
     </button>
-    {#if isGlobalAdmin}
+    {#if canPin}
       <button
         type="button"
         onclick={onTogglePin}
@@ -125,7 +129,7 @@
         <Trash2 size={14} strokeWidth={2.5} />
       </button>
     {/if}
-    {#if !canManage}
+    {#if canReport}
       {#if reportOpen}
         <div
           class="bg-surface-elevated border-cn-border absolute top-0 right-0 z-50 flex w-52 flex-col gap-2 rounded-xl border p-3 shadow-lg"

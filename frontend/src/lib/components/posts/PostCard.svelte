@@ -29,7 +29,6 @@
   import PostFeedback from './PostFeedback.svelte';
   import EditPostForm from './EditPostForm.svelte';
   import { Pin, CalendarCheck } from '@lucide/svelte';
-  import { isGlobalAdmin } from '$lib/stores/user';
   import { untrack } from 'svelte';
   import { FORM_CARD_PLACEHOLDER_MIN_HEIGHT } from '$lib/utils/mediaLayout';
   import { REACTIONS } from '$lib/posts/reactions';
@@ -82,9 +81,11 @@
   let submittingComment = $state(false);
   let showReactionPicker = $state(false);
 
-  // Server-answered, per reader: the author, an officer of the publishing association, or a global
-  // admin. Never re-derived from `authorId` - an association post does not carry one.
+  // Server-answered, per reader and per control. Never re-derived here: an association post carries
+  // no `authorId` to compare against, and nothing in a post says whether its reader moderates.
   const canManage = $derived(localPost.canManage === true);
+  const canPin = $derived(localPost.canPin === true);
+  const canReport = $derived(localPost.canReport === true);
 
   let userReaction = $derived((localPost.reactions ?? {})[currentUserId] ?? null);
   let reactions = $derived<Record<string, number>>((localPost.reactions ?? {}) as any);
@@ -411,7 +412,8 @@
       <PostOverlayControls
         pinned={localPost.pinned ?? false}
         {canManage}
-        isGlobalAdmin={isGlobalAdmin()}
+        {canPin}
+        {canReport}
         isLoggedIn={!!currentUserId}
         {reportOpen}
         {reportReason}
