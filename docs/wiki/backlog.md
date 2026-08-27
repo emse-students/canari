@@ -503,9 +503,19 @@ would hide the duplication rather than remove it.
   an unarmed check is itself a runner defect - the row knew it could not ask its question and said
   nothing about why.
 - **COMM-21** - `the peer posts while it may: COMM21-... never appeared in 30000ms`, and
-  `probeBefore` answered **HTTP 400 `senderSessionId is required for channel messages`**. That 400
-  is the runner's, not the product's: the probe posts to a channel without the field the endpoint
-  requires. Fix the probe before reading the row's verdict as anything.
+  `probeBefore` answered **HTTP 400 `senderSessionId is required for channel messages`**.
+  **CORRECTED 2026-08-27: THAT 400 IS THE DESIGN, NOT A DEFECT.** `comm21.mjs`'s own header states
+  it - the probe is deliberately session-less so the SAME request is refused for two different
+  reasons, 400 while the peer is still a member and 403 once it is not, "without the 400 the 403
+  could equally be a malformed probe". The arm condition at `comm21.mjs:196` REQUIRES
+  `probeBefore?.status === 400`. So the 400 is a satisfied conjunct and the row failed on a
+  DIFFERENT one - and the real cause is named right there in the same verdict line, which was read
+  past: **`the peer posts while it may: COMM21-... never appeared in 30000ms`, i.e.
+  `peerWroteBefore !== true`.** The peer could not send in the salon it was still a member of.
+  **Read the ledger record before touching the probe** - and note the shape: the granting device
+  and the peer failing to exchange a message in a fresh salon is EXACTLY the forked-group signature
+  COMM-8 turned out to be, so re-run this row on a build carrying that fix BEFORE calling it a
+  runner defect at all.
 
 **ADJUDICATED 2026-08-27 on `cb967b6c`, the first build carrying the same-epoch ACK.** Both
 survived the debris being cleared, so both causes are real and neither was the redelivery:
@@ -513,8 +523,9 @@ survived the debris being cleared, so both causes are real and neither was the r
 - **COMM-9/10 still `VACUOUS`**, identically: `keptArrived:false` with `failures: []`. The runner
   defect stands as written - a row that cannot ask its question must say so in `failures[]`, and
   this one still says nothing.
-- **COMM-21 still `VACUOUS`** with the same `probeBefore` 400, exactly as predicted above. It is
-  the runner's probe, and it is now the only thing between this row and a verdict.
+- **COMM-21 still `VACUOUS`** with the same `probeBefore` 400 - which the correction above shows is
+  the design. Its blocker is `peerWroteBefore`, and the first thing owed to it is a re-run on the
+  COMM-8 fix, not a runner change.
 
 ### P2 - an external joiner's own commit locked the next joiner out; FIXED for that path 2026-08-26, one half left (COMM-22)
 

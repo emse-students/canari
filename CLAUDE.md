@@ -141,17 +141,36 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     decisions the dirt turns on are on
     [cross-client-campaign](docs/wiki/cross-client-campaign.md). Neither is restated here.**
 
-    **Where the ladder stands: rungs 1-10 TAKEN.** 9 COMM was re-run 2026-08-27 on `f21502e1` - 0
-    `FAIL`, and every dirty cell carries ONE signature that is OLDER THAN THE RUN. **Both halves of
-    it are now fixed** (the create-race, and the same-epoch ACK that stops the redelivery - stories
-    in `CHANGELOG.md`), so **COMM owes ONE re-run, predicted clean, and it is NEXT** - this time WITH
-    A1, which is back, for the four `+A1` rows still on `6808a89c`; it also owes the proof
-    WP-REGRANT-2 wants. **Then 11 TAB**, then MULTI, LIFE, NOTIF, CALL, HEAL, PIN, CORRUPT.
+    **THE USER'S PRIORITY, 2026-08-27, verbatim: *"PASS ou PASS-DIRTY sur COMM, DEL, MULTI, LIFE,
+    NOTIF, HEAL."*** Those six ARE the target; TAB, CALL, PIN and CORRUPT come after them, and
+    nothing else is worth a token until those six are green.
+
+    **Where the ladder stands: rungs 1-10 TAKEN.** COMM's last full run (2026-08-27, `cb967b6c`) is
+    15 `PASS` / 5 `PASS-DIRTY` / 3 `VACUOUS` / 1 `FAIL`. **The `FAIL` is COMM-8 and its cause is
+    found and FIXED** - an external join was durable on the SERVER and volatile on the CLIENT, so a
+    reload in the gap rejoined and FORKED the group (four groups in that one rung; story in
+    `CHANGELOG.md`, rule in `durable-rules`). COMM-11's remaining dirt is the same signature.
+    **COMM owes ONE re-run**, and it also owes the proof WP-REGRANT-2 wants.
+
+    **A1 IS ARMED** - Pixel 6a, `adb devices` = `device`, `isKeyguardShowing=false`, and
+    `node phone.mjs 9333` (ONE positional port, NOT `--ensure`) returned `ok:true` on 2026-08-27. So
+    the four `+A1` rows (COMM-14/17/18/25, still on `6808a89c`) run this time. **A dead `adb devices`
+    is not always the cable:** it was empty until the user re-plugged, and the `A1_WIFI` fallback
+    needs a prior `adb tcpip 5555` it did not have.
 
     **A `PASS-DIRTY` NO LONGER STOPS A RUNG BY ITSELF (user, 2026-08-25)**, and **a x5 sweep of the
     WHOLE ladder accepting nothing short of `PASS` comes AFTER the campaign reaches the bottom (user,
     2026-08-26)** - until then one pass per rung is the target. **What is left is a WRITING job as
     much as a running one:** only CALL, CORRUPT and PIN have NO runner at all.
+
+    **BLOCKER - THE COMM-8 FIX IS COMMITTED AND NOT PUSHED, so prod does not carry it and a re-run
+    would measure the OLD build.** Four `git push` attempts died on `fatal: unable to access ...:
+    Empty reply from server` (exit 128) while `git fetch` succeeded every time - including with
+    `http.version=HTTP/1.1` and `http.postBuffer=524288000` (`http.sslbackend` is `schannel`, no
+    proxy set). The remote accepted three commits from the parallel session during those attempts,
+    so the path works for others. `git status -sb` says `ahead 1` until it lands. **Next thing to
+    try is an SSH remote.** And `git push ... | sed > log; echo $?` REPORTED SUCCESS ON A FAILED
+    PUSH - the documented masking hazard, hit again: redirect, never pipe, then read `$?`.
 
     **A KILLED RUN CAN DESTROY A MEASUREMENT SECONDS FROM BEING RECORDED**, and **`node rows.mjs`
     SETTLES WHETHER THE BOARD STILL MATCHES THE LEDGER - run it before believing a cell**
@@ -276,9 +295,8 @@ GROUP IS TWO ESTATES**: `cleanup.mjs` owns the server side, `dismiss.mjs` the co
 client keeps; one allowlist for both, `debris.mjs` (detail on
 [cross-client-campaign](docs/wiki/cross-client-campaign.md)).
 
-**A1 IS BACK** (user, 2026-08-26) and was verified unlocked and foregrounded on 2026-08-27, so `+A1`
-and `+push` rows run again. **TAB-7 is the row to watch**: offline -> act -> online with no reload is
-exactly the trigger DEL-10 says nothing honours.
+**TAB-7 is the row to watch**: offline -> act -> online with no reload is exactly the trigger DEL-10
+says nothing honours. A1's state is in the queue item above, not here.
 
 **Prod IS the test server** and commit+push are authorised so it picks changes up.
 `dev.canari-emse.fr` is a proxied CNAME to the same tunnel, NOT a second environment; it becomes one
