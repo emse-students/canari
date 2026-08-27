@@ -168,6 +168,12 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   // Refresh the App Group mirror so the NSE decrypts against the state as of the app's last
   // active moment (the foreground advances mls.bin; there is no Rust write hook to mirror on).
   CanariMirrorPushStateToAppGroup();
+  // The FCM token, asked for HERE and not at bootstrap. By the time the app is active,
+  // registerForRemoteNotifications has run and APNs has usually answered - which is the
+  // precondition FIRMessaging has and Android does not, and the one the old bootstrap call could
+  // not possibly satisfy. It self-corrects without a timer: this fires on every activation, and the
+  // function returns immediately while the APNs token is still absent.
+  CanariSyncFcmTokenIfApnsReady();
   NSLog(@"[CanariIOS] didBecomeActive");
 }
 

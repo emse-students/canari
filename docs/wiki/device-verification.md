@@ -72,6 +72,7 @@ WP-XP-7 removal at once, which means H, I, K and the dev-panel check all ride a 
 | O | WP-STORE-1 (install source + version gate) | owed | n/a |
 | P | Cookie durability across a kill (the iOS half of WP-ANDROID-SESS-1) | n/a (fixed + verified) | owed |
 | R | The shrunk release APK still having what it needs | owed | n/a |
+| S | An iPhone obtaining a push token AT ALL (the P1 of 2026-08-27) | n/a (49 rows, healthy) | **owed on 0.14.8+** |
 
 For the iOS pass, install the `ios-release` artifact of the run above rather than waiting for
 TestFlight: a dispatch does not upload there, so TestFlight is still on the previous build and check
@@ -494,6 +495,36 @@ nothing to users. Use one only to re-check a fix made after the release was cut.
 
 **A debug pass covers none of this**, which is why this check is separate from Q - cleared on a
 debug APK on 2026-08-26, on a build that by definition never ran R8.
+
+## S. An iPhone obtaining a push token at all - owed on iOS, from 0.14.8
+
+**Proves** that the ordering fix of 2026-08-28 works, and it is the only thing that can: the call it
+replaced compiled perfectly and could never succeed, so a green iOS build says nothing here.
+Measured 2026-08-27, `push_token` held 49 `android` rows and had **never** held one `ios` row - no
+alert, no mention and no CallKit ring had ever reached an iPhone. Mechanism on
+[mobile](frontend/mobile.md#the-fcm-token-an-iphone-could-never-obtain-and-the-silence-that-hid-it-for-the-platforms-life).
+
+**Steps.** Install the TestFlight build of 0.14.8 or later on the iPhone, sign in, and put the app in
+the foreground once - `didBecomeActive` is the trigger, so a launch is enough. Then, from this
+machine:
+
+```
+ssh canari 'docker exec infrastructure-postgres-1 psql -U canari -d auth_db -c "SELECT platform, count(*) FROM push_token GROUP BY platform"'
+ssh canari 'docker logs --since 30m infrastructure-chat-delivery-service-1 2>&1 | grep PUSH_UNAVAILABLE'
+```
+
+**PASS** = an `ios` row exists. Then send the iPhone a message from another device with the app
+killed, and confirm the alert arrives: the row proves registration, not delivery.
+
+**A `[PUSH_UNAVAILABLE] ... platform=ios reason=no-token` line is NOT a pass, but it is not a
+regression either** - it is the first time the platform has reported anything, and it says the
+ordering was not the only broken link. The candidates left, and the device log that separates them,
+are in [backlog](backlog.md) under the P1; `[CanariPush] APNs token not here yet` versus
+`[CanariPush] FCM token synchronise` names the branch, and reading it needs `idevicesyslog` or a Mac.
+
+**Neither answer arriving means the build did not reach the phone.** Check the version the device
+runs before reading anything into the silence - TestFlight is the beta channel and an ordinary
+install is not automatic.
 
 ## Traps that outlived the work that found them
 

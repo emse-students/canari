@@ -12,6 +12,16 @@ FOUNDATION_EXPORT NSString *_Nullable CanariRetrievePushSecret(void);
 /// Installs the push handler (FCM delegate + UNUserNotificationCenter).
 void CanariPushSetup(void);
 
+/// Fetches the current FCM token and persists it, but ONLY once APNs has handed one over.
+///
+/// The precondition is the whole point. FIRMessaging cannot mint an FCM token before an APNs token
+/// exists, and on iOS that token arrives asynchronously after `registerForRemoteNotifications` -
+/// which cannot run until launch completes. So a fetch at bootstrap is guaranteed to fail, and this
+/// is called from `didBecomeActive` instead, where the answer can be yes. Guarded on
+/// `FIRMessaging.APNSToken` rather than on a delay: it either exists or the next activation asks
+/// again. A no-op when Firebase is not linked.
+void CanariSyncFcmTokenIfApnsReady(void);
+
 /// Dismisses message notifications when the app comes to the foreground.
 void CanariPushCancelMessageNotifications(void);
 

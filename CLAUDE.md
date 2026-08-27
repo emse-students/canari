@@ -313,7 +313,7 @@ yet, so **read Android vitals from late September 2026**; and **WP-RESTORE-1** (
 required April 2027, WebAuthn on a server that has none) is ACCEPTED and scheduled AFTER the
 campaign ([backlog](docs/wiki/backlog.md)).
 
-**Release: v0.14.7 in flight (2026-08-28); v0.14.6 shipped iOS ONLY.** Android Release and AppImage
+**Release: v0.14.8 carries the iOS FCM fix and is the build check S needs; v0.14.7 in flight before it, v0.14.6 shipped iOS ONLY.** Android Release and AppImage
 Release died on a Tauri JS/Rust version skew (`plugin-log` 2.9.0 vs crate 2.8.0) that no CI job could
 see because nothing here compiles the Tauri app - fixed, and `Guard the Tauri JS/Rust version parity`
 in `code-analysis.yml` now reads the two committed files. Story in `CHANGELOG.md`, rule in
@@ -349,21 +349,23 @@ owed on macOS/Linux desktop, whose engines nobody has measured - that unknown is
 covers. A dead session is also no longer re-proven 120 times: the 401 is a proof about a credential
 and is now latched.
 
-**BUT iOS HAS NEVER REGISTERED ONE PUSH TOKEN, AND NOTHING REPORTED IT - now a P1**
-([backlog](docs/wiki/backlog.md)): `push_token` holds `android | 49` and no `ios` row has ever
-existed, so iOS receives no alert, no mention and no CallKit ring. The whole chain is present and
-correctly configured (FirebaseMessaging linked at 12.11.0, `aps-environment: production`,
-`FirebaseAppDelegateProxyEnabled`, NSE, VoIP registry), and **A1's logcat is the reference that makes
-the diagnosis stand**: Android reads its token at LAUNCH with no precondition
-(`MainActivity: FCM token synced`, 16 s before JS asks), and the iOS force-fetch was written as that
-code's mirror - copying a pattern whose precondition exists only on iOS. `CanariPushSetup` calls
-`tokenWithCompletion` BEFORE the `DidFinishLaunching` observer runs `registerForRemoteNotifications`,
-so no APNs token can exist yet. What the reading cannot settle is whether
-`didReceiveRegistrationToken` later saves it (the plist's delegate proxy should); zero rows in a
-platform's lifetime says it does not. **The defect underneath is the SILENCE** - the client warns to a
-WebView console no one can open on iOS and the server is never told, which is why 49 healthy Android
-rows looked like success. Settling the native half needs one device log line, or the fix and a
-release.
+**iOS HAD NEVER REGISTERED ONE PUSH TOKEN, AND NOTHING REPORTED IT - FIXED 2026-08-28, PROOF OWED.**
+`push_token` held `android | 49` and no `ios` row had ever existed, so no alert, no mention and no
+CallKit ring had ever reached an iPhone. The cause was an ORDER copied from the platform that has no
+such precondition, and the deeper defect was the SILENCE - the absence of a row is
+indistinguishable from a device nobody opened, so 49 healthy Android rows stood in for both. Both
+halves are fixed: `CanariSyncFcmTokenIfApnsReady()` from `didBecomeActive`, and a device that
+exhausts its retries now POSTs `/api/mls/push/unavailable` (stores nothing, logs
+`[PUSH_UNAVAILABLE] ... platform=... reason=...`). **Story in `CHANGELOG.md`, mechanism on
+[mobile](docs/wiki/frontend/mobile.md#the-fcm-token-an-iphone-could-never-obtain-and-the-silence-that-hid-it-for-the-platforms-life)
+and [chat-delivery](docs/wiki/services/chat-delivery.md#a-device-that-cannot-get-a-push-token-at-all),
+two rules in [durable-rules](docs/wiki/durable-rules.md#mobile-and-native), the P1 and its two
+remaining candidates in [backlog](docs/wiki/backlog.md), the hardware steps as
+[check S](docs/wiki/device-verification.md); none is restated here.** **IT STAYS A P1 UNTIL A DEVICE
+ANSWERS** - everything native here is verified by COMPILING, and the call this replaced compiled
+perfectly and could never succeed. **The one thing to do after 0.14.8 reaches the iPhone: run check S.
+An `ios` row is the pass; a `platform=ios reason=no-token` line is not a pass but IS the first word
+the platform has ever said; neither arriving means the build did not reach the phone.**
 
 ### CANARI - the test campaign
 

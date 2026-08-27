@@ -148,6 +148,44 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **An iPhone could never obtain a push token, and nothing anywhere reported it.** Measured on
+  production: `SELECT platform, count(*) FROM push_token GROUP BY platform` answered `android | 49`
+  and nothing else - not one row had ever carried `platform = 'ios'`, and `voipToken` was null on all
+  49, so no PushKit token existed either. No message alert, no mention and no CallKit ring had ever
+  been deliverable to an iPhone, and had not been since the platform shipped. The question was only
+  asked because the CORS defect below had put an iPhone in front of a log for the first time.
+
+  **The cause was an ORDER inherited from the platform that has no such constraint.** `canari_push.mm`
+  fetched the FCM token at the bottom of `canari_ios_bootstrap()`, written as the declared mirror of
+  Android's `FirebaseMessaging.getInstance().token` - which at launch has no precondition. On iOS it
+  has one: FIRMessaging cannot mint a token before an APNs token exists, and that arrives only after
+  `registerForRemoteNotifications`, which the same bootstrap schedules for `DidFinishLaunching`, i.e.
+  strictly later. That call could only ever fail. `CanariSyncFcmTokenIfApnsReady()` now checks
+  `APNSToken` and is called from `CanariOnDidBecomeActive`, which fires after launch completes and on
+  every foreground; nothing is on a timer.
+
+  **The defect underneath was the silence, and it is the half that cost a platform's whole life.** A
+  client that could not get a token warned to a WebView console nobody can open on iOS from a Windows
+  machine, the server was never told, and **the absence of a row is indistinguishable from a device
+  nobody opened** - so 49 healthy Android rows stood in for both platforms. `PushNotificationService`
+  now returns a typed outcome instead of a boolean and, when its retry ladder is exhausted, POSTs
+  `/api/mls/push/unavailable`; the server stores nothing (`push_token` already owns that state) and
+  logs `[PUSH_UNAVAILABLE] user=… device=… platform=… reason=…`, so one `GROUP BY` answers next time.
+  The reason is the client's classification and the server never rewrites it. Reported ONCE, at the
+  end of the ladder, because an early failure the next attempt fixes would accuse a device that goes
+  on to work.
+
+  Verification is hardware and is still owed: an `ios` row in `push_token`, or a `platform=ios` line
+  in chat-delivery's log. Until one appears this is reasoned and not observed.
+
+- **A refresh refusal named no client version**, so every `Refresh refused for the NATIVE app` line
+  from an iPhone was ambiguous until the user stated by hand which build the device ran.
+  `POST /auth/refresh` now takes `?clientVersion=` (the precedent `announcement.controller.ts` set,
+  and a query parameter rather than a header so no CORS allowance changes on four services) and the
+  log prints `client=0.14.7` or `client=unstated`. The same line's header field had one label for two
+  different states and now has three: `absent`, `empty`, and `ignored` - a header that was present
+  and valid but not consulted, because the origin uses the cookie transport.
+
 - **A dependency bump killed three release builds, and nothing before the release could have seen
   it.** Android Release and AppImage Release for v0.14.6 both died about thirty seconds in, on the
   Tauri CLI's own preflight: `tauri-plugin-log (v2.8.0) : @tauri-apps/plugin-log (v2.9.0)`. A Tauri

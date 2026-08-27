@@ -118,6 +118,44 @@ export class PushController {
   }
 
   /**
+   * A device stating that it CANNOT obtain a push token, after exhausting its own retries.
+   *
+   * THIS EXISTS BECAUSE THE ABSENCE OF A ROW IS NOT A REPORT. A client that fails to obtain an FCM
+   * token warns to its own console and stops; the row simply never appears, which reads exactly like
+   * a device that was never opened. Measured 2026-08-27: `push_token` held 49 Android rows and had
+   * never held ONE iOS row in the platform's whole life, and nothing anywhere had said so - so the
+   * healthy platform's 49 rows stood in for both.
+   *
+   * It deliberately stores NOTHING. The question it answers is "does this platform's push chain
+   * work", which a warn line plus a date answers, and a table would invite a cleanup policy, a
+   * retention question and a second source of truth for a fact `push_token` already owns. WARN and
+   * not DEBUG because a device that reached here has given up: every notification for that device is
+   * silently lost until it registers, which is a defect somewhere and should read like one.
+   */
+  @UseGuards(ThrottlerGuard, HeaderAuthGuard)
+  @Post('mls/push/unavailable')
+  reportPushUnavailable(
+    @Body() body: { deviceId: string; platform?: string; reason?: string },
+    @Headers('x-user-id') userIdRaw: string
+  ): { recorded: true } {
+    const userId = sanitizeQueryValue(userIdRaw, 'userId');
+    const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
+    // Same normalisation as registration, so the two lines are comparable by platform: anything
+    // that is not explicitly `ios` is the FCM-native platform.
+    const platform: 'android' | 'ios' = body.platform === 'ios' ? 'ios' : 'android';
+    // Bounded and free-form on purpose: the client classifies (`no-token`, `rejected`), and a value
+    // this endpoint does not recognise must still be printed rather than replaced by a guess.
+    const reason = (typeof body.reason === 'string' ? body.reason : 'unstated')
+      .trim()
+      .slice(0, 120);
+    this.logger.warn(
+      `[PUSH_UNAVAILABLE] user=${userId} device=${deviceId} platform=${platform} ` +
+        `reason=${reason || 'unstated'}`
+    );
+    return { recorded: true };
+  }
+
+  /**
    * Register or refresh a push token for a device.
    * Upserts on (userId, deviceId) - one token per device per user.
    */

@@ -1221,6 +1221,7 @@ CONFIGURATION** — and every parity defect found since has been exactly that. A
 | Cookie-jar durability | `commands/cookies.rs` | Android-only **by API**, not by decision — iOS has no flush to call and has never been observed. `check P` |
 | Server CORS allowlist | `apps/*-service/src/cors-origins.ts`, `ALLOW_ORIGIN` in `cd.yml` | Named the Android origins ONLY. Broke iOS login outright - see below. One module per service now, with a test naming each platform's origin individually |
 | Third-party cookie acceptance | `MainActivity.kt` (Android), nothing on iOS | MEASURED 2026-08-27: Android opts in and survives `am force-stop` (1 refresh, 200); iOS presented `cookies=[]` on 120. WKWebView has no equivalent API, so on `tauri://localhost` the credential is carried in a header instead - [`sessions.md`](../sessions.md#the-credential-a-client-carries-itself) |
+| Push token acquisition | `canari_push.mm` (iOS), `MainActivity.kt` + FCM SDK (Android) | MEASURED 2026-08-27: `push_token` held 49 `android` rows and had NEVER held one `ios` row. The iOS launch-time FCM fetch was written as Android's mirror, but iOS has a precondition Android does not - see [below](#the-fcm-token-an-iphone-could-never-obtain-and-the-silence-that-hid-it-for-the-platforms-life). Fixed 2026-08-28; a device now REPORTS the absence, so one `GROUP BY` settles it |
 
 Two rules come out of that table, and they are the ones to apply before adding anything native:
 
@@ -1279,6 +1280,52 @@ from it. A refusal now logs the origin once, budget-capped, at a level that accu
 Rules, in [`durable-rules.md`](../durable-rules.md#mobile-and-native): a server's origin allowlist is a
 fact about its CLIENTS, and a Tauri client has one origin per platform; and platform parity is not a
 property of the native project.
+
+### The FCM token an iPhone could never obtain, and the silence that hid it for the platform's life
+
+**Measured on prod, 2026-08-27.** `SELECT platform, count(*) FROM push_token GROUP BY platform`
+answered `android | 49` and nothing else. Not one row had ever carried `platform = 'ios'`, and
+`voipToken` was null on all 49, so no PushKit token existed either: an iPhone had never been able to
+receive a message alert, a mention or a CallKit ring, and had not since the platform shipped. The
+question was only asked because the CORS defect above had put an iPhone in front of a log for the
+first time.
+
+**Everything in the chain was present**, which is why this needed a measurement rather than a build:
+the v0.14.6 iOS build resolves and links `firebase-ios-sdk @ 12.11.0` with an explicit
+`FirebaseMessaging` dependency (read out of the run log), `canari_iOS.entitlements` carries
+`aps-environment: production`, `Info.plist` declares `remote-notification` and
+`FirebaseAppDelegateProxyEnabled: true`, and `canari_push.mm` installs a `FIRMessagingDelegate`, a
+`PKPushRegistry` and the NSE.
+
+**The defect was an ORDER, and the order was inherited from the platform that has no such
+constraint.** `canari_push.mm`'s `CanariPushSetup` called `[[FIRMessaging messaging]
+tokenWithCompletion:]` at the bottom of `canari_ios_bootstrap()` - written as the declared mirror of
+Android's `FirebaseMessaging.getInstance().token`, which at launch has NO precondition. On iOS it
+has one: **FIRMessaging cannot mint an FCM token before an APNs token exists**, and an APNs token
+only arrives after `registerForRemoteNotifications`, which the same bootstrap registers an observer
+for on `DidFinishLaunching` - i.e. strictly later. That call could therefore only ever fail with *No
+APNS token specified before fetching FCM Token*, log one line, and return without writing.
+
+**The fix carries the fetch to where the precondition is known to hold.**
+`CanariSyncFcmTokenIfApnsReady()` (declared in `canari_push.h`) checks
+`[FIRMessaging messaging].APNSToken` first and returns with a line if it is nil, rather than handing
+the work to a layer certain to refuse it; `CanariOnDidBecomeActive` calls it. `didBecomeActive` fires
+after launch completes and again on every foreground, so the first activation with an APNs token in
+hand mints and persists the FCM token, and no timer is involved.
+
+**THE DEFECT UNDERNEATH IS THE SILENCE, and it is the one that cost a platform's whole life.** A
+client that cannot obtain a token used to `console.warn('[Push] No FCM token available')` and stop.
+That line reaches a WebView console nobody can open on iOS from a Windows machine, the server was
+never told, and **the absence of a row is indistinguishable from a device nobody opened** - so 49
+healthy Android rows stood in for both platforms. `PushNotificationService` now returns a typed
+`PushRegistrationOutcome` instead of a boolean, and when the retry ladder is exhausted it POSTs
+`/api/mls/push/unavailable` with the platform and the reason. The server writes no row and only logs
+`[PUSH_UNAVAILABLE] user=… device=… platform=… reason=…` - see
+[chat-delivery](../services/chat-delivery.md#a-device-that-cannot-get-a-push-token-at-all).
+
+**What is still owed is hardware.** The native half is not verified by compiling: an
+`ios` row in `push_token`, or a `reason=no-token` line naming `platform=ios`, is the proof. Until one
+of the two appears, this section describes a fix that has been reasoned and not observed.
 
 ## CI/CD
 

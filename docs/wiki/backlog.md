@@ -68,52 +68,39 @@ entry here or closes the question.
 
 ## Measurements owed
 
-### P1 - iOS has NEVER registered a push notification token, and nothing anywhere reported it (measured 2026-08-27)
+### P1 - iOS has NEVER registered a push token: FIXED 2026-08-28, and the PROOF is what is owed
 
-**Measured, one query.** `SELECT platform, count(*) FROM push_token GROUP BY platform` on prod answers
-`android | 49` and nothing else: not one row has ever carried `platform = 'ios'`, and `voipToken` is
-null on all 49, so no PushKit token exists either. iOS therefore receives NO push of any kind - no
-message alert, no mention, no CallKit ring - and has not since the platform shipped.
+**The fix is in and the story is in `CHANGELOG.md`; the mechanism is on
+[mobile](frontend/mobile.md#the-fcm-token-an-iphone-could-never-obtain-and-the-silence-that-hid-it-for-the-platforms-life)
+and [chat-delivery](services/chat-delivery.md#a-device-that-cannot-get-a-push-token-at-all). Neither
+is restated here.** Two rules came out of it, both in
+[durable-rules](durable-rules.md#mobile-and-native): a precondition one platform does not have is
+still a precondition; and the absence of a row is not a report.
 
-**The chain is all present, which is what makes this worth a measurement rather than a build.** The
-v0.14.6 iOS build resolves and links `firebase-ios-sdk @ 12.11.0` with an explicit dependency on
-`FirebaseMessaging` (read out of the run log, per the rule that a green run is not proof your file
-compiled); `canari_iOS.entitlements` carries `aps-environment: production` plus Time Sensitive and the
-App Group; `Info.plist` declares `remote-notification` in `UIBackgroundModes` and sets
-`FirebaseAppDelegateProxyEnabled: true`; `canari_push.mm` installs a `FIRMessagingDelegate`, a
-`PKPushRegistry` and an NSE; `PushNotificationService.ts` detects `ios` from the user agent and asks
-for the VoIP token before registering. Nothing in that list is missing.
+**WHY THIS STAYS A P1 UNTIL A DEVICE ANSWERS.** Everything native in this repo is verified by
+COMPILING, which proves nothing about running, and this entry's whole subject is a call that compiled
+perfectly and could never succeed. The ordering fix is REASONED, not observed.
 
-**Two candidate links, and code reading cannot separate them.**
+**What closes it, either one, after the release carrying it reaches the iPhone:**
 
-1. **The launch-time force fetch runs too early.** In `canari_ios_bootstrap()` the order is
-   `CanariRequestNotificationPermission()` (async, its completion handler only logs), then
-   `CanariSetupFirebaseIfAvailable()`, then `CanariPushSetup()` - which calls
-   `[[FIRMessaging messaging] tokenWithCompletion:]` immediately - and only THEN registers an observer
-   that calls `registerForRemoteNotifications` on `DidFinishLaunching`. FIRMessaging cannot mint an FCM
-   token before an APNs token exists, so that fetch is expected to fail with *No APNS token specified
-   before fetching FCM Token*, log one line and return without writing.
-2. **...but that alone should be harmless**, because `FirebaseAppDelegateProxyEnabled: true` has
-   Firebase feed the APNs token to FIRMessaging itself once it arrives, after which
-   `didReceiveRegistrationToken` fires and `CanariPersistFcmToken` writes the file. So either that
-   delegate never fires (the proxy has no delegate class to swizzle - `main.mm` deliberately defines
-   none, and the plist comment calls that reliance intentional), or it fires and
-   `CanariTauriDataDir()` is still nil that early, or it writes a path the Rust `get_fcm_token`
-   (`{app_data_dir}/fcm_token.txt`) does not read.
+```
+ssh canari 'docker exec infrastructure-postgres-1 psql -U canari -d auth_db -c "SELECT platform, count(*) FROM push_token GROUP BY platform"'
+ssh canari 'docker logs --since 30m infrastructure-chat-delivery-service-1 2>&1 | grep PUSH_UNAVAILABLE'
+```
 
-**THE DEFECT UNDERNEATH IS THE SILENCE, and it is the part to fix first.** A client that cannot obtain
-a token calls `console.warn('[Push] No FCM token available')` and stops. That line reaches a WebView
-console nobody can open on iOS from Windows, the server is never told, and the row simply never
-appears - so 49 Android devices registering looked exactly like success while the second platform
-registered nothing for its entire life. **A push registration that cannot happen must be reported to
-somewhere a person reads**, and then a single `GROUP BY platform` answers the question this took a
-CORS incident to stumble into.
+An `ios` row means the chain works end to end. A `[PUSH_UNAVAILABLE] ... platform=ios
+reason=no-token` line means the ordering was not the only link - and that is a WIN too, because it is
+the first time the platform has said anything at all. **Neither answer arriving means the release did
+not reach the device**, not that the report is broken: check the build the phone runs before reading
+anything into silence.
 
-**What settles the native half:** one device log. `[CanariPush] fetching the FCM token at launch
-failed: ...` versus `[CanariPush] FCM token synchronise au lancement` names the link directly, and
-`[CanariIOS] registerForRemoteNotifications` says whether step 4 ever ran. Needs a Mac console or
-`idevicesyslog`; the ANDROID sequence is readable today over `adb logcat` on A1 and is the reference
-for what a healthy chain prints.
+**If the report says `no-token`, the next question is which of the two remaining candidates it is** -
+`didReceiveRegistrationToken` never firing (the `FirebaseAppDelegateProxyEnabled` swizzle has no
+delegate class to attach to, which `main.mm` and the plist comment call intentional), or it firing
+while `CanariTauriDataDir()` is still nil, or writing a path the Rust `get_fcm_token`
+(`{app_data_dir}/fcm_token.txt`) does not read. Separating those needs a device console
+(`idevicesyslog` or a Mac), and `[CanariPush] APNs token not here yet` versus
+`[CanariPush] FCM token synchronise` names the branch directly.
 
 ### P3 - the one fallback in `apiFetch` logs that it was taken and not WHY (seen 2026-08-28)
 

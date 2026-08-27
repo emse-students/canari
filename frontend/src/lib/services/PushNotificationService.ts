@@ -26,6 +26,17 @@ import { m } from '$lib/paraglide/messages';
 /** Push gateway platform tag sent to the backend (mirrors the server's PushPlatform). */
 type PushPlatform = 'android' | 'ios';
 
+/**
+ * Why a registration attempt did not end in a live token on the server.
+ *
+ * A TYPE rather than a boolean, because the two failures need different reactions and the caller can
+ * only tell them apart if the callee states which one it was. `no-token` means the OS never handed
+ * this app a push token, so there is nothing to send and no server involved; `rejected` means the
+ * token existed and the backend refused it. Reported to the server as-is, and the server prints
+ * whatever it is given rather than guessing.
+ */
+export type PushRegistrationOutcome = { ok: true } | { ok: false; reason: 'no-token' | 'rejected' };
+
 const FCM_TOKEN_STORAGE_KEY = 'canari_fcm_token';
 const BACKGROUND_RETRY_ATTEMPTS = 6;
 const BACKGROUND_RETRY_DELAY_MS = 5000;
@@ -62,31 +73,31 @@ export async function getFcmToken(): Promise<string | null> {
  */
 export async function registerPushToken(
   registerFn: (token: string) => Promise<void>
-): Promise<boolean> {
+): Promise<PushRegistrationOutcome> {
   console.info('[Push] registerPushToken start');
   // getFcmToken() returns immediately if already written, otherwise waits for
   // the canari:fcm-token native event emitted by MainActivity (max 30 s).
   const token = await getFcmToken();
   if (!token) {
     console.warn('[Push] No FCM token available');
-    return false;
+    return { ok: false, reason: 'no-token' };
   }
 
   // Skip backend registration when the token has not changed.
   const stored = sessionStorage.getItem(FCM_TOKEN_STORAGE_KEY);
   if (stored === token) {
     console.info('[Push] Token unchanged, skip backend registration');
-    return true;
+    return { ok: true };
   }
 
   try {
     await registerFn(token);
     sessionStorage.setItem(FCM_TOKEN_STORAGE_KEY, token);
     console.info('[Push] FCM token registered successfully');
-    return true;
+    return { ok: true };
   } catch (err) {
     console.error('[Push] FCM token registration failed', err);
-    return false;
+    return { ok: false, reason: 'rejected' };
   }
 }
 
@@ -128,7 +139,7 @@ export async function startPushService(
     return;
   }
 
-  const registerOnce = async (): Promise<boolean> => {
+  const registerOnce = async (): Promise<PushRegistrationOutcome> => {
     return await registerPushToken(async (pushToken) => {
       // PushKit VoIP token (iOS only, WP-XP-5): written by the native PKPushRegistry callback.
       // Included at registration so CallKit rings work from the very first login; later
@@ -174,6 +185,7 @@ export async function startPushService(
     await registerOnce();
     return;
   }
+
   pushAttempted = true;
 
   console.info(
@@ -203,17 +215,59 @@ export async function startPushService(
   }
   // --------------------------------------
 
-  const immediateOk = await registerOnce();
-  if (immediateOk) return;
+  let outcome = await registerOnce();
+  if (outcome.ok) return;
 
   // Fallback: token generation can be delayed on some Android devices.
   for (let i = 0; i < BACKGROUND_RETRY_ATTEMPTS; i++) {
     await new Promise((resolve) => setTimeout(resolve, BACKGROUND_RETRY_DELAY_MS));
-    const ok = await registerOnce();
-    if (ok) return;
+    outcome = await registerOnce();
+    if (outcome.ok) return;
   }
 
   console.warn('[Push] startPushService exhausted retries without successful registration');
+  // THE FAILURE IS REPORTED HERE AND NOWHERE EARLIER. Every attempt above can fail for a reason the
+  // next one fixes - that is what the retries are for - so reporting one of those would file a
+  // defect against a device that goes on to work. Reaching this line means the device has given up
+  // and every notification for it is now silently lost, which is exactly the state that had gone
+  // unnoticed on iOS for the platform's whole life. Best-effort by construction: a device that
+  // cannot reach the network cannot report that it cannot reach the network, and failing to file
+  // the report must never be louder than the thing being reported.
+  await reportPushUnavailable(apiBaseUrl, bearerToken, deviceId, platform, outcome.reason);
+}
+
+/**
+ * Tells the backend that this device has no usable push token.
+ *
+ * Sends no token and stores nothing: the server logs it. See the endpoint's own comment in
+ * `apps/chat-delivery-service/src/controllers/push.controller.ts` for why the absence of a row could
+ * not answer this question by itself.
+ */
+async function reportPushUnavailable(
+  apiBaseUrl: string,
+  bearerToken: string,
+  deviceId: string,
+  platform: PushPlatform,
+  reason: string
+): Promise<void> {
+  const userId = currentUserId();
+  if (!userId) return;
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/mls/push/unavailable`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${bearerToken}`,
+        'x-user-logged-in': 'true',
+        'x-user-id': userId,
+      },
+      body: JSON.stringify({ deviceId, platform, reason }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    console.info(`[Push] reported unavailable (${reason})`);
+  } catch (err) {
+    console.warn('[Push] could not report the missing push token', err);
+  }
 }
 
 export async function stopPushService(
