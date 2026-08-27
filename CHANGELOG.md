@@ -64,9 +64,12 @@ which is also where every release up to and including v0.13.1 now lives.
   was saved". Exactly one service has nested overrides (`gaxios`, `teeny-request`,
   `@types/request`), so exactly one image failed to build, and because the deploy is gated on
   every image it was SKIPPED - three CD runs in a row shipped nothing while reporting only a red
-  build. The other three locks come back byte-identical under 1.4.0, measured, so the fix is one
-  regenerated lock and not an estate-wide churn. The comment now states what was falsified and
-  requires every lock to be regenerated with the tag on its own line before that tag moves.
+  build. The other three locks come back byte-identical under 1.4.0, measured, so this is one
+  service's problem and not an estate-wide churn - but **regenerating that lock is NOT the fix**,
+  and it was very nearly shipped as one. A clean re-resolve writes `lockfileVersion: 3`, exactly
+  what Dependabot cannot read, and it drops a security pin those nested blocks were holding; the
+  entry below is what the fix actually is. The comment now states what was falsified and requires
+  every lock to be checked against the new tag before that tag moves.
 
 - **A reconnect that replayed nothing looked exactly like a reconnect that never happened.**
   `drainPendingGroupExits` returned a bare `[]` when there was no storage and when a drain was

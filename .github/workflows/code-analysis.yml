@@ -113,11 +113,13 @@ jobs:
       # `MAX_SUPPORTED_LOCKFILE_VERSION = 1` (dependabot-core#15896, merged 2026-08-14) and answers
       # `DependencyFileNotSupported` to a `lockfileVersion: 2` lockfile - so a v2 lockfile means NO
       # dependency updates for that directory, and the symptom is an ABSENCE of pull requests, which
-      # nobody notices. bun 1.4 writes v2 only for a lockfile it creates from nothing and preserves
-      # v1 otherwise (measured; `ecosystem-convergence.md` section 10), so the repo runs the newest
-      # bun everywhere and only this line has to hold. It reads every COMMITTED lockfile, which
-      # `.bun-version` cannot do: a contributor's own bun is not governed by this repository, and
-      # deleting a `bun.lock` before reinstalling is all it takes.
+      # nobody notices. bun 1.4 leaves an existing v1 alone on an ordinary install - but NOT when the
+      # manifest holds nested `overrides`, which 1.3.14 could not save and 1.4.0 can: that lockfile is
+      # rewritten to v3 on the first install (measured; `ecosystem-convergence.md` section 10). So the
+      # version is not a property of the bun version alone, and only this line actually holds it. It
+      # reads every COMMITTED lockfile, which `.bun-version` cannot do: a contributor's own bun is
+      # not governed by this repository, and deleting a `bun.lock` before reinstalling is all it
+      # takes.
       - name: Guard the bun lockfile version
         run: |
           set -uo pipefail
