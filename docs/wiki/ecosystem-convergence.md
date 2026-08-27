@@ -555,7 +555,7 @@ discovery again.
 |---|---|---|---|---|---|
 | Canari | 1.4.0 | 5 x `bun.lock`, all **v1** | yes | REFUSED, section 9 | green |
 | Sky | 1.4.0 | `bun.lock` **v1** | yes | `--tsgo` already wired into `check` | `check` 43 files 0 errors 2 unused-CSS warnings; `lint` 0 errors 8 warnings; `build` green; image built, container started, `/api/health` 200 |
-| MiGallery | MISSING | `package-lock.json` | no | not started | not run |
+| MiGallery | 1.4.0 | `bun.lock` **v1** | no | not started | `check` 5199 files 0 errors 0 warnings; `format:check` clean; image builds, container healthy, `/api/health` 200 |
 | le-cercle | MISSING | `bun.lock` **v1** | no | `^6.0.3` caret, section 9 | not run |
 | Portail-etu | **1.3.8** | `bun.lock` **v1** | no | not started | deploy green |
 
@@ -615,12 +615,56 @@ runs `format:check`, so the tree cannot drift again unnoticed.
 Decided and not relitigated: Sky keeps Tailwind and migrates to v4 without a preflight, and
 `bun:sqlite` replaces better-sqlite3.
 
-### MiGallery - nothing started
+### MiGallery - the package-manager half is DONE, 2026-08-27
 
-npm -> bun and a `.bun-version`; an audit of its 17 scripts; 68 lucide icons; Tailwind from the
-PostCSS plugin to the Vite one; oxlint/oxfmt/oxvelte; TypeScript 7; 4 vulnerabilities; the duplicate
-`.eslintrc.json` beside `eslint.config.js`; a `code-analysis.yml` that is still pending; and a
-`dependabot.yml` harmonised with the others.
+**Its runtime is NODE and stays node.** Two independent measurements say so, and they are recorded
+here so no one spends the afternoon re-deriving them:
+
+- `better-sqlite3` is a V8-ABI addon and **segfaults bun 1.4.0 outright** - a plain `:memory:`
+  open produces a `bun.report` crash dump. It loads fine under node from the very tree bun
+  installed.
+- `ci.yml` already carried the other half, written by someone else before this work started: bun
+  **as a runtime** inflated every incoming request-body read ~80x and retained the memory under
+  mimalloc (neither `Bun.gc` nor glibc `malloc_trim` reclaim it), which **OOM-killed prod**.
+
+So the split here is bun installs, node executes - and unlike Sky, `bun:sqlite` is NOT the escape
+hatch, because it would be a rewrite of the whole data layer rather than a swap. Both reasons now
+live in the Dockerfile and in `ci.yml`; do not collapse the two halves without re-running both.
+
+**What shipped:** `bun.lock` committed and `package-lock.json` deleted AND gitignored in its place
+- the `.gitignore` named npm "the project's package manager", so nothing else could land while it
+said so. Scripts, both husky hooks, `ci.yml`, `release.yml`, `code-analysis.yml`,
+`dependabot.yml`, the Dockerfile and every doc that told an operator to run a vanished command.
+`RELEASE_NOTES.md` was deliberately left alone: it records what was true when written.
+
+**Two things this cost that are worth keeping:**
+
+- `scripts/ci-local.mjs` and `scripts/test-with-server.mjs` held REAL `spawn('npm', ...)` calls,
+  not prose. A grep for `npm |npx ` missed them because the literal is `'npm',`. **A grep for a
+  command name must include the form it takes as an ARGUMENT**, not only the form it takes at the
+  head of a shell line.
+- The Dockerfile's `python3 make g++` looked vestigial - `better-sqlite3@13` ships prebuilds for
+  eight platforms and declares no `install` script - and removing them **failed the build**:
+  `Could not find any Python installation to use`. bun, like npm, defaults a package that ships a
+  `binding.gyp` and declares no install script to `node-gyp rebuild`, so it compiles from source
+  and the prebuilds are never consulted. **A shipped prebuild is not evidence that the prebuild is
+  what gets used.**
+
+**The npm-on-Windows hazard is retired against a measurement.** MiGallery's `CLAUDE.md` carried a
+rule born of commit `16eae58`: npm on Windows rewrote `package-lock.json` against the Windows
+optional-dependency tree, dropped Linux-only entries (`@emnapi/*`) and broke `npm ci` on the
+runner. `bun.lock` records every platform's optional dependencies, and the lockfile generated on
+Windows drove a Linux `bun install --frozen-lockfile` through a complete production image build
+that answers 200. The rule is rewritten, not merely deleted.
+
+`code-analysis.yml` also gained a `dependencies` job it never had - nothing in that repository
+checked a dependency against a published advisory, and nothing guarded the lockfile-version
+invariant that keeps Dependabot able to open the PR that would fix one.
+
+**Still owed there:** oxlint/oxfmt/oxvelte replacing eslint+prettier, and with them the duplicate
+`.eslintrc.json` sitting beside `eslint.config.js`; 29 files importing `lucide-svelte`; Tailwind
+from the PostCSS plugin to the Vite one; TypeScript 7 (read section 9 first); and `bun audit`'s
+verdict acted on.
 
 ### le-cercle
 

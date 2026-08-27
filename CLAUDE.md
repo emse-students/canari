@@ -218,8 +218,13 @@ section 11 of [ecosystem-convergence](docs/wiki/ecosystem-convergence.md), the o
 its table rather than re-deriving it**, which is what made this paragraph wrong twice. **SKY IS DONE**
 (`e0bd000`..`c65c4cf`): on bun end to end, DEPLOYED - `sky-sky-1` healthy on bun 1.4.0, site 200,
 and the renamed migration it had silently disabled applied 7 operations on its first real start.
-MiGallery owes nine items and has started none; le-cercle owes three, plus a security commit
-never pushed. **Read section 9 before touching TS 7 on either.**
+**MiGallery's package-manager half is DONE** (`41ce5c0`): bun.lock v1 committed,
+package-lock.json deleted and gitignored, every pipeline and doc converted, and the image
+built, started and answered 200. **Its RUNTIME stays node** on two measurements -
+better-sqlite3 segfaults bun 1.4.0, and bun as a runtime once OOM-killed that prod - so do
+not "finish" the migration by moving it. It still owes its tooling half: oxlint/oxfmt/oxvelte,
+lucide, Tailwind-on-Vite, TS 7. le-cercle owes three, plus a security commit never pushed.
+**Read section 9 before touching TS 7 on either.**
 
 **OWED TO THE USER, NOT TO THE CODE: the MLS + Graine explanation** - prose and diagrams, no code
 (user, 2026-08-20). Post-campaign; scope and the two audiences declined are in [backlog](docs/wiki/backlog.md).
