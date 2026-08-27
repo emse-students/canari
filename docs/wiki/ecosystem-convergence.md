@@ -590,11 +590,19 @@ stages are now `oven/bun:1.4.0-alpine`.
 **Verified, not merely compiled:** `docker build` green, container started, the four migrations ran
 to completion under Bun, the server listened, `GET /api/health` answered 200.
 
-The plan demanded this commit be split into substance and the oxfmt reformat. That split was
-attempted MECHANICALLY - HEAD re-formatted with the new oxfmt config, then compared file by file
-against the working tree - and the formatting-only set came back EMPTY: all 43 modified files carry
-substantive change. **There was no separable reformat to lift out**, so one commit is the honest
-shape. Keep the technique: it settles the question in four commands instead of by eye.
+The plan demanded the work be split into substance and the oxfmt reformat, and it now is, across
+three commits: `e0bd000` substance, `44dac39` the CI repair, `1e9d62d` the reformat alone (100
+files, mechanical).
+
+**The reasoning that nearly skipped the split is worth keeping, because the measurement was sound
+and the conclusion did not follow.** HEAD was re-formatted with the new oxfmt config and compared
+file by file against the working tree; the formatting-only set came back EMPTY, which was read as
+"there is no separable reformat here". What it actually showed is that no file's change was
+formatting-ONLY - true, every touched file also carried substance - and it said nothing about
+whether the reformat had been RUN. It had not: `format:check` failed on more than 100 files
+minutes later. **A test for "is this change purely cosmetic" is not a test for "has the formatter
+run"**, and only the second question decides whether a reformat commit is owed. `ci-bun.yml` now
+runs `format:check`, so the tree cannot drift again unnoticed.
 
 Decided and not relitigated: Sky keeps Tailwind and migrates to v4 without a preflight, and
 `bun:sqlite` replaces better-sqlite3.
