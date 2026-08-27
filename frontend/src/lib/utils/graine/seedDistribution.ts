@@ -26,10 +26,16 @@ export class GraineDistributionUnavailableError extends Error {
 }
 
 /**
- * The MLS epoch of a scope's distribution group, or null when this device has not joined it.
+ * The MLS epoch of a scope's distribution group, or null when nothing may ride it yet.
  *
  * Null is a real answer and never a zero: epoch 0 is a group that exists and has committed
  * nothing, which is a very different thing from a group this device cannot see.
+ *
+ * AND "HELD LOCALLY" IS NOT THE SAME QUESTION AS "USABLE". A group this device created moments ago
+ * is in `getLocalGroups()` and answers epoch 0, yet it may still be discarded for having lost the
+ * first-publish race - taking with it any outbound session minted against it, and leaving whatever
+ * that session sealed unreadable for ever. So the third state is asked for explicitly, and a
+ * caller that cannot send yet is told the same thing it is told when the group is absent: wait.
  */
 export function distributionEpochFor(
   mlsService: IMlsService,
@@ -37,6 +43,7 @@ export function distributionEpochFor(
 ): number | null {
   const groupId = mlsService.distributionGroupFor(scope);
   if (!groupId || !mlsService.getLocalGroups().includes(groupId)) return null;
+  if (!mlsService.isDistributionBaseSettled(groupId)) return null;
   return mlsService.getEpoch(groupId);
 }
 

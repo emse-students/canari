@@ -513,6 +513,29 @@ and the loser discards its group and joins the winner's base. **No election, no 
 peer online.** The cost of being wrong here is the reason this is not left to heal: nothing
 reconciles two MLS groups sharing an id.
 
+**AND DISCARDING THE LOSER IS ONLY FREE IF NOTHING WAS BUILT ON IT.** The code asserted that in a
+comment - "this runs before any seed is sent" - which is true of `ensureDistributionGroup`'s own
+call and of nothing else. Between `createGroup` and the server's verdict the doomed group is a
+member of `getLocalGroups()`, and `distributionEpochFor` asks exactly that question while meaning a
+different one: *held* was read as *usable*, so the group answered epoch 0 like any settled one. A
+salon message sent in that window minted an outbound Graine session against it and distributed the
+seed into it; `forgetGroup` then took the session with the group (`session ... has no reachable
+holder`) and the message stayed sealed under a session nobody could open, its author included.
+
+**So the window is named rather than asserted away.** `unsettledDistributionGroups` holds the group
+from before `createGroup` until the verdict, cleared in a `finally` so no branch can leave it
+behind, and `isDistributionBaseSettled` is what `distributionEpochFor` consults before answering an
+epoch. While it is unsettled the answer is **null** - the same answer, and the same
+`GraineDistributionUnavailableError`, that a caller already gets for a group this device does not
+hold, because the two mean the same thing to a sender: not yet. Held, settled and absent are three
+states, and the middle one had been spelled as one of the outer two.
+
+**Nothing waits on this in ordinary use.** `ensureDistributionGroupFor` is awaited at community load
+and at salon join, both before a composer exists, so only a genuinely concurrent send reaches the
+window - which is what the COMM rung does: on 2026-08-27 one race made two rows vacuous, and the
+orphaned frame, classifying as `unknown` and therefore never acknowledged, was redelivered onto
+fifteen more. That amplification is a separate defect and is in [backlog](../backlog.md).
+
 **Routing.** `setupMessageHandler` branches on `isDistributionGroup` BEFORE the known/unknown split,
 because both would misbehave: `handleKnownGroup` looks up a conversation that does not exist and
 returns without acknowledging, so every seed would be redelivered for ever while being read by

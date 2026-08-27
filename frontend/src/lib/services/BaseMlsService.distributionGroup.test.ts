@@ -31,6 +31,7 @@ type Ctx = ReturnType<typeof makeCtx>;
 const proto = BaseMlsService.prototype as unknown as {
   registerDistributionGroup(scope: DistributionScope, groupId: string): void;
   isDistributionGroup(groupId: string): boolean;
+  isDistributionBaseSettled(groupId: string): boolean;
   distributionGroupFor(scope: DistributionScope): string | null;
   distributionScopes(): DistributionScope[];
   groupInfoChannel(groupId: string): {
@@ -67,6 +68,9 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     // The predicate's own store: it answers "is this one", which the scope map cannot answer
     // for a salon whose community this session has not loaded.
     knownDistributionGroups: new Set<string>(),
+    // The create window's own store. Empty means "settled", which is the state of every group this
+    // device did not create in this test.
+    unsettledDistributionGroups: new Set<string>(),
     distributionGroupInfo: {
       fetch: vi.fn().mockResolvedValue({ groupInfo: 'c29j', baseEpoch: 7, activeEpoch: 7 }),
       publish: vi.fn().mockResolvedValue({ stored: true }),
@@ -81,6 +85,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     externalJoin: vi.fn().mockResolvedValue({ joined: true }),
     processIncomingMessage: vi.fn().mockResolvedValue(new Uint8Array([9, 9])),
     registerDistributionGroup: proto.registerDistributionGroup,
+    isDistributionBaseSettled: proto.isDistributionBaseSettled,
     groupInfoChannel: proto.groupInfoChannel,
     ...overrides,
   };
@@ -230,6 +235,68 @@ describe('joining on first use', () => {
     // A group held locally that nobody can join is worse than no group: the next call would find
     // it in `getLocalGroups` and return early, for ever.
     expect(ctx.forgetGroup).toHaveBeenCalledWith('g-1');
+  });
+});
+
+describe('the window between creating a group and learning whether it survives', () => {
+  const REF_FRESH = { groupId: 'g-1', groupInfo: null, baseEpoch: null, activeEpoch: 0 };
+  const settled = (ctx: Ctx) => proto.isDistributionBaseSettled.call(ctx, 'g-1');
+
+  it('reports the group UNSETTLED while the base is being published', async () => {
+    const ctx = makeCtx();
+    let duringPublish: boolean | null = null;
+    // Observed from inside the publish, which is the only moment the window is open. Sampling it
+    // before or after would pass against the defect this exists to prevent.
+    ctx.distributionGroupInfo.publish.mockImplementation(() => {
+      duringPublish = settled(ctx);
+      return Promise.resolve({ stored: true });
+    });
+
+    await ensure(ctx, WS, REF_FRESH);
+
+    // A sender reading `true` here mints a Graine session against a group that may be discarded a
+    // moment later, and whatever it seals is then unreadable by everyone including its author.
+    expect(duringPublish).toBe(false);
+  });
+
+  it('settles the group once its base has won', async () => {
+    const ctx = makeCtx();
+
+    expect(await ensure(ctx, WS, REF_FRESH)).toEqual({ joined: true });
+    expect(settled(ctx)).toBe(true);
+  });
+
+  it('settles again after losing the race, rather than refusing the scope for ever', async () => {
+    const ctx = makeCtx();
+    ctx.distributionGroupInfo.publish.mockResolvedValue({ stored: false });
+
+    await ensure(ctx, WS, REF_FRESH);
+    // The mark describes a window, not a verdict on the group: left behind, it would go on
+    // refusing every send for the scope this device just successfully joined.
+    expect(settled(ctx)).toBe(true);
+  });
+
+  it('settles again when the publish threw, so a transport failure strands nothing', async () => {
+    const ctx = makeCtx();
+    ctx.distributionGroupInfo.publish.mockRejectedValue(new Error('offline'));
+
+    await ensure(ctx, WS, REF_FRESH);
+    expect(settled(ctx)).toBe(true);
+  });
+
+  it('leaves a group it merely JOINED settled throughout - there was never a race', async () => {
+    const ctx = makeCtx();
+    let duringJoin: boolean | null = null;
+    ctx.externalJoin.mockImplementation(() => {
+      duringJoin = settled(ctx);
+      return Promise.resolve({ joined: true });
+    });
+
+    await ensure(ctx, WS, { groupId: 'g-1', groupInfo: 'YmFzZQ==', baseEpoch: 2, activeEpoch: 2 });
+
+    // A published base IS the arbitration; making a joiner wait for one would be inventing a
+    // window where none exists.
+    expect(duringJoin).toBe(true);
   });
 });
 

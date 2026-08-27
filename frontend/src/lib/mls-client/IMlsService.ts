@@ -493,6 +493,14 @@ export interface IMlsService {
   /** True when `groupId` carries channel seeds and must never reach the conversation pipeline. */
   isDistributionGroup(groupId: string): boolean;
   /**
+   * Whether `groupId`'s external-join base is arbitrated, which "held locally" does not answer.
+   *
+   * False only while this device is creating the group and the server has not yet said whether its
+   * base won the first-publish race. A group in that state is in `getLocalGroups()` and may still
+   * be discarded, so anything minted against it dies with it - see `distributionEpochFor`.
+   */
+  isDistributionBaseSettled(groupId: string): boolean;
+  /**
    * Records that a group IS a distribution group when the server says so but its scope cannot yet
    * be named - a private salon's group whose community this session has not loaded.
    *

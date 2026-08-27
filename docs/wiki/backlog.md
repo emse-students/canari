@@ -428,6 +428,36 @@ no check waits on wall-clock time at all. It belongs with the rendering pass, no
 
 ## Messaging convergence
 
+### P2 - a frame no rule recognises is retried for ever, so one bad frame dirties every later row (measured 2026-08-27)
+
+**The cause that produced it is FIXED** (the create-race session orphaning - story in
+`CHANGELOG.md`, mechanism in [channel-encryption](protocols/channel-encryption.md)). What is left
+is the amplifier, which is independent of it and will do the same for the next unrecognised frame.
+
+`mlsDecryptError.ts` classifies a decryption failure into nine kinds. Five are PERMANENT
+(`own-message`, `secret-reuse`, `past-epoch-application`, `generation-gap`, `evicted`) and are
+acknowledged, because retrying them can only fail again. Everything else, `unknown` included, is
+treated as recoverable: warned about and **not** acknowledged, so the server redelivers it on the
+next connection, for ever.
+
+`ValidationError(InvalidSignature)` matches no rule, so it lands in `unknown`. On the COMM rung of
+2026-08-27 a single such frame - one message sealed against a discarded group - came back on every
+subsequent row of the rung and turned **fifteen otherwise clean cells into `PASS-DIRTY`**. One
+defect, fifteen reports of it, and no way to tell from a cell which was which.
+
+**What the repair must NOT be.** Acknowledging `unknown` silently would hide exactly the divergence
+the classifier exists to surface, and a retry budget or an age cutoff would put termination on a
+clock - both are refused by standing rules. **What is wanted is a proof of permanence.** One is
+probably available and unexploited: a signature that fails validation at a distribution epoch this
+device has already advanced past can never validate later, which is the same argument
+`past-epoch-application` already makes. Settle whether `InvalidSignature` can be proven permanent
+from the epoch pair the frame already carries; if it can, it becomes a permanent kind, is
+acknowledged, and is logged at a level that ACCUSES with the epochs attached. If it cannot, the
+frame needs a durable per-frame record so it is reported ONCE rather than every connection.
+
+**Evidence:** the COMM re-run of 2026-08-27 on `6808a89c`, W1 console, group `c6c3bba5`,
+`msg_epoch=0 group_epoch=0`.
+
 ### P2 - an external joiner's own commit locked the next joiner out; FIXED for that path 2026-08-26, one half left (COMM-22)
 
 **Reproduced on two builds with one runner**, `d6f61539` (2026-08-25T21:56Z) and `2a4297cb`

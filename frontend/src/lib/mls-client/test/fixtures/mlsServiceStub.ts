@@ -59,6 +59,9 @@ export function createMlsServiceStub(
     // anything else, so the default has to be the ordinary case; a test about seeds overrides it.
     registerDistributionGroup: vi.fn(),
     isDistributionGroup: vi.fn().mockReturnValue(false),
+    // Default: SETTLED. The unsettled state lasts only for the create window of
+    // `ensureDistributionGroup`, so a test that is not about that window must not have to say so.
+    isDistributionBaseSettled: vi.fn().mockReturnValue(true),
     distributionGroupFor: vi.fn().mockReturnValue(null),
     distributionScopes: vi.fn().mockReturnValue([]),
     ensureDistributionGroup: vi

@@ -60,6 +60,9 @@ function fakeMls(epoch: number | null) {
         return scope.channelId === CHANNEL ? 'g-salon' : null;
       },
       getLocalGroups: () => (epoch === null ? [] : ['g-1', 'g-salon']),
+      // Settled unless a test says otherwise: the unsettled state lasts only for the create
+      // window of `ensureDistributionGroup`, and every seal below happens long after one.
+      isDistributionBaseSettled: () => true,
       getEpoch: () => epoch ?? 0,
       sendMessage: async (groupId: string, bytes: Uint8Array) => {
         sent.push({ groupId, bytes });
@@ -238,6 +241,25 @@ describe('a private salon seals on its OWN group', () => {
     } as never;
     wire(storage, mlsWithoutSalon, true);
 
+    await expect(sealChannelMessage(CHANNEL, new Uint8Array([1]))).rejects.toBeInstanceOf(
+      GraineDistributionUnavailableError
+    );
+    expect(sent).toHaveLength(0);
+  });
+
+  it('refuses to seal against a group whose base has not won its race yet', async () => {
+    const { storage } = fakeStorage();
+    const { mls, sent } = fakeMls(0);
+    // Held locally, epoch 0, and still discardable: this device created it moments ago and the
+    // server has not said whether its base is the one everyone will join from.
+    const unsettled = {
+      ...(mls as unknown as Record<string, unknown>),
+      isDistributionBaseSettled: () => false,
+    } as never;
+    wire(storage, unsettled, true);
+
+    // Sealing here mints a session against a group that may cease to exist, and `forgetGroup`
+    // would take the session with it - leaving this message unreadable by its own author.
     await expect(sealChannelMessage(CHANNEL, new Uint8Array([1]))).rejects.toBeInstanceOf(
       GraineDistributionUnavailableError
     );

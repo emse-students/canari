@@ -13,6 +13,24 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A salon message its own author could not read, from a race the code said could not cost
+  anything.** When two devices of one account both find a salon's distribution group
+  uninitialised, both create an MLS group under the same id at epoch 0 and the server's
+  first-publish INSERT decides between them; the loser discards its group and external-joins the
+  winner's base. That much worked, and was measured working. What the comment on
+  `ensureDistributionGroup` asserted - "nothing was built on the discarded group, this runs before
+  any seed is sent" - was true only of that call: it does not run before any seed is sent AT ALL.
+  Between `createGroup` and the server's verdict the doomed group sits in `getLocalGroups()`, so
+  `distributionEpochFor` answered epoch 0 for it, and a concurrent salon message minted an outbound
+  Graine session against it and distributed the seed into it. `forgetGroup` then took the session
+  with the group - `session ... has no reachable holder` - and the message stayed sealed under a
+  session nobody, its author included, could ever open. The frame classifies as `unknown`, which is
+  treated as recoverable, so it was never acknowledged and came back on every later row: on the COMM
+  rung of 2026-08-27 one race made two rows vacuous and fifteen more dirty. Held and settled are now
+  two questions rather than one - the group is marked unsettled for exactly the width of that window
+  and `distributionEpochFor` returns null while it is, which is the same answer, and the same
+  refusal, a caller already gets for a group it does not hold.
+
 - **A comment that promised a bun bump was free, and the deploy it skipped.** `098ac7d2` moved
   every backend image to `oven/bun:1.4.0-alpine` on the strength of a comment in all four
   Dockerfiles: a bun >= 1.4.0 "only writes `lockfileVersion: 2` into a lockfile it CREATES, and

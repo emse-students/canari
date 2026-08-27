@@ -225,17 +225,14 @@ thing a reader needs from this file is the paragraph below.
 installs/lints/builds with bun and TESTS with node, and both call sites in `ci.yml` say so. **Do not
 collapse that to one runtime without re-running that spec.**
 
-**CANARI'S SIDE OF THE MANDATE IS WRITTEN, AND ONE THING IS NOT PROVEN: PROD HAS NEVER RUN A BUN
-IMAGE.** Measured 2026-08-27 - all four containers answer `node dist/main.js` while the Dockerfiles
-in this repo say `CMD ["bun", "dist/main.js"]` on `oven/bun:1.3.14-alpine`. The last GREEN deploy
-(`cd0ac343`) PREDATES the migration commit (`591a4392`), and every CD run since was red, so the
-deploy step was skipped three times running and the images that built and pushed were never pulled.
-Nothing is broken - the deploy is gated on every image, so prod was simply left alone - but **do not
-read "the four services migrated to bun" as "prod runs bun" until `docker inspect` says `bun`.** The
-cause of the three red runs is fixed (see the queue); the verification is owed the moment a CD goes
-green. Everything else here IS closed: TS 7 measured and refused with its two conditions written
-down, and CodeQL + secret scanning were ALREADY here (`code-analysis.yml`: CodeQL, TruffleHog, `bun
-audit`, `cargo audit`) - that half was only ever owed by the other repos.
+**CANARI'S SIDE OF THE MANDATE IS CLOSED, PROD INCLUDED.** Verified 2026-08-27 on `f17bbfa0`, the
+first CD to reach the deploy step since the migration: all four containers answer `["bun",
+"dist/main.js"]`, all healthy, site 200. TS 7 is measured and refused with its two conditions
+written down, and CodeQL + secret scanning were ALREADY here (`code-analysis.yml`: CodeQL,
+TruffleHog, `bun audit`, `cargo audit`) - that half was only ever owed by the other repos.
+**`Check Dependencies Vulnerabilities` still fails every CD run** and is the only thing making them
+red; the deploy is not gated on it. That is the 16 Dependabot vulnerabilities, which are YOURS to
+arbitrate - so read a CD's DEPLOY JOB, never the run's colour.
 
 **OPEN - the other three repos, none touched this session, each still owing a `.bun-version`:** Sky
 is in a NON-BUILDABLE intermediate state from an earlier session: `bun install` pending, 36

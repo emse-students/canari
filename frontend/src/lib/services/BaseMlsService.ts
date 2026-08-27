@@ -164,6 +164,26 @@ export abstract class BaseMlsService implements IMlsService {
    */
   private readonly knownDistributionGroups = new Set<string>();
 
+  /**
+   * Groups this device CREATED whose base is not arbitrated yet - held locally, not usable yet.
+   *
+   * A THIRD STATE THE CODE USED TO SPELL AS THE SECOND. `distributionEpochFor` asks "is the group
+   * held locally" and reads the answer as "may seeds ride it". Between {@link createGroup} and the
+   * server's verdict on the first publish those two differ: the group is in `getLocalGroups()`, so
+   * it answers epoch 0, while it may still be thrown away for having lost the race.
+   *
+   * A send landing in that window mints an outbound Graine session against the doomed group and
+   * distributes the seed into it. `forgetGroup` then takes the session with the group, and whatever
+   * it sealed is unreadable for ever - by its own author included, which is how it is noticed.
+   *
+   * Measured 2026-08-27 on the COMM rung: two devices of one account both found a salon
+   * uninitialised, the loser recovered exactly as designed, and its already-minted session did not.
+   * The comment on {@link ensureDistributionGroup} asserted the window was empty - "this runs
+   * before any seed is sent" - and nothing enforced it. This set is that enforcement, and it lives
+   * exactly as long as the window: see the `finally` that clears it.
+   */
+  private readonly unsettledDistributionGroups = new Set<string>();
+
   /** Set once at wiring time; see {@link setDistributionGroupInfoTransport}. */
   private distributionGroupInfo: DistributionGroupInfoTransport | null = null;
 
@@ -1941,6 +1961,17 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /**
+   * Whether `groupId`'s external-join base is arbitrated - the question "held locally" cannot answer.
+   *
+   * True for every group this device did not create in this session: JOINING one means its base was
+   * already published, and the publish is the arbitration. False only inside the create window of
+   * {@link ensureDistributionGroup}; the reason is on {@link unsettledDistributionGroups}.
+   */
+  isDistributionBaseSettled(groupId: string): boolean {
+    return !this.unsettledDistributionGroups.has(groupId);
+  }
+
+  /**
    * Leaves a scope's key-distribution group: the MLS tree AND the registration, together.
    *
    * THE COUNTERPART OF {@link ensureDistributionGroup}, and it did not exist. Nothing removed this
@@ -2352,8 +2383,14 @@ export abstract class BaseMlsService implements IMlsService {
    * uninitialised, and both create an MLS group under the same id at epoch 0 - so the monotonic
    * rule cannot separate them, epoch 0 being no newer than epoch 0. What separates them is who won
    * the INSERT, which the server now reports: the loser throws its group away and joins the
-   * winner's. Nothing was built on the discarded group - this runs before any seed is sent - so
-   * discarding it costs nothing, and no peer has to be online for any of it.
+   * winner's. No peer has to be online for any of it.
+   *
+   * DISCARDING THE LOSER COSTS NOTHING ONLY IF NOTHING WAS BUILT ON IT, and this used to claim that
+   * outright - "this runs before any seed is sent". It runs before any seed is sent BY THIS CALL;
+   * it does not run before any seed is sent AT ALL, and a salon message concurrent with the create
+   * window sealed one against the group about to be discarded. The window is now closed rather
+   * than asserted away: {@link unsettledDistributionGroups} holds the group for its duration, and
+   * `distributionEpochFor` refuses to mint against a group it names.
    *
    * @param ref what social-service answered: the group id, the published base or null, and the
    *   group's real epoch - which the base can be permanently behind (see {@link externalJoin})
@@ -2380,35 +2417,43 @@ export abstract class BaseMlsService implements IMlsService {
     console.log(
       `[GRAINE] no base published for ${scopeLabel(scope)} - creating group ${groupId.slice(0, 8)}...`
     );
-    await this.runUnderMlsLock(() => this.createGroup(groupId));
-
-    let published: { stored: boolean };
+    // MARKED BEFORE IT EXISTS, so there is no instant at which a sender can find it both held and
+    // settled. Cleared in the `finally`, on every branch: a mark outliving its window would strand
+    // the scope refusing to send for the rest of the session.
+    this.unsettledDistributionGroups.add(groupId);
     try {
-      const groupInfo = await this.exportGroupInfo(groupId);
-      published = await this.groupInfoChannel(groupId).publish(
-        toBase64(groupInfo),
-        this.getEpoch(groupId)
-      );
-    } catch (e) {
-      // The group exists locally and nobody can join it: that is worse than not having created it,
-      // because the next call would find it in `getLocalGroups` and return early for ever.
+      await this.runUnderMlsLock(() => this.createGroup(groupId));
+
+      let published: { stored: boolean };
+      try {
+        const groupInfo = await this.exportGroupInfo(groupId);
+        published = await this.groupInfoChannel(groupId).publish(
+          toBase64(groupInfo),
+          this.getEpoch(groupId)
+        );
+      } catch (e) {
+        // The group exists locally and nobody can join it: that is worse than not having created
+        // it, because the next call would find it in `getLocalGroups` and return early for ever.
+        this.forgetGroup(groupId);
+        console.warn(
+          `[GRAINE] publishing the base for ${groupId.slice(0, 8)}... failed - group discarded:`,
+          String(e).slice(0, 120)
+        );
+        return { joined: false, reason: 'unreachable' };
+      }
+
+      if (published.stored) return { joined: true };
+
+      // Lost the race: another device published first and its base is what everyone else will join
+      // from. Ours would fork the community in two.
       this.forgetGroup(groupId);
-      console.warn(
-        `[GRAINE] publishing the base for ${groupId.slice(0, 8)}... failed - group discarded:`,
-        String(e).slice(0, 120)
+      console.log(
+        `[GRAINE] lost the first-publish race for ${groupId.slice(0, 8)}... - joining the published base instead`
       );
-      return { joined: false, reason: 'unreachable' };
+      return this.externalJoin(groupId);
+    } finally {
+      this.unsettledDistributionGroups.delete(groupId);
     }
-
-    if (published.stored) return { joined: true };
-
-    // Lost the race: another device published first and its base is what everyone else will join
-    // from. Ours would fork the community in two.
-    this.forgetGroup(groupId);
-    console.log(
-      `[GRAINE] lost the first-publish race for ${groupId.slice(0, 8)}... - joining the published base instead`
-    );
-    return this.externalJoin(groupId);
   }
 
   async addMember(
