@@ -217,6 +217,9 @@ const NOTABLE_CASES = [
   `${NEST}[MessagingService] [HISTORY_REQ][history-req-13bea09c] NO_PEER_ONLINE group=g requester=a:web-a-b`,
   `${NEST}[MessagingService] [SEND][send-85d25af2] TRANSPORT_SKIPPED_OFFLINE count=1 group=g - no row, no push: the rendezvous would expire first`,
   'Listening on http://0.0.0.0:3000',
+  // The same boot, in the shape media-service prints. It is a separate case because it is a
+  // separate rule: the line above is anchored at `Listening on http` and cannot match a bare port.
+  '[media-service] Listening on :3011',
   // The hourly backlog report. Its identifiers are anonymised here for the same reason as every
   // other case in this file: the real line names real devices, and this file is committed.
   `${NEST}[AppController] [CRON] reportQueueDepth: 1078 frame(s) queued, heaviest 5: web-a-b=189/0.2MB web-c-d=86/0.4MB`,

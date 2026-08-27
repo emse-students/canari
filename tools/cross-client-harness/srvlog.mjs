@@ -813,6 +813,13 @@ const NOTABLE = [
   // whatever it was measuring. Found exactly that way on 2026-08-14 at 12:45:20Z.
   /^Listening on http/,
   /Nest application successfully started/,
+  // THE SAME EVENT IN A SECOND SHAPE, and it reached `unexplained` for it. media-service prints its
+  // own banner - `[media-service] Listening on :3011` - which the rule above cannot match: that one
+  // is anchored at `Listening on http`, and this one leads with the service name and gives a bare
+  // port. Seen on 2026-08-27 querying a window that straddled a deploy, exactly as the core-service
+  // boot lines below were seen on 2026-08-24. A boot banner belongs with the other boot banners:
+  // left out, it is the one service whose restart under a check does not announce itself.
+  /^\[[a-z-]+-service\] Listening on :\d+$/,
   // THE SAME BOOT, THREE LINES FURTHER DOWN - core-service stating what it came up WITH. They reached
   // `unexplained` on 2026-08-24 because DEL-2's window opened seconds after the v0.14.4 deploy, while
   // `Nest application successfully started` beside them was already classified.

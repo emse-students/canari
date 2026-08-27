@@ -68,6 +68,30 @@ entry here or closes the question.
 
 ## Measurements owed
 
+### P3 - chat-delivery boots with a KafkaJS partitioner warning nobody has decided about (seen 2026-08-27)
+
+Every boot of `chat-delivery-service` prints, at WARN:
+
+> KafkaJS v2.0.0 switched default partitioner. To retain the same partitioning behavior as in
+> previous versions, create the producer with the option `createPartitioner:
+> Partitioners.LegacyPartitioner`.
+
+It is NOT a bun regression - kafkajs emits it whenever a producer is created without an explicit
+partitioner, on any runtime - but it became visible when the boot window was read on 2026-08-27, and
+a warning nobody has answered is exactly the line a reader learns to skip. Its continuation, ``(Use
+`bun --trace-warnings ...` to show where the warning was created)``, lands in `unexplained` on its
+own because the classifier sees an orphan tail.
+
+**The measurement that settles it: does anything here produce a keyed record?** `chat-delivery` is a
+Kafka *microservice* (`Transport.KAFKA` in `main.ts`) and no `emit`/`send` appears in its own source;
+the producer belongs to Nest's `ServerKafka`, which uses one for `@MessagePattern` replies. If no
+produced record carries a key, partition assignment is round-robin either way and the choice is
+genuinely free - then set `KAFKAJS_NO_PARTITIONER_WARNING=1` **with the measurement quoted next to
+it**, because the variable silences the question rather than answering it. If anything IS keyed,
+switching the default silently re-maps keys to partitions and changes per-key ordering, and
+`LegacyPartitioner` is the answer. **Do not set the variable before the measurement**: that is how a
+correctness decision gets recorded as noise suppression.
+
 ### P3 - the last node runtime: four jest suites that will not run under bun (decided 2026-08-27, AFTER the campaign)
 
 **Scheduled, not parked, and the decision behind it is the user's** (2026-08-27): npm leaves now,
