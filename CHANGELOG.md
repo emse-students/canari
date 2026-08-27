@@ -13,6 +13,28 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **An external join was durable on the server and volatile on the client, so a reload in the gap
+  joined a second time and forked the group.** When a device joins a key-distribution group by
+  external commit, the epoch advance is written server-side and visible to every other member the
+  instant the commit gate accepts it - while the secrets that make the new epoch usable exist only
+  in that device's WASM memory. Nothing wrote them to disk: `mlsStatePersister` defers routine
+  checkpoints for a reason it documents in full - inbound state replays from the server, and
+  outbound ratchet state is checkpointed on the send path - and an external join is NEITHER, so it
+  fell through both. A navigation, a tab close or a crash before the next unrelated checkpoint
+  restored a device that was IN the published tree, could not read a word of it, found no local
+  group, and joined AGAIN from the new base. The second join forks the group: measured on prod
+  2026-08-27, where one client joined the same salon at base 0 and again at base 1 two seconds
+  apart across a navigation, leaving the salon at epoch 2, the granting device stranded at 0
+  refusing frames it had no tree for, and the seed that device held undeliverable - a member
+  granted access to a private salon who could read nothing in it. FOUR groups were joined twice in
+  that single rung. The fix is the checkpoint the join always owed: `persistMlsStructuralCheckpoint`
+  is now awaited after the merge and before the join is reported, which is the guarantee the send
+  path has had since 2026-08-06 for the identical reason. The registry call returns whether a
+  checkpoint was actually taken instead of `void`, because the one branch that cannot log for
+  itself - no persister registered - is the one that has to report; the join still stands when the
+  write fails, since refusing a membership the rest of the group can already see is strictly worse
+  than one that does not survive a reload, and the line accuses rather than informs.
+
 - **A frame no rule recognised was refused an acknowledgement for ever, so one bad frame dirtied
   every later row.** `mlsDecryptError.ts` names nine kinds of decryption failure; five are permanent
   and get acknowledged, and everything else - `unknown` included - was held to be recoverable, so the

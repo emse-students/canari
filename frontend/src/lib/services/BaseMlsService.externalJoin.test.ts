@@ -3,7 +3,16 @@
 vi.mock('$lib/services/TauriMlsService', () => ({ TauriMlsService: class {} }));
 vi.mock('$lib/services/WebMlsService', () => ({ WebMlsService: class {} }));
 
+// The durability half of a join, stubbed so the ORDER and the FACT of the checkpoint are readable.
+// Mocked rather than driven through a real persister because what is under test here is that
+// `externalJoin` asks for it and waits, not what the persister then does with the request.
+vi.mock('$lib/mls-client/mlsStatePersisterRegistry', () => ({
+  persistMlsStructuralCheckpoint: vi.fn().mockResolvedValue(true),
+  scheduleOutboundMlsPersist: vi.fn(),
+}));
+
 import { BaseMlsService } from './BaseMlsService';
+import { persistMlsStructuralCheckpoint } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { NotAGroupMemberError } from '$lib/mls-client/mlsDeliveryApi';
 import type { ExternalJoinOutcome } from '$lib/mls-client/IMlsService';
 
@@ -55,6 +64,12 @@ const externalJoin = (ctx: unknown, groupId: string): Promise<ExternalJoinOutcom
   ).call(ctx, groupId);
 
 describe('BaseMlsService.externalJoin', () => {
+  // The registry mock is module-scoped, so an implementation set by one case would otherwise be the
+  // starting state of every case after it - including the ones that assert it was never called.
+  beforeEach(() => {
+    vi.mocked(persistMlsStructuralCheckpoint).mockReset().mockResolvedValue(true);
+  });
+
   it('reports no published base, without joining, when nothing is stored', async () => {
     const ctx = makeCtx();
     ctx.delivery.fetchGroupInfo.mockResolvedValue(null);
@@ -129,6 +144,79 @@ describe('BaseMlsService.externalJoin', () => {
     );
     expect(ctx.mergePendingCommit).toHaveBeenCalledWith('g');
     expect(ctx.forgetGroup).not.toHaveBeenCalled();
+  });
+
+  // ── The half the server already made durable for everybody else ─────────────
+  //
+  // AN ACCEPTED EXTERNAL COMMIT IS ASYMMETRICALLY DURABLE. The epoch advance is written server-side
+  // and visible to every other member the instant `submitCommit` returns; the secrets that make the
+  // new epoch usable exist only in this device's WASM memory until a checkpoint lands. A reload in
+  // that window restores a device that is IN the published tree, can read nothing in it, finds no
+  // local group - and joins AGAIN, forking the group at the next base.
+  //
+  // Measured on prod 2026-08-27: one device joined a salon at base 0 and again at base 1 two
+  // seconds apart across a navigation. The salon reached epoch 2, the granting device stayed at 0
+  // refusing frames it had no tree for, and the seed it held never reached the member it had just
+  // granted - COMM-8's `seedAfterTheGrant: false`.
+  //
+  // The routine persister defers writes for a reason it documents in full: inbound state replays
+  // from the server, outbound ratchet state is checkpointed on the send path. A join is neither,
+  // which is why this one is awaited rather than scheduled.
+
+  it('checkpoints the joined state before reporting the join, and after the merge', async () => {
+    const ctx = makeCtx();
+    const order: string[] = [];
+    ctx.mergePendingCommit.mockImplementation(async () => {
+      order.push('merge');
+    });
+    vi.mocked(persistMlsStructuralCheckpoint).mockImplementation(async () => {
+      order.push('checkpoint');
+      return true;
+    });
+    ctx.delivery.fetchGroupInfo.mockResolvedValue({
+      groupInfo: 'AA==',
+      baseEpoch: 5,
+      activeEpoch: 5,
+    });
+    ctx.delivery.submitCommit.mockResolvedValue({ accepted: true, newEpoch: 6 });
+
+    expect(await externalJoin(ctx, 'g')).toEqual({ joined: true });
+    // MERGE FIRST, THEN WRITE. Checkpointing an unmerged external commit would persist a pending
+    // state that breaks every later operation on the group - the opposite fault, and a worse one.
+    expect(order).toEqual(['merge', 'checkpoint']);
+  });
+
+  it('still reports the join when the checkpoint fails, because the group can already see it', async () => {
+    const ctx = makeCtx();
+    vi.mocked(persistMlsStructuralCheckpoint).mockRejectedValue(new Error('quota exceeded'));
+    ctx.delivery.fetchGroupInfo.mockResolvedValue({
+      groupInfo: 'AA==',
+      baseEpoch: 5,
+      activeEpoch: 5,
+    });
+    ctx.delivery.submitCommit.mockResolvedValue({ accepted: true, newEpoch: 6 });
+
+    // The membership is real and server-side: refusing it here would discard a leaf every other
+    // member already holds, which is strictly worse than a membership that does not survive a
+    // reload. What the failure costs is durability, and that is what the log has to say.
+    expect(await externalJoin(ctx, 'g')).toEqual({ joined: true });
+    expect(ctx.forgetGroup).not.toHaveBeenCalled();
+  });
+
+  it('does not checkpoint a join the gate refused', async () => {
+    const ctx = makeCtx();
+    ctx.delivery.fetchGroupInfo.mockResolvedValue({
+      groupInfo: 'AA==',
+      baseEpoch: 5,
+      activeEpoch: 5,
+    });
+    ctx.delivery.submitCommit.mockResolvedValue({ accepted: false, reason: 'epoch_mismatch' });
+
+    await externalJoin(ctx, 'g');
+    // A refused commit is discarded with `forgetGroup`; writing it to disk would durably persist a
+    // group this device is not in, and the next load would trust it.
+    expect(persistMlsStructuralCheckpoint).not.toHaveBeenCalled();
+    expect(ctx.forgetGroup).toHaveBeenCalledWith('g');
   });
 
   it('discards and retries with a fresher GroupInfo on an epoch-race reject, then succeeds', async () => {

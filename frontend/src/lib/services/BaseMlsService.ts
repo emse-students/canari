@@ -17,7 +17,10 @@ import {
   type MlsDeliveryFetch,
 } from '$lib/mls-client/mlsDeliveryApi';
 import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
-import { scheduleOutboundMlsPersist } from '$lib/mls-client/mlsStatePersisterRegistry';
+import {
+  persistMlsStructuralCheckpoint,
+  scheduleOutboundMlsPersist,
+} from '$lib/mls-client/mlsStatePersisterRegistry';
 import {
   MAX_BURN_GENERATIONS,
   commitPersisted,
@@ -2343,6 +2346,41 @@ export abstract class BaseMlsService implements IMlsService {
 
       if (validation.accepted) {
         await this.runUnderMlsLock(() => this.mergePendingCommit(joined.groupId));
+        // THE SERVER HAS ALREADY MADE THIS DURABLE FOR EVERYONE ELSE, so this device may not hold
+        // its half in RAM. The commit is accepted: the group's epoch has advanced for every other
+        // member, and the secrets that make the new epoch usable exist ONLY here, in WASM memory.
+        // A reload before the next checkpoint restores a device that is IN the published tree and
+        // cannot read a word of it - and, finding no local group, joins again from the new base.
+        //
+        // THAT SECOND JOIN FORKS THE GROUP. Measured on prod 2026-08-27: a device joined one salon
+        // at base 0 and again at base 1 two seconds apart across a navigation, leaving the salon at
+        // epoch 2, the granting device stranded at 0 refusing frames it could not read, and the
+        // seed that device held undeliverable - a member granted access who can read nothing.
+        //
+        // `mlsStatePersister` defers routine writes for a reason it states in full: inbound state
+        // is replayable from the server, and outbound ratchet state is checkpointed on the send
+        // path. AN EXTERNAL JOIN IS NEITHER. Nothing on the server can replay these secrets back,
+        // so the structural checkpoint is awaited here, at the point the state moved.
+        let checkpointed: boolean;
+        try {
+          checkpointed = await persistMlsStructuralCheckpoint();
+        } catch (e) {
+          checkpointed = false;
+          console.error(
+            `[MLS] externalJoin FAILED to checkpoint ${short}... - a reload before the next write` +
+              ` would rejoin and fork the group:`,
+            String(e).slice(0, 120)
+          );
+        }
+        // The join stands either way - it is accepted server-side and usable for this session, and
+        // refusing it here would discard a membership the rest of the group can already see. What
+        // is lost is only its durability, which is why this accuses rather than informs.
+        if (!checkpointed) {
+          console.error(
+            `[MLS] externalJoin for ${short}... was not checkpointed: no persister is registered,` +
+              ` so this membership does not survive a reload and the next load will rejoin`
+          );
+        }
         // NO FOLLOW-UP REFRESH HERE, AND ITS ABSENCE IS THE FIX. The base for the epoch this join
         // created was written in the same transaction as the epoch itself, so there is nothing left
         // to mint and nothing left to lose - which is what a reload used to take with it.

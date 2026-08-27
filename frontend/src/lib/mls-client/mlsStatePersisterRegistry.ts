@@ -60,15 +60,22 @@ export interface MlsStructuralCheckpointFallback {
 /**
  * Encrypted checkpoint after structural MLS mutations (commits, bootstrap, forget).
  * Routes through the session persister when registered; otherwise uses the fallback path.
+ *
+ * @returns whether a checkpoint was actually written. FALSE IS NOT AN ERROR AND IS NOT NOTHING:
+ *   outside a session there is no persister and no fallback, so the call is a no-op - but a caller
+ *   that asked for durability because the SERVER has already made its half of the change durable
+ *   (see `BaseMlsService.externalJoin`) has not got it, and silently returning `void` gave it no
+ *   way to say so. The one branch that cannot log for itself is the one that reports instead.
  */
 export async function persistMlsStructuralCheckpoint(
   fallback?: MlsStructuralCheckpointFallback
-): Promise<void> {
+): Promise<boolean> {
   if (activePersister) {
     activePersister.scheduleDeferred();
     await activePersister.flushEncrypted();
-    return;
+    return true;
   }
-  if (!fallback) return;
+  if (!fallback) return false;
   await fallback.mlsService.persistCheckpoint(fallback.deviceKeyB64);
+  return true;
 }
