@@ -148,6 +148,27 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A member with no photo exported as the word "img".** On the Carte de la Vie Asso PDF - and on the
+  trombinoscope, which the report guessed correctly - the grey box beside a member's initials was the
+  rasteriser's own doing: snapdom substitutes every `<img>` it cannot inline with a placeholder
+  `<div>` whose text is the literal string `img`, and it does so for a `display:none` image too. The
+  substitute keeps none of the original's inline style, so the `position:absolute` overlay came back
+  as an in-flow sibling, shouldering the initials off centre. The screen was always right; only the
+  export was wrong. Both call sites now **remove** the element on `error` instead of hiding it - a
+  node that is gone cannot be substituted - and `rasterizeElementToCanvas` passes
+  `placeholders: false`, so a cross-origin favicon or a dead logo URL in any of the three exports
+  becomes an invisible spacer rather than printed prose. What that swallows is named once per export
+  (`pdfRaster:missingImages`), and only for an image still in the tree: a member with no photo is a
+  known absence, not a missing asset.
+
+- **The trombinoscope's initials fallback could not fire at all.** Found while fixing the above, and
+  never seen because the placeholder box hid it: the shared rasteriser waited for images by assigning
+  `img.onload` / `img.onerror`, and that property has one slot. The trombinoscope builds its cards
+  microseconds before exporting, so its avatars are always still loading when the wait begins - the
+  assignment therefore deleted the inline handler that reveals the initials, and a member with no
+  photo got a blank disc. The wait uses `addEventListener(..., { once: true })` now, so a call site's
+  own handler survives it.
+
 - **Every photo and every logo on the Carte de la Vie Asso was missing on mobile, and nothing said
   so.** Both `<img>` sources on the poster are app-relative - `/api/users/:id/avatar` for the bureau
   photos, and the association `logoUrl`, stored as `/api/media/public/:id`. In a Tauri build the page

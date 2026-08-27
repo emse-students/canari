@@ -167,9 +167,16 @@
 
   const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 
-  /** Hides a broken avatar/logo image so the colored initials layer behind it shows through. */
-  function hideOnError(event: Event) {
-    (event.currentTarget as HTMLImageElement).style.display = 'none';
+  /**
+   * Drops a broken avatar/logo image so the colored initials layer behind it shows through.
+   *
+   * REMOVED, not hidden: the PDF rasteriser substitutes every `<img>` it cannot inline - a
+   * `display:none` one included - with its own in-flow grey box reading "img", so a member with no
+   * photo exported as the literal word "img" pushed up against their initials. A node that is gone
+   * cannot be substituted. A missing photo is the ordinary case, so it is not logged.
+   */
+  function dropOnError(event: Event) {
+    (event.currentTarget as HTMLImageElement).remove();
   }
 
   function attachWindow() {
@@ -456,7 +463,7 @@
         src={apiAssetUrl(`/api/users/${encodeURIComponent(person.userId)}/avatar`)}
         alt=""
         draggable="false"
-        onerror={hideOnError}
+        onerror={dropOnError}
         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;-webkit-user-drag:none;"
       />
     </div>
@@ -618,7 +625,7 @@
                 src={apiAssetUrl(data.logoUrl)}
                 alt=""
                 draggable="false"
-                onerror={hideOnError}
+                onerror={dropOnError}
                 style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;-webkit-user-drag:none;"
               />
             {/if}

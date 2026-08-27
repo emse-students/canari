@@ -122,7 +122,10 @@ preview and PDF never diverge (the whole point of snapdom, see `pdfRaster.ts` he
 - Fonts: force-load the Variable families like the other exports.
 
 Avatars come from `/api/users/:id/avatar` (same-origin -> snapdom inlines them). Logos via
-`asso.logoUrl`. Fallbacks: `generateAvatarColor` + `getInitials` (same as trombinoscope).
+`asso.logoUrl`. Fallbacks: `generateAvatarColor` + `getInitials` (same as trombinoscope). A member
+with no photo gets a 404 there, and its `<img>` is then **removed** from the DOM - see "A hidden
+`<img>` is still an `<img>` to the rasteriser" below, which is what the word "img" printed on a
+poster was.
 
 ## Phasing
 
@@ -139,7 +142,8 @@ Avatars come from `/api/users/:id/avatar` (same-origin -> snapdom inlines them).
   `buildPosterModel` grouping + president detection by role containing "presid"),
   `frontend/src/lib/carte/export.ts` (`exportPosterPdf` = rasterize + jsPDF landscape/paginate),
   `frontend/src/lib/components/carte/PosterCanvas.svelte` (the fixed-1600px DOM that is BOTH the
-  preview and the snapdom capture target; initials-behind fallback for broken logo/avatar imgs),
+  preview and the snapdom capture target; initials-behind fallback for broken logo/avatar imgs,
+  whose `<img>` is REMOVED rather than hidden on `error`),
   and the rewritten `/admin/carte/[id]/+page.svelte` (loads project + categories + associations +
   rosters, scaled preview via `transform: scale`, Save persists `{version,theme,background}` into
   `project.layout`, Export PDF). Removed the `carte_editor_coming_soon` i18n key; added the
@@ -408,6 +412,33 @@ needs `max-width: none` pinned on it.
 global rule, so it can confirm that the markup is right but can never clear it. Measure the LIVE
 DOM instead - a computed width that contradicts the inline one names the culprit in one call.
 
+### A hidden `<img>` is still an `<img>` to the rasteriser
+
+**snapdom substitutes every `<img>` it cannot inline with its own box - a `display:none` one
+included.** The substitute is an in-flow grey rectangle whose text is the literal string `img`, and
+it carries none of the original's inline style, so a `position:absolute` overlay comes back as a
+sibling in the flex row. That is exactly what a member with no photo exported as: `img` in a grey
+box, shouldering their own initials off centre, on the poster AND on the trombinoscope, while the
+on-screen preview was correct. Two things fix it and both are in: the call site **removes** the
+element on `error` (a node that is gone cannot be substituted), and `rasterizeElementToCanvas`
+passes `placeholders: false`, so anything it still cannot inline - a cross-origin favicon, a dead
+logo URL - becomes an invisible spacer instead of printed prose. What that option now swallows is
+logged once per export (`pdfRaster:missingImages`), and only for a node still in the tree: a member
+with no photo is a KNOWN absence, not a missing asset.
+
+**Measured in Chrome, not argued** (2026-08-27, one member card - relative box, initials span,
+absolutely-positioned `<img>` on a 404 - serialised with `snapdom.toRaw`): hidden + placeholders on,
+the SVG contains the literal `>img<`; hidden + `placeholders: false`, gone; removed, gone with
+placeholders either way. The initials survive in all four. Both halves of the fix are therefore
+independently sufficient, and they are both in on purpose - removal answers the KNOWN absence, the
+option answers everything else.
+
+**And the rasteriser may never assign `img.onerror`.** The property has ONE slot and it belongs to
+the call site. Waiting for images by assigning `img.onload` / `img.onerror` destroyed the
+trombinoscope's own handler - it builds its cards microseconds before exporting, so its avatars are
+always still loading when the wait begins, and a 404 avatar lost the very handler that reveals the
+initials behind it. `addEventListener` with `{ once: true }`, always.
+
 ### Where a constant belongs
 
 A constant the publisher needs cannot live in `PosterCanvas.svelte`: unit geometry belongs in
@@ -416,7 +447,8 @@ removed still ships - fold its value back into a constant, or it rots as plumbin
 
 ## Reuse map
 
-- `frontend/src/lib/utils/pdfRaster.ts` - rasteriser (as-is).
+- `frontend/src/lib/utils/pdfRaster.ts` - rasteriser (as-is). Owns `placeholders: false` and the
+  missing-image log for all three exports.
 - `frontend/src/lib/utils/trombinoscope.ts` - bubble/polaroid HTML + jsPDF pattern.
 - `frontend/src/lib/utils/calendarExport.ts` + `calendarThemes.ts` - theme presets, scrim,
   block-shadow, multi-page split.

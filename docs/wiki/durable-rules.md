@@ -597,6 +597,8 @@ Signing, the bump script, the secrets and every compile-check trick are on [cicd
 - **A published carte is the poster RESOLVED** (poster px + `stage`), never fractions and never a layout - the showcase decides nothing, so what it is not told it cannot copy.
 - **Association identity joins LIVE; the displayed members are a SNAPSHOT**, so a roster edit republishes.
 - **The two repos must agree on the FONTS**, or every measured box is wrong.
+- **A HIDDEN `<img>` IS STILL AN `<img>` TO THE RASTERISER.** snapdom replaces every image it cannot inline - `display:none` included - with an in-flow box reading `img`, keeping none of the original's inline style, which is how the word "img" printed beside a member's initials on the poster and the trombinoscope while the preview was right. A fallback that hides must REMOVE, and `placeholders: false` covers whatever is left. [carte-vie-asso](carte-vie-asso.md#a-hidden-img-is-still-an-img-to-the-rasteriser)
+- **NEVER ASSIGN `on*` ON A NODE YOU DID NOT CREATE** - the property has one slot and it belongs to the call site. Waiting for images with `img.onerror = ...` deleted the trombinoscope's own error handler, which is the thing that reveals the initials. `addEventListener`, `{ once: true }`. [carte-vie-asso](carte-vie-asso.md#a-hidden-img-is-still-an-img-to-the-rasteriser)
 
 ## Associations and agenda -> [social-service](services/social-service.md)
 

@@ -7,6 +7,9 @@ import type { Association, AssociationMember } from '$lib/associations/api';
  * Renders the association trombinoscope to an A4 PDF and triggers a direct download.
  * Uses the searchable-raster pipeline: text marked with `data-pdf-text` is rendered as real
  * selectable vector text in the PDF over a pixel-faithful raster background.
+ *
+ * A member with no photo REMOVES its `<img>` rather than hiding it: the rasteriser substitutes an
+ * `<img>` it cannot inline - hidden or not - with an in-flow box reading "img" (see `pdfRaster.ts`).
  */
 export async function exportTrombinoscope(
   asso: Association,
@@ -48,7 +51,7 @@ export async function exportTrombinoscope(
           <div style="position:relative;width:72px;height:72px;border-radius:50%;overflow:hidden;flex-shrink:0;">
             <img src="${apiAssetUrl(`/api/users/${encodeURIComponent(m.userId)}/avatar`)}"
                  style="width:72px;height:72px;object-fit:cover;border-radius:50%;display:block;"
-                 onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" />
+                 onerror="this.nextElementSibling.style.display='flex';this.remove();" />
             <div style="display:none;position:absolute;inset:0;background:${bg};align-items:center;justify-content:center;font-size:22px;font-weight:700;color:#fff;border-radius:50%;">${initials}</div>
           </div>
           <p data-pdf-text style="font-size:12px;font-weight:700;line-height:1.3;word-break:break-word;margin:0;">${safe(name)}</p>
