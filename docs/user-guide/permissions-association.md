@@ -14,7 +14,7 @@ comptent.
 
 | Droit (case a cocher) | Ce qu'il permet |
 |---|---|
-| **Publier au nom de l'asso** | Publier dans le fil d'actualites sous le nom de l'association au lieu du sien |
+| **Publier au nom de l'asso** | Publier dans le fil d'actualites sous le nom de l'association au lieu du sien, et modifier ou supprimer les publications faites en son nom |
 | **Proposer des evenements** | Deposer un evenement dans l'agenda (il part en validation au BDE), puis le modifier ou le supprimer. Recoit les notifications de validation ou de refus |
 | **Gerer les membres** | Ajouter, retirer, renommer et reordonner les membres, **cocher leurs droits**, changer le logo et le profil de l'association, gerer les tags, les cotisants et les paliers de cotisation, exporter la liste |
 | **Gerer les documents** | Acceder au coffre de documents prives de l'association, y deposer et y supprimer des fichiers, ecrire les notes internes |
@@ -88,6 +88,14 @@ L'onglet n'apparait que si vous avez le droit correspondant.
 
 Les droits *Publier au nom de l'asso* et *Proposer des evenements* ne correspondent a aucun onglet :
 ils agissent dans le fil d'actualites et dans l'agenda.
+
+Une publication faite au nom de l'association appartient a l'association, pas a la personne qui l'a
+redigee : **toute personne ayant *Publier au nom de l'asso* peut la modifier ou la supprimer**, et
+une personne a qui ce droit est retire ne peut plus toucher a ce qu'elle avait publie. C'est
+volontaire : le nom affiche est celui de l'asso, donc c'est l'asso qui en repond.
+
+A noter : un membre du BDE qui administre les autres associations (*Gerer les associations*)
+n'herite PAS de ce droit-la. Parler au nom d'une asso n'est pas l'administrer.
 
 ---
 

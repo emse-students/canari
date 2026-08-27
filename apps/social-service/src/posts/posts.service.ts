@@ -7,12 +7,26 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { AssociationsService } from '../associations/associations.service';
+import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Post } from './entities/post.entity';
 import { RedisService } from '../common/redis/redis.service';
 import { FollowsService } from '../follows/follows.service';
 import { PostNotificationsService } from './post-notifications.service';
+
+/**
+ * Who is reading, and what they may already do - resolved once per request and carried into every
+ * shaping helper so each row can be stamped with `canManage`.
+ */
+interface PostViewerContext {
+  /** The reader, when there is one. An anonymous reader manages nothing. */
+  viewerId: string | undefined;
+  /** Platform administrator: manages every post, member or not. */
+  isGlobalAdmin: boolean;
+  /** Associations where the reader holds `POST_AS_ASSO`, hence may manage what was said in their name. */
+  managedAssociationIds: Set<string>;
+}
 
 /** Core post service: creation, listing (with Redis cache), search, scheduling, and moderation. */
 @Injectable()
@@ -71,12 +85,77 @@ export class PostsService {
     );
   }
 
+  /**
+   * Everything the shaping helpers need to answer `canManage` for one particular reader.
+   *
+   * `managedAssociationIds` is resolved ONCE per request (`viewerContext`) rather than per row:
+   * the answer is the same for every post of the same association.
+   */
+  private static readonly EMPTY_VIEWER: PostViewerContext = {
+    viewerId: undefined,
+    isGlobalAdmin: false,
+    managedAssociationIds: new Set(),
+  };
+
+  /**
+   * Builds the per-reader context for a batch of rows, in one membership query.
+   *
+   * A global administrator needs no query at all - `viewerMayManage` grants them every row before
+   * it looks at the set.
+   */
+  private async viewerContext(
+    rows: { associationId?: string | null }[],
+    viewerId: string | undefined,
+    isGlobalAdmin: boolean
+  ): Promise<PostViewerContext> {
+    if (!viewerId) return PostsService.EMPTY_VIEWER;
+    if (isGlobalAdmin) return { viewerId, isGlobalAdmin: true, managedAssociationIds: new Set() };
+    const associationIds = rows.map((row) => row.associationId).filter((id): id is string => !!id);
+    const managedAssociationIds = await this.associationsService.mayActOnAny(
+      viewerId,
+      associationIds,
+      AssociationPermissionFlag.POST_AS_ASSO
+    );
+    return { viewerId, isGlobalAdmin: false, managedAssociationIds };
+  }
+
+  /**
+   * May this reader edit or delete this post? THE predicate behind the pencil, the bin and the
+   * `PATCH`/`DELETE` guards alike, so a shown control and an accepted write cannot disagree.
+   *
+   * It exists as a SERVED FIELD rather than a client-side comparison because a post published in
+   * an association's name has its `authorId` stripped from every response on purpose - that
+   * anonymity is the feature - so no client can tell its own post from anyone else's. It had to ask
+   * the only party that still knows.
+   *
+   * The two kinds of post answer to two different owners, and conflating them is the bug this
+   * replaced:
+   * - a PERSONAL post belongs to whoever wrote it, and to nobody else;
+   * - a post in an association's name belongs to the ASSOCIATION. Whoever may speak in its name may
+   *   correct what was said, and authorship grants nothing extra - an officer who lost the right to
+   *   speak for the association has no business editing what it said. That right is `POST_AS_ASSO`
+   *   and nothing wider: a BDE super-admin is deliberately excluded from it
+   *   (`SUPER_ADMIN_EXCLUDED_FLAGS`), speaking for an association being an identity rather than a
+   *   right over its data. Everyone who ever published such a post held that flag at the time -
+   *   `canPostAs` is the same predicate - so this takes nothing from anyone still entitled to it.
+   */
+  private viewerMayManage(
+    post: { authorId?: string | null; associationId?: string | null },
+    viewer: PostViewerContext
+  ): boolean {
+    if (viewer.isGlobalAdmin) return true;
+    if (!viewer.viewerId) return false;
+    if (post.associationId) return viewer.managedAssociationIds.has(post.associationId);
+    return !!post.authorId && post.authorId === viewer.viewerId;
+  }
+
   /** Strip publisher identity and attach association display for API responses. */
-  private shapeListRow(p: any): any {
+  private shapeListRow(p: any, viewer: PostViewerContext): any {
+    const canManage = this.viewerMayManage(p, viewer);
     if (!p.associationId) {
-      return p;
+      return { ...p, canManage };
     }
-    const out: any = { ...p };
+    const out: any = { ...p, canManage };
     delete out.authorId;
     delete out.authorDisplayName;
     delete out.authorFirstName;
@@ -97,12 +176,16 @@ export class PostsService {
   }
 
   /** Anonymize association-authored posts loaded as TypeORM entities. */
-  private async toPublicPostFromEntity(post: Post): Promise<Record<string, unknown>> {
+  private async toPublicPostFromEntity(
+    post: Post,
+    viewer: PostViewerContext
+  ): Promise<Record<string, unknown>> {
     const raw: any = { ...(post as any) };
     // Backward compatibility: expose both `media` (canonical) and `images` (legacy clients).
     if (Array.isArray(raw.media)) {
       raw.images = raw.media;
     }
+    raw.canManage = this.viewerMayManage(post, viewer);
     if (!raw.associationId) {
       return raw;
     }
@@ -197,11 +280,21 @@ export class PostsService {
       })();
     }
 
-    return this.toPublicPostFromEntity(entity);
+    // The response goes back to the publisher, so it is stamped for them - an association post is
+    // resolved through the flag like any other, never assumed from authorship.
+    return this.toPublicPostFromEntity(
+      entity,
+      await this.viewerContext([entity], authorId || undefined, false)
+    );
   }
 
   /** Full-text search across post markdown and association names. Excludes future-scheduled posts. */
-  async searchPosts(q: string, limit = 20, offset = 0): Promise<any[]> {
+  async searchPosts(
+    q: string,
+    limit = 20,
+    offset = 0,
+    viewer?: { viewerUserId?: string; isAdmin?: boolean }
+  ): Promise<any[]> {
     const term = q.trim();
     if (!term) return [];
     const selectBody = `posts.id,
@@ -268,6 +361,12 @@ export class PostsService {
       );
     }
 
+    const viewerCtx = await this.viewerContext(
+      rawPosts,
+      viewer?.viewerUserId,
+      viewer?.isAdmin === true
+    );
+
     const result = rawPosts.map((p: any) => {
       let row = p;
       if (!p.associationId && p.authorId) {
@@ -279,7 +378,7 @@ export class PostsService {
           authorLastName: info.lastName,
         };
       }
-      return this.shapeListRow(row);
+      return this.shapeListRow(row, viewerCtx);
     });
 
     return this.stripBigIntForJson(result);
@@ -491,6 +590,8 @@ export class PostsService {
       );
     }
 
+    const viewerCtx = await this.viewerContext(rawPosts, viewerUserId, isAdmin === true);
+
     const result = rawPosts.map((p: any) => {
       let row = p;
       if (!p.associationId && p.authorId) {
@@ -506,7 +607,7 @@ export class PostsService {
           authorLastName: authorInfo.lastName,
         };
       }
-      return this.shapeListRow(row);
+      return this.shapeListRow(row, viewerCtx);
     });
 
     const safe = this.stripBigIntForJson(result);
@@ -587,7 +688,10 @@ export class PostsService {
   }
 
   /** Loads a single post by ID and returns the public-shaped version (association identity applied). */
-  async getById(id: string, opts?: { allowHidden?: boolean; viewerId?: string }) {
+  async getById(
+    id: string,
+    opts?: { allowHidden?: boolean; viewerId?: string; isGlobalAdmin?: boolean }
+  ) {
     const post = await this.postRepo.findOne({ where: { id } });
     if (!post) throw new NotFoundException('Post not found');
     if (post.hiddenByModeration && !opts?.allowHidden) {
@@ -605,7 +709,10 @@ export class PostsService {
       this.logger.debug(`getById ${id} withheld: scheduled for ${post.scheduledAt?.toISOString()}`);
       throw new NotFoundException('Post not found');
     }
-    const shaped = await this.toPublicPostFromEntity(post);
+    const shaped = await this.toPublicPostFromEntity(
+      post,
+      await this.viewerContext([post], opts?.viewerId, opts?.isGlobalAdmin === true)
+    );
     // Attach author name fields (same source as listPosts - local users table).
     if (!shaped.associationId && shaped.authorId) {
       const rows: {
@@ -625,7 +732,7 @@ export class PostsService {
     return shaped;
   }
 
-  /** Updates a post's content. Author or global admin may edit. */
+  /** Updates a post's content. See `assertMayManage` for who may. */
   async updatePost(
     postId: string,
     userId: string,
@@ -642,8 +749,7 @@ export class PostsService {
   ) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
-    if (!isGlobalAdmin && post.authorId !== userId)
-      throw new UnauthorizedException('Not your post');
+    await this.assertMayManage(post, userId, isGlobalAdmin);
 
     post.markdown = data.markdown;
 
@@ -692,14 +798,41 @@ export class PostsService {
 
     const saved = await this.postRepo.save(post);
     await this.invalidateListCache();
-    return this.toPublicPostFromEntity(saved);
+    return this.toPublicPostFromEntity(
+      saved,
+      await this.viewerContext([saved], userId, isGlobalAdmin)
+    );
   }
 
-  /** Permanently deletes a post. Authors can delete their own; global admins can delete any. */
+  /**
+   * Refuses the write to whoever may not manage this post - the server half of the very predicate
+   * the pencil is drawn from, so a visible control and an accepted write cannot disagree.
+   *
+   * `mayAct` rather than its batch form: one post, one association.
+   */
+  private async assertMayManage(post: Post, userId: string, isGlobalAdmin: boolean): Promise<void> {
+    if (isGlobalAdmin) return;
+    const allowed = post.associationId
+      ? !!userId &&
+        (await this.associationsService.mayAct(
+          userId,
+          post.associationId,
+          AssociationPermissionFlag.POST_AS_ASSO
+        ))
+      : !!userId && post.authorId === userId;
+    if (!allowed) {
+      this.logger.debug(
+        `[PERM] ${userId?.slice(0, 8)} refused management of post ${post.id} (assoc=${post.associationId ?? 'none'})`
+      );
+      throw new UnauthorizedException('Not your post');
+    }
+  }
+
+  /** Permanently deletes a post. See `assertMayManage` for who may. */
   async deletePost(postId: string, userId: string, isAdmin: boolean) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
-    if (!isAdmin && post.authorId !== userId) throw new UnauthorizedException('Not your post');
+    await this.assertMayManage(post, userId, isAdmin);
     await this.postRepo.remove(post);
     return { ok: true };
   }

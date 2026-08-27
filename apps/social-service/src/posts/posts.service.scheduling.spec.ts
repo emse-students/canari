@@ -24,7 +24,9 @@ describe('PostsService.getById scheduling', () => {
       postRepo as unknown as Repository<Post>,
       {} as RedisService,
       {} as FollowsService,
-      {} as AssociationsService,
+      // `getById` stamps every row with `canManage`, which asks the association service for the
+      // flags the viewer holds. Not what this spec is about: answer "none".
+      { mayActOnAny: () => Promise.resolve(new Set<string>()) } as unknown as AssociationsService,
       {} as PostNotificationsService
     );
     // getById shapes its result through the association-identity helper, which is not what

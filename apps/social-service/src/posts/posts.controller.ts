@@ -103,9 +103,16 @@ export class PostsController {
   searchPosts(
     @Query('q') q: string,
     @Query('limit') limit?: string,
-    @Query('offset') offset?: string
+    @Query('offset') offset?: string,
+    @Headers('x-user-id') xUserId?: string,
+    @Headers('x-global-admin') xGlobalAdmin?: string
   ) {
-    return this.service.searchPosts(q ?? '', Number(limit ?? 20), Number(offset ?? 0));
+    // The viewer is carried here for the same reason `listPosts` carries it: every row is stamped
+    // with `canManage`, and a search result renders the same card as a feed row.
+    return this.service.searchPosts(q ?? '', Number(limit ?? 20), Number(offset ?? 0), {
+      viewerUserId: xUserId,
+      isAdmin: xGlobalAdmin === 'true',
+    });
   }
 
   /** Returns a paginated list of posts for the requested feed. */
@@ -196,10 +203,11 @@ export class PostsController {
     return this.service.getById(postId, {
       allowHidden: xGlobalAdmin === 'true',
       viewerId: userId,
+      isGlobalAdmin: xGlobalAdmin === 'true',
     });
   }
 
-  /** Updates a post's content. Author or global admin may edit. */
+  /** Updates a post's content. Author, a POST_AS_ASSO holder of its association, or a global admin. */
   @UseGuards(NginxAuthGuard)
   @Patch(':postId')
   updatePost(

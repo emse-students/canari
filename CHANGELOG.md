@@ -13,6 +13,26 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **Nobody could edit a post published in an association's name - not its author, not the
+  association's officers, not the BDE - and the app said nothing, because the missing thing was a
+  button.** Reported from production: an association officer holding that association's posting
+  rights - and a BDE bureau member besides - had no pencil on an announcement they had written
+  themselves; granting them platform administrator made it appear, which is what pointed at rights
+  and away from the actual cause. There was no permission failure at all. Every association post is
+  served with its `authorId` DELETED - the association is the byline, and that anonymity is
+  deliberate - while the card decided the control with `authorId === currentUserId`, a comparison
+  against a field that is never there on exactly those posts. So the answer was `false` for every
+  reader of every association post since the feature shipped, and it failed in the one way nothing
+  reports: no request was made, so no refusal was logged. The server now answers the question
+  itself. Every post carries `canManage`, resolved per reader and per request (`viewerContext` +
+  `mayActOnAny`, one membership query for a whole page), and the `PATCH`/`DELETE` guards use the
+  same predicate, so a shown control and an accepted write cannot disagree. `GET /api/posts/search`
+  carries the viewer for the same reason the feed does. **A post published in an association's name
+  now answers to `POST_AS_ASSO` alone**: any officer holding it may correct what the association
+  said, an officer who lost it may not, and authorship grants nothing extra - publishing already
+  required that flag, so this takes nothing from anyone. A BDE super-admin stays excluded from that
+  flag, unchanged: administering an association is not speaking for it.
+
 - **A group deleted with the radios off came back, and the mechanism built to stop that had been
   measuring an empty store for three days.** An exit is owed to the server and written down before
   it is attempted - one durable row per group, cleared only by an ANSWER, replayed by the reconnect.

@@ -82,7 +82,9 @@
   let submittingComment = $state(false);
   let showReactionPicker = $state(false);
 
-  const isOwnPost = $derived(localPost.authorId === currentUserId);
+  // Server-answered, per reader: the author, an officer of the publishing association, or a global
+  // admin. Never re-derived from `authorId` - an association post does not carry one.
+  const canManage = $derived(localPost.canManage === true);
 
   let userReaction = $derived((localPost.reactions ?? {})[currentUserId] ?? null);
   let reactions = $derived<Record<string, number>>((localPost.reactions ?? {}) as any);
@@ -408,7 +410,7 @@
       <PostHeader post={localPost} />
       <PostOverlayControls
         pinned={localPost.pinned ?? false}
-        {isOwnPost}
+        {canManage}
         isGlobalAdmin={isGlobalAdmin()}
         isLoggedIn={!!currentUserId}
         {reportOpen}

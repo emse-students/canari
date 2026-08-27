@@ -54,7 +54,7 @@ elsewhere, which is exactly why the audit had to read call sites rather than cou
 
 | Flag | Bit | Guard-declared routes | What it actually gates |
 | --- | --- | --- | --- |
-| `POST_AS_ASSO` | 0 | 0 | `canPostAs` - publishing a post in the association's name (`posts.controller.ts`), and seeing rejected events on its calendar |
+| `POST_AS_ASSO` | 0 | 0 | `canPostAs` - publishing a post in the association's name (`posts.controller.ts`); **editing and deleting** those posts (`PostsService.assertMayManage`, and the `canManage` field it is served through); and seeing rejected events on its calendar |
 | `PROPOSE_EVENT` | 1 | 2 | `POST :id/events`, `GET :id/link-candidates`; also `PATCH`/`DELETE :id/events/:eventId` inline, and it is the audience of every event-action notification |
 | `MANAGE_MEMBERS` | 2 | 14 | members (add / rename / remove / reorder), the logo, `PATCH :id` itself, tags, cotisants and cotisation tiers, plus the exports. Also whether `listMembers` returns bitmasks at all, and whether a form may grant a cotisation tag |
 | `MANAGE_DOCUMENTS` | 3 | 8 | the private document vault (including `GET :id/vault-key`) and the association notes |
@@ -69,6 +69,35 @@ elsewhere, which is exactly why the audit had to read call sites rather than cou
 Nothing is dead: every flag has at least one call site. Re-measure the table rather than trusting it
 - one pass over the `@SetMetadata` decorators and one over `AssociationPermissionFlag.` references
 in `apps/social-service/src` reproduces it in seconds.
+
+## A right the client cannot compute: `canManage` on a post
+
+A post published in an association's name has its `authorId` **deleted from every response** - the
+whole point being that the association speaks, not a person. The feed card nevertheless drew its
+edit and delete controls from `authorId === currentUserId`, a comparison against a field that is
+never present on exactly those posts. The result was invisible rather than noisy: no request was
+made, so no refusal was logged, and an officer editing their own announcement simply had no button.
+Making them a platform administrator "fixed" it, which is what the report looked like from outside.
+
+Two things follow, and they are the shape of the repair:
+
+1. **The capability is served, per reader.** `PostsService` stamps every post it returns with
+   `canManage`, resolved once per request: `viewerContext` asks `mayActOnAny` for the associations
+   in the page (one query for a whole feed), `viewerMayManage` decides each row. The client renders
+   the control from that field and derives nothing.
+2. **The write guard is the same predicate.** `assertMayManage` gates `PATCH`/`DELETE` with
+   `mayAct(POST_AS_ASSO)` for an association post and with authorship for a personal one, so a
+   visible control and an accepted write cannot disagree.
+
+**An association post answers to `POST_AS_ASSO` alone** - its author holds no separate claim. Whoever
+may speak in the association's name may correct what was said; whoever lost that right may not. This
+takes nothing from anyone: `canPostAs` is the same flag, so every publisher held it at the time. A
+BDE super-admin is still excluded by `SUPER_ADMIN_EXCLUDED_FLAGS`, unchanged and for the same reason
+- administering an association is not speaking for it.
+
+`mayActOnAny` is `mayAct` batched over many associations, in the same file and built from the same
+three tiers, because a feed page decides a dozen rows per render and a per-row `mayAct` is a dozen
+round trips. `associations.service.may-act.spec.ts` asserts the two agree id by id.
 
 ## What is deliberately NOT `mayAct`
 

@@ -8,15 +8,18 @@
    * Props for the PostOverlayControls component.
    * Renders the top-right overlay of a post card:
    * - Pin/Unpin: admins only
-   * - Edit: post author OR global admin
-   * - Delete: post author OR global admin
-   * - Report: any logged-in user who is not the post author
+   * - Edit / Delete: whoever the server says may manage the post (`canManage`)
+   * - Report: any logged-in user who does not manage the post
    */
   interface Props {
     /** Whether the post is currently pinned. */
     pinned: boolean;
-    /** Whether the current user is the post author. */
-    isOwnPost: boolean;
+    /**
+     * Whether the current user may edit or delete this post: its author, an officer of the
+     * publishing association, or a global admin. Answered by the server, never re-derived here -
+     * an association post carries no `authorId` to compare against.
+     */
+    canManage: boolean;
     /** Whether the current user is a global admin. */
     isGlobalAdmin: boolean;
     /** Whether any user is logged in (gates the report button). */
@@ -31,9 +34,9 @@
     reportReasons: string[];
     /** Called when the admin clicks pin/unpin. */
     onTogglePin: () => void;
-    /** Called when the author clicks "Edit post". */
+    /** Called when a manager clicks "Edit post". */
     onStartEdit: () => void;
-    /** Called when the author clicks "Delete post". */
+    /** Called when a manager clicks "Delete post". */
     onDelete: () => void;
     /** Called to open or close the report popover. */
     onToggleReport: (open: boolean) => void;
@@ -47,7 +50,7 @@
 
   let {
     pinned,
-    isOwnPost,
+    canManage,
     isGlobalAdmin,
     isLoggedIn,
     reportOpen,
@@ -102,7 +105,7 @@
         {/if}
       </button>
     {/if}
-    {#if isOwnPost || isGlobalAdmin}
+    {#if canManage}
       <button
         type="button"
         onclick={onStartEdit}
@@ -112,7 +115,7 @@
         <Pencil size={14} strokeWidth={2.5} />
       </button>
     {/if}
-    {#if isOwnPost || isGlobalAdmin}
+    {#if canManage}
       <button
         type="button"
         onclick={onDelete}
@@ -122,7 +125,7 @@
         <Trash2 size={14} strokeWidth={2.5} />
       </button>
     {/if}
-    {#if !isOwnPost}
+    {#if !canManage}
       {#if reportOpen}
         <div
           class="bg-surface-elevated border-cn-border absolute top-0 right-0 z-50 flex w-52 flex-col gap-2 rounded-xl border p-3 shadow-lg"

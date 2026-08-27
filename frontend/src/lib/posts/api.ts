@@ -67,6 +67,13 @@ export interface PostEntity {
   id: string;
   /** Omitted when the post is published as an association (`association` is set). */
   authorId?: string;
+  /**
+   * May the CALLING user edit or delete this post? Answered by the server, per reader.
+   *
+   * It cannot be derived here: `authorId` is deliberately stripped from association posts, so a
+   * client comparing ids finds no owner for the very posts an association's officers manage.
+   */
+  canManage?: boolean;
   authorDisplayName?: string | null;
   authorFirstName?: string | null;
   authorLastName?: string | null;

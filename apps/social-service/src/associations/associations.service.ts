@@ -1136,6 +1136,49 @@ export class AssociationsService {
   }
 
   /**
+   * `mayAct` answered for MANY associations at once: the subset of `associationIds` where `userId`
+   * may exercise `flag`.
+   *
+   * A feed page carries posts from a dozen associations and has to decide each row, so asking
+   * `mayAct` per row is a dozen round trips per render. It is deliberately assembled from the same
+   * three tiers rather than from a membership query alone - the exclusion set is exactly what makes
+   * `POST_AS_ASSO` behave differently here from `MANAGE_MEMBERS`, and a caller re-deriving that by
+   * hand is the drift `mayAct` was written to end.
+   *
+   * An unknown caller holds nothing: an anonymous reader gets the empty set rather than a crash.
+   */
+  async mayActOnAny(
+    userId: string | undefined,
+    associationIds: string[],
+    flag: AssociationPermissionFlag,
+    opts?: { isGlobalAdmin?: boolean }
+  ): Promise<Set<string>> {
+    const unique = [...new Set(associationIds.filter(Boolean))];
+    if (unique.length === 0) return new Set();
+    if (opts?.isGlobalAdmin) return new Set(unique);
+    if (!userId) return new Set();
+
+    if ((flag & SUPER_ADMIN_EXCLUDED_FLAGS) === 0 && (await this.isAssociationSuperAdmin(userId))) {
+      this.logger.debug(
+        `[PERM] super-admin ${userId.slice(0, 8)} granted flag=${flag} on ${unique.length} assocs`
+      );
+      return new Set(unique);
+    }
+
+    const rows = await this.memberRepo.find({
+      where: { userId, associationId: In(unique) },
+      select: { associationId: true, permissions: true },
+    });
+    const granted = new Set(
+      rows.filter((row) => (row.permissions & flag) !== 0).map((row) => row.associationId)
+    );
+    this.logger.debug(
+      `[PERM] ${userId.slice(0, 8)} holds flag=${flag} on ${granted.size}/${unique.length} assocs`
+    );
+    return granted;
+  }
+
+  /**
    * Pending calendar rows the caller may see (global admin / BDE admin: all; else own assos).
    * Any member of an association (permissions > 0) sees pending events of their own asso.
    */
