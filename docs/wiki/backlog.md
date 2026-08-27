@@ -1717,6 +1717,36 @@ directory either way; that comparison is a thing against itself and it read as 0
 as long as it took to run the real gate. Move the file.
 
 
+## Infrastructure
+
+### P3 - no docker prune runs on `canari` or `mitv`, and 141 dangling volumes say so
+
+**FOUND 2026-08-27, by checking whether le-cercle's `ENOSPC` could happen here.** It cannot happen
+the same way, and that difference is the point of this entry.
+
+le-cercle fills up because its pipeline tags every build `le-cercle:<sha>` and a tag is never
+dangling, so the `docker image prune -f` in its deploy reclaimed 0 B for months
+([durable-rules](durable-rules.md#shared-gotchas)). **Our hosts have the opposite shape:** CD pushes
+to ghcr and the compose files pull `:latest`, so the image a deploy replaces loses its tag and
+becomes dangling - reclaimable by the plainest possible prune. What they have in common is that
+**no prune runs at all.**
+
+| Host | Root | Free | Dangling images | Dangling volumes | Exited containers |
+| --- | --- | --- | --- | --- | --- |
+| `canari` | 125 G | 73 G (61%) | 57 | 64 | 0 |
+| `mitv` | 438 G | 378 G (90%) | 6 | 77 | 3 |
+
+`docker system df` puts the reclaimable at 3.02 GB of images plus 964 MB of volumes on `canari`,
+and 2.43 GB plus 4.65 GB on `mitv` - where local volumes are **82% reclaimable**, the largest single
+figure on either box. Neither host is anywhere near its edge, which is exactly why this is a P3 and
+not an incident: it is a slope, measured, with years of headroom.
+
+**Volumes are the half that needs care, not a prune flag.** A dangling volume on `mitv` may be an
+orphan of a removed container or may be data whose container is simply not running; `docker volume
+prune` cannot tell those apart and neither can a name. **Enumerate before deleting** - the standing
+rule about destructive controls needing an allowlist applies here in full, and there is no urgency
+buying the shortcut. The images half is safe and could be a scheduled `docker image prune -f` today.
+
 ## Post-campaign projects - decided, not scheduled
 
 ### The MLS + Graine explanation, written FOR THE USER - audience settled 2026-08-20

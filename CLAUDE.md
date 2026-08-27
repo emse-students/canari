@@ -254,10 +254,14 @@ reading it needed `glab`, now installed and authenticated against gitlab.emse.fr
 it from inside the repo, or `glab api` resolves the host as gitlab.com and answers 404.**
 The cause was never the code: the production host was out of disk, fixed as **!6**, also
 merged and verified on a real deploy. Two rules came out of it, both in
-[durable-rules](docs/wiki/durable-rules.md#shared-gotchas), and both apply to EVERY repo
-here, since all five deploy onto a runner that is the production host: **a cache rewritten
-every run cannot be bounded by a clock**, and **image sizes are not additive** - the
-`RECLAIMABLE` column is the only one worth reading. Four rules came out of this chantier, all in
+[durable-rules](docs/wiki/durable-rules.md#shared-gotchas): **a cache rewritten every run
+cannot be bounded by a clock**, and **image sizes are not additive** - `RECLAIMABLE` is the
+only column worth reading. **Measured, NOT assumed, on our own hosts: the mechanism does
+NOT transfer** - Canari and mitv pull `:latest` from ghcr, so their old images go dangling
+and a plain prune would reclaim them. What they share is that no prune runs at all: 57
+dangling images + 64 dangling volumes on `canari`, 77 on `mitv`. Neither is near its edge
+(73 G and 378 G free), so it is a P3 in [backlog](docs/wiki/backlog.md#infrastructure), not
+an incident. Four rules came out of this chantier, all in
 [durable-rules](docs/wiki/durable-rules.md): oxvelte pinned by sha, not branch; a guard restating
 what the tool enforces goes stale; **dropping a `--config` flag does not remove the config**; and
 **the executable bit is metadata Windows drops silently**, which cost Portail-etu a pipeline and was
