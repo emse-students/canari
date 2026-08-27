@@ -13,6 +13,34 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **Two devices could both be told they had won the first-publish race, so one of them sealed a
+  salon's only key into a tree nobody else holds.** A Graine distribution group's id is assigned by
+  the server, but its MLS tree is built by whichever device finds the scope uninitialised first -
+  and two devices of the same user routinely find it uninitialised together, because creating a
+  private salon fires a `channel.member.joined` event that makes EVERY one of that user's devices
+  load the workspace and walk its private channels. Both create a tree under the same id and both
+  publish a base at epoch 0. `putGroupInfo` settled that with an `ON CONFLICT DO NOTHING` election
+  and reported the loser honestly - but only when the two INSERTs actually collided. Serialized, and
+  a second apart is serialized, the later publisher found a row, and the update guard's `<=` let
+  epoch 0 REPLACE epoch 0 and answered `stored: true`. Both creators believed they owned the group.
+  Measured on production 2026-08-27 (COMM-8, salon `0a47eb27`, group `19d12785`): two `epoch=0
+  stored=true` publishes one second apart, then the group's only epoch-0 commit built on the
+  survivor's tree by an undriven third device of the same account. The replaced creator never
+  learned it: it refused that commit as `ValidationError(InvalidSignature)` at `group_epoch=0`, sat
+  at epoch 0 while the group ran to 4 (`epoch gap [msg_epoch=4, group_epoch=0]`, 514 times), and
+  minted the salon's only Graine session against the orphan - so the seed for the salon's first
+  message existed nowhere any member could reach. The repair path did everything right and could do
+  nothing: the joining member asked, every roster device answered `absorbed 0/0`, and it concluded
+  `has no reachable holder`. The message is unreadable for good. The rule is now strict on both
+  halves of the same function - an epoch already published is OWNED, and a base for it loses - and
+  the update reports what its own guard matched instead of assuming it landed. An equal epoch was
+  never a legitimate refresh: every republisher carries a strictly newer one by construction, since
+  `validateCommit` writes the base for `baseEpoch + 1` inside the transaction that advances to it and
+  `republishStaleBase` fires only when the stored base is BEHIND the group. The client already knew
+  what to do with a lost race; it had simply never been told it lost. This is what left COMM-8
+  failing after the external-join checkpoint below fixed the defect it was mistaken for, and the same
+  missing seed is what COMM-9/10 and COMM-21 could not arm on.
+
 - **An external join was durable on the server and volatile on the client, so a reload in the gap
   joined a second time and forked the group.** When a device joins a key-distribution group by
   external commit, the epoch advance is written server-side and visible to every other member the

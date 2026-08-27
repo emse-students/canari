@@ -76,7 +76,12 @@ describe('MessagingService - group-info (external-join base)', () => {
     groupRepo = emptyRepo();
     // Re-armed AFTER the clear, which drops the implementation set at definition time. The default
     // is winning the race; the test that cares about losing it says so.
-    execute.mockResolvedValue({ raw: [{ groupId: 'g1' }] });
+    //
+    // BOTH FIELDS, because one `execute` serves both builders and they are read differently: `raw`
+    // is the insert's `ON CONFLICT DO NOTHING` signal, `affected` the update's. A TypeORM
+    // `UpdateResult` always carries `affected`, and a fixture omitting it made every accepted
+    // update look refused - the same class of fixture lie as the `find` one documented above.
+    execute.mockResolvedValue({ raw: [{ groupId: 'g1' }], affected: 1 });
     groupInfoRepo.createQueryBuilder.mockImplementation((): unknown => ({
       ...insertBuilder,
       ...updateBuilder,
@@ -162,6 +167,46 @@ describe('MessagingService - group-info (external-join base)', () => {
       expect(updateBuilder.set).toHaveBeenCalledWith(
         expect.objectContaining({ groupInfo: 'bmV3', baseEpoch: 6 })
       );
+    });
+
+    // THE HALF OF THE FIRST-PUBLISH RACE THE INSERT ELECTION NEVER SAW, and the commoner half. The
+    // two creators' inserts only collide if they overlap; serialized - the first committed before the
+    // second read - the second found a row, `<=` let its epoch 0 REPLACE epoch 0, and it was told it
+    // had won. Both then believed they owned the group, and the one whose base was replaced sealed
+    // the salon's only seed into a tree nobody else holds (production, COMM-8, 2026-08-27).
+    it('refuses a SECOND base for an epoch already published, so two creators cannot both win', async () => {
+      groupMemberRepo.findOne.mockResolvedValue({ id: 'm' });
+      groupInfoRepo.findOne.mockResolvedValue({ groupId: 'g1', baseEpoch: 0 });
+
+      expect(await service.storeGroupInfo('g1', 'member-1', 'c2Vjb25k', 0)).toEqual({
+        stored: false,
+      });
+      expect(updateBuilder.execute).not.toHaveBeenCalled();
+      expect(insertBuilder.execute).not.toHaveBeenCalled();
+    });
+
+    // The read above cannot be trusted alone - another writer can land between it and the write - so
+    // the guard that actually decides carries the same strict rule, and this is what pins it.
+    it('guards the update on a STRICTLY newer epoch, not an equal one', async () => {
+      groupMemberRepo.findOne.mockResolvedValue({ id: 'm' });
+      groupInfoRepo.findOne.mockResolvedValue({ groupId: 'g1', baseEpoch: 5 });
+
+      await service.storeGroupInfo('g1', 'member-1', 'bmV3', 6);
+
+      expect(updateBuilder.where).toHaveBeenCalledWith(
+        '"groupId" = :groupId AND "baseEpoch" < :baseEpoch',
+        { groupId: 'g1', baseEpoch: 6 }
+      );
+    });
+
+    it('reports an update its own guard refused as not stored, rather than assuming it landed', async () => {
+      groupMemberRepo.findOne.mockResolvedValue({ id: 'm' });
+      groupInfoRepo.findOne.mockResolvedValue({ groupId: 'g1', baseEpoch: 5 });
+      // A concurrent writer got to epoch 6 first, so the WHERE matches nothing. Answering `true`
+      // here is the insert branch's old lie in the other half of the same function.
+      execute.mockResolvedValueOnce({ raw: [], affected: 0 });
+
+      expect(await service.storeGroupInfo('g1', 'member-1', 'bmV3', 6)).toEqual({ stored: false });
     });
   });
 

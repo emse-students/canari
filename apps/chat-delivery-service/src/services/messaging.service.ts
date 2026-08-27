@@ -1238,10 +1238,11 @@ export class MessagingService {
   /**
    * Stores the latest GroupInfo for `groupId` (Phase 4 external-join base). Membership-gated. The
    * committer refreshes it after every accepted commit (a new group's first member-add is itself a
-   * commit), so an authorized member lacking MLS state can self-join. Monotonic: a write with a
-   * lower `baseEpoch` than the
-   * stored one is ignored (a late/out-of-order refresh must never regress the served base epoch,
-   * mirroring the write-if-newer discipline of the commit-log and persistence layers).
+   * commit), so an authorized member lacking MLS state can self-join. STRICTLY monotonic: a write
+   * whose `baseEpoch` is not above the stored one is ignored and reported as `stored: false` - a
+   * late refresh must never regress the served base epoch (mirroring the write-if-newer discipline
+   * of the commit-log and persistence layers), and an EQUAL epoch is a second creator claiming a
+   * base that is already owned, which is the race {@link putGroupInfo} exists to settle.
    */
   async storeGroupInfo(
     groupId: string,
@@ -1279,10 +1280,36 @@ export class MessagingService {
     // transaction that advances the epoch it describes. Absent, this runs on its own connection,
     // which is what every other caller wants.
     const repo = manager ? manager.getRepository(MlsGroupInfo) : this.groupInfoRepo;
-    // Monotonic upsert: only overwrite when the incoming epoch is newer-or-equal. `orIgnore` guards
-    // the concurrent-insert race; the WHERE guards the concurrent-update race.
+    // STRICTLY monotonic: an epoch already published is OWNED, and a second base for it loses.
+    // `orIgnore` guards the concurrent-insert race; the WHERE guards the concurrent-update race.
+    //
+    // THE ELECTION BELOW USED TO DECIDE ONLY THE COLLIDING HALF OF THE RACE, and the other half is
+    // the commoner one. Two devices that both find a scope uninitialised both create a tree under
+    // the server's group id and both publish at epoch 0; only if their INSERTs collide does
+    // `orIgnore` separate them. Serialized - the first insert committed before the second device
+    // read - the second fell through to the UPDATE below, whose `<=` let epoch 0 REPLACE epoch 0,
+    // and it was told `stored: true`. Both creators then believed they owned the group.
+    //
+    // Measured on production 2026-08-27, COMM-8, salon 0a47eb27 / group 19d12785, one second apart:
+    //
+    //   09:49:41  group-info epoch=0 stored=true   publisher=d82cd226:web-d82cd226
+    //   09:49:41  group-info epoch=0 stored=true   publisher=d82cd226:web-d82cd226
+    //
+    // The creator whose base was replaced never learned it, never advanced past epoch 0 (`msg_epoch=0
+    // group_epoch=0 err=ValidationError(InvalidSignature)` on the group's own first commit, then
+    // `epoch gap [msg_epoch=4, group_epoch=0]` for the rest of the run), and minted the salon's only
+    // Graine session against that orphan - sealing the seed into a tree no other member holds. The
+    // repair did everything right and could do nothing: every roster device answered `absorbed 0/0`
+    // and the asker concluded `has no reachable holder`. The salon's first message is unreadable for
+    // good. Story in `CHANGELOG.md`.
+    //
+    // AN EQUAL EPOCH IS NEVER A LEGITIMATE REFRESH, which is what makes `>=` safe. Every republisher
+    // carries a strictly newer epoch by construction: `validateCommit` writes the base for
+    // `baseEpoch + 1` inside the transaction that advances to it, and `republishStaleBase` fires only
+    // when the stored base is BEHIND the group and publishes from a tree at or past `activeEpoch`. So
+    // equal means a second creator, and the only thing it needs is to be told.
     const existing = await repo.findOne({ where: { groupId } });
-    if (existing && existing.baseEpoch > baseEpoch) {
+    if (existing && existing.baseEpoch >= baseEpoch) {
       return { stored: false };
     }
     if (!existing) {
@@ -1302,16 +1329,23 @@ export class MessagingService {
       const won = Array.isArray(inserted.raw) && inserted.raw.length > 0;
       return { stored: won };
     }
-    await repo
+    // `<`, MATCHING THE READ ABOVE. The read cannot be trusted on its own - another writer can land
+    // between it and this - so the guard that actually decides has to carry the same rule, and a
+    // `<=` here would reopen the hole under concurrency exactly as it was open under serialization.
+    const advanced = await repo
       .createQueryBuilder()
       .update()
       .set({ groupInfo, baseEpoch, updatedAt: () => 'now()' })
-      .where('"groupId" = :groupId AND "baseEpoch" <= :baseEpoch', {
+      .where('"groupId" = :groupId AND "baseEpoch" < :baseEpoch', {
         groupId,
         baseEpoch,
       })
       .execute();
-    return { stored: true };
+    // REPORTED, NOT ASSUMED - the same rule the insert branch already obeys. This used to answer
+    // `stored: true` whatever the WHERE matched, so a write the guard had refused was indistinguishable
+    // from one it accepted, and the one caller that acts on the answer would have kept a tree the
+    // group had moved past.
+    return { stored: (advanced.affected ?? 0) > 0 };
   }
 
   /**

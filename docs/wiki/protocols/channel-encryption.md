@@ -513,6 +513,38 @@ and the loser discards its group and joins the winner's base. **No election, no 
 peer online.** The cost of being wrong here is the reason this is not left to heal: nothing
 reconciles two MLS groups sharing an id.
 
+**AND FOR A YEAR THAT ELECTION DECIDED ONLY THE COLLIDING HALF OF THE RACE.** `orIgnore` separates
+two publishes only when their INSERTs actually overlap. Serialized - the first committed before the
+second device even read the row - the second found a row and fell through to the UPDATE, whose guard
+was `baseEpoch <= :baseEpoch`: epoch 0 replaced epoch 0, and the writer was told `stored: true`. So
+the case the paragraph above describes as settled was settled only when it happened fast, and the
+commoner ordering produced exactly the outcome the election exists to prevent - two creators both
+believing they own the group.
+
+**And it is not an exotic ordering.** Creating a private salon publishes `channel.member.joined` to
+the channel audience, which makes every one of that user's devices load the workspace and walk its
+private channels; each of them reaches an uninitialised scope within the same second. Measured on
+production 2026-08-27 (COMM-8): three `epoch=0 stored=true` publishes for group `ef60eb1e` inside one
+second, from three devices of one account, and in the run before it two for `19d12785`. The survivor
+is whichever tree the next commit happens to be built on - A1's in the first case, an undriven web
+device's in the second - and the creator that minted the salon's Graine session is orphaned at epoch
+0, refusing the group's own first commit as `ValidationError(InvalidSignature)` and watching it run
+away (`epoch gap [msg_epoch=4, group_epoch=0]`). The seed for the salon's first message then exists
+only inside a tree no member holds: the joining member asks, every roster device answers
+`absorbed 0/0`, and it concludes `has no reachable holder`. **`unsettledDistributionGroups` cannot
+help here** - it closes the window for a device that KNOWS it is unsettled, and this device was told
+it had won.
+
+**The rule is now strict on both halves of the function.** An epoch already published is OWNED: a
+base for it is refused and reported `stored: false`, whether the collision is caught by the read or
+by the UPDATE's own `baseEpoch < :baseEpoch` guard, and the UPDATE reports what it actually matched
+instead of assuming it landed. **An equal epoch was never a legitimate refresh** - every republisher
+carries a strictly newer one by construction, since `validateCommit` writes the base for
+`baseEpoch + 1` inside the transaction that advances to it, and `republishStaleBase` fires only when
+the stored base is BEHIND the group and publishes from a tree at or past `activeEpoch`. The client
+needed no change at all: it had always known what to do with a lost race, and had simply never been
+told it lost.
+
 **AND DISCARDING THE LOSER IS ONLY FREE IF NOTHING WAS BUILT ON IT.** The code asserted that in a
 comment - "this runs before any seed is sent" - which is true of `ensureDistributionGroup`'s own
 call and of nothing else. Between `createGroup` and the server's verdict the doomed group is a
