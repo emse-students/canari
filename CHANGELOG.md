@@ -172,6 +172,24 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Changed
 
+- **The moderation screen now opens to the tier that was already allowed to use it.**
+  `/admin/moderation` asked `isGlobalAdmin()` in three places at once - the nav item, the home card
+  and the page's own redirect - while the server had accepted `MODERATE` on the reports, mutes and
+  comment endpoints all along. A BDE member holding the flag reached none of it: the tier existed on
+  both sides and had no door. The client now mirrors the server's `isContentModerator` through
+  `ensureContentModerator()`, and the four post endpoints the screen needs - `reported`, `hidden`,
+  `hide`, `unhide` - moved off global-admin-only onto the same predicate. The way in already existed
+  and still does: the dashboard's Administration tile, shown to anyone holding an association flag.
+
+  Two things fell out of doing it. The three non-admin tiers now resolve from **one** membership
+  request (`ensureMyAssociations`) instead of two overlapping caches, and it is AWAITED wherever it
+  decides a redirect - probed in the background, it bounced the very user it was meant to admit
+  whenever it lost the race. And `AdminCard.globalOnly` went: a field set on eight cards that no
+  template ever read.
+
+  `docs/wiki/frontend/modules/admin.md` now carries the route-by-route table of who reaches what; it
+  previously claimed every admin route checks `isGlobalAdmin()`, which four of the eleven never did.
+
 - **The BDE can now moderate a post, not just the comments under it.** `MODERATE` is documented as
   "delete posts, mute users and review content reports" and did the last two: every post-level
   control - edit, delete, pin, hide - asked `isGlobalAdmin` and nothing else, so a BDE member

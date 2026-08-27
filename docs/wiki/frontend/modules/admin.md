@@ -11,17 +11,47 @@
 
 ## Access control
 
-All admin routes check `isGlobalAdmin()` (derived from `X-Global-Admin` header injected by Nginx). Non-admins are redirected to `/admin` (or `/`) immediately.
+**`/admin` is not one permission, it is four tiers sharing a shell.** The layout decides who gets in
+and which items appear; every page repeats its own check, because a route is reachable by URL.
 
-## Routes
+| Tier | How the client knows | Source |
+| --- | --- | --- |
+| Platform administrator | `isGlobalAdmin()` | `X-Global-Admin`, injected by nginx from `auth_request` |
+| BDE super-admin | `isAssociationSuperAdmin()` | `MANAGE_ASSO` in a BDE association |
+| Content moderator | `isContentModerator()` | `MODERATE` in a BDE association |
+| Association admin | any membership with `isAdmin` (at least one flag) | `GET /api/associations/me/list` |
 
-| Route | Description |
-|---|---|
-| `/admin` | Admin dashboard (overview) |
-| `/admin/platform` | Platform configuration |
-| `/admin/moderation` | Content moderation queue |
-| `/admin/users` | User list with admin flag management |
-| `/admin/cercle` | Cercle (`balance_topup`) products, per beneficiary association |
+The last three all come from **one** membership request, `ensureMyAssociations()`, which publishes
+both BDE tiers as a side effect. It is awaited rather than probed in the background wherever it
+decides a REDIRECT: a background probe bounces the very user it was meant to admit whenever it loses
+the race.
+
+## Routes, and who reaches them
+
+| Route | Section | Who |
+| --- | --- | --- |
+| `/admin` | Home (cards) | Any association admin, any content moderator, any platform admin |
+| `/admin/agenda` | Pending agenda events | Any association admin |
+| `/admin/moderation` | Reports, hidden posts, mutes | Content moderator or platform admin |
+| `/admin/document-reviewers` | Public-document reviewer grants | BDE super-admin or platform admin |
+| `/admin/carte` | Carte de la Vie Asso | BDE super-admin or platform admin |
+| `/admin/associations` | Association list and creation | Platform admin |
+| `/admin/platform` | Maintenance, minimum client version | Platform admin |
+| `/admin/users` | User list, admin flag | Platform admin |
+| `/admin/status` | Presence and connections | Platform admin |
+| `/admin/cercle` | Cercle top-up product | Platform admin |
+| `/admin/storage` | Storage usage | Platform admin |
+
+**The way in is the dashboard's "Administration" tile**, shown to anyone holding at least one
+association flag (so every moderator sees it), plus a direct link to `/admin/agenda` from the
+calendar. Nothing else links into this tree.
+
+**A tier without its screen is a right nobody can exercise.** `/admin/moderation` was gated on
+`isGlobalAdmin()` in three places at once - the nav item, the home card and the page's own redirect -
+while the server had `MODERATE` accepted on the reports, mutes and comment endpoints. A BDE holding
+the flag could reach none of it, and the whole tier was reachable only by someone who already knew
+the URL. Whenever a permission is added to a server-side check, the matching screen is part of the
+same change.
 
 ## Cercle top-ups (`/admin/cercle`)
 
@@ -75,10 +105,20 @@ sent to Google Play.
 
 ## Moderation
 
-The moderation queue lists reported posts. Moderators can:
-- View report details (reporter, reason, content).
-- Remove the post (`DELETE /api/posts/:postId`).
-- Dismiss the report (no action).
+Three tabs, open to a content moderator (BDE `MODERATE`) or a platform admin - the same tier every
+endpoint behind them accepts:
+
+| Tab | Reads | Acts |
+| --- | --- | --- |
+| Reports | `GET /api/moderation/reports` | review/dismiss, hide the post, delete it, delete a reported comment, mute the author |
+| Hidden posts | `GET /api/posts/hidden` | unhide, delete, mute |
+| Muted users | `GET /api/moderation/muted` | unmute |
+
+**`GET /api/posts/reported` is a second, parallel report store and no screen reads it.** It returns
+posts whose `reports` JSONB column is non-empty, written by `POST /api/posts/:postId/report`, while
+this queue reads the `content_reports` TABLE written by `POST /api/moderation/reports`. Which of the
+two is the truth is an open question rather than a detail - do not extend either without settling
+it. [backlog](../../backlog.md)
 
 ## User management
 

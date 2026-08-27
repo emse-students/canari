@@ -56,3 +56,21 @@ export function associationSuperAdminState(): boolean {
 export function setAssociationSuperAdmin(value: boolean): void {
   _isAssocSuperAdmin = value;
 }
+
+let _isContentModerator = $state<boolean>(false);
+
+/**
+ * Returns `true` when the current user may moderate content platform-wide: a member of a BDE
+ * association holding `MODERATE`. Mirrors the server's `isContentModerator`.
+ *
+ * Populated lazily by `ensureContentModerator()`, for the same reason as the super-admin flag
+ * above: it depends on social-service data that login does not know.
+ */
+export function contentModeratorState(): boolean {
+  return _isContentModerator;
+}
+
+/** Updates the reactive content-moderator flag. */
+export function setContentModerator(value: boolean): void {
+  _isContentModerator = value;
+}

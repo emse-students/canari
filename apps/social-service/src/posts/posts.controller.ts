@@ -78,23 +78,27 @@ export class PostsController {
     return this.service.getMyScheduledPosts(xUserId);
   }
 
-  /** Returns all posts that have at least one report. Global admin only. */
+  /** Returns all posts that have at least one report. Content moderators. */
   @UseGuards(NginxAuthGuard)
   @Get('reported')
-  getReportedPosts(
+  async getReportedPosts(
+    @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string
   ) {
-    if (xGlobalAdmin !== 'true') throw new UnauthorizedException('Global admin required');
+    await this.assertContentModerator(xUserId, xGlobalAdmin);
     return this.service.getReportedPosts(Math.min(Number(limit ?? 50), 200), Number(offset ?? 0));
   }
 
-  /** Returns all posts currently hidden by moderation, with their pending report count. Global admin only. */
+  /** Returns all posts currently hidden by moderation, with their pending report count. Content moderators. */
   @UseGuards(NginxAuthGuard)
   @Get('hidden')
-  getHiddenPosts(@Headers('x-global-admin') xGlobalAdmin: string | undefined) {
-    if (xGlobalAdmin !== 'true') throw new UnauthorizedException('Global admin required');
+  async getHiddenPosts(
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') xGlobalAdmin: string | undefined
+  ) {
+    await this.assertContentModerator(xUserId, xGlobalAdmin);
     return this.service.getHiddenPosts();
   }
 
@@ -358,25 +362,27 @@ export class PostsController {
     if (!mayModerate) throw new UnauthorizedException('Content moderator required');
   }
 
-  /** Hides a post from public feeds (moderation). Global admin only. */
+  /** Hides a post from public feeds (moderation). Content moderators. */
   @UseGuards(NginxAuthGuard)
   @Patch(':postId/hide')
-  hidePost(
+  async hidePost(
+    @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
     @Param('postId') postId: string
   ) {
-    if (xGlobalAdmin !== 'true') throw new UnauthorizedException('Global admin required');
+    await this.assertContentModerator(xUserId, xGlobalAdmin);
     return this.service.hidePostByModeration(postId);
   }
 
-  /** Restores a moderation-hidden post back to the public feed. Global admin only. */
+  /** Restores a moderation-hidden post back to the public feed. Content moderators. */
   @UseGuards(NginxAuthGuard)
   @Patch(':postId/unhide')
-  unhidePost(
+  async unhidePost(
+    @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
     @Param('postId') postId: string
   ) {
-    if (xGlobalAdmin !== 'true') throw new UnauthorizedException('Global admin required');
+    await this.assertContentModerator(xUserId, xGlobalAdmin);
     return this.service.unhidePost(postId);
   }
 

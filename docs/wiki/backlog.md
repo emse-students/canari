@@ -215,6 +215,26 @@ hypotheses differ, and the stall will already have been measured.
 
 ## Communities and permissions
 
+### WP-REPORTS-1 - two report stores, and only one is read (opened 2026-08-27)
+
+A post can be reported through **two** mechanisms that share nothing:
+
+- `POST /api/posts/:postId/report` appends to the post's own `reports` JSONB column, and
+  `GET /api/posts/reported` lists posts whose column is non-empty. **No screen calls it** - the
+  client wrapper `getReportedPosts` exists and has no caller. The auto-hide threshold
+  (`hiddenByModeration`) counts THIS store.
+- `POST /api/moderation/reports` writes the `content_reports` table, and that is what
+  `/admin/moderation` reads, reviews and dismisses. It is also what `PostCard`'s flag button calls
+  (`createReport`).
+
+So a moderator reviews one store while the auto-hide fires off the other, and the endpoint that
+would show the second is dead client-side. Nothing here is broken enough to have been noticed, which
+is exactly why it needs settling before either half is extended: pick the store, migrate what the
+loser holds, delete the loser's route and its wrapper. Not attempted alongside the moderation-tier
+opening of 2026-08-27, which deliberately changed only WHO may call these endpoints, never what they
+mean.
+
+
 Six entries came out of ONE audit on 2026-08-17, prompted by a user question rather than by a
 failure. **All six are closed as of 2026-08-19** and are not repeated here - the last one, two communities
 sharing a name, the user closed by decision rather than by code (2026-08-19: it is not a defect).

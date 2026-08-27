@@ -34,6 +34,7 @@
     type HiddenPost,
   } from '$lib/posts/api';
   import { isGlobalAdmin } from '$lib/stores/user';
+  import { ensureContentModerator } from '$lib/associations/api';
   import { goto } from '$app/navigation';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
@@ -74,8 +75,11 @@
     previewPostId = null;
   }
 
-  onMount(() => {
-    if (!isGlobalAdmin()) {
+  onMount(async () => {
+    // The same tier the server accepts (`isContentModerator`): a platform admin, or a BDE member
+    // holding MODERATE. Awaited rather than read off the store - this decides a redirect, and a
+    // background probe would bounce a moderator who arrived here first.
+    if (!isGlobalAdmin() && !(await ensureContentModerator())) {
       void goto('/');
       return;
     }

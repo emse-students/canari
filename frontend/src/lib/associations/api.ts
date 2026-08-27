@@ -1,7 +1,7 @@
 import { apiFetch } from '$lib/utils/apiFetch';
 import { getToken } from '$lib/stores/auth';
 import { coreUrl, socialUrl } from '$lib/utils/apiUrl';
-import { setAssociationSuperAdmin } from '$lib/stores/userState.svelte';
+import { setAssociationSuperAdmin, setContentModerator } from '$lib/stores/userState.svelte';
 import { downloadDecryptedFile } from '$lib/utils/fileDownload';
 // Type-only: `carte/publish` transitively imports this module, so a value import would cycle.
 import type { PublishedCarte } from '$lib/carte/publish';
@@ -607,30 +607,58 @@ export async function listMyAssociations(): Promise<Association[]> {
   return request<Association[]>('/api/associations/me/list');
 }
 
-/** Session cache for the super-admin probe; deduplicates concurrent callers. */
-let superAdminProbe: Promise<boolean> | null = null;
+/** Session cache for the membership probe; deduplicates concurrent callers. */
+let myAssociationsProbe: Promise<Association[]> | null = null;
 
 /**
- * Determines whether the current user is a cross-association super-admin (member
- * of a BDE association holding `MANAGE_ASSO`) and publishes it to the reactive
- * user state so `isAssociationSuperAdmin()` reflects it. Result is cached for the
- * session; pass `force` to re-probe (e.g. after a permission change).
+ * Loads the caller's memberships once per session and publishes EVERY BDE-derived flag from that
+ * one answer.
+ *
+ * One request rather than one per flag: the screens that need these ask for several at once - the
+ * admin layout wants the super-admin and the moderator tier in the same breath - and two caches
+ * over the same endpoint would drift the moment one is force-refreshed and the other is not.
+ *
+ * A failure is a refusal of every flag, and it is logged: a silently empty membership list is
+ * indistinguishable from a user who belongs to nothing, and would hide a control with no trace.
  */
-export async function ensureAssociationSuperAdmin(force = false): Promise<boolean> {
-  if (force) superAdminProbe = null;
-  if (!superAdminProbe) {
-    superAdminProbe = listMyAssociations()
+export async function ensureMyAssociations(force = false): Promise<Association[]> {
+  if (force) myAssociationsProbe = null;
+  if (!myAssociationsProbe) {
+    myAssociationsProbe = listMyAssociations()
       .then((assos) => {
-        const ok = holdsBdeFlag(assos, AssociationPermissionFlag.MANAGE_ASSO);
-        setAssociationSuperAdmin(ok);
-        return ok;
+        setAssociationSuperAdmin(holdsBdeFlag(assos, AssociationPermissionFlag.MANAGE_ASSO));
+        setContentModerator(holdsBdeFlag(assos, AssociationPermissionFlag.MODERATE));
+        return assos;
       })
-      .catch(() => {
+      .catch((err) => {
+        console.error('[associations] membership probe failed, every BDE flag denied', err);
         setAssociationSuperAdmin(false);
-        return false;
+        setContentModerator(false);
+        return [];
       });
   }
-  return superAdminProbe;
+  return myAssociationsProbe;
+}
+
+/**
+ * Determines whether the current user is a cross-association super-admin (member of a BDE
+ * association holding `MANAGE_ASSO`) and publishes it to the reactive user state so
+ * `isAssociationSuperAdmin()` reflects it. Cached for the session; pass `force` to re-probe (e.g.
+ * after a permission change).
+ */
+export async function ensureAssociationSuperAdmin(force = false): Promise<boolean> {
+  return holdsBdeFlag(await ensureMyAssociations(force), AssociationPermissionFlag.MANAGE_ASSO);
+}
+
+/**
+ * Determines whether the current user may moderate content platform-wide (member of a BDE
+ * association holding `MODERATE`) and publishes it so `isContentModerator()` reflects it.
+ *
+ * The client mirror of the server's `isContentModerator`: the moderation screen and the server's
+ * guards must open to the same people, or the tier is reachable only by whoever knows the URL.
+ */
+export async function ensureContentModerator(force = false): Promise<boolean> {
+  return holdsBdeFlag(await ensureMyAssociations(force), AssociationPermissionFlag.MODERATE);
 }
 
 export async function listMyFollowedAssociations(): Promise<

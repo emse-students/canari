@@ -3,8 +3,8 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import type { Component } from 'svelte';
-  import { isGlobalAdmin, isAssociationSuperAdmin } from '$lib/stores/user';
-  import { listMyAssociations, ensureAssociationSuperAdmin } from '$lib/associations/api';
+  import { isGlobalAdmin, isAssociationSuperAdmin, isContentModerator } from '$lib/stores/user';
+  import { ensureMyAssociations } from '$lib/associations/api';
   import AdminNavGroup from '$lib/components/admin/AdminNavGroup.svelte';
   import {
     Shield,
@@ -40,27 +40,29 @@
   let isGlobalAdminUser = $state(false);
   let isAssociationAdmin = $state(false);
   let isSuperAdminUser = $state(false);
+  let isModeratorUser = $state(false);
 
   const path = $derived(page.url.pathname);
 
   onMount(async () => {
     isGlobalAdminUser = isGlobalAdmin();
-    // Probe BDE super-admin in the background so the document-reviewers item can appear.
-    void ensureAssociationSuperAdmin().then((v) => (isSuperAdminUser = v));
     if (isGlobalAdminUser) {
+      // A platform administrator holds every tier by definition; nothing to ask anyone.
       isAssociationAdmin = true;
+      isSuperAdminUser = true;
+      isModeratorUser = true;
       ready = true;
       return;
     }
-    try {
-      const mine = await listMyAssociations();
-      isAssociationAdmin = mine.some((a) => a.isAdmin);
-    } catch {
-      isAssociationAdmin = false;
-    }
+    // ONE membership request answers all three: it publishes both BDE tiers as a side effect, and
+    // the redirect below must decide on a resolved value - a background probe would bounce a
+    // moderator to the dashboard whenever it lost the race.
+    const mine = await ensureMyAssociations();
+    isAssociationAdmin = mine.some((a) => a.isAdmin);
     isSuperAdminUser = isAssociationSuperAdmin();
+    isModeratorUser = isContentModerator();
     ready = true;
-    if (!isAssociationAdmin) {
+    if (!isAssociationAdmin && !isModeratorUser) {
       void goto('/dashboard', { replaceState: true });
     }
   });
@@ -72,7 +74,10 @@
     const moderationItems: NavItem[] = [
       { href: '/admin/agenda', label: m.admin_pending_agenda_label(), icon: CalendarClock },
     ];
-    if (isGlobalAdminUser) {
+    // Reports, hidden posts and mutes: the same tier the server's `isContentModerator` accepts.
+    // Gating this on `isGlobalAdminUser` alone is what left a BDE holding MODERATE with a right
+    // and no way in.
+    if (isGlobalAdminUser || isModeratorUser) {
       moderationItems.push({
         href: '/admin/moderation',
         label: m.admin_reported_posts_label(),

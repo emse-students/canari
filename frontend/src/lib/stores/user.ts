@@ -10,6 +10,7 @@ export {
   currentUserId,
   globalAdminState as isGlobalAdmin,
   associationSuperAdminState as isAssociationSuperAdmin,
+  contentModeratorState as isContentModerator,
 } from '$lib/stores/userState.svelte';
 
 /** Full profile returned by the `/api/users/me` and `/api/users/:id` endpoints. */

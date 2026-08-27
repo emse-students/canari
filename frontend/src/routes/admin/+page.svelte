@@ -1,7 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { isGlobalAdmin, isAssociationSuperAdmin } from '$lib/stores/user';
-  import { listPendingCalendarEvents, ensureAssociationSuperAdmin } from '$lib/associations/api';
+  import { isGlobalAdmin, isAssociationSuperAdmin, isContentModerator } from '$lib/stores/user';
+  import {
+    listPendingCalendarEvents,
+    ensureAssociationSuperAdmin,
+    ensureContentModerator,
+  } from '$lib/associations/api';
   import { apiFetch } from '$lib/utils/apiFetch';
   import { deliveryUrl } from '$lib/utils/apiUrl';
   import {
@@ -25,13 +29,20 @@
 
   let isGlobalAdminUser = $state(false);
   let isSuperAdminUser = $state(false);
+  let isModeratorUser = $state(false);
   let pendingCount = $state<number | null>(null);
   let isPushTestRunning = $state(false);
   let pushTestResult = $state('');
 
   onMount(async () => {
     isGlobalAdminUser = isGlobalAdmin();
-    void ensureAssociationSuperAdmin().then((v) => (isSuperAdminUser = v));
+    isSuperAdminUser = isGlobalAdminUser || isAssociationSuperAdmin();
+    isModeratorUser = isGlobalAdminUser || isContentModerator();
+    // Both tiers resolve from ONE membership request, already warm if the layout asked first.
+    if (!isGlobalAdminUser) {
+      void ensureAssociationSuperAdmin().then((v) => (isSuperAdminUser = v));
+      void ensureContentModerator().then((v) => (isModeratorUser = v));
+    }
     try {
       const pending = await listPendingCalendarEvents();
       pendingCount = pending.events.length;
@@ -96,7 +107,6 @@
     label: string;
     description: string;
     badge?: string;
-    globalOnly?: boolean;
     action?: () => void;
     actionLabel?: string;
     actionBusy?: boolean;
@@ -118,63 +128,58 @@
         description: m.directory_subtitle(),
       },
     ];
+    // Moderation is the moderator tier's card, not the platform administrator's alone.
+    if (isModeratorUser) {
+      list.push({
+        href: '/admin/moderation',
+        kind: 'moderation',
+        label: m.admin_reported_posts_label(),
+        description: m.admin_card_moderation_desc(),
+      });
+    }
     if (isGlobalAdminUser) {
       list.push(
-        {
-          href: '/admin/moderation',
-          kind: 'moderation',
-          label: m.admin_reported_posts_label(),
-          description: m.admin_card_moderation_desc(),
-          globalOnly: true,
-        },
         {
           href: '/admin/platform',
           kind: 'platform',
           label: m.admin_platform_label(),
           description: m.admin_card_platform_desc(),
-          globalOnly: true,
         },
         {
           href: '/admin/status',
           kind: 'status',
           label: m.admin_presence_connections_label(),
           description: m.admin_card_status_desc(),
-          globalOnly: true,
         },
         {
           href: '/admin/users',
           kind: 'users',
           label: m.admin_card_manage_admins_label(),
           description: m.admin_card_users_desc(),
-          globalOnly: true,
         },
         {
           href: '/associations',
           kind: 'associations',
           label: m.admin_card_associations_label(),
           description: m.admin_card_associations_desc(),
-          globalOnly: true,
         },
         {
           href: '/associations/new',
           kind: 'create-association',
           label: m.admin_card_create_association_label(),
           description: m.admin_card_create_association_desc(),
-          globalOnly: true,
         },
         {
           href: '/calendar',
           kind: 'calendar',
           label: m.admin_card_global_calendar_label(),
           description: m.admin_card_calendar_desc(),
-          globalOnly: true,
         },
         {
           href: '/admin/storage',
           kind: 'storage',
           label: m.admin_storage_label(),
           description: m.admin_card_storage_desc(),
-          globalOnly: true,
         }
       );
     }

@@ -101,6 +101,10 @@ Le droit *Moderer* du BDE, lui, porte sur tout le fil : qui le detient peut modi
 epingler n'importe quelle publication, en plus de traiter les signalements et les mutes. C'est le
 seul droit qui donne l'epingle.
 
+Ou le trouver : *Tableau de bord* -> *Administration* -> onglet *Moderation* -> *Publications
+signalees*. On y trouve trois onglets : les signalements a traiter, les publications masquees (a
+restaurer ou supprimer) et les personnes en sourdine.
+
 ---
 
 ## 5. Ne pas confondre avec les roles d'un channel
