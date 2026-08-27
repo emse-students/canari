@@ -555,7 +555,7 @@ discovery again.
 |---|---|---|---|---|---|
 | Canari | 1.4.0 | 5 x `bun.lock`, all **v1** | yes | REFUSED, section 9 | green |
 | Sky | 1.4.0 | `bun.lock` **v1** | yes | `--tsgo` already wired into `check` | `check` 43 files 0 errors 2 unused-CSS warnings; `lint` 0 errors 8 warnings; `build` green; image built, container started, `/api/health` 200 |
-| MiGallery | 1.4.0 | `bun.lock` **v1** | no | not started | `check` 5199 files 0 errors 0 warnings; `format:check` clean; image builds, container healthy, `/api/health` 200 |
+| MiGallery | 1.4.0 | `bun.lock` **v1** | yes | not started | `check` 5396 files 0 errors 0 warnings; `lint` 0 errors 70 warnings; `format:check` clean; `bun audit` 0 vulnerabilities across 346 packages; image builds, container healthy, `/api/health` 200, and the CSS it serves carries its vendor prefixes |
 | le-cercle | MISSING | `bun.lock` **v1** | no | `^6.0.3` caret, section 9 | not run |
 | Portail-etu | **1.3.8** | `bun.lock` **v1** | no | not started | deploy green |
 
@@ -661,10 +661,51 @@ that answers 200. The rule is rewritten, not merely deleted.
 checked a dependency against a published advisory, and nothing guarded the lockfile-version
 invariant that keeps Dependabot able to open the PR that would fix one.
 
-**Still owed there:** oxlint/oxfmt/oxvelte replacing eslint+prettier, and with them the duplicate
-`.eslintrc.json` sitting beside `eslint.config.js`; 29 files importing `lucide-svelte`; Tailwind
-from the PostCSS plugin to the Vite one; TypeScript 7 (read section 9 first); and `bun audit`'s
-verdict acted on.
+**The tooling half shipped too, 2026-08-27** - oxlint/oxfmt/oxvelte in place of eslint+prettier
+(the duplicate `.eslintrc.json` beside `eslint.config.js` went with them), then the two below.
+`bun audit` now reports **no vulnerabilities across 346 packages**: the four this list carried were
+never MiGallery's own, they were the eslint/prettier tree's, and removing it removed them.
+
+**lucide, `fae2c37`.** `@lucide/svelte` replaces `lucide-svelte` across 29 files and 79 distinct
+icon names, each one verified to exist in `dist/icons/` rather than `dist/aliases/` - which in
+1.34.0 still re-exports **254** deprecated names that render correctly right up until a major drops
+them. Two things are worth keeping from it:
+
+- **A deprecated package name announces nothing.** Both specifiers resolve and both render, so the
+  guard is a CI grep, not a lint rule: oxlint's `no-restricted-imports` was measured first and
+  **fires on `.ts` but NOT inside a `.svelte` `<script>` block**, which is where almost every icon
+  import lives. A rule that covers the minority reads as a guarantee.
+- **The rename was hiding a type that had stopped being true.** `AdminPage`, `EmptyState` and
+  `ErrorState` typed their `icon` prop as `ComponentType<SvelteComponent>`, the Svelte 4 CLASS
+  shape. No lucide icon has satisfied it since the package moved to runes; it typechecked only
+  against the legacy shim the old package still carried, and **twenty errors across seventeen call
+  sites surfaced the moment that shim left**. One alias in the icon registry now names the
+  function-component shape.
+
+**Tailwind on its Vite plugin, and the prefixing that nearly went with PostCSS.** `@tailwindcss/vite`
+replaces the PostCSS wrapper, so `postcss.config.cjs` goes - **and autoprefixer with it.** That was
+the trap, and it is the reason this is written down: the source writes `backdrop-filter` fifty times
+and `-webkit-backdrop-filter` five, so **forty of the forty-five prefixed declarations in the built
+CSS were autoprefixer's**, as were all five `-webkit-user-select`. Every glass surface in that app
+would have lost its blur on Safari and iOS, silently, with a green build and a passing suite.
+Lightning CSS takes the job over for Tailwind's output and the hand-written `<style>` blocks alike.
+
+Verified declaration by declaration against the previous build rather than by eye: **2369 unique
+declarations before, 2610 after, seven changed and none lost** - `-o-object-fit` for Opera 12 which
+`not dead` excludes, `-webkit-mask-image` GAINING a `-webkit-radial-gradient` value, and
+`.transition` falling back to the v4 theme defaults instead of a hard-coded `0s`. Then, because
+`lightningcss` is a native binary and the lockfile was written on Windows: the production image
+builds, reports healthy, answers 200, and **the CSS it serves carries the prefixes** - which is the
+only thing that proves Lightning CSS ran on Linux rather than falling back.
+
+`tailwind.config.cjs` is deleted outright. Nothing declared `@config`, so Tailwind 4 never loaded
+it: its `content` globs, its empty `theme.extend` and its empty `plugins` had no effect on any
+build that has ever run. `app.css` moves from the v3 `@tailwind` directives to `@import
+'tailwindcss'`.
+
+**Still owed there:** TypeScript 7 (read section 9 first), and a decision on the 70 oxvelte
+warnings - two of which, `no-self-assign` and `no-useless-catch` in `src/routes/parametres/+page.svelte`,
+may be deliberate Svelte reactivity tricks and must not be swept.
 
 ### le-cercle
 

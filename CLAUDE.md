@@ -222,8 +222,10 @@ and the renamed migration it had silently disabled applied 7 operations on its f
 package-lock.json deleted and gitignored, every pipeline and doc converted, and the image
 built, started and answered 200. **Its RUNTIME stays node** on two measurements -
 better-sqlite3 segfaults bun 1.4.0, and bun as a runtime once OOM-killed that prod - so do
-not "finish" the migration by moving it. It still owes its tooling half: oxlint/oxfmt/oxvelte,
-lucide, Tailwind-on-Vite, TS 7. le-cercle owes three, plus a security commit never pushed.
+not "finish" the migration by moving it. **Its TOOLING half is DONE too** (`87e16d7`..`d371367`):
+oxlint/oxfmt/oxvelte; `@lucide/svelte` over 79 icon names; Tailwind on its Vite plugin, with Lightning
+CSS taking over the prefixing autoprefixer was silently doing; `bun audit` clean on 346 packages.
+**Only TS 7 is left there.** le-cercle owes three, plus a security commit never pushed.
 **Read section 9 before touching TS 7 on either.**
 
 **OWED TO THE USER, NOT TO THE CODE: the MLS + Graine explanation** - prose and diagrams, no code
