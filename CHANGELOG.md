@@ -241,6 +241,43 @@ which is also where every release up to and including v0.13.1 now lives.
   the two endpoints and the list branch go with it, and `/forms` now merges two sources instead of
   three. Unrelated to `calendar_event_co_owners`, which names ASSOCIATIONS co-hosting an event.
 
+### Fixed
+
+- **Three jobs went red on a line none of them had touched, and the fix was nearly the deletion of a
+  security pin.** `bun install --frozen-lockfile` began failing in CI, in CD and in the Docker build
+  at once, on `apps/chat-delivery-service`, with `note: overrides in package.json changed since
+  bun.lock was saved`. Nothing had changed the manifest. What changed was bun, from 1.3.14 to 1.4.0,
+  in this repository's own `.bun-version`.
+
+  This service was the only one of four whose `overrides` block was NESTED - `@types/request >
+  form-data`, `gaxios > uuid`, `teeny-request > uuid`. bun 1.3.x did not support that and SAID so,
+  three `warn: Bun currently does not support nested "overrides"` lines on every single install,
+  which is exactly how a warning gets learned as noise. bun 1.4.0 supports them - and records them in
+  a lockfile format Dependabot cannot read, rewriting `lockfileVersion` from **1 to 3** on the first
+  plain `bun install`. So the manifest, unchanged for months, silently became unfrozen against its
+  own lockfile.
+
+  **Flattening the block made CI green, and would have shipped a vulnerability.** The committed
+  lockfile still pinned `gaxios/uuid@11.1.1` from the npm era, so a frozen install stayed clean and
+  `bun audit` stayed green with the manifest's reason for it deleted. Only a resolve from NO lockfile
+  asks a manifest to prove itself: done in a scratch copy, it put `uuid@9.0.1` back under both
+  consumers and `bun audit` named GHSA-w5hq-g745-h8pq - *missing buffer bounds check in v3/v5/v6*,
+  `<11.1.1` - reached through `firebase-admin > google-auth-library > gcp-metadata > gaxios > uuid`.
+  The `^11.1.1` was never decoration. `@types/request > form-data` was, and it is gone: the package
+  asks for `^2.5.5`, resolves to 2.5.6 unaided, and the audit is clean without it.
+
+  The pin is now flat, `"uuid": "^11.1.1"`, which v1 can express. A flat override reaches direct
+  dependencies too, so `uuid` had to stop being one - and it barely was. Two call sites, each a bare
+  `uuidv4()`, in a service that already called `crypto.randomUUID()` in nine other places;
+  `groups.controller.ts` imported `crypto` on the very line below its `uuid` import and used both.
+  Both call sites are now `crypto.randomUUID()`, the direct dependency is deleted, and the tree lost
+  a package and a duplicate: one `uuid@11.1.1` where there were three.
+
+  `"uuid": "^14"` was the tidier-looking flat pin and is a trap - 14.0.2 is `"type": "module"` with
+  no `require` condition in its exports, and `gaxios` reaches it through `require("uuid")`. The
+  reasoning behind all three candidate pins is on
+  [ecosystem-convergence](docs/wiki/ecosystem-convergence.md).
+
 ### Changed
 
 - **npm is gone from this repository, and node stayed - the two were never the same question.** The

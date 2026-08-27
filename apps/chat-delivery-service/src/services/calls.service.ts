@@ -11,7 +11,7 @@ import { In, Repository } from 'typeorm';
 import { GroupMember } from '../entities/group-member.entity';
 import { PushToken } from '../entities/push-token.entity';
 import * as jwt from 'jsonwebtoken';
-import { v4 as uuidv4 } from 'uuid';
+import * as crypto from 'crypto';
 import Redis from 'ioredis';
 import { getApps } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
@@ -113,7 +113,7 @@ export class CallsService {
       throw new ServiceUnavailableException('Call room tokens are not configured on this server');
     }
 
-    const roomId = uuidv4();
+    const roomId = crypto.randomUUID();
     const roomToken = jwt.sign({ room_id: roomId, sub: userId, group_id: groupId }, roomSecret, {
       expiresIn: '5m',
       algorithm: 'HS256',

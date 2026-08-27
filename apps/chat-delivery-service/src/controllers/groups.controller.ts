@@ -13,7 +13,6 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { v4 as uuidv4 } from 'uuid';
 import * as crypto from 'crypto';
 import Redis from 'ioredis';
 import { Group } from '../entities/group.entity';
@@ -50,7 +49,7 @@ export class GroupsController {
     body: { name: string; createdBy: string; isGroup?: boolean; creatorDeviceId?: string }
   ) {
     const traceId = this.makeTraceId('create-grp');
-    const groupId = uuidv4();
+    const groupId = crypto.randomUUID();
     this.logger.log(
       `[CREATE_GROUP][${traceId}] name="${body.name}" createdBy=${body.createdBy} isGroup=${body.isGroup ?? true} creatorDevice=${body.creatorDeviceId ?? 'none'} groupId=${groupId}`
     );

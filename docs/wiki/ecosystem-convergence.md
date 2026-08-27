@@ -424,12 +424,79 @@ different commands, three different repositories:
 | `bun install --frozen-lockfile` | `apps/media-service` | **byte-identical** lockfile, `diff -q` clean |
 
 The third is the one CI actually runs. So bun 1.4.0 can be the runtime in every image, every workflow
-and every developer's shell while Dependabot keeps working, because nothing in that path ever creates
-a lockfile from nothing.
+and every developer's shell while Dependabot keeps working - **as long as the manifest stays inside
+what the v1 format can express.** That qualifier is not decoration. It was found by breaking it.
+
+### The exception, measured 2026-08-27: the manifest gets a vote
+
+The rule above says "creating a lockfile from nothing", and that is INCOMPLETE. bun 1.4.0 also
+rewrites the version when the manifest holds something v1 cannot record. Handed
+`apps/chat-delivery-service` - the one service of four whose `overrides` block was NESTED - a plain
+`bun install` against an existing, committed **v1** lockfile wrote **`lockfileVersion: 3`**. It
+changed nothing else: the entire diff was the version line and the three nested blocks it could now
+store.
+
+| Command | Where | Result |
+|---|---|---|
+| `bun install` | `apps/chat-delivery-service`, nested `overrides` | **v1 -> v3**, 16-line diff, `no changes` across 732 installs |
+| `bun install` | the same, once the nesting was flattened | **v1 preserved**, lockfile byte-identical |
+
+bun 1.3.x did not support nested overrides **and said so** - three `warn: Bun currently does not
+support nested "overrides"` lines on every install, which is precisely how a warning gets learned as
+noise and skipped. 1.4.0 supports them, and pays for it with a format Dependabot refuses. The upgrade
+did not break the invariant by accident: it broke it by implementing a feature this manifest had been
+asking for all along, unheard.
+
+**The symptom was never the version.** The committed lockfile was still v1, so the guard never fired -
+`bun install --frozen-lockfile` did, in THREE jobs at once, under
+`note: overrides in package.json changed since bun.lock was saved`. A frozen install compares the
+manifest's overrides with the lockfile's, and 1.4.0 saw three the lockfile had never recorded. CI, CD
+and the Docker build went red together, on a commit that touched none of them.
+
+So the honest general form is stronger than the version number it corrects: **A LOCKFILE VERSION IS
+NOT A PROPERTY OF THE TOOL ALONE - THE MANIFEST GETS A VOTE.** What spares the gate below from ever
+having to fire is a manifest that stays inside what v1 can express.
+
+### What the nested overrides were actually holding
+
+Deleting them was the obvious fix and it was WRONG, which only a clean re-resolve could show. A
+`bun install` from no lockfile at all, against the flattened manifest, put `uuid@9.0.1` back under
+both `gaxios` and `teeny-request` and `bun audit` immediately named
+[GHSA-w5hq-g745-h8pq](https://github.com/advisories/GHSA-w5hq-g745-h8pq) - *missing buffer bounds
+check in v3/v5/v6, `<11.1.1`*, reached by `firebase-admin > google-auth-library > gcp-metadata >
+gaxios > uuid`. **The `^11.1.1` was the fix for that advisory.** The existing lockfile hid this
+perfectly: it still pinned `gaxios/uuid@11.1.1` from the npm era, so a frozen install stayed clean
+and `bun audit` stayed green while the manifest's reason for it had been deleted. Only a resolve from
+NOTHING asks the manifest to prove itself.
+
+`@types/request > form-data: ^2.5.6` was the opposite and the clean resolve settled that too: the
+package declares `form-data: ^2.5.5`, resolves to 2.5.6 unaided, and the audit is clean without the
+override. It is gone, and nothing replaced it.
+
+### Why the pin is on `uuid` and not on `gaxios`
+
+Three flat forms could carry the same guarantee, and two of them are worse:
+
+- **`"gaxios": "^7"` + `"teeny-request": "^10"`** removes the vulnerable edge at the root rather than
+  patching the leaf - gaxios 7 dropped its `uuid` dependency entirely. But FOUR packages in this tree
+  still declare `gaxios: ^6.x`, and 7 is a major that moved to `fetch`. Forcing it through
+  firebase-admin's auth path is a runtime change no build proves.
+- **`"uuid": "^14"`** looks like the tidy dedupe until you open the package: 14.0.2 is `"type":
+  "module"` with no `main` and no `require` condition in its exports, and `gaxios/build/src/gaxios.js`
+  line 63 is `const uuid_1 = require("uuid")`.
+- **`"uuid": "^11.1.1"`**, which is what is committed. It is the version production has actually been
+  running for these two consumers, it satisfies the advisory exactly, and it keeps a `require`
+  condition.
+
+A flat override reaches direct dependencies too, so `uuid` had to stop being one. It barely was: two
+call sites, `groups.controller.ts` and `calls.service.ts`, each a bare `uuidv4()` - and
+`groups.controller.ts` already imported `crypto` on the very next line and called
+`crypto.randomUUID()` at line 42. Both are now `crypto.randomUUID()`, the direct dependency is gone, and the override governs
+only the transitives it was written for.
 
 **Pinning the toolchain to 1.3.14 never enforced the invariant anyway.** `.bun-version` governs CI
 and `setup-bun`; it does not govern the bun on a contributor's laptop, and a contributor on bun 1.4
-who deletes `bun.lock` and reinstalls produces a v2 lockfile whatever this repo pins. The pin bought
+who deletes `bun.lock` and reinstalls produces a v2-or-later lockfile whatever this repo pins. The pin bought
 an illusion. **What actually enforces it is a gate that reads the committed lockfiles**, which is why
 one exists now - it names this section, and it fails the build rather than letting Dependabot go
 quiet, which is the failure mode nobody notices because its symptom is an ABSENCE of pull requests.
