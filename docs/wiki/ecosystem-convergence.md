@@ -173,7 +173,7 @@ exists) was invisible until the type existed to make the distinction.
 | --- | --- | --- | --- | --- |
 | **Canari** | oxfmt + oxlint | yes (`.github/workflows/ci.yml`) | yes | yes |
 | **Sky** | prettier | **yes, since 2026-08-19** | yes | yes |
-| **Portail-etu** | prettier | yes (`test.yml`, `deploy.yml`) + pre-push hook | yes | yes |
+| **Portail-etu** | oxfmt + oxlint + oxvelte | yes (`test.yml`, `deploy.yml`) + pre-commit and pre-push hooks | yes | yes |
 | **MiGallery** | prettier | **yes, since 2026-08-19** (`ci.yml`) | yes | yes |
 | **Le Cercle** | prettier (inside `lint`) | via `lint` | via the pipeline | yes - and **verified running**: 10 pipelines, the last 7 green (2026-08-19) |
 
@@ -591,7 +591,7 @@ discovery again.
 | Sky | 1.4.0 | `bun.lock` **v1** | yes | `--tsgo` already wired into `check` | `check` 43 files 0 errors 2 unused-CSS warnings; `lint` 0 errors 8 warnings; `build` green; image built, container started, `/api/health` 200 |
 | MiGallery | 1.4.0 | `bun.lock` **v1** | yes | **ADOPTED**, `--tsgo`, section 9 | `check` (TS 7, `--tsgo`) 121 files 0 errors - 5396 under TS 6, a counter difference proven not to be a coverage gap; `lint` 0 errors, 88 warnings; `format:check` clean; `bun audit` 0 vulnerabilities across 346 packages; image builds, container healthy, `/api/health` 200, and the CSS it serves carries its vendor prefixes |
 | le-cercle | 1.4.0 | `bun.lock` **v1** | yes, plus oxvelte | **ADOPTED**, `--tsgo`, section 9 | `check` (TS 7) 90 files 0 errors - 5174 under TS 6, the same counter difference as MiGallery and proven the same way; `lint` 0 errors 0 warnings; `lint:svelte` 0 on the recommended set; `format:check` clean; 95 tests pass; `bun audit` 0 vulnerabilities across 204 packages; `build` green |
-| Portail-etu | **1.3.8** | `bun.lock` **v1** | no | not started | deploy green |
+| Portail-etu | **1.3.8** | `bun.lock` **v1** | yes, plus oxvelte | **ADOPTED**, `--tsgo`, and it was adopted here BEFORE the toolchain migration | `format:check` 86 files clean; `lint` 0; `lint:svelte` 0 on the recommended set **with no config file at all**, the only repo here in that state; `check` (TS 7) 35 files 0 errors; 70 tests pass; production build green |
 
 **All four committed `bun.lock` are v1**, so Dependabot is alive in every directory that has one.
 Portail-etu sits at 1.3.8 deliberately: its host cannot start a bun >= 1.3.9.
@@ -805,6 +805,64 @@ this page keeps only what the ecosystem needs to know:
 What is left there: **Dependabot, which on GitLab is not the same product as on GitHub.** The
 security commit already added `bun audit` to the gates, which is the part that matters - the
 repository audits clean, so a red there is a new advisory.
+
+### Portail-etu - DONE (`5ba4945` + `6d914ca`, 2026-08-27, CI green on run `33068835243`)
+
+The last repository still on prettier and ESLint. It is on oxfmt, oxlint and oxvelte now, and the
+migration cost almost nothing: **oxfmt disagreed with prettier about two files** - the leading-`|`
+union type every repository here hit, and one `@import url(...) layer(base)` prettier had wrapped
+across two lines to stay under 100 columns. The `.prettierrc` options were kept as they were, double
+quotes and `trailingComma: "es5"` included; converging the tool is the point, converging the quote
+style would have been a repository-wide diff for nothing.
+
+Three things came out of it that are not tidiness:
+
+- **The Svelte recommended ruleset had never run there.** `eslint.config.js` spread
+  `svelte.configs.recommended.rules`, which in eslint-plugin-svelte 3 is an ARRAY of flat configs
+  whose `.rules` is `undefined`. That repository's own backlog had carried the finding since
+  2026-08-19 - 17 errors when the real set was spread in - and it stayed a backlog item because
+  adopting it was a refactor. oxvelte runs its recommended set for real, finds **4**, and all four
+  are dealt with in place: two `{#each}` blocks keyed on `item.href`, a local `Map` inside
+  `$derived.by` justified as a plain `Map`, and `GlassCard`'s `href` justified as a prop the
+  component cannot resolve on its caller's behalf. **Zero warnings and no `oxvelte.config.json` at
+  all** - the only repository here in that state.
+- **But 17 became 4 partly because the rule got narrower, not because the code got cleaner.**
+  Measured: oxvelte's `svelte/no-navigation-without-resolve` flags a shorthand `{href}` and does NOT
+  flag a string literal, so the three `href="/associations"` links in `Footer.svelte` that ESLint
+  reported draw nothing from the new linter. Thirteen call sites that the previous gate had an
+  opinion about are now unwatched. **That is the same rule Canari suppresses 92 times and MiGallery
+  16** - three repositories, one open question, and it is written down in all three.
+- **The first CI run failed anyway, and on nothing the local gates can see.**
+  `scripts/install-oxvelte.sh` went in as `100644`: `core.fileMode` is false on this workstation, so
+  a local `chmod +x` is never recorded, and every gate here passes because Windows ignores the mode.
+  The runner does not - `Permission denied`, exit 126. Fixed in `6d914ca` by `git update-index
+  --chmod=+x` on both scripts AND by invoking the installer as `sh "$SCRIPT_DIR/install-oxvelte.sh"`,
+  so the mode stops being load-bearing at all. **The same trap was live in le-cercle's open merge
+  request** and was fixed there in the same pass. The rule is in
+  [durable-rules](durable-rules.md#shared-gotchas); what it cost is that the earlier container
+  simulation had passed, because a Windows Docker bind mount presents every file as executable
+  whatever git recorded - it simulates the commands, never the checkout.
+- **The oxvelte shims had to be the POSIX ones, not Canari's.** Copying Canari's bash version was a
+  bug caught before it shipped: `package.json` invokes them through `sh`, and on the CI runner `sh`
+  is dash, where `set -o pipefail` and `${BASH_SOURCE[0]}` fail - and only there, so a workstation
+  would never have shown it. le-cercle's POSIX versions were already proven under alpine's busybox
+  `sh`, so they transfer with the measurement attached.
+
+`lint-staged` went with prettier: the pre-commit hook used to run `prettier --write` and
+`eslint --fix` over the staged files, which hands you a commit you have not read. It measures the
+whole tree now and rewrites nothing.
+
+**Two things are deliberately NOT done there**, and neither is an oversight. Tailwind class sorting
+is off - that repository never had `prettier-plugin-tailwindcss` either, so turning `sortTailwindcss`
+on would rewrite every `class` attribute in the same commit that swaps the toolchain, and reordering
+two conflicting utilities changes which one wins. And `.bun-version` stays at **1.3.8** against the
+ecosystem's 1.4.0, for two measured reasons that are constraints rather than preferences: bun's
+runtime cannot start on that deploy host from 1.3.9 onward, and 1.4.0 writes `lockfileVersion: 2`,
+which Dependabot cannot read.
+
+**It is deployed and answering**, which is the only thing a green pipeline does not say: the
+`Deploy to Server` run chained off that build finished green and `https://portail-etu.emse.fr`
+returns 200. Full record on that repository's own `docs/wiki/tooling.md`.
 
 ### Canari - what is left of its own half
 

@@ -208,7 +208,7 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     blocked by an inherited state. Contract, audit and the seven-file PIN predicate it fixes are in
     [backlog](docs/wiki/backlog.md); diagnosis order is [testing-methodology](docs/wiki/testing-methodology.md) 39.
 
-### CANARI - THE ECOSYSTEM CHANTIER (Canari's half CLOSED 2026-08-27; three repos owe)
+### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27; three JUDGEMENTS left)
 
 The user's standing mandate, verbatim: *"Je veux de l'homogeneite et les meilleurs standards de
 partout. Partout. oxlint/oxfmt ect partout, TS7 partout ou c'est possible..., Lucide derniere version
@@ -235,35 +235,27 @@ alert is open: `libcrux-chacha20poly1305` (GHSA-hc3c-63hc-2r9f, HIGH) in `fronte
 already measured as UNREACHABLE - the crate is not compiled, the HPKE backend built is
 `hpke-rs-rust-crypto`. It needs dismissing on GitHub, not fixing.
 
-**OPEN - Portail-etu ALONE.** The worked list, and the MEASURED state of all five repos, is
-section 11 of [ecosystem-convergence](docs/wiki/ecosystem-convergence.md), the only copy - **add to
-its table rather than re-deriving it**, which is what made this paragraph wrong twice. **SKY IS DONE**
-(`e0bd000`..`c65c4cf`): on bun end to end, DEPLOYED - `sky-sky-1` healthy on bun 1.4.0, site 200,
-and the renamed migration it had silently disabled applied 7 operations on its first real start.
-**MiGallery's package-manager half is DONE** (`41ce5c0`): bun.lock v1 committed,
-package-lock.json deleted and gitignored, every pipeline and doc converted, and the image
-built, started and answered 200. **Its RUNTIME stays node** on two measurements -
-better-sqlite3 segfaults bun 1.4.0, and bun as a runtime once OOM-killed that prod - so do
-not "finish" the migration by moving it. **Its TOOLING half is DONE too** (`87e16d7`..`d371367`):
-oxlint/oxfmt/oxvelte; `@lucide/svelte` over 79 icon names; Tailwind on its Vite plugin, with Lightning
-CSS taking over the prefixing autoprefixer was silently doing; `bun audit` clean on 346 packages; and
-**TS 7 ADOPTED** - the first repo here where `--tsgo` is clean, because it uses no `<svelte:boundary>`.
-**What is left there is a JUDGEMENT, not a migration:** 88 lint warnings, 61 of them correctness
-(keyless `{#each}`, `{@html}`, non-reactive `Map`/`Set`) - section 11 lists them and says which two
-must not be swept. **LE-CERCLE IS DONE**: its ReDoS fix is on `main` (`1b5628f`, pushed on the
-user's decision, that repo's `AGENTS.md` forbidding `main` notwithstanding) and its whole toolchain
-is **merge request !5** - oxfmt/oxlint/oxvelte, `.bun-version`, **TS 7 ADOPTED**, a second pipeline
-job because the bun image carries no Rust, all gates green. Two rules came out of it, both in
-[durable-rules](docs/wiki/durable-rules.md): **oxvelte was pinned NOWHERE** (`cargo install --git`
-with no `--rev` follows the branch), now fixed in all three repos with the CI cache keys moved onto
-the revision; and **a guard restating a fact the tool enforces only has to go stale once** - the
-`MIN_RUST_VERSION` copied between these scripts refused an install that then built fine.
-**Read section 9 before touching TS 7 on either.** A third came out of trying to delete the
-`oxvelte.config.json` all three carried: **dropping a `--config` flag does not remove the config**,
-the tool finds the file in the cwd anyway, and that non-measurement nearly deleted a LIVE
-suppression - **92 navigations here and 16 on MiGallery bypass `resolve()`**, so those two configs
-stay and the work is its own P3 in [backlog](docs/wiki/backlog.md#tooling). le-cercle's really was
-inert and is gone.
+**THE MIGRATION HALF IS CLOSED IN ALL FIVE REPOS** (Canari, Sky, MiGallery, le-cercle,
+Portail-etu): oxfmt/oxlint/oxvelte everywhere, bun everywhere it can be, TS 7 wherever it is not
+refused. **Every commit, measurement and per-repo state is section 11 of
+[ecosystem-convergence](docs/wiki/ecosystem-convergence.md), the only copy - add to its table
+rather than re-deriving it**, which is what made this paragraph wrong twice. What is left is
+JUDGEMENT, not migration, and it is three items: MiGallery's 88 lint warnings (section 11 names the
+two that must not be swept); the `resolve()` question three repos now park differently -
+[backlog](docs/wiki/backlog.md#tooling); and Tailwind class sorting on Portail-etu, deliberately not
+done in the same commit that swapped its toolchain.
+
+**Guardrails, so nothing is "finished" by undoing a measurement:** MiGallery's RUNTIME stays node
+(better-sqlite3 segfaults bun 1.4.0, and bun once OOM-killed that prod); Portail-etu's
+`.bun-version` stays 1.3.8 (its host cannot start >= 1.3.9, and 1.4.0's lockfile v2 kills its
+Dependabot); le-cercle's toolchain is **merge request !5**, its ReDoS fix already on `main` by the
+user's decision - **and !5's own pipeline has never been READ from here**, `glab` being
+installed but tokenless (gitlab.emse.fr wants a PAT; the remote is SSH, so nothing is
+reusable). Every gate ran green locally, which is not the same statement. Four rules came out of this chantier, all in
+[durable-rules](docs/wiki/durable-rules.md): oxvelte pinned by sha, not branch; a guard restating
+what the tool enforces goes stale; **dropping a `--config` flag does not remove the config**; and
+**the executable bit is metadata Windows drops silently**, which cost Portail-etu a pipeline and was
+armed on le-cercle too. **Read section 9 before touching TS 7 anywhere.**
 
 **OWED TO THE USER, NOT TO THE CODE: the MLS + Graine explanation** - prose and diagrams, no code
 (user, 2026-08-20). Post-campaign; scope and the two audiences declined are in [backlog](docs/wiki/backlog.md).

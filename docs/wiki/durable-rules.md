@@ -685,6 +685,17 @@ Environment and tooling traps that belong to no one subsystem. Each cost a run.
   `MIN_RUST_VERSION=1.97.0` check copied into these install scripts refused an install that then
   built fine on the toolchain it had just rejected - oxvelte declares no `rust-version` at all, so
   the number was never anything but a guess. Let the build fail and name its own requirement.
+- **THE EXECUTABLE BIT IS METADATA THIS PLATFORM DROPS SILENTLY, AND A GATE THAT DEPENDS ON IT FAILS
+  IN CI AND NOWHERE ELSE.** `core.fileMode` is false on this workstation, so a local `chmod +x` is
+  never recorded and the file goes into git as `100644`. Every gate here then runs it happily -
+  Windows does not consult the mode - and the first checkout that honours the mode fails with
+  `Permission denied`, exit 126. It cost Portail-etu its first pipeline on the oxvelte step, and the
+  identical scripts on le-cercle's open MR carried the same trap. **Check `git ls-files -s` after
+  adding any script, and do not let a gate depend on the bit at all**: invoke it as
+  `sh path/to/script`, which is one path rather than a fallback. Note also what did NOT catch it -
+  the le-cercle job had been simulated inside its real container and passed, because a Windows bind
+  mount presents every file as executable whatever git says. **That simulated the commands, not the
+  checkout.**
 - **DROPPING A TOOL'S `--config` FLAG DOES NOT REMOVE ITS CONFIG - THE TOOL FINDS THE FILE ANYWAY.**
   oxvelte, oxlint and oxfmt all auto-discover their config in the working directory, so
   `oxvelte lint src` and `oxvelte lint --config oxvelte.config.json src` read the SAME file and
