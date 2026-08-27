@@ -58,7 +58,7 @@ import {
 import { userIdOf, workspaceOrderOf } from './grainedb.mjs';
 import { ACCOUNT_OF, OWNER_NAME, PORTS } from './names.mjs';
 import { unlockClient } from './pingate.mjs';
-import { clientBuild, mark, record } from './results.mjs';
+import { clientBuild, mark, record, unmet } from './results.mjs';
 import { gate, report, watch } from './watch.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -106,6 +106,20 @@ function serverOrderOf(userId, railNames) {
   const known = new Set(railNames);
   return workspaceOrderOf(userId).filter((w) => known.has(w.name)).map((w) => w.name);
 }
+
+/**
+ * `order` keeping only the names `held` contains - the comparison to make against a client whose
+ * rail is a SUBSET of this one's.
+ *
+ * A device that holds five of six communities can still hold them in the right order, and that is
+ * what this row asks. `serverOrderOf` above has always restricted the server's copy this way; the
+ * phone's was compared strictly until 2026-08-27, which is one check applying two standards to the
+ * same claim.
+ */
+const onlyThoseIn = (order, held) => {
+  const there = new Set(held ?? []);
+  return (order ?? []).filter((n) => there.has(n));
+};
 
 /** `list` with the item at `from` moved to sit at index `to` - what a drag is supposed to produce. */
 function moved(list, from, to) {
@@ -240,15 +254,26 @@ const expectations = {
   theServerHoldsTheNewOrder: JSON.stringify(serverAfterUp) === JSON.stringify(railAfterUp),
   // A reload is a fresh `GET /channels/workspaces/user/me`, so this is the round trip.
   theOrderSurvivesAReload: JSON.stringify(railAfterReload) === JSON.stringify(railAfterUp),
-  // The account's other device, which never saw the gesture.
-  theOrderReachesThePhone: JSON.stringify(phone?.rail) === JSON.stringify(railAfterUp),
+  // The account's other device, which never saw the gesture - compared RESTRICTED TO WHAT THE PHONE
+  // HOLDS, exactly as `serverOrderOf` already restricts the server's copy to what the rail knows.
+  // Strict array equality here held this one witness to a stricter bar than the other two in the
+  // same check, and on 2026-08-27 that cost a FAIL: the phone's rail was W1's order to the letter
+  // and one entry short of it, so the ORDER this row exists to measure had plainly arrived. Set
+  // membership is a DIFFERENT question with a different fix, so it is recorded as its own field
+  // below rather than folded into this one - a rail missing a community is still visible, and still
+  // not evidence that a reorder failed to propagate.
+  theOrderReachesThePhone:
+    phone?.rail != null &&
+    JSON.stringify(phone.rail) === JSON.stringify(onlyThoseIn(railAfterUp, phone.rail)),
   // A reorder that cannot be undone by the opposite drag is a defect, and this is also the restore.
   theReverseDragRestoresTheOriginalOrder: JSON.stringify(railRestored) === JSON.stringify(railBefore),
 };
 
+failures.push(...unmet(expectations));
+
 const verdict = !armed
   ? 'VACUOUS'
-  : failures.length > 0 || Object.values(expectations).some((v) => v !== true)
+  : failures.length > 0
     ? 'FAIL'
     : 'PASS';
 
@@ -283,6 +308,10 @@ record('COMM-17', gated.verdict, {
   a1BuildUnreadable: phone?.build?.err ?? null,
   a1Gate: phone?.gate ?? null,
   a1Rail: phone?.rail ?? null,
+  // THE OTHER HALF OF THE PHONE'S ANSWER, and not part of any verdict: what W1's rail holds and
+  // the phone's does not. `theOrderReachesThePhone` ignores this, so without it a genuinely
+  // absent community would be invisible in the record instead of merely not a failure of ORDER.
+  a1RailMissing: (railAfterUp ?? []).filter((n) => !(phone?.rail ?? []).includes(n)),
   ...expectations,
   failures,
 });

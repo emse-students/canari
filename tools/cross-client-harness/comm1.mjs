@@ -33,7 +33,7 @@ import {
 } from './comm.mjs';
 import { goto, realClick, until } from './chat.mjs';
 import { PORTS } from './names.mjs';
-import { mark, record } from './results.mjs';
+import { mark, record, unmet } from './results.mjs';
 import { consoleLines, gate, report, watch } from './watch.mjs';
 
 const w1 = await client(PORTS.W1);
@@ -85,10 +85,26 @@ const joined = await step('join', async () => {
 await step('openCommunity(W1)', () => openCommunity(w1, community));
 await step('createChannel', () => createChannel(w1, channel));
 
+// POLLED, NOT READ ONCE, and that is the whole difference between this row and a coin toss. The
+// channel was created on W1 a moment ago and reaches W2 over the socket, so `channelRow` - one
+// synchronous DOM read with no settle of its own - answers `present:false` for a row that is simply
+// not painted yet. It did exactly that on 2026-08-27 and cost COMM-1 a FAIL the run's own later
+// steps contradicted: W2 went on to CLICK that channel by `aria-label` and `selectedChannel(w2)`
+// returned it, the message arrived in 291 ms, and both copies were 1. The same unchanged runner had
+// recorded `present:true` on the previous build, which is what a race looks like in a ledger.
+//
+// It returns what it settled at rather than throwing, like `railSettlingAt` in COMM-17: an absent
+// row after the deadline is the finding, and reporting the absence is more use than a stack trace.
 const onW2 = await step('openCommunity(W2)', async () => {
   await enterCommunities(w2);
   await openCommunity(w2, community);
-  return channelRow(w2, channel);
+  const deadline = Date.now() + 15_000;
+  for (;;) {
+    const row = await channelRow(w2, channel);
+    if (row?.present === true) return row;
+    if (Date.now() > deadline) return row;
+    await new Promise((r) => setTimeout(r, 500));
+  }
 });
 
 // The channel is opened by NAME on both sides, and the selection is read back from `aria-current` -
@@ -107,18 +123,19 @@ const trace = sentAt
 
 const copies = sentAt ? { w1: await countMessage(w1, marker), w2: await countMessage(w2, marker) } : null;
 
-const verdict =
-  failures.length > 0 ||
-  !link ||
-  onW2?.present !== true ||
-  openedOn?.w1 !== channel ||
-  openedOn?.w2 !== channel ||
-  trace.firstSeen === null ||
-  trace.lost !== null ||
-  copies?.w1 !== 1 ||
-  copies?.w2 !== 1
-    ? 'FAIL'
-    : 'PASS';
+// NAMED RATHER THAN DISJOINED, so a failure says which half of the row broke. As a bare `||` chain
+// this recorded `[FAIL] ... "failures":[]` - nine terms, one of them fired, and nothing said which.
+const expectations = {
+  communityHasAnInviteLink: !!link,
+  channelReachesThePeer: onW2?.present === true,
+  channelOpensOnBothSides: openedOn?.w1 === channel && openedOn?.w2 === channel,
+  messageArrived: trace.firstSeen !== null,
+  messageStayedArrived: trace.lost === null,
+  exactlyOneCopyEachSide: copies?.w1 === 1 && copies?.w2 === 1,
+};
+failures.push(...unmet(expectations));
+
+const verdict = failures.length > 0 ? 'FAIL' : 'PASS';
 
 const raw = [
   ['W1', consoleLines(wa.cx)],
@@ -140,6 +157,7 @@ record('COMM-1', gated.verdict, {
   latencyMs: trace.firstSeen,
   lostAgainMs: trace.lost,
   copies,
+  ...expectations,
   failures,
 });
 

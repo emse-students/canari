@@ -40,7 +40,7 @@ import {
 import { channelIdOf, salonDistribution, userIdOf, workspaceIdOf } from './grainedb.mjs';
 import { seedsForChannel } from './grainestore.mjs';
 import { PEER_NAME, PORTS, VENUE } from './names.mjs';
-import { mark, record } from './results.mjs';
+import { mark, record, unmet } from './results.mjs';
 import { consoleLines, gate, report, watch } from './watch.mjs';
 
 const w1 = await client(PORTS.W1);
@@ -154,11 +154,20 @@ const keptStillThere = keptSent ? await countMessage(w2, kept) : null;
 
 // `seedsBefore.received` is the arming: without a seed the peer was GIVEN, "still held" is a claim
 // about an empty set and would pass on a salon nobody ever wrote to them in.
-const armed =
-  onRosterBefore === true &&
-  keptTrace.firstSeen !== null &&
-  offRosterAfter &&
-  (seedsBefore?.received ?? 0) > 0;
+// NAMED, ONE CONJUNCT PER LINE, so an unarmed run says WHICH precondition it could not get. As a
+// bare `&&` chain this recorded `VACUOUS` with `failures: []` twice on 2026-08-27 - a row that knew
+// it could not ask its question and said nothing about why, which `backlog` booked as a runner
+// defect in its own right. The values go into the record and the unmet ones into `failures[]`.
+const arming = {
+  peerOnTheSalonRosterBefore: onRosterBefore === true,
+  theKeptMessageArrived: keptTrace.firstSeen !== null,
+  peerOffTheSalonRosterAfter: offRosterAfter === true,
+  peerHeldASeedBefore: (seedsBefore?.received ?? 0) > 0,
+};
+const armed = Object.values(arming).every((v) => v === true);
+// PUSHED WHETHER OR NOT IT ARMED, and harmless when it did: `verdict` reads `!armed` first, so a
+// VACUOUS keeps its name and gains its reason, and an armed run pushes nothing.
+if (!armed) failures.push(...unmet(arming).map((f) => `could not arm - ${f}`));
 
 const expectations = {
   // COMM-9
@@ -177,11 +186,9 @@ const expectations = {
   peerOffAllowedUsers: !!peerUserId && !rosterAfter?.allowedUsers.includes(peerUserId),
 };
 
-const verdict = !armed
-  ? 'VACUOUS'
-  : failures.length > 0 || Object.values(expectations).some((v) => v !== true)
-    ? 'FAIL'
-    : 'PASS';
+failures.push(...(armed ? unmet(expectations) : []));
+
+const verdict = !armed ? 'VACUOUS' : failures.length > 0 ? 'FAIL' : 'PASS';
 
 const raw = [
   ['W1', consoleLines(wa.cx)],
@@ -196,6 +203,7 @@ record('COMM-9/10', gated.verdict, {
   channelId,
   peer: peerUserId ? peerUserId.slice(0, 8) : null,
   armed: { onRosterBefore, keptArrived: keptTrace.firstSeen !== null, offRosterAfter },
+  arming,
   keptMarker: kept,
   keptLatencyMs: keptTrace.firstSeen,
   // THE PURGE, RECORDED AND NOT ASSERTED: the salon leaves the peer's sidebar on removal, so this is

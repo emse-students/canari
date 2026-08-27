@@ -38,7 +38,7 @@ import {
   workspaceIdOf,
 } from './grainedb.mjs';
 import { PEER_NAME, PORTS, VENUE } from './names.mjs';
-import { mark, record } from './results.mjs';
+import { mark, record, unmet } from './results.mjs';
 import { consoleLines, gate, ignoringExpectedRefusal, report, watch } from './watch.mjs';
 
 const w1 = await client(PORTS.W1);
@@ -185,24 +185,31 @@ const seedAfterTheGrant = armed?.onSalonRoster
     })
   : null;
 
-const verdict = !armed?.onSalonRoster
-  ? 'VACUOUS'
-  : failures.length > 0 ||
-  !seedAfterTheGrant ||
-  openedOnW1?.selected !== salon ||
-  !openedOnW1?.sentAt ||
-  salonRoster?.isPrivate !== true ||
-  !salonRoster?.groupId ||
-  salonRoster?.retired !== false ||
-  !communityRoster ||
-  !peerUserId ||
-  !peerOnCommunity ||
-  peerOnSalon ||
-  peerAnnouncedASeed ||
-  onPeer?.present !== false ||
-  ![403, 404].includes(peerFetch?.status)
-    ? 'FAIL'
-    : 'PASS';
+// NAMED RATHER THAN DISJOINED. Thirteen terms decided this row and only the first could reach
+// `failures[]`, so its FAIL of 2026-08-27 recorded `"failures":[]` and the cause was recovered
+// by checking each term against the detail by hand. Half of these are NEGATIVE - this row's subject
+// is a peer who must NOT be able to reach the salon - so a bare `||` chain also read backwards.
+const expectations = {
+  // The three denials the row exists to prove, while the peer is outside `allowedUsers`.
+  peerIsNotOnTheSalon: peerOnSalon === false,
+  peerWasNeverSealedASeed: peerAnnouncedASeed === false,
+  theSalonIsAbsentFromThePeersSidebar: onPeer?.present === false,
+  theApiRefusesThePeer: [403, 404].includes(peerFetch?.status),
+  // The premises those denials mean nothing without.
+  peerIsInTheCommunity: peerOnCommunity === true,
+  peerResolved: !!peerUserId,
+  communityRosterReadable: !!communityRoster,
+  theSalonIsPrivate: salonRoster?.isPrivate === true,
+  theSalonHasItsGroup: !!salonRoster?.groupId,
+  theSalonIsNotRetired: salonRoster?.retired === false,
+  theOwnerPostedInIt: openedOnW1?.selected === salon && !!openedOnW1?.sentAt,
+  // And the arming's own consequence: once granted, the peer must actually GET the seed. There
+  // is no benign reading of its absence - see the note above `seedAfterTheGrant`.
+  theGrantedPeerStoredTheSeed: !!seedAfterTheGrant,
+};
+failures.push(...unmet(expectations));
+
+const verdict = !armed?.onSalonRoster ? 'VACUOUS' : failures.length > 0 ? 'FAIL' : 'PASS';
 
 const raw = [
   ['W1', consoleLines(wa.cx)],
@@ -242,6 +249,7 @@ record('COMM-8', gated.verdict, {
   // The console reading's own arming. `false` under a granted, opened salon is a member who cannot
   // read it - and it is also the only thing that would catch that pattern going dead again.
   seedAfterTheGrant,
+  ...expectations,
   salonEpoch: salonRoster?.epoch ?? null,
   sidebarOnPeer: onPeer,
   peerFetchStatus: peerFetch?.status ?? null,

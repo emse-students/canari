@@ -57,7 +57,7 @@ import {
 } from './comm.mjs';
 import { channelIdOf, salonDistribution, userIdOf, workspaceIdOf } from './grainedb.mjs';
 import { PEER_NAME, PORTS } from './names.mjs';
-import { mark, record } from './results.mjs';
+import { mark, record, unmet } from './results.mjs';
 import { consoleLines, gate, ignoringExpectedRefusal, report, watch } from './watch.mjs';
 
 const w1 = await client(PORTS.W1);
@@ -188,13 +188,21 @@ const composerBefore = await step('the peer starts typing', async () => {
   return composerState(w2);
 });
 
-const armed =
-  !!workspaceId &&
-  !!channelId &&
-  !!peerId &&
-  peerWroteBefore === true &&
-  probeBefore?.status === 400 &&
-  composerBefore?.draft === draft;
+// NAMED, ONE CONJUNCT PER LINE. This row recorded `VACUOUS` three times without ever saying which
+// of its six preconditions was missing, and the cost is on the record: the 400 below was read as
+// failure and chased, when it is a REQUIRED conjunct - the probe is session-less on purpose so the
+// same request is refused 400 while the peer is a member and 403 once it is not. The conjunct that
+// was actually missing, `thePeerCouldPostWhileAMember`, was named in the verdict line all along.
+const arming = {
+  workspaceResolved: !!workspaceId,
+  channelResolved: !!channelId,
+  peerResolved: !!peerId,
+  thePeerCouldPostWhileAMember: peerWroteBefore === true,
+  theSessionlessProbeWasRefused400: probeBefore?.status === 400,
+  theDraftIsOnScreen: composerBefore?.draft === draft,
+};
+const armed = Object.values(arming).every((v) => v === true);
+if (!armed) failures.push(...unmet(arming).map((f) => `could not arm - ${f}`));
 
 // -- The removal, while that draft is on screen -------------------------------------------
 const revoked = armed
@@ -262,11 +270,9 @@ const expectations = {
   nothingTheDraftBecameLanded: sentAnyway !== true,
 };
 
-const verdict = !armed
-  ? 'VACUOUS'
-  : failures.length > 0 || Object.values(expectations).some((v) => v !== true)
-    ? 'FAIL'
-    : 'PASS';
+failures.push(...(armed ? unmet(expectations) : []));
+
+const verdict = !armed ? 'VACUOUS' : failures.length > 0 ? 'FAIL' : 'PASS';
 
 const linesW1 = consoleLines(wa.cx);
 const linesW2 = consoleLines(wb.cx);
@@ -284,6 +290,7 @@ record('COMM-21', gated.verdict, {
   workspaceId,
   channelId,
   armed,
+  arming,
   peerWroteBefore,
   probeBefore,
   probeAfter,
