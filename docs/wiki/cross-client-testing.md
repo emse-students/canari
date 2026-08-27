@@ -37,7 +37,7 @@ Updated after every run.
 | 13 LIFE | 8 | - | `pending` |
 | 14 NOTIF | 21 | - | `pending` |
 | 15 CALL | 20 | - | `pending` - no script exists yet |
-| 16 HEAL | 27 | - | `pending` - **sixteen rows added 2026-08-27 on the user's report**: the eleven original rows all break a device that already HELD the group, and none reaches the NEW-device path (`HEAL-NEW-*`, section 16). Every new row is `+user` |
+| 16 HEAL | 31 | - | `pending` - **twenty rows added 2026-08-27 on the user's report**: the eleven original rows all break a device that already HELD the group, so none reaches the NEW-device path (sixteen `HEAL-NEW-*` rows) and none reaches a REVOKED device returning after the world moved (four more `HEAL-REVOKE-*`). Both groups are section 16; every new row is `+user` |
 | 17 PIN | 10 | - | `pending` |
 | 18 CORRUPT | 10 | - | `pending` |
 
@@ -417,6 +417,30 @@ ledger verdict is a `FAIL` from 2026-08-11 taken by a script rewritten that same
 ([backlog](backlog.md)). They are four rows and not one because a wipe is executed BY the device being
 wiped: "the wipe ran" and "the device came back like-new" are different claims.
 
+**AND FOUR MORE, ON THE USER'S ASK OF 2026-08-27: a revoked device that missed a LOT.** Verbatim:
+*"un appareil qui a ete revoque, qui a manque plein de messages/changements MLS (nouveaux groupes,
+suppressions de groupes etc) et de bien voir si tout est rattrape correctement a la fin (l'appareil
+revoque devrait agir comme un appareil neuf puisque la revocation lui demande de tout supprimer, mais
+il faut le tester). Ce cas est la porte vers beaucoup d'autres, toujours avec les histoires d'ordre,
+et de device mobile ou web."*
+
+**The expectation is an EQUALITY, and that is what makes it testable at all:** if revocation really
+wipes, then a revoked device returning is a NEW device, and its final state must be the state a fresh
+device reaches in the same window - the whole `HEAL-NEW-*` group already measures that side. So these
+rows do not re-measure repair, they measure SAMENESS, and any difference is the finding: a returning
+device that ends with more than a fresh one kept something the wipe was supposed to destroy
+(HEAL-REVOKE-1's open P1 is exactly a device that kept everything); a device that ends with LESS is
+carrying state that survived just enough to poison enumeration - the worse of the two, because it
+looks healthy.
+
+**Why the missed CHANGES matter and not just missed messages.** A device away for a long window misses
+two kinds of thing, and only one of them has a catch-up path: messages accumulate in a queue that can
+be drained, while MEMBERSHIP changes - a group created, a group deleted, a member removed - move the
+epoch and cannot be replayed at all. A returning device therefore has to be told the shape of the
+world rather than catch up to it, which is enumeration, which is the `HEAL-NEW-*` mechanism again. The
+axes the user names - ORDER, and web versus mobile - apply unchanged, so the same equality is asserted
+in each.
+
 | Id | How the group is broken | Needs | State |
 | --- | --- | --- | --- |
 | HEAL-W1 | Restore a snapshot from BEFORE a membership commit, then have the peer send | `+snapshot` | `pending` - a `healed` verdict after applying ZERO commits is a regression |
@@ -430,6 +454,10 @@ wiped: "the wipe ran" and "the device came back like-new" are different claims.
 | HEAL-REVOKE-2 | The revoked device reconnects: is it like-new, holding nothing from before? | `W1 W2` | `pending` - the blacklist can make this row pass while HEAL-REVOKE-1 fails |
 | HEAL-REVOKE-3 | First reconnection after revocation resynchronises as a NEW device would, history included | `W1 W2` | `pending` - a shortfall must be REPORTED, not silently partial |
 | HEAL-REVOKE-4 | The heal-on-diff mechanism catches up what the first reconnection missed - and fires on the RIGHT conditions | `W1 W2` | `pending` - the TRIGGER CONDITIONS are part of the assertion, not context |
+| HEAL-REVOKE-5 | Revoked, then the account CHANGES a lot while it is away - groups created, groups deleted, messages sent - then it returns | `W1 W2` `+user` | `pending` - the user's ask. The assertion is an EQUALITY against a fresh device enrolled in the same window (`HEAL-NEW-*` supplies the reference), not a repair count. Ending with MORE than the fresh device means the wipe kept something; ending with LESS means something survived just enough to poison enumeration |
+| HEAL-REVOKE-6 | The same, where the revoked device is **the phone** | `+A1` `+user` | `pending` - the mobile half of the user's ask. A1's store is SQLite behind the native layer, not the WebView IndexedDB the web wipe clears, so "the wipe ran" is a different claim here and must be read from the native store |
+| HEAL-REVOKE-7 | The **ORDER** of the return: the revoked device back BEFORE the other devices are online, and back AFTER | `W1 W2` `+user` | `pending` - same equality across both orders, for the same reason HEAL-NEW-11/12/13 exist: a responder present from the start and one arriving late are different mechanisms. A difference in final state is a `FAIL`, a difference in time is dirt with a number |
+| HEAL-REVOKE-8 | A group **DELETED while the device was revoked** must not return as a Sync row | `W1 W2` `+user` | `pending` - HEAL-NEW-7 from the other side, and the sharper case: the returning device may hold a stale membership belief no fresh device would have. Three causes must stay separable - a server tombstone, a per-user dismissal, and an exit the DELETING device still owes |
 
 ### The new-device path - sixteen rows the eleven above do not reach (`HEAL-NEW-*`)
 
