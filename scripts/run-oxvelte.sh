@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
-# Runs oxvelte with ~/.cargo/bin on PATH; installs via install-oxvelte.sh when missing.
+# Runs oxvelte with ~/.cargo/bin on PATH, installing the PINNED revision first.
+#
+# The install script runs on EVERY invocation, not only when the binary is missing: a machine that
+# already has an oxvelte built from some other revision is exactly the case worth catching, and
+# `command -v oxvelte` cannot see the difference. The check itself is a grep of cargo's
+# .crates2.json, so the cost of being right here is a few milliseconds.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 if [ -f "$HOME/.cargo/env" ]; then
   # shellcheck disable=SC1091
   . "$HOME/.cargo/env"
 fi
-export PATH="$HOME/.cargo/bin:$PATH"
+export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$HOME/.cargo/bin:$PATH"
 
-if ! command -v oxvelte >/dev/null 2>&1; then
-  echo "oxvelte not found; installing (Rust >= 1.93 required)..."
-  "$REPO_ROOT/scripts/install-oxvelte.sh"
-fi
+"$SCRIPT_DIR/install-oxvelte.sh"
 
 exec oxvelte "$@"

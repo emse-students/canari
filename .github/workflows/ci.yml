@@ -370,7 +370,10 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/registry/index
             ~/.cargo/git/db
-          key: oxvelte-v0.2.0-${{ runner.os }}
+          # The pinned REVISION, not the version number: 0.2.0 has meant several different
+          # binaries. It must move with OXVELTE_REV in scripts/install-oxvelte.sh, or this cache
+          # restores the previous one and the install script rebuilds it on every run.
+          key: oxvelte-7196779a-${{ runner.os }}
 
       - name: Install oxvelte
         run: ./scripts/install-oxvelte.sh

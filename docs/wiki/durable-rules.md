@@ -671,6 +671,30 @@ Environment and tooling traps that belong to no one subsystem. Each cost a run.
 - **REMOVING A BUILD PLUGIN REMOVES WHAT IT WAS QUIETLY DOING, AND THE BUILD STAYS GREEN.** Swapping MiGallery's Tailwind from the PostCSS wrapper to the Vite plugin deletes `postcss.config.cjs` - and autoprefixer with it. That config listed autoprefixer as an afterthought, but it was writing **forty of the forty-five** `-webkit-backdrop-filter` declarations in the built CSS and all five `-webkit-user-select`: every glass surface would have lost its blur on Safari and iOS, with a passing suite and a 200 from the container. Before deleting a step in an asset pipeline, DIFF ITS OUTPUT - declaration by declaration, not by eye - and check the replacement on the platform that will run it, because a native binary can fall back silently. [ecosystem-convergence](ecosystem-convergence.md#11-the-cross-repo-convergence-plan-repo-by-repo)
 - **A LINT RULE THAT COVERS THE MINORITY OF THE FILES READS AS A GUARANTEE.** `lucide-svelte` and `@lucide/svelte` both resolve and both render, so nothing announces a stray import; oxlint's `no-restricted-imports` was the obvious guard and was MEASURED to fire on `.ts` while oxvelte does not apply it inside a `.svelte` `<script>` block - which is where almost every icon import lives. Two linters are two rule sets: prove a rule fires in EVERY file kind it is meant to cover, or use a mechanism that does. [ecosystem-convergence](ecosystem-convergence.md#11-the-cross-repo-convergence-plan-repo-by-repo)
 - **A TYPE THAT STOPPED BEING TRUE KEEPS TYPECHECKING WHILE A COMPATIBILITY SHIM SURVIVES.** Three MiGallery components typed their `icon` prop as `ComponentType<SvelteComponent>`, the Svelte 4 CLASS shape; no lucide icon had satisfied it since the package moved to runes, and it compiled only against the legacy shim the deprecated package still shipped. Twenty errors across seventeen call sites appeared the instant the shim left. **A green typecheck dates from the last time the types were re-derived, not from today.** [ecosystem-convergence](ecosystem-convergence.md#11-the-cross-repo-convergence-plan-repo-by-repo)
+- **A TOOL INSTALLED FROM A BRANCH IS NOT A VERSION, AND A LINTER THAT IS NOT A VERSION IS NOT A
+  GATE.** `cargo install --git <repo>` with no `--rev` tracks the default branch, so two machines
+  that ran the same command on different days hold different binaries and disagree about the same
+  file - and the disagreement is dated, not explained. oxvelte is exactly this: published on no
+  registry, no npm package, no git tag past `v0.1.2` against a current `0.2.0`, so a commit sha is
+  the only name that version has. le-cercle pins it and reads the installed revision back from
+  cargo's own `.crates2.json` rather than keeping a stamp of its own; **`scripts/install-oxvelte.sh`
+  here and on MiGallery still do not**, and their CI cache keys name `v0.2.0`, which has meant
+  several different binaries.
+- **A GUARD THAT RESTATES A FACT THE TOOL ALREADY ENFORCES ONLY HAS TO GO STALE ONCE.** The
+  `MIN_RUST_VERSION=1.97.0` check copied into these install scripts refused an install that then
+  built fine on the toolchain it had just rejected - oxvelte declares no `rust-version` at all, so
+  the number was never anything but a guess. Let the build fail and name its own requirement.
+- **CONFIGURATION THAT CHANGES NO VERDICT IS WORSE THAN NONE**, because it tells the next reader
+  something is being suppressed. le-cercle's first `oxvelte.config.json` disabled
+  `svelte/no-navigation-without-resolve` and `svelte/require-each-key` - neither of which is an
+  oxvelte rule - copied across from the ESLint config it replaced. Measure a config by removing it
+  and re-running: if the verdict is identical, delete it.
+- **oxfmt has no `endOfLine: "auto"`** - the option exists, the value does not - so a repository it
+  formats must pin `eol=lf` in `.gitattributes` or `format:check` fails on Windows against files
+  nobody touched, reporting the operating system rather than the code. Prettier's `auto` is what
+  hides this until the day it is replaced. **It also formats code inside markdown fences**: a `ts`
+  block demonstrating what oxfmt does to a type gets rewritten into the form the prose says it
+  replaces. Fence such an example `text`.
 - Bash-tool commit messages: a heredoc or `git commit -F file`, NOT a PowerShell here-string.
 - Backend lint needs `bun install` in the app dir (bare `oxlint` / `oxfmt` + repo-level configs).
 - The pre-commit hook sweeps the WHOLE frontend and re-stages - isolate unrelated dirty files first.

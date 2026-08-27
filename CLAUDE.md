@@ -235,7 +235,7 @@ alert is open: `libcrux-chacha20poly1305` (GHSA-hc3c-63hc-2r9f, HIGH) in `fronte
 already measured as UNREACHABLE - the crate is not compiled, the HPKE backend built is
 `hpke-rs-rust-crypto`. It needs dismissing on GitHub, not fixing.
 
-**OPEN - MiGallery and le-cercle.** The worked list, and the MEASURED state of all five repos, is
+**OPEN - Portail-etu ALONE.** The worked list, and the MEASURED state of all five repos, is
 section 11 of [ecosystem-convergence](docs/wiki/ecosystem-convergence.md), the only copy - **add to
 its table rather than re-deriving it**, which is what made this paragraph wrong twice. **SKY IS DONE**
 (`e0bd000`..`c65c4cf`): on bun end to end, DEPLOYED - `sky-sky-1` healthy on bun 1.4.0, site 200,
@@ -250,7 +250,14 @@ CSS taking over the prefixing autoprefixer was silently doing; `bun audit` clean
 **TS 7 ADOPTED** - the first repo here where `--tsgo` is clean, because it uses no `<svelte:boundary>`.
 **What is left there is a JUDGEMENT, not a migration:** 88 lint warnings, 61 of them correctness
 (keyless `{#each}`, `{@html}`, non-reactive `Map`/`Set`) - section 11 lists them and says which two
-must not be swept. le-cercle owes three, plus a security commit never pushed.
+must not be swept. **LE-CERCLE IS DONE**: its ReDoS fix is on `main` (`1b5628f`, pushed on the
+user's decision, that repo's `AGENTS.md` forbidding `main` notwithstanding) and its whole toolchain
+is **merge request !5** - oxfmt/oxlint/oxvelte, `.bun-version`, **TS 7 ADOPTED**, a second pipeline
+job because the bun image carries no Rust, all gates green. Two rules came out of it, both in
+[durable-rules](docs/wiki/durable-rules.md): **oxvelte was pinned NOWHERE** (`cargo install --git`
+with no `--rev` follows the branch), now fixed in all three repos with the CI cache keys moved onto
+the revision; and **a guard restating a fact the tool enforces only has to go stale once** - the
+`MIN_RUST_VERSION` copied between these scripts refused an install that then built fine.
 **Read section 9 before touching TS 7 on either.**
 
 **OWED TO THE USER, NOT TO THE CODE: the MLS + Graine explanation** - prose and diagrams, no code

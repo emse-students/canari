@@ -590,7 +590,7 @@ discovery again.
 | Canari | 1.4.0 | 5 x `bun.lock`, all **v1** | yes | REFUSED, section 9 | green |
 | Sky | 1.4.0 | `bun.lock` **v1** | yes | `--tsgo` already wired into `check` | `check` 43 files 0 errors 2 unused-CSS warnings; `lint` 0 errors 8 warnings; `build` green; image built, container started, `/api/health` 200 |
 | MiGallery | 1.4.0 | `bun.lock` **v1** | yes | **ADOPTED**, `--tsgo`, section 9 | `check` (TS 7, `--tsgo`) 121 files 0 errors - 5396 under TS 6, a counter difference proven not to be a coverage gap; `lint` 0 errors, 88 warnings; `format:check` clean; `bun audit` 0 vulnerabilities across 346 packages; image builds, container healthy, `/api/health` 200, and the CSS it serves carries its vendor prefixes |
-| le-cercle | MISSING | `bun.lock` **v1** | no | `^6.0.3` caret, section 9 | not run |
+| le-cercle | 1.4.0 | `bun.lock` **v1** | yes, plus oxvelte | **ADOPTED**, `--tsgo`, section 9 | `check` (TS 7) 90 files 0 errors - 5174 under TS 6, the same counter difference as MiGallery and proven the same way; `lint` 0 errors 0 warnings; `lint:svelte` 0 on the recommended set; `format:check` clean; 95 tests pass; `bun audit` 0 vulnerabilities across 204 packages; `build` green |
 | Portail-etu | **1.3.8** | `bun.lock` **v1** | no | not started | deploy green |
 
 **All four committed `bun.lock` are v1**, so Dependabot is alive in every directory that has one.
@@ -756,14 +756,44 @@ what it lists is a real backlog and nobody has ruled on it:
 The first three rows are correctness, not style. **Do not blanket-fix: `{@html}` and the two
 `parametres` warnings each need a judgement.**
 
-### le-cercle
+### le-cercle - DONE, awaiting review (2026-08-27)
 
-oxlint/oxfmt/oxvelte and a `.bun-version`; TypeScript 7, which here means fixing the `^6.0.3` caret
-recorded in section 9; and Dependabot, which on GitLab is not the same product as on GitHub.
+Two changes, and the repository's own `AGENTS.md` governs how each landed: it forbids committing to
+`main`, so nothing here followed Canari's rule.
 
-**It also holds a security commit that has never been pushed**: `6ddf426 fix(security)!: an Accept
-header that could hang the site`. It is Aurel's repository, so the push is the user's call, not
-ours - but a fix sitting on one laptop protects nobody.
+**The security fix is on `main`** (`1b5628f`), pushed on the user's explicit decision of 2026-08-27
+rather than through a merge request - the exception, taken knowingly, because a ReDoS reachable
+unauthenticated on every route was sitting on one laptop. It had to be rebased onto eight of Aurel's
+commits first; the only conflict was `CHANGELOG.md`, resolved by keeping both entries. Every gate was
+re-run after the rebase before the push.
+
+**The tooling migration is merge request !5**, branch `chore/tooling-convergence`, one commit
+(`ac54e17`). oxfmt, oxlint and oxvelte replace prettier, eslint and `lint-staged`; TypeScript 7 is
+adopted; `.bun-version` says 1.4.0. The whole of it, with every measurement, is on that repository's
+own [`docs/wiki/tooling.md`](https://gitlab.emse.fr/aurel.dautry/le-cercle/-/blob/main/docs/wiki/tooling.md) -
+this page keeps only what the ecosystem needs to know:
+
+- **The reformat touched five files.** The oxfmt options are the ones `.prettierrc` carried, and all
+  five disagreements are the same multi-line union type. That is the number to quote when the next
+  repository asks what this migration costs.
+- **oxvelte is now pinned by commit sha there, and it is NOT pinned here or on MiGallery.** See the
+  entry in [durable-rules](durable-rules.md); those two install scripts owe the same fix.
+- **oxlint and oxvelte both report zero on that codebase**, which made the first
+  `oxvelte.config.json` - copied from here, disabling two rules oxvelte does not have - a file that
+  changed no verdict while claiming to. It was deleted rather than kept for symmetry.
+- **The pipeline needed a second job.** The gates run inside `oven/bun:1.4.0-alpine` on a shell
+  runner that is also the production host, and that image carries no Rust, so `gates:svelte` builds
+  the pinned oxvelte revision in `rust:1.97.0-alpine3.22` - 1m47s, no package added to that image,
+  measured locally against the working tree before the job was written - and caches it under a key
+  naming the revision. The lint is therefore two scripts, `lint` and `lint:svelte`, not one.
+- Two things were found by the migration rather than by anybody looking: an empty
+  `src/lib/server/parse.ts` with no importer, which only surfaced once the linter ran over the whole
+  repository instead of `src`; and a Dockerfile still on the floating `oven/bun:1-alpine`, the exact
+  tag that repository's own pipeline had been pinned away from a week earlier, on the same host.
+
+What is left there: **Dependabot, which on GitLab is not the same product as on GitHub.** The
+security commit already added `bun audit` to the gates, which is the part that matters - the
+repository audits clean, so a red there is a new advisory.
 
 ### Canari - what is left of its own half
 
