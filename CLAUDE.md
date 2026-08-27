@@ -216,8 +216,9 @@ already measured as UNREACHABLE - the crate is not compiled, the HPKE backend bu
 **OPEN - MiGallery and le-cercle.** The worked list, and the MEASURED state of all five repos, is
 section 11 of [ecosystem-convergence](docs/wiki/ecosystem-convergence.md), the only copy - **add to
 its table rather than re-deriving it**, which is what made this paragraph wrong twice. **SKY IS DONE**
-(`e0bd000`): on bun end to end, image built, container started, four migrations run, `/api/health`
-200. MiGallery owes nine items and has started none; le-cercle owes three, plus a security commit
+(`e0bd000`..`c65c4cf`): on bun end to end, DEPLOYED - `sky-sky-1` healthy on bun 1.4.0, site 200,
+and the renamed migration it had silently disabled applied 7 operations on its first real start.
+MiGallery owes nine items and has started none; le-cercle owes three, plus a security commit
 never pushed. **Read section 9 before touching TS 7 on either.**
 
 **OWED TO THE USER, NOT TO THE CODE: the MLS + Graine explanation** - prose and diagrams, no code

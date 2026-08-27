@@ -587,8 +587,16 @@ stages are now `oven/bun:1.4.0-alpine`.
 `deploy.yml` lost its pm2 cutover step, and not on faith: the host no longer has the binary at all
 (`/home/mitv/.bun/bin/pm2` absent), so both lines could only ever be no-ops behind their `|| true`.
 
-**Verified, not merely compiled:** `docker build` green, container started, the four migrations ran
-to completion under Bun, the server listened, `GET /api/health` answered 200.
+**Verified locally, then IN PRODUCTION.** Locally: `docker build` green, container started, four
+migrations ran, `GET /api/health` 200. In production after the deploy went green on `1e9d62d`:
+`sky-sky-1` up and healthy, `bun --version` inside it says **1.4.0**, `docker inspect` shows the
+corrected chain, and `https://sky.mitv.fr/` answers 200.
+
+The production logs also proved the defect had been real rather than theoretical:
+`migrate-drop-dead-schema` applied **7 operations** on that first start - three FTS triggers, the
+`people_fts` table, `people.bio`, `people.image_url` and `external_links`. It had NEVER run,
+because the Dockerfile invoked it under its old name. The migration nobody could see failing is
+the one the rename had silently disabled.
 
 The plan demanded the work be split into substance and the oxfmt reformat, and it now is, across
 three commits: `e0bd000` substance, `44dac39` the CI repair, `1e9d62d` the reformat alone (100
