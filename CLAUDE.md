@@ -313,7 +313,7 @@ yet, so **read Android vitals from late September 2026**; and **WP-RESTORE-1** (
 required April 2027, WebAuthn on a server that has none) is ACCEPTED and scheduled AFTER the
 campaign ([backlog](docs/wiki/backlog.md)).
 
-**Release: v0.14.8 carries the iOS FCM fix and is the build check S needs; v0.14.7 in flight before it, v0.14.6 shipped iOS ONLY.** Android Release and AppImage
+**Release: v0.14.8 DISPATCHED 2026-08-28 (bump `cc0b997c`, the three builds running); it carries the iOS FCM fix and is the build [check S](docs/wiki/device-verification.md) needs. v0.14.7's three builds all PASSED - the parity guard held; v0.14.6 shipped iOS ONLY.** Android Release and AppImage
 Release died on a Tauri JS/Rust version skew (`plugin-log` 2.9.0 vs crate 2.8.0) that no CI job could
 see because nothing here compiles the Tauri app - fixed, and `Guard the Tauri JS/Rust version parity`
 in `code-analysis.yml` now reads the two committed files. Story in `CHANGELOG.md`, rule in
@@ -366,6 +366,8 @@ ANSWERS** - everything native here is verified by COMPILING, and the call this r
 perfectly and could never succeed. **The one thing to do after 0.14.8 reaches the iPhone: run check S.
 An `ios` row is the pass; a `platform=ios reason=no-token` line is not a pass but IS the first word
 the platform has ever said; neither arriving means the build did not reach the phone.**
+
+**AND THREE OF THREE iOS DEFECTS SO FAR WERE INVISIBLE TO EVERY GATE HERE** - the CORS allowlist, the third-party refresh cookie, the FCM ordering. The user named the classes still to come before anyone looked (backgrounding, memory, a reconnection that does not happen); that expectation is recorded in [backlog](docs/wiki/backlog.md) and closes by HARDWARE, one lettered check at a time - **never by a fix written against a suspected iOS lifecycle bug nobody has seen**, because nothing here could tell whether it worked.
 
 ### CANARI - the test campaign
 

@@ -102,6 +102,27 @@ while `CanariTauriDataDir()` is still nil, or writing a path the Rust `get_fcm_t
 (`idevicesyslog` or a Mac), and `[CanariPush] APNs token not here yet` versus
 `[CanariPush] FCM token synchronise` names the branch directly.
 
+### The rest of what an iPhone will find, named by the user before it was looked for (2026-08-27)
+
+**Not a defect and not scheduled - a standing expectation, recorded so it is not re-discovered as a
+surprise.** Said while the first iPhone was still in front of a log, verbatim: *"Il y aura d'autres
+problemes graphiques et peut-etre memoire aussi, sur le fait de mal gerer la mise en arriere plan par
+exemple, la reconnexion qui ne se fait pas etc."*
+
+**Why it deserves a line rather than a WP.** Every iOS defect found so far - the CORS allowlist, the
+third-party refresh cookie, the FCM ordering - was invisible to every gate in this repository and
+became visible the moment a device ran the app. Three of three. The classes the user names are the
+ones the platform's own lifecycle owns and the ones a compile can least speak to: suspension and
+resume, the WebView being evicted under memory pressure, and a socket that does not come back. Two
+mechanisms already exist and neither has been observed on iOS - the reconnection ladder
+([auth](frontend/modules/auth.md#wp-reconnect-1---the-ladder-that-stopped-and-the-two-silences-under-it))
+and `didBecomeActive`, which the FCM fix has just made load-bearing.
+
+**How it gets closed: by hardware, one check at a time.** Each class becomes a lettered check in
+[device-verification](device-verification.md) when someone has an iPhone in hand, not a speculative
+entry here. **What must NOT happen is a fix written against a suspected iOS lifecycle bug that nobody
+has seen** - the repo has no way to tell whether it worked.
+
 ### P3 - the one fallback in `apiFetch` logs that it was taken and not WHY (seen 2026-08-28)
 
 Seen on A1's logcat during a CD deploy: `[API] getToken failed for GET /api/users/d82cd226... -
