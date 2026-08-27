@@ -1171,6 +1171,27 @@ And discovery now consults what is owed: a server group whose exit this device s
 re-created, and the skip is logged. Without that the row alone would not be enough - the drain would
 eventually delete the group, but the placeholder would have already appeared.
 
+**AND THE MECHANISM ABOVE MEASURED NOTHING FOR THREE DAYS, BECAUSE THE SWALLOW IT REPLACED WAS ONE
+LAYER FURTHER IN.** `exitGroupAndCleanup` does not call the server itself - it hands a
+`serverAction` to `deleteGroupAndBroadcast` / `leaveGroupAndBroadcast` - and step 2 of each of those
+had its OWN `try/catch` around the exit call. The delete's logged and moved on; the leave's was a
+bare `catch { /* non-blocking */ }`. So `serverAction` never threw, the classifier in the enclosing
+`catch` never ran, and the happy path's `clearPendingGroupExit` deleted the row that had been written
+three lines earlier. Every property listed above held, over a store that was empty by the time
+anything read it.
+
+The signature is exact, and DEL-10 recorded it on `4a79a6c6`: one DELETE left the device, zero were
+answered, `reconnectAnnounced: true` with `drainStarted: false` and `exitLines: []` on BOTH
+reconnects, and `dm_groups` still holding the group as live. The `console.error` the delete path did
+emit was invisible for a second reason - it carries `Failed to fetch`, which the harness forgives as
+the noise of the cut the check performs on purpose.
+
+Both helpers now HOLD the failure, finish every local step, and rethrow it last. That ordering is the
+contract: the purge must not depend on the network, and the classification must not be taken by a
+function that cannot see the durable row. **A classifier is only installed where the error is still
+travelling** - enumerate the frames between the throw and the reader, because one `catch` anywhere
+between them makes the reader unreachable while every test of the reader still passes.
+
 ## The render window is a pointer into an array the component does not own (WP-EMPTYVIEW-1)
 
 `ChatArea` never renders a whole conversation. It renders a WINDOW - `messageGroups.slice(start,

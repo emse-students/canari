@@ -13,6 +13,22 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A group deleted with the radios off came back, and the mechanism built to stop that had been
+  measuring an empty store for three days.** An exit is owed to the server and written down before
+  it is attempted - one durable row per group, cleared only by an ANSWER, replayed by the reconnect.
+  `exitGroupAndCleanup` classifies what the server call throws: a status is an answer, a transport
+  failure is not. But it does not make the call itself, and step 2 of both helpers it delegates to -
+  `deleteGroupAndBroadcast`, `leaveGroupAndBroadcast` - caught the failure first, one logging and
+  moving on, the other with a bare `catch`. So nothing ever reached the classifier, the happy path
+  cleared the row three lines after it was written, and every property of the mechanism held over a
+  store that was empty by the time anything read it. DEL-10 on prod: one DELETE left the device,
+  none was answered, both reconnects announced themselves and replayed nothing, and the group was
+  still live in `dm_groups`. The one line that did fire was invisible for its own reason - it
+  carries `Failed to fetch`, forgiven as the noise of the cut the check performs on purpose. Both
+  helpers now hold the failure, finish every local step - the purge must never depend on the
+  network - and rethrow it last, where the only caller that can see the durable row decides what it
+  means.
+
 - **Two devices could both be told they had won the first-publish race, so one of them sealed a
   salon's only key into a tree nobody else holds.** A Graine distribution group's id is assigned by
   the server, but its MLS tree is built by whichever device finds the scope uninitialised first -

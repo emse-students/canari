@@ -102,6 +102,18 @@ export async function fetchUniqueGroupMembers(mlsService: IMlsService, groupId: 
  *
  * Order 1->2 is critical: deleteGroupOnServer hard-deletes dm_group_members, stripping
  * the server of all routing info. A message sent afterwards would be lost.
+ *
+ * THE SERVER STEP'S FAILURE LEAVES THIS FUNCTION, and step 2 is the reason DEL-10 kept failing
+ * after the mechanism built to fix it shipped. `exitGroupAndCleanup` writes down the owed exit,
+ * calls this, and classifies what comes back - a status is an ANSWER, a transport failure is not -
+ * and this `try/catch` had already turned "there was no server" into "done", so the classifier
+ * never ran and the row it wrote was cleared by the happy path one line later. Measured on prod
+ * 2026-08-27: the DELETE left the device, nothing answered it, no `[EXIT]` line was ever logged,
+ * both reconnects replayed nothing, and `dm_groups` still held the group as live.
+ *
+ * The local steps still run unconditionally - a user who cannot leave a group because the network
+ * is down would be worse than any of this - so the failure is HELD and rethrown after them rather
+ * than aborting them. The only caller owns the decision about what it means.
  */
 export async function deleteGroupAndBroadcast(params: {
   mlsService: IMlsService;
@@ -126,15 +138,18 @@ export async function deleteGroupAndBroadcast(params: {
     }
   }
 
-  // 2. Delete on server.
+  // 2. Delete on server. HELD, NEVER SWALLOWED - see this function's doc. A wrapper object rather
+  // than a sentinel value, because "no failure" and "a falsy error" must not be the same state.
+  let serverExitFailure: { error: unknown } | null = null;
   try {
     const serverDeleted = await mlsService.deleteGroupOnServer(groupId);
     if (!serverDeleted) {
+      // A 404 IS AN ANSWER: the group is not there, which is the end state asked for. Nothing is
+      // owed and nothing is rethrown.
       log?.(`[DELETE] Group ${groupId.slice(0, 8)}... not found on server (already deleted?)`);
     }
   } catch (e) {
-    log?.(`[DELETE] Server deletion error for ${groupId.slice(0, 8)}...: ${String(e)}`);
-    console.error('[DELETE] deleteGroupOnServer failed:', e);
+    serverExitFailure = { error: e };
   }
 
   // 3. Forget the group locally - after sending the message (encryption requires MLS state).
@@ -152,6 +167,10 @@ export async function deleteGroupAndBroadcast(params: {
 
   // 5. Persist MLS state (forgetGroup modified the WASM tree)
   await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
+
+  // AND ONLY NOW. Every local step above has run, so the caller gets the failure with the purge
+  // already done - which is what lets it keep the owed exit without keeping the conversation.
+  if (serverExitFailure) throw serverExitFailure.error;
 }
 
 /** Renames the group on the server, then broadcasts a "groupRenamed" system message to all members so their UIs update. */
@@ -266,6 +285,11 @@ export async function removeMemberAndBroadcast(params: {
  * Unlike `removeMemberAndBroadcast`, this function does not generate an MLS remove commit:
  * the member's leaf remains in others' trees until the next commit, but they no longer
  * receive messages (server-side).
+ *
+ * STEP 2'S FAILURE LEAVES THIS FUNCTION TOO - the same seam as `deleteGroupAndBroadcast`, which
+ * carries the reasoning. The local exit is unconditional and completes first; whether the server
+ * performed its half is `exitGroupAndCleanup`'s to classify, and only it can decide whether the
+ * device still owes one.
  */
 export async function leaveGroupAndBroadcast(params: {
   mlsService: IMlsService;
@@ -278,11 +302,14 @@ export async function leaveGroupAndBroadcast(params: {
   // 1. Notify BEFORE server deletion (WASM must be intact to encrypt).
   await notifyMembershipChange(mlsService, groupId, 'memberLeft', { userId });
 
-  // 2. Clean the server registry.
+  // 2. Clean the server registry. HELD AND RETHROWN BELOW, for the reason
+  // `deleteGroupAndBroadcast` documents at length: this bare catch was the same defect with no log
+  // at all, so a leave that met no server was indistinguishable from one the server confirmed.
+  let serverExitFailure: { error: unknown } | null = null;
   try {
     await mlsService.removeMemberFromServer(groupId, userId);
-  } catch {
-    /* non-blocking */
+  } catch (e) {
+    serverExitFailure = { error: e };
   }
 
   // 3. Forget the local WASM state.
@@ -293,6 +320,10 @@ export async function leaveGroupAndBroadcast(params: {
   }
 
   await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64);
+
+  // The local exit is complete either way; whether the SERVER performed its half is the caller's
+  // to classify, and a 403/404 is one of the answers it reads as done.
+  if (serverExitFailure) throw serverExitFailure.error;
 }
 
 /**
