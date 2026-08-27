@@ -135,47 +135,39 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
 
 1. **THE CAMPAIGN ITSELF - RUNNING, by the user's decision of 2026-08-21** (*"C'est parti pour la
     campagne"*, in autonomy). The ladder, top to bottom, so every phase runs - including the six that
-    had no runner, written as the ladder reaches them. Design, cost and the decisions it turns on are
-    on [cross-client-testing](docs/wiki/cross-client-testing.md) and
-    [cross-client-campaign](docs/wiki/cross-client-campaign.md), the only copies. **Where the ladder
-    stands: rungs 1-8 TAKEN.** GRP closed 2026-08-26 on `feecfaf5` over four passes - GRP-4 green
-    after `e027679a`, GRP-8 `PASS-DIRTY` deterministically (its P2 is in
-    [backlog](docs/wiki/backlog.md)). **9 COMM RE-RUN 2026-08-27 on `f21502e1`: 0 `FAIL`** (all
-    three retired), 21 `PASS-DIRTY`, 3 `VACUOUS`. Every dirty cell carries ONE signature and it is
-    OLDER THAN THE RUN - undecryptable frames from an earlier run's create-race, redelivered on
-    every connection because nothing could prove them permanent. **Both halves are now fixed** (the
-    race, and the same-epoch ACK that kills the redelivery - stories in `CHANGELOG.md`), so **the
-    rung owes ONE more re-run, predicted clean**, this time WITH A1 for the four `+A1` rows still on
-    `6808a89c`, which also owes the proof WP-REGRANT-2 wants. Two `VACUOUS` rows are open in
-    [backlog](docs/wiki/backlog.md); the third is COMM-22's own entry there. **10 DEL IS SWEPT:
-    8 PASS, DEL-1 `PASS-DIRTY`, DEL-10 a `FAIL` on its own fix** - the durable row is kept and
-    nothing replays it, and which of the two triggers is missing needs a runner that captures W1's
-    console (P2 in [backlog](docs/wiki/backlog.md)). **NEXT IS THE COMM RE-RUN ON THE FIX, then 11 TAB**, then
-    MULTI, LIFE, NOTIF, CALL, HEAL, PIN, CORRUPT. The board carries every verdict and the format of a
-    cell; do not restate either here. **A `PASS-DIRTY` NO LONGER STOPS A RUNG BY ITSELF (user,
-    2026-08-25)**, and **a x5 sweep of the WHOLE ladder accepting nothing short of `PASS` comes AFTER
-    the campaign reaches the bottom (user, 2026-08-26)** - until then one pass per rung is the target.
-    What the class of the dirt decides is on
-    [cross-client-campaign](docs/wiki/cross-client-campaign.md), the only copy.
-    **What is left is a WRITING job as much as a running one:** only CALL, CORRUPT and PIN have NO
-    runner at all - TAB, MULTI, LIFE, NOTIF and HEAL are covered. The bill per phase is there too.
+    had no runner, written as the ladder reaches them. **Every verdict, every cause and the format of
+    a cell are on [cross-client-testing](docs/wiki/cross-client-testing.md); design, cost and the
+    decisions the dirt turns on are on
+    [cross-client-campaign](docs/wiki/cross-client-campaign.md). Neither is restated here.**
+
+    **Where the ladder stands: rungs 1-10 TAKEN.** 9 COMM was re-run 2026-08-27 on `f21502e1` - 0
+    `FAIL`, and every dirty cell carries ONE signature that is OLDER THAN THE RUN. **Both halves of
+    it are now fixed** (the create-race, and the same-epoch ACK that stops the redelivery - stories
+    in `CHANGELOG.md`), so **COMM owes ONE re-run, predicted clean, and it is NEXT** - this time WITH
+    A1, which is back, for the four `+A1` rows still on `6808a89c`; it also owes the proof
+    WP-REGRANT-2 wants. **Then 11 TAB**, then MULTI, LIFE, NOTIF, CALL, HEAL, PIN, CORRUPT.
+
+    **A `PASS-DIRTY` NO LONGER STOPS A RUNG BY ITSELF (user, 2026-08-25)**, and **a x5 sweep of the
+    WHOLE ladder accepting nothing short of `PASS` comes AFTER the campaign reaches the bottom (user,
+    2026-08-26)** - until then one pass per rung is the target. **What is left is a WRITING job as
+    much as a running one:** only CALL, CORRUPT and PIN have NO runner at all.
 
     **A KILLED RUN CAN DESTROY A MEASUREMENT SECONDS FROM BEING RECORDED**, and **`node rows.mjs`
     SETTLES WHETHER THE BOARD STILL MATCHES THE LEDGER - run it before believing a cell**
-    ([testing-methodology](docs/wiki/testing-methodology.md), the only copy). The shared venue is
-    `fbddc890` / `general` `064ac7d2`, rebuilt 2026-08-26 after a THIRD disappearance, cause unrecorded.
+    ([testing-methodology](docs/wiki/testing-methodology.md), the only copy). It caught the board
+    over-claiming a SECOND time on 2026-08-27: eight COMM cells written `PASS` on a build those rows
+    had never run on. The shared venue is `fbddc890` / `general` `064ac7d2`, rebuilt 2026-08-26 after
+    a THIRD disappearance, cause unrecorded.
 
 2. **DEFERRED PAST THE LADDER - seven UX and rendering items, substance in
-    [backlog](docs/wiki/backlog.md) and NOWHERE else**, in the order they were raised: the POSTS search
-    escapes the feed's filters and loads the whole base; the EMOJI picker neither scrolls nor stays on
-    screen, from one hard-coded height guess; a reconnected old client restored only SOME conversations
-    while a locally-pending deletion blocked the new one with that peer (HEAL's, rung 16); **ONE
-    BUNDLED EMOJI FONT everywhere** - Noto Color Emoji, decided 2026-08-23, owing ELEVEN rows to the
-    SECOND campaign; a deleted group leaves every OTHER member a dead row for ever, clearable one at a
-    time; the trash and the pencil on a device row do not read as the same kind of control (*"il
-    faudrait homogeneiser"*, 2026-08-25); a MENTION renders as its raw `@[uuid]` token (2026-08-22,
-    P2, NOTIF-13 pins it). The emoji, the dead row and the device controls want ONE pass over
-    `app.css`, not seven local patches.
+    [backlog](docs/wiki/backlog.md) and NOWHERE else**, named here only so none is forgotten: the
+    POSTS search that loads the whole base; the EMOJI picker that neither scrolls nor stays on
+    screen; HEAL's partially-restored old client; **ONE BUNDLED EMOJI FONT everywhere** (Noto Color
+    Emoji, decided 2026-08-23, owing ELEVEN rows to the SECOND campaign); the dead row a deleted
+    group leaves every other member; the trash and the pencil on a device row not reading as the same
+    kind of control; and a MENTION rendering as its raw `@[uuid]` token (NOTIF-13 pins it). The
+    emoji, the dead row and the device controls want ONE pass over `app.css`, not seven local
+    patches.
 
 3.  **THE SFU RUNS SIX webrtc MAJORS NOBODY HAS PLACED A CALL ON.** `apps/call-service` compiles,
     clippy is clean under `--all-features` and its ten tests pass - none of which runs the ICE stack.
@@ -210,23 +202,19 @@ bun); **TS 7 IS REFUSED ON CANARI** and `dependabot.yml` ignores its majors, or
 and migrates to v4 without preflight; `bun:sqlite` replaces better-sqlite3; the `image_url` deletion
 stands.
 
-**CANARI'S HALF IS CLOSED, PROD INCLUDED** - four containers answering `["bun", "dist/main.js"]`,
-healthy, site 200, verified 2026-08-27. **THE ONE MEASURED LIMIT ON "bun PARTOUT":** jest fails under
-the bun runtime - `admin-storage.controller.mls.spec.ts` passes 8/8 under node and fails under bun -
-so CI installs/lints/builds with bun and TESTS with node, and both call sites in `ci.yml` say so.
-**Do not collapse that to one runtime without re-running that spec.** `Check Dependencies
-Vulnerabilities` fails every CD run and is the only thing making them red; the deploy is not gated
-on it, and those 16 Dependabot vulnerabilities are YOURS to arbitrate.
+**CANARI'S HALF IS CLOSED, PROD INCLUDED** (four containers answering `["bun", "dist/main.js"]`,
+site 200, verified 2026-08-27). **THE ONE MEASURED LIMIT ON "bun PARTOUT":** jest fails under the bun
+runtime - `admin-storage.controller.mls.spec.ts` passes 8/8 under node and fails under bun - so CI
+installs/lints/builds with bun and TESTS with node, and both call sites in `ci.yml` say so. **Do not
+collapse that to one runtime without re-running that spec.** `Check Dependencies Vulnerabilities`
+fails every CD run and is the ONLY thing making them red; the deploy is not gated on it, and those
+16 Dependabot vulnerabilities are YOURS to arbitrate.
 
-**OPEN - the other three repos, none touched this session, each still owing a `.bun-version`:** Sky
-is in a NON-BUILDABLE intermediate state from an earlier session: `bun install` pending, 36
-`lucide-svelte` -> `@lucide/svelte` plus ~4 deprecated names, Dockerfile in bun, `ci-bun.yml`, pm2 out
-of `deploy.yml`, `dependabot.yml`, five docs pages, gates, then a commit split into substance and a
-separate oxfmt reformat. MiGallery owes npm->bun, an audit of 17 scripts, 68 lucide icons, Tailwind
-PostCSS->Vite, oxlint/oxfmt/oxvelte, TS 7, 4 vulnerabilities, the duplicate
-`.eslintrc.json`+`eslint.config.js`, a pending `code-analysis.yml` and a harmonised
-`dependabot.yml`. le-cercle owes oxlint/oxfmt/oxvelte, TS 7 (fix the `^6.0.3` caret) and Dependabot
-on GitLab. **Read section 9 before touching TS 7 on any of them.**
+**OPEN - the other three repos, none touched since 2026-08-27**, each owing a `.bun-version` and a
+worked list now in section 11 of
+[ecosystem-convergence](docs/wiki/ecosystem-convergence.md), the only copy: **Sky is NON-BUILDABLE**
+mid-migration and its nine steps are ordered there, MiGallery owes nine items, le-cercle three.
+**Read section 9 before touching TS 7 on any of them.**
 
 **OWED TO THE USER, NOT TO THE CODE: the MLS + Graine explanation** - prose and diagrams, no code
 (user, 2026-08-20). Post-campaign; scope and the two audiences declined are in [backlog](docs/wiki/backlog.md).
@@ -242,27 +230,18 @@ advisory is whether `cargo tree -i` can reach the crate at all.**
 
 ### CANARI - what is open
 
-**Google Play, both mails of 2026-08-26: CLOSED on 2026-08-27 but for check R.** Both signals were
-given and are spent. Shipped, and LIVE on Play production: the four pre-launch recommendations and
-the device-to-device transfer the app was never excluded from. Two deprecated-window-API sites will
-never clear - they are inside the `enableEdgeToEdge()` Play itself asks for, and inside
-play-services-base. Every threshold is measured on
+**Google Play: both mails of 2026-08-26 are CLOSED but for check R**, everything shipped and live;
+thresholds and the two sites that will never clear are on
 [mobile](docs/wiki/frontend/mobile.md#plays-q3-2026-quality-requirements-measured-against-this-app),
-the only copy; the 28-day memory P90 does not exist yet, so **read Android vitals from late
-September 2026**. **WP-RESTORE-1** (Zero-Tap Sign-In, required April 2027): principle ACCEPTED by
-the user 2026-08-26, scheduled AFTER the campaign, NOT to be re-opened - the build is WebAuthn on a
-server that has none ([backlog](docs/wiki/backlog.md)).
+the only copy. Two things stay open and neither is re-openable: the 28-day memory P90 does not exist
+yet, so **read Android vitals from late September 2026**; and **WP-RESTORE-1** (Zero-Tap Sign-In,
+required April 2027, WebAuthn on a server that has none) is ACCEPTED and scheduled AFTER the
+campaign ([backlog](docs/wiki/backlog.md)).
 
-**Release status: v0.14.5, cut 2026-08-26, carries both Android fixes and went to Play production,
-full rollout** - so the transfer refusal has reached users, correcting the line written here the day
-before. It was cut by a CONCURRENT session hours after being deferred here; the rule that leaves is
-in [durable-rules](docs/wiki/durable-rules.md#release-and-ci--cicdcicdmd). v0.14.4 remains the
-release that first proved the iOS path end to end, TestFlight included, and nothing there is owed.
-
-`minClientVersion` still lives in `platform_config` and is still raised BY HAND from
-`/admin/platform`, so no deploy touches it - and **half the old gap is closed, half is not.** A release
-can now REACH App Store Connect, never proven before; but TestFlight is the BETA channel, so nothing
-yet shows a build reaching an ordinary iOS user. Ship the client, verify it arrived, THEN raise
+**Release: v0.14.5, live on Play production at full rollout, nothing owed there.** What IS owed is
+one iOS proof: `minClientVersion` is raised BY HAND from `/admin/platform`, and while a release can
+now REACH App Store Connect, TestFlight is the BETA channel - nothing yet shows a build reaching an
+ordinary iOS user. Ship the client, verify it arrived, THEN raise
 ([legacy-compatibility](docs/wiki/legacy-compatibility.md)).
 
 ### CANARI - the test campaign
@@ -277,13 +256,14 @@ state here, and keep no second copy.**
 SETUP-4's 2FA, the one step no tool here can answer. Outside the work tree a credential CANNOT be
 committed and `git clean -xdf` cannot reach a profile.
 
-**MUT-20 is unarmable until a campaign message reaches 90 days** (earliest 2026-11-09).
+**MUT-20 is unarmable until a campaign message reaches 90 days** (earliest 2026-11-09). **A DELETED
+GROUP IS TWO ESTATES**: `cleanup.mjs` owns the server side, `dismiss.mjs` the copy each MEMBER's
+client keeps; one allowlist for both, `debris.mjs` (detail on
+[cross-client-campaign](docs/wiki/cross-client-campaign.md)).
 
-**A DELETED GROUP IS TWO ESTATES**: `cleanup.mjs` owns the server side, `dismiss.mjs` the copy each MEMBER's client keeps (W1 clean at 9 rows on 2026-08-24, W2 holding 189). One allowlist for both, `debris.mjs`. Detail on [cross-client-campaign](docs/wiki/cross-client-campaign.md).
-
-**A1 IS BACK** (user, 2026-08-26: *"J'ai remis le telephone si besoin"*), after a pause the same day -
-so `+A1` and `+push` rows run again, COMM-18 included. **TAB-7 is the row to watch**: offline -> act ->
-online with no reload is exactly the trigger DEL-10 says nothing honours.
+**A1 IS BACK** (user, 2026-08-26) and was verified unlocked and foregrounded on 2026-08-27, so `+A1`
+and `+push` rows run again. **TAB-7 is the row to watch**: offline -> act -> online with no reload is
+exactly the trigger DEL-10 says nothing honours.
 
 **Prod IS the test server** and commit+push are authorised so it picks changes up.
 `dev.canari-emse.fr` is a proxied CNAME to the same tunnel, NOT a second environment; it becomes one

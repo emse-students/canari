@@ -471,3 +471,38 @@ Swept 2026-08-27 across the `src/` of all five repos for `export let`, `on:click
 `on:submit`/`on:input`, `createEventDispatcher`, `<slot`, `<svelte:component` and top-level `$:`.
 **Every count is zero in every repo.** The runes migration is complete and there is nothing to do
 here - recorded so the question is not re-opened by someone who assumes otherwise.
+
+## 11. What the other three repos still owe, repo by repo (2026-08-27)
+
+Canari's half of the mandate is closed. This section is the working list for the rest, moved here
+from `CLAUDE.md` so the root index can point at it instead of restating it. **All three still owe a
+`.bun-version`**, and **section 9 must be read before TypeScript 7 is touched on any of them.**
+
+### Sky - NON-BUILDABLE, mid-migration
+
+An earlier session left it part-way through and it does not build as it stands. In order:
+
+1. `bun install` (pending - this is what makes it non-buildable)
+2. 36 `lucide-svelte` -> `@lucide/svelte` imports, plus roughly 4 deprecated icon names
+3. Dockerfile onto bun
+4. `ci-bun.yml`
+5. pm2 out of `deploy.yml`
+6. `dependabot.yml`
+7. five docs pages
+8. the gates
+9. commit SPLIT IN TWO - substance first, the oxfmt reformat separately, or neither is reviewable
+
+Decided and not to be relitigated: Sky keeps Tailwind and migrates to v4 without a preflight, and
+`bun:sqlite` replaces better-sqlite3.
+
+### MiGallery
+
+npm -> bun; an audit of its 17 scripts; 68 lucide icons; Tailwind from the PostCSS plugin to the Vite
+one; oxlint/oxfmt/oxvelte; TypeScript 7; 4 vulnerabilities; the duplicate `.eslintrc.json` beside
+`eslint.config.js`; a `code-analysis.yml` that is still pending; and a `dependabot.yml` harmonised
+with the others.
+
+### le-cercle
+
+oxlint/oxfmt/oxvelte; TypeScript 7, which here means fixing the `^6.0.3` caret recorded in section 9;
+and Dependabot, which on GitLab is not the same product as on GitHub.
