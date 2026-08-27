@@ -105,6 +105,20 @@ explicit-type-then-mime fallback:
   and its error box must therefore be in the flow, not `absolute` — a parent with no reserved
   height renders an absolutely-positioned child as nothing, including the decrypt-failure state.
 
+**The reservation also carries a CEILING, and that is the half that keeps a feed scrollable.** The
+ratio is clamped to `[0.25, 4]`, which still allows a box four times the card's width - about two
+phone screens of a single picture - so `mediaAspectStyle` emits `max-height: var(--media-max-height)`
+(80svh, defined once in `app.css`) alongside the `aspect-ratio`. Past the ceiling the media is
+CROPPED rather than shrunk, anchored to the top (`object-cover object-top`): a screenshot or an
+infographic says what it has to say at the top, and a centre crop shows the part that carries
+nothing. The full frame is one tap away in the viewer, which is what makes cropping right here.
+
+Two unit choices in that token are deliberate and neither is cosmetic: `svh` rather than `dvh`, so a
+collapsing mobile URL bar does not re-lay-out the feed under the reader's finger; and NOT
+`--app-viewport-height`, which tracks the soft keyboard - a picture must not resize because someone
+started typing. Because the ceiling lives in the shared helper, the feed, the gallery cells, a
+comment image and a chat bubble are bounded by one decision instead of four local patches.
+
 The gallery lightbox holds `lightboxMedia`, which is the attachment list **compacted** to
 image/video. A grid position is therefore not a lightbox index: each cell resolves its own index
 via `indexOf`, and `-1` doubles as "not lightboxable". Passing the grid index would let one

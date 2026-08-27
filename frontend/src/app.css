@@ -75,6 +75,15 @@
   --banner-bg: color-mix(in srgb, var(--cn-surface) 92%, var(--cn-dark) 8%);
   --banner-warn-bg: color-mix(in srgb, var(--cn-surface) 84%, var(--amber-warn) 16%);
   --app-viewport-height: 100dvh;
+  /* Ceiling for any media box that reserves an aspect ratio in a scrolling surface - the feed, a
+     comment, a chat bubble. Without it a tall picture is as tall as it likes: the ratio clamp alone
+     allows FOUR TIMES the card width, some two screens on a phone, so one image pushes the rest of
+     the feed out of reach. Past the ceiling the picture is cropped rather than shrunk, and tapping
+     it opens the full frame in the viewer.
+     `svh` and not `dvh`: the SMALL viewport is the stable one, so the cap does not re-layout the
+     feed every time the mobile URL bar collapses. Deliberately NOT `--app-viewport-height`, which
+     tracks the soft keyboard - a picture must not resize because someone started typing. */
+  --media-max-height: 80svh;
 }
 
 :root[data-theme='dark'] {

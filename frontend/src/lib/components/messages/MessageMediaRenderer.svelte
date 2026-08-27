@@ -119,7 +119,7 @@
             <img
               src={blobUrl}
               alt={mediaRef.fileName ?? m.msg_shared_image_alt()}
-              class="h-full w-full cursor-zoom-in object-cover transition-transform duration-500 md:group-hover/media:scale-[1.02]"
+              class="h-full w-full cursor-zoom-in object-cover object-top transition-transform duration-500 md:group-hover/media:scale-[1.02]"
             />
           </button>
 

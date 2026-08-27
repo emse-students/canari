@@ -170,6 +170,20 @@ which is also where every release up to and including v0.13.1 now lives.
   `ConnectivityStore` logs before it emits, which makes that line the listener actually running -
   the discriminator was there all along and nothing was collecting it.
 
+### Changed
+
+- **A tall picture no longer owns the whole feed.** The only bound on a post's media box was the
+  aspect clamp - `MIN_ASPECT = 0.25`, so four times the card's width, roughly two phone screens of
+  one image - and past it the picture was cropped from its CENTRE, which on an infographic or a
+  screenshot is the half that says nothing. Every box that reserves a ratio now also carries a
+  ceiling, `--media-max-height` (80svh), and the crop anchors to the TOP. The unit is `svh` and not
+  `dvh` so a collapsing mobile URL bar does not re-lay-out the feed, and deliberately not
+  `--app-viewport-height`, which tracks the soft keyboard: a picture must not resize because
+  someone started typing. It rides on `mediaAspectStyle`, so the feed, the gallery cells, a comment
+  and a chat bubble are bounded by the same decision rather than by four local patches. The whole
+  frame stays one tap away in the viewer, which is what makes cropping the right answer here rather
+  than shrinking.
+
 ### Added
 
 - **A price grid cell can say the combination DOES NOT EXIST.** Some configurations are not sold:

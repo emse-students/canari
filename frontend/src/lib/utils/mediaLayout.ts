@@ -22,14 +22,25 @@ export function normalizedAspectRatio(
   return Math.min(Math.max(ratio, MIN_ASPECT), MAX_ASPECT);
 }
 
-/** CSS `aspect-ratio` value for inline styles (e.g. skeleton containers). */
+/**
+ * Inline style for a container reserving space for media: its shape, and its ceiling.
+ *
+ * The two belong together and every caller wants both. The ratio alone bounds a picture at four
+ * times the container's width (`MIN_ASPECT`), which on a phone is about two screens of one image -
+ * so the ceiling is what actually keeps a feed scrollable, and it is expressed against the viewport
+ * rather than the card because that is the thing the reader has to scroll past. `--media-max-height`
+ * carries it and the reasoning; the literal here is only what applies if the stylesheet is missing.
+ *
+ * Past the ceiling the media is CROPPED, not shrunk - the box keeps the full width and the picture
+ * keeps its scale, and the whole frame is one tap away in the viewer.
+ */
 export function mediaAspectStyle(
   width?: number,
   height?: number,
   fallback = DEFAULT_MEDIA_ASPECT
 ): string {
   const ratio = normalizedAspectRatio(width, height, fallback);
-  return `aspect-ratio: ${ratio}`;
+  return `aspect-ratio: ${ratio}; max-height: var(--media-max-height, 80svh)`;
 }
 
 /**

@@ -251,7 +251,7 @@
         <img
           src={blobUrl}
           alt={media.fileName ?? m.post_image_alt()}
-          class="h-full w-full object-cover transition-transform duration-700 group-hover/img:scale-105"
+          class="h-full w-full object-cover object-top transition-transform duration-700 group-hover/img:scale-105"
           loading="lazy"
         />
       </button>
