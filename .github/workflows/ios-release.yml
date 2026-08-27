@@ -405,6 +405,13 @@ jobs:
         # workflow_dispatch is the only run that resolves this file fresh. Revert to
         # `workflow_run` only once v0.14.5 is confirmed on TestFlight.
         if: github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch'
+        # TEMPORARY: under workflow_dispatch, github.ref is the branch (refs/heads/main),
+        # not the release tag, and this action's lookup for that ref 403s
+        # ("Resource not accessible by integration") even after it already found the
+        # release by tag_name - it still blocked the next step (TestFlight) from running.
+        # Non-blocking for this recovery run; TestFlight is what actually matters. Revert
+        # alongside the condition above.
+        continue-on-error: true
         with:
           tag_name: v${{ steps.release_tag.outputs.version }}
           fail_on_unmatched_files: true
