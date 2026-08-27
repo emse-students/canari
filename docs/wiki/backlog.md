@@ -68,6 +68,38 @@ entry here or closes the question.
 
 ## Measurements owed
 
+### P1 - does an iOS session survive a restart at all? The cookie it needs is third-party (found 2026-08-27)
+
+**Not a defect yet - a hypothesis with a one-minute test, and a fix that would change an architectural
+contract, which is why it is not being written blind.** The mechanism is on
+[sessions](sessions.md#third-party-cookies-and-the-shell-that-is-not-the-backend) and is not restated
+here: `canari_refresh` is first-party on the web and THIRD-party in every native build, Android opts
+back in explicitly, and WKWebView blocks the class through ITP with no public API to lift it.
+
+**Why it is P1 if it bites, and why it would not have been noticed on the run that found the CORS
+defect.** The access token comes back in the response BODY, so the sign-in succeeds and the app works
+for that entire session. Only the next COLD START pays: the refresh arrives with no cookie and can only
+401. The symptom is "iOS logs me out every time I close it", separated from its cause by a restart.
+
+**The measurement, in this order:**
+
+1. On the iPhone: sign in, force-quit, reopen. Signed in -> the jar keeps the cookie, this item closes
+   with a line on the parity table. Back at the login screen -> read the log.
+2. `ssh canari 'docker logs --since 15m infrastructure-core-service-1 | grep -a "Refresh refused"'`.
+   The branch now names the two causes apart: it prints the cookie names it DID receive plus the origin
+   and the user agent, and warns rather than debugs when the origin is a native shell. `cookies=[]` from
+   `tauri://localhost` is the ITP verdict; any other cookie present means the jar works and the fault is
+   elsewhere.
+
+**What a fix would cost, if it is needed.** The only clean option is to stop carrying the refresh
+credential in a cookie on native and put it in the platform keystore
+(`patches/tauri-plugin-keystore` already exists and is already used), which changes the contract
+CLAUDE.md states as "Refresh token in an HttpOnly cookie" - so it needs the user's decision, not an
+edit. Two options are already CLOSED: routing the call through `tauri-plugin-http` is refused in
+`fetchRouting.ts` (its cookie jar is isolated and can deadlock, which is why `credentials: 'include'`
+is deliberately kept on the WebView's own fetch), and there is no iOS equivalent of
+`setAcceptThirdPartyCookies` to call.
+
 ### P3 - chat-delivery boots with a KafkaJS partitioner warning nobody has decided about (seen 2026-08-27)
 
 Every boot of `chat-delivery-service` prints, at WARN:

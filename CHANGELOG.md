@@ -148,6 +148,32 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **Signing in on iOS was impossible, and the reason was a server's CORS allowlist.** On an iPhone the
+  login ran the whole way - Authentik accepted the credentials, the deep link brought the app back, the
+  authorization code and the CSRF state both arrived - and then the token exchange died with
+  "Echec de la connexion / Load failed". The four NestJS services each spelt their allowed origins
+  inline, and each named `http://tauri.localhost`: the ANDROID WebView origin. iOS sends
+  `tauri://localhost`, which matched nothing, and the Rust chat-gateway's `ALLOW_ORIGIN` carried no
+  Tauri origin at all. Two things then hid the cause. A `cors.origin` callback answering `false` omits
+  the headers but does not answer the `OPTIONS`, so the preflight fell through to a router with no
+  handler and prod logged `"OPTIONS /api/auth/oidc/callback" 404` - a 404 on a path that exists,
+  attributed to no origin. And WebKit reports every such refusal to JavaScript as a bare
+  `TypeError: Load failed`, which is why it was reported as a broken deep link. The list, the predicate
+  and the delegate now live in one tested `cors-origins.ts` per service, naming all three platform
+  origins with the platform written beside each; a refusal logs the origin it refused, once per
+  distinct value. A denial stays `callback(null, false)` and never an `Error`, which would turn a
+  refused preflight into a 500 on the request - an incident this repo has already had.
+
+- **A refresh with no cookie said nothing at all.** `POST /api/auth/refresh` cleared the cookie and
+  threw a 401 without logging, and that 401 has two causes it cannot distinguish: a person who really
+  is signed out, and a WebView jar that refused to STORE a third-party `Set-Cookie` - which is what
+  the refresh cookie is in a native build, the document being `tauri://localhost` and the cookie
+  `canari-emse.fr`. Android opts back in explicitly (`setAcceptThirdPartyCookies`); WKWebView blocks it
+  too and exposes no equivalent API, so iOS is the platform where that branch is expected to lie about
+  why. The branch now prints the cookie names it did receive, the origin and the user agent, at `warn`
+  when the origin is one of the native shells and `debug` otherwise, because every anonymous first page
+  load legitimately reaches it once.
+
 - **The test rig's device-purge tool could have deleted the phone.** `purge-devices.mjs` took a
   `--keep` DENYLIST - a substring of the row text that had to survive - and it identified a row by
   walking up to `/Appareil\s*\d/`, a string the product has never rendered. Every row therefore read

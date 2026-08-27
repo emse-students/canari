@@ -26,6 +26,7 @@ import {
   SESSION_TTL_SECONDS,
   type SessionClientInfo,
 } from './auth-sessions.service';
+import { TAURI_WEBVIEW_ORIGINS } from '../cors-origins';
 
 interface OidcCallbackDto {
   code: string;
@@ -362,6 +363,29 @@ export class AuthController {
   ): Promise<{ access_token: string }> {
     const refresh_token = req.cookies?.[REFRESH_COOKIE] as string | undefined;
     if (!refresh_token) {
+      // THIS 401 HAS TWO CAUSES AND CANNOT ITSELF TELL THEM APART, so the line carries the
+      // evidence that does. A person who really is signed out sends no cookie - and so does a
+      // WebView whose jar refused to STORE the `Set-Cookie`, because a native shell's refresh
+      // cookie is third-party by construction: the document is `tauri://localhost`, the cookie is
+      // `canari-emse.fr`. Android blocks that by default and needs one explicit opt-in
+      // (`setAcceptThirdPartyCookies`, `MainActivity.kt`); WKWebView blocks it too and exposes NO
+      // equivalent API, so iOS is the platform where this branch is expected to lie about why.
+      // The cookie LIST is the discriminator: a client that holds a session still presents its
+      // other cookies, a jar that dropped the whole third-party set presents none.
+      const cookieNames = Object.keys((req.cookies ?? {}) as Record<string, unknown>);
+      const origin = req.get('origin') ?? 'none';
+      const detail =
+        `no ${REFRESH_COOKIE} cookie. cookies=[${cookieNames.join(',')}] origin=${origin} ` +
+        `ua=${req.get('user-agent') ?? 'none'}`;
+      if (TAURI_WEBVIEW_ORIGINS.includes(origin as (typeof TAURI_WEBVIEW_ORIGINS)[number])) {
+        // A native shell reaching here is not an anonymous visitor: the app only asks for a
+        // refresh once it believes it has a session, so the cookie was expected to be there.
+        this.logger.warn(`Refresh refused for the NATIVE app: ${detail}`);
+      } else {
+        // Every anonymous first page load asks once and legitimately has nothing. Debug, or the
+        // log becomes a census of visitors and stops being read at all.
+        this.logger.debug(`Refresh refused: ${detail}`);
+      }
       this.clearRefreshCookie(req, res);
       throw new UnauthorizedException('No refresh token - please log in again');
     }

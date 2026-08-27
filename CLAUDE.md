@@ -319,6 +319,22 @@ now REACH App Store Connect, TestFlight is the BETA channel - nothing yet shows 
 ordinary iOS user. Ship the client, verify it arrived, THEN raise
 ([legacy-compatibility](docs/wiki/legacy-compatibility.md)).
 
+**iOS RAN ON REAL HARDWARE for the first time on 2026-08-27** (iPhone, iOS 18.7, against prod) and
+found a defect no gate could: **signing in was impossible, because the four Nest CORS allowlists named
+the ANDROID WebView origin only.** Fixed - one tested `cors-origins.ts` per service plus the gateway's
+`ALLOW_ORIGIN` - and the story is in `CHANGELOG.md`, the mechanism on
+[mobile](docs/wiki/frontend/mobile.md#the-ios-login-that-died-in-a-cors-allowlist), four rules in
+[durable-rules](docs/wiki/durable-rules.md#mobile-and-native); none is restated here. **Everything the
+native project owns WORKED** - deep link, `ASWebAuthenticationSession`, the `UIApplication.shared.open`
+self-reinvocation, `/auth/callback` - so mobile.md's "iOS has never run a check on hardware" is gone.
+**A FULL iOS/Android PARITY AUDIT ran before the re-release** and everything else it read is symmetric
+(push payloads, WS auth, entitlements, AASA, NSE, App Group, keychain, `CFBundleURLTypes`, no
+platform-gated tauri command). It left exactly ONE open question, and it is P1 if it bites: **does an
+iOS session survive a restart?** The refresh cookie is THIRD-party in a native shell, Android opts in
+explicitly and WKWebView has no such API - so the 401 branch now names its two causes apart in the prod
+log, and the answer is one minute on the phone (sign in, force-quit, reopen). Predicate, log command
+and the contract a fix would change: [backlog](docs/wiki/backlog.md#measurements-owed).
+
 ### CANARI - the test campaign
 
 Four files, four jobs, all in WHERE THINGS LIVE above: board = state, campaign page = design,

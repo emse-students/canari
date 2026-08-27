@@ -1,44 +1,17 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
+import { buildAllowedOrigins, corsOriginDelegate } from './cors-origins';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.setGlobalPrefix('api');
 
-  const frontendUrl = (process.env.FRONTEND_URL || '').replace(/\/+$/, '');
-  const allowedOrigins = new Set<string>(['http://tauri.localhost', 'https://tauri.localhost']);
-  if (frontendUrl) allowedOrigins.add(frontendUrl);
+  // Allowed origins: every Tauri WebView origin (one per platform), the deployed frontend, and
+  // http(s) loopback on any port for dev. The list and the predicate live in `cors-origins.ts`.
+  const allowedOrigins = buildAllowedOrigins(process.env.FRONTEND_URL);
   app.enableCors({
-    origin: (
-      origin: string | undefined,
-      callback: (err: Error | null, allow?: boolean) => void
-    ) => {
-      if (!origin) {
-        callback(null, true);
-        return;
-      }
-      if (allowedOrigins.has(origin)) {
-        callback(null, true);
-        return;
-      }
-      if (/^https?:\/\/localhost(:\d+)?$/.test(origin)) {
-        callback(null, true);
-        return;
-      }
-      if (/^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(origin)) {
-        callback(null, true);
-        return;
-      }
-      // Deny CORS for unknown origins WITHOUT erroring. An Error here is not a
-      // refusal, it is a THROW: Nest turns it into a 500 for the whole request,
-      // even a public GET that needs no CORS at all - measured on prod
-      // 2026-08-19, where GET /api/media/public/:id answered 500 to any request
-      // carrying an Origin the allowlist did not know. `false` omits the CORS
-      // headers instead, which is what actually blocks a credentialed browser
-      // call while leaving the response itself correct for everything else.
-      callback(null, false);
-    },
+    origin: corsOriginDelegate(allowedOrigins),
     credentials: true,
   });
 

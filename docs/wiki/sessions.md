@@ -100,6 +100,43 @@ and the session lived. Visibility: revoking that session from another client's "
 panel and cold-starting the phone put it on `/login`, with `session dead -> logout` and
 `session expired on GET … - no anonymous retry` in its log.
 
+## Third-party cookies, and the shell that is not the backend
+
+The refresh cookie is FIRST-party on the web and THIRD-party in every native build, and nothing in
+the code says so - the asymmetry lives entirely in what the browser considers the document's origin.
+On `canari-emse.fr` the page and the API share a host, so `canari_refresh` is an ordinary same-site
+cookie. In a Tauri build the document is `tauri://localhost` (iOS, macOS, Linux) or
+`http://tauri.localhost` (Android, Windows) and the cookie belongs to `canari-emse.fr`: a
+cross-origin `Set-Cookie`, which is exactly the class every modern engine blocks by default.
+
+- **Android**: blocked by default and opted back in, in ONE line, with the reason written next to it -
+  `CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)` in
+  `MainActivity.onWebViewCreate` (`frontend/src-tauri/gen/android/app/src/main/java/fr/emse/canari/MainActivity.kt`).
+  This is why Android sessions survive a restart at all, and it is the counterpart to the flush above:
+  one line makes the jar ACCEPT the cookie, the other makes it KEEP it.
+- **iOS**: WKWebView applies the same block through ITP and exposes **no public API to lift it**. There
+  is no line to add, so there is nothing to audit - which is precisely how this stayed invisible while
+  the parity table above was being maintained.
+
+**What it costs if ITP does drop the cookie, and why login still looks fine.** The access token comes
+back in the response BODY and is kept in memory, so the sign-in the user just performed succeeds and
+the app works for that whole session. Only the NEXT cold start pays: `POST /api/auth/refresh` arrives
+with no cookie, and the server can only answer 401. The failure is therefore separated from its cause
+by an app restart, and presents as "it logs me out every time" rather than as anything about cookies.
+
+**The discriminator is logged, so the answer comes from prod rather than from a rebuild.** The 401 has
+two indistinguishable causes - a person who genuinely has no session, and a jar that refused the
+cookie - so the branch in `auth.controller.ts` (`@Post('refresh')`) prints the cookie NAMES it did
+receive, the `Origin` and the user agent, and raises the level to `warn` when that origin is one of
+the native shells, because a native client only asks for a refresh once it believes it has a session.
+A client holding a session still presents its other cookies; a jar that dropped the whole third-party
+set presents none.
+
+The general rule: **a cookie a native shell depends on is third-party by construction, and each
+platform decides that for itself.** So the question is never "does the server set the cookie" but
+"does THIS engine keep it", and the answer is a per-platform measurement - the log line above, then
+one minute on hardware: log in, force-quit, reopen.
+
 ## One session per device, enforced where the device becomes KNOWN
 
 A session and a device are two records of one physical thing, held by two services. Canari joins them

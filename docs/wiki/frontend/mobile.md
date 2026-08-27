@@ -940,13 +940,13 @@ uninstall and therefore that phone's identity and history.
 
 `KeyboardMediaBridge.kt` intercepts `InputConnection.commitContent` to handle GIF/sticker commits from the soft keyboard. Dispatches `canari-keyboard-media` DOM events picked up by `MainChatPage` → routed through the normal media pipeline.
 
-### OIDC login opens a dedicated in-app browser session (WP-OIDC-TAB-1, Android shipped and verified 2026-08-08; iOS built, NOT verified on hardware)
+### OIDC login opens a dedicated in-app browser session (WP-OIDC-TAB-1, Android shipped and verified 2026-08-08; iOS verified on hardware 2026-08-27)
 
 `startOidcLogin()` (`auth.ts`) used to open the Authentik login with `openUrl` from `tauri-plugin-opener` on every mobile platform - a plain `ACTION_VIEW` launch. On Android this left the browser tab behind after login: `openUrl` opens in a task with no relationship to the app's own, so once the `fr.emse.canari://callback` deep link brought the app back to the foreground, nothing on either side could close the tab it left sitting on Authentik's last page.
 
 The fix is `tauri-plugin-customtabs` (`frontend/src-tauri/plugins/tauri-plugin-customtabs/`), a mobile plugin (one command, `open_custom_tab`) that opens the URL via `androidx.browser.customtabs.CustomTabsIntent` on Android. A Custom Tab shares the **launching app's own task**, which is what lets the OS close it automatically the instant that task's activity resumes - confirmed live via `adb shell dumpsys activity activities`: the tab's `ActivityRecord` shared the app's task id right after `startOidcLogin()`, and was gone from that task's history entirely the moment the deep link returned. `auth.ts` now branches on `isMobileTauriRuntime()` for both platforms - iOS no longer keeps the plain `openUrl` launch.
 
-**iOS side (built, not yet run on a device or simulator - this repo has never done that for any iOS build, see the device-verification ladder in CLAUDE.md).** `ios/Sources/CustomTabsPlugin.swift` presents the same URL in an `ASWebAuthenticationSession` instead, following `patches/tauri-plugin-keystore`'s `ios/` structure exactly (`Package.swift`, `Sources/`, `@_cdecl("init_plugin_customtabs")`). The one thing that is NOT a straight mirror of Android and needs checking first on hardware: `ASWebAuthenticationSession` intercepts its `callbackURLScheme` redirect itself, bypassing the app's normal URL-opening delegate entirely - so it would never reach `tauri-plugin-deep-link`'s `onOpenUrl` listener the way Android's intent-filter callback does. The plugin works around this by re-opening the callback URL via `UIApplication.shared.open(_:)`: since `fr.emse.canari://` is this app's own registered scheme, that call is expected to route straight back into the same app-delegate path the Android deep link already uses, keeping `hooks.client.ts` and everything downstream of it (the `/auth/callback` exchange) unchanged and shared between platforms. This self-reinvocation is standard iOS behavior but unverified here specifically - it is the first thing to check once an iOS build actually runs.
+**iOS side (built, not yet run on a device or simulator - this repo has never done that for any iOS build, see the device-verification ladder in CLAUDE.md).** `ios/Sources/CustomTabsPlugin.swift` presents the same URL in an `ASWebAuthenticationSession` instead, following `patches/tauri-plugin-keystore`'s `ios/` structure exactly (`Package.swift`, `Sources/`, `@_cdecl("init_plugin_customtabs")`). The one thing that is NOT a straight mirror of Android and needs checking first on hardware: `ASWebAuthenticationSession` intercepts its `callbackURLScheme` redirect itself, bypassing the app's normal URL-opening delegate entirely - so it would never reach `tauri-plugin-deep-link`'s `onOpenUrl` listener the way Android's intent-filter callback does. The plugin works around this by re-opening the callback URL via `UIApplication.shared.open(_:)`: since `fr.emse.canari://` is this app's own registered scheme, that call is expected to route straight back into the same app-delegate path the Android deep link already uses, keeping `hooks.client.ts` and everything downstream of it (the `/auth/callback` exchange) unchanged and shared between platforms. **VERIFIED ON HARDWARE 2026-08-27** (iPhone, iOS 18.7, against production): the `ASWebAuthenticationSession` presented, the redirect was intercepted, the self-reinvocation routed back into the app, and `/auth/callback` ran - the login failed one step later, in a server's CORS allowlist, which is a different defect entirely ([below](#the-ios-login-that-died-in-a-cors-allowlist)). Nothing in this plugin needed changing.
 
 **Why this needed a real plugin and not a few lines of Rust JNI.** This app already has a working Rust → Kotlin JNI call (`flush_webview_cookies` in `commands/cookies.rs`, calling `CookieManager.getInstance()`/`.flush()`), and its own comment explains exactly why that pattern does not generalise: a JNI-attached native thread has no Java frames on its stack, so `FindClass` only reaches boot-classpath **framework** classes. `android.webkit.CookieManager` is one; `androidx.browser.customtabs.CustomTabsIntent` (bundled into the APK's own dex, like `MainActivity` itself) is not, and would fail to resolve the same way calling into `MainActivity` directly would. Tauri's own plugin-invocation mechanism (`@TauriPlugin`, `Plugin(activity)`) runs Kotlin code with the correct classloader context for exactly this reason, which is why the fix is a full (if minimal) mobile plugin, following `patches/tauri-plugin-keystore`'s structure - `Cargo.toml`/`build.rs`/`src/mobile.rs` on the Rust side, `CustomTabsPlugin.kt` + a Gradle module on the Android side - rather than extending the raw-JNI pattern.
 
@@ -1219,6 +1219,8 @@ CONFIGURATION** — and every parity defect found since has been exactly that. A
 | `push_context.json` fields | Rust writer, three native readers | `pushContextFields.test.ts` |
 | FCM manifest entries | `AndroidManifest.xml` | `androidFcmManifest.test.ts` (Android-only by nature) |
 | Cookie-jar durability | `commands/cookies.rs` | Android-only **by API**, not by decision — iOS has no flush to call and has never been observed. `check P` |
+| Server CORS allowlist | `apps/*-service/src/cors-origins.ts`, `ALLOW_ORIGIN` in `cd.yml` | Named the Android origins ONLY. Broke iOS login outright - see below. One module per service now, with a test naming each platform's origin individually |
+| Third-party cookie acceptance | `MainActivity.kt` (Android), nothing on iOS | Android opts in explicitly; WKWebView has no equivalent API. [`sessions.md`](../sessions.md#third-party-cookies-and-the-shell-that-is-not-the-backend) |
 
 Two rules come out of that table, and they are the ones to apply before adding anything native:
 
@@ -1229,9 +1231,54 @@ Two rules come out of that table, and they are the ones to apply before adding a
   answer needs hardware, it becomes a lettered check in
   [`device-verification.md`](../device-verification.md) rather than a comment implying safety.
 
-**iOS has never run a single check on hardware**, so nothing below the test line is verified there.
-Until it can be, parity is maintained by construction — one shared file wherever the platforms can
-share one, and a test reading both trees wherever they cannot.
+**iOS ran on real hardware for the first time on 2026-08-27** (an iPhone on iOS 18.7, against
+production), and the first thing it found was the CORS defect below. Everything the native project
+owns worked on that run: the deep link, the `ASWebAuthenticationSession`, the self-reinvocation
+through `UIApplication.shared.open(_:)`, and the `/auth/callback` route the two platforms share. What
+did not work was owned by a server. Beyond that single flow nothing below the test line is verified on
+iOS, so parity is still maintained by construction - one shared file wherever the platforms can share
+one, and a test reading both trees wherever they cannot.
+
+### The iOS login that died in a CORS allowlist
+
+**Measured, prod, 2026-08-27 20:10:46 UTC.** The user signed in on an iPhone, Authentik accepted the
+credentials, the deep link brought the app back, and the app showed "Échec de la connexion / Load
+failed". nginx's access log named the whole defect in one line:
+
+```
+"OPTIONS /api/auth/oidc/callback HTTP/1.1" 404 89 "-" "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 ...)"
+```
+
+The four NestJS services each carried their own inline CORS allowlist, and each named
+`http://tauri.localhost` - the ANDROID WebView origin - and nothing else from the native side. iOS
+sends `Origin: tauri://localhost`, which matched nothing, so the delegate answered
+`callback(null, false)`. The Rust chat-gateway's `ALLOW_ORIGIN` had no Tauri origin at all.
+
+Three things compound into a defect that looks like a broken deep link:
+
+- **A denied preflight is a 404, not a 403.** `callback(null, false)` only omits the CORS headers; it
+  does not answer the request. The `OPTIONS` then falls through to a router with no `OPTIONS` handler,
+  which 404s. Nothing anywhere reports "origin refused".
+- **WebKit tells JavaScript nothing.** Any CORS refusal surfaces as a bare `TypeError: Load failed` -
+  no status, no origin, no reason. That string was the entire diagnostic the app had, and it is why the
+  report arrived as "the deep link does not work".
+- **The allowlist did not read as mobile code.** It sat in four `main.ts` bootstraps, so a parity audit
+  reading the native tree could not see it, twice: the surface is configuration, and it is not even in
+  the frontend.
+
+**The fix, and what now prevents the next platform from being forgotten.** `cors-origins.ts` (one
+copy per service, deliberately duplicated - there is no shared TS package) owns the list, the
+predicate and the delegate. `TAURI_WEBVIEW_ORIGINS` holds all three platform origins with the platform
+written beside each, and `cors-origins.spec.ts` asserts each one BY NAME plus the list's length,
+because a test that loops over the list under test passes just as happily when a platform is deleted
+from it. A refusal now logs the origin once, budget-capped, at a level that accuses. A denial stays
+`callback(null, false)` and is never `callback(new Error(...))`: that turns a refused preflight into a
+500 on the request itself, which is a separate incident this repo already had (prod 2026-08-19, on
+`GET /api/media/public/:id`).
+
+Rules, in [`durable-rules.md`](../durable-rules.md#mobile-and-native): a server's origin allowlist is a
+fact about its CLIENTS, and a Tauri client has one origin per platform; and platform parity is not a
+property of the native project.
 
 ## CI/CD
 
