@@ -248,10 +248,16 @@ done in the same commit that swapped its toolchain.
 **Guardrails, so nothing is "finished" by undoing a measurement:** MiGallery's RUNTIME stays node
 (better-sqlite3 segfaults bun 1.4.0, and bun once OOM-killed that prod); Portail-etu's
 `.bun-version` stays 1.3.8 (its host cannot start >= 1.3.9, and 1.4.0's lockfile v2 kills its
-Dependabot); le-cercle's toolchain is **merge request !5**, its ReDoS fix already on `main` by the
-user's decision - **and !5's own pipeline has never been READ from here**, `glab` being
-installed but tokenless (gitlab.emse.fr wants a PAT; the remote is SSH, so nothing is
-reusable). Every gate ran green locally, which is not the same statement. Four rules came out of this chantier, all in
+Dependabot); le-cercle's toolchain is **MERGED (!5)**, its ReDoS fix already on `main` by the user's
+decision. **Its pipeline had failed three times while this file called it green**, and
+reading it needed `glab`, now installed and authenticated against gitlab.emse.fr - **run
+it from inside the repo, or `glab api` resolves the host as gitlab.com and answers 404.**
+The cause was never the code: the production host was out of disk, fixed as **!6**, also
+merged and verified on a real deploy. Two rules came out of it, both in
+[durable-rules](docs/wiki/durable-rules.md#shared-gotchas), and both apply to EVERY repo
+here, since all five deploy onto a runner that is the production host: **a cache rewritten
+every run cannot be bounded by a clock**, and **image sizes are not additive** - the
+`RECLAIMABLE` column is the only one worth reading. Four rules came out of this chantier, all in
 [durable-rules](docs/wiki/durable-rules.md): oxvelte pinned by sha, not branch; a guard restating
 what the tool enforces goes stale; **dropping a `--config` flag does not remove the config**; and
 **the executable bit is metadata Windows drops silently**, which cost Portail-etu a pipeline and was

@@ -717,6 +717,26 @@ Environment and tooling traps that belong to no one subsystem. Each cost a run.
   hides this until the day it is replaced. **It also formats code inside markdown fences**: a `ts`
   block demonstrating what oxfmt does to a type gets rewritten into the form the prose says it
   replaces. Fence such an example `text`.
+- **A CACHE REWRITTEN ON EVERY RUN CANNOT BE BOUNDED BY A CLOCK, AND THE FILTER THAT TRIES MATCHES
+  NOTHING FOREVER.** le-cercle's deploy had pruned on every run since its cutover with
+  `docker builder prune --filter until=168h`; all 38 cache records were younger than a week, so it
+  reclaimed 0 B every week until the runner died `ENOSPC` mid-`bun install` with 489 MB left of
+  7.8 GB. Its sibling line, `docker image prune -f`, reclaimed 0 B too and for an unrelated reason -
+  it removes DANGLING images and that pipeline tags every build `le-cercle:<sha>`, so nothing there
+  is ever dangling. **Two prunes running on every deploy, both reclaiming nothing, for months.** The
+  bound has to be a SIZE (`--max-used-space`), and the tagged images need an allowlisted sweep that
+  keeps the rollbacks. Measured after the repair: **one deploy took the cache from 525 MB back to
+  1.49 GB**, which is the rate no clock was ever going to catch. [le-cercle
+  `docs/wiki/deployment.md`]
+- **IMAGE SIZES ARE NOT ADDITIVE, SO THE COLUMN THAT NAMES THE CULPRIT CAN BE OFF BY SIX TIMES.**
+  Fourteen `le-cercle:<sha>` images listed at ~250 MB each read as 2.9 GB of leak; untagging eleven
+  freed **486 MB**, because they share nearly every layer. The build cache - the SMALLER number in
+  `docker system df` - gave back 911 MB. **Read `RECLAIMABLE`, never the sum of `SIZE`**, and
+  re-measure `df` after each step rather than attributing the total to the thing you suspected.
+- **A CLEANUP RUN BY HAND PROVES NOTHING ABOUT THE NEXT RUN - EXECUTE THE FIX INSTEAD.** The host
+  above was unblocked by piping the exact `after_script` block being shipped at it, not by an
+  equivalent one-off command. A one-off that works leaves the shipped block still unproven, and the
+  disk refills before anyone finds out.
 - Bash-tool commit messages: a heredoc or `git commit -F file`, NOT a PowerShell here-string.
 - Backend lint needs `bun install` in the app dir (bare `oxlint` / `oxfmt` + repo-level configs).
 - The pre-commit hook sweeps the WHOLE frontend and re-stages - isolate unrelated dirty files first.

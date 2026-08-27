@@ -756,7 +756,7 @@ what it lists is a real backlog and nobody has ruled on it:
 The first three rows are correctness, not style. **Do not blanket-fix: `{@html}` and the two
 `parametres` warnings each need a judgement.**
 
-### le-cercle - DONE, awaiting review (2026-08-27)
+### le-cercle - DONE AND MERGED (2026-08-27)
 
 Two changes, and the repository's own `AGENTS.md` governs how each landed: it forbids committing to
 `main`, so nothing here followed Canari's rule.
@@ -801,6 +801,27 @@ this page keeps only what the ecosystem needs to know:
   `src/lib/server/parse.ts` with no importer, which only surfaced once the linter ran over the whole
   repository instead of `src`; and a Dockerfile still on the floating `oven/bun:1-alpine`, the exact
   tag that repository's own pipeline had been pinned away from a week earlier, on the same host.
+
+**!5 IS MERGED, AND ITS PIPELINE HAD TO BE READ BEFORE THAT COULD BE SAID.** Until 2026-08-27 this
+page claimed every gate was green on the strength of a local run; the actual pipeline had failed
+three times, and nobody here could see it because `glab` was not installed. Installed and
+authenticated against gitlab.emse.fr, it reported the cause in one call, and **the cause was not
+the code**: `ENOSPC: copying file oxlint.linux-x64-gnu.node` during `bun install`, on a production
+host down to 489 MB of a 7.8 GB disk. `gates:svelte` - the new job, the one carrying the executable-
+bit trap - passed on the first read. **A local gate and a pipeline are two different statements, and
+this repository is where that stopped being an abstraction.**
+
+**That disk is its own defect, merged as !6**, and it is worth reading even from here because every
+repository in this ecosystem deploys onto a self-hosted runner that is also the production host. The
+`deploy` job had pruned on every run since its cutover and **both of its lines reclaimed 0 B**: one
+removes DANGLING images while that pipeline tags every build `le-cercle:<sha>`, the other bounded a
+cache by a CLOCK that a per-deploy rewrite outruns. Fourteen images and 1.5 GB of build cache later,
+a merge request could not install its dependencies. Both rules are in
+[durable-rules](durable-rules.md#shared-gotchas), with the two measurements that mislead - image
+sizes are not additive (eleven images listed at 2.9 GB freed 486 MB) and the build cache, the
+smaller number in `docker system df`, was the bigger half. Verified on the deploy that followed the
+merge: the new block ran for real, reclaimed 839 MB, health check `{"status":"ok","schema":15}`,
+disk **489 MB -> 2.1 GB free**, cache holding at 435 MB under its 512 MB bound.
 
 What is left there: **Dependabot, which on GitLab is not the same product as on GitHub.** The
 security commit already added `bun audit` to the gates, which is the part that matters - the
