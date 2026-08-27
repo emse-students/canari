@@ -188,13 +188,13 @@ WebSocket frame / fetchPendingMessages
 
 ```bash
 cd frontend
-npm run wasm:build   # wasm-pack build mls-wasm --target web --out-dir ../src/lib/wasm
-npm run generate     # the same, plus the protobuf bindings
+bun run wasm:build   # wasm-pack build mls-wasm --target web --out-dir ../src/lib/wasm
+bun run generate     # the same, plus the protobuf bindings
 make install         # a fresh clone: dependencies, svelte-kit sync, then generate
 ```
 
 `make build-frontend` calls `generate` before `vite build`, so a full build never needs the step by
-hand. After a change to `frontend/mls-core/` or `frontend/mls-wasm/`, run `npm run wasm:build` before
+hand. After a change to `frontend/mls-core/` or `frontend/mls-wasm/`, run `bun run wasm:build` before
 testing the frontend - `svelte-check` and Vitest both import the generated bindings.
 
 ### Why it is not committed

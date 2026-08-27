@@ -1,4 +1,11 @@
 #!/usr/bin/env node
+/**
+ * Points git at the repository-root `.husky/` directory after an install.
+ *
+ * Run from `frontend`, but the hooks belong to the WHOLE monorepo: the root
+ * `.husky/pre-commit` decides per-area what to gate. This script therefore walks up to the git
+ * root and installs there, never into `frontend/`.
+ */
 import { execSync } from 'child_process';
 import { existsSync } from 'fs';
 import { dirname, join } from 'path';
@@ -20,14 +27,6 @@ function findGitRoot(startDir) {
   }
 }
 
-function tryExec(cmd, options = {}) {
-  try {
-    execSync(cmd, { stdio: 'inherit', shell: true, ...options });
-  } catch (e) {
-    // swallow errors to keep prepare script non-failing
-  }
-}
-
 const gitRoot = findGitRoot(cwd);
 
 if (!gitRoot || process.env.CI === 'true') {
@@ -36,8 +35,21 @@ if (!gitRoot || process.env.CI === 'true') {
 
 const target = join(gitRoot, '.husky');
 
-if (existsSync(binPath)) {
-  tryExec(`"${binPath}" "${target}"`, { cwd: gitRoot });
-} else {
-  tryExec(`npx husky "${target}"`, { cwd: gitRoot });
+// Not an error worth failing an install over: `bun install --production` legitimately leaves the
+// binary out. But it MUST say so - a hook silently not installed is a gate silently not running,
+// and this branch used to be an empty catch that left no trace at all.
+if (!existsSync(binPath)) {
+  console.warn(
+    `[install-husky] husky is not in ${binPath} - git hooks were NOT installed. ` +
+      `Run 'bun install' with dev dependencies from 'frontend' to arm them.`
+  );
+  process.exit(0);
+}
+
+try {
+  execSync(`"${binPath}" "${target}"`, { stdio: 'inherit', shell: true, cwd: gitRoot });
+} catch (error) {
+  console.warn(
+    `[install-husky] husky failed to install hooks into ${target} - git hooks are NOT armed: ${error.message}`
+  );
 }

@@ -895,3 +895,58 @@ Its half is otherwise closed. Two things are not:
   Rust services run their own binaries, as they always did.
 - `Dockerfile.frontend-ssr` onto `svelte-adapter-bun`, decided and not started. It must preserve
   the captured OG-tag baseline and be proven on prod.
+
+### The second sweep, 2026-08-27: eleven gaps the first pass left
+
+The migration half closed on 2026-08-27 and an audit run straight afterwards found eleven things
+still divergent across the five repositories. They are recorded here with their measurements
+because most of them were invisible to the check that would naturally be run for them.
+
+| # | Gap | Where it was | Verdict |
+| --- | --- | --- | --- |
+| 1 | oxfmt in three versions (0.59 / 0.64 / 0.65) | all five | **CLOSED** - `^0.65.0` everywhere, and the bump reformats NOTHING |
+| 2 | bun declared three times on Canari, two of them wrong | `frontend/package.json` | **CLOSED** - `packageManager` and `engines.bun` deleted |
+| 3 | Sky states the `bun-version-file` rule then sets `bun-version: latest` | `code-analysis.yml` | **CLOSED** - the job that did it is deleted, not fixed |
+| 4 | a dead `frontend/.husky/` running nvm and npm | Canari | **CLOSED** - deleted |
+| 5 | docs naming npm, ESLint, Prettier and `lucide-svelte` | Canari, 12 files | **CLOSED** |
+| 6 | two oxvelte shim dialects, bash and POSIX `sh` | Canari, MiGallery, Sky vs the rest | **CLOSED** - all five on the corrected `sh` pair |
+| 7 | three lint scopes (`src` / `src scripts` / `.`) | all five | **CLOSED** - `.` everywhere; format keeps its globs, see below |
+| 8 | in-range and out-of-range dependency lag | Canari, Sky, le-cercle | **CLOSED** for in-range; NestJS 11 -> 12 deliberately parked |
+| 9 | `configVersion: 0` lockfiles; an empty `catch` in the hook installer | Sky + four services; Canari | **catch CLOSED; configVersion CANNOT be closed** - see below |
+| 10 | MiGallery's runtime is node while Sky's is bun, on the same host | MiGallery | see [MiGallery](#migallery---the-package-manager-half-is-done-2026-08-27) |
+| 11 | five hand-written SVG icons instead of lucide | Portail-etu | see that repository's `docs/wiki/tooling.md` |
+
+**What the manifests could not tell you (gap 1).** Five packages in Canari declared oxlint as
+`^1.74.0` or `^1.80.0`. The LOCKFILES said three versions: 1.75.0 in chat-delivery, media and
+social, 1.80.0 in core-service and the frontend - all five running the same repo-level config, so
+a lint verdict depended on the directory you stood in. Fixing what the manifests showed would have
+left one of the three in place. The rule is in
+[durable-rules](durable-rules.md#shared-gotchas).
+
+**oxfmt 0.59 -> 0.65 is a no-op on this code**, measured rather than feared: 799 frontend files,
+303 service files, 267 MiGallery files, 114 Sky files, zero diffs. Worth having on record - a
+formatter major is the one bump that can rewrite a whole tree, and that fear is what let three
+versions coexist.
+
+**Why the lint scope moved to `.` and the format scope did not (gap 7).** Scope `src` had never
+read `frontend/scripts/`, and a clean run looks the same whether a directory is clean or absent.
+Probed: a file there with an unused variable, a `debugger` and an `eval` drew **0 diagnostics at
+`src` and 3 at `.`**. Every package lints `.` now. The formatter keeps explicit globs because
+`oxfmt -c ../../oxfmt.json --check .` inside a NestJS service tries to format `README.md`, reaches
+for `svelte/compiler` for its embedded code blocks and dies - installing svelte in a NestJS service
+to format its README is not a trade worth making.
+
+**`configVersion: 0` cannot be raised, and this is the reason (gap 9).** Six lockfiles carry it -
+Sky's and the four Canari services'. The only way to move it is to delete the file and reinstall,
+and **a `bun.lock` regenerated under bun 1.4.0 is written at `lockfileVersion: 2`**, which
+Dependabot cannot read and which `Guard the bun lockfile version` in `code-analysis.yml` rejects.
+`bun install --help` offers no version flag. So the two requirements recorded as INDEPENDENT -
+"bun 1.4.0 everywhere" and "lockfiles stay at v1" - are independent only for as long as no lockfile
+is ever regenerated. Measured on Sky (v1/`configVersion 0` -> v2/`configVersion 1`), then reverted;
+the in-range update it was carrying was reapplied with `bun update`, which preserves v1.
+
+**Parked, with its substance in [backlog](backlog.md): NestJS 11 -> 12.** All four services offer
+it, along with `@nestjs/config` 4 -> 12, `@nestjs/schedule` 6 -> 12, `@nestjs/axios` 4 -> 12,
+`ioredis` 5 -> 6 and `@types/uuid` 10 -> 11. That is a framework major across four deployed
+services, not a dependency bump, and it is not going into a commit whose subject is toolchain
+alignment.

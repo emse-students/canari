@@ -100,7 +100,7 @@ so a schema change needs the migration file to reach the server at all.
 
 ```bash
 cd apps/core-service
-npm run start:dev
+bun run start:dev
 ```
 
 Requires a running PostgreSQL instance, Authentik OIDC provider, and Stripe (optional, for payments).

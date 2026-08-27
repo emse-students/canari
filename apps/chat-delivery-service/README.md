@@ -86,7 +86,7 @@ Hourly and daily cron jobs:
 
 ```bash
 cd apps/chat-delivery-service
-npm run start:dev
+bun run start:dev
 ```
 
 Requires running PostgreSQL, Redis, and Firebase credentials.

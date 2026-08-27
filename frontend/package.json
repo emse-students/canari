@@ -21,8 +21,8 @@
     "check": "bun run paraglide:compile && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:strict": "bun run paraglide:compile && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --threshold warning",
     "check:watch": "bun run paraglide:compile && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-    "lint": "oxlint -c .oxlintrc.json src && bash ../scripts/run-oxvelte.sh lint --config oxvelte.config.json src",
-    "lint:fix": "oxlint -c .oxlintrc.json --fix src && bash ../scripts/run-oxvelte.sh lint --config oxvelte.config.json --fix src",
+    "lint": "oxlint -c .oxlintrc.json . && sh ../scripts/run-oxvelte.sh lint --config oxvelte.config.json src",
+    "lint:fix": "oxlint -c .oxlintrc.json --fix . && sh ../scripts/run-oxvelte.sh lint --config oxvelte.config.json --fix src",
     "format": "oxfmt -c ../oxfmt.json --write .",
     "format:check": "oxfmt -c ../oxfmt.json --check .",
     "sync": "svelte-kit sync",
@@ -47,7 +47,7 @@
     "@tauri-apps/plugin-dialog": "^2.7.2",
     "@tauri-apps/plugin-fs": "^2.5.1",
     "@tauri-apps/plugin-http": "^2.5.9",
-    "@tauri-apps/plugin-log": "2.8.0",
+    "@tauri-apps/plugin-log": "2.9.0",
     "@tauri-apps/plugin-notification": "^2.3.3",
     "@tauri-apps/plugin-opener": "^2.5.4",
     "@tauri-apps/plugin-sql": "^2.4.0",
@@ -70,17 +70,16 @@
     "@sveltejs/vite-plugin-svelte": "^7.3.0",
     "@tailwindcss/vite": "^4.3.3",
     "@tauri-apps/cli": "^2.11.4",
-    "@types/node": "^25.9.5",
+    "@types/node": "^26.4.0",
     "@types/qrcode": "^1.5.6",
     "@vitest/coverage-v8": "^4.1.11",
     "fake-indexeddb": "^6.2.5",
-    "happy-dom": "^20.11.6",
+    "happy-dom": "^20.11.10",
     "husky": "^9.1.7",
-    "jsdom": "^29.1.1",
-    "oxfmt": "^0.59.0",
+    "oxfmt": "^0.65.0",
     "oxlint": "^1.80.0",
-    "protobufjs": "^8.7.2",
-    "protobufjs-cli": "^2.6.2",
+    "protobufjs": "^8.8.0",
+    "protobufjs-cli": "^2.7.0",
     "sharp": "^0.35.4",
     "svelte": "^5.56.10",
     "svelte-check": "^4.7.6",
@@ -95,9 +94,5 @@
     "dompurify": "^3.4.14",
     "nanoid": "^3.3.18",
     "postcss": "^8.5.10"
-  },
-  "engines": {
-    "bun": ">=1.3.14 <1.4.0"
-  },
-  "packageManager": "bun@1.3.14"
+  }
 }

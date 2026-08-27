@@ -11,6 +11,60 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed
+
+- **Three different oxlint binaries linted this one repository, and the manifests said two.**
+  `apps/*/package.json` asked for `^1.74.0` and `frontend/package.json` for `^1.80.0`, but a caret
+  is a range and the lockfile is the pin: chat-delivery, media and social resolved **1.75.0** while
+  core-service and the frontend resolved **1.80.0** - all five running the same repo-level
+  `.oxlintrc.nest.json` / `.oxlintrc.json`. A lint verdict here depended on which directory you
+  stood in. All five are now `oxlint ^1.80.0` and `oxfmt ^0.65.0`, one version each, and the bump
+  is measured: **oxfmt 0.59 -> 0.65 reformatted nothing** - 799 frontend files, 303 service files,
+  zero diffs.
+
+- **The lint scope missed `frontend/scripts/` entirely.** `bun run lint` linted `src`, so the four
+  scripts that build the protobuf bindings, install the hooks and check bundle consistency were
+  read by nothing. Probed rather than assumed: a file in `frontend/scripts/` carrying an unused
+  variable, a `debugger` and an `eval` drew **0 diagnostics at scope `src` and 3 at scope `.`**.
+  Every package in the repo now lints `.`, the scope le-cercle and Portail-etu already used. The
+  formatter keeps its explicit globs, and that is not an oversight: **oxfmt at scope `.` inside a
+  NestJS service tries to format `README.md` and dies on `Cannot find module 'svelte/compiler'`**,
+  because the markdown formatter reaches for the Svelte parser for embedded code blocks. Installing
+  svelte in a NestJS service to format its README is not a trade worth making.
+
+- **`.bun-version` says 1.4.0 and `frontend/package.json` said `bun@1.3.14` - twice.** The CD
+  workflow calls `.bun-version` "the one place this repo names a bun"; it was the third. A
+  `packageManager` field pinned 1.3.14, and an `engines.bun` of `">=1.3.14 <1.4.0"` actively
+  EXCLUDED the version every pipeline installs. Nothing read either field - no workflow, no
+  Makefile target - so the contradiction had no symptom and no expiry. Both are deleted;
+  `.bun-version` is now true.
+
+- **The frontend carried a dead `.husky/` of its own.** `frontend/.husky/pre-commit` loaded nvm,
+  ran `npm run format`, `npm run lint` and `npx svelte-check`, and had not executed once since
+  `core.hooksPath` was pointed at the repository root: `frontend/scripts/install-husky.js` installs
+  into the ROOT `.husky`, which is the hook that actually runs and which speaks bun. Deleted. The
+  installer that pointed at it lost its empty `catch` in the same pass - a hook that fails to
+  install is a gate that silently stops running, and that branch left no trace at all. It now says
+  so on stderr, in both the missing-binary and the failed-install case, without failing an install
+  that legitimately has no dev dependencies.
+
+- **`jsdom` was a devDependency nothing loaded.** `vitest.config.ts` sets
+  `environment: 'happy-dom'`; the only three mentions of jsdom in the tree are comments in tests
+  describing behaviour they no longer run under. Removed rather than bumped to its new major.
+
+- **The oxvelte shim speaks POSIX `sh` now, in every repository.** `scripts/run-oxvelte.sh` and
+  `scripts/install-oxvelte.sh` were bash here and `sh` in le-cercle and Portail-etu, where they had
+  been corrected for two problems bash hid: a `rust:*-alpine` image ships no bash, and the
+  executable bit is metadata a Windows checkout drops. Both are the corrected file now, invoked as
+  `sh`, and `bun run lint` no longer needs a bash to run.
+
+- **Dependencies taken to their in-range latest** across the frontend and the four services -
+  `happy-dom`, `protobufjs`, `protobufjs-cli`, `firebase-admin`, `pg`, `undici`, `body-parser`,
+  `jest`, `ts-jest`, `sharp`, `uuid`, `axios`, `@types/node` (all five packages now on 26.4.0) -
+  plus `@tauri-apps/plugin-log` 2.8.0 -> 2.9.0, whose Rust side is `tauri-plugin-log = "2"` and
+  needed no move. **NestJS 11 -> 12 is available and deliberately not taken here**: four services,
+  ten packages and a framework major is a work package, not a bump ([backlog](docs/wiki/backlog.md)).
+
 ### Fixed
 
 - **Every photo and every logo on the Carte de la Vie Asso was missing on mobile, and nothing said

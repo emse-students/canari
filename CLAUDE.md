@@ -42,7 +42,7 @@
 - WORK ON `main`. No feature branches, even if a brief says otherwise. Commit directly.
 - NO FALLBACKS: never add a fallback path. Diagnose why the primary path failed and fix it there.
 - FIX, NEVER DEFER: a warning or failure you meet is yours, whether or not you caused it. "Pre-existing" is not a disposition.
-- FACE THE BLOCKAGE: fix the cause of a failing hook (`prettier --write`), never stash or bypass it.
+- FACE THE BLOCKAGE: fix the cause of a failing hook (`bun run format`), never stash or bypass it.
 - STATE PRUNING: when updating SESSION STATE, DELETE completed work outright. Its rule goes to `durable-rules`, its story to `CHANGELOG.md`, its mechanism to the wiki page that entry points at. **Do not reconstruct shipped work here.**
 - CLAUDE.md HYGIENE: capped at ~250 lines on purpose, and it is an INDEX first. A rule needing a paragraph belongs in `durable-rules`; a story in `CHANGELOG.md`; a measurement on the topical wiki page. If this file grows, something belongs somewhere else.
 - WORKFLOW CYCLE: Plan -> Ask if uncertain -> Execute (surgical) -> Test -> commit -> update SESSION STATE -> STOP.
@@ -60,7 +60,7 @@
 - Nginx: single public entry point. Source of truth is `infrastructure/local/Dockerfile.frontend`.
 - MLS (RFC 9420): all encryption in WASM. Server stores ciphertexts. NEVER modify keys manually.
 - Build: `frontend/src/lib/wasm/` and `src/lib/proto/canari.{js,d.ts}` are GENERATED and NOT in git.
-  `cd frontend && npm run generate` after a structural change; every pipeline builds them itself
+  `cd frontend && bun run generate` after a structural change; every pipeline builds them itself
   ([mls-wasm](docs/wiki/frontend/mls-wasm.md#why-it-is-not-committed)).
 - Auth: access tokens in memory ONLY (never localStorage). Refresh token in an HttpOnly cookie. WS auth via `canari_ws_token`.
 - Media: the client generates the CEK (AES-256-GCM) before upload. The backend sees opaque blobs.
@@ -74,15 +74,15 @@
 - Language: code, comments, docs and dev-facing strings MUST be English. User-visible strings use Paraglide (`messages/fr.json`, `en.json`) - no inline literals, ALWAYS, even in a plain `.ts` util, and even when a nearby call site already has raw strings.
 - Punctuation: ASCII (`'`, `"`, `-`) everywhere; escape quotes in code. Keep French accents ONLY in localized strings and French comments.
 - Tests: changing logic requires changing the associated test.
-- UI: single source of truth is `src/app.css` (tokens, `--radius-*`). `.btn-glass` with modifiers. Dark-first glassmorphism. No raw hex/px. `lucide-svelte` only.
+- UI: single source of truth is `src/app.css` (tokens, `--radius-*`). `.btn-glass` with modifiers. Dark-first glassmorphism. No raw hex/px. `@lucide/svelte` only (NOT `lucide-svelte`, the old package name - both resolve).
 
 ## **KEY COMMANDS**
 
-- Package manager: frontend uses bun (committed `bun.lock`, CI `--frozen-lockfile`); the Makefile shells out to npm. Prefer bun locally.
+- Package manager: bun everywhere - frontend and the four NestJS apps each commit a `bun.lock`, CI installs `--frozen-lockfile`, the Makefile calls bun. **`.bun-version` is the ONE place this repo names a bun version.** No `packageManager` field, no `engines.bun`, no npm.
 - Setup/dev: `make install`, `make run-services`, `cd frontend && bun run dev`.
 - Tests: `make test`, `make test-frontend`, `cargo test`.
 - Frontend gates before every commit: `bun run check` (0 errors), `bun run lint`, `bun run format`. Rust >= 1.97. `cargo clippy` for Rust crates. `make run-ci` for the full local pipeline.
-- **NOTHING IN THIS REPO IS FORMATTED BY PRETTIER.** Everything is `oxfmt` (`oxfmt.json`) + `oxlint`. A bare `npx prettier --write` finds NO config, silently applies its own defaults (double quotes, 80 cols) and rewrites whole files - it did, and shipped. Use the package's own `format` / `lint` script, always. `bun run lint` needs bash (the oxvelte shim), so run it through the Bash tool.
+- **NOTHING IN THIS REPO IS FORMATTED BY PRETTIER.** Everything is `oxfmt` (`oxfmt.json`) + `oxlint`. A bare `npx prettier --write` finds NO config, silently applies its own defaults (double quotes, 80 cols) and rewrites whole files - it did, and shipped. Use the package's own `format` / `lint` script, always. `bun run lint` shells out to `sh` (the oxvelte shim), so run it through the Bash tool.
 
 ## **THE RULES THAT APPLY TO EVERY TASK**
 
@@ -232,10 +232,12 @@ measurement and every per-repo state is on
 [ecosystem-convergence](docs/wiki/ecosystem-convergence.md), the only copy - section 8 the
 package-manager half, section 9 the TypeScript 7 refusal, section 10 why Renovate is dropped.
 
-**NOT TO BE RELITIGATED:** bun 1.4.0 is the runtime everywhere it can be AND lockfiles stay at v1
-(independent facts; the invariant is enforced by `Guard the bun lockfile version` in
-`code-analysis.yml`, never by pinning a toolchain, because a pin never governed a contributor's own
-bun); **TS 7 IS REFUSED ON CANARI** and `dependabot.yml` ignores its majors, or
+**NOT TO BE RELITIGATED:** bun 1.4.0 is the runtime everywhere it can be AND lockfiles stay at v1 -
+**compatible only because a lockfile is never REGENERATED**, since bun 1.4.0 writes v2 from scratch
+and offers no flag for v1; `bun update` and `bun install` preserve what they find, which is the whole
+mechanism. So `configVersion: 0` on six lockfiles STAYS (raising it needs that regeneration). The
+invariant is enforced by `Guard the bun lockfile version` in `code-analysis.yml`, never by pinning a
+toolchain, because a pin never governed a contributor's own bun; **TS 7 IS REFUSED ON CANARI** and `dependabot.yml` ignores its majors, or
 `dependabot-auto-merge.yml` would land it unattended; **RENOVATE IS DROPPED**; Sky keeps Tailwind
 and migrates to v4 without preflight; `bun:sqlite` replaces better-sqlite3; the `image_url` deletion
 stands.
@@ -254,9 +256,15 @@ already measured as UNREACHABLE - the crate is not compiled, the HPKE backend bu
 Portail-etu): oxfmt/oxlint/oxvelte everywhere, bun everywhere it can be, TS 7 wherever it is not
 refused. **Every commit, measurement and per-repo state is section 11 of
 [ecosystem-convergence](docs/wiki/ecosystem-convergence.md), the only copy - add to its table
-rather than re-deriving it**, which is what made this paragraph wrong twice. What is left is
-JUDGEMENT, not migration, and it is three items: MiGallery's 88 lint warnings (section 11 names the
-two that must not be swept); the `resolve()` question three repos now park differently -
+rather than re-deriving it**, which is what made this paragraph wrong twice. **A SECOND SWEEP of
+2026-08-27 found ELEVEN residual gaps and closed nine** (its own table in section 11, with every
+measurement): one oxfmt and one oxlint version everywhere, one lint scope, one shim dialect, the
+dead `frontend/.husky/`, the three-way bun declaration, Sky's `bun-version: latest`, the stale npm
+/ ESLint / Prettier docs. **The two that are NOT closures: `configVersion: 0` on six lockfiles
+CANNOT be raised** (see above), and **NestJS 11 -> 12 is parked as a P2**
+([backlog](docs/wiki/backlog.md#tooling)) - a framework major across four deployed services is not
+a bump. What is left beyond it is JUDGEMENT: MiGallery's lint warnings (section 11 names the two
+that must not be swept); the `resolve()` question three repos park differently -
 [backlog](docs/wiki/backlog.md#tooling); and Tailwind class sorting on Portail-etu, deliberately not
 done in the same commit that swapped its toolchain.
 

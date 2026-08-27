@@ -60,7 +60,7 @@ Four consequences:
 
 ```bash
 cd apps/media-service
-npm run start:dev
+bun run start:dev
 ```
 
 Requires running PostgreSQL, Garage (S3 store), and configured credentials.

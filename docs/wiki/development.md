@@ -43,7 +43,7 @@ bun run dev
 
 | Target | What it does |
 |---|---|
-| `make build-frontend` | `npm run generate` (WASM + protobuf) → `npm run build` (SvelteKit) |
+| `make build-frontend` | `bun run generate` (WASM + protobuf) → `bun run build` (SvelteKit) |
 
 ### Services
 
@@ -217,7 +217,7 @@ wrong, and each one has already shipped a bug.
 
 - Backend apps call bare `oxlint`/`oxfmt` from their local `node_modules/.bin` with repo-level
   configs (`-c ../../oxfmt.json`, `-c ../../.oxlintrc.nest.json`). A hook failing with
-  `'oxlint' n'est pas reconnu` means `npm install` has not been run in that app directory.
+  `'oxlint' n'est pas reconnu` means `bun install` has not been run in that app directory.
 - Before pushing: `rm -rf apps/*/dist`, then `git pull --rebase --autostash origin main`. A stale
   `dist/` makes the pre-push hook replay compiled specs.
 - Commit signing is on globally over SSH (`gpg.format ssh`,

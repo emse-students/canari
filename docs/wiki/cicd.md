@@ -14,7 +14,7 @@ Runs on every push and pull request to `main`:
 | **TypeScript tests** | NestJS tests in `chat-delivery-service` |
 | **Frontend tests** | `vitest` in `frontend/` |
 | **Frontend lint** | `oxlint` + `oxvelte` + `oxfmt --check` + `svelte-check` (0 errors required) |
-| **Build** | the generated sources first - [`.github/actions/build-mls-wasm`](../../.github/actions/build-mls-wasm/action.yml) then `npm run proto:gen` - then `npm run build` |
+| **Build** | the generated sources first - [`.github/actions/build-mls-wasm`](../../.github/actions/build-mls-wasm/action.yml) then `bun run proto:gen` - then `bun run build` |
 
 **The generated sources are not in git** (`frontend/src/lib/wasm/`, `src/lib/proto/canari.{js,d.ts}`),
 so EVERY pipeline that ships a client builds them: `cd.yml`, `cd-dev.yml`, the three release

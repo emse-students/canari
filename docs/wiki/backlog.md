@@ -1731,6 +1731,36 @@ feature is therefore coherent with E2EE - it removes a password prompt, not a re
 
 ## Tooling
 
+### P2 - NestJS 11 -> 12 across all four services, plus five dependency majors under it
+
+Available and deliberately not taken in the toolchain-alignment sweep of 2026-08-27, because a
+framework major across four DEPLOYED services is not a dependency bump. Measured with
+`bun outdated` in each service directory that day:
+
+| Package | Current | Latest | Services affected |
+| --- | --- | --- | --- |
+| `@nestjs/common`, `@nestjs/core`, `@nestjs/platform-express`, `@nestjs/testing` | 11.2.3 | 12.0.1 | all four |
+| `@nestjs/typeorm` | 11.0.3 | 12.0.0 | chat-delivery, core, social |
+| `@nestjs/cli`, `@nestjs/schematics` | 11.0.24 / 11.1.0 | 12.0.0 | all four |
+| `@nestjs/config` | 4.0.4 | 12.0.0 | core, social |
+| `@nestjs/schedule` | 6.1.3 | 12.0.1 | social |
+| `@nestjs/axios` | 4.0.1 | 12.0.0 | social |
+| `@nestjs/microservices` | 11.2.3 | 12.0.1 | chat-delivery |
+| `ioredis` | 5.11.1 | 6.0.0 | chat-delivery, social |
+| `@types/uuid` | 10.0.0 | 11.0.0 | media |
+
+Note the three packages jumping from 4.x and 6.x straight to 12.0.0: `@nestjs/config`,
+`@nestjs/schedule` and `@nestjs/axios` have been renumbered onto the framework's own major, so
+those three diffs are version-scheme changes carrying an unknown amount of behaviour with them and
+must be read, not assumed.
+
+**What makes this a P2 rather than hygiene:** these four services hold the whole server side of the
+product, `ioredis` 6 is a client major on the path every message takes, and the suites that would
+catch a regression run under **node, never bun** - `admin-storage.controller.mls.spec.ts` fails
+under the bun runtime and is the reason `ci.yml` installs with bun and tests with node. Any attempt
+here re-runs all four suites under node (271 + 157 + 6 + 563 tests) and is proven on prod, not on a
+green build.
+
 ### P3 - 108 navigations bypass `resolve()`, and an inherited disable is the only reason nobody sees them
 
 **FOUND 2026-08-27, while measuring whether `oxvelte.config.json` could be deleted.** It cannot, on

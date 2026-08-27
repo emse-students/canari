@@ -63,7 +63,7 @@ Infrastructure: PostgreSQL · Redis · Kafka · Garage
 
 `make install` also installs `wasm-pack` (pinned, via `scripts/install-wasm-pack.sh`) and generates
 the MLS WASM bindings and the protobuf module. Both are build artefacts and are not in git, so a
-fresh clone needs that step before `bun run dev` - `cd frontend && npm run generate` re-runs it
+fresh clone needs that step before `bun run dev` - `cd frontend && bun run generate` re-runs it
 alone after a change to `mls-core/`, `mls-wasm/` or `libs/proto/canari.proto`.
 
 ### Setup
@@ -118,8 +118,9 @@ make reset-services    # Restart + wipe databases
 # Code quality (frontend)
 cd frontend
 bun run check          # svelte-check (0 errors required)
-npm run lint:fix       # ESLint auto-fix
-npm run format         # Prettier
+bun run lint           # oxlint + oxvelte
+bun run lint:fix       # the same, auto-fixing what can be
+bun run format         # oxfmt (NOT prettier - this repo has no prettier config)
 
 # Rust (from any crate)
 cargo clippy

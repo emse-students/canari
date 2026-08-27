@@ -376,7 +376,7 @@ jobs:
           key: oxvelte-7196779a-${{ runner.os }}
 
       - name: Install oxvelte
-        run: ./scripts/install-oxvelte.sh
+        run: sh ./scripts/install-oxvelte.sh
 
       - name: Install frontend dependencies
         working-directory: frontend

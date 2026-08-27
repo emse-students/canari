@@ -48,8 +48,9 @@ make install-hooks
 ```bash
 cd frontend
 bun run check          # svelte-check (0 errors required)
-npm run lint:fix       # ESLint auto-fix
-npm run format         # Prettier
+bun run lint           # oxlint + oxvelte
+bun run lint:fix       # the same, auto-fixing what can be
+bun run format         # oxfmt (NOT prettier - this repo has no prettier config)
 ```
 
 ## Code quality (Rust)

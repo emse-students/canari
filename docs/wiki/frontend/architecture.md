@@ -445,7 +445,8 @@ When `isKeyboardOpen = true`: bottom nav is hidden, `pb-14` padding removed, `--
 ```bash
 cd frontend
 bun run check       # paraglide:compile + svelte-kit sync + svelte-check (must be 0 errors/warnings)
-npm run lint:fix    # ESLint auto-fix
-npm run format      # Prettier
+bun run lint        # oxlint + oxvelte
+bun run lint:fix    # the same, auto-fixing what can be
+bun run format      # oxfmt (NOT prettier - this repo has no prettier config)
 bun run test        # Vitest
 ```

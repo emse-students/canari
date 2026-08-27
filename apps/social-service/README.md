@@ -64,7 +64,7 @@ An association without its own Stripe Connect account can delegate payments to a
 
 ```bash
 cd apps/social-service
-npm run start:dev
+bun run start:dev
 ```
 
 ## See also

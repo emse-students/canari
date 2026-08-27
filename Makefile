@@ -206,7 +206,7 @@ install-rust:
 
 install-oxvelte:
 	@echo "${BLUE}📦 Checking oxvelte installation…${RESET}"
-	@./scripts/install-oxvelte.sh
+	@sh ./scripts/install-oxvelte.sh
 
 install-wasm-pack:
 	@echo "${BLUE}📦 Checking wasm-pack installation…${RESET}"

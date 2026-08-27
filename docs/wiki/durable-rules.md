@@ -679,6 +679,31 @@ Environment and tooling traps that belong to no one subsystem. Each cost a run.
 - **REMOVING A BUILD PLUGIN REMOVES WHAT IT WAS QUIETLY DOING, AND THE BUILD STAYS GREEN.** Swapping MiGallery's Tailwind from the PostCSS wrapper to the Vite plugin deletes `postcss.config.cjs` - and autoprefixer with it. That config listed autoprefixer as an afterthought, but it was writing **forty of the forty-five** `-webkit-backdrop-filter` declarations in the built CSS and all five `-webkit-user-select`: every glass surface would have lost its blur on Safari and iOS, with a passing suite and a 200 from the container. Before deleting a step in an asset pipeline, DIFF ITS OUTPUT - declaration by declaration, not by eye - and check the replacement on the platform that will run it, because a native binary can fall back silently. [ecosystem-convergence](ecosystem-convergence.md#11-the-cross-repo-convergence-plan-repo-by-repo)
 - **A LINT RULE THAT COVERS THE MINORITY OF THE FILES READS AS A GUARANTEE.** `lucide-svelte` and `@lucide/svelte` both resolve and both render, so nothing announces a stray import; oxlint's `no-restricted-imports` was the obvious guard and was MEASURED to fire on `.ts` while oxvelte does not apply it inside a `.svelte` `<script>` block - which is where almost every icon import lives. Two linters are two rule sets: prove a rule fires in EVERY file kind it is meant to cover, or use a mechanism that does. [ecosystem-convergence](ecosystem-convergence.md#11-the-cross-repo-convergence-plan-repo-by-repo)
 - **A TYPE THAT STOPPED BEING TRUE KEEPS TYPECHECKING WHILE A COMPATIBILITY SHIM SURVIVES.** Three MiGallery components typed their `icon` prop as `ComponentType<SvelteComponent>`, the Svelte 4 CLASS shape; no lucide icon had satisfied it since the package moved to runes, and it compiled only against the legacy shim the deprecated package still shipped. Twenty errors across seventeen call sites appeared the instant the shim left. **A green typecheck dates from the last time the types were re-derived, not from today.** [ecosystem-convergence](ecosystem-convergence.md#11-the-cross-repo-convergence-plan-repo-by-repo)
+- **A CARET IS A RANGE; THE LOCKFILE IS THE PIN, AND ONLY THE LOCKFILE ANSWERS "WHICH BINARY".**
+  Five packages here declared oxlint as `^1.74.0` or `^1.80.0` - two numbers, which already looks
+  like drift worth fixing. The lockfiles said three: 1.75.0 in chat-delivery, media and social,
+  1.80.0 in core-service and the frontend, every one of them running the same repo-level config.
+  Reading the manifests would have under-counted the problem and called the fix done. **Ask the
+  lockfile which version a tool IS, and ask every lockfile** - a tool whose version varies by
+  directory is a gate whose verdict varies by directory.
+  [ecosystem-convergence](ecosystem-convergence.md#11-the-cross-repo-convergence-plan-repo-by-repo)
+- **A LOCKFILE FORMAT INVARIANT IS ONLY HELD BY NEVER REGENERATING THE FILE.** This repository
+  requires `lockfileVersion: 1` because Dependabot cannot read v2, and CI guards it. That guard
+  was recorded as INDEPENDENT of "bun 1.4.0 everywhere". It is not: deleting a `bun.lock` and
+  reinstalling under bun 1.4.0 writes **v2**, there is no flag to ask for v1, and the two
+  requirements are then in direct conflict. What holds v1 is that the existing files are only ever
+  UPDATED IN PLACE - `bun update` and `bun install` both preserve the version they find. So six
+  lockfiles across the ecosystem carry `configVersion: 0` and must keep it: raising it needs the
+  regeneration that would take `lockfileVersion` with it. Measured on Sky, then reverted.
+  [ecosystem-convergence](ecosystem-convergence.md#11-the-cross-repo-convergence-plan-repo-by-repo)
+- **A LINT SCOPE IS A CLAIM ABOUT COVERAGE, AND THE ONLY WAY TO READ IT IS TO PLANT A VIOLATION.**
+  `bun run lint` on `src` had never read `frontend/scripts/`, where the protobuf generator, the
+  hook installer and the bundle-consistency check live - and a clean run looks identical whether a
+  directory is clean or absent. A probe file carrying an unused variable, a `debugger` and an
+  `eval` drew 0 diagnostics at scope `src` and 3 at scope `.`. **Widening the scope is cheap; the
+  measurement is what tells you it was needed.** Its mirror image: `oxfmt` at scope `.` inside a
+  NestJS package reaches for `svelte/compiler` to format code blocks in `README.md` and fails
+  outright, so lint and format do NOT take the same scope here, and that asymmetry is deliberate.
 - **A TOOL INSTALLED FROM A BRANCH IS NOT A VERSION, AND A LINTER THAT IS NOT A VERSION IS NOT A
   GATE.** `cargo install --git <repo>` with no `--rev` tracks the default branch, so two machines
   that ran the same command on different days hold different binaries and disagree about the same
