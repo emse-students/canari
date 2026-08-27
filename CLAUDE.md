@@ -215,10 +215,7 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     to degrade quietly and now fails the whole ICE configuration. **What settles it is ONE relay-path
     call**, which is rung 15 CALL and has no runner. Substance in [backlog](docs/wiki/backlog.md),
     story in `CHANGELOG.md`; neither is restated here. **A release must not carry this unplaced.**
-4.  **`purge-devices.mjs` WOULD DELETE THE PHONE - a destructive control keyed on a string the
-    product never renders.** **Do not run it until it takes an `--only` allowlist**; repair and
-    evidence in [backlog](docs/wiki/backlog.md).
-5.  **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** - asked by the user 2026-08-25
+4.  **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** - asked by the user 2026-08-25
     (*"le meme point de depart, independamment de ce qui a pu se passer avant"*). The PHASE-level half
     is `run.mjs`'s preflight; what is left is per-STEP granularity, pulled forward the moment a rung is
     blocked by an inherited state. Contract, audit and the seven-file PIN predicate it fixes are in

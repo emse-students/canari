@@ -113,8 +113,23 @@
   });
 </script>
 
+<!--
+  `data-conversation-tile`, `data-ready` and `data-removed` exist for the cross-client campaign, and
+  they are not decoration either: the ONLY on-screen statement that a conversation is still syncing
+  is the "Sync" badge, whose text is a Paraglide message. A rig counting syncing rows by that text
+  would be measuring the translation - it silently counts zero the day the string changes or the
+  locale differs, and "no row is syncing" is exactly the answer that makes a HEAL check pass while
+  the app is broken. The same reasoning already put `.sidebar-panel` on the list around it.
+
+  Three separate attributes rather than one status word because `isReady` and `isRemoved` are
+  independent facts with opposite meanings: a removed group is dead, not in transit, and folding
+  them into one value is how a permanent placeholder gets read as a heal in progress.
+-->
 <button
   onclick={onClick}
+  data-conversation-tile
+  data-ready={isReady}
+  data-removed={isRemoved}
   class="group flex w-full items-center gap-4 rounded-[1.25rem] p-3.5 text-left transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-[0.98]
     {isSelected
     ? 'border border-black/5 bg-white/60 shadow-sm backdrop-blur-md dark:border-white/10 dark:bg-black/40'

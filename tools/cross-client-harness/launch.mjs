@@ -10,21 +10,30 @@
  *
  * Usage:  node launch.mjs kill w1        node launch.mjs start w1
  */
-import { spawn, execSync } from 'node:child_process';
-import { join } from 'node:path';
-import { STATE_DIR } from './names.mjs';
+import { spawn, execSync } from "node:child_process";
+import { join } from "node:path";
+import { STATE_DIR } from "./names.mjs";
 
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
-const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+const CHROME = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+const POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
 
 /**
  * The profiles live in `STATE_DIR`, NOT next to this file: they are the devices, not instruments.
  * A profile under the repository would be deleted by `git clean -xdf` like any other untracked
  * directory, and re-enrolling costs the one step no tool here can answer.
+ *
+ * W3 IS THE ONE PROFILE MEANT TO BE WIPED. W1, W2 and A1 are long-lived identities whose whole value
+ * is that they survive; the HEAL-NEW rows need the opposite - a client that has never seen this
+ * account, on demand, repeatedly. So W3 exists to be reset, holds the OWNER account like W1, and is
+ * the only device `newdevice.mjs` will accept. Its profile still lives OUTSIDE the work tree, because
+ * what is expensive about it is not the MLS state - wiping that IS the measurement - but the CAS
+ * session: a browser CAS has already challenged is not challenged again, so the 2FA is paid once for
+ * the profile and never again for a device reset.
  */
 export const BROWSERS = {
-  w1: { port: 9224, profile: join(STATE_DIR, 'chrome-w1') },
-  w2: { port: 9223, profile: join(STATE_DIR, 'chrome-w2') },
+  w1: { port: 9224, profile: join(STATE_DIR, "chrome-w1") },
+  w2: { port: 9223, profile: join(STATE_DIR, "chrome-w2") },
+  w3: { port: 9225, profile: join(STATE_DIR, "chrome-w3") },
 };
 
 /** True when something still answers on that debugging port. */
@@ -55,7 +64,7 @@ export async function killBrowser(which, timeoutMs = 20_000) {
   // ENOENT swallowed by a catch reads exactly like "nothing to kill".
   let spawnError = null;
   try {
-    execSync(`${POWERSHELL} -NoProfile -Command "${ps}"`, { stdio: 'pipe' });
+    execSync(`${POWERSHELL} -NoProfile -Command "${ps}"`, { stdio: "pipe" });
   } catch (e) {
     spawnError = String(e.stderr || e.message).slice(0, 200);
   }
@@ -65,7 +74,7 @@ export async function killBrowser(which, timeoutMs = 20_000) {
     await new Promise((r) => setTimeout(r, 250));
   }
   throw new Error(
-    `${which} still answering on ${BROWSERS[which].port} after the kill${spawnError ? ` (powershell said: ${spawnError})` : ''}`
+    `${which} still answering on ${BROWSERS[which].port} after the kill${spawnError ? ` (powershell said: ${spawnError})` : ""}`,
   );
 }
 
@@ -76,7 +85,7 @@ export async function killBrowser(which, timeoutMs = 20_000) {
  * not start a browser, it hands the URL to the running one and exits - so the "relaunch" would
  * silently be an extra TAB in the browser that was never killed.
  */
-export async function startBrowser(which, url = 'https://canari-emse.fr/chat') {
+export async function startBrowser(which, url = "https://canari-emse.fr/chat") {
   const { port, profile } = BROWSERS[which];
   if (await isUp(which)) throw new Error(`${which} is already up on ${port} - kill it first`);
   const child = spawn(
@@ -84,14 +93,14 @@ export async function startBrowser(which, url = 'https://canari-emse.fr/chat') {
     [
       `--remote-debugging-port=${port}`,
       `--user-data-dir=${profile}`,
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--disable-backgrounding-occluded-windows',
-      '--disable-renderer-backgrounding',
-      '--disable-features=CalculateNativeWinOcclusion,ChromeWhatsNewUI',
+      "--no-first-run",
+      "--no-default-browser-check",
+      "--disable-backgrounding-occluded-windows",
+      "--disable-renderer-backgrounding",
+      "--disable-features=CalculateNativeWinOcclusion,ChromeWhatsNewUI",
       url,
     ],
-    { detached: true, stdio: 'ignore' }
+    { detached: true, stdio: "ignore" },
   );
   child.unref();
 
@@ -108,15 +117,15 @@ export async function startBrowser(which, url = 'https://canari-emse.fr/chat') {
   throw new Error(`${which} never answered on port ${port}`);
 }
 
-if (process.argv[1] && process.argv[1].endsWith('launch.mjs')) {
+if (process.argv[1] && process.argv[1].endsWith("launch.mjs")) {
   const [, , action, which] = process.argv;
-  if (action === 'kill') {
+  if (action === "kill") {
     killBrowser(which);
     console.log(`${which} killed`);
-  } else if (action === 'start') {
+  } else if (action === "start") {
     console.log(`${which} up in ${await startBrowser(which)}ms`);
   } else {
-    console.log('usage: node launch.mjs kill|start w1|w2');
+    console.log("usage: node launch.mjs kill|start w1|w2");
   }
   process.exit(0);
 }

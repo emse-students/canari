@@ -452,6 +452,42 @@ no check waits on wall-clock time at all. It belongs with the rendering pass, no
 
 ## Messaging convergence
 
+### P3 - discovery honours a dismissal only for a row it ALREADY has, and a new device has none (measured 2026-08-27, population EMPTY today)
+
+`discoverMissingGroups` (`frontend/src/lib/utils/chat/actions.ts`) fetches the dismiss set once and
+uses it in exactly ONE place: the loop over `conversations.entries()`. The second loop - the one that
+CREATES placeholder rows out of `activeServerGroups` - filters two things, a local row already
+existing and an owed exit, and never consults the dismiss set at all. So a group in
+`dismissed AND still a member server-side` is purged on a device that has the row, and re-created as
+a `pending` placeholder wearing the Sync badge on a device that does not. **A device with an empty
+store is precisely the case where the dismiss set is load-bearing, and precisely the case where it is
+not read.** The server does not close the gap either: `getUserGroups` (`members.controller.ts`)
+filters distribution groups and `deletedAt` tombstones, never dismissals.
+
+**IT IS NOT THE CAUSE OF THE USER'S SYMPTOM, AND THAT WAS MEASURED, NOT ASSUMED.** Read from the
+owner's own session on 2026-08-27 (`node syncrows.mjs --device W3`): 9 active groups, 0 tombstoned,
+**876** dismissed-group rows, and `dismissedStillMember: 0`. The intersection is EMPTY, so the branch
+cannot currently fire - which is why this is a P3 latent gap and not the explanation for the Sync
+rows the user reported. A predicate that names an incident has to be re-measured against the
+population it will run on, and this one was.
+
+**Two swallowed branches sit on the same seam**, both in `exitGroupAndCleanup`
+(`useConversations.svelte.ts`): `await mlsService.dismissGroup(convo.id).catch(() => {})`, twice, with
+no log. That call is the ONLY thing that propagates a manual delete to the user's other devices, so a
+silent failure means the group comes back on the next new device with nothing anywhere saying why.
+`mlsDeliveryApi.dismissGroup` swallows its own transport error too, for the stated reason that the
+local purge already happened - which is true and does not make the loss unloggable. Every swallowed
+branch logs; in a best-effort path that is all a loss leaves.
+
+**The 876 is worth a second look on its own**: `user_dismissed_group` grows one row per manual delete
+per user, for ever, and the campaign is what put 876 there. Nothing reads it in bulk, so it is not an
+incident - but it is an unbounded table nobody has decided about.
+
+Reached by `HEAL-NEW-7` on the board, which is written to tell this cause apart from the two that can
+actually fire today - a server tombstone, and an exit still owed in the DELETING device's own
+IndexedDB.
+
+
 ### P3 - openmls 0.8.1 PANICS on a corrupted PrivateMessage body instead of returning an error (found 2026-08-27)
 
 Found while writing a producer for the same-epoch refusal test: tampering with the AEAD-protected
@@ -1059,53 +1095,6 @@ assertion measures, it makes the state BEFORE the assertion known. What it remov
 failure the campaign has already paid for repeatedly - a check measuring behind a modal, on the wrong
 route, or behind a PIN gate - each of which produced a refusal or a hang, never a false PASS. The rows
 stay; the flakiness they cost goes.
-
-### P2 - `purge-devices.mjs` is a destructive control keyed on a string the product never renders
-
-**Found 2026-08-25, and found by being unable to run it rather than by it doing damage.** W1's account
-had accumulated two dead web devices (two Firefox logins from 2026-08-22, neither the running client),
-and they were a material confound rather than clutter: W1 CREATES every group the GRP phase makes, so
-the creator's own devices are fanned into each one and a device that will never process its Welcome
-sits in every roster the phase measures ([durable-rules](durable-rules.md), on a revoked device keeping
-its store). The user deleted both by hand the same day, which is why nothing is blocked - the tool that
-was supposed to do it is what remains open.
-
-**Three predicates in it are stale, and the third is the dangerous one.**
-
-1. The panel-settled wait tests `/APPAREIL(S) CONNECT/i`. The product renders
-   `4 APPAREIL(S) ENREGISTRE(S)` - `chat_devices_count_label` is `"{devices} appareil(s) enregistre(s)"`.
-   So the wait times out after 45 s on a panel that has been fully loaded the whole time, which is how
-   this was found at all.
-2. `READ_PANEL` and `TAG_TARGET` identify a row by walking up to `/Appareil\s*\d/`. **That string is
-   absent from the render.** Every row therefore reads as the empty string.
-3. Because every row is `''`, `--keep` matches nothing and the tool falls through to clicking the
-   first deletable button in DOM order. On the fleet as it stood that is a Firefox row, but nothing in
-   the tool makes that true - `--keep 'Tauri'` does not match either, because the phone's row shows
-   `tauri-d8` lowercase and `Android`/`ANDROID`, never the `"Desktop (Tauri)"` label
-   (`DeviceManagementPanel.svelte`) that only the detail view uses. One reorder and it deletes A1,
-   which costs a re-enrolment plus SETUP-4's 2FA - the one step no tool here can answer.
-
-`shortDeviceId` is `deviceId.slice(0, 8)`, so every web device of one user renders the same short id.
-**The id cannot discriminate between them**; the only per-row text that does is `Derniere activite` and
-the `Connecte le <date>` line.
-
-**The repair, which is a rewrite of what it is allowed to touch, not a selector fix:**
-
-- **An allowlist, `--only`, never `--keep`** ([durable-rules](durable-rules.md): a destructive control
-  needs an allowlist of what it may touch). Nothing is deleted unless it was named.
-- **`--expect N`, and a refusal if the panel does not hold exactly N rows.** A fleet that changed
-  shape since the caller looked at it is a reason to stop, not to proceed on ordinal position.
-- **Row identity from `Connecte le <date>` bounded to ONE occurrence**
-  ([testing-methodology](testing-methodology.md) 24), because that is the only rendered string that
-  separates two web logins of the same account.
-- **The load-error state reported, not waited on.** `chat_devices_load_error` ("Impossible de charger
-  les appareils lies a votre compte.") is currently not accepted by the wait, so a failed load spends
-  45 s and then reports a timeout - the same confusion between "the question could not be asked" and
-  "the answer is no" that [testing-methodology](testing-methodology.md) 38 is about.
-
-**Until that lands the tool must not be run**, and a device that has to go is a click the user offered
-to make (*"Pour les choses qui ne se font qu'une fois, tu peux me demander de les faire hein"*,
-2026-08-25).
 
 ### P3 - a build names itself by a clock, and the commit is inferred from it
 

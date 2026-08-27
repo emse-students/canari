@@ -529,6 +529,7 @@ page. `mob` = [mobile](frontend/mobile.md), `auth` = [auth](frontend/modules/aut
 - **A dependency can make your process start in a state you never designed for** - read the MERGED manifest. [mob](frontend/mobile.md)
 - **A destructive repair must be gated on knowing the state is really broken**, or a temporary condition becomes a permanent loss. [mob](frontend/mobile.md)
 - **A destructive control exposed to the user needs an ALLOWLIST of what it may touch, not a denylist.** [mob](frontend/mobile.md)
+- **AND IT KEYS ON THE IDENTITY THE DESTRUCTIVE API ITSELF USES**, never on a rendered abbreviation and never on ordinal position. `purge-devices.mjs` matched row text the product does not render, so every row read as the empty string and its denylist matched nothing - one reorder from deleting the campaign's only phone. The short device id shown to a human is `slice(0, 8)`, identical across a user's web devices; the full id was in the row's `title` the whole time. [testing](cross-client-testing.md)
 - **Background decrypt applies no commit**, so a silent commit push leaves the next message unreadable - that is the epoch gap. [mob](frontend/mobile.md)
 - **A decision reachable from the CLEARTEXT push fields must never sit behind the decrypt ladder.** [mob](frontend/mobile.md)
 - **What removes a notification must key on what the POSTER wrote - and on iOS there are two posters.** [mob](frontend/mobile.md)

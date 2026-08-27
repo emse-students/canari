@@ -24,10 +24,10 @@
  */
 
 /** The account that owns W1 and A1, as W2 sees it in its sidebar. A DISPLAY name, not a login. */
-export const OWNER_NAME = '<owner display name>';
+export const OWNER_NAME = "<owner display name>";
 
 /** The account that owns W2, as W1 sees it in its sidebar. A DISPLAY name, not a login. */
-export const PEER_NAME = '<peer display name>';
+export const PEER_NAME = "<peer display name>";
 
 /**
  * The site, as an ABSOLUTE url.
@@ -39,10 +39,20 @@ export const PEER_NAME = '<peer display name>';
  * starts there - so anything that recovers a client must not depend on the client already being
  * somewhere.
  */
-export const SITE = 'https://canari-emse.fr';
+export const SITE = "https://canari-emse.fr";
 
-/** Devtools ports. The two Chrome profiles ARE the devices; A1 is an adb forward. */
-export const PORTS = { W1: 9224, W2: 9223, A1: 9333 };
+/**
+ * Devtools ports. The Chrome profiles ARE the devices; A1 is an adb forward.
+ *
+ * W3 IS THE SCRATCH DEVICE, and the only one anything here may wipe. It holds the OWNER account,
+ * like W1 and A1, and exists so the HEAL-NEW rows can produce a client that has never seen this
+ * account without spending a 2FA per row: `newdevice.mjs` clears the CANARI ORIGIN only, which is
+ * where the device identity lives (`mls_device_id_<userId>` in localStorage, the MLS state in
+ * IndexedDB), and leaves the CAS and Authentik sessions untouched on their own origins. The PIN is
+ * account-level, so the fresh device enters the same one. `newdevice.mjs` refuses any other device
+ * by name - see its `WIPEABLE`.
+ */
+export const PORTS = { W1: 9224, W2: 9223, A1: 9333, W3: 9225 };
 
 /**
  * WHERE EACH DEVICE'S APP LIVES. The phone's is NOT the site's.
@@ -57,7 +67,7 @@ export const PORTS = { W1: 9224, W2: 9223, A1: 9333 };
  * So route by DEVICE, never by the one constant that happens to be a URL. `SITE` remains what the
  * browsers load and what a link points at; it is not where the phone runs.
  */
-export const ORIGIN = { W1: SITE, W2: SITE, A1: 'http://tauri.localhost' };
+export const ORIGIN = { W1: SITE, W2: SITE, W3: SITE, A1: "http://tauri.localhost" };
 
 /**
  * Which account key in `test-accounts.json` each device is logged in as.
@@ -67,7 +77,12 @@ export const ORIGIN = { W1: SITE, W2: SITE, A1: 'http://tauri.localhost' };
  * "PIN incorrect" about a PIN that is perfectly correct. The device is the thing a caller actually
  * knows, so it is the thing to pass: `node pin.mjs --device W1`.
  */
-export const ACCOUNT_OF = { W1: '<owner key>', A1: '<owner key>', W2: '<peer key>' };
+export const ACCOUNT_OF = {
+  W1: "<owner key>",
+  A1: "<owner key>",
+  W3: "<owner key>",
+  W2: "<peer key>",
+};
 
 /**
  * The phone's wireless adb endpoint, tried when the USB link has dropped.
@@ -77,16 +92,16 @@ export const ACCOUNT_OF = { W1: '<owner key>', A1: '<owner key>', W2: '<peer key
  * has been run since the last reboot, and the address changes with the subnet, which is why nothing
  * may depend on it succeeding.
  */
-export const A1_WIFI = '<phone ip>:5555';
+export const A1_WIFI = "<phone ip>:5555";
 
 /**
  * The name a given client must click to reach the shared DM - i.e. the OTHER party's name.
  * A1 holds the same account as W1, so it looks for the peer just as W1 does.
  */
-export const peerNameFor = (device) => (device === 'W2' ? OWNER_NAME : PEER_NAME);
+export const peerNameFor = (device) => (device === "W2" ? OWNER_NAME : PEER_NAME);
 
 /** The campaign's channel venue. Never MiTV: a private channel is readable by every asso admin. */
-export const VENUE = { community: 'Campagne de test', channel: 'general' };
+export const VENUE = { community: "Campagne de test", channel: "general" };
 
 /*
  * ---------------------------------------------------------------------------------------------

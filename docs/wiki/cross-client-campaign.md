@@ -63,6 +63,14 @@ Three rules from the user, and they are one design:
 | `+snapshot` | an MLS or app-data snapshot taken **before** the check, because the check breaks something |
 | `+user` | a step no tool here can perform: the owner account's 2FA, the lock-screen pattern, a biometric prompt |
 
+**`+user` IS A COST, NOT A BLOCKER - and the user said so in as many words on 2026-08-27:**
+*"je suis la, donc la 2FA, me login, redemarrer le telephone etc est possible."* So a row may not
+be recorded `SKIPPED` on the mere PRICE of a 2FA, a re-login or a phone reboot while a human is at
+the keyboard - ASK for it. That retires the only reason MULTI-3 and MULTI-4 were skipped on
+`0c31be5d`, and it is what makes the eleven `HEAL-NEW-*` rows affordable at all. What `+user` still
+means is that the row cannot run UNATTENDED: it may not be scheduled into a background sweep, and
+the x5 sweep owed after the ladder must either budget a human or declare these rows out of it.
+
 **The order is the numbered ladder and there is no other.** It is ordered by tier, so each rung
 assumes what the one below it proved, and it already carries every sequencing constraint there is:
 HEAL before MULTI and PIN because it rewinds W1's ratchet in every group, PIN after HEAL because
@@ -204,7 +212,7 @@ Whoever plans a session on this should read the third column, not the first.
 | 13 LIFE | 8 | 6 | 2 | LIFE-1, and LIFE-5 which is a HUMAN check by design - it needs the unlock pattern after a reboot, so it belongs on [device-verification](device-verification.md) and will never have a runner |
 | 14 NOTIF | 21 | 5 | 16 | `notif.mjs` answers 4/9/10 and `notif7.mjs` answers 7/7b; the other sixteen have nothing |
 | 15 CALL | 20 | 0 | 20 | the largest single hole on the ladder, and the only rung whose subject (WebRTC media) no existing runner touches at all |
-| 16 HEAL | 11 | 4 | 7 | HEAL-W1/W3/W4 and the four `HEAL-REVOKE-*` |
+| 16 HEAL | 22 | 4 | 18 | HEAL-W1/W3/W4, the four `HEAL-REVOKE-*`, and the ELEVEN `HEAL-NEW-*` added 2026-08-27. The rung doubled because the eleven original rows all break a device that ALREADY HELD the group, and the user reports the sensitive path is the one where a device has never held anything - see section 16 of the [board](cross-client-testing.md). All eleven are `+user`, so the rung now needs a human present |
 | 17 PIN | 10 | 0 | 10 | zero coverage; SETUP-7 is owed before it |
 | 18 CORRUPT | 10 | 0 | 10 | zero coverage; SETUP-8 is owed before it |
 

@@ -148,6 +148,26 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **The test rig's device-purge tool could have deleted the phone.** `purge-devices.mjs` took a
+  `--keep` DENYLIST - a substring of the row text that had to survive - and it identified a row by
+  walking up to `/Appareil\s*\d/`, a string the product has never rendered. Every row therefore read
+  as the empty string, `--keep` matched nothing, and the tool fell through to clicking the first
+  deletable button in DOM order. Nothing in it made that button the right one: one reorder and it
+  removed A1, the single armed Android device, at the cost of a re-enrolment plus the campaign's one
+  irreducibly manual step. It was found by being unable to RUN - its settled-panel wait tested
+  `/APPAREIL(S) CONNECT/i` against a panel rendering `appareil(s) enregistre(s)`, so it timed out on a
+  panel that had been loaded the whole time - and it was never run against production.
+
+  It now takes `--only <deviceId>[,...]`, an allowlist, and deletes nothing that was not named;
+  entries shorter than eight characters are refused, so `web-` cannot sweep a family. `--expect N`
+  refuses outright when the panel no longer holds the number of deletable rows the caller decided
+  against. **Row identity is the FULL device id read from the row's `div[title]`** - the same key
+  `DELETE /api/mls/devices/:userId/:deviceId` deletes by - not the rendered short id, which is
+  `deviceId.slice(0, 8)` and identical across every web device of one account. And a panel that
+  FAILED to load is now a third outcome: `chat_devices_load_error` satisfied no branch of the wait, so
+  a fleet that could not be read spent 45 s and reported a timeout; it is now classified and refused,
+  because a question that could not be asked is not the answer "no".
+
 - **A member with no photo exported as the word "img".** On the Carte de la Vie Asso PDF - and on the
   trombinoscope, which the report guessed correctly - the grey box beside a member's initials was the
   rasteriser's own doing: snapdom substitutes every `<img>` it cannot inline with a placeholder
