@@ -36,9 +36,9 @@
  * enough to compare two reads and useless to anyone else. Whatever does need a display name goes
  * through `redact` first.
  */
-import { pathToFileURL } from 'node:url';
-import { client, evaluate } from './chat.mjs';
-import { ORIGIN, PORTS } from './names.mjs';
+import { pathToFileURL } from "node:url";
+import { client, evaluate } from "./chat.mjs";
+import { ORIGIN, PORTS } from "./names.mjs";
 
 const argv = process.argv.slice(2);
 const opt = (name, fallback = null) => {
@@ -47,7 +47,7 @@ const opt = (name, fallback = null) => {
 };
 
 /** Eight characters: enough to compare two reads, useless to anyone else. */
-export const cut = (s) => (typeof s === 'string' && s.length > 8 ? s.slice(0, 8) : s || null);
+export const cut = (s) => (typeof s === "string" && s.length > 8 ? s.slice(0, 8) : s || null);
 
 /**
  * The sidebar's readiness, counted off the DOM hooks rather than off the badge's prose.
@@ -95,7 +95,7 @@ export async function whoAmI(cx) {
          userId: k.slice('mls_device_id_'.length) || null,
          deviceId: k ? localStorage.getItem(k) : null,
        });
-     })()`
+     })()`,
   );
   return JSON.parse(raw);
 }
@@ -141,7 +141,7 @@ export async function serverView(cx, userId) {
          return JSON.stringify({ threw: String(e) });
        }
      })()`,
-    { awaitPromise: true }
+    { awaitPromise: true },
   );
   return JSON.parse(raw);
 }
@@ -201,17 +201,18 @@ export async function navigationCost(cx) {
        t.scrollIntoView({ block: 'center' });
        t.click();
        return 'clicked';
-     })()`
+     })()`,
   );
-  if (before !== 'clicked') return { clicked: false, why: 'no ready row to open' };
+  if (before !== "clicked") return { clicked: false, why: "no ready row to open" };
   const deadline = Date.now() + 20_000;
   for (;;) {
     const open = await evaluate(
       cx,
-      `!!document.querySelector('.chat-composer-footer .chat-composer-editor')`
+      `!!document.querySelector('.chat-composer-footer .chat-composer-editor')`,
     );
-    if (open === true || open === 'true') return { clicked: true, openedInMs: Date.now() - t0 };
-    if (Date.now() > deadline) return { clicked: true, openedInMs: null, why: 'no composer in 20s' };
+    if (open === true || open === "true") return { clicked: true, openedInMs: Date.now() - t0 };
+    if (Date.now() > deadline)
+      return { clicked: true, openedInMs: null, why: "no composer in 20s" };
     await new Promise((r) => setTimeout(r, 200));
   }
 }
@@ -220,7 +221,7 @@ export async function navigationCost(cx) {
 export async function readAll(cx) {
   const who = await whoAmI(cx);
   const rows = await sidebar(cx);
-  const server = who.userId ? await serverView(cx, who.userId) : { threw: 'no user in the store' };
+  const server = who.userId ? await serverView(cx, who.userId) : { threw: "no user in the store" };
   return {
     wall: new Date().toISOString(),
     device: { user: cut(who.userId), device: cut(who.deviceId) },
@@ -233,23 +234,25 @@ export async function readAll(cx) {
 // Direct invocation: read, or read and watch. Read-only either way - nothing here mutates a client.
 // ---------------------------------------------------------------------------------------------
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const device = opt('device', 'W1');
+  const device = opt("device", "W1");
   if (!PORTS[device]) throw new Error(`${device} is not declared in names.mjs`);
   const host = new URL(ORIGIN[device]).hostname;
   const cx = await client(PORTS[device], host);
   const first = await readAll(cx);
   console.log(`[syncrows] ${device} ${JSON.stringify(first)}`);
-  const watchFor = opt('watch', null);
+  const watchFor = opt("watch", null);
   if (watchFor) {
     const hooked = await evaluate(cx, ROWS_PRESENT);
-    if (hooked !== true && hooked !== 'true') {
-      console.log('[syncrows] no hooked rows in the sidebar - nothing to watch');
+    if (hooked !== true && hooked !== "true") {
+      console.log("[syncrows] no hooked rows in the sidebar - nothing to watch");
     } else {
       const w = await watch(cx, {
         timeoutMs: Number(watchFor) * 1000,
         log: (m) => console.log(m),
       });
-      console.log(`[syncrows] watch ${JSON.stringify({ settled: w.settled, elapsedMs: w.elapsedMs })}`);
+      console.log(
+        `[syncrows] watch ${JSON.stringify({ settled: w.settled, elapsedMs: w.elapsedMs })}`,
+      );
       console.log(`[syncrows] nav ${JSON.stringify(await navigationCost(cx))}`);
     }
   }

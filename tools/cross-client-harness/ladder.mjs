@@ -39,7 +39,7 @@ const outageMs = Number(opt('outage', 600000));
 const OLD_CIRCUIT_CAP = 20;
 
 const cx = await client(PORTS[device]);
-const w = await watch(cx, 'ladder');
+await watch(cx, 'ladder');
 const t0 = Date.now();
 const at = () => Math.round((Date.now() - t0) / 1000);
 

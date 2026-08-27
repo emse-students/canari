@@ -34,12 +34,24 @@ const only = (script, from, to) =>
 /** Devices a phase needs. `W1`/`W2` are the two Chrome profiles; `A1` is the phone over adb. */
 export const PHASES = {
   MSG: {
-    title: 'the plain path',
-    scripts: ['msg1.mjs', 'msg1.mjs --cold', 'msg1b.mjs', 'msg2.mjs', 'msg3.mjs', 'msg4.mjs',
-      'msg5.mjs', 'msg67.mjs', 'msg8.mjs', 'msg8b.mjs', 'msg9.mjs', 'msg10.mjs'],
-    needs: ['W1', 'W2', 'A1'],
+    title: "the plain path",
+    scripts: [
+      "msg1.mjs",
+      "msg1.mjs --cold",
+      "msg1b.mjs",
+      "msg2.mjs",
+      "msg3.mjs",
+      "msg4.mjs",
+      "msg5.mjs",
+      "msg67.mjs",
+      "msg8.mjs",
+      "msg8b.mjs",
+      "msg9.mjs",
+      "msg10.mjs",
+    ],
+    needs: ["W1", "W2", "A1"],
   },
-  TYPE: { title: 'typing indicators', scripts: only('type.mjs', 1, 5), needs: ['W1', 'W2'] },
+  TYPE: { title: "typing indicators", scripts: only("type.mjs", 1, 5), needs: ["W1", "W2"] },
   // READ-5 records SKIPPED on its own - it needs a fourth reader, and there are two accounts - and it
   // is listed anyway: a skip that produces a row is a state, a skip that produces nothing is a hole.
   //
@@ -49,48 +61,60 @@ export const PHASES = {
   // own control, as part of its verdict, so the reason for the opt-in is gone. A flag kept after its
   // reason expires is how a check stays permanently SKIPPED in a campaign that must end green.
   READ: {
-    title: 'receipts and unread counts',
-    scripts: [...only('read.mjs', 1, 9), 'read.mjs --only 10 --destructive'],
-    needs: ['W1', 'W2', 'A1'],
+    title: "receipts and unread counts",
+    scripts: [...only("read.mjs", 1, 9), "read.mjs --only 10 --destructive"],
+    needs: ["W1", "W2", "A1"],
   },
   MUT: {
-    title: 'editing, deleting, reacting, pinning',
-    scripts: only('mut.mjs', 1, 21),
+    title: "editing, deleting, reacting, pinning",
+    scripts: only("mut.mjs", 1, 21),
     // A1 BECAUSE MUT-18 DRIVES THE PHONE, and this said `W1 W2` until 2026-08-22 - so the preflight
     // never armed A1 for this phase, `sameAccountAs` found nothing on 9333, and MUT-18 recorded
     // `SKIPPED - second client not reachable` every time it was asked. A check cannot arm a device
     // the phase did not declare, and the skip named the symptom rather than the declaration.
     // Declaring it here is also what makes the phase carry `CANARI_A1_BUILD`, without which its rows
     // would land with no `a1Build` beside `build` - the fault found in MSG one day earlier.
-    needs: ['W1', 'W2', 'A1'],
+    needs: ["W1", "W2", "A1"],
   },
-  SEARCH: { title: 'finding a message', scripts: only('search.mjs', 1, 6), needs: ['W1', 'W2'] },
+  SEARCH: { title: "finding a message", scripts: only("search.mjs", 1, 6), needs: ["W1", "W2"] },
   // A1 IS DECLARED because MENTION-2/3 assert a real push on the owner's phone - it is a second
   // device of the OWNER's account, which is what lets the owner set their own level on W1 and have
   // W2 mention them. Declaring it is also what makes the phase carry `CANARI_A1_BUILD`.
-  MENTION: { title: 'mentions and what they trigger', scripts: only('mention.mjs', 1, 6), needs: ['W1', 'W2', 'A1'] },
-  FWD: { title: 'forwarding', scripts: ['fwd.mjs', 'fwd345.mjs', 'fwd5.mjs'], needs: ['W1', 'W2', 'A1'] },
+  MENTION: {
+    title: "mentions and what they trigger",
+    scripts: only("mention.mjs", 1, 6),
+    needs: ["W1", "W2", "A1"],
+  },
+  FWD: {
+    title: "forwarding",
+    scripts: ["fwd.mjs", "fwd345.mjs", "fwd5.mjs"],
+    needs: ["W1", "W2", "A1"],
+  },
   // GRP WAS THE PHASE WITH A SCRIPT AND NO COVERAGE. It listed `grp-traffic.mjs` alone, which
   // recorded a `GRP-TRAFFIC` id matching no board row and opened a group name hard-coded on
   // 2026-08-15 that the 2026-08-21 estate sweep deleted - so the phase's only job would have thrown
   // on its first line, and its nine board rows had never been armed at all. `grp.mjs` covers them,
   // plus GRP-10, and that script is gone rather than kept beside it.
-  GRP: { title: 'group membership and invitations', scripts: only('grp.mjs', 1, 10), needs: ['W1', 'W2'] },
+  GRP: {
+    title: "group membership and invitations",
+    scripts: only("grp.mjs", 1, 10),
+    needs: ["W1", "W2"],
+  },
   // `tab236.mjs` is named for the three checks it implements and selects ONE of them from `argv[2]`,
   // defaulting to '2' - so the bare entry ran a third of the script its own filename advertises.
   TAB: {
-    title: 'tabs and windows',
+    title: "tabs and windows",
     scripts: [
-      'tab1.mjs',
-      'tab236.mjs 2',
-      'tab236.mjs 3',
-      'tab3b.mjs',
-      'tab236.mjs 6',
-      'tab4.mjs',
-      'tab5.mjs',
-      'tab7.mjs',
+      "tab1.mjs",
+      "tab236.mjs 2",
+      "tab236.mjs 3",
+      "tab3b.mjs",
+      "tab236.mjs 6",
+      "tab4.mjs",
+      "tab5.mjs",
+      "tab7.mjs",
     ],
-    needs: ['W1', 'W2'],
+    needs: ["W1", "W2"],
   },
   // `life.mjs` implements eight states (1-8) and defaulted to '2', so the LIFE phase covered one of
   // them. LIFE-1 RUNS FIRST because it is the control the other seven are read against: it enters no
@@ -101,17 +125,17 @@ export const PHASES = {
   // and belongs on the device-verification ladder, not in an automated phase. LIFE-6 must run over
   // USB: the wireless transport rides the wifi that check switches off.
   LIFE: {
-    title: 'Android lifecycle',
+    title: "Android lifecycle",
     scripts: [
-      'life.mjs 1',
-      'life.mjs 2',
-      'life.mjs 3',
-      'life.mjs 4',
-      'life.mjs 6',
-      'life.mjs 7',
-      'life.mjs 8',
+      "life.mjs 1",
+      "life.mjs 2",
+      "life.mjs 3",
+      "life.mjs 4",
+      "life.mjs 6",
+      "life.mjs 7",
+      "life.mjs 8",
     ],
-    needs: ['W1', 'W2', 'A1'],
+    needs: ["W1", "W2", "A1"],
   },
   // EVERY RUN IS SPELT OUT, because both scripts here select ONE check from an argument and default
   // it: `notif.mjs` is `argv[2] || '4'` and `notif7.mjs` is `argv[2] || 'bg'`. Listed bare, the phase
@@ -120,26 +144,54 @@ export const PHASES = {
   // NOTIF-10 never cut the radios. A manifest entry that relies on a default covers what the script
   // felt like doing, not what the phase claims.
   NOTIF: {
-    title: 'notifications',
+    title: "notifications",
     scripts: [
-      'notif.mjs 4',
+      "notif.mjs 4",
       // 4b IMMEDIATELY AFTER 4, because it is the same gesture with the one precondition that makes
       // an unread-driven dismissal look correct removed - reading the two verdicts side by side is
       // what distinguishes a dismissal from a counter reaching zero.
-      'notif.mjs 4b',
-      'notif.mjs 9',
-      'notif.mjs 11',
+      "notif.mjs 4b",
+      "notif.mjs 9",
+      "notif.mjs 11",
       // TEN MINUTES OF DELIBERATE OUTAGE, so it goes after every row that only needs seconds.
-      'notif.mjs 10',
-      'notif7.mjs bg',
-      'notif7.mjs killed',
+      "notif.mjs 10",
+      "notif7.mjs bg",
+      "notif7.mjs killed",
     ],
-    needs: ['W1', 'W2', 'A1'],
+    needs: ["W1", "W2", "A1"],
   },
   HEAL: {
-    title: 'does a broken group repair itself',
-    scripts: ['heal.mjs', 'heal-a1.mjs', 'heal-w2.mjs', 'heal-web.mjs'],
-    needs: ['W1', 'W2', 'A1'],
+    title: "does a broken group repair itself",
+    // THE PRIMITIVE FIRST. `newdevice.mjs` IS HEAL-NEW-0, and every HEAL-NEW row below rests on the
+    // facts it asserts - a fresh id, an id the server had never seen, the same account coming back.
+    // A primitive believed rather than measured is how a whole rung's results end up describing the
+    // instrument, so it runs before the rows that depend on it and its failure is worth seeing alone.
+    //
+    // THE ORDER PAIRS ARE ADJACENT ON PURPOSE (user, 2026-08-27: every configuration must be tested,
+    // and all of them must pass the same way - that is the whole point of reconciliation). Row 3 and
+    // row 11 are the same responder present from the start and arriving late; 2 and 12 likewise. Read
+    // side by side, a difference in FINAL state is a FAIL for the pair and a difference in TIME is
+    // dirt carrying a number - which is only legible if the two ran under the same fleet.
+    //
+    // 15 LAST of the web rows: it is the only one that clicks into a conversation while the sidebar is
+    // still amber, so it leaves the client somewhere other than the list every other row starts from.
+    scripts: [
+      "newdevice.mjs",
+      "healnew.mjs --row 1",
+      "healnew.mjs --row 2",
+      "healnew.mjs --row 12",
+      "healnew.mjs --row 3",
+      "healnew.mjs --row 11",
+      "healnew.mjs --row 15",
+      "heal.mjs",
+      "heal-a1.mjs",
+      "heal-w2.mjs",
+      "heal-web.mjs",
+    ],
+    // W3 IS DECLARED BECAUSE SEVEN OF THESE ROWS WIPE IT, and A1 stays because two of them drive the
+    // phone. Both are narrowed below: the union is the right answer for running the phase and the
+    // wrong one for running one row of it.
+    needs: ["W1", "W2", "A1", "W3"],
   },
 
   // Named so `run.mjs --list` reports them as ZERO COVERAGE rather than leaving them out. A phase
@@ -159,48 +211,48 @@ export const PHASES = {
   // COMM-11, COMM-12 and COMM-19 all inherit whatever it proves, and a failure there is worth
   // seeing before the rows that depend on it.
   COMM: {
-    title: 'communities, channels, roles',
+    title: "communities, channels, roles",
     scripts: [
-      'comm1.mjs',
-      'comm2.mjs',
-      'comm3.mjs',
-      'comm4.mjs',
-      'comm5.mjs',
-      'comm6.mjs',
-      'comm7.mjs',
-      'comm8.mjs',
-      'comm910.mjs',
-      'comm11.mjs',
-      'comm12.mjs',
-      'comm13.mjs',
+      "comm1.mjs",
+      "comm2.mjs",
+      "comm3.mjs",
+      "comm4.mjs",
+      "comm5.mjs",
+      "comm6.mjs",
+      "comm7.mjs",
+      "comm8.mjs",
+      "comm910.mjs",
+      "comm11.mjs",
+      "comm12.mjs",
+      "comm13.mjs",
       // NEEDS THE PHONE TOO, and for a reason no other row has: what it asserts is that a push
       // DECISION reaches a person, and the only observer of that is A1's notification tray.
-      'comm14.mjs',
-      'comm15.mjs',
-      'comm16.mjs',
+      "comm14.mjs",
+      "comm15.mjs",
+      "comm16.mjs",
       // NEEDS THE PHONE, as the account's SECOND device: the community order is per (user,
       // community) in `channel_members.sortOrder`, so "it reaches the other device" is a statement
       // about another DEVICE of the same account and W2 - a different account - cannot make it.
-      'comm17.mjs',
-      'comm19.mjs',
-      'comm20.mjs',
-      'comm21.mjs',
-      'comm22.mjs',
-      'comm2324.mjs 23',
-      'comm2324.mjs 24',
+      "comm17.mjs",
+      "comm19.mjs",
+      "comm20.mjs",
+      "comm21.mjs",
+      "comm22.mjs",
+      "comm2324.mjs 23",
+      "comm2324.mjs 24",
       // NEEDS THE PHONE, and says so through the phase's `needs` below rather than by skipping
       // itself: A1 is one account's SECOND device, which is the whole subject of COMM-25, and a
       // runner that quietly passed with the phone absent would be describing a set of one.
-      'comm25.mjs',
+      "comm25.mjs",
       // LAST, BECAUSE IT KILLS THE APP. What it measures is a COLD start, so the app must not be
       // running when the link is followed - and `am force-stop` puts it in Android's STOPPED state,
       // where FCM broadcasts are cancelled until something starts it explicitly. Any row after this
       // one would be measuring the kill rather than the product, and COMM-14's push row above it
       // most of all. It relaunches the app itself through the link, and the next phase's preflight
       // revives it either way.
-      'comm18.mjs',
+      "comm18.mjs",
     ],
-    needs: ['W1', 'W2', 'A1'],
+    needs: ["W1", "W2", "A1"],
   },
   // EVERY ROW SPELT OUT, and MULTI-6 LAST because it kills the app. Four of the six are automated and
   // the other two are recorded as `SKIPPED` by the script itself with the reason on the row - a phase
@@ -208,19 +260,19 @@ export const PHASES = {
   // phase's subject is the ACCOUNT, so there is no MULTI row that two browsers alone can answer, and
   // `PHONE_SCRIPTS` therefore has no entry narrowing it.
   MULTI: {
-    title: 'one user, two devices',
+    title: "one user, two devices",
     scripts: [
-      'multi.mjs --only 1',
-      'multi.mjs --only 2',
-      'multi.mjs --only 3',
-      'multi.mjs --only 4',
-      'multi.mjs --only 5',
-      'multi.mjs --only 6',
+      "multi.mjs --only 1",
+      "multi.mjs --only 2",
+      "multi.mjs --only 3",
+      "multi.mjs --only 4",
+      "multi.mjs --only 5",
+      "multi.mjs --only 6",
     ],
-    needs: ['W1', 'W2', 'A1'],
+    needs: ["W1", "W2", "A1"],
   },
-  CALL: { title: 'audio and video', scripts: [], needs: ['W1', 'W2', 'A1'] },
-  CORRUPT: { title: 'deliberate store damage', scripts: [], needs: ['W1', 'W2'] },
+  CALL: { title: "audio and video", scripts: [], needs: ["W1", "W2", "A1"] },
+  CORRUPT: { title: "deliberate store damage", scripts: [], needs: ["W1", "W2"] },
   // ONE OF TEN, AND IT WAS WRITTEN BEFORE THIS MANIFEST EXISTED. `del1.mjs` covers DEL-1
   // (WP-HISTGHOST-1's regression check) and was reachable from nothing: the phase read as ZERO
   // coverage, the board read `pending`, and the script's verdict lived in a console line. Rule 22.
@@ -232,12 +284,17 @@ export const PHASES = {
   // the phase needs A1 and `PHONE_SCRIPTS` names the one invocation that does, which is why that map
   // now matches arguments and not only file names.
   DEL: {
-    title: 'deleting a conversation, crossed',
-    scripts: ['del1.mjs', ...only('del.mjs', 2, 7), 'del.mjs --only 9', 'del.mjs --only 10',
-      'del.mjs --only 8'],
-    needs: ['W1', 'W2', 'A1'],
+    title: "deleting a conversation, crossed",
+    scripts: [
+      "del1.mjs",
+      ...only("del.mjs", 2, 7),
+      "del.mjs --only 9",
+      "del.mjs --only 10",
+      "del.mjs --only 8",
+    ],
+    needs: ["W1", "W2", "A1"],
   },
-  PIN: { title: 'the encryption PIN', scripts: [], needs: ['W1', 'W2'] },
+  PIN: { title: "the encryption PIN", scripts: [], needs: ["W1", "W2"] },
 };
 
 /**
@@ -260,11 +317,33 @@ export const PHASES = {
 export const PHONE_SCRIPTS = {
   // COMM-14 (a push decision reaching a tray), COMM-17 and COMM-25 (A1 as the account's SECOND
   // device), COMM-18 (a cold start through `am start`). The other twenty are W1 + W2.
-  COMM: ['comm14.mjs', 'comm17.mjs', 'comm18.mjs', 'comm25.mjs'],
+  COMM: ["comm14.mjs", "comm17.mjs", "comm18.mjs", "comm25.mjs"],
   // DEL-7 ALONE, AND IT IS WRITTEN WITH ITS ARGUMENT ON PURPOSE. Eight rows share `del.mjs` and only
   // this one takes the phone away; a bare `del.mjs` here would demand a cable for the seven that have
   // nothing to do with it.
-  DEL: ['del.mjs --only 7'],
+  DEL: ["del.mjs --only 7"],
+  // TWO OF ELEVEN. `heal.mjs` and `heal-a1.mjs` are the rows about a phone whose store was damaged;
+  // the seven HEAL-NEW rows are a second WEB device and `heal-web.mjs`/`heal-w2.mjs` never leave the
+  // browsers. Without this entry a `--file healnew.mjs --row 1` run was refused for want of a cable
+  // it does not use, which is the refusal-with-no-reason that teaches an operator `--no-preflight`.
+  HEAL: ["heal.mjs", "heal-a1.mjs"],
+};
+
+/**
+ * The same narrowing for the SCRATCH device, and it is a separate map because it is a separate claim.
+ *
+ * W3 exists to be destroyed: `newdevice.mjs` wipes its origin, so every row built on that primitive
+ * needs it and no other row in the campaign may have it demanded. Merging this into
+ * {@link PHONE_SCRIPTS} would make one list mean "needs something extra" - and a list whose entries
+ * mean different things cannot say that a row needs the phone but NOT the scratch profile, which is
+ * exactly the distinction the two HEAL phone rows require.
+ *
+ * Read the same way and in both spellings, by the same function.
+ */
+export const SCRATCH_SCRIPTS = {
+  // The primitive and the six rows that reuse it. `heal.mjs`, `heal-a1.mjs`, `heal-w2.mjs` and
+  // `heal-web.mjs` break a device that already HELD the group, so none of them touches W3.
+  HEAL: ["newdevice.mjs", "healnew.mjs"],
 };
 
 /**
@@ -299,15 +378,15 @@ export const PHONE_SCRIPTS = {
  * `Number()` here would turn a typo into `NaN` and make every comparison false but one.
  */
 const onlyOf = (words) => {
-  const i = words.indexOf('--only');
+  const i = words.indexOf("--only");
   return i === -1 ? null : words[i + 1];
 };
 
 export function devicesFor(file, args = []) {
   const owner = Object.entries(PHASES).find(([, p]) =>
-    p.scripts.some((s) => s.split(' ')[0] === file)
+    p.scripts.some((s) => s.split(" ")[0] === file),
   );
-  if (!owner) return { devices: ['W1', 'W2'], phase: null };
+  if (!owner) return { devices: ["W1", "W2"], phase: null };
   const [name, phase] = owner;
   const narrowed = PHONE_SCRIPTS[name];
   // COMPATIBLE, NEVER EQUAL - and equality is what silently unarmed the phone.
@@ -326,18 +405,22 @@ export function devicesFor(file, args = []) {
   // an invocation narrowing to nothing runs EVERY row the script holds - the declared ones included,
   // which is why a bare `--file del.mjs` owes the cable that DEL-7 will need.
   const invOnly = onlyOf([file, ...args]);
-  const named =
-    !narrowed ||
-    narrowed.some((entry) => {
-      const words = entry.split(' ');
+  const isNamed = (list) =>
+    !list ||
+    list.some((entry) => {
+      const words = entry.split(" ");
       if (words[0] !== file) return false;
       const declOnly = onlyOf(words);
       return declOnly === null || invOnly === null || declOnly === invOnly;
     });
-  return {
-    devices: named ? [...phase.needs] : phase.needs.filter((d) => d !== 'A1'),
-    phase: name,
-  };
+
+  // Each optional device is dropped on its OWN answer. A single verdict would have made "not a phone
+  // row" mean "not a scratch row" as well, so `healnew.mjs` - which needs W3 and not A1 - would have
+  // kept both or lost both, and either way the preflight would be describing a different run.
+  const keep = new Set(phase.needs);
+  if (!isNamed(narrowed)) keep.delete("A1");
+  if (!isNamed(SCRATCH_SCRIPTS[name])) keep.delete("W3");
+  return { devices: [...keep], phase: name };
 }
 
 /**
@@ -345,4 +428,4 @@ export function devicesFor(file, args = []) {
  * all, and it reads the STORES rather than the screen - so it is run after a phase, over the traffic
  * that phase produced, not as one more check among them.
  */
-export const RECON = 'recon.mjs';
+export const RECON = "recon.mjs";

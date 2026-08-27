@@ -48,7 +48,6 @@ import {
   openChannel,
   parkConversation,
   send,
-  until,
 } from './chat.mjs';
 import { closeExtraAppTabs } from './tabs.mjs';
 import { connect } from './cdp.mjs';

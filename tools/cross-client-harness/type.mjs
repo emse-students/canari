@@ -78,7 +78,6 @@ async function type1() {
   const wB = await watch(b, 'receiver');
 
   const before = await evaluate(b, INDICATOR);
-  const t0 = Date.now();
   await typeOnly(a, 'TYPE1 probe');
   const shownMs = await until(b, `${INDICATOR}.length > 0`, 8000, 50).catch(() => null);
   const label = await evaluate(b, INDICATOR);

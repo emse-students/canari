@@ -14,7 +14,7 @@
  * `cutHard` closes the socket as a dropped connection would; the gateway's `Drop` guard removes the
  * key, and the wait below is what turns that into a fact rather than an intention.
  */
-import { client, ensureConversation, send, countMessage, evaluate } from './chat.mjs';
+import { client, ensureConversation, send, countMessage } from './chat.mjs';
 import { gate, ignoringOfflineCut, report, watch } from './watch.mjs';
 import { armCut, cutHard, link } from './net.mjs';
 import { awaitOffline, awaitOnline, whoIs } from './presence.mjs';

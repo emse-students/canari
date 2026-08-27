@@ -201,7 +201,7 @@ const never = rows.filter((r) => !latest.has(r));
 console.log('[rows] the board names ' + rows.length + ' rows; ' + latest.size + ' have a verdict in the ledger');
 
 console.log('\n[rows] per phase - answered / named, then the newest verdicts held');
-for (const phase of [...new Set(rows.map((r) => r.split('-')[0]))]) {
+for (const phase of new Set(rows.map((r) => r.split('-')[0]))) {
   const mine = rows.filter((r) => r.split('-')[0] === phase);
   const done = mine.filter((r) => latest.has(r));
   const tally = {};
