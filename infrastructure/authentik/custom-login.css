@@ -12,6 +12,17 @@
     --rootz-blue: #009bb4;
     --rootz-bg-dark: #001a23;
     --rootz-bg-med: #004d61;
+    /* PatternFly theming tokens (best-effort): unlike class selectors, custom
+     * property VALUES inherit through Shadow DOM boundaries, so this can
+     * reach the primary button even if it renders inside a stage web
+     * component whose own shadow root never received the class-based rules
+     * below. Solid color only - a gradient string is not a valid
+     * `background-color` value, so it would just be dropped silently.
+     * Unverified against this Authentik version's actual token names; keep
+     * only if it turns out to do something.
+     */
+    --pf-global--primary-color--100: #00b8d4;
+    --pf-global--primary-color--200: var(--rootz-blue);
 }
 
 /* Font: no external @import. Authentik's default CSP commonly blocks
