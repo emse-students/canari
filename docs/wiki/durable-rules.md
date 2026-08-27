@@ -676,19 +676,30 @@ Environment and tooling traps that belong to no one subsystem. Each cost a run.
   that ran the same command on different days hold different binaries and disagree about the same
   file - and the disagreement is dated, not explained. oxvelte is exactly this: published on no
   registry, no npm package, no git tag past `v0.1.2` against a current `0.2.0`, so a commit sha is
-  the only name that version has. le-cercle pins it and reads the installed revision back from
-  cargo's own `.crates2.json` rather than keeping a stamp of its own; **`scripts/install-oxvelte.sh`
-  here and on MiGallery still do not**, and their CI cache keys name `v0.2.0`, which has meant
-  several different binaries.
+  the only name that version has. All three repositories that run it now pin the same revision and
+  read the installed one back from cargo's own `.crates2.json` rather than keeping a stamp of their
+  own, so a manual `cargo install` is caught exactly like an automatic one - and the CI cache keys
+  name the revision, because a key naming `v0.2.0` restored whichever binary was built first and
+  meant several different linters under one name.
 - **A GUARD THAT RESTATES A FACT THE TOOL ALREADY ENFORCES ONLY HAS TO GO STALE ONCE.** The
   `MIN_RUST_VERSION=1.97.0` check copied into these install scripts refused an install that then
   built fine on the toolchain it had just rejected - oxvelte declares no `rust-version` at all, so
   the number was never anything but a guess. Let the build fail and name its own requirement.
+- **DROPPING A TOOL'S `--config` FLAG DOES NOT REMOVE ITS CONFIG - THE TOOL FINDS THE FILE ANYWAY.**
+  oxvelte, oxlint and oxfmt all auto-discover their config in the working directory, so
+  `oxvelte lint src` and `oxvelte lint --config oxvelte.config.json src` read the SAME file and
+  agree by construction. That non-difference was measured on three repositories and read as "the
+  config changes no verdict, delete it" - a conclusion built on a comparison of a thing with itself.
+  **Measure a config by MOVING THE FILE ASIDE, never by dropping the flag**, and check the file
+  count in the summary line: the run that fell from 232 files to 51 was the first honest one.
 - **CONFIGURATION THAT CHANGES NO VERDICT IS WORSE THAN NONE**, because it tells the next reader
-  something is being suppressed. le-cercle's first `oxvelte.config.json` disabled
-  `svelte/no-navigation-without-resolve` and `svelte/require-each-key` - neither of which is an
-  oxvelte rule - copied across from the ESLint config it replaced. Measure a config by removing it
-  and re-running: if the verdict is identical, delete it.
+  something is being suppressed - but establish that it changes no verdict before believing it. The
+  same `oxvelte.config.json` sits in all three repositories, copied from the ESLint config it
+  replaced, disabling `svelte/no-navigation-without-resolve`, which IS an oxvelte rule and a
+  RECOMMENDED one. Measured properly, by moving the file: le-cercle 0 either way, so it was deleted
+  there; **Canari 0 with, 92 without - every one of them that rule** - and MiGallery 70 with, 86
+  without, 16 of them that rule. Two of the three configs are load-bearing and stay. What they hold
+  back is a real finding, logged as its own item rather than swept into a cleanup commit.
 - **oxfmt has no `endOfLine: "auto"`** - the option exists, the value does not - so a repository it
   formats must pin `eol=lf` in `.gitattributes` or `format:check` fails on Windows against files
   nobody touched, reporting the operating system rather than the code. Prettier's `auto` is what

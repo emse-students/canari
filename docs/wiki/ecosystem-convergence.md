@@ -776,11 +776,22 @@ this page keeps only what the ecosystem needs to know:
 - **The reformat touched five files.** The oxfmt options are the ones `.prettierrc` carried, and all
   five disagreements are the same multi-line union type. That is the number to quote when the next
   repository asks what this migration costs.
-- **oxvelte is now pinned by commit sha there, and it is NOT pinned here or on MiGallery.** See the
-  entry in [durable-rules](durable-rules.md); those two install scripts owe the same fix.
-- **oxlint and oxvelte both report zero on that codebase**, which made the first
-  `oxvelte.config.json` - copied from here, disabling two rules oxvelte does not have - a file that
-  changed no verdict while claiming to. It was deleted rather than kept for symmetry.
+- **oxvelte is pinned by commit sha in all three repositories now** - `7196779a`, the fix found on
+  le-cercle and carried back here and to MiGallery the same day, cache keys included. See the entry
+  in [durable-rules](durable-rules.md).
+- **The `oxvelte.config.json` that all three carried is deleted from le-cercle ONLY, and the other
+  two keep theirs because they need them.** It disables `svelte/no-navigation-without-resolve`,
+  inherited from the ESLint config it replaced; that IS an oxvelte rule and a recommended one. The
+  file was first measured by dropping the `--config` flag, which measures nothing - oxvelte
+  discovers the file in the working directory regardless - and the resulting "identical verdict"
+  nearly deleted a live suppression from two repositories. Moving the file aside instead:
+  **le-cercle 0 either way** (the rule fires nowhere in its 53 components, so the file went),
+  **Canari 0 with and 92 without, all 92 that rule**, MiGallery 70 with and 86 without, 16 that
+  rule. See [durable-rules](durable-rules.md) for both halves of that mistake.
+- **Those 108 suppressed warnings are a finding, not a cleanup.** `resolve()` from `$app/paths` is
+  what SvelteKit 2.26+ wants around a route string; the disable was inherited from ESLint and
+  re-justified by nobody. Adopting it is 92 call sites on Canari and 16 on MiGallery and belongs in
+  the queue on its own, not folded into a tooling commit.
 - **The pipeline needed a second job.** The gates run inside `oven/bun:1.4.0-alpine` on a shell
   runner that is also the production host, and that image carries no Rust, so `gates:svelte` builds
   the pinned oxvelte revision in `rust:1.97.0-alpine3.22` - 1m47s, no package added to that image,

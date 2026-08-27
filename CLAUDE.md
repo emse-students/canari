@@ -258,7 +258,12 @@ job because the bun image carries no Rust, all gates green. Two rules came out o
 with no `--rev` follows the branch), now fixed in all three repos with the CI cache keys moved onto
 the revision; and **a guard restating a fact the tool enforces only has to go stale once** - the
 `MIN_RUST_VERSION` copied between these scripts refused an install that then built fine.
-**Read section 9 before touching TS 7 on either.**
+**Read section 9 before touching TS 7 on either.** A third came out of trying to delete the
+`oxvelte.config.json` all three carried: **dropping a `--config` flag does not remove the config**,
+the tool finds the file in the cwd anyway, and that non-measurement nearly deleted a LIVE
+suppression - **92 navigations here and 16 on MiGallery bypass `resolve()`**, so those two configs
+stay and the work is its own P3 in [backlog](docs/wiki/backlog.md#tooling). le-cercle's really was
+inert and is gone.
 
 **OWED TO THE USER, NOT TO THE CODE: the MLS + Graine explanation** - prose and diagrams, no code
 (user, 2026-08-20). Post-campaign; scope and the two audiences declined are in [backlog](docs/wiki/backlog.md).

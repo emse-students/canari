@@ -1683,6 +1683,40 @@ feature is therefore coherent with E2EE - it removes a password prompt, not a re
   before anyone believes what it says.
 
 
+## Tooling
+
+### P3 - 108 navigations bypass `resolve()`, and an inherited disable is the only reason nobody sees them
+
+**FOUND 2026-08-27, while measuring whether `oxvelte.config.json` could be deleted.** It cannot, on
+this repository or on MiGallery, and the reason it cannot IS the finding.
+
+The file disables exactly one rule, `svelte/no-navigation-without-resolve`, and it was copied across
+from the ESLint config the Oxc migration replaced - which had disabled it for reasons nobody wrote
+down. The rule is in oxvelte's recommended set. With the file moved aside:
+
+| Repository | With the config | Without | Of which that rule |
+| --- | --- | --- | --- |
+| Canari (`frontend/src`) | 0 | 92 | **92 - every one** |
+| MiGallery (`src`) | 70 | 86 | 16 |
+| le-cercle (`src`) | 0 | 0 | 0 - so its config was deleted |
+
+**What the rule wants** is `resolve()` from `$app/paths` around a route string handed to `goto()` or
+to an `href`, which is how SvelteKit 2.26+ resolves a route id against the configured base path. The
+92 call sites here are correct today because this app is served at the root and `base` is empty. That
+is the whole of their correctness: it is a property of the deployment, not of the code, and the day
+anything is served under a prefix - the second environment in this same file, a preview build, an
+embed - all 92 break together and silently.
+
+**The work is 92 call sites plus 16 on MiGallery, then deleting both config files.** It is mechanical
+and it is large, and it must not be folded into a tooling commit: a diff that touches every
+navigation in the app is a diff that wants to be read on its own. Nothing is broken while it waits,
+so it waits.
+
+**Do not re-measure it by dropping the `--config` flag.** oxvelte finds the file in the working
+directory either way; that comparison is a thing against itself and it read as 0/0 here for exactly
+as long as it took to run the real gate. Move the file.
+
+
 ## Post-campaign projects - decided, not scheduled
 
 ### The MLS + Graine explanation, written FOR THE USER - audience settled 2026-08-20
