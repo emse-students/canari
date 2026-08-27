@@ -65,6 +65,19 @@ which is also where every release up to and including v0.13.1 now lives.
   needed no move. **NestJS 11 -> 12 is available and deliberately not taken here**: four services,
   ten packages and a framework major is a work package, not a bump ([backlog](docs/wiki/backlog.md)).
 
+- **The four services' lockfiles are at `configVersion: 1` like the frontend's, after a first pass
+  recorded that as impossible.** The reasoning was: moving the field needs the file regenerated, and
+  bun 1.4.0 regenerating from nothing writes `lockfileVersion: 2`, which Dependabot cannot read and
+  which `Guard the bun lockfile version` rejects. Both halves are true; the conclusion was not. An
+  in-place install and a 1.4.0 regeneration are two writers, not every writer - and the third was
+  already documented in a sibling repository: **`bunx --bun bun@1.3.14 install` regenerates at
+  `lockfileVersion: 1` with `configVersion: 1`**, 1.3.14 being the bun Dependabot itself bundles.
+  bun 1.4.0 then reads all five files under `--frozen-lockfile` with no changes. What it costs is
+  a full re-resolution, so it was measured: the services mostly DEDUPLICATED, one copy surviving
+  where two stood - `ajv@8.20.0`, `picomatch@4.0.7`, and in chat-delivery `gaxios@7.1.3`,
+  `gcp-metadata@8.1.4`, `google-logging-utils@1.2.0` - with `prettier@3.9.6` leaving core-service
+  outright. Lint, format, `nest build` and 157 / 6 / 563 / 271 jest tests under node, all green.
+
 ### Fixed
 
 - **Every photo and every logo on the Carte de la Vie Asso was missing on mobile, and nothing said

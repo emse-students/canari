@@ -232,12 +232,15 @@ measurement and every per-repo state is on
 [ecosystem-convergence](docs/wiki/ecosystem-convergence.md), the only copy - section 8 the
 package-manager half, section 9 the TypeScript 7 refusal, section 10 why Renovate is dropped.
 
-**NOT TO BE RELITIGATED:** bun 1.4.0 is the runtime everywhere it can be AND lockfiles stay at v1 -
-**compatible only because a lockfile is never REGENERATED**, since bun 1.4.0 writes v2 from scratch
-and offers no flag for v1; `bun update` and `bun install` preserve what they find, which is the whole
-mechanism. So `configVersion: 0` on six lockfiles STAYS (raising it needs that regeneration). The
-invariant is enforced by `Guard the bun lockfile version` in `code-analysis.yml`, never by pinning a
-toolchain, because a pin never governed a contributor's own bun; **TS 7 IS REFUSED ON CANARI** and `dependabot.yml` ignores its majors, or
+**NOT TO BE RELITIGATED:** bun 1.4.0 is the runtime everywhere it can be AND lockfiles stay at v1,
+which is not a conflict: bun >= 1.4 writes v2 for a lockfile it creates from NOTHING, while
+`bun install` / `bun update` preserve the version they find, and **`bunx --bun bun@1.3.14 install`
+regenerates at v1 with `configVersion: 1`** - 1.3.14 being the bun Dependabot itself bundles. bun
+1.4.0 then accepts that file under `--frozen-lockfile` unchanged. All ten lockfiles in the ecosystem
+are now v1 / configVersion 1. A regeneration RE-RESOLVES the tree, so it is paid deliberately with
+every gate re-run, never as a side effect. The invariant is enforced by `Guard the bun lockfile
+version` in `code-analysis.yml`, never by pinning a toolchain, because a pin never governed a
+contributor's own bun; **TS 7 IS REFUSED ON CANARI** and `dependabot.yml` ignores its majors, or
 `dependabot-auto-merge.yml` would land it unattended; **RENOVATE IS DROPPED**; Sky keeps Tailwind
 and migrates to v4 without preflight; `bun:sqlite` replaces better-sqlite3; the `image_url` deletion
 stands.
@@ -260,8 +263,8 @@ rather than re-deriving it**, which is what made this paragraph wrong twice. **A
 2026-08-27 found ELEVEN residual gaps and closed nine** (its own table in section 11, with every
 measurement): one oxfmt and one oxlint version everywhere, one lint scope, one shim dialect, the
 dead `frontend/.husky/`, the three-way bun declaration, Sky's `bun-version: latest`, the stale npm
-/ ESLint / Prettier docs. **The two that are NOT closures: `configVersion: 0` on six lockfiles
-CANNOT be raised** (see above), and **NestJS 11 -> 12 is parked as a P2**
+/ ESLint / Prettier docs, and - after a first pass wrongly called it impossible - `configVersion: 0`
+on the last six lockfiles. **The one that is NOT a closure: NestJS 11 -> 12 is parked as a P2**
 ([backlog](docs/wiki/backlog.md#tooling)) - a framework major across four deployed services is not
 a bump. What is left beyond it is JUDGEMENT: MiGallery's lint warnings (section 11 names the two
 that must not be swept); the `resolve()` question three repos park differently -

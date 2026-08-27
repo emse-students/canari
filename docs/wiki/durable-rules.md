@@ -687,14 +687,22 @@ Environment and tooling traps that belong to no one subsystem. Each cost a run.
   lockfile which version a tool IS, and ask every lockfile** - a tool whose version varies by
   directory is a gate whose verdict varies by directory.
   [ecosystem-convergence](ecosystem-convergence.md#11-the-cross-repo-convergence-plan-repo-by-repo)
-- **A LOCKFILE FORMAT INVARIANT IS ONLY HELD BY NEVER REGENERATING THE FILE.** This repository
-  requires `lockfileVersion: 1` because Dependabot cannot read v2, and CI guards it. That guard
-  was recorded as INDEPENDENT of "bun 1.4.0 everywhere". It is not: deleting a `bun.lock` and
-  reinstalling under bun 1.4.0 writes **v2**, there is no flag to ask for v1, and the two
-  requirements are then in direct conflict. What holds v1 is that the existing files are only ever
-  UPDATED IN PLACE - `bun update` and `bun install` both preserve the version they find. So six
-  lockfiles across the ecosystem carry `configVersion: 0` and must keep it: raising it needs the
-  regeneration that would take `lockfileVersion` with it. Measured on Sky, then reverted.
+- **A FILE FORMAT INVARIANT IS HELD BY PINNING THE WRITER, NOT BY NEVER WRITING THE FILE.** This
+  repository requires `lockfileVersion: 1` because Dependabot cannot read v2, and CI guards it.
+  bun >= 1.4 writes **v2** for a lockfile it creates from nothing and offers no flag for v1, so an
+  in-place `bun install` / `bun update` preserving what it finds looked like the ONLY thing holding
+  the invariant - and "never regenerate" was written down as the rule. It was wrong, and wrong in
+  the way that matters: it converted a missing tool into a property of the format, and closed a
+  question. The writer is choosable. `bunx --bun bun@1.3.14 install` regenerates from nothing and
+  writes `lockfileVersion: 1` **and** `configVersion: 1` - the same 1.3.14 Dependabot itself
+  bundles, whose `MAX_SUPPORTED_LOCKFILE_VERSION` is 1 - and bun 1.4.0 then accepts the result
+  under `--frozen-lockfile` with no changes, on all five repositories. The technique was already
+  written in MiGallery's own `CLAUDE.md` while this page called it impossible.
+  **So: before recording that something CANNOT be done, name the tool you would need and go look
+  for it.** Two measurements that both fail do not add up to an impossibility; they add up to two
+  tools tried. A regeneration is not free - it re-resolves the whole tree (209 lines of transitive
+  movement on Sky, deduplication of `ajv` / `gaxios` / `picomatch` across Canari's services) - so
+  it is paid deliberately, with every gate re-run, never as a side effect of an unrelated install.
   [ecosystem-convergence](ecosystem-convergence.md#11-the-cross-repo-convergence-plan-repo-by-repo)
 - **A LINT SCOPE IS A CLAIM ABOUT COVERAGE, AND THE ONLY WAY TO READ IT IS TO PLANT A VIOLATION.**
   `bun run lint` on `src` had never read `frontend/scripts/`, where the protobuf generator, the

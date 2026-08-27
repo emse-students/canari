@@ -912,7 +912,7 @@ because most of them were invisible to the check that would naturally be run for
 | 6 | two oxvelte shim dialects, bash and POSIX `sh` | Canari, MiGallery, Sky vs the rest | **CLOSED** - all five on the corrected `sh` pair |
 | 7 | three lint scopes (`src` / `src scripts` / `.`) | all five | **CLOSED** - `.` everywhere; format keeps its globs, see below |
 | 8 | in-range and out-of-range dependency lag | Canari, Sky, le-cercle | **CLOSED** for in-range; NestJS 11 -> 12 deliberately parked |
-| 9 | `configVersion: 0` lockfiles; an empty `catch` in the hook installer | Sky + four services; Canari | **catch CLOSED; configVersion CANNOT be closed** - see below |
+| 9 | `configVersion: 0` lockfiles; an empty `catch` in the hook installer | Sky + four services; Canari | **BOTH CLOSED.** The first pass called `configVersion` unclosable; it was wrong - see below |
 | 10 | MiGallery's runtime is node while Sky's is bun, on the same host | MiGallery | see [MiGallery](#migallery---the-package-manager-half-is-done-2026-08-27) |
 | 11 | five hand-written SVG icons instead of lucide | Portail-etu | see that repository's `docs/wiki/tooling.md` |
 
@@ -936,14 +936,36 @@ Probed: a file there with an unused variable, a `debugger` and an `eval` drew **
 for `svelte/compiler` for its embedded code blocks and dies - installing svelte in a NestJS service
 to format its README is not a trade worth making.
 
-**`configVersion: 0` cannot be raised, and this is the reason (gap 9).** Six lockfiles carry it -
-Sky's and the four Canari services'. The only way to move it is to delete the file and reinstall,
-and **a `bun.lock` regenerated under bun 1.4.0 is written at `lockfileVersion: 2`**, which
-Dependabot cannot read and which `Guard the bun lockfile version` in `code-analysis.yml` rejects.
-`bun install --help` offers no version flag. So the two requirements recorded as INDEPENDENT -
-"bun 1.4.0 everywhere" and "lockfiles stay at v1" - are independent only for as long as no lockfile
-is ever regenerated. Measured on Sky (v1/`configVersion 0` -> v2/`configVersion 1`), then reverted;
-the in-range update it was carrying was reapplied with `bun update`, which preserves v1.
+**`configVersion: 0` IS raised, on all six - and the first pass calling it impossible is the more
+useful half of this entry (gap 9).** Six lockfiles carried it: Sky's and the four Canari services'
+(the frontend was already at 1).
+
+The wrong reasoning, recorded so it is not repeated: moving the field needs the file deleted and
+reinstalled; **a `bun.lock` regenerated under bun 1.4.0 is written at `lockfileVersion: 2`**, which
+Dependabot cannot read and which `Guard the bun lockfile version` in `code-analysis.yml` rejects;
+`bun install --help` offers no version flag. Two measurements - an in-place install, which preserves,
+and a 1.4.0 regeneration, which gives v2 - were taken as exhausting the space, and "never regenerate"
+went into `durable-rules` as a property of the FORMAT. It is a property of the WRITER, and the writer
+is choosable. **`bunx --bun bun@1.3.14 install` regenerates from nothing at `lockfileVersion: 1` with
+`configVersion: 1`.** 1.3.14 is the bun Dependabot itself bundles, `MAX_SUPPORTED_LOCKFILE_VERSION`
+1, which is why it writes what Dependabot can read. The technique was already documented in
+MiGallery's own `CLAUDE.md` while this page said it could not exist.
+
+**What it costs, measured, because a regeneration re-resolves the entire tree.** Sky moved 209
+resolution lines - `@oxc-project/types` 0.144.0 -> 0.147.0, `@napi-rs/wasm-runtime` 1.1.5 -> 1.2.3,
+the rolldown bindings 1.2.4 -> newer, `@csstools/css-color-parser` 4.2.0 -> 4.2.1. The four Canari
+services mostly DEDUPLICATED, one copy surviving where two had stood: `ajv@8.20.0`, `picomatch@4.0.7`
+and (chat-delivery only) `gaxios@7.1.3`, `gcp-metadata@8.1.4`, `google-logging-utils@1.2.0` all
+disappear, and `prettier@3.9.6` leaves core-service entirely. bun 1.4.0 then accepts all five files
+under `--frozen-lockfile` with **no changes**, so the two bun versions genuinely cohabit. Every gate
+was re-run against the new files: Sky check 43/0 errors, 50/50 tests, build OK; the services lint,
+format, `nest build` and 157 / 6 / 563 / 271 jest tests under node.
+
+**One thing is unexplained and is not being dismissed.** On the first pass over the services,
+social-service reported 2 suites failed / 553 tests where six later runs - three of them replaying
+the exact `bun run build` then `npm test` sequence - give 34/34 and 563. Ten tests missing means two
+suites that never LOADED, not two that disagreed. The failure text was not captured, so there is no
+cause; runs since capture full output so the next occurrence is diagnosable.
 
 **Parked, with its substance in [backlog](backlog.md): NestJS 11 -> 12.** All four services offer
 it, along with `@nestjs/config` 4 -> 12, `@nestjs/schedule` 6 -> 12, `@nestjs/axios` 4 -> 12,
