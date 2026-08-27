@@ -703,19 +703,6 @@ export class PostsService {
     return { ok: true };
   }
 
-  /** Returns posts that have at least one report, ordered by most recent. Admin only. */
-  async getReportedPosts(limit = 50, offset = 0): Promise<any[]> {
-    const rows: any[] = await this.postRepo.manager.query(
-      `SELECT id, "authorId", markdown, "createdAt", reports, pinned, "associationId"
-       FROM posts
-       WHERE jsonb_array_length(COALESCE(reports, '[]'::jsonb)) > 0
-       ORDER BY "createdAt" DESC
-       LIMIT $1 OFFSET $2`,
-      [limit, offset]
-    );
-    return rows;
-  }
-
   /** Returns the author's own future-scheduled posts (max 20), ordered by scheduled date. */
   async getMyScheduledPosts(userId: string) {
     const rows: any[] = await this.postRepo.manager.query(
@@ -890,18 +877,5 @@ export class PostsService {
     await this.postRepo.save(post);
     await this.invalidateListCache();
     return { ok: true, pinned };
-  }
-
-  /** Records a user's report on a post. Silently ignores duplicate reports from the same user. */
-  async reportPost(postId: string, userId: string, reason: string) {
-    const post = await this.postRepo.findOne({ where: { id: postId } });
-    if (!post) throw new NotFoundException('Post not found');
-    const reports = Array.isArray(post.reports) ? post.reports : [];
-    if (reports.some((r: any) => r.userId === userId)) {
-      return { ok: true, alreadyReported: true };
-    }
-    post.reports = [...reports, { userId, reason, createdAt: new Date().toISOString() }];
-    await this.postRepo.save(post);
-    return { ok: true };
   }
 }

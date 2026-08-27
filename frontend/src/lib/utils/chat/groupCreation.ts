@@ -12,6 +12,7 @@ import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
 import { requestReAdd } from '$lib/utils/chat/recovery';
 import { findActiveDirectGroupForPeer } from '$lib/utils/chat/groupSyncEligibility';
 import { isRawId } from '$lib/utils/chat/conversations';
+import { isBlockedWith } from '$lib/users/blocks';
 
 /** Dependencies injected into all group-creation and conversation-management helpers. */
 interface GroupCreationDeps {
@@ -228,10 +229,29 @@ async function processBulkAddition(
   const { mlsService, userId, deviceKeyB64, log } = deps;
   if (memberIds.length === 0) return;
 
-  const targetUsers = memberIds.map((m) => m.trim().toLowerCase()).filter(Boolean);
+  let targetUsers = memberIds.map((m) => m.trim().toLowerCase()).filter(Boolean);
   if (targetUsers.length === 0) return;
 
   log(`Inviting ${targetUsers.length} member(s): ${targetUsers.join(', ')}...`);
+
+  // Same reason as the 1-to-1 path: the server's refusal at `addGroupMember` is authoritative, but
+  // it lands after the Welcomes have gone out. Anyone a block stands between is dropped from the
+  // batch here, and the rest of the invitation proceeds - one blocked person must not cancel an
+  // invitation naming four others.
+  const reachable: string[] = [];
+  for (const target of targetUsers) {
+    try {
+      if (await isBlockedWith(target)) {
+        log(`[INVITE] Skipped ${target}: a block stands between them and you.`);
+        continue;
+      }
+      reachable.push(target);
+    } catch (e) {
+      log(`[ERROR] Could not check whether ${target} can be added, skipping: ${String(e)}`);
+    }
+  }
+  if (reachable.length === 0) return;
+  targetUsers = reachable;
 
   try {
     await mlsService.registerMember(conversation.id, userId);
@@ -543,6 +563,24 @@ export async function startNewConversation(
   } catch (e) {
     // Non-blocking: continue with normal creation but log the error.
     console.warn(`[1v1] getUserGroups failed, risk of duplicate group:`, e);
+  }
+
+  // A BLOCK IS ASKED ABOUT HERE, NOT DISCOVERED LATER. Every existing-conversation path above has
+  // already returned by now, which is what keeps a block off conversations that predate it: only
+  // the CREATION of a new one is closed. The authoritative refusal is the server's, at
+  // `addGroupMember` - but meeting it here would mean the group had already been minted and the
+  // Welcomes already sent, leaving a conversation half built on both sides.
+  //
+  // A failure to ask is not an answer, so this is not swallowed: if core-service cannot be reached
+  // the creation stops and says so, rather than proceeding as though nobody had blocked anybody.
+  try {
+    if (await isBlockedWith(contact)) {
+      log(`[1v1] Refused: a block stands between ${userId} and ${contact}.`);
+      return;
+    }
+  } catch (e) {
+    log(`[ERROR] Could not check whether ${contact} can be contacted: ${String(e)}`);
+    return;
   }
 
   // IMPORTANT: Check if contact is available BEFORE creating the group

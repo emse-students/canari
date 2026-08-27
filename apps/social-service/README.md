@@ -13,7 +13,7 @@ News feed with Markdown content, media attachments, polls, and reactions.
 - Comments with text, mentions, images, GIFs
 - Emoji reactions
 - Pin/unpin (admin)
-- Report (moderation)
+- Report (moderation) — one store, `content_reports`, written by `POST /api/moderation/reports`. Posts, comments and people can be reported; five pending reports auto-hide a post. See [moderation-and-blocking](../../docs/wiki/moderation-and-blocking.md).
 
 ### Channels & Workspaces
 

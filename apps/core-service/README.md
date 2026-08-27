@@ -44,7 +44,8 @@ User profiles, search, and directory:
 - **Account deletion**: `DELETE /api/users/me` — permanently deletes the account and all data across all services.
 - **Avatar**: fetched from an external service, proxied through `GET /api/users/:id/avatar`.
 - **Private notepad**: Markdown notes per user (`GET/PUT /api/users/me/notes`).
-- **Search**: `GET /api/users/search?q=...` — autocomplete, accent- and case-insensitive, typo-tolerant via `pg_trgm` trigram similarity.
+- **Search**: `GET /api/users/search?q=...` — autocomplete, accent- and case-insensitive, typo-tolerant via `pg_trgm` trigram similarity. Excludes accounts a block stands between, in either direction.
+- **Blocking**: `GET/POST /api/users/me/blocks`, `DELETE /api/users/me/blocks/:blockedId`, and `GET /api/users/:otherUserId/block-status`. A block closes the 1-to-1, group-add and salon-invitation paths between two people and leaves everything already shared untouched; it is enforced at the mutations in chat-delivery and social-service, never by the search exclusion alone. Nothing about a block reaches a moderator. See [moderation-and-blocking](../../docs/wiki/moderation-and-blocking.md).
 - **Directory**: `GET /api/users/directory` — paginated, filterable by promo, formation, association. Reuses the same fuzzy name search as the autocomplete endpoint.
 - **Admin list**: `GET /api/users/admin/list` — all users with their admin status.
 - **Admin toggle**: `PATCH /api/users/:id/admin` — set or clear the global admin flag (cannot self-revoke).

@@ -13,7 +13,7 @@ const GC_NOTIFICATION_DAYS = 90;
 const GC_REMINDER_DAYS = 30;
 const GC_USER_TAG_GRACE_DAYS = 30;
 const GC_WEBHOOK_DELIVERY_DAYS = 30;
-const GC_CONTENT_REPORT_DAYS = 365;
+const GC_CONTENT_REPORT_DAYS = 90;
 
 @Injectable()
 export class FormReminderScheduler {
@@ -207,7 +207,17 @@ export class FormReminderScheduler {
 
   /**
    * Weekly (Sunday 04:30) - deletes resolved content reports (reviewed/dismissed)
-   * older than one year. Pending reports are kept indefinitely.
+   * GC_CONTENT_REPORT_DAYS after they were HANDLED. Pending reports are kept indefinitely.
+   *
+   * THE ONLY RETENTION `content_reports` HAS, since 2026-08-27. It had three, and they disagreed:
+   * a lazy 7-day purge fired from `ModerationService.listAllReports` on every moderator page load,
+   * this cron said one year, and `internal.controller`'s docblock claimed the rows were kept for
+   * legal obligation. The lazy one always won, so this cron had never deleted anything - a
+   * mechanism can be correct and still be dead if something upstream empties its population first.
+   *
+   * The clock is `reviewedAt`, not `createdAt`: the policy is "90 days after a moderator answered",
+   * and keying it on filing would purge an old report the day after it was finally handled.
+   * COALESCE covers rows handled before `reviewedAt` existed.
    */
   @Cron('30 4 * * 0')
   async purgeResolvedContentReports() {
@@ -215,13 +225,13 @@ export class FormReminderScheduler {
       const res: { rowCount?: number } = await this.reminderRepo.manager.query(
         `DELETE FROM content_reports
          WHERE status IN ('reviewed', 'dismissed')
-           AND "createdAt" < NOW() - make_interval(days => $1)`,
+           AND COALESCE("reviewedAt", "createdAt") < NOW() - make_interval(days => $1)`,
         [GC_CONTENT_REPORT_DAYS]
       );
       const deleted = res.rowCount ?? 0;
       if (deleted > 0)
         this.logger.log(
-          `[GC] content_reports: ${deleted} deleted (older than ${GC_CONTENT_REPORT_DAYS} days)`
+          `[GC] content_reports: ${deleted} deleted (handled more than ${GC_CONTENT_REPORT_DAYS} days ago)`
         );
     } catch (e) {
       this.logger.warn('[GC] purgeResolvedContentReports failed', e);

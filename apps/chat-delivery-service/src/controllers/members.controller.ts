@@ -28,6 +28,7 @@ import {
 } from '../utils/sanitize';
 import { RETENTION_WINDOW_MS } from '../retention.constants';
 import { resolveUserDisplayNamesBatch } from '../utils/display-name';
+import { isBlockedBetween } from '../utils/user-blocks';
 
 /** Group membership management: add/remove members, list members, list user groups. */
 @Controller()
@@ -299,6 +300,28 @@ export class MembersController {
       headerGlobalAdmin,
       true // allow the group-creation bootstrap (creator registers itself into an empty group)
     );
+    // THE ONE PLACE A BLOCK ACTUALLY STOPS SOMETHING. Hiding a person from the user search stops
+    // nobody who already knows a uuid, and both paths the block is meant to close - opening a 1-to-1
+    // and pulling somebody into a group - end HERE: without a `GroupMember` row the target's devices
+    // never receive a pending membership, so no Welcome is ever built for them.
+    //
+    // It is scoped to ADDING A NEW MEMBER, which leaves existing groups untouched as decided. A
+    // member's later devices enter through `registerDevice`, which fans the user's existing groups
+    // out on its own and never comes through here - so healing a shared group keeps working across
+    // a block, and that is the intent.
+    //
+    // The message is neutral: it says the person cannot be added, never who blocked whom.
+    const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
+    if (caller && (await isBlockedBetween(this.dataSource.manager, caller, safeUserId))) {
+      this.logger.log(
+        `[ADD_MEMBER][${traceId}] REFUSED block between caller=${caller} target=${safeUserId}`
+      );
+      throw new ForbiddenException({
+        code: 'USER_BLOCKED',
+        message: 'This person cannot be added.',
+      });
+    }
+
     this.logger.log(`[ADD_MEMBER][${traceId}] START group=${safeGroupId} user=${safeUserId}`);
 
     // Atomic upsert: INSERT ... ON CONFLICT DO UPDATE avoids the findOne+save race.

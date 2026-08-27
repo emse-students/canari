@@ -17,8 +17,15 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { UsersService } from './users.service';
+import { UserBlocksService } from './user-blocks.service';
 import { AvatarService } from './avatar.service';
-import { CreateUserDto, UpdateUserDto, UpdateNotesDto, DirectoryQueryDto } from './dto/user.dto';
+import {
+  CreateUserDto,
+  UpdateUserDto,
+  UpdateNotesDto,
+  DirectoryQueryDto,
+  BlockUserDto,
+} from './dto/user.dto';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 
@@ -27,8 +34,60 @@ import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 export class UsersController {
   constructor(
     private readonly usersService: UsersService,
-    private readonly avatarService: AvatarService
+    private readonly avatarService: AvatarService,
+    private readonly blocksService: UserBlocksService
   ) {}
+
+  // -- Blocking -------------------------------------------------------------
+  //
+  // Declared before every `:id` route on purpose: Nest matches in declaration order, and
+  // `me/blocks` would otherwise be swallowed by `:id/...` with `id = "me"`.
+
+  /** The people the caller has blocked, with the names needed to unblock them. */
+  @UseGuards(NginxAuthGuard)
+  @Get('me/blocks')
+  listBlocks(@Headers('x-user-id') userId: string) {
+    return this.blocksService.listBlocks(userId);
+  }
+
+  /**
+   * Blocks a person. Idempotent.
+   *
+   * The blocked person is never told, and no administrator is: a block is a matter between two
+   * people (user decision, 2026-08-27). Somebody who wants a moderator involved files a report.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Post('me/blocks')
+  blockUser(@Headers('x-user-id') userId: string, @Body() dto: BlockUserDto) {
+    return this.blocksService.block(userId, dto.userId);
+  }
+
+  /**
+   * Whether a block stands between the caller and `otherUserId`, in either direction.
+   *
+   * IT EXISTS SO NOBODY LEARNS THIS BY FAILING. The authoritative refusals sit at the mutations -
+   * adding a member to an MLS group, inviting into a private salon - and reaching one of those with
+   * a conversation half built is a bad way to find out: the client would already have minted a
+   * group and delivered Welcomes before the server said no. The fact is known HERE, cheaply, so the
+   * two creation paths ask before they start rather than after.
+   *
+   * It does not say WHO blocked whom, and that is the whole answer a caller needs.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get(':otherUserId/block-status')
+  async blockStatus(
+    @Headers('x-user-id') userId: string,
+    @Param('otherUserId') otherUserId: string
+  ) {
+    return { blocked: await this.blocksService.isBlockedBetween(userId, otherUserId) };
+  }
+
+  /** Lifts a block. Only the blocker can, and this is the only surface that offers it. */
+  @UseGuards(NginxAuthGuard)
+  @Delete('me/blocks/:blockedId')
+  unblockUser(@Headers('x-user-id') userId: string, @Param('blockedId') blockedId: string) {
+    return this.blocksService.unblock(userId, blockedId);
+  }
 
   /**
    * Search users by id or displayName for autocomplete.

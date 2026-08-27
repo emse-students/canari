@@ -11,7 +11,65 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added
+
+- **Blocking a person.** Narrow on purpose, and asked for as such: the two accounts stop finding
+  each other in the user search and the mention autocomplete, neither can open a 1-to-1 with the
+  other, add them to a group, or invite them into a private salon - inside a shared community
+  included - and the two follows are severed. Everything that already exists is untouched:
+  conversations, groups, community membership, posts. The blocked person is never told, and **no
+  moderator sees anything** - by decision, because these are conflicts between two people and a
+  dashboard tallying them would turn a private gesture into a record a third party reads. Someone
+  who wants a moderator involved files a report, which the profile offers as a separate control.
+
+  The table is core-service's (`user_blocks`), read directly out of `auth_db` by the two services
+  that must refuse a mutation. **Hiding somebody from a search enforces nothing** - a known uuid is a
+  complete bypass - so the refusals sit at `addGroupMember` (chat-delivery) and the salon invitation
+  (social-service), each answering `403 USER_BLOCKED` with a neutral message that never says who
+  blocked whom. Without a membership row the target's devices never get a pending membership, so no
+  Welcome is ever built: that is the whole mechanism. Both creation paths ask
+  `GET /api/users/:id/block-status` BEFORE any MLS work, because meeting the authoritative refusal
+  at the commit means the group is already minted and the Welcomes already out.
+
+- **Reporting a person**, from their profile, with the same four reasons every other report uses.
+  A moderator sees the account's display name as the preview rather than a bare uuid.
+
 ### Changed
+
+- **A post could be reported into two stores, and one of them had never once been written to.**
+  `POST /api/posts/:postId/report` appended to a `reports` JSONB column on `posts`, read back by
+  `GET /api/posts/reported`; the other went to `content_reports`, which is what `/admin/moderation`
+  reviews and what the auto-hide threshold counts. Settling "which is the truth" looked like an
+  architecture question until it was counted: **neither end of the first had a caller** - the client
+  wrappers `reportPost` and `getReportedPosts` existed and nothing invoked them - and production
+  held **112 posts, 0 with a row in that column, 0 hidden**. The backlog entry describing the two
+  even attributed the auto-hide to the dead one. Both routes, both wrappers, the DTO and the column
+  are gone; nothing was migrated because nothing was there.
+
+- **`content_reports` had THREE retention policies and they disagreed.** A lazy 7-day purge fired
+  from `listAllReports`, so a moderator opening the queue deleted rows as a side effect of reading
+  it; a weekly cron said one year and **had therefore never deleted anything**, the lazy one always
+  emptying its population first; and an unrelated docblock claimed the rows were kept indefinitely
+  for legal obligation. One policy is left - the cron, at **90 days**, keyed on `reviewedAt` rather
+  than `createdAt`, because "90 days after a moderator answered" keyed on filing purges an old
+  report the day after it is finally handled.
+
+- **A dismissed report could be re-filed, indefinitely, by the same person.** The duplicate check
+  was scoped to `status: 'pending'`, so every rejection re-opened the door. A dismissal is an
+  answer, not an invitation to ask again: uniqueness is now per person per subject whatever became
+  of the first attempt, and the refusal is a `409` carrying `code: 'ALREADY_REPORTED'` - the client
+  read `message.includes('already')` until now, which is a distinction carried in prose.
+
+- **Reporting a comment sent `inappropriate` with no question asked, and swallowed every error.**
+  The comment path caught silently "to ignore duplicates" and so reported a moderation outage as a
+  successful report. It now offers the same four reasons a post does, through one shared dialog and
+  one shared reason list, and a real failure is shown.
+
+- **`contentType: 'message'` is removed** - declared in the DTO, the entity and the client type, and
+  produced by nobody. It could not have worked: message bodies are MLS ciphertext, so the server had
+  nothing to show a moderator and the preview was hard-coded null. Reporting a message would mean
+  the client attaching the decrypted excerpt, which is a decision about what a reporter discloses,
+  not a missing endpoint.
 
 - **Three different oxlint binaries linted this one repository, and the manifests said two.**
   `apps/*/package.json` asked for `^1.74.0` and `frontend/package.json` for `^1.80.0`, but a caret

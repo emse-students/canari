@@ -28,7 +28,6 @@ import {
   AddReactionDto,
   EditCommentDto,
   UpdatePostDto,
-  ReportPostDto,
   SubmitFormDto,
 } from './dto/post.dto';
 
@@ -76,19 +75,6 @@ export class PostsController {
   @Get('my-scheduled')
   getMyScheduledPosts(@Headers('x-user-id') xUserId: string) {
     return this.service.getMyScheduledPosts(xUserId);
-  }
-
-  /** Returns all posts that have at least one report. Content moderators. */
-  @UseGuards(NginxAuthGuard)
-  @Get('reported')
-  async getReportedPosts(
-    @Headers('x-user-id') xUserId: string,
-    @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Query('limit') limit?: string,
-    @Query('offset') offset?: string
-  ) {
-    await this.assertContentModerator(xUserId, xGlobalAdmin);
-    return this.service.getReportedPosts(Math.min(Number(limit ?? 50), 200), Number(offset ?? 0));
   }
 
   /** Returns all posts currently hidden by moderation, with their pending report count. Content moderators. */
@@ -384,16 +370,5 @@ export class PostsController {
   ) {
     await this.assertContentModerator(xUserId, xGlobalAdmin);
     return this.service.unhidePost(postId);
-  }
-
-  /** Submits a report for a post from the calling user. */
-  @UseGuards(NginxAuthGuard)
-  @HttpPost(':postId/report')
-  reportPost(
-    @Headers('x-user-id') xUserId: string,
-    @Param('postId') postId: string,
-    @Body() body: ReportPostDto
-  ) {
-    return this.service.reportPost(postId, xUserId, body.reason);
   }
 }

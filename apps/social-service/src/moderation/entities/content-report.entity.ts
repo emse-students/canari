@@ -1,6 +1,6 @@
 import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, Index } from 'typeorm';
 
-/** A content report submitted by a user flagging a post, comment, or message. */
+/** A content report submitted by a user flagging a post, a comment, or a person. */
 @Entity('content_reports')
 export class ContentReport {
   @PrimaryGeneratedColumn('uuid')
@@ -10,9 +10,16 @@ export class ContentReport {
   @Index()
   reporterId: string;
 
-  /** What type of content was reported. */
+  /**
+   * What was reported. `user` carries the reported account's id in {@link contentId}.
+   *
+   * There was a `message` case here until 2026-08-27, declared in three places and produced by
+   * nobody. It could not have worked: message bodies are MLS ciphertext, so the server has nothing
+   * to show a moderator - `contentPreview` was hard-coded null for it. A branch that names a
+   * capability the product does not have reads, to the next person, as a capability it has.
+   */
   @Column({ length: 30 })
-  contentType: 'post' | 'comment' | 'message';
+  contentType: 'post' | 'comment' | 'user';
 
   @Column()
   @Index()
@@ -35,7 +42,7 @@ export class ContentReport {
   @Column({ type: 'timestamptz', nullable: true })
   reviewedAt: Date | null;
 
-  /** The user ID of the content's author, stored at report time to enable quick moderation actions. Null for association posts or messages. */
+  /** The user ID of the content's author, stored at report time to enable quick moderation actions. Null for association posts. Equal to `contentId` when the report targets a person. */
   @Column({ nullable: true })
   reportedUserId: string | null;
 

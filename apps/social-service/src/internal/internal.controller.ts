@@ -53,6 +53,31 @@ export class InternalController {
     private readonly channelService: ChannelService
   ) {}
 
+  /**
+   * Drops every follow relationship between two accounts, in BOTH directions.
+   *
+   * Called by core-service when one of them blocks the other: staying subscribed to somebody you
+   * have just blocked is a state nobody asked for, and follows live here while blocks live there.
+   *
+   * Idempotent - two people who never followed each other are a valid, silent zero. The count is
+   * logged either way, because a sweep that reports nothing is a sweep nobody can tell ran.
+   */
+  @Delete('follows/between/:userA/:userB')
+  async severFollowsBetween(
+    @Param('userA') userA: string,
+    @Param('userB') userB: string,
+    @Headers('x-internal-secret') headerSecret: string
+  ) {
+    assertInternalSecret(headerSecret);
+    const [forward, backward] = await Promise.all([
+      this.userFollowRepo.delete({ followerUserId: userA, followedUserId: userB }),
+      this.userFollowRepo.delete({ followerUserId: userB, followedUserId: userA }),
+    ]);
+    const removed = (forward.affected ?? 0) + (backward.affected ?? 0);
+    this.logger.log(`[INTERNAL_SEVER_FOLLOWS] a=${userA} b=${userB} removed=${removed}`);
+    return { ok: true, removed };
+  }
+
   /** Returns member user IDs for an association (core-service directory filter). */
   @Get('associations/:associationId/member-user-ids')
   async listMemberUserIds(
@@ -142,6 +167,11 @@ export class InternalController {
    * Anonymises (keeps record): channel messages, purchase records, content reports
    * - these are preserved for conversation continuity or legal/financial obligations.
    *
+   * "Preserved" here means the ROW SURVIVES THE ACCOUNT, not that it survives forever: a handled
+   * content report is deleted 90 days after a moderator answered it, by the weekly cron in
+   * `forms-reminder.scheduler`. This docblock claimed indefinite retention while a 7-day lazy purge
+   * was quietly deleting the same rows on every moderator page load - three statements, one table.
+   *
    * Community memberships are deleted here directly, which is the ONE path that bypasses
    * `leaveWorkspace` and its governance guards - so the workspaces involved are captured first and
    * repaired afterwards, or a deleted account would leave communities with no admin, or with no
@@ -171,6 +201,10 @@ export class InternalController {
       this.assoFollowRepo.delete({ followerUserId: userId }),
       this.userTagRepo.delete({ userId }),
       this.moderationRepo.delete({ userId }),
+      // A report whose entire subject is this account has nothing left to moderate once the account
+      // is gone. Reports on their CONTENT are left alone: those rows describe a post or a comment,
+      // and are anonymised on the reporter side below like every other one.
+      this.reportRepo.delete({ contentType: 'user', contentId: userId }),
 
       // Anonymise - preserve records for legal/accounting obligations or conversation continuity
       this.channelMessageRepo.update({ authorId: userId }, { authorId: '[deleted]' }),

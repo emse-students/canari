@@ -1,0 +1,15 @@
+-- Drops the second report store, which was dead at both ends.
+--
+-- A post could be reported through TWO mechanisms that shared nothing. This column was written by
+-- `POST /api/posts/:postId/report` and read by `GET /api/posts/reported`, and NEITHER had a caller:
+-- the client wrappers `reportPost` and `getReportedPosts` existed and nothing invoked them. Every
+-- report a user has ever filed went to `content_reports`, which is what `/admin/moderation` reads,
+-- reviews and dismisses, and what the auto-hide threshold counts.
+--
+-- The backlog entry that opened this (WP-REPORTS-1) said the auto-hide counted THIS store. It did
+-- not: `hiddenByModeration` is set in `ModerationService.createReport`, off `content_reports`. So
+-- there was never an arbitration to make between two live stores - one of them had simply never run.
+--
+-- Nothing is migrated because nothing was there: production held 112 posts, 0 of them with a report
+-- in this column and 0 hidden, measured 2026-08-27.
+ALTER TABLE posts DROP COLUMN IF EXISTS reports;

@@ -1,6 +1,19 @@
 import type { DataSource, Repository } from 'typeorm';
 import { UsersService } from './users.service';
+import type { UserBlocksService } from './user-blocks.service';
 import { User } from './entities/user.entity';
+
+/**
+ * Blocking is exercised by `user-blocks.service.spec.ts`; here it only has to be present.
+ * `deleteAllFor` is the one method this service calls, and it is asserted in the deletion suite -
+ * a block row naming a deleted account would keep hiding a live person from somebody's search.
+ */
+function makeBlocksStub() {
+  return {
+    deleteAllFor: jest.fn().mockResolvedValue(undefined),
+    invisibleUserIdsFor: jest.fn().mockResolvedValue([]),
+  } as unknown as UserBlocksService;
+}
 
 /**
  * Focused tests for the parameter-tampering guard in `UsersService.search`.
@@ -15,7 +28,7 @@ describe('UsersService.search type guard', () => {
       createQueryBuilder,
     } as unknown as Repository<User>;
     const dataSource = {} as DataSource;
-    const service = new UsersService(userRepository, dataSource);
+    const service = new UsersService(userRepository, dataSource, makeBlocksStub());
     return { service, createQueryBuilder };
   }
 
@@ -54,7 +67,7 @@ describe('UsersService notepad', () => {
       findOne: jest.fn().mockResolvedValue(stored),
       save,
     } as unknown as Repository<User>;
-    const service = new UsersService(userRepository, {} as DataSource);
+    const service = new UsersService(userRepository, {} as DataSource, makeBlocksStub());
     return { service, stored, save };
   }
 
@@ -113,7 +126,11 @@ describe('UsersService.deleteUser fan-out', () => {
       findOne: jest.fn().mockResolvedValue({ id: 'u1' }),
       delete: remove,
     } as unknown as Repository<User>;
-    return { service: new UsersService(userRepository, {} as DataSource), del, remove };
+    return {
+      service: new UsersService(userRepository, {} as DataSource, makeBlocksStub()),
+      del,
+      remove,
+    };
   }
 
   it('asks media-service to delete the account owner uploads, with the internal secret', async () => {

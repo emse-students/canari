@@ -326,7 +326,7 @@
   const contentTypeLabel: Record<ContentReport['contentType'], string> = $derived({
     post: m.moderation_post(),
     comment: m.moderation_comment(),
-    message: m.moderation_message(),
+    user: m.moderation_user(),
   });
 
   const pendingReports = $derived(reports.filter((r) => r.status === 'pending'));
@@ -554,6 +554,16 @@
                     <ExternalLink size={11} />
                     {m.moderation_voir_post_label()}
                   </a>
+                {:else if report.contentType === 'user'}
+                  <a
+                    href="/profile/{report.contentId}"
+                    target="_blank"
+                    class="text-text-muted hover:text-text-main ml-auto flex items-center gap-1 text-[11px] font-semibold"
+                    title={m.moderation_open_profile_label()}
+                  >
+                    <ExternalLink size={11} />
+                    {m.moderation_voir_profil_label()}
+                  </a>
                 {/if}
               </div>
 
@@ -700,6 +710,15 @@
                   target="_blank"
                   class="text-text-muted/60 hover:text-text-muted shrink-0 text-[11px]"
                   title={m.moderation_open_post_short_label()}
+                >
+                  <ExternalLink size={11} />
+                </a>
+              {:else if report.contentType === 'user'}
+                <a
+                  href="/profile/{report.contentId}"
+                  target="_blank"
+                  class="text-text-muted/60 hover:text-text-muted shrink-0 text-[11px]"
+                  title={m.moderation_open_profile_label()}
                 >
                   <ExternalLink size={11} />
                 </a>

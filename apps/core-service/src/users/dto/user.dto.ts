@@ -186,3 +186,11 @@ export interface DirectoryUserRow {
   formation: string | null;
   bio: string | null;
 }
+
+/** DTO for blocking a person. */
+export class BlockUserDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(255)
+  userId!: string;
+}

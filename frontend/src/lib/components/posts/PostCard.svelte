@@ -14,7 +14,10 @@
     type PostEntity,
     type PostComment,
   } from '$lib/posts/api';
-  import { createReport } from '$lib/moderation/api';
+  import { Log } from '$lib/utils/Log';
+  import { createReport, ModerationApiError } from '$lib/moderation/api';
+  import { reportReasons, type ReportReason } from '$lib/moderation/reasons';
+  import ReportReasonDialog from '$lib/components/moderation/ReportReasonDialog.svelte';
   import { assertNotMuted } from '$lib/moderation/muteCheck';
   import { getForm, checkSubmission } from '$lib/forms/api';
   import Card from '$lib/components/ui/Card.svelte';
@@ -353,27 +356,58 @@
     }
   }
 
-  const REPORT_REASONS = $derived([
-    { label: m.post_spam(), value: 'spam' as const },
-    { label: m.post_harassment(), value: 'harassment' as const },
-    { label: m.post_inappropriate(), value: 'inappropriate' as const },
-    { label: m.post_autre(), value: 'other' as const },
-  ]);
+  const REPORT_REASONS = $derived(reportReasons());
   let reportOpen = $state(false);
   let reportReason = $state('');
   let reportSubmitting = $state(false);
 
-  /** Reports a comment directly with reason 'inappropriate'. */
-  async function handleReportComment(commentId: string) {
+  /** The comment awaiting a reason in the report dialog, or null when the dialog is closed. */
+  let commentBeingReported = $state<PostComment | null>(null);
+
+  /**
+   * Turns a report refusal into an inline message.
+   *
+   * The duplicate case is read off the server's `code`, never off its wording - see
+   * {@link ModerationApiError}. Anything else is a real failure and is SHOWN: this path used to
+   * swallow every error on the comment side, so a moderation outage looked exactly like a
+   * successful report to the person filing it.
+   */
+  function reportFailed(err: unknown, alreadyMessage: string) {
+    if (err instanceof ModerationApiError && err.isAlreadyReported) {
+      actionMessage = alreadyMessage;
+      return;
+    }
+    Log.d('PostCard.reportFailed', err);
+    errorMessage = err instanceof Error ? err.message : m.post_unable_to_report();
+  }
+
+  /** Opens the reason dialog for a comment. Same four reasons a post offers. */
+  function handleReportComment(commentId: string) {
+    const comment = (localPost.comments ?? []).find((c) => c.id === commentId) ?? null;
+    if (!comment) {
+      Log.d('PostCard.handleReportComment', `unknown comment ${commentId}`);
+      return;
+    }
+    commentBeingReported = comment;
+  }
+
+  /** Files the report for the comment currently in the dialog. */
+  async function submitCommentReport(reason: ReportReason) {
+    const comment = commentBeingReported;
+    if (!comment) return;
+    reportSubmitting = true;
     try {
-      await createReport('comment', commentId, 'inappropriate');
+      await createReport('comment', comment.id, reason, undefined, comment.userId ?? null);
       actionMessage = m.post_comment_reported();
-    } catch {
-      // Ignore duplicate report errors silently.
+    } catch (err) {
+      reportFailed(err, m.post_comment_already_reported());
+    } finally {
+      reportSubmitting = false;
+      commentBeingReported = null;
     }
   }
 
-  /** Submits the selected report reason via the moderation API. */
+  /** Submits the selected report reason for the post itself. */
   async function submitReport() {
     if (!reportReason) return;
     reportSubmitting = true;
@@ -381,15 +415,11 @@
       const value = REPORT_REASONS.find((r) => r.label === reportReason)?.value ?? 'other';
       await createReport('post', localPost.id, value, undefined, localPost.authorId ?? null);
       actionMessage = m.post_signalement_merci();
-      reportOpen = false;
-      reportReason = '';
     } catch (err) {
-      const msg = err instanceof Error ? err.message : '';
-      actionMessage = msg.includes('already') ? m.post_already_reported() : '';
-      if (!actionMessage) errorMessage = msg || m.post_unable_to_report();
+      reportFailed(err, m.post_already_reported());
+    } finally {
       reportOpen = false;
       reportReason = '';
-    } finally {
       reportSubmitting = false;
     }
   }
@@ -539,3 +569,13 @@
     <PostFeedback {errorMessage} {actionMessage} />
   </Card>
 </div>
+
+<!-- A comment is reported through the same four reasons a post is, and the same dialog. -->
+<ReportReasonDialog
+  open={!!commentBeingReported}
+  title={m.report_comment_dialog_title()}
+  targetPreview={commentBeingReported?.text ?? ''}
+  submitting={reportSubmitting}
+  onSubmit={submitCommentReport}
+  onClose={() => (commentBeingReported = null)}
+/>

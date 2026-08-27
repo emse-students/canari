@@ -119,7 +119,6 @@ The numbers and what they imply are in
 | POST | `/api/posts/:postId/comments` | Add comment |
 | PATCH | `/api/posts/:postId/pin` | Pin post (admin only) |
 | PATCH | `/api/posts/:postId/unpin` | Unpin post (admin only) |
-| POST | `/api/posts/:postId/report` | Report post |
 
 ### Channels and workspaces (`/api/channels`)
 

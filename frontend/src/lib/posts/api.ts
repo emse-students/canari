@@ -299,42 +299,12 @@ export async function deleteComment(postId: string, commentId: string): Promise<
   return request(`/api/posts/${postId}/comments/${commentId}`, { method: 'DELETE' });
 }
 
-export interface ReportEntry {
-  userId: string;
-  reason: string;
-  createdAt: string;
-}
-
-export interface ReportedPost {
-  id: string;
-  authorId?: string;
-  markdown: string;
-  createdAt: string;
-  reports: ReportEntry[];
-  pinned: boolean;
-  associationId?: string;
-}
-
-export async function getReportedPosts(limit = 50, offset = 0): Promise<ReportedPost[]> {
-  return request<ReportedPost[]>(`/api/posts/reported?limit=${limit}&offset=${offset}`);
-}
-
 export async function pinPost(postId: string): Promise<{ ok: boolean; pinned: boolean }> {
   return request(`/api/posts/${postId}/pin`, { method: 'PATCH' });
 }
 
 export async function unpinPost(postId: string): Promise<{ ok: boolean; pinned: boolean }> {
   return request(`/api/posts/${postId}/unpin`, { method: 'PATCH' });
-}
-
-export async function reportPost(
-  postId: string,
-  reason: string
-): Promise<{ ok: boolean; alreadyReported?: boolean }> {
-  return request(`/api/posts/${postId}/report`, {
-    method: 'POST',
-    body: JSON.stringify({ reason }),
-  });
 }
 
 /** A post hidden by moderation, with its pending report count. Admin only. */

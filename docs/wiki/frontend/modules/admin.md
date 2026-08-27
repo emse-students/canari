@@ -114,11 +114,12 @@ endpoint behind them accepts:
 | Hidden posts | `GET /api/posts/hidden` | unhide, delete, mute |
 | Muted users | `GET /api/moderation/muted` | unmute |
 
-**`GET /api/posts/reported` is a second, parallel report store and no screen reads it.** It returns
-posts whose `reports` JSONB column is non-empty, written by `POST /api/posts/:postId/report`, while
-this queue reads the `content_reports` TABLE written by `POST /api/moderation/reports`. Which of the
-two is the truth is an open question rather than a detail - do not extend either without settling
-it. [backlog](../../backlog.md)
+**There is ONE report store.** `content_reports`, written by `POST /api/moderation/reports` and read
+by this queue. A second one existed until 2026-08-27 - a `reports` JSONB column on `posts`, written
+by `POST /api/posts/:postId/report` and read by `GET /api/posts/reported` - and **neither end had a
+caller**, so no report ever went there: 112 posts on production, 0 with a row in it. Both routes and
+the column are gone. The queue also takes reports on a PERSON (`contentType: 'user'`), previewed by
+display name. [Reporting and blocking](../../moderation-and-blocking.md)
 
 ## User management
 

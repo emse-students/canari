@@ -3,6 +3,12 @@
   import { goto } from '$app/navigation';
   import { fetchUserProfile, type UserProfile, getSavedUserId } from '$lib/stores/user';
   import { followUser, unfollowUser, getUserFollowStatus } from '$lib/posts/api';
+  import { listBlockedUsers, blockUser, unblockUser } from '$lib/users/blocks';
+  import { createReport, ModerationApiError } from '$lib/moderation/api';
+  import type { ReportReason } from '$lib/moderation/reasons';
+  import ReportReasonDialog from '$lib/components/moderation/ReportReasonDialog.svelte';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
+  import { Log } from '$lib/utils/Log';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import {
     GraduationCap,
@@ -13,6 +19,8 @@
     UserPlus,
     UserCheck,
     Users,
+    Flag,
+    Ban,
   } from '@lucide/svelte';
   import { slide, fade } from 'svelte/transition';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
@@ -42,6 +50,13 @@
   let roleHistory = $state<UserRoleHistoryRow[]>([]);
   let parrainage = $state<SkyEntourage | null>(null);
   let extrasLoading = $state(false);
+  /** True when the signed-in user has blocked the person whose profile this is. */
+  let blocked = $state(false);
+  let blockLoading = $state(false);
+  let reportOpen = $state(false);
+  let reportSubmitting = $state(false);
+  /** Inline feedback for the report and block actions, cleared on the next attempt. */
+  let actionMessage = $state('');
 
   // Monotonic token guarding against out-of-order async results: when the user navigates
   // between two profiles quickly, a slower earlier fetch must not overwrite the newer one.
@@ -50,13 +65,21 @@
   /** Loads a profile and its extras, ignoring the result if a newer load has since started. */
   async function loadProfile(userId: string, token: number) {
     try {
-      const [prof, status] = await Promise.all([
+      const [prof, status, blocks] = await Promise.all([
         fetchUserProfile(userId),
         getUserFollowStatus(userId).catch(() => ({ following: false })),
+        // A blocked person is hidden from search but their profile stays reachable - by url, or
+        // from the blocked list itself - so this page has to know, or it would offer to block
+        // somebody who already is.
+        listBlockedUsers().catch((e) => {
+          Log.d('profile.loadBlocks failed', e);
+          return [];
+        }),
       ]);
       if (token !== loadToken) return;
       profile = prof;
       following = status.following;
+      blocked = blocks.some((b) => b.userId === userId);
       extrasLoading = true;
       try {
         const rows = await fetchUserMemberships(userId);
@@ -148,10 +171,71 @@
         await followUser(profile.id);
         following = true;
       }
-    } catch {
-      /* silent */
+    } catch (err) {
+      Log.d('profile.handleFollowToggle failed', err);
     } finally {
       followLoading = false;
+    }
+  }
+
+  /**
+   * Blocks or unblocks this person.
+   *
+   * The confirmation spells out what a block does and what it leaves alone, because the scope is
+   * narrow and easy to over-read: the two accounts stop finding each other and neither can pull the
+   * other into anything new, while existing conversations, groups and communities are untouched.
+   */
+  async function handleBlockToggle() {
+    if (!profile?.id || blockLoading) return;
+    actionMessage = '';
+
+    if (!blocked) {
+      const confirmed = await showConfirm(m.profile_block_confirm({ name: displayFallbackName }), {
+        danger: true,
+        confirmLabel: m.profile_block_btn(),
+      });
+      if (!confirmed) return;
+    }
+
+    blockLoading = true;
+    try {
+      if (blocked) {
+        await unblockUser(profile.id);
+        blocked = false;
+        actionMessage = m.profile_unblock_done();
+      } else {
+        await blockUser(profile.id);
+        blocked = true;
+        // The server severs both follows as part of blocking; reflect it rather than re-fetching.
+        following = false;
+        actionMessage = m.profile_block_done();
+      }
+    } catch (err) {
+      Log.d('profile.handleBlockToggle failed', err);
+      error = err instanceof Error ? err.message : m.common_generic_error_label();
+    } finally {
+      blockLoading = false;
+    }
+  }
+
+  /** Files a report against this person. Separate from blocking: one is private, the other is not. */
+  async function submitUserReport(reason: ReportReason) {
+    if (!profile?.id) return;
+    reportSubmitting = true;
+    actionMessage = '';
+    try {
+      await createReport('user', profile.id, reason, undefined, profile.id);
+      actionMessage = m.post_signalement_merci();
+    } catch (err) {
+      if (err instanceof ModerationApiError && err.isAlreadyReported) {
+        actionMessage = m.profile_already_reported();
+      } else {
+        Log.d('profile.submitUserReport failed', err);
+        error = err instanceof Error ? err.message : m.post_unable_to_report();
+      }
+    } finally {
+      reportSubmitting = false;
+      reportOpen = false;
     }
   }
 </script>
@@ -224,6 +308,45 @@
         </button>
       </div>
     </div>
+
+    <!--
+      Reporting and blocking are two separate gestures, deliberately. A block is private and stays
+      between the two people; a report asks a moderator to look. Offering them as one control would
+      have made every block a moderation event, which is the opposite of the intent.
+    -->
+    <div class="flex flex-wrap items-center justify-end gap-2">
+      {#if actionMessage}
+        <span class="text-text-muted mr-auto text-xs font-medium">{actionMessage}</span>
+      {/if}
+      <button
+        type="button"
+        onclick={() => (reportOpen = true)}
+        class="text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+      >
+        <Flag size={14} strokeWidth={2.5} />
+        {m.profile_report_btn()}
+      </button>
+      <button
+        type="button"
+        onclick={handleBlockToggle}
+        disabled={blockLoading}
+        class="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50
+          {blocked
+          ? 'text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/5'
+          : 'text-red-600 hover:bg-red-500/10 dark:text-red-400'}"
+      >
+        <Ban size={14} strokeWidth={2.5} />
+        {blocked ? m.profile_unblock_btn() : m.profile_block_btn()}
+      </button>
+    </div>
+
+    {#if blocked}
+      <p
+        class="text-text-muted rounded-xl border border-black/5 bg-black/[0.03] px-4 py-3 text-xs dark:border-white/10 dark:bg-white/[0.03]"
+      >
+        {m.profile_blocked_notice()}
+      </p>
+    {/if}
 
     <!-- Bio section -->
     {#if profile.bio}
@@ -315,3 +438,12 @@
     </div>
   {/if}
 </div>
+
+<ReportReasonDialog
+  open={reportOpen}
+  title={m.report_user_dialog_title()}
+  targetPreview={displayFallbackName}
+  submitting={reportSubmitting}
+  onSubmit={submitUserReport}
+  onClose={() => (reportOpen = false)}
+/>

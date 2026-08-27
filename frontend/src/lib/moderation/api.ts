@@ -1,11 +1,48 @@
 import { apiFetch } from '$lib/utils/apiFetch';
 import { socialUrl } from '$lib/utils/apiUrl';
 
+/**
+ * A refusal from the moderation API, carrying the machine-readable discriminator the server sent.
+ *
+ * IT EXISTS SO NOBODY READS THE MESSAGE AGAIN. Telling "you already reported this" from a real
+ * failure was done with `message.includes('already')` until 2026-08-27 - a distinction carried in
+ * prose, which the server was free to reword at any time. The server now answers 409 with
+ * `code: 'ALREADY_REPORTED'`, and that is what call sites branch on.
+ */
+export class ModerationApiError extends Error {
+  constructor(
+    readonly status: number,
+    /** The server's `code` field when it sent one, e.g. `ALREADY_REPORTED`. Null otherwise. */
+    readonly code: string | null,
+    message: string
+  ) {
+    super(message);
+    this.name = 'ModerationApiError';
+  }
+
+  /** True when this refusal is the server saying the caller has already reported this content. */
+  get isAlreadyReported(): boolean {
+    return this.code === 'ALREADY_REPORTED';
+  }
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await apiFetch(`${socialUrl()}${path}`, init as any);
   if (!res.ok) {
     const details = await res.text().catch(() => '');
-    throw new Error(`moderation ${res.status}: ${details || res.statusText}`);
+    let code: string | null = null;
+    try {
+      code = (JSON.parse(details) as { code?: string }).code ?? null;
+    } catch {
+      // Not a JSON body - nginx and the framework both answer in plain text on some paths. The
+      // status still classifies, so this is a missing discriminator, not a failure to report.
+      code = null;
+    }
+    throw new ModerationApiError(
+      res.status,
+      code,
+      `moderation ${res.status}: ${details || res.statusText}`
+    );
   }
   return (await res.json()) as T;
 }
@@ -14,16 +51,17 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 export interface ContentReport {
   id: string;
   reporterId: string;
-  contentType: 'post' | 'comment' | 'message';
+  /** `user` reports a person; `contentId` is then the reported account's id. */
+  contentType: 'post' | 'comment' | 'user';
   contentId: string;
   reason: string;
   details: string | null;
   status: 'pending' | 'reviewed' | 'dismissed';
   reviewedBy: string | null;
-  /** User ID of the reported content's author. Null for association posts or messages. */
+  /** User ID of the reported content's author. Null for association posts. */
   reportedUserId: string | null;
   createdAt: string;
-  /** Short text excerpt of the reported content (first ~250 chars). Null for messages or deleted content. */
+  /** Short excerpt of the reported content (first ~250 chars), or the display name when a person is reported. Null for deleted content. */
   contentPreview: string | null;
   /** For comment reports: ID of the parent post, used for navigation. Null otherwise. */
   postId: string | null;
@@ -39,9 +77,13 @@ export interface MutedUser {
   mutedReason: string | null;
 }
 
-/** Submits a content report for a post, comment, or message. */
+/**
+ * Submits a content report for a post, a comment, or a person.
+ *
+ * Throws {@link ModerationApiError}; `isAlreadyReported` tells a duplicate from a real failure.
+ */
 export async function createReport(
-  contentType: 'post' | 'comment' | 'message',
+  contentType: 'post' | 'comment' | 'user',
   contentId: string,
   reason: 'spam' | 'harassment' | 'inappropriate' | 'other',
   details?: string,

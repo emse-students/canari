@@ -18,6 +18,7 @@ import {
   DirectoryUserRow,
 } from './dto/user.dto';
 import { applyFuzzyNameSearch } from './userSearch';
+import { UserBlocksService } from './user-blocks.service';
 import { chatDeliveryUrl, mediaUrl, socialUrl } from '../internal/service-urls';
 import { STRIPE_API_VERSION } from '../payment/stripe-api-version';
 
@@ -38,7 +39,8 @@ export class UsersService implements OnModuleInit {
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
-    private readonly dataSource: DataSource
+    private readonly dataSource: DataSource,
+    private readonly blocksService: UserBlocksService
   ) {}
 
   /**
@@ -223,6 +225,29 @@ export class UsersService implements OnModuleInit {
   }
 
   /**
+   * Hides the people this caller may not be shown from a TARGET PICKER: those they blocked, and
+   * those who blocked them.
+   *
+   * THIS SURFACE ONLY, and deliberately not the directory. `search` is what feeds the New chat
+   * modal, the salon invitation field and the mention autocomplete - it exists to pick somebody to
+   * act on. The directory is a browsing view with promo and cursus filters, and punching a hole in
+   * it would make a block visible in a screen that has nothing to do with it.
+   *
+   * The exclusion is SYMMETRIC. Hiding only the blocked party would let them keep finding the
+   * blocker, and hiding only the blocker would let the blocker re-open a conversation they closed.
+   */
+  private async applyBlockVisibility(
+    qb: SelectQueryBuilder<User>,
+    requesterId?: string
+  ): Promise<void> {
+    if (!requesterId) return;
+    const hidden = await this.blocksService.invisibleUserIdsFor(requesterId);
+    if (hidden.length === 0) return;
+    this.logger.debug(`[search] hiding ${hidden.length} blocked account(s) from ${requesterId}`);
+    qb.andWhere('user.id NOT IN (:...blockedIds)', { blockedIds: hidden });
+  }
+
+  /**
    * Search users by displayName - case-insensitive, accent-insensitive, word-order-insensitive,
    * and typo-tolerant (trigram fuzzy matching). Results are ordered by closeness to the query.
    * Returns up to 10 results. The caller (requesterId) is included in results - callers that
@@ -246,6 +271,7 @@ export class UsersService implements OnModuleInit {
     if (!applied) return [];
 
     await this.applyServiceAccountVisibility(qb, requesterId);
+    await this.applyBlockVisibility(qb, requesterId);
 
     return qb.take(10).getMany();
   }
@@ -404,6 +430,10 @@ export class UsersService implements OnModuleInit {
       );
 
     // Hard-delete the user row last so login becomes impossible immediately after
+    // Local to this service, and not best-effort: a block row naming a deleted account would keep
+    // hiding a live person from the search of somebody who no longer exists.
+    await this.blocksService.deleteAllFor(userId);
+
     await this.userRepository.delete({ id: userId });
     this.logger.log(`[deleteUser] done userId=${userId}`);
   }

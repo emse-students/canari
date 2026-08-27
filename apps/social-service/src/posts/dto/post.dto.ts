@@ -349,9 +349,3 @@ export class UpdatePostDto {
   @IsDateString()
   scheduledAt?: string | null;
 }
-
-export class ReportPostDto {
-  @IsString()
-  @IsNotEmpty()
-  reason: string;
-}

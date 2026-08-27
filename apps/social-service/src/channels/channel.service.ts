@@ -15,6 +15,8 @@ import { ChannelMember } from './entities/channel-member.entity';
 import { ChannelMessage } from './entities/channel-message.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import { RedisService } from '../common/redis';
+import { sanitizeLog } from '../common/log.utils';
+import { isBlockedBetween } from '../common/user-blocks';
 import { DELIVERY_TIMEOUT_MS, deliveryUrl } from '../internal/service-urls';
 import { fetchUserDeviceCount } from '../internal/delivery.client';
 import {
@@ -2341,6 +2343,23 @@ export class ChannelService {
       );
     }
     if (!hasPerm) throw new ForbiddenException('Missing INVITE_USERS permission');
+
+    // A block closes this door too, and INSIDE A SHARED COMMUNITY as much as outside it. Almost
+    // every salon invitation is issued from a community both people belong to, so exempting that
+    // case would have left the block applying to nothing a salon could do.
+    //
+    // The refusal is neutral on purpose: it says the person cannot be invited, never who blocked
+    // whom. It carries a `code` rather than a sentence, like the device refusal below - a client
+    // that had to read the wording to tell these two apart would break the day it is reworded.
+    if (await isBlockedBetween(this.channelRepo.manager, input.actorUserId, input.targetUserId)) {
+      this.logger.log(
+        `[INVITE] refused, block between actor=${sanitizeLog(input.actorUserId)} target=${sanitizeLog(input.targetUserId)}`
+      );
+      throw new ForbiddenException({
+        code: 'USER_BLOCKED',
+        message: 'This person cannot be added.',
+      });
+    }
 
     // Reject early if the invitee has no MLS device - the key DM could never be delivered.
     //

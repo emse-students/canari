@@ -71,6 +71,24 @@ export class NotAGroupMemberError extends Error {
 }
 
 /**
+ * The server refused a membership mutation because a BLOCK stands between the two people.
+ *
+ * Typed rather than message-matched, like every other refusal here: the neutral wording the server
+ * sends is meant for a human, and a client that read it to make a decision would break the day it is
+ * translated. The discriminator is the `USER_BLOCKED` code the server puts in the body.
+ *
+ * A caller normally never sees this, because both creation paths ask `isBlockedWith` before they
+ * build anything. It is the backstop for the case they cannot cover - a block set between the
+ * pre-flight and the commit.
+ */
+export class UserBlockedError extends Error {
+  constructor(readonly userId: string) {
+    super(`A block stands between the caller and ${userId}`);
+    this.name = 'UserBlockedError';
+  }
+}
+
+/**
  * A group EXIT the server answered with a refusal - the answer being the point.
  *
  * `DELETE /api/mls/groups/:id` and `DELETE /api/mls/groups/:id/members/:user` are the two calls that
@@ -354,15 +372,31 @@ export class MlsDeliveryApi {
     }));
   }
 
-  /** Adds `userId` to the server-side member list of `groupId` (idempotent). */
+  /**
+   * Adds `userId` to the server-side member list of `groupId` (idempotent).
+   *
+   * ONE refusal is raised and the rest are logged. A 403 carrying `USER_BLOCKED` is the server
+   * stating a fact the caller has to act on - the person may not be added, and a group that
+   * pretended otherwise would show a member the server does not have. Every other non-2xx keeps the
+   * historical tolerance of this call, which callers up and down the invite path rely on, but it no
+   * longer passes in silence: an HTTP failure was swallowed here without so much as a line, since
+   * `f` resolves rather than throwing on a bad status and only transport errors reached the catch.
+   */
   async registerMember(groupId: string, userId: string): Promise<void> {
     try {
-      await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/members`, {
+      const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/members`, {
         method: 'POST',
         headers: await this.auth({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ userId }),
       });
+      if (res.ok) return;
+      const body = await res.text().catch(() => '');
+      if (res.status === 403 && body.includes('USER_BLOCKED')) {
+        throw new UserBlockedError(userId);
+      }
+      console.error(`registerMember refused: group=${groupId} user=${userId} status=${res.status}`);
     } catch (e) {
+      if (e instanceof UserBlockedError) throw e;
       console.error('Failed to register member', e);
     }
   }

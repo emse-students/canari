@@ -11,6 +11,7 @@
   import SettingsSubscriptionsSection from '$lib/components/settings/SettingsSubscriptionsSection.svelte';
   import SettingsAboutSection from '$lib/components/settings/SettingsAboutSection.svelte';
   import SettingsStorageSection from '$lib/components/settings/SettingsStorageSection.svelte';
+  import SettingsBlockedSection from '$lib/components/settings/SettingsBlockedSection.svelte';
   import SettingsDangerZone from '$lib/components/settings/SettingsDangerZone.svelte';
   import MinesweeperModal from '$lib/components/settings/MinesweeperModal.svelte';
   import { m } from '$lib/paraglide/messages';
@@ -70,6 +71,7 @@
   <SettingsBackupSection />
   <SettingsPaymentsSection />
   <SettingsSubscriptionsSection />
+  <SettingsBlockedSection />
   <SettingsAboutSection />
   <SettingsStorageSection />
   <SettingsDangerZone />

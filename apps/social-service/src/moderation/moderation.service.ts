@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ContentReport } from './entities/content-report.entity';
@@ -8,12 +8,9 @@ import { sanitizeLog } from '../common/log.utils';
 /** Number of distinct pending reports on the same content that triggers automatic hiding. */
 const AUTO_HIDE_THRESHOLD = 5;
 
-/** Handled reports (reviewed/dismissed) are purged this many days after being handled. */
-const HANDLED_REPORT_RETENTION_DAYS = 7;
-
 export interface CreateReportData {
   reporterId: string;
-  contentType: 'post' | 'comment' | 'message';
+  contentType: 'post' | 'comment' | 'user';
   contentId: string;
   reason: string;
   details?: string;
@@ -36,20 +33,33 @@ export class ModerationService {
   // ── Content reports ───────────────────────────────────────────────────────
 
   /**
-   * Creates a new content report. Prevents duplicate reports from the same user on the same content.
-   * If the number of pending reports for a post reaches AUTO_HIDE_THRESHOLD, the post is automatically
-   * hidden from public feeds until a moderator reviews it.
+   * Creates a new content report. A user reports a given piece of content ONCE, whatever becomes of
+   * that report: the duplicate check deliberately ignores `status`. It used to look at `pending`
+   * only, which meant a dismissal re-opened the door - and a dismissal is an answer, not an
+   * invitation to file the same accusation again.
+   *
+   * If the number of pending reports for a post reaches AUTO_HIDE_THRESHOLD, the post is
+   * automatically hidden from public feeds until a moderator reviews it.
+   *
+   * The refusal is a 409 carrying a `code`, never a sentence: the client has to tell "already
+   * reported" from a real failure, and a distinction carried in prose is a distinction exactly one
+   * call site will make. It read `message.includes('already')` until 2026-08-27.
    */
   async createReport(data: CreateReportData): Promise<ContentReport> {
     const existing = await this.reportRepo.findOne({
       where: {
         reporterId: data.reporterId,
         contentId: data.contentId,
-        status: 'pending',
       },
     });
     if (existing) {
-      throw new BadRequestException('You have already reported this content');
+      this.logger.log(
+        `Duplicate report refused: reporter=${sanitizeLog(data.reporterId)} content=${sanitizeLog(data.contentId)} existingStatus=${existing.status}`
+      );
+      throw new ConflictException({
+        code: 'ALREADY_REPORTED',
+        message: 'You have already reported this content',
+      });
     }
 
     const report = this.reportRepo.create({
@@ -82,46 +92,19 @@ export class ModerationService {
   }
 
   /**
-   * Deletes reports handled (reviewed/dismissed) more than HANDLED_REPORT_RETENTION_DAYS ago,
-   * so the moderation queue and DB don't accumulate stale entries. Lazy: run on each list call.
-   * Falls back to createdAt for rows handled before reviewedAt existed.
-   */
-  private async purgeExpiredHandledReports(): Promise<void> {
-    try {
-      await this.reportRepo.manager.query(
-        `DELETE FROM content_reports
-         WHERE status <> 'pending'
-           AND COALESCE("reviewedAt", "createdAt") < NOW() - make_interval(days => $1)`,
-        [HANDLED_REPORT_RETENTION_DAYS]
-      );
-    } catch (e) {
-      this.logger.warn(
-        `Purge of handled reports failed: ${e instanceof Error ? e.message : 'unknown error'}`
-      );
-    }
-  }
-
-  /** Returns all pending content reports, newest first. */
-  async listPendingReports(limit = 50, offset = 0): Promise<ContentReport[]> {
-    await this.purgeExpiredHandledReports();
-    return this.reportRepo.find({
-      where: { status: 'pending' },
-      order: { createdAt: 'DESC' },
-      take: Math.min(limit, 200),
-      skip: offset,
-    });
-  }
-
-  /**
    * Returns all content reports regardless of status, newest first.
    * Each report is enriched with `contentPreview` (a short text excerpt of the
-   * reported content) and `postId` (the parent post ID for comment reports).
+   * reported content, or the display name when the report targets a person) and
+   * `postId` (the parent post ID for comment reports).
+   *
+   * Retention is NOT this method's business. A lazy purge ran here on every call until 2026-08-27,
+   * which made a moderator's GET delete rows as a side effect and gave `content_reports` a second,
+   * contradictory lifetime. The one policy left is the weekly cron in `forms-reminder.scheduler`.
    */
   async listAllReports(
     limit = 50,
     offset = 0
   ): Promise<Array<ContentReport & { contentPreview: string | null; postId: string | null }>> {
-    await this.purgeExpiredHandledReports();
     const reports = await this.reportRepo.find({
       order: { createdAt: 'DESC' },
       take: Math.min(limit, 200),
@@ -130,6 +113,7 @@ export class ModerationService {
 
     const postIds = reports.filter((r) => r.contentType === 'post').map((r) => r.contentId);
     const commentIds = reports.filter((r) => r.contentType === 'comment').map((r) => r.contentId);
+    const reportedUserIds = reports.filter((r) => r.contentType === 'user').map((r) => r.contentId);
 
     const postPreviews = new Map<string, string>();
     if (postIds.length > 0) {
@@ -153,6 +137,18 @@ export class ModerationService {
         commentPreviews.set(row.comment_id, { text: row.text, postId: row.post_id });
     }
 
+    // A report on a person carries no text, so the preview is who they are. Without it a moderator
+    // reads a bare uuid and has to go look the account up by hand before deciding anything.
+    const userPreviews = new Map<string, string>();
+    if (reportedUserIds.length > 0) {
+      const rows: { id: string; displayName: string | null }[] =
+        await this.reportRepo.manager.query(
+          `SELECT id, "displayName" FROM users WHERE id = ANY($1)`,
+          [reportedUserIds]
+        );
+      for (const row of rows) userPreviews.set(row.id, row.displayName ?? row.id);
+    }
+
     return reports.map((r) => ({
       ...r,
       contentPreview:
@@ -160,7 +156,9 @@ export class ModerationService {
           ? (postPreviews.get(r.contentId) ?? null)
           : r.contentType === 'comment'
             ? (commentPreviews.get(r.contentId)?.text ?? null)
-            : null,
+            : r.contentType === 'user'
+              ? (userPreviews.get(r.contentId) ?? null)
+              : null,
       postId:
         r.contentType === 'comment' ? (commentPreviews.get(r.contentId)?.postId ?? null) : null,
     }));

@@ -1,4 +1,9 @@
-import { BadRequestException, Logger, ServiceUnavailableException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { ChannelService } from './channel.service';
 import { Workspace } from './entities/workspace.entity';
@@ -36,7 +41,11 @@ describe('the MLS device guard on an invitation', () => {
   const ACTOR = 'u-admin';
   const TARGET = 'u-target';
 
-  function makeService() {
+  function makeService(blockRows: unknown[] = []) {
+    // `user_blocks` is core-service's table, read straight out of `auth_db` through this manager.
+    // Empty by default: every test here is about the DEVICE guard, and a block would refuse before
+    // that guard ever runs.
+    const blockQuery = jest.fn().mockResolvedValue(blockRows);
     const channelRepo = {
       findOne: jest.fn().mockResolvedValue({
         id: CHANNEL,
@@ -46,6 +55,7 @@ describe('the MLS device guard on an invitation', () => {
       }),
       find: jest.fn().mockResolvedValue([]),
       save: jest.fn((c: Record<string, unknown>) => Promise.resolve(c)),
+      manager: { query: blockQuery },
     };
     const workspaceRepo = { findOne: jest.fn().mockResolvedValue({ id: WORKSPACE, slug: 'ws' }) };
     const memberRepo = {
@@ -73,7 +83,7 @@ describe('the MLS device guard on an invitation', () => {
     );
     jest.spyOn(service['logger'], 'log').mockImplementation(() => undefined);
     jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
-    return { service, memberRepo, channelRepo };
+    return { service, memberRepo, channelRepo, blockQuery };
   }
 
   /** A fetch answering `status` with `body`, standing in for chat-delivery's device route. */
@@ -193,6 +203,47 @@ describe('the MLS device guard on an invitation', () => {
         code: 'KEY_DISTRIBUTION_UNAVAILABLE',
       });
       expect(memberRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('refuses with USER_BLOCKED when a block stands between the two people', async () => {
+      // A salon invitation is almost always issued from a community both people belong to, so this
+      // is the case that decides whether blocking means anything for salons at all.
+      const { service, memberRepo } = makeService([{ '?column?': 1 }]);
+      global.fetch = delivery(200, { count: 1 }) as never;
+
+      const err = await service
+        .inviteToChannel(CHANNEL, { targetUserId: TARGET, actorUserId: ACTOR })
+        .catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect((err as ForbiddenException).getResponse()).toMatchObject({ code: 'USER_BLOCKED' });
+      expect(memberRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('asks about the block in BOTH directions, so the blocker cannot invite either', async () => {
+      const { service, blockQuery } = makeService([{ '?column?': 1 }]);
+      global.fetch = delivery(200, { count: 1 }) as never;
+
+      await service
+        .inviteToChannel(CHANNEL, { targetUserId: TARGET, actorUserId: ACTOR })
+        .catch(() => undefined);
+
+      const sql = String(blockQuery.mock.calls[0][0]);
+      expect(sql).toContain('"blockerId" = $1 AND "blockedId" = $2');
+      expect(sql).toContain('"blockerId" = $2 AND "blockedId" = $1');
+    });
+
+    it('refuses the block BEFORE asking chat-delivery anything about devices', async () => {
+      // Never learn by failing what a fact could have told you: a refused invitation must not have
+      // cost a round trip to another service first.
+      const { service } = makeService([{ '?column?': 1 }]);
+      global.fetch = delivery(200, { count: 1 }) as never;
+
+      await service
+        .inviteToChannel(CHANNEL, { targetUserId: TARGET, actorUserId: ACTOR })
+        .catch(() => undefined);
+
+      expect(global.fetch).not.toHaveBeenCalled();
     });
 
     it('lets the invitation through when the person has a device', async () => {
