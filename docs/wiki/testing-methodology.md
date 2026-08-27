@@ -2311,3 +2311,29 @@ it never rescues a `FAIL`. So a row that ANDs `clean` into its assertion is not 
 making `PASS-DIRTY` structurally unreachable for itself and mislabelling environmental noise as a
 product defect. **An assertion answers the row's own question and nothing else. Cleanliness is the
 gate's job, once, for every row.**
+
+### A campaign run and a push to `main` are mutually exclusive - three measurements died of it in one day
+
+On 2026-08-27, COMM-12, COMM-22 and DEL-9 all recorded `VACUOUS` with `failures: []`. Nothing they
+asked had failed. Each was voided because CD deployed a new frontend while the row was running:
+
+| Row | The deploy that landed mid-run |
+| --- | --- |
+| COMM-12 | `396dd396` `docs(tooling): the flag was dropped, the config was not` |
+| COMM-22 | `9c601be9` `docs(ecosystem): the last repo, and the bit git never recorded` |
+| DEL-9 | `5bb1cc92` `fix(posts)!: the field stripped for privacy was the field the pencil was drawn from` |
+
+**Two of the three were DOCUMENTATION commits.** A docs push is not a harmless push here: every
+commit to `main` triggers CD, CD redeploys the frontend, and prod IS the test server. A row that
+straddles that redeploy cannot say which artefact it measured, which is precisely what `gate` reports
+by returning `VACUOUS` with `redeployedMidRun` naming the run.
+
+**The mechanism is working and must not be softened.** `gate` refusing the attribution is the only
+reason no false verdict entered the ledger - the alternative is a `PASS` against an unknown build,
+which is worse than no measurement. The cost is real, though: three rows have to be re-run, and one of
+them (DEL-9) had already been re-run once for a different reason.
+
+So the scheduling rule: **while a phase is running, nothing pushes to `main` - docs included.** When
+two sessions work in parallel, one of them owns the remote for the duration of the rung. A row that
+comes back `VACUOUS` with `failures: []` and a `redeployedMidRun` key is not a defect to diagnose, it
+is a measurement to take again in a quiet window.

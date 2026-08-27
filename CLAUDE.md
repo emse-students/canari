@@ -145,52 +145,57 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     NOTIF, HEAL."*** Those six ARE the target; TAB, CALL, PIN and CORRUPT come after them, and
     nothing else is worth a token until those six are green.
 
-    **Where the ladder stands: rungs 1-10 TAKEN, 12 MULTI MEASURED.** **DEL is the first rung with NO
-    `FAIL`** (4 `PASS` / 5 `PASS-DIRTY` / DEL-9 `VACUOUS`, on `0c31be5d`), and **both of its non-passes
-    were HARNESS faults, now fixed** - the causes are on the board, in DEL-7 and DEL-9. MULTI's only
-    product-shaped cell is MULTI-5 `ERROR` (a second tab, PIN-gate hypothesis UNPROVEN). **What is owed
-    next: every DEL and MULTI cell was taken on a runner that has since CHANGED** (`del.mjs` is now
-    `2dd7a0f4a933`, `multi.mjs` `74bb17b8283f`) - `rows.mjs` names them, and those re-runs come before
-    LIFE. DEL-10 passed where it FAILed on `2a4297cb`, and **its P2 is NOT closed**: nothing names what
-    changed, and the old FAIL measured a queued SEND where this one measured a queued EXIT.
+    **Where the ladder stands: rungs 1-10 TAKEN plus 12 MULTI, and COMM and DEL are the first two
+    rungs with NO `FAIL`.** COMM on `0c31be5d` is 18 `PASS` / 5 `PASS-DIRTY` / 2 `VACUOUS`, DEL is
+    4 / 5 / 1, and **the phone ran every `+A1` row for the first time**. **COMM-8 PASSES**: the forked
+    distribution group is fixed and measured. **Every non-pass left has a named cause, all on the
+    board and not restated here** - DEL-7 and DEL-9 were HARNESS faults (now fixed), MULTI-5 is runner
+    debt, and MULTI-3/4 are `SKIPPED` on a re-enrolment cost. **Three rows - COMM-12, COMM-22, DEL-9 -
+    are `VACUOUS` with `failures: []`, voided by a CD deploy landing mid-run: a campaign run and a
+    push to `main` are MUTUALLY EXCLUSIVE**, and `gate` refusing the attribution is the only reason
+    nothing false was recorded. **What is owed next, in order:** those three re-runs in a quiet window;
+    then re-runs of every DEL and MULTI cell, because both runners have CHANGED since (`del.mjs` is
+    `2dd7a0f4a933`, `multi.mjs` `74bb17b8283f`, and `rows.mjs` names each row); then LIFE, NOTIF,
+    HEAL. **Two things must NOT be read as settled:** DEL-10 passed where it FAILed on `2a4297cb` but
+    nothing names what changed and the two runs measured different queues, so its P2 STAYS OPEN; and
+    COMM-8 passes with `seedAfterTheGrant: repaired`, not `true`, so WP-REGRANT-2's proof is still
+    owed - the seed arrived by the REPAIR path, and a fallback is a signal, never a path. COMM-23's
+    403 to the OWNER of the group it had just minted is unexplained.
 
-    COMM's last full run (2026-08-27, `cb967b6c`) is
-    15 `PASS` / 5 `PASS-DIRTY` / 3 `VACUOUS` / 1 `FAIL`. **The `FAIL` is COMM-8 and its cause is
-    found and FIXED** - an external join was durable on the SERVER and volatile on the CLIENT, so a
-    reload in the gap rejoined and FORKED the group (four groups in that one rung; story in
-    `CHANGELOG.md`, rule in `durable-rules`). COMM-11's remaining dirt is the same signature.
-    **COMM owes ONE re-run**, and it also owes the proof WP-REGRANT-2 wants.
-
-    **A1 IS ARMED** - Pixel 6a, `adb devices` = `device`, `isKeyguardShowing=false`, and
-    `node phone.mjs 9333` (ONE positional port, NOT `--ensure`) returned `ok:true` on 2026-08-27. So
-    the four `+A1` rows (COMM-14/17/18/25, still on `6808a89c`) run this time. It carried DEL-7 to its
-    first `PASS` (group reached A1 in 147ms, purged on wake, converged in 0ms). **A dead `adb devices`
-    is not always the cable:** it was empty until the user re-plugged, and the `A1_WIFI` fallback
-    needs a prior `adb tcpip 5555` it did not have.
+    **A1 IS ARMED AND HAS NOW EARNED ITS ROWS** - Pixel 6a, armed with `node phone.mjs 9333` (ONE
+    positional port, NOT `--ensure`). It cleared the four COMM `+A1` rows that had stood on
+    `6808a89c` since 2026-08-22, and carried DEL-7 to its first `PASS`. **A dead `adb devices` is not
+    always the cable:** it was empty until the user re-plugged, and the `A1_WIFI` fallback needs a
+    prior `adb tcpip 5555` it did not have. **And an unarmed phone can be INVISIBLE to a runner** -
+    `devicesFor` dropped it silently for a whole rung; the preflight header names the devices, read it.
 
     **A `PASS-DIRTY` NO LONGER STOPS A RUNG BY ITSELF (user, 2026-08-25)**, and **a x5 sweep of the
     WHOLE ladder accepting nothing short of `PASS` comes AFTER the campaign reaches the bottom (user,
     2026-08-26)** - until then one pass per rung is the target. **What is left is a WRITING job as
     much as a running one:** only CALL, CORRUPT and PIN have NO runner at all.
 
-    **THE COMM-8 FIX IS PUSHED** (`01725cda`, 2026-08-27), so the re-run measures the right build
-    once CD has deployed it - **and CD's colour is not the deploy's verdict, so read the SERVED
-    artefact.** Getting it there cost four failed pushes, all `fatal: unable to access ...: Empty
-    reply from server` (exit 128) while `git fetch` succeeded every time; the fifth, carrying
+    **PUSHING TO THIS REMOTE IS A HAZARD IN THREE WAYS, all hit on 2026-08-27.** (1) **A pipe masks
+    the exit code** - `git push ... | sed > log; echo $?` reported success on a FAILED push: redirect,
+    then read `$?`. (2) **A background wrapper reports ITS exit, not git's** - a rejected
+    non-fast-forward push came back as exit 0 and was caught only by reading `PUSH_EXIT` out of the
+    log. **Leon AND a parallel session both push `main`: fetch and rebase before every push.** (3)
+    Four failures with `fatal: unable to access ...: Empty reply from server` (exit 128) while
+    `git fetch` succeeded every time; the fifth, carrying
     `http.version=HTTP/1.1` **and** `http.postBuffer=524288000`, went through. **ONE SUCCESS DOES
     NOT SAY WHICH KNOB DID IT, or whether either did** - the failures were not reproduced against a
     control, so treat those two flags as a thing to TRY on the next `Empty reply`, never as the
-    known fix. `http.sslbackend` is `schannel` and no proxy is set. A push takes minutes because
-    the pre-push hook runs the frontend gates: **background, always.** And `git push ... | sed >
-    log; echo $?` REPORTED SUCCESS ON A FAILED PUSH - the documented masking hazard, hit again:
-    redirect, never pipe, then read `$?`.
+    known fix. `http.sslbackend` is `schannel` and no proxy is set. A push takes minutes because the
+    pre-push hook runs the frontend gates: **background, always.** And **CD's colour is not the
+    deploy's verdict** - read the SERVED artefact.
 
     **A KILLED RUN CAN DESTROY A MEASUREMENT SECONDS FROM BEING RECORDED**, and **`node rows.mjs`
     SETTLES WHETHER THE BOARD STILL MATCHES THE LEDGER - run it before believing a cell**
-    ([testing-methodology](docs/wiki/testing-methodology.md), the only copy). It caught the board
-    over-claiming a SECOND time on 2026-08-27: eight COMM cells written `PASS` on a build those rows
-    had never run on. The shared venue is `fbddc890` / `general` `064ac7d2`, rebuilt 2026-08-26 after
-    a THIRD disappearance, cause unrecorded.
+    ([testing-methodology](docs/wiki/testing-methodology.md), the only copy). It has now caught the
+    board wrong THREE times, the last on 2026-08-27 when nine COMM cells named verdicts the ledger
+    contradicted - in BOTH directions, a `FAIL` the ledger had already cleared included. **The board
+    now matches the ledger exactly: zero disagreements**, the only gaps being six SETUP rows taken by
+    hand and NOTIF-4 / HEAL-W2, whose stale ledger verdicts their cells name in prose. The shared
+    venue is `fbddc890` / `general` `064ac7d2`, rebuilt 2026-08-26 after a THIRD disappearance.
 
 2. **DEFERRED PAST THE LADDER - seven UX and rendering items, substance in
     [backlog](docs/wiki/backlog.md) and NOWHERE else**, named here only so none is forgotten: the
