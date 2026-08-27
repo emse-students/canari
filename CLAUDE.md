@@ -204,8 +204,14 @@ half and is the only copy**; nothing here restates it.
 **TYPESCRIPT 7 IS REFUSED ON CANARI** (2026-08-27, measured on both halves - section 9 of
 [ecosystem-convergence](docs/wiki/ecosystem-convergence.md), the only copy) and `dependabot.yml`
 now ignores its majors, because `dependabot-auto-merge.yml` would otherwise land it unattended;
-**RENOVATE IS DROPPED** (2026-08-27) - Dependabot's bun ecosystem works and the only thing that
-breaks it is a lockfile version we control, so no GitHub App install is owed by the user; Sky keeps
+**RENOVATE IS DROPPED** (2026-08-27) - and section 10 is now the reason, replacing the earlier one:
+the ONLY thing Renovate was wanted for was `lockfileVersion: 2`, and v2 turns out to buy nothing,
+so the condition that gated the switch ("does Renovate read v2?") never has to be answered. It
+still cannot be, from documentation. **bun 1.4.0 IS THE RUNTIME EVERYWHERE AND LOCKFILES STAY AT
+v1** (2026-08-27): the two are independent - bun 1.4 writes v2 only for a lockfile it creates from
+nothing, and preserves v1 on `install`, `update` and `--frozen-lockfile` alike (measured three
+times). The invariant is enforced by `Guard the bun lockfile version` in `code-analysis.yml`, NOT by
+pinning the toolchain, because a pin never governed a contributor's own bun; Sky keeps
 Tailwind and migrates to v4 without preflight; `bun:sqlite` replaces better-sqlite3; the `image_url`
 deletion stands.
 

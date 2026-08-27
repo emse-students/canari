@@ -108,6 +108,30 @@ jobs:
         with:
           bun-version-file: ".bun-version"
 
+      # THE INVARIANT THAT KEEPS DEPENDABOT ALIVE, and it is enforced HERE rather than by pinning
+      # the toolchain, because a pin never enforced it. Dependabot bundles bun 1.3.14 with
+      # `MAX_SUPPORTED_LOCKFILE_VERSION = 1` (dependabot-core#15896, merged 2026-08-14) and answers
+      # `DependencyFileNotSupported` to a `lockfileVersion: 2` lockfile - so a v2 lockfile means NO
+      # dependency updates for that directory, and the symptom is an ABSENCE of pull requests, which
+      # nobody notices. bun 1.4 writes v2 only for a lockfile it creates from nothing and preserves
+      # v1 otherwise (measured; `ecosystem-convergence.md` section 10), so the repo runs the newest
+      # bun everywhere and only this line has to hold. It reads every COMMITTED lockfile, which
+      # `.bun-version` cannot do: a contributor's own bun is not governed by this repository, and
+      # deleting a `bun.lock` before reinstalling is all it takes.
+      - name: Guard the bun lockfile version
+        run: |
+          set -uo pipefail
+          bad=""
+          while IFS= read -r lock; do
+            v="$(grep -m1 -o '"lockfileVersion"[[:space:]]*:[[:space:]]*[0-9]*' "$lock" | grep -o '[0-9]*$')"
+            echo "--- $lock: lockfileVersion=${v:-MISSING}"
+            [ "$v" = "1" ] || bad="$bad $lock"
+          done < <(git ls-files '*bun.lock')
+          if [ -n "$bad" ]; then
+            echo "::error::bun lockfile version must be 1 (Dependabot cannot read v2):$bad"
+            exit 1
+          fi
+
       # `bun audit`, not `npm audit`: the frontend's committed lockfile is bun.lock, and npm audit
       # against it audits whatever a stray package-lock.json happens to say instead.
       - name: Audit frontend dependencies

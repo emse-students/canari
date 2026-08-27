@@ -9,7 +9,7 @@
 # A `libs/shared-ts` build stage used to sit here, installing and compiling a
 # package whose output was then copied nowhere. Both the stage and the package
 # are gone - nothing in any service imported it. `--install-links` went too.
-FROM oven/bun:1.3.14-alpine AS builder
+FROM oven/bun:1.4.0-alpine AS builder
 
 WORKDIR /app
 
@@ -21,7 +21,7 @@ COPY apps/chat-delivery-service ./apps/chat-delivery-service
 RUN cd apps/chat-delivery-service && bunx tsc -p tsconfig.build.json
 
 # -- Runtime stage -------------------------------------------------------------
-FROM oven/bun:1.3.14-alpine
+FROM oven/bun:1.4.0-alpine
 
 WORKDIR /app
 

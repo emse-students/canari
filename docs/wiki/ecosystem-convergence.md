@@ -389,3 +389,85 @@ Both conditions are somebody else's release, so both will look "ready" the day a
 directories, with a pointer back here - because `dependabot-auto-merge.yml` is enabled on this repo,
 and without the ignore the path from "Dependabot opens a PR" to "every backend test suite fails to
 load on main" has no human in it.
+
+---
+
+## 10. bun 1.4 as the RUNTIME everywhere, lockfiles held at v1 - and why that is not a compromise
+
+Measured 2026-08-27. This section replaces the reasoning behind the `.bun-version` pin, which was
+defensive against something that turns out to be separable, and it closes the Renovate question that
+had been open since the package-manager work began.
+
+### The constraint, dated and precise
+
+Dependabot merged [PR #15896](https://github.com/dependabot/dependabot-core/pull/15896) on
+**2026-08-14**. It bundles bun **1.3.14** and sets `MAX_SUPPORTED_LOCKFILE_VERSION = 1`. Handed a
+`bun.lock` carrying `lockfileVersion: 2` it now raises `DependencyFileNotSupported` - a HARD failure,
+which is a deliberate improvement on what it did before ([issue
+#15848](https://github.com/dependabot/dependabot-core/issues/15848)): bun 1.3.5 could not parse a v2
+lockfile, discarded it, resolved from scratch and committed a **downgraded v1 lockfile back into the
+pull request** with exit code 0. Silent corruption became a loud refusal. Either way, **a v2 lockfile
+means no dependency updates for that directory.**
+
+### The separation the old pin missed
+
+The `cd.yml` comment said "any bun >= 1.4.0 writes `lockfileVersion: 2` into a `bun.lock` **it
+creates**", and that qualifier is the whole point: **the version of bun you RUN and the version of
+the lockfile you COMMIT are independent.** bun 1.4.0 writes v2 only when creating a lockfile from
+nothing. Against an existing v1 lockfile it preserves the version. Measured three times, three
+different commands, three different repositories:
+
+| Command | Where | Result |
+|---|---|---|
+| `bun update fast-uri` | `apps/core-service` | v1 preserved, dependency bumped 3.1.2 -> 3.1.6 |
+| `bun install` | Sky (14 packages installed, 16 removed) | v1 preserved |
+| `bun install --frozen-lockfile` | `apps/media-service` | **byte-identical** lockfile, `diff -q` clean |
+
+The third is the one CI actually runs. So bun 1.4.0 can be the runtime in every image, every workflow
+and every developer's shell while Dependabot keeps working, because nothing in that path ever creates
+a lockfile from nothing.
+
+**Pinning the toolchain to 1.3.14 never enforced the invariant anyway.** `.bun-version` governs CI
+and `setup-bun`; it does not govern the bun on a contributor's laptop, and a contributor on bun 1.4
+who deletes `bun.lock` and reinstalls produces a v2 lockfile whatever this repo pins. The pin bought
+an illusion. **What actually enforces it is a gate that reads the committed lockfiles**, which is why
+one exists now - it names this section, and it fails the build rather than letting Dependabot go
+quiet, which is the failure mode nobody notices because its symptom is an ABSENCE of pull requests.
+
+### Renovate: still unverified, and now unnecessary
+
+The standing plan was to replace Dependabot with Renovate, conditional on one check nobody had run -
+does Renovate read `lockfileVersion: 2`? **It still has not been answered, and it cannot be answered
+from the documentation.** The [bun manager
+page](https://docs.renovatebot.com/modules/manager/bun/) lists `bun.lockb` and `bun.lock` as
+supported and says only that "lock file maintenance is delegated to the underlying package manager,
+which Renovate runs as an external command". It never states how the bun version is chosen - not
+`packageManager`, not `.bun-version`, not a bundled pin. Since which bun runs is exactly what decides
+whether a v2 lockfile is readable, the documentation does not settle the question.
+
+**It no longer needs to be settled.** The reason to want Renovate was v2 lockfiles, and the
+measurement above removes the reason to want v2 lockfiles. **RENOVATE STAYS DROPPED** (decided
+2026-08-27, and this section is why). Reopen it only if bun stops being able to preserve a v1
+lockfile, or if Dependabot raises `MAX_SUPPORTED_LOCKFILE_VERSION` and v2 buys something concrete -
+and note that in the second case the answer is to move to v2 on Dependabot, not to switch tools.
+
+### The version inventory, all five repos, 2026-08-27
+
+`svelte`, `@sveltejs/kit` and `vite` are ALREADY identical across all five: `^5.56.10`, `^2.70.3`,
+`^8.2.2`. The homogeneity mandate has three outstanding divergences and no more:
+
+| Divergence | Repo | Everyone else |
+|---|---|---|
+| `tailwindcss@^4.3.1`, and NO `@tailwindcss/vite` (still on the PostCSS path) | MiGallery | `^4.3.3` + `@tailwindcss/vite@^4.3.3` |
+| `lucide-svelte@^1.0.1` - the OLD package name | MiGallery | `@lucide/svelte@^1.34.0` |
+| `typescript@^6.0.3` - caret, not tilde | le-cercle | `~6.0.3` |
+
+The caret is a homogeneity defect and NOT a TypeScript 7 hole: `^6.0.3` resolves `< 7.0.0`, so it
+cannot pull in the major that section 9 refuses. Fix it for consistency, not for safety.
+
+### Stale Svelte 4 syntax: none, anywhere
+
+Swept 2026-08-27 across the `src/` of all five repos for `export let`, `on:click`/`on:change`/
+`on:submit`/`on:input`, `createEventDispatcher`, `<slot`, `<svelte:component` and top-level `$:`.
+**Every count is zero in every repo.** The runes migration is complete and there is nothing to do
+here - recorded so the question is not re-opened by someone who assumes otherwise.

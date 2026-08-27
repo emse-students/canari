@@ -172,6 +172,29 @@ which is also where every release up to and including v0.13.1 now lives.
   three. Unrelated to `calendar_event_co_owners`, which names ASSOCIATIONS co-hosting an event.
 
 ### Changed
+- **bun 1.4.0 is the runtime everywhere, and Dependabot still works - the two were never in
+  conflict.** `.bun-version` and the four service images sat at 1.3.14 because "any bun >= 1.4.0
+  writes `lockfileVersion: 2`, which Dependabot cannot parse". The qualifier in that sentence was
+  doing all the work: bun writes v2 only into a lockfile it CREATES. Against an existing v1 lockfile
+  it preserves the version - measured on `bun update` in core-service, `bun install` in another repo
+  and `bun install --frozen-lockfile` in media-service, the last byte-identical. The version of bun
+  you run and the version of the lockfile you commit are independent, so the repo runs the newest bun
+  and Dependabot keeps opening pull requests.
+
+  The pin is replaced by something that actually enforces the invariant. `.bun-version` governs CI
+  and `setup-bun`; it does not govern a contributor's own bun, and deleting a `bun.lock` before
+  reinstalling produces a v2 lockfile whatever this repo pins - so the pin bought an illusion.
+  `code-analysis.yml` now reads every committed `bun.lock` and fails the build on anything but
+  version 1, quoting dependabot-core#15896 (merged 2026-08-14, `MAX_SUPPORTED_LOCKFILE_VERSION = 1`)
+  for why. That failure mode is the one worth gating on precisely because its symptom is an ABSENCE
+  of pull requests, which nobody notices; before that PR it was worse still, as Dependabot silently
+  committed a DOWNGRADED lockfile and exited 0.
+
+  This also closes the Renovate question, which had been open and blocking since the package-manager
+  work started. It was conditional on "does Renovate read lockfileVersion 2" - unanswerable from its
+  documentation, which never says which bun it runs - and the answer stopped mattering, because the
+  only reason to want v2 was gone. Renovate stays dropped, now for a measured reason.
+
 - **`Dockerfile.frontend-ssr` moves to `node:24-alpine`, the last `node:22` in the repository.** Its
   comments were French in a repo whose rule is that everything dev-facing is English, and they now
   also record why this one image is NOT on bun: it runs an `adapter-node` build, so bun would mean
