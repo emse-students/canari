@@ -163,14 +163,17 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     2026-08-26)** - until then one pass per rung is the target. **What is left is a WRITING job as
     much as a running one:** only CALL, CORRUPT and PIN have NO runner at all.
 
-    **BLOCKER - THE COMM-8 FIX IS COMMITTED AND NOT PUSHED, so prod does not carry it and a re-run
-    would measure the OLD build.** Four `git push` attempts died on `fatal: unable to access ...:
-    Empty reply from server` (exit 128) while `git fetch` succeeded every time - including with
-    `http.version=HTTP/1.1` and `http.postBuffer=524288000` (`http.sslbackend` is `schannel`, no
-    proxy set). The remote accepted three commits from the parallel session during those attempts,
-    so the path works for others. `git status -sb` says `ahead 1` until it lands. **Next thing to
-    try is an SSH remote.** And `git push ... | sed > log; echo $?` REPORTED SUCCESS ON A FAILED
-    PUSH - the documented masking hazard, hit again: redirect, never pipe, then read `$?`.
+    **THE COMM-8 FIX IS PUSHED** (`01725cda`, 2026-08-27), so the re-run measures the right build
+    once CD has deployed it - **and CD's colour is not the deploy's verdict, so read the SERVED
+    artefact.** Getting it there cost four failed pushes, all `fatal: unable to access ...: Empty
+    reply from server` (exit 128) while `git fetch` succeeded every time; the fifth, carrying
+    `http.version=HTTP/1.1` **and** `http.postBuffer=524288000`, went through. **ONE SUCCESS DOES
+    NOT SAY WHICH KNOB DID IT, or whether either did** - the failures were not reproduced against a
+    control, so treat those two flags as a thing to TRY on the next `Empty reply`, never as the
+    known fix. `http.sslbackend` is `schannel` and no proxy is set. A push takes minutes because
+    the pre-push hook runs the frontend gates: **background, always.** And `git push ... | sed >
+    log; echo $?` REPORTED SUCCESS ON A FAILED PUSH - the documented masking hazard, hit again:
+    redirect, never pipe, then read `$?`.
 
     **A KILLED RUN CAN DESTROY A MEASUREMENT SECONDS FROM BEING RECORDED**, and **`node rows.mjs`
     SETTLES WHETHER THE BOARD STILL MATCHES THE LEDGER - run it before believing a cell**
