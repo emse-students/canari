@@ -134,6 +134,17 @@ jobs:
             exit 1
           fi
 
+      # THE OTHER LOCKFILE INVARIANT, and the one a release used to be the first thing to discover.
+      # A Tauri plugin is a JS package AND a Rust crate that must agree on major.minor, and the CLI
+      # refuses to build when they do not - but nothing in this pipeline compiles the Tauri app, so
+      # the refusal lands in a RELEASE workflow, minutes after the tag. It did on 2026-08-27, killing
+      # Android, AppImage and iOS on `@tauri-apps/plugin-log` 2.9.0 against `tauri-plugin-log`
+      # 2.8.0. `bun install` re-resolves the JS half and touches no Cargo lockfile, so the two drift
+      # by default. Needs no toolchain and no install: it reads two committed files.
+      - name: Guard the Tauri JS/Rust version parity
+        working-directory: frontend
+        run: node ./scripts/check-tauri-plugin-versions.mjs
+
       # `bun audit`, not `npm audit`: the frontend's committed lockfile is bun.lock, and npm audit
       # against it audits whatever a stray package-lock.json happens to say instead.
       - name: Audit frontend dependencies

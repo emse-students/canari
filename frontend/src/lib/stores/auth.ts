@@ -15,7 +15,7 @@ import { setGlobalAdmin } from '$lib/stores/userState.svelte';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { coreUrl } from '$lib/utils/apiUrl';
 import { isTauriRuntime } from '$lib/utils/openExternal';
-import { isMobileTauriRuntime } from '$lib/utils/appVersion';
+import { getClientAppVersion, isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { customTabsCommand } from '$lib/services/customTabsCommands';
 import { clearPersistedPendingAcks } from '$lib/mls-client/ackRetry';
 import { connectivity, isTransportFailure } from '$lib/stores/connectivity.svelte';
@@ -396,7 +396,15 @@ export async function refresh(): Promise<string> {
 }
 
 async function _doRefresh(): Promise<string> {
-  const endpoint = `${coreUrl()}/api/auth/refresh`;
+  // The build doing the asking, carried the way `users/me/announcement` already carries it: as a
+  // query parameter, because nothing in a request states a client's version. It is here for the
+  // server's REPORT, not for any decision. A refused refresh has causes that only the version tells
+  // apart - a client too old to carry its own credential, which is expected and needs nothing, and a
+  // client that should have carried one and did not, which is a defect in the store write. A query
+  // parameter rather than a second custom header: the header would need its own CORS allowance on
+  // four services, and this needs none.
+  const endpoint =
+    `${coreUrl()}/api/auth/refresh` + `?clientVersion=${encodeURIComponent(getClientAppVersion())}`;
   alog(`refresh→ ${endpoint}`);
   const t0 = Date.now();
 

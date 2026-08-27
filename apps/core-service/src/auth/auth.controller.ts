@@ -11,6 +11,7 @@ import {
   Param,
   Post,
   Put,
+  Query,
   Req,
   Res,
   ServiceUnavailableException,
@@ -397,7 +398,8 @@ export class AuthController {
   @HttpCode(200)
   async refreshToken(
     @Req() req: Request,
-    @Res({ passthrough: true }) res: Response
+    @Res({ passthrough: true }) res: Response,
+    @Query('clientVersion') clientVersion?: string
   ): Promise<{ access_token: string; refresh_token?: string }> {
     const refresh_token = this.presentedRefreshToken(req);
     if (!refresh_token) {
@@ -410,10 +412,28 @@ export class AuthController {
       // equivalent API, so iOS is the platform where this branch is expected to lie about why.
       // The cookie LIST is the discriminator: a client that holds a session still presents its
       // other cookies, a jar that dropped the whole third-party set presents none.
+      // SINCE THE HEADER TRANSPORT SHIPPED THERE IS A THIRD CAUSE, and it is the only one that is a
+      // defect: a client that is supposed to carry its own credential, whose store came back empty.
+      // No field above separates it from the second, because a client with an empty store correctly
+      // sends no header at all - "old client, has not updated yet" and "the write to disk failed"
+      // look identical here. `client=` is what tells them apart, which is why it is stated rather
+      // than inferred: measured 2026-08-27, every iOS device on prod was on 0.14.5, the build BEFORE
+      // the transport existed, so every one of those lines was expected and none was worth chasing.
+      // `unstated` means a client older than this parameter, which is the same answer.
       const cookieNames = Object.keys((req.cookies ?? {}) as Record<string, unknown>);
       const origin = req.get('origin') ?? 'none';
+      // Three states, and the third is why this is not a boolean: an origin that keeps its cookie
+      // has its header IGNORED by policy, so "present" there means nothing went wrong. `empty` is
+      // the only one that accuses - a body-transport client that sent the header with nothing in it.
+      const headerState = !req.get(REFRESH_HEADER)
+        ? 'absent'
+        : usesBodyRefreshTransport(origin)
+          ? 'empty'
+          : 'ignored';
       const detail =
-        `no ${REFRESH_COOKIE} cookie. cookies=[${cookieNames.join(',')}] origin=${origin} ` +
+        `no ${REFRESH_COOKIE} cookie. cookies=[${cookieNames.join(',')}] ` +
+        `${REFRESH_HEADER}=${headerState} ` +
+        `client=${clientVersion?.trim() || 'unstated'} origin=${origin} ` +
         `ua=${req.get('user-agent') ?? 'none'}`;
       if (TAURI_WEBVIEW_ORIGINS.includes(origin as (typeof TAURI_WEBVIEW_ORIGINS)[number])) {
         // A native shell reaching here is not an anonymous visitor: the app only asks for a

@@ -137,6 +137,18 @@ it printed settles the question:
 | A1 (Pixel 6a), after `am force-stop` | **1 x 200** in 218 ms, then `[PIN] Device key restored` | the cookie |
 | Web | 401 on anonymous loads only | `cookies=[cf_clearance]` |
 
+**The line grew a third field once the header transport shipped, because the 401 grew a third cause.**
+A client too old to carry its own credential and a client whose store write FAILED both arrive with no
+cookie AND no header - a body-transport client with an empty store correctly sends none - so nothing
+above separates them, and one is expected while the other is a defect. The refresh request therefore
+states its own version as a `clientVersion` query parameter, exactly as `users/me/announcement` does
+and for the same reason (nothing in a request carries it; a query parameter also needs no CORS
+allowance on four services, which a second custom header would), and the refusal prints it as
+`client=`, or `client=unstated` for a build older than the parameter. The header's own state is three
+values, not two: `absent`, `empty`, and `ignored` for an origin whose policy is to keep its cookie -
+calling that last case `empty` accuses a healthy request, which is what the first version of the field
+did.
+
 So Android's opt-in works and survives a kill; WKWebView's refusal is total. There is no iOS flag to
 add, no entitlement, no `Info.plist` key - and the two ways to make the cookie first-party both cost
 more than they buy (serving the app from `https://canari-emse.fr` inside the WebView would end

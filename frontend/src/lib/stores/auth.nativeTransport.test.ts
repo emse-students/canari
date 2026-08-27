@@ -119,6 +119,22 @@ describe('the refresh credential a native runtime carries itself', () => {
     expect(init.headers).toBeUndefined();
   });
 
+  it('states the build that is asking, on EVERY platform and not just this one', async () => {
+    // The server's refusal has two causes it cannot otherwise tell apart, and this parameter is the
+    // discriminator: `apps/core-service/src/auth/auth.controller.ts` logs it as `client=`. Asserted
+    // with the body transport OFF on purpose - the version is not transport-specific, and a refresh
+    // that stops stating it makes that log line unreadable again with nothing failing anywhere.
+    usesBodyRefreshTransport.mockReturnValue(false);
+    fetchMock.mockResolvedValue(rotation(true));
+
+    await refresh();
+
+    const [url] = fetchMock.mock.calls[0] as [string];
+    // Matched on the string rather than parsed: `coreUrl()` is relative in this environment, and a
+    // URL constructor would fail on the shape rather than on the claim.
+    expect(url).toMatch(/[?&]clientVersion=[^&\s]+/);
+  });
+
   it('survives a server that sends no credential back, and does not pretend it stored one', async () => {
     // A server older than this transport. The rotation still happened, so this run is fine; the next
     // cold start would have only the cookie, which is worth a warning rather than a crash.

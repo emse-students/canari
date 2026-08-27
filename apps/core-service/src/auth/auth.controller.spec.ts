@@ -1,6 +1,11 @@
 /// <reference types="jest" />
 
-import { BadRequestException, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Logger,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import type { Request, Response } from 'express';
 import * as jwt from 'jsonwebtoken';
 import { AuthController } from './auth.controller';
@@ -312,6 +317,53 @@ describe('AuthController sessions', () => {
       await controller.logout(req, out.res);
 
       expect(sessions.revoke).toHaveBeenCalledWith('sid-1');
+    });
+
+    it('names the BUILD that asked when it refuses, which is the only thing that attributes it', async () => {
+      // Without this field the line reads IDENTICALLY for the two causes it now has: a client too
+      // old to carry a credential, which is expected and owes nothing, and a client that should have
+      // carried one and whose store write failed, which is a defect. A client with an empty store
+      // correctly sends no header, so no other field separates them. Measured 2026-08-27: every iOS
+      // device on prod was on 0.14.5, one build before this transport existed.
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+      const req = makeReq({ origin: 'tauri://localhost' });
+      const out = makeRes();
+
+      await expect(controller.refreshToken(req, out.res, '0.14.7')).rejects.toThrow(
+        UnauthorizedException
+      );
+
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('client=0.14.7'));
+      warn.mockRestore();
+    });
+
+    it('says `unstated` rather than nothing when the client is too old to name itself', async () => {
+      // An absent parameter must read as an ANSWER - "a build from before this existed" - not as a
+      // gap in the line that leaves a reader wondering whether the field was dropped.
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+      const req = makeReq({ origin: 'tauri://localhost' });
+      const out = makeRes();
+
+      await expect(controller.refreshToken(req, out.res)).rejects.toThrow(UnauthorizedException);
+
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('client=unstated'));
+      warn.mockRestore();
+    });
+
+    it('does not accuse a cookie platform of an empty header - there it is IGNORED, not missing', async () => {
+      // The first version of this line called it `empty` for a header that was present and valid, on
+      // an origin whose policy is simply to ignore it. A field that accuses on a healthy request is
+      // worse than no field at all, so the three states stay three.
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+      const req = makeReq({ origin: 'http://tauri.localhost', carriedRefresh: carried() });
+      const out = makeRes();
+
+      await expect(controller.refreshToken(req, out.res, '0.14.7')).rejects.toThrow(
+        UnauthorizedException
+      );
+
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('x-canari-refresh=ignored'));
+      warn.mockRestore();
     });
   });
 

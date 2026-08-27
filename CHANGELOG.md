@@ -148,6 +148,41 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A dependency bump killed three release builds, and nothing before the release could have seen
+  it.** Android Release and AppImage Release for v0.14.6 both died about thirty seconds in, on the
+  Tauri CLI's own preflight: `tauri-plugin-log (v2.8.0) : @tauri-apps/plugin-log (v2.9.0)`. A Tauri
+  plugin is two artefacts that must agree on major.minor - a JS package in `package.json` calling
+  commands a Rust crate in `src-tauri/Cargo.lock` registers - and `bun install` re-resolves the JS
+  half while touching no Cargo lockfile, so the two drift by default. The second sweep of the
+  ecosystem convergence (`ba6e4bf7`) carried the JS side to 2.9.0 and left the crate at 2.8.0.
+
+  **The refusal is correct; where it happens is the defect.** `bun run check`, `lint`, `format` and
+  the whole CI pipeline read the JS side only - nothing in this repository compiles the Tauri app -
+  so the first thing that ever runs `tauri build` is a release workflow. The skew therefore lands
+  minutes after a tag rather than on the pull request that introduced it, and **iOS Release passed
+  the whole way**, because its path never runs that check: one bump, three platforms, two failures
+  and no uniformity to notice. `Cargo.lock` is now at 2.9.0 (`cargo check` clean), and the cheap
+  half of that build moved into CI as `frontend/scripts/check-tauri-plugin-versions.mjs`, wired into
+  `code-analysis.yml`: it compares every `@tauri-apps/*` package against its crate in two committed
+  files, needs no toolchain and no network, takes seconds, and fails with the CLI's own message. It
+  was verified to FAIL on the exact defect that shipped before being trusted to pass.
+
+- **A refused refresh could not say WHICH build was refused, so its two causes read alike.** The
+  warning added earlier that day names the cookie jar, the origin and the user agent, and after the
+  header transport shipped that stopped being enough: a client too old to carry its own credential
+  and a client whose store write FAILED both arrive with no cookie and no header, because a
+  body-transport client with an empty store correctly sends none. One is expected and owes nothing,
+  the other is a defect, and the line read identically for both. The refresh request now states its
+  own version the way `users/me/announcement` already does - a query parameter, since nothing in a
+  request carries it, and a query parameter needs no CORS allowance on four services where a second
+  custom header would - and the refusal logs it as `client=`, or `client=unstated` for a build older
+  than the parameter, which is the same answer stated rather than missing. Confirmed against prod
+  the same evening: every iOS device was on 0.14.5, one build before the transport existed, so every
+  one of those lines was expected. The header's own state is reported in three values rather than
+  two: `absent`, `empty`, and `ignored` for an origin whose policy is to keep its cookie - the first
+  version of the field called that last case `empty` and accused a perfectly healthy request, which
+  a test now pins.
+
 - **Signing in on iOS was impossible, and the reason was a server's CORS allowlist.** On an iPhone the
   login ran the whole way - Authentik accepted the credentials, the deep link brought the app back, the
   authorization code and the CSRF state both arrived - and then the token exchange died with
