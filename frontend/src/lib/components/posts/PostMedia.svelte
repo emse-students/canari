@@ -248,10 +248,14 @@
         class="group/img block h-full w-full cursor-zoom-in outline-none focus-visible:z-10 focus-visible:ring-4 focus-visible:ring-amber-500/50"
         aria-label={m.post_zoom_image_label()}
       >
+        <!-- Past the box ceiling the picture is cropped, not shrunk, and the crop is CENTRED:
+             what a reader is shown is then the middle of the frame in both axes, which is where a
+             photograph puts its subject. A top anchor reads as a bug on anything that is not a
+             screenshot, and the full frame is one tap away in the viewer either way. -->
         <img
           src={blobUrl}
           alt={media.fileName ?? m.post_image_alt()}
-          class="h-full w-full object-cover object-top transition-transform duration-700 group-hover/img:scale-105"
+          class="h-full w-full object-cover object-center transition-transform duration-700 group-hover/img:scale-105"
           loading="lazy"
         />
       </button>

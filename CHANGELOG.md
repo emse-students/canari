@@ -36,6 +36,16 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Changed
 
+- **A cropped picture is cropped from its MIDDLE again.** The media ceiling shipped hours earlier
+  (`--media-max-height`, below) anchored the crop to the top, on the argument that a screenshot or
+  an infographic carries its meaning there. Measured against what people actually attach - a
+  photograph, whose subject is in the middle - that anchor reads as a bug: a portrait shot loses its
+  subject and keeps the ceiling of the room. A post image and a chat image are `object-center`; the
+  ceiling itself, the reason for cropping rather than shrinking, and the full frame one tap away in
+  the viewer are all unchanged. The three `PdfThumbnail` call sites keep `object-top` deliberately: a
+  44px square crop of an A4 page shows its title at the top and one paragraph's midriff at the
+  centre, so a document is the one attachment whose top IS its identity.
+
 - **A post could be reported into two stores, and one of them had never once been written to.**
   `POST /api/posts/:postId/report` appended to a `reports` JSONB column on `posts`, read back by
   `GET /api/posts/reported`; the other went to `content_reports`, which is what `/admin/moderation`

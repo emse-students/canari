@@ -115,9 +115,14 @@ explicit-type-then-mime fallback:
 ratio is clamped to `[0.25, 4]`, which still allows a box four times the card's width - about two
 phone screens of a single picture - so `mediaAspectStyle` emits `max-height: var(--media-max-height)`
 (80svh, defined once in `app.css`) alongside the `aspect-ratio`. Past the ceiling the media is
-CROPPED rather than shrunk, anchored to the top (`object-cover object-top`): a screenshot or an
-infographic says what it has to say at the top, and a centre crop shows the part that carries
-nothing. The full frame is one tap away in the viewer, which is what makes cropping right here.
+CROPPED rather than shrunk. **The crop is CENTRED** (`object-cover object-center`): the ceiling was
+first shipped with a top anchor, on the argument that a screenshot or an infographic says what it
+has to say at the top - but a post attachment is overwhelmingly a photograph, whose subject is in
+the middle, and a top anchor reads as a bug on one. The full frame is one tap away in the viewer,
+which is what makes cropping right here. A chat image (`MessageMediaRenderer`) is centred by the
+same argument. The only `object-top` anchors LEFT are the three `PdfThumbnail` call sites, and they
+are not an oversight: a 44px square cover-crop of an A4 page shows its title at the top and a strip
+of one paragraph at the middle, so a document is the one attachment whose top IS its identity.
 
 Two unit choices in that token are deliberate and neither is cosmetic: `svh` rather than `dvh`, so a
 collapsing mobile URL bar does not re-lay-out the feed under the reader's finger; and NOT

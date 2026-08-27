@@ -10,6 +10,22 @@ if [ -z "$STAGED_FILES" ]; then
   exit 0
 fi
 
+# Re-stage the auto-fixer's output for the files THIS COMMIT ALREADY STAGED, and no others.
+#
+# This used to be `git diff --name-only -- <dir> | xargs -r git add`, which re-stages everything
+# dirty under the directory - including work a parallel session, or the developer's own unrelated
+# edit, had deliberately left out. A commit then silently carries files its author never chose, and
+# nothing reports it: the hook's job is to fix what is being committed, not to decide what is.
+# The allowlist is $STAGED_FILES, captured before any fixer ran.
+#
+# `git add -A --` rather than `git add --`, so a staged DELETION survives the round trip instead of
+# failing the pathspec.
+restage() {
+  echo "$STAGED_FILES" | grep -E "^$1" | while IFS= read -r staged_path; do
+    [ -n "$staged_path" ] && git add -A -- "$staged_path"
+  done
+}
+
 echo "$STAGED_FILES" | grep -Eq '^(\.github/workflows/|\.husky/|Makefile|libs/shared-rust/)' && RUN_ALL=1 || RUN_ALL=0
 echo "$STAGED_FILES" | grep -Eq '^frontend/' && RUN_FRONTEND=1 || RUN_FRONTEND=0
 echo "$STAGED_FILES" | grep -Eq '^apps/chat-delivery-service/' && RUN_DELIVERY=1 || RUN_DELIVERY=0
@@ -40,7 +56,7 @@ if [ "$RUN_FRONTEND" -eq 1 ]; then
     echo "❌ Frontend lint/format failed."
     exit 1
   }
-  git diff --name-only -- frontend/ | xargs -r git add
+  restage "frontend"
   # Mirror exactly the CI lint job (lint + check + format:check) so nothing
   # broken can reach CD. Auto-fix already ran above; these are the strict gates.
   (cd frontend && bun run check -- --threshold warning && bun run lint && bun run format:check) || {
@@ -54,7 +70,7 @@ if [ "$RUN_DELIVERY" -eq 1 ]; then
     echo "❌ chat-delivery-service lint failed."
     exit 1
   }
-  git diff --name-only -- apps/chat-delivery-service/ | xargs -r git add
+  restage "apps/chat-delivery-service"
 fi
 
 if [ "$RUN_GATEWAY" -eq 1 ]; then
@@ -62,7 +78,7 @@ if [ "$RUN_GATEWAY" -eq 1 ]; then
     echo "❌ chat-gateway cargo fmt failed."
     exit 1
   }
-  git diff --name-only -- apps/chat-gateway/ | xargs -r git add
+  restage "apps/chat-gateway"
 fi
 
 if [ "$RUN_SOCIAL" -eq 1 ]; then
@@ -70,7 +86,7 @@ if [ "$RUN_SOCIAL" -eq 1 ]; then
     echo "❌ social-service lint failed."
     exit 1
   }
-  git diff --name-only -- apps/social-service/ | xargs -r git add
+  restage "apps/social-service"
 fi
 
 if [ "$RUN_CORE" -eq 1 ]; then
@@ -78,7 +94,7 @@ if [ "$RUN_CORE" -eq 1 ]; then
     echo "❌ core-service lint failed."
     exit 1
   }
-  git diff --name-only -- apps/core-service/ | xargs -r git add
+  restage "apps/core-service"
 fi
 
 if [ "$RUN_MEDIA" -eq 1 ]; then
@@ -86,7 +102,7 @@ if [ "$RUN_MEDIA" -eq 1 ]; then
     echo "❌ media-service lint failed."
     exit 1
   }
-  git diff --name-only -- apps/media-service/ | xargs -r git add
+  restage "apps/media-service"
 fi
 
 # Rust crates under frontend/: auto-format (cargo fmt) then re-stage, like chat-gateway.
@@ -96,7 +112,7 @@ if [ "$RUN_MLS_CORE" -eq 1 ]; then
     echo "❌ mls-core cargo fmt failed."
     exit 1
   }
-  git diff --name-only -- frontend/mls-core/ | xargs -r git add
+  restage "frontend/mls-core"
 fi
 
 if [ "$RUN_MLS_WASM" -eq 1 ]; then
@@ -104,7 +120,7 @@ if [ "$RUN_MLS_WASM" -eq 1 ]; then
     echo "❌ mls-wasm cargo fmt failed."
     exit 1
   }
-  git diff --name-only -- frontend/mls-wasm/ | xargs -r git add
+  restage "frontend/mls-wasm"
 fi
 
 if [ "$RUN_TAURI" -eq 1 ]; then
@@ -112,7 +128,7 @@ if [ "$RUN_TAURI" -eq 1 ]; then
     echo "❌ src-tauri cargo fmt failed."
     exit 1
   }
-  git diff --name-only -- frontend/src-tauri/ | xargs -r git add
+  restage "frontend/src-tauri"
 fi
 
 exit 0
