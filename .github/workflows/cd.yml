@@ -621,6 +621,15 @@ jobs:
           # platform - `http://tauri.localhost` on Android/Windows, `tauri://localhost` on
           # iOS/macOS/Linux. Keep in step with TAURI_WEBVIEW_ORIGINS in the four Nest services;
           # omitting the iOS spelling there cost that platform its login (see cors-origins.ts).
+          #
+          # THIS VALUE DOES NOT REACH THE CONTAINER TODAY, and the line is kept only so it is
+          # right the day it does: `docker-compose.prod.yml` sets `ALLOW_ORIGIN: "*"` as a
+          # LITERAL on the chat-gateway service, which wins over anything in `.env`. Measured on
+          # prod 2026-08-27: `docker exec infrastructure-chat-gateway-1 printenv ALLOW_ORIGIN`
+          # answers `*`. That wildcard is why the gateway was never the iOS blocker - it accepts
+          # every origin, including the one the Nest services refused. Tightening it is a P2 with
+          # its own blast radius (dev.canari-emse.fr is a CNAME onto this same tunnel and would
+          # be refused by a strict list): docs/wiki/backlog.md, "Measurements owed".
           upsert_env_var "ALLOW_ORIGIN" "$FRONTEND_URL,http://localhost:1420,http://tauri.localhost,https://tauri.localhost,tauri://localhost"
 
           if [ -n "$FIREBASE_SERVICE_ACCOUNT_JSON" ]; then

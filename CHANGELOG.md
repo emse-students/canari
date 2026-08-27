@@ -153,8 +153,10 @@ which is also where every release up to and including v0.13.1 now lives.
   authorization code and the CSRF state both arrived - and then the token exchange died with
   "Echec de la connexion / Load failed". The four NestJS services each spelt their allowed origins
   inline, and each named `http://tauri.localhost`: the ANDROID WebView origin. iOS sends
-  `tauri://localhost`, which matched nothing, and the Rust chat-gateway's `ALLOW_ORIGIN` carried no
-  Tauri origin at all. Two things then hid the cause. A `cors.origin` callback answering `false` omits
+  `tauri://localhost`, which matched nothing. (The Rust chat-gateway named no Tauri origin either,
+  but it was never the blocker: `docker-compose.prod.yml` hands it a literal `ALLOW_ORIGIN: "*"`,
+  which wins over the value CD writes to `.env`, so it accepts every origin. Measured on prod, and
+  now a P2 of its own.) Two things then hid the cause. A `cors.origin` callback answering `false` omits
   the headers but does not answer the `OPTIONS`, so the preflight fell through to a router with no
   handler and prod logged `"OPTIONS /api/auth/oidc/callback" 404` - a 404 on a path that exists,
   attributed to no origin. And WebKit reports every such refusal to JavaScript as a bare

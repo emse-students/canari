@@ -68,6 +68,35 @@ entry here or closes the question.
 
 ## Measurements owed
 
+### P2 - the chat-gateway serves CORS `*` in production, and the variable CD sets for it is inert (measured 2026-08-27)
+
+**Measured, not inferred.** `docker exec infrastructure-chat-gateway-1 printenv ALLOW_ORIGIN` answers
+`*`, and an `OPTIONS https://canari-emse.fr/api/presence` from ANY origin comes back `200` with
+`access-control-allow-origin: *`. The cause is one literal: `docker-compose.prod.yml` sets
+`ALLOW_ORIGIN: "*"` on the service, which wins over `infrastructure/.env` - so the
+`upsert_env_var "ALLOW_ORIGIN" ...` line in `cd.yml`, careful list and all, has never reached the
+container. **This is why the gateway was NOT the iOS blocker**: a wildcard accepts the origin the four
+Nest services refused, so the same defect could not express itself there.
+
+**What limits the damage today**, and why this is a P2 and not a P1: the layer sets no
+`allow-credentials`, so no cookie or `Authorization` header rides a cross-origin request - a hostile
+page gets an unauthenticated read of endpoints nginx also guards with `auth_request`. It is still an
+origin allowlist that allows everything, on the one service in this repo whose CORS is configured by a
+literal rather than by the tested module the Nest services now share.
+
+**The fix has a real blast radius, which is why it was NOT done in the same commit** (prod is the test
+server and a campaign plus an iOS verification were both live on it):
+
+1. `docker-compose.prod.yml` must read `${ALLOW_ORIGIN}` instead of `"*"` - and `.env.example` /
+   `docker-compose.dev.yml` decide separately, dev being where `*` is defensible.
+2. Any strict list has to be enumerated FIRST, because a missing entry is an outage rather than a
+   refusal: `https://canari-emse.fr`, the three tauri spellings, `http://localhost:1420`, and
+   **`https://dev.canari-emse.fr`, which is a CNAME onto this same tunnel** and would be refused by a
+   list built from `FRONTEND_URL` alone.
+3. `chat_gateway_cors_layer` PANICS when the list parses to nothing, so a typo takes the gateway down
+   at boot rather than degrading - which is correct, and means the value must be verified by reading
+   the served headers after the deploy, not by the deploy's colour.
+
 ### P1 - does an iOS session survive a restart at all? The cookie it needs is third-party (found 2026-08-27)
 
 **Not a defect yet - a hypothesis with a one-minute test, and a fix that would change an architectural
