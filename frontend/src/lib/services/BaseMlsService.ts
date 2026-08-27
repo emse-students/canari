@@ -2100,6 +2100,14 @@ export abstract class BaseMlsService implements IMlsService {
         kind === 'secret-reuse' ||
         kind === 'past-epoch-application' ||
         kind === 'generation-gap' ||
+        // Refused at exactly the epoch it names, which no later arrival changes. THIS IS THE ARM
+        // THE LIST ABOVE WAS MISSING: those four name a ratchet position, and everything else fell
+        // through to `unknown` and was refused an ACK on the argument that it might still become
+        // readable - true of a frame from an epoch we have not reached, false of one already
+        // compared against ours. On prod 2026-08-26 that was a single `InvalidSignature` at
+        // epoch 0 on two distribution groups, handed back on every connection for ever and
+        // dirtying eleven cells of the COMM rung by itself.
+        kind === 'same-epoch-refusal' ||
         // Removed from the distribution group. Permanent in the strongest sense of the four above:
         // those are frames we may no longer READ, this is a group we are no longer IN, and no peer
         // answering a history request can change that.

@@ -338,6 +338,39 @@ export async function killAndProveDead(timeoutMs = 20_000) {
 export const foregrounded = () => /fr\.emse\.canari/.test(sh('dumpsys window | grep mCurrentFocus'));
 
 /**
+ * Whether the DEVICE's own lock screen is up - which is not a question about this app, and is the
+ * one that has to be asked first.
+ *
+ * A SECURE KEYGUARD IS INDISTINGUISHABLE FROM A BROKEN APP FROM INSIDE CDP. Behind it the WebView's
+ * window is not visible, so Android freezes the renderer's network stack: a synchronous
+ * `Runtime.evaluate` still answers off the main context - `location.href` comes back, and so does a
+ * resolved promise - while every `fetch()` hangs for ever, including one for a static asset the APK
+ * carries itself. The gateway then reports the device OFFLINE because its socket is gone too. So the
+ * preflight saw "unlocked, 2 sidebar rows" from the store, and named the symptom it happened to time
+ * out on: "A1 would not say which build it is running". Measured 2026-08-27, with the phone plugged
+ * in, charging, on validated wifi and showing a fingerprint prompt.
+ *
+ * `wm dismiss-keyguard` CANNOT REPAIR THIS, which is why nothing here tries. It dismisses a
+ * swipe-only keyguard; against a credential it merely raises the prompt, and no credential is in
+ * this repo or belongs in it. The only fix is a human touching the sensor, so the value of this
+ * function is entirely in SAYING SO instead of letting three probes fail in a row.
+ *
+ * @returns true when the keyguard is up, false when it is not, and null when the dump cannot be read
+ *   - null being "do not know", which must never read as "unlocked".
+ */
+export function deviceLocked() {
+  let dump;
+  try {
+    dump = sh('dumpsys trust');
+  } catch {
+    return null;
+  }
+  const m = /deviceLocked=(\d)/.exec(dump);
+  if (!m) return null;
+  return m[1] === '1';
+}
+
+/**
  * Every notification this app currently shows, as flat text.
  *
  * `--noredact` matters: without it the OS hides the text of notifications it considers sensitive,

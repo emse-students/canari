@@ -49,6 +49,7 @@
 - DOCUMENTATION: technical docs in `docs/wiki/` (English, LLM-oriented, **search it before reading source**). User guides in `docs/user-guide/` (French). UML in `docs/diagrams/`. Root: `README.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `SECURITY.md`. Delete unused code immediately.
 - WIKI IS PREFERRED: update the relevant wiki page alongside code changes - stale wiki is worse than none. Keep `apps/*/README.md` synced with its wiki counterpart. Cross-link freely.
 - CHANGELOG: features, fixes and breaking changes get an entry under `[Unreleased]` (Keep a Changelog format).
+- ONE-OFF ACTIONS GO TO THE USER (2026-08-25): *"Pour les choses qui ne se font qu'une fois, tu peux me demander de les faire hein."* Building a tool for a single click is that waste.
 - DELEGATION: broad file-gathering goes to a search subagent; a big, risky or native Work Package goes to a background agent through a precise brief in `AGENTS.md`.
 - PROD ACCESS: `ssh canari`, `ssh mitv`, `ssh cercle` (via ProxyJump canari). Postgres is the container `infrastructure-postgres-1`, and `auth_db` is the ONLY database - every service shares it, social-service included (its `DB_DATABASE` default `canari_social` does not exist on prod). User `canari`. **Use the PowerShell tool, never Bash** - Git Bash strips the backslashes out of the cloudflared ProxyCommand. Quote SQL single-outer, doubled-inner: `ssh canari 'docker exec … psql -U canari -d auth_db -x -c "SELECT … WHERE id = ''uuid''"'`.
 
@@ -139,16 +140,17 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     [cross-client-campaign](docs/wiki/cross-client-campaign.md), the only copies. **Where the ladder
     stands: rungs 1-8 TAKEN.** GRP closed 2026-08-26 on `feecfaf5` over four passes - GRP-4 green
     after `e027679a`, GRP-8 `PASS-DIRTY` deterministically (its P2 is in
-    [backlog](docs/wiki/backlog.md)). **9 COMM IS NOT SWEPT: the board over-claimed it, corrected
-    2026-08-26 against the ledger** - 12 PASS, 10 `PASS-DIRTY`, 3 `FAIL` (COMM-8, COMM-18, COMM-22),
-    and ELEVEN of those thirteen carry ONE signature, an external join into a salon's distribution
-    group that never lands. **That cause is FIXED** (the base now travels inside the commit
-    submission and is written with the epoch advance in one transaction - story in `CHANGELOG.md`,
-    the half still open in [backlog](docs/wiki/backlog.md)), so **the whole rung is ONE re-run** -
-    which also owes the proof WP-REGRANT-2 wants and needs the phone for COMM-18. **10 DEL IS SWEPT:
+    [backlog](docs/wiki/backlog.md)). **9 COMM RE-RUN 2026-08-27 on `f21502e1`: 0 `FAIL`** (all
+    three retired), 21 `PASS-DIRTY`, 3 `VACUOUS`. Every dirty cell carries ONE signature and it is
+    OLDER THAN THE RUN - undecryptable frames from an earlier run's create-race, redelivered on
+    every connection because nothing could prove them permanent. **Both halves are now fixed** (the
+    race, and the same-epoch ACK that kills the redelivery - stories in `CHANGELOG.md`), so **the
+    rung owes ONE more re-run, predicted clean**, this time WITH A1 for the four `+A1` rows still on
+    `6808a89c`, which also owes the proof WP-REGRANT-2 wants. Two `VACUOUS` rows are open in
+    [backlog](docs/wiki/backlog.md); the third is COMM-22's own entry there. **10 DEL IS SWEPT:
     8 PASS, DEL-1 `PASS-DIRTY`, DEL-10 a `FAIL` on its own fix** - the durable row is kept and
     nothing replays it, and which of the two triggers is missing needs a runner that captures W1's
-    console (P2 in [backlog](docs/wiki/backlog.md)). **NEXT IS THE COMM RE-RUN, then 11 TAB**, then
+    console (P2 in [backlog](docs/wiki/backlog.md)). **NEXT IS THE COMM RE-RUN ON THE FIX, then 11 TAB**, then
     MULTI, LIFE, NOTIF, CALL, HEAL, PIN, CORRUPT. The board carries every verdict and the format of a
     cell; do not restate either here. **A `PASS-DIRTY` NO LONGER STOPS A RUNG BY ITSELF (user,
     2026-08-25)**, and **a x5 sweep of the WHOLE ladder accepting nothing short of `PASS` comes AFTER
@@ -191,48 +193,30 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     blocked by an inherited state. Contract, audit and the seven-file PIN predicate it fixes are in
     [backlog](docs/wiki/backlog.md); diagnosis order is [testing-methodology](docs/wiki/testing-methodology.md) 39.
 
-### CANARI - THE ECOSYSTEM CHANTIER (paused 2026-08-27, resumable from here)
+### CANARI - THE ECOSYSTEM CHANTIER (Canari's half CLOSED 2026-08-27; three repos owe)
 
 The user's standing mandate, verbatim: *"Je veux de l'homogeneite et les meilleurs standards de
 partout. Partout. oxlint/oxfmt ect partout, TS7 partout ou c'est possible..., Lucide derniere version
-avec tous les composants stale corriges PARTOUT, bun a la place de npm PARTOUT etc."* Its
-measurements and per-repo state live in
-[ecosystem-convergence](docs/wiki/ecosystem-convergence.md) - **section 8 is the package-manager
-half and is the only copy**; nothing here restates it.
+avec tous les composants stale corriges PARTOUT, bun a la place de npm PARTOUT etc."* Every
+measurement and every per-repo state is on
+[ecosystem-convergence](docs/wiki/ecosystem-convergence.md), the only copy - section 8 the
+package-manager half, section 9 the TypeScript 7 refusal, section 10 why Renovate is dropped.
 
-**Decisions already taken and NOT to be relitigated:** bun is the runtime everywhere it can be;
-**TYPESCRIPT 7 IS REFUSED ON CANARI** (2026-08-27, measured on both halves - section 9 of
-[ecosystem-convergence](docs/wiki/ecosystem-convergence.md), the only copy) and `dependabot.yml`
-now ignores its majors, because `dependabot-auto-merge.yml` would otherwise land it unattended;
-**RENOVATE IS DROPPED** (2026-08-27) - and section 10 is now the reason, replacing the earlier one:
-the ONLY thing Renovate was wanted for was `lockfileVersion: 2`, and v2 turns out to buy nothing,
-so the condition that gated the switch ("does Renovate read v2?") never has to be answered. It
-still cannot be, from documentation. **bun 1.4.0 IS THE RUNTIME EVERYWHERE AND LOCKFILES STAY AT
-v1** (2026-08-27): the two are independent - bun 1.4 writes v2 only for a lockfile it creates from
-nothing, and preserves v1 on `install`, `update` and `--frozen-lockfile` alike (measured three
-times). The invariant is enforced by `Guard the bun lockfile version` in `code-analysis.yml`, NOT by
-pinning the toolchain, because a pin never governed a contributor's own bun; Sky keeps
-Tailwind and migrates to v4 without preflight; `bun:sqlite` replaces better-sqlite3; the `image_url`
-deletion stands.
+**NOT TO BE RELITIGATED:** bun 1.4.0 is the runtime everywhere it can be AND lockfiles stay at v1
+(independent facts; the invariant is enforced by `Guard the bun lockfile version` in
+`code-analysis.yml`, never by pinning a toolchain, because a pin never governed a contributor's own
+bun); **TS 7 IS REFUSED ON CANARI** and `dependabot.yml` ignores its majors, or
+`dependabot-auto-merge.yml` would land it unattended; **RENOVATE IS DROPPED**; Sky keeps Tailwind
+and migrates to v4 without preflight; `bun:sqlite` replaces better-sqlite3; the `image_url` deletion
+stands.
 
-**DONE:** Portail-etu pinned and its outage closed (deploy green, site 200), and Canari's whole bun
-half - **each piece's story is in `CHANGELOG.md` and its measurement on
-[ecosystem-convergence](docs/wiki/ecosystem-convergence.md); neither is restated here.** The one
-thing a reader needs from this file is the paragraph below.
-
-**THE ONE MEASURED LIMIT ON "bun PARTOUT":** jest fails under the bun runtime -
-`admin-storage.controller.mls.spec.ts` passes 8/8 under node and fails under bun. CI therefore
-installs/lints/builds with bun and TESTS with node, and both call sites in `ci.yml` say so. **Do not
-collapse that to one runtime without re-running that spec.**
-
-**CANARI'S SIDE OF THE MANDATE IS CLOSED, PROD INCLUDED.** Verified 2026-08-27 on `f17bbfa0`, the
-first CD to reach the deploy step since the migration: all four containers answer `["bun",
-"dist/main.js"]`, all healthy, site 200. TS 7 is measured and refused with its two conditions
-written down, and CodeQL + secret scanning were ALREADY here (`code-analysis.yml`: CodeQL,
-TruffleHog, `bun audit`, `cargo audit`) - that half was only ever owed by the other repos.
-**`Check Dependencies Vulnerabilities` still fails every CD run** and is the only thing making them
-red; the deploy is not gated on it. That is the 16 Dependabot vulnerabilities, which are YOURS to
-arbitrate - so read a CD's DEPLOY JOB, never the run's colour.
+**CANARI'S HALF IS CLOSED, PROD INCLUDED** - four containers answering `["bun", "dist/main.js"]`,
+healthy, site 200, verified 2026-08-27. **THE ONE MEASURED LIMIT ON "bun PARTOUT":** jest fails under
+the bun runtime - `admin-storage.controller.mls.spec.ts` passes 8/8 under node and fails under bun -
+so CI installs/lints/builds with bun and TESTS with node, and both call sites in `ci.yml` say so.
+**Do not collapse that to one runtime without re-running that spec.** `Check Dependencies
+Vulnerabilities` fails every CD run and is the only thing making them red; the deploy is not gated
+on it, and those 16 Dependabot vulnerabilities are YOURS to arbitrate.
 
 **OPEN - the other three repos, none touched this session, each still owing a `.bun-version`:** Sky
 is in a NON-BUILDABLE intermediate state from an earlier session: `bun install` pending, 36
@@ -243,11 +227,6 @@ PostCSS->Vite, oxlint/oxfmt/oxvelte, TS 7, 4 vulnerabilities, the duplicate
 `.eslintrc.json`+`eslint.config.js`, a pending `code-analysis.yml` and a harmonised
 `dependabot.yml`. le-cercle owes oxlint/oxfmt/oxvelte, TS 7 (fix the `^6.0.3` caret) and Dependabot
 on GitLab. **Read section 9 before touching TS 7 on any of them.**
-
-**ONE-OFF ACTIONS GO TO THE USER** (2026-08-25): *"Pour les choses qui ne se font qu'une fois, tu peux
-me demander de les faire hein."* Building a tool for a single click is that waste.
-
-**A DELETED GROUP IS TWO ESTATES**: `cleanup.mjs` owns the server side, `dismiss.mjs` the copy each MEMBER's client keeps (W1 clean at 9 rows on 2026-08-24, W2 holding 189). One allowlist for both, `debris.mjs`. Detail on [cross-client-campaign](docs/wiki/cross-client-campaign.md).
 
 **OWED TO THE USER, NOT TO THE CODE: the MLS + Graine explanation** - prose and diagrams, no code
 (user, 2026-08-20). Post-campaign; scope and the two audiences declined are in [backlog](docs/wiki/backlog.md).
@@ -299,6 +278,8 @@ SETUP-4's 2FA, the one step no tool here can answer. Outside the work tree a cre
 committed and `git clean -xdf` cannot reach a profile.
 
 **MUT-20 is unarmable until a campaign message reaches 90 days** (earliest 2026-11-09).
+
+**A DELETED GROUP IS TWO ESTATES**: `cleanup.mjs` owns the server side, `dismiss.mjs` the copy each MEMBER's client keeps (W1 clean at 9 rows on 2026-08-24, W2 holding 189). One allowlist for both, `debris.mjs`. Detail on [cross-client-campaign](docs/wiki/cross-client-campaign.md).
 
 **A1 IS BACK** (user, 2026-08-26: *"J'ai remis le telephone si besoin"*), after a pause the same day -
 so `+A1` and `+push` rows run again, COMM-18 included. **TAB-7 is the row to watch**: offline -> act ->

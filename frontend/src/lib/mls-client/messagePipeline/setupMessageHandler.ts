@@ -961,8 +961,20 @@ async function handleKnownGroup({
       return true;
     }
 
-    // Any other failure (`wrong-epoch`, `unknown`) → out-of-sync → requestReAdd + ACK
-    log(`[MLS] Decryption error for ${convoKey.slice(0, 8)}…: ${err.slice(0, 100)} → re-add`);
+    // Any other failure (`wrong-epoch`, `same-epoch-refusal`, `unknown`) -> out-of-sync ->
+    // requestReAdd + ACK.
+    //
+    // `same-epoch-refusal` REACHES HERE DELIBERATELY, and it is the one kind on this list that is
+    // known to be permanent without that changing the policy. The two permanent arms above leave a
+    // HEALTHY group - a spent generation, an epoch we have moved past - so a re-add there would
+    // destroy a valid membership for a frame nothing local recovers. This one is the opposite
+    // finding: the frame was compared against our own copy of its epoch and refused, so it is our
+    // copy that disagrees with the sender's, and a re-Welcome is the cure rather than collateral
+    // damage. What the classification buys on this path is the LINE - "unknown" said the frame was
+    // unrecognised when it had in fact been recognised and named.
+    log(
+      `[MLS] Decryption error for ${convoKey.slice(0, 8)}… (${kind}): ${err.slice(0, 100)} → re-add`
+    );
     startRecovery(groupId);
     return true;
   }

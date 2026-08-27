@@ -13,6 +13,30 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A frame no rule recognised was refused an acknowledgement for ever, so one bad frame dirtied
+  every later row.** `mlsDecryptError.ts` names nine kinds of decryption failure; five are permanent
+  and get acknowledged, and everything else - `unknown` included - was held to be recoverable, so the
+  server handed the same bytes back on every connection for the life of the account. That is what
+  turned the salon race above from one defect into sixteen cells of a campaign rung: one
+  `ValidationError(InvalidSignature)` at epoch 0 matched no rule, so it was never ACKed, so it came
+  back on every row after it. The repair the backlog asked for was a PROOF of permanence, and the
+  proof turned out to cover far more than the `InvalidSignature` that prompted it: by the time the
+  decrypt path reaches its fall-through, `mls-core` has already returned for a frame from an epoch
+  ahead (the gap fast-fail), for one from an epoch behind (the past-epoch arm), for an eviction and
+  for our own frame - so anything left was processed against EXACTLY the epoch it names. An epoch's
+  ratchet tree is fixed once the epoch exists and a later attempt reads the same past-epoch secrets,
+  so the same bytes are refused identically whatever arrives in between. That fact is knowable only
+  at the Rust throw site, where the epoch pair was compared, and it is now carried as a type -
+  `SameEpochRefusal` - across both FFI boundaries instead of being left to each consumer to
+  re-derive from prose. Each consumer then keeps its own policy: the distribution router ACKs it, the
+  history replay counts it as a real message lost rather than letting it fall off the bottom
+  uncounted, the native layer stops writing a `pending_mls_messages` row that three retries and a
+  sweeper would only discard, and the realtime pipeline deliberately keeps its re-add - a frame
+  refused against our own copy of its epoch means our copy disagrees with the sender's, which is the
+  one case where a re-Welcome is the cure rather than collateral damage. The line it logs stays an
+  ERROR carrying both epochs: the redelivery loop is closed, the divergence it was the visible end of
+  is still accused.
+
 - **A salon message its own author could not read, from a race the code said could not cost
   anything.** When two devices of one account both find a salon's distribution group
   uninitialised, both create an MLS group under the same id at epoch 0 and the server's

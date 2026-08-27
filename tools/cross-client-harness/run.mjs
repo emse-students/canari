@@ -9,6 +9,7 @@
  *   node run.mjs --all                every phase that has a script
  *   node run.mjs --preflight [W1 A1]  the rig check ALONE, no script, no verdict (default: all three)
  *   node run.mjs MSG --no-preflight   only when you have just checked the clients yourself
+ *   node run.mjs COMM --without A1  the rows of a phase that do not need a device you cannot use
  *
  * WHY THIS EXISTS. Three things were rediscovered by hand every session, and each of them produced
  * a wrong answer at least once:
@@ -53,7 +54,7 @@ const flag = (n) => argv.includes(`--${n}`);
  * `node run.mjs MSG --repeat 3` read `3` as a phase name and refused the whole run - the parser
  * treating a flag's value as a positional. Anything added here must be listed, or it repeats.
  */
-const VALUED = ['repeat', 'file'];
+const VALUED = ['repeat', 'file', 'without'];
 
 /**
  * Phase names, and NOTHING PAST `--file`, because everything past it belongs to the script.
@@ -495,6 +496,15 @@ async function preflight(devices, { quiet = false } = {}) {
     if (d === 'A1') {
       const revived = await reviveThePhone();
       if (revived) console.log(`  fix  A1  ${revived}`);
+
+      // ASKED AFTER THE REVIVE, AND NAMED AS A CAUSE. `reviveThePhone` ends in `wake()`, which
+      // dismisses a swipe-only keyguard; a keyguard still up after it wants a credential, and no
+      // credential is in this repo. So this is the one rig fault the ladder cannot repair, and the
+      // only thing worth doing with it is SAYING it - see `phone.deviceLocked` for what a lock does
+      // to a WebView, and why every probe downstream of here reports something else.
+      const locked = phone.deviceLocked();
+      if (locked) problems.push('A1 is behind the DEVICE lock screen - every fetch inside the WebView hangs and the gateway drops it, whatever the probes below say. A human must unlock the phone; `wm dismiss-keyguard` will not.');
+      else if (locked === null) console.log('  ??   A1  dumpsys trust would not say whether the device is locked - treating that as unknown, not as unlocked');
     }
 
     // ONTO THE DEPLOYED BUNDLE BEFORE ANYTHING IS READ, and before the repair loop below - a reload
@@ -736,6 +746,7 @@ if (!named.length && !flag('all') && !flag('file')) {
   console.log('  node run.mjs --all        run every phase that has a script');
   console.log('  node run.mjs --file x.mjs run one script');
   console.log('  node run.mjs --file read.mjs --only 10 --destructive   ... with its own arguments');
+  console.log('  node run.mjs COMM --without A1        the rows that do not need that device');
   console.log('        (run.mjs\'s own flags go BEFORE --file; everything after the script is the script\'s)\n');
   process.exit(0);
 }
@@ -744,6 +755,29 @@ if (!named.length && !flag('all') && !flag('file')) {
 
 let jobs = [];
 let devices = new Set();
+
+/**
+ * Devices this run must do WITHOUT - `--without A1`, repeatable - and the rows that costs.
+ *
+ * THE ALTERNATIVE WAS A PHASE THAT COULD NOT RUN AT ALL. A phase's `needs` is the union over its
+ * scripts, so one unavailable device refuses all twenty-five COMM rows to protect four. On
+ * 2026-08-27 the phone sat behind a device lock screen only its owner can open, with a fix waiting
+ * to be measured on the twenty-one rows that never touch it; the honest answer is to run those and
+ * say what is still owed, not to run nothing and say nothing.
+ *
+ * IT IS NOT `--no-preflight` WEARING ANOTHER NAME, and the difference is the whole point. That flag
+ * disarms the gate and measures anyway; this one narrows the SELECTION and leaves the gate armed
+ * over exactly the devices the remaining rows use. Nothing here is measured on a client the
+ * preflight has not cleared.
+ *
+ * THE SKIPPED ROWS ARE PRINTED, twice - once before the run and once under the results table - and
+ * they are NOT written to `results.ndjson`. A phase that quietly ran 21 of 25 would read on the
+ * board as a swept rung, which is the failure this whole rig exists to prevent; a row nobody
+ * measured has no verdict, not a lenient one.
+ */
+const WITHOUT = argv.flatMap((a, i) => (a === '--without' ? [String(argv[i + 1] || '').toUpperCase()] : []));
+/** @type {{phase: string, script: string, need: string}[]} */
+const owed = [];
 
 if (flag('file')) {
   const at = argv.indexOf('--file');
@@ -798,9 +832,38 @@ if (flag('file')) {
       console.log(`  skip ${name}: no script exists for this phase yet`);
       continue;
     }
-    for (const d of p.needs) devices.add(d);
-    for (const s of p.scripts) jobs.push({ phase: name, script: s });
+    for (const s of p.scripts) {
+      const [file, ...rest] = s.split(' ');
+      const need = devicesFor(file, rest).devices;
+      if (WITHOUT.some((d) => need.includes(d))) {
+        owed.push({ phase: name, script: s, need: need.filter((d) => WITHOUT.includes(d)).join(' ') });
+        continue;
+      }
+      for (const d of need) devices.add(d);
+      jobs.push({ phase: name, script: s });
+    }
   }
+}
+if (WITHOUT.length && flag('file')) {
+  throw new Error('--without narrows a PHASE selection; with --file there is one script and it either needs the device or does not');
+}
+/**
+ * The owed rows again, at the END - because the banner above scrolls past a phase of twenty jobs.
+ *
+ * A reader who sees only the final table must not be able to mistake it for the phase. Printed
+ * before BOTH exits, on the same reasoning the blocked and silent lists are.
+ */
+function remindWhatIsOwed() {
+  if (!owed.length) return;
+  console.log(`  ${owed.length} row(s) were NOT RUN - this run was without ${[...new Set(owed.map((o) => o.need))].join(' ')}:`);
+  for (const o of owed) console.log(`      ${o.phase} ${o.script}`);
+  console.log('');
+}
+
+if (owed.length) {
+  const missing = [...new Set(owed.map((o) => o.need))].join(' ');
+  console.log(`\nNOT RUN - ${owed.length} row(s) need ${missing}, which this run is without:\n`);
+  for (const o of owed) console.log(`  owed ${o.phase} ${o.script}`);
 }
 if (!jobs.length) {
   console.log('nothing to run');
@@ -1018,9 +1081,11 @@ if (repeat > 1) {
         : stoppedAt && stoppedAt < repeat
           ? `STOPPED AT PASS ${stoppedAt}/${repeat} - see the row(s) above`
           : 'NOT REPRODUCIBLE - see the rows above'}\n`);
+  remindWhatIsOwed();
   process.exit(allClean ? 0 : 1);
 }
 
+remindWhatIsOwed();
 const last = passes[0];
 process.exit(last.bad || last.crashed || last.blocked.length ? 1 : 0);
 

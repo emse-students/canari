@@ -347,6 +347,13 @@ describe('routing a frame that arrived on the group', () => {
       'CannotDecryptOwnMessage',
       'SecretReuseError',
       'TooDistantInTheFuture',
+      // THE ONE THAT WAS MISSING, and the only one on this list that is not about the ratchet.
+      // `mls-core` compares the frame's epoch with the group's before it attempts anything, so
+      // reaching the residue means they MATCHED - and an epoch's tree is fixed once the epoch
+      // exists. Prod 2026-08-26: a refusal at epoch 0 on two distribution groups read as `unknown`,
+      // was refused an ACK on the argument that it might still become readable, and came back on
+      // every connection for ever - eleven cells of the COMM rung, from one frame.
+      'Process error: same-epoch refusal ValidationError(InvalidSignature) [msg_epoch=0, group_epoch=0]',
     ];
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     for (const message of permanent) {
@@ -362,6 +369,8 @@ describe('routing a frame that arrived on the group', () => {
   });
 
   it('still redelivers what a later epoch may repair', async () => {
+    // `GAP_QUEUED` WITHOUT the same-epoch marker: the native layer wraps what it does not
+    // recognise, and a genuine gap is the one thing on this whole path a redelivery does repair.
     const recoverable = ['GAP_QUEUED:g-1:missing commit', 'WrongEpoch', 'something new'];
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     for (const message of recoverable) {

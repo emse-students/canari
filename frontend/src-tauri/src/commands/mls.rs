@@ -919,6 +919,19 @@ pub(crate) async fn recevoir_message_bytes(
                     Err(err_str)
                 }
 
+                // REFUSED AT EXACTLY ITS OWN EPOCH. Never queued, for the reason the arms above
+                // are not: a retry reads the same immutable epoch state and is refused again, so
+                // the row is dead weight until the sweeper reaches it. Surfaced verbatim, and the
+                // loop it closes is on the OTHER side of the boundary - on the web an
+                // unacknowledged frame comes back on every single connection, for ever.
+                DecryptErrorKind::SameEpochRefusal => {
+                    log::warn!(
+                        "[MLS] Same-epoch refusal for group={} - unreadable for good however often it is retried, escalating to the frontend",
+                        group_id
+                    );
+                    Err(err_str)
+                }
+
                 DecryptErrorKind::Other => Err(err_str),
             }
         }

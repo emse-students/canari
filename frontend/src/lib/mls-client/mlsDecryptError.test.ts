@@ -25,7 +25,7 @@ describe('classifyIncomingDecryptError', () => {
     // this one as an epoch gap sends it to a commit replay that cannot help (WP-PENDING-2).
     expect(
       classifyIncomingDecryptError(
-        'GAP_QUEUED:642f389a:Crypto/OpenMLS error: Process error: ValidationError(UnableToDecrypt(SecretTreeError(TooDistantInTheFuture))) [msg_epoch=1, group_epoch=1]'
+        'GAP_QUEUED:642f389a:Crypto/OpenMLS error: Process error: same-epoch refusal ValidationError(UnableToDecrypt(SecretTreeError(TooDistantInTheFuture))) [msg_epoch=1, group_epoch=1]'
       )
     ).toBe('generation-gap');
     expect(classifyIncomingDecryptError(new Error('SecretTreeError(TooDistantInTheFuture)'))).toBe(
@@ -62,6 +62,42 @@ describe('classifyIncomingDecryptError', () => {
     expect(classifyIncomingDecryptError('NoMatchingKeyPackage')).toBe('unknown');
     expect(classifyIncomingDecryptError('quoi que ce soit')).toBe('unknown');
     expect(classifyIncomingDecryptError(undefined)).toBe('unknown');
+  });
+
+  it('reconnait un refus a sa propre epoque', () => {
+    expect(
+      classifyIncomingDecryptError(
+        'Crypto/OpenMLS error: Process error: same-epoch refusal ValidationError(InvalidSignature) [msg_epoch=0, group_epoch=0]'
+      )
+    ).toBe('same-epoch-refusal');
+  });
+
+  it('ne lit pas un refus a sa propre epoque comme un gap, meme enveloppe par le natif', () => {
+    // `SenderRatchetGap` is the native catch-all, so it wraps this refusal in `GAP_QUEUED` and
+    // writes a retry row for it. Read as an epoch gap on the web, it goes through a commit replay
+    // that applies nothing and reports success - WP-PENDING-2's exact shape, one kind later.
+    expect(
+      classifyIncomingDecryptError(
+        'GAP_QUEUED:642f389a:Crypto/OpenMLS error: Process error: same-epoch refusal ValidationError(InvalidSignature) [msg_epoch=0, group_epoch=0]'
+      )
+    ).toBe('same-epoch-refusal');
+  });
+
+  it('laisse les marqueurs de cliquet gagner sur le refus generique qui les transporte', () => {
+    // `mls-core` emits all three from the SAME return, embedding the OpenMLS error inside its own
+    // marker - so these strings carry two, and the specific one names the ratchet position while
+    // the general one says only that the epochs matched. Reading them the other way round would
+    // collapse a re-Welcome and a history solicitation into one policy.
+    expect(
+      classifyIncomingDecryptError(
+        'Process error: same-epoch refusal ValidationError(UnableToDecrypt(SecretTreeError(TooDistantInTheFuture))) [msg_epoch=3, group_epoch=3]'
+      )
+    ).toBe('generation-gap');
+    expect(
+      classifyIncomingDecryptError(
+        'Process error: same-epoch refusal ValidationError(UnableToDecrypt(SecretReuseError)) [msg_epoch=3, group_epoch=3]'
+      )
+    ).toBe('secret-reuse');
   });
 
   it('priorise own-message sur secret-reuse quand les deux marqueurs coexistent', () => {

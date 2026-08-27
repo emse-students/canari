@@ -769,11 +769,22 @@ export async function replayConversationHistory(params: {
             seenUpdated = true;
             continue;
           }
-          if (kind === 'secret-reuse' || kind === 'past-epoch-application') {
+          if (
+            kind === 'secret-reuse' ||
+            kind === 'past-epoch-application' ||
+            kind === 'same-epoch-refusal'
+          ) {
             // Unreadable for good, at one end of the ratchet or the other: the generation is spent
-            // (`secret-reuse`), or the epoch's secrets are gone (`past-epoch-application`, what a
-            // re-joined group holds for everything sent before the join). Either way the frame will
-            // never decrypt - mark the ROW seen or the replay reprocesses it forever.
+            // (`secret-reuse`), the epoch's secrets are gone (`past-epoch-application`, what a
+            // re-joined group holds for everything sent before the join), or the frame was refused
+            // at exactly the epoch it names and no later arrival changes that state
+            // (`same-epoch-refusal`). Either way the frame will never decrypt - mark the ROW seen
+            // or the replay reprocesses it forever.
+            //
+            // The third one used to reach the `else` at the bottom, which prints one line and lets
+            // the `finally` consume the row. The row stopped, but the LOSS was never counted: this
+            // is a real message the replay saw and will never read, and only the reconciliation
+            // below can obtain it from a member who still holds it.
             const frameKey = frameFingerprint(bytes);
 
             /**

@@ -92,6 +92,15 @@ pub enum DecryptErrorKind {
     /// it must NOT trigger recovery: asking to be re-added is asking the server to undo a
     /// moderation action, and the request that follows can only be refused.
     Evicted,
+    /// A frame refused at EXACTLY the epoch it names: the residue of the decrypt path, once the
+    /// ratchet kinds above have taken what they recognise. Permanent in the strongest sense
+    /// available to this layer, and provably so rather than by observation - the epoch pair is
+    /// compared before `process_message` is ever called, an epoch's tree never changes afterwards,
+    /// and the past-epoch secrets a later attempt would use are the same ones. So the same bytes
+    /// are refused identically for ever: never queue it, always ACK it. What recovers the
+    /// plaintext, when there is one, is a member re-sending it - never the server handing the
+    /// same bytes back.
+    SameEpochRefusal,
     /// Unrecoverable MLS state (corruption/inconsistency): the frontend must re-bootstrap.
     Unrecoverable,
     /// Unclassified.
@@ -126,6 +135,16 @@ impl MlsError {
             // could ever be gained either.
             MlsError::OpenMls(s) if s.contains("CannotDecryptOwnMessage") => {
                 DecryptErrorKind::OwnMessage
+            }
+            // THE LAST SPECIFIC ARM, and the only one whose ORDER is load-bearing rather than
+            // merely tidy: `mls-core` emits this marker from the SAME return as
+            // `TooDistantInTheFuture` and `SecretReuseError`, so one frame carries two markers and
+            // the specific one has to win. It asserts only that the frame's epoch and the group's
+            // epoch matched - which is exactly what makes it permanent, and what the generic arm
+            // below gets wrong: that one queues the frame in SQLite to be retried against a state
+            // that cannot change.
+            MlsError::OpenMls(s) if s.contains("same-epoch refusal") => {
+                DecryptErrorKind::SameEpochRefusal
             }
             MlsError::OpenMls(s) if s.contains("Process error:") => {
                 DecryptErrorKind::SenderRatchetGap

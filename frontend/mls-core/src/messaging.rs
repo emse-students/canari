@@ -334,15 +334,39 @@ impl MlsManager {
                     )));
                 }
 
+                // EVERY ERROR REACHING HERE IS A SAME-EPOCH REFUSAL, and that is a proof rather
+                // than an observation: the arms above return for `msg_epoch > group_epoch` (the
+                // gap fast-fail) and for `msg_epoch < group_epoch` (the past-epoch arm, for both
+                // content types), so the frame was processed against exactly the epoch it names.
+                // An epoch's ratchet tree is immutable once it exists - a commit builds the NEXT
+                // one - and OpenMLS keeps `max_past_epochs` of secrets, so a later attempt from a
+                // later epoch reads the same key material and is refused identically. THE SAME
+                // BYTES CAN NEVER SUCCEED, whatever arrives in between.
+                //
+                // That is the entire content of the marker, and it is the one thing every caller
+                // needs: refusing to acknowledge a frame is right while it may still become
+                // readable, and it is an INFINITE REDELIVERY LOOP for one that never will.
+                // Measured on prod 2026-08-26 (COMM-1): a `ValidationError(InvalidSignature)` at
+                // msg_epoch=0 on two key-distribution groups classified `unknown`, was never
+                // acknowledged, and came back on every connection for ever - one defect dirtying
+                // eleven cells of a rung. The epoch pair was printed on the line below all along,
+                // so the diagnosis was never missing; what was missing was carrying it as a TYPE
+                // instead of leaving each consumer to re-derive it from prose.
+                //
+                // The OpenMLS error stays EMBEDDED, unlike the past-epoch arm above which drops
+                // it: `TooDistantInTheFuture` and `SecretReuseError` both reach the callers
+                // through this very return, and both classifiers key on those markers. So a frame
+                // can carry two, and the order is fixed on both sides - a specific marker names
+                // the ratchet position, this one names only what is left when none of them does.
                 log::error!(
-                    "MLS decryption failed: group={} msg_epoch={} group_epoch={} err={:?}",
+                    "MLS decryption failed at exactly its own epoch, so no redelivery can help:                      group={} msg_epoch={} group_epoch={} err={:?}",
                     group_id,
                     msg_epoch,
                     group_epoch,
                     e
                 );
                 return Err(MlsError::OpenMls(format!(
-                    "Process error: {:?} [msg_epoch={}, group_epoch={}]",
+                    "Process error: same-epoch refusal {:?} [msg_epoch={}, group_epoch={}]",
                     e, msg_epoch, group_epoch
                 )));
             }
