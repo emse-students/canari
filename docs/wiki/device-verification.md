@@ -461,11 +461,16 @@ Test the **release** artifact from `android-release.yml`, not a local build: a l
 release cannot be installed over the existing app without an uninstall, and an uninstall costs a
 re-enrolment and SETUP-4's 2FA. **TWO signed artifacts now exist and the RELEASE one is the target:**
 v0.14.5 of 2026-08-26 carries both Android fixes and went to Google Play production, so its attached
-APK is the build users actually got - test THAT. The `workflow_dispatch` of 2026-08-27 (run
-`33024610295`, signal given) is a second, LATER build kept only as a run artifact: both the release
-upload and the Play publish are gated on `github.event_name == 'workflow_run'`, so a dispatch costs
-a run artifact and NOTHING else - it attaches nothing to a release and cannot overwrite v0.14.5's
-assets. Use it only to re-check a fix made after the release was cut.
+`app-universal-release.apk` (36 MB, beside the 15 MB `.aab`) is the build users actually got - test
+THAT, and note a release asset does not expire. The `workflow_dispatch` of 2026-08-27 (run
+`33024610295`, signal given, green in 12m37s) is a second, LATER build off `main` with the bun
+backend migration in it, and it is kept ONLY as the run artifact `android-release` (29 MB),
+**which expires 2026-11-24** - so it is not a thing to plan a device pass around.
+
+That run also PROVED the gating rather than asserting it: `Upload to Release` and `Publish to Google
+Play (production)` both **skipped**, because each is `if: github.event_name == 'workflow_run'`. A
+dispatch therefore attaches nothing to any release, cannot overwrite v0.14.5's assets, and ships
+nothing to users. Use one only to re-check a fix made after the release was cut.
 
 1. **The app starts on its own background, not grey.** `windowBackground` is now
    `@color/app_background`, so the gap before SvelteKit hydrates is `#070B12` dark / `#F9FBFF` light
