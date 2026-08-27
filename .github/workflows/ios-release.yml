@@ -399,19 +399,7 @@ jobs:
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v3
-        # TEMPORARY: also allow workflow_dispatch, to recover v0.14.5 after `gh run rerun`
-        # proved unable to pick up this file's own fix (a rerun replays the workflow
-        # definition pinned at the ORIGINAL trigger, never the current one on main) - a
-        # workflow_dispatch is the only run that resolves this file fresh. Revert to
-        # `workflow_run` only once v0.14.5 is confirmed on TestFlight.
-        if: github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch'
-        # TEMPORARY: under workflow_dispatch, github.ref is the branch (refs/heads/main),
-        # not the release tag, and this action's lookup for that ref 403s
-        # ("Resource not accessible by integration") even after it already found the
-        # release by tag_name - it still blocked the next step (TestFlight) from running.
-        # Non-blocking for this recovery run; TestFlight is what actually matters. Revert
-        # alongside the condition above.
-        continue-on-error: true
+        if: github.event_name == 'workflow_run'
         with:
           tag_name: v${{ steps.release_tag.outputs.version }}
           fail_on_unmatched_files: true
@@ -420,8 +408,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload to TestFlight / App Store Connect
-        # TEMPORARY: see "Upload to Release" above - revert once v0.14.5 ships.
-        if: github.event_name == 'workflow_run' || github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_run'
         env:
           ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}

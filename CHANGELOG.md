@@ -526,6 +526,18 @@ which is also where every release up to and including v0.13.1 now lives.
   as. "Prebuild Rust static lib" ran *before* "Build iOS archive", the step that actually runs
   `bun run build` to produce `../build` - an ordering that only worked by accident while the build
   was silently compiling as dev. The Vite build now runs in its own step, ahead of the Rust compile.
+
+  Getting the fixed build published for v0.14.5 needed one more detour: `gh run rerun` replays a
+  run's workflow definition as it existed at that run's ORIGINAL trigger, never the current file on
+  `main`, so the failed automatic run could not be resurrected in place - a fresh `workflow_dispatch`
+  was the only way to compile against the corrected file, but `workflow_dispatch` runs deliberately
+  skip the publish steps ([cicd](docs/wiki/cicd.md#a-manual-workflow-run-is-the-only-native-compiler-available-off-macos)).
+  That gate was widened for one recovery run (reverted immediately after), which then hit a third,
+  unrelated snag: `softprops/action-gh-release` 403s on a `refs/heads/main` lookup that only happens
+  under `workflow_dispatch` (`github.ref` is the branch there, not the release tag) even after
+  already finding the release by `tag_name` - and that failure was blocking the next step,
+  TestFlight, from running at all. Made non-blocking for the same recovery run. v0.14.5 reached
+  TestFlight on the second recovery attempt.
 - **Four backend lock files were out of sync with their `package.json`, and it had silently blocked
   every deploy for two hours.** `npm ci` refuses to install when the two disagree, so
   `Test TS Backend (apps/chat-delivery-service)` and `Check Dependencies Vulnerabilities` both died

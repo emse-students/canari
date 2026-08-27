@@ -257,6 +257,8 @@ the same defect wearing a different hat - two toolchains put two cryptos back in
 - `workflow_run` triggered off a release-triggered workflow must NOT have a `branches` filter (GitHub silently drops them).
 - Pre-commit hooks sweep the whole frontend and re-stage — isolate unrelated dirty files before committing (`git stash` them).
 - Never assert a wall clock in a test. An unseeded generator with rejection sampling once drew 31s against a 15s budget on a runner and took CD down: seed the input, and let the `it` timeout guard non-termination.
+- **`gh run rerun` replays the workflow FILE as it existed at that run's ORIGINAL trigger, never the current one on `main`.** Fixing a workflow bug and re-running the failed run will silently re-run the old, broken definition - confirmed on the v0.14.5 iOS recovery, where the rerun's step list was missing a step added by the fix. Only a fresh trigger (`workflow_dispatch`, or a new event) resolves the current file.
+- `softprops/action-gh-release` can 403 with `Resource not accessible by integration` on a lookup for `refs/heads/main` specifically under `workflow_dispatch` (where `github.ref` is the branch, not the release tag) — even after it already found the release by `tag_name`, and even though the same step succeeds normally under `workflow_run`/`release` events (where `github.ref` is the tag).
 
 ## See also
 
