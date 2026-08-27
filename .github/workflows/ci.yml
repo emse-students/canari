@@ -317,12 +317,27 @@ jobs:
             echo "has_test=false" >> $GITHUB_OUTPUT
           fi
 
-      # `npm test`, not `bun run test`: these suites are jest, and jest under the bun runtime
-      # fails a spec that passes under node (see the Setup Node.js note above).
+      # `node --run test`, and neither `npm test` nor `bun run test`. Two separate constraints meet
+      # on this line and it is worth naming both, because collapsing either one breaks something
+      # measured:
+      #
+      # NOT bun, because these suites are jest and jest under the bun runtime fails a spec that
+      # passes under node (`admin-storage.controller.mls.spec.ts`, 8/8 under node). That is the
+      # reason `Setup Node.js` above exists at all - see the note there.
+      #
+      # NOT npm, because this repository has no npm anywhere else and a package manager is not
+      # needed to run a script. `node --run` (node >= 22) reads `package.json` scripts natively, so
+      # the runtime jest needs stays and the package manager goes. It is also stricter than npm on
+      # purpose: it does not run pre/post scripts and does not walk up parent directories, so what
+      # runs here is exactly the `test` script of THIS service and nothing else.
+      #
+      # The jest -> `bun test` migration that would delete the node runtime from this file entirely
+      # is a dated item in `docs/wiki/backlog.md`, scheduled after the campaign. Do not attempt it
+      # by editing this line.
       - name: Run Test
         if: steps.check_test.outputs.has_test == 'true'
         working-directory: ${{ matrix.service }}
-        run: npm test
+        run: node --run test
 
   # =================================================================================================
   # FRONTEND (SVELTE)

@@ -68,6 +68,34 @@ entry here or closes the question.
 
 ## Measurements owed
 
+### P3 - the last node runtime: four jest suites that will not run under bun (decided 2026-08-27, AFTER the campaign)
+
+**Scheduled, not parked, and the decision behind it is the user's** (2026-08-27): npm leaves now,
+node leaves later. npm is already gone - `node --run test` replaced the one `npm test` in
+`ci.yml` and the one `bun run test` in the Makefile's `test-history`, so nothing in this repository
+invokes a package manager other than bun. What survives is the node RUNTIME, in three places:
+`actions/setup-node` twice in `ci.yml` (once for the backend suites, once for the harness
+self-tests) and once in `code-analysis.yml`.
+
+**The measured blocker, and it is one file.**
+`apps/chat-delivery-service/src/controllers/admin-storage.controller.mls.spec.ts` passes 8/8 under
+node and fails under the bun runtime. That single spec is why CI installs, lints and builds with bun
+but TESTS with node, and both call sites say so in a comment. **Do not collapse the two runtimes
+without re-running that spec** - the note has been in `CLAUDE.md` since the bun migration and it is
+the only thing standing between a green pipeline and a silently weaker one.
+
+**What the work actually is.** Porting four NestJS services from jest to `bun test`: `jest.fn()` and
+`jest.spyOn` to bun's `mock`/`spyOn`, `ts-jest` (which TypeScript 7 already could not load - see
+[ecosystem-convergence](ecosystem-convergence.md) section 9), the `moduleNameMapper`, and the
+`@nestjs/testing` module fixtures. It is days, not hours, and it touches suites that guard MLS
+storage - the wrong place to discover a mock that silently stopped asserting.
+
+**Sequencing, and why it is not now.** The campaign is running and prod is the test server. A test
+framework migration changes what "green" means for every rung still to be taken, so it waits until
+the ladder reaches the bottom. Until then the honest description of this repo is: **bun is the
+package manager and the runtime everywhere except one test invocation, which runs on node on
+purpose, for a reason that has been measured.**
+
 ### P1 - the SFU runs SIX webrtc majors it has never placed a call on (2026-08-27)
 
 **This is not a bug report. It is the absence of one, which is worse.** `apps/call-service` was

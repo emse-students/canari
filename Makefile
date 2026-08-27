@@ -137,9 +137,13 @@ endif
 # ── Installation des dépendances ──────────────────────────────────────────────
 install: install-node install-bun install-rust install-oxvelte install-wasm-pack install-frontend install-services
 
+# node WITHOUT npm. bun is this repository's package manager everywhere; node survives only as
+# the runtime jest needs (see test-history), and `node --run` executes package.json scripts with
+# no package manager at all. Checking for npm would fail a machine perfectly able to build and
+# test this repo.
 ifeq ($(OS),Windows_NT)
 install-node:
-	@echo "${BLUE}ℹ️ Node.js/npm auto-install skipped on Windows${RESET}"
+	@echo "${BLUE}ℹ️ Node.js auto-install skipped on Windows${RESET}"
 	@echo "${BLUE}ℹ️ Install manually from: https://nodejs.org/${RESET}"
 
 install-bun:
@@ -155,10 +159,9 @@ install-wasm-pack:
 	@echo "${BLUE}ℹ️ Install manually, PINNED to the version CI uses: cargo install wasm-pack --locked --version 0.15.0${RESET}"
 else
 install-node:
-	@echo "${BLUE}📦 Checking Node.js/npm installation…${RESET}"
-	@if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then \
+	@echo "${BLUE}📦 Checking Node.js installation (runtime for jest only)…${RESET}"
+	@if command -v node >/dev/null 2>&1; then \
 		echo "${GREEN}✅ Node.js already installed: $$(node --version)${RESET}"; \
-		echo "${GREEN}✅ npm already installed: $$(npm --version)${RESET}"; \
 	else \
 		echo "${BLUE}⬇️ Installing Node.js via nvm…${RESET}"; \
 		if [ ! -d "$$HOME/.nvm" ]; then \
@@ -319,9 +322,15 @@ test-gateway:
 	@cd apps/chat-gateway && $(RUST_TEST_CMD)
 
 # Tests Service Historique
+# `node --run`, matching `.github/workflows/ci.yml` exactly. These suites are jest, and jest
+# under the bun runtime fails `src/controllers/admin-storage.controller.mls.spec.ts` - which
+# lives in THIS service, so `bun run` here meant `make test` and the pipeline executed the same
+# files on two different runtimes. `node --run` forwards everything after `--` (verified), so
+# `--coverage` still reaches jest. No npm: the runtime is the dependency, the package manager
+# is not.
 test-history:
 	@echo "${BLUE}🧪 Testing Chat Delivery Service…${RESET}"
-	@cd apps/chat-delivery-service && bun run test -- --coverage
+	@cd apps/chat-delivery-service && node --run test -- --coverage
 
 build-frontend:
 	@echo "${BLUE}🚀 Building frontend…${RESET}"

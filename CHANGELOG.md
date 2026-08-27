@@ -172,6 +172,27 @@ which is also where every release up to and including v0.13.1 now lives.
   three. Unrelated to `calendar_event_co_owners`, which names ASSOCIATIONS co-hosting an event.
 
 ### Changed
+
+- **npm is gone from this repository, and node stayed - the two were never the same question.** The
+  standing mandate is bun everywhere, and `.github/workflows/ci.yml` still carried one `npm test`.
+  It was not laziness: those suites are jest, and jest under the bun runtime fails
+  `admin-storage.controller.mls.spec.ts`, which passes 8/8 under node. So the line looked like a
+  choice between a broken pipeline and a broken mandate. It was not. A package manager is not needed
+  to RUN a script: `node --run test` (node >= 22) reads `package.json` scripts natively, so the
+  runtime jest depends on stays and the package manager goes. It is also stricter than npm by
+  design - no pre/post scripts, no walking up to a parent directory - so what executes is exactly
+  the `test` script of the service being tested.
+
+  The same edit closed a divergence nobody had noticed: `make test-history` ran those very suites
+  with `bun run test`, so `make test` and CI were executing the same files on two different
+  runtimes, and the service it runs is the one holding the spec that fails under bun. Both now say
+  `node --run`. `make install-node` also stopped requiring npm to be present, which would have
+  failed a machine perfectly able to build and test this repo.
+
+  What this does NOT do is delete the node runtime. Doing that means porting four NestJS services
+  from jest to `bun test`, and that is a dated item in `docs/wiki/backlog.md`, scheduled after the
+  campaign - not something to attempt by editing the CI line.
+
 - **bun 1.4.0 is the runtime everywhere, and Dependabot still works - the two were never in
   conflict.** `.bun-version` and the four service images sat at 1.3.14 because "any bun >= 1.4.0
   writes `lockfileVersion: 2`, which Dependabot cannot parse". The qualifier in that sentence was
