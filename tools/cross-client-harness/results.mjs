@@ -285,6 +285,31 @@ const recorded = [];
 const observed = (detail) =>
   !!detail && (typeof detail.clean === 'boolean' || typeof detail.unobservable === 'string');
 
+/**
+ * THE FIELDS A DETAIL MAY NOT OVERWRITE - a row's own identity and provenance.
+ *
+ * `...detail` is spread OVER these below, which is deliberate for `a1Build`/`a1BuiltAt` and a trap
+ * for everything else: a check that happens to name a detail `at` erases the timestamp the row was
+ * written at, and that timestamp is what selects a run's verdicts. It happened on 2026-08-27 - a
+ * stack trace recorded as `at` by `multi.mjs` cost two undatable rows and made an ERROR from an
+ * earlier run reappear inside a later run's table.
+ *
+ * A THROW, NOT A RENAME OR A DROP. The collision is a runner bug knowable at the call site, and
+ * silently winning either way is how it went unseen: keeping the detail corrupts the ledger, and
+ * discarding it hides a check's own measurement. `a1Build` and `a1BuiltAt` are absent on purpose -
+ * four COMM checks override them with a reading of their own, which is the more precise one.
+ *
+ * `check` IS ABSENT AND THAT IS A DEBT, NOT A DECISION. It is already overwritten, today, by four
+ * runners that use the name for something else: `life.mjs` passes the state name, `tab236.mjs` a
+ * prose description of the manoeuvre, and `fwd345.mjs` spreads a row object that carries its own
+ * `check`. Every LIFE, TAB and FWD line in the ledger therefore names something other than the file
+ * that produced it, which is exactly the corruption this guard exists to stop - so listing `check`
+ * here is right in principle and would throw on three phases mid-campaign instead of measuring
+ * them. It goes back in once those runners rename their field; until then the loss is written down
+ * here rather than demoted, and `rows.mjs` must not be taught to trust `check` on those phases.
+ */
+const RESERVED = ['id', 'verdict', 'at', 'build', 'builtAt', 'checkSha'];
+
 export function record(id, verdict, detail) {
   // A PASS THAT LOOKED AT NOTHING IS NOT A PASS, AND THIS IS THE ONLY PLACE THAT CAN KNOW IT.
   //
@@ -303,6 +328,13 @@ export function record(id, verdict, detail) {
   // already work owed and already exit non-zero; rewriting them would destroy evidence to say
   // something the row already says. `UNOBSERVED` is distinct from `PASS-DIRTY` on purpose - "nobody
   // looked" and "someone looked and it was dirty" send their reader to different places.
+  const clobbered = RESERVED.filter((k) => k in (detail ?? {}));
+  if (clobbered.length)
+    throw new Error(
+      `${id}: the detail names ${clobbered.join(', ')}, which would erase this row's own ` +
+        `provenance - rename the field (see RESERVED)`
+    );
+
   const owedObservation = verdict === 'PASS' && !observed(detail);
   const stated = owedObservation ? 'UNOBSERVED' : verdict;
   const row = {

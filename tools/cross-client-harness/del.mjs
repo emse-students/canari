@@ -43,6 +43,7 @@ import {
   evaluate,
   openConversation,
   PANE_HAS_CONVERSATION,
+  parkConversation,
   PANE_STATE,
   realClick,
   requestSettled,
@@ -124,6 +125,43 @@ const PEER_DELETED_NARRATION = /Group deleted by .+ - conversation marked remove
  */
 const OWN_DEVICE_DISMISS_NARRATION = /\[DISCOVERY\] UI group ".+" dismissed by user - removing/;
 
+/**
+ * THE SOLICITATIONS A CLIENT MADE ABOUT `gid` IN `lines` - one entry per ATTEMPT, never per line.
+ *
+ * DEL-7 AND DEL-8 BOTH ASK "did the client spend the window asking about a group nobody will ever
+ * answer for", and both used to answer it by counting every line that mentioned the group and
+ * carried `[READD]`, `welcome_request` or `[DISCOVERY]`. That counts NARRATION. One correct,
+ * terminating recovery emits three such lines - `attempt starting`, `getGroupMeta -> ok`,
+ * `deleted server-side - marking removed` - so a threshold reasoned as "one solicitation is the seam
+ * doing its job, only its repetition is the defect" could not be written as a number of lines at
+ * all. DEL-7 FAILED twice on 2026-08-27 with `3`, on the BEST behaviour the seam has: `requestReAdd`
+ * step 5, terminating on the tombstone in one attempt, in 200ms, never asking again.
+ *
+ * So the boundary is the ATTEMPT, and two lines mark one each: `attempt starting` is emitted once per
+ * `requestReAdd` that got past its own throttle, and `welcome_request sent` once per broadcast.
+ * Everything else `[READD]` prints is that attempt's progress. `[DISCOVERY]` is dropped outright -
+ * `MLS state kept for X` is the client narrating what it holds, which solicits nobody.
+ *
+ * Returns the LINES, not a count. A row that fails on a number owes its reader the evidence that
+ * number came from, and DEL-7 owed exactly that: `solicitationsInWindow: 3` could not separate one
+ * attempt logged three ways from three attempts, and the run was `clean`, so no log survived to
+ * settle it by hand.
+ */
+function solicitationsAbout(gid, lines) {
+  const needle = gid.slice(0, 8);
+  return lines.filter(
+    (l) =>
+      l.includes(needle) &&
+      (/\[READD\] .+ attempt starting/.test(l) || /\[READD\] welcome_request sent/.test(l))
+  );
+}
+
+/**
+ * One solicitation is the recovery seam doing its job once; only its REPETITION is the defect.
+ * Counted in attempts by {@link solicitationsAbout}, so this is a number of ATTEMPTS.
+ */
+const MAX_SOLICITATIONS = 1;
+
 /** A client and the observer watching it - `grp.mjs`'s twin, and for its reason. */
 async function observed(port, label) {
   const cx = await client(port);
@@ -145,8 +183,48 @@ const lists = (cx, name) =>
     })`
   );
 
-/** Waits for `name` to be listed, reporting how long it took - or null if it never was. */
+/**
+ * The list panel's own state, which is NOT the same question as "does a row name this".
+ *
+ * `hiddenPanel` is the one this file kept answering wrong. On a 411px phone the conversation gets the
+ * whole screen and the list is set `display: none` WITH ITS TEN ROWS STILL IN THE DOM, so every row
+ * measures zero and `width > 0` reads "no such conversation" on a device that holds it. Read
+ * separately from the search because they send their reader to opposite places: one is a layout this
+ * file must undo, the other is a group that never arrived.
+ */
+const LIST_STATE = `JSON.stringify((function () {
+  var p = document.querySelector('.sidebar-panel');
+  if (!p) return { panel: false, hiddenPanel: false, rowsInDom: 0 };
+  var kids = p.querySelectorAll('button, [role=button], a, li');
+  var r = p.getBoundingClientRect();
+  return {
+    panel: true,
+    hiddenPanel: kids.length > 0 && r.width === 0,
+    rowsInDom: kids.length,
+  };
+})())`;
+
+/**
+ * Waits for `name` to be listed, reporting how long it took - or null if it never was.
+ *
+ * IT PARKS FIRST, AND THAT IS THE FIX FOR ITS THIRD SIGHTING OF ONE FAULT. A phone left inside a
+ * conversation renders no list, so this asked its question of a surface that was not on screen and
+ * reported the absence as an answer. `parkConversation`'s own comment already records READ-9 dying
+ * that way on 2026-08-21 and `openDM`'s records MUT-18 on 2026-08-22; DEL-7 made it three on
+ * 2026-08-27, recording INVALID and blaming the group for never reaching a phone whose sidebar held
+ * ten rows the whole time. Each of the two earlier fixes was made at ONE call site, which is why
+ * there was a third - so the precondition now lives in the function that CANNOT answer without it.
+ *
+ * Parking is a no-op outside a conversation and returns a reason rather than throwing on a layout
+ * with no back control, so this costs W1/W2 one evaluate and changes nothing about them.
+ *
+ * `null` STILL MEANS "never listed", and the caller's test is unchanged. What the caller could not
+ * do before is say WHY, so the panel's state is logged here at the moment it is known - a bare
+ * `null` cannot separate a group that did not arrive from a list that was not rendered, and the
+ * campaign has now spent three runs on that exact ambiguity.
+ */
 async function awaitListed(cx, name, timeoutMs = 45000) {
+  await parkConversation(cx).catch(() => null);
   const t0 = Date.now();
   try {
     await until(
@@ -158,6 +236,8 @@ async function awaitListed(cx, name, timeoutMs = 45000) {
     );
     return Date.now() - t0;
   } catch {
+    const state = await evaluate(cx, LIST_STATE).catch((e) => `unreadable: ${e.message}`);
+    console.log(`[del] ${name} never listed on port ${cx.port} in ${timeoutMs}ms - list ${state}`);
     return null;
   }
 }
@@ -830,20 +910,17 @@ async function del7() {
 
         // THE NEGATIVE WINDOW, over a buffer cleared for it so the read needs no offset: the row must
         // STAY converged, and the phone must not spend the window soliciting for a group nobody will
-        // ever answer for. `del8` sets the threshold and states the reason - one solicitation is the
-        // recovery seam doing its job once, and only its repetition is the defect.
+        // ever answer for. `solicitationsAbout` defines what counts as one and states the reason;
+        // DEL-8 asks the same question of W1 through the same helper.
         phone.clearLogcat();
         await sleep(NEGATIVE_WINDOW_MS);
         const lifecycleAfterWindow = (await rowOf(a1, name))?.lifecycle ?? 'purged';
-        const soliciting = phone
-          .console_()
-          .filter(
-            (l) =>
-              l.includes(gid.slice(0, 8)) &&
-              (l.includes('[READD]') || l.includes('welcome_request') || l.includes('[DISCOVERY]'))
-          );
+        const soliciting = solicitationsAbout(gid, phone.console_());
 
-        const ok = lifecycle !== 'live' && lifecycleAfterWindow !== 'live' && soliciting.length <= 2;
+        const ok =
+          lifecycle !== 'live' &&
+          lifecycleAfterWindow !== 'live' &&
+          soliciting.length <= MAX_SOLICITATIONS;
         // THE PEER LEARNT OF A DELETION THIS CHECK PERFORMED ON PURPOSE - see
         // `PEER_DELETED_NARRATION`. A1 hears the same sentence about a deletion the OWNER's other
         // device performed, so the needle is owed on both handles.
@@ -876,6 +953,11 @@ async function del7() {
             lifecycleAfterWindow, // and it must STAY there
             wakeMentionsOfTheGroup: wakeMentions,
             solicitationsInWindow: soliciting.length,
+            // THE LINES THE NUMBER ABOVE CAME FROM - DEL-8's shape, and DEL-7 owed it. A `clean` run
+            // dumps no console, so a row that fails on a count and records only the count leaves its
+            // reader nothing: the two FAILs of 2026-08-27 could not say whether `3` was three
+            // attempts or one narrated three times, and the answer took a hand-attached logcat.
+            solicitations: soliciting.slice(-8),
             negativeWindowMs: NEGATIVE_WINDOW_MS,
             convergenceDeadlineMs: CONVERGENCE_DEADLINE_MS,
           },
@@ -947,16 +1029,10 @@ async function del8() {
 
       const listedAfterRestore = await lists(w1, name);
       const rowAfterRestore = await rowOf(w1, name);
-      const soliciting = consoleLines(w1)
-        .slice(from)
-        .filter(
-          (l) =>
-            l.includes(gid.slice(0, 8)) &&
-            (l.includes('[READD]') || l.includes('welcome_request') || l.includes('[DISCOVERY]'))
-        );
+      const soliciting = solicitationsAbout(gid, consoleLines(w1).slice(from));
 
       // Purged, or at worst retired. What it may NOT be is live and asking about itself for ever.
-      const ok = listedAfterRestore === false && soliciting.length <= 2;
+      const ok = listedAfterRestore === false && soliciting.length <= MAX_SOLICITATIONS;
       // THE PEER LEARNT OF A DELETION THIS CHECK PERFORMED ON PURPOSE - see `PEER_DELETED_NARRATION`.
       const peerRep = ignoringExpectedLog(await report(o2), [PEER_DELETED_NARRATION]);
       await recordObserved(
@@ -1015,12 +1091,19 @@ async function del9() {
       const rowAfter = await rowOf(w1, name);
       const rep = await report(o1);
 
+      // CLEANLINESS IS NOT THIS ROW'S ASSERTION TO MAKE, and making it was the only row in DEL that
+      // did. `recordObserved` gates every verdict through `gate`, which turns PASS + dirt into
+      // PASS-DIRTY - but `gate` only ever DOWNGRADES, so folding `rep.clean` in here produced a raw
+      // FAIL that no gate could rescue. DEL-9 was therefore structurally incapable of the
+      // PASS-DIRTY the campaign runs on, and it spent 2026-08-27 reporting FAIL over one
+      // `[HISTORY_COVERAGE]` line from a phone that had simply joined the fleet - with all four of
+      // its own assertions recorded as holding. The dirt is not lost: it is in the row, under
+      // `clean` and `dirt_*`, put there by the one place that can know it.
       const ok =
         openedIt === true &&
         holdsAfter === false &&
         paneAfter === 'nothing' &&
-        listedAfter === false &&
-        rep.clean;
+        listedAfter === false;
       // THE PEER LEARNT OF A DELETION THIS CHECK PERFORMED ON PURPOSE - see `PEER_DELETED_NARRATION`.
       const peerRep = ignoringExpectedLog(await report(o2), [PEER_DELETED_NARRATION]);
       await recordObserved(

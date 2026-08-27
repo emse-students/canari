@@ -145,7 +145,16 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     NOTIF, HEAL."*** Those six ARE the target; TAB, CALL, PIN and CORRUPT come after them, and
     nothing else is worth a token until those six are green.
 
-    **Where the ladder stands: rungs 1-10 TAKEN.** COMM's last full run (2026-08-27, `cb967b6c`) is
+    **Where the ladder stands: rungs 1-10 TAKEN, 12 MULTI MEASURED.** **DEL is the first rung with NO
+    `FAIL`** (4 `PASS` / 5 `PASS-DIRTY` / DEL-9 `VACUOUS`, on `0c31be5d`), and **both of its non-passes
+    were HARNESS faults, now fixed** - the causes are on the board, in DEL-7 and DEL-9. MULTI's only
+    product-shaped cell is MULTI-5 `ERROR` (a second tab, PIN-gate hypothesis UNPROVEN). **What is owed
+    next: every DEL and MULTI cell was taken on a runner that has since CHANGED** (`del.mjs` is now
+    `2dd7a0f4a933`, `multi.mjs` `74bb17b8283f`) - `rows.mjs` names them, and those re-runs come before
+    LIFE. DEL-10 passed where it FAILed on `2a4297cb`, and **its P2 is NOT closed**: nothing names what
+    changed, and the old FAIL measured a queued SEND where this one measured a queued EXIT.
+
+    COMM's last full run (2026-08-27, `cb967b6c`) is
     15 `PASS` / 5 `PASS-DIRTY` / 3 `VACUOUS` / 1 `FAIL`. **The `FAIL` is COMM-8 and its cause is
     found and FIXED** - an external join was durable on the SERVER and volatile on the CLIENT, so a
     reload in the gap rejoined and FORKED the group (four groups in that one rung; story in
@@ -154,7 +163,8 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
 
     **A1 IS ARMED** - Pixel 6a, `adb devices` = `device`, `isKeyguardShowing=false`, and
     `node phone.mjs 9333` (ONE positional port, NOT `--ensure`) returned `ok:true` on 2026-08-27. So
-    the four `+A1` rows (COMM-14/17/18/25, still on `6808a89c`) run this time. **A dead `adb devices`
+    the four `+A1` rows (COMM-14/17/18/25, still on `6808a89c`) run this time. It carried DEL-7 to its
+    first `PASS` (group reached A1 in 147ms, purged on wake, converged in 0ms). **A dead `adb devices`
     is not always the cable:** it was empty until the user re-plugged, and the `A1_WIFI` fallback
     needs a prior `adb tcpip 5555` it did not have.
 

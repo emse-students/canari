@@ -267,7 +267,12 @@ const asserted =
 // `notifiedInMs !== null` already proves the background decrypt produced real text. That is the
 // property NOTIF had to be taught explicitly; LIFE had it by construction.
 await finishObserved(`LIFE-${which}`, asserted, {
-  check: state.name,
+  // NOT `check`: the ledger writes its OWN `check` - the runner file and its sha - and `record`
+  // spreads the detail over it, so this line would have replaced LIFE's provenance with a state
+  // name on every row it ever wrote. It wrote none until today, which is the only reason the
+  // corruption never surfaced. TAB and FWD still do it; `RESERVED` in `results.mjs` says why it
+  // cannot yet throw on them.
+  phoneState: state.name,
   marker: m,
   pid: { before: pidBefore, during: pidDuring, after: phone.pid(), diedAsExpected },
   notification: {

@@ -165,7 +165,7 @@ async function multi1() {
       A1: await report(oA1),
       'A1-native': logcatReport(await logcatSince(since), 'A1-native'),
     });
-    await recordObserved('MULTI-1', gated.verdict, {
+    await record('MULTI-1', gated.verdict, {
       ...gated.detail,
       marker: m,
       // THE REASON A VACUOUS IS A VACUOUS, on the row, so nobody re-derives it from the source.
@@ -252,7 +252,7 @@ async function multi2() {
       A1: await report(oA1),
       'A1-native': logcatReport(await logcatSince(since), 'A1-native'),
     });
-    await recordObserved('MULTI-2', gated.verdict, {
+    await record('MULTI-2', gated.verdict, {
       ...gated.detail,
       marker: m,
       unreadAccruedInMs: accruedMs,
@@ -327,7 +327,7 @@ async function multi5() {
       A1: await report(oA1),
       'A1-native': logcatReport(await logcatSince(since), 'A1-native'),
     });
-    await recordObserved('MULTI-5', gated.verdict, { ...gated.detail, marker: m, copies });
+    await record('MULTI-5', gated.verdict, { ...gated.detail, marker: m, copies });
     return gated.verdict === 'PASS';
   } finally {
     // THE SIBLING GOES, WHATEVER HAPPENED. Everything above can throw, and a throw between the
@@ -420,7 +420,7 @@ async function multi6() {
       A1: await report(oA1),
       'A1-native': logcatReport(await logcatSince(since), 'A1-native'),
     });
-    await recordObserved('MULTI-6', gated.verdict, {
+    await record('MULTI-6', gated.verdict, {
       ...gated.detail,
       marker: m,
       sent: BURST,
@@ -458,7 +458,22 @@ for (const [n, fn] of Object.entries(CHECKS)) {
   try {
     results.push([n, await fn()]);
   } catch (e) {
-    record(`MULTI-${n}`, 'ERROR', { error: e.message });
+    // THE FRAME, NOT JUST THE SENTENCE. `Cannot convert undefined or null to object` names no call
+    // site, and this phase produced three of them on its first ever run (2026-08-27) with nothing to
+    // say which of its own reads had returned null - the message was the whole record, so the only
+    // way to place it was to re-run by hand. An ERROR is the one verdict that cannot describe what
+    // it measured, so it owes the stack instead.
+    record(`MULTI-${n}`, 'ERROR', {
+      error: e.message,
+      // NOT `at`: that is the LEDGER's own timestamp field, and `record` spreads the detail OVER it,
+      // so a stack put there erases the time the row was written - which is what filters a run's
+      // verdicts. Two rows were corrupted that way on 2026-08-27 before the collision was seen.
+      stack: String(e.stack ?? '')
+        .split(/\r?\n/)
+        .slice(1, 5)
+        .map((l) => l.trim())
+        .join(' <- '),
+    });
     results.push([n, false]);
   }
 }

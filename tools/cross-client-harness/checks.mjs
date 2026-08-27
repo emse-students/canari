@@ -292,6 +292,17 @@ export const PHONE_SCRIPTS = {
  * @param args the arguments forwarded to it, as an array
  * @returns {{devices: string[], phase: string|null}}
  */
+/**
+ * The row an invocation SELECTS, or null when it selects none and therefore runs them all.
+ *
+ * A string, not a number: it is compared only against another spelling of the same argument, and
+ * `Number()` here would turn a typo into `NaN` and make every comparison false but one.
+ */
+const onlyOf = (words) => {
+  const i = words.indexOf('--only');
+  return i === -1 ? null : words[i + 1];
+};
+
 export function devicesFor(file, args = []) {
   const owner = Object.entries(PHASES).find(([, p]) =>
     p.scripts.some((s) => s.split(' ')[0] === file)
@@ -299,8 +310,30 @@ export function devicesFor(file, args = []) {
   if (!owner) return { devices: ['W1', 'W2'], phase: null };
   const [name, phase] = owner;
   const narrowed = PHONE_SCRIPTS[name];
-  const invocation = [file, ...args].join(' ');
-  const named = !narrowed || narrowed.includes(file) || narrowed.includes(invocation);
+  // COMPATIBLE, NEVER EQUAL - and equality is what silently unarmed the phone.
+  //
+  // The entry is `del.mjs --only 7`, and DEL-7 cannot be run without `--destructive`. Comparing the
+  // whole invocation as a STRING therefore never matched the one invocation that exists: on
+  // 2026-08-27 `--file del.mjs --only 7 --destructive` preflighted W1 and W2 alone, DEL-7 ran
+  // against a phone nobody had armed, and it recorded INVALID blaming the group for never reaching
+  // A1. That is the same fault, arriving through the same door, that this narrowing was written on
+  // 2026-08-22 to stop costing MUT-18 six rows - a flag the matcher had never been shown was enough.
+  //
+  // So the only word compared is the one that SELECTS rows. `--destructive`, `--stay` and every
+  // other flag change what a run may DO, never WHICH rows it runs, and a matcher that reads them as
+  // part of the selection is a matcher that fails on the next flag anyone adds. The two nulls are
+  // the two honest directions: a declaration naming no row covers every invocation of that file, and
+  // an invocation narrowing to nothing runs EVERY row the script holds - the declared ones included,
+  // which is why a bare `--file del.mjs` owes the cable that DEL-7 will need.
+  const invOnly = onlyOf([file, ...args]);
+  const named =
+    !narrowed ||
+    narrowed.some((entry) => {
+      const words = entry.split(' ');
+      if (words[0] !== file) return false;
+      const declOnly = onlyOf(words);
+      return declOnly === null || invOnly === null || declOnly === invOnly;
+    });
   return {
     devices: named ? [...phase.needs] : phase.needs.filter((d) => d !== 'A1'),
     phase: name,

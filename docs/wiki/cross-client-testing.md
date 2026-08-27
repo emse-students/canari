@@ -31,9 +31,9 @@ Updated after every run.
 | 7 FWD | 6 | `1579d5c3`, A1 `a7981206` | **`PASS` 6/6 x5** (FWD-2 x1, 25 iterations) |
 | 8 GRP | 10 | `feecfaf5` | **`PASS` 9/10 x4** + GRP-8 `PASS-DIRTY` deterministically, accepted by the user 2026-08-25. GRP-3's earlier socket close did not return on `feecfaf5`; both P2s in [backlog](backlog.md) |
 | 9 COMM | 25 | `cb967b6c`; the four `+A1` rows still on `6808a89c` | **15 `PASS`** (was 0), 5 `PASS-DIRTY` (4 of them the un-re-run `+A1` rows), 3 `VACUOUS`, 1 `FAIL` (COMM-8). The amplifier fix cleared twenty-one cells to fifteen clean ones; COMM-8 and COMM-11 are one NEW root - a distribution group forked by an un-checkpointed external join, now fixed. **Owes a re-run, and the four `+A1` rows owe the phone** |
-| 10 DEL | 10 | `2a4297cb` | 8 `PASS`, DEL-1 `PASS-DIRTY`, **DEL-10 `FAIL`** (reproduced on the deployed fix). DEL-8 ran for the first time |
+| 10 DEL | 10 | `0c31be5d`, A1 `0c31be5d` | **NO `FAIL` LEFT.** 4 `PASS` (2, 5, 7, 8), 5 `PASS-DIRTY` (1, 3, 4, 6, 10), DEL-9 `VACUOUS` (CD redeployed mid-run, its 4 assertions held). DEL-7 and DEL-9 each cost a HARNESS fault, both fixed - see the rows. Seven cells were taken on an older `del.mjs` and owe a re-run on `2dd7a0f4a933` |
 | 11 TAB | 8 | - | `pending` |
-| 12 MULTI | 6 | - | `pending` |
+| 12 MULTI | 6 | `0c31be5d` | 1 `PASS`, 1 `PASS-DIRTY`, 1 `VACUOUS`, 2 `SKIPPED`, **MULTI-5 `ERROR`** - runner debt, not product. Ran BEFORE the `multi.mjs` fix (`74bb17b8283f`); every cell owes a re-run |
 | 13 LIFE | 8 | - | `pending` |
 | 14 NOTIF | 21 | - | `pending` |
 | 15 CALL | 20 | - | `pending` - no script exists yet |
@@ -288,15 +288,15 @@ mid-flight.
 | Id | The crossing | Needs | State |
 | --- | --- | --- | --- |
 | DEL-1 | Peer deletes while a history solicitation for that group is outstanding | `W1 W2` | `PASS-DIRTY` 1/1 - armed at last (`armed: true`), 4/4 assertions. Dirt = 6 `[History] frame never read here and unreadable for good (past-epoch-application)` on W2, a designed line announcing loss that reconciliation then recovers |
-| DEL-2 | Peer deletes while a message from us is in the outbox | `W1 W2` | `PASS 1/1` |
-| DEL-3 | Both peers delete the same conversation within a second | `W1 W2` | `PASS 1/1` |
-| DEL-4 | Delete a conversation while its media is still uploading | `W1 W2` | `PASS 1/1` |
-| DEL-5 | Delete, then the peer sends into it anyway | `W1 W2` | `PASS 1/1` |
-| DEL-6 | Delete while a drain is in flight for that group | `W1 W2` | `PASS 1/1` |
-| DEL-7 | Delete on W1 while A1 is killed, then wake A1 | `+push` | `PASS 1/1` |
-| DEL-8 | Delete a group, then restore an MLS snapshot from BEFORE the deletion | `+snapshot` | `PASS 1/1` - first run ever. **RUNS LAST of the phase**, it restores a snapshot over W1's real state |
-| DEL-9 | Delete the conversation currently OPEN on screen | `W1 W2` | `PASS 1/1` |
-| DEL-10 | Delete while offline, then reconnect | `W1 W2` | **`FAIL` on `2a4297cb`**, the deployed fix - reproduced, and the half that broke has moved. The row IS kept now (`listedOnDeleter`, no local purge) but nothing replays it: 1 attempt offline, `sentOnFirstReconnect=0`, `sentOnSecondReconnect=0`, group still `live`. Memory is right, the TRIGGER is missing. P2 in [backlog](backlog.md) |
+| DEL-2 | Peer deletes while a message from us is in the outbox | `W1 W2` | `PASS 1/1` on `0c31be5d` |
+| DEL-3 | Both peers delete the same conversation within a second | `W1 W2` | `PASS-DIRTY 1/1` on `0c31be5d` |
+| DEL-4 | Delete a conversation while its media is still uploading | `W1 W2` | `PASS-DIRTY 1/1` on `0c31be5d` |
+| DEL-5 | Delete, then the peer sends into it anyway | `W1 W2` | `PASS 1/1` on `0c31be5d` |
+| DEL-6 | Delete while a drain is in flight for that group | `W1 W2` | `PASS-DIRTY 1/1` on `0c31be5d` |
+| DEL-7 | Delete on W1 while A1 is killed, then wake A1 | `+push` | `PASS 1/1` on `0c31be5d`: reached A1 in 147ms, killed at `LAST`, purged on wake, converged in 0ms, ONE `[READD]` solicitation. **It first recorded `INVALID` blaming the product** - `the group never reached A1` - when the group HAD reached A1: `devicesFor` matched its phone declaration `del.mjs --only 7` by whole-string equality against the invocation that actually exists (`--only 7 --destructive`), so the preflight silently ran `W1 W2` and left the phone unarmed. Then, armed, the row still could not SEE the group: the phone sidebar holds its rows but is `display: none` behind an open conversation at 411px, so a `width > 0` filter reads an empty list. THIRD sighting of that one fault (READ-9 2026-08-21, MUT-18 2026-08-22), each time fixed at one call site - which is why there was a third. Both fixed in the harness |
+| DEL-8 | Delete a group, then restore an MLS snapshot from BEFORE the deletion | `+snapshot` | `PASS 1/1` on `0c31be5d` - first run ever, and it validates the `solicitationsAbout` predicate DEL-7 now shares. **RUNS LAST of the phase**, it restores a snapshot over W1's real state |
+| DEL-9 | Delete the conversation currently OPEN on screen | `W1 W2` | `VACUOUS` on `0c31be5d` - **its four assertions ALL held** (pane `composer` -> `nothing`, no conversation held, unlisted, `purged`); `gate` refused the attribution because CD deployed `5bb1cc92` mid-run. Owes one re-run in a quiet window, nothing else. **It first recorded `FAIL` because the runner pre-empted its own gate**: `rep.clean` sat inside its `ok` expression, so one benign `[HISTORY_COVERAGE]` line - caused by A1 joining the fleet - failed a row whose own assertions held, and made `PASS-DIRTY` structurally unreachable for it. `gate` only ever downgrades; folding cleanliness into an assertion is a category error. Fixed |
+| DEL-10 | Delete while offline, then reconnect | `W1 W2` | `PASS-DIRTY 1/1` on `0c31be5d`, **and that CONTRADICTS the `FAIL` taken on `2a4297cb`** - the missing trigger fired here, in the dirt itself: `[EXIT] replaying 1 exit(s) the server never answered` then `[EXIT] c92c92e4... delete replayed - server deleted it`. The two lines are `unexplained` on W1 and that is the whole dirt. **Do not close the P2 in [backlog](backlog.md) on one row**: nothing here identifies what changed between the two builds, and the old FAIL measured a queued SEND (`sentOnFirstReconnect=0`) where this one measured a queued EXIT. Re-read it, do not declare it fixed |
 
 ## 11 - TAB - tabs and windows
 
@@ -317,12 +317,12 @@ Opens by sweeping every `+A1` row left behind in tiers B and C.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| MULTI-1 | Send from W1: appears on A1 as an OWN message | `+A1` | `pending` |
-| MULTI-2 | Read on A1: read state reflected on W1 | `+A1` | `pending` |
-| MULTI-3 | A1 enrolled AFTER W1 has history | `+A1` | `pending` |
-| MULTI-4 | Revoke A1 from W1, then A1 acts (= device check L) | `+A1` | `pending` |
-| MULTI-5 | W1 + A1 + a second W1 tab on one channel | `+A1` | `pending` |
-| MULTI-6 | A1 offline a long while, 20 messages, then returns | `+A1` | `pending` |
+| MULTI-1 | Send from W1: appears on A1 as an OWN message | `+A1` | `PASS 1/1` on `0c31be5d` |
+| MULTI-2 | Read on A1: read state reflected on W1 | `+A1` | `VACUOUS` on `0c31be5d` - `no stored conversation row named the peer`, so the row never got to ask its question. Fixture debt, undiagnosed |
+| MULTI-3 | A1 enrolled AFTER W1 has history | `+A1` | `SKIPPED` on `0c31be5d` - it needs a FRESH enrolment, and re-enrolling A1 costs SETUP-4 2FA. Runs when the phone is next re-provisioned |
+| MULTI-4 | Revoke A1 from W1, then A1 acts (= device check L) | `+A1` | `SKIPPED` on `0c31be5d` - destructive on the one armed phone, same re-enrolment cost |
+| MULTI-5 | W1 + A1 + a second W1 tab on one channel | `+A1` | **`ERROR`** on `0c31be5d`, and it is RUNNER debt: `openChannel` on the second tab saw `no gateway connection line within 30 s`, then `sidebarPanel: false, listedEntries: 14, bodyChars: 960`. NOT the SharedWorker limitation - two tabs each hold their own socket and their own MLS client ([chat-gateway](frontend/chat-gateway.md), `backlog` 1718). **Live hypothesis, UNPROVEN**: a fresh tab is a fresh JS context, so it is behind the PIN gate, and ~14 buttons is a numeric keypad. `pin.mjs --match` is the fixture fix (it exits 2 when already unlocked) |
+| MULTI-6 | A1 offline a long while, 20 messages, then returns | `+A1` | `PASS-DIRTY 1/1` on `0c31be5d` |
 
 ## 13 - LIFE - Android lifecycle
 

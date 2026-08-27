@@ -2274,3 +2274,40 @@ triaging the rows: identical lines, and especially identical ids inside those li
 and one re-run. The corollary is a scheduling one - a defect that leaks across row boundaries makes
 every LATER row in the sweep suspect, including the ones that passed, because the estate they ran
 against was already broken.
+
+### A precondition a function cannot answer without belongs INSIDE it, not at each call site
+
+Three rows have now died on one fault, and the first two were "fixed" both times:
+
+| Row | Date | What it reported | What was true |
+| --- | --- | --- | --- |
+| READ-9 | 2026-08-21 | an EMPTY conversation list | thirteen rows on the device |
+| MUT-18 | 2026-08-22 | `listedEntries: 0` | ten rows on the device |
+| DEL-7 | 2026-08-27 | `the group never reached A1` | it had, in 147ms |
+
+At the 411px width A1 runs at, `.sidebar-panel` keeps its rows in the DOM and goes `display: none`
+while a conversation is open. Every list assertion in the harness filters on
+`getBoundingClientRect().width > 0` - correctly, since an invisible row is not a listed row - so the
+whole list reads as absent. `parkConversation` is the cure and has existed since READ-9; it was added
+to `openDM`'s A1 branch after MUT-18, and to nothing else.
+
+**Two lessons, and the second is the one that keeps costing.** The parking now happens inside
+`awaitListed`, which is the function that cannot answer its question without it, so no future call
+site can forget - a precondition placed at a call site is a precondition that will be missing at the
+next call site written. And when the same wrong answer appears a second time, the fix is not the
+second call site: it is finding what makes the answer reachable at all. `awaitListed` also logs the
+discriminator now (`{panel, hiddenPanel, rowsInDom}`), because "not listed" and "listed but hidden"
+were indistinguishable in the failure output for six days.
+
+### A runner must not fold cleanliness into its own assertion - `gate` only ever DOWNGRADES
+
+DEL-9 recorded `FAIL` on 2026-08-27 with all four of its own assertions holding, because `rep.clean`
+sat inside its `ok` expression. One benign `[HISTORY_COVERAGE]` line - emitted because A1 had joined
+the fleet, nothing to do with deleting an open conversation - turned a passing row into a failing
+one.
+
+`gate` (`watch.mjs`) takes a verdict and the observation reports and returns `PASS` or `PASS-DIRTY`;
+it never rescues a `FAIL`. So a row that ANDs `clean` into its assertion is not being strict, it is
+making `PASS-DIRTY` structurally unreachable for itself and mislabelling environmental noise as a
+product defect. **An assertion answers the row's own question and nothing else. Cleanliness is the
+gate's job, once, for every row.**

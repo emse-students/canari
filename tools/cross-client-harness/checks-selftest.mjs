@@ -125,6 +125,15 @@ const cases = [
   { file: 'del.mjs', args: ['--only', '7'], phase: 'DEL', a1: true },
   { file: 'del.mjs', args: ['--only', '2'], phase: 'DEL', a1: false },
   { file: 'del.mjs', args: ['--only', '10'], phase: 'DEL', a1: false },
+  // THE INVOCATION THAT ACTUALLY EXISTS, and the reason the three above proved nothing: DEL-7 is a
+  // destructive row and cannot be run without the flag, so `--only 7` alone is a spelling no session
+  // types. It resolved to W1 W2 until 2026-08-27 and DEL-7 ran against an unarmed phone.
+  { file: 'del.mjs', args: ['--only', '7', '--destructive'], phase: 'DEL', a1: true },
+  { file: 'del.mjs', args: ['--only', '2', '--destructive'], phase: 'DEL', a1: false },
+  // NARROWED TO NOTHING IS NOT NARROWED TO THE SEVEN. A bare invocation runs all eight rows, DEL-7
+  // among them, so it owes the cable however the declaration is written.
+  { file: 'del.mjs', args: [], phase: 'DEL', a1: true },
+  { file: 'del.mjs', args: ['--destructive'], phase: 'DEL', a1: true },
   // A file whose whole subject IS the second device, and the case that started all of this.
   { file: 'comm25.mjs', args: [], phase: 'COMM', a1: true },
   // A name in no phase: the two browsers, and `phase: null` so the caller can SAY it defaulted.
