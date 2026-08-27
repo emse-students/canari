@@ -160,11 +160,13 @@ html, body, .pf-c-login, .pf-c-login * {
 }
 
 /* --- Buttons ---
- * Selectors are kept intentionally redundant (class-based AND type-based):
- * without live devtools access to this Authentik version's rendered markup,
- * a type selector is the fallback if `.pf-m-primary` ever stops matching.
+ * The form input above (`.pf-c-form-control` / `input`) proved page-level CSS
+ * DOES reach into the form area, yet `.pf-c-button.pf-m-primary` still missed
+ * the submit button on the first pass - so this version stops depending on a
+ * specific PatternFly modifier class and targets any <button> under the login
+ * card instead. There is only one button in this flow, so this is safe.
  */
-.pf-c-login .pf-c-button.pf-m-primary, .pf-c-login button[type='submit'] {
+.pf-c-login__main button, .pf-c-login .pf-c-button, .pf-c-login button[type='submit'] {
     background: linear-gradient(135deg, var(--rootz-blue), var(--rootz-cyan)) !important;
     border: none !important;
     font-size: 14px;
@@ -175,12 +177,12 @@ html, body, .pf-c-login, .pf-c-login * {
     transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
-.pf-c-login .pf-c-button.pf-m-primary:hover, .pf-c-login button[type='submit']:hover {
+.pf-c-login__main button:hover, .pf-c-login .pf-c-button:hover, .pf-c-login button[type='submit']:hover {
     box-shadow: 0 8px 24px rgba(0, 229, 255, 0.35);
     transform: translateY(-1px);
 }
 
-.pf-c-login .pf-c-button.pf-m-primary::after {
+.pf-c-login__main button::after, .pf-c-login .pf-c-button::after {
     font-weight: bold;
 }
 
