@@ -1092,6 +1092,34 @@ async function serverGroupState(groupId) {
 }
 
 /**
+ * WHAT THE DELETER SAID WHILE THE LINK CAME BACK - the evidence DEL-10 lacked.
+ *
+ * A reconnect that replays nothing has two causes and the verdict cannot tell them apart: the
+ * trigger never fired, or it fired and found no row. The run of 2026-08-26 recorded
+ * `sentOnFirstReconnect: 0` and stopped there, so the entry it produced named both causes and
+ * settled neither - a report that cannot separate the causes it reports is a day of hand-work.
+ *
+ * Both causes DO speak, in the page's own console, and this reads them rather than inferring:
+ *
+ *  - `reconnectAnnounced` - `ConnectivityStore` logs before it emits, so this line IS the trigger
+ *    firing. Absent, the listener never ran and the fault is in the connectivity seam.
+ *  - `drainStarted` - the drain announces a non-empty replay. Present with `sentOnFirstReconnect`
+ *    at zero means the calls were made and lost; absent, with the trigger announced, means the
+ *    durable row was not there to replay, which is the OTHER defect entirely.
+ *  - `exitLines` - kept whole and unfiltered, because a verdict must never be computed over a
+ *    projection of its own evidence (harness fault #31).
+ */
+function drainTrace(lines) {
+  return {
+    reconnectAnnounced: lines.some(
+      (l) => l.includes('[CONNECTIVITY] browser reports online') || l.includes('[CONNECTIVITY] server reachable again')
+    ),
+    drainStarted: lines.some((l) => l.includes('[EXIT] replaying')),
+    exitLines: lines.filter((l) => l.includes('[EXIT]')),
+  };
+}
+
+/**
  * DEL-10 - delete while offline, then reconnect.
  *
  * "REACHES THE SERVER ONCE, NO RE-BROADCAST ON LATER RECONNECTS" is two claims and the FIRST is the
@@ -1135,17 +1163,27 @@ async function del10() {
       const answeredWhileOffline = answeredDeletesSince(w1, onGroup, fromOffline).length;
 
       const fromFirst = w1.events.length;
+      // The console is snapshotted BY LENGTH rather than by time: `consoleLines` concatenates what
+      // `report` has already consumed with what is still buffered, and that concatenation only ever
+      // grows during a check, so an index into it is stable where a timestamp comparison is not.
+      const saidBeforeFirst = consoleLines(w1).length;
       await severed.restore();
       await sleep(20_000);
       const sentOnFirstReconnect = deletesSince(w1, onGroup, fromFirst).length;
       const answeredOnFirstReconnect = answeredDeletesSince(w1, onGroup, fromFirst);
+      const firstReconnectSaid = drainTrace(consoleLines(w1).slice(saidBeforeFirst));
 
       // A SECOND round trip, to tell "once" from "every time".
       const severedAgain = await cutHard(w1);
       const fromSecond = w1.events.length;
+      const saidBeforeSecond = consoleLines(w1).length;
       await severedAgain.restore();
       await sleep(20_000);
       const sentOnSecondReconnect = deletesSince(w1, onGroup, fromSecond).length;
+      // THE SILENCE OF THE SECOND RECONNECT MUST BE THE RIGHT SILENCE. Zero re-broadcasts is the
+      // claim, but zero because the row was answered and cleared is a PASS while zero because the
+      // trigger never fires is the defect wearing a PASS - and only this tells them apart.
+      const secondReconnectSaid = drainTrace(consoleLines(w1).slice(saidBeforeSecond));
 
       const listedOnW1 = await lists(w1, name);
       // THE DECISIVE ONE, and it is not a client fact at all: the group must be gone from the server
@@ -1177,7 +1215,10 @@ async function del10() {
           sentOnFirstReconnect,
           // THE CLAIM: the deletion must be ANSWERED here, with the statuses that answered it.
           answeredOnFirstReconnect: answeredOnFirstReconnect.map((a) => a.status),
+          // WHY, when the numbers above are zero - see `drainTrace`.
+          firstReconnectSaid,
           sentOnSecondReconnect, // must be 0 - no re-broadcast for ever
+          secondReconnectSaid,
           answeredOnce,
           onServerAfter, // 'absent' | 'soft-deleted' = honoured. 'live' = the defect itself.
           listedOnDeleter: listedOnW1,

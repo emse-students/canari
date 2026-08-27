@@ -184,7 +184,20 @@ export async function drainPendingGroupExits(params: {
   log: Log;
 }): Promise<DrainOutcome[]> {
   const { storage, mlsService, userId, log } = params;
-  if (!storage || draining) return [];
+  // BOTH REFUSALS ACCUSE, and DEL-10 is why. A drain that returns silently is indistinguishable
+  // from a trigger that never fired, so a reconnect replaying nothing left a reader with two
+  // causes and no way to tell them apart - which is exactly what the run of 2026-08-26 could not
+  // settle. Neither branch is routine: storage is present by the time either trigger can run, and
+  // re-entrancy needs a link flapping inside one drain. `owed.length === 0` below stays silent
+  // because it IS routine - it happens on every reconnect of every session that owes nothing.
+  if (!storage) {
+    log('[EXIT] reconnect replayed nothing - no storage to read the owed exits from');
+    return [];
+  }
+  if (draining) {
+    log('[EXIT] reconnect replayed nothing - a drain is already running');
+    return [];
+  }
   draining = true;
   try {
     let owed: PendingGroupExit[];

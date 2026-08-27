@@ -229,26 +229,47 @@ describe('drainPendingGroupExits', () => {
         return true;
       }),
     });
+    const lines: string[] = [];
     const first = drainPendingGroupExits({ storage, mlsService, userId: 'u1', log: () => {} });
     const second = await drainPendingGroupExits({
       storage,
       mlsService,
       userId: 'u1',
-      log: () => {},
+      log: (m) => lines.push(m),
     });
     expect(second).toEqual([]);
+    // AND IT SAYS SO. An empty array is what a trigger that never fired returns too, and DEL-10
+    // spent a run unable to tell the two apart.
+    expect(lines.join('\n')).toContain('a drain is already running');
     release();
     await first;
     expect(mlsService.deleteGroupOnServer).toHaveBeenCalledTimes(1);
   });
 
-  it('does nothing at all when nothing is owed', async () => {
+  it('says so, rather than returning empty, when there is no storage to read', async () => {
+    const lines: string[] = [];
+    const out = await drainPendingGroupExits({
+      storage: null,
+      mlsService: makeMls(),
+      userId: 'u1',
+      log: (m) => lines.push(m),
+    });
+    expect(out).toEqual([]);
+    expect(lines.join('\n')).toContain('no storage');
+  });
+
+  // THE ONE SILENCE THAT IS KEPT, and it is kept deliberately: this branch runs on every reconnect
+  // of every session that owes nothing, so a line here would be the noise that teaches a reader to
+  // skip `[EXIT]` - and then to skip the one that matters.
+  it('does nothing at all, and says nothing, when nothing is owed', async () => {
+    const lines: string[] = [];
     const storage = makeStorage();
     const mlsService = makeMls();
     expect(
-      await drainPendingGroupExits({ storage, mlsService, userId: 'u1', log: () => {} })
+      await drainPendingGroupExits({ storage, mlsService, userId: 'u1', log: (m) => lines.push(m) })
     ).toEqual([]);
     expect(mlsService.deleteGroupOnServer).not.toHaveBeenCalled();
+    expect(lines).toEqual([]);
   });
 
   it('replays nothing when the owed rows cannot be read', async () => {

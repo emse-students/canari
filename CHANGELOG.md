@@ -11,6 +11,21 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A reconnect that replayed nothing looked exactly like a reconnect that never happened.**
+  `drainPendingGroupExits` returned a bare `[]` when there was no storage and when a drain was
+  already running, and an empty array is what a trigger that never fired returns too - so DEL-10
+  recorded `sentOnFirstReconnect: 0` on `2a4297cb` and the entry named two causes while settling
+  neither. Both refusals now accuse. The third early return, `owed.length === 0`, deliberately stays
+  silent: it runs on every reconnect of every session that owes nothing, and a line there is the
+  noise that teaches a reader to skip `[EXIT]` - and then to skip the one that matters. Which
+  silence is kept is the whole judgement, and the tests now pin both directions, the silence
+  included. `del.mjs --only 10` was instrumented alongside it: it snapshots the deleter's console
+  around each of the two reconnects, so the row will name the cause rather than the symptom.
+  `ConnectivityStore` logs before it emits, which makes that line the listener actually running -
+  the discriminator was there all along and nothing was collecting it.
+
 ### Added
 
 - **A price grid cell can say the combination DOES NOT EXIST.** Some configurations are not sold:

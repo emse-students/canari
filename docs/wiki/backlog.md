@@ -761,10 +761,19 @@ So the decision is written down and kept, exactly as designed, and then no one c
 `drainPendingGroupExits` has two triggers - `ConnectivityStore.onReconnect`, and one pass at chat start
 for the app killed while offline - and the check reconnects the link WITHOUT a reload, so only the
 first applies. Either it does not fire for a link cut through CDP, or it fires and the drain finds no
-row. **Which of the two is not yet measured**, and the run log does not say: `del.mjs --only 10`
-records the verdict and the server dirt but captures no client console, so the `[EXIT]` lines that
-would separate them are not collected. The next step is a re-run with W1's console captured, and that
-is a change to the runner, not to the product.
+row.
+
+**BOTH HALVES OF THAT ARE NOW INSTRUMENTED (2026-08-27), and it took a product change as well as a
+runner one.** The runner half was the easy half: `del10` snapshots `consoleLines(w1)` around each
+reconnect and records `firstReconnectSaid` / `secondReconnectSaid`, so the entry now carries whether
+the trigger announced itself (`ConnectivityStore` logs before it emits, so that line IS the listener
+running) and whether the drain announced a replay. The product half is the one worth reading: the
+drain returned a bare `[]` for `!storage` and for re-entrancy, and an empty array is precisely what a
+trigger that never fired returns too - so two of the four ways to replay nothing were unnameable from
+outside. They accuse now. `owed.length === 0` deliberately stays silent, because THAT one is routine:
+it runs on every reconnect of every session that owes nothing, and a line there is the noise that
+teaches a reader to skip `[EXIT]` and then to skip the one that matters. **The re-run is owed and
+will name the cause rather than the symptom.**
 
 **Do not read this as the old defect returning.** The two failures share a row id and nothing else: one
 lost the decision, this one keeps it and never acts on it. The fix for the first is what makes the
