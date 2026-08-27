@@ -44,8 +44,11 @@
     Link,
     Lock,
     Ban,
+    QrCode,
   } from '@lucide/svelte';
   import { copyPublicShareLink } from '$lib/utils/copyShareLink';
+  import { publicAppUrl } from '$lib/utils/publicAppUrl';
+  import QrCodeModal from '$lib/components/shared/QrCodeModal.svelte';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
 
@@ -107,8 +110,12 @@
     }
   }
 
+  /** The one place this screen says where the form lives, shared by both share controls. */
+  const formPath = $derived(`/forms/${formId}`);
+  let qrOpen = $state(false);
+
   function copyFormLink() {
-    void copyPublicShareLink(`/forms/${formId}`);
+    void copyPublicShareLink(formPath);
     copiedLink = true;
     setTimeout(() => (copiedLink = false), 2000);
   }
@@ -548,19 +555,28 @@
       {m.common_back()}
     </button>
     {#if form}
-      <button
-        type="button"
-        onclick={copyFormLink}
-        class="inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors {copiedLink
-          ? 'text-green-ok bg-green-50 dark:bg-green-950/20'
-          : 'text-text-muted hover:text-text-main hover:bg-cn-border/30'}"
-      >
-        {#if copiedLink}
-          <Check size={13} />{m.form_view_link_copied()}
-        {:else}
-          <Link size={13} />{m.form_view_share()}
-        {/if}
-      </button>
+      <div class="flex items-center gap-1">
+        <button
+          type="button"
+          onclick={copyFormLink}
+          class="inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors {copiedLink
+            ? 'text-green-ok bg-green-50 dark:bg-green-950/20'
+            : 'text-text-muted hover:text-text-main hover:bg-cn-border/30'}"
+        >
+          {#if copiedLink}
+            <Check size={13} />{m.form_view_link_copied()}
+          {:else}
+            <Link size={13} />{m.form_view_share()}
+          {/if}
+        </button>
+        <button
+          type="button"
+          onclick={() => (qrOpen = true)}
+          class="text-text-muted hover:text-text-main hover:bg-cn-border/30 inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors"
+        >
+          <QrCode size={13} />{m.qr_button()}
+        </button>
+      </div>
     {/if}
   </div>
 
@@ -1116,4 +1132,15 @@
       {/if}
     </div>
   </div>
+{/if}
+
+{#if form && qrOpen}
+  <QrCodeModal
+    open
+    url={publicAppUrl(formPath)}
+    label={form.title}
+    owner={form.associationName}
+    intro={m.form_qr_intro()}
+    onClose={() => (qrOpen = false)}
+  />
 {/if}
