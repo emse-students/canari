@@ -18,7 +18,7 @@ vi.mock('$lib/stores/user', () => ({
   clearUserLocally: vi.fn(),
 }));
 
-const { refresh, setSessionExpiredHandler } = await import('$lib/stores/auth');
+const { refresh, setSessionExpiredHandler, setToken } = await import('$lib/stores/auth');
 
 /** A refresh response with the given status; 200 carries a syntactically valid JWT. */
 function answer(status: number): Response {
@@ -28,6 +28,12 @@ function answer(status: number): Response {
     status: 200,
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+/** A syntactically valid JWT, for the cases that must hand the store a LIVE credential. */
+function liveToken(): string {
+  const claims = btoa(JSON.stringify({ sub: 'user-1', exp: Math.floor(Date.now() / 1000) + 3600 }));
+  return `h.${claims}.s`;
 }
 
 const fetchMock = vi.fn<() => Promise<Response>>();
@@ -51,6 +57,9 @@ describe('the session-expired announcement', () => {
   });
 
   it('stays silent on a transient status - a 503 during a deploy is not a dead session', async () => {
+    // The case above proved a credential dead, and that verdict is LATCHED - without a live one to
+    // replace it this test would short-circuit and assert nothing about 503 at all.
+    setToken(liveToken());
     const handler = vi.fn();
     setSessionExpiredHandler(handler);
     fetchMock.mockResolvedValue(answer(503));
@@ -71,9 +80,28 @@ describe('the session-expired announcement', () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
-  it('rearms after a successful refresh - the session answered, so the verdict is void', async () => {
+  it('does not ASK again once the credential is proven dead - the answer is already known', async () => {
+    // Inherits the armed latch from the case above deliberately: that state IS the case under test.
+    // A 401 is a proof about a cookie, so a second request sends the same cookie for the same
+    // answer. Prod measured 120 of them from one iPhone in 45 minutes, in bursts of eleven inside a
+    // single second - `_pendingRefresh` collapses only the callers that overlap in time.
+    fetchMock.mockClear();
+    fetchMock.mockResolvedValue(answer(401));
+
+    await expect(refresh()).rejects.toThrow('Session expired');
+    await expect(refresh()).rejects.toThrow('Session expired');
+    await expect(refresh()).rejects.toThrow('Session expired');
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('asks again once a NEW credential arrives, and re-arms on its death', async () => {
+    // Only a new credential can change the answer, so it is the only thing that lifts the latch.
+    setToken(liveToken());
+    fetchMock.mockClear();
     fetchMock.mockResolvedValue(answer(200));
     await expect(refresh()).resolves.toContain('.');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
 
     // Registered only now, so this asserts what it claims: the 200 really did void the verdict,
     // rather than the handler simply being replayed the previous test's one.

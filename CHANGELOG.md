@@ -166,6 +166,16 @@ which is also where every release up to and including v0.13.1 now lives.
   distinct value. A denial stays `callback(null, false)` and never an `Error`, which would turn a
   refused preflight into a 500 on the request - an incident this repo has already had.
 
+- **A dead session was re-proven 120 times instead of once.** `refresh()` had a single-flight guard
+  for callers that overlap in TIME and a notify-once guard for the ANNOUNCEMENT, but nothing recorded
+  the fact itself - so every caller arriving after the previous request settled sent the same dead
+  cookie for the same answer. Measured on prod 2026-08-27: 120 `POST /api/auth/refresh` from one
+  iPhone in 45 minutes, in bursts of eleven inside a single second, all 401. A 401 there is a proof
+  about a credential, not a transient failure, so it is now latched and answered from the known fact
+  with no request at all; only a new credential (a successful rotation, the OIDC callback, or
+  `setToken`) lifts it. The latch is in memory, so a cold start still begins with the one refresh the
+  rest of the module uses as its connectivity probe.
+
 - **A refresh with no cookie said nothing at all.** `POST /api/auth/refresh` cleared the cookie and
   threw a 401 without logging, and that 401 has two causes it cannot distinguish: a person who really
   is signed out, and a WebView jar that refused to STORE a third-party `Set-Cookie` - which is what

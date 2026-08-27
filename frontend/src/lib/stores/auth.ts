@@ -87,6 +87,32 @@ let _sessionExpiredHandler: SessionExpiredHandler | null = null;
 let _sessionExpiredNotified = false;
 
 /**
+ * Latched the moment the SERVER proves the refresh credential is dead (401/403 on `/api/auth/refresh`).
+ *
+ * This is a different question from {@link _sessionExpiredNotified}, which only records whether the
+ * app has already ANNOUNCED the verdict - and using one for the other is what let the request itself
+ * repeat. `_pendingRefresh` collapses callers that overlap in TIME; it does nothing for the caller
+ * that arrives one millisecond after the previous request settled, so a screen's worth of API calls
+ * each discovered the same dead cookie separately. Measured on prod 2026-08-27: 120 `POST
+ * /api/auth/refresh` from one iPhone in 45 minutes, in bursts of eleven inside a single second,
+ * every one of them a 401 for the same absent cookie.
+ *
+ * A 401 here is a PROOF ABOUT A CREDENTIAL, not a transient failure: asking again with the same
+ * cookie cannot produce a different answer, so the second request is guaranteed-useless work. The
+ * latch is in memory only and is cleared wherever a NEW refresh credential can have arrived - a
+ * successful rotation, the OIDC callback, or {@link setToken} - because those are the only events
+ * that change the answer. A cold start begins with it clear, which keeps the first refresh of every
+ * launch the connectivity probe the rest of this module relies on.
+ */
+let _refreshCredentialProvenDead = false;
+
+/** Records that a live refresh credential exists again, voiding both verdicts above. */
+function noteRefreshCredentialAlive(): void {
+  _refreshCredentialProvenDead = false;
+  _sessionExpiredNotified = false;
+}
+
+/**
  * Registers the app-level reaction to a definitively dead session (log out, go to `/login`).
  *
  * Every caller of `refresh()`/`getToken()` used to own that decision itself, and each one that
@@ -306,6 +332,9 @@ export async function handleOidcCallback(
 
   console.debug('[auth] got access_token, saving user:', data.user?.id);
   _accessToken = data.access_token;
+  // A brand-new `canari_refresh` just arrived, so any latched verdict from the previous session is
+  // about a credential that no longer exists.
+  noteRefreshCredentialAlive();
   setWsSessionCookie(data.access_token);
   // The response carried the first `canari_refresh` of this session; on Android it is only in
   // WebView memory until something flushes it.
@@ -333,6 +362,13 @@ export async function getOidcReturnTo(): Promise<string> {
  * The browser sends the cookie automatically with `credentials: 'include'`.
  */
 export async function refresh(): Promise<string> {
+  // The server already answered this question about this exact cookie. Repeating the request is a
+  // round trip whose result is known, and 119 of them is what one iPhone sent in 45 minutes.
+  if (_refreshCredentialProvenDead) {
+    alog('refresh✗latched (cookie already proven dead - not asking again)');
+    notifySessionExpired();
+    throw new SessionExpiredError();
+  }
   if (_pendingRefresh) return _pendingRefresh;
   _pendingRefresh = _doRefresh().finally(() => {
     _pendingRefresh = null;
@@ -374,6 +410,8 @@ async function _doRefresh(): Promise<string> {
     // while the backend restarts during a deploy) is transient: throwing
     // SessionExpiredError there would force a logout + cookie revocation for a hiccup.
     if (res.status === 401 || res.status === 403) {
+      // The proof, latched: only a new credential can change this answer.
+      _refreshCredentialProvenDead = true;
       notifySessionExpired();
       throw new SessionExpiredError();
     }
@@ -388,8 +426,8 @@ async function _doRefresh(): Promise<string> {
   // memory only, so a process death before Chromium's own commit timer would hand the next cold
   // start the superseded value and get the session revoked (WP-ANDROID-SESS-1).
   await flushAndroidCookies('refresh');
-  // The session answered, so any earlier "session is dead" verdict is void.
-  _sessionExpiredNotified = false;
+  // The session answered AND rotated, so both the verdict and the latch are void.
+  noteRefreshCredentialAlive();
 
   // Decode claims from the new JWT and keep reactive state in sync.
   let tokenExp: number | null = null;
@@ -452,6 +490,8 @@ export async function getToken(): Promise<string> {
 export function setToken(token: string): void {
   _accessToken = token;
   setWsSessionCookie(token);
+  // Whoever supplied this token supplied a live session with it.
+  noteRefreshCredentialAlive();
 }
 
 /**
