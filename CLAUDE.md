@@ -207,15 +207,18 @@ stands.
 site 200, verified 2026-08-27). **THE ONE MEASURED LIMIT ON "bun PARTOUT":** jest fails under the bun
 runtime - `admin-storage.controller.mls.spec.ts` passes 8/8 under node and fails under bun - so CI
 installs/lints/builds with bun and TESTS with node, and both call sites in `ci.yml` say so. **Do not
-collapse that to one runtime without re-running that spec.** `Check Dependencies Vulnerabilities`
-fails every CD run and is the ONLY thing making them red; the deploy is not gated on it, and those
-16 Dependabot vulnerabilities are YOURS to arbitrate.
+collapse that to one runtime without re-running that spec.** CD is GREEN again since `90d79b19`
+(five red runs before it), `Check Dependencies Vulnerabilities` included, and exactly ONE Dependabot
+alert is open: `libcrux-chacha20poly1305` (GHSA-hc3c-63hc-2r9f, HIGH) in `frontend/mls-wasm/Cargo.lock`,
+already measured as UNREACHABLE - the crate is not compiled, the HPKE backend built is
+`hpke-rs-rust-crypto`. It needs dismissing on GitHub, not fixing.
 
-**OPEN - the other three repos, none touched since 2026-08-27**, each owing a `.bun-version` and a
-worked list now in section 11 of
-[ecosystem-convergence](docs/wiki/ecosystem-convergence.md), the only copy: **Sky is NON-BUILDABLE**
-mid-migration and its nine steps are ordered there, MiGallery owes nine items, le-cercle three.
-**Read section 9 before touching TS 7 on any of them.**
+**OPEN - MiGallery and le-cercle.** The worked list, and the MEASURED state of all five repos, is
+section 11 of [ecosystem-convergence](docs/wiki/ecosystem-convergence.md), the only copy - **add to
+its table rather than re-deriving it**, which is what made this paragraph wrong twice. **SKY IS DONE**
+(`e0bd000`): on bun end to end, image built, container started, four migrations run, `/api/health`
+200. MiGallery owes nine items and has started none; le-cercle owes three, plus a security commit
+never pushed. **Read section 9 before touching TS 7 on either.**
 
 **OWED TO THE USER, NOT TO THE CODE: the MLS + Graine explanation** - prose and diagrams, no code
 (user, 2026-08-20). Post-campaign; scope and the two audiences declined are in [backlog](docs/wiki/backlog.md).

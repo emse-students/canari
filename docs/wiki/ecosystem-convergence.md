@@ -554,7 +554,7 @@ discovery again.
 | Repo | `.bun-version` | Lockfile | oxlint/oxfmt | TS 7 | Gates, as measured |
 |---|---|---|---|---|---|
 | Canari | 1.4.0 | 5 x `bun.lock`, all **v1** | yes | REFUSED, section 9 | green |
-| Sky | 1.4.0 | `bun.lock` **v1** | yes | `--tsgo` already wired into `check` | `check` 43 files 0 errors 2 unused-CSS warnings; `lint` 0 errors 8 warnings; `build` GREEN since the fix below |
+| Sky | 1.4.0 | `bun.lock` **v1** | yes | `--tsgo` already wired into `check` | `check` 43 files 0 errors 2 unused-CSS warnings; `lint` 0 errors 8 warnings; `build` green; image built, container started, `/api/health` 200 |
 | MiGallery | MISSING | `package-lock.json` | no | not started | not run |
 | le-cercle | MISSING | `bun.lock` **v1** | no | `^6.0.3` caret, section 9 | not run |
 | Portail-etu | **1.3.8** | `bun.lock` **v1** | no | not started | deploy green |
@@ -562,34 +562,41 @@ discovery again.
 **All four committed `bun.lock` are v1**, so Dependabot is alive in every directory that has one.
 Portail-etu sits at 1.3.8 deliberately: its host cannot start a bun >= 1.3.9.
 
-### Sky - it built nowhere, and the cause was not the one written down
+### Sky - DONE (`e0bd000`, 2026-08-27)
 
 This list said "NON-BUILDABLE, `bun install` pending" and "36 `lucide-svelte` imports". Both were
-stale. Measured 2026-08-27: `node_modules` present (248 entries), `@lucide/svelte` at `^1.34.0`,
-**zero** `lucide-svelte` imports left, oxlint/oxfmt/oxvelte scripts in place. Steps 1 and 2 were
-already done.
+stale before anyone read them: `node_modules` was present, `@lucide/svelte` was at `^1.34.0` with
+**zero** `lucide-svelte` imports left, and oxlint/oxfmt/oxvelte were already wired. `ci-bun.yml`
+and `dependabot.yml` existed too. Four of the nine steps were already done and the list did not know.
 
-The build DID fail, for an unrelated reason worth keeping: `vite build` died with
-`ERR_UNSUPPORTED_ESM_URL_SCHEME ... Received protocol 'bun:'` under **Node.js v24.13.0**. `bun run`
-honours a bin's node shebang, so Vite ran under node; SSR then loaded `src/lib/server/database.ts`,
-which imports `bun:sqlite` - a module that exists only in the bun runtime. This is the Portail-etu
-rule biting a second time in a second repo, and the migration off better-sqlite3 is what armed it.
-Fixed by forcing the runtime on the three scripts that launch a node-shebang bin: `dev`, `build`
-and `preview` are now `bun --bun vite ...`. `test` is left on `vitest run` under node, where its
-suite is green; do not change it without re-running that suite.
+**The build did fail**, for a cause nobody had written down. `vite build` died with
+`ERR_UNSUPPORTED_ESM_URL_SCHEME ... Received protocol 'bun:'` under **Node.js v24.13.0**: `bun run`
+honours a bin's node shebang, so Vite ran under Node, and SSR then loaded
+`src/lib/server/database.ts`, which imports `bun:sqlite` - a Bun builtin. This is the Portail-etu
+rule biting a second repo, and the better-sqlite3 -> `bun:sqlite` migration is what armed it. The
+silent Node execution had been harmless for as long as nothing imported a `bun:` module. `dev`,
+`build` and `preview` now say `bun --bun vite ...`; `test` stays on `vitest run` under Node, where
+its suite is green.
 
-Still open:
+**The Dockerfile was the broken half** and would have failed at run time even once it built: it
+copied a deleted `package-lock.json`, ran `npm ci && npm rebuild better-sqlite3` against a
+dependency that is gone, installed python3/make/g++ for a native module nothing loads, and started
+the container on `migrate-drop-profile-columns.js` - renamed to `migrate-drop-dead-schema.js`. Both
+stages are now `oven/bun:1.4.0-alpine`.
 
-1. Dockerfile onto bun - it still does `npm ci --ignore-scripts && npm rebuild better-sqlite3` and
-   copies a `package-lock.json` that no longer exists
-2. `ci-bun.yml`
-3. pm2 out of `deploy.yml`
-4. `dependabot.yml`
-5. five docs pages
-6. the gates
-7. commit SPLIT IN TWO - substance first, the oxfmt reformat separately, or neither is reviewable
+`deploy.yml` lost its pm2 cutover step, and not on faith: the host no longer has the binary at all
+(`/home/mitv/.bun/bin/pm2` absent), so both lines could only ever be no-ops behind their `|| true`.
 
-Decided and not to be relitigated: Sky keeps Tailwind and migrates to v4 without a preflight, and
+**Verified, not merely compiled:** `docker build` green, container started, the four migrations ran
+to completion under Bun, the server listened, `GET /api/health` answered 200.
+
+The plan demanded this commit be split into substance and the oxfmt reformat. That split was
+attempted MECHANICALLY - HEAD re-formatted with the new oxfmt config, then compared file by file
+against the working tree - and the formatting-only set came back EMPTY: all 43 modified files carry
+substantive change. **There was no separable reformat to lift out**, so one commit is the honest
+shape. Keep the technique: it settles the question in four commands instead of by eye.
+
+Decided and not relitigated: Sky keeps Tailwind and migrates to v4 without a preflight, and
 `bun:sqlite` replaces better-sqlite3.
 
 ### MiGallery - nothing started
@@ -612,8 +619,9 @@ ours - but a fix sitting on one laptop protects nobody.
 
 Its half is otherwise closed. Two things are not:
 
-- **Prod has never been proven to run a bun image.** All four containers answered `node
-  dist/main.js` on 2026-08-27 while the Dockerfiles say `CMD ["bun", "dist/main.js"]`. Owed the
-  moment a CD goes green: `docker inspect` must say `bun`.
+- **Prod runs bun - PROVEN 2026-08-27**, and this line records the measurement so nobody re-derives
+  it: after CD went green on `90d79b19` (five red runs before it), `docker inspect` reports `bun
+  dist/main.js` for all four NestJS containers, and `https://canari-emse.fr/` answers 200. The two
+  Rust services run their own binaries, as they always did.
 - `Dockerfile.frontend-ssr` onto `svelte-adapter-bun`, decided and not started. It must preserve
   the captured OG-tag baseline and be proven on prod.
