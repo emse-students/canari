@@ -325,7 +325,7 @@ author to choose their own numbers, whereas
 
 ---
 
-## 9. TypeScript 7: possible, measured, and REFUSED on both halves of Canari - for two different reasons
+## 9. TypeScript 7: REFUSED on both halves of Canari, ADOPTED on MiGallery - all three measured
 
 The mandate says "TS7 partout ou c'est possible". On Canari it is not possible yet, and this section
 exists so nobody spends another evening finding that out. Measured 2026-08-27 against
@@ -381,6 +381,40 @@ somebody else's release, not our work.
 
 Note how this compounds with the OTHER measured limit on this repo: these suites already cannot run
 under the bun runtime (section 8). Jest is now the reason for two separate pins.
+
+### MiGallery: the same tool, the same flag, and it works - measured 2026-08-27
+
+The frontend verdict above is about `--tsgo` inventing seven errors, and **all seven were on
+`<svelte:boundary>` parameters**. MiGallery uses no `<svelte:boundary>`. So the condition that
+blocks Canari does not bind there, and the non-experimental path is clean:
+
+| Path | Result | Wall clock |
+|---|---|---|
+| TS 6, the baseline | 5396 files, **0 errors** | 8 s |
+| `--tsgo` | 121 files, **0 errors** | 5 s |
+| `--tsgo-experimental-api` | 44 files, 0 errors | 5 s |
+
+**A clean run is not evidence until you have shown the tool can fail.** Three probes, each planted
+and then reverted: a type error in `src/lib/__tsprobe.ts`, one in a route `.svelte`
+(`src/routes/albums/+page.svelte`), one in `tests/api.test.ts`. `--tsgo` reported every one, at
+the same line and column TS 6 reported it. It reads `.svelte` and it reads `tests/`.
+
+**The file count is a COUNTER difference, not a coverage gap, and it will look like a regression to
+the next reader.** 5396 counts every `.d.ts` under node_modules plus the 606 generated Paraglide
+files; 121 is roughly the checkable source. The probes are what settle it, not the number. Both
+figures are in MiGallery's own `CLAUDE.md` for that reason.
+
+`check` and `check:watch` now carry `--tsgo`, in the same shape Sky already used, and BOTH majors
+stay installed because svelte-check requires it: `typescript` at `~6.0.3` for its own API,
+`@typescript/native` at `npm:typescript@^7.0.2` for the Go compiler. Its `dependabot.yml` still
+holds `typescript` majors and its comment now gives the real reason: a major there would REPLACE
+the stable compiler svelte-check is using.
+
+**Proven on the platform CI runs.** A Go compiler ships one binary per target, the lockfile was
+written on Windows, and `bun install --frozen-lockfile && bun run check` completes inside a
+`node:24-bookworm-slim` container. This is the lightningcss lesson applied before it could bite:
+the lockfile lists all 20 `@typescript/typescript-*` platform packages, and that was checked, but
+the container is what proves it.
 
 ### The guard
 
@@ -555,7 +589,7 @@ discovery again.
 |---|---|---|---|---|---|
 | Canari | 1.4.0 | 5 x `bun.lock`, all **v1** | yes | REFUSED, section 9 | green |
 | Sky | 1.4.0 | `bun.lock` **v1** | yes | `--tsgo` already wired into `check` | `check` 43 files 0 errors 2 unused-CSS warnings; `lint` 0 errors 8 warnings; `build` green; image built, container started, `/api/health` 200 |
-| MiGallery | 1.4.0 | `bun.lock` **v1** | yes | not started | `check` 5396 files 0 errors 0 warnings; `lint` 0 errors 70 warnings; `format:check` clean; `bun audit` 0 vulnerabilities across 346 packages; image builds, container healthy, `/api/health` 200, and the CSS it serves carries its vendor prefixes |
+| MiGallery | 1.4.0 | `bun.lock` **v1** | yes | **ADOPTED**, `--tsgo`, section 9 | `check` (TS 7, `--tsgo`) 121 files 0 errors - 5396 under TS 6, a counter difference proven not to be a coverage gap; `lint` 0 errors, 88 warnings; `format:check` clean; `bun audit` 0 vulnerabilities across 346 packages; image builds, container healthy, `/api/health` 200, and the CSS it serves carries its vendor prefixes |
 | le-cercle | MISSING | `bun.lock` **v1** | no | `^6.0.3` caret, section 9 | not run |
 | Portail-etu | **1.3.8** | `bun.lock` **v1** | no | not started | deploy green |
 
@@ -703,9 +737,24 @@ it: its `content` globs, its empty `theme.extend` and its empty `plugins` had no
 build that has ever run. `app.css` moves from the v3 `@tailwind` directives to `@import
 'tailwindcss'`.
 
-**Still owed there:** TypeScript 7 (read section 9 first), and a decision on the 70 oxvelte
-warnings - two of which, `no-self-assign` and `no-useless-catch` in `src/routes/parametres/+page.svelte`,
-may be deliberate Svelte reactivity tricks and must not be swept.
+**TypeScript 7 is IN**, on `--tsgo` - the first repo here where it is possible. Section 9 carries the
+measurement.
+
+**Still owed there: a decision on 88 warnings, which are not noise.** The lint gate is 0 errors, but
+what it lists is a real backlog and nobody has ruled on it:
+
+| Rule | Count | What it means here |
+|---|---|---|
+| `svelte/require-each-key` | 25 | keyless `{#each}`; Svelte reuses DOM nodes across updates |
+| `svelte/no-at-html-tags` | 20 | `{@html}`; each one is an XSS surface to audit individually |
+| `svelte/prefer-svelte-reactivity` | 16 | plain `Map`/`Set`/`Date` under runes - state that does not react |
+| `svelte/no-useless-children-snippet` | 8 | cosmetic |
+| `unicorn/*` (`prefer-string-starts-ends-with`, `no-new-array`, `no-useless-spread`) | 12 | cosmetic |
+| `eslint/no-unused-vars` on catch params | 3 | swallowed errors, in `scripts/` |
+| `svelte/no-unused-props`, `no-unused-expressions`, `no-self-assign`, `no-useless-catch` | 4 | the last two, in `src/routes/parametres/+page.svelte`, may be deliberate reactivity tricks - **do not sweep them** |
+
+The first three rows are correctness, not style. **Do not blanket-fix: `{@html}` and the two
+`parametres` warnings each need a judgement.**
 
 ### le-cercle
 

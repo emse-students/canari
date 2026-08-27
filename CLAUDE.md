@@ -224,8 +224,11 @@ built, started and answered 200. **Its RUNTIME stays node** on two measurements 
 better-sqlite3 segfaults bun 1.4.0, and bun as a runtime once OOM-killed that prod - so do
 not "finish" the migration by moving it. **Its TOOLING half is DONE too** (`87e16d7`..`d371367`):
 oxlint/oxfmt/oxvelte; `@lucide/svelte` over 79 icon names; Tailwind on its Vite plugin, with Lightning
-CSS taking over the prefixing autoprefixer was silently doing; `bun audit` clean on 346 packages.
-**Only TS 7 is left there.** le-cercle owes three, plus a security commit never pushed.
+CSS taking over the prefixing autoprefixer was silently doing; `bun audit` clean on 346 packages; and
+**TS 7 ADOPTED** - the first repo here where `--tsgo` is clean, because it uses no `<svelte:boundary>`.
+**What is left there is a JUDGEMENT, not a migration:** 88 lint warnings, 61 of them correctness
+(keyless `{#each}`, `{@html}`, non-reactive `Map`/`Set`) - section 11 lists them and says which two
+must not be swept. le-cercle owes three, plus a security commit never pushed.
 **Read section 9 before touching TS 7 on either.**
 
 **OWED TO THE USER, NOT TO THE CODE: the MLS + Graine explanation** - prose and diagrams, no code
