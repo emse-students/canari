@@ -171,13 +171,20 @@ html, body, .pf-c-login, .pf-c-login * {
 }
 
 /* --- Buttons ---
- * The form input above (`.pf-c-form-control` / `input`) proved page-level CSS
- * DOES reach into the form area, yet `.pf-c-button.pf-m-primary` still missed
- * the submit button on the first pass - so this version stops depending on a
- * specific PatternFly modifier class and targets any <button> under the login
- * card instead. There is only one button in this flow, so this is safe.
+ * Confirmed via devtools outerHTML: the submit button IS
+ * `<button type="submit" class="pf-c-button pf-m-primary pf-m-block">` - the
+ * exact classes every earlier attempt targeted. What was wrong is that every
+ * one of those selectors also required `.pf-c-login`/`.pf-c-login__main` as
+ * an ANCESTOR. If Authentik clones this stylesheet into more than one shadow
+ * root (the button plausibly renders inside a stage web component's own
+ * shadow root, separate from the one holding `.pf-c-login`), a descendant
+ * combinator can never match there even though a bare compound selector on
+ * the button's own classes would - selectors only see the local tree the
+ * stylesheet is attached to. No ancestor scoping this time: this also themes
+ * the button consistently across every other stage of the flow (MFA, etc.),
+ * which is correct for brand-wide CSS anyway.
  */
-.pf-c-login__main button, .pf-c-login .pf-c-button, .pf-c-login button[type='submit'] {
+.pf-c-button.pf-m-primary, button[type='submit'] {
     background: linear-gradient(135deg, var(--rootz-blue), var(--rootz-cyan)) !important;
     border: none !important;
     font-size: 14px;
@@ -188,12 +195,12 @@ html, body, .pf-c-login, .pf-c-login * {
     transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
-.pf-c-login__main button:hover, .pf-c-login .pf-c-button:hover, .pf-c-login button[type='submit']:hover {
+.pf-c-button.pf-m-primary:hover, button[type='submit']:hover {
     box-shadow: 0 8px 24px rgba(0, 229, 255, 0.35);
     transform: translateY(-1px);
 }
 
-.pf-c-login__main button::after, .pf-c-login .pf-c-button::after {
+.pf-c-button.pf-m-primary::after {
     font-weight: bold;
 }
 
