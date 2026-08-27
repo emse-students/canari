@@ -62,6 +62,20 @@ The following must be configured in the Authentik admin UI (not automated via CD
 - **Redirect URIs**: `https://<domain>/auth/callback`
 - **Users**: managed in Authentik; synced to Canari's `users` table on first login
 
+## Login page branding
+
+`infrastructure/authentik/custom-login.css` is the versioned source of truth for the login flow's
+custom CSS. Authentik has no mechanism to load this from a file or a repo path - it must be pasted
+manually into the admin UI (System -> Brands -> the Canari brand -> "Custom CSS") after any edit,
+and the field itself lives only in Authentik's Postgres DB, so a change made only there and never
+copied back here is one lost/stale backup away from disappearing silently.
+
+Two failure modes worth knowing before touching it again: a `z-index: -1` decorative element needs
+its parent to actually establish a stacking context (`isolation: isolate`, not just
+`position: relative`) or it paints behind the whole page instead of just behind its own sibling;
+and an external `@import` (e.g. Google Fonts) can silently no-op under Authentik's default CSP,
+which blocks it - self-hosting is the fix if an exact custom font is needed.
+
 ## Database and backup
 
 The PostgreSQL database (volume `miconnect_database`) contains all Authentik configuration: providers, applications, users, OIDC settings. It is backed up daily by [`infrastructure/backup/backup.sh`](../../../infrastructure/backup/backup.sh) as `authentik_db.sql.gz`.

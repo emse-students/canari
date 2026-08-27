@@ -1,0 +1,207 @@
+/* Canari branding for the Authentik login flow.
+ *
+ * Not deployed automatically: paste this into the Authentik admin UI under
+ * System -> Brands -> (the Canari brand) -> "Custom CSS", then save. Kept here
+ * as the versioned source of truth - the field itself only lives in Authentik's
+ * Postgres DB (infrastructure/authentik/README.md), which is one lost backup
+ * away from losing this styling entirely.
+ */
+
+:root {
+    --rootz-cyan: #00e5ff;
+    --rootz-blue: #009bb4;
+    --rootz-bg-dark: #001a23;
+    --rootz-bg-med: #004d61;
+}
+
+/* Font: no external @import. Authentik's default CSP commonly blocks
+ * fonts.googleapis.com under font-src/style-src, which is why Montserrat
+ * silently fell back to the browser default before - a system stack avoids
+ * that failure mode entirely and still reads clean and modern. Self-hosting
+ * Montserrat (via a data-URI @font-face, or a static file served through the
+ * custom-templates mount) is the option if the exact brand font matters
+ * enough to justify the extra weight.
+ */
+html, body, .pf-c-login, .pf-c-login * {
+    font-family:
+        -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial,
+        sans-serif !important;
+}
+
+/* --- Background: blobs behind a dark base --- */
+.pf-c-login, .pf-c-login ak-flow-card, .pf-c-login .pf-c-form__group {
+    background-image: none !important;
+    background-color: var(--rootz-bg-dark) !important;
+    position: relative;
+    /* Establishes a stacking context scoped to this element, so the negative
+     * z-index blobs below stack behind the login card WITHOUT escaping to
+     * the document root - without this, `z-index: -1` on ::before/::after
+     * resolves against the nearest ANCESTOR stacking context instead (there
+     * isn't one that helps), so the blobs painted behind the whole page and
+     * were never visible at all.
+     */
+    isolation: isolate;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+}
+
+.pf-c-login::before, .pf-c-login::after {
+    content: '';
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(80px);
+    opacity: 0.55;
+    animation: blobBounce 20s infinite;
+    z-index: -1;
+}
+
+.pf-c-login::before {
+    width: 400px;
+    height: 400px;
+    background: var(--rootz-cyan);
+    top: -100px;
+    left: -100px;
+}
+
+.pf-c-login::after {
+    width: 600px;
+    height: 600px;
+    background: var(--rootz-bg-med);
+    bottom: -150px;
+    right: -150px;
+    animation-delay: -5s;
+}
+
+@keyframes blobBounce {
+    0%, 100% { transform: translate(0, 0); }
+    50% { transform: translate(30px, 30px) scale(1.05); }
+}
+
+/* --- Card: dark glassmorphism, matching the rest of Canari --- */
+.pf-c-login__main {
+    background: linear-gradient(
+        160deg,
+        rgba(0, 77, 97, 0.55),
+        rgba(0, 26, 35, 0.85)
+    ) !important;
+    backdrop-filter: blur(20px) saturate(140%);
+    -webkit-backdrop-filter: blur(20px) saturate(140%);
+    border-radius: 20px;
+    border: 1px solid rgba(0, 229, 255, 0.25);
+    box-shadow:
+        0 20px 60px rgba(0, 0, 0, 0.45),
+        inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    padding: 2rem !important;
+    max-width: 450px;
+    width: 100%;
+    margin: auto;
+}
+
+@media (max-width: 480px) {
+    .pf-c-login__main {
+        max-width: 92vw;
+        padding: 1.5rem !important;
+    }
+}
+
+/* --- Text: light on dark, replacing the forced-dark-navy rule the light
+ * card used to need
+ */
+.pf-c-login__main, .pf-c-login .pf-c-title, .pf-c-login__main-header-desc,
+.pf-c-login .pf-c-form__group {
+    color: #eaf6f8 !important;
+    text-align: center;
+    padding-inline: 0 !important;
+}
+
+.pf-c-login .pf-c-title {
+    margin-top: 1rem;
+    font-size: 20px;
+    font-weight: 600;
+}
+
+.pf-c-brand {
+    margin: 0 auto;
+    display: block;
+}
+
+.pf-c-login__main-header-desc {
+    color: rgba(234, 246, 248, 0.65) !important;
+    font-size: 14px;
+    margin-bottom: 2rem;
+}
+
+/* --- Form fields --- */
+.pf-c-form__label, .pf-c-form__label-text {
+    color: rgba(234, 246, 248, 0.85) !important;
+    font-weight: 600;
+}
+
+.pf-c-form-control, input[type='text'], input[type='password'], input[type='email'] {
+    background: rgba(255, 255, 255, 0.06) !important;
+    border: 1px solid rgba(255, 255, 255, 0.18) !important;
+    border-radius: 10px !important;
+    color: #eaf6f8 !important;
+    padding: 10px 14px !important;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.pf-c-form-control::placeholder, input::placeholder {
+    color: rgba(234, 246, 248, 0.4) !important;
+}
+
+.pf-c-form-control:focus, input:focus {
+    border-color: var(--rootz-cyan) !important;
+    box-shadow: 0 0 0 3px rgba(0, 229, 255, 0.25) !important;
+    outline: none !important;
+}
+
+/* --- Buttons ---
+ * Selectors are kept intentionally redundant (class-based AND type-based):
+ * without live devtools access to this Authentik version's rendered markup,
+ * a type selector is the fallback if `.pf-m-primary` ever stops matching.
+ */
+.pf-c-login .pf-c-button.pf-m-primary, .pf-c-login button[type='submit'] {
+    background: linear-gradient(135deg, var(--rootz-blue), var(--rootz-cyan)) !important;
+    border: none !important;
+    font-size: 14px;
+    font-weight: 600;
+    color: #001a23 !important;
+    padding: 12px;
+    border-radius: 12px;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.pf-c-login .pf-c-button.pf-m-primary:hover, .pf-c-login button[type='submit']:hover {
+    box-shadow: 0 8px 24px rgba(0, 229, 255, 0.35);
+    transform: translateY(-1px);
+}
+
+.pf-c-login .pf-c-button.pf-m-primary::after {
+    font-weight: bold;
+}
+
+/* --- Footer links --- */
+.pf-c-login__main-footer-links {
+    margin-top: 2rem;
+    text-align: center;
+}
+
+.pf-c-login__main-footer-links a, .pf-c-login__main-footer a {
+    color: var(--rootz-cyan) !important;
+}
+
+.pf-c-login__main-footer {
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.pf-c-page__drawer {
+    width: 100%;
+}
+
+ak-brand-links {
+    display: none;
+}
