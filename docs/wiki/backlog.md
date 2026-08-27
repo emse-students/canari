@@ -68,6 +68,89 @@ entry here or closes the question.
 
 ## Measurements owed
 
+### P1 - iOS has NEVER registered a push notification token, and nothing anywhere reported it (measured 2026-08-27)
+
+**Measured, one query.** `SELECT platform, count(*) FROM push_token GROUP BY platform` on prod answers
+`android | 49` and nothing else: not one row has ever carried `platform = 'ios'`, and `voipToken` is
+null on all 49, so no PushKit token exists either. iOS therefore receives NO push of any kind - no
+message alert, no mention, no CallKit ring - and has not since the platform shipped.
+
+**The chain is all present, which is what makes this worth a measurement rather than a build.** The
+v0.14.6 iOS build resolves and links `firebase-ios-sdk @ 12.11.0` with an explicit dependency on
+`FirebaseMessaging` (read out of the run log, per the rule that a green run is not proof your file
+compiled); `canari_iOS.entitlements` carries `aps-environment: production` plus Time Sensitive and the
+App Group; `Info.plist` declares `remote-notification` in `UIBackgroundModes` and sets
+`FirebaseAppDelegateProxyEnabled: true`; `canari_push.mm` installs a `FIRMessagingDelegate`, a
+`PKPushRegistry` and an NSE; `PushNotificationService.ts` detects `ios` from the user agent and asks
+for the VoIP token before registering. Nothing in that list is missing.
+
+**Two candidate links, and code reading cannot separate them.**
+
+1. **The launch-time force fetch runs too early.** In `canari_ios_bootstrap()` the order is
+   `CanariRequestNotificationPermission()` (async, its completion handler only logs), then
+   `CanariSetupFirebaseIfAvailable()`, then `CanariPushSetup()` - which calls
+   `[[FIRMessaging messaging] tokenWithCompletion:]` immediately - and only THEN registers an observer
+   that calls `registerForRemoteNotifications` on `DidFinishLaunching`. FIRMessaging cannot mint an FCM
+   token before an APNs token exists, so that fetch is expected to fail with *No APNS token specified
+   before fetching FCM Token*, log one line and return without writing.
+2. **...but that alone should be harmless**, because `FirebaseAppDelegateProxyEnabled: true` has
+   Firebase feed the APNs token to FIRMessaging itself once it arrives, after which
+   `didReceiveRegistrationToken` fires and `CanariPersistFcmToken` writes the file. So either that
+   delegate never fires (the proxy has no delegate class to swizzle - `main.mm` deliberately defines
+   none, and the plist comment calls that reliance intentional), or it fires and
+   `CanariTauriDataDir()` is still nil that early, or it writes a path the Rust `get_fcm_token`
+   (`{app_data_dir}/fcm_token.txt`) does not read.
+
+**THE DEFECT UNDERNEATH IS THE SILENCE, and it is the part to fix first.** A client that cannot obtain
+a token calls `console.warn('[Push] No FCM token available')` and stops. That line reaches a WebView
+console nobody can open on iOS from Windows, the server is never told, and the row simply never
+appears - so 49 Android devices registering looked exactly like success while the second platform
+registered nothing for its entire life. **A push registration that cannot happen must be reported to
+somewhere a person reads**, and then a single `GROUP BY platform` answers the question this took a
+CORS incident to stumble into.
+
+**What settles the native half:** one device log. `[CanariPush] fetching the FCM token at launch
+failed: ...` versus `[CanariPush] FCM token synchronise au lancement` names the link directly, and
+`[CanariIOS] registerForRemoteNotifications` says whether step 4 ever ran. Needs a Mac console or
+`idevicesyslog`; the ANDROID sequence is readable today over `adb logcat` on A1 and is the reference
+for what a healthy chain prints.
+
+### P3 - the one fallback in `apiFetch` logs that it was taken and not WHY (seen 2026-08-28)
+
+Seen on A1's logcat during a CD deploy: `[API] getToken failed for GET /api/users/d82cd226... -
+proceeding without auth`, one second after `[A] token→refresh` and a `502`.
+
+**The dangerous half is already guarded, and this is not WP-ANDROID-SESS-1 returning.**
+`apiFetch.ts` catches `SessionExpiredError` separately and refuses the anonymous retry for it, by
+name and with a comment; the fallback is reachable only on a non-401 failure, which is deliberate
+because some routes answer without a token and offline startup depends on it. On that logcat the
+cause was a service restarting mid-deploy - the designed transient path.
+
+**What is missing is the evidence, which the standing rule requires of any fallback**: the line names
+that the fallback was taken and nothing about the cause, so a reader cannot separate "a container is
+restarting", which needs nothing, from "refresh is broken", which needs everything - and the two
+produce the identical line. Log the caught error, and while there decide whether the rate is worth
+measuring against the population before the name "transient" is believed.
+
+### P3 - nothing records which BUILD each device runs, though two mechanisms already carry it (2026-08-27)
+
+Asked by the user while debugging the iOS session: is there one place naming the version of every
+device? There is not, and the two pages that look like it are not it - `/admin/platform` WRITES
+`minClientVersion` (a policy, not an observation) and `/admin/status` reads live presence out of the
+gateway (no version at all). The question mattered immediately: every `Refresh refused` line from an
+iPhone was ambiguous until the user stated by hand that all of them were on 0.14.5.
+
+**Two mechanisms already receive the value.** `GET /users/me/announcement?clientVersion=` takes it from
+every client on every launch and uses it only to decide an announcement's audience, then discards it;
+and since 2026-08-27 `POST /auth/refresh?clientVersion=` carries it for the refusal log. Meanwhile
+`push_token` already holds exactly one row per `(userId, deviceId)` with a `platform` and an
+`updatedAt`. Recording the version against a device is therefore a column and a write, not a feature -
+and it would have answered both this question and the iOS FCM one above without asking anybody.
+
+Not done tonight because the cheap version is genuinely cheap and the useful version is a decision:
+which table owns it, whether a web session counts as a device, and what a dashboard should show
+(distribution by version, or the laggards below `minClientVersion`).
+
 ### P2 - the chat-gateway serves CORS `*` in production, and the variable CD sets for it is inert (measured 2026-08-27)
 
 **Measured, not inferred.** `docker exec infrastructure-chat-gateway-1 printenv ALLOW_ORIGIN` answers

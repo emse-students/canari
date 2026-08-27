@@ -313,7 +313,12 @@ yet, so **read Android vitals from late September 2026**; and **WP-RESTORE-1** (
 required April 2027, WebAuthn on a server that has none) is ACCEPTED and scheduled AFTER the
 campaign ([backlog](docs/wiki/backlog.md)).
 
-**Release: v0.14.5, live on Play production at full rollout, nothing owed there.** What IS owed is
+**Release: v0.14.7 in flight (2026-08-28); v0.14.6 shipped iOS ONLY.** Android Release and AppImage
+Release died on a Tauri JS/Rust version skew (`plugin-log` 2.9.0 vs crate 2.8.0) that no CI job could
+see because nothing here compiles the Tauri app - fixed, and `Guard the Tauri JS/Rust version parity`
+in `code-analysis.yml` now reads the two committed files. Story in `CHANGELOG.md`, rule in
+[durable-rules](docs/wiki/durable-rules.md#release-and-ci). Play production is therefore still on
+v0.14.5 until 0.14.7 lands. What IS owed is
 one iOS proof: `minClientVersion` is raised BY HAND from `/admin/platform`, and while a release can
 now REACH App Store Connect, TestFlight is the BETA channel - nothing yet shows a build reaching an
 ordinary iOS user. Ship the client, verify it arrived, THEN raise
@@ -337,11 +342,28 @@ carried in `X-Canari-Refresh` and kept in an awaited store write, both sides cho
 from one fact and never by being refused; Android and the web are untouched by construction. Mechanism
 on [sessions](docs/wiki/sessions.md#the-credential-a-client-carries-itself), story in `CHANGELOG.md`,
 the cookie-read shim and its removal condition in
-[legacy-compatibility](docs/wiki/legacy-compatibility.md) - none restated here. **What is OWED is the
-hardware proof on the phone that ships with it** (sign in, force-quit, reopen; the prod log names the
-cause either way), and it is owed on macOS/Linux desktop too, whose engines nobody has measured -
-that unknown is exactly what the shim covers. A dead session is also no longer re-proven 120 times:
-the 401 is a proof about a credential and is now latched.
+[legacy-compatibility](docs/wiki/legacy-compatibility.md) - none restated here. **THE HARDWARE PROOF
+IS IN: 0.14.6 installed on the iPhone and the session holds** (user, 2026-08-28), and the server side
+says the same - `OIDC callback: credential also returned in the body` on `tauri://localhost`. Still
+owed on macOS/Linux desktop, whose engines nobody has measured - that unknown is exactly what the shim
+covers. A dead session is also no longer re-proven 120 times: the 401 is a proof about a credential
+and is now latched.
+
+**BUT iOS HAS NEVER REGISTERED ONE PUSH TOKEN, AND NOTHING REPORTED IT - now a P1**
+([backlog](docs/wiki/backlog.md)): `push_token` holds `android | 49` and no `ios` row has ever
+existed, so iOS receives no alert, no mention and no CallKit ring. The whole chain is present and
+correctly configured (FirebaseMessaging linked at 12.11.0, `aps-environment: production`,
+`FirebaseAppDelegateProxyEnabled`, NSE, VoIP registry), and **A1's logcat is the reference that makes
+the diagnosis stand**: Android reads its token at LAUNCH with no precondition
+(`MainActivity: FCM token synced`, 16 s before JS asks), and the iOS force-fetch was written as that
+code's mirror - copying a pattern whose precondition exists only on iOS. `CanariPushSetup` calls
+`tokenWithCompletion` BEFORE the `DidFinishLaunching` observer runs `registerForRemoteNotifications`,
+so no APNs token can exist yet. What the reading cannot settle is whether
+`didReceiveRegistrationToken` later saves it (the plist's delegate proxy should); zero rows in a
+platform's lifetime says it does not. **The defect underneath is the SILENCE** - the client warns to a
+WebView console no one can open on iOS and the server is never told, which is why 49 healthy Android
+rows looked like success. Settling the native half needs one device log line, or the fix and a
+release.
 
 ### CANARI - the test campaign
 
