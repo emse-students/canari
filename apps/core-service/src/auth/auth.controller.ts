@@ -27,6 +27,7 @@ import {
   type SessionClientInfo,
 } from './auth-sessions.service';
 import { TAURI_WEBVIEW_ORIGINS } from '../cors-origins';
+import { REFRESH_HEADER, usesBodyRefreshTransport } from './refresh-transport';
 
 interface OidcCallbackDto {
   code: string;
@@ -194,9 +195,34 @@ export class AuthController {
     return { userId: payload.sub, isAdmin: !!payload.admin };
   }
 
-  /** Reads the `sid` of the refresh cookie, if one is present and parsable. Never throws. */
-  private currentSessionId(req: Request): string | null {
+  /**
+   * The refresh credential this request presents, by whichever transport its platform can use.
+   *
+   * The choice is made from the caller's `Origin` - a fact already in hand - and never by trying the
+   * cookie and reading the failure. A client whose engine cannot keep a third-party cookie sends the
+   * credential in {@link REFRESH_HEADER} instead; everyone else sends the cookie, and for them the
+   * header is not even consulted, so presenting one cannot become a way around the cookie.
+   */
+  private presentedRefreshToken(req: Request): string | undefined {
     const cookie = req.cookies?.[REFRESH_COOKIE] as string | undefined;
+    if (!usesBodyRefreshTransport(req.get('origin'))) return cookie;
+
+    // The header is authoritative when it is there, because a client that sends one is carrying its
+    // own copy and rotating it - the cookie beside it, if any, is a value it stopped maintaining.
+    const carried = req.get(REFRESH_HEADER);
+    if (carried && carried.length > 0) return carried;
+
+    // No header from an origin that could have sent one means a client that predates this transport.
+    // `tauri://localhost` is not only iOS: the Linux AppImage and macOS share it, and on those the
+    // cookie may work perfectly. Refusing it here would log those users out on a deploy, so the
+    // cookie is still read - and this is the whole of the shim, recorded with its removal condition
+    // in `docs/wiki/legacy-compatibility.md`.
+    return cookie;
+  }
+
+  /** Reads the `sid` of the presented refresh credential, if one is present and parsable. Never throws. */
+  private currentSessionId(req: Request): string | null {
+    const cookie = this.presentedRefreshToken(req);
     if (!cookie) return null;
     try {
       const payload = jwt.verify(cookie, this.jwtSecret, {
@@ -233,6 +259,8 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response
   ): Promise<{
     access_token: string;
+    /** Present only for a client whose engine cannot keep the cookie - see `refresh-transport.ts`. */
+    refresh_token?: string;
     user: {
       id: string;
       displayName: string;
@@ -328,11 +356,21 @@ export class AuthController {
     const session = await this.authSessions.create(user.id, this.clientInfo(req));
     const refresh_token = this.signRefreshToken(user.id, session.sessionId, session.tokenId);
 
-    // Set refresh token as HttpOnly cookie (not accessible to JS)
+    // The cookie is set for EVERY client, including the ones that will drop it: it is unreadable by
+    // the page's own JavaScript, so it stays the preferred transport wherever it survives - and
+    // `tauri://localhost` covers desktop builds where it may well survive. The body copy is added
+    // only for origins whose engine can refuse the cookie, and only they are told to carry it.
     this.setRefreshCookie(req, res, refresh_token);
+    const bodyTransport = usesBodyRefreshTransport(req.get('origin'));
+    if (bodyTransport) {
+      this.logger.debug(
+        `OIDC callback: credential also returned in the body (origin=${req.get('origin')} may not keep a third-party cookie)`
+      );
+    }
 
     return {
       access_token,
+      ...(bodyTransport ? { refresh_token } : {}),
       user: {
         id: user.id,
         displayName: user.displayName || '',
@@ -360,8 +398,8 @@ export class AuthController {
   async refreshToken(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response
-  ): Promise<{ access_token: string }> {
-    const refresh_token = req.cookies?.[REFRESH_COOKIE] as string | undefined;
+  ): Promise<{ access_token: string; refresh_token?: string }> {
+    const refresh_token = this.presentedRefreshToken(req);
     if (!refresh_token) {
       // THIS 401 HAS TWO CAUSES AND CANNOT ITSELF TELL THEM APART, so the line carries the
       // evidence that does. A person who really is signed out sends no cookie - and so does a
@@ -452,8 +490,13 @@ export class AuthController {
     });
     const new_refresh = this.signRefreshToken(payload.sub, sessionId, nextTokenId);
 
-    // Rotate the refresh cookie
+    // Rotate on BOTH transports the caller can hold, for the reason above. From this moment the old
+    // value is spent, and 60 s from now it reads as a replay that revokes the row - so a client
+    // carrying its own copy must persist the new one before relying on it.
     this.setRefreshCookie(req, res, new_refresh);
+    if (usesBodyRefreshTransport(req.get('origin'))) {
+      return { access_token, refresh_token: new_refresh };
+    }
 
     return { access_token };
   }

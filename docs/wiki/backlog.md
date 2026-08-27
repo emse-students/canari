@@ -97,37 +97,25 @@ server and a campaign plus an iOS verification were both live on it):
    at boot rather than degrading - which is correct, and means the value must be verified by reading
    the served headers after the deploy, not by the deploy's colour.
 
-### P1 - does an iOS session survive a restart at all? The cookie it needs is third-party (found 2026-08-27)
+### P3 - the native refresh credential could live in the platform keychain, on BOTH platforms (2026-08-27)
 
-**Not a defect yet - a hypothesis with a one-minute test, and a fix that would change an architectural
-contract, which is why it is not being written blind.** The mechanism is on
-[sessions](sessions.md#third-party-cookies-and-the-shell-that-is-not-the-backend) and is not restated
-here: `canari_refresh` is first-party on the web and THIRD-party in every native build, Android opts
-back in explicitly, and WKWebView blocks the class through ITP with no public API to lift it.
+**Not a defect - a strict improvement, deliberately not bundled with the fix that needed shipping.**
+Today the credential sits in a file inside the app sandbox: the Chromium cookie file on Android, a
+`@tauri-apps/plugin-store` file on `tauri://localhost` ([sessions](sessions.md#the-credential-a-client-carries-itself)).
+Both are protected by the OS at the container level and neither is encrypted as a secret. The
+platforms both offer better - iOS Keychain, Android Keystore / `EncryptedSharedPreferences` - and the
+same argument applies to each, which is why this is one item and not two.
 
-**Why it is P1 if it bites, and why it would not have been noticed on the run that found the CORS
-defect.** The access token comes back in the response BODY, so the sign-in succeeds and the app works
-for that entire session. Only the next COLD START pays: the refresh arrives with no cookie and can only
-401. The symptom is "iOS logs me out every time I close it", separated from its cause by a restart.
+**What blocks it from being trivial:** `patches/tauri-plugin-keystore` already reaches the iOS keychain,
+but its `ios/Sources/CustomTabsPlugin`-style path builds `SecAccessControlCreateWithFlags` with
+BIOMETRIC flags, because it guards the MLS device key - reading it raises Face ID, which cannot sit in
+front of every cold start. So this needs a second, non-biometric command in the vendored plugin
+(`kSecAttrAccessibleAfterFirstUnlock`), Kotlin parity so the Android build still links, a permission
+entry, and an iOS build to verify - none of it measurable from this machine.
 
-**The measurement, in this order:**
-
-1. On the iPhone: sign in, force-quit, reopen. Signed in -> the jar keeps the cookie, this item closes
-   with a line on the parity table. Back at the login screen -> read the log.
-2. `ssh canari 'docker logs --since 15m infrastructure-core-service-1 | grep -a "Refresh refused"'`.
-   The branch now names the two causes apart: it prints the cookie names it DID receive plus the origin
-   and the user agent, and warns rather than debugs when the origin is a native shell. `cookies=[]` from
-   `tauri://localhost` is the ITP verdict; any other cookie present means the jar works and the fault is
-   elsewhere.
-
-**What a fix would cost, if it is needed.** The only clean option is to stop carrying the refresh
-credential in a cookie on native and put it in the platform keystore
-(`patches/tauri-plugin-keystore` already exists and is already used), which changes the contract
-CLAUDE.md states as "Refresh token in an HttpOnly cookie" - so it needs the user's decision, not an
-edit. Two options are already CLOSED: routing the call through `tauri-plugin-http` is refused in
-`fetchRouting.ts` (its cookie jar is isolated and can deadlock, which is why `credentials: 'include'`
-is deliberately kept on the WebView's own fetch), and there is no iOS equivalent of
-`setAcceptThirdPartyCookies` to call.
+**Do not start it as a security fix.** The current posture is the one Android has had all along and
+which the user has accepted; this is an upgrade to both, worth doing when native work is being done
+anyway rather than as an emergency.
 
 ### P3 - chat-delivery boots with a KafkaJS partitioner warning nobody has decided about (seen 2026-08-27)
 

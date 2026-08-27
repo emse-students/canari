@@ -166,6 +166,32 @@ which is also where every release up to and including v0.13.1 now lives.
   distinct value. A denial stays `callback(null, false)` and never an `Error`, which would turn a
   refused preflight into a 500 on the request - an incident this repo has already had.
 
+- **An iOS session now survives a restart, because the credential stopped being a cookie there.** The
+  CORS fix above let iOS log IN; it could not make iOS stay logged in. The refresh cookie is
+  first-party on the web and third-party in every native shell - the document is `tauri://localhost`,
+  the cookie is `canari-emse.fr` - and the two platforms answer that differently, measured on the same
+  server in the same minute: an iPhone presented `cookies=[]` on 120 consecutive refreshes, while A1
+  came back from `am force-stop` with a single `refresh 200` in 218 ms and auto-unlocked. Android
+  blocks third-party cookies by default and opts back in with one line
+  (`setAcceptThirdPartyCookies`); WKWebView blocks them too and publishes no equivalent API, so there
+  was nothing to add.
+
+  On `tauri://localhost` the credential is therefore carried explicitly: sent in `X-Canari-Refresh`,
+  returned in the response body, kept between launches in a store file whose `save()` is AWAITED -
+  because rotation makes durability part of the protocol, and a debounced write hands the next cold
+  start a spent token that reads as a replay 60 s later and deletes the session row. Both sides pick
+  the transport from ONE fact and never by being refused: the request's `Origin` on the server, the
+  document's scheme on the client. `http(s)://tauri.localhost` is deliberately excluded - Android's
+  cookie works, its durability is proven on hardware, and moving it would unprove that.
+
+  The cookie is still set for every client, and still read when no header arrives, because
+  `tauri://localhost` is also macOS and the Linux AppImage and nobody has measured whether their
+  engines keep it - dropping it would log those installs out on a deploy. That read is a shim over an
+  unknown population, registered with its removal condition in `docs/wiki/legacy-compatibility.md`.
+  The trade is stated rather than buried: on those platforms the credential is readable by the app's
+  own JavaScript instead of being `httpOnly`, which is the trade Android already makes in substance;
+  moving both platforms into the platform keychain is filed as an improvement.
+
 - **A dead session was re-proven 120 times instead of once.** `refresh()` had a single-flight guard
   for callers that overlap in TIME and a notify-once guard for the ANNOUNCEMENT, but nothing recorded
   the fact itself - so every caller arriving after the previous request settled sent the same dead

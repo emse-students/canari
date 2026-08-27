@@ -44,9 +44,18 @@ function makeRes() {
 }
 
 /** Minimal Express request double carrying cookies and headers. */
-function makeReq(options: { cookies?: Record<string, string>; bearer?: string } = {}): Request {
+function makeReq(
+  options: {
+    cookies?: Record<string, string>;
+    bearer?: string;
+    origin?: string;
+    carriedRefresh?: string;
+  } = {}
+): Request {
   const headers: Record<string, string> = { 'user-agent': 'jest' };
   if (options.bearer) headers['authorization'] = `Bearer ${options.bearer}`;
+  if (options.origin) headers['origin'] = options.origin;
+  if (options.carriedRefresh) headers['x-canari-refresh'] = options.carriedRefresh;
   return {
     cookies: options.cookies ?? {},
     headers,
@@ -207,6 +216,102 @@ describe('AuthController sessions', () => {
       await expect(controller.refreshToken(req, out.res)).rejects.toThrow(UnauthorizedException);
       expect(sessions.rotate).not.toHaveBeenCalled();
       expect(sessions.create).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * The credential's transport, for the platforms whose WebView refuses a third-party cookie.
+   *
+   * Measured on production 2026-08-27: an iPhone presented `cookies=[]` on 120 consecutive refreshes
+   * while an Android device answered 200 on the same server, and A1 kept its session across an
+   * `am force-stop` with a single `refresh 200`. These pin the seam that closes that gap, because a
+   * device round trip is otherwise the only witness to it.
+   */
+  describe('refresh transport', () => {
+    const rotated: RotateResult = {
+      status: 'rotated',
+      tokenId: 'jti-2',
+      expiresAt: new Date(Date.now() + 1000),
+    };
+    const carried = () =>
+      signRefresh({ sub: 'user-1', type: 'refresh', sid: 'sid-1', jti: 'jti-1' });
+
+    it('rotates from the HEADER for a custom-scheme client, and returns the new value in the body', async () => {
+      sessions.rotate.mockResolvedValue(rotated);
+      const req = makeReq({ origin: 'tauri://localhost', carriedRefresh: carried() });
+      const out = makeRes();
+
+      const body = await controller.refreshToken(req, out.res);
+
+      expect(sessions.rotate).toHaveBeenCalledWith('sid-1', 'jti-1', expect.anything());
+      // Without this the client has nothing to persist, and the next cold start is a fresh login.
+      expect(body.refresh_token).toBeDefined();
+      const next = jwt.verify(body.refresh_token as string, JWT_SECRET) as { jti: string };
+      expect(next.jti).toBe('jti-2');
+    });
+
+    it('does NOT return the credential in the body to a web client, where HttpOnly is the point', async () => {
+      sessions.rotate.mockResolvedValue(rotated);
+      const req = makeReq({
+        origin: 'https://canari-emse.fr',
+        cookies: { canari_refresh: carried() },
+      });
+      const out = makeRes();
+
+      const body = await controller.refreshToken(req, out.res);
+
+      expect(body.refresh_token).toBeUndefined();
+      expect(out.cookies['canari_refresh']).toBeDefined();
+    });
+
+    it('ignores the header entirely for an origin that can keep its cookie', async () => {
+      // Android's cookie is proven and stays authoritative there: a header must not become a second
+      // way in, nor a way to present a credential the cookie policy would have refused.
+      sessions.rotate.mockResolvedValue(rotated);
+      const req = makeReq({ origin: 'http://tauri.localhost', carriedRefresh: carried() });
+      const out = makeRes();
+
+      await expect(controller.refreshToken(req, out.res)).rejects.toThrow(UnauthorizedException);
+      expect(sessions.rotate).not.toHaveBeenCalled();
+    });
+
+    it('still sets the cookie for a custom-scheme client, because that origin is desktop too', async () => {
+      // `tauri://localhost` is iOS, macOS AND the Linux AppImage. Where the cookie survives it stays
+      // the better credential, so dropping it here would log those installs out on a deploy.
+      sessions.rotate.mockResolvedValue(rotated);
+      const req = makeReq({ origin: 'tauri://localhost', carriedRefresh: carried() });
+      const out = makeRes();
+
+      await controller.refreshToken(req, out.res);
+
+      expect(out.cookies['canari_refresh']).toBeDefined();
+    });
+
+    it('accepts the COOKIE from a custom-scheme client that sends no header (the shim)', async () => {
+      // A client older than this transport, and every desktop build until it updates. Recorded with
+      // its removal condition in docs/wiki/legacy-compatibility.md.
+      sessions.rotate.mockResolvedValue(rotated);
+      const req = makeReq({
+        origin: 'tauri://localhost',
+        cookies: { canari_refresh: carried() },
+      });
+      const out = makeRes();
+
+      const body = await controller.refreshToken(req, out.res);
+
+      expect(sessions.rotate).toHaveBeenCalledWith('sid-1', 'jti-1', expect.anything());
+      // It is still TOLD to carry it from now on: that is how an updated client stops needing the shim.
+      expect(body.refresh_token).toBeDefined();
+    });
+
+    it('revokes the session named by the CARRIED credential on logout, not just the cookie', async () => {
+      // Without this, a logout on iOS clears the local copy and leaves the row alive for seven days.
+      const req = makeReq({ origin: 'tauri://localhost', carriedRefresh: carried() });
+      const out = makeRes();
+
+      await controller.logout(req, out.res);
+
+      expect(sessions.revoke).toHaveBeenCalledWith('sid-1');
     });
   });
 

@@ -124,18 +124,62 @@ the app works for that whole session. Only the NEXT cold start pays: `POST /api/
 with no cookie, and the server can only answer 401. The failure is therefore separated from its cause
 by an app restart, and presents as "it logs me out every time" rather than as anything about cookies.
 
-**The discriminator is logged, so the answer comes from prod rather than from a rebuild.** The 401 has
-two indistinguishable causes - a person who genuinely has no session, and a jar that refused the
-cookie - so the branch in `auth.controller.ts` (`@Post('refresh')`) prints the cookie NAMES it did
-receive, the `Origin` and the user agent, and raises the level to `warn` when that origin is one of
-the native shells, because a native client only asks for a refresh once it believes it has a session.
-A client holding a session still presents its other cookies; a jar that dropped the whole third-party
-set presents none.
+**MEASURED, both sides, 2026-08-27, and the two devices answer differently on the same server in the same
+minute.** The 401 has two indistinguishable causes - a person who genuinely has no session, and a jar
+that refused the cookie - so the branch in `auth.controller.ts` (`@Post('refresh')`) prints the cookie
+NAMES it received, the `Origin` and the user agent, and warns rather than debugs when that origin is a
+native shell, because a native client only asks for a refresh once it believes it has a session. What
+it printed settles the question:
+
+| Device | `POST /api/auth/refresh` | Cookies presented |
+|---|---|---|
+| iPhone, iOS 18.7 | **120 x 401** in 45 minutes | `cookies=[]`, `origin=tauri://localhost` |
+| A1 (Pixel 6a), after `am force-stop` | **1 x 200** in 218 ms, then `[PIN] Device key restored` | the cookie |
+| Web | 401 on anonymous loads only | `cookies=[cf_clearance]` |
+
+So Android's opt-in works and survives a kill; WKWebView's refusal is total. There is no iOS flag to
+add, no entitlement, no `Info.plist` key - and the two ways to make the cookie first-party both cost
+more than they buy (serving the app from `https://canari-emse.fr` inside the WebView would end
+offline launch, and Tauri has no https-origin mode on iOS anyway).
+
+## The credential a client carries itself
+
+Where the cookie cannot live, the credential travels explicitly: sent in `X-Canari-Refresh`, returned
+in the response body, and kept between launches in a store file. Both halves decide from ONE fact -
+the request's `Origin` on the server (`refresh-transport.ts`), the document's scheme on the client
+(`nativeRefreshToken.ts`) - so neither side infers the other's platform, and nothing is learnt by
+being refused.
+
+- **`tauri://localhost` only.** `http(s)://tauri.localhost` is Android and Windows, whose cookie works
+  and whose durability is proven on hardware; routing them through here would unprove it.
+- **The cookie is still SET for everyone**, including the clients that will drop it. It is unreadable
+  by the page's own JavaScript, so it stays the better credential wherever it survives - and
+  `tauri://localhost` is also macOS and the Linux AppImage, where nobody has measured whether it does.
+  Reading it when no header arrives is therefore a shim over an UNKNOWN population, not just an old
+  one, and it is registered as such in
+  [`legacy-compatibility.md`](legacy-compatibility.md) with a removal condition that requires that
+  measurement first.
+- **The header wins when both are present.** A client that sends one is maintaining its own copy and
+  rotating it; the cookie beside it is a value it stopped updating.
+- **The write is AWAITED, and that is the whole design.** Rotation makes durability part of the
+  protocol, exactly as it does on Android: from the instant the server answers, the previous value is
+  spent and becomes a replay 60 s later, which deletes the session row. So `autoSave` is OFF on that
+  store - a debounced write is precisely the hazard - and `writeNativeRefreshToken` does not return
+  until `save()` has. The Android incident above is what this is copying.
+- **An empty store is NOT proof of no session.** On the same origin a desktop build may hold a working
+  HttpOnly cookie that this code cannot see by design, so the request is still made; the header is
+  added only when a copy is actually held.
+
+**What it costs, stated plainly:** on those platforms the credential is readable by the app's own
+JavaScript instead of being `httpOnly`. It is the same trade Android already makes in substance - its
+refresh token sits in the Chromium cookie file inside the app sandbox - and the file used here has the
+same protection class (iOS Data Protection, app container). Moving it into the platform keychain
+without biometric flags is a strict improvement on BOTH platforms and is filed as one
+([`backlog.md`](backlog.md)); it needs a new command in the vendored plugin, so it is not this change.
 
 The general rule: **a cookie a native shell depends on is third-party by construction, and each
-platform decides that for itself.** So the question is never "does the server set the cookie" but
-"does THIS engine keep it", and the answer is a per-platform measurement - the log line above, then
-one minute on hardware: log in, force-quit, reopen.
+platform decides that for itself.** The question is never "does the server set the cookie" but "does
+THIS engine keep it" - and where the answer is no, the credential stops being a cookie there.
 
 ## One session per device, enforced where the device becomes KNOWN
 

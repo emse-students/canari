@@ -59,6 +59,27 @@ working clients to protect them from a warning that was accurate all along - see
 
 ## The diary
 
+### No date yet - the refresh COOKIE accepted from a `tauri://localhost` client
+
+**Site:** `presentedRefreshToken()` in `apps/core-service/src/auth/auth.controller.ts` - the last
+`return cookie` after the header has been found absent.
+**Shim:** a client on the custom-scheme origin is expected to carry its refresh credential in
+`X-Canari-Refresh` (`refresh-transport.ts`), because WKWebView drops the third-party cookie -
+measured on prod 2026-08-27, `cookies=[]` on 120 consecutive refreshes from one iPhone. When that
+header is absent the cookie is still read.
+**Why it is not just "old iOS clients":** `tauri://localhost` is ALSO the macOS and Linux AppImage
+origin, and nothing has ever measured whether their engines keep the cookie. If they do, refusing it
+here would log every desktop install out on the deploy that introduced the header - so the shim is
+covering an unknown population, not only an old one.
+**Removal condition, and it has two halves:** (1) `minClientVersion` is at or above the first release
+carrying `nativeRefreshToken.ts`, so no client on that origin predates the header; AND (2) desktop
+persistence has been MEASURED on macOS and Linux - if the cookie works there, that platform keeps it
+and the removal is instead a narrowing of `BODY_TRANSPORT_ORIGINS`, not a deletion. Until (2) exists
+this entry deliberately has no date: a date would be a guess about a platform nobody has run.
+**Cost of keeping it:** one header read and one cookie read per refresh. The hazard is not cost, it
+is that a client sending neither looks identical to one sending a stale cookie, which is why the
+refusal already logs the cookie names it received.
+
 ### 2027-02-20 - the whole-list role-permission PUT
 
 **Site:** `PUT /api/channels/roles/:roleId/permissions` and `ChannelService.setRoleBasePermissions`

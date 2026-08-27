@@ -1220,7 +1220,7 @@ CONFIGURATION** — and every parity defect found since has been exactly that. A
 | FCM manifest entries | `AndroidManifest.xml` | `androidFcmManifest.test.ts` (Android-only by nature) |
 | Cookie-jar durability | `commands/cookies.rs` | Android-only **by API**, not by decision — iOS has no flush to call and has never been observed. `check P` |
 | Server CORS allowlist | `apps/*-service/src/cors-origins.ts`, `ALLOW_ORIGIN` in `cd.yml` | Named the Android origins ONLY. Broke iOS login outright - see below. One module per service now, with a test naming each platform's origin individually |
-| Third-party cookie acceptance | `MainActivity.kt` (Android), nothing on iOS | Android opts in explicitly; WKWebView has no equivalent API. [`sessions.md`](../sessions.md#third-party-cookies-and-the-shell-that-is-not-the-backend) |
+| Third-party cookie acceptance | `MainActivity.kt` (Android), nothing on iOS | MEASURED 2026-08-27: Android opts in and survives `am force-stop` (1 refresh, 200); iOS presented `cookies=[]` on 120. WKWebView has no equivalent API, so on `tauri://localhost` the credential is carried in a header instead - [`sessions.md`](../sessions.md#the-credential-a-client-carries-itself) |
 
 Two rules come out of that table, and they are the ones to apply before adding anything native:
 

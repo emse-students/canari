@@ -63,7 +63,7 @@
 - Build: `frontend/src/lib/wasm/` and `src/lib/proto/canari.{js,d.ts}` are GENERATED and NOT in git.
   `cd frontend && bun run generate` after a structural change; every pipeline builds them itself
   ([mls-wasm](docs/wiki/frontend/mls-wasm.md#why-it-is-not-committed)).
-- Auth: access tokens in memory ONLY (never localStorage). Refresh token in an HttpOnly cookie. WS auth via `canari_ws_token`.
+- Auth: access tokens in memory ONLY (never localStorage). Refresh token in an HttpOnly cookie **everywhere the engine keeps one** - on `tauri://localhost` (iOS, macOS, Linux) WKWebView drops it and the client carries it in `X-Canari-Refresh` instead, one fact deciding both sides ([sessions](docs/wiki/sessions.md#the-credential-a-client-carries-itself)). WS auth via `canari_ws_token`.
 - Media: the client generates the CEK (AES-256-GCM) before upload. The backend sees opaque blobs.
 - Infra truth: keep `infrastructure/MIGRATION.md` synced with new secrets, services or bootstrap steps; add a new service to `docs/wiki/infrastructure/` and the `README.md` diagram.
 
@@ -329,11 +329,19 @@ native project owns WORKED** - deep link, `ASWebAuthenticationSession`, the `UIA
 self-reinvocation, `/auth/callback` - so mobile.md's "iOS has never run a check on hardware" is gone.
 **A FULL iOS/Android PARITY AUDIT ran before the re-release** and everything else it read is symmetric
 (push payloads, WS auth, entitlements, AASA, NSE, App Group, keychain, `CFBundleURLTypes`, no
-platform-gated tauri command). It left exactly ONE open question, and it is P1 if it bites: **does an
-iOS session survive a restart?** The refresh cookie is THIRD-party in a native shell, Android opts in
-explicitly and WKWebView has no such API - so the 401 branch now names its two causes apart in the prod
-log, and the answer is one minute on the phone (sign in, force-quit, reopen). Predicate, log command
-and the contract a fix would change: [backlog](docs/wiki/backlog.md#measurements-owed).
+platform-gated tauri command). **Its one open question is now ANSWERED AND FIXED.** iOS could log in but not STAY
+logged in: measured on the same server in the same minute, the iPhone presented `cookies=[]` on 120
+consecutive refreshes while A1 came back from `am force-stop` on ONE `refresh 200`. WKWebView drops the
+third-party refresh cookie and offers no opt-in, so on `tauri://localhost` the credential is now
+carried in `X-Canari-Refresh` and kept in an awaited store write, both sides choosing the transport
+from one fact and never by being refused; Android and the web are untouched by construction. Mechanism
+on [sessions](docs/wiki/sessions.md#the-credential-a-client-carries-itself), story in `CHANGELOG.md`,
+the cookie-read shim and its removal condition in
+[legacy-compatibility](docs/wiki/legacy-compatibility.md) - none restated here. **What is OWED is the
+hardware proof on the phone that ships with it** (sign in, force-quit, reopen; the prod log names the
+cause either way), and it is owed on macOS/Linux desktop too, whose engines nobody has measured -
+that unknown is exactly what the shim covers. A dead session is also no longer re-proven 120 times:
+the 401 is a proof about a credential and is now latched.
 
 ### CANARI - the test campaign
 

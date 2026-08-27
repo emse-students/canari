@@ -20,6 +20,13 @@ import { customTabsCommand } from '$lib/services/customTabsCommands';
 import { clearPersistedPendingAcks } from '$lib/mls-client/ackRetry';
 import { connectivity, isTransportFailure } from '$lib/stores/connectivity.svelte';
 import { flushAndroidCookies } from '$lib/utils/androidCookies';
+import {
+  REFRESH_HEADER,
+  clearNativeRefreshToken,
+  readNativeRefreshToken,
+  usesBodyRefreshTransport,
+  writeNativeRefreshToken,
+} from '$lib/stores/nativeRefreshToken';
 
 const OIDC_STATE_KEY = 'canari_oidc_state';
 const OIDC_RETURN_KEY = 'canari_oidc_return';
@@ -319,6 +326,7 @@ export async function handleOidcCallback(
 
   const data = (await res.json()) as {
     access_token: string;
+    refresh_token?: string;
     user: {
       id: string;
       email: string;
@@ -332,6 +340,17 @@ export async function handleOidcCallback(
 
   console.debug('[auth] got access_token, saving user:', data.user?.id);
   _accessToken = data.access_token;
+  // The first credential of this session. On a cookie platform it arrived as a `Set-Cookie` and
+  // there is nothing to do; where the cookie cannot live, this response body is the ONLY copy that
+  // will ever exist, so losing it here costs the user a fresh login at the next launch.
+  if (usesBodyRefreshTransport()) {
+    if (data.refresh_token) {
+      await writeNativeRefreshToken(data.refresh_token);
+      console.debug('[auth] stored native refresh credential');
+    } else {
+      awarn('login✓ but no refresh_token in the response - this session cannot survive a restart');
+    }
+  }
   // A brand-new `canari_refresh` just arrived, so any latched verdict from the previous session is
   // about a credential that no longer exists.
   noteRefreshCredentialAlive();
@@ -380,6 +399,17 @@ async function _doRefresh(): Promise<string> {
   const endpoint = `${coreUrl()}/api/auth/refresh`;
   alog(`refresh→ ${endpoint}`);
   const t0 = Date.now();
+
+  // On a platform whose WebView can refuse the cookie, the credential is ours to carry. An EMPTY
+  // store is not proof of no session though: `tauri://` is also the desktop origin, where the
+  // HttpOnly cookie may work perfectly and is invisible to this code by design. So the request is
+  // still made - the header is added only when we actually hold a copy, and it is authoritative
+  // when present.
+  const bodyTransport = usesBodyRefreshTransport();
+  const carried = bodyTransport ? await readNativeRefreshToken() : null;
+  if (bodyTransport)
+    alog(`refresh carries=${carried ? 'stored credential' : 'nothing (cookie only)'}`);
+
   // The refresh is the first call of every cold start, so it is also the app's primary
   // connectivity probe. A transport failure here means "no network"; an HTTP status - any status -
   // means the server answered and the session question is decided below. Keeping the two apart is
@@ -388,7 +418,10 @@ async function _doRefresh(): Promise<string> {
   try {
     res = await fetch(endpoint, {
       method: 'POST',
-      credentials: 'include', // send HttpOnly cookie
+      // `credentials` still says `include` on every platform: where the cookie works it IS the
+      // credential, and where it does not the header carries it and the flag costs nothing.
+      credentials: 'include',
+      headers: carried ? { [REFRESH_HEADER]: carried } : undefined,
     });
     connectivity.notifyServerReachable();
   } catch (e) {
@@ -418,9 +451,27 @@ async function _doRefresh(): Promise<string> {
     throw new Error(`Token refresh failed (HTTP ${res.status})`);
   }
 
-  const data = (await res.json()) as { access_token: string };
+  const data = (await res.json()) as { access_token: string; refresh_token?: string };
   _accessToken = data.access_token;
   setWsSessionCookie(data.access_token);
+  // The credential ROTATED. Where we carry it ourselves, the new value must be on disk before this
+  // function returns: the server will refuse the old one from now on, and 60 s later will read it as
+  // a REPLAY and delete the session row. A server that answered 200 without one would leave this
+  // device holding a token it has just invalidated, so say so rather than storing nothing.
+  if (bodyTransport) {
+    if (data.refresh_token) {
+      await writeNativeRefreshToken(data.refresh_token);
+      alog('refresh✓stored');
+    } else {
+      // The rotation happened regardless, so the session is fine for this run - but nothing durable
+      // came with it, and the next cold start will have only the cookie to go on. That is either a
+      // server that predates this transport or one that stopped sending the field, and both are
+      // worth naming rather than silently degrading to "logs in every launch".
+      awarn(
+        'refresh✓ but no refresh_token in the response - nothing to persist for the next launch'
+      );
+    }
+  }
   // The refresh token ROTATED: the cookie the server just set is the only one it will accept from
   // now on, and the previous one becomes a replay 60 s later. On Android that cookie is in WebView
   // memory only, so a process death before Chromium's own commit timer would hand the next cold
@@ -505,14 +556,20 @@ export async function clearAuth(): Promise<void> {
   clearWsSessionCookie();
   // Drop persisted message ACKs so a next user on this tab can't ACK the previous user's ids.
   clearPersistedPendingAcks();
-  // Tell the backend to clear the HttpOnly cookie
+  // Tell the backend to REVOKE the session row - the cookie is the least of it. The credential has
+  // to travel the same way it does on a refresh, or the server cannot name the row to delete and a
+  // logout on iOS would clear the local copy while leaving the session alive for seven more days.
+  const carried = usesBodyRefreshTransport() ? await readNativeRefreshToken() : null;
   await fetch(`${coreUrl()}/api/auth/logout`, {
     method: 'POST',
     credentials: 'include',
+    headers: carried ? { [REFRESH_HEADER]: carried } : undefined,
   }).catch((e) => awarn('logout✗ ' + e));
   // Same reasoning as the rotation: the cookie DELETION must reach disk too, or a process death
   // resurrects a revoked cookie at the next launch.
   await flushAndroidCookies('logout');
+  // And the copy we carry ourselves, which no `Set-Cookie` can clear.
+  if (usesBodyRefreshTransport()) await clearNativeRefreshToken();
   clearUserLocally();
 }
 
