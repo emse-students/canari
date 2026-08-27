@@ -13,6 +13,19 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A comment that promised a bun bump was free, and the deploy it skipped.** `098ac7d2` moved
+  every backend image to `oven/bun:1.4.0-alpine` on the strength of a comment in all four
+  Dockerfiles: a bun >= 1.4.0 "only writes `lockfileVersion: 2` into a lockfile it CREATES, and
+  reads an existing v1 one unchanged". Both halves are false. It writes v3, and it REFUSES a v1
+  lockfile whose `overrides` are nested, because bun 1.3.14 had saved only the flat ones into it -
+  so `bun install --frozen-lockfile` failed with "overrides in package.json changed since bun.lock
+  was saved". Exactly one service has nested overrides (`gaxios`, `teeny-request`,
+  `@types/request`), so exactly one image failed to build, and because the deploy is gated on
+  every image it was SKIPPED - three CD runs in a row shipped nothing while reporting only a red
+  build. The other three locks come back byte-identical under 1.4.0, measured, so the fix is one
+  regenerated lock and not an estate-wide churn. The comment now states what was falsified and
+  requires every lock to be regenerated with the tag on its own line before that tag moves.
+
 - **A reconnect that replayed nothing looked exactly like a reconnect that never happened.**
   `drainPendingGroupExits` returned a bare `[]` when there was no storage and when a drain was
   already running, and an empty array is what a trigger that never fired returns too - so DEL-10
