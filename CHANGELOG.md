@@ -13,6 +13,23 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **Every photo and every logo on the Carte de la Vie Asso was missing on mobile, and nothing said
+  so.** Both `<img>` sources on the poster are app-relative - `/api/users/:id/avatar` for the bureau
+  photos, and the association `logoUrl`, stored as `/api/media/public/:id`. In a Tauri build the page
+  is served from `tauri://localhost` (iOS) or `http://tauri.localhost` (Android), so those paths
+  resolve against the shell and the asset server answers them with `index.html`. The image fails to
+  decode, `onerror` fires, and the initials placeholder that exists for absent users shows through:
+  no exception, no console line, no request that looks wrong in any log. Both now go through a new
+  `apiAssetUrl()`, which prefixes `coreUrl()` and leaves anything already carrying a scheme
+  (`data:`, `blob:`, absolute) untouched.
+
+  **The guard that should have caught it existed and matched one spelling.**
+  `apiUrl.absolute.test.ts` has scanned for `fetch('/api/…')` since 2026-08-11 - the same defect,
+  where it fails loudly enough to be noticed - and never looked at `src=`. Extended, it found **two
+  more live call sites** beyond the poster: the trombinoscope PDF export (logo + every member photo)
+  and the community-invite preview image on `/c/join/[token]`. All three are fixed. `Avatar.svelte`
+  also lost its private copy of `coreUrl()` while its neighbourhood was open.
+
 - **Nobody could edit a post published in an association's name - not its author, not the
   association's officers, not the BDE - and the app said nothing, because the missing thing was a
   button.** Reported from production: an association officer holding that association's posting
@@ -171,6 +188,20 @@ which is also where every release up to and including v0.13.1 now lives.
   the discriminator was there all along and nothing was collecting it.
 
 ### Changed
+
+- **The Carte de la Vie Asso editor is offered to a mouse only.** Asked for on 2026-08-27:
+  *"j'aimerais rendre l'edition impossible sur mobile, trop complexe, il faut ne la rendre possible
+  que sur le PC."* Arranging bubbles means dragging and resizing objects a finger covers while it
+  moves them, on a poster wider than any phone. **What decides is the POINTER, not the viewport**
+  (`isCoarsePointerDevice`, `(pointer: coarse)`): a narrow desktop window still has a mouse and a
+  large tablet still does not, while a touchscreen laptop reports `fine` and keeps the editor. It is
+  watched, not sampled once.
+
+  Viewing, PDF export and publish/unpublish stay available everywhere - none of them is editing.
+  What goes: the canvas's `editable` flag, the settings and per-bubble property column (every
+  control in it writes the layout, so it is absent rather than disabled), the rename control, the
+  Save button - nothing to save - and, on the project list, the create form, which otherwise led
+  straight into an editor that could not be used. A banner says where to go instead.
 
 - **The moderation screen now opens to the tier that was already allowed to use it.**
   `/admin/moderation` asked `isGlobalAdmin()` in three places at once - the nav item, the home card

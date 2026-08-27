@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { isCoarsePointerDevice, onCoarsePointerChange } from '$lib/utils/pointerDevice';
   import { goto } from '$app/navigation';
   import { isGlobalAdmin, isAssociationSuperAdmin } from '$lib/stores/user';
   import {
@@ -170,6 +171,13 @@
     }
   }
 
+  // Same predicate as the editor: what decides is the pointer, not the width.
+  let coarsePointer = $state(false);
+  $effect(() => {
+    coarsePointer = isCoarsePointerDevice();
+    return onCoarsePointerChange((coarse) => (coarsePointer = coarse));
+  });
+
   onMount(async () => {
     await ensureAssociationSuperAdmin();
     if (!isGlobalAdmin() && !isAssociationSuperAdmin()) {
@@ -294,27 +302,33 @@
           <p class="text-text-muted text-sm">{m.carte_projects_subtitle()}</p>
         </div>
 
-        <form
-          class="flex flex-col gap-2 sm:flex-row"
-          onsubmit={(e) => {
-            e.preventDefault();
-            void handleCreateProject();
-          }}
-        >
-          <input
-            bind:value={newProjectName}
-            placeholder={m.carte_project_name_placeholder()}
-            class="border-cn-border bg-cn-bg/30 text-text-main min-w-0 flex-1 rounded-xl border px-4 py-2.5 text-sm"
-          />
-          <button
-            type="submit"
-            disabled={creatingProject || !newProjectName.trim()}
-            class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
+        <!-- Creating a map leads straight into an editor a finger cannot use, so the form is
+             absent there rather than offering a dead end. -->
+        {#if coarsePointer}
+          <p class="text-text-muted text-sm">{m.carte_desktop_only_short()}</p>
+        {:else}
+          <form
+            class="flex flex-col gap-2 sm:flex-row"
+            onsubmit={(e) => {
+              e.preventDefault();
+              void handleCreateProject();
+            }}
           >
-            <Plus size={16} />
-            {creatingProject ? m.common_saving_label() : m.carte_project_create_button()}
-          </button>
-        </form>
+            <input
+              bind:value={newProjectName}
+              placeholder={m.carte_project_name_placeholder()}
+              class="border-cn-border bg-cn-bg/30 text-text-main min-w-0 flex-1 rounded-xl border px-4 py-2.5 text-sm"
+            />
+            <button
+              type="submit"
+              disabled={creatingProject || !newProjectName.trim()}
+              class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
+            >
+              <Plus size={16} />
+              {creatingProject ? m.common_saving_label() : m.carte_project_create_button()}
+            </button>
+          </form>
+        {/if}
 
         <div
           class="border-cn-border divide-cn-border/70 divide-y overflow-hidden rounded-2xl border bg-(--cn-surface)"

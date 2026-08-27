@@ -36,6 +36,19 @@ const SRC = resolve(here, '../..');
 /** `fetch('/api/…')` / `fetch("/api/…")` / `fetch(`/api/…`)`, with any whitespace after the paren. */
 const RELATIVE_API_FETCH = /\bfetch\(\s*[`'"]\/api\//;
 
+/**
+ * `src="/api/…"` and `src={`/api/…`}` - the same defect one element over, and QUIETER.
+ *
+ * A `fetch` at least returns something a caller can misread; an `<img>` pointed at the Tauri asset
+ * server is handed `index.html`, fails to decode, fires `onerror`, and a component with an initials
+ * placeholder shows the placeholder. Nothing is thrown and nothing is logged. That is how the Carte
+ * de la Vie Asso shipped with every president photo and every association logo missing on mobile.
+ *
+ * The fix is `apiAssetUrl()`, which leaves an already-absolute URL (including `data:` and `blob:`)
+ * exactly as it is.
+ */
+const RELATIVE_API_SRC = /\bsrc=[{]?\s*[`'"]\/api\//;
+
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir)) {
@@ -58,6 +71,19 @@ describe('API calls are addressed absolutely', () => {
       `Use a base from $lib/utils/apiUrl (coreUrl/socialUrl/gatewayUrl/deliveryUrl) or ` +
         `historyBaseUrl. A relative /api/ path resolves to the Tauri asset server on mobile and ` +
         `returns index.html with status 200, so res.ok is true and the response is HTML.`
+    ).toEqual([]);
+  });
+
+  it('has no element src pointing at a relative /api/ path anywhere in src', () => {
+    const offenders = sourceFiles(SRC)
+      .filter((file) => RELATIVE_API_SRC.test(readFileSync(file, 'utf8')))
+      .map((file) => relative(SRC, file).replace(/\\/g, '/'));
+
+    expect(
+      offenders,
+      `Wrap the path in apiAssetUrl() from $lib/utils/apiUrl. On mobile a relative /api/ src is ` +
+        `served index.html by the Tauri asset server: the image fails to decode, onerror fires, and ` +
+        `a component with a placeholder shows the placeholder forever - silently.`
     ).toEqual([]);
   });
 });

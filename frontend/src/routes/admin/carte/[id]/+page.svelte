@@ -32,6 +32,8 @@
   import { exportPosterPdf } from '$lib/carte/export';
   import { buildPublishedCarte } from '$lib/carte/publish';
   import PosterCanvas from '$lib/components/carte/PosterCanvas.svelte';
+  import { MonitorSmartphone } from '@lucide/svelte';
+  import { isCoarsePointerDevice, onCoarsePointerChange } from '$lib/utils/pointerDevice';
   import ColorPicker from '$lib/components/ui/ColorPicker.svelte';
   import {
     ArrowLeft,
@@ -369,6 +371,24 @@
     }
   }
 
+  /**
+   * Arranging bubbles means dragging and resizing objects a finger covers while it moves them, on a
+   * poster wider than any phone. The editor is therefore offered to a mouse only - the poster stays
+   * viewable, exportable and publishable everywhere. Asked for on 2026-08-27: *"j'aimerais rendre
+   * l'edition impossible sur mobile, trop complexe, il faut ne la rendre possible que sur le PC."*
+   *
+   * The pointer decides, not the width: a narrow desktop window still has a mouse.
+   */
+  let coarsePointer = $state(false);
+  const canEdit = $derived(!coarsePointer);
+
+  // An `$effect` rather than `onMount`: this one is async, and Svelte honours a returned teardown
+  // only from a synchronous `onMount`. The subscription would never be detached.
+  $effect(() => {
+    coarsePointer = isCoarsePointerDevice();
+    return onCoarsePointerChange((coarse) => (coarsePointer = coarse));
+  });
+
   onMount(async () => {
     await ensureAssociationSuperAdmin();
     if (!isGlobalAdmin() && !isAssociationSuperAdmin()) {
@@ -400,7 +420,9 @@
       <p class="text-sm text-red-500" role="alert">{error}</p>
     {:else if project && model}
       <header class="flex flex-wrap items-center justify-between gap-3">
-        {#if editingName}
+        {#if !canEdit}
+          <h2 class="text-text-main text-lg font-extrabold">{project.name}</h2>
+        {:else if editingName}
           <input
             bind:this={nameInputEl}
             bind:value={editedName}
@@ -425,20 +447,22 @@
           </button>
         {/if}
         <div class="flex items-center gap-2">
-          <button
-            type="button"
-            onclick={handleSave}
-            disabled={saving}
-            class="border-cn-border text-text-main hover:bg-cn-bg inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold disabled:opacity-50"
-          >
-            {#if saved}
-              <Check size={16} />
-              {m.carte_saved_label()}
-            {:else}
-              <Save size={16} />
-              {saving ? m.carte_saving_label() : m.carte_save_button()}
-            {/if}
-          </button>
+          {#if canEdit}
+            <button
+              type="button"
+              onclick={handleSave}
+              disabled={saving}
+              class="border-cn-border text-text-main hover:bg-cn-bg inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold disabled:opacity-50"
+            >
+              {#if saved}
+                <Check size={16} />
+                {m.carte_saved_label()}
+              {:else}
+                <Save size={16} />
+                {saving ? m.carte_saving_label() : m.carte_save_button()}
+              {/if}
+            </button>
+          {/if}
           <button
             type="button"
             onclick={handlePublish}
@@ -472,8 +496,20 @@
         <p class="text-sm text-red-500" role="alert">{error}</p>
       {/if}
 
+      {#if !canEdit}
+        <div
+          class="border-cn-border bg-cn-surface-alt flex items-start gap-3 rounded-2xl border p-4"
+        >
+          <MonitorSmartphone size={18} class="text-text-muted mt-0.5 shrink-0" />
+          <div>
+            <p class="text-text-main text-sm font-bold">{m.carte_desktop_only_title()}</p>
+            <p class="text-text-muted mt-0.5 text-sm">{m.carte_desktop_only_body()}</p>
+          </div>
+        </div>
+      {/if}
+
       <div
-        class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px] {isFullPage
+        class="grid gap-4 {canEdit ? 'lg:grid-cols-[minmax(0,1fr)_300px]' : ''} {isFullPage
           ? 'bg-cn-bg fixed inset-0 z-50 overflow-auto p-5'
           : ''}"
       >
@@ -527,7 +563,7 @@
                   {theme}
                   {background}
                   {directoryVisible}
-                  editable
+                  editable={canEdit}
                   {viewScale}
                   {selectedId}
                   {selectedDecorationId}
@@ -542,396 +578,399 @@
           </div>
         </div>
 
-        <!-- Settings + per-bubble property panel -->
-        <div class="space-y-4">
-          <section class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface) p-4">
-            <div class="flex items-center justify-between gap-2">
-              <h3 class="text-text-main text-sm font-bold">
-                {m.carte_settings_heading()}
-              </h3>
-              <button
-                type="button"
-                onclick={toggleFullPage}
-                class="border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold"
-              >
-                {#if isFullPage}
-                  <Minimize size={14} />
-                  {m.carte_fullpage_exit()}
-                {:else}
-                  <Maximize size={14} />
-                  {m.carte_fullpage_enter()}
-                {/if}
-              </button>
-            </div>
-
-            <div class="flex flex-wrap items-center gap-3">
-              <span class="text-text-muted block text-xs font-semibold"
-                >{m.carte_background_label()}</span
-              >
-              <label
-                class="border-cn-border text-text-main hover:bg-cn-bg inline-flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-1.5 text-sm font-semibold"
-              >
-                <ImagePlus size={15} />
-                {m.carte_background_upload()}
-                <input type="file" accept="image/*" class="hidden" onchange={onBackgroundFile} />
-              </label>
-              {#if bgDataUrl}
+        <!-- Settings + per-bubble property panel. Every control in it writes the layout, so the
+             column is absent rather than disabled where editing is not offered. -->
+        {#if canEdit}
+          <div class="space-y-4">
+            <section class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface) p-4">
+              <div class="flex items-center justify-between gap-2">
+                <h3 class="text-text-main text-sm font-bold">
+                  {m.carte_settings_heading()}
+                </h3>
                 <button
                   type="button"
-                  onclick={() => (bgDataUrl = null)}
-                  class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-sm font-semibold"
+                  onclick={toggleFullPage}
+                  class="border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold"
                 >
-                  <X size={15} />
-                  {m.carte_background_clear()}
+                  {#if isFullPage}
+                    <Minimize size={14} />
+                    {m.carte_fullpage_exit()}
+                  {:else}
+                    <Maximize size={14} />
+                    {m.carte_fullpage_enter()}
+                  {/if}
                 </button>
-                <label class="text-text-muted inline-flex items-center gap-2 text-xs">
-                  {m.carte_scrim_label()}
-                  <input
-                    type="range"
-                    min="0"
-                    max="80"
-                    bind:value={scrimOpacity}
-                    class="accent-cn-yellow"
-                  />
-                </label>
-              {/if}
-            </div>
-
-            <label class="text-text-muted inline-flex items-center gap-2 text-xs font-semibold">
-              <input type="checkbox" bind:checked={directoryVisible} class="accent-cn-yellow" />
-              {m.carte_directory_toggle()}
-            </label>
-
-            <div class="text-text-muted flex items-center gap-2 text-xs font-semibold">
-              <span>{m.carte_title_color_label()}</span>
-              <ColorPicker bind:value={titleColor} label={m.carte_title_color_label()} />
-            </div>
-
-            <p class="text-text-muted text-xs">{m.carte_editor_hint()}</p>
-            <p class="text-text-muted text-xs">{m.carte_generated_note()}</p>
-          </section>
-
-          <!-- Add-element palette -->
-          <section class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface) p-4">
-            <h3 class="text-text-main text-sm font-bold">
-              {m.carte_elements_heading()}
-            </h3>
-            <button
-              type="button"
-              onclick={addText}
-              class="border-cn-border text-text-main hover:bg-cn-bg inline-flex items-center gap-2 rounded-xl border px-3 py-1.5 text-sm font-semibold"
-            >
-              <Type size={15} />
-              {m.carte_add_text()}
-            </button>
-          </section>
-
-          {#if selectedDecoration}
-            <!-- Selected-decoration property panel -->
-            <section class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface) p-4">
-              <h3 class="text-text-main text-sm font-bold">
-                {m.carte_deco_heading()}
-              </h3>
-
-              {#if selectedTextDeco}
-                <label class="block space-y-1">
-                  <span class="text-text-muted block text-xs font-semibold"
-                    >{m.carte_deco_content()}</span
-                  >
-                  <textarea
-                    value={selectedTextDeco.content}
-                    oninput={(e) =>
-                      patchDecoration(selectedTextDeco.id, {
-                        content: e.currentTarget.value,
-                      })}
-                    rows="2"
-                    class="border-cn-border text-text-main w-full resize-y rounded-lg border bg-transparent px-2 py-1.5 text-sm"
-                  ></textarea>
-                </label>
-              {/if}
+              </div>
 
               <div class="flex flex-wrap items-center gap-3">
-                <div class="text-text-muted flex items-center gap-2 text-xs font-semibold">
-                  {m.carte_panel_color()}
-                  <ColorPicker
-                    value={selectedDecoration.color}
-                    label={m.carte_panel_color()}
-                    onChange={(hex) => patchDecoration(selectedDecoration.id, { color: hex })}
-                  />
-                </div>
-                {#if selectedTextDeco}
-                  <label class="text-text-muted flex items-center gap-2 text-xs font-semibold">
+                <span class="text-text-muted block text-xs font-semibold"
+                  >{m.carte_background_label()}</span
+                >
+                <label
+                  class="border-cn-border text-text-main hover:bg-cn-bg inline-flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-1.5 text-sm font-semibold"
+                >
+                  <ImagePlus size={15} />
+                  {m.carte_background_upload()}
+                  <input type="file" accept="image/*" class="hidden" onchange={onBackgroundFile} />
+                </label>
+                {#if bgDataUrl}
+                  <button
+                    type="button"
+                    onclick={() => (bgDataUrl = null)}
+                    class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-sm font-semibold"
+                  >
+                    <X size={15} />
+                    {m.carte_background_clear()}
+                  </button>
+                  <label class="text-text-muted inline-flex items-center gap-2 text-xs">
+                    {m.carte_scrim_label()}
                     <input
-                      type="checkbox"
-                      checked={selectedTextDeco.bold}
-                      onchange={(e) =>
-                        patchDecoration(selectedTextDeco.id, {
-                          bold: e.currentTarget.checked,
-                        })}
+                      type="range"
+                      min="0"
+                      max="80"
+                      bind:value={scrimOpacity}
                       class="accent-cn-yellow"
                     />
-                    {m.carte_deco_bold()}
                   </label>
                 {/if}
               </div>
 
-              {#if selectedTextDeco}
-                <div class="flex flex-wrap items-center gap-1.5">
-                  {#each [{ v: 'left', icon: TextAlignStart, label: m.carte_align_left() }, { v: 'center', icon: TextAlignCenter, label: m.carte_align_center() }, { v: 'right', icon: TextAlignEnd, label: m.carte_align_right() }] as opt (opt.v)}
-                    <button
-                      type="button"
-                      aria-label={opt.label}
-                      onclick={() =>
-                        patchDecoration(selectedTextDeco.id, {
-                          align: opt.v as 'left' | 'center' | 'right',
-                        })}
-                      class="inline-flex items-center justify-center rounded-lg border px-2 py-1 transition-colors
-                      {selectedTextDeco.align === opt.v
-                        ? 'border-cn-yellow bg-cn-yellow/15 text-cn-dark'
-                        : 'border-cn-border text-text-muted hover:text-text-main'}"
-                    >
-                      <opt.icon size={14} />
-                    </button>
-                  {/each}
-                </div>
-              {/if}
-
-              <div class="flex flex-wrap gap-2 pt-1">
-                <button
-                  type="button"
-                  onclick={() => decoBringToFront(selectedDecoration.id)}
-                  class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold"
-                >
-                  <BringToFront size={13} />
-                  {m.carte_panel_front()}
-                </button>
-                <button
-                  type="button"
-                  onclick={() => decoSendToBack(selectedDecoration.id)}
-                  class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold"
-                >
-                  <SendToBack size={13} />
-                  {m.carte_panel_back()}
-                </button>
-                <button
-                  type="button"
-                  onclick={() => deleteDecoration(selectedDecoration.id)}
-                  class="inline-flex items-center gap-1.5 rounded-lg border border-red-500/40 px-2.5 py-1 text-xs font-semibold text-red-500 hover:bg-red-500/10"
-                >
-                  <Trash2 size={13} />
-                  {m.carte_deco_delete()}
-                </button>
-              </div>
-            </section>
-          {/if}
-
-          <!-- Selected-bubble property panel -->
-          <section class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface) p-4">
-            <h3 class="text-text-main text-sm font-bold">
-              {m.carte_panel_heading()}
-            </h3>
-            {#if selectedBubble && selectedContent}
-              <p class="text-text-main text-sm font-extrabold">
-                {selectedContent.name}
-              </p>
+              <label class="text-text-muted inline-flex items-center gap-2 text-xs font-semibold">
+                <input type="checkbox" bind:checked={directoryVisible} class="accent-cn-yellow" />
+                {m.carte_directory_toggle()}
+              </label>
 
               <div class="text-text-muted flex items-center gap-2 text-xs font-semibold">
-                {m.carte_panel_color()}
-                <ColorPicker
-                  value={selectedBubble.colorOverride ?? selectedContent.color}
-                  label={m.carte_panel_color()}
-                  onChange={(hex) => patchBubble(selectedBubble.assoId, { colorOverride: hex })}
-                />
-                {#if selectedBubble.colorOverride}
-                  <button
-                    type="button"
-                    onclick={() =>
-                      patchBubble(selectedBubble.assoId, {
-                        colorOverride: null,
-                      })}
-                    class="text-text-muted hover:text-text-main underline"
-                  >
-                    {m.carte_panel_color_reset()}
-                  </button>
-                {/if}
+                <span>{m.carte_title_color_label()}</span>
+                <ColorPicker bind:value={titleColor} label={m.carte_title_color_label()} />
               </div>
 
-              <div class="space-y-1.5">
-                <span class="text-text-muted block text-xs font-semibold"
-                  >{m.carte_shape_label()}</span
-                >
-                <div class="flex flex-wrap gap-1.5">
-                  {#each CARTE_SHAPES as sh, i (sh.key)}
-                    <button
-                      type="button"
-                      aria-label={m.carte_shape_option({ n: i + 1 })}
-                      onclick={() => patchBubble(selectedBubble.assoId, { shape: sh.key })}
-                      class="h-8 w-8 border p-1 transition-colors {selectedBubble.shape === sh.key
-                        ? 'border-cn-yellow text-cn-yellow'
-                        : 'border-cn-border text-text-muted hover:text-text-main'}"
+              <p class="text-text-muted text-xs">{m.carte_editor_hint()}</p>
+              <p class="text-text-muted text-xs">{m.carte_generated_note()}</p>
+            </section>
+
+            <!-- Add-element palette -->
+            <section class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface) p-4">
+              <h3 class="text-text-main text-sm font-bold">
+                {m.carte_elements_heading()}
+              </h3>
+              <button
+                type="button"
+                onclick={addText}
+                class="border-cn-border text-text-main hover:bg-cn-bg inline-flex items-center gap-2 rounded-xl border px-3 py-1.5 text-sm font-semibold"
+              >
+                <Type size={15} />
+                {m.carte_add_text()}
+              </button>
+            </section>
+
+            {#if selectedDecoration}
+              <!-- Selected-decoration property panel -->
+              <section class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface) p-4">
+                <h3 class="text-text-main text-sm font-bold">
+                  {m.carte_deco_heading()}
+                </h3>
+
+                {#if selectedTextDeco}
+                  <label class="block space-y-1">
+                    <span class="text-text-muted block text-xs font-semibold"
+                      >{m.carte_deco_content()}</span
                     >
-                      <span
-                        class="block h-full w-full bg-current"
-                        style:border-radius={shapeRadius(sh.key)}
-                      ></span>
-                    </button>
-                  {/each}
-                </div>
-              </div>
-
-              <div class="space-y-1.5">
-                <span class="text-text-muted block text-xs font-semibold"
-                  >{m.carte_logo_shape_label()}</span
-                >
-                <div class="flex flex-wrap gap-1.5">
-                  {#each LOGO_SHAPES as ls, i (ls.key)}
-                    {@const max = Math.max(ls.w, ls.h)}
-                    <button
-                      type="button"
-                      aria-label={m.carte_logo_shape_option({ n: i + 1 })}
-                      onclick={() =>
-                        patchBubble(selectedBubble.assoId, {
-                          logoShape: ls.key,
+                    <textarea
+                      value={selectedTextDeco.content}
+                      oninput={(e) =>
+                        patchDecoration(selectedTextDeco.id, {
+                          content: e.currentTarget.value,
                         })}
-                      class="flex h-8 w-8 items-center justify-center border p-1 transition-colors {selectedBubble.logoShape ===
-                      ls.key
-                        ? 'border-cn-yellow text-cn-yellow'
-                        : 'border-cn-border text-text-muted hover:text-text-main'}"
-                    >
-                      <span
-                        class="block bg-current"
-                        style:width="{(ls.w / max) * 100}%"
-                        style:height="{(ls.h / max) * 100}%"
-                        style:border-radius={logoShape(ls.key).radius}
-                      ></span>
-                    </button>
-                  {/each}
-                </div>
-              </div>
+                      rows="2"
+                      class="border-cn-border text-text-main w-full resize-y rounded-lg border bg-transparent px-2 py-1.5 text-sm"
+                    ></textarea>
+                  </label>
+                {/if}
 
-              <div class="border-cn-border space-y-1.5 border-t pt-2">
-                <span class="text-text-muted block text-xs font-semibold"
-                  >Membres affichés (Max 7)</span
-                >
-                <div class="space-y-1">
-                  {#if selectedContent}
-                    {@const defaultSelected = selectedContent.members
-                      .filter((m) => m.isAdmin)
-                      .slice(0, 7)
-                      .map((m) => m.userId)}
-                    {@const admins = selectedContent.members.filter((m) => m.isAdmin)}
-                    {@const nonAdmins = selectedContent.members.filter((m) => !m.isAdmin)}
-
-                    {#each admins as member (member.userId)}
-                      {@const isSelected = selectedBubble.selectedBureau
-                        ? selectedBubble.selectedBureau.includes(member.userId)
-                        : defaultSelected.includes(member.userId)}
-                      {@const maxReached =
-                        (selectedBubble.selectedBureau || defaultSelected).length >= 7}
-                      <label
-                        class="text-text-main flex items-center gap-2 text-xs {maxReached &&
-                        !isSelected
-                          ? 'opacity-50'
-                          : ''}"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          disabled={maxReached && !isSelected}
-                          onchange={(e) => {
-                            let next = selectedBubble.selectedBureau
-                              ? [...selectedBubble.selectedBureau]
-                              : [...defaultSelected];
-                            if (e.currentTarget.checked) {
-                              if (!next.includes(member.userId)) next.push(member.userId);
-                            } else {
-                              next = next.filter((id) => id !== member.userId);
-                            }
-                            patchBubble(selectedBubble.assoId, {
-                              selectedBureau: next,
-                            });
-                          }}
-                          class="accent-cn-yellow"
-                        />
-                        {member.name}
-                        {member.role ? `- ${member.role}` : ''}
-                      </label>
-                    {/each}
-
-                    {#if nonAdmins.length > 0 && admins.length > 0}
-                      <div class="border-cn-border my-1.5 border-t opacity-50"></div>
-                    {/if}
-
-                    {#each nonAdmins as member (member.userId)}
-                      {@const isSelected = selectedBubble.selectedBureau
-                        ? selectedBubble.selectedBureau.includes(member.userId)
-                        : defaultSelected.includes(member.userId)}
-                      {@const maxReached =
-                        (selectedBubble.selectedBureau || defaultSelected).length >= 7}
-                      <label
-                        class="text-text-main flex items-center gap-2 text-xs {maxReached &&
-                        !isSelected
-                          ? 'opacity-50'
-                          : ''}"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          disabled={maxReached && !isSelected}
-                          onchange={(e) => {
-                            let next = selectedBubble.selectedBureau
-                              ? [...selectedBubble.selectedBureau]
-                              : [...defaultSelected];
-                            if (e.currentTarget.checked) {
-                              if (!next.includes(member.userId)) next.push(member.userId);
-                            } else {
-                              next = next.filter((id) => id !== member.userId);
-                            }
-                            patchBubble(selectedBubble.assoId, {
-                              selectedBureau: next,
-                            });
-                          }}
-                          class="accent-cn-yellow"
-                        />
-                        {member.name}
-                        {member.role ? `- ${member.role}` : ''}
-                      </label>
-                    {/each}
+                <div class="flex flex-wrap items-center gap-3">
+                  <div class="text-text-muted flex items-center gap-2 text-xs font-semibold">
+                    {m.carte_panel_color()}
+                    <ColorPicker
+                      value={selectedDecoration.color}
+                      label={m.carte_panel_color()}
+                      onChange={(hex) => patchDecoration(selectedDecoration.id, { color: hex })}
+                    />
+                  </div>
+                  {#if selectedTextDeco}
+                    <label class="text-text-muted flex items-center gap-2 text-xs font-semibold">
+                      <input
+                        type="checkbox"
+                        checked={selectedTextDeco.bold}
+                        onchange={(e) =>
+                          patchDecoration(selectedTextDeco.id, {
+                            bold: e.currentTarget.checked,
+                          })}
+                        class="accent-cn-yellow"
+                      />
+                      {m.carte_deco_bold()}
+                    </label>
                   {/if}
                 </div>
-              </div>
 
-              <div class="flex flex-wrap gap-2 pt-1">
-                <button
-                  type="button"
-                  onclick={() => bringToFront(selectedBubble.assoId)}
-                  class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold"
-                >
-                  <BringToFront size={13} />
-                  {m.carte_panel_front()}
-                </button>
-                <button
-                  type="button"
-                  onclick={() => sendToBack(selectedBubble.assoId)}
-                  class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold"
-                >
-                  <SendToBack size={13} />
-                  {m.carte_panel_back()}
-                </button>
-                <button
-                  type="button"
-                  onclick={() => resetBubble(selectedBubble.assoId)}
-                  class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold"
-                >
-                  <RotateCcw size={13} />
-                  {m.carte_panel_reset()}
-                </button>
-              </div>
-            {:else}
-              <p class="text-text-muted text-xs">{m.carte_panel_empty()}</p>
+                {#if selectedTextDeco}
+                  <div class="flex flex-wrap items-center gap-1.5">
+                    {#each [{ v: 'left', icon: TextAlignStart, label: m.carte_align_left() }, { v: 'center', icon: TextAlignCenter, label: m.carte_align_center() }, { v: 'right', icon: TextAlignEnd, label: m.carte_align_right() }] as opt (opt.v)}
+                      <button
+                        type="button"
+                        aria-label={opt.label}
+                        onclick={() =>
+                          patchDecoration(selectedTextDeco.id, {
+                            align: opt.v as 'left' | 'center' | 'right',
+                          })}
+                        class="inline-flex items-center justify-center rounded-lg border px-2 py-1 transition-colors
+                      {selectedTextDeco.align === opt.v
+                          ? 'border-cn-yellow bg-cn-yellow/15 text-cn-dark'
+                          : 'border-cn-border text-text-muted hover:text-text-main'}"
+                      >
+                        <opt.icon size={14} />
+                      </button>
+                    {/each}
+                  </div>
+                {/if}
+
+                <div class="flex flex-wrap gap-2 pt-1">
+                  <button
+                    type="button"
+                    onclick={() => decoBringToFront(selectedDecoration.id)}
+                    class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold"
+                  >
+                    <BringToFront size={13} />
+                    {m.carte_panel_front()}
+                  </button>
+                  <button
+                    type="button"
+                    onclick={() => decoSendToBack(selectedDecoration.id)}
+                    class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold"
+                  >
+                    <SendToBack size={13} />
+                    {m.carte_panel_back()}
+                  </button>
+                  <button
+                    type="button"
+                    onclick={() => deleteDecoration(selectedDecoration.id)}
+                    class="inline-flex items-center gap-1.5 rounded-lg border border-red-500/40 px-2.5 py-1 text-xs font-semibold text-red-500 hover:bg-red-500/10"
+                  >
+                    <Trash2 size={13} />
+                    {m.carte_deco_delete()}
+                  </button>
+                </div>
+              </section>
             {/if}
-          </section>
-        </div>
+
+            <!-- Selected-bubble property panel -->
+            <section class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface) p-4">
+              <h3 class="text-text-main text-sm font-bold">
+                {m.carte_panel_heading()}
+              </h3>
+              {#if selectedBubble && selectedContent}
+                <p class="text-text-main text-sm font-extrabold">
+                  {selectedContent.name}
+                </p>
+
+                <div class="text-text-muted flex items-center gap-2 text-xs font-semibold">
+                  {m.carte_panel_color()}
+                  <ColorPicker
+                    value={selectedBubble.colorOverride ?? selectedContent.color}
+                    label={m.carte_panel_color()}
+                    onChange={(hex) => patchBubble(selectedBubble.assoId, { colorOverride: hex })}
+                  />
+                  {#if selectedBubble.colorOverride}
+                    <button
+                      type="button"
+                      onclick={() =>
+                        patchBubble(selectedBubble.assoId, {
+                          colorOverride: null,
+                        })}
+                      class="text-text-muted hover:text-text-main underline"
+                    >
+                      {m.carte_panel_color_reset()}
+                    </button>
+                  {/if}
+                </div>
+
+                <div class="space-y-1.5">
+                  <span class="text-text-muted block text-xs font-semibold"
+                    >{m.carte_shape_label()}</span
+                  >
+                  <div class="flex flex-wrap gap-1.5">
+                    {#each CARTE_SHAPES as sh, i (sh.key)}
+                      <button
+                        type="button"
+                        aria-label={m.carte_shape_option({ n: i + 1 })}
+                        onclick={() => patchBubble(selectedBubble.assoId, { shape: sh.key })}
+                        class="h-8 w-8 border p-1 transition-colors {selectedBubble.shape === sh.key
+                          ? 'border-cn-yellow text-cn-yellow'
+                          : 'border-cn-border text-text-muted hover:text-text-main'}"
+                      >
+                        <span
+                          class="block h-full w-full bg-current"
+                          style:border-radius={shapeRadius(sh.key)}
+                        ></span>
+                      </button>
+                    {/each}
+                  </div>
+                </div>
+
+                <div class="space-y-1.5">
+                  <span class="text-text-muted block text-xs font-semibold"
+                    >{m.carte_logo_shape_label()}</span
+                  >
+                  <div class="flex flex-wrap gap-1.5">
+                    {#each LOGO_SHAPES as ls, i (ls.key)}
+                      {@const max = Math.max(ls.w, ls.h)}
+                      <button
+                        type="button"
+                        aria-label={m.carte_logo_shape_option({ n: i + 1 })}
+                        onclick={() =>
+                          patchBubble(selectedBubble.assoId, {
+                            logoShape: ls.key,
+                          })}
+                        class="flex h-8 w-8 items-center justify-center border p-1 transition-colors {selectedBubble.logoShape ===
+                        ls.key
+                          ? 'border-cn-yellow text-cn-yellow'
+                          : 'border-cn-border text-text-muted hover:text-text-main'}"
+                      >
+                        <span
+                          class="block bg-current"
+                          style:width="{(ls.w / max) * 100}%"
+                          style:height="{(ls.h / max) * 100}%"
+                          style:border-radius={logoShape(ls.key).radius}
+                        ></span>
+                      </button>
+                    {/each}
+                  </div>
+                </div>
+
+                <div class="border-cn-border space-y-1.5 border-t pt-2">
+                  <span class="text-text-muted block text-xs font-semibold"
+                    >Membres affichés (Max 7)</span
+                  >
+                  <div class="space-y-1">
+                    {#if selectedContent}
+                      {@const defaultSelected = selectedContent.members
+                        .filter((m) => m.isAdmin)
+                        .slice(0, 7)
+                        .map((m) => m.userId)}
+                      {@const admins = selectedContent.members.filter((m) => m.isAdmin)}
+                      {@const nonAdmins = selectedContent.members.filter((m) => !m.isAdmin)}
+
+                      {#each admins as member (member.userId)}
+                        {@const isSelected = selectedBubble.selectedBureau
+                          ? selectedBubble.selectedBureau.includes(member.userId)
+                          : defaultSelected.includes(member.userId)}
+                        {@const maxReached =
+                          (selectedBubble.selectedBureau || defaultSelected).length >= 7}
+                        <label
+                          class="text-text-main flex items-center gap-2 text-xs {maxReached &&
+                          !isSelected
+                            ? 'opacity-50'
+                            : ''}"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            disabled={maxReached && !isSelected}
+                            onchange={(e) => {
+                              let next = selectedBubble.selectedBureau
+                                ? [...selectedBubble.selectedBureau]
+                                : [...defaultSelected];
+                              if (e.currentTarget.checked) {
+                                if (!next.includes(member.userId)) next.push(member.userId);
+                              } else {
+                                next = next.filter((id) => id !== member.userId);
+                              }
+                              patchBubble(selectedBubble.assoId, {
+                                selectedBureau: next,
+                              });
+                            }}
+                            class="accent-cn-yellow"
+                          />
+                          {member.name}
+                          {member.role ? `- ${member.role}` : ''}
+                        </label>
+                      {/each}
+
+                      {#if nonAdmins.length > 0 && admins.length > 0}
+                        <div class="border-cn-border my-1.5 border-t opacity-50"></div>
+                      {/if}
+
+                      {#each nonAdmins as member (member.userId)}
+                        {@const isSelected = selectedBubble.selectedBureau
+                          ? selectedBubble.selectedBureau.includes(member.userId)
+                          : defaultSelected.includes(member.userId)}
+                        {@const maxReached =
+                          (selectedBubble.selectedBureau || defaultSelected).length >= 7}
+                        <label
+                          class="text-text-main flex items-center gap-2 text-xs {maxReached &&
+                          !isSelected
+                            ? 'opacity-50'
+                            : ''}"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            disabled={maxReached && !isSelected}
+                            onchange={(e) => {
+                              let next = selectedBubble.selectedBureau
+                                ? [...selectedBubble.selectedBureau]
+                                : [...defaultSelected];
+                              if (e.currentTarget.checked) {
+                                if (!next.includes(member.userId)) next.push(member.userId);
+                              } else {
+                                next = next.filter((id) => id !== member.userId);
+                              }
+                              patchBubble(selectedBubble.assoId, {
+                                selectedBureau: next,
+                              });
+                            }}
+                            class="accent-cn-yellow"
+                          />
+                          {member.name}
+                          {member.role ? `- ${member.role}` : ''}
+                        </label>
+                      {/each}
+                    {/if}
+                  </div>
+                </div>
+
+                <div class="flex flex-wrap gap-2 pt-1">
+                  <button
+                    type="button"
+                    onclick={() => bringToFront(selectedBubble.assoId)}
+                    class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold"
+                  >
+                    <BringToFront size={13} />
+                    {m.carte_panel_front()}
+                  </button>
+                  <button
+                    type="button"
+                    onclick={() => sendToBack(selectedBubble.assoId)}
+                    class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold"
+                  >
+                    <SendToBack size={13} />
+                    {m.carte_panel_back()}
+                  </button>
+                  <button
+                    type="button"
+                    onclick={() => resetBubble(selectedBubble.assoId)}
+                    class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold"
+                  >
+                    <RotateCcw size={13} />
+                    {m.carte_panel_reset()}
+                  </button>
+                </div>
+              {:else}
+                <p class="text-text-muted text-xs">{m.carte_panel_empty()}</p>
+              {/if}
+            </section>
+          </div>
+        {/if}
       </div>
     {/if}
   </div>

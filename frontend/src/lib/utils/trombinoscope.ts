@@ -1,4 +1,5 @@
 import { generateAvatarColor, getInitials } from './avatar';
+import { apiAssetUrl } from './apiUrl';
 import { exportSearchablePdf } from '$lib/pdf/searchableRaster';
 import type { Association, AssociationMember } from '$lib/associations/api';
 
@@ -30,7 +31,7 @@ export async function exportTrombinoscope(
   const safe = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
   const logoHtml = asso.logoUrl
-    ? `<img src="${asso.logoUrl}" style="width:72px;height:72px;border-radius:50%;object-fit:cover;flex-shrink:0;" />`
+    ? `<img src="${apiAssetUrl(asso.logoUrl)}" style="width:72px;height:72px;border-radius:50%;object-fit:cover;flex-shrink:0;" />`
     : (() => {
         const bg = generateAvatarColor(asso.id);
         return `<div style="width:72px;height:72px;border-radius:50%;background:${bg};display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:700;color:#fff;flex-shrink:0;">${getInitials(asso.name)}</div>`;
@@ -45,7 +46,7 @@ export async function exportTrombinoscope(
       return `
         <div style="display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;width:110px;">
           <div style="position:relative;width:72px;height:72px;border-radius:50%;overflow:hidden;flex-shrink:0;">
-            <img src="/api/users/${encodeURIComponent(m.userId)}/avatar"
+            <img src="${apiAssetUrl(`/api/users/${encodeURIComponent(m.userId)}/avatar`)}"
                  style="width:72px;height:72px;object-fit:cover;border-radius:50%;display:block;"
                  onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" />
             <div style="display:none;position:absolute;inset:0;background:${bg};align-items:center;justify-content:center;font-size:22px;font-weight:700;color:#fff;border-radius:50%;">${initials}</div>

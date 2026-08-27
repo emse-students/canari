@@ -1,5 +1,6 @@
 <script lang="ts">
   import { generateAvatarPlaceholder, getInitials } from '$lib/utils/avatar';
+  import { coreUrl } from '$lib/utils/apiUrl';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import {
     releaseUserAvatarDisplayUrl,
@@ -22,15 +23,6 @@
 
   let { userId, size = 'md', fill = false, shape = 'soft', fallbackLabel = '' }: Props = $props();
 
-  function getCoreUrl(): string {
-    const url =
-      typeof import.meta !== 'undefined'
-        ? ((import.meta as any).env?.VITE_CORE_URL as string | undefined)
-        : undefined;
-    if (url?.trim()) return url.trim();
-    return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3012';
-  }
-
   /**
    * WHETHER THERE IS ANYONE TO ASK ABOUT.
    *
@@ -43,7 +35,7 @@
    */
   const identified = $derived(userId.trim().length > 0);
 
-  const avatarSrc = $derived(`${getCoreUrl()}/api/users/${encodeURIComponent(userId)}/avatar`);
+  const avatarSrc = $derived(`${coreUrl()}/api/users/${encodeURIComponent(userId)}/avatar`);
   const _fallbackSrc = $derived(generateAvatarPlaceholder(userId));
 
   let imageFailed = $state(false);

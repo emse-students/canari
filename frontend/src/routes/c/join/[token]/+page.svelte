@@ -6,6 +6,7 @@
   import { describeCommunityRefusal } from '$lib/utils/chat/communityErrors';
   import { openInvitedChannel } from '$lib/utils/chat/notificationRouting';
   import { currentUserId } from '$lib/stores/user';
+  import { apiAssetUrl } from '$lib/utils/apiUrl';
   import { Users, LoaderCircle, CircleAlert } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -108,7 +109,7 @@
       >
         {#if preview.imageMediaId}
           <img
-            src="/api/media/public/{preview.imageMediaId}"
+            src={apiAssetUrl(`/api/media/public/${preview.imageMediaId}`)}
             alt=""
             class="h-full w-full object-cover"
           />

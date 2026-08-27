@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getInitials } from '$lib/utils/avatar';
+  import { apiAssetUrl } from '$lib/utils/apiUrl';
   import type { CarteStyle } from '$lib/carte/theme';
   import type { PosterModel, PosterBubble, PosterMemberRef } from '$lib/carte/generator';
   import {
@@ -452,7 +453,7 @@
     >
       <span>{getInitials(person.name)}</span>
       <img
-        src={`/api/users/${encodeURIComponent(person.userId)}/avatar`}
+        src={apiAssetUrl(`/api/users/${encodeURIComponent(person.userId)}/avatar`)}
         alt=""
         draggable="false"
         onerror={hideOnError}
@@ -614,7 +615,7 @@
             <span>{getInitials(data.name)}</span>
             {#if data.logoUrl}
               <img
-                src={data.logoUrl}
+                src={apiAssetUrl(data.logoUrl)}
                 alt=""
                 draggable="false"
                 onerror={hideOnError}

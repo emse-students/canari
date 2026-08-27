@@ -18,6 +18,37 @@ canvas, and rasterised to PDF through the existing snapdom pipeline.
 Gated behind `GlobalAdminOrBdeSuperAdminGuard` (already used for document-reviewers).
 The editor lives under `/admin` as a dashboard card.
 
+## Editing is desktop-only, and viewing is not
+
+Asked for on 2026-08-27: *"j'aimerais rendre l'edition impossible sur mobile, trop complexe, il faut
+ne la rendre possible que sur le PC."* Arranging bubbles means dragging and resizing objects a finger
+covers while it moves them, on a poster wider than any phone.
+
+**The predicate is the POINTER, never the viewport** (`isCoarsePointerDevice`, `(pointer: coarse)`):
+a narrow desktop window still has a mouse, and a large tablet still does not. A laptop with a
+touchscreen reports `fine` as its primary pointer and keeps the editor. It is watched rather than
+sampled once, so device emulation and a tablet gaining a mouse are both handled.
+
+Where the pointer is coarse the poster is still rendered, exportable to PDF and publishable - none of
+those is editing. What disappears: the canvas's `editable` flag, the settings and per-bubble property
+column (every control in it writes the layout, so it is ABSENT rather than disabled), the rename
+control, the Save button - there is nothing to save - and, on the project list, the create form,
+which otherwise leads straight into an editor that cannot be used.
+
+## Images on mobile: `apiAssetUrl`, always
+
+Both `<img>` sources on the poster - the president/bureau avatars (`/api/users/:id/avatar`) and the
+association logo (`logoUrl`, stored as `/api/media/public/:id`) - are app-RELATIVE paths. In a Tauri
+build the page is served from `tauri://localhost` (iOS) or `http://tauri.localhost` (Android), so
+they resolve against the shell and are answered with `index.html` by the asset server. The image
+fails to decode, `onerror` fires, the initials placeholder behind it shows through, and **nothing is
+logged anywhere**: the poster simply had no photos and no logos on mobile.
+
+Every such path goes through `apiAssetUrl()` from `$lib/utils/apiUrl`, which prefixes `coreUrl()` and
+leaves anything already carrying a scheme (including `data:` and `blob:`) untouched. Guarded by
+`apiUrl.absolute.test.ts`, which scans for `src=` as well as `fetch(` - the scanner had existed for
+the `fetch` spelling since 2026-08-11 and this defect walked past it.
+
 ## Data model
 
 ### 1. Thematic category (managed table + one primary category per asso)
