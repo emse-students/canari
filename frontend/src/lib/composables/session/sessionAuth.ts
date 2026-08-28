@@ -294,12 +294,19 @@ export async function resetDeviceAsFreshImpl(
  * teardown that the login path performs first, and it is the frame path that runs while the
  * service is live and could still write a key back.
  *
- * The five steps are ordered on purpose: tear the session down first, revoke the refresh cookie
- * while the network context still exists, and only then delete everything local - so nothing left
- * running can write a key back after the wipe. The PIN is cleared last because the wipe is what
- * makes it meaningless.
+ * The steps are ordered on purpose: STOP the session first, revoke the refresh credential while the
+ * network context still exists, and only then delete everything local - so nothing left running can
+ * write a key back after the wipe. The PIN is cleared last because the wipe is what makes it
+ * meaningless.
+ *
+ * "Tear the session down first" used to mean `resetMls()` alone, which nulls the client and stops
+ * nothing: measured on prod 2026-08-28, the SYNC_WATCHDOG ticked 1.25 s later, rebuilt the MLS
+ * database through `ensureMls()` and re-marked all ten groups not-ready - 8.2 MB of a device that
+ * had just been returned to a fresh install. `tearDownLiveSession` is that step done properly, and
+ * it runs BEFORE the first delete rather than alongside it.
  */
 export async function wipeRevokedDevice(ctx: SessionContext, cb: ChatSessionCallbacks) {
+  tearDownLiveSession(ctx, cb, 'revoked');
   ctx.resetMls();
   await resetDeviceAsFreshImpl(ctx, ctx.getUserId(), cb);
   await clearAuth();
@@ -1510,11 +1517,31 @@ export async function recoverPinImpl(
 }
 
 /**
- * Clears all session state (conversations, tokens, push registration),
- * deregisters the device push token, and redirects to /login.
+ * Stops everything this session is running, and stops it for good.
+ *
+ * ONE SEAM FOR "THIS SESSION IS OVER", because the two exits differ only in what they may still
+ * write. A sign-out and a revocation both leave a five-second watchdog, an outbox, four timers and
+ * a set of listeners behind, and only `logoutImpl` ever took them down: the revocation path set its
+ * flags and wiped the disk while the SYNC_WATCHDOG kept ticking. Measured on prod 2026-08-28:
+ * 1.25 s after a device was revoked and wiped, the watchdog found ten conversations still in memory
+ * and an empty WASM, and drove `requestReAdd` for all ten - re-marking every group not-ready and
+ * REBUILDING the MLS database through `ensureMls()`, which creates a client whenever it finds none.
+ * A wipe is not a wipe while something is still running that can put the state back.
+ *
+ * `reason` is the only discriminator, and both differences follow from it. A revoked device must not
+ * FLUSH its MLS state on the way out - that write is the one thing the wipe exists to remove - and
+ * must not deregister its push token, which the server already deleted when it revoked the device,
+ * so asking would earn a 401 and nothing else.
+ *
+ * It deliberately does NOT clear the auth token or the storage handle: `clearAuth` needs the token
+ * to revoke the refresh credential, and the wipe needs the handle to close the connection that
+ * would otherwise defer every delete. Each caller owns its own erasure, in its own order.
  */
-export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void {
-  cb.log(`[LOGOUT] Signing out userId=${ctx.getUserId()?.slice(0, 8) ?? 'unknown'}...`);
+export function tearDownLiveSession(
+  ctx: SessionContext,
+  cb: ChatSessionCallbacks,
+  reason: 'logout' | 'revoked'
+): void {
   unregisterOutbox();
   // Detach the reconnect listener too, or a regained network would promote a session that no
   // longer exists - reopening a WebSocket for the user who just signed out.
@@ -1530,17 +1557,28 @@ export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void 
   // reconcile history for the user who just signed out.
   unregisterPeerReturn?.();
   unregisterPeerReturn = null;
-  void flushActiveMlsStateEncrypted().finally(() => {
+
+  if (reason === 'logout') {
+    void flushActiveMlsStateEncrypted().finally(() => {
+      uninstallMlsStatePersisterLifecycle();
+      unregisterMlsStatePersister();
+      // Dispose after the final flush: flushEncrypted relies on the encrypt worker.
+      disposeMlsEncryptWorker();
+    });
+  } else {
+    // NO FINAL FLUSH FOR A REVOKED DEVICE. Persisting the state the next step deletes is precisely
+    // the write that must not survive the wipe, so the persister is uninstalled without one.
     uninstallMlsStatePersisterLifecycle();
     unregisterMlsStatePersister();
-    // Dispose after the final flush: flushEncrypted relies on the encrypt worker.
     disposeMlsEncryptWorker();
-  });
-  const tokenForPushCleanup = ctx.getAuthToken();
-  const deviceForPushCleanup = ctx.getMyDeviceId();
+  }
 
-  if (tokenForPushCleanup && deviceForPushCleanup) {
-    void stopPushService(ctx.getHistoryBaseUrl(), tokenForPushCleanup, deviceForPushCleanup);
+  if (reason === 'logout') {
+    const tokenForPushCleanup = ctx.getAuthToken();
+    const deviceForPushCleanup = ctx.getMyDeviceId();
+    if (tokenForPushCleanup && deviceForPushCleanup) {
+      void stopPushService(ctx.getHistoryBaseUrl(), tokenForPushCleanup, deviceForPushCleanup);
+    }
   }
 
   if (ctx.timers.reconnect !== null) {
@@ -1563,15 +1601,26 @@ export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void 
   ctx.setIsLoggedIn(false);
   ctx.setIsWsConnected(false);
   ctx.setIsMessagingInitializing(false);
+  // The watchdog's candidate set IS the live conversation map, so emptying it is half of why
+  // nothing can drive recovery for a session that has ended.
   cb.conversations.clear();
   cb.setSelectedContact(null);
-  ctx.setStorage(null);
-  ctx.setAuthToken('');
   setCallSystemMessageContext(null);
   // Decrypted Graine seeds and the channel-to-community map belong to the account that just left.
   setGraineRuntime(null);
   ctx.getCallService()?.setChatNotifier(null);
   resetSiblingCallWarning();
+}
+
+/**
+ * Clears all session state (conversations, tokens, push registration),
+ * deregisters the device push token, and redirects to /login.
+ */
+export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void {
+  cb.log(`[LOGOUT] Signing out userId=${ctx.getUserId()?.slice(0, 8) ?? 'unknown'}...`);
+  tearDownLiveSession(ctx, cb, 'logout');
+  ctx.setStorage(null);
+  ctx.setAuthToken('');
   clearUserLocally();
   clearDeviceKeyAndWrapKey();
   clearAuth();

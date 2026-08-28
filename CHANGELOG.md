@@ -148,6 +148,47 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A revoked device wiped itself and then put its own state back, 1.25 s later.** Measured on
+  production to the millisecond: the server recorded the revocation at 08:40:39.773, the client
+  received the frame and ran the full factory wipe - every `CanariDB*` database deleted,
+  `localStorage.clear()` - and at 08:40:41.02 the **SYNC_WATCHDOG** ticked. It found ten
+  conversations still in memory and an empty WASM, so it drove `requestReAdd` for all ten,
+  re-marking every group not-ready and **rebuilding the MLS database** through `ensureMls()`, which
+  creates a client whenever it finds none. A device asked to return to a fresh install kept ten
+  `mls_not_ready_since` keys, its per-user MLS database and 8.2 MB of storage - and printed
+  `[RESET] done - nothing of this device remains` while doing it.
+
+  The cause was one seam existing twice. `logoutImpl` had always performed a complete teardown -
+  four timers, the outbox, the offline-promotion and peer-return listeners, the history probe
+  sender, the conversation map - and the revocation path performed **none** of it: it set its flags
+  and erased the disk with everything still running. The code even claimed otherwise ("tear the
+  session down first ... so nothing left running can write a key back"), because `resetMls()` nulls
+  the client and stops nothing. Extracted as `tearDownLiveSession(ctx, cb, reason)`, called first by
+  both exits, so they cannot drift again; `reason` is the only discriminator and both differences
+  follow from it - a revoked device does not FLUSH its MLS state on the way out (that write is what
+  the wipe exists to remove) and does not deregister a push token the server already deleted.
+
+  `wipeDeviceToFactory` also no longer claims an empty device without looking: it reads the stores
+  back and **names** the survivors. A second, delayed audit was deliberately not added - the login
+  page's "reset" button is the other caller, and a user who signs back in writes keys within
+  seconds, so a late check would accuse an ordinary new session of being a zombie.
+
+- **A full account got a client that reported a deferral forever and never healed.** The per-user
+  device cap (15 within the 90-day retention window) is refused with a `400` that no retry can
+  lift - the account has to lose a device first - and it fired *before* the
+  `[REGISTER_DEVICE] START` line, so it left **no server trace at all**. The client logged every
+  KeyPackage failure identically, as `welcome_request deferred to next connection`, which is true of
+  a 502 and false of this. A device in that state holds a session, has no KeyPackage, is answered
+  `[MEMBERSHIP_ACTIVE] REFUSED reason=no_key_package` in every group, and cannot recover. Measured
+  on production 2026-08-28, where it cost a whole test rung a night and was written up as a product
+  defect that did not exist.
+
+  The distinction is now carried as a TYPE from the seam that reads the status, never as prose: the
+  server answers `DEVICE_LIMIT_REACHED` with its `max` and logs the count it read
+  (`spent=15/15`), `registerDeviceKeyPackage` throws `DeviceLimitReachedError`, and the call site
+  logs an accusation and tells the **user** - the only actor who can lift it - which device list to
+  open.
+
 - **A paid form's sticky payment bar sat visibly to the right of the form content above it** on
   desktop/tablet widths. `.page-scroll-wrap` (the scrollable ancestor every routed page renders
   inside) has `will-change: transform` for the swipe-nav-between-tabs feature, which per spec

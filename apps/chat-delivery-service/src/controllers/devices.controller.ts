@@ -175,9 +175,24 @@ export class DevicesController {
       where: { userId, createdAt: MoreThanOrEqual(new Date(Date.now() - RETENTION_WINDOW_MS)) },
     });
     if (deviceCount >= MAX_DEVICES_PER_USER) {
-      throw new BadRequestException(
-        `Maximum ${MAX_DEVICES_PER_USER} devices per user reached. Delete an unused device in Settings first.`
+      // A REFUSAL NOBODY COULD SEE. Until 2026-08-28 this threw a bare sentence and logged nothing at
+      // all - it fires BEFORE the `[REGISTER_DEVICE] START` line below, so a full account produced a
+      // 400 with no server trace and a client console reading "welcome_request deferred to next
+      // connection". A device in that state holds a session, has no KeyPackage, is refused
+      // `[MEMBERSHIP_ACTIVE] reason=no_key_package` in every group, and can never heal. It cost a
+      // whole HEAL rung a night and was written up as a product defect that did not exist.
+      //
+      // THE CODE IS THE POINT, not the message: a 400 here is terminal (the account must lose a
+      // device first) while other 400s and every 5xx are retryable, and a client must not tell those
+      // apart by reading prose - `DEVICE_LIMIT_REACHED` is what `DeviceLimitReachedError` is thrown on.
+      this.logger.warn(
+        `[REGISTER_DEVICE] REFUSED device cap user=${userId} device=${deviceId} spent=${deviceCount}/${MAX_DEVICES_PER_USER}`
       );
+      throw new BadRequestException({
+        code: 'DEVICE_LIMIT_REACHED',
+        message: `Maximum ${MAX_DEVICES_PER_USER} devices per user reached. Delete an unused device in Settings first.`,
+        max: MAX_DEVICES_PER_USER,
+      });
     }
 
     const traceId = this.makeTraceId('reg-device');

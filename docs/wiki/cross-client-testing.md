@@ -607,6 +607,25 @@ genuinely cannot read those frames, so the condition is expected; what is not se
 `PASS-DIRTY` at best**, which is a reporting question standing between this rung and the `PASS` the
 user asked for.
 
+**THE CAUSE OF EVERY HEAL-NEW FAILURE WAS THE PER-USER DEVICE CAP, AND THE PREDICATE WAS RIGHT ALL
+ALONG, 2026-08-28 10:22.** One mint on a quiet prod settled it: `POST /api/mls/register-device -> 400`,
+`[KP] Publication failed (400) - welcome_request deferred to next connection`, then
+`[MEMBERSHIP_ACTIVE] REFUSED reason=no_key_package` on the server for all ten groups. `registerDevice`
+counts the account's `key_package` rows and throws at `MAX_DEVICES_PER_USER` = 15 **before it logs
+`[REGISTER_DEVICE] START`**, which is why the server's trace looked empty. The owner account stood at
+exactly 15, and **all fifteen slots were the campaign's own abandoned mints**. With the debris purged
+(25 devices deleted through the product's own panel, account back to 2), the same profile published
+its KeyPackage in **1.9 s**.
+
+**So the census was never the wrong question - it was the RIGHT one, asked of a device the server had
+refused.** Reading `auth_sessions` instead made the row pass while the device was unusable, which is
+worse than the failure it replaced. The primitive now reads BOTH facts and reports the pair: a session
+with no KeyPackage is not "publication is slow", it is "the registration was REFUSED, go read the
+server's line". It also asserts the account has a free slot BEFORE it wipes anything, and purges the
+id each mint abandons - a sixteen-row rung fills a fifteen-device cap by construction. **The product
+half is a P1 in [backlog](backlog.md): a 400 that means "delete a device" reaches the user as a
+console line saying "deferred to next connection".**
+
 **THE SECOND NIGHT MEASURED ONE THING, AND IT WAS THE INSTRUMENT, 2026-08-28 03:30-03:58.**
 Run 3 of the ladder took eight rows and recorded NOTHING: HEAL-NEW-2, -12, -3, -11 and -15 exited 1,
 and all four HEAL-REVOKE rows exited 2 on the preflight's own refusal. **No verdict from this run is

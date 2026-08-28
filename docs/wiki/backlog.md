@@ -640,6 +640,79 @@ no check waits on wall-clock time at all. It belongs with the rendering pass, no
 
 ## Messaging convergence
 
+### P2 - a client at the DEVICE CAP still enumerates ten rows it can never join (the P1 half SHIPPED 2026-08-28)
+
+**THE P1 IS CLOSED AND ITS STORY IS IN `CHANGELOG.md`, ITS RULES IN
+[durable-rules](durable-rules.md#mls-membership-and-routing); neither is restated here.** The server
+now logs its own refusal with the count it read (`spent=15/15`) and answers
+`DEVICE_LIMIT_REACHED` + `max`; `registerDeviceKeyPackage` throws `DeviceLimitReachedError`; and the
+publication call site logs an accusation and shows the user `chat_device_limit_reached`, naming the
+device list to open. Points 1 and 2 below are therefore done, and only point 3 remains - which is
+why this is a P2: nothing is now silent, and nobody is left without the one instruction that helps.
+
+**What is left**, and it is a rendering-honesty question rather than a mechanism: ten conversations
+that can never become ready still wear the "Sync" badge, because the sidebar is enumerated from the
+server's group list and every row starts `isReady: false`. The toast explains the cause once; the
+rows keep claiming a repair is in progress for as long as the device stays refused.
+
+**Everything below is the original measurement, kept because it is the evidence, not the plan.**
+
+**This is the user's own HEAL report, mechanised.** They described adding a device and finding
+conversations wearing the "Sync" badge, some repairing and others not. That is exactly the state a
+device reaches when its KeyPackage publication is REFUSED: the sidebar is enumerated from the
+server's group list, every row starts `isReady: false`, and nothing can ever move them because the
+device is not addressable.
+
+**THE MEASUREMENT.** A device minted on prod at 10:22, on a fresh profile of an account holding
+fifteen devices:
+
+```
+POST /api/mls/register-device -> 400
+[KP] Publication failed (Error: Failed to publish KeyPackage: 400 ) - welcome_request deferred to next connection
+[SYNC] 7da231f8... absent - welcome_request deferred (KP not published)      (x10, one per group)
+```
+
+and on the server, for every one of the ten groups:
+
+```
+[MEMBERSHIP_ACTIVE] REFUSED group=... device=...  reason=no_key_package
+```
+
+`registerDevice` counts `key_package` rows inside `RETENTION_WINDOW_MS` and throws
+`BadRequestException` at `MAX_DEVICES_PER_USER` (15) - **before** it logs `[REGISTER_DEVICE] START`,
+which is why the server's own trace shows nothing for the device at all. The cap is deliberate (audit
+M5) and is not the defect.
+
+**THE DEFECT IS THAT THE CLIENT CALLS A PERMANENT REFUSAL "deferred to next connection".** A 400 here
+is a statement about the ACCOUNT, not about this attempt: no reconnection, no retry and no amount of
+waiting will change it, and the user is never told the one thing that would fix it - delete a device
+in Settings. The server's message already says so and is thrown away. A fallback is a signal, never a
+path: the retry loop here is a path, and it is silent.
+
+**WHY IT IS NOT ONLY OUR TEST ACCOUNT.** Two accounts on prod are at exactly 15 on 2026-08-28: the
+campaign owner (its own debris, since purged to 2) and one REAL user, whose oldest device dates from
+2026-07-21. Their next device will be refused the same way, and nothing will tell them.
+
+**WHAT A FIX MUST DO**, in the order that matters:
+
+1. **Classify at the throw, not on the message.** A 400 from `register-device` is terminal; a 5xx or
+   a transport failure is retryable. The publication path currently treats every failure as the
+   second kind. The discriminator is the status code, which is already there.
+2. **Say it, once, where the user is.** The refusal is the answer to "why is everything stuck on
+   Sync", so it belongs on the sidebar state, not in a console line - and it needs a Paraglide
+   string, with the action (`Settings -> Devices`) in it.
+3. **Do not enumerate what cannot be joined.** Ten rows that can never become ready are ten rows
+   claiming a repair is in progress. Whatever the UI decides to show, the honest state is not "Sync".
+
+**MEASURED SO IT IS NOT RE-DERIVED:** with a slot free, the same profile publishes its KeyPackage in
+**1.9 s** - so slowness was never the story, and neither was the wipe.
+
+**WHAT IT COST THE CAMPAIGN, recorded because the lesson is the reusable part.** The rung's own
+sixteen HEAL-NEW rows each mint a device and abandon it, so the cap was reached by construction, and
+five rows then reported that a wiped profile does not publish - a phantom product defect written into
+this file overnight. `newdevice.mjs` now asserts the account has a slot BEFORE it wipes anything, and
+purges the id each mint abandons.
+
 ### P1 - a PLACEHOLDER held a member's place in a real conversation, and both directions of it were lost for 134 minutes (measured on prod 2026-08-28; CAUSE FOUND, GUARDS SHIPPED, cleanup owed)
 
 **This entry replaces the two written earlier the same day.** They described one chain, from its two
@@ -1070,6 +1143,19 @@ Three separate things, in the order they have to be answered:
    and the one wipe is `wipeRevokedDevice`, shared by all three triggers - which also gave the frame
    path the MLS teardown it was skipping, on the one path where the service is still live. Story in
    `CHANGELOG.md`, rule in [durable-rules](durable-rules.md).
+
+   **AND THE PARAGRAPH ABOVE WAS HALF WRONG, CORRECTED BY MEASUREMENT 2026-08-28.** The wipe was
+   thorough and the trigger was missing - both true - but the wipe was also **not permanent**, which
+   reading it could not show: it ran, deleted everything, and the SYNC_WATCHDOG nobody had stopped
+   rebuilt the MLS database and re-marked ten groups 1.25 s later, on a device that had just printed
+   `nothing of this device remains`. So "the mechanism exists, so it did not fire" was the right
+   deduction from the wrong premise, and a user's report of a revoked PC that *still had local
+   memory* is consistent with the wipe having fired all along. **Fixed by `tearDownLiveSession`;
+   story in `CHANGELOG.md`, mechanism on
+   [auth](frontend/modules/auth.md#erasing-a-revoked-device-and-the-125-s-that-undid-it), two rules
+   in [durable-rules](durable-rules.md#mls-state-and-keys).** It also means the two candidate causes
+   below are no longer the only two: a third is that the PC was revoked, wiped, and re-created its
+   own store - the one the user would have seen as "still had local memory".
 
    **TWO CANDIDATE CAUSES SURVIVE that fix and only the user's own history separates them**, so
    neither is worth code before rung 16 measures it: the removed panel row may have been

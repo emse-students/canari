@@ -52,6 +52,30 @@ export class DeviceRevokedError extends Error {
 }
 
 /**
+ * The account already spends every device slot the server allows, so this device cannot enrol.
+ *
+ * TERMINAL, AND THAT IS THE WHOLE REASON IT IS A TYPE. Every other failure of a KeyPackage
+ * publication is worth retrying on the next connection; this one is not - no reconnection, no backoff
+ * and no amount of waiting changes an account's device count. The only cure is a human deleting a
+ * device, so a client that retries silently leaves a device holding a session, no KeyPackage, and a
+ * sidebar of conversations that can never become ready (`[MEMBERSHIP_ACTIVE] reason=no_key_package`
+ * on the server, for every group).
+ *
+ * Typed rather than message-matched, like {@link DeviceRevokedError}: the discriminator is the
+ * `DEVICE_LIMIT_REACHED` code the server puts in the body, never the sentence beside it.
+ */
+export class DeviceLimitReachedError extends Error {
+  constructor(readonly max: number | null) {
+    super(
+      max === null
+        ? 'The account has no free device slot'
+        : `The account already uses all ${max} device slots`
+    );
+    this.name = 'DeviceLimitReachedError';
+  }
+}
+
+/**
  * The delivery service refused a read of a group's member list because this caller is not in it.
  *
  * `GET /api/mls/groups/:id/members` is members-only by design (audit S5: the device list leaks
@@ -422,14 +446,21 @@ export class MlsDeliveryApi {
     });
 
     if (!response.ok) {
-      // 403 + DEVICE_REVOKED is the one failure a retry can never fix: the id itself is banned.
-      if (response.status === 403) {
-        const code = await response
+      // TWO REFUSALS NO RETRY CAN FIX, both classified HERE because downstream they are one sentence.
+      // 403 + DEVICE_REVOKED: the id itself is banned, and the cure is a fresh id.
+      // 400 + DEVICE_LIMIT_REACHED: the ACCOUNT is full, and the cure is a person deleting a device.
+      if (response.status === 403 || response.status === 400) {
+        const body = await response
           .clone()
           .json()
-          .then((b) => (b as { code?: string })?.code)
+          .then((b) => b as { code?: string; max?: number })
           .catch(() => undefined);
-        if (code === 'DEVICE_REVOKED') throw new DeviceRevokedError(this.deviceId);
+        if (response.status === 403 && body?.code === 'DEVICE_REVOKED') {
+          throw new DeviceRevokedError(this.deviceId);
+        }
+        if (response.status === 400 && body?.code === 'DEVICE_LIMIT_REACHED') {
+          throw new DeviceLimitReachedError(typeof body.max === 'number' ? body.max : null);
+        }
       }
       throw new Error(`Failed to publish KeyPackage: ${response.status} ${response.statusText}`);
     }

@@ -1,5 +1,8 @@
 import type { IMlsService, UserGroupRow } from './IMlsService';
+import { DeviceLimitReachedError } from './mlsDeliveryApi';
 import { getIsTabLeader } from './tabLeader';
+import { showToast } from '$lib/stores/toast.svelte';
+import { m } from '$lib/paraglide/messages';
 import {
   forgetMlsGroupIfPresent,
   persistMlsStateAfterMutation,
@@ -139,7 +142,23 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
       .reconcilePublishedKeyPackages()
       .catch((e) => log(`[KP] Prekey reconciliation failed (non-blocking): ${e}`));
   } catch (e) {
-    log(`[KP] Publication failed (${e}) - welcome_request deferred to next connection`);
+    // A REFUSAL IS NOT A DEFERRAL, AND ONLY THE THROW KNOWS WHICH THIS IS. Every failure here used
+    // to be logged as "deferred to next connection", which is true of a 502 and false of the device
+    // cap: the server refuses a 16th device with a 400 forever, so the next connection is refused
+    // identically and the device never becomes addressable. Measured on prod 2026-08-28 - an account
+    // sat at 15/15 while its client reported a deferral every reconnection, published no KeyPackage,
+    // and was answered `reason=no_key_package` on every membership activation. Nothing healed, and
+    // nothing said so. The distinction is carried as a TYPE from the seam that reads the status.
+    if (e instanceof DeviceLimitReachedError) {
+      log(
+        `[KP] REFUSED - this account is at its device limit (${e.max ?? 'unknown'}).` +
+          ' This device cannot register and NOTHING will heal it: an unused device must be deleted.'
+      );
+      // The only actor who can lift it is the user, so the only useful place to say so is the UI.
+      showToast(m.chat_device_limit_reached({ max: e.max ?? '' }), 'error', 12_000);
+    } else {
+      log(`[KP] Publication failed (${e}) - welcome_request deferred to next connection`);
+    }
   }
 
   // 2. Groupes du serveur

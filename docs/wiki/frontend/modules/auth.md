@@ -221,6 +221,49 @@ restarts in first-setup mode. It costs the local history and is the last resort,
 `classifyStateLoadFailure` has ruled out a recoverable `sealed` state - see
 [`protocols/mls-protocol.md`](../../protocols/mls-protocol.md).
 
+### Erasing a revoked device, and the 1.25 s that undid it
+
+`wipeRevokedDevice` (`session/sessionAuth.ts`) is the one consequence of one fact - this device is
+revoked - reached from the three places that can learn it: the PIN check at login, the
+`device_revoked` frame on a live session, and a vault or biometric login asking the server. Its
+steps are ORDERED, and the order is the whole mechanism:
+
+1. `tearDownLiveSession(ctx, cb, 'revoked')` - stop everything that is running.
+2. `resetMls()` - destroy the MLS client.
+3. `resetDeviceAsFreshImpl` - drop this user's MLS state, device id and local database.
+4. `clearAuth()` - revoke the refresh credential, which needs the network context to still exist.
+5. `wipeDeviceToFactory()` - every `CanariDB*` database, every cache, `localStorage.clear()`.
+6. `setPin('')` - last, because the wipe is what makes the PIN meaningless.
+
+**Step 1 did not exist until 2026-08-28, and its absence made steps 3 and 5 temporary.** Measured on
+production to the millisecond: the server recorded the revocation at 08:40:39.773, the wipe ran, and
+at 08:40:41.02 the SYNC_WATCHDOG - a 5 s interval nothing had stopped - found ten conversations still
+in the live map and an empty WASM. It drove `requestReAdd` for all ten, which re-marked every group
+in the `mls_not_ready_since` registry and, through `ensureMls()` (which builds a client whenever it
+finds none), REBUILT the per-user MLS database. The device kept 8.2 MB of the install it had just
+erased, and `[RESET] done - nothing of this device remains` was printed over the top of it.
+
+`logoutImpl` had always done this teardown properly - four timers, the outbox, the offline-promotion
+and peer-return listeners, the history probe sender, the conversation map that IS the watchdog's
+candidate set. The revocation path had a comment claiming it did ("tear the session down first ... so
+nothing left running can write a key back") and in fact only called `resetMls()`, which nulls a
+reference and stops nothing. `tearDownLiveSession` is that teardown, shared, with `reason` as the
+only discriminator: a revoked device does not FLUSH its MLS state on the way out (that write is what
+the wipe exists to remove) and does not deregister a push token the server deleted when it revoked
+the device.
+
+`wipeDeviceToFactory` now also reads the stores back and NAMES whatever survived, because it had been
+reporting the steps it ran as though they were the state of the disk. A second, delayed audit was
+deliberately not added: the login page's "reset" button is the other caller, and a user who signs
+back in writes keys within seconds, so a late check would accuse an ordinary new session of being a
+zombie.
+
+**A device revoked while OFFLINE is not wiped offline, by design.** Every login path asks the server
+`isDeviceRevoked`, which answers `false` when it cannot be reached - a status code is an answer, a
+transport failure is not - so the wipe happens at the first login WITH a network and never on a dead
+link. One residue follows from the same fact: nobody is there to receive `notifyDeviceRevoked`, so
+the device's `auth_sessions` row lives to its 7-day expiry.
+
 ## Mobile unlock flow (Tauri)
 
 Driven by `startLoginFlow()` in `components/layout/ChatBackgroundService.svelte`.

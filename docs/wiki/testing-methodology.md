@@ -2480,3 +2480,34 @@ mid-run. What a hard-won run cost goes to [cross-client-campaign](cross-client-c
 a defect goes to `CHANGELOG.md`; what is open goes to `CLAUDE.md`; and the build belongs on the PHASE
 row, once, not on twelve check rows.
 
+### A predicate that answers "no" for a whole minute may be reporting a REFUSAL - ask the server before you change it
+
+On 2026-08-28 five HEAL-NEW rows failed on `the census carries the new id: false (after 63762ms)`. The
+bounded poll had done its job perfectly: it turned "sometimes false" into "false for 63.7 s", which is
+the shape of a fact that is never going to be true. The conclusion drawn from it was that the
+PREDICATE was wrong - the census reads `key_package`, so it asks whether a peer can address the
+device rather than whether the device exists - and it was replaced with a read of `auth_sessions`.
+
+**That reasoning was correct about the two columns and wrong about the defect.** The device really had
+no KeyPackage, because `POST /api/mls/register-device` had answered **400**: the account was at the
+server's fifteen-device cap, filled by the rig's own abandoned mints. The census was asking exactly
+the right question and getting the right answer. Reading the session instead made the row PASS while
+the device was addressable by nobody - a green row over a client that could never heal, which is the
+worst outcome available.
+
+**The cheap step that was skipped: the client had printed the status code.**
+`[KP] Publication failed (Error: Failed to publish KeyPackage: 400 )` was in the console of the very
+run being diagnosed, and `[MEMBERSHIP_ACTIVE] REFUSED reason=no_key_package` was in the server log for
+every group. A single `docker logs | grep` would have named the cause in seconds. Instead the
+instrument was rewritten on an inference, and the inference was published.
+
+**The rules that follow, and both are cheaper than the mistake:**
+
+- **When a poll exhausts its deadline, the next question is "what did the server answer", not "is my
+  predicate right".** A refusal has a status code and a log line; a wrong predicate has neither. Only
+  one of the two can be checked in one command.
+- **When two columns answer two different questions, read BOTH and report the pair.** Session and
+  KeyPackage together mean enrolled; session without KeyPackage means refused, and names where to
+  look. Choosing between them throws away the discriminator - which is the same fault, one layer up,
+  as collapsing an exit code to a boolean.
+

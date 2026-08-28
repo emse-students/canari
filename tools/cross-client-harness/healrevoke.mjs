@@ -43,7 +43,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { client, ensureChat, evaluate } from "./chat.mjs";
-import { census, installTag } from "./devices.mjs";
+import { census, installTag, isRegistered, revokedAt } from "./devices.mjs";
 import { createGroup, deleteGroup } from "./groupnav.mjs";
 import { isUp, killBrowser, startBrowser } from "./launch.mjs";
 import { ORIGIN, PORTS, SITE } from "./names.mjs";
@@ -172,41 +172,56 @@ async function rowNamed(cx, name) {
 /**
  * Revokes the victim through the device panel, and proves the server agrees it is gone.
  *
- * THE CENSUS IS THE PROOF, not the panel's own animation: `purge-devices.mjs` reports what it
- * clicked, and a click that opened a confirm nobody answered reports exactly the same thing. The
- * census reads `key_package`, so a device absent from it is a device no member can address any more -
- * which is what revocation has to mean before anything below is worth measuring.
+ * TWO FACTS, READ SEPARATELY, BECAUSE THEY ANSWER TWO QUESTIONS. `revoked_device` is the row the
+ * DELETE endpoint writes to record the DECISION, so it is the proof the revocation landed at all;
+ * the device leaving the census is the proof no member can address it any more, which is what makes
+ * everything below worth measuring. Reading only the second cannot tell a revocation that landed
+ * from a device that had nothing to purge, and reading only the first cannot tell a decision from
+ * its effect. The panel's own animation proves neither: `purge-devices.mjs` reports what it clicked,
+ * and a click that opened a confirm nobody answered reports exactly the same thing.
+ *
+ * WAITED FOR, NOT READ ONCE. The mirror of the same fault on the minting side, which cost HEAL-NEW-2
+ * its verdict on 2026-08-28: a KeyPackage's PUBLICATION is asynchronous, so its DELETION is not
+ * something to assume synchronous with a click returning either. A single read here would report a
+ * revocation still in flight as a revocation that failed - and this is the gate all four rows stand
+ * on, so it would kill every one of them with one number. The wait is bounded and both elapsed times
+ * are returned, so a slow revocation is a finding carrying a number rather than a silent tick.
  */
 async function revoke(deviceId) {
   const today = new Date().toISOString().slice(0, 10);
-  const carries = () => census(today).some((r) => r.deviceId === deviceId);
-  const before = carries();
+  const addressable = () => census(today).some((r) => r.deviceId === deviceId);
+  const before = { addressable: addressable(), registered: isRegistered(deviceId) };
+  const revokedBefore = revokedAt(deviceId);
   const r = runScript("purge-devices.mjs", ["--only", deviceId, "--port", String(PORTS[ACTOR])]);
 
-  // WAITED FOR, NOT READ ONCE. The mirror of the same fault on the minting side, which cost
-  // HEAL-NEW-2 a FAIL on 2026-08-28: the key package's PUBLICATION is asynchronous, so its DELETION
-  // is not something to assume synchronous with a click returning either. A single read here would
-  // report a revocation that had not landed yet as a revocation that failed - and this is the gate
-  // every row below stands on, so it would kill all four of them with one number.
-  //
-  // The wait is bounded and the elapsed time is returned, so a slow revocation is a finding with a
-  // number rather than a silent tick. It ends on the proof - the census no longer carries the id.
   const askedAt = Date.now();
-  let after = true;
+  let stillAddressable = true;
+  let decidedInMs = null;
   let goneInMs = null;
   for (;;) {
-    after = carries();
-    if (!after) {
-      goneInMs = Date.now() - askedAt;
-      break;
+    // The decision first: it is written inside the request, so if it is not there after the whole
+    // window the click never reached the endpoint and the effect below is not worth waiting for.
+    if (decidedInMs === null) {
+      const now = revokedAt(deviceId);
+      if (now && now !== revokedBefore) decidedInMs = Date.now() - askedAt;
     }
-    if (Date.now() - askedAt >= 45_000) {
+    stillAddressable = addressable();
+    if (!stillAddressable) {
       goneInMs = Date.now() - askedAt;
-      break;
+      if (decidedInMs !== null) break;
     }
+    if (Date.now() - askedAt >= 45_000) break;
     await sleep(3000);
   }
-  return { wasEnrolled: before, stillEnrolled: after, goneInMs, script: r };
+  return {
+    wasAddressable: before.addressable,
+    wasRegistered: before.registered,
+    revoked: decidedInMs !== null,
+    decidedInMs,
+    stillAddressable,
+    goneInMs,
+    script: r,
+  };
 }
 
 /**
@@ -419,8 +434,13 @@ const gap = differences(returnedState, freshState);
 const expectations = {
   /** The starting point was real: an enrolled device that had actually healed. */
   theVictimHeldTheWorldFirst: seedSettle.settled === true && heldTheDoomedGroup === true,
-  /** Revocation reached the server: the census no longer carries the id. */
-  theServerForgotTheDevice: revocation.wasEnrolled === true && revocation.stillEnrolled === false,
+  /**
+   * Revocation reached the server, which is TWO claims: the decision is durable (`revoked_device`
+   * holds a fresh row) and its effect landed (no member can address the id any more). A row that
+   * asserted only the effect would pass on a device that had nothing to purge.
+   */
+  theServerRecordedTheRevocation: revocation.revoked === true,
+  theServerForgotTheDevice: revocation.wasAddressable === true && revocation.stillAddressable === false,
   /** The device obeyed: it said so, and it finished. */
   theDeviceWipedItself: wipe.wipeRan === true && wipe.wipeFinished === true,
   noWipeStepFailed: wipe.wipeIncomplete !== true && wipe.stepsFailed === 0,

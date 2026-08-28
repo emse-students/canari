@@ -2,7 +2,7 @@
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { DevicesController } from './devices.controller';
 import { KeyPackage } from '../entities/key-package.entity';
@@ -14,6 +14,7 @@ import { PushToken } from '../entities/push-token.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { MessagingService } from '../services/messaging.service';
+import { MAX_DEVICES_PER_USER } from '../retention.constants';
 
 /**
  * Deleting a device denylists its id permanently, and the client deliberately restores the SAME id
@@ -93,5 +94,32 @@ describe('DevicesController.registerDevice - revoked device', () => {
     await controller.registerDevice(BODY, 'u1', undefined);
 
     expect(keyPackageRepo.save).toHaveBeenCalled();
+  });
+
+  /**
+   * The per-user cap is TERMINAL: unlike a 5xx or any other 400 here, no retry can lift it - the
+   * account has to lose a device first. It used to throw a bare sentence and log nothing at all,
+   * firing before the START line, so a full account produced a 400 with no server trace while the
+   * client logged "deferred to next connection" on every reconnection and healed never. The code is
+   * what lets the client tell terminal from retryable without reading prose.
+   */
+  it('refuses a device over the cap with a code the client can classify, and says so in the log', async () => {
+    revokedDeviceRepo.findOne.mockResolvedValue(null);
+    keyPackageRepo.count.mockResolvedValue(MAX_DEVICES_PER_USER);
+    const warn = jest
+      .spyOn((controller as unknown as { logger: { warn: (m: string) => void } }).logger, 'warn')
+      .mockImplementation(() => undefined);
+
+    await expect(controller.registerDevice(BODY, 'u1', undefined)).rejects.toBeInstanceOf(
+      BadRequestException
+    );
+    await expect(controller.registerDevice(BODY, 'u1', undefined)).rejects.toMatchObject({
+      response: { code: 'DEVICE_LIMIT_REACHED', max: MAX_DEVICES_PER_USER },
+    });
+    expect(keyPackageRepo.save).not.toHaveBeenCalled();
+    // A refusal with no trace is found by hand, a day late: the line must carry the count it read.
+    expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).toContain(
+      `spent=${MAX_DEVICES_PER_USER}/${MAX_DEVICES_PER_USER}`
+    );
   });
 });

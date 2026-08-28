@@ -36,7 +36,14 @@
  * device named in `WIPEABLE` may be wiped, and naming one is a repository edit, not a flag.
  */
 import { spawnSync } from "node:child_process";
-import { census, isRegistered, userTag } from "./devices.mjs";
+import {
+  census,
+  enrolledDeviceCount,
+  hasKeyPackage,
+  isRegistered,
+  MAX_DEVICES_PER_USER,
+  userTag,
+} from "./devices.mjs";
 import { client, ensureChat } from "./chat.mjs";
 import { evaluate, until } from "./cdp.mjs";
 import { ORIGIN, PORTS } from "./names.mjs";
@@ -159,9 +166,31 @@ export async function becomeANewDevice({ report = stage } = {}) {
       `${before.cookieCount} readable cookie(s), device ${was ? was.deviceId : "(none)"} of ${was ? userTag(was.userId) : "(nobody)"}`,
   );
 
+  // THE ACCOUNT MUST HAVE ROOM BEFORE ANYTHING IS DESTROYED, and it is asked HERE because after the
+  // wipe there is no way back: the old identity is gone and the new one cannot be registered, which
+  // leaves the profile holding a session and no KeyPackage - addressable by nobody, and looking to
+  // every row above like a product that does not heal. That is what happened on 2026-08-28.
+  const spent = was ? enrolledDeviceCount(was.userId) : null;
+  const theAccountHadRoomForOneMore = spent === null ? true : spent < MAX_DEVICES_PER_USER;
+  report(
+    `the account spends ${spent === null ? "(unknown)" : spent}/${MAX_DEVICES_PER_USER} device slot(s)` +
+      (theAccountHadRoomForOneMore ? "" : " - FULL, and register-device answers a full account with a 400"),
+  );
+  if (!theAccountHadRoomForOneMore) {
+    cx.close();
+    return {
+      refused: "the account is at the server's per-user device cap, so a new device cannot enrol",
+      before,
+      was,
+      spent,
+      knownBefore: knownBefore.size,
+      theAccountHadRoomForOneMore,
+    };
+  }
+
   if (dry) {
     report("--dry: the origin is left exactly as it is");
-    return { dry: true, before, was, knownBefore: knownBefore.size };
+    return { dry: true, before, was, spent, knownBefore: knownBefore.size };
   }
 
   // ONE CALL, AND IT IS THE BROWSER'S OWN. Deleting databases from page script races the app, which
@@ -258,48 +287,71 @@ export async function becomeANewDevice({ report = stage } = {}) {
   const theServerHadNeverSeenIt = !!now && !knownBefore.has(now.deviceId);
   const theSameAccountCameBack = !!now && !!was && now.userId === was.userId;
 
-  // Enrolment is not the id existing locally: it is the server holding a record of it. On this
-  // schema that record is an `auth_sessions` row and nothing else - there is no device registry.
+  // ENROLMENT IS TWO SERVER FACTS, AND THE PAIR IS THE DIAGNOSIS. A session is written by the OIDC
+  // callback; a KeyPackage is written by `POST /api/mls/register-device`. Only the second makes the
+  // device ADDRESSABLE - the server refuses to activate a membership without one
+  // (`[MEMBERSHIP_ACTIVE] REFUSED reason=no_key_package`) - so it is the fact every HEAL row rests on.
+  // Reading one of them alone is what turned a plain refusal into a phantom product defect on
+  // 2026-08-28: session yes, KeyPackage no is not "publication is slow", it is "the registration was
+  // REFUSED", and the server had logged the reason all along.
   //
   // AND IT IS A FACT THAT ARRIVES, so it is waited for by proof rather than read once after a sleep.
-  // The publication is asynchronous: this same code read `true` at +19.8 s on one run and `false` at
-  // +20.7 s on the next - and the second device had ALREADY healed all ten of its sidebar rows, so
-  // HEAL-NEW-2 failed on a race inside its own instrument while the product had done everything the
-  // row asked. A single read after a fixed delay is a clock wearing a fact's clothes.
-  //
-  // THE DEADLINE IS A REPORTING BOUNDARY, NOT THE ANSWER. `enrolledInMs` reaches the ledger either
-  // way, so a device that takes forty seconds to register is a finding carrying a number instead of
-  // a silent tick - and this is one indexed query, cheap enough to ask again.
-  //
-  // AND THE POLL IS NOT WHAT WAS WRONG. Bounding the wait turned "it sometimes says no" into "it
-  // says no for 63.7 s", which is what finally pointed at the predicate: the census reads
-  // `key_package` UNION `dm_device_group_memberships`, so it asks whether a peer could ADDRESS this
-  // device, never whether the device exists. A device that has published no KeyPackage is invisible
-  // to it, and five HEAL-NEW rows failed on that while everything they were written to measure had
-  // succeeded. `isRegistered` reads `auth_sessions`, the only row a registration writes on this
-  // schema. Whether publication itself is late or absent is a SEPARATE question, and it is not this
-  // primitive's to answer.
+  // THE DEADLINE IS A REPORTING BOUNDARY, NOT THE ANSWER: both elapsed times reach the ledger, so a
+  // device that takes forty seconds is a finding carrying a number instead of a silent tick.
   const ENROLMENT_DEADLINE_MS = 60_000;
-  let enrolled = false;
-  let enrolledInMs = null;
+  let registered = false;
+  let addressable = false;
+  let registeredInMs = null;
+  let addressableInMs = null;
   if (now) {
     const askedAt = Date.now();
     for (;;) {
-      if (isRegistered(now.deviceId)) {
-        enrolled = true;
-        enrolledInMs = Date.now() - askedAt;
+      if (!registered && isRegistered(now.deviceId)) {
+        registered = true;
+        registeredInMs = Date.now() - askedAt;
+      }
+      if (hasKeyPackage(now.deviceId)) {
+        addressable = true;
+        addressableInMs = Date.now() - askedAt;
         break;
       }
-      if (Date.now() - askedAt >= ENROLMENT_DEADLINE_MS) {
-        enrolledInMs = Date.now() - askedAt;
-        break;
-      }
+      if (Date.now() - askedAt >= ENROLMENT_DEADLINE_MS) break;
       await sleep(3000);
     }
   }
+  const enrolled = registered && addressable;
+  // THE PRIMITIVE CLEANS UP AFTER ITSELF, because its debris is what broke the rung. Every mint
+  // abandons an id that still spends one of the account's fifteen slots, so a sixteen-row rung fills
+  // the cap by construction - and the sixteenth row then measures a refusal instead of the product.
+  // Purging the id THIS call abandoned keeps the account at a steady two or three devices, which is
+  // also what makes consecutive rows comparable: they each meet an account of the same shape.
+  //
+  // AN ALLOWLIST OF EXACTLY ONE, and it is named by measurement rather than by position: the id read
+  // off this profile before the wipe. It runs AFTER the new device is addressable, so a failure here
+  // costs a slot and never the row.
+  let abandonedPurged = null;
+  if (was && enrolled && was.deviceId !== now.deviceId) {
+    const status = run("purge-devices.mjs", [
+      "--only",
+      was.deviceId,
+      "--port",
+      String(PORTS.W1),
+    ]);
+    abandonedPurged = status === 0;
+    report(
+      `the id this mint abandoned (...${was.deviceId.slice(-13)}) was purged: ${abandonedPurged}` +
+        (abandonedPurged ? "" : " - a slot stays spent, and the cap is one row closer"),
+    );
+  }
+
   report(
-    `the server has a session for the new id: ${enrolled}` +
-      (enrolledInMs === null ? "" : ` (after ${enrolledInMs}ms)`),
+    `the server has a session for the new id: ${registered}` +
+      (registeredInMs === null ? "" : ` (after ${registeredInMs}ms)`) +
+      `, and a published KeyPackage: ${addressable}` +
+      (addressableInMs === null ? "" : ` (after ${addressableInMs}ms)`) +
+      (registered && !addressable
+        ? " - A SESSION WITHOUT A KEYPACKAGE MEANS register-device REFUSED IT; read the server's line"
+        : ""),
   );
 
   return {
@@ -320,8 +372,14 @@ export async function becomeANewDevice({ report = stage } = {}) {
     aFreshIdWasMinted,
     theServerHadNeverSeenIt,
     theSameAccountCameBack,
+    theAccountHadRoomForOneMore,
+    spent,
+    registered,
+    registeredInMs,
+    addressable,
+    addressableInMs,
+    abandonedPurged,
     enrolled,
-    enrolledInMs,
   };
 }
 
@@ -335,8 +393,18 @@ const invokedDirectly =
 if (invokedDirectly) {
   const r = await becomeANewDevice();
   if (r.dry) {
-    console.log(JSON.stringify({ dry: true, before: r.before, was: r.was }, null, 2));
+    console.log(JSON.stringify({ dry: true, before: r.before, was: r.was, spent: r.spent }, null, 2));
     process.exit(0);
+  }
+  // REFUSED BEFORE THE WIPE IS NOT A VERDICT ABOUT THE PRODUCT, so it does not become one. The
+  // account being full is a fact about the rig's own debris, and recording a FAIL here would put the
+  // campaign's housekeeping on the board as a defect.
+  if (r.refused) {
+    console.error(`\n[newdevice] REFUSED - ${r.refused} (${r.spent}/${MAX_DEVICES_PER_USER})`);
+    console.error(
+      `[newdevice] purge the abandoned mints first: node purge-devices.mjs --dry --port ${PORTS.W1}`,
+    );
+    process.exit(3);
   }
 
   const ok =
@@ -352,7 +420,8 @@ if (invokedDirectly) {
   console.log(
     `\n[newdevice] wipe=${r.nothingSurvivedTheWipe} loggedOut=${r.loggedOut} ` +
       `noHumanStep=${r.landedWithoutAHumanStep} pin=${r.pinGate} freshId=${r.aFreshIdWasMinted} ` +
-      `neverSeen=${r.theServerHadNeverSeenIt} sameAccount=${r.theSameAccountCameBack} enrolled=${r.enrolled}`,
+      `neverSeen=${r.theServerHadNeverSeenIt} sameAccount=${r.theSameAccountCameBack} ` +
+      `registered=${r.registered} addressable=${r.addressable}`,
   );
 
   // `recordObserved` and NOT `finishObserved`: the latter calls `process.exit` itself, so the close

@@ -1,6 +1,33 @@
 import { isTauriRuntime } from '$lib/utils/openExternal';
 
 /**
+ * Everything still on this device that a factory wipe was supposed to remove.
+ *
+ * Names the survivors rather than counting them: a count cannot say whether a step did nothing or
+ * something re-created what it deleted, and those have different fixes.
+ */
+async function surveyDeviceStorage(): Promise<string[]> {
+  const survivors: string[] = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k !== null) survivors.push(k);
+    }
+  } catch (e) {
+    console.warn('[RESET] could not read the stored preferences back:', e);
+  }
+  try {
+    if (indexedDB.databases) {
+      const all = await indexedDB.databases();
+      for (const db of all) if (db.name?.startsWith('CanariDB')) survivors.push(db.name);
+    }
+  } catch (e) {
+    console.warn('[RESET] could not read the local databases back:', e);
+  }
+  return survivors;
+}
+
+/**
  * Returns this device to the state of a brand-new install: no MLS state, no local database, no
  * cached response, no stored preference, nothing in the platform keystore.
  *
@@ -93,12 +120,29 @@ export async function wipeDeviceToFactory(closeStorage?: () => Promise<void>): P
     sessionStorage.clear();
   });
 
+  // NEVER CLAIM AN EMPTY DEVICE WITHOUT LOOKING. This function used to print "nothing of this
+  // device remains" on the strength of the steps it RAN, and on 2026-08-28 it printed it on a
+  // revoked device that kept its MLS database and ten `mls_not_ready_since` keys - 8.2 MB - because
+  // the session's watchdog was still running and rebuilt them 1.25 s later. A wipe reports what it
+  // deleted; only a survey reports what is GONE, which is the claim being made.
+  const survivors = await surveyDeviceStorage();
   if (failures.length > 0) {
     console.error(
       `[RESET] finished with ${failures.length} step(s) unfinished: ${failures.join(', ')}`
     );
-  } else {
+  }
+  if (survivors.length > 0) {
+    console.error(
+      `[RESET] ${survivors.length} store(s) SURVIVED the wipe: ${survivors.join(', ')}`
+    );
+  } else if (failures.length === 0) {
     console.log('[RESET] done - nothing of this device remains');
   }
+
+  // THE SURVEY IS SYNCHRONOUS ON PURPOSE, and a second, later look was deliberately NOT added: the
+  // login page's "reset" button is the other caller, and a user who signs back in writes keys
+  // within seconds, so a delayed audit would accuse an ordinary new session of being a zombie. What
+  // stops the state coming back is `tearDownLiveSession`, which leaves nothing running to write it.
+
   return failures;
 }

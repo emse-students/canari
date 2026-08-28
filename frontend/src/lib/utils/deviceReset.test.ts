@@ -10,17 +10,22 @@ vi.mock('$lib/utils/openExternal', () => ({ isTauriRuntime: () => false }));
  */
 describe('wipeDeviceToFactory', () => {
   const deleted: string[] = [];
+  // Stateful on purpose: the survey re-reads this after the wipe, so a fake that keeps answering
+  // with the databases it was asked to delete would report every wipe as having left them behind.
+  let present: string[] = [];
 
   beforeEach(() => {
     deleted.length = 0;
+    present = ['CanariDB_u1', 'SomethingElse'];
     localStorage.setItem('canari_theme', 'dark');
     sessionStorage.setItem('anything', '1');
 
     vi.stubGlobal('indexedDB', {
-      databases: async () => [{ name: 'CanariDB_u1' }, { name: 'SomethingElse' }],
+      databases: async () => present.map((name) => ({ name })),
       deleteDatabase: (name: string) => {
         const req: Record<string, unknown> = {};
         deleted.push(name);
+        present = present.filter((n) => n !== name);
         queueMicrotask(() => (req.onsuccess as () => void)?.());
         return req;
       },
@@ -83,5 +88,37 @@ describe('wipeDeviceToFactory', () => {
     // The cache step failed, and the ones after it still ran.
     expect(failures).toEqual(['the cached responses']);
     expect(localStorage.getItem('canari_theme')).toBeNull();
+  });
+
+  /**
+   * "Nothing of this device remains" was printed, on 2026-08-28, on a revoked device that kept its
+   * MLS database and ten localStorage keys: the wipe reported the steps it RAN, and something still
+   * running had put the state back. A claim about what is GONE has to be read back to be made.
+   */
+  it('names what survived instead of claiming an empty device', async () => {
+    const errors: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((...args) => void errors.push(String(args[0])));
+    // A store that outlives its own deletion, which is exactly the shape that went unreported.
+    vi.stubGlobal('indexedDB', {
+      databases: async () => [{ name: 'CanariDBMls_u1' }],
+      deleteDatabase: () => {
+        const req: Record<string, unknown> = {};
+        queueMicrotask(() => (req.onsuccess as () => void)?.());
+        return req;
+      },
+    });
+
+    await wipeDeviceToFactory();
+
+    expect(errors.some((e) => e.includes('SURVIVED') && e.includes('CanariDBMls_u1'))).toBe(true);
+  });
+
+  it('claims an empty device only when nothing reads back', async () => {
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args) => void logs.push(String(args[0])));
+
+    await wipeDeviceToFactory();
+
+    expect(logs).toContain('[RESET] done - nothing of this device remains');
   });
 });

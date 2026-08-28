@@ -234,16 +234,15 @@ export function summarize(rows) {
   };
 }
 
-/** Fetches and classifies the whole estate. */
 /**
  * Whether the server has any record that this device REGISTERED, which on this schema means an
  * `auth_sessions` row and nothing else - there is no device-registry table.
  *
- * WHY THIS IS NOT `census()`: the census reads `key_package` UNION `dm_device_group_memberships`, so
- * it answers "is this device addressable by a peer", never "does this device exist". A freshly
- * enrolled device holds a session for as long as it takes to publish its first KeyPackage - measured
- * at over 60 s, and sometimes never - and reading the census for it cost five HEAL-NEW rows on
- * 2026-08-28 (testing-methodology.md, "A poll does not make a predicate true").
+ * WHY THIS IS NOT `hasKeyPackage()`, AND WHY BOTH EXIST. A session is written by the OIDC callback; a
+ * KeyPackage is written by `POST /api/mls/register-device`. They are two different requests, so the
+ * PAIR is a diagnosis and neither half is one: session and KeyPackage means enrolled; session and NO
+ * KeyPackage means the registration was REFUSED, and the server logged why. On 2026-08-28 that pair
+ * separated "a wiped profile never publishes" from the truth - a 400 from the per-user device cap.
  */
 export function isRegistered(deviceId) {
   return (
@@ -251,6 +250,63 @@ export function isRegistered(deviceId) {
   );
 }
 
+/**
+ * Whether this device has a published KeyPackage, which is what makes it ADDRESSABLE: the server
+ * refuses to activate a membership without one (`[MEMBERSHIP_ACTIVE] REFUSED reason=no_key_package`),
+ * so every HEAL row rests on this fact and not on the session.
+ */
+export function hasKeyPackage(deviceId) {
+  return psql(`SELECT count(*) FROM key_package WHERE "deviceId" = '${deviceId}'`).trim() !== '0';
+}
+
+/**
+ * The server's per-user device cap, mirrored from `apps/chat-delivery-service/src/retention.constants.ts`.
+ *
+ * MIRRORED AND NOT IMPORTED because this rig does not build the server, and mirrored WITH ITS WINDOW
+ * because the server counts `key_package` rows created inside `RETENTION_WINDOW_MS` - a count of all
+ * rows would be a different number and would refuse runs the server would have accepted.
+ */
+export const MAX_DEVICES_PER_USER = 15;
+const RETENTION_WINDOW_DAYS = 90;
+
+/**
+ * How many devices this account currently spends against the cap above.
+ *
+ * WHY A PRECONDITION AND NOT A CONSEQUENCE. `register-device` answers a full account with a 400 whose
+ * body never reaches a log this rig reads, and the client's only trace is
+ * `[KP] Publication failed ... welcome_request deferred` - a line that says "later" about something
+ * that will never happen. Every HEAL-NEW row mints a device and abandons it, so a rung of sixteen
+ * rows walks into the cap by construction: on 2026-08-28 the campaign's own debris filled all fifteen
+ * slots and five rows reported that a wiped profile does not publish, which was never true
+ * (durable-rules.md: never learn by failing what a fact could have told you).
+ */
+export function enrolledDeviceCount(userId) {
+  return Number(
+    psql(
+      `SELECT count(DISTINCT "deviceId") FROM key_package WHERE "userId" = '${userId}'` +
+        ` AND "createdAt" >= now() - interval '${RETENTION_WINDOW_DAYS} days'`
+    ).trim()
+  );
+}
+
+/**
+ * When this device was REVOKED, or null if it never was.
+ *
+ * WHY THIS AND NOT THE CENSUS DISAPPEARING: `revoked_device` is the row the DELETE endpoint writes on
+ * purpose to record the decision, so it is the only column that is evidence for the question "was
+ * this device revoked". The device leaving the census is a CONSEQUENCE - the same purge deletes its
+ * KeyPackages and memberships - and a consequence cannot distinguish "the revocation landed" from
+ * "the device had nothing to purge in the first place". Both are read, and they are reported
+ * separately (durable-rules.md: a column is only evidence for the question it was written to answer).
+ */
+export function revokedAt(deviceId) {
+  const at = psql(
+    `SELECT COALESCE(MAX("revokedAt")::text, '') FROM revoked_device WHERE "deviceId" = '${deviceId}'`
+  ).trim();
+  return at === '' ? null : at;
+}
+
+/** Fetches and classifies the whole estate. */
 export function census(today) {
   return psql(CENSUS_SQL)
     .split('\n')

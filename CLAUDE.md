@@ -166,16 +166,32 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     on this schema**, `auth_sessions` is the only row a registration writes, and `isRegistered()` in
     `devices.mjs` now reads it. **12 of today's 22 session-without-KeyPackage web devices looked like
     a regression and are all `d82cd226` inside run 3's own 16-minute window** - the rig is a
-    participant, so a population is not a finding until you ask who is in it. **The one real question
-    it leaves, owed FIRST on resumption: mint ONE device by hand, leave it alone ten minutes, query
-    `key_package`** - that separates "the runner tore W3 down too early" from "a wiped profile never
-    publishes", and until it is run `enrolled` is not a product fact in either direction. (2) All four
+    participant, so a population is not a finding until you ask who is in it. **AND THE QUESTION THAT
+    PARAGRAPH LEFT IS NOW ANSWERED, BY THE SERVER: a wiped profile publishes in 1.9 s. The refusal was
+    the per-user DEVICE CAP** - the rung's own sixteen rows each mint and abandon a device, so 15/15
+    was reached by construction and `register-device` answered 400 before it logged anything. Both
+    halves are FIXED and shipped (server code + client type + the rig asserting a free slot before it
+    wipes); story in `CHANGELOG.md`, rules in
+    [durable-rules](docs/wiki/durable-rules.md#mls-membership-and-routing), what remains in
+    [backlog](docs/wiki/backlog.md). **`enrolled` is a product fact again, and no HEAL-NEW cell needs
+    re-measuring for that reason.** (2) All four
     HEAL-REVOKE rows were refused by the preflight because **W2 was alive, on `/login`, and logged
     out** - `still unknown after 4 repair(s)` - a state no baseline in this rig restores, since
     `launch.mjs start` no-ops on a running browser and `unlock.mjs` only answers a PIN. Try
     `login.mjs --device W2`. **This is queue item 6 blocking rows, not merely owed.** Detail and
     every measurement are on the board and in
     [testing-methodology](docs/wiki/testing-methodology.md); neither is restated here.
+
+    **AND A SECOND P1 CAME OUT OF THE SAME NIGHT, FIXED 2026-08-28: a revoked device wiped itself and
+    then put its own state back 1.25 s later**, because the 5 s SYNC_WATCHDOG was never stopped and
+    `ensureMls()` rebuilds a client whenever it finds none. `tearDownLiveSession` is now shared by
+    logout and revocation, and `wipeDeviceToFactory` reads the stores back instead of claiming an
+    empty device. **What is OWED is a row, because nothing on the board asks this question:** a
+    HEAL-REVOKE cell that asserts the storage is EMPTY after a revocation, and the user's own
+    question - does it still wipe when the device was OFFLINE at deletion time - which the design
+    answers (`isDeviceRevoked` says `false` when unreachable, so the wipe lands at the first login
+    WITH a network) and no run has ever shown. Story in `CHANGELOG.md`, mechanism on
+    [auth](docs/wiki/frontend/modules/auth.md#erasing-a-revoked-device-and-the-125-s-that-undid-it).
 
     **Two things must NOT be read as settled:** DEL-10 passed where it FAILed on `2a4297cb` but
     nothing names what changed and the two runs measured different queues, so its P2 STAYS OPEN; and

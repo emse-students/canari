@@ -289,6 +289,7 @@
   "chat_device_session_count": "{count} connexions",
   "chat_device_session_orphan_note": "Cette connexion n'a jamais identifié d'appareil : elle n'a pas déverrouillé vos messages. Si vous ne la reconnaissez pas, supprimez-la.",
   "chat_device_session_unlisted_note": "Cette connexion nomme un appareil qui ne figure plus dans la liste. Si vous ne la reconnaissez pas, supprimez-la.",
+  "chat_device_limit_reached": "Cet appareil n'a pas pu s'enregistrer : votre compte a atteint la limite de {max} appareils. Supprimez un appareil inutilisé dans Paramètres > Gestion des appareils, puis rouvrez l'application.",
   "common_refresh_button": "Actualiser",
   "chat_channel_settings_title": "Paramètres du canal",
   "chat_channel_overview_tab": "Vue d'ensemble",

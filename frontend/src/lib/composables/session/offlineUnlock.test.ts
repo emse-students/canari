@@ -2,7 +2,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 /**
- * Guards on the offline-unlock decision inside `loginImpl`.
+ * Source guards on the two decisions `sessionAuth` makes that no unit test can execute: which
+ * logins may unlock without a server, and what a session stops before it erases itself.
  *
  * The behaviour itself is not executable in a unit test - `loginImpl` is a several-hundred-line
  * flow over a dozen module-level dependencies (MLS init, storage, push, outbox, WebSocket), and a
@@ -11,20 +12,28 @@ import { fileURLToPath } from 'node:url';
  * and that a server answer is never mistaken for a missing network. Both are security decisions
  * that a later edit could reverse while every other test stays green.
  *
+ * The same argument covers the revocation teardown at the bottom of this file: `wipeRevokedDevice`
+ * runs over the same dozen module-level dependencies, and what broke was an ORDER, which is what a
+ * source guard pins best.
+ *
  * See `sessionDeviceKey.test.ts` for the same technique on the Tauri command contract.
  */
 const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
 
 const sessionAuth = read('./sessionAuth.ts');
 
-/** The body of `loginImpl`, from its signature to the start of the next exported function. */
-const loginImplBody = (() => {
-  const start = sessionAuth.indexOf('export async function loginImpl');
+/** The body of an exported function, from its signature to the start of the next one. */
+const bodyOf = (signature: string) => {
+  const start = sessionAuth.indexOf(signature);
   expect(start).toBeGreaterThan(-1);
   const rest = sessionAuth.slice(start + 1);
   const end = rest.indexOf('\nexport ');
   return rest.slice(0, end === -1 ? undefined : end);
-})();
+};
+
+const loginImplBody = bodyOf('export async function loginImpl');
+const tearDownBody = bodyOf('export function tearDownLiveSession');
+const wipeRevokedDeviceBody = bodyOf('export async function wipeRevokedDevice');
 
 describe('which logins may unlock offline', () => {
   it('allows exactly the two paths that already skip the server PIN check when online', () => {
@@ -120,7 +129,48 @@ describe('the offline session never re-enters the destructive catch', () => {
   });
 
   it('detaches the reconnect listener on logout', () => {
+    // Now via the shared teardown, which is the point: the listener is detached for BOTH exits.
     const logout = sessionAuth.slice(sessionAuth.indexOf('export function logoutImpl'));
-    expect(logout).toContain('unregisterOfflinePromotion();');
+    expect(logout).toContain("tearDownLiveSession(ctx, cb, 'logout');");
+    expect(tearDownBody).toContain('unregisterOfflinePromotion();');
+  });
+});
+
+/**
+ * A wipe is not a wipe while something is still running that can put the state back.
+ *
+ * Measured on prod 2026-08-28: 1.25 s after a revoked device wiped itself, the SYNC_WATCHDOG ticked,
+ * found ten conversations still in memory and an empty WASM, and drove `requestReAdd` for all ten -
+ * re-marking every group not-ready and rebuilding the MLS database through `ensureMls()`, which
+ * creates a client whenever it finds none. `logoutImpl` had always stopped all of that; the
+ * revocation path had never run any of it. These pin the two halves that cannot drift again.
+ */
+describe('what a revoked device stops before it deletes anything', () => {
+  it('stops the live session before the first delete', () => {
+    const wipe = wipeRevokedDeviceBody;
+    const stop = wipe.indexOf("tearDownLiveSession(ctx, cb, 'revoked');");
+    expect(stop).toBeGreaterThan(-1);
+    // Every erasure must come after it - one running timer is enough to undo all three.
+    for (const erase of ['resetDeviceAsFreshImpl(', 'clearAuth()', 'wipeDeviceToFactory()']) {
+      expect(wipe.indexOf(erase)).toBeGreaterThan(stop);
+    }
+  });
+
+  it('stops the watchdog that re-created the state, and empties what it iterates', () => {
+    // The timer AND its candidate set: the watchdog unions the live conversation map with the
+    // not-ready registry, so clearing the timer alone would still leave a reactive path a source.
+    expect(tearDownBody).toContain('clearInterval(ctx.timers.syncWatchdog);');
+    expect(tearDownBody).toContain('cb.conversations.clear();');
+  });
+
+  it('never flushes MLS state on the way out of a revocation', () => {
+    // The flush writes back exactly what the wipe exists to delete, so it is gated on the reason
+    // rather than shared - and the persister is still uninstalled either way.
+    const flushAt = tearDownBody.indexOf('flushActiveMlsStateEncrypted()');
+    expect(flushAt).toBeGreaterThan(-1);
+    const guard = tearDownBody.lastIndexOf("if (reason === 'logout') {", flushAt);
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(flushAt);
+    expect(tearDownBody).toContain('unregisterMlsStatePersister();');
   });
 });

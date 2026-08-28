@@ -2,7 +2,11 @@ vi.mock('$lib/mls-client/tabLeader', () => ({
   getIsTabLeader: () => true,
 }));
 
+const { showToastMock } = vi.hoisted(() => ({ showToastMock: vi.fn() }));
+vi.mock('$lib/stores/toast.svelte', () => ({ showToast: showToastMock }));
+
 import { syncConnectionAfterWsOpen } from './initializeConnection';
+import { DeviceLimitReachedError } from './mlsDeliveryApi';
 import { workspaceScope } from '$lib/mls-client/distributionScope';
 
 /**
@@ -221,5 +225,65 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
     });
 
     expect(mls.forgetGroup).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * What the client says when the server refuses this device outright.
+ *
+ * A 502 is deferred to the next connection and the device heals; the per-user device cap is refused
+ * with a 400 every time, forever, and nothing heals. Both used to print the same line. Measured on
+ * prod 2026-08-28: an account at 15/15 published no KeyPackage, was answered `no_key_package` on
+ * every membership activation, and reported a deferral each reconnection - so the one actor who
+ * could fix it was never told.
+ */
+describe('syncConnectionAfterWsOpen (a refused device is not a deferred one)', () => {
+  /** Minimal stub: the KeyPackage step is the whole subject, so nothing after it needs to run. */
+  const refusingStub = (error: Error) => ({
+    generateKeyPackage: vi.fn().mockRejectedValue(error),
+    reconcilePublishedKeyPackages: vi.fn().mockResolvedValue(undefined),
+    getUserGroups: vi.fn().mockResolvedValue([]),
+    getLocalGroups: vi.fn().mockReturnValue([]),
+    isDistributionGroup: vi.fn().mockReturnValue(false),
+    registerDistributionGroup: vi.fn(),
+    ...forgetPair(),
+    saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
+    getDeviceId: vi.fn().mockReturnValue('dev-1'),
+    waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
+  });
+
+  beforeEach(() => showToastMock.mockClear());
+
+  it('names the device cap as a refusal and tells the user, who is the only one who can lift it', async () => {
+    const log = vi.fn();
+    await syncConnectionAfterWsOpen({
+      mlsService: refusingStub(new DeviceLimitReachedError(15)) as any,
+      userId: 'u1',
+      deviceKeyB64: 'pin1',
+      processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
+      log,
+    });
+
+    const lines = log.mock.calls.map((c) => String(c[0]));
+    expect(lines.some((l) => l.includes('REFUSED') && l.includes('15'))).toBe(true);
+    // The word that made this defect invisible for as long as it lasted.
+    expect(lines.some((l) => l.includes('deferred to next connection'))).toBe(false);
+    expect(showToastMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('still defers a transport failure, which the next connection really can fix', async () => {
+    const log = vi.fn();
+    await syncConnectionAfterWsOpen({
+      mlsService: refusingStub(new Error('502 Bad Gateway')) as any,
+      userId: 'u1',
+      deviceKeyB64: 'pin1',
+      processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
+      log,
+    });
+
+    const lines = log.mock.calls.map((c) => String(c[0]));
+    expect(lines.some((l) => l.includes('deferred to next connection'))).toBe(true);
+    // Nothing for the user to do about a 502, so nothing is said to them.
+    expect(showToastMock).not.toHaveBeenCalled();
   });
 });
