@@ -2233,6 +2233,28 @@ by anyone who has not met them.
 
 ---
 
+
+## A defect the ladder cannot ask about, found by READING one row's log
+
+**Measured 2026-08-28, during HEAL-NEW-3.** The row passed. Its client log carried
+`[SettingsBlockedSection.load failed] Error: blocks 500`, and the server behind it read
+`EntityMetadataNotFoundError: No metadata for "UserBlock" was found` eleven times that day. The
+whole blocking feature was down on production, and with it opening a 1-to-1 and inviting anyone to
+a group - both creation paths ask `isBlockedWith` first and are written to stop rather than guess.
+
+**Nothing here could have caught it, and the reason is structural.** No row asks the question; the
+classifier does not fire on it, because a 500 on a section this row never navigates to is not dirt
+this row produced; and the deploy was green, since the container boots and Nest maps every route.
+The fault is a disagreement between two lists in one file - `forFeature` and the root DataSource -
+and a green ladder says nothing about it.
+
+**So the instruction stands and it is not a formality.** A run's logs are read on every pass, and
+the useful half is what the row was NOT asking about. Two more things came out of the same log and
+neither is in the verdict: the reconciliation covered 7 of 11 groups and deferred the rest for want
+of a probe sender, so the sidebar went green on the READD path rather than on a complete sweep; and
+the fresh-device bulk of `TooDistantInThePast` is the documented past-epoch noise, which is exactly
+the kind of line a reader learns to skip - and the 500 was three lines away from it.
+
 ## Where a result goes
 
 - **PASS** -> one row in the [dashboard](cross-client-testing.md), with the build it ran against.
@@ -2321,6 +2343,15 @@ next call site written. And when the same wrong answer appears a second time, th
 second call site: it is finding what makes the answer reachable at all. `awaitListed` also logs the
 discriminator now (`{panel, hiddenPanel, rowsInDom}`), because "not listed" and "listed but hidden"
 were indistinguishable in the failure output for six days.
+
+### A phone declaration matched by whole-string equality silently unarms the phone
+
+DEL-7 first recorded `INVALID` blaming the product - `the group never reached A1` - when the group HAD
+reached A1 in 147 ms. `devicesFor` compared its declaration `del.mjs --only 7` against the invocation
+that actually exists, `del.mjs --only 7 --destructive`, by whole-string equality. No match, so the
+preflight silently ran `W1 W2` and the phone was never armed. **A declaration is a PREDICATE over
+invocations, never a string to be equal to** - and the failure mode is the worst available: not an
+error, but a row that measures a different fleet than the one it names and then accuses the product.
 
 ### A runner must not fold cleanliness into its own assertion - `gate` only ever DOWNGRADES
 
@@ -2602,3 +2633,43 @@ The verdict is now `deviceResidue(label, cx)`, exported, with the pure combiner
 exact reading that cost three sessions. **A CLI ENTRY POINT IS A CALLER, NEVER A HOME.** Anything a
 row asserts on has to be reachable by import, or the tool and the runner are two implementations of
 one criterion and only one of them is ever exercised by hand.
+
+## What the HEAL rung taught the instrument
+
+Moved off the board on 2026-08-28 with the rest of section 16's prose. These are rules about measuring, not verdicts.
+
+**A LAUNCHER CLICK IS JUDGED BY ITS EFFECT.** A button that has painted but not hydrated takes the
+click and does nothing with it - `realClick`'s recorder confirms the `BUTTON` received the event, so
+no layer reports a problem - and the step then spends its budget waiting for a navigation that never
+started. A dropped click is not cured by waiting longer, so the step retries and ends on a fact.
+
+**THE DIRT EVERY FRESH DEVICE CARRIES.** `[History] frame never read here and unreadable for good
+(past-epoch-application); will reconcile` arrives once per frame older than the device's own epoch -
+hundreds of lines on an account with history. A device that was not in the group at that epoch
+genuinely cannot read those frames, so the condition is expected; what is not settled is whether
+`severe` is the right level for it, and until that is answered **every row on this rung is
+`PASS-DIRTY` at best**, which is a reporting question standing between this rung and the `PASS` the
+user asked for.
+
+**What that says about this board is the point.** The defect is invisible to every row here, and to
+the two HEAL-REVOKE cells that ARE green, because they assert the log line - `[RESET] done - nothing
+of this device remains` - or the product's behaviour, and neither is a reading of the disk. It was
+also invisible to every gate in the repo: nothing in CI compiles the Android app, so a missing class
+in a LAYOUT inside a dependency reached a user. **A cell asserting an empty store after a revocation,
+on BOTH halves, is therefore owed on A1 and on a web device**, and it is the only row that would have
+caught this. Until it exists, a HEAL-REVOKE pass means the product recovered, never that the device
+is clean.
+
+**THE INSTRUMENT WAS THE REASON THIS TOOK THREE READINGS, and that is the transferable part.**
+`footprint.mjs` answered **"nothing of the account remains" about A1 while the phone was displaying
+eleven conversations.** Its whole criterion was `canariDatabases === 0`, and on a Tauri client the
+message store is native SQLite - so the count is 0 on an enrolled phone and 0 on a wiped one. **A
+predicate that cannot fail on the device class it judges is not a criterion**, and this one had been
+read as evidence three times. Three changes, all in
+[testing-methodology](testing-methodology.md): it also counts `mls_device_id_<userId>` and
+`canari_device_key_vault`, which nothing but an enrolment writes; a new `nativeResidue()` reports
+WHICH paths survived, because the byte total read 19 MB with the account gone and 31 MB with it
+present, on the same device inside an hour; and for a Tauri origin the verdict is the AND of the two
+halves, computed in one place, with an unreadable native half VOIDING it rather than passing it.
+`logs/Canari.log` is reported separately - the running app rewrites it in milliseconds, the same
+argument that keeps `PARAGLIDE_LOCALE` out of the web criterion.

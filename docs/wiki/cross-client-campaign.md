@@ -610,3 +610,411 @@ What was removed on 2026-08-25, when the board was swept a second time:
   GRP and most of DEL fell through. Third instrument fault of this shape in this file, found the same
   way each time: a gap that large about phases already known green is a gap in the reader, not in the
   campaign. Both spellings are read now.
+
+- **RUNG 9's LAST TWO SWEEPS, AND THE AMPLIFIER FIX THAT WAS HIDING EVERYTHING ELSE.** Twenty-one of
+  the rung's cells were dirty on one signature, and acknowledging a same-epoch refusal removed it: the
+  re-run of 2026-08-27 on `cb967b6c` (twenty rows `--without A1`, the four `+A1` rows keeping their `6808a89c` verdict until the full re-run on `0c31be5d`) turned **15 into `PASS` where the
+  previous sweep had none**, and `could not join the distribution group` has appeared in no row since.
+  Three cells survived that fix, and they were not the old signature:
+
+  - **COMM-8 `FAIL`** - the one row whose dirt was never only the amplifier. A member granted a
+    private salon reached its delivery roster and stored no seed at all, because the peer had
+    external-joined the salon's group TWICE across a navigation, base 0 then base 1 two seconds apart.
+    The salon reached epoch 2, the granting device stayed at 0 refusing frames it had no tree for, and
+    the seed could not move. **Four groups were double-joined in that one rung** (`93c80263`,
+    `a3b34f58`, `73cb54d2`, `60561454`). The cause - an accepted external join durable on the SERVER
+    and volatile on the client - and its fix are in `CHANGELOG.md`; the row is green on `0c31be5d`.
+  - **COMM-11 `PASS-DIRTY`** - one same-epoch refusal at 0/0 on `5e09125d`, correctly ACKed but still
+    an ERROR, same root: a distribution group forked by a duplicate join. Clean since.
+  - **COMM-9/10, COMM-21 and COMM-22 `VACUOUS`**, unchanged by the fix, which is what adjudicates
+    them: none was the debris. COMM-21's HTTP 400 survived exactly as predicted.
+
+  **And the ACK fix did not cause COMM-8.** The ledger carries `seedAfterTheGrant: false` twice on
+  pre-fix builds (`d3cff54c`, `d6f61539`), and has never once recorded `'distributed'` - every pass
+  that row has ever taken came through the history-repair route, never the distribution frame, which
+  is why WP-REGRANT-2's proof is still owed with the row green.
+
+- **COMM-22's full measurement**, taken on `66639621` in the quiet window: 12 Graine sessions minted
+  over 6 join/leave cycles (epochs 1->13), every message reaching the server (12/12), the sender
+  reading all 12, and the peer reading all 12 both warm (3.2 s) and cold (3.3 s, `gate: unlocked`)
+  holding **one seed per session** - the same twelve session ids in `seedsWarm` and `seedsCold`, so
+  nothing was reconstructed by luck. `nothingStaysUnreadable` is the assertion that matters: the peer
+  DID miss 30 frames and DID render `[CHANNEL] ... unreadable ... (repairable)` rows, then
+  `[GRAINE] absorbed` closed every one. **It is also the first production measurement of the joiner
+  publishing `base + 1` inside its own submission**:
+  `[MLS] externalJoin succeeded ... (base epoch 0, base for 1 stored with the commit)`.
+
+- **MULTI-5's `ERROR` in full**: `openChannel` on the second tab saw `no gateway connection line
+  within 30 s`, then `sidebarPanel: false, listedEntries: 14, bodyChars: 960`.
+
+- **COMM-12 SETTLED ON ITS THIRD ATTEMPT, and only because the rail was swept.** Its two `VACUOUS`
+  were a mid-run CD deploy with `failures: []`, then a NAMED failure:
+  `click missed its target: [aria-label="Ajouter une communaute"] - dispatched at 108,475 on <BUTTON>,
+  taken by` a community TILE of an earlier COMM run. `stableCentreOf` had cleared that point 120 ms
+  earlier and the recorder named who took it, so the campaign's OWN debris - 8 communities on the rail
+  - was overflowing the control. Six debris communities and 26 debris salons later the same runner
+  passes unchanged, which is the cleanest possible proof that nothing about the product was ever at
+  fault: **an inherited state, not a defect**, and queue item 4's per-step starting point is what stops
+  it recurring. Its residual dirt is 9 social-service lines the classifier has no rule for - a
+  workspace create, an invite pair, the distribution-group commits, and six
+  `No message queued after validation - recipients=0` WARNs that are correct for a key-distribution
+  group whose only member is its creator. Noise to teach `srvclassify` about, not a signal.
+
+### The evidence the cells carried before 2026-08-28
+
+The board's State column is a verdict, a number and a time - the rule above, applied to every cell on
+2026-08-28 when the user read the file as a session state rather than a state table
+(*"s'il y a plus de 4-5 mots c'est probablement que c'est verbeux"*). What each of those cells said,
+kept because it was measured once and is expensive to measure again. Where a row's EXPECTATION was
+living in this column it moved into the board's own "What it asks", which is where it belongs, and is
+not repeated here.
+
+- **0 SETUP** - 5/9 `passed`; SETUP-2 `skipped` by decision, SETUP-7/8 owed before CORRUPT and PIN
+- **1 MSG** - **`PASS` 12/12 x1**; four `+A1` rows owe a re-run for `a1Build`
+- **9 COMM** - 19 `PASS`, 5 `PASS-DIRTY`, no `FAIL`, no `VACUOUS`; COMM-10 never run
+- **10 DEL** - 4 `PASS`, 6 `PASS-DIRTY`, no `FAIL`, no `VACUOUS`; 7 cells owe a re-run on `del.mjs` `2dd7a0f4a933`
+- **12 MULTI** - 1 `PASS`, 1 `PASS-DIRTY`, 1 `VACUOUS`, 2 `SKIPPED`, MULTI-5 `ERROR`; every cell owes a re-run on `multi.mjs` `74bb17b8283f`
+- **SETUP-2** - `skipped` - deliberate; `install -r` keeps the store and avoids re-paying SETUP-4's 2FA
+- **MSG-2** - `PASS` - 578 ms. **No `a1Build`** - re-run owed for attribution (see the phase note)
+- **READ-5** - `SKIPPED`, TERMINAL (user, 2026-08-23) - needs FOUR readers and the estate has TWO accounts, the watermark being per USER. Closed, not deferred
+- **SEARCH-2** - `PASS` 5/5 - one `ERROR` in the six, the intermittent of [testing-methodology](testing-methodology.md) 34
+- **GRP-1** - **`PASS`** - `feecfaf5` x4; one run `PASS-DIRTY` on the deliberately unclassified `[KICK] Stale leaf`, read and benign (the phone re-asked for a Welcome whose leaf was already in the tree)
+- **GRP-3** - **`PASS`** - `feecfaf5` x4. An earlier run was `PASS-DIRTY` on one `webSocketClosed` no navigation explains; it did not return, and it stays a P2 in [backlog](backlog.md)
+- **GRP-4** - **`PASS`** - `feecfaf5` x4 after `e027679a`; was 4 FAIL / 4 PASS before it (two parties added the joiner's leaf, the healing Welcome dropped as a redelivery)
+- **GRP-8** - `PASS-DIRTY` - `feecfaf5` x4, identical each time: the re-admitted device calls its own exclusion window a loss and reconciles for it. P2 in [backlog](backlog.md). Clean before `e027679a`, when the re-admission never happened
+- **COMM-8** - `PASS` - the fork is gone, twelve assertions hold, the peer 403s and was never sealed a seed. **`seedAfterTheGrant: repaired`, not `true`**: the seed came through the REPAIR path, so WP-REGRANT-2's proof is not taken
+- **COMM-9** - `PASS-DIRTY`, as `COMM-9/10`. Dirt is one W1 line, `[GRAINE] lost the first-publish race for 38ad9778 - joining the published base instead`. It heals, and a race that heals cleanly is still a defect
+- **COMM-10** - `PASS-DIRTY` - same combined row, same dirt. **The runner debt the user named is PAID**: a line that cannot ask its question now says so in `failures[]` instead of recording a bare `VACUOUS`
+- **COMM-12** - `PASS-DIRTY` on `66639621`, after `cleanup.mjs` swept the rail - **the sweep IS the adjudication**: the two `VACUOUS` before it were a mid-run CD deploy and then a debris community tile taking the click, an inherited state and not a defect. Dirt is 9 social-service lines `srvclassify` has no rule for
+- **COMM-18** - `PASS-DIRTY` - on screen in 153 ms. Dirt is one A1 line, `[hooks] launch URL already acted on by this start, ignoring the replay`, a designed dedupe announcing itself
+- **COMM-21** - `PASS-DIRTY` - dirt is one W2 line, `[MLS] Skipping stale MLS state write (v63068 <= stored v63069)`, the `peerWroteBefore` signature. **Its 400 probe is INTENDED** and is not the cause - `comm21.mjs:196` requires it
+- **COMM-22** - `PASS` on `66639621`, clean - 12 Graine sessions over 6 join/leave cycles (epochs 1->13), 12/12 read warm (3.2 s) and cold (3.3 s), one seed per session and the same ids in both. 30 frames were missed and `[GRAINE] absorbed` closed every one
+- **COMM-23** - `PASS-DIRTY` - the routing flip holds. Dirt is on the OWNER, `GET /api/mls/group-info/8473ce11 -> 403`: a QUESTION, not a designed refusal, and the one thing in this run nobody has explained
+- **DEL-1** - `PASS-DIRTY 1/1` - armed at last (`armed: true`), 4/4. Dirt = 6 W2 lines `[History] frame never read here and unreadable for good (past-epoch-application)`, a designed line announcing a loss reconciliation then recovers
+- **DEL-7** - `PASS 1/1` - reached A1 in 147 ms, killed at `LAST`, purged on wake, converged in 0 ms, ONE `[READD]` solicitation. Two harness faults paid first, both fixed
+- **DEL-8** - `PASS 1/1` - first run ever, and it validates the `solicitationsAbout` predicate DEL-7 now shares. **RUNS LAST of the phase**, it restores a snapshot over W1's real state
+- **DEL-9** - `PASS-DIRTY` on `66639621` - 4/4. Dirt is ONE unexplained W1 line, `[blocks.isBlockedWith] Object`, a debug log printing an object as the string `Object`: noise to fix, not a signal
+- **DEL-10** - `PASS-DIRTY 1/1`, **and it CONTRADICTS the `FAIL` on `2a4297cb`** - the missing trigger fired here, in the dirt: `[EXIT] replaying 1 exit(s) the server never answered`, then `[EXIT] c92c92e4 delete replayed - server deleted it`. **Do not close the P2 in [backlog](backlog.md) on one row**: nothing names what changed between the builds, and the old FAIL measured a queued SEND where this measured a queued EXIT
+- **TAB-1** - `pending` - RE-SCOPED 2026-08-24 onto the web `Notification`, the only out-of-page signal the product has. The gap it cannot assert is P3 in [backlog](backlog.md)
+- **TAB-3b** - `pending` - one 77.7 s run stands on the record, unexplained and not reproduced in four more
+- **MULTI-2** - `VACUOUS` - `no stored conversation row named the peer`, so the row never asked its question. Fixture debt, undiagnosed
+- **MULTI-3** - `SKIPPED`, **and the reason is RETIRED**: it was priced on SETUP-4's 2FA, which the user made payable on request 2026-08-27. Simply OWED, and it is the mobile twin of `HEAL-NEW-6` - one re-provisioning pays both
+- **MULTI-4** - `SKIPPED` - the 2FA half of the reason is retired (see MULTI-3), but the row is DESTRUCTIVE on the one armed phone. It runs LAST of the phone rows, after `HEAL-NEW-4/5/6`, or a revocation costs the campaign its only phone
+- **MULTI-5** - **`ERROR`**, and it is RUNNER debt: `no gateway connection line within 30 s`, then `sidebarPanel: false, listedEntries: 14`. NOT the SharedWorker limitation ([chat-gateway](services/chat-gateway.md)). **Hypothesis, UNPROVEN**: a fresh tab is behind the PIN gate and 14 buttons is a keypad; `pin.mjs --match` is the fixture fix
+- **MULTI-7** - `INVALID` - NO VENUE: the channel URL carried no group id, so no roster was read. Re-run owed, the row untried
+- **MULTI-8** - `INVALID` - same venue fault, untried. A new device id appearing is a `FAIL`, not a recovery
+- **MULTI-10** - `FAIL` on `e731b5b8`, a true positive against DATA, not code: ONE expectation unmet, `noPlaceholderIdentityAnywhere`, on the single row `userId='unknown'` / `status=active` in group `7da231f8`. The two invariants that would accuse the product HOLD. **It cannot go green by being re-run** - the guards of `c8addd53` repair nothing existing, so this is one `DELETE` on production, a one-off that belongs to the user
+- **NOTIF-2** - `pending` - a generic fallback is CORRECT; opening the app must recover
+- **NOTIF-4** - `PASS-DIRTY` - on `1f396ac7`, taken by a runner changed since, so a re-run is owed. a `PASS-DIRTY` on `1f396ac7` stands in the ledger, taken by a runner changed since
+- **NOTIF-6** - `pending` - reported not working from a real phone 2026-08-20, on an APK predating the current bundle
+- **NOTIF-7d** - `pending` - the case most likely to lose a pending deep link
+- **NOTIF-15** - `pending` - MUT-13 asserts the in-app half and defers the push half here
+- **HEAL-W1** - `pending` - a `healed` verdict after applying ZERO commits is a regression
+- **HEAL-W2** - `FAIL` of 2026-08-11, **which must NOT be read as current**: it predates the `build` field, so no artefact can be named for it, and it recorded `recovered: false` with `unknownGroupFired: 0` and `recoveryLines: 0` - the drain ran 8/8 and nothing asked for the missing group. The rung's FIRST question, not its verdict
+- **HEAL-REVOKE-1** - `pending` - the user found one that kept everything, P1 in [backlog](backlog.md)
+- **HEAL-REVOKE-2** - `pending` - the blacklist can make this row pass while HEAL-REVOKE-1 fails
+- **HEAL-REVOKE-4** - `pending` - the TRIGGER CONDITIONS are part of the assertion, not context
+- **HEAL-REVOKE-5** - `INVALID` on `48b65d08` - the shared instrument cause: no enrolled victim, so nothing to revoke. Re-run owed
+- **HEAL-REVOKE-6** - `pending` - **the instrument is in**: `deviceResidue()` is the AND of both halves, and the web-only predicate was still what `healrevoke.mjs` imported until 2026-08-28, so this row would have passed on a dirty phone. What is left is the victim being A1 rather than W3, one re-enrolment per run, measured at no 2FA
+- **HEAL-REVOKE-9** - `pending` - written 2026-08-28, the user's second question and the half no row had ever asked. Measured by hand on W3 first, which is what showed it worth a row
+- **HEAL-NEW-0** - **`PASS-DIRTY` on `48b65d08`** - the primitive the other fifteen rest on: nothing left of the identity, the store or the cookie, a never-seen `device_id` minted, and **no credential prompt**, the SSO session living outside the app origin - which is why the group costs ONE 2FA and not eleven. **The ledger's NEWEST row here is a `FAIL` the board deliberately does not take** (`03d015fd`): dirt only, and it measures the classifier - P3 in [backlog](backlog.md)
+- **HEAL-NEW-1** - **`PASS` on `48b65d08`** - the isolation was REAL (both webs killed, the phone force-stopped, `extra: []` after a 915 ms drain), and ten rows stayed amber the full 600 s at `serverActive: 10`, which the condition entails. **It asserts the OUTCOME, not that the app SAYS `no_peer_online`** - HEAL-NEW-5 is where that distinction is made
+- **HEAL-NEW-2** - `pending` on `a35cf4e5`, re-scoped to the `servableSubset` - 1 row of 10. Two earlier `FAIL`s measured the instrument: the device cap on `48b65d08`, then `expect: healed` over ten groups the peer is not in on `3b5cee35`
+- **HEAL-NEW-3** - **`PASS`** on `ebef7f3c` - 10/10 ready, settled during enrolment; heal served over READD while the reconciliation itself asked 7/11 (rest deferred, no probe sender). Three earlier runs measured the instrument
+- **HEAL-NEW-5** - `pending` - a responder that cannot answer must not leave a group on Sync with nothing owed. The row that says whether the ladder terminates on a PROOF or on a clock
+- **HEAL-NEW-6** - `pending` - this is MULTI-3, and it stops being `SKIPPED` the moment a 2FA is being paid anyway
+- **HEAL-NEW-7** - `pending` - the user's first symptom. Three causes to tell apart, and only two are visible to a new device: the third is an exit still owed, which lives in the DELETING device's own IndexedDB
+- **HEAL-NEW-8** - `pending` - the user's second symptom. The assertion is a COUNT plus the identity of every laggard, never a sample
+- **HEAL-NEW-10** - `pending` - the add-lock under two concurrent enumerations. Lowest of the group, and it costs a second 2FA
+- **HEAL-NEW-11** - `FAIL` on `48b65d08` - the shared instrument cause, read twice: `wentAmberBeforeTheResponderArrived: false` is `{"panel":false}`, which is what a device refused its KeyPackage looks like. Re-run owed
+- **HEAL-NEW-12** - `pending` on `a35cf4e5` - same `servableSubset` narrowing as HEAL-NEW-2, and runnable for the first time
+- **HEAL-NEW-13** - `pending` - says whether the retry is driven by OUR reconnect or the RESPONDER's. Read with HEAL-NEW-5, whose responder can never answer
+- **HEAL-NEW-14** - `pending` - the user's own worry. A reload must not restart the ladder from zero, and a cut must not leave a row amber with nothing owed
+- **HEAL-NEW-15** - `FAIL` on `48b65d08` - shared instrument cause; `healed: true` and `usability.openedInMs: 26`, so the app WAS navigable. Its `fleet.extra` also named two abandoned mints. Re-run owed
+
+## 12 MULTI - the four rows added 2026-08-28, and why NOTHING on the board could have caught the defect
+
+**A conversation lost both its directions for 134 minutes on production and every rung above would
+have passed through it.** The peer had NO active device in the group: a placeholder identity
+(`userId='unknown'`, `deviceId='pending'`) had been stored as an `active` member 0.84 s before the
+real members joined, and the peer's own two devices sat `pending` and were never activated. Full
+account in [backlog](backlog.md), not restated here.
+
+**The board was searched before these rows were written, and the gap is STRUCTURAL, not an
+oversight.** Of the 200-odd rows, exactly ONE reads `dm_device_group_memberships` at all - COMM-8 -
+and it reads **who is named**, never **what status they hold**. Every other row asserts the SYMPTOM: a
+message appears, a badge lights, a list is right. That is precisely what this defect leaves intact -
+it was invisible from the sender's side, and the receiver's side was a device the rig does not own.
+**A rung can be green while a member of the group is a string the client itself defines as "no
+identity yet".**
+
+**Nor would the ladder have run long enough.** Every runner enrols, measures and tears down inside one
+session. Three of the ten stranded memberships found on production had stood since 2026-08-03,
+twenty-five days, and no row anywhere asks a question whose answer is a POPULATION rather than an
+event. MULTI-10 is that question, and it is the cheapest of the four.
+
+**And it is NOT an iOS defect, which is what makes it belong on the ladder rather than on
+[device-verification](device-verification.md)**: nine of the ten stranded devices are `web-`, on
+Chrome, and the guards that shipped are one client seam and one server allowlist, neither of them
+platform-specific. `W1 W2` alone can run all four rows.
+
+What each of the four is for:
+
+- **MULTI-7** is the cheap half: `userId` and `deviceId` are compared against the client's own
+  non-identity literals (`unknown`, `pending`), and a match is a `FAIL` however well the messages
+  flowed. Nothing on this board had ever asserted the ROW.
+- **MULTI-8** names the defect. On production the activation never came at all and the "heal" was the
+  user uninstalling the app, which minted a new device id and took the group's only commit. **A
+  reinstall must not be what makes this pass** - the runner asserts the ORIGINAL device id went
+  `active`. W3 is the second device it enrols, so the row costs no re-enrolment of A1.
+- **MULTI-9** asserts the half nobody watched: for 134 minutes messages were accepted, fanned out and
+  lost while both clients showed them sent. A message sent while a member device is pending must still
+  be RECOVERABLE by that device after it activates, and nothing may claim success in between.
+- **MULTI-10** opens no client - it reads the table and the gateway only, runs as a preflight, and its
+  output is a COUNT with the offending ids. A non-zero count is a finding even when every other rung
+  is green. Its `pending` half is discriminated by PRESENCE: a switched-off device is legitimately
+  pending, so those rows are reported as `notCountedAgainstTheProduct` rather than counted.
+
+## 16 HEAL - what the rows are, and what they cost
+
+Moved off [the board](cross-client-testing.md) on 2026-08-28: it had grown to 280 lines of prose around 44 lines of table, which is the rule of 2026-08-22 broken in one section - a cell is a verdict, a count and a time. Nothing here is state; it is why each row exists.
+
+**Four runners for eleven rows**, and every runner now records the id of the row it answers:
+`heal-web.mjs` (HEAL-repair), `heal-a1.mjs` (HEAL-A1), `heal.mjs` (HEAL-NEXT). HEAL-W1, HEAL-W3,
+HEAL-W4 and the four HEAL-REVOKE rows are written as the ladder reaches this rung. HEAL-W2's only
+ledger verdict is a `FAIL` from 2026-08-11 taken by a script rewritten that same day, so it reads
+`pending`.
+
+**The four HEAL-REVOKE rows** come from the user's decision that revocation is a WIPE
+([backlog](backlog.md)). They are four rows and not one because a wipe is executed BY the device being
+wiped: "the wipe ran" and "the device came back like-new" are different claims.
+
+**The two nights' timings, since the cells no longer carry them:** HEAL-NEW-1 drained its fleet in
+915 ms and left ten rows amber for the full 600 s at `serverActive: 10`; HEAL-NEW-2's first run healed
+10/10 in 6.1 s on a premise the device cap had already voided, and its second drained in 982 ms before
+healing 1 of 10; HEAL-NEW-11's `wentAmberBeforeTheResponderArrived` note was
+`never went amber alone within 90s: {"panel":false}`.
+
+**AND FOUR MORE, ON THE USER'S ASK OF 2026-08-27: a revoked device that missed a LOT.** Verbatim:
+*"un appareil qui a ete revoque, qui a manque plein de messages/changements MLS (nouveaux groupes,
+suppressions de groupes etc) et de bien voir si tout est rattrape correctement a la fin (l'appareil
+revoque devrait agir comme un appareil neuf puisque la revocation lui demande de tout supprimer, mais
+il faut le tester). Ce cas est la porte vers beaucoup d'autres, toujours avec les histoires d'ordre,
+et de device mobile ou web."*
+
+**The expectation is an EQUALITY, and that is what makes it testable at all:** if revocation really
+wipes, then a revoked device returning is a NEW device, and its final state must be the state a fresh
+device reaches in the same window - the whole `HEAL-NEW-*` group already measures that side. So these
+rows do not re-measure repair, they measure SAMENESS, and any difference is the finding: a returning
+device that ends with more than a fresh one kept something the wipe was supposed to destroy
+(HEAL-REVOKE-1's open P1 is exactly a device that kept everything); a device that ends with LESS is
+carrying state that survived just enough to poison enumeration - the worse of the two, because it
+looks healthy.
+
+**Why the missed CHANGES matter and not just missed messages.** A device away for a long window misses
+two kinds of thing, and only one of them has a catch-up path: messages accumulate in a queue that can
+be drained, while MEMBERSHIP changes - a group created, a group deleted, a member removed - move the
+epoch and cannot be replayed at all. A returning device therefore has to be told the shape of the
+world rather than catch up to it, which is enumeration, which is the `HEAL-NEW-*` mechanism again. The
+axes the user names - ORDER, and web versus mobile - apply unchanged, so the same equality is asserted
+in each.
+
+Every row above breaks a device that **already held** the group - a rewound snapshot, or a
+revocation. A device that has **never held anything** is a different mechanism, and it is the one the
+user names as the app's sensitive point (2026-08-27): conversations stuck on the "Sync" badge, some
+repairing and others not, and rows for conversations that are DELETED.
+
+**Why it is a mechanism and not a variation.** A new device holds no group, so every row it shows is
+minted by server enumeration - `discoverMissingGroups` in `utils/chat/actions.ts` - and every one of
+them starts `isReady: false`. The badge is `chat_sync_badge_label` ("Sync"), rendered by
+`ConversationTile.svelte` on exactly `!isReady && lifecycle !== 'removed'`. So **"Sync" is not a
+progress indicator, it is the absence of MLS state** - and a row that will never repair looks
+identical to one that is about to. Getting from there to ready is rung 2 of the
+[recovery ladder](protocols/mls-recovery-ladder.md): `requestReAdd` tries `externalJoin` (fetch the
+published GroupInfo, build an external commit, no peer required), and only when no GroupInfo exists
+does it fall back to a `welcome_request` - which **needs a member ONLINE to answer it**. So who else
+is running is not a nuisance variable to be held constant, it IS the axis, which is why the user's
+five conditions are five rows and not five repetitions of one.
+
+**What this group must separate, and no existing row does:** an enumerated row that repaired by
+external join, one that repaired by a peer's Welcome, one that CANNOT repair because nobody can
+answer, and one that should never have been enumerated at all. All four look the same in the sidebar.
+
+**The cost, stated once: every row here is `+user`,** because a fresh device pays SETUP-4's 2FA -
+which is why MULTI-3 has been `SKIPPED` since `0c31be5d`. The group is only affordable if ONE 2FA
+buys many rows, so it stands on a primitive the rig does not have: `newdevice.mjs`, clearing the
+Canari ORIGIN (IndexedDB, the device key vault, the refresh cookie) while leaving the CAS/Authentik
+session on its own origin intact, so the next load enrols as a device the server has never seen
+without a credential prompt. **That is a claim, not a plan, and nine rows may not rest on an
+unmeasured one** - it is HEAL-NEW-0 and it runs first.
+
+**ORDER IS AN AXIS, NOT A DETAIL, and equality across it is the assertion** (user, 2026-08-27:
+*"W3 actif avant W1, w1 actif avant W3, etc. Toutes les configurations sont a tester et finir, pour
+que tout pass, de la meme facon (tout l'interet de la reconciliation)"*). A responder that is
+ALREADY online when the fresh device first enumerates, and the same responder arriving AFTER every
+row has gone amber, are two different mechanisms wearing one sidebar: the first can be answered
+inside the initial `discoverMissingGroups`, the second needs something to notice later and ask
+again - a reconnect, a presence event, or a retry. That is why each responder kind gets a
+present-from-the-start row AND an arrives-late row, and why the verdict is an EQUALITY: **a
+difference in the FINAL state between two orders is a `FAIL`; a difference in the TIME to reach it
+is dirt carrying a number.** Reconciliation that depends on who booted first is not reconciliation.
+
+**EVERY ROW HERE IS A TIMELINE, NOT A SNAPSHOT** (user, 2026-08-27: *"Est-ce-que tout finit bien par
+HEAL, et est-ce que le temps gene la navigation/UX"*). Two questions, and a readiness count answers
+neither: does it EVENTUALLY heal, and is the app usable while it does not. So every row records, per
+sample, an elapsed offset and a wall-clock stamp - the offset is what an assertion may use, the
+stamp is what makes a sample correlatable with a console, logcat or server line when the cause turns
+out to be on the far side of the wire. A row that ends amber must name WHICH rows and for how long;
+a row that heals must say when. `syncrows.mjs` is that reader, and it counts readiness off
+`data-conversation-tile` / `data-ready` / `data-removed` rather than off the "Sync" badge's text,
+because the badge is a Paraglide message and counting it counts the translation - the day the string
+moves, the count silently becomes zero, which is exactly the answer that lets a HEAL row pass over a
+broken app.
+
+**MEASURED AND OWED A ROW OF ITS OWN: a brand-new device enrols with NO PIN gate shown.** It reaches
+`/chat`, enrols, and the census carries it, while `pin.mjs` finds no modal. Recorded as `pinGate:
+"none shown"` on every HEAL row rather than judged here - see section 17, where the question
+belongs.
+
+**THE PHONE IS NOT PART OF ANY HEAL-NEW TOPOLOGY, so every row stops it first.** A1 is a third
+device of the OWNER's account, fanned into every group the owner creates, and no row here models it:
+row 1 claims nothing of the account was online, rows 2 and 12 claim no device of ours could have
+served the Welcome, and rows 3, 11 and 15 could not say whether W1 or the phone answered. `am
+force-stop` is the kill, for the reason a browser is killed rather than navigated away - a
+backgrounded app keeps its gateway socket - and it is paired with a restore registered as an exit
+hook, because a row that dies early would otherwise leave the package in Android's STOPPED state
+where FCM is cancelled, and every later push row would silently measure this row's kill.
+
+**Two things follow for the rows themselves.** A HEAL-REVOKE cell on A1 must read BOTH halves -
+`footprint.mjs` sees the WebView and only `nativeFootprint()` in `phone.mjs`, over `adb run-as`, sees
+`mls.bin` and the `.db` files - and a row that reads one half has measured the smaller one. And the
+build the phone must carry is NEWER THAN `v0.14.11`, for the reason below.
+
+**So the owed cell is now writable, and its predicate is the tool.** A HEAL-REVOKE row asserting
+`node footprint.mjs --device A1` reads `residue: 0` and `identityKeys: 0` is the row that would have
+caught all three of these defects, and none of the ~200 existing rows would have caught any. The
+BEFORE reading for it, taken on a fully enrolled A1: `identityKeys: 3`, native `residue: 28`.
+
+### What five of the rows assert, moved off the board 2026-08-28
+
+The cells carried these as prose; they are design, and the board is a state table.
+
+- **HEAL-REVOKE-8 is HEAL-NEW-7 from the other side, and the sharper case:** a returning device may
+  hold a stale membership belief no fresh device would have. Three causes must stay separable, and
+  only two are visible to a new device at all: a server tombstone (`deletedAt`, filtered by
+  `activeServerGroups`), a per-user dismissal (`getDismissedGroups`), and an **owed exit**, which
+  lives in the DELETING device's own IndexedDB (`pendingGroupExits.ts`). While the first device still
+  owes the server that exit, a new device is *entitled* to re-create the group, and the user sees a
+  deleted conversation wearing a Sync badge.
+- **HEAL-REVOKE-9 takes two samples of one disk.** While `cutHard` has the device really unreachable
+  the state must still be PRESENT (`isDeviceRevoked` answers `false` when it cannot ask, because a
+  transport failure is not an answer - a wipe here would mean every offline user loses their device),
+  and after ONE reload with a network it must be empty. It ends there: the return equality is
+  HEAL-REVOKE-5/7/8's subject, this row is the DEFERRAL.
+- **HEAL-NEW-8's assertion is a count because the throttles are the question.**
+  `RECOVERY_TIMEOUT_MS` allows one attempt per period and `PROBE_COALESCE_MS` collapses a 30 s burst,
+  so whether recovery is per-GROUP or per-DEVICE is exactly what a 13-conversation account measures
+  and a 1-conversation account cannot.
+- **HEAL-NEW-9 separates "no history" from "no history YET".** `externalJoin` restores membership,
+  never the past, and [history-reconciliation](protocols/history-reconciliation.md) says a new
+  device with no peer online starts with everything unread.
+- **HEAL-NEW-15 is a finding independent of the heal completing.** An amber sidebar that cannot be
+  clicked, or a healed conversation that will not open, fails the row whatever the repair does next: a
+  10-minute heal is acceptable where 10 minutes of a frozen list is not.
+
+### The HEAL rung's first two nights, and the device cap under all of it
+
+**WHAT THE FIRST NIGHT OF THIS RUNG ACTUALLY MEASURED, 2026-08-28.** Five rows died in a row -
+HEAL-NEW-0 `FAIL`, HEAL-REVOKE-5/7/8 and MULTI-8/9 `INVALID` - all on `login: false`, and not one of
+them measured the product. **One cause, six rows:** the wipe clears the app's origin and does not
+touch the SSO session, which lives on `auth.canari-emse.fr` and `cas.emse.fr`, so the browser walks
+the whole flow and lands signed in with no field to fill - and `login.mjs` read "no `#username`
+after 30 s" as a failure. `newdevice.mjs`'s own header had said so since it was written; the helper
+had not been told. Three rig faults came out, each fixed by making a predicate name what it meant:
+
+- **A missing form is TWO outcomes.** Classified at the throw now, by the fact available there -
+  where the browser ended up - because downstream both are the same sentence.
+- **`PARAGLIDE_LOCALE` was never a survivor.** MEASURED: clearing the origin leaves `[]`, and the
+  reload the rig performs on purpose - so the wipe is read against a fresh document - is what writes
+  the locale back. Asserting zero keys asserted against the rig's own reload. The claim is now no
+  IDENTITY survived, with an allowlist by name rather than a tolerance by count.
+- **`pin.mjs` exits 2 for "no unlock modal", which is an OBSERVATION.** `run()` collapsed every
+  non-zero to `false`, so "the gate was not there" and "the gate refused us" reached the verdict as
+  the same missing tick. Whether the app challenges a brand-new device is a question about the
+  product, not this primitive's claim, and smuggling it in answered it by accident.
+
+**THE SECOND NIGHT MEASURED ONE THING, AND IT WAS THE INSTRUMENT, 2026-08-28 03:30-03:58.**
+Run 3 of the ladder took eight rows and recorded NOTHING: HEAL-NEW-2, -12, -3, -11 and -15 exited 1,
+and all four HEAL-REVOKE rows exited 2 on the preflight's own refusal. **No verdict from this run is
+on this board, and none should be** - `gate` refusing the attribution is again the only reason
+nothing false was recorded.
+
+**The five HEAL-NEW rows died on one predicate, and the predicate was wrong.** Every row failed
+`sameAccountEnrolled` while everything the row was written to measure had already succeeded: the
+wipe was total, the IdP kept its session, the client minted a fresh id (`mtca2o9o-6fn1` for row 2),
+and `active` grew from 9 to 10. The poll added the night before then ran its FULL 60 s deadline -
+`the census carries the new id: false (after 63762ms)` - so the fix that was supposed to remove the
+flake instead proved the fact is never true. **`census()` reads `key_package` UNION
+`dm_device_group_memberships`** (`devices.mjs:76`), so a device that has published no KeyPackage and
+joined no group is not absent from the census, it is INVISIBLE to it. Measured on prod for that
+exact device: `auth_sessions` 1 row at 01:33:32 - the same instant the client reported the id -
+`key_package` 0, `one_time_key_package` 0, memberships 0. **There is no device-registry table at
+all**; `auth_sessions` is the only table that records that a device exists, and it is the table the
+predicate should have read.
+
+**The population question was asked before believing any of it, and it changed the answer.** Web
+devices holding a session but no KeyPackage, by day: **12 of 22 today, and ZERO on every day from
+2026-08-21 to 2026-08-27** but one. That shape reads exactly like a regression landing with tonight's
+deploy - and it is not one: **all 12 belong to `d82cd226`, the harness owner account, first seen
+between 01:30:01 and 01:45:59, which is run 3's HEAL-NEW window to the second.** Nothing outside this
+rig is affected, and no P1 is opened. **What is NOT settled is which of two causes it is** - the
+runner tearing W3 down before the client gets to publish (rig timing), or a wiped profile genuinely
+failing to publish (product). The discriminator is one gesture and it is the first thing owed on
+resumption: **mint ONE device by hand, leave it entirely alone for ten minutes, then query
+`key_package`.** Until that is run, `enrolled` must not be read as a product fact in either
+direction.
+
+**The four HEAL-REVOKE rows never started, and the cause is W2, not the runner.** Each preflight
+reported `W2 (9223): OFFLINE` and `still unknown on /login after 4 repair(s) - unknown -> unknown ->
+unknown -> unknown -> unknown`, while `start w2` answered exit 1 (already running) every time. W2 was
+therefore alive, on `/login`, and logged out - and the ladder's `baseline()` cannot repair that,
+because `launch.mjs start` is a no-op against a running browser and `unlock.mjs` only answers a PIN
+gate. **A device that has lost its session is a state no baseline in this rig currently restores**,
+which is the per-STEP starting point queue item 6 was written for, now blocking rows rather than
+merely owed. `login.mjs --device W2` against the live profile is the cheap first attempt.
+
+**One rig fault was fixed and has not yet run:** `revoke()` in `healrevoke.mjs` read the census once,
+immediately after the purge, and that single read is the gate all four HEAL-REVOKE rows stand on. It
+now polls for the disappearance with a 45 s bound and records `goneInMs`. It inherits the census
+defect described above and must be re-pointed at `auth_sessions` / `revoked_device` in the same pass.
+
+**AND THE MINT WAS STILL SPENDING A SLOT PER ROW, SILENTLY, UNTIL 2026-08-28.** `becomeANewDevice`
+purges the id each mint abandons - through `purge-devices.mjs --port <W1>`, which drives W1's device
+PANEL. HEAL-NEW-2 kills W1 by construction (its premise is that no device of ours is online), so the
+purge died on `ECONNREFUSED 127.0.0.1:9224` and reported `purged: false - a slot stays spent, and the
+cap is one row closer`. **That failure costs a slot and never a verdict, by design**, so a rung of
+sixteen such rows walks into the fifteen-device cap with nothing objecting - which is precisely how
+15/15 was reached the first time. It now purges through the device it just enrolled, the only client
+the function can prove is up and the one guaranteed to be on the right account. First run after the
+fix: `purged: true`. The account sat at 3/15 through the pass.
+
+**THE CAUSE OF EVERY HEAL-NEW FAILURE WAS THE PER-USER DEVICE CAP, AND THE PREDICATE WAS RIGHT ALL
+ALONG, 2026-08-28 10:22.** One mint on a quiet prod settled it: `POST /api/mls/register-device -> 400`,
+`[KP] Publication failed (400) - welcome_request deferred to next connection`, then
+`[MEMBERSHIP_ACTIVE] REFUSED reason=no_key_package` on the server for all ten groups. `registerDevice`
+counts the account's `key_package` rows and throws at `MAX_DEVICES_PER_USER` = 15 **before it logs
+`[REGISTER_DEVICE] START`**, which is why the server's trace looked empty. The owner account stood at
+exactly 15, and **all fifteen slots were the campaign's own abandoned mints**. With the debris purged
+(25 devices deleted through the product's own panel, account back to 2), the same profile published
+its KeyPackage in **1.9 s**.
+
+**So the census was never the wrong question - it was the RIGHT one, asked of a device the server had
+refused.** Reading `auth_sessions` instead made the row pass while the device was unusable, which is
+worse than the failure it replaced. The primitive now reads BOTH facts and reports the pair: a session
+with no KeyPackage is not "publication is slow", it is "the registration was REFUSED, go read the
+server's line". It also asserts the account has a free slot BEFORE it wipes anything, and purges the
+id each mint abandons - a sixteen-row rung fills a fifteen-device cap by construction. **The product
+half is a P1 in [backlog](backlog.md): a 400 that means "delete a device" reaches the user as a
+console line saying "deferred to next connection".**
+
+**Restorable since 2026-08-28**: `setTopology` was a sixth copy of "bring a client up" and could not restore a session, so those four verdicts measured the rig; it now uses `bringToReady`, checks its ACTOR before minting the victim, and `state.mjs` reads `/login` as `signedOut`. Story in `CHANGELOG.md`, rule in [durable-rules](durable-rules.md).

@@ -43,7 +43,31 @@ which is also where every release up to and including v0.13.1 now lives.
 - **Reporting a person**, from their profile, with the same four reasons every other report uses.
   A moderator sees the account's display name as the preview rather than a bare uuid.
 
+### Removed
+
+- **The Cercle test top-up on `/admin/cercle`, and every line that served it.** The button credited
+  5 EUR to the pressing admin's own Cercle account through the production path on a synthetic
+  `pi_canari_test_` intent. Nothing about it was simulated except the card: it moved a real balance
+  on a system Canari does not own, wrote a real `purchase_records` line into the association's
+  accounting, and left a `webhook_deliveries` row on the retry ladder - a credit wearing a test's
+  name. Gone with it: the endpoint (`POST /associations/:id/products/:productId/simulate-topup`), its
+  DTO, the service method, the client call, twenty Paraglide keys, and `resolvePurchase`'s
+  `skipPaymentReadiness` option, whose only caller it was - so the two conditions it waived (product
+  on sale, Connect account onboarded) are now unconditional. The cost is stated where it will be
+  read: proving the webhook now needs a real purchase, which needs Le Cercle's Stripe onboarding
+  finished (`docs/PROD-TEST-CERCLE.md`, step V5).
+
 ### Changed
+
+- **A cash grant can no longer be recorded against a Cercle top-up product.** The Achats tab let an
+  association manager pick the `balance_topup` product for a manual "paid in cash" sale, next to a
+  hint admitting it credited nothing on the Cercle. It could not: the outbound webhook is keyed by
+  the Stripe PaymentIntent, a cash sale has none, and `grantProductPurchase` passed
+  `dispatchWebhook: false` anyway. So the line read as a recharge, moved no balance, and no retry
+  could repair it - there was no key to retry under. **The advantage on the accounting side does not
+  outweigh the confusion**, so the type is refused with a 400 in `grantProductPurchase` and filtered
+  out of the selector; the selector is a courtesy, the server check is the control. The bar credits a
+  member from the Cercle's own till screen, which writes its own ledger line.
 
 - **A conversation tile now says WHICH conversation it is, in the markup.** `ConversationTile` takes
   the MLS groupId and publishes it on the hook it already carried (`data-conversation-tile`), and the

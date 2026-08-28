@@ -614,3 +614,88 @@ Record them **here**, in the table and next to the check: what passed, on which 
 lines you actually saw**. Only a FAILURE goes to `CLAUDE.md`, as a new Work Package carrying its
 captured log - a failure with no log is worth almost nothing, which is exactly why WP-FWD-1 is still
 open with nothing to act on.
+
+## The revocation wipe, read off both devices by hand
+
+Moved off [the board](cross-client-testing.md) on 2026-08-28. Four defects, none of which any row on that board asks about, plus the reading that answers the user's question. The product stories are in `CHANGELOG.md`; what is here is the MEASUREMENT.
+
+**AND HEAL-REVOKE NOW READS THE DISK, NOT THE LOG, 2026-08-28.** The rows asserted
+`[RESET] done` and `no step failed`, which is a claim about the steps that RAN. Measured on prod the
+same morning, the two disagreed: a revoked device printed `nothing of this device remains` and kept
+ten `mls_not_ready_since` keys, its per-user MLS database and 8.2 MB, because the SYNC_WATCHDOG - a
+5 s interval the revocation path never stopped - rebuilt them 1.25 s later. **Twenty HEAL rows
+asserted the log line and not one asked the disk**, so the wipe was believed for exactly as long as
+it was broken. `healrevoke.mjs` now samples `localStorage.length`, the count of `CanariDB*` databases
+and `navigator.storage.estimate()` seconds after the wipe, and `theWipeLeftNoDatabase` is a FAIL
+condition. The localStorage count is deliberately not asserted at zero - the page writes
+`PARAGLIDE_LOCALE` back as soon as it renders - while a database is, because nothing re-creates one
+without an MLS client. The product defect itself is fixed and shipped in `v0.14.10`; story in
+`CHANGELOG.md`, mechanism on
+[auth](frontend/modules/auth.md#erasing-a-revoked-device-and-the-125-s-that-undid-it). **The four
+HEAL-REVOKE rows must run on a build carrying that fix - which for A1 means a new APK, since the
+Tauri app embeds the frontend and a CD deploy never reaches it.**
+
+**AND ASKING THE PHONE THE SAME QUESTION FOUND A SECOND DEFECT BEFORE ANY ROW RAN, 2026-08-28.**
+`node footprint.mjs --device A1` answered `canariDatabases: 1`, `bytesInUse: 5939115` on a device
+whose message store is SQLite - so the WebView held 5.9 MB that nothing on that platform writes and,
+until that morning, nothing on that platform deleted: `wipeDeviceToFactory` had the native stores and
+the WebView's as the two ARMS of one branch. The database existed because the posts mini panel named
+its backend by hand instead of asking `getStorage`. Both are fixed, with a guard test on the cause;
+story in `CHANGELOG.md`, mechanism on
+[auth](frontend/modules/auth.md#erasing-a-revoked-device-and-the-125-s-that-undid-it).
+
+**RUNNING THAT MEASUREMENT BY HAND, ON A BUILD CARRYING THE FIX, FOUND A THIRD DEFECT - AND NO ROW ON
+THIS BOARD ASKS THE QUESTION IT ANSWERED, 2026-08-28 14:12.** A1 on a local debug `0.14.11` was
+revoked from W1's own panel and STILL kept `canariDatabases: 1` / 5 939 015 bytes, while its native
+half fell 42 216 492 -> 29 249 922. **The wipe crashed the app 55 ms in**: `[RESET] wiping...` at
+14:12:22.218, the biometric plugin's activity at .223, `FATAL EXCEPTION: main /
+ClassNotFoundException: androidx.coordinatorlayout.widget.CoordinatorLayout` at .273, `SIG: 9`. Every
+step after the biometric one never ran. Fixed with five tests; story in `CHANGELOG.md`, mechanism on
+[auth](frontend/modules/auth.md#erasing-a-revoked-device-and-the-125-s-that-undid-it).
+
+**AND THE THIRD READING OF THE SAME DEVICE FOUND A FOURTH DEFECT, ON THE HALF NO ROW HAS EVER
+LOOKED AT, 2026-08-28.** With the crash fixed, A1 was revoked again and its WebView came back
+genuinely empty - `canariDatabases: 0`, 261 localStorage keys down to 0, which is the previous fix
+working. Reading the native side with `adb` instead of the log found **twenty-eight paths of account
+state still on disk**: `mls.bin`, `canari_<userId>.db` and its WAL, `graine_seeds.json` and
+`channel_keys.json` (the material the background push service decrypts notifications with),
+`push_context.json`, `pending_push_secret.txt`, `fcm_token.txt`, `session-meta.json`, the
+`keystore_aliases` index, five `canari_*.xml` preference files and **six cached avatars of real
+people**. `clear_app_data` deleted an entry only when its extension was exactly `db`, and every file
+in that list was added after that filter was written. Fixed with four Rust tests; story in
+`CHANGELOG.md`, mechanism on
+[auth](frontend/modules/auth.md#erasing-a-revoked-device-and-the-125-s-that-undid-it), two rules in
+[durable-rules](durable-rules.md#mls-state-and-keys).
+
+**AND THE MEASUREMENT ANSWERS YES, ON BOTH HALVES AND ON BOTH DEVICES, 2026-08-28 16:08.** Taken by
+hand on a debug **0.14.12** carrying every fix, A1 in the FOREGROUND, both devices deleted from W1's
+own panel by allowlist (`deleted 2/2`, `deletableAfter 0`).
+
+| | A1 BEFORE | A1 AFTER |
+| --- | --- | --- |
+| native `residue` | **28 paths** | **0** |
+| native `rewritten` | `logs/Canari.log` | none |
+| `identityKeys` | 3 | 0 |
+| localStorage / sessionStorage / caches | 36 / 4 / 2 | 0 / 0 / 0 |
+| native bytes | 27 893 083 | 19 171 657 |
+| verdict | `STATE PRESENT` | **`nothing of the account remains`** |
+
+The logcat is the mechanism, end to end in **55 ms with no crash**: `[WS RCV] device_revoked` at
+16:08:10.774, `[SECURITY] This device was revoked by its owner` at .158, `[RESET] wiping` at .604,
+eight `[RESET] leaving <dir> to its owner` lines, **`[RESET] native wipe removed 26 entries, 0
+failed`** at .628, `[Flags] no native_flags.json - biometricConfigured is already absent` at .653 -
+the flag fix declining to recreate what the sweep had deleted - and `[RESET] done` at .659.
+
+**AND THE USER'S SECOND QUESTION IS ANSWERED BY W3, WHICH WAS OFFLINE WHEN IT WAS REVOKED.** It never
+received the frame: it sat on `/chat` reading `Hors-ligne / Connexion en cours` with
+`CanariDBMls_<userId>` and 8 343 362 bytes intact, which is exactly what the design says -
+`isDeviceRevoked` answers `false` when it cannot reach the server, and a transport failure is not an
+answer. **One reload with a network and the deferred wipe landed**: `/login`, `canariDatabases 1 -> 0`,
+`identityKeys 0`, verdict `nothing of the account remains`. No run had ever shown this, and it cost
+nothing to measure because a revocation had already put a device in that state.
+
+**What this does NOT close: neither reading came from a RUNNER, so neither is in the ledger and
+`rows.mjs` will not see them.** They are hand-taken, like the six SETUP rows. The HEAL-REVOKE cell is
+still owed as a script, and its predicate is now written for it: `node footprint.mjs --device <d>`
+must read `residue: 0` on a phone and `identityKeys: 0` everywhere, with the offline variant driven by
+a reload rather than a frame.
