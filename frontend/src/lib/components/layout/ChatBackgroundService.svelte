@@ -390,15 +390,37 @@
    * the login page so they can sign in again.
    */
   async function handleSessionExpired() {
-    // Several observers can reach the same verdict at once (the global notifier, the promotion
-    // path, a login attempt). One logout is enough.
-    if (_sessionExpiredHandled) return;
-    _sessionExpiredHandled = true;
-    appendLog('[AUTH] Session expired - logging out and redirecting to /login.');
+    // RELEASING THIS CALLER IS NOT THE LOGOUT, AND DEDUPLICATING THEM TOGETHER SILENCED THE
+    // TRIGGER. `_sessionExpiredHandled` answers "has a logout already run for this expiry" -
+    // several observers reach the same verdict at once (the global notifier, the promotion path, a
+    // login attempt) and one logout is enough. It was also, wrongly, gating the part that releases
+    // whoever is waiting RIGHT NOW, and those two have different lifetimes: the first is true once
+    // per expiry, the second is true again on every single submit.
+    //
+    // Measured on W1, 2026-08-28. The session had expired earlier, so the guard was already set.
+    // A PIN submit then ran `loginImpl` -> `getToken()` -> `refresh()`, which is latched once a
+    // 401 has proven the cookie dead, threw `SessionExpiredError`, and reached here - where this
+    // function returned at the guard without touching the modal. `handlePinSubmit` clears its
+    // watchdog on `onMlsReady` and `onLoginFailed` only, so nothing cleared it: ten seconds later
+    // the spinner was unblocked with "Le deverrouillage prend plus de temps que prevu. Veuillez
+    // reessayer." - an invented cause, and advice that can never work, since the latch is
+    // permanent by design and only a fresh credential clears it. The client's own log said exactly
+    // what had happened; the modal said something else.
+    //
+    // So the release is unconditional and runs first. Every line of it is idempotent.
     dismissAuthPrompts();
     pinError = '';
     _loginInProgress = false;
     globalSession.isLoginInProgress = false;
+
+    if (_sessionExpiredHandled) {
+      // NOT A SILENT RETURN. This is the branch that used to swallow the whole event, and the only
+      // trace it can leave is this line.
+      appendLog('[AUTH] Session expired again - the logout already ran; released the PIN modal.');
+      return;
+    }
+    _sessionExpiredHandled = true;
+    appendLog('[AUTH] Session expired - logging out and redirecting to /login.');
     await clearAuth().catch(() => {});
     void goto('/login', { replaceState: true });
   }

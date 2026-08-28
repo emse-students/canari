@@ -175,6 +175,23 @@ which is also where every release up to and including v0.13.1 now lives.
   `CanariBootReceiver.kt` and the `BGTaskSchedulerPermittedIdentifiers` comment), and the safe-area
   single-contract refactor (item 1.5) and the four notification-channels-vs-one-category difference
   (item 2.5, platform-inherent) are deliberately left to their own items.
+- **A PIN prompt no correct PIN could ever answer, and a watchdog that invented the reason.** Found
+  on a real client on 2026-08-28. Once a 401 has proven the refresh cookie dead, `refresh()` latches
+  that verdict and throws `SessionExpiredError` - deliberately, so a dead cookie is not asked about
+  119 times. `loginImpl` routes that to `onSessionExpired`, which is neither `onMlsReady` nor
+  `onLoginFailed`, and `handleSessionExpired` began with `if (_sessionExpiredHandled) return;`. That
+  flag exists to deduplicate the LOGOUT between the several observers that reach the verdict at once,
+  and it was also gating the lines that release whoever is waiting. So on any client whose session had
+  already expired once, submitting the PIN reached the handler, returned at the guard, and left the
+  modal up with its spinner running; ten seconds later `handlePinSubmit`'s watchdog - a last-resort
+  net that clears on `onMlsReady` and `onLoginFailed` only - unblocked it with "Le deverrouillage
+  prend plus de temps que prevu. Veuillez reessayer.". The advice can never work: the latch is
+  permanent by design and only a fresh credential clears it. The user's own console said
+  `refresh latched (cookie already proven dead - not asking again)`; the modal said something else.
+  The release is now unconditional and runs FIRST, only the logout stays deduplicated, and the
+  repeat path LOGS instead of returning silently. The order is pinned by a source guard, because what
+  broke is an order between two statements and every other test stayed green through it.
+
 - **The two-half wipe verdict was correct on the command line and wrong in every runner.** A phone
   keeps its messages in native SQLite, so `footprint.mjs`'s web-only criterion reads 0 on an enrolled
   device and 0 on a wiped one; the fix for that computed the AND of the WebView and the native half -

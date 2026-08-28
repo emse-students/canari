@@ -329,14 +329,18 @@ export async function becomeANewDevice({ report = stage } = {}) {
   // AN ALLOWLIST OF EXACTLY ONE, and it is named by measurement rather than by position: the id read
   // off this profile before the wipe. It runs AFTER the new device is addressable, so a failure here
   // costs a slot and never the row.
+  //
+  // AND IT PURGES THROUGH THE DEVICE IT JUST ENROLLED, not through W1. `purge-devices.mjs` drives a
+  // device PANEL, so it needs a LIVE client of this account - and naming W1 made the cleanup depend
+  // on a browser the calling row may have deliberately killed. HEAL-NEW-2 does exactly that (its
+  // premise is that no device of ours is online), so its purge died on
+  // `ECONNREFUSED 127.0.0.1:9224` and the slot stayed spent. **The failure is SILENT by design** -
+  // it costs a slot and never the verdict - so a rung of such rows walks into the fifteen-device cap
+  // with nothing objecting, which is how 15/15 was reached once already. The device this call just
+  // enrolled is the one client it can prove is up, and it is on the right account by construction.
   let abandonedPurged = null;
   if (was && enrolled && was.deviceId !== now.deviceId) {
-    const status = run("purge-devices.mjs", [
-      "--only",
-      was.deviceId,
-      "--port",
-      String(PORTS.W1),
-    ]);
+    const status = run("purge-devices.mjs", ["--only", was.deviceId, "--port", String(port)]);
     abandonedPurged = status === 0;
     report(
       `the id this mint abandoned (...${was.deviceId.slice(-13)}) was purged: ${abandonedPurged}` +
@@ -402,7 +406,7 @@ if (invokedDirectly) {
   if (r.refused) {
     console.error(`\n[newdevice] REFUSED - ${r.refused} (${r.spent}/${MAX_DEVICES_PER_USER})`);
     console.error(
-      `[newdevice] purge the abandoned mints first: node purge-devices.mjs --dry --port ${PORTS.W1}`,
+      `[newdevice] purge the abandoned mints first: node purge-devices.mjs --dry --port ${port}`,
     );
     process.exit(3);
   }

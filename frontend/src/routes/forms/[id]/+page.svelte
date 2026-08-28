@@ -113,7 +113,13 @@
    * shrinks the sentinel's effective intersection root by that much, so scrolling past the bar
    * is required to also clear the nav sitting below it, not just the bar's own edge. Measured in
    * $effect rather than as a top-level const: top-level script runs during construction, before
-   * the DOM is mounted and laid out, so `clientHeight` would read 0 there regardless of CSS. */
+   * the DOM is mounted and laid out, so `clientHeight` would read 0 there regardless of CSS.
+   *
+   * AND THAT IS WHY `prefer-writable-derived` IS WRONG HERE, rather than unaddressed. A `$derived`
+   * is evaluated on first READ, which happens during the first render - before mount - and it has
+   * no reactive dependency on the DOM, so it would latch 0 and never recompute. Taking the lint's
+   * advice would turn a working measurement into a constant zero. */
+  // oxlint-disable-next-line svelte/prefer-writable-derived
   let bottomNavHeight = $state(0);
   $effect(() => {
     bottomNavHeight = document.querySelector('#bottom-nav')?.clientHeight ?? 0;

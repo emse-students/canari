@@ -707,6 +707,7 @@ before touching any login, cookie or rotation.
 - **Rotation makes DURABILITY part of the protocol** - force the write where the rotation happens and AWAIT it; on Android the cookie jar reaches disk only on `CookieManager.flush()`.
 - **A dead session is an ANSWER** - never retry the request anonymously, or "you are logged out" renders as "there is nothing here". Reach the verdict in ONE place.
 - **A one-shot announcement and a late subscriber are a RACE** - replay the verdict to whoever registers after it, because a fallback never does everything the real handler does.
+- **A ONE-SHOT GUARD MAY COVER ONLY THE PART THAT MUST HAPPEN ONCE.** Releasing whoever is waiting RIGHT NOW is not the logout: "has a logout already run" is true once per expiry, "does this submit need its modal closed" is true again every time. Gating both on one flag left a PIN modal that no correct PIN could ever answer, and a 10 s watchdog then invented "please try again" for a latch that is permanent by design ([story](../../CHANGELOG.md)).
 
 ## Object storage, and deleting infrastructure -> [docker](infrastructure/docker.md)
 

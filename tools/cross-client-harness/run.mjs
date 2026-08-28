@@ -37,13 +37,15 @@ import { PHASES, devicesFor } from './checks.mjs';
 import { awaitQuiet } from './deploy.mjs';
 import { groupTombstones, sweepDismissed } from './dismiss.mjs';
 import { srvReport, srvSummary } from './srvlog.mjs';
-import { OVERLAYS, clearOverlays, client, evaluate } from './chat.mjs';
+import { client } from './chat.mjs';
 import * as phone from './phone.mjs';
 import { closeExtraAppTabs } from './tabs.mjs';
-import { ORIGIN, PORTS, VENUE } from './names.mjs';
+import { PORTS, VENUE } from './names.mjs';
 import { channelIdOf, communityMemberIds, workspaceIdOf } from './grainedb.mjs';
 import { all, clientBuild } from './results.mjs';
 import { deployedBundleId, isOnTheDeployment, reloadOntoBundle } from './bundle.mjs';
+import { stateOf } from './ready-probe.mjs';
+import { bringToReady } from './ready-repair.mjs';
 
 const argv = process.argv.slice(2);
 const flag = (n) => argv.includes(`--${n}`);
@@ -106,147 +108,7 @@ let serverWindowFrom = new Date().toISOString();
 
 // ---------------------------------------------------------------------------- preflight
 
-/**
- * Is a client reachable, unlocked, and on a route that can answer that question?
- *
- * `unknown` is a real answer and the honest one: the PIN gate only mounts where the encryption
- * state is needed, so on `/posts` a fully locked client shows no gate at all. Reporting that as
- * "unlocked" is how a drain investigation was once run entirely against a locked phone.
- */
-const READY = `(function () {
-  var sidebar = document.querySelectorAll('aside button, nav button').length;
-  return JSON.stringify({
-    path: location.pathname,
-    ready: document.readyState,
-    locked: (function () {
-      var gate = !!document.querySelector('#encryption-pin') ||
-        document.body.innerText.indexOf('PIN de chiffrement') !== -1;
-      if (gate) return 'LOCKED';
-      // A CLIENT WITH NO SESSION IS NOT A PAGE THAT CANNOT BE JUDGED, and calling both 'unknown' cost
-      // the four HEAL-REVOKE rows of 2026-08-28. A logged-out W2 sat on /login, the 'unknown' repair
-      // sent it to /chat, the app bounced it straight back, and four passes later the phase refused
-      // with 'still unknown after 4 repair(s)' - a state no baseline in this rig restored, because
-      // launch.mjs no-ops on a running browser and pin.mjs only answers a gate that never mounts.
-      // The two want opposite repairs, so the probe names which one it is looking at.
-      if (/^\\/login/.test(location.pathname) || !!document.querySelector('#username')) return 'signedOut';
-      // THE PROOF BELOW ONLY DESCRIBES /chat, SO ONLY /chat MAY BE JUDGED BY IT. This test used to
-      // admit /communities as well, on the reasoning that the PIN gate mounts there too - which is
-      // true and is already settled one line above, before this ever runs. What it actually did was
-      // hand a /communities client to a rendered-proof that page cannot satisfy: its sidebar is
-      // links, not buttons, so a fully booted client counts ZERO and was declared 'booting' for
-      // ever. Measured 2026-08-15: W1 rendering 7098 characters on the deployed bundle, waiting out
-      // four repair passes that had nothing to repair, and taking the whole phase down with it.
-      // Answering 'unknown' instead routes it to the repair that already exists and works - send it
-      // to /chat - which is where every check puts it anyway.
-      if (!/^\\/chat/.test(location.pathname)) return 'unknown';
-      // NOT SEEING THE GATE IS NOT BEING PAST IT. A booting client shows no gate either -
-      // 'readyState' reaches 'complete' while the app is still deciding whether the encryption key
-      // is available - so the absence alone reported "unlocked" about a client one second away from
-      // raising the prompt. Measured 2026-08-13 on all three clients at once, straight after
-      // reload.mjs. Something RENDERED is the proof; until then the honest answer is 'booting'.
-      return sidebar > 0 ? 'unlocked' : 'booting';
-    })(),
-    sidebar: sidebar,
-    // A MODAL LEFT OPEN BY THE PREVIOUS CHECK, WHICH NO OTHER PROBE CAN SEE. The client is reachable,
-    // unlocked, on /chat and rendering a full sidebar - every existing signal says ready - while an
-    // overlay sits on top and swallows the first click the next check makes. Measured 2026-08-14:
-    // MSG-5 left the "Ajouter un canal" dialog up and the four scripts after it died inside
-    // ensureChat, each reporting a navigation the app was perfectly able to perform. (No backticks
-    // in this comment: it lives inside a template literal, and one would end the string here.)
-    //
-    // ONE DEFINITION, shared with the preconditions in chat.mjs. The private copy this replaces
-    // asked only for [role=dialog] / [aria-modal], which is the half of the problem the DESKTOP has:
-    // the mobile action sheet carries neither attribute, so a phone left holding one passed this
-    // preflight as ready and then ate the next click - the exact failure the field exists to catch,
-    // surviving on the one client whose layout renders it.
-    overlay: JSON.parse(${OVERLAYS}).length
-  });
-})()`;
-
-/** Reads a client's state, or throws if nothing is listening. */
-async function readiness(d) {
-  const cx = await client(PORTS[d], null, { focus: false });
-  const s = JSON.parse(await evaluate(cx, READY));
-  cx.close();
-  return s;
-}
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-/** Runs a harness script to completion and resolves its exit code. */
-const runScript = (args) =>
-  new Promise((resolve) => {
-    const c = spawn(process.execPath, args, {
-      cwd: new URL('.', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'),
-      stdio: 'ignore',
-    });
-    c.on('close', resolve);
-  });
-
-/**
- * THE PREFLIGHT REPAIRS WHAT IT CAN, AND SAYS SO EVERY TIME.
- *
- * Three states are expected rather than exceptional - a fresh tab starts at the PIN gate, a client
- * left on `/posts` cannot prove it is unlocked because the gate does not mount there, and a row that
- * revokes or logs a device out leaves it with no session at all - so refusing to run over any of them
- * would just move a manual step from one place to another. All three are repaired.
- *
- * They are repaired LOUDLY. A silent repair would hide the thing worth knowing: which check left the
- * instrument in that state. TYPE-3 closes a tab by design and W1 comes back locked; that is fine and
- * it should be visible, because the day it is something else, the line is the only warning.
- *
- * AND EACH REPAIR CAN PRODUCE THE STATE THE OTHER ONE EXISTS TO FIX, so they run in a LOOP rather
- * than once each in a fixed order. Unlocking lands the client wherever it already was - on `/posts`
- * for a freshly launched phone - which is precisely the `unknown` the navigation repairs; running
- * the navigation first and the unlock second therefore refuses a client that was one step from
- * ready. Seen 2026-08-13: A1 launched, gate up, `fix ... unlocking` then `REFUSING TO RUN - still
- * unknown on /posts after repair`, with the phone unlocked and healthy the whole time.
- *
- * The bound is on PASSES, not on time, and exhausting it reports the trail rather than the last
- * state alone: `LOCKED -> unknown -> LOCKED` is a client re-locking on every navigation, which is a
- * different fault from one that never moves, and the last state cannot tell them apart.
- */
-const MAX_REPAIR_PASSES = 4;
-
-/**
- * Ready is BOTH conditions, and the second one was added after it cost four checks in one run.
- *
- * Being unlocked says the client can answer; carrying no overlay says the next click will reach what
- * it aims at. Neither implies the other, and the state that broke the 2026-08-14 run satisfied every
- * part of the first while failing the second.
- */
-const isReady = (s) => s.locked === 'unlocked' && !s.overlay;
-
-/**
- * Dismisses whatever covers the screen, and NAMES it - the postcondition of the previous check, run
- * where a postcondition can actually run.
- *
- * IT CANNOT LIVE IN THE SCRIPTS. A check that ends normally could tidy up after itself, but the ones
- * that need tidying are the ones that DIED, and a script that throws never reaches its own last line
- * - `finish` compounds it by exiting the process on the verdict, so anything written after it is
- * unreachable by construction. So the only place a cleanup runs on the path that needs it is here,
- * between two scripts, in a process neither of them can crash.
- *
- * The repair itself is `clearOverlays`, imported rather than reimplemented. The private version this
- * replaces pressed Escape, slept 600 ms, clicked `[aria-label="Fermer"]` and slept again: three
- * separate faults in nine lines - the French caption is a Paraglide string that reads "Close" on an
- * `en` client, the sleeps are wall clocks in an instrument whose whole purpose is determinism, and
- * the predicate disagreed with the one the checks themselves use, which is how two definitions of
- * "the screen is clear" end up answering differently about the same screen.
- *
- * What it cleared is PRINTED. A check that leaves a modal behind is a fault in that check even when
- * its own verdict was PASS, and this line is the only place that is ever visible.
- */
-async function dismissOverlay(d) {
-  const cx = await client(PORTS[d], null, { focus: false });
-  try {
-    const cleared = await clearOverlays(cx);
-    for (const o of cleared)
-      console.log(`       ${d} ${o.stuck ? 'STUCK' : 'cleared'} ${o.kind}${o.label ? ` (${o.label})` : ''}`);
-  } finally {
-    cx.close();
-  }
-}
 
 /**
  * Clears the dead conversation rows this pass left on every client it drove, and NAMES what it
@@ -298,27 +160,6 @@ async function sweepDebris() {
     } finally {
       cx?.close();
     }
-  }
-}
-
-/**
- * Re-reads a client until it is ready, or until the deadline - whichever comes first.
- *
- * Returns the LAST state it managed to read, including an unready one, because the caller's repair
- * loop needs to know what it is still looking at in order to choose the next repair. `null` only
- * when the client never answered at all inside the window.
- */
-async function settle(d, deadlineMs) {
-  const t0 = Date.now();
-  let last = null;
-  for (;;) {
-    const s = await readiness(d).catch(() => null);
-    if (s) {
-      last = s;
-      if (isReady(s)) return s;
-    }
-    if (Date.now() - t0 >= deadlineMs) return last;
-    await sleep(300);
   }
 }
 
@@ -550,15 +391,17 @@ async function preflight(devices, { quiet = false } = {}) {
       }
     }
 
-    let s;
-    try {
-      s = await readiness(d);
-    } catch (e) {
+    // ONE CALL, AND THE PROBE AND ITS REPAIRS LIVE IN `ready-probe.mjs` / `ready-repair.mjs` - because a
+    // predicate whose only home is a CLI is omitted by every other caller, and `healnew.mjs` proved it
+    // by driving a signed-out W1 through an entire row. What stays HERE is what only a run can decide:
+    // whether an unready client refuses the phase.
+    const r = await bringToReady(d);
+    if (r.unreachable) {
       // NOT EVERY FAILURE HERE IS AN ABSENCE. `client()` also refuses a browser holding more than one
       // page, and that wants the opposite fix from "the browser is closed" - so the refusal is passed
       // through verbatim rather than translated into a hint about a cable (rule 6).
-      if (/so no tab can be chosen/.test(String(e.message))) {
-        problems.push(`${d}: ${e.message}`);
+      if (/so no tab can be chosen/.test(r.unreachable)) {
+        problems.push(`${d}: ${r.unreachable}`);
         continue;
       }
       // A1's own message ("fetch failed") sends the reader to the network rather than to the phone,
@@ -571,57 +414,11 @@ async function preflight(devices, { quiet = false } = {}) {
       continue;
     }
 
-    const state = (x) => (x.overlay ? `${x.locked}+overlay` : x.locked);
-    const trail = [state(s)];
-    for (let pass = 0; pass < MAX_REPAIR_PASSES && !isReady(s); pass++) {
-      // How long this pass will keep asking. It is a DEADLINE, not a delay: `settle` returns the
-      // moment the client is ready, so a repair that works instantly costs nothing. The numbers
-      // below used to be `sleep`s, which charged their full value to every repair including the
-      // ones that had already succeeded - and this loop runs before EVERY job in a phase.
-      let deadlineMs = 8000;
-      if (s.locked === 'unlocked' && s.overlay) {
-        console.log(`  fix  ${d.padEnd(3)} ${s.overlay} overlay(s) still up on ${s.path} - dismissing`);
-        await dismissOverlay(d);
-        deadlineMs = 3000;
-      } else if (s.locked === 'signedOut') {
-        // THE ONE REPAIR THIS LOOP DID NOT HAVE, and its absence was not a missing convenience: no
-        // other baseline in the rig restores a session. `launch.mjs start` no-ops on a browser that is
-        // already running and `pin.mjs` answers a gate a logged-out client never mounts, so a device
-        // left signed out could not be brought to a named starting point by anything here.
-        //
-        // `login.mjs` is idempotent by reading before acting and usually costs no credential at all -
-        // the SSO cookies live on auth.canari-emse.fr and cas.emse.fr, which wiping the app's origin
-        // does not touch. The deadline is the widest in this loop because this repair is a full OIDC
-        // round trip, not a click.
-        console.log(`  fix  ${d.padEnd(3)} on ${s.path} with no session - signing it back in`);
-        await runScript(['login.mjs', '--device', d]);
-        deadlineMs = 40000;
-      } else if (s.locked === 'unknown') {
-        console.log(`  fix  ${d.padEnd(3)} on ${s.path}, where the PIN gate does not mount - sending it to /chat`);
-        const cx = await client(PORTS[d], null, { focus: false });
-        // ORIGIN[d], never SITE: the phone's app is served from `tauri.localhost`, and sending its
-        // WebView to the public site leaves the app rather than reloading it - the Tauri plugin
-        // allowlist is scoped to that origin, so every request then fails silently and the client
-        // reads as stuck. This preflight would have done it on EVERY run touching A1.
-        await evaluate(cx, `location.href = ${JSON.stringify(`${ORIGIN[d]}/chat`)}`);
-        cx.close();
-        deadlineMs = 20000;
-      } else if (s.locked === 'booting') {
-        // Nothing to repair - the app is coming up. Acting here would type a PIN into a page that
-        // has not raised the prompt yet, and then read the failure as the client's.
-        console.log(`  wait ${d.padEnd(3)} on ${s.path}, no gate and nothing rendered yet - still booting`);
-        deadlineMs = 20000;
-      } else {
-        console.log(`  fix  ${d.padEnd(3)} PIN gate is up - unlocking`);
-        await runScript(['pin.mjs', '--device', d]);
-        deadlineMs = 10000;
-      }
-      s = (await settle(d, deadlineMs)) ?? s;
-      trail.push(state(s));
-    }
-
-    if (!isReady(s))
-      problems.push(`${d}: still ${state(s)} on ${s.path} after ${trail.length - 1} repair(s) - ${trail.join(' -> ')}`);
+    const s = r.state;
+    if (!r.ok)
+      problems.push(
+        `${d}: still ${stateOf(s)} on ${s.path} after ${r.trail.length - 1} repair(s) - ${r.trail.join(' -> ')}`
+      );
     else if (!s.sidebar) problems.push(`${d}: on ${s.path} with an EMPTY sidebar - nothing has loaded`);
     else if (!quiet) console.log(`  ok   ${d.padEnd(3)} ${s.path} unlocked, ${s.sidebar} sidebar rows`);
   }

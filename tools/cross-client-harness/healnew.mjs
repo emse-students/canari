@@ -46,6 +46,7 @@ import { SITE } from "./names.mjs";
 import { becomeANewDevice } from "./newdevice.mjs";
 import { forceStop, launch, pid, sh } from "./phone.mjs";
 import { onlineDevicesOf } from "./presence.mjs";
+import { bringToReady } from "./ready-repair.mjs";
 import { record, unmet } from "./results.mjs";
 import { navigationCost, readAll, sidebar, whoAmI, watch as watchRows } from "./syncrows.mjs";
 import { report } from "./watch.mjs";
@@ -57,6 +58,22 @@ const opt = (name, fallback = null) => {
 };
 
 /**
+ * A RESPONDER CAN ONLY SERVE A GROUP IT IS A MEMBER OF, AND THAT MAKES TWO OF THESE ROWS
+ * UNSATISFIABLE ON THIS ACCOUNT - measured 2026-08-28, so it is not re-derived from a FAIL.
+ * `dm_device_group_memberships` says the owner holds ELEVEN active groups while the peer that shares
+ * the most shares TWO, and every other user of the account's world shares exactly one. So rows 2 and
+ * 12, whose responder is the PEER, name a device that can answer for at most 2 of the 11 - and
+ * `everyRowHealed` over all of them cannot be reached however correct the code is. HEAL-NEW-2's
+ * re-run on 2026-08-28 landed exactly there: every rig premise met (the phone stopped, the abandoned
+ * id purged, the fleet drained in 982 ms), 100 `welcome_request`s at the documented 60 s cadence,
+ * two `externalJoin succeeded`, ONE group ready and nine still amber after 600 s. **That is a
+ * statement about who was online, not about the mechanism** - rows 3, 11 and 15 name W1, another
+ * device of the OWNER and therefore a member of all eleven, and they are satisfiable unchanged.
+ *
+ * What such a row must assert is therefore the SERVABLE subset, the way row 1 uses `expect: 'either'`
+ * for a question whose answer is a fact about the account rather than about the code. Until that is
+ * written, a peer-responder row is scoped on the board and not run.
+ *
  * THE ROWS, AS DATA.
  *
  * `responder` is WHO may answer a fresh device's request for re-admission; `at` is WHEN they are
@@ -219,37 +236,48 @@ function giveThePhoneBackOnExit(taken) {
   });
 }
 
+/**
+ * Brings the two browser clients to the presence this row wants - and a WANTED one all the way to a
+ * named starting point, not merely to a running process.
+ *
+ * A RUNNING BROWSER IS NOT A RESPONDER, AND THIS COST HEAL-NEW-3 A WHOLE PASS on 2026-08-28. W1 was
+ * alive and signed OUT, sitting on /login. `startBrowser` no-ops on a browser that is already up and
+ * the private `unlock()` this replaces called `pin.mjs`, which answers a gate a logged-out client
+ * never mounts - so the row proceeded with no responder at all, watched ten groups stay amber for
+ * ten minutes and recorded a product FAIL about the rig's own omission.
+ *
+ * `bringToReady` IS THE PREFLIGHT'S OWN REPAIR, IMPORTED. It is the fourth caller of a predicate
+ * that used to live only inside `run.mjs`, and the four states it repairs are exactly the four a
+ * responder can be found in: no session (sign it back in), the PIN gate (unlock), a page where the
+ * gate does not mount (send it to /chat), and still booting (wait). The reason the unlock mattered
+ * survives unchanged: a client on the gate holds a session and answers nothing, because it has no
+ * MLS state loaded and cannot build a Welcome - reading a stall on a locked responder blames the app
+ * for the rig's omission.
+ *
+ * WHAT IT DID DOES NOT DECIDE ANYTHING HERE. The trail is returned so the row can record it, and the
+ * caller refuses the row; a topology helper that exited would take the phone-restore hook with it.
+ */
 async function setTopology(present) {
   const acted = {};
   for (const which of ["w1", "w2"]) {
     const wanted = present.includes(which);
     const up = await isUp(which);
-    if (wanted && !up) {
+    if (!wanted) {
+      acted[which] = up ? `killed in ${await killBrowser(which)}ms` : "already down";
+      continue;
+    }
+    if (!up) {
       await startBrowser(which, `${SITE}/chat`);
       acted[which] = "started";
-    } else if (!wanted && up) {
-      const ms = await killBrowser(which);
-      acted[which] = `killed in ${ms}ms`;
     } else {
-      acted[which] = up ? "already up" : "already down";
+      acted[which] = "already up";
     }
+    const r = await bringToReady(which.toUpperCase(), { log: (line) => note(`ready ${line.trim()}`) });
+    if (r.unreachable) acted[which] += `, UNREACHABLE: ${r.unreachable}`;
+    else acted[which] += `, ${r.ok ? "ready" : "NOT READY"} (${r.trail.join(" -> ")})`;
+    acted[`${which}Ready`] = r.ok === true;
   }
   return acted;
-}
-
-/**
- * Unlocks a responder so it is a real member and not a locked shell.
- *
- * A client sitting on the PIN gate holds a session and answers nothing: it has no MLS state loaded,
- * so it cannot build a Welcome. Reading a stall on a locked responder would blame the app for the
- * rig's omission, which is the class of fault that made a whole rung unattributable once already.
- */
-function unlock(device) {
-  const r = spawnSync(process.execPath, ["pin.mjs", "--device", device], {
-    encoding: "utf8",
-    cwd: import.meta.dirname,
-  });
-  return { status: r.status, tail: (r.stdout || r.stderr || "").trim().split("\n").slice(-1)[0] };
 }
 
 /**
@@ -267,19 +295,49 @@ function unlock(device) {
  * makes waiting for it a proof rather than a sleep: re-read until the extras are gone, and report
  * whatever is still there at the deadline as genuinely present.
  */
+function fleetNow(userId, mineFull) {
+  try {
+    return { readable: true, extra: onlineDevicesOf(userId).filter((d) => d !== mineFull) };
+  } catch (e) {
+    return { readable: false, why: firstLine(e) };
+  }
+}
+
 async function fleetBesides(userId, mineFull, { drainMs = 30_000 } = {}) {
   const t0 = Date.now();
   for (;;) {
-    let online;
-    try {
-      online = onlineDevicesOf(userId);
-    } catch (e) {
-      return { readable: false, why: firstLine(e) };
-    }
-    const extra = online.filter((d) => d !== mineFull);
-    if (extra.length === 0) return { readable: true, extra: [], drainedInMs: Date.now() - t0 };
+    const now = fleetNow(userId, mineFull);
+    if (!now.readable) return now;
+    if (now.extra.length === 0) return { readable: true, extra: [], drainedInMs: Date.now() - t0 };
     if (Date.now() - t0 >= drainMs)
-      return { readable: true, extra: extra.map(installTag), waitedMs: Date.now() - t0 };
+      return { readable: true, extra: now.extra.map(installTag), waitedMs: Date.now() - t0 };
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+}
+
+/**
+ * THE SAME READ WITH THE OPPOSITE POLARITY: waits until another device of this account IS there.
+ *
+ * "Prove nobody else is online" and "wait for our responder to arrive" are two questions, and
+ * `fleetBesides` only answers the first: it returns the INSTANT the fleet reads empty, because an
+ * empty fleet is the answer it was written for. Asked of the arrival case it answers 961 ms after a
+ * responder failed to exist - which is exactly what HEAL-NEW-3 did on 2026-08-28, then watched ten
+ * groups stay amber for ten minutes and recorded a product FAIL. A COLUMN IS ONLY EVIDENCE FOR THE
+ * QUESTION IT WAS WRITTEN TO ANSWER.
+ *
+ * The deadline is generous because it covers a full sign-in: `bringToReady` may have just spent a
+ * whole OIDC round trip, and the gateway key is written when the socket opens, not when the page
+ * loads. Returning an empty fleet at the deadline is a REPORT, not a verdict - the caller refuses
+ * the row as INVALID, because a precondition the rig could not establish is not a product fact.
+ */
+async function awaitFleetMember(userId, mineFull, { waitMs = 90_000 } = {}) {
+  const t0 = Date.now();
+  for (;;) {
+    const now = fleetNow(userId, mineFull);
+    if (!now.readable) return now;
+    if (now.extra.length > 0)
+      return { readable: true, extra: now.extra.map(installTag), arrivedInMs: Date.now() - t0 };
+    if (Date.now() - t0 >= waitMs) return { readable: true, extra: [], waitedMs: Date.now() - t0 };
     await new Promise((r) => setTimeout(r, 3000));
   }
 }
@@ -299,10 +357,6 @@ note(`phone ${JSON.stringify(phone)}`);
 
 const topology = await setTopology(startPresent);
 note(`topology ${JSON.stringify(topology)}`);
-for (const which of startPresent) {
-  const u = unlock(which.toUpperCase());
-  note(`unlock ${which.toUpperCase()} ${JSON.stringify(u)}`);
-}
 
 // THE PRIMITIVE, MEASURED BY HEAL-NEW-0 AND REUSED HERE. `--keep-open` is why it is a module: the
 // device it mints is the device this row then watches, and re-minting per row would pay the whole
@@ -336,8 +390,24 @@ note(`first read ${JSON.stringify(first)}`);
 // evidence that says which responder the heal could have come from, and it REFUSES only the isolated
 // row, whose whole condition is that there was none.
 const me = await whoAmI(cx);
-const fleet = await fleetBesides(me.userId, me.deviceId);
+// AND ASKED WITH THE POLARITY THIS ROW NEEDS. A row whose responder is our own W1, present from
+// the start, has "another device of this account is online" as its PREMISE - so an empty read is the
+// thing to wait for, not the answer to record.
+const wantsOwnResponderNow = row.responder === "w1" && row.at === "start";
+const fleet = wantsOwnResponderNow
+  ? await awaitFleetMember(me.userId, me.deviceId)
+  : await fleetBesides(me.userId, me.deviceId);
 note(`fleet ${JSON.stringify(fleet)}`);
+if (wantsOwnResponderNow && fleet.readable && fleet.extra.length === 0) {
+  record(row.id, "INVALID", {
+    unobservable: `the row needs our own ${row.responder.toUpperCase()} online as the responder and the gateway never listed it within ${Math.round((fleet.waitedMs ?? 0) / 1000)}s - topology said ${JSON.stringify(topology)}`,
+    what: row.what,
+    topology,
+    timeline,
+  });
+  cx.close();
+  process.exit(1);
+}
 if (row.responder === null && fleet.readable && fleet.extra.length > 0) {
   record(row.id, "INVALID", {
     unobservable: `the row needs an isolated account and ${fleet.extra.length} other device(s) of it are online: ${fleet.extra.join(",")}`,
@@ -378,17 +448,11 @@ if (row.at === "late") {
   note(`starting the late responder ${row.responder}`);
   const late = await setTopology([row.responder]);
   note(`topology ${JSON.stringify(late)}`);
-  const u = unlock(row.responder.toUpperCase());
-  note(`unlock ${row.responder.toUpperCase()} ${JSON.stringify(u)}`);
   // For an own-account responder, "it arrived" is a fleet fact and is read as one. Started is not
   // connected: a browser that launched and never reached the gateway would leave the row measuring
   // the isolated case under the late case's name.
   if (row.responder === "w1") {
-    lateFleet = await fleetBesides(me.userId, me.deviceId, { drainMs: 0 });
-    for (let i = 0; i < 20 && lateFleet.readable && lateFleet.extra.length === 0; i += 1) {
-      await new Promise((r) => setTimeout(r, 3000));
-      lateFleet = await fleetBesides(me.userId, me.deviceId, { drainMs: 0 });
-    }
+    lateFleet = await awaitFleetMember(me.userId, me.deviceId);
     note(`late fleet ${JSON.stringify(lateFleet)}`);
   }
 }
