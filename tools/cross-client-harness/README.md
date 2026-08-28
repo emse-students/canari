@@ -89,13 +89,13 @@ the server. `srvlog.mjs` classifies the whole server window - `--shapes` collaps
 `notable` into distinct sentences - and `srvclassify-selftest.mjs` pins every rule against a line
 whose bucket is known.
 
-**The rig has nine self-tests, and they run in TWO targets, because they are not one kind of thing.**
-`make test-harness` is the CI gate and holds the eight that need nothing: `rawcheck.mjs` reads every
+**The rig has ten self-tests, and they run in TWO targets, because they are not one kind of thing.**
+`make test-harness` is the CI gate and holds the nine that need nothing: `rawcheck.mjs` reads every
 page-side template for an escape Node eats, `classify-selftest.mjs` pins the client-side verdict
 rules, `srvclassify-selftest.mjs` the server-log buckets, `logcatclassify-selftest.mjs` the phone's,
 `checks-selftest.mjs` asserts that every phase in `checks.mjs` declares the devices its scripts
 actually drive, `devices-selftest.mjs` pins the device panel, `debris-selftest.mjs` the allowlist that
-decides what may be DELETED, and `gate-selftest.mjs` the gate itself. `make test-harness-device` holds the one that needs a live rig,
+decides what may be DELETED, `gate-selftest.mjs` the gate itself, and `ready-selftest.mjs` the preflight's readiness probe on the pages it has to tell apart - which exists because that probe is a STRING and a string is not compiled: a `\/` that should have been `\\/` emitted `/^/login/`, a SyntaxError in the page, and `node -c` was perfectly happy with it. `make test-harness-device` holds the one that needs a live rig,
 `tabguard-selftest.mjs`, which makes W2 ambiguous on purpose to prove the tab guard refuses it - run
 it by hand after editing `tabs.mjs`, `chat.mjs` or the preflight's tab repair. Run the gate after
 editing `checks.mjs`, any classifier or `debris.mjs` - a phase whose `needs` disagrees with its

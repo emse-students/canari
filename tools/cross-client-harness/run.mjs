@@ -128,7 +128,7 @@ const READY = `(function () {
       // with 'still unknown after 4 repair(s)' - a state no baseline in this rig restored, because
       // launch.mjs no-ops on a running browser and pin.mjs only answers a gate that never mounts.
       // The two want opposite repairs, so the probe names which one it is looking at.
-      if (/^\/login/.test(location.pathname) || !!document.querySelector('#username')) return 'signedOut';
+      if (/^\\/login/.test(location.pathname) || !!document.querySelector('#username')) return 'signedOut';
       // THE PROOF BELOW ONLY DESCRIBES /chat, SO ONLY /chat MAY BE JUDGED BY IT. This test used to
       // admit /communities as well, on the reasoning that the PIN gate mounts there too - which is
       // true and is already settled one line above, before this ever runs. What it actually did was

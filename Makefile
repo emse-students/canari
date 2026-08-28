@@ -294,6 +294,7 @@ test-harness:
 	@node tools/cross-client-harness/devices-selftest.mjs
 	@node tools/cross-client-harness/debris-selftest.mjs
 	@node tools/cross-client-harness/gate-selftest.mjs
+	@node tools/cross-client-harness/ready-selftest.mjs
 	@echo "${GREEN}✅ Harness self-tests OK${RESET}"
 
 # THE SELF-TESTS THAT NEED THE RIG UP, and therefore not the CI gate. `test-harness` runs on a fresh

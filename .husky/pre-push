@@ -32,6 +32,7 @@ echo "$CHANGED_FILES" | grep -Eq '^apps/chat-gateway/' && RUN_GATEWAY=1 || RUN_G
 echo "$CHANGED_FILES" | grep -Eq '^frontend/mls-core/' && RUN_MLS_CORE=1 || RUN_MLS_CORE=0
 echo "$CHANGED_FILES" | grep -Eq '^frontend/mls-wasm/' && RUN_MLS_WASM=1 || RUN_MLS_WASM=0
 echo "$CHANGED_FILES" | grep -Eq '^frontend/src-tauri/' && RUN_TAURI=1 || RUN_TAURI=0
+echo "$CHANGED_FILES" | grep -Eq '^tools/cross-client-harness/' && RUN_HARNESS=1 || RUN_HARNESS=0
 
 if [ "$RUN_ALL" -eq 1 ]; then
   RUN_FRONTEND=1
@@ -40,6 +41,7 @@ if [ "$RUN_ALL" -eq 1 ]; then
   RUN_MLS_CORE=1
   RUN_MLS_WASM=1
   RUN_TAURI=1
+  RUN_HARNESS=1
 fi
 
 # `bun run test` sits here and not in the pre-commit hook: ~2 min over 176 files, too expensive on
@@ -48,6 +50,18 @@ fi
 # reached the CD through that hole: it breaks neither the lint nor svelte-check, it breaks at module
 # EXECUTION, so only a test that imports could see it. The pre-commit hook mirrors the CI lint job;
 # this mirrors its test job.
+# `make test-harness` mirrors the CI job of the same name, and it sits here because `tools/` was the
+# one directory this hook did not cover. It cost a red CD on 2026-08-28: a `\/` that should have been
+# `\/` inside a page-side template emitted `/^/login/` - a SyntaxError in the browser - and nothing
+# local objected, because `node -c` compiles the template as a STRING. `rawcheck.mjs` caught it on the
+# runner, one push too late. The whole target is ~2 s and needs no rig, no browser and no credential.
+if [ "$RUN_HARNESS" -eq 1 ]; then
+  make test-harness || {
+    echo "❌ Harness self-tests failed (make test-harness)."
+    exit 1
+  }
+fi
+
 if [ "$RUN_FRONTEND" -eq 1 ]; then
   (
     cd frontend && bun run lint && bun run check && bun run format:check && bun run test

@@ -585,6 +585,8 @@ either** - the table is on
 
 ## Release and CI -> [cicd](cicd.md)
 
+- **A GATE THAT PICKS PROJECTS BY DIRECTORY DOES NOT COVER A DIRECTORY NOBODY LISTED.** `.husky/pre-push` named six trees and not `tools/cross-client-harness/`, so a rig fault reached CI and turned a deploy red. Read the list, not the intent - `make test-harness` is now in it. [cicd](cicd.md)
+- **A PAGE-SIDE TEMPLATE IS A STRING, AND A STRING IS NOT COMPILED.** `node -c` is happy with any escape inside one; `/^\/login/` in a template emits `/^/login/`, a SyntaxError the BROWSER raises, blaming the readiness question rather than the typo. `rawcheck.mjs` is the only thing that reads them, and `ready-selftest.mjs` now runs the preflight's probe against the pages it must tell apart. [cicd](cicd.md)
 - **A CONTROL THAT CAN LOCK OUT EVERY CLIENT NEEDS A CEILING, AND THE CEILING MUST SAY WHAT IT CANNOT SEE.** `minClientVersion` above the server's own deployed version demands a client that was never built, so it is refused - but at or below is NOT thereby safe, because the real hazard is a raise above what the app stores have distributed and no server can read App Store review state. Ship the check, and write down that it is a typo guard rather than the procedure. [legacy-compatibility](legacy-compatibility.md)
 - **A SENTINEL THAT IS ALSO A VALID VALUE CANNOT CARRY A DECISION.** `'0.0.0'` for "I could not read the version" is fine while the value is only reported and wrong the moment a bound compares against it - a failed file read then becomes a policy refusing every legitimate change. Return `null`, make the deciding caller handle it, and have it log that the guard did not run. [cicd](cicd.md)
 
