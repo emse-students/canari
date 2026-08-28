@@ -118,9 +118,9 @@ escapes.
 | --- | --- | --- |
 | **Canari** (this monorepo) | `emse-students/canari`, **PUBLIC** | active - see below |
 | **Sky** | `../Sky` | COMPLETE, nothing open |
-| **MiGallery** | `../MiGallery` | COMPLETE. Its search met the standing requirement on 2026-08-19 (`fuzzyScore`/`fuzzySearch`, `docs/wiki/search.md` there): word inversion, transposition-aware edit distance, and ranking on every list that truncates. |
+| **MiGallery** | `../MiGallery` | COMPLETE |
 | **Portail-etu** | `../refonte-portail-etu` | COMPLETE. **No SSH to that box** - the self-hosted CD runner is the only way in; `deploy.yml` has a `workflow_dispatch` (a dispatch can 500 while STILL creating the run - check `gh run list` before re-dispatching). PUBLIC, so every run log must redact and `grep -a` is mandatory. `pm2 flush`, never `rm`. `data-export/` holds PII, never commit. |
-| **Le Cercle** | `../le-cercle`, `gitlab.emse.fr:aurel.dautry/le-cercle` | Aurel's repo, but the rewrite is MERGED and we hold push rights now. See below. |
+| **Le Cercle** | `../le-cercle`, `gitlab.emse.fr:aurel.dautry/le-cercle` | Aurel's repo, but our rewrite is MERGED (!5, !6) and we hold push rights. Reading its pipeline needs `glab`, **run from INSIDE that tree**. |
 
 Work is tracked as Work Packages by severity: **P1** (security, or a broken user-facing path), **P2**
 (correctness), **P3** (hygiene). Delete a WP outright once it ships - from HERE and from
@@ -130,9 +130,8 @@ queue below in its place, and its substance into `backlog`.
 **RESUMING (paused 2026-08-28 by the user: *"Prepare toi a reprendre directement la campagne, je
 crois qu'il n'y a plus rien avant"*). In this order, and nothing else first:**
 
-1. `git fetch` then **PUSH** - three local commits are unpushed and a push redeploys prod, so it
-   cannot happen during a run. Background, redirect not pipe, read `PUSH_EXIT`, `rm -rf apps/*/dist`
-   first.
+1. `git fetch` then **PUSH** - local commits are unpushed and a push redeploys prod, so it cannot
+   happen during a run. Background, redirect not pipe, read `PUSH_EXIT`, `rm -rf apps/*/dist` first.
 2. `gh run list` - CD GREEN and QUIET before any row.
 3. `node state.mjs` - all four clients were logged in and unlocked at the pause, A1 on a local debug
    **0.14.12**. If the phone was unplugged, the from-zero sequence is in
@@ -144,12 +143,6 @@ crois qu'il n'y a plus rien avant"*). In this order, and nothing else first:**
    (2026-08-28): HEAL restarts from zero repeatedly, and a heal that works is not a heal that was
    observed.
 
-**Three rig faults were fixed at the pause and none of them is a product defect** - the gate
-predicate that read `/settings` as `LOCKED`, `login.mjs` never being able to log a phone in (two
-independent causes), and the biometric offer that must be declined or A1 becomes undrivable forever.
-Stories in `CHANGELOG.md`, rules in
-[testing-methodology](docs/wiki/testing-methodology.md); neither restated here.
-
 ### CANARI - THE QUEUE, IN ORDER
 
 Everything actionable is HERE, one line each; the detail lives where the link says and **is not
@@ -159,442 +152,137 @@ deleted from BOTH this file and [backlog](docs/wiki/backlog.md). **Every defect 
 is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the three is restated here.**
 
 1. **THE CAMPAIGN ITSELF - RUNNING, by the user's decision of 2026-08-21** (*"C'est parti pour la
-    campagne"*, in autonomy). The ladder, top to bottom, so every phase runs - including the six that
-    had no runner, written as the ladder reaches them. **Every verdict, every cause and the format of
-    a cell are on [cross-client-testing](docs/wiki/cross-client-testing.md); design, cost and the
-    decisions the dirt turns on are on
-    [cross-client-campaign](docs/wiki/cross-client-campaign.md). Neither is restated here.**
+   campagne"*, in autonomy), top of the ladder down, writing the runners the six unrunnable phases
+   never had. **THE USER'S PRIORITY, 2026-08-27, verbatim: *"PASS ou PASS-DIRTY sur COMM, DEL, MULTI,
+   LIFE, NOTIF, HEAL."*** Those six ARE the target; TAB, CALL, PIN and CORRUPT come after them.
 
-    **THE USER'S PRIORITY, 2026-08-27, verbatim: *"PASS ou PASS-DIRTY sur COMM, DEL, MULTI, LIFE,
-    NOTIF, HEAL."*** Those six ARE the target; TAB, CALL, PIN and CORRUPT come after them, and
-    nothing else is worth a token until those six are green.
+   **Where it stands: rungs 1-10 TAKEN plus 12 MULTI; HEAL is the rung in hand**, with two green
+   cells and five `FAIL`s whose single cause (the per-user device cap) is fixed, so re-running them
+   is cheap. **What is owed, in order:** those re-runs, the four HEAL-REVOKE rows, the new
+   HEAL-REVOKE cell (step 4 above); then re-runs of every DEL and MULTI cell, because both runners
+   have CHANGED since; then LIFE and NOTIF. **A `PASS-DIRTY` does not stop a rung by itself (user,
+   2026-08-25); a x5 sweep of the whole ladder accepting nothing short of `PASS` comes AFTER the
+   ladder is finished (user, 2026-08-26).** Only CALL, CORRUPT and PIN still have no runner at all.
 
-    **Where the ladder stands: rungs 1-10 TAKEN plus 12 MULTI, and COMM and DEL are the first two
-    rungs with NO `FAIL`.** COMM on `0c31be5d` is 18 `PASS` / 5 `PASS-DIRTY` / 2 `VACUOUS`, DEL is
-    4 / 5 / 1, and **the phone ran every `+A1` row for the first time**. **COMM-8 PASSES**: the forked
-    distribution group is fixed and measured. **Every non-pass left has a named cause, all on the
-    board and not restated here** - DEL-7 and DEL-9 were HARNESS faults (now fixed), MULTI-5 is runner
-    debt, and MULTI-3/4 are `SKIPPED` on a re-enrolment cost. **COMM-12, COMM-22 and DEL-9 were once
-    `VACUOUS` with `failures: []`, voided by a CD deploy landing mid-run - a campaign run and a push
-    to `main` are MUTUALLY EXCLUSIVE**, and `gate` refusing the attribution is the only reason nothing
-    false was recorded. **All three are RE-RUN and green on `66639621`** (COMM-22 `PASS`, the other two
-    `PASS-DIRTY`), so what that episode leaves is the rule and not a debt. **What is owed next, in
-    order:** re-runs of every DEL and MULTI cell, because both runners have CHANGED since (`del.mjs`
-    is `2dd7a0f4a933`, `multi.mjs` `74bb17b8283f`, and `rows.mjs` names each row); then LIFE, NOTIF,
-    HEAL. **HEAL IS THE RUNG IN HAND, and it has TWO green cells: HEAL-NEW-0 `PASS-DIRTY` and
-    HEAL-NEW-1 `PASS`, both on `48b65d08`. The five HEAL-NEW `FAIL`s of the same night are the
-    INSTRUMENT, and re-running them is now cheap:** every one failed on `sameAccountEnrolled: false`
-    alone while the product healed 10/10 in 6.1 s, and that predicate's cause - the per-user device
-    cap - is fixed. HEAL-NEW-11's second condition READ like a product question and is the same cause
-    twice: its note is `never went amber alone within 90s: {"panel":false}`, a panel that never
-    mounted, which is what a refused KeyPackage looks like. Run 3 (2026-08-28 03:30-03:58) took
-    eight rows and recorded NOTHING - five HEAL-NEW exit 1, four HEAL-REVOKE exit 2 - and **both
-    causes are the instrument, both are now fixed or named, and neither is a product defect.** (1)
-    `sameAccountEnrolled` read `census()`, which reads `key_package` UNION memberships and therefore
-    answers *is this device addressable*, never *does it exist*; there is **NO device-registry table
-    on this schema**, `auth_sessions` is the only row a registration writes, and `isRegistered()` in
-    `devices.mjs` now reads it. **12 of today's 22 session-without-KeyPackage web devices looked like
-    a regression and are all `d82cd226` inside run 3's own 16-minute window** - the rig is a
-    participant, so a population is not a finding until you ask who is in it. **AND THE QUESTION THAT
-    PARAGRAPH LEFT IS NOW ANSWERED, BY THE SERVER: a wiped profile publishes in 1.9 s. The refusal was
-    the per-user DEVICE CAP** - the rung's own sixteen rows each mint and abandon a device, so 15/15
-    was reached by construction and `register-device` answered 400 before it logged anything. Both
-    halves are FIXED and shipped (server code + client type + the rig asserting a free slot before it
-    wipes); story in `CHANGELOG.md`, rules in
-    [durable-rules](docs/wiki/durable-rules.md#mls-membership-and-routing), what remains in
-    [backlog](docs/wiki/backlog.md). **`enrolled` is a product fact again, and no HEAL-NEW cell needs
-    re-measuring for that reason.** (2) All four
-    HEAL-REVOKE rows were refused by the preflight because **W2 was alive, on `/login`, and logged
-    out** - `still unknown after 4 repair(s)`. **FIXED 2026-08-28, structurally: a client with no
-    session is not a page that cannot be judged**, and calling both `unknown` is what cost the rows.
-    `run.mjs`'s probe now answers `signedOut` (path `/login`, or a `#username` field) and the repair
-    loop signs the device back in with `login.mjs --device <d>`, which is idempotent and usually costs
-    no credential - the SSO cookies are on `auth.canari-emse.fr` and `cas.emse.fr`, which wiping the
-    app's origin does not touch. That was the ONE baseline the rig did not have: `launch.mjs start`
-    no-ops on a running browser and `pin.mjs` answers a gate a logged-out client never mounts. It is
-    queue item 6's per-STEP half, arriving because a rung was blocked by an inherited state. Detail and
-    every measurement are on the board and in
-    [testing-methodology](docs/wiki/testing-methodology.md); neither is restated here.
+   **Three things must NOT be read as settled:** DEL-10 passed where it FAILed but nothing names
+   what changed and the two runs measured different queues, so its P2 STAYS OPEN; COMM-8 passes with
+   `seedAfterTheGrant: repaired`, not `true`, so WP-REGRANT-2's proof is still owed - a fallback is
+   a signal, never a path; and COMM-23's 403 to the OWNER of the group it had just minted is
+   unexplained.
 
-    **AND A SECOND P1 CAME OUT OF THE SAME NIGHT, FIXED 2026-08-28: a revoked device wiped itself and
-    then put its own state back 1.25 s later**, because the 5 s SYNC_WATCHDOG was never stopped and
-    `ensureMls()` rebuilds a client whenever it finds none. `tearDownLiveSession` is now shared by
-    logout and revocation, and `wipeDeviceToFactory` reads the stores back instead of claiming an
-    empty device. **What is OWED is a row, because nothing on the board asks this question:** a
-    HEAL-REVOKE cell that asserts the storage is EMPTY after a revocation, and the user's own
-    question - does it still wipe when the device was OFFLINE at deletion time - which the design
-    answers (`isDeviceRevoked` says `false` when unreachable, so the wipe lands at the first login
-    WITH a network) and no run has ever shown. Story in `CHANGELOG.md`, mechanism on
-    [auth](docs/wiki/frontend/modules/auth.md#erasing-a-revoked-device-and-the-125-s-that-undid-it).
-    **AND A THIRD P1 CAME OUT OF ASKING THE PHONE THE SAME QUESTION, FIXED 2026-08-28: a revoked
-    PHONE kept its conversations.** `node footprint.mjs --device A1` answered `canariDatabases: 1`,
-    `bytesInUse: 5939115` on a device whose message store is SQLite. Two causes, both fixed with a
-    guard test: the wipe's platform branch REPLACED the WebView cleanup instead of adding to it (the
-    tell was in the same function - caches and localStorage were outside the branch), and the store
-    existed at all because a READER, the posts mini panel, named `IndexedDbStorage` by hand instead
-    of asking `getStorage`, creating by opening what it then wrongly read. **A phone has TWO halves
-    and a row reading one has measured the smaller:** `footprint.mjs` sees the WebView,
-    `nativeFootprint()` in `phone.mjs` sees `mls.bin` and the `.db` files over `adb run-as`. Story in
-    `CHANGELOG.md`, mechanism on
-    [auth](docs/wiki/frontend/modules/auth.md#erasing-a-revoked-device-and-the-125-s-that-undid-it),
-    two rules in [durable-rules](docs/wiki/durable-rules.md#mls-state-and-keys).
-
-    **Two things must NOT be read as settled:** DEL-10 passed where it FAILed on `2a4297cb` but
-    nothing names what changed and the two runs measured different queues, so its P2 STAYS OPEN; and
-    COMM-8 passes with `seedAfterTheGrant: repaired`, not `true`, so WP-REGRANT-2's proof is still
-    owed - the seed arrived by the REPAIR path, and a fallback is a signal, never a path. COMM-23's
-    403 to the OWNER of the group it had just minted is unexplained.
-
-    **A1 IS ARMED AND HAS NOW EARNED ITS ROWS** - Pixel 6a, armed with `node phone.mjs 9333` (ONE
-    positional port, NOT `--ensure`). It cleared the four COMM `+A1` rows that had stood on
-    `6808a89c` since 2026-08-22, and carried DEL-7 to its first `PASS`. **A dead `adb devices` is not
-    always the cable:** it was empty until the user re-plugged, and the `A1_WIFI` fallback needs a
-    prior `adb tcpip 5555` it did not have. **And an unarmed phone can be INVISIBLE to a runner** -
-    `devicesFor` dropped it silently for a whole rung; the preflight header names the devices, read it.
-
-    **A `PASS-DIRTY` NO LONGER STOPS A RUNG BY ITSELF (user, 2026-08-25)**, and **a x5 sweep of the
-    WHOLE ladder accepting nothing short of `PASS` comes AFTER the campaign reaches the bottom (user,
-    2026-08-26)** - until then one pass per rung is the target. **What is left is a WRITING job as
-    much as a running one:** only CALL, CORRUPT and PIN have NO runner at all.
-
-    **PUSHING TO THIS REMOTE IS A HAZARD IN THREE WAYS, all hit on 2026-08-27.** (1) **A pipe masks
-    the exit code** - `git push ... | sed > log; echo $?` reported success on a FAILED push: redirect,
-    then read `$?`. (2) **A background wrapper reports ITS exit, not git's** - a rejected
-    non-fast-forward push came back as exit 0 and was caught only by reading `PUSH_EXIT` out of the
-    log. **Leon AND a parallel session both push `main`: fetch and rebase before every push.** (3)
-    Four failures with `fatal: unable to access ...: Empty reply from server` (exit 128) while
-    `git fetch` succeeded every time; the fifth, carrying
-    `http.version=HTTP/1.1` **and** `http.postBuffer=524288000`, went through. **ONE SUCCESS DOES
-    NOT SAY WHICH KNOB DID IT, or whether either did** - the failures were not reproduced against a
-    control, so treat those two flags as a thing to TRY on the next `Empty reply`, never as the
-    known fix. `http.sslbackend` is `schannel` and no proxy is set. A push takes minutes because the
-    pre-push hook runs the frontend gates: **background, always.** And **CD's colour is not the
-    deploy's verdict** - read the SERVED artefact.
-
-    **A KILLED RUN CAN DESTROY A MEASUREMENT SECONDS FROM BEING RECORDED**, and **`node rows.mjs`
-    SETTLES WHETHER THE BOARD STILL MATCHES THE LEDGER - run it before believing a cell**
-    ([testing-methodology](docs/wiki/testing-methodology.md), the only copy). It has now caught the
-    board wrong THREE times, the last on 2026-08-27 when nine COMM cells named verdicts the ledger
-    contradicted - in BOTH directions, a `FAIL` the ledger had already cleared included. **The board
-    now matches the ledger exactly: zero disagreements**, the only gaps being six SETUP rows taken by
-    hand and NOTIF-4 / HEAL-W2, whose stale ledger verdicts their cells name in prose. The shared
-    venue is `fbddc890` / `general` `064ac7d2`, rebuilt 2026-08-26 after a THIRD disappearance.
-
-2. **A PLACEHOLDER HELD A MEMBER'S PLACE IN A REAL CONVERSATION - the user's lost messages, and
-    the ghost, are ONE P1. CAUSE FOUND, GUARDS SHIPPED 2026-08-28, CLEANUP AND ONE PROOF OWED.**
-    Measured on prod: for 134 minutes the peer had NO active device in the group, because a
-    `userId='unknown'` / `deviceId='pending'` row was stored **`active` 0.84 s before the real
-    members joined** while both of the peer's own devices sat `pending`. Twenty-one
-    `No active membership`, every `MSG_FETCH count=0`, **no `COMMIT` for the group at all**; what
-    ended it was the user REINSTALLING, which minted a new device id and took the group's only
-    commit - nothing self-corrected. The cause is one client seam publishing `BaseMlsService`'s own
-    non-identity sentinels, and **the existing ghost gate could not see it: a shape allowlist is not
-    an identity allowlist**, and the placeholder held a KeyPackage so it read as addressable.
-    Guarded at BOTH ends (named constants + typed `UnresolvedIdentityError` on the client,
-    `sanitizeIdentityValue` on `REGISTER_DEVICE` and `invitations/status`), 12 tests. **Owed, in
-    order: DEPLOY then clean the row and its 72 queued frames** (cleaning first lets a client
-    re-create it and destroys the evidence); and **do NOT assert the guards fixed the activation** -
-    an active member was polling and was answered `invitations=8` six times and committed none, and
-    only a CLIENT log separates the causes. **Not iOS, not mobile: 9 of the 10 stranded memberships
-    are `web-`.** Substance in [backlog](docs/wiki/backlog.md), rules in
-    [durable-rules](docs/wiki/durable-rules.md), story in `CHANGELOG.md`; none restated here.
+2. **A PLACEHOLDER HELD A MEMBER'S PLACE IN A REAL CONVERSATION - the user's lost messages, and the
+   ghost, are ONE P1. CAUSE FOUND, GUARDS SHIPPED 2026-08-28, CLEANUP AND ONE PROOF OWED.** Owed, in
+   this order: **DEPLOY, then clean the row and its 72 queued frames** (cleaning first lets a client
+   re-create it and destroys the evidence); and **do NOT assert the guards fixed the activation** -
+   an active member polled six times, was answered `invitations=8` and committed none, and only a
+   CLIENT log separates the causes.
 
 3. **NOTHING ON THE CAMPAIGN BOARD COULD HAVE CAUGHT IT, AND THE GAP IS STRUCTURAL** (checked
-    2026-08-28 on the user's question). Of ~200 rows exactly ONE reads
-    `dm_device_group_memberships` - COMM-8 - and it reads WHO is named, never WHAT STATUS they hold;
-    every other row asserts the symptom, which this defect leaves intact. And no row asks a question
-    whose answer is a POPULATION, so three memberships stranded for 25 days were invisible. **Four
-    rows written into rung 12 MULTI** (7: assert the ROW and that none names a placeholder; 8: a
-    device enrolled while the peer is offline reaches `active` **without a reinstall**; 9: delivery
-    after activation, and nothing claiming success in between; 10: the whole-population invariant,
-    run as a preflight). All four need only `W1 W2`. On
-    [cross-client-testing](docs/wiki/cross-client-testing.md), the only copy.
+   2026-08-28): of ~200 rows exactly one reads `dm_device_group_memberships`, and none asks a
+   question whose answer is a POPULATION. **Four rows are written into rung 12 MULTI** (7-10), all
+   needing only `W1 W2`, on the board.
 
-4. **DEFERRED PAST THE LADDER - seven UX and rendering items, substance in
-    [backlog](docs/wiki/backlog.md) and NOWHERE else**, named here only so none is forgotten: the
-    POSTS search that loads the whole base; the EMOJI picker that neither scrolls nor stays on
-    screen; HEAL's partially-restored old client; **ONE BUNDLED EMOJI FONT everywhere** (Noto Color
-    Emoji, decided 2026-08-23, owing ELEVEN rows to the SECOND campaign); the dead row a deleted
-    group leaves every other member; the trash and the pencil on a device row not reading as the same
-    kind of control; and a MENTION rendering as its raw `@[uuid]` token (NOTIF-13 pins it). The
-    emoji, the dead row and the device controls want ONE pass over `app.css`, not seven local
-    patches.
+4. **DEFERRED PAST THE LADDER - seven UX and rendering items**, substance in
+   [backlog](docs/wiki/backlog.md) and nowhere else, named here only so none is forgotten: the POSTS
+   search that loads the whole base; the EMOJI picker that neither scrolls nor stays on screen;
+   HEAL's partially-restored old client; **ONE BUNDLED EMOJI FONT everywhere** (Noto Color Emoji,
+   decided 2026-08-23, owing ELEVEN rows to the SECOND campaign); the dead row a deleted group leaves
+   every other member; the trash and the pencil on a device row not reading as the same kind of
+   control; and a MENTION rendering as its raw `@[uuid]` token (NOTIF-13 pins it). The emoji, the
+   dead row, the device controls and the iOS bars want ONE pass over `app.css`, not seven local
+   patches.
 
-5.  **THE SFU RUNS SIX webrtc MAJORS NOBODY HAS PLACED A CALL ON.** `apps/call-service` compiles,
-    clippy is clean under `--all-features` and its ten tests pass - none of which runs the ICE stack.
-    The CI hole that let two breaking Dependabot majors merge green is CLOSED (no crate in this repo
-    is uncompiled now), and the one known behaviour change is handled: an empty TURN credential used
-    to degrade quietly and now fails the whole ICE configuration. **What settles it is ONE relay-path
-    call**, which is rung 15 CALL and has no runner. Substance in [backlog](docs/wiki/backlog.md),
-    story in `CHANGELOG.md`; neither is restated here. **A release must not carry this unplaced.**
-6.  **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** - asked by the user 2026-08-25
-    (*"le meme point de depart, independamment de ce qui a pu se passer avant"*). The PHASE-level half
-    is `run.mjs`'s preflight; what is left is per-STEP granularity, pulled forward the moment a rung is
-    blocked by an inherited state. Contract, audit and the seven-file PIN predicate it fixes are in
-    [backlog](docs/wiki/backlog.md); diagnosis order is [testing-methodology](docs/wiki/testing-methodology.md) 39.
+5. **THE SFU RUNS SIX webrtc MAJORS NOBODY HAS PLACED A CALL ON.** It compiles, clippy is clean and
+   its ten tests pass - none of which runs the ICE stack. What settles it is ONE relay-path call,
+   which is rung 15 CALL and has no runner. **A release must not carry this unplaced.**
 
-### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27; three JUDGEMENTS left)
+6. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** - asked by the user 2026-08-25
+   (*"le meme point de depart, independamment de ce qui a pu se passer avant"*). The PHASE-level half
+   is `run.mjs`'s preflight; the per-STEP half is pulled forward the moment a rung is blocked by an
+   inherited state, as HEAL-REVOKE was. Contract and audit in [backlog](docs/wiki/backlog.md).
+
+### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 
 The user's standing mandate, verbatim: *"Je veux de l'homogeneite et les meilleurs standards de
 partout. Partout. oxlint/oxfmt ect partout, TS7 partout ou c'est possible..., Lucide derniere version
-avec tous les composants stale corriges PARTOUT, bun a la place de npm PARTOUT etc."* Every
-measurement and every per-repo state is on
-[ecosystem-convergence](docs/wiki/ecosystem-convergence.md), the only copy - section 8 the
-package-manager half, section 9 the TypeScript 7 refusal, section 10 why Renovate is dropped.
+avec tous les composants stale corriges PARTOUT, bun a la place de npm PARTOUT etc."*
 
-**NOT TO BE RELITIGATED:** bun 1.4.0 is the runtime everywhere it can be AND lockfiles stay at v1,
-which is not a conflict: bun >= 1.4 writes v2 for a lockfile it creates from NOTHING, while
-`bun install` / `bun update` preserve the version they find, and **`bunx --bun bun@1.3.14 install`
-regenerates at v1 with `configVersion: 1`** - 1.3.14 being the bun Dependabot itself bundles. bun
-1.4.0 then accepts that file under `--frozen-lockfile` unchanged. All ten lockfiles in the ecosystem
-are now v1 / configVersion 1. A regeneration RE-RESOLVES the tree, so it is paid deliberately with
-every gate re-run, never as a side effect. The invariant is enforced by `Guard the bun lockfile
-version` in `code-analysis.yml`, never by pinning a toolchain, because a pin never governed a
-contributor's own bun; **TS 7 IS REFUSED ON CANARI** and `dependabot.yml` ignores its majors, or
-`dependabot-auto-merge.yml` would land it unattended; **RENOVATE IS DROPPED**; Sky keeps Tailwind
-and migrates to v4 without preflight; `bun:sqlite` replaces better-sqlite3; the `image_url` deletion
-stands.
+**Every decision, measurement, guardrail and per-repo state is on
+[ecosystem-convergence](docs/wiki/ecosystem-convergence.md), the ONLY copy - add to its tables rather
+than re-deriving anything here, which is what made this section wrong twice.** Read section 8 for the
+package manager, 9 before touching TS 7 anywhere, 10 for bun 1.4 and the lockfile-v1 invariant, 11
+for the repo-by-repo state and the second sweep's eleven gaps. Its "NOT TO BE RELITIGATED" and
+guardrail paragraphs exist so a later session cannot "finish" the work by undoing a measurement.
 
-**CANARI'S HALF IS CLOSED, PROD INCLUDED** (four containers answering `["bun", "dist/main.js"]`,
-site 200, verified 2026-08-27). **THE ONE MEASURED LIMIT ON "bun PARTOUT":** jest fails under the bun
-runtime - `admin-storage.controller.mls.spec.ts` passes 8/8 under node and fails under bun - so CI
-installs/lints/builds with bun and TESTS with node, and both call sites in `ci.yml` say so. **Do not
-collapse that to one runtime without re-running that spec.** CD is GREEN again since `90d79b19`
-(five red runs before it), `Check Dependencies Vulnerabilities` included, and exactly ONE Dependabot
-alert is open: `libcrux-chacha20poly1305` (GHSA-hc3c-63hc-2r9f, HIGH) in `frontend/mls-wasm/Cargo.lock`,
-already measured as UNREACHABLE - the crate is not compiled, the HPKE backend built is
-`hpke-rs-rust-crypto`. It needs dismissing on GitHub, not fixing.
-
-**THE MIGRATION HALF IS CLOSED IN ALL FIVE REPOS** (Canari, Sky, MiGallery, le-cercle,
-Portail-etu): oxfmt/oxlint/oxvelte everywhere, bun everywhere it can be, TS 7 wherever it is not
-refused. **Every commit, measurement and per-repo state is section 11 of
-[ecosystem-convergence](docs/wiki/ecosystem-convergence.md), the only copy - add to its table
-rather than re-deriving it**, which is what made this paragraph wrong twice. **A SECOND SWEEP of
-2026-08-27 found ELEVEN residual gaps and closed nine** (its own table in section 11, with every
-measurement): one oxfmt and one oxlint version everywhere, one lint scope, one shim dialect, the
-dead `frontend/.husky/`, the three-way bun declaration, Sky's `bun-version: latest`, the stale npm
-/ ESLint / Prettier docs, and - after a first pass wrongly called it impossible - `configVersion: 0`
-on the last six lockfiles. **The one that is NOT a closure: NestJS 11 -> 12 is parked as a P2**
-([backlog](docs/wiki/backlog.md#tooling)) - a framework major across four deployed services is not
-a bump. What is left beyond it is JUDGEMENT: MiGallery's lint warnings (section 11 names the two
-that must not be swept); the `resolve()` question three repos park differently -
-[backlog](docs/wiki/backlog.md#tooling); and Tailwind class sorting on Portail-etu, deliberately not
-done in the same commit that swapped its toolchain.
-
-**Guardrails, so nothing is "finished" by undoing a measurement:** MiGallery's RUNTIME stays node
-(better-sqlite3 segfaults bun 1.4.0, and bun once OOM-killed that prod); Portail-etu's
-`.bun-version` stays 1.3.8 (its host cannot start >= 1.3.9, and 1.4.0's lockfile v2 kills its
-Dependabot); le-cercle's toolchain is **MERGED (!5)**, its ReDoS fix already on `main` by the user's
-decision. **Its pipeline had failed three times while this file called it green**, and
-reading it needed `glab`, now installed and authenticated against gitlab.emse.fr - **run
-it from inside the repo, or `glab api` resolves the host as gitlab.com and answers 404.**
-The cause was never the code: the production host was out of disk, fixed as **!6**, also
-merged and verified on a real deploy. Two rules came out of it, both in
-[durable-rules](docs/wiki/durable-rules.md#shared-gotchas): **a cache rewritten every run
-cannot be bounded by a clock**, and **image sizes are not additive** - `RECLAIMABLE` is the
-only column worth reading. **Measured, NOT assumed, on our own hosts: the mechanism does
-NOT transfer** - Canari and mitv pull `:latest` from ghcr, so their old images go dangling
-and a plain prune would reclaim them. What they share is that no prune runs at all: 57
-dangling images + 64 dangling volumes on `canari`, 77 on `mitv`. Neither is near its edge
-(73 G and 378 G free), so it is a P3 in [backlog](docs/wiki/backlog.md#infrastructure), not
-an incident. Four rules came out of this chantier, all in
-[durable-rules](docs/wiki/durable-rules.md): oxvelte pinned by sha, not branch; a guard restating
-what the tool enforces goes stale; **dropping a `--config` flag does not remove the config**; and
-**the executable bit is metadata Windows drops silently**, which cost Portail-etu a pipeline and was
-armed on le-cercle too. **Read section 9 before touching TS 7 anywhere.**
+**What is left is JUDGEMENT, not migration:** MiGallery's lint warnings (section 11 names the two
+that must not be swept), the `resolve()` question three repos park differently, and Tailwind class
+sorting on Portail-etu. Plus one parked P2: **NestJS 11 -> 12**, a framework major across four
+deployed services ([backlog](docs/wiki/backlog.md#tooling)). Exactly ONE Dependabot alert is open -
+`libcrux-chacha20poly1305`, measured UNREACHABLE (the crate is not compiled; the HPKE backend built
+is `hpke-rs-rust-crypto`). It needs **dismissing** on GitHub, not fixing - and the first question
+about any advisory is whether `cargo tree -i` can reach the crate at all, because `cargo audit` reads
+the LOCKFILE.
 
 **OWED TO THE USER, NOT TO THE CODE: the MLS + Graine explanation** - prose and diagrams, no code
-(user, 2026-08-20). Post-campaign; scope and the two audiences declined are in [backlog](docs/wiki/backlog.md).
+(user, 2026-08-20). Post-campaign; scope and the two audiences declined are in
+[backlog](docs/wiki/backlog.md).
 
 **THE FIVE THAT CANNOT BE PULLED FORWARD** - none waits on us, each carrying its blocking condition in
-[backlog](docs/wiki/backlog.md), the only copy: the iOS avatar-cache question (needs an iPhone), the Lydia flip
-WP-LYDIA-1 (needs credentials Lydia owes), one MLS client in a SharedWorker, `dev.canari-emse.fr` plus
-the SECOND campaign (post-campaign), and - owed to the user - is a MiGallery application worth building?
-The sixth is gone: the `libcrux-chacha20poly1305` panic never reached this product, because the crate
-is not compiled - the HPKE backend actually built is `hpke-rs-rust-crypto`. `cargo audit` reads the
-LOCKFILE, which lists optional dependencies nothing enables, so **the first question about any
-advisory is whether `cargo tree -i` can reach the crate at all.**
+[backlog](docs/wiki/backlog.md), the only copy: the iOS avatar-cache question (needs an iPhone), the
+Lydia flip WP-LYDIA-1 (needs credentials Lydia owes), one MLS client in a SharedWorker,
+`dev.canari-emse.fr` plus the SECOND campaign (post-campaign), and - owed to the user - is a
+MiGallery application worth building?
 
 ### CANARI - what is open
+
+**Release: the version in the three files is `0.14.12`, bumped and UNTAGGED, and a release carrying
+it is OWED.** v0.14.11 shipped 2026-08-28 09:53 with its Android build green; .10 and .11 both
+MEASURE the wipe defects rather than fixing them, so **no HEAL-REVOKE verdict about a clean device may
+be taken on a build older than 0.14.12.** A1 already runs a local debug 0.14.12; W1/W2/W3 get the web
+half through CD on the next push. **An APK is not reached by a deploy** - `frontendDist: "../build"`
+means the Tauri app EMBEDS the frontend, so a version has to identify its content or
+`minClientVersion` and check S are reasoning about a name. Read `gh run list` rather than this
+paragraph, which has been stale twice. **How A1 is upgraded, and why the CI artefact cannot do it, is
+in [the harness README](tools/cross-client-harness/README.md).**
 
 **Google Play: both mails of 2026-08-26 are CLOSED but for check R**, everything shipped and live;
 thresholds and the two sites that will never clear are on
 [mobile](docs/wiki/frontend/mobile.md#plays-q3-2026-quality-requirements-measured-against-this-app),
 the only copy. Two things stay open and neither is re-openable: the 28-day memory P90 does not exist
 yet, so **read Android vitals from late September 2026**; and **WP-RESTORE-1** (Zero-Tap Sign-In,
-required April 2027, WebAuthn on a server that has none) is ACCEPTED and scheduled AFTER the
-campaign ([backlog](docs/wiki/backlog.md)).
+required April 2027, WebAuthn on a server that has none) is ACCEPTED and scheduled AFTER the campaign
+([backlog](docs/wiki/backlog.md)).
 
-**Release: v0.14.11 SHIPPED 2026-08-28 09:53 and its Android build is GREEN** (run `33161214934`) -
-read `gh run list` rather than this line, which has been stale twice. **THE VERSION IN THE THREE
-FILES IS NOW `0.14.12`, UNRELEASED**, bumped so the debug build carrying the native-wipe fix cannot
-be confused with the released 0.14.11 that MEASURES the defect - a version has to identify its
-content. A1 carried a local debug 0.14.11 from 14:00, which is how the fourth and fifth P1s were
-found; **a release carrying both fixes is owed**, and until it exists no HEAL-REVOKE verdict about a
-clean device may be taken on any build older than 0.14.12. v0.14.10 (00:46, three builds green) carries the revocation-wipe fix and
-the iOS FCM fix, and is the build [check S](docs/wiki/device-verification.md) needs; v0.14.11 adds
-the half of the wipe that reaches a phone's WebView. The earlier skew that killed Android Release and AppImage Release (Tauri
-`plugin-log` JS 2.9.0 vs crate 2.8.0) is fixed, and no CI job could see it because nothing here
-compiles the Tauri app: `Guard the Tauri JS/Rust version parity` in `code-analysis.yml` now reads the
-two committed files. Story in `CHANGELOG.md`, rule in
-[durable-rules](docs/wiki/durable-rules.md#release-and-ci).
+**iOS - three defects found on hardware, all fixed, one proof still owed.** Stories in `CHANGELOG.md`,
+mechanisms on [mobile](docs/wiki/frontend/mobile.md) and
+[sessions](docs/wiki/sessions.md#the-credential-a-client-carries-itself), rules in
+[durable-rules](docs/wiki/durable-rules.md#mobile-and-native---frontendmobilefrontendmobilemd). **None restated here.** Two things are
+PROVEN and must not be re-verified: the session HOLDS on the iPhone, and a full iOS/Android parity
+audit read everything else as symmetric. What remains open:
 
-**THE MEASUREMENT THE USER ASKED FOR HAS RUN (2026-08-28 14:12), AND IT FOUND A FOURTH P1 - FIXED,
-BUT NOT YET RE-MEASURED.** *"Supprime tous les appareils sauf W1 ... comme ca on voit si le mobile
-perd tout aussi."* A1 was upgraded to a LOCAL debug 0.14.11, both halves read before and after, and
-the two devices deleted from W1's panel by allowlist (`--expect 2`, `deleted 2/2`).
-
-**Verdict: the phone did NOT lose everything.** Native fell 42 216 492 -> 29 249 922 bytes, and the
-WebView kept `canariDatabases: 1` / 5 939 015 bytes / 261 localStorage keys. **The wipe CRASHED the
-app 55 ms in** - `[RESET] wiping...` at 14:12:22.218, then the biometric plugin's activity, then
-`FATAL EXCEPTION: main / ClassNotFoundException: androidx.coordinatorlayout.widget.CoordinatorLayout`
-and `SIG: 9`. Three defects met at that one step and each alone kept the conversations; all three are
-FIXED with five tests, one of them mutation-verified against the old code. **Story in `CHANGELOG.md`,
-mechanism on [auth](docs/wiki/frontend/modules/auth.md#erasing-a-revoked-device-and-the-125-s-that-undid-it),
-three rules in [durable-rules](docs/wiki/durable-rules.md); none restated here.** The measured
-BEFORE, kept because a re-run must reproduce it: W1 `2 DB / 65 200 621`, W2 `2 DB / 31 273 345`,
-W3 `1 DB / 8 253 748` (the debris of the 1.25 s regression), A1 `1 DB / 5 938 001` + 2937 files /
-42 216 492 native.
-
-**AND THE RE-RUN OF THAT MEASUREMENT FOUND A FIFTH P1, ON THE HALF NO ROW HAS EVER READ - FIXED
-2026-08-28, PROOF STILL OWED.** A1 was signed back in (no 2FA - the trust window held, and the IdP
-cookies survive an origin wipe), enrolled as a FRESH device id in 634 ms, and reached `/chat` with
-eleven conversations. Its WebView had come back genuinely EMPTY from the previous revocation -
-`canariDatabases: 0`, 261 localStorage keys down to 0 - **so the fourth P1's fix is confirmed working
-on hardware.** Reading the native side with `adb` found **twenty-eight paths of account state still
-there**: `mls.bin`, `canari_<userId>.db` + WAL, `graine_seeds.json` and `channel_keys.json` (the
-material the background push service decrypts notifications with), `push_context.json`,
-`pending_push_secret.txt`, `fcm_token.txt`, `session-meta.json`, `keystore_aliases.xml`, five
-`canari_*.xml` and **six cached avatars of real people**. Cause: `clear_app_data` deleted an entry
-only when `extension() == "db"`, and every one of those files was added after that filter was
-written. `wipe_app_data` now deletes everything except a named framework keep-list, so the default is
-ERASE; 4 Rust tests, and the old body removed 2 of the 14 files the first one creates. Story in
-`CHANGELOG.md`, mechanism on
-[auth](docs/wiki/frontend/modules/auth.md#erasing-a-revoked-device-and-the-125-s-that-undid-it), two
-rules in [durable-rules](docs/wiki/durable-rules.md#mls-state-and-keys).
-
-**THE INSTRUMENT IS WHY THIS TOOK THREE READINGS, and its fix is the transferable part.**
-`footprint.mjs` answered **"nothing of the account remains" about A1 while the phone displayed eleven
-conversations** - its whole criterion was `canariDatabases === 0`, and a Tauri client keeps its
-messages in native SQLite, so that count is 0 either way. **A predicate that cannot fail on the
-device class it judges is not a criterion**, and it had been read as evidence three times. Now: it
-also counts `identityKeys` (`mls_device_id_<userId>` + `canari_device_key_vault`, which nothing but
-an enrolment writes); `nativeResidue()` in the rig NAMES which paths survived, because the byte total
-read 19 MB with the account gone and 31 MB with it present on the same device inside an hour; and for
-a `tauri` origin the verdict is the AND of both halves in ONE place, an unreadable native half
-VOIDING it rather than passing it. `logs/Canari.log` is reported apart - the running app rewrites it
-in milliseconds, the same argument that keeps `PARAGLIDE_LOCALE` out of the web criterion. The pure
-classifier is `native-residue.mjs` and `residue-selftest.mjs` is the **twelfth** self-test; it FAILED
-`gate-selftest` on its first run for importing `phone.mjs`, which is the gate working. Detail in
-[testing-methodology](docs/wiki/testing-methodology.md), the only copy.
-
-**THE MEASURED BEFORE, on a fully enrolled A1, because the re-run must reproduce it:**
-`identityKeys: 3`, native `residue: 28`, `rewritten: ["logs/Canari.log"]`, WebView
-`localStorageKeys: 31 / canariDatabases: 0 / bytesInUse: 3 008 238`, native total 2793 files /
-31 014 834 bytes.
-
-**THE MEASUREMENT IS DONE AND IT ANSWERS YES, ON BOTH HALVES (2026-08-28 16:08).** On a debug
-**0.14.12** carrying every fix, A1 in the foreground, both devices deleted from W1's panel by
-allowlist: A1's native `residue` went **28 paths -> 0**, `identityKeys` 3 -> 0, every store 0, verdict
-`nothing of the account remains`. The whole wipe took **55 ms with no crash**, and
-`[Flags] no native_flags.json - biometricConfigured is already absent` shows the flag fix declining to
-recreate what the sweep deleted. **The user's second question is answered too**, by W3, which was
-OFFLINE when revoked: it kept `CanariDBMls_<userId>` and 8.3 MB, exactly as the design says, and one
-reload WITH a network landed the deferred wipe (`canariDatabases 1 -> 0`). **Every number, the logcat
-sequence and what it does not close are on
-[cross-client-testing](docs/wiki/cross-client-testing.md); not restated here.**
-
-**WHAT THAT LEAVES, and it is small:** neither reading came from a RUNNER, so neither is in the ledger
-and `rows.mjs` cannot see them - the HEAL-REVOKE cell is still owed as a SCRIPT, and its predicate is
-now written for it (`residue: 0` on a phone, `identityKeys: 0` everywhere, the offline variant driven
-by a reload rather than a frame). **BOTH ARE RE-ENROLLED (2026-08-28 16:35) AND IT COST NO 2FA** - Authentik's cookie
-survived on both; on A1 only CAS's had expired, and the rig typed those credentials itself. All four
-clients are logged in, unlocked and ready.
-
-**A RELEASE CARRYING BOTH FIXES IS OWED** - `0.14.12` is bumped in the three files but UNTAGGED, and
-the web half reaches W1/W2/W3 through CD on the next push. A1 already runs the local debug build.
-
-**HOW THE PHONE IS UPGRADED, because the CI APK cannot do it** (measured 2026-08-28): A1 must stay a
-LOCAL **debug** build. The CI artefact is release - not debuggable and signed with the release
-keystore - so `adb install -r` fails on the signature, and an uninstall would destroy the data to be
-measured. **`run-as` needs debuggable**, and `run-as` IS the native half of the footprint, the half
-that found the third and fifth P1s. So:
-`ANDROID_HOME=<sdk> ANDROID_SDK_ROOT=<sdk> NDK_HOME=<sdk>/ndk/26.1.10909125 bun tauri android build --debug --apk --target aarch64`
-from `frontend/`, then `adb install -r` the arm64 debug APK.
-It names itself from `tauri.conf.json`, and an upgrade keeps the data - verified, 355 bytes of drift.
-**A1 is the ONLY device needing any of this**; W1/W2/W3 get web fixes through CD. **Do not pipe that
-build to `tail`** - the output is buffered until exit and all progress visibility is lost; redirect
-instead, and read `cargo`/`rustc` in the process list to tell a running build from a stalled one.
-
-**THE DEV BOX RAN OUT OF DISK TWICE** - first `rustc-LLVM ERROR: IO failure on output stream: no
-space on device` with **10 MB** free, then 4 GB after a host `cargo test` built its own target dir.
-Both were paid in pure build cache and nothing else: the two `incremental` dirs, `~/.bun/install/cache`,
-`mls-wasm/target`, and `src-tauri/target/debug` (**14 GB alone**, and the Android build does not use
-it - a different target triple). 17 GB free after. **The real consumer is still NOT measured** - a
-full scan fights the build for I/O - so it stays a P3 in
-[backlog](docs/wiki/backlog.md#infrastructure) next to the two prod hosts, and the user is asked
-before anything outside a build cache goes.
-
-**GATES, all run against this work:** `bun run check` 0, `bun run lint` 0, `cargo test` 7/7 on the new
-wipe, `make test-harness` green (twelve self-tests), `idcheck` clean. **COMMITTED, NOT YET PUSHED** -
-`682936f4` and the native-wipe commit are local, and the rig work below is a third. A campaign run and
-a push to `main` are mutually exclusive, so **PUSH FIRST, then run.**
-
-**Still owed on the board:** a HEAL-REVOKE cell asserting the storage is EMPTY after a revocation,
-and A1's native half has no row at all.
-
-**AN APK IS NOT REACHED BY A DEPLOY: `frontendDist: "../build"` means the Tauri app EMBEDS the
-frontend**, so every web fix reaches W1/W2/W3 through CD and reaches A1 only in a new build. That is
-why v0.14.10 was cut for the revocation-wipe fix and **v0.14.11 for the half of it that reaches the
-WebView on a phone** - a version has to identify its content, or `minClientVersion` and check S are
-reasoning about a name. **A1 must carry a build NEWER than 0.14.11** before any HEAL-REVOKE row is
-worth running: .10 and .11 are green and both measure the defect. What IS owed is
-one iOS proof: `minClientVersion` is raised BY HAND from `/admin/platform`, and while a release can
-now REACH App Store Connect, TestFlight is the BETA channel - nothing yet shows a build reaching an
-ordinary iOS user. Ship the client, verify it arrived, THEN raise
-([legacy-compatibility](docs/wiki/legacy-compatibility.md)).
-
-**iOS - THREE DEFECTS FOUND ON HARDWARE, ALL FIXED, ONE PROOF STILL OWED.** The stories are in
-`CHANGELOG.md` and the mechanisms on [mobile](docs/wiki/frontend/mobile.md) and
-[sessions](docs/wiki/sessions.md#the-credential-a-client-carries-itself); rules in
-[durable-rules](docs/wiki/durable-rules.md#mobile-and-native). **None is restated here.** What
-remains OPEN:
-
-**Two things are PROVEN and must not be re-verified:** the session HOLDS on the iPhone (0.14.6
-installed, user 2026-08-28, and the server agrees - `OIDC callback: credential also returned in the
-body` on `tauri://localhost`), and a full iOS/Android PARITY AUDIT ran before the re-release and read
-everything else as symmetric - push payloads, WS auth, entitlements, AASA, NSE, App Group, keychain,
-`CFBundleURLTypes`, no platform-gated tauri command.
-
-- **RE-RUN [check S](docs/wiki/device-verification.md) ON A BUILD CARRYING THE APNs FIX.** `push_token`
-  had never held one `ios` row, so no alert, mention or CallKit ring had ever reached an iPhone. The
-  SILENCE half is closed and proven on hardware (`[PUSH_UNAVAILABLE] ... platform=ios
-  reason=no-token`); the ACQUISITION half is fixed and UNPROVEN - everything native here is verified
-  by COMPILING. What each outcome of the re-run MEANS is written in check S, along with one inference
-  from the first run that was RETRACTED so it is not made again.
-- **THE iOS BARS at the top and bottom are NOT done** - a P2 in [backlog](docs/wiki/backlog.md). The
-  keyboard itself is fixed (the WebView's frame is shrunk, no web change was needed). The bars want
-  ONE pass over `app.css` with a device in hand - the same pass the emoji, dead-row and device-row
-  items want.
+- **RE-RUN [check S](docs/wiki/device-verification.md) ON A BUILD CARRYING THE APNs FIX.** The SILENCE
+  half is closed and proven on hardware; the ACQUISITION half is fixed and UNPROVEN, because
+  everything native here is verified by COMPILING. What each outcome MEANS is written in check S,
+  along with one inference from the first run that was RETRACTED.
+- **The iOS bars** at top and bottom are a P2 in [backlog](docs/wiki/backlog.md) - the keyboard itself
+  is fixed with no web change. They want the same `app.css` pass as queue item 4, with a device in hand.
 - **`minClientVersion` is raised BY HAND** from `/admin/platform`, and only after a build is shown
   reaching an ORDINARY iOS user: a release can reach App Store Connect, but TestFlight is the BETA
   channel ([legacy-compatibility](docs/wiki/legacy-compatibility.md)).
-- Still owed on macOS/Linux desktop: nobody has measured those engines' cookie behaviour, which is
-  exactly the unknown the `X-Canari-Refresh` shim covers.
+- Nobody has measured macOS/Linux desktop cookie behaviour - exactly the unknown `X-Canari-Refresh`
+  covers.
 
-**AND THREE OF THREE iOS DEFECTS WERE INVISIBLE TO EVERY GATE HERE** - a CORS allowlist naming only
-the Android WebView origin, a third-party refresh cookie WKWebView drops, an FCM proxy sampling an
-app delegate that did not exist yet. The user named the classes still to come before anyone looked
-(backgrounding, memory, a reconnection that does not happen); that expectation is in
-[backlog](docs/wiki/backlog.md) and closes by HARDWARE, one lettered check at a time - **never by a
-fix written against a suspected iOS lifecycle bug nobody has seen**, because nothing here could tell
-whether it worked.
+**AND THREE OF THREE iOS DEFECTS WERE INVISIBLE TO EVERY GATE HERE.** The user named the classes still
+to come before anyone looked (backgrounding, memory, a reconnection that does not happen); that
+expectation is in [backlog](docs/wiki/backlog.md) and closes by HARDWARE, one lettered check at a
+time - **never by a fix written against a suspected iOS lifecycle bug nobody has seen**, because
+nothing here could tell whether it worked.
 
 ### CANARI - the test campaign
 
 Four files, four jobs, all in WHERE THINGS LIVE above: board = state, campaign page = design,
-methodology = how a result earns belief, README = operating manual. **Read them rather than re-deriving
-state here, and keep no second copy.**
+methodology = how a result earns belief, README = operating manual. **Read them rather than
+re-deriving state here, and keep no second copy.**
 
 **The rig lives in the repo at `tools/cross-client-harness/`; its STATE lives outside at
 `../canari-harness`** - `test-accounts.json`, the debug APK, A1's baseline, `results.ndjson`, and
@@ -602,19 +290,22 @@ state here, and keep no second copy.**
 SETUP-4's 2FA, the one step no tool here can answer. Outside the work tree a credential CANNOT be
 committed and `git clean -xdf` cannot reach a profile.
 
+**`node rows.mjs` SETTLES WHETHER THE BOARD STILL MATCHES THE LEDGER - run it before believing a
+cell.** It has caught the board wrong three times; the board now matches exactly, the only gaps being
+six SETUP rows taken by hand and NOTIF-4 / HEAL-W2, whose stale ledger verdicts their cells name in
+prose. **A killed run can destroy a measurement seconds from being recorded**, and **a campaign run
+and a push to `main` are MUTUALLY EXCLUSIVE** - a mid-run deploy has already voided three cells.
+
 **MUT-20 is unarmable until a campaign message reaches 90 days** (earliest 2026-11-09). **A DELETED
 GROUP IS TWO ESTATES**: `cleanup.mjs` owns the server side, `dismiss.mjs` the copy each MEMBER's
-client keeps; one allowlist for both, `debris.mjs` (detail on
-[cross-client-campaign](docs/wiki/cross-client-campaign.md)).
-
+client keeps; one allowlist for both, `debris.mjs`. The shared venue is `fbddc890` / `general`.
 **TAB-7 is the row to watch**: offline -> act -> online with no reload is exactly the trigger DEL-10
-says nothing honours. A1's state is in the queue item above, not here.
+says nothing honours.
 
 **Prod IS the test server** and commit+push are authorised so it picks changes up.
 `dev.canari-emse.fr` is a proxied CNAME to the same tunnel, NOT a second environment; it becomes one
 AFTER the campaign (decided 2026-08-17, re-confirmed 2026-08-25 - pulling it forward would need its
-own FCM project, which would unprove every push verdict already taken). Scope in
-[backlog](docs/wiki/backlog.md).
+own FCM project, which would unprove every push verdict already taken).
 
 **LEON PUSHES TO CANARI's `main` TOO.** `git fetch` at the START of a session and again before any
 measurement, and `git pull` his work in. **It does not concern ours and owes no pass** (user,

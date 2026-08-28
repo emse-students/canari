@@ -834,5 +834,18 @@ Environment and tooling traps that belong to no one subsystem. Each cost a run.
 - Commit signing is ON globally over SSH - all commits Verified, do NOT disable.
 - **Never assert a wall clock in a test**; two isolated browser contexts = two devices.
 - **A FIRE-AND-FORGET CALL IS THE ONE A TEST FORGETS TO MOCK, AND NOTHING FAILS.** `void f().catch(log)` swallows its own rejection, so an unmocked module reaches the REAL host: the frontend suite was sending five live `PUT` at prod per run, its only symptom console noise inside a 215-file run. Mock it and ASSERT it - a call worth making is worth an assertion, and silencing it without one just moves the hole.
+- **A `git push` TO THIS REMOTE FAILS IN THREE WAYS THAT ALL REPORT SUCCESS, all hit 2026-08-27.**
+  (1) **A pipe masks the exit code**: `git push ... | sed > log; echo $?` reported success on a
+  FAILED push, because `$?` is the last stage's. Redirect, then read `$?` - and write it into the log
+  (`echo "PUSH_EXIT=$?"`) so a later reader is not trusting a memory. (2) **A background wrapper
+  reports ITS exit, not git's**: a rejected non-fast-forward push came back as exit 0 and was caught
+  only by reading `PUSH_EXIT` out of the log. Two other agents push this `main`, so **fetch and check
+  divergence before every push.** (3) Four consecutive failures with `fatal: unable to access ...:
+  Empty reply from server` (exit 128) while `git fetch` succeeded every time; the fifth, carrying
+  `http.version=HTTP/1.1` **and** `http.postBuffer=524288000`, went through. **ONE SUCCESS DOES NOT
+  SAY WHICH KNOB DID IT, or whether either did** - there was no control run, so those two flags are a
+  thing to TRY on the next `Empty reply`, never the known fix. `http.sslbackend` is `schannel`, no
+  proxy is set. The push takes minutes because the pre-push hook runs the frontend gates, so it is
+  ALWAYS backgrounded - which is what makes (2) reachable in the first place.
 - MiConnect 2FA remembers the device for 8 h; if the CAS page stalls after Esup Auth accepts, go BACK and reload rather than looping.
 - Portail: SPA (`ssr = false`); `data-export/` holds PII, never commit. Sky UI French keeps accents and straight apostrophes.

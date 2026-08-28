@@ -805,7 +805,10 @@ this page keeps only what the ecosystem needs to know:
 **!5 IS MERGED, AND ITS PIPELINE HAD TO BE READ BEFORE THAT COULD BE SAID.** Until 2026-08-27 this
 page claimed every gate was green on the strength of a local run; the actual pipeline had failed
 three times, and nobody here could see it because `glab` was not installed. Installed and
-authenticated against gitlab.emse.fr, it reported the cause in one call, and **the cause was not
+authenticated against gitlab.emse.fr, it reported the cause in one call. **Run `glab` from inside
+that working tree**: outside it there is no remote to read, so `glab api` resolves the host as
+gitlab.com and answers 404 - a wrong answer that looks like a missing resource, not like a
+misconfiguration. And **the cause was not
 the code**: `ENOSPC: copying file oxlint.linux-x64-gnu.node` during `bun install`, on a production
 host down to 489 MB of a 7.8 GB disk. `gates:svelte` - the new job, the one carrying the executable-
 bit trap - passed on the first read. **A local gate and a pipeline are two different statements, and
@@ -895,6 +898,13 @@ Its half is otherwise closed. Two things are not:
   Rust services run their own binaries, as they always did.
 - `Dockerfile.frontend-ssr` onto `svelte-adapter-bun`, decided and not started. It must preserve
   the captured OG-tag baseline and be proven on prod.
+
+**THE ONE MEASURED LIMIT ON "bun PARTOUT", and it is a limit on the TEST runner only.** jest fails
+under the bun runtime: `admin-storage.controller.mls.spec.ts` passes 8/8 under node and fails under
+bun. So CI **installs, lints and builds with bun, and TESTS with node**, and both call sites in
+`ci.yml` say so in a comment. **Do not collapse that to one runtime without re-running that spec** -
+the temptation is constant, because every other stage in the pipeline is bun and the asymmetry reads
+like an oversight rather than a measurement.
 
 ### The second sweep, 2026-08-27: eleven gaps the first pass left
 

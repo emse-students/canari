@@ -399,6 +399,17 @@ next one's symptom names the wrong cause.
 
 **Building for it**
 
+- **A1 MUST STAY A LOCAL `--debug` BUILD, and the CI artefact cannot replace it (measured
+  2026-08-28).** The pipeline produces a RELEASE APK: not debuggable, and signed with the release
+  keystore, so `adb install -r` fails on the signature mismatch and the only way through would be an
+  uninstall - which destroys the very data a footprint row measures. And **`run-as` needs
+  debuggable**, while `run-as` IS the native half of the footprint, the half that found two P1s. The
+  invocation that works here, from `frontend/`:
+  `ANDROID_HOME=<sdk> ANDROID_SDK_ROOT=<sdk> NDK_HOME=<sdk>/ndk/26.1.10909125 bun tauri android build --debug --apk --target aarch64`,
+  then `adb install -r` the arm64 debug APK. It names itself from `tauri.conf.json`, and the upgrade
+  KEEPS the app data - verified, 355 bytes of drift. **Do not pipe that build to `tail`**: the output
+  is buffered until exit, so all progress visibility is lost. Redirect instead, and read `cargo` /
+  `rustc` in the process list to tell a running build from a stalled one.
 - `./node_modules/.bin/tauri.exe android build --debug` from `frontend/`, then
   `adb install -r .../apk/universal/debug/app-universal-debug.apk` - **not** `arm64/`, which is
   stale. Three details, each of which has cost a session:

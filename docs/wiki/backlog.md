@@ -2162,6 +2162,21 @@ prune` cannot tell those apart and neither can a name. **Enumerate before deleti
 rule about destructive controls needing an allowlist applies here in full, and there is no urgency
 buying the shortcut. The images half is safe and could be a scheduled `docker image prune -f` today.
 
+### P3 - the DEV box ran out of disk twice, and the real consumer is still not measured
+
+**2026-08-28.** A Tauri Android build died with `rustc-LLVM ERROR: IO failure on output stream: no
+space on device` at **10 MB** free; a second attempt hit the same wall at 4 GB after a host
+`cargo test` built its own target directory. **Both were paid in pure build cache and nothing
+else** - the two `incremental` directories, `~/.bun/install/cache`, `mls-wasm/target`, and
+`src-tauri/target/debug` at **14 GB alone**, which the Android build does not even use (a different
+target triple). 17 GB free afterwards.
+
+**What is NOT done is the measurement.** A full scan of the volume fights the build for I/O, so
+nothing here names the actual top consumer, and every figure above is of a directory that was
+already suspected. Until that scan runs, this is a slope rather than a diagnosis - which is why it
+sits at P3 beside the two prod hosts above rather than being called fixed. **Ask the user before
+deleting anything that is not a build cache.**
+
 ## Post-campaign projects - decided, not scheduled
 
 ### The MLS + Graine explanation, written FOR THE USER - audience settled 2026-08-20
