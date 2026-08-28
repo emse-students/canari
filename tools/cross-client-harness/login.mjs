@@ -42,23 +42,84 @@ await cx.ready;
 await cx.send('Runtime.enable');
 
 const here = () => evaluate(cx, 'location.href');
+
+// THE ONE PREDICATE FOR "the browser is back on the app". It has two readers - the classification of
+// a missing form below, and the poll that ends after a submit - and they must never drift, because a
+// disagreement between them would read as a login that half worked.
+const onTheApp = (url) =>
+  url.includes('canari-emse.fr') && !url.includes('auth.canari-emse.fr') && !url.includes('cas.emse.fr');
 console.log(`[login:${account}] start ${await here()}`);
 
 // The Canari login page is only a launcher. The hop is canari -> auth.canari (Authentik flow)
 // -> cas.emse.fr, and the middle page is a real render, so poll for the FIELD rather than for a
 // URL: waiting on "cas.emse.fr" alone lands on the Authentik step and reads as a failure.
-if (!(await evaluate(cx, `!!document.querySelector('#username')`))) {
-  await realClick(cx, 'text=Se connecter');
-}
+//
+// THE CLICK IS JUDGED BY ITS EFFECT, NOT BY BEING DELIVERED. A launcher that has painted but not yet
+// hydrated takes the click and does nothing with it - `realClick`'s own recorder confirms the BUTTON
+// received the event, so no layer anywhere reports a problem - and the step then spends its whole
+// budget waiting for a form whose navigation was never started. That is exactly what happened on
+// 2026-08-28: this read "no credential form after 30s" while the same click made by hand two minutes
+// later reached /chat in two seconds. A dropped click is not cured by waiting longer for it, so the
+// loop RETRIES rather than extends, and it ends on a fact instead of on a timeout.
+//
+// TWO FACTS END IT, because there are two legitimate outcomes and the step cannot know which it will
+// get. The CAS form appears, or the browser leaves the launcher on its own because the IdP still holds
+// a session for this browser - the SSO cookies live on auth.canari-emse.fr and cas.emse.fr, and
+// wiping the app's origin does not touch them, which is why a device wiped to factory re-enrols with
+// no field to fill and why the HEAL rows cost no 2FA.
+const onTheLauncher = (url) => url.includes('/login');
 let onForm = false;
-for (let i = 0; i < 300; i++) {
-  await sleep(100);
-  if (await evaluate(cx, `!!document.querySelector('#username')`)) {
-    onForm = true;
-    break;
+
+// IDEMPOTENT BY READING BEFORE ACTING. What this script is for is leaving the browser holding an
+// authenticated session, so a browser that already holds one needs no gesture at all - and clicking a
+// launcher that is not on screen would throw on the very state being asked for. It is also what rule
+// 4 of the campaign requires of every step: the same call has to be safe whatever the previous row
+// left behind, rather than only from one starting page.
+let theIdPAnsweredForUs = await (async () => {
+  const url = await here();
+  return onTheApp(url) && !onTheLauncher(url);
+})();
+if (theIdPAnsweredForUs) console.log(`[login:${account}] already on the app, no launcher to click`);
+for (let attempt = 1; attempt <= 3 && !onForm && !theIdPAnsweredForUs; attempt++) {
+  if (!(await evaluate(cx, `!!document.querySelector('#username')`))) {
+    await realClick(cx, 'text=Se connecter');
+  }
+  for (let i = 0; i < 100; i++) {
+    await sleep(100);
+    if (await evaluate(cx, `!!document.querySelector('#username')`)) {
+      onForm = true;
+      break;
+    }
+    const url = await here();
+    if (onTheApp(url) && !onTheLauncher(url)) {
+      theIdPAnsweredForUs = true;
+      break;
+    }
+  }
+  if (!onForm && !theIdPAnsweredForUs) {
+    console.log(`[login:${account}] attempt ${attempt} produced nothing, at ${await here()}`);
   }
 }
-if (!onForm) throw new Error(`no credential form after 30s, at ${await here()}`);
+
+// CLASSIFIED HERE, AT THE THROW, because downstream the two outcomes are the same sentence - "no
+// #username" - and a caller reading that as a failure records a rig fault where the product behaved.
+// It cost exactly that on 2026-08-28: HEAL-NEW-0 and all four HEAL-REVOKE rows died on `login: false`
+// while their own console showed the device enrolled and the census carrying its new id.
+//
+// IT DOES NOT CLAIM WHOSE SESSION IT IS, deliberately. This script cannot map a spelt account key to
+// a uuid, and inventing the mapping is how a confident wrong answer gets made. It PRINTS the landing
+// instead, so the caller that cares proves the identity with what it already holds - `newdevice.mjs`
+// compares the account before the wipe with the account after it, which no session cookie can fake.
+if (!onForm) {
+  const url = await here();
+  if (!theIdPAnsweredForUs) {
+    throw new Error(`no credential form, and still on the launcher after 3 attempt(s), at ${url}`);
+  }
+  console.log(`[login:${account}] already authenticated - the IdP kept its session, nothing to fill`);
+  console.log(`[login:${account}] final ${url}`);
+  cx.close();
+  process.exit(0);
+}
 console.log(`[login:${account}] form at ${await here()}`);
 
 // Focused BY ELEMENT, never by a synthetic click - the same reasoning the submit below already
@@ -111,7 +172,7 @@ console.log(`[login:${account}] submit: ${submitted}`);
 for (let i = 0; i < 300; i++) {
   await sleep(100);
   const url = await here();
-  if (url.includes('canari-emse.fr') && !url.includes('auth.canari-emse.fr') && !url.includes('cas.emse.fr')) {
+  if (onTheApp(url)) {
     console.log(`[login:${account}] landed ${url} after ${i + 1}s`);
     break;
   }

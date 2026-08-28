@@ -235,6 +235,22 @@ export function summarize(rows) {
 }
 
 /** Fetches and classifies the whole estate. */
+/**
+ * Whether the server has any record that this device REGISTERED, which on this schema means an
+ * `auth_sessions` row and nothing else - there is no device-registry table.
+ *
+ * WHY THIS IS NOT `census()`: the census reads `key_package` UNION `dm_device_group_memberships`, so
+ * it answers "is this device addressable by a peer", never "does this device exist". A freshly
+ * enrolled device holds a session for as long as it takes to publish its first KeyPackage - measured
+ * at over 60 s, and sometimes never - and reading the census for it cost five HEAL-NEW rows on
+ * 2026-08-28 (testing-methodology.md, "A poll does not make a predicate true").
+ */
+export function isRegistered(deviceId) {
+  return (
+    psql(`SELECT count(*) FROM auth_sessions WHERE "deviceId" = '${deviceId}'`).trim() !== '0'
+  );
+}
+
 export function census(today) {
   return psql(CENSUS_SQL)
     .split('\n')

@@ -36,10 +36,10 @@
  * through `userTag`, so a finding can be lined up with `identity.mjs` and is useless to anyone else.
  * This file reads a table that holds every real user of the product, so nothing is ever dumped whole.
  */
-import { ensureChat, client, countMessage, openChannel, send } from "./chat.mjs";
+import { ensureChat, client, countMessage, openDM, send } from "./chat.mjs";
 import { installTag, userTag } from "./devices.mjs";
 import { isUp, killBrowser, startBrowser } from "./launch.mjs";
-import { ORIGIN, PORTS, SITE } from "./names.mjs";
+import { ORIGIN, PORTS, SITE, peerNameFor } from "./names.mjs";
 import { becomeANewDevice } from "./newdevice.mjs";
 import { onlineDevicesOf } from "./presence.mjs";
 import { record, unmet } from "./results.mjs";
@@ -266,38 +266,74 @@ if (row.id === "MULTI-10") {
 const OWNER = "W1";
 const PEER = "W2";
 
-/** The channel group id both accounts share, read from the owner's own store. */
-async function venueGroupId(cx) {
-  await openChannel(cx);
-  const raw = await import("./cdp.mjs").then(({ evaluate }) =>
-    evaluate(
-      cx,
-      `(function () {
-         var m = location.pathname.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g);
-         return JSON.stringify({ path: location.pathname, ids: m || [] });
-       })()`,
+/**
+ * The conversation both accounts are really in, resolved from the TABLE rather than from a URL.
+ *
+ * A COMMUNITY CHANNEL IS THE WRONG OBJECT, and this row asked about it for a day. `general`'s
+ * key-distribution group is workspace-scoped - `dm_groups.distributionWorkspaceId` - and it carries
+ * ZERO `dm_group_members` rows, because a community's membership lives in `channel_members` instead.
+ * So `rosterOf(theChannel)` compared 0 authoritative members against 7 device rows and every
+ * assertion here was about an empty set. Measured 2026-08-28: the channel id `064ac7d2` appears in
+ * neither membership table, and its workspace group `315b8a1d` has 0 members and 7 device rows.
+ *
+ * SO THE VENUE IS THE OWNER-PEER CONVERSATION, which is a `dm_groups` row with both users in
+ * `dm_group_members` and one device row per enrolled device - the exact shape these three rows read.
+ * It is also a USED group, which is what MULTI-7 asks for by name, and it needs no minting: it
+ * already exists, both accounts are in it, and its identity follows from the two accounts.
+ *
+ * RESOLVED BY MEMBERSHIP, NOT BY NAME OR BY POSITION. `dm_groups.name` for a DM is the canonical
+ * `ownerHash::peerHash` pair, so it could be spelt - but spelling it would put two account hashes in
+ * a public repository and would break the day the pair is ordered the other way. The user ids come
+ * from the clients themselves (`whoAmI`), so nothing here is hard-coded and nothing is guessed.
+ */
+function theConversationBetween(ownerId, peerId) {
+  return rows(
+    psql(
+      `SELECT g.id FROM dm_groups g ` +
+        `JOIN dm_group_members a ON a."groupId" = g.id AND a."userId" = '${ownerId}' ` +
+        `JOIN dm_group_members b ON b."groupId" = g.id AND b."userId" = '${peerId}' ` +
+        `WHERE g."isGroup" = false AND g."deletedAt" IS NULL ` +
+        `AND (SELECT count(*) FROM dm_group_members m WHERE m."groupId" = g.id) = 2 ` +
+        `ORDER BY g."activeEpoch" DESC`,
     ),
-  );
-  return JSON.parse(raw);
+  )
+    .map((r) => r[0].trim())
+    .filter(Boolean);
 }
 
 const ownerCx = await client(PORTS[OWNER], new URL(ORIGIN[OWNER]).hostname);
 const ownerWatch = await watch(ownerCx, OWNER);
 await ensureChat(ownerCx);
-const venue = await venueGroupId(ownerCx);
-note(`venue ${JSON.stringify(venue)}`);
-const groupId = venue.ids.at(-1) ?? null;
-if (!groupId) {
+
+const me = await whoAmI(ownerCx);
+const peerProbe = await client(PORTS[PEER], new URL(ORIGIN[PEER]).hostname);
+const them = await whoAmI(peerProbe);
+peerProbe.close();
+note(`the two accounts: ${userTag(me.userId)} and ${userTag(them.userId)}`);
+
+const candidates =
+  me.userId && them.userId ? theConversationBetween(me.userId, them.userId) : [];
+note(`conversations between them: ${candidates.length}`);
+
+// MORE THAN ONE IS NOT A VENUE, IT IS AN AMBIGUITY, and picking the first would make the row's
+// subject depend on an ORDER BY. Neither zero nor two is a product defect these rows can speak to, so
+// both are unobservable rather than failures.
+if (candidates.length !== 1) {
   record(row.id, "INVALID", {
-    unobservable: "the channel URL carried no group id, so no row here has a venue to read",
-    venue,
+    unobservable:
+      candidates.length === 0
+        ? "the two accounts share no live conversation, so there is no roster to read"
+        : `the two accounts share ${candidates.length} live conversations, so no single roster is THE roster`,
+    accounts: [userTag(me.userId), userTag(them.userId)],
     what: row.what,
     timeline,
   });
   ownerCx.close();
   process.exit(1);
 }
-note(`the venue group is ${groupId.slice(0, 8)}`);
+const groupId = candidates[0];
+note(`the venue conversation is ${groupId.slice(0, 8)}`);
+await openDM(ownerCx, peerNameFor(OWNER));
 
 // ------------------------------------------------------------------------------------------ MULTI-7
 if (row.id === "MULTI-7") {
@@ -311,7 +347,7 @@ if (row.id === "MULTI-7") {
   const peerCx = await client(PORTS[PEER], new URL(ORIGIN[PEER]).hostname);
   const peerWatch = await watch(peerCx, PEER);
   await ensureChat(peerCx);
-  await openChannel(peerCx);
+  await openDM(peerCx, peerNameFor(PEER));
 
   // One message each way, so the group is not merely joined but USED - a roster that is correct only
   // until someone speaks is not the property being claimed.
@@ -498,7 +534,7 @@ await startBrowser(PEER.toLowerCase(), `${SITE}/chat`);
 const peerCx = await client(PORTS[PEER], new URL(ORIGIN[PEER]).hostname);
 const peerWatch = await watch(peerCx, PEER);
 await ensureChat(peerCx);
-await openChannel(peerCx);
+await openDM(peerCx, peerNameFor(PEER));
 
 const marker = `ROSTER9-${Math.random().toString(36).slice(2, 8)}`;
 const HOW_MANY = 5;
@@ -515,7 +551,7 @@ note(`the new device was ${statusWhenSent ?? "(no row)"} when the peer sent`);
 const activationAfter = activation.active
   ? activation
   : await awaitActive(newDeviceId, BUDGET_MINUTES * 60_000);
-await openChannel(minted.cx).catch(() => null);
+await openDM(minted.cx, peerNameFor(OWNER)).catch(() => null);
 let arrived = 0;
 for (let i = 0; i < 40; i += 1) {
   arrived = 0;

@@ -2337,3 +2337,132 @@ So the scheduling rule: **while a phase is running, nothing pushes to `main` - d
 two sessions work in parallel, one of them owns the remote for the duration of the rung. A row that
 comes back `VACUOUS` with `failures: []` and a `redeployedMidRun` key is not a defect to diagnose, it
 is a measurement to take again in a quiet window.
+
+### The IdP's session survives an app-origin wipe, and reading that as a failure cost six rows
+
+On 2026-08-28 five checks failed in a row - HEAL-NEW-0, HEAL-REVOKE-5/7/8, MULTI-8/9 - every one of
+them on `login: false`, and not one of them measured the product. The console of each said the
+device had enrolled and the census carried its new id.
+
+**One cause.** `Storage.clearDataForOrigin` clears `canari-emse.fr`. The SSO session does not live
+there: it lives on `auth.canari-emse.fr` and `cas.emse.fr`. So a device wiped to factory walks the
+whole flow and lands signed in with **no field to fill** - and `login.mjs` had been written to treat
+"no `#username` after 30 s" as a failure.
+
+That is not an edge case, it is the normal path, and it is the reason the eleven HEAL rows cost ONE
+2FA instead of eleven. `newdevice.mjs`'s own header had said as much since the day it was written;
+the helper it calls had never been told.
+
+**The rule is the one this repo already had, applied one layer down: classify at the throw, as a
+type.** Downstream both outcomes are the same sentence - "no credential form" - and a caller reading
+that as a failure records a rig fault where the product behaved. What separates them is a fact
+available at the throw and nowhere after it: where the browser ended up.
+
+### A predicate must not assert against a gesture the instrument itself made
+
+`nothingSurvivedTheWipe` read localStorage after the wipe and required zero keys. It found
+`PARAGLIDE_LOCALE` and failed the primitive, while both MLS databases, every cookie and every
+identity-bearing key really were gone.
+
+**Measured, not argued:** clearing the origin leaves `[]`. It is the reload performed two lines
+later - performed on purpose, so the wipe is read against a fresh document rather than one still
+holding the app's in-memory copies - that lets the app boot and write its locale back. The assertion
+was therefore about the rig's own reload.
+
+Two things follow. **Name the claim after what must be absent, not after a count**: the row asks
+that no IDENTITY survived, so an allowlist of what the boot legitimately writes is the shape, by
+name, and the next key the app learns to write surfaces as a name for someone to judge instead of
+slipping under a threshold. And **when a verification needs a gesture of its own to be trustworthy,
+ask what that gesture creates** - the answer belongs in the predicate before the first run, not
+after a `FAIL`.
+
+### A helper's exit code is a classification - collapsing it to a boolean destroys the discriminator
+
+`pin.mjs` exits `2` for "no unlock modal on screen". `newdevice.mjs`'s `run()` returned `r.status
+=== 0`, so "the gate was not there" and "the gate refused us" arrived at the verdict as the same
+missing tick, and the primitive failed on the one of the two that is not a failure at all.
+
+**A spawned script's status is the only channel it has for a distinction it already knows.**
+Throwing it away is the same fault as branching on an error message, from the other end: the
+information exists and is discarded at the boundary rather than never produced.
+
+### A click that was delivered is not a click that was acted on
+
+A launcher that has painted but not hydrated takes a click and does nothing with it. `realClick`'s
+page-side recorder confirms the `BUTTON` received the event - so the click layer, which is the layer
+built precisely to catch a click landing on the wrong element, reports success - and the step then
+spends its whole budget waiting for a navigation that was never started. This read as "no credential
+form after 30s" while the same click made by hand two minutes later reached `/chat` in two seconds.
+
+**So a gesture is judged by its EFFECT, and the wait ends on a fact rather than on a timeout.** A
+dropped click is not cured by waiting longer for it, which means the step retries rather than
+extends; and where a gesture has two legitimate outcomes, the loop watches for both and says which
+one it got.
+
+### A primitive asserts its own claim and nothing more
+
+The same run also failed because no PIN gate appeared for a brand-new device. That is a real
+question about the product - possibly a sharp one - and it was being answered by accident, in a
+primitive whose claim is narrow and load-bearing: this browser is now a device the server has never
+seen, of the same account, enrolled, reached with no human step.
+
+A finding smuggled into a primitive arrives labelled as a broken instrument, and nine rows resting
+on that instrument stop for a reason that is not theirs. **Record the observation by name, let the
+row that set out to ask do the judging.** `pinGate: "answered" | "none shown" | "refused (exit N)"`
+says what happened without deciding what it means.
+
+### A row's own teardown is the next row's inherited state, and the SEQUENCER owns the baseline
+
+HEAL-NEW-1's condition is an account with nothing online, so the row kills W1 and W2. That is right
+for the row. It is fatal for the row after it: `run.mjs`'s preflight refuses a run whose clients are
+unreachable, and the preflight runs BEFORE the script that would have started them. So HEAL-NEW-2,
+-12 and -3 each died in thirty seconds, having measured nothing, with a refusal naming a state their
+own runner was written to create.
+
+**This is campaign rule 4 arriving from the direction nobody watched.** The rule was written for a
+row blocked by an inherited state - a leftover group, a client on the wrong page - and the
+assumption was that the harm comes from a previous row failing. Here every row behaved perfectly:
+one row's correct teardown was the next row's broken precondition.
+
+**The baseline belongs to whatever sequences the rows, because that is the only layer that knows a
+row ran before this one.** A runner cannot restore what its own condition required it to destroy -
+and it cannot do it in an exit hook either, since starting a browser is asynchronous and an exit
+hook cannot await. So the ladder starts both browsers and unlocks them before every row,
+idempotently, and the row is free to kill whatever its condition needs dead.
+
+**It has a second half that is easy to forget: the phone.** `healnew.mjs` restarts the app it
+force-stopped, but not the devtools forward - `phone.mjs` owns that - so a row that stopped A1
+leaves it running and INVISIBLE, which reads exactly like a dead cable to the next row that needs
+it. The baseline re-arms it for the same reason it starts the browsers.
+
+### A poll does not make a predicate true, it only proves how long it is false
+
+The night before, `sameAccountEnrolled` was read once after a fixed sleep and said `false` at +20.7 s
+where an earlier run had said `true` at +19.8 s. That is the exact signature of a race, so it was
+fixed as one: poll for the fact, bound the wait, record `enrolledInMs`. Five rows then failed with
+`the census carries the new id: false (after 63762ms)` - the full deadline, every time.
+
+**The poll was the right instrument and it returned the right answer: the fact is never true.** What
+looked like a race was two different devices, one of which happened to have published a KeyPackage
+and one of which had not. A single read cannot tell those apart; a bounded poll can, and did, in one
+run. So a poll is worth adding even when the flake turns out not to be a flake - it converts "it
+sometimes says no" into "it says no for 63.7 s", and only the second form points at the predicate.
+
+The predicate was wrong in the way [durable-rules](durable-rules.md) already names: **a column is
+only evidence for the question it was written to answer.** `census()` reads `key_package` UNION
+`dm_device_group_memberships`, which answers *is this device addressable*, not *does this device
+exist*. On this schema there is no device-registry table at all - `auth_sessions` is the only row a
+registration writes - so "enrolled" had no correct column and the runner reached for the nearest one.
+
+### A number that looks like a regression is one `GROUP BY` away from being your own footprint
+
+Twelve of today's twenty-two new web devices held a session and no KeyPackage, against zero on each
+of the six preceding days. Read alone, that is a regression landing with tonight's deploy, and it
+would have been written up as a P1. One more query - group the same population by owner - returned a
+single row: all twelve were the harness's own account, first seen inside a sixteen-minute window that
+matches the failing rung to the second.
+
+**Before a population becomes a finding, ask who is IN it.** The rig is a participant on this
+platform, not an observer of it, and every row it runs writes to the tables the next question reads.
+A day-over-day count is the shape most likely to hide that, because the rig's own activity is exactly
+what is new today.

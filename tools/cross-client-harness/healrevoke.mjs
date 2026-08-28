@@ -177,12 +177,36 @@ async function rowNamed(cx, name) {
  * census reads `key_package`, so a device absent from it is a device no member can address any more -
  * which is what revocation has to mean before anything below is worth measuring.
  */
-function revoke(deviceId) {
+async function revoke(deviceId) {
   const today = new Date().toISOString().slice(0, 10);
-  const before = census(today).some((r) => r.deviceId === deviceId);
+  const carries = () => census(today).some((r) => r.deviceId === deviceId);
+  const before = carries();
   const r = runScript("purge-devices.mjs", ["--only", deviceId, "--port", String(PORTS[ACTOR])]);
-  const after = census(today).some((r2) => r2.deviceId === deviceId);
-  return { wasEnrolled: before, stillEnrolled: after, script: r };
+
+  // WAITED FOR, NOT READ ONCE. The mirror of the same fault on the minting side, which cost
+  // HEAL-NEW-2 a FAIL on 2026-08-28: the key package's PUBLICATION is asynchronous, so its DELETION
+  // is not something to assume synchronous with a click returning either. A single read here would
+  // report a revocation that had not landed yet as a revocation that failed - and this is the gate
+  // every row below stands on, so it would kill all four of them with one number.
+  //
+  // The wait is bounded and the elapsed time is returned, so a slow revocation is a finding with a
+  // number rather than a silent tick. It ends on the proof - the census no longer carries the id.
+  const askedAt = Date.now();
+  let after = true;
+  let goneInMs = null;
+  for (;;) {
+    after = carries();
+    if (!after) {
+      goneInMs = Date.now() - askedAt;
+      break;
+    }
+    if (Date.now() - askedAt >= 45_000) {
+      goneInMs = Date.now() - askedAt;
+      break;
+    }
+    await sleep(3000);
+  }
+  return { wasEnrolled: before, stillEnrolled: after, goneInMs, script: r };
 }
 
 /**
@@ -315,7 +339,7 @@ note(`the victim is device ${victimBefore.deviceId?.slice(0, 8)}`);
 // THE REVOCATION
 // ---------------------------------------------------------------------------------------------
 note("revoking the victim from the device panel, through the product path");
-const revocation = revoke(victimBefore.deviceId);
+const revocation = await revoke(victimBefore.deviceId);
 note(`revocation ${JSON.stringify(revocation)}`);
 
 // The victim is live, so it should learn this from a frame rather than at a login gate. Either is

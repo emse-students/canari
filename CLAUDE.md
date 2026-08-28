@@ -157,7 +157,27 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     nothing false was recorded. **What is owed next, in order:** those three re-runs in a quiet window;
     then re-runs of every DEL and MULTI cell, because both runners have CHANGED since (`del.mjs` is
     `2dd7a0f4a933`, `multi.mjs` `74bb17b8283f`, and `rows.mjs` names each row); then LIFE, NOTIF,
-    HEAL. **Two things must NOT be read as settled:** DEL-10 passed where it FAILed on `2a4297cb` but
+    HEAL. **HEAL IS NOW THE RUNG IN HAND, and after two nights it has exactly TWO cells: HEAL-NEW-0
+    `PASS-DIRTY` and HEAL-NEW-1 `PASS`, both on `48b65d08`.** Run 3 (2026-08-28 03:30-03:58) took
+    eight rows and recorded NOTHING - five HEAL-NEW exit 1, four HEAL-REVOKE exit 2 - and **both
+    causes are the instrument, both are now fixed or named, and neither is a product defect.** (1)
+    `sameAccountEnrolled` read `census()`, which reads `key_package` UNION memberships and therefore
+    answers *is this device addressable*, never *does it exist*; there is **NO device-registry table
+    on this schema**, `auth_sessions` is the only row a registration writes, and `isRegistered()` in
+    `devices.mjs` now reads it. **12 of today's 22 session-without-KeyPackage web devices looked like
+    a regression and are all `d82cd226` inside run 3's own 16-minute window** - the rig is a
+    participant, so a population is not a finding until you ask who is in it. **The one real question
+    it leaves, owed FIRST on resumption: mint ONE device by hand, leave it alone ten minutes, query
+    `key_package`** - that separates "the runner tore W3 down too early" from "a wiped profile never
+    publishes", and until it is run `enrolled` is not a product fact in either direction. (2) All four
+    HEAL-REVOKE rows were refused by the preflight because **W2 was alive, on `/login`, and logged
+    out** - `still unknown after 4 repair(s)` - a state no baseline in this rig restores, since
+    `launch.mjs start` no-ops on a running browser and `unlock.mjs` only answers a PIN. Try
+    `login.mjs --device W2`. **This is queue item 6 blocking rows, not merely owed.** Detail and
+    every measurement are on the board and in
+    [testing-methodology](docs/wiki/testing-methodology.md); neither is restated here.
+
+    **Two things must NOT be read as settled:** DEL-10 passed where it FAILed on `2a4297cb` but
     nothing names what changed and the two runs measured different queues, so its P2 STAYS OPEN; and
     COMM-8 passes with `seedAfterTheGrant: repaired`, not `true`, so WP-REGRANT-2's proof is still
     owed - the seed arrived by the REPAIR path, and a fallback is a signal, never a path. COMM-23's

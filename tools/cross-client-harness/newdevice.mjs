@@ -36,12 +36,28 @@
  * device named in `WIPEABLE` may be wiped, and naming one is a repository edit, not a flag.
  */
 import { spawnSync } from "node:child_process";
-import { census, userTag } from "./devices.mjs";
+import { census, isRegistered, userTag } from "./devices.mjs";
 import { client, ensureChat } from "./chat.mjs";
 import { evaluate, until } from "./cdp.mjs";
 import { ORIGIN, PORTS } from "./names.mjs";
 import { recordObserved } from "./results.mjs";
 import { watch } from "./watch.mjs";
+
+/**
+ * Keys the app itself writes on a cold boot, which are therefore NOT survivors of a wipe.
+ *
+ * MEASURED on 2026-08-28 against this very device rather than reasoned about: clearing the origin
+ * leaves localStorage at `[]`, and the reload performed below - done on purpose, so the wipe is read
+ * against a fresh document instead of one still holding the app's in-memory copies - brings
+ * PARAGLIDE_LOCALE back on its own. A locale is not an identity: no key material, no session, no
+ * statement about who this browser belongs to.
+ *
+ * NAMES, NOT A COUNT, and an allowlist rather than a tolerance. The next key the app learns to write
+ * on boot must surface as a name for someone to judge, not slip under a threshold that quietly moves
+ * a verdict - which is the same reason a destructive control here carries an allowlist of what it may
+ * touch instead of a denylist of what it may not.
+ */
+const WRITTEN_BY_THE_BOOT = new Set(["PARAGLIDE_LOCALE"]);
 
 const argv = process.argv.slice(2);
 const opt = (name, fallback = null) => {
@@ -80,10 +96,15 @@ const stage = (s) =>
   console.log(`[${String((Date.now() - T0) / 1000).padStart(7)}s] [newdevice] ${s}`);
 
 /** Runs one of the rig's own tools and returns whether it succeeded, never its output. */
+// THE STATUS, NOT A BOOLEAN. Collapsing every non-zero to `false` throws away the one thing that
+// separates "the gate was not there" from "the gate refused us", and both then arrive at the verdict
+// as the same missing tick. `pin.mjs` exits 2 for "no unlock modal on screen", which is an
+// OBSERVATION about the product, not a failure of the rig - and read as a failure it took HEAL-NEW-0
+// to FAIL on 2026-08-28 with every other expectation of the primitive true.
 const run = (script, args) => {
   stage(`spawn ${script} ${args.join(" ")}`);
   const r = spawnSync(process.execPath, [script, ...args], { stdio: "inherit" });
-  return r.status === 0;
+  return r.status;
 };
 
 /**
@@ -157,8 +178,13 @@ export async function becomeANewDevice({ report = stage } = {}) {
   cx.close();
   cx = await client(port, "canari-emse.fr");
   const after = await readOrigin(cx);
+  // ASSERTED AGAINST IDENTITY, not against key count. Counting every key asserted against the rig's
+  // own reload: it failed HEAL-NEW-0 and all four HEAL-REVOKE rows on 2026-08-28 naming
+  // PARAGLIDE_LOCALE, while both MLS databases, every cookie and every identity-bearing key really
+  // were gone. See WRITTEN_BY_THE_BOOT for what was measured.
+  const identitySurvivors = after.localStorageKeys.filter((k) => !WRITTEN_BY_THE_BOOT.has(k));
   const nothingSurvivedTheWipe =
-    after.localStorageKeys.length === 0 && after.databases.length === 0 && after.cookieCount === 0;
+    identitySurvivors.length === 0 && after.databases.length === 0 && after.cookieCount === 0;
   report(
     `after the wipe: ${after.localStorageKeys.length} localStorage key(s) ${JSON.stringify(after.localStorageKeys).slice(0, 200)}, ` +
       `${after.databases.length} database(s) ${JSON.stringify(after.databases).slice(0, 200)}, ${after.cookieCount} cookie(s)`,
@@ -179,7 +205,7 @@ export async function becomeANewDevice({ report = stage } = {}) {
   // THE LOGIN IS THE CLAIM BEING TESTED, NOT A SETUP STEP. If CAS challenges this browser, the
   // eleven rows each cost a human, and that has to be a measured fact rather than a discovery made
   // three rows in.
-  const loginOk = run("login.mjs", ["--device", device]);
+  const loginOk = run("login.mjs", ["--device", device]) === 0;
   const landedAt = await evaluate(cx, "location.href").catch(() => "(unreadable)");
   const landedOnTheApp =
     landedAt.includes("canari-emse.fr") && !landedAt.includes("auth.canari-emse.fr");
@@ -199,7 +225,26 @@ export async function becomeANewDevice({ report = stage } = {}) {
 
   // The PIN is account-level (`PinVerifier`, `POST /api/mls/security/pin-check`), so a new device
   // enters the SAME one - which is why this costs no human step either.
-  const pinOk = landedWithoutAHumanStep && run("pin.mjs", ["--device", device]);
+  //
+  // WHETHER A GATE APPEARS AT ALL IS AN OBSERVATION, NOT THIS PRIMITIVE'S CLAIM. What the primitive
+  // asserts is narrow and it is the thing nine rows rest on: this browser is now a device the server
+  // has never seen, of the same account, enrolled, reached without a human. Whether the app also
+  // challenges a brand-new device for the account PIN is a different question about the product, and
+  // smuggling it in here answers it by accident - a fresh device that enrolled with no gate shown
+  // would fail a row that never set out to ask, and the finding would arrive labelled as a broken
+  // primitive rather than as the security question it is. Measured on 2026-08-28: no gate is shown.
+  // Named, recorded, and left for a row of its own to judge.
+  const pinStatus = landedWithoutAHumanStep ? run("pin.mjs", ["--device", device]) : null;
+  const pinGate =
+    pinStatus === null
+      ? "not reached"
+      : pinStatus === 0
+        ? "answered"
+        : pinStatus === 2
+          ? "none shown"
+          : `refused (exit ${pinStatus})`;
+  const pinOk = pinStatus === 0 || pinStatus === 2;
+  report(`the PIN gate: ${pinGate}`);
   await ensureChat(cx).catch(() => null);
   await sleep(8_000);
 
@@ -213,10 +258,49 @@ export async function becomeANewDevice({ report = stage } = {}) {
   const theServerHadNeverSeenIt = !!now && !knownBefore.has(now.deviceId);
   const theSameAccountCameBack = !!now && !!was && now.userId === was.userId;
 
-  // Enrolment is not the id existing locally: it is the key package the server stores, which is what
-  // makes this device addressable by every other member. The census is the only place that says so.
-  const enrolled = !!now && census(today).some((r) => r.deviceId === now.deviceId);
-  report(`the census now carries the new id: ${enrolled}`);
+  // Enrolment is not the id existing locally: it is the server holding a record of it. On this
+  // schema that record is an `auth_sessions` row and nothing else - there is no device registry.
+  //
+  // AND IT IS A FACT THAT ARRIVES, so it is waited for by proof rather than read once after a sleep.
+  // The publication is asynchronous: this same code read `true` at +19.8 s on one run and `false` at
+  // +20.7 s on the next - and the second device had ALREADY healed all ten of its sidebar rows, so
+  // HEAL-NEW-2 failed on a race inside its own instrument while the product had done everything the
+  // row asked. A single read after a fixed delay is a clock wearing a fact's clothes.
+  //
+  // THE DEADLINE IS A REPORTING BOUNDARY, NOT THE ANSWER. `enrolledInMs` reaches the ledger either
+  // way, so a device that takes forty seconds to register is a finding carrying a number instead of
+  // a silent tick - and this is one indexed query, cheap enough to ask again.
+  //
+  // AND THE POLL IS NOT WHAT WAS WRONG. Bounding the wait turned "it sometimes says no" into "it
+  // says no for 63.7 s", which is what finally pointed at the predicate: the census reads
+  // `key_package` UNION `dm_device_group_memberships`, so it asks whether a peer could ADDRESS this
+  // device, never whether the device exists. A device that has published no KeyPackage is invisible
+  // to it, and five HEAL-NEW rows failed on that while everything they were written to measure had
+  // succeeded. `isRegistered` reads `auth_sessions`, the only row a registration writes on this
+  // schema. Whether publication itself is late or absent is a SEPARATE question, and it is not this
+  // primitive's to answer.
+  const ENROLMENT_DEADLINE_MS = 60_000;
+  let enrolled = false;
+  let enrolledInMs = null;
+  if (now) {
+    const askedAt = Date.now();
+    for (;;) {
+      if (isRegistered(now.deviceId)) {
+        enrolled = true;
+        enrolledInMs = Date.now() - askedAt;
+        break;
+      }
+      if (Date.now() - askedAt >= ENROLMENT_DEADLINE_MS) {
+        enrolledInMs = Date.now() - askedAt;
+        break;
+      }
+      await sleep(3000);
+    }
+  }
+  report(
+    `the server has a session for the new id: ${enrolled}` +
+      (enrolledInMs === null ? "" : ` (after ${enrolledInMs}ms)`),
+  );
 
   return {
     cx,
@@ -226,15 +310,18 @@ export async function becomeANewDevice({ report = stage } = {}) {
     was,
     now,
     knownBefore: knownBefore.size,
+    identitySurvivors,
     nothingSurvivedTheWipe,
     loggedOut,
     landedWithoutAHumanStep,
     challenge,
+    pinGate,
     pinOk,
     aFreshIdWasMinted,
     theServerHadNeverSeenIt,
     theSameAccountCameBack,
     enrolled,
+    enrolledInMs,
   };
 }
 
@@ -264,7 +351,7 @@ if (invokedDirectly) {
 
   console.log(
     `\n[newdevice] wipe=${r.nothingSurvivedTheWipe} loggedOut=${r.loggedOut} ` +
-      `noHumanStep=${r.landedWithoutAHumanStep} pin=${r.pinOk} freshId=${r.aFreshIdWasMinted} ` +
+      `noHumanStep=${r.landedWithoutAHumanStep} pin=${r.pinGate} freshId=${r.aFreshIdWasMinted} ` +
       `neverSeen=${r.theServerHadNeverSeenIt} sameAccount=${r.theSameAccountCameBack} enrolled=${r.enrolled}`,
   );
 
@@ -282,6 +369,9 @@ if (invokedDirectly) {
       localStorageKeysAfter: r.after.localStorageKeys,
       databasesAfter: r.after.databases,
       cookiesAfter: r.after.cookieCount,
+      // The survivors BY NAME. `localStorageKeysAfter` says what was there; this says what of it the
+      // row refused to excuse, so a future disagreement is readable off the ledger line alone.
+      identitySurvivors: r.identitySurvivors,
       // The ids themselves, because "a fresh id" is a claim about two values and the ledger is
       // outside the repository precisely so it may hold them.
       abandonedDeviceId: r.was?.deviceId ?? null,
@@ -291,11 +381,15 @@ if (invokedDirectly) {
       nothingSurvivedTheWipe: r.nothingSurvivedTheWipe,
       loggedOut: r.loggedOut,
       landedWithoutAHumanStep: r.landedWithoutAHumanStep,
+      // BY NAME, so "no gate was shown" can never again read as "the gate refused us".
+      pinGate: r.pinGate,
       pinOk: r.pinOk,
       aFreshIdWasMinted: r.aFreshIdWasMinted,
       theServerHadNeverSeenIt: r.theServerHadNeverSeenIt,
       theSameAccountCameBack: r.theSameAccountCameBack,
       enrolled: r.enrolled,
+      // HOW LONG the key package took to appear. A number nobody had until it broke a row.
+      enrolledInMs: r.enrolledInMs,
     },
     { [device]: r.observer },
   );

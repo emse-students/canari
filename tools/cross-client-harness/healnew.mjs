@@ -44,6 +44,7 @@ import { installTag } from "./devices.mjs";
 import { isUp, killBrowser, startBrowser } from "./launch.mjs";
 import { SITE } from "./names.mjs";
 import { becomeANewDevice } from "./newdevice.mjs";
+import { forceStop, launch, pid, sh } from "./phone.mjs";
 import { onlineDevicesOf } from "./presence.mjs";
 import { record, unmet } from "./results.mjs";
 import { navigationCost, readAll, sidebar, whoAmI, watch as watchRows } from "./syncrows.mjs";
@@ -151,6 +152,73 @@ const note = (what) => {
  * so "not online" has to mean the process is gone. A responder that must be present is started and
  * left on `/chat`, because a client parked elsewhere is online and is not listening to this group.
  */
+/**
+ * Takes the PHONE out of the picture, because it is an own-account responder nobody here controls.
+ *
+ * A1 IS NOT PART OF ANY HEAL-NEW TOPOLOGY, AND LEAVING IT ONLINE BREAKS EVERY ROW rather than only
+ * the isolated one. Row 1 claims nothing of the account was online. Rows 2 and 12 claim NO device of
+ * ours could have served the Welcome, which is the whole reason the peer is provably the responder.
+ * Rows 3, 11 and 15 name W1 as the responder and could not say whether W1 or the phone answered. In
+ * all five the phone is a second listener of the same person, fanned into every group the owner
+ * creates - the same class of confounder that already cost one rung its attribution.
+ *
+ * `am force-stop` IS THE RIGHT KILL, for the reason `setTopology` kills a browser instead of
+ * navigating it: a backgrounded app keeps its gateway socket and answers a `welcome_request` exactly
+ * as a foreground one does, so the process has to be gone. The cost is documented in `phone.mjs` - a
+ * force-stopped package sits in Android's STOPPED state where FCM broadcasts are cancelled until
+ * something launches it explicitly - which is why this is paired with a restore, and why no row here
+ * measures a push.
+ *
+ * AN ABSENT PHONE IS NOT A FALLBACK. A phone that is not plugged in cannot be a responder, so there
+ * is nothing to do and no row is weakened; what WOULD weaken one is assuming that instead of reading
+ * it. So the three outcomes are reported apart - stopped by us, already down, or out of reach - and
+ * `pid()` alone cannot tell the last two apart, since it swallows an adb failure into the same null.
+ */
+function takeThePhoneOffline() {
+  try {
+    sh("echo ok");
+  } catch (e) {
+    return { phone: "out of reach", why: firstLine(e) };
+  }
+  const before = pid();
+  if (!before) return { phone: "already down" };
+  try {
+    forceStop();
+  } catch (e) {
+    return { phone: "refused the stop", pidWas: before, why: firstLine(e) };
+  }
+  for (let i = 0; i < 10; i += 1) {
+    if (!pid()) return { phone: "stopped", pidWas: before, waitedMs: i * 500 };
+    spawnSync(process.execPath, ["-e", "setTimeout(function () {}, 500)"]);
+  }
+  return { phone: "still running after the stop", pidWas: before };
+}
+
+/**
+ * Puts the phone back, on EVERY exit path, because a row must not leave the rig worse than it found.
+ *
+ * REGISTERED AS AN EXIT HOOK rather than called at the end. This file records and exits from a dozen
+ * places - an unmet expectation, an unreadable fleet, an intruder that voids the row - and a restore
+ * written at the bottom would be reached by none of them. A force-stopped package receives no FCM
+ * broadcast until something starts it, so a row that died early would silently cost every later push
+ * row its subject, and the failure would surface hours away from its cause.
+ *
+ * SYNCHRONOUS, because an exit hook cannot await: `phone.mjs`'s `sh` is a synchronous spawn, so the
+ * launch really does happen before the process leaves. It restores the APP, not the devtools forward
+ * - `phone.mjs <port>` owns that - so the next `+A1` row still arms the phone as it always did.
+ */
+function giveThePhoneBackOnExit(taken) {
+  if (taken.phone !== "stopped") return;
+  process.on("exit", () => {
+    try {
+      launch();
+      console.log(`[healnew:${row.id}] the phone was restarted (it was stopped for this row)`);
+    } catch (e) {
+      console.log(`[healnew:${row.id}] COULD NOT RESTART THE PHONE: ${firstLine(e)} - arm it before a push row`);
+    }
+  });
+}
+
 async function setTopology(present) {
   const acted = {};
   for (const which of ["w1", "w2"]) {
@@ -220,6 +288,15 @@ async function fleetBesides(userId, mineFull, { drainMs = 30_000 } = {}) {
 
 const startPresent = row.responder && row.at === "start" ? [row.responder] : [];
 note(`topology for "${row.what}" - present at start: ${startPresent.join(",") || "none"}`);
+
+// THE PHONE FIRST, AND FOR EVERY ROW. It is not one of the two responders a row chooses between, so
+// it is not in `startPresent` and never will be: it is a third device of the OWNER's account that no
+// row here models, and it has to be gone before the fresh device is minted rather than after, or it
+// can answer the very first discovery the row is trying to attribute.
+const phone = takeThePhoneOffline();
+giveThePhoneBackOnExit(phone);
+note(`phone ${JSON.stringify(phone)}`);
+
 const topology = await setTopology(startPresent);
 note(`topology ${JSON.stringify(topology)}`);
 for (const which of startPresent) {
@@ -238,6 +315,10 @@ note(
     neverSeen: minted.theServerHadNeverSeenIt,
     sameAccount: minted.theSameAccountCameBack,
     enrolled: minted.enrolled,
+    // HOW LONG the key package took. It is in the note because it is the number that told HEAL-NEW-2
+    // its FAIL was the instrument's: the sidebar had healed all ten rows while the census still said no.
+    enrolledInMs: minted.enrolledInMs,
+    pinGate: minted.pinGate,
     pinOk: minted.pinOk,
   })}`,
 );

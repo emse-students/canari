@@ -116,6 +116,31 @@ and `didBecomeActive`, which the FCM fix has just made load-bearing.
 entry here. **What must NOT happen is a fix written against a suspected iOS lifecycle bug that nobody
 has seen** - the repo has no way to tell whether it worked.
 
+### P2 - the login button accepts a click before it is wired, and drops it (measured 2026-08-28)
+
+**What was measured, on W3 against production.** `realClick` dispatched a real mouse click on the
+`/login` launcher's "Se connecter" button. Its page-side recorder - which exists to catch a click
+landing on the wrong element - confirmed the `BUTTON` received the event in the capture phase.
+Nothing happened: no navigation, no request, no console line. Thirty seconds later the browser was
+still on `/login`. The same click by hand two minutes later reached `/chat` in two seconds.
+
+**Why this is not only a rig story.** The harness half is fixed and written up
+([testing-methodology](testing-methodology.md), "A click that was delivered is not a click that was
+acted on") - the step now judges the gesture by its effect and retries. But the product half is
+untouched, and a real person cold-loading `/login` on a slow connection is in exactly that window:
+the button is painted, looks pressable, takes the press, and does nothing. There is no spinner, no
+disabled state, and no second chance except pressing it again.
+
+**What would settle the scope.** How long is the window on a real device and a real network - tens
+of milliseconds, or seconds? That is one performance trace of a cold `/login` load, reading the gap
+between first paint of the button and hydration. If the gap is measurable by a human, the fix is to
+render the launcher's primary action disabled until it is wired, which is a two-line change in the
+component and no new mechanism.
+
+**Why it is P2 and not P1.** Pressing again works, and the session that hits it is a first-visit or
+post-wipe session, not a daily one. It is not a lost session, it is a lost press - but it is the
+FIRST press a new user makes, on the one screen that has no alternative route.
+
 ### P2 - iOS carries none of the window-layout work Android already has (user, 2026-08-28)
 
 **Named by the user from real use on an iPhone**, and one of the three is already fixed. The Android
