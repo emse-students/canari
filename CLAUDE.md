@@ -136,12 +136,18 @@ crois qu'il n'y a plus rien avant"*). In this order, and nothing else first:**
 3. `node state.mjs` - all four clients were logged in and unlocked at the pause, A1 on a local debug
    **0.14.12**. If the phone was unplugged, the from-zero sequence is in
    [the harness README](tools/cross-client-harness/README.md#operating-it), scripted end to end.
-4. **HEAL, the rung in hand.** Re-run the five HEAL-NEW `FAIL`s (their cause is fixed), the four
-   HEAL-REVOKE rows (the signed-out repair is in), and WRITE the owed HEAL-REVOKE cell - predicate
+4. **HEAL, the rung in hand - AND IT IS BLOCKED ON ONE HUMAN GESTURE (2026-08-28).** W1's SSO
+   session is gone and `cas.emse.fr` answers *"Authentification renforcee"* - Esup Auth on the
+   Pixel 6a, TOTP, or the NFC card. That is SETUP-4's 2FA, the one step no tool here can answer, and
+   **rows HEAL-NEW-3, -11 and -15 cannot run without W1**: it is the only device in all ELEVEN of the
+   owner's groups, where the peer shares two. So: ASK THE USER for the 2FA, then re-run. Everything
+   else is in - `bringToReady` restores a session, an overlay is swept unless it IS the gate, and
+   `awaitFleetMember` refuses a row as `INVALID` rather than blaming the product for a responder that
+   never arrived. Then the four HEAL-REVOKE rows, and WRITE the owed HEAL-REVOKE cell - predicate
    `residue: 0` on a phone, `identityKeys: 0` everywhere, the offline variant driven by a reload.
    **The user asked for the LOGS to be read on every pass, the reconciliations especially**
    (2026-08-28): HEAL restarts from zero repeatedly, and a heal that works is not a heal that was
-   observed.
+   observed. Reading them is what found the P1 above.
 
 ### CANARI - THE QUEUE, IN ORDER
 
