@@ -1050,8 +1050,14 @@
 
 <!-- ── Sticky bottom bar ── -->
 {#if form && !loading}
+  <!-- No md:left-[4.5rem] here: .page-scroll-wrap (the ancestor this bar is rendered inside)
+       has `will-change: transform` (app.css, for swipe-nav-between-tabs), which makes it the
+       containing block for `position: fixed` descendants - its own box already starts after
+       the sidebar (it fills <main>, itself inside the md:pl-[4.5rem]-padded column in
+       +layout.svelte). Adding the sidebar offset here double-applies it, shifting this bar
+       to the right of the form content above, which sits in the same box without it. -->
   <div
-    class="keyboard-aware-bottom pointer-events-none fixed inset-x-0 bottom-0 z-50 pb-[calc(4rem+env(safe-area-inset-bottom))] md:left-[4.5rem] md:pb-5"
+    class="keyboard-aware-bottom pointer-events-none fixed inset-x-0 bottom-0 z-50 pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-5"
   >
     <div class="mx-auto max-w-2xl px-4">
       <div
