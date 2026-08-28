@@ -379,12 +379,18 @@ yet, so **read Android vitals from late September 2026**; and **WP-RESTORE-1** (
 required April 2027, WebAuthn on a server that has none) is ACCEPTED and scheduled AFTER the
 campaign ([backlog](docs/wiki/backlog.md)).
 
-**Release: v0.14.8 DISPATCHED 2026-08-28 (bump `cc0b997c`, the three builds running); it carries the iOS FCM fix and is the build [check S](docs/wiki/device-verification.md) needs. v0.14.7's three builds all PASSED - the parity guard held; v0.14.6 shipped iOS ONLY.** Android Release and AppImage
-Release died on a Tauri JS/Rust version skew (`plugin-log` 2.9.0 vs crate 2.8.0) that no CI job could
-see because nothing here compiles the Tauri app - fixed, and `Guard the Tauri JS/Rust version parity`
-in `code-analysis.yml` now reads the two committed files. Story in `CHANGELOG.md`, rule in
-[durable-rules](docs/wiki/durable-rules.md#release-and-ci). Play production is therefore still on
-v0.14.5 until 0.14.7 lands. What IS owed is
+**Release: v0.14.9 SHIPPED 2026-08-28 00:46 and ALL THREE BUILDS PASSED** (Android 12m34s, iOS
+14m46s, AppImage) - read `gh run list` rather than this line, which has been stale twice. It carries
+the iOS FCM fix and is the build [check S](docs/wiki/device-verification.md) needs. The earlier skew
+that killed Android Release and AppImage Release (Tauri `plugin-log` JS 2.9.0 vs crate 2.8.0) is
+fixed, and no CI job could see it because nothing here compiles the Tauri app: `Guard the Tauri
+JS/Rust version parity` in `code-analysis.yml` now reads the two committed files. Story in
+`CHANGELOG.md`, rule in [durable-rules](docs/wiki/durable-rules.md#release-and-ci).
+
+**AN APK IS NOT REACHED BY A DEPLOY: `frontendDist: "../build"` means the Tauri app EMBEDS the
+frontend**, so every web fix reaches W1/W2/W3 through CD and reaches A1 only in a new build. That is
+why v0.14.10 is being cut for the revocation-wipe fix - a version has to identify its content, or
+`minClientVersion` and check S are reasoning about a name. What IS owed is
 one iOS proof: `minClientVersion` is raised BY HAND from `/admin/platform`, and while a release can
 now REACH App Store Connect, TestFlight is the BETA channel - nothing yet shows a build reaching an
 ordinary iOS user. Ship the client, verify it arrived, THEN raise

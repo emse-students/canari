@@ -607,6 +607,22 @@ genuinely cannot read those frames, so the condition is expected; what is not se
 `PASS-DIRTY` at best**, which is a reporting question standing between this rung and the `PASS` the
 user asked for.
 
+**AND HEAL-REVOKE NOW READS THE DISK, NOT THE LOG, 2026-08-28.** The rows asserted
+`[RESET] done` and `no step failed`, which is a claim about the steps that RAN. Measured on prod the
+same morning, the two disagreed: a revoked device printed `nothing of this device remains` and kept
+ten `mls_not_ready_since` keys, its per-user MLS database and 8.2 MB, because the SYNC_WATCHDOG - a
+5 s interval the revocation path never stopped - rebuilt them 1.25 s later. **Twenty HEAL rows
+asserted the log line and not one asked the disk**, so the wipe was believed for exactly as long as
+it was broken. `healrevoke.mjs` now samples `localStorage.length`, the count of `CanariDB*` databases
+and `navigator.storage.estimate()` seconds after the wipe, and `theWipeLeftNoDatabase` is a FAIL
+condition. The localStorage count is deliberately not asserted at zero - the page writes
+`PARAGLIDE_LOCALE` back as soon as it renders - while a database is, because nothing re-creates one
+without an MLS client. The product defect itself is fixed and shipped in `v0.14.10`; story in
+`CHANGELOG.md`, mechanism on
+[auth](frontend/modules/auth.md#erasing-a-revoked-device-and-the-125-s-that-undid-it). **The four
+HEAL-REVOKE rows must run on a build carrying that fix - which for A1 means a new APK, since the
+Tauri app embeds the frontend and a CD deploy never reaches it.**
+
 **THE CAUSE OF EVERY HEAL-NEW FAILURE WAS THE PER-USER DEVICE CAP, AND THE PREDICATE WAS RIGHT ALL
 ALONG, 2026-08-28 10:22.** One mint on a quiet prod settled it: `POST /api/mls/register-device -> 400`,
 `[KP] Publication failed (400) - welcome_request deferred to next connection`, then

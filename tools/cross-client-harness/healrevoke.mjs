@@ -245,6 +245,39 @@ function classifyWipe(lines) {
 }
 
 /**
+ * What is LEFT on the victim, read off the device instead of out of its own log.
+ *
+ * `[RESET] done` is a statement about the steps that RAN, which is a different claim from "the disk
+ * is empty" - and on 2026-08-28 the two disagreed on prod: a revoked device printed `nothing of this
+ * device remains` and kept ten localStorage keys, its per-user MLS database and 8.2 MB, because the
+ * SYNC_WATCHDOG nobody had stopped rebuilt them 1.25 s later. Twenty HEAL rows asserted the log line
+ * and none asked the disk, so the wipe was believed for exactly as long as it was broken.
+ *
+ * COUNTS ONLY, NEVER NAMES: a surviving key is `mls_not_ready_since:<userId>:<groupId>`, and this
+ * output is read into a PUBLIC repository.
+ */
+async function storageFootprint(cx) {
+  const raw = await evaluate(
+    cx,
+    `(async function () {
+      var keys = -1;
+      try { keys = localStorage.length; } catch (e) { keys = -1; }
+      var dbs = -1;
+      try {
+        if (indexedDB.databases) {
+          var all = await indexedDB.databases();
+          dbs = all.filter(function (d) { return d.name && d.name.indexOf('CanariDB') === 0; }).length;
+        }
+      } catch (e) { dbs = -1; }
+      var bytes = null;
+      try { bytes = (await navigator.storage.estimate()).usage; } catch (e) { bytes = null; }
+      return JSON.stringify({ localStorageKeys: keys, canariDatabases: dbs, bytesInUse: bytes });
+    })()`,
+  );
+  return JSON.parse(raw);
+}
+
+/**
  * Brings the victim back: log in, enter the PIN, wait for the list to appear, watch it settle.
  *
  * It does NOT wipe anything - the point of the row is that REVOCATION did the wiping. If a store
@@ -367,6 +400,12 @@ for (let i = 0; i < 30; i += 1) {
   await sleep(4000);
 }
 note(`the victim's own account of the wipe ${JSON.stringify(wipe)}`);
+
+// THE DISK, NOT THE LOG. Taken here rather than immediately after the wipe on purpose: the loop
+// above polls every 4 s, so this sample sits SECONDS past `[RESET] done` - long enough for anything
+// still running to have put state back, which is exactly the failure the log cannot report.
+const leftBehind = await storageFootprint(seeded.cx).catch((e) => ({ error: firstLine(e) }));
+note(`what the wipe left on the victim ${JSON.stringify(leftBehind)}`);
 seeded.cx.close();
 
 // ---------------------------------------------------------------------------------------------
@@ -444,6 +483,15 @@ const expectations = {
   /** The device obeyed: it said so, and it finished. */
   theDeviceWipedItself: wipe.wipeRan === true && wipe.wipeFinished === true,
   noWipeStepFailed: wipe.wipeIncomplete !== true && wipe.stepsFailed === 0,
+  /**
+   * AND THE DISK AGREES. One database left is a FAILURE here, not dirt: a device that kept its MLS
+   * store has not become a new device, whatever its own log said. The localStorage count is NOT
+   * asserted at zero - the page writes `PARAGLIDE_LOCALE` back as soon as it renders - while the
+   * databases are, because nothing re-creates one without an MLS client, which was the defect.
+   */
+  theWipeLeftNoDatabase: leftBehind.canariDatabases === 0,
+  theDiskWasActuallyRead: typeof leftBehind.canariDatabases === "number" &&
+    leftBehind.canariDatabases >= 0,
   /** It came back as a device the server had never seen - a revoked id must not be reusable. */
   itReturnedAsANewDevice: !!back.who.deviceId && back.who.deviceId !== victimBefore.deviceId,
   itReturnedAsTheSamePerson: back.who.userId === victimBefore.userId,
@@ -481,6 +529,7 @@ record(row.id, verdict, {
   },
   revocation,
   wipe,
+  leftBehind,
   world: { created: born, deleted: doomed, deletionSucceeded: deleted },
   returned: {
     deviceId: back.who.deviceId,
