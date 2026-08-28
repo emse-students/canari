@@ -6,7 +6,13 @@ vi.mock('$lib/utils/openExternal', () => ({ isTauriRuntime: () => tauri }));
 
 const invokeMock = vi.fn(async (_cmd: string) => {});
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string) => invokeMock(cmd) }));
-vi.mock('$lib/services/biometric', () => ({ BiometricService: { disable: async () => {} } }));
+// Both entry points are mocked, because WHICH one the wipe reaches is the assertion: `disable`
+// raises an Android activity and can be refused, `forget` asks nothing.
+const forgetMock = vi.fn(async (_alias?: string) => {});
+const disableMock = vi.fn(async (_alias?: string) => {});
+vi.mock('$lib/services/biometric', () => ({
+  BiometricService: { forget: forgetMock, disable: disableMock },
+}));
 
 /**
  * A revoked device is one its owner declared lost or stolen, so what must remain afterwards is an
@@ -119,6 +125,13 @@ describe('wipeDeviceToFactory', () => {
     expect(errors.some((e) => e.includes('SURVIVED') && e.includes('CanariDBMls_u1'))).toBe(true);
   });
 
+  it('touches no keystore off a native runtime, because there is none', async () => {
+    await wipeDeviceToFactory();
+
+    expect(forgetMock).not.toHaveBeenCalled();
+    expect(disableMock).not.toHaveBeenCalled();
+  });
+
   it('claims an empty device only when nothing reads back', async () => {
     const logs: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args) => void logs.push(String(args[0])));
@@ -146,6 +159,10 @@ describe('wipeDeviceToFactory on a native runtime', () => {
     tauri = true;
     deleted.length = 0;
     invoked.length = 0;
+    forgetMock.mockClear();
+    disableMock.mockClear();
+    // What a signed-in session leaves behind, and the only record of the keystore alias.
+    localStorage.setItem('mls_device_id_u1', 'tauri-u1-abcd');
     present = ['CanariDB_u1'];
     vi.stubGlobal('indexedDB', {
       databases: async () => present.map((name) => ({ name })),
@@ -196,5 +213,61 @@ describe('wipeDeviceToFactory on a native runtime', () => {
     const said = errors.flat().join(' ');
     expect(said).toContain('SURVIVED');
     spy.mockRestore();
+  });
+
+  /**
+   * A revoked device may be in the hands of whoever took it, so the wipe must not be refusable. It
+   * called `BiometricService.disable()`, whose whole contract is a prompt that can be cancelled -
+   * and on a Pixel 6a on 2026-08-28 that prompt did not even get as far as being cancelled: the
+   * activity failed to inflate and killed the process 55 ms in.
+   */
+  it('never asks the holder of a revoked device for a fingerprint', async () => {
+    await wipeDeviceToFactory();
+
+    expect(disableMock).not.toHaveBeenCalled();
+    expect(forgetMock).toHaveBeenCalled();
+  });
+
+  /**
+   * The step was named "the biometric key" and deleted none: it passed no alias, and without one
+   * `deleteKeyBytes` is never called. The alias is rebuilt from the device's own record so that
+   * both callers sweep it - the login page's reset button has no session to ask.
+   */
+  it('deletes the keystore entry the device recorded, not just the flag', async () => {
+    await wipeDeviceToFactory();
+
+    expect(forgetMock).toHaveBeenCalledWith('mls_device_key_u1_tauri-u1-abcd');
+  });
+
+  /**
+   * Ordering is a property here, not a style choice: `step()` catches a rejected promise, and a
+   * native activity that fails to inflate is not a rejected promise but a dead process. The one
+   * step that can raise an activity therefore runs after every step that cannot.
+   */
+  it('clears the WebView stores before the step that could kill the process', async () => {
+    const order: string[] = [];
+    forgetMock.mockImplementation(async () => void order.push('biometric'));
+    vi.stubGlobal('indexedDB', {
+      databases: async () => [{ name: 'CanariDB_u1' }],
+      deleteDatabase: () => {
+        const req: Record<string, unknown> = {};
+        order.push('databases');
+        queueMicrotask(() => (req.onsuccess as () => void)?.());
+        return req;
+      },
+    });
+    vi.stubGlobal('caches', {
+      keys: async () => ['app-shell'],
+      delete: async () => {
+        order.push('caches');
+        return true;
+      },
+    });
+
+    await wipeDeviceToFactory();
+
+    expect(order.indexOf('biometric')).toBeGreaterThan(order.indexOf('databases'));
+    expect(order.indexOf('biometric')).toBeGreaterThan(order.indexOf('caches'));
+    forgetMock.mockImplementation(async () => {});
   });
 });

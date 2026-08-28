@@ -104,12 +104,26 @@ rust {
  * would not have removed the library: Gradle would simply have resolved the plugins' 1.7.0 and
  * kept it, `MaterialDatePicker` included - the class Google Play reports a deprecated
  * `Window.setStatusBarColor` call from. The exclusion is what actually takes it out of the APK.
+ *
+ * IT TOOK MORE THAN THE LIBRARY, AND THE ASSERTION ABOVE COULD NOT SEE IT. Excluding a module also
+ * drops whatever only that module contributed, and `material:1.7.0` was the single path to
+ * `androidx.coordinatorlayout` - which no Kotlin file names, so the source-level check passed, and
+ * which `app.tauri.biometric`'s `auth_activity.xml` inflates as its root view. Measured on a Pixel
+ * 6a on 2026-08-28: zero occurrences of `coordinatorlayout` across all twelve dex files, and every
+ * biometric call ended in `FATAL EXCEPTION: main / ClassNotFoundException` that killed the process -
+ * which is how a revoked phone kept its conversations. The dependency below puts the class back
+ * WITHOUT the library, and is declared rather than the exclusion lifted because the exclusion's own
+ * reason still holds.
  */
 configurations.configureEach {
     exclude(group = "com.google.android.material", module = "material")
 }
 
 dependencies {
+    // The root view of `app.tauri.biometric`'s `auth_activity.xml`, and the ONLY class the biometric
+    // plugin needs out of the `material` graph excluded above. A layout is a reference no source
+    // grep sees, which is why this is an explicit dependency and not a transitive one.
+    implementation("androidx.coordinatorlayout:coordinatorlayout:1.3.0")
     implementation("androidx.webkit:webkit:1.14.0")
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("androidx.activity:activity-ktx:1.10.1")

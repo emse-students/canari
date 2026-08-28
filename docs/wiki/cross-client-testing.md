@@ -635,8 +635,25 @@ story in `CHANGELOG.md`, mechanism on
 **Two things follow for the rows themselves.** A HEAL-REVOKE cell on A1 must read BOTH halves -
 `footprint.mjs` sees the WebView and only `nativeFootprint()` in `phone.mjs`, over `adb run-as`, sees
 `mls.bin` and the `.db` files - and a row that reads one half has measured the smaller one. And the
-build the phone must carry is now `v0.14.11`, not `v0.14.10`: the wipe shipped in .10, the half that
-reaches the WebView on a phone did not.
+build the phone must carry is NEWER THAN `v0.14.11`, for the reason below.
+
+**RUNNING THAT MEASUREMENT BY HAND, ON A BUILD CARRYING THE FIX, FOUND A THIRD DEFECT - AND NO ROW ON
+THIS BOARD ASKS THE QUESTION IT ANSWERED, 2026-08-28 14:12.** A1 on a local debug `0.14.11` was
+revoked from W1's own panel and STILL kept `canariDatabases: 1` / 5 939 015 bytes, while its native
+half fell 42 216 492 -> 29 249 922. **The wipe crashed the app 55 ms in**: `[RESET] wiping...` at
+14:12:22.218, the biometric plugin's activity at .223, `FATAL EXCEPTION: main /
+ClassNotFoundException: androidx.coordinatorlayout.widget.CoordinatorLayout` at .273, `SIG: 9`. Every
+step after the biometric one never ran. Fixed with five tests; story in `CHANGELOG.md`, mechanism on
+[auth](frontend/modules/auth.md#erasing-a-revoked-device-and-the-125-s-that-undid-it).
+
+**What that says about this board is the point.** The defect is invisible to every row here, and to
+the two HEAL-REVOKE cells that ARE green, because they assert the log line - `[RESET] done - nothing
+of this device remains` - or the product's behaviour, and neither is a reading of the disk. It was
+also invisible to every gate in the repo: nothing in CI compiles the Android app, so a missing class
+in a LAYOUT inside a dependency reached a user. **A cell asserting an empty store after a revocation,
+on BOTH halves, is therefore owed on A1 and on a web device**, and it is the only row that would have
+caught this. Until it exists, a HEAL-REVOKE pass means the product recovered, never that the device
+is clean.
 
 **THE CAUSE OF EVERY HEAL-NEW FAILURE WAS THE PER-USER DEVICE CAP, AND THE PREDICATE WAS RIGHT ALL
 ALONG, 2026-08-28 10:22.** One mint on a quiet prod settled it: `POST /api/mls/register-device -> 400`,

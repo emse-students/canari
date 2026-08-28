@@ -174,17 +174,21 @@ export class BiometricService {
   }
 
   /**
-   * Turns biometric unlock off.  Clears the "configured" flag and deletes the
-   * device key from the platform keystore.  The next PIN login re-derives the
-   * key and `store_push_context` puts it back automatically.
+   * Deletes the device key from the platform keystore and clears the "configured" flags, ASKING
+   * NOTHING. The next PIN login re-derives the key and `store_push_context` puts it back.
+   *
+   * SEPARATE FROM `disable` ON PURPOSE, and the difference is who is holding the phone. `disable` is
+   * the Settings toggle, where a biometric prompt is the point: the person turning the feature off
+   * must be the owner. A WIPE is the opposite case - the device has been revoked by its owner, so
+   * the person in front of the sensor may be whoever took it, and asking them for a fingerprint
+   * before removing the key that decrypts the MLS state hands them a veto over their own lockout.
+   * Measured on a Pixel 6a on 2026-08-28: the wipe called `disable`, the prompt raised
+   * `BiometricActivity`, and cancelling it would have left key and flags intact.
+   *
+   * @param alias - the exact keystore entry, `mls_device_key_<userId>_<deviceId>`. Without one this
+   *   clears the flags only, which is why the wipe reconstructs every alias the device recorded.
    */
-  static async disable(alias?: string): Promise<void> {
-    // Require a biometric authentication before deleting the keystore key. If the user cancels the
-    // prompt, authenticate() throws and the disable does not happen — key and flags stay intact.
-    await authenticate(m.auth_biometric_desc(), {
-      ...biometricPromptOptions(),
-      title: m.auth_biometric_prompt_disable_title(),
-    });
+  static async forget(alias?: string): Promise<void> {
     if (alias && isTauri()) {
       await invoke(keystoreCommand('deleteKeyBytes'), { payload: { alias } }).catch((e) => {
         console.warn('[BIOMETRIC] deleteKeyBytes failed - keystore entry may survive:', e);
@@ -194,5 +198,19 @@ export class BiometricService {
     if (isTauri()) {
       await invoke('set_native_flag', { key: NATIVE_FLAG_KEY, value: false }).catch(() => {});
     }
+  }
+
+  /**
+   * Turns biometric unlock off from Settings: confirms the owner, then forgets the key.
+   *
+   * The prompt is load-bearing here - if the user cancels, `authenticate()` throws and nothing is
+   * deleted, so key and flags stay intact. A caller that must NOT be refusable wants `forget`.
+   */
+  static async disable(alias?: string): Promise<void> {
+    await authenticate(m.auth_biometric_desc(), {
+      ...biometricPromptOptions(),
+      title: m.auth_biometric_prompt_disable_title(),
+    });
+    await BiometricService.forget(alias);
   }
 }

@@ -148,6 +148,41 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **And it kept them a second time, for a reason the first fix could not reach: the wipe CRASHED the
+  app 55 ms in.** With the WebView cleanup made unconditional, a Pixel 6a was revoked from its
+  owner's panel on 2026-08-28 and still held its `CanariDB` and 5.9 MB. The logcat named the cause in
+  three lines: `[RESET] wiping this device back to a fresh install`, then
+  `Tauri plugin: pluginId: biometric, command: authenticate`, then `FATAL EXCEPTION: main` -
+  `ClassNotFoundException: androidx.coordinatorlayout.widget.CoordinatorLayout` while inflating
+  `app.tauri.biometric`'s `auth_activity.xml`. The process took `SIG: 9`, and every step after the
+  biometric one never ran. Three independent defects, all fixed:
+
+  **The class was absent from the APK - zero occurrences of `coordinatorlayout` in all twelve dex
+  files - because `build.gradle.kts` excludes `com.google.android.material:material`.** That
+  exclusion is right and stays: nothing here uses the library. But excluding a module also drops
+  whatever only that module contributed, and `material:1.7.0` was the single path to
+  `androidx.coordinatorlayout`. Its own justification - that not one Kotlin file names a class from
+  the graph - was true, and blind by construction: the reference is in a LAYOUT, inside a dependency.
+  `androidx.coordinatorlayout` is now declared explicitly, so the class is back without the library.
+  **Every biometric call on Android was killing the app**, so biometric unlock was broken too, for as
+  long as the exclusion has been in.
+
+  **The wipe asked the holder for a fingerprint before it would delete the key.** It called
+  `BiometricService.disable()`, whose contract is a prompt that can be cancelled - correct for the
+  Settings toggle, backwards for a revocation: the person at the sensor may be whoever took the
+  phone, and a veto over one's own lockout is not a feature. `forget()` is that work with no prompt,
+  and `disable()` is now `authenticate()` followed by it.
+
+  **And the step named "the biometric key" deleted no key**, because it passed no alias and
+  `deleteKeyBytes` is never called without one. The aliases are now rebuilt from the
+  `mls_device_id_<userId>` records the device itself keeps, which is why the login page's reset
+  button sweeps them too - it has no session to ask.
+
+  The one step that can raise a native activity now runs LAST, after every step that cannot: `step()`
+  catches a rejected promise, and a process killed by a failed inflate is not one. Four tests pin it,
+  and a fifth refuses the `material` exclusion unless the declaration that repairs it is in the same
+  file - nothing in CI compiles the Android app, so that pair is checkable nowhere else.
+
 - **A revoked PHONE kept its conversations, because the wipe's platform branch replaced the step it
   should have added to.** `wipeDeviceToFactory` cleared either the native stores or the WebView's,
   never both: inside Tauri it deleted `mls.bin` and every `.db` in the app data directory and left

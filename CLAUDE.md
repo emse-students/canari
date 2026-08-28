@@ -403,61 +403,68 @@ required April 2027, WebAuthn on a server that has none) is ACCEPTED and schedul
 campaign ([backlog](docs/wiki/backlog.md)).
 
 **Release: v0.14.11 SHIPPED 2026-08-28 09:53 and its Android build is GREEN** (run `33161214934`) -
-read `gh run list` rather than this line, which has been stale twice. **THE APK IS BUILT AND NOT
-INSTALLED**: A1 still runs an older build, so nothing measured on the phone yet concerns the wipe fix.
-v0.14.10 (00:46, three builds green) carries the revocation-wipe fix and the iOS FCM fix, and is the
-build [check S](docs/wiki/device-verification.md) needs; v0.14.11 adds the half of the wipe that
-reaches a phone's WebView. The earlier skew that killed Android Release and AppImage Release (Tauri
+read `gh run list` rather than this line, which has been stale twice. **A1 CARRIES A LOCAL DEBUG
+0.14.11 AS OF 14:00**, which is how it measured the fourth P1 - and it PREDATES that fix, so a
+release carrying it is owed. v0.14.10 (00:46, three builds green) carries the revocation-wipe fix and
+the iOS FCM fix, and is the build [check S](docs/wiki/device-verification.md) needs; v0.14.11 adds
+the half of the wipe that reaches a phone's WebView. The earlier skew that killed Android Release and AppImage Release (Tauri
 `plugin-log` JS 2.9.0 vs crate 2.8.0) is fixed, and no CI job could see it because nothing here
 compiles the Tauri app: `Guard the Tauri JS/Rust version parity` in `code-analysis.yml` now reads the
 two committed files. Story in `CHANGELOG.md`, rule in
 [durable-rules](docs/wiki/durable-rules.md#release-and-ci).
 
-**THE FIRST THING TO DO ON RESUMING, and it is a MEASUREMENT the user asked for** (*"Supprime tous
-les appareils sauf W1 ... comme ca on voit si le mobile perd tout aussi"*), in this order and no
-other:
+**THE MEASUREMENT THE USER ASKED FOR HAS RUN (2026-08-28 14:12), AND IT FOUND A FOURTH P1 - FIXED,
+BUT NOT YET RE-MEASURED.** *"Supprime tous les appareils sauf W1 ... comme ca on voit si le mobile
+perd tout aussi."* A1 was upgraded to a LOCAL debug 0.14.11, both halves read before and after, and
+the two devices deleted from W1's panel by allowlist (`--expect 2`, `deleted 2/2`).
 
-0. **THE PHONE IS UNPLUGGED** - the user unplugged it at the end of the session of 2026-08-28
-   (*"on aura plus qu'a installer l'apk et reprendre"*). Plug it in FIRST. An empty `adb devices` is
-   the cable and nothing else here; the `A1_WIFI` fallback needs a prior `adb tcpip 5555` it does not
-   have.
-1. `gh run list` - CD must be GREEN and QUIET. A run and a push to `main` are mutually exclusive.
-2. Install the v0.14.11 APK on A1: `gh run download 33161214934 -D <dir>` then `adb install -r <apk>`.
-   An upgrade keeps the app's data, which is the point - the wipe must be seen removing it. **A1 is
-   the ONLY device that needs this**; W1/W2/W3 already have the fix through CD.
-3. Arm the phone: `node phone.mjs 9333` (ONE positional port, NOT `--ensure`), and read the preflight
-   header - an unarmed phone is INVISIBLE to a runner rather than an error.
-4. **The BEFORE reading, both halves for A1:** `node footprint.mjs --device W2` / `--device W3` /
-   `--device A1`, and for the native half
-   `node -e "import('./phone.mjs').then(p=>console.log(JSON.stringify(p.nativeFootprint())))"`.
-   Measured 2026-08-28 before any of this: A1 held `canariDatabases: 1`, `bytesInUse: 5939115` in its
-   WebView and 2938 files / 41977059 bytes natively.
-5. Inventory the panel, which deletes NOTHING: `node purge-devices.mjs --port 9224`.
-6. Delete, by an ALLOWLIST of full device ids read from that inventory:
-   `node purge-devices.mjs --only <id>,<id>,<id> --expect N --port 9224`. **Never a "all but".**
-   **Keep A1's app in the FOREGROUND and connected while this runs**, or the measurement changes
-   meaning: a live device wipes on the `device_revoked` frame, a backgrounded or offline one wipes at
-   its first login WITH a network, and only the first is visible in the seconds after the click.
-7. The AFTER reading, same four commands as step 4. `canariDatabases` is the criterion
-   (`nothingOfTheAccountRemains`); localStorage and the cache are NOT, because an empty app rewrites
-   a locale key and re-caches its shell the moment it is looked at.
+**Verdict: the phone did NOT lose everything.** Native fell 42 216 492 -> 29 249 922 bytes, and the
+WebView kept `canariDatabases: 1` / 5 939 015 bytes / 261 localStorage keys. **The wipe CRASHED the
+app 55 ms in** - `[RESET] wiping...` at 14:12:22.218, then the biometric plugin's activity, then
+`FATAL EXCEPTION: main / ClassNotFoundException: androidx.coordinatorlayout.widget.CoordinatorLayout`
+and `SIG: 9`. Three defects met at that one step and each alone kept the conversations; all three are
+FIXED with five tests, one of them mutation-verified against the old code. **Story in `CHANGELOG.md`,
+mechanism on [auth](docs/wiki/frontend/modules/auth.md#erasing-a-revoked-device-and-the-125-s-that-undid-it),
+three rules in [durable-rules](docs/wiki/durable-rules.md); none restated here.** The measured
+BEFORE, kept because a re-run must reproduce it: W1 `2 DB / 65 200 621`, W2 `2 DB / 31 273 345`,
+W3 `1 DB / 8 253 748` (the debris of the 1.25 s regression), A1 `1 DB / 5 938 001` + 2937 files /
+42 216 492 native.
 
-**The COST is low and worth naming:** the deleted devices re-enrol through SSO with no field to fill
-- the IdP cookies live on `auth.canari-emse.fr` and `cas.emse.fr`, which wiping the app's origin does
-not touch - so no 2FA is spent, and the deletions FREE device-cap slots the HEAL rung needs anyway.
+**WHAT IS OWED, IN ORDER, AND IT IS THE PROOF NOT THE FIX:** build a debug 0.14.11 CARRYING the fix,
+install it, sign A1 back in (SSO costs no field - the IdP cookies are on `auth.canari-emse.fr` and
+`cas.emse.fr`, which wiping the app's origin does not touch), confirm it holds state, delete it again
+from W1, and read both halves. `canariDatabases: 0` is the criterion; localStorage and the cache are
+NOT, because an empty app rewrites a locale key and re-caches its shell the moment it is looked at.
+**A green build is not the proof** - everything native here is verified by compiling, and this defect
+compiled perfectly for weeks. The same run answers the user's second question, which the design
+answers and no run has shown: a device revoked while OFFLINE wipes at its first login WITH a network.
 
-**What that measurement is FOR:** the board owes a HEAL-REVOKE cell asserting the storage is EMPTY
-after a revocation, and A1's native half has no row at all. It also answers the user's second
-question, which the design answers and no run has shown: a device revoked while OFFLINE is not wiped
-offline - `isDeviceRevoked` says `false` when unreachable - so the wipe lands at its first login WITH
-a network.
+**HOW THE PHONE IS UPGRADED, because the CI APK cannot do it** (measured 2026-08-28): A1 must stay a
+LOCAL **debug** build. The CI artefact is release - not debuggable and signed with the release
+keystore - so `adb install -r` fails on the signature, and an uninstall would destroy the data to be
+measured. **`run-as` needs debuggable**, and `run-as` IS the native half of the footprint, the half
+that found the third P1 and measured this one. So:
+`ANDROID_HOME=<sdk> ANDROID_SDK_ROOT=<sdk> NDK_HOME=<sdk>/ndk/26.1.10909125 bun tauri android build --debug --apk --target aarch64`
+from `frontend/`, then `adb install -r gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`.
+It names itself from `tauri.conf.json`, and an upgrade keeps the data - verified, 355 bytes of drift.
+**A1 is the ONLY device needing any of this**; W1/W2/W3 get web fixes through CD.
+
+**THE DEV BOX RAN OUT OF DISK MID-BUILD** - `rustc-LLVM ERROR: IO failure on output stream: no space
+on device` with **10 MB** free on C:. Freed ~12 GB of pure cache and nothing else (both `incremental`
+dirs under `src-tauri/target`, `~/.bun/install/cache`, `mls-wasm/target`); 7 GB left after the build.
+**The real consumer is NOT measured** - the scan was killed because it fought the build for I/O - and
+a full Android debug build needs ~10 GB. It is a P3 in [backlog](docs/wiki/backlog.md#infrastructure)
+next to the two prod hosts, and the user is to be asked before anything outside a build cache goes.
+
+**Still owed on the board:** a HEAL-REVOKE cell asserting the storage is EMPTY after a revocation,
+and A1's native half has no row at all.
 
 **AN APK IS NOT REACHED BY A DEPLOY: `frontendDist: "../build"` means the Tauri app EMBEDS the
 frontend**, so every web fix reaches W1/W2/W3 through CD and reaches A1 only in a new build. That is
 why v0.14.10 was cut for the revocation-wipe fix and **v0.14.11 for the half of it that reaches the
 WebView on a phone** - a version has to identify its content, or `minClientVersion` and check S are
-reasoning about a name. **v0.14.11 is the build A1 must carry** before any HEAL-REVOKE row or the
-delete-every-device test is worth running: .10 is green but measures the defect. What IS owed is
+reasoning about a name. **A1 must carry a build NEWER than 0.14.11** before any HEAL-REVOKE row is
+worth running: .10 and .11 are green and both measure the defect. What IS owed is
 one iOS proof: `minClientVersion` is raised BY HAND from `/admin/platform`, and while a release can
 now REACH App Store Connect, TestFlight is the BETA channel - nothing yet shows a build reaching an
 ordinary iOS user. Ship the client, verify it arrived, THEN raise

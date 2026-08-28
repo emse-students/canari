@@ -28,6 +28,34 @@ async function surveyDeviceStorage(): Promise<string[]> {
 }
 
 /**
+ * Every platform-keystore alias this device recorded, read off the device itself.
+ *
+ * The alias is `mls_device_key_<userId>_<deviceId>`, and only the session that created it knows both
+ * halves - which is why the wipe used to call `BiometricService.disable()` with NO alias at all and
+ * therefore deleted no key: a step named "the biometric key" that cleared two flags. Rather than ask
+ * a caller to thread an identity in (the login page's reset button has no session and could not),
+ * the pairs are reconstructed from the `mls_device_id_<userId>` records the device already keeps, so
+ * both callers sweep the same set and neither needs to know anything.
+ *
+ * MUST BE READ BEFORE `localStorage.clear()`, which is why it is a separate step and not inlined.
+ */
+function recordedKeystoreAliases(): string[] {
+  const aliases: string[] = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key === null || !key.startsWith('mls_device_id_')) continue;
+      const userId = key.slice('mls_device_id_'.length);
+      const deviceId = localStorage.getItem(key);
+      if (userId && deviceId) aliases.push(`mls_device_key_${userId}_${deviceId}`);
+    }
+  } catch (e) {
+    console.warn('[RESET] could not read the recorded device ids back:', e);
+  }
+  return aliases;
+}
+
+/**
  * Returns this device to the state of a brand-new install: no MLS state, no local database, no
  * cached response, no stored preference, nothing in the platform keystore.
  *
@@ -64,14 +92,13 @@ export async function wipeDeviceToFactory(closeStorage?: () => Promise<void>): P
 
   if (closeStorage) await step('the open database connection', closeStorage);
 
+  // READ BEFORE ANYTHING IS CLEARED: the aliases live in the very store this wipe empties.
+  const aliases = recordedKeystoreAliases();
+
   if (isTauriRuntime()) {
     const { invoke } = await import('@tauri-apps/api/core');
     await step('the native MLS state', async () => {
       await invoke('delete_mls_state');
-    });
-    await step('the biometric key', async () => {
-      const { BiometricService } = await import('$lib/services/biometric');
-      await BiometricService.disable();
     });
     // Every .db file in the Tauri app data directory.
     await step('the native app data', async () => {
@@ -125,6 +152,28 @@ export async function wipeDeviceToFactory(closeStorage?: () => Promise<void>): P
     localStorage.clear();
     sessionStorage.clear();
   });
+
+  // LAST, AND THAT IS THE WHOLE POINT. `step()` catches a rejected promise, which is every failure
+  // this file can survive - but the biometric plugin raises an ANDROID ACTIVITY, and an activity
+  // that fails to inflate takes the PROCESS with it. Measured on a Pixel 6a on 2026-08-28: this step
+  // ran third, `BiometricActivity` died on a missing `CoordinatorLayout`, the process was killed 55
+  // ms after `[RESET] wiping this device back to a fresh install`, and the revoked phone kept its
+  // `CanariDB` and 5.9 MB because every step after this one never ran. `forget` no longer raises an
+  // activity, so the crash is gone at the source; running the only step that COULD kill the process
+  // after all the others is what stops a future one costing them.
+  //
+  // It also asks for no fingerprint, deliberately - see `BiometricService.forget`.
+  // Gated on the runtime because the platform keystore is the only thing this step can reach, and
+  // only Tauri has one; on the web the flag it also clears left with `localStorage.clear()` above.
+  if (isTauriRuntime()) {
+    await step('the biometric keys', async () => {
+      const { BiometricService } = await import('$lib/services/biometric');
+      // Per alias, so one unreachable keystore entry cannot cost the others - and once with none,
+      // so the native flag is cleared on a device that recorded no id at all.
+      for (const alias of aliases) await BiometricService.forget(alias);
+      if (aliases.length === 0) await BiometricService.forget();
+    });
+  }
 
   // NEVER CLAIM AN EMPTY DEVICE WITHOUT LOOKING. This function used to print "nothing of this
   // device remains" on the strength of the steps it RAN, and on 2026-08-28 it printed it on a

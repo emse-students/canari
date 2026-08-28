@@ -283,10 +283,51 @@ What the wipe reaches, per platform, is therefore:
 | Messages and conversations | `CanariDB_<userId>` (IndexedDB) | `*.db` in the app data dir, via `clear_app_data` |
 | WebView stores | deleted | deleted - and this is the half that was missing |
 | Response cache, `localStorage`, `sessionStorage` | deleted | deleted |
-| Biometric key | n/a | `BiometricService.disable()` |
+| Biometric key | n/a | `BiometricService.forget(alias)`, per recorded alias |
 
 `native_flags.json` is deliberately not deleted: it holds UI booleans, the biometric one of which is
 cleared by the step above, and no account data.
+
+**AND THE WIPE STILL LEFT EVERYTHING, BECAUSE IT KILLED THE APP 55 ms IN.** Measured 2026-08-28, on a
+Pixel 6a carrying the unconditional cleanup above: the phone was revoked from its owner's panel and
+kept its `CanariDB` and 5.9 MB. Its logcat is the whole diagnosis, in four lines:
+
+```
+14:12:21.657 [WS RCV] device_revoked - this device was deleted by its owner
+14:12:22.218 [RESET] wiping this device back to a fresh install
+14:12:22.223 Tauri plugin: pluginId: biometric, command: authenticate
+14:12:22.273 FATAL EXCEPTION: main
+             ClassNotFoundException: androidx.coordinatorlayout.widget.CoordinatorLayout
+```
+
+Three defects met at that step, and each one alone was enough to keep the conversations.
+
+**The class was not in the APK - zero occurrences of `coordinatorlayout` in all twelve dex files.**
+`build.gradle.kts` excludes `com.google.android.material:material`, correctly, on the assertion that
+no Kotlin file in this app or any bundled plugin names a class from it. The assertion was true and
+could not see the reference: `app.tauri.biometric`'s `auth_activity.xml` inflates `CoordinatorLayout`
+as its root view, `material:1.7.0` was the only path to `androidx.coordinatorlayout` in the resolved
+graph, and excluding a module drops what only that module contributed. So the exclusion stays and the
+class is declared back explicitly. **Any biometric call had the same fate**, which means biometric
+unlock on Android was broken for as long as the exclusion has been in - nothing here compiles the
+Android app in CI, and `androidBiometricLayout.test.ts` reads the two declarations as a pair because
+that pair is checkable nowhere else.
+
+**The wipe asked the holder for a fingerprint before deleting the key.** `BiometricService.disable()`
+is `authenticate()` then delete, and its prompt is load-bearing for the Settings toggle: cancelling
+must leave the key intact. On a revoked device that is exactly backwards - the person at the sensor
+may be whoever took the phone. `forget()` is the same deletion with no prompt, `disable()` is now
+`authenticate()` followed by it, and the wipe calls `forget`.
+
+**And the step deleted no key.** It passed no alias, and `deleteKeyBytes` is never called without
+one, so "the biometric key" cleared two flags and left the keystore entry that decrypts `mls.bin`.
+The aliases are now rebuilt from the `mls_device_id_<userId>` records the device itself keeps -
+which is what lets the login page's reset button sweep them too, having no session to ask - and read
+BEFORE `localStorage.clear()`, since that is the store they live in.
+
+The step now runs LAST. `step()` catches a rejected promise, which is every failure this file can
+survive; a native activity that fails to inflate is not one, and everything after it was its
+hostage. That ordering is a property, not a style choice, and a test asserts it.
 
 **A device revoked while OFFLINE is not wiped offline, by design.** Every login path asks the server
 `isDeviceRevoked`, which answers `false` when it cannot be reached - a status code is an answer, a
