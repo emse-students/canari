@@ -198,7 +198,20 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     hand and NOTIF-4 / HEAL-W2, whose stale ledger verdicts their cells name in prose. The shared
     venue is `fbddc890` / `general` `064ac7d2`, rebuilt 2026-08-26 after a THIRD disappearance.
 
-2. **A DEVICE JOINED A REAL CONVERSATION UNDER PLACEHOLDER IDS, AND EVERY MESSAGE SINCE IS QUEUED
+2. **THE USER'S LOST MESSAGES ARE EXPLAINED, AND THE CAUSE IS A P1 - measured on prod 2026-08-28**
+    from `chat-delivery`'s log, which covers the whole episode. The peer's device held a `pending`
+    membership for 71 minutes and never became `active`: the server answered `No active membership`
+    **21 times** while reporting `pendingGroups=1`, every `MSG_FETCH` returned `count=0`, and **there
+    is no `COMMIT` for that group in the window at all**. So the 01:03 message could not be handed to
+    a non-member, and the 01:09 reply was encrypted by a device outside the group. **THE "HEAL" WAS
+    THE REINSTALL** - a new device id, a `WELCOME_REQ`, the group's only commit (epoch 2 -> 3);
+    nothing self-corrected, and an ordinary user would have stayed stranded. **Two defects**: a
+    client that never commits the pending member, silently (no server line, so it never called); and
+    a stranded state that prints exactly what a healthy brand-new device prints, so twenty-one
+    reports said nothing. Substance and the three things owed in
+    [backlog](docs/wiki/backlog.md), the only copy.
+
+3. **A DEVICE JOINED A REAL CONVERSATION UNDER PLACEHOLDER IDS, AND EVERY MESSAGE SINCE IS QUEUED
     FOR A GHOST - P1, measured on prod 2026-08-28** while looking for the message loss the user
     reported. One `dm_device_group_memberships` row is `userId='unknown'` / `deviceId='pending'`,
     status `active`, in a real conversation, joined ONE SECOND before the real members; it holds a
@@ -211,7 +224,7 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     Substance, the three things owed and the order they must be done in are in
     [backlog](docs/wiki/backlog.md), the only copy - **do not delete the row first, it is the evidence.**
 
-3. **DEFERRED PAST THE LADDER - seven UX and rendering items, substance in
+4. **DEFERRED PAST THE LADDER - seven UX and rendering items, substance in
     [backlog](docs/wiki/backlog.md) and NOWHERE else**, named here only so none is forgotten: the
     POSTS search that loads the whole base; the EMOJI picker that neither scrolls nor stays on
     screen; HEAL's partially-restored old client; **ONE BUNDLED EMOJI FONT everywhere** (Noto Color
@@ -221,14 +234,14 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     emoji, the dead row and the device controls want ONE pass over `app.css`, not seven local
     patches.
 
-4.  **THE SFU RUNS SIX webrtc MAJORS NOBODY HAS PLACED A CALL ON.** `apps/call-service` compiles,
+5.  **THE SFU RUNS SIX webrtc MAJORS NOBODY HAS PLACED A CALL ON.** `apps/call-service` compiles,
     clippy is clean under `--all-features` and its ten tests pass - none of which runs the ICE stack.
     The CI hole that let two breaking Dependabot majors merge green is CLOSED (no crate in this repo
     is uncompiled now), and the one known behaviour change is handled: an empty TURN credential used
     to degrade quietly and now fails the whole ICE configuration. **What settles it is ONE relay-path
     call**, which is rung 15 CALL and has no runner. Substance in [backlog](docs/wiki/backlog.md),
     story in `CHANGELOG.md`; neither is restated here. **A release must not carry this unplaced.**
-5.  **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** - asked by the user 2026-08-25
+6.  **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** - asked by the user 2026-08-25
     (*"le meme point de depart, independamment de ce qui a pu se passer avant"*). The PHASE-level half
     is `run.mjs`'s preflight; what is left is per-STEP granularity, pulled forward the moment a rung is
     blocked by an inherited state. Contract, audit and the seven-file PIN predicate it fixes are in
