@@ -157,6 +157,29 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **Blocking a person did nothing at all on the server, and it took opening a conversation down with
+  it.** `UsersModule` declared `TypeOrmModule.forFeature([User, UserBlock])`, and the root DataSource
+  in `app.module.ts` listed five entities without `UserBlock`. Those two lists read like one
+  statement and are not: `forFeature` publishes the repository provider, so injection resolves and
+  the service constructs, while the metadata comes from the root array - so the first query threw
+  `EntityMetadataNotFoundError: No metadata for "UserBlock" was found`. Nothing upstream could catch
+  it. It compiles, the container boots, Nest maps all three `me/blocks` routes, the CD deploy is
+  green, and the symptom is a 500 on whoever opens the blocked-people section.
+
+  **What it actually broke is wider than the feature.** Both conversation-creation paths ask
+  `isBlockedWith` before minting anything, on purpose, because the authoritative refusal lands only
+  after the Welcomes have gone out; and both are written to stop rather than guess, since a failure
+  to ask is not an answer. So the 500 made opening a 1-to-1 return silently and dropped every target
+  of a group invitation. The design failed CLOSED - no block was ever bypassed, and the two
+  authoritative refusals read `user_blocks` with plain SQL and were unaffected - which is why the
+  gesture simply did nothing rather than reporting anything. The table itself was fine: migration
+  `007_user_blocks.sql` had been applied on prod all along.
+
+  The fix is the one missing registration. What keeps it fixed is `entities-registered.spec.ts`,
+  which reads both lists out of the source and asserts every `forFeature` name is registered - the
+  defect is a disagreement between two lists and no compiler compares them, so a test pinning
+  `UserBlock` alone would pass for ever while the next entity repeated it.
+
 - **Seven of the nine iOS/Android graphical and software asymmetries found by the parity audit are
   closed** (`docs/wiki/frontend/android-ios-parity.md`, written 2026-08-28 with no device in hand).
   iOS now shows its status bar instead of hiding it, matching Android's edge-to-edge-but-visible
