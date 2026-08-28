@@ -403,9 +403,12 @@ required April 2027, WebAuthn on a server that has none) is ACCEPTED and schedul
 campaign ([backlog](docs/wiki/backlog.md)).
 
 **Release: v0.14.11 SHIPPED 2026-08-28 09:53 and its Android build is GREEN** (run `33161214934`) -
-read `gh run list` rather than this line, which has been stale twice. **A1 CARRIES A LOCAL DEBUG
-0.14.11 AS OF 14:00**, which is how it measured the fourth P1 - and it PREDATES that fix, so a
-release carrying it is owed. v0.14.10 (00:46, three builds green) carries the revocation-wipe fix and
+read `gh run list` rather than this line, which has been stale twice. **THE VERSION IN THE THREE
+FILES IS NOW `0.14.12`, UNRELEASED**, bumped so the debug build carrying the native-wipe fix cannot
+be confused with the released 0.14.11 that MEASURES the defect - a version has to identify its
+content. A1 carried a local debug 0.14.11 from 14:00, which is how the fourth and fifth P1s were
+found; **a release carrying both fixes is owed**, and until it exists no HEAL-REVOKE verdict about a
+clean device may be taken on any build older than 0.14.12. v0.14.10 (00:46, three builds green) carries the revocation-wipe fix and
 the iOS FCM fix, and is the build [check S](docs/wiki/device-verification.md) needs; v0.14.11 adds
 the half of the wipe that reaches a phone's WebView. The earlier skew that killed Android Release and AppImage Release (Tauri
 `plugin-log` JS 2.9.0 vs crate 2.8.0) is fixed, and no CI job could see it because nothing here
@@ -430,31 +433,89 @@ BEFORE, kept because a re-run must reproduce it: W1 `2 DB / 65 200 621`, W2 `2 D
 W3 `1 DB / 8 253 748` (the debris of the 1.25 s regression), A1 `1 DB / 5 938 001` + 2937 files /
 42 216 492 native.
 
-**WHAT IS OWED, IN ORDER, AND IT IS THE PROOF NOT THE FIX:** build a debug 0.14.11 CARRYING the fix,
-install it, sign A1 back in (SSO costs no field - the IdP cookies are on `auth.canari-emse.fr` and
-`cas.emse.fr`, which wiping the app's origin does not touch), confirm it holds state, delete it again
-from W1, and read both halves. `canariDatabases: 0` is the criterion; localStorage and the cache are
-NOT, because an empty app rewrites a locale key and re-caches its shell the moment it is looked at.
-**A green build is not the proof** - everything native here is verified by compiling, and this defect
-compiled perfectly for weeks. The same run answers the user's second question, which the design
-answers and no run has shown: a device revoked while OFFLINE wipes at its first login WITH a network.
+**AND THE RE-RUN OF THAT MEASUREMENT FOUND A FIFTH P1, ON THE HALF NO ROW HAS EVER READ - FIXED
+2026-08-28, PROOF STILL OWED.** A1 was signed back in (no 2FA - the trust window held, and the IdP
+cookies survive an origin wipe), enrolled as a FRESH device id in 634 ms, and reached `/chat` with
+eleven conversations. Its WebView had come back genuinely EMPTY from the previous revocation -
+`canariDatabases: 0`, 261 localStorage keys down to 0 - **so the fourth P1's fix is confirmed working
+on hardware.** Reading the native side with `adb` found **twenty-eight paths of account state still
+there**: `mls.bin`, `canari_<userId>.db` + WAL, `graine_seeds.json` and `channel_keys.json` (the
+material the background push service decrypts notifications with), `push_context.json`,
+`pending_push_secret.txt`, `fcm_token.txt`, `session-meta.json`, `keystore_aliases.xml`, five
+`canari_*.xml` and **six cached avatars of real people**. Cause: `clear_app_data` deleted an entry
+only when `extension() == "db"`, and every one of those files was added after that filter was
+written. `wipe_app_data` now deletes everything except a named framework keep-list, so the default is
+ERASE; 4 Rust tests, and the old body removed 2 of the 14 files the first one creates. Story in
+`CHANGELOG.md`, mechanism on
+[auth](docs/wiki/frontend/modules/auth.md#erasing-a-revoked-device-and-the-125-s-that-undid-it), two
+rules in [durable-rules](docs/wiki/durable-rules.md#mls-state-and-keys).
+
+**THE INSTRUMENT IS WHY THIS TOOK THREE READINGS, and its fix is the transferable part.**
+`footprint.mjs` answered **"nothing of the account remains" about A1 while the phone displayed eleven
+conversations** - its whole criterion was `canariDatabases === 0`, and a Tauri client keeps its
+messages in native SQLite, so that count is 0 either way. **A predicate that cannot fail on the
+device class it judges is not a criterion**, and it had been read as evidence three times. Now: it
+also counts `identityKeys` (`mls_device_id_<userId>` + `canari_device_key_vault`, which nothing but
+an enrolment writes); `nativeResidue()` in the rig NAMES which paths survived, because the byte total
+read 19 MB with the account gone and 31 MB with it present on the same device inside an hour; and for
+a `tauri` origin the verdict is the AND of both halves in ONE place, an unreadable native half
+VOIDING it rather than passing it. `logs/Canari.log` is reported apart - the running app rewrites it
+in milliseconds, the same argument that keeps `PARAGLIDE_LOCALE` out of the web criterion. The pure
+classifier is `native-residue.mjs` and `residue-selftest.mjs` is the **twelfth** self-test; it FAILED
+`gate-selftest` on its first run for importing `phone.mjs`, which is the gate working. Detail in
+[testing-methodology](docs/wiki/testing-methodology.md), the only copy.
+
+**THE MEASURED BEFORE, on a fully enrolled A1, because the re-run must reproduce it:**
+`identityKeys: 3`, native `residue: 28`, `rewritten: ["logs/Canari.log"]`, WebView
+`localStorageKeys: 31 / canariDatabases: 0 / bytesInUse: 3 008 238`, native total 2793 files /
+31 014 834 bytes.
+
+**THE MEASUREMENT IS DONE AND IT ANSWERS YES, ON BOTH HALVES (2026-08-28 16:08).** On a debug
+**0.14.12** carrying every fix, A1 in the foreground, both devices deleted from W1's panel by
+allowlist: A1's native `residue` went **28 paths -> 0**, `identityKeys` 3 -> 0, every store 0, verdict
+`nothing of the account remains`. The whole wipe took **55 ms with no crash**, and
+`[Flags] no native_flags.json - biometricConfigured is already absent` shows the flag fix declining to
+recreate what the sweep deleted. **The user's second question is answered too**, by W3, which was
+OFFLINE when revoked: it kept `CanariDBMls_<userId>` and 8.3 MB, exactly as the design says, and one
+reload WITH a network landed the deferred wipe (`canariDatabases 1 -> 0`). **Every number, the logcat
+sequence and what it does not close are on
+[cross-client-testing](docs/wiki/cross-client-testing.md); not restated here.**
+
+**WHAT THAT LEAVES, and it is small:** neither reading came from a RUNNER, so neither is in the ledger
+and `rows.mjs` cannot see them - the HEAL-REVOKE cell is still owed as a SCRIPT, and its predicate is
+now written for it (`residue: 0` on a phone, `identityKeys: 0` everywhere, the offline variant driven
+by a reload rather than a frame). **A1 and W3 are both un-enrolled now**, which the HEAL rung wanted
+anyway: their device-cap slots are free. Re-enrolling W3 is free; re-enrolling A1 costs a human 2FA
+unless the trust window is still open.
+
+**A RELEASE CARRYING BOTH FIXES IS OWED** - `0.14.12` is bumped in the three files but UNTAGGED, and
+the web half reaches W1/W2/W3 through CD on the next push. A1 already runs the local debug build.
 
 **HOW THE PHONE IS UPGRADED, because the CI APK cannot do it** (measured 2026-08-28): A1 must stay a
 LOCAL **debug** build. The CI artefact is release - not debuggable and signed with the release
 keystore - so `adb install -r` fails on the signature, and an uninstall would destroy the data to be
 measured. **`run-as` needs debuggable**, and `run-as` IS the native half of the footprint, the half
-that found the third P1 and measured this one. So:
+that found the third and fifth P1s. So:
 `ANDROID_HOME=<sdk> ANDROID_SDK_ROOT=<sdk> NDK_HOME=<sdk>/ndk/26.1.10909125 bun tauri android build --debug --apk --target aarch64`
-from `frontend/`, then `adb install -r gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk`.
+from `frontend/`, then `adb install -r` the arm64 debug APK.
 It names itself from `tauri.conf.json`, and an upgrade keeps the data - verified, 355 bytes of drift.
-**A1 is the ONLY device needing any of this**; W1/W2/W3 get web fixes through CD.
+**A1 is the ONLY device needing any of this**; W1/W2/W3 get web fixes through CD. **Do not pipe that
+build to `tail`** - the output is buffered until exit and all progress visibility is lost; redirect
+instead, and read `cargo`/`rustc` in the process list to tell a running build from a stalled one.
 
-**THE DEV BOX RAN OUT OF DISK MID-BUILD** - `rustc-LLVM ERROR: IO failure on output stream: no space
-on device` with **10 MB** free on C:. Freed ~12 GB of pure cache and nothing else (both `incremental`
-dirs under `src-tauri/target`, `~/.bun/install/cache`, `mls-wasm/target`); 7 GB left after the build.
-**The real consumer is NOT measured** - the scan was killed because it fought the build for I/O - and
-a full Android debug build needs ~10 GB. It is a P3 in [backlog](docs/wiki/backlog.md#infrastructure)
-next to the two prod hosts, and the user is to be asked before anything outside a build cache goes.
+**THE DEV BOX RAN OUT OF DISK TWICE** - first `rustc-LLVM ERROR: IO failure on output stream: no
+space on device` with **10 MB** free, then 4 GB after a host `cargo test` built its own target dir.
+Both were paid in pure build cache and nothing else: the two `incremental` dirs, `~/.bun/install/cache`,
+`mls-wasm/target`, and `src-tauri/target/debug` (**14 GB alone**, and the Android build does not use
+it - a different target triple). 17 GB free after. **The real consumer is still NOT measured** - a
+full scan fights the build for I/O - so it stays a P3 in
+[backlog](docs/wiki/backlog.md#infrastructure) next to the two prod hosts, and the user is asked
+before anything outside a build cache goes.
+
+**GATES, all run against this work:** `bun run check` 0, `bun run lint` 0, `cargo test` 4/4 on the new
+wipe, `make test-harness` green including the new twelfth self-test. **NOTHING IS COMMITTED OR PUSHED
+YET, deliberately** - a campaign run and a push to `main` are mutually exclusive, and the deletion
+measurement is a run.
 
 **Still owed on the board:** a HEAL-REVOKE cell asserting the storage is EMPTY after a revocation,
 and A1's native half has no row at all.

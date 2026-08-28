@@ -45,11 +45,41 @@ await cx.send('Runtime.enable');
 const field = '#encryption-pin';
 const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
 
-let hasField = await evaluate(cx, `!!document.querySelector('${field}')`);
-let hasKeypad = await evaluate(
-  cx,
-  `[].some.call(document.querySelectorAll('button'), function (b) { return b.innerText.trim() === '\\u232b'; })`,
-);
+// A GATE THAT HAS NOT MOUNTED YET IS NOT A GATE THAT IS NOT COMING, and this file used to read the
+// DOM exactly once. On 2026-08-28 that cost HEAL-NEW-0: `newdevice.mjs` spawned this the moment the
+// OIDC callback landed on `/`, the client had not finished routing to `/chat`, and the single read
+// answered "no unlock modal on screen" - exit 2, `pinGate: none shown`, no device minted, `FAIL` on
+// the primitive eleven rows rest on. The modal was up 400 ms later.
+//
+// BOTH EXITS ARE PROOFS AND THE CLOCK IS ONLY A BOUND: the gate being present, or the client being
+// demonstrably past it - on `/chat` with a rendered sidebar, the same proof `run.mjs`'s READY uses
+// and for the same reason (not seeing the gate is not being past it, because a booting client shows
+// no gate either). Only a page answering NEITHER within the deadline is a timeout, and it says so
+// rather than reporting the absence as a verdict.
+const GATE_DEADLINE_MS = 25000;
+const GATE_PROBE = `(function () {
+  var f = !!document.querySelector('#encryption-pin');
+  var k = [].some.call(document.querySelectorAll('button'), function (b) { return b.innerText.trim() === '\\u232b'; });
+  var t = document.body.innerText.indexOf('PIN de chiffrement') !== -1;
+  var sidebar = document.querySelectorAll('aside button, nav button').length;
+  return JSON.stringify({
+    field: f,
+    keypad: k,
+    gate: f || k || t,
+    path: location.pathname,
+    onChat: location.pathname.indexOf('/chat') === 0,
+    sidebar: sidebar
+  });
+})()`;
+
+let seen = JSON.parse(await evaluate(cx, GATE_PROBE));
+const waitUntil = Date.now() + GATE_DEADLINE_MS;
+while (!seen.gate && !(seen.onChat && seen.sidebar > 0) && Date.now() < waitUntil) {
+  await sleepMs(400);
+  seen = JSON.parse(await evaluate(cx, GATE_PROBE));
+}
+let hasField = seen.field;
+let hasKeypad = seen.keypad;
 
 // PREFER THE TEXT FIELD, even on mobile. The keypad has no readable buffer: you cannot assert
 // what it holds, leftovers from a previous attempt survive, and after a failed try the first tap
@@ -77,7 +107,16 @@ if (!hasField && hasKeypad) {
 }
 
 if (!hasField && !hasKeypad) {
-  console.log('[pin] no unlock modal on screen');
+  // THREE OUTCOMES, THREE MESSAGES. "No modal" was one line for two situations wanting opposite
+  // repairs - a client already unlocked needs nothing, a client that never mounted the gate needs
+  // looking at - and a caller recording the same string for both cannot tell them apart afterwards.
+  if (seen.onChat && seen.sidebar > 0) {
+    console.log('[pin] no gate to answer - the client is already past it');
+  } else {
+    console.log(
+      `[pin] no unlock modal within ${GATE_DEADLINE_MS} ms - on ${seen.path}, sidebar ${seen.sidebar}`,
+    );
+  }
   process.exit(2);
 }
 

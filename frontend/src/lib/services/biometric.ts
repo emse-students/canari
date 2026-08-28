@@ -196,7 +196,11 @@ export class BiometricService {
     }
     localStorage.removeItem(CONFIG_FLAG_KEY);
     if (isTauri()) {
-      await invoke('set_native_flag', { key: NATIVE_FLAG_KEY, value: false }).catch(() => {});
+      // REMOVED, not set to `false`. Every reader treats an absent key and a `false` one alike, but
+      // the device wipe runs this step LAST - after `clear_app_data` - so writing here re-creates
+      // the `native_flags.json` the wipe had just deleted, and the criterion that reads the disk
+      // then needs an exception for it.
+      await invoke('remove_native_flag', { key: NATIVE_FLAG_KEY }).catch(() => {});
     }
   }
 

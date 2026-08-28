@@ -45,12 +45,22 @@ export async function storageFootprint(cx) {
       try {
         if (typeof caches !== 'undefined') cacheNames = (await caches.keys()).length;
       } catch (e) { cacheNames = -1; }
+      var identity = -1;
+      try {
+        identity = 0;
+        for (var i = 0; i < localStorage.length; i++) {
+          var k = localStorage.key(i);
+          if (k === null) continue;
+          if (k.indexOf('mls_device_id_') === 0 || k.indexOf('canari_device_key_vault') === 0) identity++;
+        }
+      } catch (e) { identity = -1; }
       var bytes = null;
       try { bytes = (await navigator.storage.estimate()).usage; } catch (e) { bytes = null; }
       return JSON.stringify({
         localStorageKeys: keys,
         sessionStorageKeys: session,
         canariDatabases: dbs,
+        identityKeys: identity,
         cacheEntries: cacheNames,
         bytesInUse: bytes,
       });
@@ -60,20 +70,26 @@ export async function storageFootprint(cx) {
 }
 
 /**
- * True when nothing that could only have come from a SESSION is left in the WebView's stores.
+ * True when nothing that could only have come from an enrolled SESSION is left in the WebView's
+ * stores.
  *
- * Only the databases are a criterion, and the other three counts are evidence beside them - because
- * each of the others is rewritten by an empty app. `PARAGLIDE_LOCALE` lands in localStorage the
- * moment the page draws a frame, and the service worker re-caches the shell on the very next
- * navigation, so a wiped device that has merely been LOOKED at already has a key and a cache entry.
- * Asserting those at zero would fail a correct wipe for having been observed.
+ * Two criteria, and the other counts are evidence beside them - because each of the others is
+ * rewritten by an empty app. `PARAGLIDE_LOCALE` lands in localStorage the moment the page draws a
+ * frame, and the service worker re-caches the shell on the very next navigation, so a wiped device
+ * that has merely been LOOKED at already has a key and a cache entry. Asserting those at zero
+ * would fail a correct wipe for having been observed.
  *
- * `CanariDB*` is different: nothing but a signed-in session creates one, so one surviving database
- * is the whole of the claim. `-1` means the store could not be read, which is NOT zero and is why
- * this reads `=== 0` rather than `< 1`.
+ * `CanariDB*` is created by nothing but a signed-in session. It is not enough on its own: on a
+ * Tauri client the message store is native SQLite, so it reads 0 whether the account is there or
+ * not - measured on A1 on 2026-08-28, which answered "nothing of the account remains" while
+ * holding eleven conversations. `mls_device_id_<userId>` (written only by `BaseMlsService` at
+ * enrolment) and `canari_device_key_vault` (the wrapped device key) are the identity and the key
+ * material, so a count of those two discriminates on every engine.
+ *
+ * `-1` means the store could not be read, which is NOT zero and is why both read `=== 0`.
  */
 export function nothingOfTheAccountRemains(f) {
-  return f.canariDatabases === 0;
+  return f.canariDatabases === 0 && f.identityKeys === 0;
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -86,9 +102,22 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   }
   const cx = await client(port, ORIGIN[label], { allowMany: true });
   const f = await storageFootprint(cx);
+  let verdict = nothingOfTheAccountRemains(f);
+  let native = null;
+  // A Tauri client keeps its message store, its MLS state and the Graine seeds NATIVELY, where CDP
+  // cannot see them. Reading only the WebView on such a device measures the smaller half and calls
+  // it the device: on 2026-08-28 that half was empty while `mls.bin`, `graine_seeds.json` and six
+  // cached faces were still on disk. So the phone's verdict is the AND of the two, and a native
+  // half that could not be read at all voids it rather than passing it.
+  if (ORIGIN[label].includes("tauri")) {
+    const { nativeResidue } = await import("./phone.mjs");
+    native = nativeResidue();
+    verdict = verdict && native.residue === 0;
+    console.log(`[footprint] ${label} native ${JSON.stringify(native)}`);
+  }
   console.log(
     `[footprint] ${label} ${JSON.stringify(f)} -> ${
-      nothingOfTheAccountRemains(f) ? "nothing of the account remains" : "STATE PRESENT"
+      verdict ? "nothing of the account remains" : "STATE PRESENT"
     }`,
   );
   cx.close();

@@ -8,6 +8,7 @@
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { A1_WIFI, ACCOUNT_OF, PORTS } from './names.mjs';
+import { classifyNativePaths } from './native-residue.mjs';
 
 /** The USB serial if there is one, else the wireless entry. */
 export function serial() {
@@ -95,6 +96,30 @@ export const adb = (args, timeout = 60_000) => run(args, timeout);
  *   happens on a RELEASE build, where `run-as` is refused. That is a limit of the instrument and is
  *   reported as one, never as an empty device.
  */
+/**
+ * WHAT of the account is still on the native side, rather than how much.
+ *
+ * `nativeFootprint` answers a byte total, and a running WebView's own cache moves that by
+ * megabytes in either direction: on 2026-08-28 it read 19 MB on a device whose account state was
+ * gone and 31 MB on the same device once the account was back, so a difference in it proves
+ * nothing either way. A revocation is judged by this instead - an empty list, or the names that
+ * survived it.
+ */
+export function nativeResidue() {
+  try {
+    const root = '/data/data/' + PKG + '/';
+    const out = sh('run-as ' + PKG + ' find /data/data/' + PKG + ' -maxdepth 2');
+    const relative = out
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => l.startsWith(root))
+      .map((l) => l.slice(root.length));
+    return classifyNativePaths(relative);
+  } catch (e) {
+    return { error: String(e.stderr || e.message).split(/\r?\n/)[0] };
+  }
+}
+
 export function nativeFootprint() {
   try {
     // `run-as` is the only way in without root, and it needs a debuggable build.

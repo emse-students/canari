@@ -48,7 +48,7 @@ use crate::commands::push::{
 use crate::commands::storage::{
     clear_app_data, delete_mls_state, get_installer_package, get_local_storage_usage,
     get_native_flags, load_mls_state, mls_foreground_heartbeat, pause_mls_foreground,
-    recharger_mls_au_resume, save_mls_state, set_native_flag,
+    recharger_mls_au_resume, remove_native_flag, save_mls_state, set_native_flag,
 };
 
 // ─── JNI functions (Android background push) ──────────────────────────────
@@ -881,6 +881,7 @@ pub fn run() {
             load_mls_state,
             store_push_secret,
             clear_app_data,
+            remove_native_flag,
             bootstrap_dead_conversation,
             set_native_flag,
             get_native_flags,

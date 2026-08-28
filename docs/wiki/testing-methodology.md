@@ -2511,3 +2511,32 @@ instrument was rewritten on an inference, and the inference was published.
   look. Choosing between them throws away the discriminator - which is the same fault, one layer up,
   as collapsing an exit code to a boolean.
 
+
+### A criterion must be shown to FAIL on a dirty device before a green from it is worth anything
+
+`footprint.mjs` existed for one reason: `[RESET] done - nothing of this device remains` is a claim
+about the steps that ran, not about the disk, and twenty HEAL rows asserted the log line. Its whole
+criterion was `canariDatabases === 0`, which is sound on a browser, where nothing but a signed-in
+session creates a `CanariDB`.
+
+**On A1 it returned "nothing of the account remains" while the phone was displaying eleven
+conversations.** A Tauri client keeps its messages in native SQLite, so that count is 0 on a fully
+enrolled phone and 0 on a wiped one. The predicate could not fail on the device class it was being
+used to judge, and it had been read as evidence three times.
+
+Nothing subtle was needed to catch it - only running the criterion against a device known to be
+DIRTY, once, and requiring it to say so. That is the whole test, it costs one command, and it is the
+step that was never taken:
+
+- **Before believing a criterion's green, run it on a device you know is loaded and require a red.**
+  A criterion that answers the same on both populations is measuring neither. This is the same fault
+  as a predicate asserting against a gesture the instrument itself made, arrived at from the other
+  side: there the instrument caused the answer, here it could not see it.
+- **A total, not a name, is not a criterion.** The native byte total read 19 MB with the account gone
+  and 31 MB with it present, on the same device within the hour - the running WebView's own cache
+  moves it by more than the account does. `nativeResidue()` answers WHICH paths survived instead, and
+  an empty list is a claim that can be wrong out loud.
+- **A device with two stores needs a verdict over BOTH, computed in one place.** The web half was
+  clean and the native half held twenty-nine paths; two separate readings had been taken and the
+  clean one quoted. `footprint.mjs --device A1` now reads the native half itself and returns the AND,
+  and a native half it cannot read voids the verdict rather than passing it.

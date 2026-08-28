@@ -329,6 +329,45 @@ The step now runs LAST. `step()` catches a rejected promise, which is every fail
 survive; a native activity that fails to inflate is not one, and everything after it was its
 hostage. That ordering is a property, not a style choice, and a test asserts it.
 
+**AND THEN IT LEFT THE NATIVE HALF, WHICH NO WIPE HAD EVER LOOKED AT.** Measured on the same phone
+the same day, with the crash fixed and the WebView genuinely empty (`canariDatabases: 0`, 261
+localStorage keys down to 0): `adb` found twenty-nine paths of account state still on disk. `mls.bin`,
+`canari_<userId>.db` and its WAL, `graine_seeds.json` and `channel_keys.json` - the material the
+background push service decrypts notifications with - `push_context.json`,
+`pending_push_secret.txt`, `fcm_token.txt`, `session-meta.json`, `shared_prefs/keystore_aliases.xml`,
+five `shared_prefs/canari_*.xml`, `logs/Canari.log`, and six `files/avatar_<sha1>.jpg`: cached
+photographs of real people.
+
+**One line caused all of it.** `clear_app_data` deleted an entry only when
+`path.extension() == Some("db")`. Every file in that list was added to the app data directory after
+that filter was written, none of them carries the extension it could see, and a wipe whose default is
+SURVIVE reports success either way. The same filter never matched `mls_pending.db-wal` or `-shm`
+either - a gap a comment three functions away had already written down and deferred.
+
+`wipe_app_data` now deletes every top-level entry EXCEPT a named `KEPT_AT_TOP_LEVEL`, so the default
+is erasure and a file added tomorrow needs no one to remember it. That list is short and every name on
+it has a reason:
+
+| Kept | Why |
+| --- | --- |
+| `app_webview` | the engine running this code is reading out of it - deleting it is the `SIG: 9` above |
+| `no_backup` | WorkManager's live database |
+| `cache`, `code_cache`, `app_textures`, `databases`, `lib` | the framework's, and re-derived |
+| `files`, `shared_prefs` | SHARED with Firebase - emptied by prefix instead (`avatar_`, `canari_`, `keystore_aliases`) |
+
+The two shared directories are the fragile part, and a first draft that left them off the list
+deleted Firebase's installation id and made both prefix lists dead code. A test creates a realistic
+tree of each and asserts both halves: ours gone, theirs untouched.
+
+Failures are isolated and counted per entry, not `?`-propagated at the first one, and logged at a
+level that accuses - the same lesson as the ordering above, one layer down: a sweep that abandons its
+remaining work on one unremovable file is a sweep whose result depends on directory order.
+
+**The border between the two sweeps is drawn twice, facing each other.** `KEPT_AT_TOP_LEVEL` says
+what the native sweep must not touch; `OUR_NATIVE` in the harness's `phone.mjs` says what must be
+gone after it. Neither is a fallback for the other, and a row about a phone that reads only the
+WebView has measured the smaller half - which is how this survived two fixes.
+
 **A device revoked while OFFLINE is not wiped offline, by design.** Every login path asks the server
 `isDeviceRevoked`, which answers `false` when it cannot be reached - a status code is an answer, a
 transport failure is not - so the wipe happens at the first login WITH a network and never on a dead

@@ -148,6 +148,43 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **And it kept them a THIRD time, on the half no wipe had ever looked at: the native one.** With
+  the crash fixed, the same Pixel 6a was revoked on 2026-08-28 and its WebView came back
+  genuinely empty - `canariDatabases: 0`, 261 localStorage keys down to 0. Reading the disk with
+  `adb` instead of the log found `mls.bin`, `canari_<userId>.db`, `graine_seeds.json`,
+  `channel_keys.json`, `push_context.json`, `pending_push_secret.txt`, `fcm_token.txt`,
+  `session-meta.json`, the `keystore_aliases` index and **six cached avatars of real people** all
+  still there. Twenty-nine paths.
+
+  **The cause is one line: `clear_app_data` deleted a file only when
+  `path.extension() == Some("db")`.** Every one of those files was added to the app data directory
+  AFTER that filter was written, and not one of them carries the extension it could see - a wipe
+  whose default is SURVIVE is wrong the day the next file lands, and nothing anywhere says so. The
+  same filter also never matched `mls_pending.db-wal` or `-shm`, a gap a comment three functions
+  away had already recorded as "worth knowing about but not fixing here".
+
+  `wipe_app_data` now deletes every entry in the app data directory **except** a named list of
+  what belongs to a framework, so a file added tomorrow is erased by default. `app_webview` and
+  `no_backup` are on that list for a reason that is the previous defect: the WebView and
+  WorkManager are reading out of them, and deleting a store from under its own engine is what
+  killed the process. `files` and `shared_prefs` are shared with Firebase, so those two are
+  emptied by prefix - and a first draft that omitted them from the list deleted Firebase's
+  installation id and left both prefix lists dead code, which is what the third test caught.
+
+  Failures are now isolated and counted per entry rather than abandoning the sweep at the first
+  one, and logged at a level that accuses. Four Rust tests, against a real directory: the old body
+  removed 2 of the 14 files the first one creates.
+
+- **`footprint.mjs` answered "nothing of the account remains" about a phone displaying eleven
+  conversations.** Its whole criterion was `canariDatabases === 0`, and on a Tauri client the
+  message store is native SQLite - so the count reads 0 whether the account is there or not, and
+  the predicate could not fail on the one device class it was being used to judge. It now also
+  counts `mls_device_id_<userId>` and `canari_device_key_vault`, which nothing but an enrolment
+  writes and which an empty app does not rewrite when it is merely looked at. For a Tauri origin
+  the verdict is the AND of both halves, the native one from a new `nativeResidue()` that **names**
+  what survived: a byte total read 19 MB with the account gone and 31 MB with it present, so a
+  difference in it proves nothing in either direction.
+
 - **And it kept them a second time, for a reason the first fix could not reach: the wipe CRASHED the
   app 55 ms in.** With the WebView cleanup made unconditional, a Pixel 6a was revoked from its
   owner's panel on 2026-08-28 and still held its `CanariDB` and 5.9 MB. The logcat named the cause in

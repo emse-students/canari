@@ -100,7 +100,11 @@ export async function wipeDeviceToFactory(closeStorage?: () => Promise<void>): P
     await step('the native MLS state', async () => {
       await invoke('delete_mls_state');
     });
-    // Every .db file in the Tauri app data directory.
+    // Everything Canari wrote in the Tauri app data directory: the MLS state, the message
+    // database, the Graine seeds and channel keys the background push service reads, the
+    // cached notification avatars and the device-key alias index. NOT the WebView's own
+    // stores, which the unconditional block below owns - and which this step must not touch,
+    // because deleting them from under a running engine is what killed the process.
     await step('the native app data', async () => {
       await invoke('clear_app_data');
     });
