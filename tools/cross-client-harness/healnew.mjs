@@ -489,7 +489,9 @@ timeline.push(respondersReadyAt);
 let servable = null;
 if (row.expect === "servableSubset") {
   const which = row.responder.toUpperCase();
-  const rcx = client(PORTS[which], new URL(ORIGIN[which]).hostname);
+  // `client` IS ASYNC, and an unawaited one is a Promise that reaches `whoAmI` as `cx.send is not a
+  // function` - the row would ERROR at the exact moment it measures rather than record anything.
+  const rcx = await client(PORTS[which], new URL(ORIGIN[which]).hostname);
   const rwho = await whoAmI(rcx);
   const groups = await activeGroupIds(rcx, rwho.userId ?? "");
   rcx.close();
