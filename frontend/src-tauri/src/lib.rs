@@ -40,9 +40,10 @@ use crate::commands::mls::{
 };
 use crate::commands::push::{
     check_push_secret_health, forget_graine_channel, forget_graine_sessions, get_fcm_token,
-    get_voip_token, load_push_context, read_and_clear_fcm_cache, read_and_clear_outbox_sent,
-    read_and_clear_pending_call_accept, read_outbox_mirror, set_push_context_locale,
-    store_graine_seed, store_outbox_mirror, store_push_context, store_push_secret,
+    get_push_diagnostic, get_voip_token, load_push_context, read_and_clear_fcm_cache,
+    read_and_clear_outbox_sent, read_and_clear_pending_call_accept, read_outbox_mirror,
+    set_push_context_locale, store_graine_seed, store_outbox_mirror, store_push_context,
+    store_push_secret,
 };
 use crate::commands::storage::{
     clear_app_data, delete_mls_state, get_installer_package, get_local_storage_usage,
@@ -867,6 +868,7 @@ pub fn run() {
             recevoir_messages_batch,
             exporter_secret,
             get_fcm_token,
+            get_push_diagnostic,
             check_push_secret_health,
             store_push_context,
             set_push_context_locale,

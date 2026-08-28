@@ -198,7 +198,37 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     hand and NOTIF-4 / HEAL-W2, whose stale ledger verdicts their cells name in prose. The shared
     venue is `fbddc890` / `general` `064ac7d2`, rebuilt 2026-08-26 after a THIRD disappearance.
 
-2. **DEFERRED PAST THE LADDER - seven UX and rendering items, substance in
+2. **A PLACEHOLDER HELD A MEMBER'S PLACE IN A REAL CONVERSATION - the user's lost messages, and
+    the ghost, are ONE P1. CAUSE FOUND, GUARDS SHIPPED 2026-08-28, CLEANUP AND ONE PROOF OWED.**
+    Measured on prod: for 134 minutes the peer had NO active device in the group, because a
+    `userId='unknown'` / `deviceId='pending'` row was stored **`active` 0.84 s before the real
+    members joined** while both of the peer's own devices sat `pending`. Twenty-one
+    `No active membership`, every `MSG_FETCH count=0`, **no `COMMIT` for the group at all**; what
+    ended it was the user REINSTALLING, which minted a new device id and took the group's only
+    commit - nothing self-corrected. The cause is one client seam publishing `BaseMlsService`'s own
+    non-identity sentinels, and **the existing ghost gate could not see it: a shape allowlist is not
+    an identity allowlist**, and the placeholder held a KeyPackage so it read as addressable.
+    Guarded at BOTH ends (named constants + typed `UnresolvedIdentityError` on the client,
+    `sanitizeIdentityValue` on `REGISTER_DEVICE` and `invitations/status`), 12 tests. **Owed, in
+    order: DEPLOY then clean the row and its 72 queued frames** (cleaning first lets a client
+    re-create it and destroys the evidence); and **do NOT assert the guards fixed the activation** -
+    an active member was polling and was answered `invitations=8` six times and committed none, and
+    only a CLIENT log separates the causes. **Not iOS, not mobile: 9 of the 10 stranded memberships
+    are `web-`.** Substance in [backlog](docs/wiki/backlog.md), rules in
+    [durable-rules](docs/wiki/durable-rules.md), story in `CHANGELOG.md`; none restated here.
+
+3. **NOTHING ON THE CAMPAIGN BOARD COULD HAVE CAUGHT IT, AND THE GAP IS STRUCTURAL** (checked
+    2026-08-28 on the user's question). Of ~200 rows exactly ONE reads
+    `dm_device_group_memberships` - COMM-8 - and it reads WHO is named, never WHAT STATUS they hold;
+    every other row asserts the symptom, which this defect leaves intact. And no row asks a question
+    whose answer is a POPULATION, so three memberships stranded for 25 days were invisible. **Four
+    rows written into rung 12 MULTI** (7: assert the ROW and that none names a placeholder; 8: a
+    device enrolled while the peer is offline reaches `active` **without a reinstall**; 9: delivery
+    after activation, and nothing claiming success in between; 10: the whole-population invariant,
+    run as a preflight). All four need only `W1 W2`. On
+    [cross-client-testing](docs/wiki/cross-client-testing.md), the only copy.
+
+4. **DEFERRED PAST THE LADDER - seven UX and rendering items, substance in
     [backlog](docs/wiki/backlog.md) and NOWHERE else**, named here only so none is forgotten: the
     POSTS search that loads the whole base; the EMOJI picker that neither scrolls nor stays on
     screen; HEAL's partially-restored old client; **ONE BUNDLED EMOJI FONT everywhere** (Noto Color
@@ -208,14 +238,14 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     emoji, the dead row and the device controls want ONE pass over `app.css`, not seven local
     patches.
 
-3.  **THE SFU RUNS SIX webrtc MAJORS NOBODY HAS PLACED A CALL ON.** `apps/call-service` compiles,
+5.  **THE SFU RUNS SIX webrtc MAJORS NOBODY HAS PLACED A CALL ON.** `apps/call-service` compiles,
     clippy is clean under `--all-features` and its ten tests pass - none of which runs the ICE stack.
     The CI hole that let two breaking Dependabot majors merge green is CLOSED (no crate in this repo
     is uncompiled now), and the one known behaviour change is handled: an empty TURN credential used
     to degrade quietly and now fails the whole ICE configuration. **What settles it is ONE relay-path
     call**, which is rung 15 CALL and has no runner. Substance in [backlog](docs/wiki/backlog.md),
     story in `CHANGELOG.md`; neither is restated here. **A release must not carry this unplaced.**
-4.  **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** - asked by the user 2026-08-25
+6.  **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** - asked by the user 2026-08-25
     (*"le meme point de depart, independamment de ce qui a pu se passer avant"*). The PHASE-level half
     is `run.mjs`'s preflight; what is left is per-STEP granularity, pulled forward the moment a rung is
     blocked by an inherited state. Contract, audit and the seven-file PIN predicate it fixes are in
@@ -349,23 +379,36 @@ owed on macOS/Linux desktop, whose engines nobody has measured - that unknown is
 covers. A dead session is also no longer re-proven 120 times: the 401 is a proof about a credential
 and is now latched.
 
-**iOS HAD NEVER REGISTERED ONE PUSH TOKEN, AND NOTHING REPORTED IT - FIXED 2026-08-28, PROOF OWED.**
+**iOS HAD NEVER REGISTERED ONE PUSH TOKEN - CAUSE FOUND AND FIXED 2026-08-28, HARDWARE PROOF OWED.**
 `push_token` held `android | 49` and no `ios` row had ever existed, so no alert, no mention and no
-CallKit ring had ever reached an iPhone. The cause was an ORDER copied from the platform that has no
-such precondition, and the deeper defect was the SILENCE - the absence of a row is
-indistinguishable from a device nobody opened, so 49 healthy Android rows stood in for both. Both
-halves are fixed: `CanariSyncFcmTokenIfApnsReady()` from `didBecomeActive`, and a device that
-exhausts its retries now POSTs `/api/mls/push/unavailable` (stores nothing, logs
-`[PUSH_UNAVAILABLE] ... platform=... reason=...`). **Story in `CHANGELOG.md`, mechanism on
-[mobile](docs/wiki/frontend/mobile.md#the-fcm-token-an-iphone-could-never-obtain-and-the-silence-that-hid-it-for-the-platforms-life)
-and [chat-delivery](docs/wiki/services/chat-delivery.md#a-device-that-cannot-get-a-push-token-at-all),
-two rules in [durable-rules](docs/wiki/durable-rules.md#mobile-and-native), the P1 and its two
-remaining candidates in [backlog](docs/wiki/backlog.md), the hardware steps as
-[check S](docs/wiki/device-verification.md); none is restated here.** **IT STAYS A P1 UNTIL A DEVICE
-ANSWERS** - everything native here is verified by COMPILING, and the call this replaced compiled
-perfectly and could never succeed. **The one thing to do after 0.14.8 reaches the iPhone: run check S.
-An `ios` row is the pass; a `platform=ios reason=no-token` line is not a pass but IS the first word
-the platform has ever said; neither arriving means the build did not reach the phone.**
+CallKit ring had ever reached an iPhone. **Two defects, both fixed.** The SILENCE half is CLOSED and
+PROVEN on hardware: a device that exhausts its retries POSTs `/api/mls/push/unavailable`, and check S
+saw `[PUSH_UNAVAILABLE] ... platform=ios reason=no-token` at 01:23 - the first word this platform has
+ever said. The ACQUISITION half then took a second cause, found by reading the ORDER rather than
+shipping another build: **this app does not own its `UIApplicationDelegate`** (wry installs one inside
+`start_app`), and Firebase's App Delegate Proxy - the declared APNs->FCM bridge - samples that
+delegate exactly ONCE, at `[FIRApp configure]`, which runs from `main()` before the application
+exists. It found nil and never retried, so the APNs token was dropped on every launch the platform
+ever had. **The evidence had been in the file for months**: the neighbouring code already swizzles
+wry's delegate by hand for remote notifications - work the proxy does when installed. Fixed by
+`CanariInstallApnsTokenHook` on `DidFinishLaunching`, and the report now names WHICH branch failed
+(`no-apns-token` / `fcm-token-fetch-failed` / `apns-registration-refused` / `app-delegate-absent`)
+instead of the symptom. **Story in `CHANGELOG.md`, mechanism on
+[mobile](docs/wiki/frontend/mobile.md#the-apns-token-had-nowhere-to-land-because-the-proxy-meant-to-catch-it-installed-nothing),
+three rules in [durable-rules](docs/wiki/durable-rules.md#mobile-and-native), the P1 in
+[backlog](docs/wiki/backlog.md), and what each outcome of the re-run MEANS in
+[check S](docs/wiki/device-verification.md); none is restated here.** **RE-RUN CHECK S ON THE BUILD
+CARRYING THIS** - everything native is verified by COMPILING, and none of the four reasons above is
+the cause just fixed. One inference from the first run was RETRACTED (reconnection churn does not
+reset the client's module state); it is written down in check S so it is not made again.
+
+**THE iOS KEYBOARD IS FIXED THE WAY ANDROID'S WAS** (user, 2026-08-28: *"c'est assez handicapant"*):
+WKWebView is never resized for the keyboard, so the shell was pinned to the visible height inside a
+full-height document and a keyboard-tall empty band opened below it. `CanariApplyKeyboardLayout`
+shrinks the WebView's frame - the layout viewport MOVES, no margin - and **no web change was needed**,
+that branch of `computeSnapshot` having been written for a native resize iOS never did. **The BARS at
+the top and bottom are NOT done** and are a P2 in [backlog](docs/wiki/backlog.md): they want ONE pass
+over `app.css` with a device in hand, the same pass the emoji / dead-row / device-row items want.
 
 **AND THREE OF THREE iOS DEFECTS SO FAR WERE INVISIBLE TO EVERY GATE HERE** - the CORS allowlist, the third-party refresh cookie, the FCM ordering. The user named the classes still to come before anyone looked (backgrounding, memory, a reconnection that does not happen); that expectation is recorded in [backlog](docs/wiki/backlog.md) and closes by HARDWARE, one lettered check at a time - **never by a fix written against a suspected iOS lifecycle bug nobody has seen**, because nothing here could tell whether it worked.
 

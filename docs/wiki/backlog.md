@@ -68,39 +68,32 @@ entry here or closes the question.
 
 ## Measurements owed
 
-### P1 - iOS has NEVER registered a push token: FIXED 2026-08-28, and the PROOF is what is owed
+### P1 - iOS could not obtain a push token: CAUSE FOUND AND FIXED 2026-08-28, hardware proof owed
 
-**The fix is in and the story is in `CHANGELOG.md`; the mechanism is on
-[mobile](frontend/mobile.md#the-fcm-token-an-iphone-could-never-obtain-and-the-silence-that-hid-it-for-the-platforms-life)
-and [chat-delivery](services/chat-delivery.md#a-device-that-cannot-get-a-push-token-at-all). Neither
-is restated here.** Two rules came out of it, both in
-[durable-rules](durable-rules.md#mobile-and-native): a precondition one platform does not have is
-still a precondition; and the absence of a row is not a report.
+**The report half is CLOSED and proven** - on a fresh 0.14.8 install the server printed
+`[PUSH_UNAVAILABLE] ... platform=ios reason=no-token` at 01:23:39, the first thing this platform has
+ever said about its push chain. The run is [check S](device-verification.md), which carries the
+conditions and the retraction and is not restated here.
 
-**WHY THIS STAYS A P1 UNTIL A DEVICE ANSWERS.** Everything native in this repo is verified by
-COMPILING, which proves nothing about running, and this entry's whole subject is a call that compiled
-perfectly and could never succeed. The ordering fix is REASONED, not observed.
+**The cause was then found by reading the ORDER, not by shipping another build.** It is written up in
+full on [mobile](frontend/mobile.md#the-apns-token-had-nowhere-to-land-because-the-proxy-meant-to-catch-it-installed-nothing)
+and not repeated here. In one line: `FIRMessaging.APNSToken` is set only by
+`application:didRegisterForRemoteNotificationsWithDeviceToken:`, this app does not own its
+`UIApplicationDelegate` (wry does), and the Firebase App Delegate Proxy that was supposed to bridge
+the two looks for that delegate exactly once - at `[FIRApp configure]`, which runs from `main()`
+before the application exists. It found nil and never retried. Candidate 2 of the two this entry used
+to name was right in substance and wrong about the reason: the proxy had a delegate class to attach
+to, it simply looked before there was one.
 
-**What closes it, either one, after the release carrying it reaches the iPhone:**
+**What shipped**: `CanariInstallApnsTokenHook` on `UIApplicationDidFinishLaunching`, plus the
+discriminator this entry asked for - `push_diagnostic.txt` written by the native branch that failed,
+read by `get_push_diagnostic`, reported verbatim. The next `[PUSH_UNAVAILABLE]` says
+`no-apns-token`, `fcm-token-fetch-failed`, `apns-registration-refused` or `app-delegate-absent`.
 
-```
-ssh canari 'docker exec infrastructure-postgres-1 psql -U canari -d auth_db -c "SELECT platform, count(*) FROM push_token GROUP BY platform"'
-ssh canari 'docker logs --since 30m infrastructure-chat-delivery-service-1 2>&1 | grep PUSH_UNAVAILABLE'
-```
-
-An `ios` row means the chain works end to end. A `[PUSH_UNAVAILABLE] ... platform=ios
-reason=no-token` line means the ordering was not the only link - and that is a WIN too, because it is
-the first time the platform has said anything at all. **Neither answer arriving means the release did
-not reach the device**, not that the report is broken: check the build the phone runs before reading
-anything into silence.
-
-**If the report says `no-token`, the next question is which of the two remaining candidates it is** -
-`didReceiveRegistrationToken` never firing (the `FirebaseAppDelegateProxyEnabled` swizzle has no
-delegate class to attach to, which `main.mm` and the plist comment call intentional), or it firing
-while `CanariTauriDataDir()` is still nil, or writing a path the Rust `get_fcm_token`
-(`{app_data_dir}/fcm_token.txt`) does not read. Separating those needs a device console
-(`idevicesyslog` or a Mac), and `[CanariPush] APNs token not here yet` versus
-`[CanariPush] FCM token synchronise` names the branch directly.
+**WHAT IS OWED IS THE HARDWARE RUN, and it is the only thing that can close this.** Everything native
+here is verified by COMPILING, which proves nothing about running. Re-run [check S](device-verification.md)
+on the build that carries this: an `ios` row in `push_token` closes it; another `[PUSH_UNAVAILABLE]`
+now names which of four causes it was, and none of them is the one just fixed.
 
 ### The rest of what an iPhone will find, named by the user before it was looked for (2026-08-27)
 
@@ -122,6 +115,31 @@ and `didBecomeActive`, which the FCM fix has just made load-bearing.
 [device-verification](device-verification.md) when someone has an iPhone in hand, not a speculative
 entry here. **What must NOT happen is a fix written against a suspected iOS lifecycle bug that nobody
 has seen** - the repo has no way to tell whether it worked.
+
+### P2 - iOS carries none of the window-layout work Android already has (user, 2026-08-28)
+
+**Named by the user from real use on an iPhone**, and one of the three is already fixed. The Android
+half of each of these took a measurement and a comment to get right (`MainActivity`,
+[mobile](frontend/mobile.md#the-window-layout-the-keyboard-and-the-orientation-lock)); iOS inherited
+none of it because `gen/apple` is a different generated project nothing compared against `gen/android`.
+
+- **DONE 2026-08-28 - the keyboard.** WKWebView was never resized, so the shell was pinned to the
+  visible height inside a full-height document and a keyboard-tall empty band opened below it.
+  `CanariApplyKeyboardLayout` shrinks the WebView's frame; no web change was needed. Written up on
+  [mobile](frontend/mobile.md#ios-shrinks-the-webview-and-that-is-the-same-decision-taken-twice).
+- **OPEN - the bars at the top and the bottom.** The user reports black bands, or none at all, where
+  the status bar and the home indicator are, with the interface colliding with system text and
+  controls. Android's answer is an explicit inset contract; iOS has `env(safe-area-inset-*)` scattered
+  across `app.css` and a dozen components and no single owner. **This wants ONE pass over `app.css`
+  with a device in hand**, not local patches - the same conclusion the emoji / dead-row / device-row
+  items reached, and the same pass.
+- **OPEN - whether anything else in that Android comment has no iOS peer.** The orientation lock and
+  the bottom nav's reservation were both decided with a measurement. Nobody has asked the question on
+  iOS. Read `MainActivity.onCreate` beside `canari_ios.mm` once, deliberately, rather than waiting for
+  each to be found from use.
+
+**This closes by HARDWARE, one item at a time**, like every other iOS finding: three of three defects
+so far were invisible to every gate here.
 
 ### P3 - the one fallback in `apiFetch` logs that it was taken and not WHY (seen 2026-08-28)
 
@@ -591,6 +609,91 @@ asserts a deadline arriving live (the campaign closes polls with the close contr
 no check waits on wall-clock time at all. It belongs with the rendering pass, not with a rung.
 
 ## Messaging convergence
+
+### P1 - a PLACEHOLDER held a member's place in a real conversation, and both directions of it were lost for 134 minutes (measured on prod 2026-08-28; CAUSE FOUND, GUARDS SHIPPED, cleanup owed)
+
+**This entry replaces the two written earlier the same day.** They described one chain, from its two
+ends, and reading them apart is what made the first account stop one step short.
+
+**THE USER'S SYMPTOM.** Nothing arrived between their message at 23:02 Paris and 01:03; their 01:03
+message never reached the peer; the peer's 01:09 reply never reached them; afterwards both could
+talk again. All five facts are in `chat-delivery`'s log, which happens to start at 00:47 Paris and
+covers the whole episode.
+
+**WHAT THE ROSTER ACTUALLY SAID**, for group `7da231f8-119c-4ce2-884f-55f5c94c903f`:
+
+| device | status | created (UTC) |
+| --- | --- | --- |
+| `pending` / user `unknown` | **`active`** | 21:00:13.26 |
+| the peer's `web-...-mtbep8vs-5oxb` | `pending` | 21:00:14.10 |
+| the peer's `tauri-...-mtc0al5c-9hny` | `pending` | 22:03:36 |
+| the peer's `tauri-...-mtc545la-ebnu` | `active` | **23:14:45** - the reinstall |
+
+**The peer had NO active device in this conversation between 21:00 and 23:14.** A placeholder took
+their place 0.84 s before the real members joined, and held it. So the 01:03 message was fanned out
+to a roster in which the peer did not appear, and the 01:09 reply was encrypted by a device that
+was not in the group at the live epoch. The server said so twenty-one times
+(`No active membership`), every `MSG_FETCH` returned `count=0`, and **there is no `COMMIT` for the
+group in the window at all.**
+
+**THE "HEAL" WAS A REINSTALL, and that is the part that must not be misread.** At 23:14:45 the user
+uninstalled and reinstalled the app by hand for [check S](device-verification.md). That minted a NEW
+device id, which issued a `WELCOME_REQ`, which produced the group's only commit (epoch 2 -> 3).
+**Nothing self-corrected.** An ordinary user would have stayed stranded with no reason to reinstall.
+
+**THE CAUSE, and it is one line of client code.** `BaseMlsService` initialises `userId = 'unknown'`
+and `deviceId = 'pending'`, and `updateInvitationStatus` is the only client call that can CREATE an
+`active` membership row from nothing. Two call sites in `setupMessageHandler` reach it with
+`mlsService.getDeviceId()`, which returns the raw field - so a Welcome processed before the identity
+resolved published the pair, and the server stored it as a member. The class already guarded on both
+literals in three other places (`settleBarrier`, `fetchPendingMessages`, `resolveDeviceId`): the
+value was documented as a non-identity and one seam published it anyway.
+
+**Why the existing ghost guard did not catch it.** `invitations/status` already gates promotion on
+`deviceAddressability` (WP-GHOST-1) - a denylist check plus the presence of a KeyPackage. The
+placeholder registered a KeyPackage under the same pair, so it was addressable. Both literals also
+pass `SAFE_QUERY_VALUE_REGEX` perfectly. **A shape allowlist is not an identity allowlist.**
+
+**WHAT SHIPPED 2026-08-28, at both ends deliberately** - a client of any version reaches that
+endpoint, so neither guard is allowed to be the only one.
+
+- Client: `UNRESOLVED_USER_ID` / `UNRESOLVED_DEVICE_ID` are named constants, the three existing
+  literal comparisons read from them, and `updateInvitationStatus` throws `UnresolvedIdentityError`
+  (typed, carrying `seam` and `field`) rather than publishing. Every call site is fire-and-forget
+  and re-driven, so a refusal costs one cycle. Tests: `BaseMlsService.unresolvedIdentity.test.ts`.
+- Server: `sanitizeIdentityValue` refuses the two literals on the paths that can WRITE an identity -
+  `REGISTER_DEVICE` and `invitations/status`. `kick-stale-device` deliberately keeps the generic
+  sanitizer: it only DEMOTES an existing row, and demoting a placeholder is a step towards cleaning
+  one up. Tests: `sanitize.identity.spec.ts`.
+
+**WHAT IS STILL OWED, in order and not before.**
+
+1. **Deploy, then clean** - in that order. The row and its 72 queued messages (70 ordinary
+   application frames addressed to a ghost) stay until the guards are live, or a client re-creates
+   them. Cleaning first also destroys the evidence for (2).
+2. **NOT ESTABLISHED: whether the ghost is what stopped the activation.** The peer's real devices
+   were `pending` and an active member of Jolan's was online and polling throughout - the server
+   answered it `invitations=8` at 23:03, 23:03, 23:09, 23:10, 23:11 and 23:16 and it committed none
+   of them. Whether `addMember` was failing over a tree holding the placeholder's leaf, or the
+   client skipped for its own reason, is a CLIENT-log question and no server line separates them.
+   **Do not assert the guards fixed it.** MULTI-8 and MULTI-9 on
+   [cross-client-testing](cross-client-testing.md) are the rows that answer it.
+3. **A report for the stranded state.** `No active membership` is logged at `LOG` and is also the
+   normal answer for a device in its first seconds, so a working system and a broken one print the
+   same thing twenty-one times - the same shape as the push token no row reported. The age of the
+   row is already in the table, so the predicate is a `WHERE`, not a new column, and it must be
+   measured against the whole population before its name is believed.
+
+**THE POPULATION, measured rather than assumed** (`GROUP BY status`, 2026-08-28): 150 `active`, **10
+`pending`, every one older than an hour**, three of them since 2026-08-25 and their queued Welcomes
+since 2026-08-03. **Nine of the ten are `web-`, on Chrome. This is not an iOS defect and not a
+mobile one.**
+
+**One thing was checked and is NOT a defect, so it is not re-derived**: nine of those ten have an
+undelivered Welcome sitting in `queued_message`, which looks like a deadlock and is not.
+`MSG_FETCH` filters on group tombstones, never on membership status, so those Welcomes are
+retrievable the moment the device comes back - they are abandoned browser profiles, debris. The
+tenth, the device that lost the user's messages, has **no queued row at all**: nobody ever added it.
 
 ### P3 - discovery honours a dismissal only for a row it ALREADY has, and a new device has none (measured 2026-08-27, population EMPTY today)
 

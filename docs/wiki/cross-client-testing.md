@@ -33,7 +33,7 @@ Updated after every run.
 | 9 COMM | 25 | `0c31be5d`, COMM-12/22 `66639621`, A1 `0c31be5d` | **NO `FAIL` AND NO `VACUOUS` LEFT.** 19 `PASS`, 5 `PASS-DIRTY` (9, 12, 18, 21, 23), COMM-10 the one row never run. **COMM-22 is `PASS` and clean** - twelve Graine sessions, twelve seeds on both a warm and a cold peer, every repairable row repaired, and the first production sighting of a joiner publishing `base + 1` inside its own commit. **COMM-12 passes on the third attempt, and only because the rail was swept**: its two `VACUOUS` were a CD deploy and then the campaign's own accumulated community tiles stealing a click. **COMM-8 PASSES**, which is the fix for the forked distribution group measured at last, and COMM-11 is clean with it. What COMM still owes: the 403 served to the OWNER in COMM-23, and WP-REGRANT-2's proof - COMM-8 passes with `seedAfterTheGrant: repaired`, not `true` |
 | 10 DEL | 10 | `0c31be5d`, DEL-9 `66639621`, A1 `0c31be5d` | **NO `FAIL` AND NO `VACUOUS` LEFT - the rung is answered end to end.** 4 `PASS` (2, 5, 7, 8), 6 `PASS-DIRTY` (1, 3, 4, 6, 9, 10). DEL-7 and DEL-9 each cost a HARNESS fault, both fixed - see the rows. Seven cells were taken on an older `del.mjs` and owe a re-run on `2dd7a0f4a933`; **DEL-9 is the only one already re-taken on it** |
 | 11 TAB | 8 | - | `pending` |
-| 12 MULTI | 6 | `0c31be5d` | 1 `PASS`, 1 `PASS-DIRTY`, 1 `VACUOUS`, 2 `SKIPPED`, **MULTI-5 `ERROR`** - runner debt, not product. Ran BEFORE the `multi.mjs` fix (`74bb17b8283f`); every cell owes a re-run |
+| 12 MULTI | 10 | `0c31be5d` | 1 `PASS`, 1 `PASS-DIRTY`, 1 `VACUOUS`, 2 `SKIPPED`, **MULTI-5 `ERROR`** - runner debt, not product. Ran BEFORE the `multi.mjs` fix (`74bb17b8283f`); every cell owes a re-run |
 | 13 LIFE | 8 | - | `pending` |
 | 14 NOTIF | 21 | - | `pending` |
 | 15 CALL | 20 | - | `pending` - no script exists yet |
@@ -316,6 +316,32 @@ mid-flight.
 
 Opens by sweeping every `+A1` row left behind in tiers B and C.
 
+### The four rows added 2026-08-28, and why NOTHING on this board could have caught the defect
+
+**A conversation lost both its directions for 134 minutes on production and every rung above would
+have passed through it.** The peer had NO active device in the group: a placeholder identity
+(`userId='unknown'`, `deviceId='pending'`) had been stored as an `active` member 0.84 s before the
+real members joined, and the peer's own two devices sat `pending` and were never activated. Full
+account in [backlog](backlog.md), not restated here.
+
+**The board was searched before these rows were written, and the gap is STRUCTURAL, not an
+oversight.** Of the 200-odd rows, exactly ONE reads `dm_device_group_memberships` at all - COMM-8 -
+and it reads **who is named**, never **what status they hold**. Every other row asserts the SYMPTOM:
+a message appears, a badge lights, a list is right. That is precisely what this defect leaves
+intact - it was invisible from the sender's side, and the receiver's side was a device the rig does
+not own. **A rung can be green while a member of the group is a string the client itself defines as
+"no identity yet".**
+
+**Nor would the ladder have run long enough.** Every runner enrols, measures and tears down inside
+one session. Three of the ten stranded memberships found on production had stood since 2026-08-03,
+twenty-five days, and no row anywhere asks a question whose answer is a POPULATION rather than an
+event. MULTI-10 is that question, and it is the cheapest of the four.
+
+**And it is NOT an iOS defect, which is what makes it belong here rather than on
+[device-verification](device-verification.md)**: nine of the ten stranded devices are `web-`, on
+Chrome, and the guards that shipped are one client seam and one server allowlist, neither of them
+platform-specific. `W1 W2` alone can run all four rows.
+
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | MULTI-1 | Send from W1: appears on A1 as an OWN message | `+A1` | `PASS 1/1` on `0c31be5d` |
@@ -324,6 +350,10 @@ Opens by sweeping every `+A1` row left behind in tiers B and C.
 | MULTI-4 | Revoke A1 from W1, then A1 acts (= device check L) | `+A1` | `SKIPPED` on `0c31be5d` - the 2FA half of the reason is retired (see MULTI-3), but this row is still DESTRUCTIVE on the one armed phone, and A1 is the device every `+A1` row on the ladder depends on. It runs LAST of the phone rows, after `HEAL-NEW-4/5/6` have taken their measurements, or a revocation costs the rest of the campaign its only phone |
 | MULTI-5 | W1 + A1 + a second W1 tab on one channel | `+A1` | **`ERROR`** on `0c31be5d`, and it is RUNNER debt: `openChannel` on the second tab saw `no gateway connection line within 30 s`, then `sidebarPanel: false, listedEntries: 14, bodyChars: 960`. NOT the SharedWorker limitation - two tabs each hold their own socket and their own MLS client ([chat-gateway](frontend/chat-gateway.md), `backlog` 1718). **Live hypothesis, UNPROVEN**: a fresh tab is a fresh JS context, so it is behind the PIN gate, and ~14 buttons is a numeric keypad. `pin.mjs --match` is the fixture fix (it exits 2 when already unlocked) |
 | MULTI-6 | A1 offline a long while, 20 messages, then returns | `+A1` | `PASS-DIRTY 1/1` on `0c31be5d` |
+| MULTI-7 | Every device of both users reaches `active` in `dm_device_group_memberships`, and **no row names a placeholder identity** | `W1 W2` | `pending` - written 2026-08-28. Asserts the ROW, which nothing on this board has ever done. It is the cheap half of the defect: `userId` and `deviceId` are compared against the client's own non-identity literals (`unknown`, `pending`), and a match is a `FAIL` however well the messages flowed |
+| MULTI-8 | A second device enrolled while the peer is OFFLINE reaches `active` within the activation budget, **without a reinstall** | `W1 W2` | `pending` - written 2026-08-28, and this is the row that names the defect. On production the activation never came at all and the "heal" was the user uninstalling the app, which minted a new device id and took the group's only commit. **A reinstall must not be what makes this pass** - the runner asserts the ORIGINAL device id went `active`, and a new one appearing is a `FAIL`, not a recovery |
+| MULTI-9 | With one device `pending`, **the peer's messages are still delivered to it once activated** - and the sender is not told they were | `W1 W2` | `pending` - written 2026-08-28. The half nobody watched: for 134 minutes messages were accepted, fanned out and lost, and both clients showed them sent. Asserts delivery after activation AND that nothing claimed success in between; a message accepted for a group with an inactive member is the case to name |
+| MULTI-10 | **Whole-population invariant**: no membership `pending` past the budget, and none under a placeholder identity, ACROSS THE DATABASE | `W1 W2` | `pending` - written 2026-08-28, and the only row here that does not ask about one group. Three of the ten stranded rows found on production had stood 25 days, so the question every other row cannot ask is how many there are. Runs as a preflight, and its output is a COUNT with the offending ids - a non-zero count is a finding even when every other rung is green |
 
 ## 13 - LIFE - Android lifecycle
 

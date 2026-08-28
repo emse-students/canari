@@ -82,6 +82,62 @@ const EXTERNAL_JOIN_MAX_ATTEMPTS = 3;
  * - WebMlsService: WASM client, key-package worker, browser WebSocket
  * - TauriMlsService: invoke() calls, native WebSocket, epoch/group caches
  */
+/**
+ * The value {@link BaseMlsService.userId} holds before a session has resolved one.
+ *
+ * It is a NON-IDENTITY, not a user, and it is exported because the difference has to be checkable
+ * from outside this file: the server was once sent this literal and stored it as a group member.
+ */
+export const UNRESOLVED_USER_ID = 'unknown';
+
+/**
+ * The value {@link BaseMlsService.deviceId} holds before {@link BaseMlsService.resolveDeviceId}
+ * has run. Same contract as {@link UNRESOLVED_USER_ID}, and the same reason for being named.
+ */
+export const UNRESOLVED_DEVICE_ID = 'pending';
+
+/**
+ * Thrown when a seam that publishes an identity is reached before that identity exists.
+ *
+ * Typed rather than a message, because the ONE call site that must tell this apart from a network
+ * failure is the one deciding whether to retry: an unresolved identity resolves on its own and the
+ * next cycle succeeds, where a 500 does not.
+ */
+export class UnresolvedIdentityError extends Error {
+  constructor(
+    readonly seam: string,
+    readonly field: 'userId' | 'deviceId'
+  ) {
+    super(`${seam} refused: ${field} is still the unresolved placeholder`);
+    this.name = 'UnresolvedIdentityError';
+  }
+}
+
+/**
+ * Refuses to publish an identity that does not exist yet.
+ *
+ * WHY IT IS A THROW AND NOT A SKIP: on 2026-08-27 a client reached `updateInvitationStatus` with
+ * `userId = 'unknown'` and `deviceId = 'pending'` and the server stored the pair as an ACTIVE
+ * member of a real conversation - one second before the two real members joined. For 134 minutes
+ * the placeholder held the peer's place while both of the peer's own devices sat `pending`, and
+ * every message between them was lost. The class already knew both values were non-identities and
+ * guarded on them in four other places; these seams did not.
+ *
+ * The caller may swallow it - most of these calls are fire-and-forget and are re-driven on the
+ * next cycle, by which time the identity exists. What must NOT happen is the value reaching the
+ * server, because a roster cannot tell a placeholder from a member.
+ */
+function assertResolvedIdentity(seam: string, userId: string, deviceId: string): void {
+  if (userId === UNRESOLVED_USER_ID || !userId) {
+    console.error(`[IDENTITY] ${seam} called before the userId resolved - refused`);
+    throw new UnresolvedIdentityError(seam, 'userId');
+  }
+  if (deviceId === UNRESOLVED_DEVICE_ID || !deviceId) {
+    console.error(`[IDENTITY] ${seam} called before the deviceId resolved - refused`);
+    throw new UnresolvedIdentityError(seam, 'deviceId');
+  }
+}
+
 export abstract class BaseMlsService implements IMlsService {
   // ── Platform identity ─────────────────────────────────────────────────────
   protected readonly platform: 'web' | 'tauri';
@@ -127,8 +183,8 @@ export abstract class BaseMlsService implements IMlsService {
   // ── URLs & identity ───────────────────────────────────────────────────────
   protected baseUrl: string;
   protected historyUrl: string;
-  protected userId = 'unknown';
-  protected deviceId = 'pending';
+  protected userId: string = UNRESOLVED_USER_ID;
+  protected deviceId: string = UNRESOLVED_DEVICE_ID;
 
   // ── Delivery REST client ──────────────────────────────────────────────────
   protected readonly delivery: MlsDeliveryApi;
@@ -804,7 +860,7 @@ export abstract class BaseMlsService implements IMlsService {
     if (
       !this.pendingPullInFlight &&
       !(this.mailboxEmptiedByAPull && this.isWsOpen()) &&
-      this.userId !== 'unknown'
+      this.userId !== UNRESOLVED_USER_ID
     ) {
       // Ends by awaiting `settleMailbox` itself, so this is the whole barrier and not a step of it.
       return this.fetchPendingMessages().catch(() => {});
@@ -1132,7 +1188,7 @@ export abstract class BaseMlsService implements IMlsService {
    * nothing, and its backlog grew forever.
    */
   async fetchPendingMessages(): Promise<void> {
-    if (this.userId === 'unknown') return;
+    if (this.userId === UNRESOLVED_USER_ID) return;
 
     // Cleared here rather than on failure: what the barrier may trust is a pull that finished, and
     // this one has not started. A pull that dies half-way therefore leaves it false.
@@ -1355,7 +1411,7 @@ export abstract class BaseMlsService implements IMlsService {
    * and mirrored to the delivery client, so the subsequent {@link init} reuses it.
    */
   async resolveDeviceId(userId: string): Promise<string> {
-    if (this.deviceId && this.deviceId !== 'pending') return this.deviceId;
+    if (this.deviceId && this.deviceId !== UNRESOLVED_DEVICE_ID) return this.deviceId;
     const deviceKey = `mls_device_id_${userId}`;
     const stored = localStorage.getItem(deviceKey);
     let resolved = stored;
@@ -1650,12 +1706,22 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.getDeviceMemberships(userId, deviceId);
   }
 
+  /**
+   * Marks a device's membership `pending` or `active` on the server.
+   *
+   * GUARDED, because this is the only client call that can CREATE an `active` membership row from
+   * nothing, and it was reached twice with an identity that did not exist yet - see
+   * {@link assertResolvedIdentity} for what that cost. The throw is the report: every call site is
+   * fire-and-forget and re-driven, so refusing here delays a promotion by one cycle and prevents a
+   * placeholder from being written into a roster for good.
+   */
   async updateInvitationStatus(
     deviceId: string,
     userId: string,
     groupId: string,
     status: 'pending' | 'active'
   ): Promise<void> {
+    assertResolvedIdentity('updateInvitationStatus', userId, deviceId);
     return this.delivery.updateInvitationStatus(deviceId, userId, groupId, status);
   }
 

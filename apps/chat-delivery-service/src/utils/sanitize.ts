@@ -26,6 +26,39 @@ export function sanitizeQueryValue(value: unknown, fieldName: string): string {
 }
 
 /**
+ * The literals a Canari client holds for "this identity has not resolved yet".
+ *
+ * They are the CLIENT's own placeholders (`BaseMlsService`), named here so the server can refuse
+ * them: a value the sender defines as "not an identity" must never become one on this side.
+ */
+export const UNRESOLVED_IDENTITY_VALUES: readonly string[] = ['unknown', 'pending'];
+
+/**
+ * `sanitizeQueryValue` for a value that will be STORED as an identity - a `userId` or a `deviceId`
+ * on a path that can create a key package or a membership row.
+ *
+ * WHY AN ALLOWLIST OF SHAPE IS NOT ENOUGH. On 2026-08-27 a client reached `invitations/status`
+ * before its own identity resolved and this server stored `userId = 'unknown'`,
+ * `deviceId = 'pending'` as an ACTIVE member of a real conversation, one second before its two
+ * real members joined. Both literals pass `SAFE_QUERY_VALUE_REGEX` perfectly, and the existing
+ * addressability gate (WP-GHOST-1) passed too, because the placeholder had by then registered a
+ * KeyPackage under the same pair. The only thing that separates a member from a non-identity here
+ * is the value itself, so it is checked here, once, for every writing path.
+ *
+ * READ paths keep `sanitizeQueryValue`: asking about a placeholder is harmless and answers
+ * nothing, and refusing it there would only move a 404 to a 400.
+ */
+export function sanitizeIdentityValue(value: unknown, fieldName: string): string {
+  const sanitized = sanitizeQueryValue(value, fieldName);
+  if (UNRESOLVED_IDENTITY_VALUES.includes(sanitized)) {
+    throw new BadRequestException(
+      `${fieldName} is the client's unresolved-identity placeholder ('${sanitized}') and cannot be stored`
+    );
+  }
+  return sanitized;
+}
+
+/**
  * Like `sanitizeQueryValue` but treats `undefined`, `null`, and `""` as absent
  * and returns `undefined` instead of throwing, leaving the field truly optional.
  */

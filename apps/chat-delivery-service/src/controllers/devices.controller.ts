@@ -27,6 +27,7 @@ import { RevokedDevice } from '../entities/revoked-device.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { MessagingService } from '../services/messaging.service';
 import {
+  sanitizeIdentityValue,
   sanitizeQueryValue,
   sanitizeOptionalDeviceName,
   sanitizeOptionalDeviceOs,
@@ -125,8 +126,11 @@ export class DevicesController {
     @Headers('x-user-id') headerUserId?: string,
     @Headers('x-global-admin') headerGlobalAdmin?: string
   ) {
-    const userId = sanitizeQueryValue(body.userId, 'userId');
-    const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
+    // IDENTITIES, not query values: this path creates a KeyPackage and a `pending` membership in
+    // every group the user is in, so a placeholder accepted here becomes addressable and can then
+    // be vouched `active` (see `sanitizeIdentityValue`).
+    const userId = sanitizeIdentityValue(body.userId, 'userId');
+    const deviceId = sanitizeIdentityValue(body.deviceId, 'deviceId');
     // A device may only register under its own account (audit S2): binding to the HMAC-bound
     // x-user-id prevents an attacker from registering a device under a victim's userId, which
     // would auto-provision pending memberships for the victim's groups and phish Welcomes.

@@ -84,6 +84,52 @@ pub(crate) fn get_fcm_token(app: tauri::AppHandle) -> Option<String> {
     }
 }
 
+/// Reads {app_data_dir}/push_diagnostic.txt - the native layer's own account of WHY it has no
+/// push token to hand over.
+///
+/// `get_fcm_token` returning None says only that there is no token, and that single word covers
+/// causes needing opposite fixes (see canari_push.mm): APNs never answering at all, versus APNs
+/// answering and FCM refusing. The native side knows which and writes it here, so the report the
+/// client sends to the server names the cause rather than the symptom. None on the platforms with
+/// nothing finer to say, and None in the ordinary case where nothing has failed.
+#[tauri::command]
+pub(crate) fn get_push_diagnostic(app: tauri::AppHandle) -> Option<String> {
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let data_dir = match app.path().app_data_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                log::warn!("[FCM] app_data_dir() failed: {e}");
+                return None;
+            }
+        };
+        match std::fs::read_to_string(data_dir.join("push_diagnostic.txt")) {
+            Ok(reason) => {
+                let reason = reason.trim().to_string();
+                if reason.is_empty() {
+                    log::warn!("[FCM] push_diagnostic.txt is empty");
+                    None
+                } else {
+                    log::debug!("[FCM] push diagnostic: {reason}");
+                    Some(reason)
+                }
+            }
+            // Absent is the ordinary case: the native layer writes this file only when it fails
+            // to obtain a token, and deletes it the moment one arrives. Anything else is not.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => {
+                log::warn!("[FCM] read push_diagnostic.txt: {e}");
+                None
+            }
+        }
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let _ = app;
+        None
+    }
+}
+
 /// Reads {app_data_dir}/voip_token.txt (written by the native iOS PushKit callback, WP-XP-5).
 /// The frontend includes it in POST /api/mls/push/register so CallKit rings work from the very
 /// first login (the native refresh-token path only covers later launches). Always None outside

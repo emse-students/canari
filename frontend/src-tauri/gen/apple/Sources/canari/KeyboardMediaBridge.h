@@ -4,6 +4,13 @@
 
 @class WKWebView;
 
+/// Finds the app's WKWebView by traversing the connected window scenes.
+///
+/// Exposed rather than duplicated: this is the only way any native code here reaches the web
+/// layer, and a second copy would be a second answer to "which WebView is the app's". Returns nil
+/// before wry has created it, i.e. before `ffi::start_app()` - every caller must handle that.
+WKWebView *_Nullable CanariFindWebView(void);
+
 /// Bridges rich content (GIFs, images) committed by the iOS soft keyboard into the web layer.
 ///
 /// iOS keyboards (e.g. Gboard) deliver media through UIPasteboard.general: the keyboard copies

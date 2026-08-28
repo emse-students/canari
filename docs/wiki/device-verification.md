@@ -72,7 +72,7 @@ WP-XP-7 removal at once, which means H, I, K and the dev-panel check all ride a 
 | O | WP-STORE-1 (install source + version gate) | owed | n/a |
 | P | Cookie durability across a kill (the iOS half of WP-ANDROID-SESS-1) | n/a (fixed + verified) | owed |
 | R | The shrunk release APK still having what it needs | owed | n/a |
-| S | An iPhone obtaining a push token AT ALL (the P1 of 2026-08-27) | n/a (49 rows, healthy) | **owed on 0.14.8+** |
+| S | An iPhone obtaining a push token AT ALL (the P1 of 2026-08-27) | n/a (49 rows, healthy) | **RUN 2026-08-28 on 0.14.8: report PASSES, token FAILS.** Cause found and fixed the same day - **RE-RUN OWED on the build carrying it** |
 
 For the iOS pass, install the `ios-release` artifact of the run above rather than waiting for
 TestFlight: a dispatch does not upload there, so TestFlight is still on the previous build and check
@@ -496,7 +496,7 @@ nothing to users. Use one only to re-check a fix made after the release was cut.
 **A debug pass covers none of this**, which is why this check is separate from Q - cleared on a
 debug APK on 2026-08-26, on a build that by definition never ran R8.
 
-## S. An iPhone obtaining a push token at all - owed on iOS, from 0.14.8
+## S. An iPhone obtaining a push token at all - RUN 2026-08-28, split verdict
 
 **Proves** that the ordering fix of 2026-08-28 works, and it is the only thing that can: the call it
 replaced compiled perfectly and could never succeed, so a green iOS build says nothing here.
@@ -525,6 +525,68 @@ are in [backlog](backlog.md) under the P1; `[CanariPush] APNs token not here yet
 **Neither answer arriving means the build did not reach the phone.** Check the version the device
 runs before reading anything into the silence - TestFlight is the beta channel and an ordinary
 install is not automatic.
+
+### The run of 2026-08-28, 01:23 Paris - what it settled and what it did not
+
+**Conditions, which matter because the first attempt was worthless.** Arthur DORADOUX uninstalled and
+reinstalled 0.14.8 from TestFlight (`REGISTER_DEVICE ... isNew=true` at 01:14:45, a device id never
+seen before), in a window with no CD deploy running. An earlier attempt the same night was void:
+five CD deploys landed between 00:40 and 00:52 and each restarts every container, so the logs that
+would have carried a report were destroyed as they were written. **A hardware check and a push to
+`main` are mutually exclusive, exactly as a campaign run is.**
+
+**The half that PASSES.** At 01:23:39 the server printed, for the first time in the platform's life:
+
+```
+[PUSH_UNAVAILABLE] user=0acc3ab9... device=tauri-0acc3ab9...-mtc545la-ebnu platform=ios reason=no-token
+```
+
+The client classified its own failure, the server printed it unrewritten, and one `GROUP BY` now
+answers a question that previously took a CORS incident to stumble into. The instrumentation is
+verified on hardware, which is the only way it could be.
+
+**The half that FAILS.** `reason=no-token` means `getFcmToken()` read nothing for four minutes:
+the OS never handed this app an FCM token. **The ordering fix was necessary and is not sufficient** -
+`push_token` still holds `android | 49` and no `ios` row.
+
+**One inference made during the run and RETRACTED, recorded so it is not made again.** The device
+reconnected its WebSocket 12 times in 15 minutes, each reconnection paired with a `REGISTER_DEVICE`,
+and that was read as a full client re-initialisation which would reset the module-level
+`pushAttempted` and prevent the four-minute ladder from ever completing. **It did complete**: the
+ladder that reported started around 01:19:39 and ran straight through the events at 01:20:10,
+01:21:36 and 01:22:36. So those events are socket and device-registration churn, not a teardown of
+the JS context, and the module state survives them. Android shows the same churn (7 in 10 minutes).
+Whether the churn itself is a defect is a separate question and is not evidence about push.
+
+**What the next run must separate, and why it needed a build.** `reason=no-token` cannot say
+WHETHER AN APNs TOKEN EVER ARRIVED, which is the fork the two candidates hung on. That fact is known
+on the device and was written only to a console this machine cannot open.
+
+#### The cause was then found without another run, and the re-run is what closes this
+
+**Read the order, 2026-08-28.** `FIRMessaging.APNSToken` is set only by
+`application:didRegisterForRemoteNotificationsWithDeviceToken:`, this app does not own its
+`UIApplicationDelegate` (wry installs one inside `ffi::start_app()`), and Firebase's App Delegate
+Proxy - the declared bridge - samples `sharedApplication.delegate` exactly once, at
+`[FIRApp configure]`, which runs from `main()` before the application exists. It found nil and never
+retried, so the APNs token had nowhere to land on every launch the platform has ever had. Full
+account on
+[mobile](frontend/mobile.md#the-apns-token-had-nowhere-to-land-because-the-proxy-meant-to-catch-it-installed-nothing).
+
+**The re-run is therefore the proof, and it is worth stating what each outcome means** - everything
+native here is verified by compiling, which proves nothing about running.
+
+- An `ios` row in `push_token` closes the P1 outright.
+- Another `[PUSH_UNAVAILABLE]` is no longer ambiguous: the reason now names which branch failed -
+  `no-apns-token` (APNs still never answered, so look at entitlements, provisioning and the
+  notification permission), `fcm-token-fetch-failed` (APNs answered and FCM refused),
+  `apns-registration-refused` (the OS refused registration, a branch that previously had no observer
+  at all) or `app-delegate-absent`. **None of the four is the cause just fixed**, so a repeat of
+  `no-token` itself would mean the hook did not install and the log line
+  `[CanariPush] APNs token hook installed on ...` is the thing to ask for.
+- Run it in a QUIET WINDOW. The first attempt of 2026-08-28 was voided by five CD deploys in twelve
+  minutes: a push to `main` restarts every container and destroys its logs, so a hardware check and a
+  push are mutually exclusive, exactly as a campaign run is.
 
 ## Traps that outlived the work that found them
 
