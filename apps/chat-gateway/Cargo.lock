@@ -226,7 +226,7 @@ dependencies = [
 
 [[package]]
 name = "chat-gateway"
-version = "0.14.10"
+version = "0.14.11"
 dependencies = [
  "axum",
  "base64",
@@ -2176,7 +2176,7 @@ dependencies = [
 
 [[package]]
 name = "shared-rust"
-version = "0.14.10"
+version = "0.14.11"
 dependencies = [
  "chrono",
  "serde",
