@@ -3155,6 +3155,27 @@ static void CanariInstallRemoteNotificationHook(void) {
 }
 
 #if __has_include(<FirebaseMessaging/FirebaseMessaging.h>)
+/// Records WHY this device has no FCM token, next to the token it could not write.
+///
+/// The web layer reports the absence to the server, but on its own it can only say "no token" -
+/// and that one word covers causes needing opposite fixes: APNs never answering at all, versus
+/// APNs answering and FCM refusing. The device knows which; this is how it says so, instead of
+/// leaving the reader to learn by failing what the client already knew. Pass nil to clear it: a
+/// reason that outlives its cause is evidence for a question nobody asked.
+static void CanariWritePushDiagnostic(NSString *_Nullable reason) {
+  NSString *dir = CanariTauriDataDir();
+  if (dir == nil) {
+    return;
+  }
+  NSString *path = [dir stringByAppendingPathComponent:@"push_diagnostic.txt"];
+  if (reason == nil) {
+    [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+    return;
+  }
+  NSLog(@"[CanariPush] push diagnostic: %@", reason);
+  [reason writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+}
+
 /// Persist a freshly-obtained FCM token to fcm_token.txt and re-register it on the
 /// backend when a push context + secret already exist. Shared by the delegate
 /// callback (which fires only when the token CHANGES) and the launch-time fetch in
@@ -3168,6 +3189,7 @@ static void CanariPersistFcmToken(NSString *fcmToken) {
   }
   NSString *path = [dir stringByAppendingPathComponent:@"fcm_token.txt"];
   [fcmToken writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+  CanariWritePushDiagnostic(nil);
   CanariPushContext *ctx = CanariLoadPushContext();
   NSString *secret = CanariRetrievePushSecret();
   if (ctx != nil && secret != nil) {
@@ -3187,6 +3209,81 @@ static void CanariPersistFcmToken(NSString *fcmToken) {
 @end
 
 static CanariFcmPushDelegate *g_fcmPushDelegate = nil;
+
+// --- The APNs token, handed to FIRMessaging by hand ------------------------------------------
+//
+// WHY THIS EXISTS. FIRMessaging cannot mint an FCM token before `FIRMessaging.APNSToken` is set,
+// and the only thing that sets it is
+// `application:didRegisterForRemoteNotificationsWithDeviceToken:`. Firebase normally intercepts
+// that method itself through the App Delegate Proxy that Info.plist enables - but the proxy
+// installs itself ONCE, reading `[UIApplication sharedApplication].delegate` at the moment
+// Firebase is configured, and never looks again. Here `[FIRApp configure]` runs from
+// `canari_ios_bootstrap()`, that is from `main()` BEFORE `ffi::start_app()`: there is no
+// application object yet and therefore no delegate, so the proxy found nil, gave up, and its
+// dispatch_once never fired a second time. wry's own delegate does not implement the method
+// either. The APNs token the OS delivered on every launch had nowhere to land, `APNSToken` stayed
+// nil for the platform's entire life, and every FCM fetch failed on its own precondition.
+// Measured on hardware 2026-08-28: `push_token` held 49 android rows, never one ios row, and the
+// device reported reason=no-token.
+//
+// The sibling hook above already had to swizzle wry's delegate for remote notifications, for
+// exactly this reason; this is the same technique applied to the method carrying the token.
+// `class_replaceMethod` covers both worlds without a second path: it ADDS the method when the
+// delegate lacks it (the case today) and REPLACES it while handing back the previous
+// implementation, which the replacement chains to - so a wry that starts implementing this is
+// extended rather than silently overridden.
+
+static void (*CanariOrigDidRegisterApns)(id, SEL, UIApplication *, NSData *) = NULL;
+static void (*CanariOrigDidFailApns)(id, SEL, UIApplication *, NSError *) = NULL;
+
+static void CanariSwizzledDidRegisterApns(id self, SEL _cmd, UIApplication *application,
+                                          NSData *deviceToken) {
+  [FIRMessaging messaging].APNSToken = deviceToken;
+  NSLog(@"[CanariPush] APNs token received (%lu bytes) -> FIRMessaging",
+        (unsigned long)deviceToken.length);
+  // The precondition FIRMessaging waits on now holds, so ask here rather than leaving it to the
+  // next foreground: this is the earliest instant at which the answer can be yes.
+  CanariSyncFcmTokenIfApnsReady();
+  if (CanariOrigDidRegisterApns != NULL) {
+    CanariOrigDidRegisterApns(self, _cmd, application, deviceToken);
+  }
+}
+
+static void CanariSwizzledDidFailApns(id self, SEL _cmd, UIApplication *application,
+                                      NSError *error) {
+  // The branch that was silent. APNs refusing registration - a missing aps-environment
+  // entitlement, a provisioning profile without push, no network on a first launch - looked
+  // exactly like a device nobody had ever opened.
+  NSLog(@"[CanariPush] APNs registration REFUSED: %@", error.localizedDescription);
+  CanariWritePushDiagnostic(@"apns-registration-refused");
+  if (CanariOrigDidFailApns != NULL) {
+    CanariOrigDidFailApns(self, _cmd, application, error);
+  }
+}
+
+/// Installs both APNs-token callbacks on wry's delegate class. Call once launch has completed,
+/// which is the first moment `sharedApplication.delegate` exists - the very thing Firebase's own
+/// proxy could not wait for.
+static void CanariInstallApnsTokenHook(void) {
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    id<UIApplicationDelegate> delegate = [UIApplication sharedApplication].delegate;
+    if (delegate == nil) {
+      NSLog(@"[CanariPush] APNs token hook: app delegate absent - no push token can be obtained");
+      CanariWritePushDiagnostic(@"app-delegate-absent");
+      return;
+    }
+    Class delegateClass = [delegate class];
+    CanariOrigDidRegisterApns = (void (*)(id, SEL, UIApplication *, NSData *))class_replaceMethod(
+        delegateClass, @selector(application:didRegisterForRemoteNotificationsWithDeviceToken:),
+        (IMP)CanariSwizzledDidRegisterApns, "v@:@@");
+    CanariOrigDidFailApns = (void (*)(id, SEL, UIApplication *, NSError *))class_replaceMethod(
+        delegateClass, @selector(application:didFailToRegisterForRemoteNotificationsWithError:),
+        (IMP)CanariSwizzledDidFailApns, "v@:@@");
+    NSLog(@"[CanariPush] APNs token hook installed on %@ (chained=%d)", delegateClass,
+          CanariOrigDidRegisterApns != NULL);
+  });
+}
 #endif
 
 @interface CanariNotificationDelegate : NSObject <UNUserNotificationCenterDelegate>
@@ -3273,6 +3370,9 @@ void CanariPushSetup(void) {
                    queue:[NSOperationQueue mainQueue]
               usingBlock:^(__unused NSNotification *note) {
                 CanariInstallRemoteNotificationHook();
+#if __has_include(<FirebaseMessaging/FirebaseMessaging.h>)
+                CanariInstallApnsTokenHook();
+#endif
               }];
 
 #if __has_include(<FirebaseMessaging/FirebaseMessaging.h>)
@@ -3301,12 +3401,16 @@ void CanariSyncFcmTokenIfApnsReady(void) {
   // didReceiveRegistrationToken covers the first acquisition independently. Nothing here waits.
   if ([FIRMessaging messaging].APNSToken == nil) {
     NSLog(@"[CanariPush] APNs token not here yet - not asking FCM for one");
+    CanariWritePushDiagnostic(@"no-apns-token");
     return;
   }
   [[FIRMessaging messaging] tokenWithCompletion:^(NSString *_Nullable token,
                                                   NSError *_Nullable error) {
     if (error != nil) {
+      // APNs answered and FCM still refused - a different fault entirely from the guard above,
+      // and the reason the report has to carry which of the two it was.
       NSLog(@"[CanariPush] fetching the FCM token failed: %@", error.localizedDescription);
+      CanariWritePushDiagnostic(@"fcm-token-fetch-failed");
       return;
     }
     // Persisting an unchanged token is deliberate and cheap: this is the ONLY path that covers a

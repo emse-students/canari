@@ -72,7 +72,7 @@ WP-XP-7 removal at once, which means H, I, K and the dev-panel check all ride a 
 | O | WP-STORE-1 (install source + version gate) | owed | n/a |
 | P | Cookie durability across a kill (the iOS half of WP-ANDROID-SESS-1) | n/a (fixed + verified) | owed |
 | R | The shrunk release APK still having what it needs | owed | n/a |
-| S | An iPhone obtaining a push token AT ALL (the P1 of 2026-08-27) | n/a (49 rows, healthy) | **RUN 2026-08-28 on 0.14.8: report PASSES, token acquisition FAILS** (`reason=no-token`) |
+| S | An iPhone obtaining a push token AT ALL (the P1 of 2026-08-27) | n/a (49 rows, healthy) | **RUN 2026-08-28 on 0.14.8: report PASSES, token FAILS.** Cause found and fixed the same day - **RE-RUN OWED on the build carrying it** |
 
 For the iOS pass, install the `ios-release` artifact of the run above rather than waiting for
 TestFlight: a dispatch does not upload there, so TestFlight is still on the previous build and check
@@ -558,11 +558,35 @@ ladder that reported started around 01:19:39 and ran straight through the events
 the JS context, and the module state survives them. Android shows the same churn (7 in 10 minutes).
 Whether the churn itself is a defect is a separate question and is not evidence about push.
 
-**What the next run must separate, and why it needs a build.** `reason=no-token` cannot say WHETHER
-AN APNs TOKEN EVER ARRIVED, which is the fork the backlog's two candidates hang on. That fact is
-known on the device and is currently written only to a console this machine cannot open. Carry it to
-where the decision is made rather than learning it by failing: report the APNs state alongside the
-FCM one.
+**What the next run must separate, and why it needed a build.** `reason=no-token` cannot say
+WHETHER AN APNs TOKEN EVER ARRIVED, which is the fork the two candidates hung on. That fact is known
+on the device and was written only to a console this machine cannot open.
+
+#### The cause was then found without another run, and the re-run is what closes this
+
+**Read the order, 2026-08-28.** `FIRMessaging.APNSToken` is set only by
+`application:didRegisterForRemoteNotificationsWithDeviceToken:`, this app does not own its
+`UIApplicationDelegate` (wry installs one inside `ffi::start_app()`), and Firebase's App Delegate
+Proxy - the declared bridge - samples `sharedApplication.delegate` exactly once, at
+`[FIRApp configure]`, which runs from `main()` before the application exists. It found nil and never
+retried, so the APNs token had nowhere to land on every launch the platform has ever had. Full
+account on
+[mobile](frontend/mobile.md#the-apns-token-had-nowhere-to-land-because-the-proxy-meant-to-catch-it-installed-nothing).
+
+**The re-run is therefore the proof, and it is worth stating what each outcome means** - everything
+native here is verified by compiling, which proves nothing about running.
+
+- An `ios` row in `push_token` closes the P1 outright.
+- Another `[PUSH_UNAVAILABLE]` is no longer ambiguous: the reason now names which branch failed -
+  `no-apns-token` (APNs still never answered, so look at entitlements, provisioning and the
+  notification permission), `fcm-token-fetch-failed` (APNs answered and FCM refused),
+  `apns-registration-refused` (the OS refused registration, a branch that previously had no observer
+  at all) or `app-delegate-absent`. **None of the four is the cause just fixed**, so a repeat of
+  `no-token` itself would mean the hook did not install and the log line
+  `[CanariPush] APNs token hook installed on ...` is the thing to ask for.
+- Run it in a QUIET WINDOW. The first attempt of 2026-08-28 was voided by five CD deploys in twelve
+  minutes: a push to `main` restarts every container and destroys its logs, so a hardware check and a
+  push are mutually exclusive, exactly as a campaign run is.
 
 ## Traps that outlived the work that found them
 

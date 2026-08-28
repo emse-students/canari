@@ -68,43 +68,32 @@ entry here or closes the question.
 
 ## Measurements owed
 
-### P1 - iOS still cannot obtain a push token; the REPORT now works (measured on hardware 2026-08-28)
+### P1 - iOS could not obtain a push token: CAUSE FOUND AND FIXED 2026-08-28, hardware proof owed
 
-**Split verdict, both halves measured on an iPhone running 0.14.8 - the run is
-[check S](device-verification.md), which carries the conditions and the retraction and is not
-restated here.**
+**The report half is CLOSED and proven** - on a fresh 0.14.8 install the server printed
+`[PUSH_UNAVAILABLE] ... platform=ios reason=no-token` at 01:23:39, the first thing this platform has
+ever said about its push chain. The run is [check S](device-verification.md), which carries the
+conditions and the retraction and is not restated here.
 
-- **The instrumentation PASSES.** At 01:23:39 the server printed
-  `[PUSH_UNAVAILABLE] ... platform=ios reason=no-token`, the first thing this platform has ever said
-  about its push chain. The silence half of this P1 is closed, and closed the only way it could be.
-- **The token acquisition FAILS.** `push_token` still holds `android | 49` and no `ios` row. The
-  ordering fix (`CanariSyncFcmTokenIfApnsReady` from `didBecomeActive`) was necessary and is **not
-  sufficient**.
+**The cause was then found by reading the ORDER, not by shipping another build.** It is written up in
+full on [mobile](frontend/mobile.md#the-apns-token-had-nowhere-to-land-because-the-proxy-meant-to-catch-it-installed-nothing)
+and not repeated here. In one line: `FIRMessaging.APNSToken` is set only by
+`application:didRegisterForRemoteNotificationsWithDeviceToken:`, this app does not own its
+`UIApplicationDelegate` (wry does), and the Firebase App Delegate Proxy that was supposed to bridge
+the two looks for that delegate exactly once - at `[FIRApp configure]`, which runs from `main()`
+before the application exists. It found nil and never retried. Candidate 2 of the two this entry used
+to name was right in substance and wrong about the reason: the proxy had a delegate class to attach
+to, it simply looked before there was one.
 
-**What `reason=no-token` does and does not say.** It says `getFcmToken()` read nothing for four
-minutes - the Rust command that reads `{app_data_dir}/fcm_token.txt` never saw a file. It says
-NOTHING about whether an APNs token ever arrived, and that is precisely the fork the two remaining
-candidates hang on:
+**What shipped**: `CanariInstallApnsTokenHook` on `UIApplicationDidFinishLaunching`, plus the
+discriminator this entry asked for - `push_diagnostic.txt` written by the native branch that failed,
+read by `get_push_diagnostic`, reported verbatim. The next `[PUSH_UNAVAILABLE]` says
+`no-apns-token`, `fcm-token-fetch-failed`, `apns-registration-refused` or `app-delegate-absent`.
 
-1. **No APNs token, so FIRMessaging has nothing to work from.** `registerForRemoteNotifications`
-   never ran, or ran and Apple refused - a notification permission never granted would do it, and so
-   would an `aps-environment` that does not match the TestFlight distribution.
-2. **An APNs token arrived and the FCM token still never reached the file.**
-   `didReceiveRegistrationToken` never fires (the `FirebaseAppDelegateProxyEnabled` swizzle has no
-   delegate class to attach to - `main.mm` defines none, deliberately), or it fires while
-   `CanariTauriDataDir()` is nil, or it writes a path `get_fcm_token` does not read.
-
-**THE NEXT STEP IS TO CARRY THE DISCRIMINATOR, NOT TO GUESS.** The device knows which of the two it
-is - `[FIRMessaging messaging].APNSToken` is nil or it is not - and `CanariSyncFcmTokenIfApnsReady`
-already branches on exactly that, writing the answer to a console no one here can open. The standing
-rule says never learn by failing what a fact could have told you: expose the APNs state through the
-existing Rust command and let the client report `no-apns-token` distinctly from `no-fcm-token`. One
-build, and the next report names the cause instead of the symptom. A Mac console or `idevicesyslog`
-would answer it tonight for anyone who has one; nobody here does, which is why the fact must travel.
-
-**Do not attempt a fix before that report.** Both candidates are plausible, they need opposite
-changes, and nothing in this repository can tell which one a patch fixed - everything native here is
-verified by compiling.
+**WHAT IS OWED IS THE HARDWARE RUN, and it is the only thing that can close this.** Everything native
+here is verified by COMPILING, which proves nothing about running. Re-run [check S](device-verification.md)
+on the build that carries this: an `ios` row in `push_token` closes it; another `[PUSH_UNAVAILABLE]`
+now names which of four causes it was, and none of them is the one just fixed.
 
 ### The rest of what an iPhone will find, named by the user before it was looked for (2026-08-27)
 
@@ -126,6 +115,31 @@ and `didBecomeActive`, which the FCM fix has just made load-bearing.
 [device-verification](device-verification.md) when someone has an iPhone in hand, not a speculative
 entry here. **What must NOT happen is a fix written against a suspected iOS lifecycle bug that nobody
 has seen** - the repo has no way to tell whether it worked.
+
+### P2 - iOS carries none of the window-layout work Android already has (user, 2026-08-28)
+
+**Named by the user from real use on an iPhone**, and one of the three is already fixed. The Android
+half of each of these took a measurement and a comment to get right (`MainActivity`,
+[mobile](frontend/mobile.md#the-window-layout-the-keyboard-and-the-orientation-lock)); iOS inherited
+none of it because `gen/apple` is a different generated project nothing compared against `gen/android`.
+
+- **DONE 2026-08-28 - the keyboard.** WKWebView was never resized, so the shell was pinned to the
+  visible height inside a full-height document and a keyboard-tall empty band opened below it.
+  `CanariApplyKeyboardLayout` shrinks the WebView's frame; no web change was needed. Written up on
+  [mobile](frontend/mobile.md#ios-shrinks-the-webview-and-that-is-the-same-decision-taken-twice).
+- **OPEN - the bars at the top and the bottom.** The user reports black bands, or none at all, where
+  the status bar and the home indicator are, with the interface colliding with system text and
+  controls. Android's answer is an explicit inset contract; iOS has `env(safe-area-inset-*)` scattered
+  across `app.css` and a dozen components and no single owner. **This wants ONE pass over `app.css`
+  with a device in hand**, not local patches - the same conclusion the emoji / dead-row / device-row
+  items reached, and the same pass.
+- **OPEN - whether anything else in that Android comment has no iOS peer.** The orientation lock and
+  the bottom nav's reservation were both decided with a measurement. Nobody has asked the question on
+  iOS. Read `MainActivity.onCreate` beside `canari_ios.mm` once, deliberately, rather than waiting for
+  each to be found from use.
+
+**This closes by HARDWARE, one item at a time**, like every other iOS finding: three of three defects
+so far were invisible to every gate here.
 
 ### P3 - the one fallback in `apiFetch` logs that it was taken and not WHY (seen 2026-08-28)
 
@@ -595,6 +609,42 @@ asserts a deadline arriving live (the campaign closes polls with the close contr
 no check waits on wall-clock time at all. It belongs with the rendering pass, not with a rung.
 
 ## Messaging convergence
+
+### P1 - a device joined a real conversation under PLACEHOLDER identifiers, and every message since is queued for a ghost (measured on prod 2026-08-28)
+
+**Found while looking for the user's unexplained lost messages, and it is not a theory - the rows are
+on production.** `dm_device_group_memberships` holds one row with `userId = 'unknown'` and
+`deviceId = 'pending'`, status **`active`**, in the real conversation `7da231f8-119c-4ce2-884f-55f5c94c903f`,
+created 2026-08-27 21:00:13 UTC - **one second before** the two real members joined. Fourteen minutes
+later a `key_package` was registered under the same two literals. `queued_message` now holds **72 rows
+addressed to it, 70 of them ordinary application messages**, from 22:04 to 23:22 UTC, every one of
+them a real MLS payload that nothing will ever fetch.
+
+**Where the literals come from**: they are the client's own pre-identity placeholders.
+`BaseMlsService` initialises `deviceId = 'pending'` and resets it there on logout, and guards elsewhere
+with `if (this.deviceId && this.deviceId !== 'pending')` - so the value is KNOWN to be a non-identity,
+and one path let it reach the server anyway. Exactly one such membership and one such key package
+exist in the whole database, so this is a narrow race, not a broken path: an identity that had not
+resolved when the group was joined.
+
+**Why it is a P1 rather than debris.** The ghost holds a key package, so it passes the
+`liveDeviceIds` filter in the send fan-out and is treated as a live member - it is not skipped as a
+`SKIPPED_NO_KEY_PACKAGE` ghost would be. It is `active`, so it is in the gateway's routing set. And it
+was added to the MLS group, which means it is in the ratchet tree and every commit carries it.
+
+**What is NOT yet established, and must not be asserted**: whether this is what lost the user's
+messages. The 72 rows are COPIES; the real recipients had their own. The open question is what a
+member that never advances does to the group's epochs - that is an MLS question and it needs its own
+measurement, not an inference from this row.
+
+**Three things are owed, in order.** (1) Find the client path that sends a recipient or joins a group
+while its own id is still `'pending'` - `BaseMlsService` already knows the value is a non-identity, so
+the guard exists and one call site does not use it. (2) **Refuse the literals at the server**: a
+`userId`/`deviceId` that the authenticated session can supply must never be taken from the body, and
+`key_package` registration and membership must reject a value the client itself defines as "no
+identity yet". A destructive control needs an allowlist, and so does an identity. (3) Only then clean
+the row and its 72 messages - deleting first would destroy the evidence for (1).
+
 
 ### P3 - discovery honours a dismissal only for a row it ALREADY has, and a new device has none (measured 2026-08-27, population EMPTY today)
 

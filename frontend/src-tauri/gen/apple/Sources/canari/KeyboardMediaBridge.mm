@@ -51,8 +51,7 @@ static WKWebView * _Nullable FindWebViewInHierarchy(UIView *view) {
   return nil;
 }
 
-/// Finds the WKWebView by traversing all connected window scenes.
-static WKWebView * _Nullable FindWebView(void) {
+WKWebView * _Nullable CanariFindWebView(void) {
   for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
     if (![scene isKindOfClass:[UIWindowScene class]]) continue;
     for (UIWindow *window in ((UIWindowScene *)scene).windows) {
@@ -174,7 +173,7 @@ static void PollPasteboard(__unused NSTimer *timer) {
   WKWebView *webView = g_targetWebView;
   if (webView == nil) {
     // WKWebView was deallocated (e.g. app terminated abnormally). Try to re-acquire once.
-    webView = FindWebView();
+    webView = CanariFindWebView();
     if (webView != nil) {
       g_targetWebView = webView;
     } else {
@@ -231,7 +230,7 @@ static void StopPolling(void) {
 static void OnAppDidBecomeActive(__unused NSNotification *note) {
   WKWebView *webView = g_targetWebView;
   if (webView == nil) {
-    webView = FindWebView();
+    webView = CanariFindWebView();
     g_targetWebView = webView;
   }
   // Snap the changeCount to now – anything already in the pasteboard before the app came
@@ -253,7 +252,7 @@ void CanariKeyboardMediaStart(WKWebView *webView) {
   if (webView == nil) {
     NSLog(@"[KeyboardMediaBridge] start called with nil WebView, will try to find one later");
     // Try to find it ourselves.
-    webView = FindWebView();
+    webView = CanariFindWebView();
     if (webView == nil) {
       NSLog(@"[KeyboardMediaBridge] no WKWebView found – keyboard media bridge disabled");
       return;

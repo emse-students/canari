@@ -37,6 +37,26 @@ type PushPlatform = 'android' | 'ios';
  */
 export type PushRegistrationOutcome = { ok: true } | { ok: false; reason: 'no-token' | 'rejected' };
 
+/**
+ * Asks the native layer WHY there is no token, and falls back to the symptom when it has no answer.
+ *
+ * `no-token` is the honest limit of what this layer can see, and it is not enough: on iOS it covers
+ * APNs never answering at all and APNs answering while FCM refuses, two causes whose fixes are
+ * opposite. The native side branches on exactly that distinction already and writes the branch it
+ * took, so the report can name the cause instead of making the next reader learn it by shipping a
+ * build. Android and desktop have nothing finer to say and keep saying `no-token`.
+ */
+async function noTokenReason(): Promise<string> {
+  if (!isTauriRuntime()) return 'no-token';
+  try {
+    const diagnostic = await invoke<string | null>('get_push_diagnostic');
+    return diagnostic?.trim() || 'no-token';
+  } catch (err) {
+    console.warn('[Push] get_push_diagnostic unavailable', err);
+    return 'no-token';
+  }
+}
+
 const FCM_TOKEN_STORAGE_KEY = 'canari_fcm_token';
 const BACKGROUND_RETRY_ATTEMPTS = 6;
 const BACKGROUND_RETRY_DELAY_MS = 5000;
@@ -233,7 +253,8 @@ export async function startPushService(
   // unnoticed on iOS for the platform's whole life. Best-effort by construction: a device that
   // cannot reach the network cannot report that it cannot reach the network, and failing to file
   // the report must never be louder than the thing being reported.
-  await reportPushUnavailable(apiBaseUrl, bearerToken, deviceId, platform, outcome.reason);
+  const reason = outcome.reason === 'no-token' ? await noTokenReason() : outcome.reason;
+  await reportPushUnavailable(apiBaseUrl, bearerToken, deviceId, platform, reason);
 }
 
 /**

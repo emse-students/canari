@@ -17,7 +17,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * passed nothing while looking like it covered this.
  */
 
-const tauriInvokeStub = vi.fn(() => Promise.resolve(null));
+const tauriInvokeStub = vi.fn((_cmd?: string): Promise<unknown> => Promise.resolve(null));
 
 Object.defineProperty(globalThis, '__TAURI_INTERNALS__', {
   value: { invoke: tauriInvokeStub, transformCallback: vi.fn() },
@@ -67,6 +67,38 @@ describe('a device the OS never gives a push token', () => {
       expect(body).toMatchObject({ deviceId: 'dev-1', platform: 'android', reason: 'no-token' });
       // With no token there is nothing to register, so no registration may have been attempted.
       expect(calls.filter(([url]) => String(url).includes('/push/register'))).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reports the cause the native layer named, not the symptom this layer can see', async () => {
+    // `no-token` is where this layer's sight ends, and on iOS it covers two faults whose fixes are
+    // opposite: APNs never answering, versus APNs answering and FCM refusing. The native side has
+    // already branched on exactly that and says which; carrying its word through is what keeps the
+    // next reader from having to learn it by shipping a build.
+    //
+    // A FRESH MODULE, for the reason this file exists at all: `pushAttempted` latches on the first
+    // call, and the test above already spent it. Re-importing is the only way to reach the ladder
+    // a second time.
+    vi.resetModules();
+    const { startPushService: freshStart } = await import('./PushNotificationService');
+    tauriInvokeStub.mockImplementation((cmd?: string) =>
+      Promise.resolve(cmd === 'get_push_diagnostic' ? 'no-apns-token' : null)
+    );
+
+    vi.useFakeTimers();
+    try {
+      const started = freshStart('https://api', 'jwt', 'dev-1');
+      await vi.advanceTimersByTimeAsync(300_000);
+      await started;
+
+      const reports = vi
+        .mocked(globalThis.fetch)
+        .mock.calls.filter(([url]) => String(url).includes('/api/mls/push/unavailable'));
+      expect(reports).toHaveLength(1);
+      const body = JSON.parse((reports[0][1] as RequestInit).body as string);
+      expect(body.reason).toBe('no-apns-token');
     } finally {
       vi.useRealTimers();
     }

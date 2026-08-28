@@ -543,6 +543,31 @@ Both live in `MainActivity.onCreate`, both are in `gen/android` which `tauri and
 from a template, and neither is caught by a compile. `frontend/src/lib/mobile/androidWindowLayout.test.ts`
 reads the Kotlin and the resources as text for exactly that reason - it is the only gate either has.
 
+#### iOS shrinks the WebView, and that is the same decision taken twice
+
+**WKWebView is never resized for the keyboard.** It keeps its full height and only the VISUAL viewport
+shrinks. `keyboardViewport.svelte.ts` notices and pins the app shell to the visible height - correctly,
+given what it can see - but the DOCUMENT is still full height, so a keyboard-tall empty band opens
+below the shell, and WebKit, auto-scrolling to reveal the focused field, scrolls the page straight onto
+it. One cause, two faces again: a composer pushed out of reach, and a large empty zone appearing on
+scroll.
+
+`CanariApplyKeyboardLayout` (`canari_ios.mm`, on `UIKeyboardWillChangeFrame`) shrinks the WebView's
+frame by the keyboard's overlap with its superview. That moves the LAYOUT viewport itself, so
+`window.innerHeight` and the shell height agree again and the band cannot exist. **No web change was
+needed**: `computeSnapshot` already reported `layoutInsetBottom: 0` for a natively-resized window - that
+branch had been written for a native resize iOS never performed. The margin was never the fix on either
+platform.
+
+It settles the safe area for free, which on Android needed a second mechanism: a WebView whose bottom
+edge no longer reaches the home indicator is given `safeAreaInsets.bottom == 0` by UIKit, so
+`env(safe-area-inset-bottom)` stops reserving a strip that is now behind the keyboard.
+
+Stateless on purpose - the target is recomputed from the superview's bounds on every event, so there is
+no remembered frame to restore and nothing that can drift. `UIKeyboardWillChangeFrame` alone covers
+appearing, disappearing, height changes and interactive dismissal: on the way out the end frame is
+off-screen, the intersection is empty, and the overlap is zero. One path, both directions.
+
 #### `android:windowSoftInputMode="adjustResize"` IS INERT, and the manifest still carries it
 
 Since Android 15 an edge-to-edge window is never resized for the IME. The attribute is not an error
@@ -1323,13 +1348,50 @@ healthy Android rows stood in for both platforms. `PushNotificationService` now 
 `[PUSH_UNAVAILABLE] user=… device=… platform=… reason=…` - see
 [chat-delivery](../services/chat-delivery.md#a-device-that-cannot-get-a-push-token-at-all).
 
-**MEASURED ON HARDWARE 2026-08-28, and the verdict is split.** On a fresh 0.14.8 install the server
-printed `[PUSH_UNAVAILABLE] ... platform=ios reason=no-token` at 01:23:39 - the first thing this
-platform has ever said about its push chain, so the reporting half is proven. But `push_token` still
-holds no `ios` row: **the ordering fix was necessary and is not sufficient.** What `no-token` cannot
-say is whether an APNs token ever arrived, which is the fork the two remaining candidates hang on -
-see [check S](../device-verification.md) for the run and [backlog](../backlog.md) for the discriminator
-the next build must carry.
+**MEASURED ON HARDWARE 2026-08-28, and the verdict was split.** On a fresh 0.14.8 install the
+server printed `[PUSH_UNAVAILABLE] ... platform=ios reason=no-token` at 01:23:39 - the first thing
+this platform had ever said about its push chain, so the reporting half is proven. But `push_token`
+still held no `ios` row: **the ordering fix was necessary and was not sufficient.**
+
+#### The APNs token had nowhere to land, because the proxy meant to catch it installed nothing
+
+**FOUND 2026-08-28 by reading the order, not by another build.** `FIRMessaging` cannot mint an FCM
+token before `FIRMessaging.APNSToken` is set, and the only thing that sets it is
+`application:didRegisterForRemoteNotificationsWithDeviceToken:`. That method belongs to the
+`UIApplicationDelegate` - **and on iOS this app does not own its delegate.** wry creates and installs
+one inside `ffi::start_app()`; `main.mm` deliberately declares none, because a second one would never
+be registered. Firebase's answer to exactly that situation is the App Delegate Proxy, which `Info.plist`
+enables explicitly and `main.mm` names as the bridge.
+
+The proxy installs itself ONCE. It reads `[UIApplication sharedApplication].delegate` at the moment
+Firebase is configured, under a `dispatch_once`, and never looks again. `[FIRApp configure]` runs from
+`canari_ios_bootstrap()` - that is from `main()`, **before** `ffi::start_app()` - when there is no
+application object at all and therefore no delegate. It found nil, gave up, and never retried. So on
+every launch for the platform's entire life: the OS obtained an APNs token, handed it to a delegate
+with no such method, and the token was dropped; `APNSToken` stayed nil; every FCM fetch failed on its
+precondition; the device reported `no-token`.
+
+**The evidence was already in the file.** `CanariInstallRemoteNotificationHook` swizzles wry's delegate
+BY HAND for remote notifications, and `CanariPushProcessRemoteNotificationUserInfo` calls
+`[[FIRMessaging messaging] appDidReceiveMessage:]` by hand too - both are work the proxy performs when
+it is installed. The codebase had already recorded that the proxy was absent; nobody had connected
+that to the token.
+
+The fix stops depending on it. `CanariInstallApnsTokenHook`, installed on
+`UIApplicationDidFinishLaunching` - the first moment the delegate exists, which is precisely what
+Firebase's proxy could not wait for - puts the two APNs callbacks on wry's delegate class with
+`class_replaceMethod`, sets `APNSToken` itself, and asks FCM for a token on the spot. It ADDS the
+method today and would CHAIN to a real one tomorrow, so a wry that starts implementing it is extended
+rather than silently overridden.
+
+**AND THE REPORT NOW CARRIES THE CAUSE INSTEAD OF THE SYMPTOM.** `no-token` covers faults whose fixes
+are opposite, so the native layer - which branches on the distinction already - writes the branch it
+took to `push_diagnostic.txt`, the Rust command `get_push_diagnostic` reads it and
+`PushNotificationService` sends it verbatim: `no-apns-token` (APNs never answered),
+`fcm-token-fetch-failed` (APNs answered, FCM refused), `apns-registration-refused` (the OS refused
+registration outright - the branch that had no observer at all), `app-delegate-absent`. The file is
+deleted the moment a token arrives, so a reason cannot outlive its cause. See
+[check S](../device-verification.md) for the run this must be measured against.
 
 ## CI/CD
 

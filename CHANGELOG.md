@@ -177,9 +177,53 @@ which is also where every release up to and including v0.13.1 now lives.
 
   **Measured on hardware the same night.** A fresh 0.14.8 install on an iPhone produced
   `[PUSH_UNAVAILABLE] ... platform=ios reason=no-token` - the report works, and it is the first thing
-  the platform has ever said about its push chain. The token itself is still not obtained, so the
-  ordering was necessary and not sufficient; the cause is narrowed and the next step is to carry the
-  APNs state into the report rather than guess between the two candidates left.
+  the platform has ever said about its push chain. The token itself was still not obtained, so the
+  ordering was necessary and not sufficient.
+
+  **THE REST OF THE CAUSE, found by reading the order rather than shipping another build.** An FCM
+  token needs `FIRMessaging.APNSToken`, and the only thing that sets it is
+  `application:didRegisterForRemoteNotificationsWithDeviceToken:` - a method on the
+  `UIApplicationDelegate`, **which this app does not own**: wry installs one inside `ffi::start_app()`
+  and `main.mm` deliberately declares none. Firebase's answer to exactly that is its App Delegate
+  Proxy, enabled explicitly in `Info.plist` and named in `main.mm` as the bridge. It installs itself
+  ONCE, reading `sharedApplication.delegate` when Firebase is configured - and `[FIRApp configure]`
+  runs from `main()` **before** `start_app()`, when there is no application object at all. It found
+  nil, gave up, and never looked again. So every launch since the platform shipped: the OS produced an
+  APNs token, handed it to a delegate with no such method, and it was dropped; `APNSToken` stayed nil;
+  FCM refused on its precondition. **The evidence was already in the file** - the neighbouring code
+  swizzles wry's delegate by hand for remote notifications and calls `appDidReceiveMessage:` by hand,
+  both jobs the proxy does when it is installed. The absence had been recorded for months without
+  being read as a statement about the token. `CanariInstallApnsTokenHook` now puts the two APNs
+  callbacks on wry's delegate class on `DidFinishLaunching` - the first moment that delegate exists -
+  sets `APNSToken` itself and asks FCM on the spot; `class_replaceMethod` adds the method today and
+  would chain to a real one tomorrow.
+
+  **And the report now names the cause instead of the symptom.** `no-token` covered faults whose fixes
+  are opposite, so the native layer writes the branch it actually took to `push_diagnostic.txt`,
+  `get_push_diagnostic` reads it and the client sends it verbatim: `no-apns-token`,
+  `fcm-token-fetch-failed`, `apns-registration-refused` (the OS refusing registration outright, which
+  had no observer at all) or `app-delegate-absent`. The file is deleted the moment a token arrives, so
+  a reason cannot outlive its cause. **The hardware proof is owed**: everything native here is verified
+  by compiling, which proves nothing about running.
+
+- **The iOS keyboard opened a large empty zone under the interface, and pushed the composer out of
+  reach.** WKWebView is never resized for the keyboard: it keeps its full height while only the visual
+  viewport shrinks. The web layer saw that and pinned the app shell to the visible height - correctly,
+  for what it could see - but the document was still full height, so a keyboard-tall empty band opened
+  below the shell, and WebKit, auto-scrolling to reveal the focused field, scrolled the page onto it.
+  One cause wearing two faces, exactly as on Android.
+
+  Fixed the way Android already had been: by moving the LAYOUT viewport, never with a margin.
+  `CanariApplyKeyboardLayout`, on `UIKeyboardWillChangeFrame`, shrinks the WebView's frame by the
+  keyboard's overlap with its superview, so `window.innerHeight` itself moves and shell and document
+  agree again. **No web change was needed** - `computeSnapshot` already stood its `layoutInsetBottom`
+  down for a natively-resized window; that branch had been written for a native resize iOS never
+  performed. It also settles the safe area for free, which on Android took a second mechanism: a
+  WebView whose bottom edge no longer reaches the home indicator is given `safeAreaInsets.bottom == 0`
+  by UIKit, so `env(safe-area-inset-bottom)` stops reserving a strip that is behind the keyboard.
+  Stateless by construction - the target is recomputed from the superview's bounds every time, so
+  there is no remembered frame to restore, and one notification serves both directions because the
+  end frame on the way out is off-screen and the overlap is zero.
 
 - **A refresh refusal named no client version**, so every `Refresh refused for the NATIVE app` line
   from an iPhone was ambiguous until the user stated by hand which build the device ran.

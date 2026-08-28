@@ -7,6 +7,7 @@
 #import <Security/Security.h>
 #import <UIKit/UIKit.h>
 #import <UserNotifications/UserNotifications.h>
+#import <WebKit/WebKit.h>
 
 static volatile bool g_isInForeground = false;
 
@@ -153,6 +154,63 @@ static void CanariSetupFirebaseIfAvailable(void) {
 #endif
 }
 
+/// Shrinks the WebView to the space the soft keyboard leaves - the iOS peer of Android's
+/// `MainActivity.applyKeyboardInsets`, taken for the same reason and with the same shape.
+///
+/// WKWebView is never resized for the keyboard: it keeps its full height and only the VISUAL
+/// viewport shrinks. The web layer sees that and pins the app shell to the visible height
+/// (`keyboardViewport.svelte.ts`), but the document is still full height, so a keyboard-tall empty
+/// band opens below the shell - and the page, auto-scrolled by WebKit to reveal the focused field,
+/// is scrolled straight onto it. That band is the large empty zone the composer sits above.
+///
+/// The fix is the one Android already took: move the LAYOUT viewport instead of papering over it
+/// with a margin. Changing the WebView's frame changes `window.innerHeight` itself, so shell height
+/// and document height agree again - and `computeSnapshot` then reports `layoutInsetBottom: 0`
+/// with no web change at all, because that branch was already written for a native resize iOS
+/// never performed.
+///
+/// It settles the safe area for free, which on Android needed a second mechanism: a WebView whose
+/// bottom edge no longer reaches the home indicator is given `safeAreaInsets.bottom == 0` by
+/// UIKit, so `env(safe-area-inset-bottom)` stops reserving a strip that is now behind the keyboard.
+///
+/// Stateless on purpose: the target is recomputed from the superview's bounds on every event, so
+/// there is no remembered "original frame" to restore and nothing that can drift out of step.
+/// `UIKeyboardWillChangeFrame` alone covers appearing, disappearing, height changes (predictive
+/// bar, accessory views) and interactive dismissal - on the way out the end frame is off-screen,
+/// the intersection is empty and the overlap is zero, so one path serves both directions.
+static void CanariApplyKeyboardLayout(NSNotification *note) {
+  WKWebView *webView = CanariFindWebView();
+  UIView *parent = webView.superview;
+  if (parent == nil) {
+    // Before start_app() there is no WebView; the next keyboard event finds one.
+    return;
+  }
+
+  CGRect keyboardEnd = [note.userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue];
+  CGRect overlapRect =
+      CGRectIntersection(parent.bounds, [parent convertRect:keyboardEnd fromView:nil]);
+  CGFloat overlap = CGRectIsNull(overlapRect) ? 0.0 : CGRectGetHeight(overlapRect);
+
+  CGRect target = parent.bounds;
+  target.size.height -= overlap;
+  if (CGRectEqualToRect(webView.frame, target)) {
+    return;
+  }
+
+  NSNumber *duration = note.userInfo[UIKeyboardAnimationDurationUserInfoKey];
+  NSNumber *curve = note.userInfo[UIKeyboardAnimationCurveUserInfoKey];
+  NSLog(@"[CanariIOS] keyboard overlap=%.0f -> webview height %.0f", overlap, target.size.height);
+  // Ride the keyboard's own curve rather than a guessed one: the shift is then a single motion
+  // instead of the layout snapping ahead of the keys it is making room for.
+  [UIView animateWithDuration:duration.doubleValue
+                        delay:0
+                      options:(UIViewAnimationOptions)(curve.unsignedIntegerValue << 16)
+                   animations:^{
+                     webView.frame = target;
+                   }
+                   completion:nil];
+}
+
 static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   g_isInForeground = true;
   canari_ios_on_resume();
@@ -207,6 +265,12 @@ void canari_ios_bootstrap(void) {
                    queue:[NSOperationQueue mainQueue]
               usingBlock:^(NSNotification *note) {
                 CanariOnWillResignActive(note);
+              }];
+  [nc addObserverForName:UIKeyboardWillChangeFrameNotification
+                  object:nil
+                   queue:[NSOperationQueue mainQueue]
+              usingBlock:^(NSNotification *note) {
+                CanariApplyKeyboardLayout(note);
               }];
   CanariRequestNotificationPermission();
   CanariSetupFirebaseIfAvailable();
