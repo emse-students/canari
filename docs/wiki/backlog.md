@@ -207,6 +207,46 @@ Not done tonight because the cheap version is genuinely cheap and the useful ver
 which table owns it, whether a web session counts as a device, and what a dashboard should show
 (distribution by version, or the laggards below `minClientVersion`).
 
+**AND A THIRD MECHANISM ALREADY HAS THE COLUMN, WRITES IT ON ONE PLATFORM AND LEAVES IT NULL ON THE
+REST - measured on prod 2026-08-28.** `key_package.deviceAppVersion` exists, `register-device`
+sanitises it, and both client services accept it. Over the last 21 days, by `deviceOs`:
+
+| `deviceOs` | enrolments | carrying a version |
+| --- | --- | --- |
+| android | 58 | 36 |
+| ios | 48 | **5** |
+| windows | 40 | **0** |
+| macos | 12 | **0** |
+| linux | 6 | **0** |
+
+Two separate causes, and the population is what separates them. **The web never sends it at all**:
+`WebMlsService.publishKeyPackage` passes `deviceName` and `deviceOs` and stops there, while
+`TauriMlsService.publishKeyPackage` awaits `getRuntimeAppVersion()` and includes it - so windows,
+macos and linux read 0 out of 58 by construction, and that half is one line. **The iOS half is not
+that**: it goes through the Tauri path, which does send the field, and still 43 of 48 enrolments
+carry nothing - so `getRuntimeAppVersion()` is answering empty on that platform, which is a
+different defect and the one worth measuring before writing anything. Android's 22 missing rows say
+it is not purely iOS either.
+
+**Why this is worth more than a column being tidy: `minClientVersion` is raised BY HAND and is
+supposed to be reasoning about what devices actually run.** On the evidence above, the one table that
+records a device's build is empty for every desktop browser and for 90% of iPhones - so raising the
+floor is a decision taken against no data at all, which is exactly what
+[legacy-compatibility](legacy-compatibility.md) warns about from the other side. Found while checking
+the per-user device cap on a real account, not by a gate.
+
+**A REAL ACCOUNT IS AT THE CAP, AND IT IS NOT A DEFECT - it is what the cap looks like from the
+inside.** `39b96d7e` holds 15/15 `key_package` rows: **14 `ios` between 2026-07-21 and today**, plus
+one `windows` taken today, and 13 `auth_sessions` all created between 2026-08-26 and 2026-08-28 with
+12 distinct iPhone user agents. That is the iOS debugging campaign - every install minted a device
+and nothing ever deleted one - and the next install on that account will be REFUSED. The mechanism is
+complete and behaves: the server logs `[REGISTER_DEVICE] REFUSED device cap`, throws
+`DEVICE_LIMIT_REACHED`, the client classifies it as `DeviceLimitReachedError` at the fetch and
+`chat_device_limit_reached` tells the user in French to delete a device in Settings. Recorded because
+the failure LOOKS like "iOS cannot enrol" and cost a HEAL rung a night once already, on the test
+account, for exactly this reason. **A device is only reclaimed by the 90-day retention window or by a
+person deleting it**, so an account debugged through fifteen installs stays capped for three months.
+
 ### P2 - the chat-gateway serves CORS `*` in production, and the variable CD sets for it is inert (measured 2026-08-27)
 
 **Measured, not inferred.** `docker exec infrastructure-chat-gateway-1 printenv ALLOW_ORIGIN` answers
