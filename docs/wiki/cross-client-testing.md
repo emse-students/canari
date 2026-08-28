@@ -49,7 +49,7 @@ is the numbered ladder below, top to bottom - the only copy of that order.**
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | SETUP-1 | Build the debug APK, plus the jniLibs `.so` rescue | `+A1` | `passed` 2026-08-14 |
-| SETUP-2 | Clean uninstall + install (wipes `mls.bin`) - `install -r` keeps the store instead, and avoids re-paying SETUP-4 s 2FA | `+A1` | `skipped` - deliberate |
+| SETUP-2 | Clean uninstall + install (wipes `mls.bin`) - `install -r` keeps the store instead, and avoids re-paying SETUP-4's 2FA | `+A1` | `skipped` - deliberate |
 | SETUP-3 | Start logcat | `+A1` | re-run each session |
 | SETUP-4 | W1: log in as owner, enrol the device, set the PIN | `+user` | `passed` 2026-08-14 |
 | SETUP-5 | W2: log in as peer, set the PIN | `W1 W2` | `passed` 2026-08-14 |
@@ -400,7 +400,7 @@ four wipe defects found by hand:
 | HEAL-REVOKE-3 | First reconnection after revocation resynchronises as a NEW device would, history included - a shortfall must be REPORTED, not silently partial | `W1 W2` | `pending` |
 | HEAL-REVOKE-4 | The heal-on-diff mechanism catches up what the first reconnection missed, and the TRIGGER CONDITIONS are part of the assertion | `W1 W2` | `pending` |
 | HEAL-REVOKE-5 | Revoked, then the account CHANGES a lot while it is away, then it returns | `W1 W2` `+user` | `INVALID` on `48b65d08` - the instrument; re-run owed |
-| HEAL-REVOKE-6 | The same, where the revoked device is **the phone** - A1 s store is SQLite behind the native layer, not the WebView IndexedDB the web wipe clears, so "the wipe ran" is a different claim and must be read from the native store | `+A1` `+user` | `pending` - the instrument is in, the victim must be A1 |
+| HEAL-REVOKE-6 | The same, where the revoked device is **the phone** - A1's store is SQLite behind the native layer, not the WebView IndexedDB the web wipe clears, so "the wipe ran" is a different claim and must be read from the native store | `+A1` `+user` | `pending` - the instrument is in, the victim must be A1 |
 | HEAL-REVOKE-7 | The **ORDER** of the return: back BEFORE the other devices are online, and back AFTER | `W1 W2` `+user` | `INVALID` on `48b65d08` - the instrument; both orders untried |
 | HEAL-REVOKE-8 | A group **DELETED while the device was revoked** must not return as a Sync row | `W1 W2` `+user` | `INVALID` on `48b65d08` - the instrument; untried |
 | HEAL-REVOKE-9 | Revoked while **OFFLINE**: the wipe is DEFERRED, not lost, and must not fire while the server is unreachable | `W1 W2` | `pending` - written 2026-08-28 |
@@ -417,7 +417,7 @@ four wipe defects found by hand:
 | HEAL-NEW-10 | Two fresh devices enrolling **at the same time** - the add-lock under two concurrent enumerations. Costs a second 2FA | `+user` | `pending` |
 | HEAL-NEW-11 | The responder is our own **W1, arriving LATE** | `+user` | `FAIL` on `48b65d08` - the instrument; re-run owed |
 | HEAL-NEW-12 | The responder is the **PEER W2, arriving LATE** | `+user` | `pending` on `a35cf4e5`, narrowed as HEAL-NEW-2 - same stale ledger `FAIL` |
-| HEAL-NEW-13 | The responder is **the phone, arriving LATE** - says whether the retry is driven by OUR reconnect or the RESPONDER s. Read with HEAL-NEW-5, whose responder can never answer | `+A1` `+user` | `pending` |
+| HEAL-NEW-13 | The responder is **the phone, arriving LATE** - says whether the retry is driven by OUR reconnect or the RESPONDER's. Read with HEAL-NEW-5, whose responder can never answer | `+A1` `+user` | `pending` |
 | HEAL-NEW-14 | **The heal is INTERRUPTED** - a reload, then a link cut and restored, while rows are still amber. A reload must not restart the ladder from zero, and a cut must not leave a row amber with nothing owed | `+user` | `pending` |
 | HEAL-NEW-15 | **Is the app usable while it heals?** N rows amber, and the user navigates and sends | `+user` | `FAIL` on `48b65d08` - the instrument; re-run owed |
 
