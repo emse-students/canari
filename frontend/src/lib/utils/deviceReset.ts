@@ -77,35 +77,41 @@ export async function wipeDeviceToFactory(closeStorage?: () => Promise<void>): P
     await step('the native app data', async () => {
       await invoke('clear_app_data');
     });
-  } else {
-    await step('the local databases', async () => {
-      // `indexedDB.databases()` is absent on Firefox, where there is no way to enumerate them; the
-      // per-user database is dropped by its own name instead, which is what the session teardown
-      // already did before this existed.
-      if (!indexedDB.databases) return;
-      const all = await indexedDB.databases();
-      await Promise.all(
-        all
-          .filter((db) => db.name?.startsWith('CanariDB'))
-          .map(
-            (db) =>
-              new Promise<void>((resolve) => {
-                if (!db.name) return resolve();
-                const req = indexedDB.deleteDatabase(db.name);
-                req.onsuccess = () => resolve();
-                req.onerror = () => resolve();
-                // Reached only if something else still holds the database open - a second tab, for
-                // instance. The delete then completes when that connection closes, so the reset is
-                // not lost, only deferred; saying so is what stops it reading as success.
-                req.onblocked = () => {
-                  console.warn(`[RESET] ${db.name} is still open elsewhere - delete deferred`);
-                  resolve();
-                };
-              })
-          )
-      );
-    });
   }
+
+  // UNCONDITIONAL, AND IT USED TO BE THE `else` OF THE BRANCH ABOVE. Every platform has a WebView
+  // with its own stores, so the native steps are an ADDITION to this one and never a replacement -
+  // measured on a Pixel 6a on 2026-08-28, which held a `CanariDB_<userId>` of 5.9 MB that no wipe on
+  // that platform could reach. The phone's real message store is SQLite, so that database should not
+  // have existed at all; what created it is a call site that opened IndexedDB without asking the
+  // runtime, and one such call site is enough to leave a revoked phone holding its conversations.
+  await step('the local databases', async () => {
+    // `indexedDB.databases()` is absent on Firefox, where there is no way to enumerate them; the
+    // per-user database is dropped by its own name instead, which is what the session teardown
+    // already did before this existed.
+    if (!indexedDB.databases) return;
+    const all = await indexedDB.databases();
+    await Promise.all(
+      all
+        .filter((db) => db.name?.startsWith('CanariDB'))
+        .map(
+          (db) =>
+            new Promise<void>((resolve) => {
+              if (!db.name) return resolve();
+              const req = indexedDB.deleteDatabase(db.name);
+              req.onsuccess = () => resolve();
+              req.onerror = () => resolve();
+              // Reached only if something else still holds the database open - a second tab, for
+              // instance. The delete then completes when that connection closes, so the reset is
+              // not lost, only deferred; saying so is what stops it reading as success.
+              req.onblocked = () => {
+                console.warn(`[RESET] ${db.name} is still open elsewhere - delete deferred`);
+                resolve();
+              };
+            })
+        )
+    );
+  });
 
   // The HTTP cache the service worker keeps. Cached avatars and media outlive every other store,
   // which is exactly what "wipe the cache" means to the person asking for it.

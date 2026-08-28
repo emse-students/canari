@@ -44,6 +44,7 @@
 import { spawnSync } from "node:child_process";
 import { client, ensureChat, evaluate } from "./chat.mjs";
 import { census, installTag, isRegistered, revokedAt } from "./devices.mjs";
+import { nothingOfTheAccountRemains, storageFootprint } from "./footprint.mjs";
 import { createGroup, deleteGroup } from "./groupnav.mjs";
 import { isUp, killBrowser, startBrowser } from "./launch.mjs";
 import { ORIGIN, PORTS, SITE } from "./names.mjs";
@@ -242,39 +243,6 @@ function classifyWipe(lines) {
     wipeIncomplete: said(/\[RESET\] finished with \d+ step\(s\) unfinished/),
     stepsFailed: lines.filter((l) => /\[RESET\] could not clear/.test(l)).length,
   };
-}
-
-/**
- * What is LEFT on the victim, read off the device instead of out of its own log.
- *
- * `[RESET] done` is a statement about the steps that RAN, which is a different claim from "the disk
- * is empty" - and on 2026-08-28 the two disagreed on prod: a revoked device printed `nothing of this
- * device remains` and kept ten localStorage keys, its per-user MLS database and 8.2 MB, because the
- * SYNC_WATCHDOG nobody had stopped rebuilt them 1.25 s later. Twenty HEAL rows asserted the log line
- * and none asked the disk, so the wipe was believed for exactly as long as it was broken.
- *
- * COUNTS ONLY, NEVER NAMES: a surviving key is `mls_not_ready_since:<userId>:<groupId>`, and this
- * output is read into a PUBLIC repository.
- */
-async function storageFootprint(cx) {
-  const raw = await evaluate(
-    cx,
-    `(async function () {
-      var keys = -1;
-      try { keys = localStorage.length; } catch (e) { keys = -1; }
-      var dbs = -1;
-      try {
-        if (indexedDB.databases) {
-          var all = await indexedDB.databases();
-          dbs = all.filter(function (d) { return d.name && d.name.indexOf('CanariDB') === 0; }).length;
-        }
-      } catch (e) { dbs = -1; }
-      var bytes = null;
-      try { bytes = (await navigator.storage.estimate()).usage; } catch (e) { bytes = null; }
-      return JSON.stringify({ localStorageKeys: keys, canariDatabases: dbs, bytesInUse: bytes });
-    })()`,
-  );
-  return JSON.parse(raw);
 }
 
 /**
@@ -489,7 +457,7 @@ const expectations = {
    * asserted at zero - the page writes `PARAGLIDE_LOCALE` back as soon as it renders - while the
    * databases are, because nothing re-creates one without an MLS client, which was the defect.
    */
-  theWipeLeftNoDatabase: leftBehind.canariDatabases === 0,
+  theWipeLeftNoDatabase: nothingOfTheAccountRemains(leftBehind),
   theDiskWasActuallyRead: typeof leftBehind.canariDatabases === "number" &&
     leftBehind.canariDatabases >= 0,
   /** It came back as a device the server had never seen - a revoked id must not be reusable. */

@@ -148,6 +148,20 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A revoked PHONE kept its conversations, because the wipe's platform branch replaced the step it
+  should have added to.** `wipeDeviceToFactory` cleared either the native stores or the WebView's,
+  never both: inside Tauri it deleted `mls.bin` and every `.db` in the app data directory and left
+  IndexedDB untouched. Measured on a Pixel 6a on 2026-08-28, that WebView held a 5.9 MB
+  `CanariDB_<userId>` - a store nothing on that platform should ever have created, since the phone's
+  message backend is SQLite. **The database was there because a reader named its backend by hand:**
+  the posts mini panel built an `IndexedDbStorage` directly instead of asking `getStorage`, so on a
+  phone it read a store nothing writes - answering the posts sidebar from an unrelated database while
+  the chat answered from SQLite - and CREATED that database by opening it. Both halves are fixed: the
+  WebView cleanup is now unconditional, and the panel asks the runtime which store this device has.
+  A guard test refuses any call site outside `db.ts` naming a backend, because naming one does not
+  pick a slower path, it picks a different DEVICE - the MLS state persister writes `mls.bin` to the
+  filesystem without consulting that choice. The panel's silent `catch` now says what it could not
+  read, instead of rendering "no conversations" as if it knew.
 - **A revoked device wiped itself and then put its own state back, 1.25 s later.** Measured on
   production to the millisecond: the server recorded the revocation at 08:40:39.773, the client
   received the frame and ran the full factory wipe - every `CanariDB*` database deleted,

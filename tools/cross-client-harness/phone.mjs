@@ -81,6 +81,36 @@ export function sh(cmd, timeout = 30_000) {
 export const adb = (args, timeout = 60_000) => run(args, timeout);
 
 /**
+ * What the app still holds on DISK, which is the half no CDP connection can see.
+ *
+ * `footprint.mjs` measures the WebView's stores; on a phone those are only part of the answer,
+ * because `wipeDeviceToFactory` also calls the native `delete_mls_state` and `clear_app_data`, and
+ * both write to the Tauri app data directory rather than to any web origin. A row that asks whether
+ * a revoked PHONE was really erased and reads only localStorage has measured the smaller half.
+ *
+ * COUNTS AND BYTES, NEVER PATHS: a file here is named after a user and a group, and this output is
+ * read into a PUBLIC repository.
+ *
+ * @returns `{ files, bytes }`, or `{ error }` when the app's own data cannot be listed - which
+ *   happens on a RELEASE build, where `run-as` is refused. That is a limit of the instrument and is
+ *   reported as one, never as an empty device.
+ */
+export function nativeFootprint() {
+  try {
+    // `run-as` is the only way in without root, and it needs a debuggable build.
+    const out = sh(`run-as ${PKG} find /data/data/${PKG} -type f -printf '%s\n' 2>/dev/null`);
+    const sizes = out
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => /^\d+$/.test(l))
+      .map(Number);
+    return { files: sizes.length, bytes: sizes.reduce((a, b) => a + b, 0) };
+  } catch (e) {
+    return { error: String(e.stderr || e.message).split(/\r?\n/)[0] };
+  }
+}
+
+/**
  * The app's pid, or null when it is not running.
  *
  * `pidof` EXITS 1 when nothing matches, so the un-caught form threw exactly in the case the LIFE

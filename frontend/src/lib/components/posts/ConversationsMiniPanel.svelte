@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { IndexedDbStorage, type ConversationMeta } from '$lib/db';
+  import { getStorage, type ConversationMeta } from '$lib/db';
   import type { Conversation } from '$lib/types';
   import { getSavedUserId } from '$lib/stores/user';
   import {
@@ -136,16 +136,27 @@
       return;
     }
     try {
-      const storage = new IndexedDbStorage(uid);
-      await storage.init();
+      // ASK THE RUNTIME WHICH STORE THIS DEVICE HAS. This used to build an `IndexedDbStorage`
+      // directly, which is the web backend: on a phone, where the real message store is SQLite, it
+      // read an unrelated database and CREATED it by opening it. A Pixel 6a was measured on
+      // 2026-08-28 holding 5.9 MB of `CanariDB_<userId>` that nothing on that platform deletes, so
+      // the wrong store was also a store a revoked device kept.
+      const storage = await getStorage(uid);
       const convos = await storage.getConversations();
       idbItems = convos
         .filter((meta) => !isChannelConversationId(meta.id))
         .sort((a, b) => b.updatedAt - a.updatedAt)
         .slice(0, 20)
         .map((meta) => buildItemFromMeta(meta, uid));
-    } catch {
-      /* silent */
+      // IT DOES NOT CLOSE, DELIBERATELY, AND ADDING A `close()` HERE WOULD BREAK THE LIVE SESSION.
+      // `SqliteStorage.close()` closes the plugin's POOL for that path, and the pool is shared with
+      // the chat session running behind this page - a reader would be tearing down the writer's
+      // handle. The web backend has the opposite shape and its own connection, so the honest answer
+      // is that the lifetime belongs to whoever opened the session, not to this panel.
+    } catch (e) {
+      // A reader that fails silently is a panel that renders empty and says nothing, which reads as
+      // "no conversations" - the one answer it must not invent.
+      console.warn('[POSTS] could not read the stored conversations for the mini panel:', e);
     } finally {
       idbLoading = false;
     }

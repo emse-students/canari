@@ -258,6 +258,36 @@ deliberately not added: the login page's "reset" button is the other caller, and
 back in writes keys within seconds, so a late check would accuse an ordinary new session of being a
 zombie.
 
+**And what step 5 REACHES was platform-dependent until the same day.** `wipeDeviceToFactory` had one
+`if (isTauriRuntime())` whose two arms were the native stores and the WebView's, so a phone got
+`mls.bin` and every `.db` in the app data directory deleted and kept its IndexedDB. A Pixel 6a
+measured on 2026-08-28 held a 5.9 MB `CanariDB_<userId>` after the wipe. The tell was inside the
+function already: the cache and `localStorage` steps sat outside the branch, and only the databases
+had been pulled in. **Every platform has a WebView, so the native steps are an ADDITION**, and the
+web cleanup now runs unconditionally.
+
+That database should not have existed at all, and the reason it did is worth more than the wipe fix.
+Inside Tauri the message store is SQLite - `getStorage` picks it, and the MLS state persister writes
+`mls.bin` to the filesystem beside it without consulting that choice - so nothing on a phone writes
+`CanariDB_*`. What created it was a READER naming its backend by hand: the posts mini panel built an
+`IndexedDbStorage` directly, which on a phone answered the sidebar from a database nothing writes
+while the chat answered from SQLite, and brought that database into existence by opening it. Naming a
+backend does not pick a slower path, it picks a different DEVICE; `db/backendChoice.test.ts` now
+refuses any call site outside `db.ts` that does it.
+
+What the wipe reaches, per platform, is therefore:
+
+| Store | Web | Tauri |
+| --- | --- | --- |
+| MLS state | `CanariDBMls_<userId>` (IndexedDB) | `mls.bin`, via `delete_mls_state` |
+| Messages and conversations | `CanariDB_<userId>` (IndexedDB) | `*.db` in the app data dir, via `clear_app_data` |
+| WebView stores | deleted | deleted - and this is the half that was missing |
+| Response cache, `localStorage`, `sessionStorage` | deleted | deleted |
+| Biometric key | n/a | `BiometricService.disable()` |
+
+`native_flags.json` is deliberately not deleted: it holds UI booleans, the biometric one of which is
+cleared by the step above, and no account data.
+
 **A device revoked while OFFLINE is not wiped offline, by design.** Every login path asks the server
 `isDeviceRevoked`, which answers `false` when it cannot be reached - a status code is an answer, a
 transport failure is not - so the wipe happens at the first login WITH a network and never on a dead

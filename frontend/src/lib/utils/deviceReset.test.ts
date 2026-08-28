@@ -1,6 +1,12 @@
 import { wipeDeviceToFactory } from './deviceReset';
 
-vi.mock('$lib/utils/openExternal', () => ({ isTauriRuntime: () => false }));
+// Mutable, because the two runtimes are exactly what the branch below is about.
+let tauri = false;
+vi.mock('$lib/utils/openExternal', () => ({ isTauriRuntime: () => tauri }));
+
+const invokeMock = vi.fn(async (_cmd: string) => {});
+vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string) => invokeMock(cmd) }));
+vi.mock('$lib/services/biometric', () => ({ BiometricService: { disable: async () => {} } }));
 
 /**
  * A revoked device is one its owner declared lost or stolen, so what must remain afterwards is an
@@ -120,5 +126,75 @@ describe('wipeDeviceToFactory', () => {
     await wipeDeviceToFactory();
 
     expect(logs).toContain('[RESET] done - nothing of this device remains');
+  });
+});
+
+/**
+ * The native steps are an ADDITION to the WebView ones, never a replacement.
+ *
+ * They used to be the two arms of one `if`, so a phone got `mls.bin` and its `.db` files deleted and
+ * kept every IndexedDB database in its WebView. That was not theoretical: a Pixel 6a was measured on
+ * 2026-08-28 holding a 5.9 MB `CanariDB_<userId>` after the wipe, on a platform whose real message
+ * store is SQLite - so the database should not have existed AND could not be removed.
+ */
+describe('wipeDeviceToFactory on a native runtime', () => {
+  const deleted: string[] = [];
+  const invoked: string[] = [];
+  let present: string[] = [];
+
+  beforeEach(() => {
+    tauri = true;
+    deleted.length = 0;
+    invoked.length = 0;
+    present = ['CanariDB_u1'];
+    vi.stubGlobal('indexedDB', {
+      databases: async () => present.map((name) => ({ name })),
+      deleteDatabase: (name: string) => {
+        const req: Record<string, unknown> = {};
+        deleted.push(name);
+        present = present.filter((n) => n !== name);
+        queueMicrotask(() => (req.onsuccess as () => void)?.());
+        return req;
+      },
+    });
+    vi.stubGlobal('caches', { keys: async () => [], delete: async () => true });
+    invokeMock.mockImplementation(async (cmd: string) => {
+      invoked.push(cmd);
+    });
+  });
+
+  afterEach(() => {
+    tauri = false;
+    vi.unstubAllGlobals();
+  });
+
+  it('deletes the WebView databases as well as the native files', async () => {
+    const failures = await wipeDeviceToFactory();
+
+    expect(failures).toEqual([]);
+    expect(invoked).toContain('delete_mls_state');
+    expect(invoked).toContain('clear_app_data');
+    // The half that was missing: a phone kept this.
+    expect(deleted).toContain('CanariDB_u1');
+  });
+
+  it('does not claim an empty device while a WebView database survives', async () => {
+    const errors: unknown[][] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...a) => errors.push(a));
+    // A database that outlives its own deletion - which is what the phone looked like.
+    vi.stubGlobal('indexedDB', {
+      databases: async () => [{ name: 'CanariDB_u1' }],
+      deleteDatabase: () => {
+        const req: Record<string, unknown> = {};
+        queueMicrotask(() => (req.onsuccess as () => void)?.());
+        return req;
+      },
+    });
+
+    await wipeDeviceToFactory();
+
+    const said = errors.flat().join(' ');
+    expect(said).toContain('SURVIVED');
+    spy.mockRestore();
   });
 });

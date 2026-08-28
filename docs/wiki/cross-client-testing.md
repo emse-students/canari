@@ -623,6 +623,21 @@ without an MLS client. The product defect itself is fixed and shipped in `v0.14.
 HEAL-REVOKE rows must run on a build carrying that fix - which for A1 means a new APK, since the
 Tauri app embeds the frontend and a CD deploy never reaches it.**
 
+**AND ASKING THE PHONE THE SAME QUESTION FOUND A SECOND DEFECT BEFORE ANY ROW RAN, 2026-08-28.**
+`node footprint.mjs --device A1` answered `canariDatabases: 1`, `bytesInUse: 5939115` on a device
+whose message store is SQLite - so the WebView held 5.9 MB that nothing on that platform writes and,
+until that morning, nothing on that platform deleted: `wipeDeviceToFactory` had the native stores and
+the WebView's as the two ARMS of one branch. The database existed because the posts mini panel named
+its backend by hand instead of asking `getStorage`. Both are fixed, with a guard test on the cause;
+story in `CHANGELOG.md`, mechanism on
+[auth](frontend/modules/auth.md#erasing-a-revoked-device-and-the-125-s-that-undid-it).
+
+**Two things follow for the rows themselves.** A HEAL-REVOKE cell on A1 must read BOTH halves -
+`footprint.mjs` sees the WebView and only `nativeFootprint()` in `phone.mjs`, over `adb run-as`, sees
+`mls.bin` and the `.db` files - and a row that reads one half has measured the smaller one. And the
+build the phone must carry is now `v0.14.11`, not `v0.14.10`: the wipe shipped in .10, the half that
+reaches the WebView on a phone did not.
+
 **THE CAUSE OF EVERY HEAL-NEW FAILURE WAS THE PER-USER DEVICE CAP, AND THE PREDICATE WAS RIGHT ALL
 ALONG, 2026-08-28 10:22.** One mint on a quiet prod settled it: `POST /api/mls/register-device -> 400`,
 `[KP] Publication failed (400) - welcome_request deferred to next connection`, then
