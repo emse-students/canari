@@ -148,6 +148,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A paid form's sticky payment bar sat visibly to the right of the form content above it** on
+  desktop/tablet widths. `.page-scroll-wrap` (the scrollable ancestor every routed page renders
+  inside) has `will-change: transform` for the swipe-nav-between-tabs feature, which per spec
+  makes it the **containing block** for `position: fixed` descendants - its own box already starts
+  after the sidebar, since it fills `<main>` inside the `md:pl-[4.5rem]`-padded column
+  (`+layout.svelte`). The payment bar's own `md:left-[4.5rem]` then applied that same sidebar
+  offset a second time, on a containing block already shifted once - a deterministic double-offset,
+  not a scrollbar or browser quirk. Removed the now-redundant class; the bar and the form now share
+  the exact same box with nothing left to keep in sync by hand.
 - **An iPhone could never obtain a push token, and nothing anywhere reported it.** Measured on
   production: `SELECT platform, count(*) FROM push_token GROUP BY platform` answered `android | 49`
   and nothing else - not one row had ever carried `platform = 'ios'`, and `voipToken` was null on all
