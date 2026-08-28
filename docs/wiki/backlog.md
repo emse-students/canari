@@ -672,10 +672,11 @@ endpoint, so neither guard is allowed to be the only one.
    application frames addressed to a ghost) stay until the guards are live, or a client re-creates
    them. Cleaning first also destroys the evidence for (2).
 2. **NOT ESTABLISHED: whether the ghost is what stopped the activation.** The peer's real devices
-   were `pending` and an active member of Jolan's was online and polling throughout - the server
-   answered it `invitations=8` at 23:03, 23:03, 23:09, 23:10, 23:11 and 23:16 and it committed none
-   of them. Whether `addMember` was failing over a tree holding the placeholder's leaf, or the
-   client skipped for its own reason, is a CLIENT-log question and no server line separates them.
+   were `pending` and an active member device of the OWNER's account was online and polling
+   throughout - the server answered it `invitations=8` at 23:03, 23:03, 23:09, 23:10, 23:11 and
+   23:16 and it committed none of them. Whether `addMember` was failing over a tree holding the
+   placeholder's leaf, or the client skipped for its own reason, is a CLIENT-log question and no
+   server line separates them.
    **Do not assert the guards fixed it.** MULTI-8 and MULTI-9 on
    [cross-client-testing](cross-client-testing.md) are the rows that answer it.
 3. **A report for the stranded state.** `No active membership` is logged at `LOG` and is also the

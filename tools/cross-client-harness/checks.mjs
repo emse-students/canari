@@ -183,6 +183,22 @@ export const PHASES = {
       "healnew.mjs --row 3",
       "healnew.mjs --row 11",
       "healnew.mjs --row 15",
+      // THE REVOKED DEVICE, AFTER THE NEW ONE, because its assertion is an EQUALITY against a fresh
+      // device and there is no point measuring the difference before the reference itself passes.
+      // Each of these rows costs two enrolments and one revocation - it mints the victim, revokes it,
+      // moves the world, brings it back, then mints a fresh device in the SAME world to compare
+      // against - so they are the most expensive rows in the phase and none of them is cheap dirt.
+      //
+      // 7's two orders are adjacent for the same reason 3 and 11 are: read side by side, a difference
+      // in final state is a FAIL for the pair and a difference in time is dirt carrying a number.
+      "healrevoke.mjs --row 5",
+      "healrevoke.mjs --row 8",
+      "healrevoke.mjs --row 7 --order first",
+      "healrevoke.mjs --row 7 --order last",
+      // THE FOUR LEGACY ROWS LAST, and `heal.mjs` most of all: it restores an MLS snapshot, which is a
+      // ratchet REWIND over W1's real state. Everything that reached W1 since its snapshot is rolled
+      // back out of the store, so a revoke row after it would be comparing two devices against a W1
+      // that had forgotten the world they were both trying to catch up with.
       "heal.mjs",
       "heal-a1.mjs",
       "heal-w2.mjs",
@@ -268,8 +284,23 @@ export const PHASES = {
       "multi.mjs --only 4",
       "multi.mjs --only 5",
       "multi.mjs --only 6",
+      // FOUR ROWS THAT READ THE MEMBERSHIP TABLE, added 2026-08-28 after a conversation lost both its
+      // directions for 134 minutes. `multi.mjs` is about the phone as a second device; these are
+      // about `dm_device_group_memberships`, which two hundred rows on this ladder never read - and
+      // the one that does reads WHO is named rather than WHAT STATUS they hold.
+      //
+      // 10 FIRST, AND IT NEEDS NO CLIENT AT ALL. It is the whole-population invariant, so it is the
+      // one row here that can fail because of something no other row touched - three of the ten
+      // stranded memberships found on production had stood 25 days. Running it before the three that
+      // build state means its count describes the database as the phase FOUND it.
+      "roster.mjs --row 10",
+      "roster.mjs --row 7",
+      "roster.mjs --row 8",
+      "roster.mjs --row 9",
     ],
-    needs: ["W1", "W2", "A1"],
+    // W3 IS THE SECOND WEB DEVICE rows 8 and 9 enrol while the peer is away, and A1 stays for the six
+    // phone rows. Both are narrowed below - no row here needs the two together.
+    needs: ["W1", "W2", "A1", "W3"],
   },
   CALL: { title: "audio and video", scripts: [], needs: ["W1", "W2", "A1"] },
   CORRUPT: { title: "deliberate store damage", scripts: [], needs: ["W1", "W2"] },
@@ -327,6 +358,10 @@ export const PHONE_SCRIPTS = {
   // browsers. Without this entry a `--file healnew.mjs --row 1` run was refused for want of a cable
   // it does not use, which is the refusal-with-no-reason that teaches an operator `--no-preflight`.
   HEAL: ["heal.mjs", "heal-a1.mjs"],
+  // SIX OF TEN. Every `multi.mjs` row is about the phone as the account's second device - the phase's
+  // own comment says there is no MULTI row two browsers alone can answer, and that was true until the
+  // four `roster.mjs` rows, which read a database table and never open A1.
+  MULTI: ["multi.mjs"],
 };
 
 /**
@@ -343,7 +378,10 @@ export const PHONE_SCRIPTS = {
 export const SCRATCH_SCRIPTS = {
   // The primitive and the six rows that reuse it. `heal.mjs`, `heal-a1.mjs`, `heal-w2.mjs` and
   // `heal-web.mjs` break a device that already HELD the group, so none of them touches W3.
-  HEAL: ["newdevice.mjs", "healnew.mjs"],
+  HEAL: ["newdevice.mjs", "healnew.mjs", "healrevoke.mjs"],
+  // MULTI-8 and MULTI-9 enrol a second web device of the owner; MULTI-7 and MULTI-10 do not, and
+  // MULTI-10 opens no client at all.
+  MULTI: ["roster.mjs --row 8", "roster.mjs --row 9"],
 };
 
 /**
@@ -376,10 +414,26 @@ export const SCRATCH_SCRIPTS = {
  *
  * A string, not a number: it is compared only against another spelling of the same argument, and
  * `Number()` here would turn a typo into `NaN` and make every comparison false but one.
+ *
+ * TWO SPELLINGS, BECAUSE THE RIG HAS TWO. `--only` is what `del.mjs`, `read.mjs` and `multi.mjs` take;
+ * `--row` is what `healnew.mjs`, `healrevoke.mjs` and `roster.mjs` take. A matcher that knew only the
+ * first read every `--row` invocation as selecting NOTHING, which collapses to "this file's whole
+ * declaration applies" - so `roster.mjs --row 10`, which opens no client at all, was preflighted for
+ * the scratch device two rows 8 and 9 need. That is the safe direction and it is still the same fault
+ * the narrowing exists to prevent: a flag the matcher was never shown. It degrades quietly, which is
+ * why it is worth naming here rather than discovering from a refusal.
+ *
+ * A SELECTOR, NOT EVERY FLAG. `--destructive`, `--order`, `--stay` and `--settle` change what a run
+ * may DO or how long it waits, never WHICH row it runs. Reading them here would make two invocations
+ * of the same row look like two different rows.
  */
+const SELECTORS = ["--only", "--row"];
 const onlyOf = (words) => {
-  const i = words.indexOf("--only");
-  return i === -1 ? null : words[i + 1];
+  for (const flag of SELECTORS) {
+    const i = words.indexOf(flag);
+    if (i !== -1) return words[i + 1];
+  }
+  return null;
 };
 
 export function devicesFor(file, args = []) {

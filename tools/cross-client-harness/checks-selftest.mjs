@@ -205,6 +205,33 @@ const cases = [
   { file: "newdevice.mjs", args: [], phase: "HEAL", a1: false, w3: true },
   { file: "heal-a1.mjs", args: [], phase: "HEAL", a1: true, w3: false },
   { file: "heal-web.mjs", args: [], phase: "HEAL", a1: false, w3: false },
+  // THE SELECTOR IS SPELT `--row` IN HALF THE RIG, and a matcher that knew only `--only` read every
+  // one of those invocations as selecting nothing - which collapses to the file's whole declaration.
+  // `roster.mjs --row 10` opens no client at all and was being preflighted for the scratch device
+  // that rows 8 and 9 enrol. Safe direction, same fault: a flag the matcher was never shown.
+  { file: "roster.mjs", args: ["--row", "10"], phase: "MULTI", a1: false, w3: false },
+  { file: "roster.mjs", args: ["--row", "7"], phase: "MULTI", a1: false, w3: false },
+  { file: "roster.mjs", args: ["--row", "8"], phase: "MULTI", a1: false, w3: true },
+  { file: "roster.mjs", args: ["--row", "9"], phase: "MULTI", a1: false, w3: true },
+  // A FLAG THAT IS NOT A SELECTOR MUST NOT SPLIT A ROW IN TWO. `--order` says which direction row 7
+  // runs in, not which row - both spellings are the same row and both need the scratch profile.
+  {
+    file: "healrevoke.mjs",
+    args: ["--row", "7", "--order", "first"],
+    phase: "HEAL",
+    a1: false,
+    w3: true,
+  },
+  {
+    file: "healrevoke.mjs",
+    args: ["--row", "7", "--order", "last"],
+    phase: "HEAL",
+    a1: false,
+    w3: true,
+  },
+  // A PHONE ROW OF THE SAME PHASE MUST STILL GET ITS CABLE AND NOT THE PROFILE, which is the whole
+  // reason the two narrowings are read independently.
+  { file: "multi.mjs", args: ["--only", "3"], phase: "MULTI", a1: true, w3: false },
 ];
 for (const c of cases) {
   const got = devicesFor(c.file, c.args);
