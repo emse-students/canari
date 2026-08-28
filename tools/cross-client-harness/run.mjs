@@ -122,6 +122,13 @@ const READY = `(function () {
       var gate = !!document.querySelector('#encryption-pin') ||
         document.body.innerText.indexOf('PIN de chiffrement') !== -1;
       if (gate) return 'LOCKED';
+      // A CLIENT WITH NO SESSION IS NOT A PAGE THAT CANNOT BE JUDGED, and calling both 'unknown' cost
+      // the four HEAL-REVOKE rows of 2026-08-28. A logged-out W2 sat on /login, the 'unknown' repair
+      // sent it to /chat, the app bounced it straight back, and four passes later the phase refused
+      // with 'still unknown after 4 repair(s)' - a state no baseline in this rig restored, because
+      // launch.mjs no-ops on a running browser and pin.mjs only answers a gate that never mounts.
+      // The two want opposite repairs, so the probe names which one it is looking at.
+      if (/^\/login/.test(location.pathname) || !!document.querySelector('#username')) return 'signedOut';
       // THE PROOF BELOW ONLY DESCRIBES /chat, SO ONLY /chat MAY BE JUDGED BY IT. This test used to
       // admit /communities as well, on the reasoning that the PIN gate mounts there too - which is
       // true and is already settled one line above, before this ever runs. What it actually did was
@@ -179,9 +186,10 @@ const runScript = (args) =>
 /**
  * THE PREFLIGHT REPAIRS WHAT IT CAN, AND SAYS SO EVERY TIME.
  *
- * Two states are expected rather than exceptional - a fresh tab starts at the PIN gate, and a client
- * left on `/posts` cannot prove it is unlocked because the gate does not mount there - so refusing
- * to run over either would just move a manual step from one place to another. Both are repaired.
+ * Three states are expected rather than exceptional - a fresh tab starts at the PIN gate, a client
+ * left on `/posts` cannot prove it is unlocked because the gate does not mount there, and a row that
+ * revokes or logs a device out leaves it with no session at all - so refusing to run over any of them
+ * would just move a manual step from one place to another. All three are repaired.
  *
  * They are repaired LOUDLY. A silent repair would hide the thing worth knowing: which check left the
  * instrument in that state. TYPE-3 closes a tab by design and W1 comes back locked; that is fine and
@@ -575,6 +583,19 @@ async function preflight(devices, { quiet = false } = {}) {
         console.log(`  fix  ${d.padEnd(3)} ${s.overlay} overlay(s) still up on ${s.path} - dismissing`);
         await dismissOverlay(d);
         deadlineMs = 3000;
+      } else if (s.locked === 'signedOut') {
+        // THE ONE REPAIR THIS LOOP DID NOT HAVE, and its absence was not a missing convenience: no
+        // other baseline in the rig restores a session. `launch.mjs start` no-ops on a browser that is
+        // already running and `pin.mjs` answers a gate a logged-out client never mounts, so a device
+        // left signed out could not be brought to a named starting point by anything here.
+        //
+        // `login.mjs` is idempotent by reading before acting and usually costs no credential at all -
+        // the SSO cookies live on auth.canari-emse.fr and cas.emse.fr, which wiping the app's origin
+        // does not touch. The deadline is the widest in this loop because this repair is a full OIDC
+        // round trip, not a click.
+        console.log(`  fix  ${d.padEnd(3)} on ${s.path} with no session - signing it back in`);
+        await runScript(['login.mjs', '--device', d]);
+        deadlineMs = 40000;
       } else if (s.locked === 'unknown') {
         console.log(`  fix  ${d.padEnd(3)} on ${s.path}, where the PIN gate does not mount - sending it to /chat`);
         const cx = await client(PORTS[d], null, { focus: false });

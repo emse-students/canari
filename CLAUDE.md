@@ -176,9 +176,14 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     [backlog](docs/wiki/backlog.md). **`enrolled` is a product fact again, and no HEAL-NEW cell needs
     re-measuring for that reason.** (2) All four
     HEAL-REVOKE rows were refused by the preflight because **W2 was alive, on `/login`, and logged
-    out** - `still unknown after 4 repair(s)` - a state no baseline in this rig restores, since
-    `launch.mjs start` no-ops on a running browser and `unlock.mjs` only answers a PIN. Try
-    `login.mjs --device W2`. **This is queue item 6 blocking rows, not merely owed.** Detail and
+    out** - `still unknown after 4 repair(s)`. **FIXED 2026-08-28, structurally: a client with no
+    session is not a page that cannot be judged**, and calling both `unknown` is what cost the rows.
+    `run.mjs`'s probe now answers `signedOut` (path `/login`, or a `#username` field) and the repair
+    loop signs the device back in with `login.mjs --device <d>`, which is idempotent and usually costs
+    no credential - the SSO cookies are on `auth.canari-emse.fr` and `cas.emse.fr`, which wiping the
+    app's origin does not touch. That was the ONE baseline the rig did not have: `launch.mjs start`
+    no-ops on a running browser and `pin.mjs` answers a gate a logged-out client never mounts. It is
+    queue item 6's per-STEP half, arriving because a rung was blocked by an inherited state. Detail and
     every measurement are on the board and in
     [testing-methodology](docs/wiki/testing-methodology.md); neither is restated here.
 
@@ -192,6 +197,18 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     answers (`isDeviceRevoked` says `false` when unreachable, so the wipe lands at the first login
     WITH a network) and no run has ever shown. Story in `CHANGELOG.md`, mechanism on
     [auth](docs/wiki/frontend/modules/auth.md#erasing-a-revoked-device-and-the-125-s-that-undid-it).
+    **AND A THIRD P1 CAME OUT OF ASKING THE PHONE THE SAME QUESTION, FIXED 2026-08-28: a revoked
+    PHONE kept its conversations.** `node footprint.mjs --device A1` answered `canariDatabases: 1`,
+    `bytesInUse: 5939115` on a device whose message store is SQLite. Two causes, both fixed with a
+    guard test: the wipe's platform branch REPLACED the WebView cleanup instead of adding to it (the
+    tell was in the same function - caches and localStorage were outside the branch), and the store
+    existed at all because a READER, the posts mini panel, named `IndexedDbStorage` by hand instead
+    of asking `getStorage`, creating by opening what it then wrongly read. **A phone has TWO halves
+    and a row reading one has measured the smaller:** `footprint.mjs` sees the WebView,
+    `nativeFootprint()` in `phone.mjs` sees `mls.bin` and the `.db` files over `adb run-as`. Story in
+    `CHANGELOG.md`, mechanism on
+    [auth](docs/wiki/frontend/modules/auth.md#erasing-a-revoked-device-and-the-125-s-that-undid-it),
+    two rules in [durable-rules](docs/wiki/durable-rules.md#mls-state-and-keys).
 
     **Two things must NOT be read as settled:** DEL-10 passed where it FAILed on `2a4297cb` but
     nothing names what changed and the two runs measured different queues, so its P2 STAYS OPEN; and
@@ -389,8 +406,10 @@ JS/Rust version parity` in `code-analysis.yml` now reads the two committed files
 
 **AN APK IS NOT REACHED BY A DEPLOY: `frontendDist: "../build"` means the Tauri app EMBEDS the
 frontend**, so every web fix reaches W1/W2/W3 through CD and reaches A1 only in a new build. That is
-why v0.14.10 is being cut for the revocation-wipe fix - a version has to identify its content, or
-`minClientVersion` and check S are reasoning about a name. What IS owed is
+why v0.14.10 was cut for the revocation-wipe fix and **v0.14.11 for the half of it that reaches the
+WebView on a phone** - a version has to identify its content, or `minClientVersion` and check S are
+reasoning about a name. **v0.14.11 is the build A1 must carry** before any HEAL-REVOKE row or the
+delete-every-device test is worth running: .10 is green but measures the defect. What IS owed is
 one iOS proof: `minClientVersion` is raised BY HAND from `/admin/platform`, and while a release can
 now REACH App Store Connect, TestFlight is the BETA channel - nothing yet shows a build reaching an
 ordinary iOS user. Ship the client, verify it arrived, THEN raise
