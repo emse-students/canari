@@ -39,16 +39,17 @@
  * failure mode that produces a confident wrong answer.
  */
 import { spawnSync } from "node:child_process";
-import { ensureChat } from "./chat.mjs";
+import { client, ensureChat } from "./chat.mjs";
 import { installTag } from "./devices.mjs";
 import { isUp, killBrowser, startBrowser } from "./launch.mjs";
-import { SITE } from "./names.mjs";
+import { ORIGIN, PORTS, SITE } from "./names.mjs";
 import { becomeANewDevice } from "./newdevice.mjs";
 import { forceStop, launch, pid, sh } from "./phone.mjs";
 import { onlineDevicesOf } from "./presence.mjs";
 import { bringToReady } from "./ready-repair.mjs";
 import { record, unmet } from "./results.mjs";
-import { navigationCost, readAll, sidebar, whoAmI, watch as watchRows } from "./syncrows.mjs";
+import { splitBySubset, subsetSettled } from "./servable.mjs";
+import { activeGroupIds, cut, navigationCost, readAll, sidebar, whoAmI, watch as watchRows } from "./syncrows.mjs";
 import { report } from "./watch.mjs";
 
 const argv = process.argv.slice(2);
@@ -70,9 +71,15 @@ const opt = (name, fallback = null) => {
  * statement about who was online, not about the mechanism** - rows 3, 11 and 15 name W1, another
  * device of the OWNER and therefore a member of all eleven, and they are satisfiable unchanged.
  *
- * What such a row must assert is therefore the SERVABLE subset, the way row 1 uses `expect: 'either'`
- * for a question whose answer is a fact about the account rather than about the code. Until that is
- * written, a peer-responder row is scoped on the board and not run.
+ * SO THEY ASSERT THE SERVABLE SUBSET, AND THAT IS THE SAME CLAIM NARROWED, NOT A WEAKER ONE. Rows 2
+ * and 12 carry `expect: 'servableSubset'`: the responder's own client is asked which groups it is
+ * actually a member of, the fresh device's rows are intersected with that list, and every row in the
+ * intersection must heal. The rows outside it are recorded and not asserted - a group no online
+ * device is a member of has no path to this device at all, and demanding one is how a rig blames the
+ * product for the shape of an account. An EMPTY intersection is `INVALID`, never a pass: a predicate
+ * over an empty set is vacuously true, which would make the one row that cannot be run the fastest
+ * PASS on the board. The same reasoning as row 1's `expect: 'either'` - where the answer is a fact
+ * about the account, the row's job is the SEPARATION, and here the separation is measured by id.
  *
  * THE ROWS, AS DATA.
  *
@@ -96,7 +103,7 @@ const ROWS = {
     responder: "w2",
     at: "start",
     what: "fresh device, the PEER online from the start",
-    expect: "healed",
+    expect: "servableSubset",
   },
   3: {
     id: "HEAL-NEW-3",
@@ -117,7 +124,7 @@ const ROWS = {
     responder: "w2",
     at: "late",
     what: "fresh device alone, then the PEER arrives",
-    expect: "healed",
+    expect: "servableSubset",
   },
   15: {
     id: "HEAL-NEW-15",
@@ -460,8 +467,87 @@ if (row.at === "late") {
 const respondersReadyAt = mark("responders in place");
 timeline.push(respondersReadyAt);
 
+// ---------------------------------------------------------------------------------------------
+// WHAT THE RESPONDER CAN ACTUALLY SERVE, ASKED OF THE RESPONDER, BEFORE ANYTHING IS WAITED ON.
+//
+// A RESPONDER CAN ONLY ANSWER FOR A GROUP IT IS A MEMBER OF. For an own-account responder that is
+// every group, so "the sidebar went quiet" is the right proof and these rows never needed this. For
+// a PEER it is a subset - measured 2026-08-28, eleven groups on the owner against two on the peer
+// that shares the most - and `everyRowHealed` is then unreachable however correct the app is. The
+// row that asserted it recorded a product FAIL for a fact about who was online.
+//
+// SO THE ROW'S CLAIM IS SCOPED TO THE SUBSET AND THE SUBSET IS MEASURED, NEVER ASSUMED. It is read
+// from the responder's own client, at the moment the responder is in place, because it is exactly
+// then that it is true: a `late` row has just started the peer, and a membership read taken before
+// that would describe a browser that was not running.
+//
+// AN EMPTY SUBSET IS UNOBSERVABLE, NOT A PASS. If the peer shares nothing with the fresh device
+// there is no heal anybody could have served, and a predicate over an empty set is vacuously true -
+// which would turn the one row that cannot be run into the fastest PASS on the board.
+// ---------------------------------------------------------------------------------------------
+/** The full ids the responder is a member of, and the fresh device's rows that intersect them. */
+let servable = null;
+if (row.expect === "servableSubset") {
+  const which = row.responder.toUpperCase();
+  const rcx = client(PORTS[which], new URL(ORIGIN[which]).hostname);
+  const rwho = await whoAmI(rcx);
+  const groups = await activeGroupIds(rcx, rwho.userId ?? "");
+  rcx.close();
+  const before = await sidebar(cx);
+  const ids = new Set(groups.ids ?? []);
+  // ONE DEFINITION OF THE SUBSET, shared with the termination proof below and with its self-test.
+  // Splitting here and re-filtering there is how the two would drift apart, and only one of them
+  // decides the verdict.
+  const { inTheSubset, outside } = splitBySubset(before.tiles, ids);
+  servable = {
+    responder: which,
+    responderGroups: groups.ids?.length ?? null,
+    unreadable: groups.why,
+    ids,
+    rowsInTheSubset: inTheSubset.map((t) => cut(t.id)),
+    rowsOutside: outside.map((t) => cut(t.id)),
+  };
+  note(
+    `servable ${JSON.stringify({
+      responder: which,
+      responderGroups: servable.responderGroups,
+      unreadable: servable.unreadable,
+      inTheSubset: servable.rowsInTheSubset.length,
+      outside: servable.rowsOutside.length,
+    })}`,
+  );
+  if (groups.ids === null) {
+    record(row.id, "INVALID", {
+      unobservable: `the row asserts what ${which} can serve and its membership could not be read: ${groups.why}`,
+      what: row.what,
+      topology,
+      timeline,
+    });
+    cx.close();
+    process.exit(1);
+  }
+  if (inTheSubset.length === 0) {
+    record(row.id, "INVALID", {
+      unobservable: `${which} shares no group with this device's ${before.rows ?? 0} row(s), so no heal here could have been served by the responder the row names`,
+      what: row.what,
+      servable: { responderGroups: servable.responderGroups, rowsOutside: servable.rowsOutside },
+      topology,
+      timeline,
+    });
+    cx.close();
+    process.exit(1);
+  }
+}
+
 note(`watching the sidebar for up to ${SETTLE_MS / 1000}s`);
-const w = await watchRows(cx, { timeoutMs: SETTLE_MS, log: (m) => console.log(m) });
+// TERMINATION IS A PROOF, AND FOR A SUBSET ROW IT IS A DIFFERENT PROOF - the rows the responder
+// cannot serve are allowed to stay amber, so waiting for the whole sidebar would burn the deadline
+// every time and report a stall nobody could have avoided.
+const w = await watchRows(cx, {
+  timeoutMs: SETTLE_MS,
+  log: (m) => console.log(m),
+  ...(servable ? { settledWhen: subsetSettled(servable.ids) } : {}),
+});
 timeline.push(mark(w.settled ? "settled" : "deadline reached"));
 
 const usability = row.usability ? await navigationCost(cx) : null;
@@ -500,6 +586,11 @@ const expectations = {
   timelineIsStamped: timeline.every((m) => typeof m.at === "number" && typeof m.wall === "string"),
 };
 if (row.expect === "healed") expectations.everyRowHealed = healed;
+// THE SUBSET ROW'S CLAIM, AND IT IS THE SAME CLAIM NARROWED, NOT A WEAKER ONE: every group the
+// responder could have answered for did heal. The rows outside the subset are REPORTED and not
+// asserted - a group nobody online is a member of has no path to this device, and demanding one is
+// how a rig blames the product for the shape of the account.
+if (row.expect === "servableSubset") expectations.everyServableRowHealed = healed;
 // The responder the row NAMES must be the one that could have answered. For an own-account
 // responder that is a fleet fact; for the peer, the fleet must hold NOTHING of ours, or a second
 // device of the owner could have served the Welcome and the row would be measuring the wrong path.
@@ -525,6 +616,18 @@ const detail = {
   responder: row.responder,
   responderAt: row.at,
   healed,
+  // The subset as it was measured, minus the id Set, which is a working value and not a result.
+  servable: servable
+    ? {
+        responder: servable.responder,
+        responderGroups: servable.responderGroups,
+        rowsInTheSubset: servable.rowsInTheSubset,
+        rowsOutside: servable.rowsOutside,
+        finalStateOfTheSubset: (w.final?.tiles ?? [])
+          .filter((t) => servable.rowsInTheSubset.includes(t.id))
+          .map((t) => ({ id: t.id, ready: t.ready })),
+      }
+    : null,
   settledInMs: w.settled ? w.elapsedMs : null,
   stalledForMs: w.settled ? null : w.elapsedMs,
   finalState,

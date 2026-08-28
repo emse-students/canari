@@ -55,15 +55,32 @@ export const cut = (s) => (typeof s === "string" && s.length > 8 ? s.slice(0, 8)
  * `data-ready` is the string "true"/"false", not a boolean - a dataset value always is - so it is
  * compared as one. A tile carrying neither attribute is reported as `unhooked`: that is not zero
  * syncing rows, it is a reader that no longer matches the markup, and the two must never look alike.
+ *
+ * IT ALSO RETURNS THE ROWS THEMSELVES, BECAUSE A COUNT CANNOT ANSWER "WHICH". `tiles` is the same
+ * information keyed by the groupId the hook now carries, and it exists for one question the counts
+ * make unaskable: of the rows still amber, which are groups a device currently online could serve at
+ * all? A responder is a member of some groups and not others, so "9 syncing" is a number with two
+ * completely different meanings behind it. The counts stay, because every existing caller reads them
+ * and a subset verdict must never quietly replace a total one.
+ *
+ * FULL IDS, NOT PREFIXES, AND THEY STOP AT THE PROCESS BOUNDARY. The join happens between two
+ * BROWSER contexts - the fresh device's sidebar and the responder's group list - so it can only be
+ * done in node, on values that came from both. Prefixes would make the join lossy in the one
+ * direction that matters: two groups colliding on eight characters would add a group to the servable
+ * set that the responder is NOT in, and the row would then demand a heal nobody could serve. So the
+ * id travels whole in memory and is cut by `cut()` at every point where it is printed or recorded.
  */
 const SIDEBAR = `(function () {
   var panel = document.querySelector('.sidebar-panel');
   if (!panel) return JSON.stringify({ panel: false });
   var tiles = [].slice.call(panel.querySelectorAll('[data-conversation-tile]'));
-  var out = { panel: true, rows: tiles.length, ready: 0, syncing: 0, removed: 0, unhooked: 0 };
+  var out = { panel: true, rows: tiles.length, ready: 0, syncing: 0, removed: 0, unhooked: 0, tiles: [] };
   tiles.forEach(function (t) {
     var r = t.getAttribute('data-ready');
     var rm = t.getAttribute('data-removed') === 'true';
+    // An id is only absent if the markup lost the hook's value, which is a reader fault and is
+    // reported as one rather than as a tile with no identity.
+    out.tiles.push({ id: t.getAttribute('data-conversation-tile') || null, ready: r === 'true', removed: rm });
     if (rm) { out.removed++; return; }
     if (r === 'true') out.ready++;
     else if (r === 'false') out.syncing++;
@@ -147,6 +164,51 @@ export async function serverView(cx, userId) {
 }
 
 /**
+ * The groups the server says this user is ACTIVELY a member of, by full id.
+ *
+ * WHY A SECOND READER AND NOT A FIELD ON `serverView`. `serverView`'s output is recorded, and its
+ * ids are cut for that reason. This one exists to be JOINED - "which of the fresh device's amber
+ * rows is a group the responder is in" - and a join on prefixes can invent a match that the world
+ * does not contain. So the two are kept apart by their PURPOSE: this answer stays in memory, and
+ * whatever a caller writes down it writes through `cut`.
+ *
+ * IT MUST BE ASKED OF THE RESPONDER'S OWN CLIENT. Membership is per user, and the token comes from
+ * the cookie of the browser this connection points at - so passing a userId that is not that
+ * browser's own gets a 403, correctly. The caller therefore reads the id from `whoAmI(cx)` on the
+ * same connection rather than from any account file, exactly as `whoAmI`'s own doc argues.
+ *
+ * A read it cannot perform is `null`, never an empty list: "the responder is in no groups" and "the
+ * question could not be asked" are the two answers a subset verdict must never confuse, because the
+ * first makes a row unobservable and the second makes it unmeasured.
+ */
+export async function activeGroupIds(cx, userId) {
+  const raw = await evaluate(
+    cx,
+    `(async function () {
+       var base = location.origin;
+       try {
+         var r = await fetch(base + '/api/auth/refresh', { method: 'POST', credentials: 'include' });
+         if (!r.ok) return JSON.stringify({ ids: null, why: 'refresh answered ' + r.status });
+         var h = { Authorization: 'Bearer ' + (await r.json()).access_token };
+         var u = ${JSON.stringify(encodeURIComponent(userId))};
+         var g = await fetch(base + '/api/mls/users/' + u + '/groups', { headers: h });
+         if (!g.ok) return JSON.stringify({ ids: null, why: 'groups answered ' + g.status });
+         var groups = await g.json();
+         if (!Array.isArray(groups)) return JSON.stringify({ ids: null, why: 'not an array' });
+         return JSON.stringify({
+           ids: groups.filter(function (x) { return !x.deletedAt; }).map(function (x) { return x.groupId; }),
+           why: null,
+         });
+       } catch (e) {
+         return JSON.stringify({ ids: null, why: String(e) });
+       }
+     })()`,
+    { awaitPromise: true },
+  );
+  return JSON.parse(raw);
+}
+
+/**
  * Samples the sidebar until nothing is syncing any more, or the deadline passes.
  *
  * TERMINATION IS A PROOF, NEVER THE CLOCK: the loop ends when `syncing === 0`, and the deadline is
@@ -156,8 +218,30 @@ export async function serverView(cx, userId) {
  *
  * Samples are kept only when the counts CHANGE. A 10-minute watch at 2s would otherwise be 300
  * identical rows, and a timeline nobody reads is a timeline that hides the one transition in it.
+ *
+ * `settledWhen` IS WHAT THE ROW IS WAITING FOR, AND THE DEFAULT IS ONLY THE COMMONEST ONE. Every
+ * caller so far waits for the whole sidebar to go quiet, which is the right proof when a responder
+ * is a member of every group. It is the WRONG one when the responder can serve a subset: the loop
+ * then runs to its deadline every time and reports a stall that was never possible to avoid, which
+ * is how HEAL-NEW-2 spent 600 s on 2026-08-28 to record a product FAIL about who was online. The
+ * predicate is passed in rather than inferred, because only the caller knows which groups the world
+ * it built could answer for - and TERMINATION IS STILL A PROOF: whatever the predicate, `settled`
+ * says whether the loop ended on it or on the clock.
+ *
+ * THE SAMPLES CARRY CUT IDS, THE PREDICATE SEES WHOLE ONES. Samples are recorded in the ledger, and
+ * `cut` is the rule for anything written down; the predicate runs in this process and needs the full
+ * value to join against a server list. Both read the same sample, so a verdict can always be
+ * re-derived from what was recorded, to eight characters.
  */
-export async function watch(cx, { timeoutMs = 600_000, everyMs = 2000, log = () => {} } = {}) {
+export async function watch(
+  cx,
+  {
+    timeoutMs = 600_000,
+    everyMs = 2000,
+    log = () => {},
+    settledWhen = (s) => s.panel && s.rows > 0 && s.syncing === 0 && s.unhooked === 0,
+  } = {},
+) {
   const t0 = Date.now();
   const samples = [];
   let last = null;
@@ -165,14 +249,15 @@ export async function watch(cx, { timeoutMs = 600_000, everyMs = 2000, log = () 
   for (;;) {
     const s = await sidebar(cx);
     const at = Date.now() - t0;
-    const key = JSON.stringify(s);
+    const recordable = { ...s, tiles: (s.tiles ?? []).map((t) => ({ ...t, id: cut(t.id) })) };
+    const key = JSON.stringify(recordable);
     if (key !== last) {
-      const sample = { at, wall: new Date().toISOString(), ...s };
+      const sample = { at, wall: new Date().toISOString(), ...recordable };
       samples.push(sample);
       log(`[syncrows] +${(at / 1000).toFixed(1)}s ${key}`);
       last = key;
     }
-    if (s.panel && s.rows > 0 && s.syncing === 0 && s.unhooked === 0) {
+    if (settledWhen(s)) {
       settled = true;
       break;
     }

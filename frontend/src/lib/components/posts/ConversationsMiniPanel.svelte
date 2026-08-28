@@ -221,6 +221,7 @@
       <div class="animate-in fade-in flex flex-col px-2 duration-300">
         {#each displayItems as item (item.meta.id)}
           <ConversationTile
+            conversationId={item.meta.id}
             contactName={item.contactId}
             displayName={item.displayName}
             displayNameResolved={item.displayNameResolved}

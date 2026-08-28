@@ -60,6 +60,8 @@ import { armCut, awaitSevered, cutHard, link } from "./net.mjs";
 import { ORIGIN, PORTS, SITE } from "./names.mjs";
 import { becomeANewDevice } from "./newdevice.mjs";
 import { onlineDevicesOf } from "./presence.mjs";
+import { stateOf } from "./ready-probe.mjs";
+import { bringToReady } from "./ready-repair.mjs";
 import { record, unmet } from "./results.mjs";
 import { navigationCost, readAll, watch as watchRows, whoAmI } from "./syncrows.mjs";
 import { report, watch } from "./watch.mjs";
@@ -138,21 +140,40 @@ function runScript(file, args) {
  */
 const debrisName = () => `HGRP${Math.random().toString(36).slice(2, 7)}`;
 
-/** Puts the two peer browsers where this row needs them, and says what it actually did. */
+/**
+ * Puts the two peer browsers where this row needs them, and says what it actually did.
+ *
+ * "PRESENT" MEANS READY, NOT RUNNING, AND THE DIFFERENCE COST THIS RUNG FOUR ROWS ON 2026-08-28.
+ * The version this replaces started a browser that was down and then ran `pin.mjs` on it - which is
+ * a repair for exactly one state, the PIN gate. A browser already up satisfied `isUp` and was
+ * reported "already up" whatever page it was on, and W1 was on `/login`: no session, no device
+ * panel, no group creation. The row then blamed the product for an actor that was never there.
+ *
+ * `bringToReady` IS THE ONLY DEFINITION OF "ready" IN THIS RIG, and this is the sixth caller to be
+ * put on it. It restores a session, answers a gate, navigates off a page the proof cannot judge and
+ * dismisses a modal left up by whatever ran before - in a loop, because each repair can produce the
+ * state another one fixes. Reporting `${which}Ready` as a BOOLEAN is what lets the caller refuse to
+ * measure rather than measure something else: a topology that failed must be unmet, never assumed.
+ */
 async function setTopology(present) {
   const acted = {};
   for (const which of ["w1", "w2"]) {
     const wanted = present.includes(which);
     const up = await isUp(which);
-    if (wanted && !up) {
+    if (!wanted) {
+      acted[which] = up ? `killed in ${await killBrowser(which)}ms` : "already down";
+      continue;
+    }
+    if (!up) {
       await startBrowser(which, `${SITE}/chat`);
       acted[which] = "started";
-      runScript("pin.mjs", ["--device", which.toUpperCase()]);
-    } else if (!wanted && up) {
-      acted[which] = `killed in ${await killBrowser(which)}ms`;
     } else {
-      acted[which] = up ? "already up" : "already down";
+      acted[which] = "already up";
     }
+    const r = await bringToReady(which.toUpperCase(), { log: (line) => note(`ready ${line.trim()}`) });
+    if (r.unreachable) acted[which] += `, UNREACHABLE: ${r.unreachable}`;
+    else acted[which] += `, ${r.ok ? "ready" : `NOT READY (${stateOf(r.state)})`} (${r.trail.join(" -> ")})`;
+    acted[`${which}Ready`] = r.ok === true;
   }
   return acted;
 }
@@ -315,6 +336,31 @@ const differences = (a, b) =>
 // account's groups healed into it - which is the only state from which "it was revoked and came
 // back" means anything.
 // ---------------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------------
+// THE ACTOR IS A PRECONDITION OF THE ROW, NOT A PARTICIPANT IN IT (user, 2026-08-25: the same
+// starting point, whatever happened before). Every step below is performed BY the actor: it creates
+// the doomed group, it opens the device panel and revokes the victim, it moves the world while the
+// victim is away. A revocation this rig could not perform is not a statement about the wipe, and on
+// 2026-08-28 that is precisely what four HEAL-REVOKE rows recorded - W1 was sitting signed out on
+// `/login`, `setTopology` called it "already up", and the row failed on the product's behalf.
+//
+// SO IT IS ASKED BEFORE THE VICTIM IS EVEN MINTED, and refused as INVALID rather than FAIL. Minting
+// the victim first would spend a full enrolment and a PIN on a row that cannot be run, and would
+// leave a fresh device enrolled with nothing to revoke it.
+// ---------------------------------------------------------------------------------------------
+note(`bringing the actor ${ACTOR} to ready - it performs every step of this row`);
+const actorTopology = await setTopology([ACTOR.toLowerCase()]);
+note(`actor topology ${JSON.stringify(actorTopology)}`);
+if (actorTopology[`${ACTOR.toLowerCase()}Ready`] !== true) {
+  record(row.id, "INVALID", {
+    unobservable: `the actor ${ACTOR} could not be brought to ready, so nothing here could revoke the victim or move the world: ${actorTopology[ACTOR.toLowerCase()]}`,
+    what: row.what,
+    actorTopology,
+    timeline,
+  });
+  process.exit(1);
+}
+
 note(`starting point: minting an enrolled ${VICTIM} for the revocation to take away`);
 const seeded = await becomeANewDevice({ report: (s) => note(`newdevice: ${s}`) });
 note(
@@ -524,6 +570,26 @@ const returnTopology = row.id === "HEAL-REVOKE-7" && order === "first" ? [] : [A
 note(`the return happens with ${returnTopology.join(",") || "nothing"} online`);
 const topology = await setTopology(returnTopology);
 note(`topology ${JSON.stringify(topology)}`);
+// A TOPOLOGY THE RIG FAILED TO ESTABLISH IS NOT A RESULT, AND MUST NOT BECOME ONE. Where this row
+// asks for the actor online, it is the only member that can serve a Welcome for the account's
+// groups - so a returning device that stalls because nobody was there fails `bothSettled` and
+// `theNewGroupArrived`, and the ledger would read that as the product losing a group. The evidence
+// already collected is carried into the INVALID rather than thrown away: the revocation and the
+// wipe were measured before the return, and both halves stay readable.
+if (returnTopology.includes(ACTOR.toLowerCase()) && topology[`${ACTOR.toLowerCase()}Ready`] !== true) {
+  record(row.id, "INVALID", {
+    unobservable: `the return needs ${ACTOR} online to answer for the account's groups and it could not be brought to ready: ${topology[ACTOR.toLowerCase()]}`,
+    what: row.what,
+    order,
+    revocation,
+    wipe,
+    leftBehind,
+    world: { created: born, deleted: doomed, deletionSucceeded: deleted },
+    topology,
+    timeline,
+  });
+  process.exit(1);
+}
 
 const back = await comeBack("return");
 const returnedState = fingerprint(back.last);

@@ -11,6 +11,13 @@
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
+    /**
+     * The MLS groupId this tile stands for, published as the value of the `data-conversation-tile`
+     * hook below. It is the only stable identity a tile has: `contactName` is a peer id for a DM and
+     * a display NAME for a group, and a name is neither unique nor the thing a server list is keyed
+     * by. The cross-client campaign needs the two to be joinable - see the hook's comment.
+     */
+    conversationId: string;
     /** Raw contact/user ID used for presence lookup and direct-message routing. */
     contactName: string;
     /** Human-readable display name shown in the tile. */
@@ -44,6 +51,7 @@
   }
 
   let {
+    conversationId,
     contactName,
     displayName,
     displayNameResolved = true,
@@ -121,13 +129,21 @@
   locale differs, and "no row is syncing" is exactly the answer that makes a HEAL check pass while
   the app is broken. The same reasoning already put `.sidebar-panel` on the list around it.
 
+  THE HOOK CARRIES THE groupId, AND WITHOUT IT ONE QUESTION CANNOT BE ASKED AT ALL: which of the
+  amber rows is a group somebody currently online could actually serve. A responder can only answer
+  for a group it is a member of, and on the campaign account the owner holds eleven while the peer
+  that shares the most shares two - so "every row healed" is unreachable with a peer responder
+  however correct the app is, and a rig with no per-row identity can only record that as a product
+  FAIL (measured 2026-08-28). Selectors are unaffected: `[data-conversation-tile]` matches on the
+  attribute's presence, not on it being empty.
+
   Three separate attributes rather than one status word because `isReady` and `isRemoved` are
   independent facts with opposite meanings: a removed group is dead, not in transit, and folding
   them into one value is how a permanent placeholder gets read as a heal in progress.
 -->
 <button
   onclick={onClick}
-  data-conversation-tile
+  data-conversation-tile={conversationId}
   data-ready={isReady}
   data-removed={isRemoved}
   class="group flex w-full items-center gap-4 rounded-[1.25rem] p-3.5 text-left transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-[0.98]

@@ -295,6 +295,7 @@ test-harness:
 	@node tools/cross-client-harness/debris-selftest.mjs
 	@node tools/cross-client-harness/gate-selftest.mjs
 	@node tools/cross-client-harness/ready-selftest.mjs
+	@node tools/cross-client-harness/servable-selftest.mjs
 	@node tools/cross-client-harness/residue-selftest.mjs
 	@node tools/cross-client-harness/gate-probe-selftest.mjs
 	@echo "${GREEN}✅ Harness self-tests OK${RESET}"

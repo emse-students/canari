@@ -504,6 +504,7 @@
         {#each filteredConversationEntries as { name, convo, resolved } (name)}
           <div class="relative">
             <ConversationTile
+              conversationId={convo.id}
               contactName={resolved.contactId}
               displayName={resolved.displayName}
               displayNameResolved={resolved.displayNameResolved}

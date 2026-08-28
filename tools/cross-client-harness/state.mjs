@@ -25,11 +25,20 @@ import { PORTS } from './names.mjs';
  * `unknown` is therefore a real answer and the honest one: not "no", but "this route cannot say".
  * The only cure is to run `pin.mjs` after ANY restart, kill, reboot, radio cycle or `install -r` -
  * it is idempotent, so running it when it was not needed costs nothing.
+ *
+ * AND `signedOut` IS A FOURTH VALUE, ADDED AFTER THIS READER MISLABELLED THE ONE STATE THAT WAS
+ * BLOCKING A RUNG. On 2026-08-28 W1 sat on `/login` for hours and this probe answered
+ * `unknown (gate not on this route)` - true of the gate, and useless: `unknown` says "ask
+ * elsewhere", while what was needed is "there is no session, run login.mjs". The distinction is
+ * FREE, because the path is already in hand; `ready-probe.mjs` makes exactly the same call, and for
+ * the same reason it comes FIRST - a PIN gate genuinely mounted over `/login` is a session problem,
+ * and reading it as `LOCKED` sends the repair that cannot work.
  */
 const PROBE = `JSON.stringify({
   path: location.pathname,
   ready: document.readyState,
   locked: (function () {
+    if (/^\\/login/.test(location.pathname) || !!document.querySelector('#username')) return 'signedOut';
     var gate = ${GATE_EXPR};
     if (gate) return 'LOCKED';
     return /^\\/(chat|communities)/.test(location.pathname) ? 'unlocked' : 'unknown (gate not on this route)';

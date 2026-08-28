@@ -36,6 +36,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Changed
 
+- **A conversation tile now says WHICH conversation it is, in the markup.** `ConversationTile` takes
+  the MLS groupId and publishes it on the hook it already carried (`data-conversation-tile`), and the
+  two call sites - the sidebar and the posts mini-panel - pass it. Nothing about the rendering
+  changes and every existing selector still matches, because `[data-conversation-tile]` matches on
+  the attribute's presence rather than on a value. **It exists because one question could not be
+  asked at all without it**: of the amber rows a freshly enrolled device shows, which are groups
+  somebody currently online is actually a member of. The count alone cannot answer that, and the
+  answer is what separates a re-admission the app failed to serve from one nobody could have served.
+
 - **A cropped picture is cropped from its MIDDLE again.** The media ceiling shipped hours earlier
   (`--media-max-height`, below) anchored the crop to the top, on the argument that a screenshot or
   an infographic carries its meaning there. Measured against what people actually attach - a
