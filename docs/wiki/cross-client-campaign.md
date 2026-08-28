@@ -115,6 +115,11 @@ Decided with the user, not to be re-litigated.
   profite pour rendre les tests suivants plus rapides et plus faciles"*. An `aria-label`, a
   `role="option"`, a stable `id` is simultaneously what a screen reader announces and what a harness
   selects on, and both outlive a Tailwind class or a portal's screen position.
+- **`recon.mjs` starts from a known baseline, and `LOSS` on the W1/W2 pair is the EXPECTED verdict
+  until the number changes** (established 2026-08-19). **Five** message ids, all on W1 only, all
+  created 2026-08-16 between 09:45 and 16:27 UTC. A run reporting five has found nothing; a sixth is
+  new. Do not clear them - the divergence is the evidence. Why they are believed never to have left
+  the sender is WP-ECHO-1's, in [backlog](backlog.md).
 - **Observation is part of every check, not a debugging step.** A verdict is `PASS` only if the
   assertions hold AND the run is clean, on every client and on the server.
 - **Reconciliation runs after every phase, not once at the end.** `recon.mjs` is the only instrument

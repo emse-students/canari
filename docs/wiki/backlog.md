@@ -158,10 +158,15 @@ none of it because `gen/apple` is a different generated project nothing compared
   across `app.css` and a dozen components and no single owner. **This wants ONE pass over `app.css`
   with a device in hand**, not local patches - the same conclusion the emoji / dead-row / device-row
   items reached, and the same pass.
-- **OPEN - whether anything else in that Android comment has no iOS peer.** The orientation lock and
-  the bottom nav's reservation were both decided with a measurement. Nobody has asked the question on
-  iOS. Read `MainActivity.onCreate` beside `canari_ios.mm` once, deliberately, rather than waiting for
-  each to be found from use.
+- **ANSWERED 2026-08-28 - the question "what else has no iOS peer" now has a written answer.** The
+  audit is [android-ios-parity](frontend/android-ios-parity.md), the only copy: six graphical
+  findings, six software ones, eight concerns confirmed already at parity so nobody re-derives them,
+  and one asymmetry closed by construction that must NOT be given a peer. The orientation lock and the
+  bottom nav's reservation are both fine. **The three structural candidates for the bars the user
+  reports are 1.1 (iOS hides the status bar where Android keeps it edge-to-edge), 1.3 (the launch
+  background is Apple's, not the product's) and 1.4 (the WKWebView background is never set, so the
+  mechanism that kills Android's startup flash has no iOS peer).** Ranking them is a DEVICE
+  measurement; the audit deliberately refuses to rank them from source.
 
 **This closes by HARDWARE, one item at a time**, like every other iOS finding: three of three defects
 so far were invisible to every gate here.

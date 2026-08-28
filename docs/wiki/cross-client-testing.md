@@ -1,47 +1,38 @@
 # Cross-client testing - the board
 
-**State only.** Each check, what it asks, what it needs, and the verdict with the commit it ran on.
-No commentary: the campaign's shape is [cross-client-campaign](cross-client-campaign.md), how a result
-earns belief is [testing-methodology](testing-methodology.md), the instrument is
-[`tools/cross-client-harness/README.md`](../../tools/cross-client-harness/README.md), the story of
-every defect is `CHANGELOG.md`, and what is still open is `CLAUDE.md`.
+**STATE ONLY, AND IN AS FEW WORDS AS THE STATE ALLOWS.** A cell is a verdict, a count, and a time if
+the time means anything. Everything else lives elsewhere and is never restated here:
+[cross-client-campaign](cross-client-campaign.md) is the campaign's shape and what a run cost,
+[testing-methodology](testing-methodology.md) is how a result earns belief and how a cell is written,
+[`the README`](../../tools/cross-client-harness/README.md) is the instrument, `CHANGELOG.md` is every
+defect, `CLAUDE.md` is what is open.
 
-Two accounts, anonymised everywhere as **owner** (W1, A1) and **peer** (W2). Target is PRODUCTION.
-
-**A `PASS` CELL SAYS `PASS X/X` AND A TIME IF THE TIME MEANS ANYTHING. Nothing else.** A cell keeps
-prose in exactly two cases: the verdict is not a clean pass (`PASS-DIRTY`, `FAIL`, `SKIPPED`, a
-partial like `4/5`), or the row carries an unresolved item - a missing `a1Build`, an owed re-run.
-Both are open state, which is what this file is. Everything a hard-won run cost to get goes to
-[cross-client-campaign](cross-client-campaign.md); everything that was a defect goes to
-`CHANGELOG.md`. The build belongs on the PHASE row, once, not on twelve check rows.
+Two accounts, anonymised as **owner** (W1, A1) and **peer** (W2). Target is PRODUCTION. **Run order
+is the numbered ladder below, top to bottom - the only copy of that order.**
 
 ## Standing
 
-Updated after every run.
-
 | Phase | Scripts | Last build | State |
 | --- | --- | --- | --- |
-| 0 SETUP | - | - | 5/9 `passed`; SETUP-2 skipped by decision, SETUP-7/8 owed before CORRUPT and PIN |
-| 1 MSG | 12 | `e9d951d7` | **`PASS` 12/12 x1** (2026-08-21). Four A1 rows carry no `a1Build` - re-run owed for attribution |
-| 2 TYPE | 5 | `e9d951d7` | **`PASS` 5/5 x1** (2026-08-21). An earlier x5 stands on superseded runner `25376b86` |
-| 3 READ | 10 | `70497810` | **`PASS` 9/9 x5** on runner `2c2b83d1b748` (2026-08-21). READ-5 `SKIPPED`: needs four readers, the estate has two |
-| 4 MUT | 21 | `6748f6b8`, A1 `a7981206` | **`PASS` 24/24 x5** on runner `e3e5a60bb007`, + x1 on `fbf202d9d9d9`. MUT-20 `SKIPPED`: unarmable until 2026-11-09 |
-| 5 SEARCH | 6 | `1f396ac7` | **`PASS` 6/6 x5** on runner `928f8b286dac` |
-| 6 MENTION | 6 | `1f396ac7`, A1 `a7981206` | **`PASS` 6/6 x5** on runner `cdc081edabc0` |
-| 7 FWD | 6 | `1579d5c3`, A1 `a7981206` | **`PASS` 6/6 x5** (FWD-2 x1, 25 iterations) |
-| 8 GRP | 10 | `feecfaf5` | **`PASS` 9/10 x4** + GRP-8 `PASS-DIRTY` deterministically, accepted by the user 2026-08-25. GRP-3's earlier socket close did not return on `feecfaf5`; both P2s in [backlog](backlog.md) |
-| 9 COMM | 25 | `0c31be5d`, COMM-12/22 `66639621`, A1 `0c31be5d` | **NO `FAIL` AND NO `VACUOUS` LEFT.** 19 `PASS`, 5 `PASS-DIRTY` (9, 12, 18, 21, 23), COMM-10 the one row never run. **COMM-22 is `PASS` and clean** - twelve Graine sessions, twelve seeds on both a warm and a cold peer, every repairable row repaired, and the first production sighting of a joiner publishing `base + 1` inside its own commit. **COMM-12 passes on the third attempt, and only because the rail was swept**: its two `VACUOUS` were a CD deploy and then the campaign's own accumulated community tiles stealing a click. **COMM-8 PASSES**, which is the fix for the forked distribution group measured at last, and COMM-11 is clean with it. What COMM still owes: the 403 served to the OWNER in COMM-23, and WP-REGRANT-2's proof - COMM-8 passes with `seedAfterTheGrant: repaired`, not `true` |
-| 10 DEL | 10 | `0c31be5d`, DEL-9 `66639621`, A1 `0c31be5d` | **NO `FAIL` AND NO `VACUOUS` LEFT - the rung is answered end to end.** 4 `PASS` (2, 5, 7, 8), 6 `PASS-DIRTY` (1, 3, 4, 6, 9, 10). DEL-7 and DEL-9 each cost a HARNESS fault, both fixed - see the rows. Seven cells were taken on an older `del.mjs` and owe a re-run on `2dd7a0f4a933`; **DEL-9 is the only one already re-taken on it** |
+| 0 SETUP | - | - | 5/9 `passed`; SETUP-2 `skipped` by decision, SETUP-7/8 owed before CORRUPT and PIN |
+| 1 MSG | 12 | `e9d951d7` | **`PASS` 12/12 x1**; four `+A1` rows owe a re-run for `a1Build` |
+| 2 TYPE | 5 | `e9d951d7` | **`PASS` 5/5 x1**; the x5 stands on superseded runner `25376b86` |
+| 3 READ | 10 | `70497810` | **`PASS` 9/9 x5** on `2c2b83d1b748`; READ-5 `SKIPPED`, terminal |
+| 4 MUT | 21 | `6748f6b8`, A1 `a7981206` | **`PASS` 24/24 x5** on `e3e5a60bb007`; MUT-20 `SKIPPED` until 2026-11-09 |
+| 5 SEARCH | 6 | `1f396ac7` | **`PASS` 6/6 x5** on `928f8b286dac` |
+| 6 MENTION | 6 | `1f396ac7`, A1 `a7981206` | **`PASS` 6/6 x5** on `cdc081edabc0` |
+| 7 FWD | 6 | `1579d5c3`, A1 `a7981206` | **`PASS` 6/6 x5** |
+| 8 GRP | 10 | `feecfaf5` | **`PASS` 9/10 x4**; GRP-8 `PASS-DIRTY` deterministically, accepted 2026-08-25 |
+| 9 COMM | 25 | `0c31be5d`, COMM-12/22 `66639621`, A1 `0c31be5d` | 19 `PASS`, 5 `PASS-DIRTY`, no `FAIL`, no `VACUOUS`; COMM-10 never run |
+| 10 DEL | 10 | `0c31be5d`, DEL-9 `66639621`, A1 `0c31be5d` | 4 `PASS`, 6 `PASS-DIRTY`, no `FAIL`, no `VACUOUS`; 7 cells owe a re-run on `del.mjs` `2dd7a0f4a933` |
 | 11 TAB | 8 | - | `pending` |
-| 12 MULTI | 10 | `0c31be5d` | 1 `PASS`, 1 `PASS-DIRTY`, 1 `VACUOUS`, 2 `SKIPPED`, **MULTI-5 `ERROR`** - runner debt, not product. Ran BEFORE the `multi.mjs` fix (`74bb17b8283f`); every cell owes a re-run |
+| 12 MULTI | 10 | `0c31be5d` | 1 `PASS`, 1 `PASS-DIRTY`, 1 `VACUOUS`, 2 `SKIPPED`, MULTI-5 `ERROR`; every cell owes a re-run on `multi.mjs` `74bb17b8283f` |
 | 13 LIFE | 8 | - | `pending` |
 | 14 NOTIF | 21 | - | `pending` |
-| 15 CALL | 20 | - | `pending` - no script exists yet |
-| 16 HEAL | 31 | - | `pending` - **twenty rows added 2026-08-27 on the user's report**: the eleven original rows all break a device that already HELD the group, so none reaches the NEW-device path (sixteen `HEAL-NEW-*` rows) and none reaches a REVOKED device returning after the world moved (four more `HEAL-REVOKE-*`). Both groups are section 16; every new row is `+user` |
-| 17 PIN | 10 | - | `pending` |
-| 18 CORRUPT | 10 | - | `pending` |
-
-**Run order is the numbered ladder above, top to bottom.** It is the only copy of that order.
+| 15 CALL | 20 | - | `pending` - no runner exists |
+| 16 HEAL | 31 | `48b65d08` | 2/31 taken: HEAL-NEW-0 `PASS-DIRTY`, HEAL-NEW-1 `PASS` |
+| 17 PIN | 10 | - | `pending` - no runner exists |
+| 18 CORRUPT | 10 | - | `pending` - no runner exists |
 
 | State | Meaning |
 | --- | --- |
@@ -52,13 +43,6 @@ Updated after every run.
 | `FAIL` | ran and did not hold - paired with a Work Package carrying the log, or with a fixed commit |
 | `SKIPPED` | cannot be armed with two accounts, or needs `--destructive` |
 | `BLOCKED` | cannot run until something outside the campaign happens |
-
-## The baseline `recon.mjs` starts from - established 2026-08-19
-
-`LOSS` on the W1/W2 pair is the EXPECTED verdict until the number changes. **Five** message ids, all
-on W1 only, all created 2026-08-16 between 09:45 and 16:27 UTC. A run reporting five has found
-nothing; a sixth is new. Do not clear them - the divergence is the evidence. Why they are believed to
-have never left the sender is WP-ECHO-1's, in [backlog](backlog.md).
 
 ## 0 - SETUP
 
@@ -195,6 +179,8 @@ Client-side, in-conversation, substring-only: no server index, no global search.
 
 ## 8 - GRP - group membership and invitations
 
+GRP-3's earlier socket close did not return on `feecfaf5`; both P2s are in [backlog](backlog.md).
+
 The first rung that moves an MLS epoch, and the rung that proved a third device changes what a
 two-device check measures: GRP-4's evictions were committed by an undriven fleet member, not by
 either driven browser.
@@ -213,6 +199,14 @@ either driven browser.
 | GRP-10 | The invitation link of one group must not appear in another group's panel | `W1 W2` | **`PASS`** |
 
 ## 9 - COMM - communities, channels, roles
+
+**Standing, `0c31be5d`: no `FAIL` and no `VACUOUS` left.** COMM-22 is `PASS` and clean - twelve
+Graine sessions, twelve seeds on a warm and a cold peer, and the first production sighting of a
+joiner publishing `base + 1` inside its own commit. **COMM-12 passes on the third attempt, and only
+because the rail was swept**: its two `VACUOUS` were a CD deploy, then the campaign's own accumulated
+community tiles stealing a click. **COMM-8 passes**, which is the forked distribution group measured
+at last, and COMM-11 is clean with it. **What the rung still owes:** the 403 served to the OWNER in
+COMM-23, and WP-REGRANT-2's proof - COMM-8 passes with `seedAfterTheGrant: repaired`, not `true`.
 
 A community is a `Workspace`, and **its membership is not MLS membership**. Every row is read against
 MSG-5's standing assertion: no `masterSecret` in any payload, ever.
@@ -281,6 +275,9 @@ they measured in [cross-client-campaign](cross-client-campaign.md).
 
 ## 10 - DEL - deleting a conversation, crossed
 
+**Standing, `0c31be5d`: no `FAIL` and no `VACUOUS` left - the rung is answered end to end.** DEL-7
+and DEL-9 each cost a HARNESS fault, both fixed; the rows carry them.
+
 Deletion removes state while OTHER state keeps pointing at it, so each row pairs it with something
 mid-flight.
 
@@ -313,6 +310,8 @@ mid-flight.
 | TAB-7 | Offline -> act -> online, tab never reloaded | `W1 W2` | `pending` - written 2026-08-24, never run |
 
 ## 12 - MULTI - one user, two devices
+
+MULTI-5's `ERROR` is runner debt, not product.
 
 Opens by sweeping every `+A1` row left behind in tiers B and C.
 

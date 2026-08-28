@@ -2466,3 +2466,17 @@ matches the failing rung to the second.
 platform, not an observer of it, and every row it runs writes to the tables the next question reads.
 A day-over-day count is the shape most likely to hide that, because the rig's own activity is exactly
 what is new today.
+
+### A board cell is a verdict, and prose in one is state that has not been written down yet
+
+**A `PASS` cell says `PASS X/X` and a time if the time means anything. Nothing else.** A cell may
+keep words in exactly two cases: the verdict is not a clean pass (`PASS-DIRTY`, `FAIL`, `SKIPPED`, a
+partial like `4/5`), or the row carries an unresolved item - a missing `a1Build`, an owed re-run.
+Both are open state, which is the whole of what the board is for.
+
+Everything else has a home, and the reason to enforce it is not tidiness: a fact that exists in two
+files diverges the first time one of them is updated, and the board is the file that gets edited
+mid-run. What a hard-won run cost goes to [cross-client-campaign](cross-client-campaign.md); what was
+a defect goes to `CHANGELOG.md`; what is open goes to `CLAUDE.md`; and the build belongs on the PHASE
+row, once, not on twelve check rows.
+

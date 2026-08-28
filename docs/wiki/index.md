@@ -38,6 +38,7 @@
 
 - [Frontend architecture](frontend/architecture.md) — SvelteKit 5, stores, routing, Paraglide i18n
 - [Mobile architecture](frontend/mobile.md) — Tauri 2, iOS NSE, Android push, native FFI
+- [Android / iOS parity audit](frontend/android-ios-parity.md) - where the two native projects DISAGREE, read from source 2026-08-28
 - [MLS WASM client](frontend/mls-wasm.md) — openmls compiled to WASM, key management, sync engine
 - [Backup and restore](frontend/backup.md) — the `.canari` file, and why a refusal is a code rather than a sentence
 - [Auth module](frontend/modules/auth.md) — Login flow, PIN, biometrics, device registration
