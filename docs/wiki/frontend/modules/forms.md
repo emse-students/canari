@@ -377,6 +377,56 @@ would look saved and then do nothing:
 - a `variantKey` the association does not sell;
 - a base-tier grant on an association that sells named tiers only.
 
+## Sharing a form: the link, and the same link as a QR code
+
+Both `/forms` and the detail screen carry two controls side by side: copy the public link, and show
+it as a QR code. The modal (`shared/QrCodeModal.svelte`) knows nothing about forms - the caller hands
+it an already absolute URL (`publicAppUrl`), the label the plate and the file name are built from, an
+optional owner line, and the sentence saying what scanning it opens. That is what lets whatever comes
+next reuse it without a prop naming a feature.
+
+The PNG is rendered ONCE per opening and the preview `<img>` and the download read that SAME blob, so
+what a person sees is byte-for-byte what they save. `downloadDecryptedFile` does the saving, as
+everywhere else in the app.
+
+### The style is measured, not decorated
+
+`utils/qrCode.ts` does not use `qrcode`'s renderer: it takes the raw module matrix at error
+correction `H` and paints it on a canvas sized FROM an integer module pixel size, so the grid never
+lands between pixels. Modules are CONNECTED strokes with rounded corners, never isolated dots - a
+corner is rounded only where both modules sharing it are light (`moduleCorners`), and the whole grid
+is accumulated into ONE path and filled once, so no antialiased seam splits a stroke. The three
+finders are stacked rounded squares, the ink is a diagonal gradient between two DARK brand colours,
+and the colours are fixed dark-on-light: a QR inverted by a theme is a QR a phone refuses.
+
+Isolated dots were tried first and measured, by decoding the actually painted pixels in a browser
+across seven sizes: a 0.84 dot fill decoded 6 times out of 14 combinations against 12 out of 14 for
+connected strokes. Adaptive binarisation is the reason - a scanner thresholds a neighbourhood, and a
+dot leaves it less dark to find. The look that was asked for and the look that decodes were the same
+look. The one remaining failure, a long URL under 160px, is a pure resolution limit: the BARE square
+symbol fails at the same threshold, so neither the style nor the badge costs anything there.
+
+The bird sits in a rounded badge over the middle at 22 percent of the side, which
+`logoBadgeDamageRatio` keeps under a tenth of the symbol - well inside the 30 percent `H` recovers,
+asserted at all 40 versions.
+
+### The plate carries the name
+
+An exported code is read off a poster, where a bare grid says nothing about what it opens. So the PNG
+is a taller white plate: the code, then the form title in Fredoka and, when the form belongs to one,
+the association name in Nunito - the app's own two faces in its own two text colours. The title wraps
+to two lines and then ellipsises. `document.fonts.load` is awaited before drawing, or the canvas
+falls back to a system face without saying so. The file lands as `canari-qr-<slug>.png`.
+
+### It encodes the ordinary URL, so the deep link is the app's, not the code's
+
+There is no scheme of our own in the payload: it is the same `https://canari-emse.fr/forms/<id>` the
+copy button hands out, which the Android manifest claims with an `autoVerify` intent-filter
+(`pathPrefix="/forms/"`) backed by `/.well-known/assetlinks.json`. A scan that lands in a browser
+rather than in the app therefore says something about App Link verification on that device, never
+about the code - `adb shell pm get-app-links fr.emse.canari` is what settles it, and a scanner that
+renders the page in its own webview never consults the resolver at all.
+
 ## Note on form management
 
 Association admins also reach a form's submissions, cash validation, edit and delete through the
@@ -395,3 +445,10 @@ refusals through `forms.service.matrix.spec.ts` (an incomplete grid, a double-co
 condition with no criterion), `pricing/visibility.spec.ts` (memoisation, cycles, the legacy pair
 ANDed with `showIf`) and `frontend/src/lib/forms/priceMatrix.test.ts` (the cross product and the
 payload).
+
+`frontend/src/lib/utils/qrCode.test.ts` answers the QR claim on PIXELS rather than on the badge's
+arithmetic: it rasterises a symbol in pure JS through the SAME exported geometry the canvas draws
+(`moduleCorners`, `moduleContains`, `finderShapes`, `badgeShape`) and hands the buffer to `jsQR`, a
+real decoder that knows nothing about how the image was made - with no badge, with it, and on a link
+far longer than a form URL. happy-dom has no 2D context, which is why the canvas itself is not under
+test and the geometry is exported instead of inlined: a retuned radius moves the test with it.

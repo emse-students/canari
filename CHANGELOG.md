@@ -13,6 +13,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Added
 
+- **A form can be shared as a QR code**, next to the copy-link button on both the list and the form
+  itself. It encodes the ordinary public URL - no scheme of our own - and downloads as a PNG plate
+  carrying the form's title and, when it has one, its association, in the app's own two faces. The
+  style is measured rather than decorated: modules are connected strokes with rounded corners, the
+  bird sits in a badge over the middle at 22 percent of the side, and the whole thing is decoded back
+  in a real decoder, in the test suite and in a browser across seven sizes. Isolated dots were drawn
+  first and thrown away on that measurement - they decoded 6 times out of 14 against 12, because a
+  scanner thresholds a neighbourhood and a dot leaves it less dark to find.
+
 - **Blocking a person.** Narrow on purpose, and asked for as such: the two accounts stop finding
   each other in the user search and the mention autocomplete, neither can open a 1-to-1 with the
   other, add them to a group, or invite them into a private salon - inside a shared community
