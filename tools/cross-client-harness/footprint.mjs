@@ -11,14 +11,18 @@
  * COUNTS ONLY, NEVER NAMES: a surviving key is `mls_not_ready_since:<userId>:<groupId>`, and this
  * output is read into a PUBLIC repository.
  *
- * It reads the WebView's own stores, which is all CDP can reach. On A1 that is the whole of the web
- * half and none of the native half - `delete_mls_state` and `clear_app_data` write to the Tauri app
- * data directory, and only `adb` can see whether those files are gone. A row about a phone needs
- * BOTH, and this module deliberately answers only the half it can prove.
+ * TWO HALVES, AND THE VERDICT IS THE AND OF THEM. `storageFootprint` reads the WebView's own stores,
+ * which is all CDP can reach; on a Tauri client that is the smaller half, because `mls.bin`, the
+ * per-user SQLite store and the Graine seeds live in the app data directory where only `adb` can see
+ * them. Reading the web half alone once answered "nothing of the account remains" about a phone that
+ * was displaying eleven conversations - a predicate that CANNOT FAIL on the device class it judges is
+ * not a criterion. `deviceResidue()` is therefore the entry point for any assertion, and an
+ * unreadable native half VOIDS its verdict rather than passing it.
  *
  * Usage: node footprint.mjs --device W1
  */
 import { client, evaluate } from "./chat.mjs";
+import { residueVerdict } from "./native-residue.mjs";
 import { ORIGIN, PORTS } from "./names.mjs";
 import { pathToFileURL } from "node:url";
 
@@ -88,8 +92,47 @@ export async function storageFootprint(cx) {
  *
  * `-1` means the store could not be read, which is NOT zero and is why both read `=== 0`.
  */
+/**
+ * THE WEB HALF ALONE. Kept exported because a web device has no other half, but **do not call this
+ * about a device that might be a phone** - use `deviceResidue()`, which is the AND of both halves.
+ * On a Tauri origin this returns true for an enrolled device.
+ */
 export function nothingOfTheAccountRemains(f) {
   return f.canariDatabases === 0 && f.identityKeys === 0;
+}
+
+/** An error's first line only: a stack in a ledger detail is noise nobody reads. */
+const firstLine = (e) =>
+  String(e?.message ?? e)
+    .split(String.fromCharCode(10))[0]
+    .trim()
+    .slice(0, 200);
+
+/**
+ * What is left of the account on a device, BOTH halves, with the verdict computed in one place.
+ *
+ * This is what a runner asserts on. It reads the WebView over CDP and, for a Tauri origin, the app's
+ * private directory over `adb run-as` - and `residueVerdict` in `native-residue.mjs` decides what
+ * the pair MEANS, so the answer cannot differ between this and the command line.
+ *
+ * @param label - a device label, `W1` / `A1` - it selects the origin, which decides whether there
+ *   is a native half at all
+ * @param cx - an open connection to that device's page
+ */
+export async function deviceResidue(label, cx) {
+  const web = await storageFootprint(cx);
+  let native = null;
+  if (ORIGIN[label].includes("tauri")) {
+    const { nativeResidue } = await import("./phone.mjs");
+    try {
+      native = nativeResidue();
+    } catch (e) {
+      // An unreadable native half is reported as unreadable. Returning `null` here would say "this
+      // device has no native half", which is the one lie that turns a dirty phone green.
+      native = { residue: null, error: firstLine(e) };
+    }
+  }
+  return { label, web, native, ...residueVerdict(web, native) };
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -101,24 +144,12 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
     process.exit(2);
   }
   const cx = await client(port, ORIGIN[label], { allowMany: true });
-  const f = await storageFootprint(cx);
-  let verdict = nothingOfTheAccountRemains(f);
-  let native = null;
-  // A Tauri client keeps its message store, its MLS state and the Graine seeds NATIVELY, where CDP
-  // cannot see them. Reading only the WebView on such a device measures the smaller half and calls
-  // it the device: on 2026-08-28 that half was empty while `mls.bin`, `graine_seeds.json` and six
-  // cached faces were still on disk. So the phone's verdict is the AND of the two, and a native
-  // half that could not be read at all voids it rather than passing it.
-  if (ORIGIN[label].includes("tauri")) {
-    const { nativeResidue } = await import("./phone.mjs");
-    native = nativeResidue();
-    verdict = verdict && native.residue === 0;
-    console.log(`[footprint] ${label} native ${JSON.stringify(native)}`);
-  }
+  const r = await deviceResidue(label, cx);
+  if (r.native) console.log(`[footprint] ${label} native ${JSON.stringify(r.native)}`);
   console.log(
-    `[footprint] ${label} ${JSON.stringify(f)} -> ${
-      verdict ? "nothing of the account remains" : "STATE PRESENT"
-    }`,
+    `[footprint] ${label} ${JSON.stringify(r.web)} -> ${
+      r.empty ? "nothing of the account remains" : r.readable ? "STATE PRESENT" : "UNREADABLE"
+    }${r.why.length ? ` (${r.why.join("; ")})` : ""}`,
   );
   cx.close();
 }

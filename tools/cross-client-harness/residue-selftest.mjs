@@ -10,7 +10,7 @@
  * No device needed, and no `names.mjs` either: the classifier is its own pure module, which is
  * what lets this run on a fresh checkout.
  */
-import { classifyNativePaths } from "./native-residue.mjs";
+import { classifyNativePaths, residueVerdict } from "./native-residue.mjs";
 
 let failures = 0;
 function check(label, ok) {
@@ -93,8 +93,49 @@ check(
   classifyNativePaths(["app_webview/Default/Local Storage/leveldb"]).residue === 0,
 );
 
+// ---------------------------------------------------------------------------------------------
+// THE COMBINER. The classifier above says what native paths MEAN; this says what the pair of halves
+// means, and it is the half of the instrument that read a phone as clean three times.
+// ---------------------------------------------------------------------------------------------
+const CLEAN_WEB = { canariDatabases: 0, identityKeys: 0 };
+const DIRTY_WEB = { canariDatabases: 1, identityKeys: 3 };
+const UNREADABLE_WEB = { canariDatabases: -1, identityKeys: -1 };
+
+check("a web device with empty stores is empty", residueVerdict(CLEAN_WEB, null).empty === true);
+check("a web device holding a database is not", residueVerdict(DIRTY_WEB, null).empty === false);
+check(
+  "an identity key alone is enough to fail - nothing but an enrolment writes one",
+  residueVerdict({ canariDatabases: 0, identityKeys: 1 }, null).empty === false,
+);
+check(
+  "THE ONE THAT COST THREE READINGS: an empty WebView plus native paths is NOT clean",
+  residueVerdict(CLEAN_WEB, { residue: 28 }).empty === false,
+);
+check(
+  "a phone is clean only when BOTH halves are",
+  residueVerdict(CLEAN_WEB, { residue: 0 }).empty === true,
+);
+check(
+  "an unreadable native half VOIDS the verdict rather than passing it",
+  residueVerdict(CLEAN_WEB, { residue: null, error: "run-as: package not debuggable" }).empty ===
+    false,
+);
+check(
+  "and it says so as UNREADABLE, not as dirt",
+  residueVerdict(CLEAN_WEB, { residue: null }).readable === false,
+);
+check(
+  "an unreadable WebView is not zero either",
+  residueVerdict(UNREADABLE_WEB, null).empty === false &&
+    residueVerdict(UNREADABLE_WEB, null).readable === false,
+);
+check(
+  "a FAIL names WHICH half objected",
+  residueVerdict(CLEAN_WEB, { residue: 28 }).why.join(" ").includes("native"),
+);
+
 if (failures > 0) {
   console.error(`[residue] ${failures} check(s) failed`);
   process.exit(1);
 }
-console.log("[residue] clean - the native border holds");
+console.log("[residue] clean - the native border and the two-half verdict hold");

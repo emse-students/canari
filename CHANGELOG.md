@@ -148,6 +148,19 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **The two-half wipe verdict was correct on the command line and wrong in every runner.** A phone
+  keeps its messages in native SQLite, so `footprint.mjs`'s web-only criterion reads 0 on an enrolled
+  device and 0 on a wiped one; the fix for that computed the AND of the WebView and the native half -
+  inside the module's `import.meta.url` guard. `node footprint.mjs --device A1` was therefore right
+  while `healrevoke.mjs`, the runner that records the row, imported `nothingOfTheAccountRemains` and
+  asserted the web half alone. A human reading a terminal was served and every future row was not,
+  which is the worse half: a row's verdict is believed later, by someone who was not there. The
+  verdict is now `deviceResidue(label, cx)`, exported and the runner's only assertion, with the pure
+  combiner `residueVerdict` beside `classifyNativePaths` in `native-residue.mjs` so
+  `residue-selftest.mjs` pins it with no device - nine cases, including the exact reading that had
+  been quoted three times, and an unreadable native half voiding the verdict rather than passing it.
+  Found while writing the HEAL-REVOKE row for A1; nothing would have reported it.
+
 - **The test rig read a settings page as a locked client.** The encryption gate was detected three
   times over, in `pin.mjs`, `pingate.mjs` and `state.mjs`, and each copy asked partly whether the
   page CONTAINED "PIN de chiffrement" - which `/settings` does, in its own security section. So a

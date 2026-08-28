@@ -6,6 +6,15 @@
  *   node healrevoke.mjs --row 7 --order first    it returns BEFORE the other devices are online
  *   node healrevoke.mjs --row 7 --order last     it returns AFTER they are
  *   node healrevoke.mjs --row 8                  a group DELETED while it was away
+ *   node healrevoke.mjs --row 9                  revoked while it was OFFLINE - a deferred wipe
+ *
+ * ROW 9 IS ITS OWN QUESTION AND STOPS EARLIER THAN THE OTHERS. `isDeviceRevoked` answers `false`
+ * when it cannot reach the server, because a transport failure is not an answer - so a device
+ * revoked while unreachable is SUPPOSED to keep everything until it has a network, and the wipe is
+ * supposed to land at the first contact with one. Both halves are assertions: a device that wiped
+ * itself while unreachable would mean something read a failure as a revocation, which is how every
+ * offline user gets logged out. It therefore does not move the world or mint a reference device -
+ * the return equality is rows 5, 7 and 8's subject, and this row is about the DEFERRAL.
  *
  * THE ASSERTION IS AN EQUALITY, NOT A REPAIR COUNT (user, 2026-08-27). Revocation orders the device
  * to delete everything, so a revoked device coming back IS a new device - and if that is true, its
@@ -44,9 +53,10 @@
 import { spawnSync } from "node:child_process";
 import { client, ensureChat, evaluate } from "./chat.mjs";
 import { census, installTag, isRegistered, revokedAt } from "./devices.mjs";
-import { nothingOfTheAccountRemains, storageFootprint } from "./footprint.mjs";
+import { deviceResidue } from "./footprint.mjs";
 import { createGroup, deleteGroup } from "./groupnav.mjs";
 import { isUp, killBrowser, startBrowser } from "./launch.mjs";
+import { armCut, awaitSevered, cutHard, link } from "./net.mjs";
 import { ORIGIN, PORTS, SITE } from "./names.mjs";
 import { becomeANewDevice } from "./newdevice.mjs";
 import { onlineDevicesOf } from "./presence.mjs";
@@ -69,6 +79,11 @@ const ROWS = {
   5: { id: "HEAL-REVOKE-5", what: "revoked, the world changes a lot, then it returns" },
   7: { id: "HEAL-REVOKE-7", what: "the ORDER of the return", orders: ["first", "last"] },
   8: { id: "HEAL-REVOKE-8", what: "a group deleted while the device was revoked" },
+  9: {
+    id: "HEAL-REVOKE-9",
+    what: "revoked while the device was OFFLINE - the wipe is deferred, not lost",
+    offline: true,
+  },
 };
 
 const row = ROWS[opt("row", "")];
@@ -351,12 +366,116 @@ note(`the victim holds ${doomed}: ${heldTheDoomedGroup}`);
 const victimBefore = await whoAmI(seeded.cx);
 note(`the victim is device ${victimBefore.deviceId?.slice(0, 8)}`);
 
+// Row 9 only: the victim is taken REALLY offline first - no new request AND no surviving socket, or
+// the server could still reach it and the deferral would never be exercised.
+let severance = null;
+let restoreLink = null;
+if (row.offline) {
+  note("taking the victim really offline, before anything revokes it");
+  const armed = await armCut(seeded.cx);
+  const theCut = await cutHard(seeded.cx);
+  restoreLink = theCut.restore;
+  const severed = await awaitSevered(seeded.cx).catch((e) => ({ severed: false, why: firstLine(e) }));
+  severance = {
+    gatewayBackAfterMs: armed.gatewayBackAfterMs,
+    socketsClosed: theCut.socketsClosed,
+    severed,
+    link: await link(seeded.cx),
+  };
+  note(`severance ${JSON.stringify(severance)}`);
+}
+
 // ---------------------------------------------------------------------------------------------
 // THE REVOCATION
 // ---------------------------------------------------------------------------------------------
 note("revoking the victim from the device panel, through the product path");
 const revocation = await revoke(victimBefore.deviceId);
 note(`revocation ${JSON.stringify(revocation)}`);
+
+// -------------------------------------------------------------------------------------------
+// ROW 9 ENDS HERE, on two samples of the same disk: one while the device cannot be reached, one
+// after a reload with a network. Nothing below applies - the world does not move and no reference
+// device is minted, because what is being measured is the DEFERRAL and not the return.
+// -------------------------------------------------------------------------------------------
+if (row.offline) {
+  const offlineWipe = classifyWipe((await report(seedObserver)).lines ?? []);
+  const whileUnreachable = await deviceResidue(VICTIM, seeded.cx).catch((e) => ({
+    error: firstLine(e),
+    readable: false,
+    empty: false,
+  }));
+  note(`while unreachable ${JSON.stringify({ wipe: offlineWipe, residue: whileUnreachable })}`);
+
+  note("restoring the network and RELOADING - the reload is the trigger, not a frame");
+  await restoreLink();
+  await seeded.cx.send("Page.reload");
+  const reloadedAt = Date.now();
+  let landed = whileUnreachable;
+  let landedInMs = null;
+  for (let i = 0; i < 20; i += 1) {
+    await sleep(3000);
+    landed = await deviceResidue(VICTIM, seeded.cx).catch((e) => ({
+      error: firstLine(e),
+      readable: false,
+      empty: false,
+    }));
+    if (landed.empty) {
+      landedInMs = Date.now() - reloadedAt;
+      break;
+    }
+  }
+  const afterWipe = classifyWipe((await report(seedObserver)).lines ?? []);
+  const where = await evaluate(seeded.cx, "location.pathname").catch(() => null);
+  note(
+    `after the reload ${JSON.stringify({ landedInMs, residue: landed, wipe: afterWipe, where })}`,
+  );
+
+  const offlineExpectations = {
+    theVictimHeldTheWorldFirst: seedSettle.settled === true && heldTheDoomedGroup === true,
+    /** The cut was real: the far end agrees it cannot reach this client. */
+    itWasReallyUnreachable: severance?.severed?.severed === true,
+    theServerRecordedTheRevocation: revocation.revoked === true,
+    theServerForgotTheDevice:
+      revocation.wasAddressable === true && revocation.stillAddressable === false,
+    /**
+     * THE DEFERRAL, WHICH IS THE ROW. A device that cannot ask must not conclude: wiping here would
+     * mean a transport failure had been read as an answer, and every offline user would lose their
+     * device. So the state is asserted PRESENT while unreachable, not merely tolerated.
+     */
+    theWipeWasDeferredWhileUnreachable: whileUnreachable.readable === true &&
+      whileUnreachable.empty === false,
+    itDidNotClaimToHaveWipedWhileUnreachable: offlineWipe.wipeRan === false,
+    /** And it is not lost: one contact with a network lands it. */
+    theWipeLandedAfterOneReload: landed.empty === true,
+    itSaidSoInItsOwnLog: afterWipe.wipeRan === true && afterWipe.wipeFinished === true,
+    noWipeStepFailed: afterWipe.wipeIncomplete !== true && afterWipe.stepsFailed === 0,
+    /** A wiped device belongs at the door, not on a chat page with nothing in it. */
+    itEndedAtTheLoginGate: where === "/login",
+    bothSamplesWereReallyRead: whileUnreachable.readable === true && landed.readable === true,
+    timelineIsStamped: timeline.every((m) => typeof m.at === "number" && typeof m.wall === "string"),
+  };
+  const offlineMissing = unmet(offlineExpectations);
+  const offlineVerdict = offlineMissing.length === 0 ? "PASS" : "FAIL";
+  record(row.id, offlineVerdict, {
+    what: row.what,
+    seed: {
+      deviceId: victimBefore.deviceId,
+      settledInMs: seedSettle.settled ? seedSettle.elapsedMs : null,
+      state: seedState,
+      heldTheDoomedGroup,
+    },
+    severance,
+    revocation,
+    whileUnreachable: { residue: whileUnreachable, wipe: offlineWipe },
+    afterTheReload: { residue: landed, wipe: afterWipe, landedInMs, where },
+    timeline,
+    unmet: offlineMissing,
+    observers: { victim: await report(seedObserver), actor: await report(actorObserver) },
+  });
+  seeded.cx.close();
+  actorCx.close();
+  process.exit(offlineVerdict === "PASS" ? 0 : 1);
+}
 
 // The victim is live, so it should learn this from a frame rather than at a login gate. Either is
 // accepted; what is waited for is the wipe.
@@ -372,7 +491,11 @@ note(`the victim's own account of the wipe ${JSON.stringify(wipe)}`);
 // THE DISK, NOT THE LOG. Taken here rather than immediately after the wipe on purpose: the loop
 // above polls every 4 s, so this sample sits SECONDS past `[RESET] done` - long enough for anything
 // still running to have put state back, which is exactly the failure the log cannot report.
-const leftBehind = await storageFootprint(seeded.cx).catch((e) => ({ error: firstLine(e) }));
+const leftBehind = await deviceResidue(VICTIM, seeded.cx).catch((e) => ({
+  error: firstLine(e),
+  readable: false,
+  empty: false,
+}));
 note(`what the wipe left on the victim ${JSON.stringify(leftBehind)}`);
 seeded.cx.close();
 
@@ -457,9 +580,8 @@ const expectations = {
    * asserted at zero - the page writes `PARAGLIDE_LOCALE` back as soon as it renders - while the
    * databases are, because nothing re-creates one without an MLS client, which was the defect.
    */
-  theWipeLeftNoDatabase: nothingOfTheAccountRemains(leftBehind),
-  theDiskWasActuallyRead: typeof leftBehind.canariDatabases === "number" &&
-    leftBehind.canariDatabases >= 0,
+  theWipeLeftNothingOfTheAccount: leftBehind.empty === true,
+  theDiskWasActuallyRead: leftBehind.readable === true,
   /** It came back as a device the server had never seen - a revoked id must not be reusable. */
   itReturnedAsANewDevice: !!back.who.deviceId && back.who.deviceId !== victimBefore.deviceId,
   itReturnedAsTheSamePerson: back.who.userId === victimBefore.userId,

@@ -69,3 +69,39 @@ export function classifyNativePaths(relative) {
   return { residue: residue.length, paths: residue.sort(), rewritten: rewritten.sort() };
 }
 
+
+/**
+ * THE VERDICT FOR A WHOLE DEVICE, both halves, in ONE place.
+ *
+ * WHY THIS IS NOT A LINE OF THE CALLER'S. The web half alone CANNOT FAIL on a phone: a Tauri client
+ * keeps its messages in native SQLite, so `canariDatabases` reads 0 on an enrolled phone and 0 on a
+ * wiped one. That predicate was read as evidence three times about A1, once while the device was
+ * displaying eleven conversations. Anything asking "is the account gone" must therefore go through
+ * here, and `footprint.mjs`'s CLI is one caller of it rather than its only home - a runner importing
+ * the web half by itself is the same defect with a new name.
+ *
+ * AN UNREADABLE NATIVE HALF VOIDS THE VERDICT, it does not pass it. `run-as` needs a debuggable
+ * build and `adb` needs a cable, and neither absence is evidence that a disk is empty - so
+ * `readable` is returned beside `empty`, and a caller that cannot tell them apart records an
+ * unobservable row rather than a green one.
+ *
+ * @param web - a `storageFootprint()` readout of the WebView's own stores
+ * @param native - a `nativeResidue()` readout, or `null` for a device that has no native half
+ */
+export function residueVerdict(web, native) {
+  const webReadable = typeof web?.canariDatabases === "number" && web.canariDatabases >= 0;
+  const webEmpty = webReadable && web.canariDatabases === 0 && web.identityKeys === 0;
+  const nativeReadable = native === null || typeof native?.residue === "number";
+  const nativeEmpty = native === null || native.residue === 0;
+  return {
+    readable: webReadable && nativeReadable,
+    empty: webEmpty && nativeEmpty && nativeReadable,
+    // WHICH half objected, so a FAIL names it without the reader opening two readouts.
+    why: [
+      webReadable ? null : "the WebView stores could not be read",
+      webEmpty || !webReadable ? null : "the WebView still holds account state",
+      nativeReadable ? null : "the native half could not be read - the verdict is VOID, not clean",
+      nativeEmpty || !nativeReadable ? null : "native paths of the account are still on disk",
+    ].filter(Boolean),
+  };
+}

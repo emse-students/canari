@@ -2587,3 +2587,18 @@ step that was never taken:
   clean and the native half held twenty-nine paths; two separate readings had been taken and the
   clean one quoted. `footprint.mjs --device A1` now reads the native half itself and returns the AND,
   and a native half it cannot read voids the verdict rather than passing it.
+
+**AND "IN ONE PLACE" MEANT IN THE COMMAND-LINE BLOCK, WHICH IS NOT A PLACE A RUNNER CAN REACH.** The
+AND above was written inside `footprint.mjs`'s `import.meta.url === ...` guard, so `node footprint.mjs
+--device A1` was correct while `healrevoke.mjs` - the runner that actually records the row - imported
+`nothingOfTheAccountRemains` and asserted the WEB HALF ALONE. The fix that closed the defect for a
+human reading a terminal left it open for every row, which is worse: a row's verdict is believed
+later, by someone who was not there. Caught before any HEAL-REVOKE cell was taken on a phone, and only
+because the row for A1 was being written; nothing would have reported it.
+
+The verdict is now `deviceResidue(label, cx)`, exported, with the pure combiner
+(`residueVerdict`) beside `classifyNativePaths` in `native-residue.mjs` so
+`residue-selftest.mjs` pins it with no device and no `names.mjs` - nine new cases, one of them the
+exact reading that cost three sessions. **A CLI ENTRY POINT IS A CALLER, NEVER A HOME.** Anything a
+row asserts on has to be reachable by import, or the tool and the runner are two implementations of
+one criterion and only one of them is ever exercised by hand.
