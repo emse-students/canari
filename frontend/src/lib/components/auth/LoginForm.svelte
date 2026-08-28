@@ -34,7 +34,7 @@
 </script>
 
 <div
-  class="flex min-h-dvh items-start justify-center overflow-y-auto bg-transparent px-4 py-10 pt-[max(2.5rem,env(safe-area-inset-top))] pb-[max(2.5rem,env(safe-area-inset-bottom))] md:items-center"
+  class="flex min-h-dvh items-start justify-center overflow-y-auto bg-transparent px-4 py-10 pt-[max(2.5rem,env(safe-area-inset-top))] pb-[max(2.5rem,var(--safe-area-inset-bottom,0px))] md:items-center"
   in:fade
 >
   <!--

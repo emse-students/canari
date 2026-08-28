@@ -37,7 +37,7 @@
 
   <!-- Sheet -->
   <div
-    class="border-cn-border bg-cn-surface/95 fixed inset-x-0 bottom-0 z-50 rounded-t-3xl border-t px-6 pt-5 pb-[calc(1.5rem+env(safe-area-inset-bottom))] shadow-2xl backdrop-blur-2xl"
+    class="border-cn-border bg-cn-surface/95 fixed inset-x-0 bottom-0 z-50 rounded-t-3xl border-t px-6 pt-5 pb-[calc(1.5rem+var(--safe-area-inset-bottom,0px))] shadow-2xl backdrop-blur-2xl"
     role="dialog"
     aria-modal="true"
     aria-label={m.auth_biometric_aria()}

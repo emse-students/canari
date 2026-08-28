@@ -557,7 +557,7 @@
         ? 'max-h-full max-w-full rounded-none'
         : 'max-h-[82vh] max-w-6xl rounded-[2rem]'} bg-cn-scrim flex flex-col overflow-hidden shadow-2xl ring-1 ring-white/10 transition-all duration-300"
       style={isMobileRtc
-        ? 'padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px);'
+        ? 'padding-top: env(safe-area-inset-top, 0px); padding-bottom: var(--safe-area-inset-bottom, 0px);'
         : ''}
     >
       {#if callState === 'ended'}
@@ -813,7 +813,7 @@
     <!-- Bottom control bar -->
     <div
       class="{isMobileRtc
-        ? 'mb-[env(safe-area-inset-bottom,12px)]'
+        ? 'mb-[var(--safe-area-inset-bottom,12px)]'
         : 'mt-6'} flex items-center gap-3 rounded-full border border-white/20 bg-white/10 px-6 py-4 shadow-2xl backdrop-blur-2xl sm:gap-4 sm:px-8"
       transition:fly={{ y: 40, duration: 500, delay: 100 }}
     >

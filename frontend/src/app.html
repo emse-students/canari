@@ -18,6 +18,23 @@
         } catch (_) {}
       })();
     </script>
+    <!-- Only the native Tauri WebView draws edge-to-edge behind the system's own gesture/button
+         area, so only there does env(safe-area-inset-*) answer a real question. A plain mobile
+         browser tab already excludes that area from its own viewport - env() reports it there
+         too (non-zero on at least one device measured), so every consumer of the raw env() value
+         double-reserved it, opening a dead gap above the browser's own on-screen nav buttons.
+         --safe-area-inset-bottom is the one place this is decided, set before first paint like
+         the theme above; every consumer reads var(--safe-area-inset-bottom, 0px) instead of
+         calling env() itself. -->
+    <script>
+      (function () {
+        try {
+          if (!window.__TAURI_INTERNALS__) {
+            document.documentElement.style.setProperty('--safe-area-inset-bottom', '0px');
+          }
+        } catch (_) {}
+      })();
+    </script>
     <style>
       html,
       body {

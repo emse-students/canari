@@ -331,7 +331,7 @@
       <BackgroundBlobs />
       <div
         bind:this={pageScrollWrap}
-        class="page-scroll-wrap absolute inset-0 overflow-y-auto pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-0"
+        class="page-scroll-wrap absolute inset-0 overflow-y-auto pb-[calc(4rem+var(--safe-area-inset-bottom,0px))] md:pb-0"
       >
         <svelte:boundary onerror={(e) => console.error('[Layout] page crash:', e)}>
           {@render children?.()}

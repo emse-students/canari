@@ -55,6 +55,11 @@
 }
 
 :root {
+  /* Default assumes the native Tauri WebView (env() answers a real question there); app.html's
+   * inline script overrides this to 0px before first paint when not running in Tauri, since a
+   * plain browser tab already excludes the system nav/gesture area from its own viewport - see
+   * that script for why. Every safe-area-bottom consumer reads this variable, never env() itself. */
+  --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
   --cn-dark: #151b2c;
   --cn-yellow: #f6c232;
   --cn-yellow-hover: #e4af1b;
@@ -417,12 +422,12 @@ h6,
 }
 
 .chat-messages-scroll {
-  /* --chat-composer-height already includes env(safe-area-inset-bottom) via the footer's own
+  /* --chat-composer-height already includes var(--safe-area-inset-bottom, 0px) via the footer's own
      padding-bottom, so it must not be added again here (only the unset-var fallback needs it). */
-  padding-bottom: var(--chat-composer-height, calc(7.5rem + env(safe-area-inset-bottom, 0px)));
+  padding-bottom: var(--chat-composer-height, calc(7.5rem + var(--safe-area-inset-bottom, 0px)));
   scroll-padding-bottom: var(
     --chat-composer-height,
-    calc(7.5rem + env(safe-area-inset-bottom, 0px))
+    calc(7.5rem + var(--safe-area-inset-bottom, 0px))
   );
   /* Keep scrolling inside the message list - no chaining/rubber-band to the page that
      would drag content off-screen (notably while the keyboard is open). */
@@ -437,7 +442,7 @@ h6,
 }
 
 .mobile-convo-open .chat-messages-scroll {
-  /* --chat-composer-height already includes env(safe-area-inset-bottom) via the footer's
+  /* --chat-composer-height already includes var(--safe-area-inset-bottom, 0px) via the footer's
      padding-bottom, so we must not add it again here. */
   padding-bottom: var(--chat-composer-height, 6rem);
   scroll-padding-bottom: var(--chat-composer-height, 6rem);
@@ -450,7 +455,7 @@ h6,
   bottom: 0;
   background: transparent;
   padding-top: 0.5rem;
-  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+  padding-bottom: max(0.75rem, var(--safe-area-inset-bottom, 0px));
   pointer-events: none;
   z-index: 40;
   transition: bottom 180ms ease;
@@ -464,7 +469,7 @@ h6,
    just because the keyboard opened. */
 .keyboard-open .chat-composer-footer {
   bottom: var(--keyboard-layout-inset-bottom, 0px);
-  padding-bottom: max(0.75rem, env(safe-area-inset-bottom)) !important;
+  padding-bottom: max(0.75rem, var(--safe-area-inset-bottom, 0px)) !important;
 }
 
 /* `.app-layout` deliberately has NO keyboard-open height override (WP-KBD-1). Its ancestor
@@ -491,11 +496,11 @@ h6,
 /* When a conversation is open on mobile the BottomNav is unmounted - drop its
    reserved height so the composer sits flush with the safe area. */
 .mobile-convo-open .chat-composer-footer {
-  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+  padding-bottom: max(0.75rem, var(--safe-area-inset-bottom, 0px));
 }
 
 .mobile-convo-open.keyboard-open .chat-composer-footer {
-  padding-bottom: max(0.75rem, env(safe-area-inset-bottom)) !important;
+  padding-bottom: max(0.75rem, var(--safe-area-inset-bottom, 0px)) !important;
 }
 
 /* Chat layout fills the full viewport - no page scroll behind the chat shell. */
@@ -515,7 +520,7 @@ h6,
    gesture reads as "scrolling is broken". A scroller inside the chat shell that reaches the bottom
    of the viewport carries this class instead of that reservation. */
 .mobile-nav-inset {
-  padding-bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(4rem + var(--safe-area-inset-bottom, 0px));
 }
 
 /* MIRRORS THE NAV'S OWN MOUNT CONDITIONS, because reserved space the bar does not occupy is a dead
@@ -536,7 +541,7 @@ h6,
 
 html.keyboard-open .page-scroll-wrap {
   scroll-padding-bottom: calc(
-    4rem + env(safe-area-inset-bottom, 0px) + var(--keyboard-layout-inset-bottom, 0px)
+    4rem + var(--safe-area-inset-bottom, 0px) + var(--keyboard-layout-inset-bottom, 0px)
   );
 }
 
@@ -565,7 +570,7 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   padding-top: max(1rem, env(safe-area-inset-top, 0px));
   padding-right: max(1rem, env(safe-area-inset-right, 0px));
   padding-left: max(1rem, env(safe-area-inset-left, 0px));
-  padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+  padding-bottom: max(1rem, var(--safe-area-inset-bottom, 0px));
   transition:
     height 180ms ease,
     top 180ms ease,
@@ -579,42 +584,43 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
 /* Message action wheel (long-press menu) - above composer / bottom nav */
 [data-keyboard-aware-actions] {
   bottom: calc(
-    max(4.5rem, env(safe-area-inset-bottom, 0px) + 3rem) + var(--keyboard-layout-inset-bottom, 0px)
+    max(4.5rem, var(--safe-area-inset-bottom, 0px) + 3rem) +
+      var(--keyboard-layout-inset-bottom, 0px)
   );
   transition: bottom 180ms ease;
 }
 
 .mobile-convo-open [data-keyboard-aware-actions] {
   bottom: calc(
-    max(1rem, env(safe-area-inset-bottom, 0px) + 1rem) + var(--keyboard-layout-inset-bottom, 0px)
+    max(1rem, var(--safe-area-inset-bottom, 0px) + 1rem) + var(--keyboard-layout-inset-bottom, 0px)
   );
 }
 
 .keyboard-open [data-keyboard-aware-toast] {
   bottom: calc(
-    env(safe-area-inset-bottom, 0px) + 1rem + var(--keyboard-layout-inset-bottom, 0px)
+    var(--safe-area-inset-bottom, 0px) + 1rem + var(--keyboard-layout-inset-bottom, 0px)
   ) !important;
 }
 
 /* Side panels (group settings, channel members) with bottom actions */
 .keyboard-aware-panel-scroll {
-  padding-bottom: max(1.25rem, env(safe-area-inset-bottom, 0px));
+  padding-bottom: max(1.25rem, var(--safe-area-inset-bottom, 0px));
 }
 
 .keyboard-open .keyboard-aware-panel-scroll {
   padding-bottom: calc(
-    max(1.25rem, env(safe-area-inset-bottom, 0px)) + var(--keyboard-layout-inset-bottom, 0px)
+    max(1.25rem, var(--safe-area-inset-bottom, 0px)) + var(--keyboard-layout-inset-bottom, 0px)
   ) !important;
 }
 
 .keyboard-aware-panel-footer {
-  padding-bottom: max(1.25rem, env(safe-area-inset-bottom, 0px));
+  padding-bottom: max(1.25rem, var(--safe-area-inset-bottom, 0px));
   transition: padding-bottom 180ms ease;
 }
 
 .keyboard-open .keyboard-aware-panel-footer {
   padding-bottom: calc(
-    max(1.25rem, env(safe-area-inset-bottom, 0px)) + var(--keyboard-layout-inset-bottom, 0px)
+    max(1.25rem, var(--safe-area-inset-bottom, 0px)) + var(--keyboard-layout-inset-bottom, 0px)
   ) !important;
 }
 

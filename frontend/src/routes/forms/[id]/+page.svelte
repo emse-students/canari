@@ -93,6 +93,32 @@
   let paymentMethodChoice = $state<'stripe' | 'cash'>('stripe');
   let copiedLink = $state(false);
 
+  // ── Submit bar: sits at the end by default, sticks for good once earned ─────
+  /** Marks the bar's natural position - placed AFTER the bar (not before), so it only becomes
+   * visible once the submitter has scrolled PAST the whole bar, not merely up to its edge. */
+  let barSentinel: HTMLDivElement | undefined = $state();
+  /** Whether the sentinel is currently within the scrollable viewport. */
+  let barSentinelVisible = $state(false);
+  /** One-way latch: true once the submitter has scrolled far enough to see the whole bar AND
+   * every required question was answered at that moment. Never resets - reaching the end is a
+   * milestone, not a live state. Once true, the bar sticks to the bottom of the screen FOR GOOD -
+   * `position: sticky` (unlike `fixed`) never leaves the document flow, so it still settles back
+   * into its own natural spot, right after the last question, once scrolled all the way down;
+   * nothing needs to manually reserve space for it. There is nothing useful for it to guard
+   * before `reachedEnd`, and stopping short of it looks like an intrusive floating panel over
+   * content still being filled in - but once earned there is no scroll position where un-pinning
+   * it again would help the submitter. */
+  let reachedEnd = $state(false);
+  /** BottomNav's real rendered height (mobile only; 0 on desktop where it does not mount) -
+   * shrinks the sentinel's effective intersection root by that much, so scrolling past the bar
+   * is required to also clear the nav sitting below it, not just the bar's own edge. Measured in
+   * $effect rather than as a top-level const: top-level script runs during construction, before
+   * the DOM is mounted and laid out, so `clientHeight` would read 0 there regardless of CSS. */
+  let bottomNavHeight = $state(0);
+  $effect(() => {
+    bottomNavHeight = document.querySelector('#bottom-nav')?.clientHeight ?? 0;
+  });
+
   async function handleSaveCard() {
     savingCard = true;
     try {
@@ -510,25 +536,51 @@
   }
 
   // ── Progress bar ─────────────────────────────────────────────────
+  /** Shared by the progress bar (all visible items) and `allRequiredAnswered` (required ones
+   * only) - the same "does this item have a value" check `handleSubmit`'s own validation loop
+   * uses per item, so the three never drift into disagreeing about what counts as answered. */
+  function isItemAnswered(item: FormItem): boolean {
+    const val = selections[item.id];
+    if (item.type === 'multiple_choice') return Array.isArray(val) && val.length > 0;
+    if (['matrix_single', 'matrix_multiple'].includes(item.type)) {
+      if (!val || typeof val !== 'object') return false;
+      return (item.rows ?? []).every((row) => {
+        const rv = (val as Record<string, any>)[row];
+        return (
+          rv !== '' && rv !== undefined && rv !== null && (!Array.isArray(rv) || rv.length > 0)
+        );
+      });
+    }
+    return val !== '' && val !== undefined && val !== null;
+  }
   const totalCount = $derived(visibleItems.length);
   const answeredCount = $derived.by(() => {
     if (!form) return 0;
-    return visibleItems.filter((item) => {
-      const val = selections[item.id];
-      if (item.type === 'multiple_choice') return Array.isArray(val) && val.length > 0;
-      if (['matrix_single', 'matrix_multiple'].includes(item.type)) {
-        if (!val || typeof val !== 'object') return false;
-        return (item.rows ?? []).every((row) => {
-          const rv = (val as Record<string, any>)[row];
-          return (
-            rv !== '' && rv !== undefined && rv !== null && (!Array.isArray(rv) || rv.length > 0)
-          );
-        });
-      }
-      return val !== '' && val !== undefined && val !== null;
-    }).length;
+    return visibleItems.filter(isItemAnswered).length;
   });
+  /** What `reachedEnd` waits on: every visible REQUIRED question answered - optional ones do not
+   * gate it, matching `handleSubmit`'s own validation, which only ever refuses on `item.required`. */
+  const allRequiredAnswered = $derived(
+    visibleItems.every((item) => !item.required || isItemAnswered(item))
+  );
   const progressPct = $derived(totalCount > 0 ? Math.round((answeredCount / totalCount) * 100) : 0);
+
+  $effect(() => {
+    if (!barSentinel) return;
+    const root = barSentinel.closest('.page-scroll-wrap');
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        barSentinelVisible = entry?.isIntersecting ?? false;
+      },
+      { root, rootMargin: `0px 0px ${-bottomNavHeight}px 0px` }
+    );
+    observer.observe(barSentinel);
+    return () => observer.disconnect();
+  });
+
+  $effect(() => {
+    if (barSentinelVisible && allRequiredAnswered) reachedEnd = true;
+  });
 </script>
 
 {#if showPaymentModal && pendingSubmissionId}
@@ -544,7 +596,7 @@
   />
 {/if}
 
-<div class="mx-auto max-w-2xl px-4 pt-6 pb-36">
+<div class="mx-auto max-w-2xl px-4 pt-6">
   <!-- Back + Share -->
   <div class="mb-6 flex items-center justify-between">
     <button
@@ -1048,96 +1100,109 @@
   {/if}
 </div>
 
-<!-- ── Sticky bottom bar ── -->
+<!-- ── Submit bar: sits at the end by default, sticks for good once earned ── -->
 {#if form && !loading}
-  <!-- No md:left-[4.5rem] here: .page-scroll-wrap (the ancestor this bar is rendered inside)
-       has `will-change: transform` (app.css, for swipe-nav-between-tabs), which makes it the
-       containing block for `position: fixed` descendants - its own box already starts after
-       the sidebar (it fills <main>, itself inside the md:pl-[4.5rem]-padded column in
-       +layout.svelte). Adding the sidebar offset here double-applies it, shifting this bar
-       to the right of the form content above, which sits in the same box without it. -->
+  <!-- `position: sticky`, never `fixed`: .page-scroll-wrap (the ancestor this bar renders
+       inside) has `will-change: transform` (app.css, for swipe-nav-between-tabs), which makes
+       it the containing block for `position: fixed` descendants - and on real mobile browsers,
+       a `fixed` descendant of a `will-change: transform` ancestor can lose its own compositing
+       layer mid-scroll and disappear entirely until the next reflow (measured on-device: it
+       vanished after a scroll and never came back on its own). `sticky` is not redirected by a
+       transformed ancestor the same way and is computed against the actual scrolling viewport,
+       so it does not carry that failure mode.
+
+       Only this OUTER wrapper's position/spacing changes between the two states - the card
+       inside keeps the exact same look either way, so detaching from the flow at `reachedEnd`
+       reads as the same bar continuing to float, never as a swap to a different-looking element.
+
+       No `calc(4rem + safe-area)` clearance and no manually measured/reserved height either:
+       `position: sticky` never leaves the document flow the way `fixed` does, so the browser
+       already reserves this bar's own natural spot on its own - reaching the true bottom always
+       settles it back there, right after the last question, for free. -->
   <div
-    class="keyboard-aware-bottom pointer-events-none fixed inset-x-0 bottom-0 z-50 pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-5"
+    class="keyboard-aware-bottom mx-auto max-w-2xl px-4 {reachedEnd
+      ? 'sticky bottom-0 z-50 pb-3 md:pb-5'
+      : 'mt-6'}"
   >
-    <div class="mx-auto max-w-2xl px-4">
-      <div
-        class="border-cn-border/60 pointer-events-auto flex items-center gap-3 rounded-2xl border bg-(--cn-surface)/90 px-4 py-3 shadow-lg backdrop-blur-xl"
-      >
-        <div class="min-w-0 flex-1">
-          {#if submitted}
-            <span class="text-green-ok flex items-center gap-1.5 text-sm font-bold"
-              ><Check size={16} /> {m.form_view_response_sent()}</span
-            >
-          {:else if priceUnavailable}
-            <span class="text-text-muted text-sm">{m.form_view_combination_closed_title()}</span>
-          {:else if calculateTotal() > 0}
-            <div>
-              <p class="text-text-muted text-xs font-medium">{m.form_view_total_to_pay()}</p>
-              <p class="text-cn-dark text-lg font-extrabold">
-                {formatCurrency(calculateTotal(), form.currency)}
-              </p>
-            </div>
-          {:else}
-            <span class="text-text-muted text-sm">{m.form_view_submit()}</span>
-          {/if}
-        </div>
-        <Button
-          variant="primary"
-          class="shrink-0 px-6"
-          disabled={submitted ||
-            formFull ||
-            submitting ||
-            isNotOpenYet ||
-            !maySubmit ||
-            priceUnavailable}
-          loading={submitting}
-          onclick={handleSubmit}
-        >
-          {#if paymentPending}
-            <Check size={16} class="mr-1.5" />{m.form_view_pending()}
-          {:else if submitted}
-            <Check size={16} class="mr-1.5" />{m.form_view_sent()}
-          {:else if !maySubmit}
-            {m.form_view_not_open_to_you_title()}
-          {:else if priceUnavailable}
-            {m.form_view_combination_closed_title()}
-          {:else if formFull}
-            {m.form_view_full()}
-          {:else if calculateTotal() > 0}
-            <CreditCard size={16} class="mr-1.5" />{m.form_view_pay_button({
-              amount: formatCurrency(calculateTotal(), form.currency),
-            })}
-          {:else}
-            <Check size={16} class="mr-1.5" />{m.form_view_submit()}
-          {/if}
-        </Button>
-      </div>
-
-      {#if paymentPending}
-        <p class="text-amber-warn pointer-events-auto mt-2 text-center text-sm font-medium">
-          {m.form_view_payment_pending_note()}
-        </p>
-      {:else if formFull && !submitted}
-        <p class="text-text-muted pointer-events-auto mt-2 text-center text-sm font-medium">
-          {m.form_view_form_full_note()}
-        </p>
-      {/if}
-
-      {#if !submitted && form.requiresPayment && paymentMethods.length === 0 && userId}
-        <div class="pointer-events-auto mt-2 flex justify-center">
-          <button
-            type="button"
-            onclick={() => void handleSaveCard()}
-            disabled={savingCard}
-            class="text-text-muted hover:text-text-main inline-flex items-center gap-1.5 text-xs underline underline-offset-2 disabled:opacity-50"
+    <div
+      class="border-cn-border/60 flex items-center gap-3 rounded-2xl border bg-(--cn-surface)/90 px-4 py-3 shadow-lg backdrop-blur-xl"
+    >
+      <div class="min-w-0 flex-1">
+        {#if submitted}
+          <span class="text-green-ok flex items-center gap-1.5 text-sm font-bold"
+            ><Check size={16} /> {m.form_view_response_sent()}</span
           >
-            <CreditCard size={13} />
-            {savingCard ? m.form_view_saving_card() : m.form_view_save_card()}
-          </button>
-        </div>
-      {/if}
+        {:else if priceUnavailable}
+          <span class="text-text-muted text-sm">{m.form_view_combination_closed_title()}</span>
+        {:else if calculateTotal() > 0}
+          <div>
+            <p class="text-text-muted text-xs font-medium">{m.form_view_total_to_pay()}</p>
+            <p class="text-cn-dark text-lg font-extrabold">
+              {formatCurrency(calculateTotal(), form.currency)}
+            </p>
+          </div>
+        {:else}
+          <span class="text-text-muted text-sm">{m.form_view_submit()}</span>
+        {/if}
+      </div>
+      <Button
+        variant="primary"
+        class="shrink-0 px-6"
+        disabled={submitted ||
+          formFull ||
+          submitting ||
+          isNotOpenYet ||
+          !maySubmit ||
+          priceUnavailable}
+        loading={submitting}
+        onclick={handleSubmit}
+      >
+        {#if paymentPending}
+          <Check size={16} class="mr-1.5" />{m.form_view_pending()}
+        {:else if submitted}
+          <Check size={16} class="mr-1.5" />{m.form_view_sent()}
+        {:else if !maySubmit}
+          {m.form_view_not_open_to_you_title()}
+        {:else if priceUnavailable}
+          {m.form_view_combination_closed_title()}
+        {:else if formFull}
+          {m.form_view_full()}
+        {:else if calculateTotal() > 0}
+          <CreditCard size={16} class="mr-1.5" />{m.form_view_pay_button({
+            amount: formatCurrency(calculateTotal(), form.currency),
+          })}
+        {:else}
+          <Check size={16} class="mr-1.5" />{m.form_view_submit()}
+        {/if}
+      </Button>
     </div>
+
+    {#if paymentPending}
+      <p class="text-amber-warn mt-2 text-center text-sm font-medium">
+        {m.form_view_payment_pending_note()}
+      </p>
+    {:else if formFull && !submitted}
+      <p class="text-text-muted mt-2 text-center text-sm font-medium">
+        {m.form_view_form_full_note()}
+      </p>
+    {/if}
+
+    {#if !submitted && form.requiresPayment && paymentMethods.length === 0 && userId}
+      <div class="mt-2 flex justify-center">
+        <button
+          type="button"
+          onclick={() => void handleSaveCard()}
+          disabled={savingCard}
+          class="text-text-muted hover:text-text-main inline-flex items-center gap-1.5 text-xs underline underline-offset-2 disabled:opacity-50"
+        >
+          <CreditCard size={13} />
+          {savingCard ? m.form_view_saving_card() : m.form_view_save_card()}
+        </button>
+      </div>
+    {/if}
   </div>
+
+  <div bind:this={barSentinel}></div>
 {/if}
 
 {#if form && qrOpen}

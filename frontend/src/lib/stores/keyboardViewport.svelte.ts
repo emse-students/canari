@@ -139,7 +139,7 @@ export function getKeyboardViewport(): KeyboardViewportSnapshot {
  * Does not add `--keyboard-inset-bottom` - the overlay box already matches `--app-viewport-height`.
  */
 export const keyboardAwareOverlayPadding =
-  'max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left)';
+  'max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1rem, var(--safe-area-inset-bottom, 0px)) max(1rem, env(safe-area-inset-left)';
 
 function isFocusableField(el: HTMLElement): boolean {
   return el.matches(

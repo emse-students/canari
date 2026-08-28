@@ -203,15 +203,44 @@ which is also where every release up to and including v0.13.1 now lives.
   logs an accusation and tells the **user** - the only actor who can lift it - which device list to
   open.
 
-- **A paid form's sticky payment bar sat visibly to the right of the form content above it** on
-  desktop/tablet widths. `.page-scroll-wrap` (the scrollable ancestor every routed page renders
-  inside) has `will-change: transform` for the swipe-nav-between-tabs feature, which per spec
-  makes it the **containing block** for `position: fixed` descendants - its own box already starts
-  after the sidebar, since it fills `<main>` inside the `md:pl-[4.5rem]`-padded column
-  (`+layout.svelte`). The payment bar's own `md:left-[4.5rem]` then applied that same sidebar
-  offset a second time, on a containing block already shifted once - a deterministic double-offset,
-  not a scrollbar or browser quirk. Removed the now-redundant class; the bar and the form now share
-  the exact same box with nothing left to keep in sync by hand.
+- **A paid form's submit bar sat visibly to the right of the form content, then, once that was
+  fixed, disappeared entirely mid-scroll on a real phone.** First measured on desktop/tablet:
+  `.page-scroll-wrap` (the scrollable ancestor every routed page renders inside) has
+  `will-change: transform` for the swipe-nav-between-tabs feature, which per spec makes it the
+  **containing block** for `position: fixed` descendants - its own box already starts after the
+  sidebar, since it fills `<main>` inside the `md:pl-[4.5rem]`-padded column (`+layout.svelte`).
+  The bar's own `md:left-[4.5rem]` then applied that same sidebar offset a second time, on a
+  containing block already shifted once - a deterministic double-offset, not a scrollbar or
+  browser quirk. Removing the redundant class fixed the alignment, but on-device testing then
+  found the SAME `will-change: transform` ancestor has a second, worse consequence for a `fixed`
+  descendant on real mobile browsers: it can lose its own compositing layer mid-scroll and vanish
+  entirely until the next reflow - measured live, it scrolled away and never came back on its own.
+
+  **The fix was architectural, not a patch: the bar is `position: sticky`, never `fixed`, and only
+  once the submitter has actually earned it.** `sticky` is not redirected by a transformed
+  ancestor the way `fixed` is, so it does not carry that disappearing failure mode - and unlike
+  `fixed`, it never leaves the document flow, so the browser reserves its own space for free; nothing
+  needs to manually measure or reserve height for it. By default the bar just sits inline at the
+  end of the form (no floating panel over content still being filled in); a one-way latch
+  (`reachedEnd`) flips permanently true once an end-of-content sentinel - placed AFTER the bar, so
+  scrolling must clear the WHOLE bar plus `BottomNav`'s own real measured height, not merely
+  brush its edge - has been seen with every required question already answered. From that point
+  the bar stays pinned to the bottom of the screen for good, including once scrolled back down to
+  its own natural position, where `sticky`'s native behavior settles it back in place with zero
+  extra code. The card's own look never changes between the two states, so detaching from the
+  flow reads as the same bar continuing to float, never a swap to a different-looking element.
+
+  **A third, unrelated bug surfaced from the same on-device session: a mobile BROWSER tab opened a
+  dead gap above its own on-screen navigation buttons.** `BottomNav` and fifteen other call sites
+  padded themselves with `env(safe-area-inset-bottom)` to clear the phone's OS-level gesture/button
+  area - correct in the native Tauri WebView, which draws edge-to-edge behind that area, but a
+  plain browser tab already excludes it from its own viewport, and `env()` still answered non-zero
+  there on at least one device - double-reserving space nothing was drawn behind. Centralized into
+  one `--safe-area-inset-bottom` CSS variable (`app.css`), decided once in `app.html`'s inline
+  script before first paint (same pattern already used there to avoid a theme flash): defaults to
+  `env(safe-area-inset-bottom, 0px)` for Tauri, overridden to `0px` when `window.__TAURI_INTERNALS__`
+  is absent. Every consumer now reads `var(--safe-area-inset-bottom, 0px)` instead of calling
+  `env()` itself, so the platform distinction is made in exactly one place.
 - **An iPhone could never obtain a push token, and nothing anywhere reported it.** Measured on
   production: `SELECT platform, count(*) FROM push_token GROUP BY platform` answered `android | 49`
   and nothing else - not one row had ever carried `platform = 'ios'`, and `voipToken` was null on all

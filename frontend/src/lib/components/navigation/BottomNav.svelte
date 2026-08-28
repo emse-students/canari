@@ -48,8 +48,9 @@
 </script>
 
 <nav
+  id="bottom-nav"
   class="fixed inset-x-0 bottom-0 z-30 border-t border-black/5 bg-white/70 shadow-[0_-4px_24px_rgba(0,0,0,0.02)] backdrop-blur-2xl md:hidden dark:border-white/10 dark:bg-black/80 dark:shadow-[0_-4px_24px_rgba(0,0,0,0.2)]"
-  style="padding-bottom: env(safe-area-inset-bottom)"
+  style="padding-bottom: var(--safe-area-inset-bottom, 0px)"
 >
   <div class="flex h-16 items-stretch justify-around">
     {#each APP_PLACES.filter((p) => p.mobileNav) as place (place.id)}

@@ -8,7 +8,7 @@
 
 {#if toasts.length > 0}
   <div
-    class="pointer-events-none fixed right-4 bottom-[calc(env(safe-area-inset-bottom,0px)+5rem)] left-4 z-[60] flex flex-col gap-2 md:right-6 md:bottom-6 md:left-auto md:w-96"
+    class="pointer-events-none fixed right-4 bottom-[calc(var(--safe-area-inset-bottom,0px)+5rem)] left-4 z-[60] flex flex-col gap-2 md:right-6 md:bottom-6 md:left-auto md:w-96"
     aria-live="assertive"
     aria-atomic="false"
   >

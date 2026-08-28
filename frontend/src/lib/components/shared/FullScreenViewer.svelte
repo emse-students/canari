@@ -130,7 +130,7 @@
       {#if footer}
         <div
           class="shrink-0"
-          style="padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0.5rem));"
+          style="padding-bottom: max(0.5rem, var(--safe-area-inset-bottom, 0.5rem));"
         >
           {@render footer()}
         </div>
