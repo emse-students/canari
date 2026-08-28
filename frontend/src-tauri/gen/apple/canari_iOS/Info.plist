@@ -99,9 +99,13 @@
 	<string>Canari accède à vos photos pour les partager dans vos conversations.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Canari utilise Face ID pour déverrouiller l'application de façon sécurisée.</string>
-	<!-- The APNs<->FCM token bridge relies on Firebase's App Delegate Proxy swizzling
-	     (main.mm deliberately defines no UIApplicationDelegate). Setting this explicitly to
-	     YES makes the dependency intentional instead of relying on the framework default. -->
+	<!-- KEPT YES, but nothing here depends on it any more, and that is deliberate. The proxy is
+	     the DECLARED APNs<->FCM bridge and it installed nothing: it samples
+	     sharedApplication.delegate once, at [FIRApp configure], which main() runs before wry
+	     creates the application. CanariInstallApnsTokenHook does the bridging instead. This stays
+	     YES so the proxy keeps doing the OTHER jobs it is credited with should it ever attach
+	     (it uses class_replaceMethod, which chains rather than replaces), and so that turning it
+	     off is a deliberate act rather than a silent change of two mechanisms at once. -->
 	<key>FirebaseAppDelegateProxyEnabled</key>
 	<true/>
 	<!-- App Store Connect compliance: the app includes end-to-end encryption (MLS messages,
