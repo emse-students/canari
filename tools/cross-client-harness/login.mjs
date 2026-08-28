@@ -31,6 +31,20 @@ if (!account) throw new Error(`no account known for port ${port} - pass --device
 
 const creds = accountFor(account);
 
+// THE MOBILE FORM IS NOT IN THE APP. Tauri hands the OIDC hop to a Chrome Custom Tab, which is a
+// different browser and therefore a different devtools endpoint - `phone.mjs` forwards the app's
+// WebView on the device port and Chrome's own on the next one up. Everything below used to attach to
+// the WebView alone, so a phone whose IdP session had expired sat on a form this script could not
+// see, and reported "no credential form" about a form plainly on screen (measured 2026-08-28, A1
+// after a factory wipe: CAS's cookie had expired while Authentik's had not).
+const TAB_PORT = Number(opt('tabPort', port + 1));
+
+/** The credential form when it is in Chrome rather than in the app, or null. */
+const casTab = async () => {
+  const seen = await listTargets(TAB_PORT).catch(() => []);
+  return seen.find((t) => t.url.includes('cas.emse.fr') || t.url.includes('auth.canari-emse.fr')) ?? null;
+};
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const wanted = opt('match', null);
@@ -46,8 +60,14 @@ const here = () => evaluate(cx, 'location.href');
 // THE ONE PREDICATE FOR "the browser is back on the app". It has two readers - the classification of
 // a missing form below, and the poll that ends after a submit - and they must never drift, because a
 // disagreement between them would read as a login that half worked.
+//
+// THE PHONE'S APP IS NOT ON canari-emse.fr AT ALL. A Tauri client serves its embedded frontend from
+// `tauri.localhost` (`frontendDist: "../build"`), so this answered `false` for every landing A1 has
+// ever made and the step could only end on its own timeout.
 const onTheApp = (url) =>
-  url.includes('canari-emse.fr') && !url.includes('auth.canari-emse.fr') && !url.includes('cas.emse.fr');
+  (url.includes('canari-emse.fr') || url.includes('tauri.localhost')) &&
+  !url.includes('auth.canari-emse.fr') &&
+  !url.includes('cas.emse.fr');
 console.log(`[login:${account}] start ${await here()}`);
 
 // The Canari login page is only a launcher. The hop is canari -> auth.canari (Authentik flow)
@@ -69,6 +89,11 @@ console.log(`[login:${account}] start ${await here()}`);
 // no field to fill and why the HEAL rows cost no 2FA.
 const onTheLauncher = (url) => url.includes('/login');
 let onForm = false;
+// Which client holds the form. `cx` on the web, a Custom Tab target on the phone - and the two are
+// filled by the SAME code below, because a second copy is a second place for the focus assertion to
+// rot.
+let tabTarget = null;
+let formCx = cx;
 
 // IDEMPOTENT BY READING BEFORE ACTING. What this script is for is leaving the browser holding an
 // authenticated session, so a browser that already holds one needs no gesture at all - and clicking a
@@ -87,6 +112,11 @@ for (let attempt = 1; attempt <= 3 && !onForm && !theIdPAnsweredForUs; attempt++
   for (let i = 0; i < 100; i++) {
     await sleep(100);
     if (await evaluate(cx, `!!document.querySelector('#username')`)) {
+      onForm = true;
+      break;
+    }
+    tabTarget = await casTab();
+    if (tabTarget) {
       onForm = true;
       break;
     }
@@ -120,7 +150,21 @@ if (!onForm) {
   cx.close();
   process.exit(0);
 }
-console.log(`[login:${account}] form at ${await here()}`);
+if (tabTarget) {
+  formCx = connect(tabTarget.webSocketDebuggerUrl);
+  await formCx.ready;
+  await formCx.send('Runtime.enable');
+  // The TARGET appears before its render does, so the fields are waited for on the tab as they are
+  // on the app - and a tab that never grows a `#username` is a throw, not a fill against nothing.
+  for (let i = 0; i < 100; i++) {
+    if (await evaluate(formCx, `!!document.querySelector('#username')`)) break;
+    await sleep(100);
+    if (i === 99) throw new Error(`the Custom Tab on ${TAB_PORT} never rendered a credential form`);
+  }
+  console.log(`[login:${account}] form in the Custom Tab on ${TAB_PORT}`);
+} else {
+  console.log(`[login:${account}] form at ${await here()}`);
+}
 
 // Focused BY ELEMENT, never by a synthetic click - the same reasoning the submit below already
 // carried, and it applies to the fields for the same reason. On the phone's narrow CAS layout a
@@ -133,7 +177,7 @@ for (const [selector, value] of [
   ['#password', creds.password],
 ]) {
   const focused = await evaluate(
-    cx,
+    formCx,
     `(function () {
       var e = document.querySelector('${selector}');
       if (!e) return 'missing';
@@ -143,11 +187,11 @@ for (const [selector, value] of [
     })()`,
   );
   if (focused !== 'ok') throw new Error(`cannot focus ${selector}: ${focused}`);
-  await cx.send('Input.insertText', { text: value });
+  await formCx.send('Input.insertText', { text: value });
 }
 
 const filled = await evaluate(
-  cx,
+  formCx,
   `JSON.stringify({ user: document.querySelector('#username').value, pwLen: document.querySelector('#password').value.length })`,
 );
 console.log(`[login:${account}] fields ${filled}`);
@@ -158,7 +202,7 @@ console.log(`[login:${account}] fields ${filled}`);
 // test, so event fidelity buys nothing here; every click INSIDE Canari still goes through
 // realClick.
 const submitted = await evaluate(
-  cx,
+  formCx,
   `(function () {
     var b = document.querySelector('#submitBtn');
     if (!b) return 'no button';
@@ -168,17 +212,42 @@ const submitted = await evaluate(
 );
 console.log(`[login:${account}] submit: ${submitted}`);
 
+// THE APP'S WEBVIEW CAN BE GONE BY NOW, and the socket opened before the hop then answers nothing.
+// Android is free to kill the Tauri process while the Custom Tab is in front, and it did - measured
+// 2026-08-28 on A1, where polling the pre-hop target reported the same `/login` for sixty seconds
+// while the login had in fact moved to Chrome. So the landing is read by RE-RESOLVING the app's
+// target on its own port, and only the web path keeps using the connection it already holds.
+const landing = async () => {
+  if (!tabTarget) return here();
+  const seen = await listTargets(port).catch(() => []);
+  const app = seen.find((t) => onTheApp(t.url));
+  return app ? app.url : '(the app has no target yet)';
+};
+
 // CAS -> auth.canari-emse.fr -> back to the app. Poll rather than guess a single delay.
 for (let i = 0; i < 300; i++) {
   await sleep(100);
-  const url = await here();
+  const url = await landing();
   if (onTheApp(url)) {
-    console.log(`[login:${account}] landed ${url} after ${i + 1}s`);
+    console.log(`[login:${account}] landed ${url} after ${((i + 1) / 10).toFixed(1)}s`);
     break;
   }
   if (i === 299) console.log(`[login:${account}] STILL AT ${url}`);
 }
 
-console.log(`[login:${account}] final ${await here()}`);
-console.log(await evaluate(cx, 'document.body.innerText.replace(/\\s+/g," ").slice(0,500)'));
-cx.close();
+// Read the app through a FRESH connection on the tab path, for the same reason.
+let readCx = cx;
+if (tabTarget) {
+  formCx.close();
+  const seen = await listTargets(port).catch(() => []);
+  const app = seen.find((t) => onTheApp(t.url));
+  if (!app) throw new Error(`the Custom Tab submitted but the app has no target on ${port}`);
+  readCx = connect(app.webSocketDebuggerUrl);
+  await readCx.ready;
+  await readCx.send('Runtime.enable');
+}
+
+console.log(`[login:${account}] final ${await evaluate(readCx, 'location.href')}`);
+console.log(await evaluate(readCx, 'document.body.innerText.replace(/\\s+/g," ").slice(0,500)'));
+readCx.close();
+if (readCx !== cx) cx.close();

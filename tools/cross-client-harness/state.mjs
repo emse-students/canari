@@ -10,6 +10,7 @@
  *   node state.mjs
  */
 import { client, evaluate } from './chat.mjs';
+import { GATE_EXPR } from './gate-probe.mjs';
 import { PORTS } from './names.mjs';
 
 /**
@@ -29,11 +30,7 @@ const PROBE = `JSON.stringify({
   path: location.pathname,
   ready: document.readyState,
   locked: (function () {
-    var gate = !!document.querySelector('#encryption-pin') ||
-      document.body.innerText.indexOf('PIN de chiffrement') !== -1 ||
-      [].some.call(document.querySelectorAll('button'), function (b) {
-        return /D\\u00e9verrouiller|Saisie manuelle/i.test(b.innerText || '');
-      });
+    var gate = ${GATE_EXPR};
     if (gate) return 'LOCKED';
     return /^\\/(chat|communities)/.test(location.pathname) ? 'unlocked' : 'unknown (gate not on this route)';
   })(),

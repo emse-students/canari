@@ -95,7 +95,7 @@ page-side template for an escape Node eats, `classify-selftest.mjs` pins the cli
 rules, `srvclassify-selftest.mjs` the server-log buckets, `logcatclassify-selftest.mjs` the phone's,
 `checks-selftest.mjs` asserts that every phase in `checks.mjs` declares the devices its scripts
 actually drive, `devices-selftest.mjs` pins the device panel, `debris-selftest.mjs` the allowlist that
-decides what may be DELETED, `gate-selftest.mjs` the gate itself, and `ready-selftest.mjs` the preflight's readiness probe on the pages it has to tell apart - which exists because that probe is a STRING and a string is not compiled: a `\/` that should have been `\\/` emitted `/^/login/`, a SyntaxError in the page, and `node -c` was perfectly happy with it. `gate-probe-selftest.mjs` is the same job for `pin.mjs`'s unlock-gate probe, whose keypad test carries an escape of exactly that shape - and it pins the CLASSIFICATION too, because a client PAST the gate and a client that has not reached it yet look identical to a single DOM read: reporting the second as "no unlock modal" is what failed HEAL-NEW-0 on 2026-08-28. `residue-selftest.mjs` pins the border between what a native wipe must leave nothing of and what it may leave - `OUR_NATIVE` in `native-residue.mjs`, facing `KEPT_AT_TOP_LEVEL` in `src-tauri/src/commands/storage.rs` - against the real listing of a revoked Pixel 6a, because a wipe defined by what it DELETES is wrong the day the next store is added and that is how a revoked phone kept its Graine seeds. **It failed this gate on its first run**, importing `phone.mjs` for a classifier that needs no device names at all; the classifier is now its own pure module, which is the fix the gate's own error message asks for. `make test-harness-device` holds the one that needs a live rig,
+decides what may be DELETED, `gate-selftest.mjs` the gate itself, and `ready-selftest.mjs` the preflight's readiness probe on the pages it has to tell apart - which exists because that probe is a STRING and a string is not compiled: a `\/` that should have been `\\/` emitted `/^/login/`, a SyntaxError in the page, and `node -c` was perfectly happy with it. `gate-probe-selftest.mjs` is the same job for the unlock gate - it scrapes `pin.mjs`'s own template, feeds it the shared `GATE_EXPR`, and classifies eleven pages. It pins the CLASSIFICATION too, in both directions: a client PAST the gate and one that has not reached it yet look identical to a single DOM read, and reporting the second as "no unlock modal" is what failed HEAL-NEW-0 on 2026-08-28 - while four pages that merely TALK about the PIN (`/settings`, prose anywhere, the device panel, a fresh phone's biometric offer) used to read as the gate itself. `residue-selftest.mjs` pins the border between what a native wipe must leave nothing of and what it may leave - `OUR_NATIVE` in `native-residue.mjs`, facing `KEPT_AT_TOP_LEVEL` in `src-tauri/src/commands/storage.rs` - against the real listing of a revoked Pixel 6a, because a wipe defined by what it DELETES is wrong the day the next store is added and that is how a revoked phone kept its Graine seeds. **It failed this gate on its first run**, importing `phone.mjs` for a classifier that needs no device names at all; the classifier is now its own pure module, which is the fix the gate's own error message asks for. `make test-harness-device` holds the one that needs a live rig,
 `tabguard-selftest.mjs`, which makes W2 ambiguous on purpose to prove the tab guard refuses it - run
 it by hand after editing `tabs.mjs`, `chat.mjs` or the preflight's tab repair. Run the gate after
 editing `checks.mjs`, any classifier or `debris.mjs` - a phase whose `needs` disagrees with its
@@ -135,7 +135,8 @@ running the gate somewhere with no rig proves that, which is what CI does on eve
 | `grainedb.mjs` | The questions a SCREEN cannot answer, asked of production's database: what a device is routed, what sessions a salon holds, what notification level a member stored, what order a member put their communities in. Read-only, always. |
 | `names.mjs` / `accounts.mjs` | The only two readers of machine-local truth. Every other file goes through them. |
 | `phone.mjs` | adb, app lifecycle, notifications, the WebView - and the only entry point for the devtools forward. Also the NATIVE half of what a device holds: `nativeFootprint()` for a byte total, and `nativeResidue()` for the part that is a criterion - WHICH of Canari's own paths are still under `/data/data/<pkg>` (`mls.bin`, `canari_<userId>.db`, `graine_seeds.json`, `channel_keys.json`, the `avatar_*` cache, `shared_prefs/canari_*`, `keystore_aliases`). Its `OUR_NATIVE` faces `KEPT_AT_TOP_LEVEL` in `src-tauri/src/commands/storage.rs`: that says what the wipe must not touch, this says what must be gone after it. Prefer it to the byte total, which read 19 MB with the account gone and 31 MB with it present on the same device inside an hour. Ids are cut to eight characters, and `logs/` is reported under `rewritten` rather than counted - the running app recreates it in milliseconds. Needs a DEBUGGABLE build (`run-as`). |
-| `login.mjs`, `pin.mjs`, `unlock.mjs` | The auth gates. `unlock.mjs` unlocks every client it can identify; `login.mjs --match cas.emse.fr` also drives the phone's system-browser login. |
+| `login.mjs`, `pin.mjs`, `unlock.mjs` | The auth gates. `unlock.mjs` unlocks every client it can identify. `login.mjs` ends its wait on EITHER the app's own form or a CAS form in the phone's **Chrome Custom Tab** (`--tabPort`, default `port + 1`), fills whichever holds it with one copy of the code, and reads the landing by RE-RESOLVING the app's target - Android may have killed the WebView while the tab was in front. |
+| `gate-probe.mjs` | `GATE_EXPR`, the ONE expression answering "is the encryption PIN gate on screen", imported by `pin.mjs`, `pingate.mjs` and `state.mjs`. It had three copies keyed partly on body text, and `/settings` names the gate in its own security section - so a client parked there read `LOCKED` while perfectly unlocked, and `settle()` returns `LOCKED` to four runners that then produce no verdict. A gate is a MODAL: `role=dialog` plus its `aria-label`. |
 | `pingate.mjs` | The PIN gate as a LIBRARY, for a check that has to re-unlock mid-run. `unlockClient` types the PIN and then RE-READS the client to say whether it got through - see below. |
 | `net.mjs` | The radios. `armCut`/`cutHard` exist because CDP offline emulation leaves an already-established WebSocket alone - the plain cut could never produce a receiver-side disconnection, so MSG-9 had never once measured the thing it was named for. |
 | `a1.py` | Native Android surfaces via `uiautomator2`, for what the WebView cannot see. |
@@ -348,6 +349,26 @@ Four properties worth keeping:
 
 Facts about the instrument that are not guessable from the code, each of which has cost at least one
 run.
+
+**Bringing A1 back from zero** - HEAL does this repeatedly, and every step below was learnt by it
+failing once. The whole sequence is scripted; it is written out because when one step misbehaves the
+next one's symptom names the wrong cause.
+
+1. `adb devices` must list it. An empty list here is the CABLE - the `A1_WIFI` fallback needs a prior
+   `adb tcpip 5555` it does not have.
+2. `node phone.mjs 9333` (ONE positional port, not `--ensure`). It forwards the app's WebView on
+   9333 **and Chrome's own on 9334** - both are needed, because the login is not in the app.
+3. `node login.mjs --device A1`. Idempotent: a device the IdP still knows reports `already
+   authenticated` and fills nothing. When CAS's cookie has expired the form appears in the Custom
+   Tab, and this fills it there. **The app's WebView may die during the hop** - that is not a
+   failure, and the landing is re-resolved.
+4. `node pin.mjs --device A1`. Required after ANY relaunch, kill, reboot, radio cycle or
+   `install -r`.
+5. The biometric offer is answered with **Plus tard**, by `clearOverlays` and by `pin.mjs`. Never
+   "Activer": it erases the PIN, and the PIN is the only credential this rig can present.
+6. `node state.mjs` and `node identity.mjs --device A1` to prove it - a path, a sidebar, a device id
+   and the right user. `LOCKED` on a route that merely mentions the PIN is no longer possible, but a
+   client with no sidebar and no dialog on `/settings` is simply on `/settings`.
 
 **The browsers**
 

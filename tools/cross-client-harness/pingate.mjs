@@ -26,6 +26,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { evaluate } from './chat.mjs';
+import { GATE_EXPR } from './gate-probe.mjs';
 
 /** This directory, as `spawn`'s cwd - `pin.mjs` resolves its own imports relative to it. */
 const HERE = new URL('.', import.meta.url).pathname.replace(/^\//, '');
@@ -39,11 +40,7 @@ const HERE = new URL('.', import.meta.url).pathname.replace(/^\//, '');
  * and reading both is the whole point.
  */
 const PROBE = `JSON.stringify({
-  gate: !!document.querySelector('#encryption-pin') ||
-    document.body.innerText.indexOf('PIN de chiffrement') !== -1 ||
-    [].some.call(document.querySelectorAll('button'), function (b) {
-      return /D\\u00e9verrouiller|Saisie manuelle/i.test(b.innerText || '');
-    }),
+  gate: ${GATE_EXPR},
   mounted: !!document.querySelector('.chat-composer-footer .chat-composer-editor') ||
     document.querySelectorAll('aside button, nav button').length > 0
 })`;

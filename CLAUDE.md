@@ -127,6 +127,29 @@ Work is tracked as Work Packages by severity: **P1** (security, or a broken user
 [backlog](docs/wiki/backlog.md) both. Since 2026-08-18 nothing is parked: anything new goes into the
 queue below in its place, and its substance into `backlog`.
 
+**RESUMING (paused 2026-08-28 by the user: *"Prepare toi a reprendre directement la campagne, je
+crois qu'il n'y a plus rien avant"*). In this order, and nothing else first:**
+
+1. `git fetch` then **PUSH** - three local commits are unpushed and a push redeploys prod, so it
+   cannot happen during a run. Background, redirect not pipe, read `PUSH_EXIT`, `rm -rf apps/*/dist`
+   first.
+2. `gh run list` - CD GREEN and QUIET before any row.
+3. `node state.mjs` - all four clients were logged in and unlocked at the pause, A1 on a local debug
+   **0.14.12**. If the phone was unplugged, the from-zero sequence is in
+   [the harness README](tools/cross-client-harness/README.md#operating-it), scripted end to end.
+4. **HEAL, the rung in hand.** Re-run the five HEAL-NEW `FAIL`s (their cause is fixed), the four
+   HEAL-REVOKE rows (the signed-out repair is in), and WRITE the owed HEAL-REVOKE cell - predicate
+   `residue: 0` on a phone, `identityKeys: 0` everywhere, the offline variant driven by a reload.
+   **The user asked for the LOGS to be read on every pass, the reconciliations especially**
+   (2026-08-28): HEAL restarts from zero repeatedly, and a heal that works is not a heal that was
+   observed.
+
+**Three rig faults were fixed at the pause and none of them is a product defect** - the gate
+predicate that read `/settings` as `LOCKED`, `login.mjs` never being able to log a phone in (two
+independent causes), and the biometric offer that must be declined or A1 becomes undrivable forever.
+Stories in `CHANGELOG.md`, rules in
+[testing-methodology](docs/wiki/testing-methodology.md); neither restated here.
+
 ### CANARI - THE QUEUE, IN ORDER
 
 Everything actionable is HERE, one line each; the detail lives where the link says and **is not
@@ -484,9 +507,9 @@ sequence and what it does not close are on
 **WHAT THAT LEAVES, and it is small:** neither reading came from a RUNNER, so neither is in the ledger
 and `rows.mjs` cannot see them - the HEAL-REVOKE cell is still owed as a SCRIPT, and its predicate is
 now written for it (`residue: 0` on a phone, `identityKeys: 0` everywhere, the offline variant driven
-by a reload rather than a frame). **A1 and W3 are both un-enrolled now**, which the HEAL rung wanted
-anyway: their device-cap slots are free. Re-enrolling W3 is free; re-enrolling A1 costs a human 2FA
-unless the trust window is still open.
+by a reload rather than a frame). **BOTH ARE RE-ENROLLED (2026-08-28 16:35) AND IT COST NO 2FA** - Authentik's cookie
+survived on both; on A1 only CAS's had expired, and the rig typed those credentials itself. All four
+clients are logged in, unlocked and ready.
 
 **A RELEASE CARRYING BOTH FIXES IS OWED** - `0.14.12` is bumped in the three files but UNTAGGED, and
 the web half reaches W1/W2/W3 through CD on the next push. A1 already runs the local debug build.
@@ -512,10 +535,10 @@ full scan fights the build for I/O - so it stays a P3 in
 [backlog](docs/wiki/backlog.md#infrastructure) next to the two prod hosts, and the user is asked
 before anything outside a build cache goes.
 
-**GATES, all run against this work:** `bun run check` 0, `bun run lint` 0, `cargo test` 4/4 on the new
-wipe, `make test-harness` green including the new twelfth self-test. **NOTHING IS COMMITTED OR PUSHED
-YET, deliberately** - a campaign run and a push to `main` are mutually exclusive, and the deletion
-measurement is a run.
+**GATES, all run against this work:** `bun run check` 0, `bun run lint` 0, `cargo test` 7/7 on the new
+wipe, `make test-harness` green (twelve self-tests), `idcheck` clean. **COMMITTED, NOT YET PUSHED** -
+`682936f4` and the native-wipe commit are local, and the rig work below is a third. A campaign run and
+a push to `main` are mutually exclusive, so **PUSH FIRST, then run.**
 
 **Still owed on the board:** a HEAL-REVOKE cell asserting the storage is EMPTY after a revocation,
 and A1's native half has no row at all.

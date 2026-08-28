@@ -148,6 +148,31 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **The test rig read a settings page as a locked client.** The encryption gate was detected three
+  times over, in `pin.mjs`, `pingate.mjs` and `state.mjs`, and each copy asked partly whether the
+  page CONTAINED "PIN de chiffrement" - which `/settings` does, in its own security section. So a
+  client parked there reported `LOCKED` while being perfectly unlocked, `pin.mjs` burnt its 25 s
+  deadline on a modal that was not there, and `pingate.settle()` - whose gate branch is read before
+  the mounted branch - would have handed `LOCKED` to four runners that produce no verdict at all when
+  the gate cannot be passed. A gate is a MODAL, not a phrase: `PinModal` renders through
+  `shared/Modal.svelte`, which carries `role="dialog"` and `aria-label={title}`, so it is now named
+  exactly. The three copies and `pin.mjs`'s separate "the modal is gone" check are one `GATE_EXPR` in
+  `gate-probe.mjs`, and its self-test classifies eleven pages - four of them pages that merely talk
+  about the PIN.
+- **`login.mjs` could never log a phone in, for two independent reasons.** Its "we are back on the
+  app" predicate accepted only `canari-emse.fr`, and a Tauri client serves its embedded frontend
+  from `tauri.localhost` - so every landing A1 ever made read as a failure. And the mobile OIDC hop
+  runs in a Chrome **Custom Tab**, a different browser on a different devtools endpoint, so a script
+  attached to the app's WebView polled an unchanging `/login` while the credential form sat in
+  Chrome; worse, Android may kill the Tauri process while that tab is in front, leaving the pre-hop
+  connection naming nothing. The wait now ends on either client, one copy of the fill serves both,
+  and the landing is read by re-resolving the target.
+- **A freshly enrolled device is offered biometrics, and the rig now declines it.** "Connexion
+  rapide" covers the app after an enrolment and its own text says the PIN will be erased from the
+  device - which would destroy the only credential the harness can present, since nothing here can
+  offer a fingerprint. `clearOverlays` answers "Plus tard" before its Escape logic and reports it as
+  debris; Escape alone postpones a question rather than answering it.
+
 - **And it kept them a THIRD time, on the half no wipe had ever looked at: the native one.** With
   the crash fixed, the same Pixel 6a was revoked on 2026-08-28 and its WebView came back
   genuinely empty - `canariDatabases: 0`, 261 localStorage keys down to 0. Reading the disk with

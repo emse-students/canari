@@ -601,6 +601,14 @@ export const OVERLAYS = `(function () {
 export async function clearOverlays(cx) {
   const read = async () => JSON.parse(await evaluate(cx, OVERLAYS));
   const cleared = [];
+
+  // ANSWERED, not merely removed, and FIRST. The biometric offer is dismissible, so Escape below
+  // would clear it - and it would come back, because an offer Escaped is a question left open. It
+  // also must never be answered the other way: "Activer" erases the PIN, which is the only
+  // credential this rig can present. `declineBiometricOffer` says why at length.
+  if ((await declineBiometricOffer(cx)) === 'declined') {
+    cleared.push({ kind: 'offer', label: 'Connexion rapide' });
+  }
   const TAG = 'data-harness-backdrop';
   const CLOSE = 'data-harness-close';
   let escaped = false;
@@ -1870,4 +1878,39 @@ export async function apiGet(cx, path) {
  */
 export async function apiPost(cx, path, body) {
   return apiCall(cx, 'POST', path, body ?? {});
+}
+
+/**
+ * Answers the "Connexion rapide" offer with PLUS TARD, on a client that has just enrolled.
+ *
+ * WHY THE RIG MUST DECLINE IT, AND WHY THAT IS NOT A PREFERENCE. The modal's own words are
+ * "Deverrouillez Canari avec la biometrie au lieu de saisir votre code. Votre PIN sera efface de cet
+ * appareil." Accepting it removes the ONE credential this harness can present: `pin.mjs` types
+ * digits over CDP, and nothing here can offer a fingerprint. So "Activer" would end every `+A1` row
+ * permanently, and the modal appears on EVERY fresh enrolment - which the HEAL rung performs
+ * repeatedly, by design.
+ *
+ * NOT LEFT TO `clearOverlays`. That function is safe here - it presses Escape, then only an
+ * icon-only button, so it can never reach a captioned control - but "safe" is not "correct": Escape
+ * on a dismissible offer is an unanswered question, and an unanswered question comes back. "Plus
+ * tard" is the answer, so this is explicit and the screen stays clear afterwards.
+ *
+ * MATCHED BY CAPTION, and that is a known limitation, not an oversight. The dialog carries no
+ * structural hook, and its label is a Paraglide string - so this reads French, like `login.mjs`'s
+ * `text=Se connecter` and `pin.mjs`'s "Saisie manuelle" before it. Every campaign client is `fr`.
+ *
+ * Idempotent: a client not being offered anything costs one round trip and reports `none`.
+ *
+ * @param {object} cx an attached CDP client
+ * @returns {Promise<'declined' | 'none' | 'no button'>}
+ */
+export async function declineBiometricOffer(cx) {
+  const OFFERED = `[].some.call(document.querySelectorAll('[role=dialog][aria-modal=true]'), function (e) {
+    return (e.getAttribute('aria-label') || '').indexOf('Connexion rapide') !== -1;
+  })`;
+  if (!(await evaluate(cx, OFFERED))) return 'none';
+  // Through realClick, like every other click on this app: it proves the control is on screen and
+  // settled, where a bare `.click()` would report success against a button mid-transition.
+  await realClick(cx, 'text=Plus tard');
+  return (await evaluate(cx, OFFERED)) ? 'still up' : 'declined';
 }

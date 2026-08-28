@@ -2208,6 +2208,29 @@ by anyone who has not met them.
   a browser. Enumerate the fleet before blaming the product; and a phase whose verdict turns on the
   creator's device set should say which devices were present.
 
+- **THE MOBILE LOGIN DOES NOT HAPPEN IN THE APP.** Tauri hands the OIDC hop to a Chrome Custom Tab,
+  which is a different browser and therefore a **different devtools endpoint** - `phone.mjs` forwards
+  the app's WebView on the device port and Chrome's own on the next one up (9333 / 9334 for A1). A
+  script attached to the WebView alone sees a `/login` that never changes and reports "no credential
+  form" about a form plainly on screen. Measured 2026-08-28 re-enrolling A1 after a factory wipe:
+  Authentik's cookie had survived and **CAS's had not**, so the form was in Chrome for sixty seconds
+  while the rig polled the app. `login.mjs` now ends its wait on EITHER client and fills whichever
+  holds the form, with one copy of the fill.
+- **AND THE APP'S WEBVIEW MAY NOT SURVIVE THE HOP.** Android is free to kill the Tauri process while
+  the Custom Tab is in front, and it did - the pre-hop target was gone, so the socket opened before
+  the login answered nothing at all. A landing after a Custom Tab is read by **re-resolving the
+  target**, never through a connection held across the hop. This is the same class as
+  `launch.mjs start` no-opping on a running browser: a handle is not a guarantee that what it names
+  still exists.
+- **A FRESHLY ENROLLED DEVICE IS OFFERED BIOMETRICS, AND THE OFFER MUST BE DECLINED.** The
+  "Connexion rapide" modal covers the app after an enrolment, and its own words are *"Votre PIN sera
+  efface de cet appareil"* - so accepting it destroys the ONE credential this harness can present,
+  permanently, since nothing here can offer a fingerprint. `clearOverlays` ANSWERS it with "Plus
+  tard" before its Escape logic and reports it as debris; Escape alone would only postpone the
+  question. It was safe by luck already - the escalation only ever presses an icon-only button, and
+  every confirming control in this app carries a word - but safe is not answered. **HEAL re-enrols
+  repeatedly by design, so this modal is met on every pass.**
+
 ---
 
 ## Where a result goes
@@ -2511,6 +2534,30 @@ instrument was rewritten on an inference, and the inference was published.
   look. Choosing between them throws away the discriminator - which is the same fault, one layer up,
   as collapsing an exit code to a boolean.
 
+
+### A predicate that names a state by page TEXT is matched by the page that documents that state
+
+The encryption gate was detected three ways at once, and one of them was
+`document.body.innerText.indexOf('PIN de chiffrement') !== -1`. `/settings` **names** the gate in its
+own security section - `profile_pin_heading`, "Code PIN de chiffrement", which contains that
+substring - so a client parked there read `LOCKED` while being perfectly unlocked. Measured
+2026-08-28 on W1: `pin.mjs` spent its whole 25 s deadline and reported "no unlock modal",
+`state.mjs` printed `LOCKED`, and `pingate.settle()` - whose `gate` branch is tested BEFORE
+`mounted` - returns `LOCKED` to `comm17`, `comm18`, `comm22` and `tab3b`, none of which produces a
+verdict when the gate cannot be passed. W1 was on `/chat` with eleven sidebar buttons two commands
+later; it had never been locked.
+
+**A gate is a MODAL, not a phrase.** The prompt is `PinModal.svelte` through `shared/Modal.svelte`,
+which carries `role="dialog"` and `aria-label={title}` - so it is identifiable EXACTLY, by the label
+of a dialog, instead of approximately by any text anywhere on the page. The corollary is the older
+rule again: a predicate is only evidence for the question it was written to answer, and "the page
+mentions the PIN" was never that question.
+
+**And it had THREE COPIES, which is why the loosest one decided.** `pin.mjs`, `pingate.mjs` and
+`state.mjs` each carried their own, and `pin.mjs` carried a fourth as its "the modal is gone" check.
+They now import one `GATE_EXPR` from `gate-probe.mjs`, and `gone` is that expression NEGATED.
+`gate-probe-selftest.mjs` classifies eleven pages, four of which are the ones that used to be
+misread - `/settings`, prose anywhere, the device panel, and a fresh phone's biometric offer.
 
 ### A criterion must be shown to FAIL on a dirty device before a green from it is worth anything
 

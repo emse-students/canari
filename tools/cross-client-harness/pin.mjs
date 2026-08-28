@@ -11,6 +11,8 @@
  */
 import { accounts as readAccounts } from './accounts.mjs';
 import { activate, connect, evaluate, listTargets, realClick, until } from './cdp.mjs';
+import { declineBiometricOffer } from './chat.mjs';
+import { GATE_EXPR } from './gate-probe.mjs';
 import { ACCOUNT_OF, PORTS } from './names.mjs';
 
 const argv = process.argv.slice(2);
@@ -60,12 +62,11 @@ const GATE_DEADLINE_MS = 25000;
 const GATE_PROBE = `(function () {
   var f = !!document.querySelector('#encryption-pin');
   var k = [].some.call(document.querySelectorAll('button'), function (b) { return b.innerText.trim() === '\\u232b'; });
-  var t = document.body.innerText.indexOf('PIN de chiffrement') !== -1;
   var sidebar = document.querySelectorAll('aside button, nav button').length;
   return JSON.stringify({
     field: f,
     keypad: k,
-    gate: f || k || t,
+    gate: ${GATE_EXPR},
     path: location.pathname,
     onChat: location.pathname.indexOf('/chat') === 0,
     sidebar: sidebar
@@ -169,14 +170,18 @@ console.log(`[pin] ${account}: ${len} ${hasField ? 'chars' : 'taps'}${has('value
 
 await activate(cx, 'text=Déverrouiller');
 // The modal either closes (unlocked) or shows an error - poll for whichever comes first.
-// "Gone" must be tested on the MODAL, not on the input, or the keypad shape never settles.
-const gone = `!document.querySelector('#encryption-pin') && document.body.innerText.indexOf('PIN de chiffrement') === -1`;
+// "Gone" is the gate predicate NEGATED, never a second reading of it: the keypad shape carries
+// no `#encryption-pin`, so a check keyed on the input alone never settles there.
+const gone = `!(${GATE_EXPR})`;
 const ms = await until(cx, `(${gone}) || document.body.innerText.indexOf('incorrect') !== -1`, 25000);
 console.log(`[pin] settled in ${ms}ms`);
 
+const offer = await declineBiometricOffer(cx);
+if (offer !== 'none') console.log(`[pin] biometric offer: ${offer}`);
+
 const state = await evaluate(
   cx,
-  `JSON.stringify({ url: location.href, modal: document.body.innerText.indexOf('PIN de chiffrement') !== -1, body: document.body.innerText.replace(/\\s+/g,' ').slice(0, 300) })`,
+  `JSON.stringify({ url: location.href, modal: ${GATE_EXPR}, body: document.body.innerText.replace(/\\s+/g,' ').slice(0, 300) })`,
 );
 console.log(`[pin] after: ${state}`);
 cx.close();
