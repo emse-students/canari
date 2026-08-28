@@ -151,14 +151,20 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     4 / 5 / 1, and **the phone ran every `+A1` row for the first time**. **COMM-8 PASSES**: the forked
     distribution group is fixed and measured. **Every non-pass left has a named cause, all on the
     board and not restated here** - DEL-7 and DEL-9 were HARNESS faults (now fixed), MULTI-5 is runner
-    debt, and MULTI-3/4 are `SKIPPED` on a re-enrolment cost. **Three rows - COMM-12, COMM-22, DEL-9 -
-    are `VACUOUS` with `failures: []`, voided by a CD deploy landing mid-run: a campaign run and a
-    push to `main` are MUTUALLY EXCLUSIVE**, and `gate` refusing the attribution is the only reason
-    nothing false was recorded. **What is owed next, in order:** those three re-runs in a quiet window;
-    then re-runs of every DEL and MULTI cell, because both runners have CHANGED since (`del.mjs` is
-    `2dd7a0f4a933`, `multi.mjs` `74bb17b8283f`, and `rows.mjs` names each row); then LIFE, NOTIF,
-    HEAL. **HEAL IS NOW THE RUNG IN HAND, and after two nights it has exactly TWO cells: HEAL-NEW-0
-    `PASS-DIRTY` and HEAL-NEW-1 `PASS`, both on `48b65d08`.** Run 3 (2026-08-28 03:30-03:58) took
+    debt, and MULTI-3/4 are `SKIPPED` on a re-enrolment cost. **COMM-12, COMM-22 and DEL-9 were once
+    `VACUOUS` with `failures: []`, voided by a CD deploy landing mid-run - a campaign run and a push
+    to `main` are MUTUALLY EXCLUSIVE**, and `gate` refusing the attribution is the only reason nothing
+    false was recorded. **All three are RE-RUN and green on `66639621`** (COMM-22 `PASS`, the other two
+    `PASS-DIRTY`), so what that episode leaves is the rule and not a debt. **What is owed next, in
+    order:** re-runs of every DEL and MULTI cell, because both runners have CHANGED since (`del.mjs`
+    is `2dd7a0f4a933`, `multi.mjs` `74bb17b8283f`, and `rows.mjs` names each row); then LIFE, NOTIF,
+    HEAL. **HEAL IS THE RUNG IN HAND, and it has TWO green cells: HEAL-NEW-0 `PASS-DIRTY` and
+    HEAL-NEW-1 `PASS`, both on `48b65d08`. The five HEAL-NEW `FAIL`s of the same night are the
+    INSTRUMENT, and re-running them is now cheap:** every one failed on `sameAccountEnrolled: false`
+    alone while the product healed 10/10 in 6.1 s, and that predicate's cause - the per-user device
+    cap - is fixed. HEAL-NEW-11's second condition READ like a product question and is the same cause
+    twice: its note is `never went amber alone within 90s: {"panel":false}`, a panel that never
+    mounted, which is what a refused KeyPackage looks like. Run 3 (2026-08-28 03:30-03:58) took
     eight rows and recorded NOTHING - five HEAL-NEW exit 1, four HEAL-REVOKE exit 2 - and **both
     causes are the instrument, both are now fixed or named, and neither is a product defect.** (1)
     `sameAccountEnrolled` read `census()`, which reads `key_package` UNION memberships and therefore
@@ -396,13 +402,55 @@ yet, so **read Android vitals from late September 2026**; and **WP-RESTORE-1** (
 required April 2027, WebAuthn on a server that has none) is ACCEPTED and scheduled AFTER the
 campaign ([backlog](docs/wiki/backlog.md)).
 
-**Release: v0.14.9 SHIPPED 2026-08-28 00:46 and ALL THREE BUILDS PASSED** (Android 12m34s, iOS
-14m46s, AppImage) - read `gh run list` rather than this line, which has been stale twice. It carries
-the iOS FCM fix and is the build [check S](docs/wiki/device-verification.md) needs. The earlier skew
-that killed Android Release and AppImage Release (Tauri `plugin-log` JS 2.9.0 vs crate 2.8.0) is
-fixed, and no CI job could see it because nothing here compiles the Tauri app: `Guard the Tauri
-JS/Rust version parity` in `code-analysis.yml` now reads the two committed files. Story in
-`CHANGELOG.md`, rule in [durable-rules](docs/wiki/durable-rules.md#release-and-ci).
+**Release: v0.14.11 SHIPPED 2026-08-28 09:53 and its Android build is GREEN** (run `33161214934`) -
+read `gh run list` rather than this line, which has been stale twice. **THE APK IS BUILT AND NOT
+INSTALLED**: A1 still runs an older build, so nothing measured on the phone yet concerns the wipe fix.
+v0.14.10 (00:46, three builds green) carries the revocation-wipe fix and the iOS FCM fix, and is the
+build [check S](docs/wiki/device-verification.md) needs; v0.14.11 adds the half of the wipe that
+reaches a phone's WebView. The earlier skew that killed Android Release and AppImage Release (Tauri
+`plugin-log` JS 2.9.0 vs crate 2.8.0) is fixed, and no CI job could see it because nothing here
+compiles the Tauri app: `Guard the Tauri JS/Rust version parity` in `code-analysis.yml` now reads the
+two committed files. Story in `CHANGELOG.md`, rule in
+[durable-rules](docs/wiki/durable-rules.md#release-and-ci).
+
+**THE FIRST THING TO DO ON RESUMING, and it is a MEASUREMENT the user asked for** (*"Supprime tous
+les appareils sauf W1 ... comme ca on voit si le mobile perd tout aussi"*), in this order and no
+other:
+
+0. **THE PHONE IS UNPLUGGED** - the user unplugged it at the end of the session of 2026-08-28
+   (*"on aura plus qu'a installer l'apk et reprendre"*). Plug it in FIRST. An empty `adb devices` is
+   the cable and nothing else here; the `A1_WIFI` fallback needs a prior `adb tcpip 5555` it does not
+   have.
+1. `gh run list` - CD must be GREEN and QUIET. A run and a push to `main` are mutually exclusive.
+2. Install the v0.14.11 APK on A1: `gh run download 33161214934 -D <dir>` then `adb install -r <apk>`.
+   An upgrade keeps the app's data, which is the point - the wipe must be seen removing it. **A1 is
+   the ONLY device that needs this**; W1/W2/W3 already have the fix through CD.
+3. Arm the phone: `node phone.mjs 9333` (ONE positional port, NOT `--ensure`), and read the preflight
+   header - an unarmed phone is INVISIBLE to a runner rather than an error.
+4. **The BEFORE reading, both halves for A1:** `node footprint.mjs --device W2` / `--device W3` /
+   `--device A1`, and for the native half
+   `node -e "import('./phone.mjs').then(p=>console.log(JSON.stringify(p.nativeFootprint())))"`.
+   Measured 2026-08-28 before any of this: A1 held `canariDatabases: 1`, `bytesInUse: 5939115` in its
+   WebView and 2938 files / 41977059 bytes natively.
+5. Inventory the panel, which deletes NOTHING: `node purge-devices.mjs --port 9224`.
+6. Delete, by an ALLOWLIST of full device ids read from that inventory:
+   `node purge-devices.mjs --only <id>,<id>,<id> --expect N --port 9224`. **Never a "all but".**
+   **Keep A1's app in the FOREGROUND and connected while this runs**, or the measurement changes
+   meaning: a live device wipes on the `device_revoked` frame, a backgrounded or offline one wipes at
+   its first login WITH a network, and only the first is visible in the seconds after the click.
+7. The AFTER reading, same four commands as step 4. `canariDatabases` is the criterion
+   (`nothingOfTheAccountRemains`); localStorage and the cache are NOT, because an empty app rewrites
+   a locale key and re-caches its shell the moment it is looked at.
+
+**The COST is low and worth naming:** the deleted devices re-enrol through SSO with no field to fill
+- the IdP cookies live on `auth.canari-emse.fr` and `cas.emse.fr`, which wiping the app's origin does
+not touch - so no 2FA is spent, and the deletions FREE device-cap slots the HEAL rung needs anyway.
+
+**What that measurement is FOR:** the board owes a HEAL-REVOKE cell asserting the storage is EMPTY
+after a revocation, and A1's native half has no row at all. It also answers the user's second
+question, which the design answers and no run has shown: a device revoked while OFFLINE is not wiped
+offline - `isDeviceRevoked` says `false` when unreachable - so the wipe lands at its first login WITH
+a network.
 
 **AN APK IS NOT REACHED BY A DEPLOY: `frontendDist: "../build"` means the Tauri app EMBEDS the
 frontend**, so every web fix reaches W1/W2/W3 through CD and reaches A1 only in a new build. That is
@@ -415,63 +463,41 @@ now REACH App Store Connect, TestFlight is the BETA channel - nothing yet shows 
 ordinary iOS user. Ship the client, verify it arrived, THEN raise
 ([legacy-compatibility](docs/wiki/legacy-compatibility.md)).
 
-**iOS RAN ON REAL HARDWARE for the first time on 2026-08-27** (iPhone, iOS 18.7, against prod) and
-found a defect no gate could: **signing in was impossible, because the four Nest CORS allowlists named
-the ANDROID WebView origin only.** Fixed - one tested `cors-origins.ts` per service plus the gateway's
-`ALLOW_ORIGIN` - and the story is in `CHANGELOG.md`, the mechanism on
-[mobile](docs/wiki/frontend/mobile.md#the-ios-login-that-died-in-a-cors-allowlist), four rules in
-[durable-rules](docs/wiki/durable-rules.md#mobile-and-native); none is restated here. **Everything the
-native project owns WORKED** - deep link, `ASWebAuthenticationSession`, the `UIApplication.shared.open`
-self-reinvocation, `/auth/callback` - so mobile.md's "iOS has never run a check on hardware" is gone.
-**A FULL iOS/Android PARITY AUDIT ran before the re-release** and everything else it read is symmetric
-(push payloads, WS auth, entitlements, AASA, NSE, App Group, keychain, `CFBundleURLTypes`, no
-platform-gated tauri command). **Its one open question is now ANSWERED AND FIXED.** iOS could log in but not STAY
-logged in: measured on the same server in the same minute, the iPhone presented `cookies=[]` on 120
-consecutive refreshes while A1 came back from `am force-stop` on ONE `refresh 200`. WKWebView drops the
-third-party refresh cookie and offers no opt-in, so on `tauri://localhost` the credential is now
-carried in `X-Canari-Refresh` and kept in an awaited store write, both sides choosing the transport
-from one fact and never by being refused; Android and the web are untouched by construction. Mechanism
-on [sessions](docs/wiki/sessions.md#the-credential-a-client-carries-itself), story in `CHANGELOG.md`,
-the cookie-read shim and its removal condition in
-[legacy-compatibility](docs/wiki/legacy-compatibility.md) - none restated here. **THE HARDWARE PROOF
-IS IN: 0.14.6 installed on the iPhone and the session holds** (user, 2026-08-28), and the server side
-says the same - `OIDC callback: credential also returned in the body` on `tauri://localhost`. Still
-owed on macOS/Linux desktop, whose engines nobody has measured - that unknown is exactly what the shim
-covers. A dead session is also no longer re-proven 120 times: the 401 is a proof about a credential
-and is now latched.
+**iOS - THREE DEFECTS FOUND ON HARDWARE, ALL FIXED, ONE PROOF STILL OWED.** The stories are in
+`CHANGELOG.md` and the mechanisms on [mobile](docs/wiki/frontend/mobile.md) and
+[sessions](docs/wiki/sessions.md#the-credential-a-client-carries-itself); rules in
+[durable-rules](docs/wiki/durable-rules.md#mobile-and-native). **None is restated here.** What
+remains OPEN:
 
-**iOS HAD NEVER REGISTERED ONE PUSH TOKEN - CAUSE FOUND AND FIXED 2026-08-28, HARDWARE PROOF OWED.**
-`push_token` held `android | 49` and no `ios` row had ever existed, so no alert, no mention and no
-CallKit ring had ever reached an iPhone. **Two defects, both fixed.** The SILENCE half is CLOSED and
-PROVEN on hardware: a device that exhausts its retries POSTs `/api/mls/push/unavailable`, and check S
-saw `[PUSH_UNAVAILABLE] ... platform=ios reason=no-token` at 01:23 - the first word this platform has
-ever said. The ACQUISITION half then took a second cause, found by reading the ORDER rather than
-shipping another build: **this app does not own its `UIApplicationDelegate`** (wry installs one inside
-`start_app`), and Firebase's App Delegate Proxy - the declared APNs->FCM bridge - samples that
-delegate exactly ONCE, at `[FIRApp configure]`, which runs from `main()` before the application
-exists. It found nil and never retried, so the APNs token was dropped on every launch the platform
-ever had. **The evidence had been in the file for months**: the neighbouring code already swizzles
-wry's delegate by hand for remote notifications - work the proxy does when installed. Fixed by
-`CanariInstallApnsTokenHook` on `DidFinishLaunching`, and the report now names WHICH branch failed
-(`no-apns-token` / `fcm-token-fetch-failed` / `apns-registration-refused` / `app-delegate-absent`)
-instead of the symptom. **Story in `CHANGELOG.md`, mechanism on
-[mobile](docs/wiki/frontend/mobile.md#the-apns-token-had-nowhere-to-land-because-the-proxy-meant-to-catch-it-installed-nothing),
-three rules in [durable-rules](docs/wiki/durable-rules.md#mobile-and-native), the P1 in
-[backlog](docs/wiki/backlog.md), and what each outcome of the re-run MEANS in
-[check S](docs/wiki/device-verification.md); none is restated here.** **RE-RUN CHECK S ON THE BUILD
-CARRYING THIS** - everything native is verified by COMPILING, and none of the four reasons above is
-the cause just fixed. One inference from the first run was RETRACTED (reconnection churn does not
-reset the client's module state); it is written down in check S so it is not made again.
+**Two things are PROVEN and must not be re-verified:** the session HOLDS on the iPhone (0.14.6
+installed, user 2026-08-28, and the server agrees - `OIDC callback: credential also returned in the
+body` on `tauri://localhost`), and a full iOS/Android PARITY AUDIT ran before the re-release and read
+everything else as symmetric - push payloads, WS auth, entitlements, AASA, NSE, App Group, keychain,
+`CFBundleURLTypes`, no platform-gated tauri command.
 
-**THE iOS KEYBOARD IS FIXED THE WAY ANDROID'S WAS** (user, 2026-08-28: *"c'est assez handicapant"*):
-WKWebView is never resized for the keyboard, so the shell was pinned to the visible height inside a
-full-height document and a keyboard-tall empty band opened below it. `CanariApplyKeyboardLayout`
-shrinks the WebView's frame - the layout viewport MOVES, no margin - and **no web change was needed**,
-that branch of `computeSnapshot` having been written for a native resize iOS never did. **The BARS at
-the top and bottom are NOT done** and are a P2 in [backlog](docs/wiki/backlog.md): they want ONE pass
-over `app.css` with a device in hand, the same pass the emoji / dead-row / device-row items want.
+- **RE-RUN [check S](docs/wiki/device-verification.md) ON A BUILD CARRYING THE APNs FIX.** `push_token`
+  had never held one `ios` row, so no alert, mention or CallKit ring had ever reached an iPhone. The
+  SILENCE half is closed and proven on hardware (`[PUSH_UNAVAILABLE] ... platform=ios
+  reason=no-token`); the ACQUISITION half is fixed and UNPROVEN - everything native here is verified
+  by COMPILING. What each outcome of the re-run MEANS is written in check S, along with one inference
+  from the first run that was RETRACTED so it is not made again.
+- **THE iOS BARS at the top and bottom are NOT done** - a P2 in [backlog](docs/wiki/backlog.md). The
+  keyboard itself is fixed (the WebView's frame is shrunk, no web change was needed). The bars want
+  ONE pass over `app.css` with a device in hand - the same pass the emoji, dead-row and device-row
+  items want.
+- **`minClientVersion` is raised BY HAND** from `/admin/platform`, and only after a build is shown
+  reaching an ORDINARY iOS user: a release can reach App Store Connect, but TestFlight is the BETA
+  channel ([legacy-compatibility](docs/wiki/legacy-compatibility.md)).
+- Still owed on macOS/Linux desktop: nobody has measured those engines' cookie behaviour, which is
+  exactly the unknown the `X-Canari-Refresh` shim covers.
 
-**AND THREE OF THREE iOS DEFECTS SO FAR WERE INVISIBLE TO EVERY GATE HERE** - the CORS allowlist, the third-party refresh cookie, the FCM ordering. The user named the classes still to come before anyone looked (backgrounding, memory, a reconnection that does not happen); that expectation is recorded in [backlog](docs/wiki/backlog.md) and closes by HARDWARE, one lettered check at a time - **never by a fix written against a suspected iOS lifecycle bug nobody has seen**, because nothing here could tell whether it worked.
+**AND THREE OF THREE iOS DEFECTS WERE INVISIBLE TO EVERY GATE HERE** - a CORS allowlist naming only
+the Android WebView origin, a third-party refresh cookie WKWebView drops, an FCM proxy sampling an
+app delegate that did not exist yet. The user named the classes still to come before anyone looked
+(backgrounding, memory, a reconnection that does not happen); that expectation is in
+[backlog](docs/wiki/backlog.md) and closes by HARDWARE, one lettered check at a time - **never by a
+fix written against a suspected iOS lifecycle bug nobody has seen**, because nothing here could tell
+whether it worked.
 
 ### CANARI - the test campaign
 

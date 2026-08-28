@@ -1157,6 +1157,16 @@ Three separate things, in the order they have to be answered:
    below are no longer the only two: a third is that the PC was revoked, wiped, and re-created its
    own store - the one the user would have seen as "still had local memory".
 
+   **A SECOND, INDEPENDENT WAY A REVOKED DEVICE KEPT ITS STORE - FIXED THE SAME DAY, AND IT DOES NOT
+   EXPLAIN THIS REPORT.** `wipeDeviceToFactory` had the native stores and the WebView's as the two
+   ARMS of one platform branch, so inside Tauri it deleted `mls.bin` and the `.db` files and never
+   touched IndexedDB - measured on a Pixel 6a holding 5.9 MB of `CanariDB_<userId>` it should never
+   have had, created by a reader that named `IndexedDbStorage` instead of asking `getStorage`. Both
+   halves are fixed with a guard test. **It is recorded here so it is not mistaken for a fourth
+   candidate cause above: the user's device was a PC, on the web, where that branch always ran.**
+   Story in `CHANGELOG.md`, mechanism on the same auth section, two more rules in
+   [durable-rules](durable-rules.md#mls-state-and-keys).
+
    **TWO CANDIDATE CAUSES SURVIVE that fix and only the user's own history separates them**, so
    neither is worth code before rung 16 measures it: the removed panel row may have been
    SESSION-only, since `handleRemoveRow` calls `deleteDevice` only when `row.device` exists, in which
