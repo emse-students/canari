@@ -25,7 +25,11 @@ import { KeyPackage } from '../entities/key-package.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { IsNull } from 'typeorm';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
-import { sanitizeQueryValue, assertCallerOwnsUserId } from '../utils/sanitize';
+import {
+  sanitizeIdentityValue,
+  sanitizeQueryValue,
+  assertCallerOwnsUserId,
+} from '../utils/sanitize';
 import { In } from 'typeorm';
 import { MessagingService } from '../services/messaging.service';
 import { groupInviteIsValid, resolveGroupInvitePreview } from '../utils/group-invite';
@@ -335,8 +339,12 @@ export class InvitationsController {
     @Headers('x-user-id') headerUserId?: string,
     @Headers('x-global-admin') headerGlobalAdmin?: string
   ) {
-    const safeDeviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
-    const safeUserId = sanitizeQueryValue(body.userId, 'userId');
+    // IDENTITIES on the only path that can CREATE an `active` membership from nothing - the one
+    // that stored a placeholder as a member of a real conversation on 2026-08-27. The
+    // addressability gate below cannot catch it: a placeholder that registered a KeyPackage is
+    // addressable. See `sanitizeIdentityValue`.
+    const safeDeviceId = sanitizeIdentityValue(body.deviceId, 'deviceId');
+    const safeUserId = sanitizeIdentityValue(body.userId, 'userId');
     const safeGroupId = sanitizeQueryValue(body.groupId, 'groupId');
     // Authorization: a device marks ITSELF active (owns userId), OR any active member of the
     // group vouches that another user's device is already in the shared MLS tree - the same

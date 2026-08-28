@@ -610,97 +610,90 @@ no check waits on wall-clock time at all. It belongs with the rendering pass, no
 
 ## Messaging convergence
 
-### P1 - a device sat `pending` in a conversation for over an hour, silently, and BOTH directions of the conversation were lost while it did (measured on prod 2026-08-28)
+### P1 - a PLACEHOLDER held a member's place in a real conversation, and both directions of it were lost for 134 minutes (measured on prod 2026-08-28; CAUSE FOUND, GUARDS SHIPPED, cleanup owed)
 
-**THE USER'S LOST MESSAGES, FOUND IN THE LOG AND FULLY ACCOUNTED FOR.** The user reported a gap in
-one conversation: nothing between their "Banger" at 23:02 Paris and 01:03, their 01:03 message never
-reached the peer, the peer's 01:09 "Test" never reached them, and afterwards both could talk again.
-Every one of those five facts is in `chat-delivery`'s log, which happens to start at 00:47 Paris and
-therefore covers the whole episode.
+**This entry replaces the two written earlier the same day.** They described one chain, from its two
+ends, and reading them apart is what made the first account stop one step short.
 
-**What actually happened**, in group `7da231f8-119c-4ce2-884f-55f5c94c903f`:
+**THE USER'S SYMPTOM.** Nothing arrived between their message at 23:02 Paris and 01:03; their 01:03
+message never reached the peer; the peer's 01:09 reply never reached them; afterwards both could
+talk again. All five facts are in `chat-delivery`'s log, which happens to start at 00:47 Paris and
+covers the whole episode.
 
-- The peer's device `tauri-0acc3ab9...-mtc0al5c-9hny` took a membership row at 22:03:36 UTC with
-  status **`pending`**, and it never became `active`.
-- From 22:49 to 23:11 UTC the server answered
-  `[PENDING] No active membership for 0acc3ab9:tauri-...-mtc0al5c-9hny` **twenty-one times**, once
-  per `REGISTER_DEVICE`, each of which also reported `pendingGroups=1`. Every `[MSG_FETCH]` in that
-  window returned `count=0`.
-- **There is no `[COMMIT]` for that group anywhere in the window.** The only one in the entire log is
-  at 23:14:46, and it is the one described below.
-- So the 01:03 message was fanned out and the peer's device could not be given it - it is not an
-  active member, and `MSG_FETCH` hands an inactive device nothing. And the 01:09 reply was sent from
-  a device that is not in the MLS group at the live epoch, so the ciphertext that did reach the
-  sender's own clients could not be opened by them.
+**WHAT THE ROSTER ACTUALLY SAID**, for group `7da231f8-119c-4ce2-884f-55f5c94c903f`:
 
-**THE HEAL WAS NOT A HEAL - IT WAS A REINSTALL, and this matters.** At 23:14:45 the peer uninstalled
-and reinstalled the app (asked for by hand, for [check S](device-verification.md)). That minted a NEW
-device id `...-mtc545la-ebnu`, which issued a `WELCOME_REQ`, which produced the group's only commit
-(`baseEpoch=2 -> newEpoch=3`) and a Welcome. **Nothing self-corrected.** Read as a self-heal, this
-defect looks transient and rare; read correctly, an ordinary user would have been stranded until they
-reinstalled, and would have had no reason to.
+| device | status | created (UTC) |
+| --- | --- | --- |
+| `pending` / user `unknown` | **`active`** | 21:00:13.26 |
+| the peer's `web-...-mtbep8vs-5oxb` | `pending` | 21:00:14.10 |
+| the peer's `tauri-...-mtc0al5c-9hny` | `pending` | 22:03:36 |
+| the peer's `tauri-...-mtc545la-ebnu` | `active` | **23:14:45** - the reinstall |
 
-**THE DEFECT IS TWOFOLD, and the second half is the one that let it run for 71 minutes.**
+**The peer had NO active device in this conversation between 21:00 and 23:14.** A placeholder took
+their place 0.84 s before the real members joined, and held it. So the 01:03 message was fanned out
+to a roster in which the peer did not appear, and the 01:09 reply was encrypted by a device that
+was not in the group at the live epoch. The server said so twenty-one times
+(`No active membership`), every `MSG_FETCH` returned `count=0`, and **there is no `COMMIT` for the
+group in the window at all.**
 
-1. **Nobody committed the pending device.** Activating a pending member is another member's client's
-   job, and that client was demonstrably online - it was sending messages through the same seventy
-   minutes. It never tried, and the failure is client-side and SILENT: had it called and been
-   refused, `chat-delivery` would have a line, and it has none.
-2. **The server said so twenty-one times and nothing could hear it.** `No active membership` is
-   logged at `LOG`, and it is also the perfectly normal answer for a device in its first seconds.
-   One line cannot separate "brand new" from "stranded for an hour" - so a working system and a
-   broken one print the same thing, which is the same shape as the push token that no row reported.
-   **A device pending in a group for longer than an activation can plausibly take is a defect, and it
-   is knowable from the row's own age.**
+**THE "HEAL" WAS A REINSTALL, and that is the part that must not be misread.** At 23:14:45 the user
+uninstalled and reinstalled the app by hand for [check S](device-verification.md). That minted a NEW
+device id, which issued a `WELCOME_REQ`, which produced the group's only commit (epoch 2 -> 3).
+**Nothing self-corrected.** An ordinary user would have stayed stranded with no reason to reinstall.
 
-**What is owed, in order.** (1) Find why the peer's client never committed the pending member - start
-from what it does on `pendingGroups > 0`, since the server reports that on every registration and it
-was reported twenty-one times. (2) Give the stranded state a REPORT that a working system does not
-produce: the age of the `pending` row is already in the table, so the predicate is a `WHERE`, not a
-new column - and it must be measured against the whole population before its name is believed. (3)
-Only then consider a repair path; a `WELCOME_REQ` triggered by a reinstall is a fallback standing in
-for a primary path, and the fix belongs in the primary path.
+**THE CAUSE, and it is one line of client code.** `BaseMlsService` initialises `userId = 'unknown'`
+and `deviceId = 'pending'`, and `updateInvitationStatus` is the only client call that can CREATE an
+`active` membership row from nothing. Two call sites in `setupMessageHandler` reach it with
+`mlsService.getDeviceId()`, which returns the raw field - so a Welcome processed before the identity
+resolved published the pair, and the server stored it as a member. The class already guarded on both
+literals in three other places (`settleBarrier`, `fetchPendingMessages`, `resolveDeviceId`): the
+value was documented as a non-identity and one seam published it anyway.
 
-**Related, same group, NOT established as the cause**: the placeholder member below joined that same
-conversation one second before the real members. Whether an `active` member that never advances is
-what stopped the commit is an MLS question and needs its own measurement - do not infer it from the
-coincidence.
+**Why the existing ghost guard did not catch it.** `invitations/status` already gates promotion on
+`deviceAddressability` (WP-GHOST-1) - a denylist check plus the presence of a KeyPackage. The
+placeholder registered a KeyPackage under the same pair, so it was addressable. Both literals also
+pass `SAFE_QUERY_VALUE_REGEX` perfectly. **A shape allowlist is not an identity allowlist.**
 
-### P1 - a device joined a real conversation under PLACEHOLDER identifiers, and every message since is queued for a ghost (measured on prod 2026-08-28)
+**WHAT SHIPPED 2026-08-28, at both ends deliberately** - a client of any version reaches that
+endpoint, so neither guard is allowed to be the only one.
 
-**Found while looking for the user's unexplained lost messages, and it is not a theory - the rows are
-on production.** `dm_device_group_memberships` holds one row with `userId = 'unknown'` and
-`deviceId = 'pending'`, status **`active`**, in the real conversation `7da231f8-119c-4ce2-884f-55f5c94c903f`,
-created 2026-08-27 21:00:13 UTC - **one second before** the two real members joined. Fourteen minutes
-later a `key_package` was registered under the same two literals. `queued_message` now holds **72 rows
-addressed to it, 70 of them ordinary application messages**, from 22:04 to 23:22 UTC, every one of
-them a real MLS payload that nothing will ever fetch.
+- Client: `UNRESOLVED_USER_ID` / `UNRESOLVED_DEVICE_ID` are named constants, the three existing
+  literal comparisons read from them, and `updateInvitationStatus` throws `UnresolvedIdentityError`
+  (typed, carrying `seam` and `field`) rather than publishing. Every call site is fire-and-forget
+  and re-driven, so a refusal costs one cycle. Tests: `BaseMlsService.unresolvedIdentity.test.ts`.
+- Server: `sanitizeIdentityValue` refuses the two literals on the paths that can WRITE an identity -
+  `REGISTER_DEVICE` and `invitations/status`. `kick-stale-device` deliberately keeps the generic
+  sanitizer: it only DEMOTES an existing row, and demoting a placeholder is a step towards cleaning
+  one up. Tests: `sanitize.identity.spec.ts`.
 
-**Where the literals come from**: they are the client's own pre-identity placeholders.
-`BaseMlsService` initialises `deviceId = 'pending'` and resets it there on logout, and guards elsewhere
-with `if (this.deviceId && this.deviceId !== 'pending')` - so the value is KNOWN to be a non-identity,
-and one path let it reach the server anyway. Exactly one such membership and one such key package
-exist in the whole database, so this is a narrow race, not a broken path: an identity that had not
-resolved when the group was joined.
+**WHAT IS STILL OWED, in order and not before.**
 
-**Why it is a P1 rather than debris.** The ghost holds a key package, so it passes the
-`liveDeviceIds` filter in the send fan-out and is treated as a live member - it is not skipped as a
-`SKIPPED_NO_KEY_PACKAGE` ghost would be. It is `active`, so it is in the gateway's routing set. And it
-was added to the MLS group, which means it is in the ratchet tree and every commit carries it.
+1. **Deploy, then clean** - in that order. The row and its 72 queued messages (70 ordinary
+   application frames addressed to a ghost) stay until the guards are live, or a client re-creates
+   them. Cleaning first also destroys the evidence for (2).
+2. **NOT ESTABLISHED: whether the ghost is what stopped the activation.** The peer's real devices
+   were `pending` and an active member of Jolan's was online and polling throughout - the server
+   answered it `invitations=8` at 23:03, 23:03, 23:09, 23:10, 23:11 and 23:16 and it committed none
+   of them. Whether `addMember` was failing over a tree holding the placeholder's leaf, or the
+   client skipped for its own reason, is a CLIENT-log question and no server line separates them.
+   **Do not assert the guards fixed it.** MULTI-8 and MULTI-9 on
+   [cross-client-testing](cross-client-testing.md) are the rows that answer it.
+3. **A report for the stranded state.** `No active membership` is logged at `LOG` and is also the
+   normal answer for a device in its first seconds, so a working system and a broken one print the
+   same thing twenty-one times - the same shape as the push token no row reported. The age of the
+   row is already in the table, so the predicate is a `WHERE`, not a new column, and it must be
+   measured against the whole population before its name is believed.
 
-**What is NOT yet established, and must not be asserted**: whether this is what lost the user's
-messages. The 72 rows are COPIES; the real recipients had their own. The open question is what a
-member that never advances does to the group's epochs - that is an MLS question and it needs its own
-measurement, not an inference from this row.
+**THE POPULATION, measured rather than assumed** (`GROUP BY status`, 2026-08-28): 150 `active`, **10
+`pending`, every one older than an hour**, three of them since 2026-08-25 and their queued Welcomes
+since 2026-08-03. **Nine of the ten are `web-`, on Chrome. This is not an iOS defect and not a
+mobile one.**
 
-**Three things are owed, in order.** (1) Find the client path that sends a recipient or joins a group
-while its own id is still `'pending'` - `BaseMlsService` already knows the value is a non-identity, so
-the guard exists and one call site does not use it. (2) **Refuse the literals at the server**: a
-`userId`/`deviceId` that the authenticated session can supply must never be taken from the body, and
-`key_package` registration and membership must reject a value the client itself defines as "no
-identity yet". A destructive control needs an allowlist, and so does an identity. (3) Only then clean
-the row and its 72 messages - deleting first would destroy the evidence for (1).
-
+**One thing was checked and is NOT a defect, so it is not re-derived**: nine of those ten have an
+undelivered Welcome sitting in `queued_message`, which looks like a deadlock and is not.
+`MSG_FETCH` filters on group tombstones, never on membership status, so those Welcomes are
+retrievable the moment the device comes back - they are abandoned browser profiles, debris. The
+tenth, the device that lost the user's messages, has **no queued row at all**: nobody ever added it.
 
 ### P3 - discovery honours a dismissal only for a row it ALREADY has, and a new device has none (measured 2026-08-27, population EMPTY today)
 

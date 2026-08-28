@@ -198,31 +198,35 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
     hand and NOTIF-4 / HEAL-W2, whose stale ledger verdicts their cells name in prose. The shared
     venue is `fbddc890` / `general` `064ac7d2`, rebuilt 2026-08-26 after a THIRD disappearance.
 
-2. **THE USER'S LOST MESSAGES ARE EXPLAINED, AND THE CAUSE IS A P1 - measured on prod 2026-08-28**
-    from `chat-delivery`'s log, which covers the whole episode. The peer's device held a `pending`
-    membership for 71 minutes and never became `active`: the server answered `No active membership`
-    **21 times** while reporting `pendingGroups=1`, every `MSG_FETCH` returned `count=0`, and **there
-    is no `COMMIT` for that group in the window at all**. So the 01:03 message could not be handed to
-    a non-member, and the 01:09 reply was encrypted by a device outside the group. **THE "HEAL" WAS
-    THE REINSTALL** - a new device id, a `WELCOME_REQ`, the group's only commit (epoch 2 -> 3);
-    nothing self-corrected, and an ordinary user would have stayed stranded. **Two defects**: a
-    client that never commits the pending member, silently (no server line, so it never called); and
-    a stranded state that prints exactly what a healthy brand-new device prints, so twenty-one
-    reports said nothing. Substance and the three things owed in
-    [backlog](docs/wiki/backlog.md), the only copy.
+2. **A PLACEHOLDER HELD A MEMBER'S PLACE IN A REAL CONVERSATION - the user's lost messages, and
+    the ghost, are ONE P1. CAUSE FOUND, GUARDS SHIPPED 2026-08-28, CLEANUP AND ONE PROOF OWED.**
+    Measured on prod: for 134 minutes the peer had NO active device in the group, because a
+    `userId='unknown'` / `deviceId='pending'` row was stored **`active` 0.84 s before the real
+    members joined** while both of the peer's own devices sat `pending`. Twenty-one
+    `No active membership`, every `MSG_FETCH count=0`, **no `COMMIT` for the group at all**; what
+    ended it was the user REINSTALLING, which minted a new device id and took the group's only
+    commit - nothing self-corrected. The cause is one client seam publishing `BaseMlsService`'s own
+    non-identity sentinels, and **the existing ghost gate could not see it: a shape allowlist is not
+    an identity allowlist**, and the placeholder held a KeyPackage so it read as addressable.
+    Guarded at BOTH ends (named constants + typed `UnresolvedIdentityError` on the client,
+    `sanitizeIdentityValue` on `REGISTER_DEVICE` and `invitations/status`), 12 tests. **Owed, in
+    order: DEPLOY then clean the row and its 72 queued frames** (cleaning first lets a client
+    re-create it and destroys the evidence); and **do NOT assert the guards fixed the activation** -
+    an active member was polling and was answered `invitations=8` six times and committed none, and
+    only a CLIENT log separates the causes. **Not iOS, not mobile: 9 of the 10 stranded memberships
+    are `web-`.** Substance in [backlog](docs/wiki/backlog.md), rules in
+    [durable-rules](docs/wiki/durable-rules.md), story in `CHANGELOG.md`; none restated here.
 
-3. **A DEVICE JOINED A REAL CONVERSATION UNDER PLACEHOLDER IDS, AND EVERY MESSAGE SINCE IS QUEUED
-    FOR A GHOST - P1, measured on prod 2026-08-28** while looking for the message loss the user
-    reported. One `dm_device_group_memberships` row is `userId='unknown'` / `deviceId='pending'`,
-    status `active`, in a real conversation, joined ONE SECOND before the real members; it holds a
-    `key_package`, so the fan-out treats it as live, and `queued_message` has 72 rows for it, 70 of
-    them ordinary messages nothing will ever fetch. The literals are the CLIENT's own pre-identity
-    placeholders (`BaseMlsService` sets `deviceId = 'pending'` and guards on it elsewhere), so one
-    call site skips a guard the class already has. Exactly one such membership and one such key
-    package exist in the whole database - a narrow race, not a broken path. **Whether this is what
-    lost the user's messages is NOT established and must not be asserted**: the 72 rows are copies.
-    Substance, the three things owed and the order they must be done in are in
-    [backlog](docs/wiki/backlog.md), the only copy - **do not delete the row first, it is the evidence.**
+3. **NOTHING ON THE CAMPAIGN BOARD COULD HAVE CAUGHT IT, AND THE GAP IS STRUCTURAL** (checked
+    2026-08-28 on the user's question). Of ~200 rows exactly ONE reads
+    `dm_device_group_memberships` - COMM-8 - and it reads WHO is named, never WHAT STATUS they hold;
+    every other row asserts the symptom, which this defect leaves intact. And no row asks a question
+    whose answer is a POPULATION, so three memberships stranded for 25 days were invisible. **Four
+    rows written into rung 12 MULTI** (7: assert the ROW and that none names a placeholder; 8: a
+    device enrolled while the peer is offline reaches `active` **without a reinstall**; 9: delivery
+    after activation, and nothing claiming success in between; 10: the whole-population invariant,
+    run as a preflight). All four need only `W1 W2`. On
+    [cross-client-testing](docs/wiki/cross-client-testing.md), the only copy.
 
 4. **DEFERRED PAST THE LADDER - seven UX and rendering items, substance in
     [backlog](docs/wiki/backlog.md) and NOWHERE else**, named here only so none is forgotten: the

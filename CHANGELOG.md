@@ -206,6 +206,33 @@ which is also where every release up to and including v0.13.1 now lives.
   a reason cannot outlive its cause. **The hardware proof is owed**: everything native here is verified
   by compiling, which proves nothing about running.
 
+- **A placeholder identity was stored as an active member of a real conversation, and the peer lost
+  both directions of it for 134 minutes.** `BaseMlsService` holds `userId = 'unknown'` and
+  `deviceId = 'pending'` until a session resolves them, and `updateInvitationStatus` - the only
+  client call that can create an `active` membership row from nothing - was reached with the raw
+  fields by a Welcome processed before that happened. The server stored the pair, 0.84 s before the
+  conversation's two real members joined, and it then held the peer's place: their own two devices
+  sat `pending`, `No active membership` was logged twenty-one times, no commit was ever made for the
+  group, and nothing self-corrected - what ended it was the user reinstalling the app by hand, which
+  minted a new device id and took the group's only commit.
+
+  The existing ghost gate could not catch it. It asks whether a device is addressable - not
+  denylisted, and holding a KeyPackage - and the placeholder had registered one under the same pair.
+  Both literals also pass the query-value regex perfectly: **a shape allowlist is not an identity
+  allowlist.**
+
+  Guarded at both ends, deliberately, because a client of any version reaches that endpoint. The
+  client names the two sentinels as constants, reads its three existing comparisons from them, and
+  throws a typed `UnresolvedIdentityError` rather than publishing one - every call site is
+  fire-and-forget and re-driven, so a refusal costs one cycle where a stored placeholder costs a
+  conversation. The server refuses the same two values on the paths that WRITE an identity,
+  `REGISTER_DEVICE` and `invitations/status`; `kick-stale-device` keeps the generic sanitizer on
+  purpose, since it only demotes an existing row and demoting a placeholder is how one gets cleaned
+  up.
+
+  Ten stranded memberships were found on production while measuring this, the oldest carrying a
+  Welcome from 2026-08-03. Nine are `web-`, on Chrome: this is not a mobile defect.
+
 - **The iOS keyboard opened a large empty zone under the interface, and pushed the composer out of
   reach.** WKWebView is never resized for the keyboard: it keeps its full height while only the visual
   viewport shrinks. The web layer saw that and pinned the app shell to the visible height - correctly,
