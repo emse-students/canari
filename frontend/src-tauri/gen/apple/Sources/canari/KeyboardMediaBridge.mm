@@ -5,10 +5,6 @@
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <WebKit/WebKit.h>
 
-/// Polling interval in seconds. 0.5 s is low enough to feel instant and high enough to be
-/// negligible for battery (NSTimer is coalesced by the system when idle).
-static const NSTimeInterval kPollInterval = 0.5;
-
 /// Maximum payload size in bytes (12 MiB, matching KeyboardMediaBridge.kt).
 static const NSUInteger kMaxBytes = 12 * 1024 * 1024;
 
@@ -29,13 +25,6 @@ static NSArray<NSString *> *kImageTypes(void) {
 
 /// The target WKWebView (weak – owned by the view hierarchy, not by us).
 static __weak WKWebView *g_targetWebView = nil;
-
-/// Last known changeCount of UIPasteboard.general. We only dispatch when this value changes,
-/// avoiding re-detection of the same pasteboard content without clearing it.
-static NSInteger g_lastChangeCount = -1;
-
-/// The repeating timer that drives the pasteboard poll.
-static NSTimer *g_pollTimer = nil;
 
 // ─── Internal helpers ────────────────────────────────────────────────────────
 
@@ -164,11 +153,16 @@ static void DispatchToWeb(WKWebView *webView, NSString *mime, NSString *name, NS
   });
 }
 
-// ─── Poll logic ──────────────────────────────────────────────────────────────
+// ─── Pasteboard event handling ──────────────────────────────────────────────
 
-/// Called by the repeating timer. Reads the pasteboard if changeCount has advanced and an
-/// image is available.
-static void PollPasteboard(__unused NSTimer *timer) {
+/// Called on `UIPasteboardChangedNotification` - the real event a 0.5 s `NSTimer` poll used to
+/// stand in for (docs/wiki/frontend/android-ios-parity.md#2.1). A third-party iOS keyboard has
+/// no direct content-commit API into a host app the way Android's IME does; it mediates through
+/// the pasteboard, so this notification - fired exactly when that write happens - IS the commit
+/// signal, not an approximation of one. Edge-triggered by construction: unlike the poll, it
+/// cannot fire for content that was already on the pasteboard before this handler was attached,
+/// so no changeCount bookkeeping is needed to reject stale content.
+static void OnPasteboardChanged(__unused NSNotification *note) {
   if (!canari_ios_is_in_foreground()) return;
   WKWebView *webView = g_targetWebView;
   if (webView == nil) {
@@ -182,10 +176,6 @@ static void PollPasteboard(__unused NSTimer *timer) {
   }
 
   UIPasteboard *pb = [UIPasteboard generalPasteboard];
-  NSInteger currentCount = pb.changeCount;
-  if (currentCount == g_lastChangeCount) return;
-  g_lastChangeCount = currentCount;
-
   NSInteger imageIdx = IndexOfImageItem(pb);
   if (imageIdx == NSNotFound) return;
 
@@ -204,46 +194,12 @@ static void PollPasteboard(__unused NSTimer *timer) {
   DispatchToWeb(webView, mime, name, dataB64);
 }
 
-/// Starts the repeating poll timer on the main run loop.
-static void StartPolling(void) {
-  if (g_pollTimer != nil) return;
-  g_pollTimer = [NSTimer scheduledTimerWithTimeInterval:kPollInterval
-                                                repeats:YES
-                                                  block:^(__unused NSTimer *timer) {
-                                                    PollPasteboard(timer);
-                                                  }];
-  // Allow the timer to fire while scrolling (keyboard may be open over a scroll view).
-  [[NSRunLoop mainRunLoop] addTimer:g_pollTimer forMode:NSRunLoopCommonModes];
-  NSLog(@"[KeyboardMediaBridge] polling started (interval=%.1fs)", kPollInterval);
-}
-
-/// Stops the poll timer.
-static void StopPolling(void) {
-  if (g_pollTimer == nil) return;
-  [g_pollTimer invalidate];
-  g_pollTimer = nil;
-  NSLog(@"[KeyboardMediaBridge] polling stopped");
-}
-
-/// Called when the app becomes active. Resumes polling and snaps the current changeCount so
-/// any pasteboard content that arrived while backgrounded is not treated as a keyboard commit.
+/// Called when the app becomes active. Re-acquires the target WebView if it was deallocated
+/// while backgrounded (e.g. the app was terminated and relaunched).
 static void OnAppDidBecomeActive(__unused NSNotification *note) {
-  WKWebView *webView = g_targetWebView;
-  if (webView == nil) {
-    webView = CanariFindWebView();
-    g_targetWebView = webView;
+  if (g_targetWebView == nil) {
+    g_targetWebView = CanariFindWebView();
   }
-  // Snap the changeCount to now – anything already in the pasteboard before the app came
-  // to the foreground is NOT a keyboard commit.
-  if (webView != nil) {
-    g_lastChangeCount = [UIPasteboard generalPasteboard].changeCount;
-  }
-  StartPolling();
-}
-
-/// Called when the app resigns active. Pauses polling to save CPU while backgrounded.
-static void OnAppWillResignActive(__unused NSNotification *note) {
-  StopPolling();
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -260,7 +216,6 @@ void CanariKeyboardMediaStart(WKWebView *webView) {
   }
 
   g_targetWebView = webView;
-  g_lastChangeCount = [UIPasteboard generalPasteboard].changeCount;
 
   NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
   [nc addObserverForName:UIApplicationDidBecomeActiveNotification
@@ -269,18 +224,14 @@ void CanariKeyboardMediaStart(WKWebView *webView) {
               usingBlock:^(NSNotification *note) {
                 OnAppDidBecomeActive(note);
               }];
-  [nc addObserverForName:UIApplicationWillResignActiveNotification
-                  object:nil
+  [nc addObserverForName:UIPasteboardChangedNotification
+                  object:[UIPasteboard generalPasteboard]
                    queue:[NSOperationQueue mainQueue]
               usingBlock:^(NSNotification *note) {
-                OnAppWillResignActive(note);
+                OnPasteboardChanged(note);
               }];
 
-  // Start immediately if already in the foreground.
-  if (canari_ios_is_in_foreground()) {
-    StartPolling();
-  }
-
-  NSLog(@"[KeyboardMediaBridge] initialized (target WebView=%p)", (__bridge void *)webView);
+  NSLog(@"[KeyboardMediaBridge] initialized, listening for UIPasteboardChangedNotification (target WebView=%p)",
+        (__bridge void *)webView);
 }
 

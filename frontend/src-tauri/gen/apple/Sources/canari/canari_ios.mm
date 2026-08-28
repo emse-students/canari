@@ -211,9 +211,26 @@ static void CanariApplyKeyboardLayout(NSNotification *note) {
                    completion:nil];
 }
 
+/// Makes the WKWebView transparent so the window's background shows through while SvelteKit
+/// hydrates - the iOS peer of Android's `onWebViewCreate` / `Color.TRANSPARENT`
+/// (docs/wiki/frontend/android-ios-parity.md#1.4). There is no iOS equivalent of
+/// `onWebViewCreate`: wry creates the WKWebView inside `ffi::start_app()`, so - like the
+/// keyboard media bridge above - this is applied lazily on the first `didBecomeActive` rather
+/// than at creation time. Idempotent, so re-applying on every activation costs nothing.
+static void CanariApplyWebViewTransparency(void) {
+  WKWebView *webView = CanariFindWebView();
+  if (webView == nil) {
+    return;
+  }
+  webView.opaque = NO;
+  webView.backgroundColor = [UIColor clearColor];
+  webView.scrollView.backgroundColor = [UIColor clearColor];
+}
+
 static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   g_isInForeground = true;
   canari_ios_on_resume();
+  CanariApplyWebViewTransparency();
   CanariProcessPendingPushSecret();
   CanariMigrateDeviceKeyFromJson();
   CanariCheckKeystoreHealth();

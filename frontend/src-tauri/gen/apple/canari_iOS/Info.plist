@@ -46,10 +46,20 @@
 		<string>arm64</string>
 		<string>metal</string>
 	</array>
+	<!-- Android goes edge-to-edge but keeps the status bar, reading its insets via
+	     env(safe-area-inset-top); iOS now matches that decision instead of hiding the bar
+	     outright (docs/wiki/frontend/android-ios-parity.md#1.1). UIStatusBarStyleDefault
+	     auto-switches dark/light content with the system appearance since iOS 13, mirroring
+	     Android's system-driven icon colour. UIViewControllerBasedStatusBarAppearance is
+	     explicitly false so this plist value is what actually governs - Tauri/wry installs no
+	     view controller that overrides preferredStatusBarStyle, so without this the key is a
+	     dead declaration (the empty-string bug this replaces, docs/wiki/frontend/android-ios-parity.md#1.2). -->
 	<key>UIStatusBarHidden</key>
-	<true/>
+	<false/>
 	<key>UIStatusBarStyle</key>
-	<string></string>
+	<string>UIStatusBarStyleDefault</string>
+	<key>UIViewControllerBasedStatusBarAppearance</key>
+	<false/>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

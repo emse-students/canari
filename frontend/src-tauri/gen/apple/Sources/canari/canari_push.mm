@@ -70,6 +70,17 @@ static NSString *const kCanariMarkReadActionId = @"CANARI_MARK_READ_ACTION";
 static NSString *const kFcmCacheGroupIdKey = @"groupId";
 static NSString *const kFcmCacheMessageIdKey = @"messageId";
 
+/// Serializes decrypt attempts against `mls.bin` WITHIN THIS PROCESS (app) only - unlike
+/// Android's `MlsStateLock`, which is shared between two components that run in the same
+/// process, this has no peer to coordinate with: the Notification Service Extension runs in a
+/// SEPARATE process and cannot see this NSLock (docs/wiki/frontend/android-ios-parity.md#2.3).
+/// That is safe, not merely assumed, because both halves of the claim are true and enforced
+/// elsewhere: the NSE's decrypt path is read-only (NotificationService.swift's file-level
+/// comment: "the extension never writes mls.bin"), and the app's own write - the App Group
+/// mirror `CanariMirrorPushStateToAppGroup` produces below - uses `NSDataWritingAtomic`
+/// (temp file + rename), so a concurrent NSE read can never observe a torn file. If either half
+/// ever stops holding, this lock stops being sufficient and the fix belongs at THAT half, not
+/// here.
 static NSLock *g_mlsStateLock = nil;
 static NSLock *g_cacheLock = nil;
 
@@ -546,7 +557,15 @@ static NSString *_Nullable CanariFetchProtoFromBackend(NSString *queuedMessageId
                                          }
                                          dispatch_semaphore_signal(sem);
                                        }] resume];
-      dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 6 * NSEC_PER_SEC));
+      // Bridges NSURLSession's async completion into the synchronous return this FFI caller
+      // needs. The 6 s ceiling is a safety margin ABOVE the request's own 5 s timeoutInterval,
+      // which is what actually bounds a slow network - this only fires if the completion
+      // handler itself never runs (a stuck data task), and that case is distinguished from an
+      // ordinary "server answered with no proto" by the log line below
+      // (docs/wiki/frontend/android-ios-parity.md#2.2: a swallowed branch must log).
+      if (dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 6 * NSEC_PER_SEC)) != 0) {
+        NSLog(@"[CanariPush] fetchProto: 6s safety timeout fired, dataTask completion handler never returned");
+      }
       if (protoResult != nil) {
         return protoResult;
       }
@@ -626,7 +645,11 @@ static NSString *_Nullable CanariFetchCommitsFromBackend(NSString *groupId, long
             }
             dispatch_semaphore_signal(sem);
           }] resume];
-    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 6 * NSEC_PER_SEC));
+    // See CanariFetchProtoFromBackend above: 6s is a safety margin above the request's own 5s
+    // timeoutInterval, and only fires if the completion handler itself never ran.
+    if (dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 6 * NSEC_PER_SEC)) != 0) {
+      NSLog(@"[CanariPush] fetchCommits: 6s safety timeout fired, dataTask completion handler never returned");
+    }
     return commitsJson;
   } @catch (NSException *ex) {
     NSLog(@"[CanariPush] fetchCommits exception: %@", ex.reason);
@@ -678,7 +701,7 @@ static CanariDecryptedMessage *_Nullable CanariTryDecrypt(NSString *queuedMessag
   }
 
   if (![g_mlsStateLock tryLock]) {
-    NSLog(@"[CanariPush] tryDecrypt: MlsStateLock occupe");
+    NSLog(@"[CanariPush] tryDecrypt: MlsStateLock busy");
     return nil;
   }
   CanariDecryptedMessage *result = nil;
@@ -748,7 +771,7 @@ static CanariDecryptedMessage *_Nullable CanariTryDecryptWithCommitCatchup(
   // 1) Read the current epoch (brief lock: mls.bin + Argon2).
   long long epoch = -1;
   if (![g_mlsStateLock tryLock]) {
-    NSLog(@"[CanariPush] catchup: MlsStateLock occupe (epoch)");
+    NSLog(@"[CanariPush] catchup: MlsStateLock busy (epoch)");
     return nil;
   }
   @try {
@@ -775,7 +798,7 @@ static CanariDecryptedMessage *_Nullable CanariTryDecryptWithCommitCatchup(
 
   // 3) Apply the commits in memory and decrypt (brief lock).
   if (![g_mlsStateLock tryLock]) {
-    NSLog(@"[CanariPush] catchup: MlsStateLock occupe (decrypt)");
+    NSLog(@"[CanariPush] catchup: MlsStateLock busy (decrypt)");
     return nil;
   }
   CanariDecryptedMessage *result = nil;
@@ -1397,7 +1420,7 @@ static void CanariSubmitBackgroundCleanupRequest(void) {
   if (![[BGTaskScheduler sharedScheduler] submitTaskRequest:request error:&error]) {
     NSLog(@"[CanariPush] BGTask submit failed: %@", error.localizedDescription);
   } else {
-    NSLog(@"[CanariPush] BGTask cleanup planifie");
+    NSLog(@"[CanariPush] BGTask cleanup scheduled");
   }
 }
 
@@ -1422,7 +1445,7 @@ static void CanariRegisterBackgroundCleanupHandler(void) {
                           [task setTaskCompletedWithSuccess:YES];
                         });
                       }];
-  NSLog(@"[CanariPush] BGTask handler enregistre (%@)", kCanariBgCleanupTaskId);
+  NSLog(@"[CanariPush] BGTask handler registered (%@)", kCanariBgCleanupTaskId);
 }
 
 // Forward declarations for functions used in the outbox-retry handler but defined later.
@@ -1443,7 +1466,7 @@ static void CanariSubmitOutboxRetryRequest(void) {
   if (![[BGTaskScheduler sharedScheduler] submitTaskRequest:request error:&error]) {
     NSLog(@"[CanariPush] BGTask outboxRetry submit failed: %@", error.localizedDescription);
   } else {
-    NSLog(@"[CanariPush] BGTask outboxRetry planifie");
+    NSLog(@"[CanariPush] BGTask outboxRetry scheduled");
   }
 }
 
@@ -1471,7 +1494,7 @@ static void CanariRegisterOutboxRetryHandler(void) {
                           [task setTaskCompletedWithSuccess:YES];
                         });
                       }];
-  NSLog(@"[CanariPush] BGTask outboxRetry handler enregistre (%@)", kCanariBgOutboxRetryTaskId);
+  NSLog(@"[CanariPush] BGTask outboxRetry handler registered (%@)", kCanariBgOutboxRetryTaskId);
 }
 
 #endif
@@ -1614,7 +1637,7 @@ static NSDictionary<NSString *, NSString *> *_Nullable CanariEncryptQueuedMessag
     return nil;
   }
   if (![g_mlsStateLock tryLock]) {
-    NSLog(@"[CanariPush] encryptQueuedMessages: MlsStateLock occupe");
+    NSLog(@"[CanariPush] encryptQueuedMessages: MlsStateLock busy");
     return nil;
   }
   NSMutableDictionary<NSString *, NSString *> *out = nil;
@@ -2069,7 +2092,7 @@ static void CanariProcessWelcomeRequestBackground(NSString *groupId, NSString *r
     }
 
     if (![g_mlsStateLock tryLock]) {
-      NSLog(@"[CanariPush] processWelcomeRequestBackground: MlsStateLock occupe");
+      NSLog(@"[CanariPush] processWelcomeRequestBackground: MlsStateLock busy");
       return;
     }
     NSDictionary *result = nil;
@@ -2158,7 +2181,7 @@ static void CanariProcessReceivedWelcomeBackground(NSString *groupId, NSString *
   }
 
   if (![g_mlsStateLock tryLock]) {
-    NSLog(@"[CanariPush] processReceivedWelcomeBackground: MlsStateLock occupe");
+    NSLog(@"[CanariPush] processReceivedWelcomeBackground: MlsStateLock busy");
     return;
   }
   BOOL joined = NO;

@@ -16,7 +16,9 @@ import UserNotifications
 /// libapp.a) but reads the MLS state, push context and channel keys from the
 /// shared App Group container (`group.fr.emse.canari`) that the app mirrors into
 /// on every foreground/background transition. All decryption is read-only - the
-/// extension never writes mls.bin.
+/// extension never writes mls.bin. This is why the app's `g_mlsStateLock`
+/// (canari_push.mm) never needs a cross-process peer here: see the doc comment at
+/// its declaration for the full argument.
 ///
 /// Richness (WP-iOS-7): the rewritten notification carries a per-conversation
 /// `threadIdentifier` (stacked per chat instead of one flat "canari_messages"

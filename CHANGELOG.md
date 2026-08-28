@@ -148,6 +148,33 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **Seven of the nine iOS/Android graphical and software asymmetries found by the parity audit are
+  closed** (`docs/wiki/frontend/android-ios-parity.md`, written 2026-08-28 with no device in hand).
+  iOS now shows its status bar instead of hiding it, matching Android's edge-to-edge-but-visible
+  decision, and `UIStatusBarStyle` is a real value (`UIStatusBarStyleDefault`, auto light/dark)
+  instead of a dead empty string that only looked handled. The launch screen paints the product's
+  own colour (`AppBackground`, light `#FFF9FBFF` / dark `#FF070B12`, matching Android's
+  `app_background`) instead of Apple's `systemBackgroundColor`, which was hardcoded to white with
+  no dark variant. The WKWebView is made transparent on first activation - there is no iOS peer of
+  `onWebViewCreate`, so this is applied lazily like the keyboard media bridge already does -
+  closing the second candidate for the reported black bands. The keyboard-media pasteboard poll
+  (0.5 s `NSTimer`) is replaced by `UIPasteboardChangedNotification`: a real, edge-triggered event
+  a third-party keyboard's pasteboard write already produces, removing both the clock the standing
+  architecture directive forbids and the "already-there vs just-committed" bookkeeping a poll
+  needed and an event does not. The two 6 s semaphore waits bridging `NSURLSession` into the
+  synchronous FFI path now log distinctly when the safety ceiling itself fires (completion handler
+  never ran), instead of returning nil indistinguishably from an ordinary empty response. The
+  iOS `g_mlsStateLock` (`NSLock`, necessarily process-local) now carries the proof next to the
+  declaration that no cross-process peer is needed - the NSE's decrypt path is read-only and the
+  App Group mirror write is already atomic (temp file + rename) - so the audit's open question
+  ("assertion, not measurement") is answered rather than left standing. Seven French dev-facing
+  `NSLog` lines in `canari_push.mm` are now English (the audit's own sample undercounted them:
+  three `occupe` lock-contention lines and a second `enregistre` line existed beyond the two named).
+  **Two items are NOT fixed on purpose**: the reboot/app-update re-registration gap has no possible
+  iOS counterpart (the OS offers no boot-wake hook at all, already correctly documented at both
+  `CanariBootReceiver.kt` and the `BGTaskSchedulerPermittedIdentifiers` comment), and the safe-area
+  single-contract refactor (item 1.5) and the four notification-channels-vs-one-category difference
+  (item 2.5, platform-inherent) are deliberately left to their own items.
 - **The two-half wipe verdict was correct on the command line and wrong in every runner.** A phone
   keeps its messages in native SQLite, so `footprint.mjs`'s web-only criterion reads 0 on an enrolled
   device and 0 on a wiped one; the fix for that computed the AND of the WebView and the native half -
