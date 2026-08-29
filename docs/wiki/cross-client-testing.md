@@ -30,7 +30,7 @@ is the numbered ladder below, top to bottom - the only copy of that order.**
 | 13 LIFE | 8 | - | `pending` |
 | 14 NOTIF | 21 | - | `pending` |
 | 15 CALL | 20 | - | `pending` - no runner exists |
-| 16 HEAL | 31 | `48b65d08`, HEAL-NEW-3/11 `ebef7f3c` | 4/31 taken: 3 `PASS`, HEAL-NEW-0 `PASS-DIRTY`; 1 and 3 owe an ungated re-run |
+| 16 HEAL | 31 | `48b65d08`, HEAL-NEW-3/11 `ebef7f3c`, HEAL-NEW-15 `dc8bf000` | 4/31 taken: 3 `PASS`, HEAL-NEW-0 `PASS-DIRTY`; 15 `INVALID`, blocked on the mint split; 1 and 3 owe an ungated re-run |
 | 17 PIN | 10 | - | `pending` - no runner exists |
 | 18 CORRUPT | 10 | - | `pending` - no runner exists |
 

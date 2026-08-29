@@ -1077,6 +1077,31 @@ fault as a `PASS` over an empty intersection: a predicate that cannot tell the r
 from the wreckage the row left behind. Every HEAL-NEW cell taken until it asserts W1's own id by name
 is owed a read of `fleet.extra` before it is believed.
 
+**THE AMBER WINDOW LIVES INSIDE THE MINT, AND THE DESIGN CALL IS THAT NO BLOCKING WORK MAY SIT
+BETWEEN A LIVE CLIENT AND THE FIRST SAMPLE** (trunk, 2026-08-29, on HEAL-NEW-15's `INVALID` of
+`dc8bf000`). The probe moved inside the watch and the row was still unaskable one layer earlier: the
+watch's FIRST sample read 10 rows, 10 ready, 0 syncing and settled in 2 ms, because the fresh device
+had landed on the app at +12.5 s and the runner's first sidebar read did not happen until +61.3 s.
+The 49 s in between are `becomeANewDevice`'s own tail - an 8 s settle, the enrolment poll against the
+database, and the abandoned-id purge - and every one of them is `spawnSync` or an `ssh`, so the
+event loop is BLOCKED and no concurrent reader can exist. Widening a deadline cannot reach this and
+neither can a second connection.
+
+**So the primitive is SPLIT at the moment the fresh client is live on `/chat`**, which is the moment
+the sidebar starts to enumerate and therefore the moment the row's subject begins. Everything after
+it - the settle, the new device id, the two server facts, the purge - is a SECOND call the row makes
+once its watch is finished. This is a factorisation and not a new mechanism: the primitive was doing
+two jobs, producing a fresh live client and proving it enrolled, and only the first one is a
+precondition of watching a sidebar. `enrolled` is read at verdict time, never as a gate, so moving
+the proof later changes no assertion - and the guard that actually protects the rung from the device
+cap, `theAccountHadRoomForOneMore`, is asserted BEFORE the wipe and stays exactly where it is.
+
+**What the split COSTS, stated so nobody reads it as a measurement it is not:** the enrolment
+timings become an UPPER BOUND, because the first database read now happens after the watch rather
+than seconds after landing. They are named as a bound, measured from the instant the client went
+live, and the real latency belongs to HEAL-NEW-0, which mints and measures nothing else. A column is
+only evidence for the question it was written to answer.
+
 **So the census was never the wrong question - it was the RIGHT one, asked of a device the server had
 refused.** Reading `auth_sessions` instead made the row pass while the device was unusable, which is
 worse than the failure it replaced. The primitive now reads BOTH facts and reports the pair: a session

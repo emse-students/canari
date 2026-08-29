@@ -141,8 +141,15 @@ crois qu'il n'y a plus rien avant"*). In this order, and nothing else first:**
    BLOCK IS GONE.** W1 now passes `cas.emse.fr` in 14.4 s with no challenge, so the SSO session lives
    in the `chrome-w1` profile: `login.mjs --device W1` is enough, and nothing here needs a human
    again unless that profile is lost. **HEAL-NEW-3 and -11 are `PASS` on `ebef7f3c`** (verdict and the two
-   things its log says that the verdict does not are on the board). What is owed, in order:
-   **HEAL-NEW-15, then -2 and -12** (those two kill W1 by construction, so re-login after),
+   things its log says that the verdict does not are on the board). **HEAL-NEW-15 is `INVALID` on
+   `dc8bf000` and BLOCKED on one instrument change**: the amber window it is named for closes inside
+   `becomeANewDevice`, 49 s before any sidebar reader runs, and the primitive blocks the event loop
+   throughout - so the mint is SPLIT at the live client and the enrolment proof becomes a second call
+   the row makes after its watch
+   ([campaign](docs/wiki/cross-client-campaign.md#16-heal---what-the-rows-are-and-what-they-cost)).
+   Two instrument faults ride with it: every `INVALID` exit in `healnew.mjs` records no console at
+   all, and `enrolledInMs` has never been set by anything. What is owed, in order:
+   **that split and HEAL-NEW-15's re-run, then -2 and -12** (those two kill W1 by construction, so re-login after),
    then the four HEAL-REVOKE rows, then WRITE the owed HEAL-REVOKE cell - predicate `residue: 0` on a
    phone, `identityKeys: 0` everywhere, the offline variant driven by a reload. The device cap that
    voided five cells is not in play: the owner spends **4 of 15 slots**, measured.
