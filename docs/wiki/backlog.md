@@ -767,6 +767,16 @@ undetermined and is the first question to ask. **Do not assume the correlation i
 `GROUP BY` over `dm_device_group_memberships` for this device and this group settles which row
 existed when.
 
+**RECURRED ON BOTH ROWS OF THE 2 / 12 PAIR, same build `038c7e8d`, so it is not a one-run
+coincidence and the population is "every freshly minted device", not "a device that waited for a late
+peer".** Stamps, which is all these two rows owe it: row 2 logged the stale-group line at 15:09:47
+and `externalJoin succeeded for 315b8a1d...` at 15:09:48; row 12 logged both at 15:14:31. In both,
+the community is `fbddc890` and the device count in the line is 3. **Two of the reading conditions
+differ from row 15's and rule nothing out:** each of these rows external-joined `315b8a1d` TWICE and
+no conversation group at all, and the reconciliation asked 0 of 1 and 0 of 2 rather than skipping one
+of eleven - so the "only group the reconciliation did not ask about" correlation cannot be tested at
+this fleet size and is neither confirmed nor refuted here.
+
 ### P2 - a membership is REFUSED for want of a KeyPackage one second after the device external-joined that very group (measured 2026-08-29)
 
 **It heals, and by the standing rule that is still a defect:** a race that needs a heal in THEORY is
@@ -788,6 +798,22 @@ publication's own timestamp against the refusal's, both of which exist.
 
 **It cost nothing here** because W1 was online and serving; the concern is the population where
 nothing is. Nobody has measured how often it happens outside this rig.
+
+**RECURRED ON BOTH ROWS OF THE 2 / 12 PAIR, on `038c7e8d`, and the refused group is the SAME ONE the
+entry above is about.** Row 2: `[MEMBERSHIP_ACTIVE] REFUSED group=315b8a1d... reason=no_key_package`
+at 13:09:20, then `[MEMBERSHIP_ACTIVE] group=315b8a1d...` at 13:09:47 - 27 s. Row 12: refused
+13:13:36, active 13:14:31 - 55 s. **In both, the group is the community distribution group and NOT a
+conversation**, and in both the client external-joined that same group twice and logged the stale
+local group of the entry above within a second of the activation. Two P2s, one group, one second
+apart, twice: **treat "are these one defect" as the first question, not two independent
+investigations.** The discriminator both entries name is still unmeasured - the KeyPackage
+publication's own timestamp against the refusal's.
+
+**And on those two rows the refusal was invisible from the client half.** `healnew.mjs` records only
+`observers: { w3 }`; the server window is taken by `run.mjs` per PASS and printed, not written to the
+ledger row - so `node rows.mjs` and every HEAL-NEW cell are silent about it, and it was found by
+reading the run's stdout. Nothing here is wrong, but a HEAL-NEW verdict says "clean on the web
+client", never "clean on the server".
 
 ### P3 - the mint's own refusal is not a verdict, so a full account throws instead of recording (measured 2026-08-29)
 

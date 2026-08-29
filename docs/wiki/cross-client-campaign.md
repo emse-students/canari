@@ -956,6 +956,19 @@ that reload by 6 to 8 s in both. **Inside one document the throttle held exactly
 whole window. A reader taking the gap at face value would have called row 2 a cadence violation and
 row 12 a confirmation of 60 s, and both readings would have been about the rig.
 
+**THE SERVER HALF OF BOTH RUNS WAS `NOT CLEAN`, AND IT IS NOT ON THE LEDGER.** `run.mjs` takes a
+server window per pass and PRINTS it; `healnew.mjs` writes `observers: { w3 }` and nothing else, so a
+HEAL-NEW cell says "clean on the web client" and never "clean on the server". Read from the run's
+own output, both windows hold the same three things and no fourth: the WebSocket resets from the
+kills the topology performs on purpose (1 on row 2, 2 on row 12, classified `expected-errors`), the
+mint's own server-side narration (`Refresh refused: no canari_refresh cookie`, `[DELETE_DEVICE]`,
+`[PURGE_PREKEYS]`, the lock and KeyPackage pushes, `[KICK]`), and **one already-queued P2 recurring on
+each row** - `[MEMBERSHIP_ACTIVE] REFUSED group=315b8a1d... reason=no_key_package`, on the community
+distribution group, 27 s before activation on row 2 and 55 s before it on row 12. Timestamps and the
+correlation with the stale-distribution-group rejoin are in
+[backlog](backlog.md#p2---a-membership-is-refused-for-want-of-a-keypackage-one-second-after-the-device-external-joined-that-very-group-measured-2026-08-29);
+neither was acted on here, both leave these rows' subject.
+
 **EVERY ROW HERE IS A TIMELINE, NOT A SNAPSHOT** (user, 2026-08-27: *"Est-ce-que tout finit bien par
 HEAL, et est-ce que le temps gene la navigation/UX"*). Two questions, and a readiness count answers
 neither: does it EVENTUALLY heal, and is the app usable while it does not. So every row records, per
