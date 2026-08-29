@@ -274,9 +274,20 @@ forbids of any decision.
    server under the run. CD green AND QUIET (`gh run list`) before the row starts.
 7. **Where the verdict is written.** The board cell - a verdict, a count, a time, four or five words -
    and the ledger; then `node rows.mjs`, which is what proves the two vocabularies still agree.
-8. **What the delegated session must NOT do: guess a product fix.** It measures, it reads, it reports.
-   A defect it finds goes back to the trunk WITH ITS EVIDENCE, and the trunk decides what the fix is
-   and where it belongs.
+8. **A branch CARRIES ITS ROW TO GREEN - it tests, and it FIXES, the product included** (user,
+   2026-08-29). A row that ends `FAIL` because the product is wrong is not finished by reporting the
+   `FAIL`: the branch diagnoses it, fixes it where the cause is, re-runs the row, and comes back with
+   a `PASS` and the story. What it may never do is get there by moving the target - **fixing the
+   PRODUCT is the job, weakening the TEST is the one forbidden move**, and they are easy to confuse
+   at three in the morning. So a change that makes a row pass by asserting less, by widening a
+   deadline, by adding a fallback, or by narrowing a population is out of bounds whatever it does to
+   the colour. Three things still come back to the trunk before they are written, because they are
+   decisions about what the campaign MEASURES rather than about whether the product works: **the
+   scope of a row** (its topology, its `expect`, what it asserts), **a new row or a retired one**,
+   and **a fix whose blast radius leaves the row's own subject**. Everything else - the diagnosis,
+   the code, the test that changes with it, the CHANGELOG entry, the rule in
+   [durable-rules](durable-rules.md) - belongs to the branch, and so does saying plainly when it
+   could not get there.
 
 **The trunk keeps the campaign's state and not the runs' logs.** A returned verdict updates the board,
 `CLAUDE.md` and `CHANGELOG.md`, and whatever it closes is DELETED from all three - the board is a
@@ -1116,6 +1127,32 @@ timings become an UPPER BOUND, because the first database read now happens after
 than seconds after landing. They are named as a bound, measured from the instant the client went
 live, and the real latency belongs to HEAL-NEW-0, which mints and measures nothing else. A column is
 only evidence for the question it was written to answer.
+
+**THE SPLIT SHIPPED, IT WORKED, AND IT WAS NOT ENOUGH - so the row is RE-SCOPED, which is the
+trunk's call and not the branch's** (2026-08-29, on runner `56090443`). `watchOpenedAfterLiveMs` fell
+from ~49 000 ms to 1 118 ms and the row was still `INVALID`: all ten `welcome_request`s land between
++12.9 s and +14.9 s, the sidebar is 10/10 by +15 s, and the handover is at +37.6 s. **Most of the 22 s
+in between is `pin.mjs` polling for a modal a fresh device never shows** - a fact this page has
+recorded since 2026-08-28 and which the sequence then spent twenty seconds re-learning.
+
+Three decisions follow, and the first is the one that matters:
+
+- **HEAL-NEW-15 moves to `at: "late"`.** Its own words are *N rows amber, and the user navigates and
+  sends*, and on `at: "start"` there are no N rows amber: W1 is a member of all eleven groups and the
+  heal is over in about two seconds. That is not a slow instrument, it is a topology with no window
+  in it, and no amount of earlier observation manufactures one. A late responder gives `ALONE_MS` of
+  amber alone and then a STAGGERED heal, which is the only shape in which a ready row and a syncing
+  row coexist - the exact instant the usability probe is written to fire. **Nothing is lost by the
+  move**: row 3 already owns the start-topology heal, and row 15 was never part of an order pair.
+- **The handover moves AHEAD of the PIN probe.** `ensureChat` runs as soon as the client lands, the
+  row takes its client there, and the PIN probe joins the rest of the post-watch work in
+  `confirmEnrolment`. No expectation reads `pinGate` or `pinOk` - they are recorded observations, and
+  section 17 is where they are judged - so nothing is weakened. If a gate ever IS shown, the row's
+  first sample reads `panel: false` and the `INVALID` names it, which is a better answer than
+  blinding the row for twenty seconds to ask a question whose answer is already on this page.
+- **The sampling cadence is per row.** A 2 000 ms cadence cannot see a two-second window, and a
+  reader that cannot resolve the event it is pointed at reports its own period as the product's
+  behaviour.
 
 **So the census was never the wrong question - it was the RIGHT one, asked of a device the server had
 refused.** Reading `auth_sessions` instead made the row pass while the device was unusable, which is

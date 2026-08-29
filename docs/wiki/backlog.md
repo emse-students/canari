@@ -716,6 +716,40 @@ no check waits on wall-clock time at all. It belongs with the rendering pass, no
 
 ## Messaging convergence
 
+### P2 - a membership is REFUSED for want of a KeyPackage one second after the device external-joined that very group (measured 2026-08-29)
+
+**It heals, and by the standing rule that is still a defect:** a race that needs a heal in THEORY is
+wrong whatever it does in practice, and a ledger that reconciles the two paths afterwards is a
+witness, never a fix.
+
+Seen twice in HEAL-NEW-15's run on `dc8bf000` / runner `56090443`, on a device that had been minted
+seconds earlier: the client logs `externalJoin succeeded` for a group, and roughly one second later
+the server logs `[MEMBERSHIP_ACTIVE] REFUSED ... reason=no_key_package` for the SAME group. The
+membership goes active shortly afterwards, so no row went amber for it and nothing in the sidebar
+records that it happened.
+
+**What has to be named before a fix is written** is which of the two orderings is the real one - a
+KeyPackage published after the external commit, or an activation read that runs before the
+publication it depends on has committed. The two are indistinguishable from the refusal line alone,
+and this is the second time on this rung that a `no_key_package` refusal has meant something other
+than what it said (see the entry below, where it meant the device cap). The discriminator is the
+publication's own timestamp against the refusal's, both of which exist.
+
+**It cost nothing here** because W1 was online and serving; the concern is the population where
+nothing is. Nobody has measured how often it happens outside this rig.
+
+### P3 - the mint's own refusal is not a verdict, so a full account throws instead of recording (measured 2026-08-29)
+
+`becomeANewDevice` returns `{ refused: ... }` when the account is at the per-user device cap - the
+guard added on 2026-08-28 so nothing is destroyed that cannot be rebuilt. `healnew.mjs` never reads
+`minted.refused`: it goes straight on to use `minted.cx`, which is not there, and the row dies with
+a TypeError instead of recording `INVALID` with the reason the primitive had already measured and
+handed it.
+
+**A blocked job is not a crashed one**, and this turns the one refusal the rig knows how to explain
+into the least legible failure it can produce. Every HEAL-NEW row is affected, and it costs nothing
+today only because the owner sits at 3 of 15 slots.
+
 ### P2 - a client at the DEVICE CAP still enumerates ten rows it can never join (the P1 half SHIPPED 2026-08-28)
 
 **THE P1 IS CLOSED AND ITS STORY IS IN `CHANGELOG.md`, ITS RULES IN
