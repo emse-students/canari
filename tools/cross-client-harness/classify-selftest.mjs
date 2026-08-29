@@ -859,6 +859,93 @@ for (const [what, url, status, failed, shouldBreak] of HTTP_CASES) {
 
 
 /**
+ * A STATUS WITH NO REQUEST IS EVIDENCE FOR NOTHING - the three cases that make it one.
+ *
+ * HEAL-NEW-15's gate on `038c7e8d` demoted the row partly on a `415 Unsupported Media Type` that no
+ * bucket named: Chrome's sentence carries the status and nothing else, and the url and
+ * `networkRequestId` that `Log.entryAdded` had carried all along were dropped at render time. Dirt
+ * whose subject cannot be recovered can be neither explained nor fixed, and adding it to an ignore
+ * list is weakening the test rather than explaining a line - so the fix has to be here.
+ *
+ * The third case is the one that was silently WRONG rather than merely unhelpful: the dedup key was
+ * the sentence, and Chrome writes the same sentence for every failing resource, so ten requests
+ * collapsed into one line carrying the FIRST url - and `isBenignUrl` then judged all ten on it. A
+ * benign avatar 404 arriving first forgave a 404 from anywhere else on the page.
+ */
+function netLinesOf(reqs) {
+  const events = [];
+  reqs.forEach(([url, status, method], i) => {
+    const requestId = `n${i}`;
+    events.push({
+      method: 'Network.requestWillBeSent',
+      params: { requestId, request: { url, method }, timestamp: 1000 + i, wallTime: 1_786_710 + i },
+    });
+    events.push({ method: 'Network.responseReceived', params: { requestId, response: { status } } });
+    events.push({
+      method: 'Log.entryAdded',
+      params: {
+        entry: {
+          timestamp: 1_786_710_000_000 + i * 1000,
+          level: 'error',
+          text: `Failed to load resource: the server responded with a status of ${status} ()`,
+          url,
+          networkRequestId: requestId,
+        },
+      },
+    });
+  });
+  return { events };
+}
+
+const named = await report({
+  cx: netLinesOf([[`${SITE}/api/media/upload`, 415, 'POST']]),
+  label: 'selftest',
+});
+{
+  const ok = named.errors.some((l) => l.includes('415') && l.includes('POST /api/media/upload'));
+  if (!ok) failures++;
+  console.log(`${ok ? 'ok  ' : 'FAIL'} ${'named'.padEnd(12)} a 415 error line carries the request that earned it`);
+  if (!ok) console.log(`       errors=${JSON.stringify(named.errors)}`);
+}
+
+const twoResources = await report({
+  cx: netLinesOf([
+    [`${SITE}/api/media/upload`, 415, 'POST'],
+    [`${SITE}/api/mls/commit`, 415, 'POST'],
+  ]),
+  label: 'selftest',
+});
+{
+  const ok =
+    twoResources.errors.length === 2 &&
+    twoResources.errors.some((l) => l.includes('/api/media/upload')) &&
+    twoResources.errors.some((l) => l.includes('/api/mls/commit'));
+  if (!ok) failures++;
+  console.log(`${ok ? 'ok  ' : 'FAIL'} ${'named'.padEnd(12)} two resources failing the same way are two lines, not one`);
+  if (!ok) console.log(`       errors=${JSON.stringify(twoResources.errors)}`);
+}
+
+const benignFirst = await report({
+  cx: netLinesOf([
+    [`${SITE}/api/users/${'a'.repeat(64)}/avatar`, 404, 'GET'],
+    [`${SITE}/api/forms/e318b48e`, 404, 'GET'],
+  ]),
+  label: 'selftest',
+});
+{
+  // The avatar 404 is understood and forgiven on its own url; the other one is not, and its line
+  // must survive to break `clean`. Before the url joined the dedup key it did not exist at all.
+  const ok =
+    benignFirst.errors.length === 1 &&
+    benignFirst.errors[0].includes('/api/forms/e318b48e') &&
+    benignFirst.clean === false;
+  if (!ok) failures++;
+  console.log(`${ok ? 'ok  ' : 'FAIL'} ${'named'.padEnd(12)} a benign avatar 404 does not forgive a 404 from elsewhere`);
+  if (!ok) console.log(`       errors=${JSON.stringify(benignFirst.errors)} clean=${benignFirst.clean}`);
+}
+
+
+/**
  * THE FORGIVENESS, TESTED FOR WHAT IT MUST NOT FORGIVE.
  *
  * `ignoringExpectedLog` exists so DEL-2 can name the one sentence the classifier refuses to classify

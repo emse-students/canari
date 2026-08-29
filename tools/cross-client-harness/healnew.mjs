@@ -50,7 +50,62 @@ import { bringToReady } from "./ready-repair.mjs";
 import { finishObserved, record, unmet } from "./results.mjs";
 import { splitBySubset, subsetSettled } from "./servable.mjs";
 import { activeGroupIds, amberListCost, cut, navigationCost, readAll, sidebar, whoAmI, watch as watchRows } from "./syncrows.mjs";
-import { report } from "./watch.mjs";
+import { ignoringExpectedLog, ignoringExpectedRefusal, report } from "./watch.mjs";
+
+/**
+ * THE MINT'S OWN SIGNATURE - the request and the sentences every HEAL-NEW row provokes by existing.
+ *
+ * A ROW HERE WIPES A BROWSER'S ORIGIN AND LOGS IT BACK IN THROUGH THE IdP, so three shapes arrive on
+ * every single run and none of them is about the product: a `POST /api/auth/refresh` answered `401`
+ * to a client that has just deleted every cookie it owned - which is the wipe WORKING, and the one
+ * observation that says it did; the OIDC callback's own `debug:` trail, which is what the primitive
+ * doing its job sounds like; and the abandoned-id purge's three `[DevicePanel]` lines, which are the
+ * mint reclaiming the slot it just spent. HEAL-NEW-15 was the rung's first verdict to reach `gate()`
+ * at all and it came back `PASS-DIRTY` on exactly these, so without this every row on the rung is a
+ * `PASS-DIRTY` that says nothing about the app - and dirt that is always there is dirt nobody reads.
+ *
+ * THE DISPOSITION IS PER ROW AND NEVER A WIDER CLASSIFIER (backlog, 2026-08-28). Every one of these
+ * sentences is the visible end of something upstream anywhere else in the campaign: a 401 on
+ * `/api/auth/refresh` is a dead session, an OIDC trail is a client that lost its own, and a
+ * `[DevicePanel] Deleted` is somebody's device disappearing. Widening `BENIGN` would silence them
+ * for the forty-eight checks where they would be the finding.
+ *
+ * EVERY NEEDLE NAMES A SUCCESS SPELLING, WHICH IS WHY NONE OF THEM CAN SWALLOW A FAILURE. The
+ * status line is pinned to `200` and the state check to `matches: true`, so a `500` from
+ * core-service or a mismatched OIDC state stays dirt; `[DevicePanel]`'s three `console.error` and
+ * two `console.warn` spellings are not named at all. `ignoringExpectedLog` reports the needles that
+ * matched NOTHING rather than guessing what that means, and this list is deliberately the whole
+ * documented trail - a dry needle here says the callback took a path it usually does not.
+ */
+const MINT_REFUSALS = [{ path: /^\/api\/auth\/refresh(\?|$)/, status: [401] }];
+const MINT_NARRATION = [
+  /^\[auth\] handleOidcCallback isDesktop: (true|false)$/,
+  /^\[auth\] savedState present: true matches: true$/,
+  /^\[auth\] redirectUri: \S+ coreUrl: \S+$/,
+  /^\[auth\] POSTing to core-service \/api\/auth\/oidc\/callback/,
+  /^\[auth\] core-service response status: 200$/,
+  /^\[auth\] got access_token, saving user: \S+$/,
+  /^\[auth\] handleOidcCallback complete$/,
+  /^\[callback\] starting handleOidcCallback, code length: \d+$/,
+  /^\[callback\] handleOidcCallback resolved, user: \S+$/,
+  /^\[callback\] goto -> \S+$/,
+  /^\[callback\] goto resolved$/,
+  /^\[DevicePanel\] Loading devices and sessions for user: \S+$/,
+  /^\[DevicePanel\] \d+ live session\(s\)$/,
+  /^\[DevicePanel\] Found \d+ device\(s\)$/,
+  /^\[DevicePanel\] Deleting device \S+$/,
+  /^\[DevicePanel\] Deleted device \S+ \(groups cleaned: \d+, keyPackages: \d+\)$/,
+];
+
+/**
+ * The fresh device's console with the mint's own signature removed, and `clean` recomputed.
+ *
+ * THE ORDER IS LOAD-BEARING, for the reason DEL-2 records: `ignoringExpectedLog` recomputes `clean`
+ * over `badHttp` AS IT FINDS IT, so the refresh `401` has to be forgiven first or the whole run
+ * stays dirty on a request that was already explained.
+ */
+const withoutTheMintsOwnNoise = (rep) =>
+  ignoringExpectedLog(ignoringExpectedRefusal(rep, MINT_REFUSALS), MINT_NARRATION);
 
 const argv = process.argv.slice(2);
 const opt = (name, fallback = null) => {
@@ -418,7 +473,10 @@ await ensureChat(cx);
  * verdict about the product, which this is not.
  */
 async function invalid(unobservable, extra = {}) {
-  const observed = await report(w3);
+  // Forgiven here too, so the console attached to an `INVALID` reads the same as the one attached to
+  // a verdict. It changes no outcome - an `INVALID` never goes through `gate()` - but a reader
+  // comparing the two would otherwise be comparing two different renderings of one run.
+  const observed = withoutTheMintsOwnNoise(await report(w3));
   record(row.id, "INVALID", {
     unobservable,
     what: row.what,
@@ -782,7 +840,7 @@ const verdict = missing.length === 0 ? "PASS" : "FAIL";
 
 // THE REPORT IS TAKEN ONCE AND HANDED TO BOTH READERS. `recordObserved` accepts a finished report
 // as readily as a live handle, and reporting twice on one observer drains the second read.
-const w3Report = await report(w3);
+const w3Report = withoutTheMintsOwnNoise(await report(w3));
 const detail = {
   what: row.what,
   expect: row.expect,

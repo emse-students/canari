@@ -1218,7 +1218,10 @@ export async function report(w) {
       case 'Log.entryAdded':
         // Keep `url`: a browser "Failed to load resource" line names the status but not the
         // resource, so without it a benign avatar 404 is indistinguishable from a real one.
-        console_.push({ at: p.entry.timestamp, level: p.entry.level, text: p.entry.text.slice(0, 300), url: p.entry.url });
+        //
+        // AND KEEP `networkRequestId`, WHICH IS THE JOIN TO THE REQUEST ITSELF. `url` alone cannot
+        // name the METHOD, and a status with no request is evidence for nothing - see `renderLine`.
+        console_.push({ at: p.entry.timestamp, level: p.entry.level, text: p.entry.text.slice(0, 300), url: p.entry.url, requestId: p.entry.networkRequestId });
         break;
     }
   }
@@ -1238,9 +1241,16 @@ export async function report(w) {
   for (const w of ws) w.at = wall(w.mono);
 
   // De-duplicate: Log.entryAdded and consoleAPICalled surface the same line twice.
+  //
+  // THE URL IS PART OF THE IDENTITY, AND LEAVING IT OUT FORGAVE THE WRONG REQUEST. Chrome writes
+  // the SAME sentence - "Failed to load resource: the server responded with a status of 404" - for
+  // every resource that fails, so a key built from the text alone collapsed ten different requests
+  // into one line carrying the FIRST one's url. `isBenignUrl` then judged all ten on that url: a
+  // benign avatar 404 arriving first silently forgave a 404 from anywhere else on the page. Two
+  // network lines are the same event only when they are about the same resource.
   const seen = new Set();
   const lines = console_.filter((l) => {
-    const k = `${l.level}|${l.text.replace(/^\[\d\d:\d\d:\d\d\]\s*/, '')}`;
+    const k = `${l.level}|${l.url ?? ''}|${l.text.replace(/^\[\d\d:\d\d:\d\d\]\s*/, '')}`;
     if (seen.has(k)) return false;
     seen.add(k);
     return true;
@@ -1282,6 +1292,29 @@ export async function report(w) {
     } catch {
       return false;
     }
+  };
+  /**
+   * A console line, rendered WITH the request the browser said it was about.
+   *
+   * A STATUS WITH NO REQUEST IS EVIDENCE FOR NOTHING. HEAL-NEW-15's gate on `038c7e8d` demoted the
+   * row partly on a `415 Unsupported Media Type` that no bucket named: `badHttp` did not hold it,
+   * `knownBadHttp` did not hold it, and Chrome's own sentence carries the status and nothing else.
+   * A dirt line whose subject cannot be recovered can be neither explained nor fixed, so it demotes
+   * every future run of the row for as long as it goes unnamed - which is the one shape of dirt an
+   * ignore list must never be allowed to swallow.
+   *
+   * NOTHING HERE IS NEW EVIDENCE. `Log.entryAdded` has always carried `url`, and `networkRequestId`
+   * joins the line to the request `reqs` already holds - so the METHOD is there too. Both were being
+   * thrown away at render time, one line after the comment saying why `url` was kept.
+   *
+   * IT RENDERS, IT DOES NOT CLASSIFY. Every list is still matched against `l.text`, so no rule,
+   * needle or `^` anchor sees the suffix; and only a line the browser attached a url to gets one, so
+   * an application log line is untouched.
+   */
+  const renderLine = (l) => {
+    if (!l.url) return l.text;
+    const r = l.requestId ? reqs.get(l.requestId) : null;
+    return `${l.text} <- ${r?.method ?? '???'} ${l.url.replace('https://canari-emse.fr', '')}`;
   };
   const errors = lines.filter(
     (l) => (l.level === 'error' || l.level === 'assert') && !isBenignUrl(l.url, l.text)
@@ -1379,18 +1412,18 @@ export async function report(w) {
       ws.length === 0 &&
       severe.length === 0 &&
       unexplained.length === 0,
-    severe: severe.map((l) => l.text),
-    errors: errors.map((l) => l.text),
+    severe: severe.map(renderLine),
+    errors: errors.map(renderLine),
     exceptions,
     badHttp: badHttp.map((r) => `${r.method} ${r.url.replace('https://canari-emse.fr', '')} -> ${r.status ?? r.failed}`),
     knownBadHttp: knownBadHttp.map((r) => `${r.method} ${r.url.replace('https://canari-emse.fr', '')} -> ${r.status ?? r.failed}`),
     ...(untrackedFailures ? { untrackedFailures } : {}),
     wsEvents: ws.map((w) => `${hhmmss(w.at)} ${w.text}`),
     documentsReplaced,
-    warnings: warnings.map((l) => l.text),
-    notable: notable.map((l) => l.text),
-    stateChanges: stateChanges.map((l) => l.text),
-    unexplained: unexplained.map((l) => `${l.level}: ${l.text}`),
+    warnings: warnings.map(renderLine),
+    notable: notable.map(renderLine),
+    stateChanges: stateChanges.map(renderLine),
+    unexplained: unexplained.map((l) => `${l.level}: ${renderLine(l)}`),
     httpCount: http.length,
     consoleCount: lines.length,
     // EVERY line and every socket event, in one sequence, each DATED. See {@link timelineOf}.
@@ -1402,7 +1435,7 @@ export async function report(w) {
     // offline` fired a second time ten seconds after the first, and the classifier had thrown the
     // second one away as a duplicate of the first. A repeat is not noise - it is often the entire
     // finding.
-    timeline: timelineOf(console_, ws),
+    timeline: timelineOf(console_.map((l) => ({ ...l, text: renderLine(l) })), ws),
   });
 }
 

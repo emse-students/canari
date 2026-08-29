@@ -224,6 +224,26 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **The harness recorded a `415` as dirt and nothing in the record could say which request it was.**
+  HEAL-NEW-15's gate on `038c7e8d` demoted the row partly on `Failed to load resource: the server
+  responded with a status of 415`, and no `badHttp` or `knownBadHttp` entry named it - so the method,
+  the path and the caller were all undetermined. A dirt line whose subject cannot be recovered can be
+  neither explained nor fixed, and it would have demoted every future run of the row for as long as
+  it went unnamed; adding it to an ignore list would have been weakening the test rather than
+  explaining a line. **None of this was missing evidence.** `Log.entryAdded` has always carried the
+  resource's `url`, and its `networkRequestId` joins the line to the request the classifier already
+  held - so the METHOD was there too. Both were dropped at render time, one line below the comment
+  saying why `url` was kept. Every console bucket and the timeline now render a network line as
+  `<sentence> <- METHOD /path`; classification is untouched, because every rule and every
+  `ignoringExpectedLog` needle still matches the sentence alone.
+
+  **The same key was silently forgiving the wrong request.** Chrome writes one sentence for every
+  failing resource, and the de-duplication that collapses `Log.entryAdded` against
+  `Runtime.consoleAPICalled` keyed on that sentence - so ten different failures became one line
+  carrying the FIRST url, and `isBenignUrl` judged all ten on it. A benign avatar `404` arriving
+  first forgave a `404` from anywhere else on the page. The url is now part of the identity, and the
+  three new cases in `classify-selftest.mjs` were validated against the unfixed classifier first.
+
 - **A device that had just joined reported 8259 losses, and the one that mattered was inside them.**
   A frame from before this device joined can never be read - joining at epoch N means epoch N-1 is
   gone - and the replay printed a `warn` for each one. On a device enrolling into eleven groups with

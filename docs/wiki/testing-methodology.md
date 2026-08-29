@@ -2255,6 +2255,36 @@ of a probe sender, so the sidebar went green on the READD path rather than on a 
 the fresh-device bulk of `TooDistantInThePast` is the documented past-epoch noise, which is exactly
 the kind of line a reader learns to skip - and the 500 was three lines away from it.
 
+## A STATUS WITH NO REQUEST IS EVIDENCE FOR NOTHING
+
+**Measured 2026-08-29, on HEAL-NEW-15's gate.** The row was demoted to `PASS-DIRTY` partly on
+`Failed to load resource: the server responded with a status of 415` - and no `badHttp` entry, and
+no `knownBadHttp` entry, named the request. The method, the path and the caller were all
+undetermined, so the line could be neither explained nor fixed, and it would have demoted every
+future run of the row for as long as it went unnamed.
+
+**That shape is the one an ignore list must never be allowed to swallow**, and it is why the rule is
+here rather than in a runner. A line that can be READ is either explained and named per row, or it
+is a finding; a line that cannot be read is neither, and adding it to a needle list is weakening the
+test while looking exactly like explaining it. The disposition for an unidentifiable dirt line is to
+make it identifiable.
+
+**None of it was missing evidence, which is the transferable half.** `Log.entryAdded` carries the
+resource's `url` as a field and its `networkRequestId` joins the line to the request the classifier
+already held, so the METHOD was there too - and both were thrown away at render time, one line below
+the comment explaining why `url` was kept. The report now renders a network line as
+`<sentence> <- METHOD /path` in every console bucket and in the timeline, and classification is
+untouched: every rule, and every `ignoringExpectedLog` needle, still matches the sentence alone.
+
+**And the same key was forgiving the wrong request.** Chrome writes ONE sentence for every failing
+resource, so the de-duplication that collapses `Log.entryAdded` against `Runtime.consoleAPICalled`
+was collapsing ten different failures into one line carrying the FIRST url - and `isBenignUrl` then
+judged all ten on it. A benign avatar `404` arriving first forgave a `404` from anywhere else on the
+page: an under-report, invisible from a green run, and the second time on this campaign that a
+classifier compared a different string from the one it meant. **Two network lines are the same event
+only when they are about the same resource.** All three cases were run against the unfixed
+classifier first and fail there.
+
 ## Where a result goes
 
 - **PASS** -> one row in the [dashboard](cross-client-testing.md), with the build it ran against.

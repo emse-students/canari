@@ -142,21 +142,20 @@ just deleted every cookie it owned, which is the wipe working; the OIDC callback
 the per-row `ignoringExpectedLog` list is what stands between this rung and a wall of `PASS-DIRTY`
 verdicts that say nothing about the product. Name them per row, never widen the classifier.
 
+**SHIPPED FOR THE HEAL-NEW ROWS ON 2026-08-29, and only for them.** `healnew.mjs` carries
+`withoutTheMintsOwnNoise` - `ignoringExpectedRefusal` for the `POST /api/auth/refresh -> 401` and
+then `ignoringExpectedLog` for the OIDC trail and the purge's three lines, in that order, because
+`ignoringExpectedLog` recomputes `clean` over `badHttp` as it finds it. Every needle names a SUCCESS
+spelling - the status pinned to `200`, the state check to `matches: true`, and none of
+`[DevicePanel]`'s five `console.error`/`console.warn` spellings named at all - so a `500` from
+core-service, a mismatched OIDC state or a failed device deletion stays dirt. **What is still open is
+the other rows on this rung**: `healrevoke.mjs` mints devices the same way and has no such list, so
+the first HEAL-REVOKE row to reach `gate()` will meet all three shapes unforgiven.
+
 **Two lines from that run are explained and must NOT be re-opened.** `History msg error: Group not
 found: 642f389a...` is the amber probe's own doing - the row clicks a SYNCING tile on purpose, and a
 conversation with no MLS state is exactly a group the history reader cannot find. `[WS] Disconnected.
 Code: 1006` is a browser the row killed by construction.
-
-### P3 - a 415 was recorded as dirt and nothing can say which request it was (measured 2026-08-29)
-
-HEAL-NEW-15's gate on `038c7e8d` demoted the row partly on a `415 Unsupported Media Type` that **no
-`badHttp` entry names**, so the method, the path and the caller are all undetermined. A dirt line
-whose subject cannot be recovered is unactionable by construction: it can be neither explained nor
-fixed, and it will demote every future run of this row for as long as it goes unnamed.
-
-**The fix is in the classifier, not in the product**: whatever records `badHttp` has to carry the
-request with the status, or the status is not evidence for anything. Until it does, a 415 here means
-only "something posted something somewhere".
 
 
 
