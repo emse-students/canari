@@ -238,6 +238,29 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **Two real conversations were stuck for good because the recovery ladder could only be entered
+  from the read side.** Found on production 2026-08-29 while HEAL-REVOKE-5's fresh reference device
+  sat at eleven groups of thirteen for eight minutes: the two it never got were being refused
+  `epoch_mismatch` by the server, 191 and 172 times in twenty-four hours, from the one web device
+  that held them. That device was a single epoch behind and could not commit; being the only member
+  online, it was also the only one that could re-admit anybody, so every peer asking to be re-added
+  was stranded behind it and their outboxes stayed frozen - which is what the "vous avez peut-etre
+  des messages en attente" nudge had been reporting to them. **The refusal was documented as
+  retryable and the retry was never going to work.** It is retryable in the case it was written for,
+  two devices committing at once: the loser rolls back, the winner's commit arrives through the
+  fan-out, the retry lands. On a quiet conversation the refused commits are the ONLY traffic, so
+  nothing arrives, and the premise the retry rests on is one nothing establishes. Both rungs of the
+  ladder - `attemptCommitReplay`, then the watchdog's forget + re-Welcome - hung off an incoming
+  frame this device could not decrypt, and a device that is behind but hears nothing never reaches
+  them. **The fix is the entrance, not a rung.** `runCommitTransaction` now calls
+  `catchUpOnRefusedCommit` before throwing the refusal: the EPOCHS decide, not the reason string (a
+  refusal reporting no server epoch ahead of ours is not a gap and touches nothing), rung 1 replays
+  the missed commits under the same MLS lock the read side holds, and a gap it cannot close is left
+  in the epoch-gap registry whose owner - the sync watchdog - already owns rung 2 and the whole
+  re-add cadence. No rung, no timer, no escalation and no fallback was added, and the refusal is
+  still thrown, because catching up is not succeeding. The two conversations heal themselves on the
+  first commit after the deploy.
+
 - **A revoked device kept both of its databases, and every log said the wipe had worked.** Found by
   HEAL-REVOKE-5 on production, 2026-08-29, on a build carrying all three of August's earlier wipe
   fixes: the `device_revoked` frame arrived, the server confirmed it, the reset ran, no step reported

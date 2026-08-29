@@ -14,6 +14,25 @@ This document describes how the **client** recovers from MLS and delivery-queue 
 
 4. **Epoch gap recovery (rung 1 → rung 2)** — When an incoming frame is at a higher epoch than the local group (`msg_epoch > group_epoch`), the device is behind. **Rung 1 (non-destructive)**: it fetches the ordered commits it missed from the server commit-log (**`GET /api/mls/commits/:groupId?sinceEpoch=N`**) and re-applies them via `processIncomingMessage` (`attemptCommitReplay` in `commitReplay.ts`), catching its epoch up with **no state loss and no re-Welcome**. **Rung 2 (destructive, fallback)**: only if the commits were pruned below the retained floor (`belowFloor`) or one fails to apply, AND the gap persists past `EPOCH_GAP_ESCALATION_MS`, does it `forgetGroup` + recover its state anew. The commit-log is written atomically with the epoch advance in `validateCommit`: **`POST /api/mls/commit`** now carries the commit bytes and does validate + store + fan-out in one call. Retention is long (~1 year) so rung 1 covers almost every gap.
 
+   **THE LADDER HAS TWO ENTRANCES, AND UNTIL 2026-08-29 IT HAD ONE.** Everything above is the READ
+   side: a frame arrives, it cannot be decrypted, the device learns it is behind. The WRITE side
+   learns the same fact from a different place — `POST /api/mls/commit` refuses a staged commit with
+   `epoch_mismatch` and answers with its own `activeEpoch` — and that fact reached no rung at all.
+   The refusal is documented as retryable, and the retry is correct *provided the commit we missed
+   arrives on its own*, which is what happens in the case it was written for: two devices commit at
+   once, the loser is refused, the winner's commit reaches it through the fan-out, the retry lands.
+   **Nothing established that premise.** On a conversation whose only remaining traffic was the
+   refused commits themselves, no frame ever arrived, so no rung ever ran and the same commit was
+   refused for ever — measured on production at 191 and 172 refusals in twenty-four hours, on two
+   conversations that were stuck for good. A device in that state is also the only one that can admit
+   anyone, so every peer asking to be re-added was stranded behind it, and their outboxes stayed
+   frozen (`isInEpochGap`) — which is what the "messages en attente" nudge was reporting.
+   `runCommitTransaction` now calls `catchUpOnRefusedCommit` before it throws: the epochs decide (a
+   refusal that reports no server epoch ahead of ours is not a gap and touches nothing), rung 1
+   replays under the same MLS lock the read side holds, and a gap it cannot close is left in the
+   epoch-gap registry for the sync watchdog to escalate. **No rung, no cadence and no escalation was
+   added** — the two rungs, their order and their single owner are unchanged.
+
    **Rung 2 recovery is self-service first.** The re-add seam `requestReAdd` tries **`externalJoin`** before any peer Welcome: it fetches the latest GroupInfo (**`GET /api/mls/group-info/:groupId`**, membership-gated), builds a native openmls external commit, and submits it under the standard epoch gate (**`POST /api/mls/commit`** at the GroupInfo's base epoch; on an epoch race it discards the group and retries with a fresher GroupInfo — no peer liveness required). The committer refreshes the stored GroupInfo after every accepted commit (**`POST /api/mls/group-info/:groupId`**, monotonic). Only when no GroupInfo is available does it fall back to a `welcome_request` (a reachable member re-adds us via a Welcome). The reboot/CAS/successor machinery was fully retired — external join is the self-service recovery; welcome_request is the thin fallback.
 
    **A joiner publishes the base its OWN commit created, inside the submission (2026-08-26).** An
@@ -46,6 +65,7 @@ This document describes how the **client** recovers from MLS and delivery-queue 
 | Epoch (Tauri) | After queue success (incl. persisted `group_reset`), welcome, and `sendCommit`, cache reflects `obtenir_epoch` | Code: `refreshEpochCache` after `group_reset` and on success path; `sendCommit` seeds cache |
 | Metrics | `logMlsMetric` is a no-op unless dev or `canari_mls_debug` | `mlsRecoveryMetrics.test.ts` |
 | Epoch gap replay (rung 1) | Missed commits are fetched + re-applied before any destructive rung-2 forget; `belowFloor` falls to rung 2 | `commitReplay.test.ts`, `setupMessageHandler.test.ts`, `messaging.commit-log.spec.ts` |
+| The write side enters the ladder too | A commit refused with a server epoch ahead of ours replays the missed commits before the refusal is thrown; one it cannot close stays in the epoch-gap registry for rung 2; a refusal reporting no such epoch, and an accepted commit, enter nothing | `BaseMlsService.refusedCommit.test.ts` |
 | External-join self-recovery (rung 2) | `requestReAdd` tries `externalJoin` first; welcome_request only as fallback; GroupInfo store is membership-gated + monotonic | `external_join.rs`, `BaseMlsService.externalJoin.test.ts`, `messaging.group-info.spec.ts`, `recovery.test.ts` |
 | A join never leaves the base behind | The joiner exports at `base + 1` before merging, the blob travels in the commit submission, and the server stores it in the same transaction as the advance; a wrong-epoch instance abandons the join | `external_join.rs` (`a_joiner_exports_the_base_its_own_commit_created_before_merging`), `BaseMlsService.externalJoin.test.ts`, `messaging.commit-log.spec.ts` |
 | A refused GroupInfo read terminates the ladder | 403 is typed at the throw, survives `externalJoin`, retires the conversation; 401/404/5xx and a `200`-with-`null` stay retryable | `mlsDeliveryApi.groupStatus.test.ts`, `BaseMlsService.externalJoin.test.ts`, `recovery.test.ts` |
