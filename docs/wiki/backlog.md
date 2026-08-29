@@ -1540,6 +1540,29 @@ rebuild re-bases A1's build for every phase of the ladder that follows it.
 
 ## The harness itself
 
+### P2 - no row on the board can tell a healthy conversation from an epoch-forked one (measured 2026-08-29)
+
+Two production conversations sat forked one epoch behind for twenty-four hours, refusing 191 and 172
+commits, and **every reading this rig takes was green throughout**: `data-ready="true"` on both tiles,
+`syncing: 0`, `amber: []`. The fork was found in the SERVER's refusal count while chasing something
+else. Reasoning in
+[testing-methodology](testing-methodology.md#a-green-sidebar-tile-does-not-prove-the-group-is-not-epoch-forked);
+this is the queue entry for the gap it leaves.
+
+**What is missing is a predicate, not a runner.** Readiness answers *the list has painted*, which is
+what it was written for. Nothing anywhere in the rig asks *is this device at the group's epoch*,
+though the answer is one field: the client already holds `getEpoch(groupId)`, and the server already
+answers `activeEpoch` on any refused commit and carries it in the commit-log endpoint. A `syncrows`
+reader that put the two side by side would turn a class of defect that is currently found by hand,
+a day late, into a per-row assertion.
+
+**The row it belongs to is not written either.** COMM and MULTI both send and observe arrival, so
+they would catch a fork that blocks traffic *in the window they watch*; neither asks the question of
+a conversation it is not itself using, which is the only place a quiet fork can live. Scope it with
+the four MULTI rows of queue item 3 - same shape, same devices, and the same reason none of ~200
+existing rows would have caught it.
+
+
 ### P3 - an internet scanner can stop a `--repeat`, and separate invocations are the way round it (2026-08-26)
 
 `GRP --repeat 5` stopped at pass 1 with `frontend-ssr NOT CLEAN ... unexplained=3`, the three lines being

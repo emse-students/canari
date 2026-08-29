@@ -199,15 +199,31 @@ const firstLine = (e) =>
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** Runs one rig script and reports its exit and last line, never its whole output. */
+/**
+ * Runs one rig script and reports its exit and the ONE line that says what happened.
+ *
+ * THE LAST LINE OF A CRASH IS THE LEAST INFORMATIVE LINE OF IT. A thrown error ends with the node
+ * version banner, so a child that died with a precise complaint was reported here as
+ * `tail: "Node.js v24.16.0"` - which named neither the script, nor the state, nor the failure. It
+ * cost a diagnosis on 2026-08-29: HEAL-REVOKE-5 recorded a login that had refused, and the refusal
+ * itself was three lines above the one that got written down.
+ *
+ * So the throw is preferred when there is one, and the last line only otherwise. A script that
+ * exits cleanly still reports what it did on its final line, exactly as before.
+ */
 function runScript(file, args) {
   const r = spawnSync(process.execPath, [file, ...args], {
     encoding: "utf8",
     cwd: import.meta.dirname,
     maxBuffer: 64 * 1024 * 1024,
   });
-  const out = `${r.stdout || ""}${r.stderr || ""}`.trim().split("\n");
-  return { ok: r.status === 0, status: r.status, tail: out.at(-1) ?? "" };
+  const out = `${r.stdout || ""}${r.stderr || ""}`
+    .trim()
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const threw = out.find((l) => /^(?:[A-Za-z]*Error|Uncaught)\b/.test(l));
+  return { ok: r.status === 0, status: r.status, tail: threw ?? out.at(-1) ?? "" };
 }
 
 /**
@@ -462,11 +478,16 @@ async function whatTheWorldCanServe(label) {
  * survived, this is where it shows, and clearing the origin first would delete the evidence.
  */
 async function comeBack(label) {
+  // THE OBSERVER GOES UP BEFORE THE LOGIN, BECAUSE THE LOGIN IS THE STEP THAT CAN FAIL. It used
+  // to be attached after it, and on 2026-08-29 that left the only interesting console of the run
+  // unrecorded: the return reported login ok and landed on /chat, and three milliseconds later the
+  // app logged itself out. The row could say the sidebar never came and could not say why, because
+  // the sentence that said why was spoken before anyone was listening.
+  const cx = await victimCx();
+  const observer = await watch(cx, VICTIM);
   note(`${label}: logging the revoked device back in`);
   const login = runScript("login.mjs", ["--device", VICTIM]);
   note(`${label}: login ${JSON.stringify(login)}`);
-  const cx = await victimCx();
-  const observer = await watch(cx, VICTIM);
   const pin = runScript("pin.mjs", ["--device", VICTIM]);
   note(`${label}: pin ${JSON.stringify(pin)}`);
   await ensureChat(cx).catch(() => null);
@@ -478,9 +499,14 @@ async function comeBack(label) {
     settledWhen: target.settledWhen,
     log: (m) => console.log(m),
   });
-  note(
-    `${label}: ${w.settled ? `settled in ${w.elapsedMs}ms` : `still syncing after ${w.elapsedMs}ms`}`,
-  );
+  // THREE OUTCOMES, NOT TWO. A watch that ended on a logout is not a watch that ran out of time,
+  // and reporting both as "still syncing" is what made a ten-minute stall read like a slow heal.
+  const how = w.settled
+    ? `settled in ${w.elapsedMs}ms`
+    : w.abandoned
+      ? `ABANDONED after ${w.elapsedMs}ms - the client is on ${w.abandoned}, so no sidebar was coming`
+      : `still syncing after ${w.elapsedMs}ms`;
+  note(`${label}: ${how}`);
   const last = await readAll(cx);
   return { cx, observer, login, pin, who, watch: w, target, last };
 }
@@ -944,6 +970,9 @@ const detail = {
     deviceId: back.who.deviceId,
     settledInMs: back.watch.settled ? back.watch.elapsedMs : null,
     stalledForMs: back.watch.settled ? null : back.watch.elapsedMs,
+    // WHY IT DID NOT SETTLE, WHEN THE ANSWER IS KNOWN. A stall and a logout are both a null
+    // settledInMs, and only one of them is about the sidebar at all.
+    abandonedOn: back.watch.abandoned,
     waitedFor: back.target.ids.size,
     servableFrom: back.target.from,
     state: returnedState,

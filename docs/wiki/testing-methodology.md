@@ -2846,6 +2846,28 @@ exact reading that cost three sessions. **A CLI ENTRY POINT IS A CALLER, NEVER A
 row asserts on has to be reachable by import, or the tool and the runner are two implementations of
 one criterion and only one of them is ever exercised by hand.
 
+### A green sidebar tile does not prove the group is not epoch-forked
+
+Measured on production 2026-08-29, while diagnosing the write-side entrance to the recovery ladder.
+Two conversations, `3ca20e77` and `6e7c9ab1`, had been forked one epoch behind for twenty-four hours:
+every commit W1 staged in them was refused, 191 and 172 times, and no message could enter or leave.
+**Both tiles read `data-ready="true"` on W1's sidebar for the whole of it**, and every `readAll` this
+rung takes reported `syncing: 0`, `amber: []`.
+
+That is not a bug in the tile. `data-ready` says the conversation has a local MLS group and has
+finished its initial load - which was true, and stayed true, because a fork does not unload anything.
+It is the instrument's mistake to have read it as more: **`watchRows`'s settle predicate counts ready
+tiles, so it is green on a device that cannot send or receive in the group it is green about.** The
+fork was found in the SERVER's refusal count and nowhere else; nothing on any screen in this rig
+would ever have said it.
+
+So a settle predicate built on tile readiness bounds exactly one thing - *the list finished loading* -
+and never *this device is in step with the group*. Any row wanting the second has to ask for it, by
+the epoch or by a round trip through the group, and **no row on the board asks**. This is the same
+fault as the `footprint.mjs` reading two paragraphs below and as
+[the column rule](durable-rules.md): a signal is evidence only for the question it was written to
+answer, and readiness was written to answer whether the list had painted.
+
 ## What the HEAL rung taught the instrument
 
 Moved off the board on 2026-08-28 with the rest of section 16's prose. These are rules about measuring, not verdicts.
