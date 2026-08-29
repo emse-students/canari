@@ -94,24 +94,18 @@
   let copiedLink = $state(false);
 
   // ── Submit bar: sits at the end by default, sticks for good once earned ─────
-  /** Marks the bar's natural position - placed AFTER the bar (not before), so it only becomes
-   * visible once the submitter has scrolled PAST the whole bar, not merely up to its edge. */
+  /** Marks the bar's natural position - placed AFTER the bar (not before), so reaching it means
+   * the submitter has scrolled PAST the whole bar, not merely up to its edge. */
   let barSentinel: HTMLDivElement | undefined = $state();
-  /** Whether the sentinel is currently within the scrollable viewport. */
-  let barSentinelVisible = $state(false);
   /** One-way latch: true once the submitter has scrolled far enough to see the whole bar AND
    * every required question was answered at that moment. Never resets - reaching the end is a
    * milestone, not a live state. Once true, the bar sticks to the bottom of the screen FOR GOOD -
    * `position: sticky` (unlike `fixed`) never leaves the document flow, so it still settles back
    * into its own natural spot, right after the last question, once scrolled all the way down;
-   * nothing needs to manually reserve space for it. There is nothing useful for it to guard
-   * before `reachedEnd`, and stopping short of it looks like an intrusive floating panel over
-   * content still being filled in - but once earned there is no scroll position where un-pinning
-   * it again would help the submitter. */
+   * nothing needs to manually reserve space for it. */
   let reachedEnd = $state(false);
-  /** BottomNav's real rendered height (mobile only; 0 on desktop where it does not mount) -
-   * shrinks the sentinel's effective intersection root by that much, so scrolling past the bar
-   * is required to also clear the nav sitting below it, not just the bar's own edge. Measured in
+  /** BottomNav's real rendered height (mobile only; 0 on desktop where it does not mount) - the
+   * sentinel must also clear this to count as "reached", not just its own edge. Measured in
    * $effect rather than as a top-level const: top-level script runs during construction, before
    * the DOM is mounted and laid out, so `clientHeight` would read 0 there regardless of CSS.
    *
@@ -124,6 +118,37 @@
   $effect(() => {
     bottomNavHeight = document.querySelector('#bottom-nav')?.clientHeight ?? 0;
   });
+
+  /** Whether the sentinel has scrolled far enough up to also clear `BottomNav` below it. Computed
+   * fresh from the DOM every call, deliberately NOT cached in reactive state - see the effect
+   * below for why that distinction is what makes this whole mechanism work. */
+  function sentinelReached(): boolean {
+    if (!barSentinel) return false;
+    const root = barSentinel.closest('.page-scroll-wrap');
+    if (!root) return false;
+    // Tolerance, not exactness: `bottomNavHeight` (a measured `clientHeight`) and
+    // `.page-scroll-wrap`'s own reserved end-of-content padding (a CSS `calc()` of nominally the
+    // SAME `4rem + safe-area`) are computed independently and never land bit-for-bit identical -
+    // measured on-device, the sentinel's own top sat 0.05px short of the threshold at the actual
+    // maximum scroll position, meaning an exact comparison could never be satisfied at all, even
+    // scrolled as far as the page physically allows. A few pixels of slack costs nothing semantic
+    // (the sentinel still has to have scrolled essentially all the way up) and admits the
+    // sub-pixel rounding every browser's layout engine introduces.
+    const TOLERANCE_PX = 4;
+    return (
+      barSentinel.getBoundingClientRect().top <=
+      root.getBoundingClientRect().bottom - bottomNavHeight + TOLERANCE_PX
+    );
+  }
+  /** `totalCount` as of the last genuine scroll (or the initial mount check). Gates the reactive
+   * fallback below: a form short enough to need only ONE scroll to see everything can have its
+   * LAST required answer arrive as a click, with the submitter already parked at the bottom - no
+   * further scroll ever happens to run the check above, so nothing would ever latch. But that
+   * same click can ALSO be the one that reveals a further `showIf`-conditional question, and that
+   * must still wait for a real scroll (the original bug this whole mechanism exists to avoid).
+   * The two are told apart by whether `totalCount` moved since the last scroll: unchanged means
+   * nothing new rendered, so it is safe to check immediately; changed means it is not. */
+  let lastScrollTotalCount = $state(0);
 
   async function handleSaveCard() {
     savingCard = true;
@@ -572,20 +597,44 @@
   const progressPct = $derived(totalCount > 0 ? Math.round((answeredCount / totalCount) * 100) : 0);
 
   $effect(() => {
-    if (!barSentinel) return;
-    const root = barSentinel.closest('.page-scroll-wrap');
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        barSentinelVisible = entry?.isIntersecting ?? false;
-      },
-      { root, rootMargin: `0px 0px ${-bottomNavHeight}px 0px` }
-    );
-    observer.observe(barSentinel);
-    return () => observer.disconnect();
+    const root = barSentinel?.closest('.page-scroll-wrap');
+    if (!root) return;
+    // Deliberately event-driven, not reactive to `allRequiredAnswered`: answering a question -
+    // including the one that reveals a further `showIf`-conditional question right above this
+    // sentinel - is a click, never a `scroll` event, so it can never run this check by itself.
+    // Only an actual scroll action re-evaluates the CURRENT, live DOM state, which is why this
+    // reads live geometry (`sentinelReached()`) rather than a cached `$state` flag updated by an
+    // IntersectionObserver: that flag is only as fresh as the browser's own async scheduling of
+    // the observer callback, and a fresh reading can still say "still visible" if the new content
+    // fit inside existing slack - reintroducing the same premature latch one tick later. The
+    // one-off call right after attaching the listener is what still lets a form short enough to
+    // need no scrolling at all latch once its last required answer comes in - and also seeds
+    // `lastScrollTotalCount` for the reactive fallback below, before any scroll has happened yet.
+    const check = () => {
+      lastScrollTotalCount = totalCount;
+      if (!reachedEnd && allRequiredAnswered && sentinelReached()) reachedEnd = true;
+    };
+    root.addEventListener('scroll', check, { passive: true });
+    check();
+    return () => root.removeEventListener('scroll', check);
   });
 
   $effect(() => {
-    if (barSentinelVisible && allRequiredAnswered) reachedEnd = true;
+    // Reactive fallback for a form short enough that seeing everything only ever takes ONE
+    // scroll: the submitter can answer the LAST required question - a click - while already
+    // parked at the bottom, and no further scroll would ever happen to run the check above.
+    // Gated on `totalCount` matching its value as of the last real scroll: unchanged means this
+    // answer did not also reveal a new question, so nothing here relies on a stale reading the
+    // way the scroll-driven check's own comment warns against - it means there is nothing NEW
+    // to have missed since that last scroll actually measured this same layout.
+    if (
+      !reachedEnd &&
+      allRequiredAnswered &&
+      totalCount === lastScrollTotalCount &&
+      sentinelReached()
+    ) {
+      reachedEnd = true;
+    }
   });
 </script>
 
@@ -602,7 +651,7 @@
   />
 {/if}
 
-<div class="mx-auto max-w-2xl px-4 pt-6">
+<div class="mx-auto max-w-2xl p-4 pt-6">
   <!-- Back + Share -->
   <div class="mb-6 flex items-center justify-between">
     <button

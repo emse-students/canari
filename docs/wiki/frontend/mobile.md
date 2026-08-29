@@ -1393,6 +1393,48 @@ registration outright - the branch that had no observer at all), `app-delegate-a
 deleted the moment a token arrives, so a reason cannot outlive its cause. See
 [check S](../device-verification.md) for the run this must be measured against.
 
+## Reading live state out of a running WebView, over adb
+
+`android:dev`'s own HMR occasionally stops picking up file changes (observed twice in one session,
+no root cause chased down - a full CDP-forced reload worked around it every time, see below), and a
+screenshot cannot tell you why a JS condition evaluated the way it did. Both are solved by talking to
+the WebView's own debugger directly, which needs no more than `adb` and a Chrome DevTools Protocol
+(CDP) client:
+
+```bash
+# 1. Find the debuggable WebView's abstract socket (present on any debug build; the app
+#    does not need to be built with anything special beyond the default dev/debug profile).
+adb shell cat /proc/net/unix | grep webview_devtools_remote
+
+# 2. Forward it to a local TCP port.
+adb forward tcp:9333 localabstract:webview_devtools_remote_<pid>
+
+# 3. List debuggable pages/targets - each has an "id" and a "webSocketDebuggerUrl".
+curl -s http://127.0.0.1:9333/json
+```
+
+From there, any CDP client can drive the page. `wscat` cannot send-and-wait for a single response,
+so a short Python script using the `websockets` package is the path of least resistance:
+
+```python
+import asyncio, websockets, json
+async def main():
+    async with websockets.connect("ws://127.0.0.1:9333/devtools/page/<id>", max_size=10_000_000) as ws:
+        await ws.send(json.dumps({"id": 1, "method": "Runtime.evaluate",
+            "params": {"expression": "location.href", "returnByValue": True}}))
+        print(json.loads(await ws.recv()))
+asyncio.run(main())
+```
+
+`Runtime.evaluate` runs arbitrary JS in the page - read `getBoundingClientRect()` on any element,
+dispatch synthetic `scroll`/`click` events, or read a component's exposed state. `Page.reload` with
+`{"ignoreCache": true}` forces a full asset re-fetch when HMR has silently stopped applying edits
+(costs a much larger download over the dev-server's LAN connection, so expect a genuinely stuck-
+looking splash screen for several seconds - that is normal, not a second hang). This is what caught
+the sub-pixel scroll-threshold bug in [durable-rules](../durable-rules.md) - a screenshot only ever
+showed "not sticky," never why, and the actual gap (0.05px) was only visible by reading
+`getBoundingClientRect()` live against the exact values the running code was comparing.
+
 ## CI/CD
 
 | Workflow | Output |

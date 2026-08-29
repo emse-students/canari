@@ -586,6 +586,36 @@ which is also where every release up to and including v0.13.1 now lives.
   `env(safe-area-inset-bottom, 0px)` for Tauri, overridden to `0px` when `window.__TAURI_INTERNALS__`
   is absent. Every consumer now reads `var(--safe-area-inset-bottom, 0px)` instead of calling
   `env()` itself, so the platform distinction is made in exactly one place.
+
+  **Getting `reachedEnd` itself right took three more rounds, each one an on-device finding, not a
+  guess.** A `showIf`-conditional question can appear the exact instant the answer that satisfies
+  it also completes every required field, and the first two designs (tracking `visibleItems`'
+  count through an `IntersectionObserver`-backed `$state` flag, then requiring that flag to be
+  observed leaving the viewport before counting again) each traded one failure for another: the
+  first could still re-latch one animation frame later if the new content happened to fit inside
+  existing scroll slack, and the second could stall forever if it never did, permanently blocking
+  a short form's only completion path. The mechanism that actually holds: a `scroll` listener
+  reads live DOM geometry directly - `sentinelReached()`, never cached - and answering a question
+  is a click, never a `scroll` event, so it cannot run the check by itself regardless of what that
+  answer causes to appear; a reactive fallback, gated on the visible item count matching its value
+  as of the last real scroll, covers a form short enough to need only one scroll to see everything,
+  where the last required answer can land as a click while already parked at the bottom.
+
+  **Even that geometry comparison had one more bug, caught only by inspecting the real WebView live
+  over the Chrome DevTools Protocol:** at the actual maximum scroll position on a real device, the
+  sentinel's measured `top` sat 0.05px past the computed threshold - `.page-scroll-wrap`'s own
+  reserved end-of-content padding (a CSS `calc()`) and `BottomNav`'s measured `clientHeight` name
+  the same `4rem + safe-area`, but two independently computed values are never guaranteed to land
+  bit-for-bit identical after browser sub-pixel rounding. An exact comparison could never be
+  satisfied at all, even scrolled as far as the page physically allows - a few pixels of tolerance
+  fixed it, confirmed live by scripting the same WebView to select an answer, scroll to the bottom,
+  and back, and reading the bar's own class list before and after.
+
+  **One unrelated bug surfaced along the way and was fixed on sight:** `+layout.ts`'s redirect to
+  `/login` read `event.url.hash` inside a `load` function, which SvelteKit refuses outright (hash
+  changes never re-run `load`, so it will not let one depend on it) - throwing before `goto()` was
+  even called, on every redirect, for every signed-out visit. `window.location.hash` reads the same
+  value without that restriction and is safe in this already browser-only branch.
 - **An iPhone could never obtain a push token, and nothing anywhere reported it.** Measured on
   production: `SELECT platform, count(*) FROM push_token GROUP BY platform` answered `android | 49`
   and nothing else - not one row had ever carried `platform = 'ios'`, and `voipToken` was null on all

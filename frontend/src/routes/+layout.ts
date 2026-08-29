@@ -36,8 +36,13 @@ export const load = async (event: LoadEvent) => {
       // refresh failed - session truly expired
     }
     if (!userId) {
+      // window.location.hash, not event.url.hash: SvelteKit throws on reading `.hash` off a
+      // `load` event's URL (hash changes never re-run load, so it refuses to let one depend on
+      // it) - and since that throw happens while building this very argument, it fires before
+      // `goto()` is even called, well before the `.catch()` below could ever see it. Safe here
+      // regardless, since this whole branch is already behind the `typeof window` guard above.
       return goto(
-        `/login?returnTo=${encodeURIComponent(event.url.pathname + event.url.search + event.url.hash)}`,
+        `/login?returnTo=${encodeURIComponent(event.url.pathname + event.url.search + window.location.hash)}`,
         { replaceState: true }
       ).catch(() => {});
     }
@@ -56,7 +61,7 @@ export const load = async (event: LoadEvent) => {
     // typed error rather than parsed back out of its sentence.
     if (error instanceof UserProfileFetchError && error.status === 404) {
       return goto(
-        `/login?returnTo=${encodeURIComponent(event.url.pathname + event.url.search + event.url.hash)}`,
+        `/login?returnTo=${encodeURIComponent(event.url.pathname + event.url.search + window.location.hash)}`,
         { replaceState: true }
       ).catch(() => {});
     }
