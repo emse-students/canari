@@ -89,6 +89,20 @@ the server. `srvlog.mjs` classifies the whole server window - `--shapes` collaps
 `notable` into distinct sentences - and `srvclassify-selftest.mjs` pins every rule against a line
 whose bucket is known.
 
+**A network line in a client report renders as `<sentence> <- METHOD /path`**, joined through
+`Log.entryAdded`'s `networkRequestId` to the request the classifier already holds - because "the
+server responded with a status of 415" names no request, and a dirt line whose subject cannot be
+recovered can be neither explained nor fixed. The join is only attempted for `source === 'network'`:
+a worker's own `console.log` arrives on the same channel carrying the worker FILE as its `url`, and a
+`???` where the method belongs is what that looks like. Classification is untouched by any of it -
+every rule and every `ignoringExpectedLog` needle still matches the sentence alone.
+
+**A runner names the noise IT provokes, per row, and never widens a shared classifier.**
+`healnew.mjs` mints a device by driving the OIDC callback and the device panel, so it declares its
+own `MINT_REFUSALS` (the `POST /api/auth/refresh -> 401` from a client that has just deleted every
+cookie) and `MINT_NARRATION` (the `[auth]`, `[callback]` and `[DevicePanel]` trail) and folds both
+into `withoutTheMintsOwnNoise`. Needles that go `unmatched` are reported and forgive nothing.
+
 **The rig has twelve self-tests, and they run in TWO targets, because they are not one kind of thing.**
 `make test-harness` is the CI gate and holds the eleven that need nothing: `rawcheck.mjs` reads every
 page-side template for an escape Node eats, `classify-selftest.mjs` pins the client-side verdict

@@ -2282,8 +2282,37 @@ was collapsing ten different failures into one line carrying the FIRST url - and
 judged all ten on it. A benign avatar `404` arriving first forgave a `404` from anywhere else on the
 page: an under-report, invisible from a green run, and the second time on this campaign that a
 classifier compared a different string from the one it meant. **Two network lines are the same event
-only when they are about the same resource.** All three cases were run against the unfixed
+only when they are about the same resource.** All four cases were run against the unfixed
 classifier first and fail there.
+
+**Then the fix over-reached, and the report said so.** A worker's own `console.log` reaches
+`Log.entryAdded` too, and its `url` is the WORKER FILE - so HEAL-NEW-2's first read showed four
+`[RUST::WARN] Past-epoch application frame` lines dressed as
+`<- ??? /_app/immutable/workers/mlsCrypto.worker-*.js`. **The `???` where a method belongs is what
+gave it away**, which is the argument for rendering the method at all rather than the url alone: a
+join that failed is visible instead of plausible. `entry.source` is the field that separates a
+network line from a script's, and both the renderer and the de-duplication key now require
+`source === 'network'`. The negative control is a self-test case, because a narrowing that quietly
+restored the old collapsing would look identical from a green run.
+
+## A CADENCE READ OFF A HEAL-NEW LOG MEASURES THE RIG, UNLESS IT IS SCOPED TO ONE DOCUMENT
+
+**Measured 2026-08-29 on HEAL-NEW-2 and -12, and it would have been misread in BOTH directions.**
+Each row logged 19 `welcome_request`s where 10 groups were asked: ten at once, then nine again - 34 s
+later on row 2, and 60 s later on row 12, against an app line that names its own cadence as
+`(cadence 60s)`. Read alone, row 2 is a violation and row 12 is a confirmation. Neither is either.
+
+**Both ledger lines carry `documentsReplaced: 1`.** `confirmEnrolment` drives the abandoned-device
+purge through the device panel, which replaces the document - and the re-add throttle is an
+in-memory `Map`, so the reload resets it. The second round follows that reload by 6-8 s in both runs,
+and the 34 s and the 60 s are the distance to a page load, not a cadence. **Row 12's agreement with
+the documented number was a coincidence**, which is the more dangerous of the two readings.
+
+**Inside one document the throttle held exactly.** Every one of the nine repeats logged
+`[READD] <id>... throttled (17s ago) / (22s ago) / (36s ago) / (43s ago)` at each 5 s watchdog poll.
+That is the measurement the row can actually support. **A rate, an interval or a count taken from a
+HEAL-NEW log is a statement about ONE document or it is a statement about the harness** - the runner
+navigates the client by design, and every in-memory guard in the app is reset each time it does.
 
 ## Where a result goes
 

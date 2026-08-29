@@ -887,6 +887,7 @@ function netLinesOf(reqs) {
         entry: {
           timestamp: 1_786_710_000_000 + i * 1000,
           level: 'error',
+          source: 'network',
           text: `Failed to load resource: the server responded with a status of ${status} ()`,
           url,
           networkRequestId: requestId,
@@ -923,6 +924,37 @@ const twoResources = await report({
   if (!ok) failures++;
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${'named'.padEnd(12)} two resources failing the same way are two lines, not one`);
   if (!ok) console.log(`       errors=${JSON.stringify(twoResources.errors)}`);
+}
+
+// A WORKER'S OWN `console.log` CARRIES A URL TOO - THE WORKER FILE - AND IT IS NOT A REQUEST.
+// The first cut of the fix keyed on `url` alone and rendered four `[RUST::WARN] Past-epoch
+// application frame` lines on HEAL-NEW-2 as `<- ??? /_app/immutable/workers/mlsCrypto.worker-*.js`.
+// The `???` was the tell: there was no request to name, so the suffix dressed an application
+// sentence as an HTTP failure. Only `source === 'network'` earns one.
+const workerLine = await report({
+  cx: {
+    events: [
+      {
+        method: 'Log.entryAdded',
+        params: {
+          entry: {
+            timestamp: 1_786_710_000_000,
+            level: 'error',
+            source: 'worker',
+            text: '[MLS] LOST frame in 642f389a…',
+            url: `${SITE}/_app/immutable/workers/mlsCrypto.worker-BYORCre_.js`,
+          },
+        },
+      },
+    ],
+  },
+  label: 'selftest',
+});
+{
+  const ok = workerLine.severe.some((l) => l === '[MLS] LOST frame in 642f389a…');
+  if (!ok) failures++;
+  console.log(`${ok ? 'ok  ' : 'FAIL'} ${'named'.padEnd(12)} a worker's own log line is NOT dressed as a request`);
+  if (!ok) console.log(`       severe=${JSON.stringify(workerLine.severe)}`);
 }
 
 const benignFirst = await report({

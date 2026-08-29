@@ -1221,7 +1221,14 @@ export async function report(w) {
         //
         // AND KEEP `networkRequestId`, WHICH IS THE JOIN TO THE REQUEST ITSELF. `url` alone cannot
         // name the METHOD, and a status with no request is evidence for nothing - see `renderLine`.
-        console_.push({ at: p.entry.timestamp, level: p.entry.level, text: p.entry.text.slice(0, 300), url: p.entry.url, requestId: p.entry.networkRequestId });
+        //
+        // `source` IS WHAT SAYS THE URL IS A REQUEST AND NOT A SCRIPT. A worker's own `console.log`
+        // arrives here too, and its `url` is the WORKER FILE - so rendering it beside the sentence
+        // dressed an ordinary application line as an HTTP failure. Measured on HEAL-NEW-2, where
+        // four `[RUST::WARN] Past-epoch application frame` lines came back wearing
+        // `<- ??? /_app/immutable/workers/mlsCrypto.worker-*.js`; the `???` was the tell, because
+        // there was no request to name. Only `source === 'network'` is about a resource.
+        console_.push({ at: p.entry.timestamp, level: p.entry.level, text: p.entry.text.slice(0, 300), url: p.entry.url, requestId: p.entry.networkRequestId, source: p.entry.source });
         break;
     }
   }
@@ -1242,15 +1249,20 @@ export async function report(w) {
 
   // De-duplicate: Log.entryAdded and consoleAPICalled surface the same line twice.
   //
-  // THE URL IS PART OF THE IDENTITY, AND LEAVING IT OUT FORGAVE THE WRONG REQUEST. Chrome writes
-  // the SAME sentence - "Failed to load resource: the server responded with a status of 404" - for
-  // every resource that fails, so a key built from the text alone collapsed ten different requests
-  // into one line carrying the FIRST one's url. `isBenignUrl` then judged all ten on that url: a
-  // benign avatar 404 arriving first silently forgave a 404 from anywhere else on the page. Two
-  // network lines are the same event only when they are about the same resource.
+  // THE URL IS PART OF THE IDENTITY OF A NETWORK LINE, AND LEAVING IT OUT FORGAVE THE WRONG
+  // REQUEST. Chrome writes the SAME sentence - "Failed to load resource: the server responded with
+  // a status of 404" - for every resource that fails, so a key built from the text alone collapsed
+  // ten different requests into one line carrying the FIRST one's url. `isBenignUrl` then judged
+  // all ten on that url: a benign avatar 404 arriving first silently forgave a 404 from anywhere
+  // else on the page. Two network lines are the same event only when they are about the same
+  // resource.
+  //
+  // AND ONLY FOR A NETWORK LINE. A worker's `console.log` also carries a url - the worker file - so
+  // keying every line on it would stop collapsing the `Log.entryAdded` / `Runtime.consoleAPICalled`
+  // pair this dedup exists for, which is the one thing it must keep doing.
   const seen = new Set();
   const lines = console_.filter((l) => {
-    const k = `${l.level}|${l.url ?? ''}|${l.text.replace(/^\[\d\d:\d\d:\d\d\]\s*/, '')}`;
+    const k = `${l.level}|${l.source === 'network' ? l.url : ''}|${l.text.replace(/^\[\d\d:\d\d:\d\d\]\s*/, '')}`;
     if (seen.has(k)) return false;
     seen.add(k);
     return true;
@@ -1308,11 +1320,16 @@ export async function report(w) {
    * thrown away at render time, one line after the comment saying why `url` was kept.
    *
    * IT RENDERS, IT DOES NOT CLASSIFY. Every list is still matched against `l.text`, so no rule,
-   * needle or `^` anchor sees the suffix; and only a line the browser attached a url to gets one, so
-   * an application log line is untouched.
+   * needle or `^` anchor sees the suffix.
+   *
+   * AND IT IS SCOPED TO `source === 'network'`, WHICH IS THE ONLY URL THAT IS A REQUEST. A worker's
+   * own `console.log` arrives with the WORKER FILE as its url, and a first cut rendered four
+   * `[RUST::WARN] Past-epoch application frame` lines on HEAL-NEW-2 as
+   * `<- ??? /_app/immutable/workers/mlsCrypto.worker-*.js` - an application sentence dressed as an
+   * HTTP failure, which is the exact opposite of naming a request.
    */
   const renderLine = (l) => {
-    if (!l.url) return l.text;
+    if (l.source !== 'network' || !l.url) return l.text;
     const r = l.requestId ? reqs.get(l.requestId) : null;
     return `${l.text} <- ${r?.method ?? '???'} ${l.url.replace('https://canari-emse.fr', '')}`;
   };

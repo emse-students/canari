@@ -242,7 +242,15 @@ which is also where every release up to and including v0.13.1 now lives.
   `Runtime.consoleAPICalled` keyed on that sentence - so ten different failures became one line
   carrying the FIRST url, and `isBenignUrl` judged all ten on it. A benign avatar `404` arriving
   first forgave a `404` from anywhere else on the page. The url is now part of the identity, and the
-  three new cases in `classify-selftest.mjs` were validated against the unfixed classifier first.
+  new cases in `classify-selftest.mjs` were validated against the unfixed classifier first.
+
+  **And a `url` is not proof that a line is a request.** A worker's own `console.log` reaches
+  `Log.entryAdded` as well, carrying the WORKER FILE as its `url` - so the first cut of the renderer
+  dressed four `[RUST::WARN] Past-epoch application frame` lines as `<- ??? /_app/immutable/workers/
+  mlsCrypto.worker-*.js`, and the `???` where a method belongs is what gave it away. `entry.source`
+  is what separates the two, and both the renderer and the de-duplication key now require
+  `source === 'network'`: a worker line renders as itself and keys on its sentence, exactly as
+  before. The negative control is the fourth self-test case.
 
 - **A device that had just joined reported 8259 losses, and the one that mattered was inside them.**
   A frame from before this device joined can never be read - joining at epoch N means epoch N-1 is

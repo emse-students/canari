@@ -30,7 +30,7 @@ is the numbered ladder below, top to bottom - the only copy of that order.**
 | 13 LIFE | 8 | - | `pending` |
 | 14 NOTIF | 21 | - | `pending` |
 | 15 CALL | 20 | - | `pending` - no runner exists |
-| 16 HEAL | 31 | `48b65d08`, HEAL-NEW-3/11 `ebef7f3c`, HEAL-NEW-15 `038c7e8d` | 5/31 taken: 3 `PASS`, HEAL-NEW-0 and -15 `PASS-DIRTY`; 15 is the FIRST gated `PASS` of the rung; 1 and 3 owe an ungated re-run |
+| 16 HEAL | 31 | `48b65d08`, HEAL-NEW-3/11 `ebef7f3c`, HEAL-NEW-2/12/15 `038c7e8d` | 7/31 taken: 3 `PASS`, HEAL-NEW-0/2/12/15 `PASS-DIRTY`; the 2/12 ORDER PAIR is EQUAL, adjudicated on the campaign page; 1 and 3 owe an ungated re-run |
 | 17 PIN | 10 | - | `pending` - no runner exists |
 | 18 CORRUPT | 10 | - | `pending` - no runner exists |
 
@@ -379,7 +379,7 @@ device answered.
 15-device cap, `register-device` answered 400 and no KeyPackage was ever published, so nothing could
 be enrolled or revoked.** Re-runs owed, not findings. **And a responder can only serve a group it is
 a MEMBER of** - the owner holds 11 active groups where the peer shares 2, so the peer-responder rows
-assert the `servableSubset`, 1 row of 10.
+assert the `servableSubset`, measured at 1 row of 10 on 2026-08-29.
 
 Row-by-row design and cost:
 [cross-client-campaign](cross-client-campaign.md#16-heal---what-the-rows-are-and-what-they-cost). The
@@ -406,7 +406,7 @@ four wipe defects found by hand:
 | HEAL-REVOKE-9 | Revoked while **OFFLINE**: the wipe is DEFERRED, not lost, and must not fire while the server is unreachable | `W1 W2` | `pending` - written 2026-08-28 |
 | HEAL-NEW-0 | The rig can mint a device the server has never seen, repeatably, on ONE 2FA | `+user` | **`PASS-DIRTY` on `48b65d08`** - a newer ledger `FAIL` is dirt only, P3 |
 | HEAL-NEW-1 | Fresh device, **nothing else online** - external join is the only path there is | `+user` | **`PASS` on `48b65d08`** - isolation real, ten amber for 600 s |
-| HEAL-NEW-2 | Fresh device, **the PEER online** - a responder that is not us | `+user` | `pending` on `a35cf4e5`, re-scoped to 1 servable row of 10 - the ledger's `FAIL` measured the instrument |
+| HEAL-NEW-2 | Fresh device, **the PEER online** - a responder that is not us | `+user` | **`PASS-DIRTY` on `038c7e8d`** - the servable row healed in 552 ms, 1 of 10 |
 | HEAL-NEW-3 | Fresh device, **another device of the SAME user online** (W1) | `+user` | **`PASS`** on `ebef7f3c` - 10/10 ready; ungated, re-run owed |
 | HEAL-NEW-4 | Fresh device, the only possible responder is **the phone, foreground** | `+A1` `+user` | `pending` |
 | HEAL-NEW-5 | The same, **phone BACKGROUNDED** - a responder that cannot answer must not leave a group on Sync with nothing owed, which is what says whether the ladder terminates on a PROOF or on a clock | `+A1` `+user` | `pending` |
@@ -416,7 +416,7 @@ four wipe defects found by hand:
 | HEAL-NEW-9 | After repair, does the new device get the HISTORY? Separates "no history" from "no history YET" | `+user` | `pending` |
 | HEAL-NEW-10 | Two fresh devices enrolling **at the same time** - the add-lock under two concurrent enumerations. Costs a second 2FA | `+user` | `pending` |
 | HEAL-NEW-11 | The responder is our own **W1, arriving LATE** | `+user` | **`PASS`** on `ebef7f3c` - 10/10 ready, settled 4.0 s after W1 arrived |
-| HEAL-NEW-12 | The responder is the **PEER W2, arriving LATE** | `+user` | `pending` on `a35cf4e5`, narrowed as HEAL-NEW-2 - same stale ledger `FAIL` |
+| HEAL-NEW-12 | The responder is the **PEER W2, arriving LATE** | `+user` | **`PASS-DIRTY` on `038c7e8d`** - 10 amber alone, then the same row ready in 2.6 s |
 | HEAL-NEW-13 | The responder is **the phone, arriving LATE** - says whether the retry is driven by OUR reconnect or the RESPONDER's. Read with HEAL-NEW-5, whose responder can never answer | `+A1` `+user` | `pending` |
 | HEAL-NEW-14 | **The heal is INTERRUPTED** - a reload, then a link cut and restored, while rows are still amber. A reload must not restart the ladder from zero, and a cut must not leave a row amber with nothing owed | `+user` | `pending` |
 | HEAL-NEW-15 | **Is the app usable while it heals?** N rows amber, and the user navigates and sends | `+user` | **`PASS-DIRTY` on `038c7e8d`** - 10 amber, the click answered in 26 ms |

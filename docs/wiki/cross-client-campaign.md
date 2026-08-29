@@ -916,6 +916,46 @@ present-from-the-start row AND an arrives-late row, and why the verdict is an EQ
 difference in the FINAL state between two orders is a `FAIL`; a difference in the TIME to reach it
 is dirt carrying a number.** Reconciliation that depends on who booted first is not reconciliation.
 
+### The 2 / 12 ORDER PAIR, adjudicated 2026-08-29 - the final states are EQUAL
+
+Both rows ran adjacently on `038c7e8d`, under one fleet and one bundle, and both came back
+`PASS-DIRTY` with `unmet: []`. **The comparison the pair exists for:**
+
+| | HEAL-NEW-2, peer online from the start | HEAL-NEW-12, peer arriving late |
+| --- | --- | --- |
+| `servable.rowsInTheSubset` | `642f389a`, 1 of 10 | `642f389a`, 1 of 10 |
+| `servable.finalStateOfTheSubset` | `[{642f389a, ready: true}]` | `[{642f389a, ready: true}]` |
+| the nine outside | amber, unasserted | amber, unasserted |
+| time to the Welcome | 552 ms after the `welcome_request` | 2 589 ms after the responder was READY |
+
+**Equal final state, so the pair PASSES; the difference is time, which is dirt carrying a number.**
+Reconciliation here does not depend on who booted first.
+
+**THE PEER IS PROVABLY THE RESPONDER IN BOTH, and that separation is the whole reason this group of
+rows exists.** `fleet.extra` was empty in both (drained in 1 358 ms and 908 ms), W1 was killed and the
+phone stopped, so no device of the owner could have answered - and the row that healed did so on a
+frame the console names: `WS RCV ... senderId=b78568a3..., groupId=642f389a..., isWelcome=true`,
+followed by `[SYNC] Welcome processed`. **Both `externalJoin succeeded` lines in each run are for
+`315b8a1d`, the key-distribution group, not a conversation** - so ZERO conversation rows healed
+without a peer, which is exactly what tells a self-service join apart from a peer-served Welcome.
+
+**Row 12 is the one that actually observed the transition.** Its premise held with nothing to spare:
+`amber alone: 10 rows, 0 ready, 10 syncing` at +28.9 s, W2 started there and reached READY at
++51.6 s (it needed a PIN unlock, ~20 s of that), the Welcome landed at +54.2 s and the subset settled
+at +56.0 s. Row 2's subset was already ready 2 s after the client went live - its `settledInMs: 1` is
+a fact about when the watch could open, not about the app - which is the same shape section 16
+records for row 15 on a start topology.
+
+**AND THE CADENCE READING THAT WOULD HAVE BEEN WRONG BOTH WAYS.** Each row logged 19
+`welcome_request`s: ten at once, then nine again - 34 s later on row 2 and 60 s later on row 12,
+against a line that says `(cadence 60s)`. Neither gap is the cadence. Both runs carry
+`documentsReplaced: 1` - `confirmEnrolment` drives the abandoned-id purge through the device panel,
+which replaces the document and resets the in-memory `lastReAddAt` map - and the second round follows
+that reload by 6 to 8 s in both. **Inside one document the throttle held exactly**, and says so:
+`[READD] <id>... throttled (Ns ago)` on every one of the nine, at every 5 s watchdog poll, for the
+whole window. A reader taking the gap at face value would have called row 2 a cadence violation and
+row 12 a confirmation of 60 s, and both readings would have been about the rig.
+
 **EVERY ROW HERE IS A TIMELINE, NOT A SNAPSHOT** (user, 2026-08-27: *"Est-ce-que tout finit bien par
 HEAL, et est-ce que le temps gene la navigation/UX"*). Two questions, and a readiness count answers
 neither: does it EVENTUALLY heal, and is the app usable while it does not. So every row records, per
