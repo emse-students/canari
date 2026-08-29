@@ -195,6 +195,12 @@ export const PHASES = {
       "healrevoke.mjs --row 8",
       "healrevoke.mjs --row 7 --order first",
       "healrevoke.mjs --row 7 --order last",
+      // 9 LAST OF THE REVOKE ROWS, because it is the only one that severs a profile's link. It
+      // restores it on every exit path and asserts the restoration, but a cut that outlived its row
+      // would poison every row after it and the symptom would arrive hours from its cause - so it
+      // runs where there is nothing left behind it to poison. It is also the only one that stops
+      // before the return: it mints no reference device, because the DEFERRAL is its whole subject.
+      "healrevoke.mjs --row 9",
       // THE FOUR LEGACY ROWS LAST, and `heal.mjs` most of all: it restores an MLS snapshot, which is a
       // ratchet REWIND over W1's real state. Everything that reached W1 since its snapshot is rolled
       // back out of the store, so a revoke row after it would be comparing two devices against a W1

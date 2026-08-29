@@ -1701,6 +1701,80 @@ export const EVICTED_REJOIN_NARRATION = [
 ];
 
 /**
+ * THE REFUSAL A CLIENT THAT HAS JUST DELETED ITS OWN COOKIES GETS BACK, forgiven per row.
+ *
+ * Any runner that mints a device - `newdevice.mjs`, and every row that calls it - clears the Canari
+ * origin and logs the browser back in through the IdP. The boot that follows asks for a refresh with
+ * no refresh cookie to present, and `401` is the correct answer: it is the wipe WORKING, and the one
+ * observation in the capture that says so.
+ *
+ * PINNED TO `401`, so it can swallow nothing else. A `500` from core-service on the same path is a
+ * dead auth service and stays dirt; so does a `403`. And it is opt-in for the reason every list here
+ * is: outside a mint, a `401` on `/api/auth/refresh` is a session that died under a user.
+ */
+export const MINT_REFUSALS = [{ path: /^\/api\/auth\/refresh(\?|$)/, status: [401] }];
+
+/**
+ * WHAT THE OIDC CALLBACK SAYS WHEN IT WORKS - the sound of the login primitive doing its job.
+ *
+ * EVERY NEEDLE NAMES A SUCCESS SPELLING, which is what stops the list swallowing a failure: the
+ * status line is pinned to `200` and the state check to `matches: true`, so a `500` from
+ * core-service or a mismatched OIDC state stays dirt and stays the finding.
+ *
+ * The whole documented trail is here on purpose. `ignoringExpectedLog` reports the needles that
+ * matched NOTHING, so a dry needle in this list says the callback took a path it usually does not -
+ * which is worth seeing, and is destroyed by a list trimmed to what one run happened to emit.
+ */
+export const OIDC_LOGIN_NARRATION = [
+  /^\[auth\] handleOidcCallback isDesktop: (true|false)$/,
+  /^\[auth\] savedState present: true matches: true$/,
+  /^\[auth\] redirectUri: \S+ coreUrl: \S+$/,
+  /^\[auth\] POSTing to core-service \/api\/auth\/oidc\/callback/,
+  /^\[auth\] core-service response status: 200$/,
+  /^\[auth\] got access_token, saving user: \S+$/,
+  /^\[auth\] handleOidcCallback complete$/,
+  /^\[callback\] starting handleOidcCallback, code length: \d+$/,
+  /^\[callback\] handleOidcCallback resolved, user: \S+$/,
+  /^\[callback\] goto -> \S+$/,
+  /^\[callback\] goto resolved$/,
+];
+
+/**
+ * WHAT THE DEVICE PANEL SAYS WHEN A RUNNER DRIVES IT - `purge-devices.mjs`'s own trail.
+ *
+ * A mint abandons the id it replaced and a revocation row deletes a device on purpose, and both go
+ * through the product's panel rather than the database. These five sentences are that panel
+ * narrating a click the runner performed.
+ *
+ * ITS THREE `console.error` AND TWO `console.warn` SPELLINGS ARE NOT NAMED HERE, deliberately: a
+ * panel that failed to delete is the finding, and this list may only forgive the panel succeeding.
+ * Outside a runner-driven purge, `[DevicePanel] Deleted device ...` is somebody's device
+ * disappearing, which is why it is a needle and never a `BENIGN` rule.
+ */
+export const DEVICE_PANEL_NARRATION = [
+  /^\[DevicePanel\] Loading devices and sessions for user: \S+$/,
+  /^\[DevicePanel\] \d+ live session\(s\)$/,
+  /^\[DevicePanel\] Found \d+ device\(s\)$/,
+  /^\[DevicePanel\] Deleting device \S+$/,
+  /^\[DevicePanel\] Deleted device \S+ \(groups cleaned: \d+, keyPackages: \d+\)$/,
+];
+
+/**
+ * NO LIST FOR THE WIPE'S OWN NARRATION, and the absence is the measurement.
+ *
+ * A HEAL-REVOKE row provokes three sentences by revoking a device - `[SECURITY] Revoked device
+ * detected`, and `wipeDeviceToFactory`'s `[RESET]` bookends - and one was written for them on
+ * 2026-08-29 before anything was asked. `NOTABLE`'s `/forget|revoke|reset|corrupt/i` already claims
+ * all three, so they have never reached `unexplained` and have never dirtied a run: the list would
+ * have forgiven nothing and reported three dry needles on every row of the rung forever, which is
+ * the same false signal an unexplained line is, pointed the other way.
+ *
+ * `classify-selftest.mjs` pins the four lines this reasoning rests on - the three that are `notable`
+ * and gate nothing, and `[RESET] N store(s) SURVIVED the wipe`, which is `console.error` and breaks
+ * `clean` where HEAL-REVOKE-1's open P1 would speak.
+ */
+
+/**
  * THE PHONE'S NATIVE HALF, CLASSIFIED - the third surface, which had a `grep` where the other two
  * have classifiers.
  *

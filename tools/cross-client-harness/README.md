@@ -97,11 +97,25 @@ a worker's own `console.log` arrives on the same channel carrying the worker FIL
 `???` where the method belongs is what that looks like. Classification is untouched by any of it -
 every rule and every `ignoringExpectedLog` needle still matches the sentence alone.
 
-**A runner names the noise IT provokes, per row, and never widens a shared classifier.**
-`healnew.mjs` mints a device by driving the OIDC callback and the device panel, so it declares its
-own `MINT_REFUSALS` (the `POST /api/auth/refresh -> 401` from a client that has just deleted every
-cookie) and `MINT_NARRATION` (the `[auth]`, `[callback]` and `[DevicePanel]` trail) and folds both
-into `withoutTheMintsOwnNoise`. Needles that go `unmatched` are reported and forgive nothing.
+**A runner names the noise IT provokes, per row, and never widens a shared classifier.** Minting a
+device drives the OIDC callback and the device panel, so `watch.mjs` exports `MINT_REFUSALS` (the
+`POST /api/auth/refresh -> 401` from a client that has just deleted every cookie), and
+`OIDC_LOGIN_NARRATION` and `DEVICE_PANEL_NARRATION` beside `COLD_START_NARRATION` - **named there and
+applied nowhere**, so naming them stays the caller's act. `healnew.mjs` folds them into
+`withoutTheMintsOwnNoise`; `healrevoke.mjs` mints twice and revokes once, and hands each of its four
+observers only the list that observer can produce - the actor is given no refusal to forgive,
+because a `401` on a client that wiped no cookie is the campaign's own session dying. Needles that go
+`unmatched` are reported and forgive nothing, and two of `DEVICE_PANEL_NARRATION`'s five always are:
+`Loading devices and sessions` and `N live session(s)` are already `BENIGN`, so every HEAL row
+records `unmatched: 2` for a healthy panel. `classify-selftest.mjs` pins that number.
+
+**And there is no list for the wipe's own narration, deliberately.** One was written for the three
+sentences a revoked device emits before anything was asked; `NOTABLE`'s `/forget|revoke|reset|corrupt/i`
+already claims all three, so they have never reached `unexplained` and the list would have forgiven
+nothing while reporting three dry needles on every row of the rung forever. The four lines that
+reasoning rests on are pinned in `classify-selftest.mjs`, `[RESET] N store(s) SURVIVED the wipe`
+included - that one is `console.error` and breaks `clean`, which is where HEAL-REVOKE-1's open P1
+would speak.
 
 **The rig has twelve self-tests, and they run in TWO targets, because they are not one kind of thing.**
 `make test-harness` is the CI gate and holds the eleven that need nothing: `rawcheck.mjs` reads every

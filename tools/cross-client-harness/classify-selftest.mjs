@@ -18,7 +18,12 @@
  * this campaign actually saw, kept verbatim WITH its `[HH:MM:SS]` prefix, because the prefix is what
  * the first bug turned on.
  */
-import { EVICTED_REJOIN_NARRATION, ignoringExpectedLog, report } from './watch.mjs';
+import {
+  DEVICE_PANEL_NARRATION,
+  EVICTED_REJOIN_NARRATION,
+  ignoringExpectedLog,
+  report,
+} from './watch.mjs';
 
 /** A fake CDP buffer: one `Runtime.consoleAPICalled` per line, dated so the timeline is orderable. */
 function cxOf(entries) {
@@ -775,6 +780,26 @@ const CASES = [
     '[20:46:31] [GRAINE] private salon bea8c230 of 9b34e540 not entered: no MLS client on this load',
     'unexplained',
   ],
+  // A DEVICE ERASING ITSELF, AND THE FOUR LINES THE HEAL-REVOKE ROWS REST ON.
+  //
+  // The three success sentences are `notable` and gate nothing, which is why those rows hand
+  // `ignoringExpectedLog` no list for them: `NOTABLE`'s `/forget|revoke|reset|corrupt/i` claims all
+  // three, so they never reached `unexplained` and there has never been anything to forgive. Pinned
+  // HERE rather than left implicit, because the next reader of `healrevoke.mjs` will otherwise write
+  // the list again - as one was written, on 2026-08-29, before anything was measured.
+  //
+  // The `[RESET]` bookends carry NO timestamp - `wipeDeviceToFactory` uses a bare `console.log` -
+  // while the `[SECURITY]` line goes through `appendLog` and does. Both stampings are here on
+  // purpose: an `^`-anchored rule silently dead against one of them is this file's oldest defect.
+  ['log', '[16:02:11] [SECURITY] Revoked device detected: local state purged, reconnection required.', 'notable'],
+  ['log', '[RESET] wiping this device back to a fresh install', 'notable'],
+  ['log', '[RESET] done - nothing of this device remains', 'notable'],
+  // AND THE ONE THAT MUST BREAK `clean`: HEAL-REVOKE-1's open P1 is a revoked device that kept
+  // everything, and this is the sentence in which it would say so. It sits one word from the line
+  // above and means the opposite, so it is asserted in `errors` and not merely in `notable`.
+  // `errors` is the bucket that DECIDES - it also lands in `notable`, and the matcher above asserts
+  // membership rather than exclusivity for exactly that reason.
+  ['error', '[RESET] 2 store(s) SURVIVED the wipe: canari-mls, keyval-store', 'errors'],
 ];
 
 let failures = 0;
@@ -1041,6 +1066,33 @@ const FORGIVE_CASES = [
     ],
     EVICTED_REJOIN_NARRATION,
     { clean: false, unmatched: 1 },
+  ],
+  // THE PANEL SUCCEEDING, against the trail `purge-devices.mjs` provokes on every mint and every
+  // revocation. The ids carry the U+2026 the component appends, matched by `\S+` and never spelled
+  // out here - this file is ASCII, and a literal glyph is one a re-encode can mangle into a needle
+  // that matches nothing.
+  [
+    "the device panel deleting a device, forgiven by the runner that clicked",
+    [
+      ['log', '[DevicePanel] Loading devices and sessions for user: 4c1f8a20-...'],
+      ['log', '[DevicePanel] 2 live session(s)'],
+      ['log', '[DevicePanel] Found 4 device(s)'],
+      ['log', '[DevicePanel] Deleting device f0a3bb2c…'],
+      ['log', '[DevicePanel] Deleted device f0a3bb2c… (groups cleaned: 9, keyPackages: 3)'],
+    ],
+    DEVICE_PANEL_NARRATION,
+    // TWO NEEDLES GO DRY HERE AND THAT IS THE MEASUREMENT, not a slack expectation: `Loading devices
+    // and sessions` and `N live session(s)` are already `BENIGN`, so they never reach a bucket this
+    // can filter. Every HEAL-NEW and HEAL-REVOKE row therefore records `unmatched: 2` for a healthy
+    // panel, and a reader who did not know that would read the campaign's own instrument as a
+    // finding. Pinned rather than trimmed: the list is the whole documented trail on purpose.
+    { clean: true, unmatched: 2 },
+  ],
+  [
+    'a removal the user cancelled is not forgiven - the runner meant to delete',
+    [['log', '[DevicePanel] Removal of f0a3bb2c-1d44-4e1a-9b77-2a0c5e8f1234 cancelled by user']],
+    DEVICE_PANEL_NARRATION,
+    { clean: false, unmatched: 5 },
   ],
   [
     'a console error beside a forgiven line still breaks clean',

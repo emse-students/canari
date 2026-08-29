@@ -64,7 +64,78 @@ import { stateOf } from "./ready-probe.mjs";
 import { bringToReady } from "./ready-repair.mjs";
 import { finishObserved, record, unmet } from "./results.mjs";
 import { navigationCost, readAll, watch as watchRows, whoAmI } from "./syncrows.mjs";
-import { report, watch } from "./watch.mjs";
+import {
+  DEVICE_PANEL_NARRATION,
+  ignoringExpectedLog,
+  ignoringExpectedRefusal,
+  ignoringOfflineCut,
+  MINT_REFUSALS,
+  OIDC_LOGIN_NARRATION,
+  report,
+  watch,
+} from "./watch.mjs";
+
+
+/**
+ * THE NOISE THESE ROWS PROVOKE, NAMED PER OBSERVER RATHER THAN ONCE FOR THE RUN.
+ *
+ * A row here mints TWICE and revokes once, so it produces the whole of `healnew.mjs`'s signature and
+ * then some: two OIDC logins, two abandoned-id purges, one panel-driven revocation, and a device
+ * narrating its own erasure. Left in, every cell on this rung is a `PASS-DIRTY` on the instrument -
+ * and dirt that is always there is dirt nobody reads.
+ *
+ * THREE OBSERVERS, THREE LISTS, BECAUSE THEY DO NOT DO THE SAME THINGS. The actor never wipes a
+ * cookie, so it is not handed the refresh `401`; the returning device is logged in by `login.mjs`
+ * and purges nothing, so it is not handed the panel's trail; only a device that was actually revoked
+ * is handed the wipe's. A single list applied to all three would forgive each client the lines the
+ * OTHER two produce, which is how a per-row disposition quietly becomes a classifier.
+ *
+ * `ignoringExpectedLog` NAMES THE NEEDLES THAT MATCHED NOTHING, and that is the check on this
+ * narrowness: a dry needle here says an observer took a path it usually does not, and the report
+ * carries it rather than guessing what it meant.
+ *
+ * NOTHING BELOW FORGIVES A FAILURE SPELLING. `[RESET] could not clear`, `[RESET] ... SURVIVED the
+ * wipe` and the panel's five error and warning lines are named in no list, so the one thing this
+ * rung exists to catch - a wipe that kept something - still breaks `clean`.
+ *
+ * THE ORDER IS LOAD-BEARING, for the reason DEL-2 records and `healnew.mjs` repeats: each helper
+ * recomputes `clean` over the buckets AS IT FINDS THEM, so a refusal has to be forgiven before the
+ * log pass or the run stays dirty on a request that was already explained.
+ */
+const forgiving = (rep, narration) =>
+  ignoringExpectedLog(ignoringExpectedRefusal(rep, MINT_REFUSALS), narration);
+
+/** The victim after it came back: `login.mjs` drove the IdP, and nothing here purged a device. */
+const asAReturningDevice = (rep) => forgiving(rep, OIDC_LOGIN_NARRATION);
+
+/** The reference: a full mint, so the callback's trail AND the abandoned id's purge. */
+const asAFreshlyMintedDevice = (rep) =>
+  forgiving(rep, [...OIDC_LOGIN_NARRATION, ...DEVICE_PANEL_NARRATION]);
+
+/**
+ * The window in which the device was revoked: its mint, and then its own account of erasing itself.
+ *
+ * THIS WINDOW WAS UNGATED UNTIL 2026-08-29, which is two thirds of a gate on the one observer that
+ * covers the row's subject. `classifyWipe` read `wipeRan` and `wipeFinished` off it and nothing ever
+ * asked whether anything ELSE was said while the wipe ran - so a store rebuilding itself behind the
+ * reset, the exact defect HEAL-REVOKE-1 recorded, would have spoken into a capture no verdict read.
+ *
+ * IT FORGIVES THE MINT AND NOT THE WIPE, and the second half is a measurement rather than an
+ * oversight: `NOTABLE` already claims all three of the wipe's sentences, so they never reached
+ * `unexplained` and a list for them would forgive nothing while reporting three dry needles on every
+ * row of this rung. The failure spellings still break `clean`, which is the whole point of looking.
+ */
+const asTheWipedVictim = (rep) =>
+  forgiving(rep, [...OIDC_LOGIN_NARRATION, ...DEVICE_PANEL_NARRATION]);
+
+/**
+ * The actor: it drove the device panel, and it wiped no cookie of its own.
+ *
+ * NO REFUSAL IS FORGIVEN HERE, deliberately. A `401` on `/api/auth/refresh` is the wipe working on a
+ * client that just deleted its cookies; on the actor, which did no such thing, it is the campaign's
+ * own owner session dying - and that is a finding, not this row's noise.
+ */
+const asTheActor = (rep) => ignoringExpectedLog(rep, DEVICE_PANEL_NARRATION);
 
 const argv = process.argv.slice(2);
 const opt = (name, fallback = null) => {
@@ -502,10 +573,13 @@ if (row.offline) {
   };
   const offlineMissing = unmet(offlineExpectations);
   const offlineVerdict = offlineMissing.length === 0 ? "PASS" : "FAIL";
-  // Taken once and handed to both readers: reporting twice on one observer drains the second read.
+  // THE CUT IS FORGIVEN FIRST, AND ONLY HERE. This row severs the victim's link on purpose, so the
+  // disconnected fetches and the dead socket that follow are the cut working - and `report` cannot
+  // tell a deliberate cut from a real one, so it has to be told. No other row of this rung cuts
+  // anything, which is why the forgiveness is at this call site and not around the shared helper.
   const offlineObservers = {
-    victim: await report(seedObserver),
-    actor: await report(actorObserver),
+    victim: asTheWipedVictim(ignoringOfflineCut(await report(seedObserver))),
+    actor: asTheActor(await report(actorObserver)),
   };
   const offlineDetail = {
     what: row.what,
@@ -548,6 +622,9 @@ const leftBehind = await deviceResidue(VICTIM, seeded.cx).catch((e) => ({
   empty: false,
 }));
 note(`what the wipe left on the victim ${JSON.stringify(leftBehind)}`);
+// THE WIPE'S OWN WINDOW, read before the connection that carries it is closed. It is the only
+// observer covering the instant this rung is about, and until 2026-08-29 no verdict looked at it.
+const wipeReport = asTheWipedVictim(await report(seedObserver));
 seeded.cx.close();
 
 // ---------------------------------------------------------------------------------------------
@@ -606,7 +683,7 @@ note(
 );
 const usability = await navigationCost(back.cx);
 note(`usability ${JSON.stringify(usability)}`);
-const backReport = await report(back.observer);
+const backReport = asAReturningDevice(await report(back.observer));
 back.cx.close();
 
 // ---------------------------------------------------------------------------------------------
@@ -626,7 +703,7 @@ const bornOnFresh = await rowNamed(fresh.cx, born);
 note(
   `on the reference: ${doomed} ${JSON.stringify(doomedOnFresh)}, ${born} ${JSON.stringify(bornOnFresh)}`,
 );
-const freshReport = await report(fresh.observer);
+const freshReport = asAFreshlyMintedDevice(await report(fresh.observer));
 fresh.cx.close();
 
 const gap = differences(returnedState, freshState);
@@ -679,7 +756,12 @@ if (row.id === "HEAL-REVOKE-8") expectations.theDeletionActuallyHappened = delet
 const missing = unmet(expectations);
 const verdict = missing.length === 0 ? "PASS" : "FAIL";
 
-const observers = { victim: backReport, reference: freshReport, actor: await report(actorObserver) };
+const observers = {
+  victim: backReport,
+  reference: freshReport,
+  actor: asTheActor(await report(actorObserver)),
+  wipeWindow: wipeReport,
+};
 const detail = {
   what: row.what,
   order,
