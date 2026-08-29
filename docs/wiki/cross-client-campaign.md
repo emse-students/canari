@@ -253,6 +253,12 @@ an ungated runner, one level further out.
 Written 2026-08-29, when this contract existed only inside a chat prompt - exactly what `CLAUDE.md`
 forbids of any decision.
 
+0. **ONE PROMPT, ONE ROW - except an ORDER PAIR, which is one question wearing two ids.** Rows 3 and
+   11, and 2 and 12, assert an EQUALITY between a responder present from the start and the same
+   responder arriving late, so the pair is adjudicated by reading two ledger lines against each
+   other - and that is only legible if both ran under the SAME fleet. Split across two sessions it
+   cannot be settled at all. So a pair goes in one prompt, runs adjacently, and the prompt says which
+   comparison closes it.
 1. **The row id, its question, and what its `expect` ENTAILS.** `PASS` is never "it went green":
    several rows on this ladder expect an outcome no repair can reach, so a row whose condition makes
    healing impossible must FAIL if it heals. The prompt STATES the entailment; it does not leave it to

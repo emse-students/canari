@@ -132,6 +132,34 @@ exactly. The mechanism that already fits is `ignoringExpectedLog`, per row, nami
 **The accessibility hint is a separate, real, small finding**: the PIN field is a bare
 `type=password` with no username field in its form. It belongs with the P2 above, in the same pass.
 
+**IT RECURRED ON HEAL-NEW-15, `038c7e8d`, and that run is why the disposition above is now owed
+rather than merely correct.** It is the rung's FIRST verdict to have passed `gate()` at all, and the
+gate demoted it to `PASS-DIRTY` on three shapes, none of them the row's subject and all three the
+MINT's own signature: `POST /api/auth/refresh?clientVersion=0.14.12 -> 401` from a client that had
+just deleted every cookie it owned, which is the wipe working; the OIDC callback's `debug:` trail
+(`code length: 32`, `savedState present`, `redirectUri`, `got access_token`); and the purge's
+`[DevicePanel] Found/Deleting/Deleted`. **Every HEAL-NEW row will produce all three, every time**, so
+the per-row `ignoringExpectedLog` list is what stands between this rung and a wall of `PASS-DIRTY`
+verdicts that say nothing about the product. Name them per row, never widen the classifier.
+
+**Two lines from that run are explained and must NOT be re-opened.** `History msg error: Group not
+found: 642f389a...` is the amber probe's own doing - the row clicks a SYNCING tile on purpose, and a
+conversation with no MLS state is exactly a group the history reader cannot find. `[WS] Disconnected.
+Code: 1006` is a browser the row killed by construction.
+
+### P3 - a 415 was recorded as dirt and nothing can say which request it was (measured 2026-08-29)
+
+HEAL-NEW-15's gate on `038c7e8d` demoted the row partly on a `415 Unsupported Media Type` that **no
+`badHttp` entry names**, so the method, the path and the caller are all undetermined. A dirt line
+whose subject cannot be recovered is unactionable by construction: it can be neither explained nor
+fixed, and it will demote every future run of this row for as long as it goes unnamed.
+
+**The fix is in the classifier, not in the product**: whatever records `badHttp` has to carry the
+request with the status, or the status is not evidence for anything. Until it does, a 415 here means
+only "something posted something somewhere".
+
+
+
 ### P2 - the PIN prompt is offered when the answer is already known to be impossible (measured 2026-08-28)
 
 **The half of the stuck-PIN P1 that the fix did not close.** The P1 was that nothing released the
@@ -715,6 +743,30 @@ asserts a deadline arriving live (the campaign closes polls with the close contr
 no check waits on wall-clock time at all. It belongs with the rendering pass, not with a rung.
 
 ## Messaging convergence
+
+### P2 - a device holds a distribution group the group holds no row for it, and heals by rejoining (measured 2026-08-29)
+
+**Handed back by HEAL-NEW-15's branch on `038c7e8d`, deliberately unacted on because its blast radius
+leaves that row.** Sixty seconds after external-joining the community distribution group `315b8a1d`
+at epoch 56, the fresh device logged:
+
+```
+this device holds the distribution group but the group holds NO row for it (3 device(s) for this user)
+ - the local group is stale, rejoining
+```
+
+and joined again at epoch 57. **A race that heals cleanly is still a defect**: if the mechanism needs
+a heal in THEORY it is wrong whatever it does in practice, and the thing to find is what makes the
+two paths overlap, not to admire the repair.
+
+**Two facts from the same run belong with it and may or may not be one cause.** `315b8a1d` is the
+ONLY group of eleven the reconciliation did not ask about - `reconciliation pass complete - 10/11
+group(s) asked in 794 ms` - and it is also the only group that was external-joined twice, at 56->57
+and 57->58, both before the late responder arrived. Whether the skipped reconciliation is a
+CONSEQUENCE of the membership row being absent, or a second symptom of the same stale local state, is
+undetermined and is the first question to ask. **Do not assume the correlation is causation**; one
+`GROUP BY` over `dm_device_group_memberships` for this device and this group settles which row
+existed when.
 
 ### P2 - a membership is REFUSED for want of a KeyPackage one second after the device external-joined that very group (measured 2026-08-29)
 
