@@ -39,6 +39,9 @@
 import { pathToFileURL } from "node:url";
 import { client, evaluate } from "./chat.mjs";
 import { ORIGIN, PORTS } from "./names.mjs";
+// The four values that decide what "the app answered" means live in their own module so the gate can
+// test them: anything reaching `names.mjs` cannot run on a fresh checkout. See `usability.mjs`.
+import { OPENED, READY_TILE, REACTED, SYNCING_TILE } from "./usability.mjs";
 
 const argv = process.argv.slice(2);
 const opt = (name, fallback = null) => {
@@ -297,38 +300,92 @@ export async function watch(
 }
 
 /**
+ * CLICKS ONE CONVERSATION TILE AND TIMES WHAT THE APP DOES ABOUT IT - the mechanics both usability
+ * probes share, so the only thing that differs between them is WHICH tile and WHAT counts as an
+ * answer.
+ *
+ * A CLICK MUST BE ABLE TO SAY WHAT RECEIVED IT, and until 2026-08-29 neither probe could. The
+ * post-condition was "a composer exists somewhere on the page", which is true of a client that
+ * already had a conversation open - so a probe run after another probe would report a real number
+ * for a click that had done nothing. It reads the CLICKED TILE's own `data-selected` instead, which
+ * is a statement about this click and not about the page.
+ *
+ * THE ANSWER IS A PAIR AND THE CALLER DECIDES WHICH HALF IT NEEDS: `selected` is the LIST reacting,
+ * `opened` is the CONVERSATION rendering. A ready row must do both; a syncing row is allowed to do
+ * only the first, and that difference is the entire distinction between the two rows of the design.
+ *
+ * AND IT NEVER CLICKS THE CONVERSATION THAT IS ALREADY OPEN, which the callers now make reachable:
+ * a run takes up to three of these, so by the third some tile is already selected and a click on it
+ * is a no-op in any app - it would satisfy both halves instantly and hand back a real-looking
+ * number for nothing. `:not([data-selected="true"])` is in every selector for that reason.
+ */
+async function clickTileAndTime(cx, tileSelector, answered) {
+  const t0 = Date.now();
+  const id = await evaluate(
+    cx,
+    `(function () {
+       var t = document.querySelector(${JSON.stringify(tileSelector)});
+       if (!t) return '';
+       t.scrollIntoView({ block: 'center' });
+       t.click();
+       return t.getAttribute('data-conversation-tile') || '';
+     })()`,
+  );
+  if (!id) return { clicked: false, id: null };
+  const deadline = Date.now() + 20_000;
+  for (;;) {
+    const seen = JSON.parse(
+      await evaluate(
+        cx,
+        `(function () {
+           var t = document.querySelector('.sidebar-panel [data-conversation-tile=' + ${JSON.stringify(JSON.stringify(id))} + ']');
+           return JSON.stringify({
+             selected: t ? t.getAttribute('data-selected') === 'true' : null,
+             opened: !!document.querySelector('.chat-composer-footer .chat-composer-editor'),
+           });
+         })()`,
+      ),
+    );
+    if (answered(seen)) return { clicked: true, id, tookMs: Date.now() - t0, ...seen };
+    // A tile that left the sidebar cannot answer, and waiting the deadline out on it would report a
+    // frozen list for a row that simply healed and re-rendered under the click.
+    if (seen.selected === null)
+      return { clicked: true, id, tookMs: null, why: "the tile left the sidebar", ...seen };
+    if (Date.now() > deadline)
+      return { clicked: true, id, tookMs: null, why: "no answer to the click in 20s", ...seen };
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
+/**
  * Whether the app is USABLE while it heals - the second half of the user's question.
  *
  * A heal that completes in ten minutes is acceptable; ten minutes of a frozen sidebar is not, and
  * the two are indistinguishable from a readiness count. So this measures the thing a person would
  * feel: how long a click on the conversation list takes to be honoured while rows are still amber.
- * It clicks the FIRST READY row - never a syncing one, which is expected to refuse - and times the
- * pane changing. A syncing app that cannot open a conversation it has already healed is the finding.
+ * It clicks the FIRST READY row - never a syncing one, which `amberListCost` below owns - and times
+ * the conversation opening. A syncing app that cannot open a conversation it has already healed is
+ * the finding.
+ *
+ * IT DEMANDS BOTH HALVES, because this tile is one the app has no excuse to refuse: the row is
+ * ready, so the list must select it AND the conversation must render. Requiring only the composer
+ * let a page that already had one answer for a click that never landed.
  */
 export async function navigationCost(cx) {
-  const t0 = Date.now();
-  const before = await evaluate(
+  const r = await clickTileAndTime(
     cx,
-    `(function () {
-       var t = document.querySelector('.sidebar-panel [data-conversation-tile][data-ready="true"]');
-       if (!t) return 'none';
-       t.scrollIntoView({ block: 'center' });
-       t.click();
-       return 'clicked';
-     })()`,
+    READY_TILE,
+    OPENED,
   );
-  if (before !== "clicked") return { clicked: false, why: "no ready row to open" };
-  const deadline = Date.now() + 20_000;
-  for (;;) {
-    const open = await evaluate(
-      cx,
-      `!!document.querySelector('.chat-composer-footer .chat-composer-editor')`,
-    );
-    if (open === true || open === "true") return { clicked: true, openedInMs: Date.now() - t0 };
-    if (Date.now() > deadline)
-      return { clicked: true, openedInMs: null, why: "no composer in 20s" };
-    await new Promise((r) => setTimeout(r, 200));
-  }
+  if (!r.clicked) return { clicked: false, why: "no unopened ready row to open" };
+  return {
+    clicked: true,
+    tile: cut(r.id),
+    openedInMs: r.tookMs,
+    selected: r.selected,
+    opened: r.opened,
+    ...(r.why ? { why: r.why } : {}),
+  };
 }
 
 /**
@@ -358,51 +415,23 @@ export async function navigationCost(cx) {
  * it shows no badge, and clicking it asks HEAL-NEW-7's question instead of this one.
  */
 export async function amberListCost(cx) {
-  const t0 = Date.now();
-  const id = await evaluate(
+  const r = await clickTileAndTime(
     cx,
-    `(function () {
-       var t = document.querySelector('.sidebar-panel [data-conversation-tile][data-ready="false"]:not([data-removed="true"])');
-       if (!t) return '';
-       t.scrollIntoView({ block: 'center' });
-       t.click();
-       return t.getAttribute('data-conversation-tile') || '';
-     })()`,
+    SYNCING_TILE,
+    REACTED,
   );
-  if (!id) return { clicked: false, why: "no syncing row to click" };
-  const deadline = Date.now() + 20_000;
-  for (;;) {
-    const seen = JSON.parse(
-      await evaluate(
-        cx,
-        `(function () {
-           var t = document.querySelector('.sidebar-panel [data-conversation-tile=' + ${JSON.stringify(JSON.stringify(id))} + ']');
-           return JSON.stringify({
-             selected: t ? t.getAttribute('data-selected') === 'true' : null,
-             opened: !!document.querySelector('.chat-composer-footer .chat-composer-editor'),
-           });
-         })()`,
-      ),
-    );
-    if (seen.selected === true || seen.opened === true) {
-      const by = [seen.selected === true ? "selected" : null, seen.opened ? "opened" : null]
-        .filter(Boolean)
-        .join("+");
-      return { clicked: true, tile: cut(id), answeredInMs: Date.now() - t0, answeredBy: by, ...seen };
-    }
-    // A tile that left the sidebar cannot answer, and waiting out the deadline on it would report a
-    // frozen list for a row that simply healed and re-rendered under the click.
-    if (seen.selected === null)
-      return { clicked: true, tile: cut(id), answeredInMs: null, why: "the tile left the sidebar" };
-    if (Date.now() > deadline)
-      return {
-        clicked: true,
-        tile: cut(id),
-        answeredInMs: null,
-        why: "the list did not react to the click in 20s",
-      };
-    await new Promise((r) => setTimeout(r, 100));
-  }
+  if (!r.clicked) return { clicked: false, why: "no unopened syncing row to click" };
+  return {
+    clicked: true,
+    tile: cut(r.id),
+    answeredInMs: r.tookMs,
+    answeredBy:
+      [r.selected === true ? "selected" : null, r.opened ? "opened" : null].filter(Boolean).join("+") ||
+      null,
+    selected: r.selected,
+    opened: r.opened,
+    ...(r.why ? { why: r.why } : {}),
+  };
 }
 
 /** One full read: who the device is, what it shows, what the server says. */
