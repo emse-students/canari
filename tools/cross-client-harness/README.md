@@ -97,6 +97,17 @@ a worker's own `console.log` arrives on the same channel carrying the worker FIL
 `???` where the method belongs is what that looks like. Classification is untouched by any of it -
 every rule and every `ignoringExpectedLog` needle still matches the sentence alone.
 
+**A watch waits for what the world can SERVE, never for the whole sidebar.** `servable.mjs` holds the
+predicate and both HEAL rungs use it, with different subsets for the same reason. `healnew.mjs`'s
+responder is the PEER, another account, so `activeGroupIds` narrows it per USER; `healrevoke.mjs`'s
+responder is the owner's own other device, which the server says is a member of everything the victim
+is in, so membership narrows nothing - there the subset is the union of the READY rows of every
+client that is up, because a device can only answer for a group whose MLS state it holds. On this
+account two groups of twelve are ready NOWHERE, so `syncing === 0` burnt three 600 s deadlines a run
+and reported a stall nothing online could have prevented. An empty world is still never settled, and
+`theSettlePredicateKnewWhatToWaitFor` is what tells a row that MEANT to return alone from a rig that
+failed to read the world.
+
 **A runner names the noise IT provokes, per row, and never widens a shared classifier.** Minting a
 device drives the OIDC callback and the device panel, so `watch.mjs` exports `MINT_REFUSALS` (the
 `POST /api/auth/refresh -> 401` from a client that has just deleted every cookie), and

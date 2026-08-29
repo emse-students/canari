@@ -2343,6 +2343,33 @@ unmet expectations reads as a product in trouble; nothing in it says the instrum
 That is what makes these guards expectations rather than notes - they are cheap, they cost one field
 each, and the alternative is a campaign whose worst findings are the ones nobody can trust.
 
+## THE HEAL-REVOKE RUNG WAITED FOR A PROOF THIS ACCOUNT CANNOT REACH
+
+**Measured across three runs of HEAL-REVOKE-5 on 2026-08-29, and the number was the same every
+time.** Two rows of twelve stay amber for the full 600 s deadline on EVERY device in the world - the
+seeded victim, the returned device, the freshly minted reference - and the ids are identical:
+`3ca20e77` and `6e7c9ab1`. `syncing === 0` therefore burnt three deadlines a run, thirty of a run's
+thirty-five minutes, and then reported a stall that nothing online could have prevented.
+
+**That is the same failure `servable.mjs` was written for on the HEAL-NEW rung, and this is its
+second caller - but not with the same subset.** There the responder is the PEER, a different account,
+so `activeGroupIds` (a per-USER question) already narrows the set. Here the responder is the owner's
+own other device: the server says it is a member of every group the victim is in, and the per-user
+set narrows NOTHING. **A device can only answer a re-admission request for a group whose MLS state it
+HOLDS**, and the sidebar says which those are - a READY row. So the subset is the union of the ready
+rows of every client that is up, which is a strictly stronger statement than membership.
+
+**An empty world still never settles.** `subsetSettled` refuses a vacuous subset by construction, so
+HEAL-REVOKE-7 `--order first` - which exists to return with nobody online - reports a device that
+could not heal rather than becoming the fastest PASS on the board. The runner's own guard knows which
+rows meant it: `theSettlePredicateKnewWhatToWaitFor` demands a non-empty world only where the row's
+declared `returnTopology` put someone there.
+
+**What the change did NOT do is weaken the equality the row exists for.** `itEndedWhereAFreshDeviceEnds`
+still compares the whole fingerprint, and the run that established all of this returned an EMPTY gap:
+13 rows, 11 ready, 2 syncing, same `serverActive`, and the same two amber ids on the returned device
+and on the reference. The rows that cannot heal are equal too, which is the claim.
+
 ## A CADENCE READ OFF A HEAL-NEW LOG MEASURES THE RIG, UNLESS IT IS SCOPED TO ONE DOCUMENT
 
 **Measured 2026-08-29 on HEAL-NEW-2 and -12, and it would have been misread in BOTH directions.**
