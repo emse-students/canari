@@ -242,6 +242,46 @@ A run that skips this measures the previous build.
 | `recon.mjs` W1 vs W2 | the campaign starts from a reconciled fleet or it cannot attribute what it finds |
 | `[HISTORY_RECONCILE]` quiet on all three | a client still asking for history is state the run would otherwise blame itself for |
 
+## A row handed to another session - the delegation contract
+
+The campaign is run by a TRUNK that holds the ladder's state and by delegated sessions that hold one
+row each. A delegated session has this repository and nothing else: no chat history, no memory of the
+previous rung, no idea which cell is owed. **So the prompt that hands it a row IS the interface, and a
+prompt missing any of the eight points below buys a verdict nobody may believe** - the same failure as
+an ungated runner, one level further out.
+
+Written 2026-08-29, when this contract existed only inside a chat prompt - exactly what `CLAUDE.md`
+forbids of any decision.
+
+1. **The row id, its question, and what its `expect` ENTAILS.** `PASS` is never "it went green":
+   several rows on this ladder expect an outcome no repair can reach, so a row whose condition makes
+   healing impossible must FAIL if it heals. The prompt STATES the entailment; it does not leave it to
+   be inferred from the runner's source.
+2. **The exact invocation, and the devices it demands.** Through `run.mjs`, so the preflight runs -
+   `run.mjs`'s own flags first, then `--file <script>`, then the script's arguments.
+3. **The preconditions the runner does NOT establish itself.** Whatever a runner assumes rather than
+   asserts is a step in the prompt, not a hope.
+4. **What to read in the LOG beyond the verdict, named precisely.** Never "read the logs". The
+   reconciliations especially: one that DEFERS (`no member online - will ask when one returns`) is
+   readable only against the instant the responder arrived, so the observation window has to COVER
+   that instant - and where it does not, the question is UNDECIDABLE and the report says so instead of
+   choosing.
+5. **The security constraints, non-negotiable.** No credential ever on a command line (`accounts.mjs`
+   is the only reader); output in ACCOUNTS, never in names; ids cut to 8 characters; this repository is
+   PUBLIC and `names.mjs` is gitignored; a destructive control takes an ALLOWLIST (`--only <ids>
+   --expect N`), never a denylist.
+6. **The mutual exclusion.** A campaign run and a push to `main` cannot overlap - a push redeploys the
+   server under the run. CD green AND QUIET (`gh run list`) before the row starts.
+7. **Where the verdict is written.** The board cell - a verdict, a count, a time, four or five words -
+   and the ledger; then `node rows.mjs`, which is what proves the two vocabularies still agree.
+8. **What the delegated session must NOT do: guess a product fix.** It measures, it reads, it reports.
+   A defect it finds goes back to the trunk WITH ITS EVIDENCE, and the trunk decides what the fix is
+   and where it belongs.
+
+**The trunk keeps the campaign's state and not the runs' logs.** A returned verdict updates the board,
+`CLAUDE.md` and `CHANGELOG.md`, and whatever it closes is DELETED from all three - the board is a
+state table, never a session journal.
+
 ## A commit from another contributor owes a WEB pass and a MOBILE pass
 
 Their tests establish that their code compiles and that their units behave. They cannot establish

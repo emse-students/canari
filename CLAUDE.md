@@ -26,6 +26,7 @@
 | The story of a defect that shipped | `CHANGELOG.md` |
 | Campaign board: every check, its verdict, its build | [docs/wiki/cross-client-testing.md](docs/wiki/cross-client-testing.md) |
 | Campaign design: the ladder, the scope, the preflight | [docs/wiki/cross-client-campaign.md](docs/wiki/cross-client-campaign.md) |
+| What a prompt handing ONE row to another session must carry | [cross-client-campaign.md](docs/wiki/cross-client-campaign.md#a-row-handed-to-another-session---the-delegation-contract) |
 | Why a result may be believed | [docs/wiki/testing-methodology.md](docs/wiki/testing-methodology.md) |
 | What the app has that NOTHING watches | [docs/wiki/mechanism-audit.md](docs/wiki/mechanism-audit.md) |
 | How to operate the test rig | [tools/cross-client-harness/README.md](tools/cross-client-harness/README.md) |
@@ -139,12 +140,16 @@ crois qu'il n'y a plus rien avant"*). In this order, and nothing else first:**
 4. **HEAL, the rung in hand - THE 2FA IS ANSWERED (user, 2026-08-28: *"J'ai fait l'A2F"*), AND THE
    BLOCK IS GONE.** W1 now passes `cas.emse.fr` in 14.4 s with no challenge, so the SSO session lives
    in the `chrome-w1` profile: `login.mjs --device W1` is enough, and nothing here needs a human
-   again unless that profile is lost. **HEAL-NEW-3 is `PASS` on `ebef7f3c`** (verdict and the two
+   again unless that profile is lost. **HEAL-NEW-3 and -11 are `PASS` on `ebef7f3c`** (verdict and the two
    things its log says that the verdict does not are on the board). What is owed, in order:
-   **HEAL-NEW-11, -15, then -2 and -12** (those two kill W1 by construction, so re-login after),
+   **HEAL-NEW-15, then -2 and -12** (those two kill W1 by construction, so re-login after),
    then the four HEAL-REVOKE rows, then WRITE the owed HEAL-REVOKE cell - predicate `residue: 0` on a
    phone, `identityKeys: 0` everywhere, the offline variant driven by a reload. The device cap that
    voided five cells is not in play: the owner spends **4 of 15 slots**, measured.
+   **AND HEAL-NEW-1 AND -3 ARE RE-RUNS OWED, for the INSTRUMENT and not for the product**: both were
+   taken before `healnew.mjs` and `healrevoke.mjs` were put on `gate()`, so neither passed the dirt
+   and mid-run-redeploy gate every other rung's `PASS` passed
+   ([methodology](docs/wiki/testing-methodology.md#a-field-in-the-detail-is-not-a-gate-and-two-heal-runners-believed-it-was)).
    **The user asked for the LOGS to be read on every pass, the reconciliations especially**
    (2026-08-28): a heal that works is not a heal that was observed. It is what found the `UserBlock`
    P1 that no row on the board asks about
