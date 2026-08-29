@@ -224,6 +224,22 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A revoked device kept both of its databases, and every log said the wipe had worked.** Found by
+  HEAL-REVOKE-5 on production, 2026-08-29, on a build carrying all three of August's earlier wipe
+  fixes: the `device_revoked` frame arrived, the server confirmed it, the reset ran, no step reported
+  a failure - and the survey named `CanariDBMls_<userId>` and `CanariDB_<userId>` as survivors.
+  `indexedDB.deleteDatabase` does not fail on an open connection, it BLOCKS, and the connection was
+  this application's own: `hex.ts` caches its handle on the MLS database in a module-level promise
+  that is opened on first use, never released, and REOPENED by `removeMlsState` one step before the
+  wipe. So the last thing a revoked device did was guarantee the block.
+
+  `closeMlsDb()` closes it, from inside `wipeDeviceToFactory` rather than through its `closeStorage`
+  parameter: that parameter is for the message store, which the session owns and can hand over,
+  while a module singleton in a util is something no caller can see - and both production callers
+  passed nothing, so a parameter documented as necessary had only ever been supplied by a unit test.
+  A delete that ERRORS is also logged now; it used to resolve silently, which made a failed delete
+  and a successful one the same event.
+
 - **The HEAL-REVOKE runner reported two product defects it had invented, and both were blind spots
   in the instrument.** `classifyWipe` was handed `report(...).lines`, a field the report object has
   never carried - so it classified an empty array on every call and concluded a revoked device had

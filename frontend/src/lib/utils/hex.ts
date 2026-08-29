@@ -92,6 +92,30 @@ export function seedMlsSnapshotSeq(version: number | undefined): void {
 
 let _dbPromise: Promise<IDBDatabase> | null = null;
 
+/**
+ * Closes this module's cached handle on `CanariDBMls_<userId>`, so a later delete can complete.
+ *
+ * IT IS THE ONE CONNECTION NO CALLER CAN REACH, AND THAT IS WHY IT SURVIVED EVERY WIPE. `_dbPromise`
+ * is a module singleton opened on first use and never released; `removeMlsState` REOPENS it, and it
+ * is the last thing a revoked device does before `wipeDeviceToFactory` tries to drop the database.
+ * `indexedDB.deleteDatabase` does not fail on an open connection, it BLOCKS - so the wipe logged
+ * `CanariDBMls_... is still open elsewhere - delete deferred`, reported two stores SURVIVED, and a
+ * device its owner had declared lost kept its MLS store. Measured on prod by HEAL-REVOKE-5,
+ * 2026-08-29; every other surface said the wipe had worked.
+ *
+ * `close()` returns immediately and the connection ends once its open transactions finish, so this
+ * is awaited on the handle rather than on the close: what the caller needs is that no NEW
+ * transaction can be started, which nulling the cache guarantees.
+ */
+export async function closeMlsDb(): Promise<void> {
+  const pending = _dbPromise;
+  _dbPromise = null;
+  if (!pending) return;
+  // A handle that never opened has nothing to close, and its rejection is not this function's to
+  // report - the caller that asked for it already logged one.
+  await pending.then((db) => db.close()).catch(() => undefined);
+}
+
 function openMlsDb(userId: string): Promise<IDBDatabase> {
   if (!_dbPromise) {
     _dbPromise = new Promise<IDBDatabase>((resolve, reject) => {

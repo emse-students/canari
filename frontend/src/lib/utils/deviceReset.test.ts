@@ -8,6 +8,16 @@ const invokeMock = vi.fn(async (_cmd: string) => {});
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string) => invokeMock(cmd) }));
 // Both entry points are mocked, because WHICH one the wipe reaches is the assertion: `disable`
 // raises an Android activity and can be refused, `forget` asks nothing.
+/**
+ * The MLS connection close, recorded in the SAME order array as the deletes - because the property
+ * under test is not that it was called, it is that it was called FIRST. `deleteDatabase` does not
+ * fail on an open connection, it blocks, so a close that happens afterwards leaves exactly the
+ * defect HEAL-REVOKE-5 measured on prod: a revoked device that kept its MLS store while every log
+ * said the wipe had run.
+ */
+const closeMlsDbMock = vi.fn(async () => {});
+vi.mock('$lib/utils/hex', () => ({ closeMlsDb: () => closeMlsDbMock() }));
+
 const forgetMock = vi.fn(async (_alias?: string) => {});
 const disableMock = vi.fn(async (_alias?: string) => {});
 vi.mock('$lib/services/biometric', () => ({
@@ -52,6 +62,50 @@ describe('wipeDeviceToFactory', () => {
   });
 
   afterEach(() => vi.unstubAllGlobals());
+
+  it('closes the MLS connection BEFORE deleting anything, or the delete only blocks', async () => {
+    const order: string[] = [];
+    closeMlsDbMock.mockImplementationOnce(async () => {
+      order.push('close');
+    });
+    vi.stubGlobal('indexedDB', {
+      databases: async () => present.map((name) => ({ name })),
+      deleteDatabase: (name: string) => {
+        const req: Record<string, unknown> = {};
+        order.push(`delete:${name}`);
+        present = present.filter((n) => n !== name);
+        queueMicrotask(() => (req.onsuccess as () => void)?.());
+        return req;
+      },
+    });
+
+    await wipeDeviceToFactory();
+
+    expect(order[0]).toBe('close');
+    expect(order).toContain('delete:CanariDB_u1');
+  });
+
+  it('reports a delete that FAILED, which used to be indistinguishable from one that worked', async () => {
+    const errors: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => {
+      errors.push(a.map(String).join(' '));
+    });
+    vi.stubGlobal('indexedDB', {
+      databases: async () => present.map((name) => ({ name })),
+      deleteDatabase: (_name: string) => {
+        const req: Record<string, unknown> = { error: new Error('QuotaExceeded') };
+        queueMicrotask(() => (req.onerror as () => void)?.());
+        return req;
+      },
+    });
+
+    await wipeDeviceToFactory();
+
+    expect(errors.some((e) => e.includes('could not delete CanariDB_u1'))).toBe(true);
+    // And the survey still speaks for itself: the database is reported as a survivor, because the
+    // delete never happened. One accusation is not the other - the log says WHY, the survey WHAT.
+    expect(errors.some((e) => e.includes('SURVIVED') && e.includes('CanariDB_u1'))).toBe(true);
+  });
 
   it('clears preferences, caches and the app databases', async () => {
     const failures = await wipeDeviceToFactory();

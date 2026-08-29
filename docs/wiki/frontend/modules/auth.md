@@ -275,6 +275,26 @@ while the chat answered from SQLite, and brought that database into existence by
 backend does not pick a slower path, it picks a different DEVICE; `db/backendChoice.test.ts` now
 refuses any call site outside `db.ts` that does it.
 
+**AND IT STILL KEPT BOTH DATABASES, BECAUSE `deleteDatabase` DOES NOT FAIL ON AN OPEN CONNECTION -
+IT BLOCKS.** Measured by HEAL-REVOKE-5 on prod, 2026-08-29, on a build carrying every fix above: the
+frame arrived, the server confirmed, `[RESET] wiping this device back to a fresh install` ran, no
+step reported a failure - and the survey named `CanariDBMls_<userId>` and `CanariDB_<userId>` as
+survivors, with `CanariDBMls_... is still open elsewhere - delete deferred` one line above it. The
+disk agreed: two databases, `empty: false`.
+
+"Elsewhere" was this application. `hex.ts` caches its handle on the MLS database in a module-level
+`_dbPromise`, opened on first use and **never released** - and `removeMlsState`, which step 3 calls,
+REOPENS it. So the last thing a revoked device did before step 5 was guarantee the connection step 5
+would block on. `closeMlsDb()` closes it, and it is called from inside `wipeDeviceToFactory` rather
+than passed by a caller: the `closeStorage` parameter exists for the message store, which the session
+OWNS and can hand over, while a module singleton inside a util is something no caller can see. **A
+parameter documented as necessary that no production call site passes is not a parameter, it is a
+comment** - both real callers passed nothing, and only a unit test ever supplied one.
+
+The same run found the second half: a delete that ERRORS resolved silently, so a failed delete and a
+successful one were the same event, and only the one that happened to log `blocked` could be told
+apart. It logs now.
+
 What the wipe reaches, per platform, is therefore:
 
 | Store | Web | Tauri |

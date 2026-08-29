@@ -1,3 +1,4 @@
+import { closeMlsDb } from '$lib/utils/hex';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 
 /**
@@ -92,6 +93,15 @@ export async function wipeDeviceToFactory(closeStorage?: () => Promise<void>): P
 
   if (closeStorage) await step('the open database connection', closeStorage);
 
+  // THE CONNECTION NO CALLER CAN PASS. `closeStorage` covers the message store, which the session
+  // owns and can therefore hand over; `CanariDBMls_<userId>` is held by a module singleton inside
+  // `hex.ts`, opened on first use, never released, and REOPENED by `removeMlsState` - which is the
+  // last thing a revoked device does before this runs. `deleteDatabase` does not fail on an open
+  // connection, it BLOCKS, so the wipe deferred the delete, reported the store as a SURVIVOR and
+  // left a device its owner had declared lost holding its MLS state. Measured by HEAL-REVOKE-5 on
+  // prod, 2026-08-29. It is closed HERE and not asked of the caller because no caller can see it.
+  await step('the MLS database connection', closeMlsDb);
+
   // READ BEFORE ANYTHING IS CLEARED: the aliases live in the very store this wipe empties.
   const aliases = recordedKeystoreAliases();
 
@@ -131,7 +141,14 @@ export async function wipeDeviceToFactory(closeStorage?: () => Promise<void>): P
               if (!db.name) return resolve();
               const req = indexedDB.deleteDatabase(db.name);
               req.onsuccess = () => resolve();
-              req.onerror = () => resolve();
+              // A DELETE THAT FAILED USED TO LOOK EXACTLY LIKE ONE THAT WORKED. `resolve()` alone
+              // left the survey as the only witness, which says WHAT remains and never WHY - and
+              // the two databases HEAL-REVOKE-5 found surviving were distinguishable only by the
+              // one that happened to log `blocked`. Every swallowed branch logs.
+              req.onerror = () => {
+                console.error(`[RESET] could not delete ${db.name}:`, req.error);
+                resolve();
+              };
               // Reached only if something else still holds the database open - a second tab, for
               // instance. The delete then completes when that connection closes, so the reset is
               // not lost, only deferred; saying so is what stops it reading as success.
