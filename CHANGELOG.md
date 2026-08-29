@@ -233,9 +233,11 @@ which is also where every release up to and including v0.13.1 now lives.
   returning device was compared against its reference 2.3 s after its sidebar appeared and the row
   reported an eight-group loss that had not happened.
 
-  The classifier now reads `timeline` and returns `linesRead`, plus five fields naming WHERE the
-  `device_revoked` chain stopped - frame arrived, check refused, server disagreed, server confirmed,
-  wipe ran. The predicate is anchored to the server's own active-group count for that user, less the
+  Fixing the field was not enough: `report()` DRAINS, and the wipe is waited for in a poll, so each
+  call ate the window the previous one had filled and the run kept the last four seconds of a
+  two-minute wait. The classifier now reads `consoleLines(cx)` - the cumulative archive `report`
+  fills as it drains - and returns `linesRead`, plus five fields naming WHERE the `device_revoked`
+  chain stopped: frame arrived, check refused, server disagreed, server confirmed, wipe ran. The predicate is anchored to the server's own active-group count for that user, less the
   groups dismissed while still a member. Two expectations, `theWipeWindowWasActuallyRead` and
   `theSettlePredicateKnewWhatToWaitFor`, make a rig that could not measure FAIL instead of guessing:
   a zero meaning "silent" and a zero meaning "unread" must never produce the same row. There is no

@@ -2303,12 +2303,23 @@ an equality gap of `rows: 3 vs 11` against its reference. Both are P1-shaped. Ne
 
 **The first: `classifyWipe` was reading a field `report()` does not return.** It was called as
 `classifyWipe((await report(obs)).lines ?? [])`; the report object carries `timeline`, and has never
-carried `lines`. So the classifier ran over `[]` on every call, every `said(...)` was `false`, and
-the runner concluded the device had stayed silent - when nothing had read a single line of its
+carried `lines` - the exact mistake `consoleLines()` was exported to prevent in 2026-08-11, with a
+doc comment naming it. So the classifier ran over `[]` on every call, every `said(...)` was `false`,
+and the runner concluded the device had stayed silent - when nothing had read a single line of its
 console. The server logs said the opposite and settled it: the delivery service signalled the
 revocation, the gateway routed the control frame to the victim's live socket, and the disk sample
 taken independently showed two databases still present. **The `?? []` is the whole story**: it turned
 a field that did not exist into a defensible-looking empty, and an empty console into a verdict.
+
+**AND FIXING THE FIELD DID NOT FIX THE DEFECT, WHICH IS THE HALF WORTH KEEPING.** Reading
+`rep.timeline` is correct and still reported `linesRead: 0` on the very next run, because
+**`report()` DRAINS** - it consumes `cx.events` on purpose, so that a second report covers only what
+happened since the first. The wipe is waited for in a poll, four seconds apart, up to thirty times;
+each call therefore ATE the window the previous one had filled, and what the run recorded was the
+last four seconds of a two-minute wait. It also quietly emptied the gated `wipeWindow` observer that
+had just been added to close this rung's gate. A classifier must never be built on a projection that
+consumes its own evidence: `consoleLines(cx)` is the archive `report` fills as it drains, cumulative
+and safe to call in a loop, and it is what the classifier reads now.
 
 **The second: the settle predicate accepted a device that had not finished arriving.** `watch`'s
 default is `rows > 0 && syncing === 0`, which a sidebar holding three of eleven groups with nothing
@@ -2319,7 +2330,8 @@ row reported the gap in the WORSE direction, as a device that had lost eight gro
 **The rule both leave: a measurement whose zero is indistinguishable from "not measured" must FAIL
 rather than pick one.** `classifyWipe` now returns `linesRead`, and `theWipeWindowWasActuallyRead`
 asserts it above zero, so a silent device and an unread console can never again produce the same
-row. The predicate is now anchored to a count the rig can READ - the server's own active-group count
+row - and that guard is what caught the drain, on its first run, in a window where the verdict
+itself was `VACUOUS` and would have told nobody anything. The predicate is now anchored to a count the rig can READ - the server's own active-group count
 for that user, less the groups dismissed while still a member - and when that count cannot be read
 `expected` is `null`, the predicate is never satisfied, and
 `theSettlePredicateKnewWhatToWaitFor` names the cause. **There is deliberately no fallback to the

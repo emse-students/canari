@@ -65,6 +65,7 @@ import { bringToReady } from "./ready-repair.mjs";
 import { finishObserved, record, unmet } from "./results.mjs";
 import { navigationCost, readAll, serverView, watch as watchRows, whoAmI } from "./syncrows.mjs";
 import {
+  consoleLines,
   DEVICE_PANEL_NARRATION,
   ignoringExpectedLog,
   ignoringExpectedRefusal,
@@ -335,13 +336,23 @@ async function revoke(deviceId) {
 /**
  * WHAT THE VICTIM'S OWN CONSOLE SAID ABOUT BEING REVOKED - the whole chain, not just its tail.
  *
- * IT USED TO READ `rep.lines`, WHICH `report()` DOES NOT RETURN, so every call classified an empty
- * array and `wipeRan` was `false` on a device that had erased itself perfectly. HEAL-REVOKE-5 spent
- * 25 minutes on `166169a4` to record `theDeviceWipedItself: false` about an instrument that had
- * never looked - the campaign's own recurring shape, one level in: a correct mechanism with no
- * report is found by hand, a day late. It reads `rep.timeline` now, which is EVERY line and every
- * socket event in one dated sequence, and `linesRead` is returned so a zero can never again pass
- * for a silent device.
+ * IT TAKES THE CLIENT, NOT A REPORT, AND THAT IS THE WHOLE FIX. It went wrong twice, in the two
+ * ways this seam can go wrong, and the second was the interesting one:
+ *
+ *   - It read `rep.lines`, which `report()` does not return - the exact mistake `consoleLines`'
+ *     own doc comment was written about in 2026-08-11. Every call classified an empty array, and
+ *     HEAL-REVOKE-5 spent 25 minutes on `166169a4` recording `theDeviceWipedItself: false` about an
+ *     instrument that had never looked.
+ *   - Reading `rep.timeline` fixed the field and kept the defect, because **`report()` DRAINS**.
+ *     The wipe is waited for in a poll, and each poll consumed the window the previous one had
+ *     filled: what the run kept was the LAST four seconds of a two-minute wait, and the run of
+ *     16:07 recorded `linesRead: 0` for a device whose log the archive held in full. A classifier
+ *     that consumes its own evidence answers about a window nobody chose.
+ *
+ * `consoleLines(cx)` is the archive `report` fills as it drains - cumulative, non-destructive, and
+ * safe to call in a loop. It also leaves the window intact for the gated `wipeWindow` observer,
+ * which the polling version was quietly emptying. `linesRead` is returned so a zero can never again
+ * pass for a silent device.
  *
  * FIVE SENTENCES, FIVE QUESTIONS, BECAUSE A WIPE THAT DID NOT HAPPEN HAS FOUR DIFFERENT CAUSES and
  * only the client can tell them apart. The frame is routed by the gateway, decoded, dispatched by
@@ -360,8 +371,8 @@ async function revoke(deviceId) {
  * later at the PIN gate is just as correct - but they are now DISTINGUISHABLE, which is the half
  * that was missing.
  */
-function classifyWipe(rep) {
-  const lines = rep?.timeline ?? [];
+function classifyWipe(cx) {
+  const lines = consoleLines(cx);
   const said = (re) => lines.some((l) => re.test(l));
   return {
     linesRead: lines.length,
@@ -457,6 +468,22 @@ async function comeBack(label) {
   return { cx, observer, login, pin, who, watch: w, target, last };
 }
 
+
+/**
+ * THE ROWS THAT ARE STILL AMBER, BY ID - recorded, never asserted on.
+ *
+ * The fingerprint carries `syncing` as a COUNT, which answers "did it finish" and nothing else. Two
+ * runs of this row in a row ended with exactly two amber rows on every device measured - the seed,
+ * the reference, and W1's own sidebar - and the count alone cannot say whether they were the SAME
+ * two, which is the difference between a device that is behind and a pair of groups nothing online
+ * can serve. Ids are cut to 8 like every other id this rig writes down.
+ *
+ * It is deliberately OUTSIDE `fingerprint`: the equality gap compares fingerprints field by field,
+ * and adding a list to it would change what the row asserts rather than what it records.
+ */
+const stillAmber = (readout) =>
+  (readout.rows?.tiles ?? []).filter((t) => !t.ready).map((t) => t.id);
+
 /**
  * The fingerprint two states are compared on: counts and the server's own view, never names.
  *
@@ -544,8 +571,10 @@ const seedSettle = await watchRows(seeded.cx, {
 note(
   `the seeded device ${seedSettle.settled ? "settled" : "did NOT settle"} in ${seedSettle.elapsedMs}ms`,
 );
-const seedState = fingerprint(await readAll(seeded.cx));
-note(`seeded state ${JSON.stringify(seedState)}`);
+const seedReadout = await readAll(seeded.cx);
+const seedState = fingerprint(seedReadout);
+const seedAmber = stillAmber(seedReadout);
+note(`seeded state ${JSON.stringify(seedState)} amber=${JSON.stringify(seedAmber)}`);
 
 // A group the victim HOLDS before it is revoked, and that will be deleted while it is away. Row 8's
 // whole subject; created for every row because "did a doomed group come back" is worth knowing in all
@@ -600,7 +629,7 @@ note(`revocation ${JSON.stringify(revocation)}`);
 // device is minted, because what is being measured is the DEFERRAL and not the return.
 // -------------------------------------------------------------------------------------------
 if (row.offline) {
-  const offlineWipe = classifyWipe(await report(seedObserver));
+  const offlineWipe = classifyWipe(seeded.cx);
   const whileUnreachable = await deviceResidue(VICTIM, seeded.cx).catch((e) => ({
     error: firstLine(e),
     readable: false,
@@ -626,7 +655,7 @@ if (row.offline) {
       break;
     }
   }
-  const afterWipe = classifyWipe(await report(seedObserver));
+  const afterWipe = classifyWipe(seeded.cx);
   const where = await evaluate(seeded.cx, "location.pathname").catch(() => null);
   note(
     `after the reload ${JSON.stringify({ landedInMs, residue: landed, wipe: afterWipe, where })}`,
@@ -695,7 +724,7 @@ if (row.offline) {
 // accepted; what is waited for is the wipe.
 let wipe = { revocationSeen: false, wipeRan: false, wipeFinished: false };
 for (let i = 0; i < 30; i += 1) {
-  wipe = classifyWipe(await report(seedObserver));
+  wipe = classifyWipe(seeded.cx);
   if (wipe.wipeFinished || wipe.wipeIncomplete) break;
   await sleep(4000);
 }
@@ -763,7 +792,8 @@ if (returnTopology.includes(ACTOR.toLowerCase()) && topology[`${ACTOR.toLowerCas
 
 const back = await comeBack("return");
 const returnedState = fingerprint(back.last);
-note(`returned state ${JSON.stringify(returnedState)}`);
+const returnedAmber = stillAmber(back.last);
+note(`returned state ${JSON.stringify(returnedState)} amber=${JSON.stringify(returnedAmber)}`);
 const doomedAfterReturn = await rowNamed(back.cx, doomed);
 const bornAfterReturn = await rowNamed(back.cx, born);
 note(
@@ -789,8 +819,10 @@ const freshSettle = await watchRows(fresh.cx, {
 note(
   `the reference ${freshSettle.settled ? "settled" : "did NOT settle"} in ${freshSettle.elapsedMs}ms`,
 );
-const freshState = fingerprint(await readAll(fresh.cx));
-note(`reference state ${JSON.stringify(freshState)}`);
+const freshReadout = await readAll(fresh.cx);
+const freshState = fingerprint(freshReadout);
+const freshAmber = stillAmber(freshReadout);
+note(`reference state ${JSON.stringify(freshState)} amber=${JSON.stringify(freshAmber)}`);
 const doomedOnFresh = await rowNamed(fresh.cx, doomed);
 const bornOnFresh = await rowNamed(fresh.cx, born);
 note(
@@ -841,13 +873,14 @@ const expectations = {
   /**
    * THE INSTRUMENT LOOKED, AND KNEW WHAT IT WAS LOOKING FOR. Two guards, both written after the run
    * of 2026-08-29 in which neither held and the row reported product defects it had invented:
-   * `classifyWipe` was reading a field `report()` does not return, so it classified an empty array
-   * and said the device had stayed silent when nobody had read a line of its console; and the settle
-   * predicate accepted a device holding three of eleven groups, so the equality gap was measured
-   * against a device that had not finished arriving. NEITHER FAILURE WAS DISTINGUISHABLE FROM THE
-   * PRODUCT FAILING, which is the whole reason they are expectations and not notes: a zero that
-   * could mean "silent" or "unread" is evidence for nothing, and a rig that cannot tell the two
-   * apart must FAIL rather than pick one.
+   * `classifyWipe` was reading a field `report()` does not return - and then, once that was fixed,
+   * reading a report that DRAINS from inside a poll, so the run kept the last four seconds of a
+   * two-minute wait and said the device had stayed silent; and the settle predicate accepted a
+   * device holding three of eleven groups, so the equality gap was measured against a device that
+   * had not finished arriving. NEITHER FAILURE WAS DISTINGUISHABLE FROM THE PRODUCT FAILING, which
+   * is the whole reason they are expectations and not notes: a zero that could mean "silent" or
+   * "unread" is evidence for nothing, and a rig that cannot tell the two apart must FAIL rather
+   * than pick one. `theWipeWindowWasActuallyRead` is what caught the second one, on its first run.
    */
   theWipeWindowWasActuallyRead: wipe.linesRead > 0,
   theSettlePredicateKnewWhatToWaitFor: seedTarget.expected !== null &&
@@ -878,6 +911,7 @@ const detail = {
     settledInMs: seedSettle.settled ? seedSettle.elapsedMs : null,
     waitedFor: seedTarget.expected,
     state: seedState,
+    stillAmber: seedAmber,
     heldTheDoomedGroup,
   },
   revocation,
@@ -890,6 +924,7 @@ const detail = {
     stalledForMs: back.watch.settled ? null : back.watch.elapsedMs,
     waitedFor: back.target.expected,
     state: returnedState,
+    stillAmber: returnedAmber,
     samples: back.watch.samples,
     doomedGroup: doomedAfterReturn,
     newGroup: bornAfterReturn,
@@ -899,6 +934,7 @@ const detail = {
     settledInMs: freshSettle.settled ? freshSettle.elapsedMs : null,
     waitedFor: freshTarget.expected,
     state: freshState,
+    stillAmber: freshAmber,
     samples: freshSettle.samples,
     doomedGroup: doomedOnFresh,
     newGroup: bornOnFresh,
