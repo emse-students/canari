@@ -316,7 +316,7 @@
     <AppSidebar />
   {/if}
 
-  <div class="relative z-10 flex flex-1 flex-col overflow-hidden md:pl-[4.5rem]">
+  <div class="relative z-10 flex flex-1 flex-col overflow-hidden md:pl-18">
     <!-- Bandeau multi-onglets : pleine largeur, en haut du contenu (jamais dans la rangée sidebar). -->
     <TabFollowerBanner />
     <OfflineBanner />

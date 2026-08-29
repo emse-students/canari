@@ -660,7 +660,7 @@
         <div class="relative">
           <img src={form.imageUrl} alt="" class="max-h-72 w-full object-cover" loading="lazy" />
           <div
-            class="absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-black/60 to-transparent"
+            class="absolute inset-x-0 bottom-0 h-28 bg-linear-to-t from-black/60 to-transparent"
           ></div>
           <div class="absolute inset-x-0 bottom-0 flex items-end gap-3 p-5">
             <div class="min-w-0 flex-1">
@@ -683,7 +683,7 @@
         </div>
       {:else}
         <div
-          class="from-cn-yellow/10 flex items-start gap-4 bg-gradient-to-br via-transparent to-transparent px-6 pt-6 pb-4"
+          class="from-cn-yellow/10 flex items-start gap-4 bg-linear-to-br via-transparent to-transparent px-6 pt-6 pb-4"
         >
           <div class="bg-cn-yellow/20 text-cn-dark shrink-0 rounded-2xl p-3">
             <ClipboardList size={26} />
@@ -998,10 +998,10 @@
               <table class="w-full border-separate border-spacing-0 text-sm">
                 <thead>
                   <tr class="bg-cn-border/20">
-                    <th class="sticky left-0 z-10 w-1/3 min-w-[120px] bg-(--cn-surface) p-3"></th>
+                    <th class="sticky left-0 z-10 w-1/3 min-w-30 bg-(--cn-surface) p-3"></th>
                     {#each item.options ?? [] as col (col.id)}
                       <th
-                        class="text-text-muted min-w-[80px] px-3 py-3 text-center text-xs font-bold tracking-wide uppercase"
+                        class="text-text-muted min-w-20 px-3 py-3 text-center text-xs font-bold tracking-wide uppercase"
                         >{col.label}</th
                       >
                     {/each}
@@ -1126,9 +1126,9 @@
        already reserves this bar's own natural spot on its own - reaching the true bottom always
        settles it back there, right after the last question, for free. -->
   <div
-    class="keyboard-aware-bottom mx-auto max-w-2xl px-4 {reachedEnd
-      ? 'sticky bottom-0 z-50 pb-3 md:pb-5'
-      : 'mt-6'}"
+    class="keyboard-aware-bottom mx-auto max-w-2xl px-4 pb-3 {reachedEnd
+      ? 'sticky bottom-0 z-50 md:pb-5'
+      : ''}"
   >
     <div
       class="border-cn-border/60 flex items-center gap-3 rounded-2xl border bg-(--cn-surface)/90 px-4 py-3 shadow-lg backdrop-blur-xl"
