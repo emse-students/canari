@@ -306,12 +306,29 @@ export async function resetDeviceAsFreshImpl(
  * it runs BEFORE the first delete rather than alongside it.
  */
 export async function wipeRevokedDevice(ctx: SessionContext, cb: ChatSessionCallbacks) {
-  tearDownLiveSession(ctx, cb, 'revoked');
-  ctx.resetMls();
-  await resetDeviceAsFreshImpl(ctx, ctx.getUserId(), cb);
-  await clearAuth();
-  await wipeDeviceToFactory();
-  ctx.setPin('');
+  // BEFORE THE FIRST STEP, BECAUSE THE FIRST STEP IS WHAT OPENS THE DOOR. `tearDownLiveSession`
+  // sets `isLoggedIn` false, and that is one of the three flags `loginImpl` reads to decide nobody
+  // owns the flow - so the wipe was itself the event that let a login start and undo it. Measured on
+  // prod 2026-08-29: a login began 3 ms after the `device_revoked` frame, its own revocation check
+  // could not be answered (the wipe had already killed the session) so it read "not revoked", and it
+  // reopened `CanariDB_<userId>` 24 ms before the delete - which does not fail on an open connection,
+  // it BLOCKS. The store SURVIVED on a device its owner had declared lost.
+  //
+  // A latch and not a device id: between clearing `mls_device_id_<userId>` and deleting the stores
+  // there is a window in which no identity exists to recognise, and a login slipping into it reopens
+  // the database just the same. What must be excluded is the WIPE'S WHOLE DURATION, which is exactly
+  // what this spans - and being released in `finally`, it can never leave a real user locked out.
+  ctx.setWipingRevokedDevice(true);
+  try {
+    tearDownLiveSession(ctx, cb, 'revoked');
+    ctx.resetMls();
+    await resetDeviceAsFreshImpl(ctx, ctx.getUserId(), cb);
+    await clearAuth();
+    await wipeDeviceToFactory();
+    ctx.setPin('');
+  } finally {
+    ctx.setWipingRevokedDevice(false);
+  }
 }
 
 /**
@@ -362,18 +379,26 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     return;
   }
 
-  // Guard against concurrent calls (e.g. onMount + afterNavigate firing together).
+  // Guard against a login starting while something else owns the flow: a concurrent call (onMount +
+  // afterNavigate firing together), or the revocation wipe, whose teardown clears `isLoggedIn` and
+  // would otherwise read as "nobody owns it" to the very login that then reopens what it deletes.
   // Returning silently here is intentional: the in-flight login owns the flow and will
   // resolve the caller's UI. An explicit PIN submit must clear this flag before calling
   // (see handlePinSubmit) so a user action is never swallowed by a background login.
-  if (ctx.isLoggedIn() || ctx.isReconnecting() || ctx.getIsLoginInProgress()) {
+  if (
+    ctx.isLoggedIn() ||
+    ctx.isReconnecting() ||
+    ctx.getIsLoginInProgress() ||
+    ctx.isWipingRevokedDevice()
+  ) {
     // Name the flag that won. A swallowed user tap is otherwise indistinguishable in a log from a
     // tap that never reached loginImpl at all: on Android 2026-07-29 the FIRST biometric attempt of
     // a cold launch returned here and only a second tap 3 s later went through, with no way to tell
     // which of the three was still set - which is the whole reason that bug is still open.
     cb.log(
       `[LOGIN] Call ignored, a login already owns the flow (loggedIn=${ctx.isLoggedIn()}, ` +
-        `reconnecting=${ctx.isReconnecting()}, loginInProgress=${ctx.getIsLoginInProgress()})`
+        `reconnecting=${ctx.isReconnecting()}, loginInProgress=${ctx.getIsLoginInProgress()}, ` +
+        `wipingRevokedDevice=${ctx.isWipingRevokedDevice()})`
     );
     return;
   }

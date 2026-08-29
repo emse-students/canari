@@ -268,6 +268,25 @@ which is also where every release up to and including v0.13.1 now lives.
   first accepted commit 18:24:44, the two epochs moved 196 -> 201 and 216 -> 218, and the device
   immediately sent the two Welcomes it had owed for hours.
 
+- **A revoked device kept the user's message database, because the wipe was racing a login it had
+  itself started.** Found by HEAL-REVOKE-5 on production 2026-08-29, on the build that had just made
+  the survivor visible. `wipeRevokedDevice` opens by tearing the live session down, which sets
+  `isLoggedIn` false - and that is one of the three flags `loginImpl` reads to decide nobody owns
+  the flow. So the wipe's own first act was the event that let a login start: 3 ms after the
+  `device_revoked` frame, one did. It asked the server whether this device was revoked, the question
+  could not be answered because the wipe had already cleared the credentials, and `isDeviceRevoked`
+  answers `false` when it cannot reach the server - correct for the question it was written for
+  (*should I erase myself?*, where a transport failure must never be a verdict) and exactly wrong for
+  the one the login was asking (*may I proceed?*). The login proceeded, reopened
+  `CanariDB_<userId>` 24 ms before the delete, and `deleteDatabase` does not fail on an open
+  connection - it BLOCKS. The store survived on a device its owner had declared lost, and every line
+  except one said the wipe had worked. **The fix excludes the wipe's whole DURATION, not a device
+  identity**: between clearing `mls_device_id_<userId>` and deleting the stores there is a window in
+  which no identity exists to recognise, and a login slipping into it reopens the database just the
+  same. A latch is raised before the first step and released in a `finally`, so it is causal rather
+  than timed, costs one boolean read on every login, and cannot leave a real user locked out. The
+  refusal names itself in the log beside the three flags that were already named.
+
 - **A revoked device kept both of its databases, and every log said the wipe had worked.** Found by
   HEAL-REVOKE-5 on production, 2026-08-29, on a build carrying all three of August's earlier wipe
   fixes: the `device_revoked` frame arrived, the server confirmed it, the reset ran, no step reported

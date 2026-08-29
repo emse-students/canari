@@ -108,6 +108,7 @@ export function useChatSession() {
   let isExporting = $state(false);
   let isImporting = $state(false);
   let isLoginInProgress = false; // plain boolean - guards against concurrent login() calls
+  let isWipingRevokedDevice = false; // plain boolean - a login must not race the wipe that erases it
   /** True from MLS unlock until the full startup login path finishes (messaging catch-up). */
   let isMessagingInitializing = $state(false);
 
@@ -209,6 +210,10 @@ export function useChatSession() {
     getIsLoginInProgress: () => isLoginInProgress,
     setIsLoginInProgress: (v) => {
       isLoginInProgress = v;
+    },
+    isWipingRevokedDevice: () => isWipingRevokedDevice,
+    setWipingRevokedDevice: (v) => {
+      isWipingRevokedDevice = v;
     },
     getIsMessagingInitializing: () => isMessagingInitializing,
     setIsMessagingInitializing: (v) => {

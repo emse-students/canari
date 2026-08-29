@@ -174,3 +174,40 @@ describe('what a revoked device stops before it deletes anything', () => {
     expect(tearDownBody).toContain('unregisterMlsStatePersister();');
   });
 });
+
+/**
+ * The wipe's own first act is what let a login start and undo it.
+ *
+ * Measured on prod 2026-08-29: a `device_revoked` frame arrived, `wipeRevokedDevice` began, and 3 ms
+ * later a login started - because `tearDownLiveSession` had set `isLoggedIn` false, and that is one
+ * of the flags `loginImpl` reads to decide nobody owns the flow. The login's own revocation check
+ * could not be answered (the wipe had already killed the session) so it read "not revoked", and it
+ * reopened `CanariDB_<userId>` 24 ms before the delete. `deleteDatabase` does not fail on an open
+ * connection, it BLOCKS: the store SURVIVED on a device its owner had declared lost.
+ *
+ * A latch over the WHOLE wipe, not a device id: between clearing `mls_device_id_<userId>` and
+ * deleting the stores there is a window in which no identity exists to recognise. The ORDER is the
+ * fix and the order is what these pin.
+ */
+describe('a login can never race the wipe that erases it', () => {
+  it('raises the latch BEFORE the teardown that clears isLoggedIn', () => {
+    const wipe = wipeRevokedDeviceBody;
+    const latch = wipe.indexOf('ctx.setWipingRevokedDevice(true);');
+    expect(latch).toBeGreaterThan(-1);
+    // Strictly before the teardown - raising it afterwards leaves exactly the gap that was measured.
+    expect(wipe.indexOf("tearDownLiveSession(ctx, cb, 'revoked');")).toBeGreaterThan(latch);
+  });
+
+  it('releases the latch in a finally, so a failed wipe cannot lock a real user out', () => {
+    expect(wipeRevokedDeviceBody).toMatch(
+      /finally\s*\{\s*ctx\.setWipingRevokedDevice\(false\);\s*\}/
+    );
+  });
+
+  it('makes loginImpl refuse while the latch is up, and say which flag won', () => {
+    // The guard is only worth having if it is read where a login decides to proceed, and only
+    // debuggable if the log names it - the other three are named for exactly that reason.
+    expect(loginImplBody).toContain('ctx.isWipingRevokedDevice()');
+    expect(loginImplBody).toContain('wipingRevokedDevice=${ctx.isWipingRevokedDevice()}');
+  });
+});

@@ -394,6 +394,34 @@ transport failure is not - so the wipe happens at the first login WITH a network
 link. One residue follows from the same fact: nobody is there to receive `notifyDeviceRevoked`, so
 the device's `auth_sessions` row lives to its 7-day expiry.
 
+
+#### The wipe's first step is what started the login that undid it
+
+**Step 1 is `tearDownLiveSession`, and one of the things it does is set `isLoggedIn` false.** That
+flag is also one of the three `loginImpl` reads to decide that nobody owns the flow, so the wipe's
+own opening move announces a free slot to the thing most able to defeat it. Measured on production
+2026-08-29, three milliseconds after a `device_revoked` frame: a login started, asked the server
+whether this device was revoked, and got no answer because the wipe had already cleared the
+credentials. `isDeviceRevoked` returns `false` when it cannot reach the server - **right for its own
+question and wrong for that one**. It is written to gate a DESTRUCTIVE act (*should I erase
+myself?*), where a transport failure must never be read as a verdict; the login was asking *may I
+proceed?*, whose safe default is the opposite. One boolean, two questions, opposite defaults.
+
+The login proceeded, reopened `CanariDB_<userId>` twenty-four milliseconds before the delete, and
+`deleteDatabase` does not fail on an open connection - it BLOCKS. The message store survived on a
+device its owner had declared lost, and every line but one reported a clean wipe.
+
+**What is excluded is the wipe's DURATION, not a device identity.** Recognising the revoked
+`deviceId` looks tighter and is not: between clearing `mls_device_id_<userId>` and deleting the
+stores there is a window in which no identity exists to recognise, and a login entering it reopens
+the database just the same. `ctx.setWipingRevokedDevice(true)` is therefore raised BEFORE step 1 and
+released in a `finally` - causal rather than timed, one boolean read on every login, and incapable
+of locking out a user who is legitimately re-enrolling, because the latch is gone by the time the
+wipe returns. `loginImpl` names it in the refusal beside the three flags that were already named,
+for the same reason they are: a swallowed login is otherwise indistinguishable from one that never
+ran. Pinned by source guards in `offlineUnlock.test.ts`, which assert the ORDER - the thing that
+broke.
+
 ## Mobile unlock flow (Tauri)
 
 Driven by `startLoginFlow()` in `components/layout/ChatBackgroundService.svelte`.

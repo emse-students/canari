@@ -139,6 +139,17 @@ export interface SessionContext {
   setIsSyncing(v: boolean): void;
   getIsLoginInProgress(): boolean;
   setIsLoginInProgress(v: boolean): void;
+  /**
+   * True for exactly as long as `wipeRevokedDevice` is running.
+   *
+   * The wipe's FIRST act is to tear the live session down, which sets `isLoggedIn` false - and that
+   * is the flag a login checks before deciding nobody owns the flow. So the wipe opens the door to
+   * the login that then undoes it: measured on prod 2026-08-29, a login started 3 ms after the
+   * `device_revoked` frame and reopened `CanariDB_<userId>` 24 ms before the delete, which then
+   * blocked and left the store on a device its owner had declared lost.
+   */
+  isWipingRevokedDevice(): boolean;
+  setWipingRevokedDevice(v: boolean): void;
   /** True while post-auth startup sync runs (conversations, WebSocket, pending MLS queue). */
   getIsMessagingInitializing(): boolean;
   setIsMessagingInitializing(v: boolean): void;
