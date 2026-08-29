@@ -541,6 +541,34 @@ if (row.expect === "servableSubset") {
   }
 }
 
+/**
+ * THE CLICK THIS ROW IS NAMED FOR, TAKEN WHILE THE SIDEBAR IS STILL AMBER.
+ *
+ * "Is the app usable while it heals" is a question about a state the watch exists to LEAVE, so it
+ * cannot be asked after the watch returns - by then the answer is about a healed app, or about
+ * whatever a stall left behind. HEAL-NEW-15's `FAIL` on `48b65d08` is that pair written down:
+ * `healed: true` beside `usability.openedInMs: 26`, a real number about an app that had finished
+ * healing, which meets every one of the row's expectations and answers none of its question.
+ *
+ * SO IT FIRES ON THE STATE, NOT ON A CLOCK: the first sample holding a READY row and a SYNCING row
+ * at once, which is the only instant at which the question exists at all - a ready row is what
+ * `navigationCost` can click, and a syncing row is what makes the app amber while it clicks. It
+ * fires ONCE, and the flag is set before the await so a probe that outlives its sampling interval
+ * cannot be entered twice.
+ *
+ * A RUN WHERE THOSE NEVER COEXIST HAS NOT ASKED THE ROW'S QUESTION, and that is `INVALID` below -
+ * never a PASS over an unasked question, and never a second probe invented to rescue it.
+ */
+let whileAmber = null;
+let amberProbeFired = false;
+const takeTheAmberSample = async (s, when) => {
+  if (amberProbeFired || !(s.ready > 0 && s.syncing > 0)) return;
+  amberProbeFired = true;
+  const cost = await navigationCost(cx);
+  whileAmber = { ...cost, at: when.at, wall: when.wall, ready: s.ready, syncing: s.syncing };
+  note(`usability while amber ${JSON.stringify(whileAmber)}`);
+};
+
 note(`watching the sidebar for up to ${SETTLE_MS / 1000}s`);
 // TERMINATION IS A PROOF, AND FOR A SUBSET ROW IT IS A DIFFERENT PROOF - the rows the responder
 // cannot serve are allowed to stay amber, so waiting for the whole sidebar would burn the deadline
@@ -549,11 +577,32 @@ const w = await watchRows(cx, {
   timeoutMs: SETTLE_MS,
   log: (m) => console.log(m),
   ...(servable ? { settledWhen: subsetSettled(servable.ids) } : {}),
+  ...(row.usability ? { onSample: takeTheAmberSample } : {}),
 });
 timeline.push(mark(w.settled ? "settled" : "deadline reached"));
 
-const usability = row.usability ? await navigationCost(cx) : null;
+// BOTH HALVES, BECAUSE THEY ARE TWO FINDINGS AND EITHER ONE FAILS THE ROW. The amber click answers
+// the user's question; the post-settle click is the other half of the design - a healed conversation
+// that will not open fails this row whatever the repair did before it.
+const usability = row.usability ? { whileAmber, afterSettle: await navigationCost(cx) } : null;
 if (usability) note(`usability ${JSON.stringify(usability)}`);
+if (row.usability && !whileAmber) {
+  record(row.id, "INVALID", {
+    unobservable: w.hookThrew
+      ? `the amber probe threw at +${Math.round(w.hookThrew.at / 1000)}s (${w.hookThrew.why}), so the click this row exists for was never timed`
+      : `no sample ever held a ready row and a syncing row at once, so "usable WHILE it heals" was never askable on this run - ${w.settled ? `the sidebar settled in ${w.elapsedMs}ms` : `it stalled for ${w.elapsedMs}ms`}`,
+    what: row.what,
+    hookThrew: w.hookThrew,
+    afterSettle: usability.afterSettle,
+    settledInMs: w.settled ? w.elapsedMs : null,
+    stalledForMs: w.settled ? null : w.elapsedMs,
+    samples: w.samples,
+    topology,
+    timeline,
+  });
+  cx.close();
+  process.exit(1);
+}
 
 const last = await readAll(cx);
 note(`last read ${JSON.stringify(last)}`);
@@ -606,7 +655,11 @@ if (row.at === "late")
   );
 if (row.responder === "w1" && row.at === "late")
   expectations.ourOwnDeviceArrivedLate = lateFleet?.readable === true && lateFleet.extra.length > 0;
-if (row.usability) expectations.navigableWhileAmber = usability?.openedInMs != null;
+// AND IT READS THE AMBER HALF, WHICH IS THE ONLY HALF THAT ANSWERS THE ROW. The post-settle click is
+// recorded beside it and is not this expectation: a click honoured by an app that has finished
+// healing says nothing about an app that has not, and reading it here is how `48b65d08` met every
+// expectation on the board while the question went unasked.
+if (row.usability) expectations.navigableWhileAmber = usability?.whileAmber?.openedInMs != null;
 
 const missing = unmet(expectations);
 const verdict = missing.length === 0 ? "PASS" : "FAIL";

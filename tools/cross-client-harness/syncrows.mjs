@@ -232,6 +232,20 @@ export async function activeGroupIds(cx, userId) {
  * `cut` is the rule for anything written down; the predicate runs in this process and needs the full
  * value to join against a server list. Both read the same sample, so a verdict can always be
  * re-derived from what was recorded, to eight characters.
+ *
+ * `onSample` IS HOW A MEASUREMENT REACHES A STATE THE WATCH IS WAITING TO LEAVE. A question about
+ * the app WHILE it is amber cannot be asked after `watch` returns: by then the sidebar has settled,
+ * or the deadline has passed and the state is whatever a stall left. HEAL-NEW-15 recorded exactly
+ * that on `48b65d08` - `healed: true` beside a 26 ms click - a real number about an app that had
+ * finished healing. So the hook is awaited INSIDE the loop, sees the same read `settledWhen` does
+ * (whole ids, not the cut copy the ledger gets), and whatever it costs is simply time the watch
+ * spends before its next sample.
+ *
+ * A THROW IN IT IS REPORTED, NEVER SWALLOWED AND NEVER FATAL. The hook belongs to a caller measuring
+ * something beside the watch's own question, so its failure must not destroy the timeline the row is
+ * built on - and a best-effort branch that logs nothing leaves a loss with no trace at all. It is
+ * caught, logged at a level that ACCUSES, and returned as `hookThrew` so a caller whose measurement
+ * is now missing can say WHY rather than report it as never observable.
  */
 export async function watch(
   cx,
@@ -240,12 +254,14 @@ export async function watch(
     everyMs = 2000,
     log = () => {},
     settledWhen = (s) => s.panel && s.rows > 0 && s.syncing === 0 && s.unhooked === 0,
+    onSample = null,
   } = {},
 ) {
   const t0 = Date.now();
   const samples = [];
   let last = null;
   let settled = false;
+  let hookThrew = null;
   for (;;) {
     const s = await sidebar(cx);
     const at = Date.now() - t0;
@@ -257,6 +273,19 @@ export async function watch(
       log(`[syncrows] +${(at / 1000).toFixed(1)}s ${key}`);
       last = key;
     }
+    if (onSample) {
+      try {
+        await onSample(s, { at, wall: new Date().toISOString() });
+      } catch (e) {
+        const why = String(e?.message ?? e)
+          .split(/\r?\n/)[0]
+          .slice(0, 200);
+        hookThrew = { at, wall: new Date().toISOString(), why };
+        log(
+          `[syncrows] THE onSample HOOK THREW at +${(at / 1000).toFixed(1)}s - whatever it was measuring was NOT measured: ${why}`,
+        );
+      }
+    }
     if (settledWhen(s)) {
       settled = true;
       break;
@@ -264,7 +293,7 @@ export async function watch(
     if (Date.now() - t0 >= timeoutMs) break;
     await new Promise((r) => setTimeout(r, everyMs));
   }
-  return { settled, elapsedMs: Date.now() - t0, samples, final: samples.at(-1) ?? null };
+  return { settled, elapsedMs: Date.now() - t0, samples, final: samples.at(-1) ?? null, hookThrew };
 }
 
 /**
