@@ -743,6 +743,47 @@ no check waits on wall-clock time at all. It belongs with the rendering pass, no
 
 ## Messaging convergence
 
+### P2 - ten push notifications were REFUSED by FCM for size in one run, and the guard measures the wrong quantity (measured 2026-08-29)
+
+Read off HEAL-REVOKE-5's server window on `96bdd1bb`, which no cell on the board carries:
+
+```
+WARN [MessagingService] [PUSH_SEND][send-d55b58e9] FCM failed user=d82cd226... device=tauri-...-mtd1qgu3-vnde
+  err=Error: Message is too large. The maximum is 4K (4096 bytes).
+```
+
+**Ten of them, inside one run, all to the same Android device** - the campaign owner's phone. Three
+other devices took one each in the same window, so it is not one device's problem.
+
+**WHAT IS MEASURED, AND IT IS NOT YET THE CAUSE.** `messaging.service.ts` guards with
+`FCM_INLINE_LIMIT = 3_500` applied to `protoB64` ALONE, under a comment that correctly states the
+4 KB budget is the DATA PAYLOAD's. The payload is not the proto: `buildPushDataFields` adds nine more
+entries, and FCM counts key names as well as values - `senderId` is 64 hex characters on this
+deployment, two UUIDs are 36 each, `createdAt` is 24, and `senderName`/`groupName` are unbounded
+user text. The same map is then spread a SECOND time into `apns.payload`. So the guard bounds a
+quantity strictly smaller than the one the limit is about, which is the column rule pointed at a
+byte budget: **a limit is only evidence for the quantity it was measured over.**
+
+**WHICH excess crosses 4096 is NOT measured, and must not be guessed.** A 3 500-byte proto plus the
+fixed fields lands near 3 800 and would fit; a long `groupName`, a long display name, or the APNs
+duplication are each sufficient on their own, and nothing in the log distinguishes them. **The first
+step is not a fix, it is a number**: the failure branch has the payload in hand and logs only the
+error, so serialize it and report the actual byte count and the largest field. Sizing the budget
+from the built fields - proto gets what is left under 4096, never a constant chosen ahead of them -
+is the shape of the fix, but only after the measurement says what it must leave room for.
+
+**WHAT IT COSTS IS UNVERIFIED.** The queue lines in the same window - `message stays in DB queue,
+will be fetched on reconnect` - suggest the MESSAGE survives and only the NOTIFICATION is lost, which
+would make this "a mobile user is never told" rather than "a message disappears". That is a
+reasonable reading of the mechanism and it was NOT checked for these ten, so it is written here as
+the question and not as the answer.
+
+**NOT FIXED INSIDE A CAMPAIGN ROW, deliberately.** The blast radius is another service's push path,
+and it cannot be verified here at all: proving a fix needs a message over the limit pushed to a real
+handset, which is hardware and belongs with the lettered device checks. Everything native verified by
+COMPILING has been wrong three times on this project.
+
+
 ### P3 - the WASM warns about a missing MLS state on every device that is SUPPOSED not to have one (measured 2026-08-29)
 
 `mls-wasm/src/lib.rs` warns `device_key_b64 provided but no encrypted state - key ignored, creating
@@ -837,6 +878,13 @@ local group of the entry above within a second of the activation. Two P2s, one g
 apart, twice: **treat "are these one defect" as the first question, not two independent
 investigations.** The discriminator both entries name is still unmeasured - the KeyPackage
 publication's own timestamp against the refusal's.
+
+**RECURRED ON HEAL-REVOKE-5, `96bdd1bb`, 2026-08-29 - same group `315b8a1d`, on the SEED device, at
+21:00:41.** This sighting cannot measure the interval the entry asks for: **no `[MEMBERSHIP_ACTIVE]`
+line for that device appears in the window at all**, and that is explained by the ROW rather than by
+the defect - HEAL-REVOKE-5 revokes the seed roughly ninety seconds later, so the activation had no
+opportunity to happen. Recorded so the absence is not later read as a refusal that never healed. The
+population now includes "a device minted as a revocation row's seed", which is a third rung.
 
 **And on those two rows the refusal was invisible from the client half.** `healnew.mjs` records only
 `observers: { w3 }`; the server window is taken by `run.mjs` per PASS and printed, not written to the
