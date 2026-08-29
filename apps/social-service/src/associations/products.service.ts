@@ -9,7 +9,7 @@ import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
-import { createHmac, randomBytes } from 'crypto';
+import { createHmac } from 'crypto';
 import { firstValueFrom } from 'rxjs';
 import * as ExcelJS from 'exceljs';
 import { AssociationProduct } from './entities/association-product.entity';
@@ -735,18 +735,12 @@ export class ProductsService {
 
   /**
    * Loads product/association, validates purchase rules, and resolves the amount in cents.
-   *
-   * `skipPaymentReadiness` drops the two checks that are purely about taking money - the product
-   * being on sale and the Stripe target being onboarded - and is used ONLY by the admin test
-   * top-up, which charges nothing. Everything else (gating, purchase limits, the server-side
-   * amount) is validated identically, so the test still exercises the real rules.
    */
   private async resolvePurchase(
     associationId: string,
     productId: string,
     userId: string,
-    customAmountCents?: number,
-    opts: { skipPaymentReadiness?: boolean } = {}
+    customAmountCents?: number
   ): Promise<{
     asso: Association;
     product: AssociationProduct;
@@ -760,13 +754,13 @@ export class ProductsService {
 
     if (!asso) throw new NotFoundException('Association not found');
     if (!product) throw new NotFoundException('Product not found');
-    if (!product.isActive && !opts.skipPaymentReadiness) {
+    if (!product.isActive) {
       throw new NotFoundException('Product not found or inactive');
     }
 
     // Route to the association's own account, or an approved parent's when delegating.
     const paymentTarget = await this.resolvePaymentTargetFor(asso);
-    if (!opts.skipPaymentReadiness && (!paymentTarget.ready || !paymentTarget.connectAccountId)) {
+    if (!paymentTarget.ready || !paymentTarget.connectAccountId) {
       throw new BadRequestException(
         paymentTarget.delegated
           ? 'The parent association this club delegates payments to has not completed onboarding to receive payments'
@@ -1114,6 +1108,19 @@ export class ProductsService {
     const product = await this.productRepo.findOne({ where: { id: productId, associationId } });
     if (!product) throw new NotFoundException('Product not found');
 
+    // A cash grant records a sale in Canari's books; it never credits the Cercle balance, because
+    // the outbound webhook is keyed by a Stripe PaymentIntent a cash sale does not have. Recording
+    // one against a top-up product therefore produces a line that reads as a recharge and is not
+    // one - the confusion outweighs the accounting. The Cercle credits from its own till screen.
+    if (product.type === 'balance_topup') {
+      this.logger.warn(
+        `[SHOP] refused a cash grant on balance_topup product=${productId.slice(0, 8)} by=${grantedBy.slice(0, 8)}`
+      );
+      throw new BadRequestException(
+        'A balance top-up cannot be granted as a cash sale: it would not credit the Cercle account. Credit the member from the Cercle instead.'
+      );
+    }
+
     const userRows: { id: string }[] = await this.productRepo.manager.query(
       `SELECT id FROM users WHERE id = $1`,
       [dto.userId]
@@ -1419,96 +1426,6 @@ export class ProductsService {
     );
 
     await this.runDeliveryAttempts(product, delivery, CERCLE_RETRY_DELAYS);
-  }
-
-  /**
-   * Runs a Cercle top-up end to end for `userId` WITHOUT charging a card: everything a real
-   * purchase does is executed unchanged - buyer gating and purchase limits, server-side amount
-   * resolution, tag grants, the signed webhook with its 3 delivery attempts, the
-   * `webhook_deliveries` audit row and the `purchase_records` row. Only Stripe is left out: the
-   * PaymentIntent is synthetic and the two conditions that exist solely to take money (product on
-   * sale, Connect account onboarded) are waived, so nothing is charged and no money moves.
-   *
-   * It deliberately reuses `resolvePurchase` (the checkout-side validation) and
-   * `handlePurchaseCompleted` (the exact entry point core-service calls from the Stripe webhook)
-   * instead of re-implementing them: a parallel implementation would only ever prove itself.
-   *
-   * The synthetic intent is prefixed `pi_canari_test_`, so the rows it leaves are identifiable on
-   * both sides (Canari `purchase_records`/`webhook_deliveries`, Cercle
-   * `account_movements.idempotency_key`). Global-admin only, caller-credits-caller only (see the
-   * controller) - it is a deployment check, not a way to hand out balance.
-   */
-  async simulateCercleTopup(
-    associationId: string,
-    productId: string,
-    userId: string,
-    requestedAmountCents: number
-  ): Promise<{
-    paymentIntentId: string;
-    amountCents: number;
-    status: 'pending' | 'delivered' | 'failed';
-    attemptCount: number;
-    lastError: string | null;
-  }> {
-    this.logger.log(
-      `[CERCLE][TEST] simulated top-up requested: association=${associationId.slice(0, 8)} product=${productId.slice(0, 8)} user=${userId.slice(0, 8)} requested=${requestedAmountCents}`
-    );
-
-    const product = await this.productRepo.findOne({ where: { id: productId, associationId } });
-    if (!product) throw new NotFoundException('Product not found');
-    if (product.type !== 'balance_topup') {
-      throw new BadRequestException('Only balance_topup (Cercle) products can be test-credited');
-    }
-    // The real fulfillment SKIPS the dispatch silently when either field is missing, so without
-    // this guard the test would report a flawless success while nothing was ever sent.
-    if (!product.webhookUrl || !product.webhookSecret) {
-      throw new BadRequestException(
-        'This product has no webhookUrl/webhookSecret: a real purchase would credit nothing on the Cercle side'
-      );
-    }
-
-    // Same checks a real checkout runs - buyer gating, purchase limits, server-side amount. The
-    // resolved amount wins over the requested one exactly as it would for a paying buyer, so a
-    // fixed-price product still credits its own price. Only the two Stripe-side conditions are
-    // waived: nothing is charged here, so an association without a Connect account (or a product
-    // left inactive because of it) must not block a webhook test.
-    const { amountCents } = await this.resolvePurchase(
-      associationId,
-      productId,
-      userId,
-      requestedAmountCents,
-      { skipPaymentReadiness: true }
-    );
-
-    const paymentIntentId = `pi_canari_test_${randomBytes(12).toString('hex')}`;
-    await this.handlePurchaseCompleted(productId, userId, amountCents, paymentIntentId);
-
-    const delivery = await this.deliveryRepo.findOne({ where: { paymentIntentId } });
-    if (!delivery) {
-      // Unreachable given the webhook config check above - but a missing audit row means the
-      // dispatch never ran, which must never be reported as a delivered top-up.
-      this.logger.error(
-        `[CERCLE][TEST] no delivery row recorded for intent=${paymentIntentId} - dispatch was skipped`
-      );
-      return {
-        paymentIntentId,
-        amountCents,
-        status: 'failed',
-        attemptCount: 0,
-        lastError: 'No webhook delivery was recorded',
-      };
-    }
-
-    this.logger.log(
-      `[CERCLE][TEST] simulated top-up done: intent=${paymentIntentId} amount=${amountCents} status=${delivery.status} attempts=${delivery.attemptCount}`
-    );
-    return {
-      paymentIntentId,
-      amountCents,
-      status: delivery.status,
-      attemptCount: delivery.attemptCount,
-      lastError: delivery.lastError,
-    };
   }
 
   // ── Webhook delivery admin ────────────────────────────────────────────────

@@ -30,7 +30,14 @@
   let grantAmountEuros = $state<number | ''>('');
   let grantingProduct = $state(false);
 
-  const grantSelectedProduct = $derived(products.find((p) => p.id === grantProductId));
+  /**
+   * Products a cash sale may be recorded against. A `balance_topup` is excluded on purpose: it
+   * credits a balance on the Cercle's own books, which a Canari cash grant never does, so offering
+   * it here only ever reads as "this recharged them" when it did not. The bar credits a member
+   * from the Cercle's own till screen.
+   */
+  const grantableProducts = $derived(products.filter((p) => p.type !== 'balance_topup'));
+  const grantSelectedProduct = $derived(grantableProducts.find((p) => p.id === grantProductId));
   const grantNeedsAmount = $derived(
     grantSelectedProduct != null && grantSelectedProduct.amountCents == null
   );
@@ -163,7 +170,7 @@
           required
         >
           <option value="">{m.asso_achats_grant_product_placeholder()}</option>
-          {#each products as product (product.id)}
+          {#each grantableProducts as product (product.id)}
             <option value={product.id}>{product.name}</option>
           {/each}
         </select>
@@ -189,8 +196,6 @@
     <p class="text-text-muted text-xs">
       {#if grantSelectedProduct?.type === 'membership' && grantSelectedProduct.grantedTagName}
         {m.asso_achats_grant_tag_hint({ tag: grantSelectedProduct.grantedTagName })}
-      {:else if grantSelectedProduct?.type === 'balance_topup'}
-        {m.asso_achats_grant_topup_hint()}
       {:else}
         {m.asso_achats_grant_other_hint()}
       {/if}

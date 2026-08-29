@@ -323,27 +323,20 @@ nulls it and adds `webhookConfigured: boolean`. It had no projection at all befo
 answers every logged-in user, and a signature is worthless once its key is in a JSON response.
 `webhookUrl` is returned - it is the Cercle's public endpoint, and the admin form must show it.
 
-**Testing the link without paying (`simulateCercleTopup`)**: each product on `/admin/cercle` carries
-a test button that credits the CALLING admin's own Cercle account for 5 EUR through the production
-path - `resolvePurchase` for the buyer checks, purchase limits and the server-side amount, then
-`handlePurchaseCompleted`, the very entry point core-service calls from the Stripe webhook, so the
-signed dispatch, the retry ladder, the `webhook_deliveries` row and the `purchase_records` row are
-all the real ones. `POST /associations/:id/products/:productId/simulate-topup`, global admin only,
-and the beneficiary is always the caller (taken from `x-user-id`, never from the body).
+**A CASH GRANT MAY NOT BE RECORDED AGAINST A TOP-UP PRODUCT** (`grantProductPurchase`, refused with
+a 400). The manual grant on an association's Achats tab records a sale in Canari's books and passes
+`dispatchWebhook: false`; even if it did not, the dispatch requires a `stripePaymentIntentId` and a
+cash sale has none - the intent IS the idempotency key the Cercle deduplicates on. So the line would
+read as a recharge, credit nothing on the Cercle, and no retry could ever repair it, because there
+is no key to retry under. The type is also filtered out of the grant selector, but the selector is a
+courtesy and the server check is the control. **The bar credits a member from the Cercle's own till
+screen**, which writes its own ledger line.
 
-Three deliberate departures, and nothing else differs:
-
-- the PaymentIntent is synthetic, prefixed **`pi_canari_test_`** so the rows are identifiable on
-  both sides (it is also what the Cercle stores as `canari_ledger_details.payment_intent_id`);
-- `skipPaymentReadiness` waives the two conditions that exist only to take money - the product being
-  on sale and the Connect account being onboarded - because an association with no Stripe account
-  must still be able to prove its webhook works;
-- a product with an empty `webhookUrl`/`webhookSecret` is refused up front rather than run: the real
-  fulfillment skips the dispatch silently there, which would report a flawless success while nothing
-  was ever sent.
-
-It DOES record a real 5 EUR purchase in the association's accounting (that is what "reproduces
-everything" means) - the rows are removable by their `pi_canari_test_` intent.
+**There is no test lever left on this path.** `/admin/cercle` used to carry a button that ran the
+whole production credit for the pressing admin on a synthetic `pi_canari_test_` intent; it was
+removed on 2026-08-28 (see `CHANGELOG.md`) because a control that credits a real balance on another
+system, and writes a real accounting row, is not a test. What now proves the link is a real purchase
+through the boutique, and the delivery list on `/admin/cercle`.
 
 **The outbound half is live and proven against the real Cercle (2026-08-03)**: deliveries land on
 the first attempt, and on the Cercle they produce one `ledger` row (`type='topup'`, `uuid_staff`
@@ -435,7 +428,6 @@ by another - a cross-tenant IDOR (WP-COT-9).
 | POST | `/api/associations/:id/products` | Create a product (incl. `type: 'membership'`) (`MANAGE_PRODUCTS`) |
 | POST | `/api/associations/:id/products/:productId/checkout` | Start Stripe checkout for a product |
 | POST | `/api/associations/:id/products/:productId/grant` | Manual purchase + tag grant (`MANAGE_PRODUCTS`) |
-| POST | `/api/associations/:id/products/:productId/simulate-topup` | Test top-up for the caller, no Stripe charge (global admin) |
 | POST | `/api/associations/:id/webhook-failures/:deliveryId/retry` | Re-fire a failed Cercle delivery (`MANAGE_PRODUCTS`, scoped to `:id`) |
 | DELETE | `/api/associations/:id/webhook-failures/:deliveryId` | Drop a failed delivery settled by hand (`MANAGE_PRODUCTS`) |
 | POST | `/api/forms/:id/submit` | Submit a form; applies member pricing, may grant a tag |

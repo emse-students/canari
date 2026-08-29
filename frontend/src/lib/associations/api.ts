@@ -1604,33 +1604,6 @@ export async function listWebhookFailures(associationId: string): Promise<Webhoo
   );
 }
 
-/** Outcome of a test top-up: the audit row the production dispatcher left behind. */
-export interface CercleTopupSimulation {
-  /** Synthetic Stripe intent (`pi_canari_test_…`) - the idempotency key on both sides. */
-  paymentIntentId: string;
-  /** Amount actually credited: the server-resolved price, not necessarily the requested one. */
-  amountCents: number;
-  status: 'pending' | 'delivered' | 'failed';
-  attemptCount: number;
-  lastError: string | null;
-}
-
-/**
- * Credits the CURRENT user's Cercle account through the whole production path with no Stripe
- * charge (global admin only): same validation, same signed webhook, same audit rows as a real
- * purchase. `amountCents` is a request - a fixed-price product still credits its own price.
- */
-export async function simulateCercleTopup(
-  associationId: string,
-  productId: string,
-  amountCents: number
-): Promise<CercleTopupSimulation> {
-  return request<CercleTopupSimulation>(
-    `/api/associations/${encodeURIComponent(associationId)}/products/${encodeURIComponent(productId)}/simulate-topup`,
-    { method: 'POST', body: JSON.stringify({ amountCents }) }
-  );
-}
-
 /**
  * Retries a failed Cercle webhook delivery ONCE (requires MANAGE_PRODUCTS), and answers with the
  * row as it now stands - so the caller can say whether it went through rather than just reload.

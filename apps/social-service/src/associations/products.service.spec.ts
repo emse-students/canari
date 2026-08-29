@@ -498,90 +498,42 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       ...overrides,
     } as Partial<AssociationProduct>);
 
-  describe('simulated Cercle top-up (admin test button, no Stripe charge)', () => {
-    it('runs the production path: signed webhook, audit row and a purchase recorded as Stripe', async () => {
-      const { service, productRepo, assoRepo, httpService, purchaseRecordService } = makeService();
-      assoRepo.findOne.mockResolvedValue(asso());
+  describe('a cash grant may not be recorded against a Cercle top-up', () => {
+    it('refuses the grant, before touching the buyer or the books', async () => {
+      const { service, productRepo, purchaseRecordService } = makeService();
       productRepo.findOne.mockResolvedValue(topupProduct());
 
-      const result = await service.simulateCercleTopup('asso1', 'prod1', 'user1', 500);
-
-      expect(result.status).toBe('delivered');
-      expect(result.amountCents).toBe(500);
-      expect(result.paymentIntentId).toMatch(/^pi_canari_test_[0-9a-f]{24}$/);
-
-      const [url, body, config] = (httpService.post as jest.Mock).mock.calls[0];
-      expect(url).toBe('https://cercle.example/api/canari/topup');
-      expect(JSON.parse(body)).toMatchObject({
-        productId: 'prod1',
-        userId: 'user1',
-        amountCents: 500,
-        paymentIntentId: result.paymentIntentId,
-      });
-      expect(config.headers['X-Canari-Signature']).toMatch(/^sha256=[0-9a-f]{64}$/);
-
-      // The purchase is recorded exactly as a paid Stripe purchase would be - only the intent is
-      // synthetic, so the accounting rows and the Cercle idempotency key are the real ones.
-      expect(purchaseRecordService.create).toHaveBeenCalledWith(
-        expect.objectContaining({
+      await expect(
+        service.grantProductPurchase('asso1', 'prod1', 'admin1', {
           userId: 'user1',
-          paymentMethod: 'stripe',
-          status: 'paid',
-          amountCents: 500,
-          stripePaymentIntentId: result.paymentIntentId,
+          amountCents: 1000,
         })
-      );
-    });
-
-    it('credits the fixed price rather than the requested amount', async () => {
-      const { service, productRepo, assoRepo } = makeService();
-      assoRepo.findOne.mockResolvedValue(asso());
-      productRepo.findOne.mockResolvedValue(
-        topupProduct({ amountCents: 1000, allowCustomAmount: false })
-      );
-
-      const result = await service.simulateCercleTopup('asso1', 'prod1', 'user1', 500);
-      expect(result.amountCents).toBe(1000);
-    });
-
-    it('refuses when the product has no webhook configured, instead of silently crediting nothing', async () => {
-      const { service, productRepo, assoRepo, purchaseRecordService } = makeService();
-      assoRepo.findOne.mockResolvedValue(asso());
-      productRepo.findOne.mockResolvedValue(topupProduct({ webhookSecret: null }));
-
-      await expect(service.simulateCercleTopup('asso1', 'prod1', 'user1', 500)).rejects.toThrow(
-        BadRequestException
-      );
+      ).rejects.toThrow(BadRequestException);
+      // The refusal is the point: a recorded line would read as a recharge that never reached the
+      // Cercle, since a cash sale has no PaymentIntent to key the webhook on.
       expect(purchaseRecordService.create).not.toHaveBeenCalled();
     });
 
-    it('refuses a product that is not a balance_topup', async () => {
-      const { service, productRepo, assoRepo } = makeService();
-      assoRepo.findOne.mockResolvedValue(asso());
-      productRepo.findOne.mockResolvedValue(topupProduct({ type: 'other' }));
-
-      await expect(service.simulateCercleTopup('asso1', 'prod1', 'user1', 500)).rejects.toThrow(
-        BadRequestException
-      );
-    });
-
-    it('reports a failed delivery instead of a success when the Cercle refuses it', async () => {
-      const { service, productRepo, assoRepo, httpService } = makeService();
-      jest.spyOn(global, 'setTimeout').mockImplementation(((cb: () => void) => {
-        cb();
-        return 0 as unknown as NodeJS.Timeout;
-      }) as unknown as typeof setTimeout);
-      assoRepo.findOne.mockResolvedValue(asso());
-      productRepo.findOne.mockResolvedValue(topupProduct());
-      (httpService.post as jest.Mock).mockImplementation(() => {
-        throw new Error('401 Unauthorized');
+    it('still grants an ordinary product', async () => {
+      const { service, productRepo, purchaseRecordService } = makeService();
+      productRepo.findOne.mockResolvedValue(product({ type: 'other', amountCents: 500 }));
+      productRepo.manager.query.mockResolvedValue([{ id: 'user1' }]);
+      purchaseRecordService.create.mockResolvedValue({
+        id: 'rec1',
+        userId: 'user1',
+        source: 'product',
+        productId: 'prod1',
+        formId: null,
+        productName: 'Sweat',
+        amountCents: 500,
+        paymentMethod: 'cash',
+        paidAt: new Date('2026-08-28T12:00:00Z'),
       });
 
-      const result = await service.simulateCercleTopup('asso1', 'prod1', 'user1', 500);
-      expect(result.status).toBe('failed');
-      expect(result.attemptCount).toBe(3);
-      expect(result.lastError).toContain('401');
-      jest.restoreAllMocks();
+      await service.grantProductPurchase('asso1', 'prod1', 'admin1', { userId: 'user1' });
+      expect(purchaseRecordService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ paymentMethod: 'cash', amountCents: 500 })
+      );
     });
   });
 
