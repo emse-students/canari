@@ -961,6 +961,16 @@ The cells carried these as prose; they are design, and the board is a state tabl
 - **HEAL-NEW-15 is a finding independent of the heal completing.** An amber sidebar that cannot be
   clicked, or a healed conversation that will not open, fails the row whatever the repair does next: a
   10-minute heal is acceptable where 10 minutes of a frozen list is not.
+  **AND THE RUNNER DOES NOT ASK THAT QUESTION YET, read 2026-08-29 and owed before the row is taken
+  again.** `healnew.mjs:555` calls `navigationCost` AFTER `watchRows` has returned (`:548`), so on a
+  topology that heals fast - row 15's responder is W1, present from the start, which is row 3's
+  topology and row 3 settled during enrolment - the click lands on a sidebar that is already green.
+  The `FAIL` of `48b65d08` recorded exactly that pair, `healed: true` beside `usability.openedInMs:
+  26`: a real number, about an app that had finished healing. `navigationCost` also clicks only a
+  `data-ready="true"` tile, so the half of the row that asks whether the AMBER list itself answers a
+  click is measured by nothing at all. The sample has to be taken inside the watch, at the first
+  sample holding a ready row and a syncing row at once, and a run where those never coexist has not
+  asked the row's question - which is `INVALID`, never a pass over an unasked question.
 
 ### The HEAL rung's first two nights, and the device cap under all of it
 
@@ -1047,6 +1057,15 @@ counts the account's `key_package` rows and throws at `MAX_DEVICES_PER_USER` = 1
 exactly 15, and **all fifteen slots were the campaign's own abandoned mints**. With the debris purged
 (25 devices deleted through the product's own panel, account back to 2), the same profile published
 its KeyPackage in **1.9 s**.
+
+**AND THE PREDICATE THAT NAMES THE RESPONDER IS SATISFIED BY THE DEBRIS, read 2026-08-29.** Rows 3
+and 15 assert `ourOwnDeviceWasInTheFleet` as `fleet.readable && fleet.extra.length > 0`
+(`healnew.mjs:600`) - a COUNT, over a presence read whose keys outlive their device by up to 20 s and
+which the abandoned mints of this very rung populate. HEAL-NEW-15's `FAIL` on `48b65d08` carried two
+abandoned mints in `fleet.extra`, so the expectation would have been met with W1 shut. It is the same
+fault as a `PASS` over an empty intersection: a predicate that cannot tell the responder the row NAMES
+from the wreckage the row left behind. Every HEAL-NEW cell taken until it asserts W1's own id by name
+is owed a read of `fleet.extra` before it is believed.
 
 **So the census was never the wrong question - it was the RIGHT one, asked of a device the server had
 refused.** Reading `auth_sessions` instead made the row pass while the device was unusable, which is
