@@ -1039,7 +1039,22 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
         }
         cb.log('[SECURITY] This device was revoked by its owner - signing out and resetting.');
         await wipeRevokedDevice(ctx, cb);
-        cb.onLoginFailed?.(m.auth_device_revoked_reset(), 'device_revoked');
+        // A REVOCATION IS NOT A FAILED LOGIN ATTEMPT, AND THE SEAM DECIDES WHAT THE USER SEES.
+        // `onLoginFailed` means "the credential you just offered was refused, stay in the modal and
+        // try again" - which is right at the two login-path call sites above, where a person is
+        // standing at the gate. Here there is no gate and nothing to retry: the wipe one line up has
+        // just returned this device to a fresh install, so there is no PIN, no device id and no
+        // session left for a modal to act on. The live callbacks bind `onLoginFailed` to the
+        // saved-PIN handler, so this call REOPENED THE PIN PROMPT on top of /chat and the app then
+        // sat there - measured on prod 2026-08-29: no sidebar, no session, no navigation, until the
+        // prompt's own attempt drew a 401 and the session-expired path finally did the redirect.
+        //
+        // `onSessionExpired` is the seam written for exactly this - an authentication loss rather
+        // than a retryable error - and it is the one callback the background service wires
+        // unconditionally: it clears the auth and goes to /login. Nothing is lost by the change,
+        // because the message it replaces was displayed in a modal the app abandoned two seconds
+        // later anyway.
+        cb.onSessionExpired?.();
       })();
     });
 

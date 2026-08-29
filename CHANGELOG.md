@@ -238,6 +238,23 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A device revoked while it was RUNNING wiped itself and then sat on a dead `/chat`.** Measured on
+  production 2026-08-29 by HEAL-REVOKE-5, on the build that had just fixed the wipe itself: the
+  `device_revoked` frame arrived, the wipe ran to completion and left nothing of the account - and
+  the client stayed exactly where it was, on `/chat`, with no session, no sidebar and no navigation.
+  It was still there fifteen seconds later. **The wipe was right and the handover was wrong.** The
+  push handler announced the revocation through `onLoginFailed`, which is the correct seam at the two
+  login-path call sites beside it - a person is at the gate, the modal is where the answer belongs -
+  and the wrong one here, where the background service binds that callback to the saved-PIN handler.
+  So a revocation REOPENED THE PIN PROMPT on a device the previous line had returned to a fresh
+  install: no PIN to enter, no device id, no session for it to act on. What finally moved the page
+  was the prompt's own attempt drawing a `401` from `/api/auth/refresh`, several seconds later,
+  through the session-expired path - the right destination reached by accident, by way of a failure.
+  The handler now calls `onSessionExpired`, the seam written for an authentication loss rather than a
+  retryable error and the one callback the background service wires unconditionally: it clears the
+  auth and goes to `/login`. Nothing is lost, because the message it replaces lived in a modal the
+  app abandoned two seconds later anyway.
+
 - **Two real conversations were stuck for good because the recovery ladder could only be entered
   from the read side.** Found on production 2026-08-29 while HEAL-REVOKE-5's fresh reference device
   sat at eleven groups of thirteen for eight minutes: the two it never got were being refused

@@ -720,6 +720,7 @@ before touching any login, cookie or rotation.
 - **A dead session is an ANSWER** - never retry the request anonymously, or "you are logged out" renders as "there is nothing here". Reach the verdict in ONE place.
 - **A one-shot announcement and a late subscriber are a RACE** - replay the verdict to whoever registers after it, because a fallback never does everything the real handler does.
 - **A ONE-SHOT GUARD MAY COVER ONLY THE PART THAT MUST HAPPEN ONCE.** Releasing whoever is waiting RIGHT NOW is not the logout: "has a logout already run" is true once per expiry, "does this submit need its modal closed" is true again every time. Gating both on one flag left a PIN modal that no correct PIN could ever answer, and a 10 s watchdog then invented "please try again" for a latch that is permanent by design ([story](../../CHANGELOG.md)).
+- **AN ERROR SEAM THAT OFFERS A RETRY MAY ONLY BE USED WHERE THERE IS SOMETHING TO RETRY.** `onLoginFailed` and `onSessionExpired` differ in exactly that, and the caller BINDS them to different things - the first to a PIN prompt, the second to a logout and a redirect. A revocation announced through the first reopened a PIN prompt on a device the line above had just returned to a fresh install, and the page then sat on `/chat` with no session until the prompt's own attempt drew a 401 ([story](../../CHANGELOG.md)). Pick the seam by what the user can DO next, never by the fact that something failed.
 
 ## Object storage, and deleting infrastructure -> [docker](infrastructure/docker.md)
 

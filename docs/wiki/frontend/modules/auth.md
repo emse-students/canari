@@ -422,6 +422,31 @@ for the same reason they are: a swallowed login is otherwise indistinguishable f
 ran. Pinned by source guards in `offlineUnlock.test.ts`, which assert the ORDER - the thing that
 broke.
 
+#### And what the wipe hands over to decides whether the device ever leaves the page
+
+The wipe finishing is not the end of the revocation - something has to take the person off a client
+that no longer has an account. There are three call sites for `wipeRevokedDevice` and they do not
+all have the same next step. The two inside `loginImpl` throw a `LoginFailure`, which is right: a
+person is standing at the PIN gate, the modal is where an answer belongs, and `loginImpl`'s caller is
+holding a submit open waiting for one. The third is the `device_revoked` push handler, and there is
+no gate, no submit and nothing to retry.
+
+It used the same seam anyway, and the callbacks make the consequence concrete. `ChatBackgroundService`
+binds `onLoginFailed` to `onSavedPinFailed`, which sets `showPinModal = true`. So a revocation
+reopened the PIN prompt on a device the line above had just returned to a fresh install: no PIN
+registered locally, no device id, no session for the prompt to act on. Measured on production
+2026-08-29, the client then stayed on `/chat` with no sidebar and no navigation for at least fifteen
+seconds; what eventually moved it was the prompt's own attempt calling `POST /api/auth/refresh`,
+being told `no canari_refresh cookie`, and reaching `handleSessionExpired` - the right destination,
+arrived at by way of a failure, several seconds late.
+
+`onSessionExpired` is that destination named directly. Its contract is an authentication loss rather
+than a retryable error, and it is the one callback `sessionCb()` wires unconditionally rather than as
+an override - `handleSessionExpired` clears the auth and navigates to `/login`. The localized message
+the change drops was only ever shown in a modal the app abandoned two seconds later, so nothing a
+user could read is lost. Pinned in `offlineUnlock.test.ts` by two guards on the handler's own text:
+the handover comes after the wipe, and it is not the retry seam.
+
 ## Mobile unlock flow (Tauri)
 
 Driven by `startLoginFlow()` in `components/layout/ChatBackgroundService.svelte`.
