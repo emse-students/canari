@@ -444,8 +444,12 @@ function classifyWipe(cx) {
  * The caller's guard knows which rows meant it: `theSettlePredicateKnewWhatToWaitFor` demands a
  * non-empty world only where the row's own `returnTopology` put someone there.
  *
- * READING A RESPONDER COSTS IT NOTHING. `sidebar()` is one `document.querySelector` in the page: no
- * request, no console line, nothing that reaches the actor's own observer or its gate.
+ * READING A RESPONDER IS ALMOST FREE, AND THE EXCEPTION IS NAMED. `sidebar()` is one
+ * `document.querySelector` in the page - no request, no console line. `activeGroupIds` is NOT free:
+ * it issues a refresh and a groups fetch from the actor's own page. They are raw `fetch` calls in
+ * the evaluate context rather than calls through the app's client, so nothing routes them into the
+ * app's logger and the actor's observer sees no line - but the requests are real, and a claim that
+ * reading a responder costs nothing at all would be false and would hide the next surprise.
  */
 async function whatTheWorldCanServe(label) {
   const served = new Set();
@@ -946,10 +950,13 @@ const expectations = {
    * reading a report that DRAINS from inside a poll, so the run kept the last four seconds of a
    * two-minute wait and said the device had stayed silent; and the settle predicate accepted a
    * device holding three of eleven groups, so the equality gap was measured against a device that
-   * had not finished arriving. NEITHER FAILURE WAS DISTINGUISHABLE FROM THE PRODUCT FAILING, which
-   * is the whole reason they are expectations and not notes: a zero that could mean "silent" or
-   * "unread" is evidence for nothing, and a rig that cannot tell the two apart must FAIL rather
-   * than pick one. `theWipeWindowWasActuallyRead` is what caught the second one, on its first run.
+   * had not finished arriving - and the guard added then covered only the VACUOUS half of that
+   * second one, an empty subset, leaving the partial-arrival half open until
+   * `subsetArrivedAndSettled` closed it. NEITHER FAILURE WAS DISTINGUISHABLE FROM THE PRODUCT
+   * FAILING, which is the whole reason they are expectations and not notes: a zero that could mean
+   * "silent" or "unread" is evidence for nothing, and a rig that cannot tell the two apart must
+   * FAIL rather than pick one. `theWipeWindowWasActuallyRead` is what caught the second one, on its
+   * first run.
    */
   theWipeWindowWasActuallyRead: wipe.linesRead > 0,
   theSettlePredicateKnewWhatToWaitFor: seedTarget.ids.size > 0 &&
