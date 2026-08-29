@@ -12,6 +12,8 @@
   import { ChevronLeft, ChevronRight } from '@lucide/svelte';
   import { fade } from 'svelte/transition';
   import { clampTranslation, zoomAboutPivot } from '$lib/utils/pinchZoom';
+  import { isVerticalDismissDrag, shouldDismissOnRelease } from '$lib/utils/lightboxSwipeDismiss';
+  import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { m } from '$lib/paraglide/messages';
   import FullScreenViewer from './FullScreenViewer.svelte';
 
@@ -47,6 +49,23 @@
     children,
   }: Props = $props();
 
+  // ---- Back-button support ----
+  // Opening the lightbox pushes a browser history entry, same mechanism Modal.svelte and the
+  // PIN modal already use: physical/hardware Back then closes the lightbox instead of leaving
+  // the app or navigating the underlying conversation away.
+  const historyOverlay = bindHistoryOverlay(
+    () => open,
+    () => onClose()
+  );
+  $effect(() => {
+    historyOverlay.syncOpen();
+  });
+  /** Every UI-triggered close (X button, backdrop, Escape, swipe) goes through here, never
+   * straight to `onClose`, so it stays in sync with the history entry pushed above. */
+  function dismiss() {
+    historyOverlay.dismissFromUi();
+  }
+
   // ---- Zoom / pan ----
   const MIN_SCALE = 1;
   const MAX_SCALE = 8;
@@ -66,6 +85,14 @@
     lastPinchDist = 0;
   let zoomTimeout: ReturnType<typeof setTimeout> | null = null;
 
+  // Swipe-to-dismiss tracking (only armed while unzoomed - a zoomed image keeps its one-finger
+  // drag as pan, per the existing `isZoomed` gate below).
+  let isDismissDragging = false;
+  let dismissStartX = 0,
+    dismissStartY = 0;
+  let dismissDy = $state(0);
+  let snappingBack = $state(false);
+
   let transformEl = $state<HTMLDivElement | null>(null);
 
   const isZoomed = $derived(scale > 1.005);
@@ -81,6 +108,9 @@
     ty = 0;
     isDragging = false;
     showZoomIndicator = false;
+    isDismissDragging = false;
+    dismissDy = 0;
+    snappingBack = false;
   }
 
   function showIndicator() {
@@ -177,6 +207,13 @@
         dragStartTx = tx;
         dragStartTy = ty;
         e.preventDefault();
+      } else if (e.touches.length === 1 && !isZoomed) {
+        const target = e.target as HTMLElement;
+        if (target.closest('video, button')) return;
+        isDismissDragging = true;
+        snappingBack = false;
+        dismissStartX = e.touches[0].clientX;
+        dismissStartY = e.touches[0].clientY;
       }
     }
 
@@ -202,12 +239,29 @@
           dragStartTx + e.touches[0].clientX - dragStartX,
           dragStartTy + e.touches[0].clientY - dragStartY
         );
+      } else if (isDismissDragging && e.touches.length === 1) {
+        const dx = e.touches[0].clientX - dismissStartX;
+        const dy = e.touches[0].clientY - dismissStartY;
+        if (!isVerticalDismissDrag(dx, dy)) return;
+        e.preventDefault();
+        dismissDy = dy;
       }
     }
 
     function onTouchEnd(e: TouchEvent) {
       if (e.touches.length < 2) isPinching = false;
-      if (e.touches.length === 0) isDragging = false;
+      if (e.touches.length === 0) {
+        isDragging = false;
+        if (isDismissDragging) {
+          isDismissDragging = false;
+          if (shouldDismissOnRelease(dismissDy)) {
+            dismiss();
+          } else if (dismissDy !== 0) {
+            snappingBack = true;
+            dismissDy = 0;
+          }
+        }
+      }
     }
 
     el.addEventListener('touchstart', onTouchStart, { passive: false });
@@ -289,8 +343,8 @@
 {#if open}
   <FullScreenViewer
     {ariaLabel}
-    {onClose}
-    onEscape={() => (isZoomed ? resetZoom() : onClose())}
+    onClose={dismiss}
+    onEscape={() => (isZoomed ? resetZoom() : dismiss())}
     lockTouch
   >
     {#snippet headerLead()}
@@ -334,7 +388,10 @@
         bind:this={transformEl}
         role="presentation"
         class="pointer-events-auto relative z-10 flex h-full w-full items-center justify-center select-none"
-        style="transform: translate({tx}px, {ty}px) scale({scale}); transform-origin: center; will-change: transform; touch-action: none; cursor: {isDragging
+        style="transform: translate({tx}px, {ty +
+          dismissDy}px) scale({scale}); transform-origin: center; will-change: transform; touch-action: none; transition: {snappingBack
+          ? 'transform 200ms ease-out'
+          : 'none'}; opacity: {1 - Math.min(Math.abs(dismissDy) / 500, 0.5)}; cursor: {isDragging
           ? 'grabbing'
           : isZoomed
             ? 'grab'
@@ -345,6 +402,7 @@
         onpointermove={handlePointerMove}
         onpointerup={handlePointerUp}
         onpointercancel={handlePointerUp}
+        ontransitionend={() => (snappingBack = false)}
       >
         {@render children?.()}
       </div>

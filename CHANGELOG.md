@@ -13,6 +13,20 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Added
 
+- **Opening an image now pushes a history entry, so the hardware/browser Back button closes the
+  lightbox instead of leaving the conversation.** `MediaLightbox` was one of the few full-screen
+  overlays in the app that had never been wired into the shared history-overlay stack
+  (`historyOverlayStack.ts`) already backing `Modal.svelte` and the PIN modal - so it is the first
+  real consumer of the existing-but-unused `bindHistoryOverlay` helper, rather than a new
+  reimplementation of the same effect. Every UI-triggered close (X button, backdrop, Escape, and
+  the new swipe below) now goes through one `dismiss()` that keeps the history entry in sync,
+  instead of calling `onClose` straight from four different places.
+- **A vertical swipe up or down now closes the image viewer**, while it is not zoomed in (a
+  zoomed image keeps its one-finger drag as pan, unchanged). The gesture classification
+  (vertical-enough to count, far-enough-released to dismiss) is pure logic in the new
+  `lightboxSwipeDismiss.ts`, tested without a browser - the same split already used for the
+  bottom-nav swipe and the per-message reply swipe - so `MediaLightbox.svelte` only does the DOM
+  read and the live drag-follow visual feedback.
 - **A conversation tile now says whether it is SELECTED, in the markup.** `ConversationTile`
   publishes `data-selected` beside the `data-conversation-tile` / `data-ready` / `data-removed` hooks
   it already carried, and nothing renders differently. It exists because one question had no
