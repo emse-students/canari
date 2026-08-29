@@ -190,6 +190,20 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A device that had just joined reported 8259 losses, and the one that mattered was inside them.**
+  A frame from before this device joined can never be read - joining at epoch N means epoch N-1 is
+  gone - and the replay printed a `warn` for each one. On a device enrolling into eleven groups with
+  history that was 8259 of 8976 console lines, 92 percent of the journal saying one thing, with a
+  `GET /api/users/me/blocks -> 500` three lines inside it that no reader would have found. The three
+  decrypt kinds that end "unreadable for good" are now told apart: `past-epoch-application` is
+  arithmetic and is carried to the replay's own summary as a COUNT with five fingerprints named,
+  while `secret-reuse` and `same-epoch-refusal` - a frame this device SHOULD have read - keep the
+  line that accuses, per frame. Measured 0 of 8298 for those two across HEAL-NEW-3 and -11, so the
+  line that accuses now fires on an accusation. The reconciliation was already once per replay; the
+  file's own comment ("a page can hold forty such frames and they are all one difference") had said
+  so since it was written, and only the log disagreed.
+
+
 - **Blocking a person did nothing at all on the server, and it took opening a conversation down with
   it.** `UsersModule` declared `TypeOrmModule.forFeature([User, UserBlock])`, and the root DataSource
   in `app.module.ts` listed five entities without `UserBlock`. Those two lists read like one

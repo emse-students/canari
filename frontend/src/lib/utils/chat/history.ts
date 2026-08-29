@@ -369,6 +369,25 @@ export async function replayConversationHistory(params: {
    */
   let sawUnreadableFrame = false;
 
+  /**
+   * HOW MANY THEY WERE, AND A FEW BY NAME - the reasoning directly above, applied to the LOG.
+   *
+   * The reconciliation was already carried to the end of the replay because "a page can hold forty
+   * such frames and they are all one difference"; the LINE was still printed per frame, which is the
+   * same claim made forty times. Measured on 2026-08-28 during HEAL-NEW-3: 8259 of these out of 8976
+   * console lines on a device enrolling into eleven groups with history - 92% of the console, all of
+   * it one sentence - with a `GET /api/users/me/blocks -> 500` sitting three lines inside it that no
+   * reader would have found. A device cannot read anything sent before it joined; that is the ratchet
+   * working, not an incident, so the bulk is expected by construction and only its SIZE informs.
+   *
+   * COUNTED, NEVER SILENCED, and the fingerprints kept as a bounded sample rather than dropped: the
+   * frame key is what lets a loss here be lined up with the live path's `LOST frame` line, which is
+   * why it was printed at all, and a handful compares exactly as well as all of them.
+   */
+  let unreadableFrames = 0;
+  const unreadableSample: string[] = [];
+  const UNREADABLE_SAMPLE_MAX = 5;
+
   let session: MlsDecryptSession | null = null;
   try {
     // Incremental fetch: only retrieve messages after the last processed stream ID.
@@ -824,9 +843,28 @@ export async function replayConversationHistory(params: {
             // The FRAME key, not the row key: the live path's `LOST frame` line names the ciphertext,
             // and a line naming the Redis stream id instead cannot be compared with it. That is not a
             // hypothetical - it was the first thing the fingerprints revealed once both were printed.
-            console.warn(
-              `[History] frame never read here and unreadable for good (${kind}); will reconcile (group ${id}, frame ${frameKey}, row ${rowKey})`
-            );
+            unreadableFrames += 1;
+            if (unreadableSample.length < UNREADABLE_SAMPLE_MAX) unreadableSample.push(frameKey);
+            /**
+             * ONE OF THESE THREE KINDS IS ARITHMETIC AND TWO ARE LOSSES, AND THEY WERE PRINTED ALIKE.
+             *
+             * `past-epoch-application` is every frame sent before this device joined: a device that
+             * joins at epoch N cannot read epoch N-1, that is the ratchet working, and a fresh device
+             * meets it once per historical frame in every group at once. `secret-reuse` and
+             * `same-epoch-refusal` are the opposite - a frame this device SHOULD have been able to
+             * read and cannot - and they are rare: measured 0 of 8298 across HEAL-NEW-3 and -11 on
+             * 2026-08-28, where the expected kind accounted for all 8298.
+             *
+             * So the expected kind is carried to the summary as a number and the two losses keep the
+             * line that accuses. This is not a demotion of the loss: it is the loss no longer being
+             * spelled identically to a device doing arithmetic, which is what made the harness's
+             * severity rule fire on every fresh device and taught its reader to skip it.
+             */
+            if (kind !== 'past-epoch-application') {
+              console.warn(
+                `[History] frame never read here and unreadable for good (${kind}); will reconcile (group ${id}, frame ${frameKey}, row ${rowKey})`
+              );
+            }
             continue;
           }
           if (kind === 'epoch-gap' || kind === 'wrong-epoch') {
@@ -859,6 +897,10 @@ export async function replayConversationHistory(params: {
               // to remind us, so the replay carries the fact to its own end and reconciles there -
               // once for the whole page, whatever the number of dead frames in it.
               sawUnreadableFrame = true;
+              // Counted into the same total, because the summary's claim - frames this device can
+              // never read - is true of these too. It keeps its own line: it is rare, and `attempts`
+              // is the part of it a reader acts on.
+              unreadableFrames += 1;
               console.warn(
                 `[History] permanently undecryptable after ${attempts} attempts (${kind}); marking seen and reconciling`
               );
@@ -1089,7 +1131,12 @@ export async function replayConversationHistory(params: {
      * saw the unreadable frame either way, and that is what the ask is about.
      */
     if (sawUnreadableFrame) {
-      log(`[HISTORY] ${id.slice(0, 8)}… holds frames it can never read - reconciling`);
+      const sample = unreadableSample.length
+        ? ` (e.g. ${unreadableSample.join(', ')}${unreadableFrames > unreadableSample.length ? ', …' : ''})`
+        : '';
+      log(
+        `[HISTORY] ${id.slice(0, 8)}… holds ${unreadableFrames} frame(s) it can never read - reconciling${sample}`
+      );
       void reconcileGroup(mlsService, id, log);
     }
   }

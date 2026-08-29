@@ -47,7 +47,7 @@ import { becomeANewDevice } from "./newdevice.mjs";
 import { forceStop, launch, pid, sh } from "./phone.mjs";
 import { onlineDevicesOf } from "./presence.mjs";
 import { bringToReady } from "./ready-repair.mjs";
-import { record, unmet } from "./results.mjs";
+import { finishObserved, record, unmet } from "./results.mjs";
 import { splitBySubset, subsetSettled } from "./servable.mjs";
 import { activeGroupIds, cut, navigationCost, readAll, sidebar, whoAmI, watch as watchRows } from "./syncrows.mjs";
 import { report } from "./watch.mjs";
@@ -611,7 +611,9 @@ if (row.usability) expectations.navigableWhileAmber = usability?.openedInMs != n
 const missing = unmet(expectations);
 const verdict = missing.length === 0 ? "PASS" : "FAIL";
 
-const reports = { w3: await report(w3) };
+// THE REPORT IS TAKEN ONCE AND HANDED TO BOTH READERS. `recordObserved` accepts a finished report
+// as readily as a live handle, and reporting twice on one observer drains the second read.
+const w3Report = await report(w3);
 const detail = {
   what: row.what,
   expect: row.expect,
@@ -641,10 +643,21 @@ const detail = {
   samples: w.samples,
   timeline,
   unmet: missing,
-  clean: reports.w3.clean,
-  observers: { w3: reports.w3 },
+  observers: { w3: w3Report },
 };
 
-record(row.id, verdict, detail);
+// THE ASSERTION IS NOT THE VERDICT, AND THIS RUNNER WAS THE LAST PLACE THAT BELIEVED IT WAS.
+//
+// Forty-eight checks put their outcome through `gate()` and these six HEAL runners did not - so a
+// HEAL row could hold a console full of severe lines, or be measured across a deploy that replaced
+// the server mid-run, and still print `PASS`. HEAL-NEW-11 did exactly the first on 2026-08-28: every
+// expectation met, `clean: false` recorded beside it as decoration, and a `PASS` on the board that
+// no other rung's `PASS` meant the same thing as. A field in the detail is not a gate; only a gate
+// is a gate.
+//
+// THE REDEPLOY HALF IS THE SHARPER ONE. A push to `main` redeploys the server this rig points at,
+// and the campaign has already lost three cells to a run that straddled one. Every gated check turns
+// VACUOUS there and says so; these six would have recorded a product verdict about a server that
+// went away mid-measurement - a Work Package written about us.
 cx.close();
-process.exit(verdict === "PASS" ? 0 : 1);
+await finishObserved(row.id, verdict, detail, { W3: w3Report });

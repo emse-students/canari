@@ -2344,6 +2344,33 @@ second call site: it is finding what makes the answer reachable at all. `awaitLi
 discriminator now (`{panel, hiddenPanel, rowsInDom}`), because "not listed" and "listed but hidden"
 were indistinguishable in the failure output for six days.
 
+### A field in the detail is not a gate, and two HEAL runners believed it was
+
+**Measured 2026-08-28.** Forty-eight checks put their outcome through `gate()`; `healnew.mjs` and
+`healrevoke.mjs` did not. They computed `PASS` from their unmet expectations alone and stored
+`clean: false` beside it as a fact nobody acted on. HEAL-NEW-11 landed exactly there - every
+expectation met, thirty-nine severe lines in the console, and a `PASS` on the board that no other
+rung's `PASS` meant the same thing as. HEAL-NEW-1 and -3 were taken the same way.
+
+**The redeploy half is the sharper one.** `gate()` also turns a run VACUOUS when a deploy replaced
+the server underneath it, and the campaign has already lost three cells that way. An ungated runner
+would have recorded a product verdict about a server that went away mid-measurement.
+
+**`finishObserved` is the affordance, and it is shorter than not using it** - it takes the reports,
+gates on both, and exits on the gated verdict. `heal-a1.mjs` and `heal-web.mjs` are the exception
+and say so in the source: they rewind an MLS store on purpose, so the loss markers are their
+stimulus and the console is promoted to the ASSERTION rather than used as a gate.
+
+### A build stamp that names only the frontend cannot separate two runs against different servers
+
+**Measured 2026-08-28.** HEAL-NEW-3 ran at 19:42 and HEAL-NEW-11 at 20:37, both recorded against
+build `ebef7f3c`, `builtAt` 19:30. Between them, at 19:56, a core-service fix deployed and closed the
+`UserBlock` P1 - which is why the first run carries `GET /api/users/me/blocks -> 500` and the second
+carries `badHttp: []`. The frontend artefact genuinely did not change, so the stamp is not wrong; it
+is simply not an answer to "which server did this row ask". Two rows naming one build ran against two
+different systems, and only the wall clock told them apart.
+
+
 ### A phone declaration matched by whole-string equality silently unarms the phone
 
 DEL-7 first recorded `INVALID` blaming the product - `the group never reached A1` - when the group HAD

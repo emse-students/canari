@@ -150,10 +150,17 @@ describe('a frame the archive replay consumed', () => {
     timestamp: String(1786655250946),
   };
 
-  /** Drives one replay page and returns the commit thunk. One result per row, in order. */
+  /**
+   * Drives one replay page and returns the commit thunk. One result per row, in order.
+   *
+   * `log` is a parameter rather than a constant because the replay's END-OF-PAGE findings are
+   * addressed to it, not to the console: the summary naming how many frames can never be read is
+   * the one line some cases exist to read.
+   */
   const replayPage = async (
     rows: Array<{ id: string; sender_id: string; content: string; timestamp: string }>,
-    results: Array<{ ok: boolean; plaintext?: null; error?: string }>
+    results: Array<{ ok: boolean; plaintext?: null; error?: string }>,
+    log: (line: string) => void = () => undefined
   ) => {
     const mlsService = createMlsServiceStub({
       getLocalGroups: vi.fn().mockReturnValue([GROUP]),
@@ -174,7 +181,7 @@ describe('a frame the archive replay consumed', () => {
       getConversation: () => undefined,
       setConversation: () => undefined,
       messageReactions: new Map(),
-      log: () => undefined,
+      log,
       primedFirstPage: { rows },
     });
   };
@@ -350,6 +357,101 @@ describe('a frame the archive replay consumed', () => {
     await replay;
 
     expect(vi.mocked(reconcileGroup)).toHaveBeenCalledWith(mlsService, GROUP, expect.any(Function));
+  });
+
+  /**
+   * HOW THE REPLAY REPORTS FRAMES IT CAN NEVER READ - a number for the arithmetic, a line for a loss.
+   *
+   * Three decrypt kinds end in "unreadable for good" and they are not the same event.
+   * `past-epoch-application` is every frame sent before this device joined: joining at epoch N means
+   * epoch N-1 is gone, and a fresh device meets that once per historical frame of every group at
+   * once. `secret-reuse` and `same-epoch-refusal` are a frame this device should have been able to
+   * read and cannot.
+   *
+   * PRINTED ALIKE, THE ARITHMETIC BURIES THE LOSS. Measured on 2026-08-28 during HEAL-NEW-3: 8259
+   * of these lines out of 8976 console lines, every one of them the expected kind, and a
+   * `GET /api/users/me/blocks -> 500` - the visible end of a P1 - sitting three lines inside them.
+   * These cases pin the split, because it is the kind of thing a later change reverts by accident:
+   * one summary carrying the COUNT, and the accusing line kept for the kinds that accuse.
+   */
+  describe('frames it can never read', () => {
+    const pastEpoch = 'ValidationError(UnableToDecrypt(past epoch application frame))';
+    const secretReuse = 'ValidationError(UnableToDecrypt(SecretTreeError(SecretReuseError)))';
+
+    /** One row per byte given, so a case can ask for a page of any size. */
+    const rowsOf = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        id: `1786655250946-${i}`,
+        sender_id: 'peer',
+        content: toBase64(new Uint8Array([0xa0, i, 0x33])),
+        timestamp: String(1786655250946 + i),
+      }));
+
+    it('says how many there were in ONE line, instead of one line per frame', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const log = vi.fn();
+
+      await replayPage(rowsOf(3), Array(3).fill({ ok: false, error: pastEpoch }), log);
+
+      const summaries = log.mock.calls
+        .map(([l]) => String(l))
+        .filter((l) => l.includes('[HISTORY]'));
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0]).toContain('holds 3 frame(s) it can never read');
+      // The claim that makes the summary worth having: nothing was printed per frame.
+      expect(warn.mock.calls.filter(([l]) => String(l).includes('never read here'))).toHaveLength(
+        0
+      );
+      warn.mockRestore();
+    });
+
+    it('still names a few, because the fingerprint is what lines a loss up with the live path', async () => {
+      const log = vi.fn();
+
+      await replayPage(rowsOf(7), Array(7).fill({ ok: false, error: pastEpoch }), log);
+
+      const summary = String(
+        log.mock.calls.map(([l]) => String(l)).find((l) => l.includes('[HISTORY]'))
+      );
+      expect(summary).toContain('holds 7 frame(s)');
+      // Bounded at five and SAID to be bounded, so a reader never reads the sample as the whole set.
+      const sample = String(summary.match(/\(e\.g\. (.*)\)$/)?.[1]).split(', ');
+      expect(sample.filter((f) => f !== '…')).toHaveLength(5);
+      expect(summary).toContain(', …');
+    });
+
+    it('keeps the accusing line for a kind that is a real loss, not arithmetic', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      await replayPage(rowsOf(1), [{ ok: false, error: secretReuse }]);
+
+      // The whole point of the split: this one is still shouted, per frame, in the app's own words.
+      const accusations = warn.mock.calls
+        .map(([l]) => String(l))
+        .filter((l) => l.includes('never read here and unreadable for good'));
+      expect(accusations).toHaveLength(1);
+      expect(accusations[0]).toContain('secret-reuse');
+      warn.mockRestore();
+    });
+
+    it('counts the real loss into the same total, because the summary claims to hold it too', async () => {
+      const log = vi.fn();
+
+      await replayPage(
+        rowsOf(3),
+        [
+          { ok: false, error: pastEpoch },
+          { ok: false, error: secretReuse },
+          { ok: false, error: pastEpoch },
+        ],
+        log
+      );
+
+      const summary = String(
+        log.mock.calls.map(([l]) => String(l)).find((l) => l.includes('[HISTORY]'))
+      );
+      expect(summary).toContain('holds 3 frame(s) it can never read');
+    });
   });
 });
 

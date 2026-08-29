@@ -62,7 +62,7 @@ import { becomeANewDevice } from "./newdevice.mjs";
 import { onlineDevicesOf } from "./presence.mjs";
 import { stateOf } from "./ready-probe.mjs";
 import { bringToReady } from "./ready-repair.mjs";
-import { record, unmet } from "./results.mjs";
+import { finishObserved, record, unmet } from "./results.mjs";
 import { navigationCost, readAll, watch as watchRows, whoAmI } from "./syncrows.mjs";
 import { report, watch } from "./watch.mjs";
 
@@ -502,7 +502,12 @@ if (row.offline) {
   };
   const offlineMissing = unmet(offlineExpectations);
   const offlineVerdict = offlineMissing.length === 0 ? "PASS" : "FAIL";
-  record(row.id, offlineVerdict, {
+  // Taken once and handed to both readers: reporting twice on one observer drains the second read.
+  const offlineObservers = {
+    victim: await report(seedObserver),
+    actor: await report(actorObserver),
+  };
+  const offlineDetail = {
     what: row.what,
     seed: {
       deviceId: victimBefore.deviceId,
@@ -516,11 +521,11 @@ if (row.offline) {
     afterTheReload: { residue: landed, wipe: afterWipe, landedInMs, where },
     timeline,
     unmet: offlineMissing,
-    observers: { victim: await report(seedObserver), actor: await report(actorObserver) },
-  });
+    observers: offlineObservers,
+  };
   seeded.cx.close();
   actorCx.close();
-  process.exit(offlineVerdict === "PASS" ? 0 : 1);
+  await finishObserved(row.id, offlineVerdict, offlineDetail, offlineObservers);
 }
 
 // The victim is live, so it should learn this from a frame rather than at a login gate. Either is
@@ -674,7 +679,8 @@ if (row.id === "HEAL-REVOKE-8") expectations.theDeletionActuallyHappened = delet
 const missing = unmet(expectations);
 const verdict = missing.length === 0 ? "PASS" : "FAIL";
 
-record(row.id, verdict, {
+const observers = { victim: backReport, reference: freshReport, actor: await report(actorObserver) };
+const detail = {
   what: row.what,
   order,
   seed: {
@@ -718,8 +724,11 @@ record(row.id, verdict, {
   })(),
   timeline,
   unmet: missing,
-  clean: backReport.clean && freshReport.clean,
-  observers: { victim: backReport, reference: freshReport, actor: await report(actorObserver) },
-});
+  observers,
+};
 actorCx.close();
-process.exit(verdict === "PASS" ? 0 : 1);
+// GATED, NOT MERELY REPORTED - see the note at the foot of `healnew.mjs`. `clean` used to be an AND
+// of two booleans computed here, which said nothing about the ACTOR and nothing at all about a
+// deploy landing mid-run; `gate()` reads all three observers and outranks the assertion with a
+// VACUOUS when the server was replaced underneath it.
+await finishObserved(row.id, verdict, detail, observers);

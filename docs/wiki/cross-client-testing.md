@@ -407,7 +407,7 @@ four wipe defects found by hand:
 | HEAL-NEW-0 | The rig can mint a device the server has never seen, repeatably, on ONE 2FA | `+user` | **`PASS-DIRTY` on `48b65d08`** - a newer ledger `FAIL` is dirt only, P3 |
 | HEAL-NEW-1 | Fresh device, **nothing else online** - external join is the only path there is | `+user` | **`PASS` on `48b65d08`** - isolation real, ten amber for 600 s |
 | HEAL-NEW-2 | Fresh device, **the PEER online** - a responder that is not us | `+user` | `pending` on `a35cf4e5`, re-scoped to 1 servable row of 10 - the ledger's `FAIL` measured the instrument |
-| HEAL-NEW-3 | Fresh device, **another device of the SAME user online** (W1) | `+user` | **`PASS`** on `ebef7f3c` - 10/10 ready during enrolment |
+| HEAL-NEW-3 | Fresh device, **another device of the SAME user online** (W1) | `+user` | **`PASS`** on `ebef7f3c` - 10/10 ready; ungated, re-run owed |
 | HEAL-NEW-4 | Fresh device, the only possible responder is **the phone, foreground** | `+A1` `+user` | `pending` |
 | HEAL-NEW-5 | The same, **phone BACKGROUNDED** - a responder that cannot answer must not leave a group on Sync with nothing owed, which is what says whether the ladder terminates on a PROOF or on a clock | `+A1` `+user` | `pending` |
 | HEAL-NEW-6 | **The new device IS the phone**, enrolled after the account has history - this is MULTI-3, and it stops being `SKIPPED` the moment a 2FA is being paid anyway | `+A1` `+user` | `pending` |
@@ -415,7 +415,7 @@ four wipe defects found by hand:
 | HEAL-NEW-8 | **N conversations at once: do they ALL repair?** The assertion is a COUNT plus the identity of every laggard, never a sample | `+user` | `pending` |
 | HEAL-NEW-9 | After repair, does the new device get the HISTORY? Separates "no history" from "no history YET" | `+user` | `pending` |
 | HEAL-NEW-10 | Two fresh devices enrolling **at the same time** - the add-lock under two concurrent enumerations. Costs a second 2FA | `+user` | `pending` |
-| HEAL-NEW-11 | The responder is our own **W1, arriving LATE** | `+user` | `FAIL` on `48b65d08` - the instrument; re-run owed |
+| HEAL-NEW-11 | The responder is our own **W1, arriving LATE** | `+user` | **`PASS`** on `ebef7f3c` - 10/10 ready, settled 4.0 s after W1 arrived |
 | HEAL-NEW-12 | The responder is the **PEER W2, arriving LATE** | `+user` | `pending` on `a35cf4e5`, narrowed as HEAL-NEW-2 - same stale ledger `FAIL` |
 | HEAL-NEW-13 | The responder is **the phone, arriving LATE** - says whether the retry is driven by OUR reconnect or the RESPONDER's. Read with HEAL-NEW-5, whose responder can never answer | `+A1` `+user` | `pending` |
 | HEAL-NEW-14 | **The heal is INTERRUPTED** - a reload, then a link cut and restored, while rows are still amber. A reload must not restart the ladder from zero, and a cut must not leave a row amber with nothing owed | `+user` | `pending` |
