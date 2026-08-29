@@ -815,6 +815,24 @@ ledger row - so `node rows.mjs` and every HEAL-NEW cell are silent about it, and
 reading the run's stdout. Nothing here is wrong, but a HEAL-NEW verdict says "clean on the web
 client", never "clean on the server".
 
+### P2 - a HEAL verdict says "clean on the web client" and never "clean on the server" (measured 2026-08-29)
+
+**Instrument debt, and it qualifies every verdict this rung has taken.** `healnew.mjs` and
+`healrevoke.mjs` record `observers: { w3 }` and nothing else. The server window IS taken - `run.mjs`
+does it per pass and `srvlog.mjs` classifies it - but it is PRINTED, never written to the ledger row,
+so `gate()` never sees it, `node rows.mjs` cannot report it, and no cell on the board can say
+anything about it either way.
+
+**It is not hypothetical: both windows of the 2/12 pair were NOT clean**, and the `no_key_package`
+refusal in the entry above was found by reading a run's stdout rather than by any mechanism the
+campaign owns. A `PASS-DIRTY` on a HEAL row today means "the web console was dirty"; whether the
+server's was is simply unrecorded.
+
+**The campaign's own rule is that a pass is a pass only if its window is clean on web, on the phone
+and on the server** - so until the third window reaches the ledger, every HEAL-NEW and HEAL-REVOKE
+cell is carrying two thirds of a gate. It is the same class as the pre-gate re-runs owed by
+HEAL-NEW-1 and -3, and it should be paid before the post-ladder sweep rather than during it.
+
 ### P3 - the mint's own refusal is not a verdict, so a full account throws instead of recording (measured 2026-08-29)
 
 `becomeANewDevice` returns `{ refused: ... }` when the account is at the per-user device cap - the

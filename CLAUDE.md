@@ -151,7 +151,7 @@ crois qu'il n'y a plus rien avant"*). In this order, and nothing else first:**
    `healnew.mjs`, and `healrevoke.mjs` still has no such list.** **-2 and -12 are `PASS-DIRTY` on
    `038c7e8d` and the ORDER PAIR is EQUAL** (adjudicated on the campaign page, with the server half
    both cells cannot carry). What is owed, in order:
-   the four HEAL-REVOKE rows, then WRITE the owed HEAL-REVOKE cell - predicate `residue: 0` on a
+   **the four HEAL-REVOKE rows - 5, the 7 ORDER PAIR (first and last), 8 and 9** - then WRITE the owed HEAL-REVOKE cell - predicate `residue: 0` on a
    phone, `identityKeys: 0` everywhere, the offline variant driven by a reload. The device cap that
    voided five cells is not in play: the owner spends **4 of 15 slots**, measured.
    **AND HEAL-NEW-1 AND -3 ARE RE-RUNS OWED, for the INSTRUMENT and not for the product**: both were
