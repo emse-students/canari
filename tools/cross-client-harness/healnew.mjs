@@ -43,7 +43,7 @@ import { client, ensureChat } from "./chat.mjs";
 import { installTag } from "./devices.mjs";
 import { isUp, killBrowser, startBrowser } from "./launch.mjs";
 import { ORIGIN, PORTS, SITE } from "./names.mjs";
-import { becomeANewDevice } from "./newdevice.mjs";
+import { becomeANewDevice, confirmEnrolment } from "./newdevice.mjs";
 import { forceStop, launch, pid, sh } from "./phone.mjs";
 import { onlineDevicesOf } from "./presence.mjs";
 import { bringToReady } from "./ready-repair.mjs";
@@ -368,17 +368,18 @@ note(`topology ${JSON.stringify(topology)}`);
 // THE PRIMITIVE, MEASURED BY HEAL-NEW-0 AND REUSED HERE. `--keep-open` is why it is a module: the
 // device it mints is the device this row then watches, and re-minting per row would pay the whole
 // enrolment again for nothing.
+//
+// AND ONLY ITS FIRST HALF RUNS HERE. `becomeANewDevice` returns the instant the client is live on
+// /chat; everything the server has to say about the enrolment is `confirmEnrolment`, called far below
+// once this row has finished observing. That is not a tidy-up, it is HEAL-NEW-15's whole subject: the
+// second half is a chain of blocking `spawnSync`/`ssh` calls that held the event loop for ~49 s while
+// the fresh device healed in silence, so no reader of this row's could open on the amber window.
 note("minting a device the server has never seen");
 const minted = await becomeANewDevice({ report: (s) => note(`newdevice: ${s}`) });
 note(
   `minted ${JSON.stringify({
-    freshId: minted.aFreshIdWasMinted,
-    neverSeen: minted.theServerHadNeverSeenIt,
-    sameAccount: minted.theSameAccountCameBack,
-    enrolled: minted.enrolled,
-    // HOW LONG the key package took. It is in the note because it is the number that told HEAL-NEW-2
-    // its FAIL was the instrument's: the sidebar had healed all ten rows while the census still said no.
-    enrolledInMs: minted.enrolledInMs,
+    wipe: minted.nothingSurvivedTheWipe,
+    noHumanStep: minted.landedWithoutAHumanStep,
     pinGate: minted.pinGate,
     pinOk: minted.pinOk,
   })}`,
@@ -388,6 +389,36 @@ const cx = minted.cx;
 // console of the whole heal, and two watchers on one connection would drain each other's events.
 const w3 = minted.observer;
 await ensureChat(cx);
+
+/**
+ * THE ONE INVALID EXIT, because an `INVALID` that cannot say WHY is half an observation.
+ *
+ * Six copies of record-close-exit stood here and not one of them attached the console, so every
+ * `INVALID` this runner has ever recorded is silent about the state it is complaining of - and on
+ * `dc8bf000` the question the log would have answered was the row's own: WHY was the sidebar already
+ * green. The observer exists from before the wipe on every one of these paths; there was never a
+ * reason not to read it.
+ *
+ * THE REPORT IS TAKEN ONCE. Reporting twice on one observer drains the second read, and this path
+ * ends the process, so one read is all there is.
+ *
+ * `record` AND NOT `finishObserved`. An `INVALID` is already not a pass; putting it through `gate()`
+ * could only demote it to something the board has no word for, and the gate exists to downgrade a
+ * verdict about the product, which this is not.
+ */
+async function invalid(unobservable, extra = {}) {
+  const observed = await report(w3);
+  record(row.id, "INVALID", {
+    unobservable,
+    what: row.what,
+    topology,
+    timeline,
+    ...extra,
+    observers: { w3: observed },
+  });
+  cx.close();
+  process.exit(1);
+}
 
 const first = await readAll(cx);
 note(`first read ${JSON.stringify(first)}`);
@@ -406,32 +437,21 @@ const fleet = wantsOwnResponderNow
   : await fleetBesides(me.userId, me.deviceId);
 note(`fleet ${JSON.stringify(fleet)}`);
 if (wantsOwnResponderNow && fleet.readable && fleet.extra.length === 0) {
-  record(row.id, "INVALID", {
-    unobservable: `the row needs our own ${row.responder.toUpperCase()} online as the responder and the gateway never listed it within ${Math.round((fleet.waitedMs ?? 0) / 1000)}s - topology said ${JSON.stringify(topology)}`,
-    what: row.what,
-    topology,
-    timeline,
-  });
-  cx.close();
-  process.exit(1);
+  await invalid(
+    `the row needs our own ${row.responder.toUpperCase()} online as the responder and the gateway never listed it within ${Math.round((fleet.waitedMs ?? 0) / 1000)}s - topology said ${JSON.stringify(topology)}`,
+    { fleet },
+  );
 }
 if (row.responder === null && fleet.readable && fleet.extra.length > 0) {
-  record(row.id, "INVALID", {
-    unobservable: `the row needs an isolated account and ${fleet.extra.length} other device(s) of it are online: ${fleet.extra.join(",")}`,
-    what: row.what,
-    timeline,
-  });
-  cx.close();
-  process.exit(1);
+  await invalid(
+    `the row needs an isolated account and ${fleet.extra.length} other device(s) of it are online: ${fleet.extra.join(",")}`,
+    { fleet },
+  );
 }
 if (row.responder === null && !fleet.readable) {
-  record(row.id, "INVALID", {
-    unobservable: `the row needs an isolated account and the gateway could not be asked: ${fleet.why}`,
-    what: row.what,
-    timeline,
+  await invalid(`the row needs an isolated account and the gateway could not be asked: ${fleet.why}`, {
+    fleet,
   });
-  cx.close();
-  process.exit(1);
 }
 
 /** The device went amber before anything could answer - the precondition of every `late` row. */
@@ -519,25 +539,15 @@ if (row.expect === "servableSubset") {
     })}`,
   );
   if (groups.ids === null) {
-    record(row.id, "INVALID", {
-      unobservable: `the row asserts what ${which} can serve and its membership could not be read: ${groups.why}`,
-      what: row.what,
-      topology,
-      timeline,
-    });
-    cx.close();
-    process.exit(1);
+    await invalid(
+      `the row asserts what ${which} can serve and its membership could not be read: ${groups.why}`,
+    );
   }
   if (inTheSubset.length === 0) {
-    record(row.id, "INVALID", {
-      unobservable: `${which} shares no group with this device's ${before.rows ?? 0} row(s), so no heal here could have been served by the responder the row names`,
-      what: row.what,
-      servable: { responderGroups: servable.responderGroups, rowsOutside: servable.rowsOutside },
-      topology,
-      timeline,
-    });
-    cx.close();
-    process.exit(1);
+    await invalid(
+      `${which} shares no group with this device's ${before.rows ?? 0} row(s), so no heal here could have been served by the responder the row names`,
+      { servable: { responderGroups: servable.responderGroups, rowsOutside: servable.rowsOutside } },
+    );
   }
 }
 
@@ -581,27 +591,63 @@ const w = await watchRows(cx, {
 });
 timeline.push(mark(w.settled ? "settled" : "deadline reached"));
 
+/**
+ * HOW LATE THE FIRST SAMPLE WAS, and it is the number this whole split exists for.
+ *
+ * A watch that opens after the sidebar has healed reports a green sidebar and says nothing about the
+ * app; separating that from a product that heals instantly needs the OFFSET, and until 2026-08-29
+ * nothing recorded it. On `dc8bf000` it was about 49 000 ms, all of it spent inside the mint's second
+ * half - which is why that half now runs below this line instead of above it.
+ */
+const watchOpenedAfterLiveMs = w.samples[0] ? Date.parse(w.samples[0].wall) - minted.liveAt : null;
+note(`the watch's first sample was ${watchOpenedAfterLiveMs}ms after the client went live`);
+
 // BOTH HALVES, BECAUSE THEY ARE TWO FINDINGS AND EITHER ONE FAILS THE ROW. The amber click answers
 // the user's question; the post-settle click is the other half of the design - a healed conversation
 // that will not open fails this row whatever the repair did before it.
 const usability = row.usability ? { whileAmber, afterSettle: await navigationCost(cx) } : null;
 if (usability) note(`usability ${JSON.stringify(usability)}`);
+
+// THE MINT'S SECOND HALF, AND IT RUNS HERE FOR TWO REASONS. It blocks the event loop for tens of
+// seconds, so above this line it would be the reason no observation of the heal could exist; and its
+// last step drives `purge-devices.mjs` through THIS client's device panel, so it navigates the very
+// page a watch or a usability probe reads. Both readers are finished by now.
+//
+// IT IS ALSO BEFORE THE `INVALID` BELOW, so a row that could not ask its question still reclaims the
+// slot its own mint abandoned. The earlier `invalid()` exits do not get that - a row refused on its
+// topology leaves a slot spent, which is the same silent cost the purge has always carried and the
+// `theAccountHadRoomForOneMore` guard is what actually keeps the rung off the cap.
+Object.assign(minted, await confirmEnrolment({ ...minted, report: (s) => note(`newdevice: ${s}`) }));
+note(
+  `enrolment ${JSON.stringify({
+    freshId: minted.aFreshIdWasMinted,
+    neverSeen: minted.theServerHadNeverSeenIt,
+    sameAccount: minted.theSameAccountCameBack,
+    enrolled: minted.enrolled,
+    // BOUNDS, NOT LATENCIES, and the flags are what say so: the row watched its sidebar for minutes
+    // before the first database read, so the facts may have become true at any point in between.
+    registeredWithinMs: minted.registeredWithinMs,
+    registeredWasAlreadyTrue: minted.registeredWasAlreadyTrue,
+    addressableWithinMs: minted.addressableWithinMs,
+    addressableWasAlreadyTrue: minted.addressableWasAlreadyTrue,
+    abandonedPurged: minted.abandonedPurged,
+  })}`,
+);
+
 if (row.usability && !whileAmber) {
-  record(row.id, "INVALID", {
-    unobservable: w.hookThrew
+  await invalid(
+    w.hookThrew
       ? `the amber probe threw at +${Math.round(w.hookThrew.at / 1000)}s (${w.hookThrew.why}), so the click this row exists for was never timed`
-      : `no sample ever held a ready row and a syncing row at once, so "usable WHILE it heals" was never askable on this run - ${w.settled ? `the sidebar settled in ${w.elapsedMs}ms` : `it stalled for ${w.elapsedMs}ms`}`,
-    what: row.what,
-    hookThrew: w.hookThrew,
-    afterSettle: usability.afterSettle,
-    settledInMs: w.settled ? w.elapsedMs : null,
-    stalledForMs: w.settled ? null : w.elapsedMs,
-    samples: w.samples,
-    topology,
-    timeline,
-  });
-  cx.close();
-  process.exit(1);
+      : `no sample ever held a ready row and a syncing row at once, so "usable WHILE it heals" was never askable on this run - the watch's first sample was ${watchOpenedAfterLiveMs}ms after the client went live and ${w.settled ? `the sidebar settled in ${w.elapsedMs}ms` : `it stalled for ${w.elapsedMs}ms`}`,
+    {
+      watchOpenedAfterLiveMs,
+      hookThrew: w.hookThrew,
+      afterSettle: usability.afterSettle,
+      settledInMs: w.settled ? w.elapsedMs : null,
+      stalledForMs: w.settled ? null : w.elapsedMs,
+      samples: w.samples,
+    },
+  );
 }
 
 const last = await readAll(cx);
@@ -687,6 +733,20 @@ const detail = {
     : null,
   settledInMs: w.settled ? w.elapsedMs : null,
   stalledForMs: w.settled ? null : w.elapsedMs,
+  // WHAT SEPARATES THE INSTRUMENT FROM THE PRODUCT ON THIS RUNG. A settle of 2 ms means one thing if
+  // the watch opened 49 s after the device went live and another if it opened at 1 s.
+  watchOpenedAfterLiveMs,
+  // The mint's server-side half, measured AFTER the watch, so both figures are bounds and carry the
+  // flag that says whether the first read already found the fact true.
+  enrolment: {
+    enrolled: minted.enrolled,
+    registeredWithinMs: minted.registeredWithinMs,
+    registeredWasAlreadyTrue: minted.registeredWasAlreadyTrue,
+    addressableWithinMs: minted.addressableWithinMs,
+    addressableWasAlreadyTrue: minted.addressableWasAlreadyTrue,
+    abandonedPurged: minted.abandonedPurged,
+    pinGate: minted.pinGate,
+  },
   finalState,
   laggards: w.final ? w.final.syncing : null,
   usability,

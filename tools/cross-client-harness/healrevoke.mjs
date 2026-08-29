@@ -58,7 +58,7 @@ import { createGroup, deleteGroup } from "./groupnav.mjs";
 import { isUp, killBrowser, startBrowser } from "./launch.mjs";
 import { armCut, awaitSevered, cutHard, link } from "./net.mjs";
 import { ORIGIN, PORTS, SITE } from "./names.mjs";
-import { becomeANewDevice } from "./newdevice.mjs";
+import { becomeANewDeviceAndConfirm } from "./newdevice.mjs";
 import { onlineDevicesOf } from "./presence.mjs";
 import { stateOf } from "./ready-probe.mjs";
 import { bringToReady } from "./ready-repair.mjs";
@@ -362,7 +362,7 @@ if (actorTopology[`${ACTOR.toLowerCase()}Ready`] !== true) {
 }
 
 note(`starting point: minting an enrolled ${VICTIM} for the revocation to take away`);
-const seeded = await becomeANewDevice({ report: (s) => note(`newdevice: ${s}`) });
+const seeded = await becomeANewDeviceAndConfirm({ report: (s) => note(`newdevice: ${s}`) });
 note(
   `seed ${JSON.stringify({
     freshId: seeded.aFreshIdWasMinted,
@@ -614,7 +614,7 @@ back.cx.close();
 // than looked up, because the number this is compared against has to describe THIS world.
 // ---------------------------------------------------------------------------------------------
 note("minting a fresh device as the reference the returned device must equal");
-const fresh = await becomeANewDevice({ report: (s) => note(`reference: ${s}`) });
+const fresh = await becomeANewDeviceAndConfirm({ report: (s) => note(`reference: ${s}`) });
 const freshSettle = await watchRows(fresh.cx, { timeoutMs: SETTLE_MS, log: (m) => console.log(m) });
 note(
   `the reference ${freshSettle.settled ? "settled" : "did NOT settle"} in ${freshSettle.elapsedMs}ms`,

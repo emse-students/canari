@@ -143,11 +143,27 @@ const DEVICE_ID_NOW = `(function () {
 })()`;
 
 /**
- * Makes `device` a device the server has never seen, and returns what it measured.
+ * Makes `device` a device the server has never seen, and RETURNS THE MOMENT THAT DEVICE IS LIVE.
  *
  * Exported because the ten HEAL-NEW rows all begin here and differ only in WHO ELSE IS ONLINE while
  * it runs. Each of them owns its own assertions about the sidebar that comes back; this owns only the
  * claim that the thing looking at that sidebar really is a new device.
+ *
+ * WHY IT STOPS AT `/chat` AND `confirmEnrolment` HOLDS THE REST - the design call of 2026-08-29, and
+ * it is HEAL-NEW-15's whole subject. Everything that used to follow this point - an 8 s settle, the
+ * `isRegistered`/`hasKeyPackage` poll against the database, the abandoned-id purge - is a `spawnSync`
+ * or an `ssh`, so it BLOCKS THE EVENT LOOP: no concurrent reader can exist while it runs, and it ran
+ * for about 49 s. The fresh device is live and healing throughout, which means the amber window a row
+ * asks about lives INSIDE the mint and no sidebar reader could ever open on it. `dc8bf000` recorded
+ * exactly that: the watch's first sample read 10 rows, 10 ready, 0 syncing, 49 s after the landing.
+ *
+ * So the mint is SPLIT at the live client. A row that has a question about the app WHILE it heals
+ * asks it here, between the two halves; a row that has none calls them back to back and nothing about
+ * what it asserts changes.
+ *
+ * THE REFUSAL PATH DOES NOT MOVE. `theAccountHadRoomForOneMore` is asserted BEFORE the wipe, because
+ * after it there is no way back - it is the guard that protects the rung from the device cap, and a
+ * guard that runs after the damage is not a guard.
  */
 export async function becomeANewDevice({ report = stage } = {}) {
   // The census BEFORE, so "the server has never seen this id" is a comparison and not a hope. It is
@@ -183,14 +199,14 @@ export async function becomeANewDevice({ report = stage } = {}) {
       before,
       was,
       spent,
-      knownBefore: knownBefore.size,
+      knownBefore,
       theAccountHadRoomForOneMore,
     };
   }
 
   if (dry) {
     report("--dry: the origin is left exactly as it is");
-    return { dry: true, before, was, spent, knownBefore: knownBefore.size };
+    return { dry: true, before, was, spent, knownBefore };
   }
 
   // ONE CALL, AND IT IS THE BROWSER'S OWN. Deleting databases from page script races the app, which
@@ -275,6 +291,62 @@ export async function becomeANewDevice({ report = stage } = {}) {
   const pinOk = pinStatus === 0 || pinStatus === 2;
   report(`the PIN gate: ${pinGate}`);
   await ensureChat(cx).catch(() => null);
+
+  // THE HANDOVER POINT. From here the device is live on /chat and enumerating; `liveAt` is the origin
+  // every later duration is measured from, and it is a wall stamp because the second half may run
+  // after a caller has spent ten minutes watching the sidebar.
+  const liveAt = Date.now();
+  report("the client is LIVE on /chat - the mint hands over here");
+
+  return {
+    cx,
+    observer,
+    before,
+    after,
+    was,
+    knownBefore,
+    liveAt,
+    identitySurvivors,
+    nothingSurvivedTheWipe,
+    loggedOut,
+    landedWithoutAHumanStep,
+    challenge,
+    pinGate,
+    pinOk,
+    theAccountHadRoomForOneMore,
+    spent,
+  };
+}
+
+/**
+ * The second half of the mint: what the SERVER says about the device that just went live.
+ *
+ * SPLIT OUT ON 2026-08-29 so a caller can put its own observation between the two - see
+ * `becomeANewDevice` for why the split exists at all. Nothing here changed in substance; only WHEN it
+ * runs, and therefore what its durations are evidence FOR.
+ *
+ * THE TIMINGS ARE A BOUND, AND THEY SAY SO IN THEIR NAMES. They used to be measured from the instant
+ * the poll started, which was the instant the device went live - so `registeredInMs` really was the
+ * enrolment latency. It no longer is: a row may watch its sidebar for ten minutes before calling
+ * this, and the fact could have become true at any point in between. `registeredWithinMs` is
+ * therefore "true no later than this many ms after the client went live", and
+ * `registeredWasAlreadyTrue` says whether the very first read found it - which is exactly the case
+ * where the number is a bound and nothing more. A COLUMN IS ONLY EVIDENCE FOR THE QUESTION IT WAS
+ * WRITTEN TO ANSWER: the real enrolment latency belongs to HEAL-NEW-0, which calls the two halves
+ * back to back and measures nothing in between.
+ *
+ * IT DRIVES A UI, SO IT MUST NOT RUN BESIDE AN OBSERVATION. `purge-devices.mjs` navigates this very
+ * client to its device panel; a caller that runs this while a watch or a usability probe is live is
+ * measuring a page the cleanup moved.
+ */
+export async function confirmEnrolment({
+  cx,
+  was,
+  knownBefore,
+  liveAt,
+  port: devicePort = port,
+  report = stage,
+}) {
   await sleep(8_000);
 
   const nowRaw = await evaluate(cx, DEVICE_ID_NOW);
@@ -297,22 +369,28 @@ export async function becomeANewDevice({ report = stage } = {}) {
   //
   // AND IT IS A FACT THAT ARRIVES, so it is waited for by proof rather than read once after a sleep.
   // THE DEADLINE IS A REPORTING BOUNDARY, NOT THE ANSWER: both elapsed times reach the ledger, so a
-  // device that takes forty seconds is a finding carrying a number instead of a silent tick.
+  // device that takes forty seconds is a finding carrying a number instead of a silent tick. The
+  // deadline is counted from the first read, because it bounds THIS WAIT; the reported figures are
+  // counted from `liveAt`, because that is the only instant they are a statement about the device.
   const ENROLMENT_DEADLINE_MS = 60_000;
   let registered = false;
   let addressable = false;
-  let registeredInMs = null;
-  let addressableInMs = null;
+  let registeredWithinMs = null;
+  let addressableWithinMs = null;
+  let registeredWasAlreadyTrue = null;
+  let addressableWasAlreadyTrue = null;
   if (now) {
     const askedAt = Date.now();
-    for (;;) {
+    for (let read = 0; ; read += 1) {
       if (!registered && isRegistered(now.deviceId)) {
         registered = true;
-        registeredInMs = Date.now() - askedAt;
+        registeredWithinMs = Date.now() - liveAt;
+        registeredWasAlreadyTrue = read === 0;
       }
       if (hasKeyPackage(now.deviceId)) {
         addressable = true;
-        addressableInMs = Date.now() - askedAt;
+        addressableWithinMs = Date.now() - liveAt;
+        addressableWasAlreadyTrue = read === 0;
         break;
       }
       if (Date.now() - askedAt >= ENROLMENT_DEADLINE_MS) break;
@@ -340,7 +418,7 @@ export async function becomeANewDevice({ report = stage } = {}) {
   // enrolled is the one client it can prove is up, and it is on the right account by construction.
   let abandonedPurged = null;
   if (was && enrolled && was.deviceId !== now.deviceId) {
-    const status = run("purge-devices.mjs", ["--only", was.deviceId, "--port", String(port)]);
+    const status = run("purge-devices.mjs", ["--only", was.deviceId, "--port", String(devicePort)]);
     abandonedPurged = status === 0;
     report(
       `the id this mint abandoned (...${was.deviceId.slice(-13)}) was purged: ${abandonedPurged}` +
@@ -348,43 +426,47 @@ export async function becomeANewDevice({ report = stage } = {}) {
     );
   }
 
+  // A BOUND IS SAID TO BE A BOUND. "within 61s of going live, and it was already true when asked" is
+  // a different sentence from "it took 61s", and only the first one is what this call can know.
+  const bound = (ms, alreadyTrue) =>
+    ms === null
+      ? ""
+      : ` (within ${ms}ms of the client going live${alreadyTrue ? ", ALREADY true at the first read" : ""})`;
   report(
-    `the server has a session for the new id: ${registered}` +
-      (registeredInMs === null ? "" : ` (after ${registeredInMs}ms)`) +
-      `, and a published KeyPackage: ${addressable}` +
-      (addressableInMs === null ? "" : ` (after ${addressableInMs}ms)`) +
+    `the server has a session for the new id: ${registered}${bound(registeredWithinMs, registeredWasAlreadyTrue)}` +
+      `, and a published KeyPackage: ${addressable}${bound(addressableWithinMs, addressableWasAlreadyTrue)}` +
       (registered && !addressable
         ? " - A SESSION WITHOUT A KEYPACKAGE MEANS register-device REFUSED IT; read the server's line"
         : ""),
   );
 
   return {
-    cx,
-    observer,
-    before,
-    after,
-    was,
     now,
-    knownBefore: knownBefore.size,
-    identitySurvivors,
-    nothingSurvivedTheWipe,
-    loggedOut,
-    landedWithoutAHumanStep,
-    challenge,
-    pinGate,
-    pinOk,
     aFreshIdWasMinted,
     theServerHadNeverSeenIt,
     theSameAccountCameBack,
-    theAccountHadRoomForOneMore,
-    spent,
     registered,
-    registeredInMs,
+    registeredWithinMs,
+    registeredWasAlreadyTrue,
     addressable,
-    addressableInMs,
+    addressableWithinMs,
+    addressableWasAlreadyTrue,
     abandonedPurged,
     enrolled,
   };
+}
+
+/**
+ * The two halves back to back, for a caller with no question to ask in between.
+ *
+ * Every caller but HEAL-NEW-15 is one of those, and threading `cx`, `was`, `knownBefore` and `liveAt`
+ * from one call into the next at each site is four chances for them to drift apart. A refusal or a
+ * `--dry` never reaches the second half: there is no live client to ask about.
+ */
+export async function becomeANewDeviceAndConfirm({ report = stage } = {}) {
+  const minted = await becomeANewDevice({ report });
+  if (minted.refused || minted.dry) return minted;
+  return { ...minted, ...(await confirmEnrolment({ ...minted, report })) };
 }
 
 // --- HEAL-NEW-0 ---------------------------------------------------------------------------------
@@ -395,7 +477,9 @@ const invokedDirectly =
   process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, "/").split("/").pop());
 
 if (invokedDirectly) {
-  const r = await becomeANewDevice();
+  // BACK TO BACK, so what this row asserts did not change when the mint was split - and so the
+  // durations it records really are the enrolment latency: nothing runs between the two halves here.
+  const r = await becomeANewDeviceAndConfirm();
   if (r.dry) {
     console.log(JSON.stringify({ dry: true, before: r.before, was: r.was, spent: r.spent }, null, 2));
     process.exit(0);
@@ -449,7 +533,7 @@ if (invokedDirectly) {
       // outside the repository precisely so it may hold them.
       abandonedDeviceId: r.was?.deviceId ?? null,
       newDeviceId: r.now?.deviceId ?? null,
-      enrolledDevicesOnTheServerBefore: r.knownBefore,
+      enrolledDevicesOnTheServerBefore: r.knownBefore.size,
       challenge: r.challenge,
       nothingSurvivedTheWipe: r.nothingSurvivedTheWipe,
       loggedOut: r.loggedOut,
@@ -461,8 +545,15 @@ if (invokedDirectly) {
       theServerHadNeverSeenIt: r.theServerHadNeverSeenIt,
       theSameAccountCameBack: r.theSameAccountCameBack,
       enrolled: r.enrolled,
-      // HOW LONG the key package took to appear. A number nobody had until it broke a row.
-      enrolledInMs: r.enrolledInMs,
+      // HOW LONG the two server facts took to appear, each beside whether the first read already
+      // found it. `enrolledInMs` stood here until 2026-08-29 and NOTHING HAS EVER SET IT: the key
+      // was never returned by anything, so the ledger carried `null` under a name that reads like a
+      // measurement. These two are the fields that exist - and on this row, where the halves run back
+      // to back, "within N ms of going live" is the enrolment latency itself.
+      registeredWithinMs: r.registeredWithinMs,
+      registeredWasAlreadyTrue: r.registeredWasAlreadyTrue,
+      addressableWithinMs: r.addressableWithinMs,
+      addressableWasAlreadyTrue: r.addressableWasAlreadyTrue,
     },
     { [device]: r.observer },
   );
