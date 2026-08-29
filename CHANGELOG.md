@@ -13,6 +13,30 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Added
 
+- **An Android vitals watch, because nothing here could see the field** (`tools/play-vitals/`).
+  Every Android gate in this repository proves the app compiles and that R8 did not crash; none runs
+  the app on a stranger's phone, which is where all three Android defects so far were found. The
+  watch reads Play's crash clusters, their stack traces, its own anomaly detection, nine vitals
+  metric sets and what each track is serving, over a read-only service account whose key is kept
+  OUT of this public repo.
+
+  **Its first run found that Play production was serving a build the biometric fix predates.**
+  Play reported `InflateException -> ClassNotFoundException` in `BiometricActivity.onCreate` on
+  versionCode 14005 - the `androidx.coordinatorlayout` casualty of excluding
+  `com.google.android.material`, diagnosed on a Pixel 6a on 2026-08-28 and fixed by `0cf9c3dd`.
+  That commit landed at 14:30, AFTER the 0.14.11 bump, so **14011 - what users actually have - still
+  crashes every biometric unlock.** The fix first ships in 14012.
+
+  Acknowledgement lives in `known-issues.json` rather than in Play's archive, and is deliberately
+  not a mute list: each entry names the fixing commit and the first good versionCode, so the same
+  cluster reappearing at or above it is reported as a REGRESSION instead of being swallowed. The
+  Reporting API cannot archive anything anyway - its discovery document defines no write method, and
+  no IAM role adds one.
+
+  Two Play measures enforced from Feb 2027 turned out to be readable this way at P50 through P99
+  with an `appState` dimension. `mobile.md` called dynamic memory "unmeasured"; it is now merely
+  empty, pending users.
+
 - **A form can be shared as a QR code**, next to the copy-link button on both the list and the form
   itself. It encodes the ordinary public URL - no scheme of our own - and downloads as a PNG plate
   carrying the form's title and, when it has one, its association, in the app's own two faces. The

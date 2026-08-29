@@ -1,0 +1,23 @@
+{
+  "$comment": [
+    "Play crash clusters this repo has already diagnosed, keyed by the issue id in the console URL.",
+    "Archiving an issue in the Play Console hides it there; it does NOT stop the API returning it,",
+    "and the Reporting API has no write method to archive with (verified 2026-08-29 against the",
+    "v1beta1 discovery document - every POST it offers is a `:query`). So the acknowledgement lives",
+    "here, in the repo, beside the reasoning.",
+    "",
+    "`fixedInVersionCode` is the FIRST build carrying the fix. An issue reappearing at or above that",
+    "code is NOT known - it is a regression, and `vitals.mjs` says so loudly. Muting by id alone",
+    "would silence exactly the report that matters."
+  ],
+  "issues": {
+    "e2054d3a3a5e20908789ffd5e3ccdd47": {
+      "cause": "app.tauri.biometric.BiometricActivity.onCreate",
+      "location": "android.view.InflateException -> java.lang.ClassNotFoundException",
+      "diagnosis": "Excluding com.google.android.material also dropped androidx.coordinatorlayout, which no Kotlin file names and which the biometric plugin's auth_activity.xml inflates as its root view. Every biometric call died in the inflater.",
+      "fixedBy": "0cf9c3dd",
+      "fixedInVersionCode": 14012,
+      "note": "Diagnosed independently on a Pixel 6a on 2026-08-28 before Play surfaced it; the Play report on versionCode 14005 is the same defect seen in the field. Production carried 14011, which PREDATES the fix."
+    }
+  }
+}

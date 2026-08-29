@@ -486,8 +486,15 @@ nothing to users. Use one only to re-check a fix made after the release was cut.
 4. **The two system bars still have their gap.** The theme parent changed, so re-read
    `env(safe-area-inset-top)` and `env(safe-area-inset-bottom)` through CDP and require non-zero,
    as measured on 2026-08-07.
-5. **A file picker and a dialog still open.** They are the only native UI this app has, and the
-   claim under test is that nothing referenced the excluded library.
+5. **A file picker, a dialog, AND THE BIOMETRIC PROMPT still open.** The claim under test is that
+   nothing referenced the excluded library. **This step said "the only native UI this app has" and
+   named two of three** - and the one it left out is the one that broke: `app.tauri.biometric`'s
+   `auth_activity.xml` inflates an `androidx.coordinatorlayout` root that only
+   `com.google.android.material` was carrying, so every biometric call died in the inflater. An
+   enumeration of native UI is a claim about the whole app and must be derived from the LAYOUTS the
+   dependencies ship, never from the Kotlin this repo wrote - a layout is a reference no source grep
+   sees. Google Play reported the same crash from the field on versionCode 14005 on 2026-08-27,
+   which is what [the vitals watch](../../../tools/play-vitals/README.md) now reads.
 6. **The installed package refuses a device transfer.** `adb shell dumpsys package fr.emse.canari`
    must show `dataExtractionRules` resolved, not just `allowBackup=false` - the attribute that does
    NOT cover device-to-device transfer on Android 12+. Asserting the merged manifest is what the

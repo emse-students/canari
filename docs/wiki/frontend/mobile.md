@@ -1167,8 +1167,8 @@ by anything here, so what follows is where this app STANDS, and the one place it
 
 | Requirement | Threshold | Enforced | Where this app is |
 | --- | --- | --- | --- |
-| Dynamic memory | anon RSS + swap, 28-day P90, 2 GB foreground on a 4 GB device | Feb 2027 | **unmeasured** - only Android vitals or the Play Developer Reporting API can answer it |
-| Bitmap memory | > 200 MB backgrounded, > 400 MB cached | Feb 2027 | **bounded by construction**, see below |
+| Dynamic memory | anon RSS + swap, 28-day P90, 2 GB foreground on a 4 GB device | Feb 2027 | **readable, still empty**: `anonRssAndSwapMemoryUsageMetricSet` carries P50-P99 with an `appState` dimension, and [the vitals watch](../../../tools/play-vitals/README.md) queries it. No rows yet - too few installs for Play to report a distribution |
+| Bitmap memory | > 200 MB backgrounded, > 400 MB cached | Feb 2027 | **bounded by construction**, see below - and now also *observable*, via `bitmapMemoryUsageMetricSet` in [the vitals watch](../../../tools/play-vitals/README.md) |
 | Code optimization | >= 25% across obfuscation, optimization and shrinking, for apps over 10 MB of DEX | Feb 2027 | **out of scope by size**: the release DEX is 2.83 MB. Minified and shrunk anyway |
 | Zero-Tap Sign-In restoration | Restore Credentials API, apps with any sign-in | Apr 2027 | **NOT IMPLEMENTED** - a work package, see [backlog](../backlog.md) |
 

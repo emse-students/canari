@@ -30,6 +30,7 @@
 | Why a result may be believed | [docs/wiki/testing-methodology.md](docs/wiki/testing-methodology.md) |
 | What the app has that NOTHING watches | [docs/wiki/mechanism-audit.md](docs/wiki/mechanism-audit.md) |
 | How to operate the test rig | [tools/cross-client-harness/README.md](tools/cross-client-harness/README.md) |
+| What Google Play sees that no gate here does | [tools/play-vitals/README.md](tools/play-vitals/README.md) |
 | What is owed on real hardware | [docs/wiki/device-verification.md](docs/wiki/device-verification.md) |
 | Secrets, services, bootstrap steps | `infrastructure/MIGRATION.md` |
 | A shim kept alive for old clients, and its removal date | [docs/wiki/legacy-compatibility.md](docs/wiki/legacy-compatibility.md) |
@@ -256,7 +257,11 @@ MiGallery application worth building?
 ### CANARI - what is open
 
 **Release: the version in the three files is `0.14.12`, bumped and UNTAGGED, and a release carrying
-it is OWED.** v0.14.11 shipped 2026-08-28 09:53 with its Android build green; .10 and .11 both
+it is OWED - now URGENTLY, and the reason is a P1 in the field.** Google Play production serves
+**14011**, and `0cf9c3dd` (the `coordinatorlayout` fix, without which EVERY biometric unlock dies in
+the layout inflater) landed at 14:30 on 2026-08-28, AFTER the 0.14.11 bump. Play has reported the
+crash from a real user's Galaxy S23 Ultra. **14012 is the first build that does not have it**, and
+`node tools/play-vitals/vitals.mjs` is what reads the field. v0.14.11 shipped 2026-08-28 09:53 with its Android build green; .10 and .11 both
 MEASURE the wipe defects rather than fixing them, so **no HEAL-REVOKE verdict about a clean device may
 be taken on a build older than 0.14.12.** A1 already runs a local debug 0.14.12; W1/W2/W3 get the web
 half through CD on the next push. **An APK is not reached by a deploy** - `frontendDist: "../build"`
@@ -268,8 +273,14 @@ in [the harness README](tools/cross-client-harness/README.md).**
 **Google Play: both mails of 2026-08-26 are CLOSED but for check R**, everything shipped and live;
 thresholds and the two sites that will never clear are on
 [mobile](docs/wiki/frontend/mobile.md#plays-q3-2026-quality-requirements-measured-against-this-app),
-the only copy. Two things stay open and neither is re-openable: the 28-day memory P90 does not exist
-yet, so **read Android vitals from late September 2026**; and **WP-RESTORE-1** (Zero-Tap Sign-In,
+the only copy. **Android vitals are now READ FROM HERE**, by a read-only service account, with
+`node tools/play-vitals/vitals.mjs` ([README](tools/play-vitals/README.md)) - crash clusters, their
+stacks, Play's own anomalies, nine metric sets and what each track serves. Both Feb-2027 memory
+measures turned out readable at P50-P99; every RATE is still empty, which is Play withholding a
+distribution for want of installs and NOT a green zero, so **re-read from late September 2026**.
+Archiving a cluster is a console click and no IAM role changes that - the Reporting API has no write
+method at all, so an acknowledgement goes in `tools/play-vitals/known-issues.json`, which names the
+fixing commit and REPORTS a recurrence above it rather than muting. And **WP-RESTORE-1** (Zero-Tap Sign-In,
 required April 2027, WebAuthn on a server that has none) is ACCEPTED and scheduled AFTER the campaign
 ([backlog](docs/wiki/backlog.md)).
 
