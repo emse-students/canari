@@ -238,6 +238,18 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **One tab election was logged twenty times on a device coming up with twenty-two conversations.**
+  Measured on production 2026-08-29 in HEAL-REVOKE-5's wipe window: a single
+  `[OUTBOX] Flush deferred - tab leadership undecided` followed by TWENTY
+  `[OUTBOX] Leadership decided as leader after N ms` lines inside one second, each carrying its own
+  start offset - 6017 ms down to 3871 ms - so nothing deduplicated them. Boot asks for a flush per
+  recovering conversation, per enqueue and per wake-up; every one of them that landed in the
+  election gap awaited the decision on its own. The flush already coalesces through
+  `flushing`/`rerun`, but only AFTER that gate, so the coalescing could never reach the waiting. No
+  message was ever lost and every waiter resumed - **what the twenty lines cost is the reader**, and
+  a line its reader learns to skip is the one that hides the next defect. The wait is now shared:
+  one election, one promise, one pair of lines.
+
 - **A device revoked while it was RUNNING wiped itself and then sat on a dead `/chat`.** Measured on
   production 2026-08-29 by HEAL-REVOKE-5, on the build that had just fixed the wipe itself: the
   `device_revoked` frame arrived, the wipe ran to completion and left nothing of the account - and

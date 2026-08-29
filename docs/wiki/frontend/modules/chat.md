@@ -263,6 +263,19 @@ The same reasoning is why a follower promoted to leader **reloads** rather than 
 left off: the gate froze its in-memory state at load time while the leader kept advancing the one on
 disk.
 
+**The election is awaited once, however many flushes are waiting on it.** Leadership has three
+states, and `runFlush` awaits the decision when it reads `undecided` rather than treating it as
+"another tab will do it" (WP-OUTBOX-2). Boot, though, asks for a flush per recovering conversation,
+per enqueue and per wake-up: on a device coming up with twenty-two conversations, twenty of those
+requests landed in the election gap and each awaited it on its own, logging its own resolution -
+twenty `Leadership decided as leader after N ms` lines inside one second, differing by their start
+offset so nothing deduplicated them (measured on HEAL-REVOKE-5, 2026-08-29). `flushing`/`rerun`
+coalesces the WORK, but it sits after this gate and so could never reach the WAITING. The waiters
+now share one promise, `theElection`, created by whichever flush arrives first: one election, one
+deferral line, one decision line. It is never reset because the election does not reopen - once
+decided, the `undecided` guard returns before the promise is read at all. Nothing about correctness
+changed here; every waiter always resumed. What twenty lines cost is the reader.
+
 ### The flusher resolves its token, and does not run while offline
 
 Two rules about *when* the queue is allowed to try, both learned from the offline-unlock work

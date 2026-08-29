@@ -743,6 +743,26 @@ no check waits on wall-clock time at all. It belongs with the rendering pass, no
 
 ## Messaging convergence
 
+### P3 - the WASM warns about a missing MLS state on every device that is SUPPOSED not to have one (measured 2026-08-29)
+
+`mls-wasm/src/lib.rs` warns `device_key_b64 provided but no encrypted state - key ignored, creating
+fresh state` whenever a device key arrives with no blob beside it. Everywhere else that is worth a
+warning - a key with no state means something lost one. On a device that has just been wiped to
+factory and re-enrolled it is the expected pair, and it fired three times in one HEAL-REVOKE-5 run:
+the seed, the returning victim, and the reference.
+
+**The discriminator is KNOWN at the call site and is not carried down.** The TypeScript caller knows
+whether it is booting a fresh enrolment or reloading an existing device; the WASM does not, and
+learns it by finding nothing. That is the standing rule about never learning by failing what a fact
+could have told you, pointed at a log line rather than a request: the caller should say which case it
+is, and the warning should fire only where a state was genuinely expected.
+
+**Named per row in `FRESH_CLIENT_NARRATION` until then**, which is a disposition and not a fix: the
+line still fires, and every HEAL row that mints carries it. The blast radius is why it was not done
+inside a campaign row - it is Rust, a WASM regeneration and a frontend rebuild, and it leaves the
+subject of every row that would have found it.
+
+
 ### P2 - a device holds a distribution group the group holds no row for it, and heals by rejoining (measured 2026-08-29)
 
 **Handed back by HEAL-NEW-15's branch on `038c7e8d`, deliberately unacted on because its blast radius
@@ -776,6 +796,15 @@ differ from row 15's and rule nothing out:** each of these rows external-joined 
 no conversation group at all, and the reconciliation asked 0 of 1 and 0 of 2 rather than skipping one
 of eleven - so the "only group the reconciliation did not ask about" correlation cannot be tested at
 this fleet size and is neither confirmed nor refuted here.
+
+**RECURRED ON A DIFFERENT RUNG, AND THE DEVICE COUNT IS NOT A CONSTANT.** HEAL-REVOKE-5 on
+`96bdd1bb`, 2026-08-29: the wipe window logged the line at 23:00:52 with `(3 device(s) for this
+user)` and the reference device logged it at 23:02:55 with `(2 device(s) for this user)` - **two
+different counts in ONE run, two minutes apart**, tracking the live device population as devices were
+revoked and minted. So the `3` recorded above is not part of the shape and nothing should be read
+into it; what is constant across every sighting is the community, `fbddc890`. The population is
+therefore wider than "every freshly minted device": a device that RETURNS from a revocation wipe
+produces it too, which is a second rung and a second build. Not chased here, per the row's brief.
 
 ### P2 - a membership is REFUSED for want of a KeyPackage one second after the device external-joined that very group (measured 2026-08-29)
 

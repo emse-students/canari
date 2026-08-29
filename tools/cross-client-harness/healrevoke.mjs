@@ -73,8 +73,11 @@ import {
   whoAmI,
 } from "./syncrows.mjs";
 import {
+  AUTH_TEARDOWN_NARRATION,
+  BLOCK_LIST_READ_NARRATION,
   consoleLines,
   DEVICE_PANEL_NARRATION,
+  FRESH_CLIENT_NARRATION,
   ignoringExpectedLog,
   ignoringExpectedRefusal,
   ignoringOfflineCut,
@@ -114,12 +117,28 @@ import {
 const forgiving = (rep, narration) =>
   ignoringExpectedLog(ignoringExpectedRefusal(rep, MINT_REFUSALS), narration);
 
-/** The victim after it came back: `login.mjs` drove the IdP, and nothing here purged a device. */
-const asAReturningDevice = (rep) => forgiving(rep, OIDC_LOGIN_NARRATION);
+/**
+ * The victim after it came back: `login.mjs` drove the IdP, and nothing here purged a device.
+ *
+ * IT BOOTS WITH NO MLS STATE, which is the row's whole premise - the wipe took it. So it says
+ * everything `FRESH_CLIENT_NARRATION` names, and a row that did not forgive that would be reporting
+ * its own subject as dirt.
+ */
+const asAReturningDevice = (rep) =>
+  forgiving(rep, [
+    ...OIDC_LOGIN_NARRATION,
+    ...FRESH_CLIENT_NARRATION,
+    ...BLOCK_LIST_READ_NARRATION,
+  ]);
 
-/** The reference: a full mint, so the callback's trail AND the abandoned id's purge. */
+/** The reference: a full mint, so the callback's trail, the abandoned id's purge, and a cold client. */
 const asAFreshlyMintedDevice = (rep) =>
-  forgiving(rep, [...OIDC_LOGIN_NARRATION, ...DEVICE_PANEL_NARRATION]);
+  forgiving(rep, [
+    ...OIDC_LOGIN_NARRATION,
+    ...DEVICE_PANEL_NARRATION,
+    ...FRESH_CLIENT_NARRATION,
+    ...BLOCK_LIST_READ_NARRATION,
+  ]);
 
 /**
  * The window in which the device was revoked: its mint, and then its own account of erasing itself.
@@ -135,7 +154,16 @@ const asAFreshlyMintedDevice = (rep) =>
  * row of this rung. The failure spellings still break `clean`, which is the whole point of looking.
  */
 const asTheWipedVictim = (rep) =>
-  forgiving(rep, [...OIDC_LOGIN_NARRATION, ...DEVICE_PANEL_NARRATION]);
+  forgiving(rep, [
+    ...OIDC_LOGIN_NARRATION,
+    ...DEVICE_PANEL_NARRATION,
+    ...FRESH_CLIENT_NARRATION,
+    // THE ONLY OBSERVER HANDED THE TEARDOWN, because it is the only device that was revoked. A
+    // session clearing itself and a socket dropping is this window's subject and everyone else's
+    // finding.
+    ...AUTH_TEARDOWN_NARRATION,
+    ...BLOCK_LIST_READ_NARRATION,
+  ]);
 
 /**
  * The actor: it drove the device panel, and it wiped no cookie of its own.
@@ -144,7 +172,8 @@ const asTheWipedVictim = (rep) =>
  * client that just deleted its cookies; on the actor, which did no such thing, it is the campaign's
  * own owner session dying - and that is a finding, not this row's noise.
  */
-const asTheActor = (rep) => ignoringExpectedLog(rep, DEVICE_PANEL_NARRATION);
+const asTheActor = (rep) =>
+  ignoringExpectedLog(rep, [...DEVICE_PANEL_NARRATION, ...BLOCK_LIST_READ_NARRATION]);
 
 const argv = process.argv.slice(2);
 const opt = (name, fallback = null) => {
