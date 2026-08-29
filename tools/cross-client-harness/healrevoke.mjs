@@ -303,6 +303,44 @@ async function setTopology(present) {
   return acted;
 }
 
+/**
+ * PUTS BACK THE FLEET THIS ROW TOOK DOWN - on every exit path, including the ones that fail.
+ *
+ * A ROW'S TEARDOWN IS THE NEXT ROW'S INHERITED STATE. `setTopology([ACTOR])` kills W2 in the row's
+ * first act, because the world must not move while the victim is away, and until 2026-08-29 nothing
+ * ever put it back. The cost is not hypothetical: the run after the first HEAL-REVOKE-5 verdict was
+ * refused by `run.mjs`'s preflight - `W2: unreachable on 9223` - and so was the one after the
+ * second. Twice, for a device the row itself had killed. `devicesFor` demands W1, W2 and W3 of this
+ * rung, so every remaining row would have paid the same toll.
+ *
+ * IT IS `setTopology` AND NOT A SECOND SPELLING OF IT. `bringToReady` already answers a client that
+ * came back signed out - a killed browser keeps its profile but not its in-memory token - by driving
+ * `login.mjs` and then `pin.mjs`, so restoring is the same primitive with the full fleet named. A
+ * restore path that reimplemented any of that would be a second definition of "ready", and this file
+ * has already recorded what those cost.
+ *
+ * W3 IS NOT IN IT, DELIBERATELY. The victim is the row's SUBJECT, and its final state is the
+ * measurement: bringing it to ready here would erase the thing the next reader has to look at, and
+ * `run.mjs`'s preflight is what re-establishes it before a row that needs it.
+ *
+ * IT APPEARS AT FIVE EXITS AND NOT ONE, which is a debt this file's shape owes rather than a choice.
+ * A top-level-await script has no `finally` around it without being restructured, so the call is
+ * placed at each exit that can end the row after the topology has been set. The three `INVALID`
+ * paths need it MOST - they are the ones that end early, and an early end is exactly when a fleet is
+ * left broken.
+ *
+ * IT ALWAYS RUNS AFTER THE ROW IS DURABLE, NEVER BEFORE. Restoring costs a browser start, a login
+ * and a PIN, and a run killed inside that minute would lose a verdict that was already computed -
+ * three cells of this campaign have died that way. `record` is synchronous, so on the `INVALID`
+ * paths the row is on disk by the time this is called; on the two that finish, `finishObserved`
+ * takes it as its `afterRecording` hook and runs it between the write and the exit.
+ */
+async function restoreTheFleet() {
+  const back = await setTopology(["w1", "w2"]);
+  note(`fleet restored ${JSON.stringify(back)}`);
+  return back;
+}
+
 /** A connection to the victim's browser, whatever state its page is in. */
 const victimCx = () => client(PORTS[VICTIM], new URL(ORIGIN[VICTIM]).hostname);
 
@@ -637,6 +675,9 @@ if (actorTopology[`${ACTOR.toLowerCase()}Ready`] !== true) {
     actorTopology,
     timeline,
   });
+  // The row is on disk by now - `record` is synchronous - so a kill during the restore
+  // costs the fleet and never the measurement.
+  await restoreTheFleet();
   process.exit(1);
 }
 
@@ -658,6 +699,9 @@ if (!seeded.enrolled || !seeded.pinOk) {
     timeline,
   });
   seeded.cx.close();
+  // The row is on disk by now - `record` is synchronous - so a kill during the restore
+  // costs the fleet and never the measurement.
+  await restoreTheFleet();
   process.exit(1);
 }
 
@@ -819,7 +863,13 @@ if (row.offline) {
   };
   seeded.cx.close();
   actorCx.close();
-  await finishObserved(row.id, offlineVerdict, offlineDetail, offlineObservers);
+  await finishObserved(
+    row.id,
+    offlineVerdict,
+    offlineDetail,
+    offlineObservers,
+    restoreTheFleet,
+  );
 }
 
 // The victim is live, so it should learn this from a frame rather than at a login gate. Either is
@@ -889,6 +939,9 @@ if (returnTopology.includes(ACTOR.toLowerCase()) && topology[`${ACTOR.toLowerCas
     topology,
     timeline,
   });
+  // The row is on disk by now - `record` is synchronous - so a kill during the restore
+  // costs the fleet and never the measurement.
+  await restoreTheFleet();
   process.exit(1);
 }
 
@@ -1074,4 +1127,4 @@ actorCx.close();
 // of two booleans computed here, which said nothing about the ACTOR and nothing at all about a
 // deploy landing mid-run; `gate()` reads all three observers and outranks the assertion with a
 // VACUOUS when the server was replaced underneath it.
-await finishObserved(row.id, verdict, detail, observers);
+await finishObserved(row.id, verdict, detail, observers, restoreTheFleet);

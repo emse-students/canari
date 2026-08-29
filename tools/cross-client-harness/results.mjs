@@ -444,9 +444,29 @@ export async function recordObserved(id, verdict, detail, observers) {
  * cannot are the ones holding a CDP socket or an adb forward open: nothing closes those, so the
  * process never idles and `beforeExit` never fires. `life.mjs` is exactly that shape, which is why
  * it had a `process.exit` - and why the fix is to keep the exit and gate what it exits ON.
+ *
+ * `afterRecording` IS FOR TEARDOWN, AND IT RUNS AFTER THE ROW IS ON DISK ON PURPOSE. A runner that
+ * has to put something back - a fleet it killed, a network link it severed - cannot do it before
+ * this call, because the exit above is the last thing that happens; and it must not do it before
+ * the RECORD either, because a killed run destroys a measurement that was seconds from being
+ * written, which has already cost this campaign three cells. So the order is fixed here rather than
+ * left to each caller to get right: measure, write, restore, exit.
+ *
+ * A TEARDOWN THAT THROWS MAY NOT SWALLOW THE VERDICT. The row is already durable by then, so the
+ * failure is reported and the exit code stays the one the verdict earned - a rig that could not tidy
+ * up is not a check that failed, and conflating them would relabel a PASS.
+ *
+ * @param {() => Promise<unknown>} [afterRecording] teardown, run once the row is durable
  */
-export async function finishObserved(id, verdict, detail, observers) {
+export async function finishObserved(id, verdict, detail, observers, afterRecording) {
   const row = await recordObserved(id, verdict, detail, observers);
+  if (afterRecording) {
+    try {
+      await afterRecording();
+    } catch (e) {
+      console.error(`[results] teardown after ${id} threw: ${String(e)}`);
+    }
+  }
   process.exit(row.verdict === 'PASS' ? 0 : 1);
 }
 
