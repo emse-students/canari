@@ -419,7 +419,7 @@ four wipe defects found by hand:
 | HEAL-NEW-12 | The responder is the **PEER W2, arriving LATE** | `+user` | `pending` on `a35cf4e5`, narrowed as HEAL-NEW-2 - same stale ledger `FAIL` |
 | HEAL-NEW-13 | The responder is **the phone, arriving LATE** - says whether the retry is driven by OUR reconnect or the RESPONDER's. Read with HEAL-NEW-5, whose responder can never answer | `+A1` `+user` | `pending` |
 | HEAL-NEW-14 | **The heal is INTERRUPTED** - a reload, then a link cut and restored, while rows are still amber. A reload must not restart the ladder from zero, and a cut must not leave a row amber with nothing owed | `+user` | `pending` |
-| HEAL-NEW-15 | **Is the app usable while it heals?** N rows amber, and the user navigates and sends | `+user` | `FAIL` on `48b65d08` - the instrument; re-run owed |
+| HEAL-NEW-15 | **Is the app usable while it heals?** N rows amber, and the user navigates and sends | `+user` | `INVALID` on `dc8bf000` - 10/10 ready before the watch opened |
 
 ## 17 - PIN
 

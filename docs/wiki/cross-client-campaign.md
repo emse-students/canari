@@ -961,16 +961,26 @@ The cells carried these as prose; they are design, and the board is a state tabl
 - **HEAL-NEW-15 is a finding independent of the heal completing.** An amber sidebar that cannot be
   clicked, or a healed conversation that will not open, fails the row whatever the repair does next: a
   10-minute heal is acceptable where 10 minutes of a frozen list is not.
-  **AND THE RUNNER DOES NOT ASK THAT QUESTION YET, read 2026-08-29 and owed before the row is taken
-  again.** `healnew.mjs:555` calls `navigationCost` AFTER `watchRows` has returned (`:548`), so on a
+  **THE PROBE WAS MOVED INSIDE THE WATCH ON 2026-08-29, AND THE ROW IS STILL UNASKABLE ONE LAYER
+  EARLIER.** `healnew.mjs` used to call `navigationCost` AFTER `watchRows` had returned, so on a
   topology that heals fast - row 15's responder is W1, present from the start, which is row 3's
-  topology and row 3 settled during enrolment - the click lands on a sidebar that is already green.
+  topology and row 3 settled during enrolment - the click landed on a sidebar that was already green.
   The `FAIL` of `48b65d08` recorded exactly that pair, `healed: true` beside `usability.openedInMs:
-  26`: a real number, about an app that had finished healing. `navigationCost` also clicks only a
-  `data-ready="true"` tile, so the half of the row that asks whether the AMBER list itself answers a
-  click is measured by nothing at all. The sample has to be taken inside the watch, at the first
-  sample holding a ready row and a syncing row at once, and a run where those never coexist has not
-  asked the row's question - which is `INVALID`, never a pass over an unasked question.
+  26`: a real number, about an app that had finished healing. `watch()` now takes an awaited
+  `onSample` hook and the row fires it ONCE, at the first sample holding a ready row and a syncing
+  row at once, storing `usability.whileAmber`; the post-settle click stays as `usability.afterSettle`,
+  because a healed conversation that will not open fails the row too. A run where the two states
+  never coexist is `INVALID` - never a pass over an unasked question.
+  **AND THAT IS WHAT THE FIRST GATED RUN RECORDED, on `dc8bf000`: the watch's FIRST sample read
+  10 rows, 10 ready, 0 syncing, and it settled in 2 ms.** The sidebar had finished healing before the
+  watch could open, which is not a fact about the watch: the runner's own `first read`, 900 ms
+  earlier, was already 10/10, and between the device landing on the app (+12.5 s) and that read
+  (+61.3 s) sits the whole enrolment, the abandoned-id purge and the KeyPackage poll - about 49 s in
+  which NO sidebar reader runs at all. So the amber window on this topology lives inside the mint,
+  not after it, and reaching it is a DESIGN decision about where the first sample belongs, not a
+  wider deadline. `navigationCost` was also cleared of the fear that it would destroy its own watch:
+  measured on the post-click client, `.sidebar-panel [data-conversation-tile]` still reads 10 rows
+  and 0 unhooked with a composer open, so no non-navigating probe is owed.
 
 ### The HEAL rung's first two nights, and the device cap under all of it
 
