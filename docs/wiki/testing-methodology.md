@@ -2868,6 +2868,39 @@ fault as the `footprint.mjs` reading two paragraphs below and as
 [the column rule](durable-rules.md): a signal is evidence only for the question it was written to
 answer, and readiness was written to answer whether the list had painted.
 
+### A termination proof must be about the unknown ITS OWN row is aimed at
+
+`subsetSettled` was written for HEAL-NEW and reused verbatim by HEAL-REVOKE, and the reuse was wrong
+in a way neither row could report. It reads: *of the rows this device already has, the ones some
+responder could serve are ready.* On HEAL-NEW that is a complete proof, because the server lists a
+fresh device into its groups before the watch opens - the sidebar already holds every row it will
+ever hold, and only the COLOUR is unknown. After a revocation wipe the sidebar starts **empty** and
+the rows arrive one at a time, so PRESENCE is the unknown, and a predicate that looks only at rows
+already present is satisfied by the first one to land.
+
+Measured on `96bdd1bb`, HEAL-REVOKE-5. The returning device recorded `+0ms rows=0` then
+`+6022ms rows=1 ready=1` and was declared settled; the reference, minted through `newdevice.mjs`,
+walked into its own watch already holding twelve. The row's last unmet expectation was
+`itEndedWhereAFreshDeviceEnds`, `rows: 1 vs 12` - the equality failing not because the product healed
+one group of twenty-one, but because **one device was judged after six seconds and the other after a
+minute**, which is [the interval rule](#a-duration-is-evidence-only-for-the-interval-it-was-measured-over-and-a-name-has-to-say-which)
+arriving through the settle predicate instead of through a name.
+
+The fix is a second predicate, `subsetArrivedAndSettled`, and NOT a change to the first: made strict,
+`subsetSettled` would demand the peer responder's own groups of a device that is not a member of them
+and stall HEAL-NEW forever. Two rows with two different unknowns need two proofs, and the self-test
+now carries the pair - including the case that states the defect outright, *the loose predicate calls
+this same sidebar settled*.
+
+The owed set is then an INTERSECTION, and each half alone is a false verdict in a different
+direction. What a responder can serve, without membership, is the peer's rows - demanded of a device
+that will never see them, a 600 s stall reported as a defect. Membership without serving is a row
+nothing online could hand over - the same stall, and the reason the subset rule exists at all. The
+runner reads membership from the actor, which is the subject's own other device, and a set it could
+not narrow stays EMPTY so the existing `theSettlePredicateKnewWhatToWaitFor` guard calls the row
+unobservable - **never a silent widening back to the loose rule, which is a fallback and would turn a
+stall into a PASS.**
+
 ## What the HEAL rung taught the instrument
 
 Moved off the board on 2026-08-28 with the rest of section 16's prose. These are rules about measuring, not verdicts.

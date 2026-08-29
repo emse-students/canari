@@ -63,8 +63,9 @@ import { onlineDevicesOf } from "./presence.mjs";
 import { stateOf } from "./ready-probe.mjs";
 import { bringToReady } from "./ready-repair.mjs";
 import { finishObserved, record, unmet } from "./results.mjs";
-import { subsetSettled } from "./servable.mjs";
+import { subsetArrivedAndSettled } from "./servable.mjs";
 import {
+  activeGroupIds,
   navigationCost,
   readAll,
   sidebar,
@@ -429,25 +430,28 @@ function classifyWipe(cx) {
  * `servable.mjs` was written for on the HEAL-NEW rung, and this is its second caller.
  *
  * IT IS NOT THE SAME SUBSET AS HEAL-NEW'S, AND THE DIFFERENCE IS THE POINT. There the responder is
- * the PEER, a different account, so `activeGroupIds` - a per-USER question - already narrows it.
- * Here the responder is the owner's own other device: the server says it is a member of every group
- * the victim is in, and the per-user set narrows NOTHING. A device can only answer a re-admission
- * request for a group whose MLS state it HOLDS, and the sidebar says which those are - a ready row.
- * So the subset is the union of the READY rows of every client that is up, which is a strictly
- * stronger statement than membership and is the one the product actually has to satisfy.
+ * the PEER, a different account, and the fresh device already HOLDS every row it will ever hold, so
+ * membership alone is the whole subset. Here the subject's rows have to ARRIVE, so the subset is the
+ * intersection of two facts, and neither one alone is it: a device can only answer a re-admission
+ * request for a group whose MLS state it HOLDS - a ready row in its sidebar - and the subject can
+ * only ever receive a group the SERVER says it is a member of. Serving without membership is the
+ * peer's rows, which the subject will never see; membership without serving is a row nothing online
+ * could hand over. The subset is what satisfies both, and it is the claim the product must meet.
  *
- * AN EMPTY WORLD NEVER SETTLES. `subsetSettled` refuses a vacuous subset by construction, so a row
- * that returns with nobody online - HEAL-REVOKE-7 `--order first`, which exists to do exactly that -
- * reports a device that could not heal instead of the fastest PASS on the board. The caller's guard
- * knows which rows meant it: `theSettlePredicateKnewWhatToWaitFor` demands a non-empty world only
- * where the row's own `returnTopology` put someone there.
+ * AN EMPTY WORLD NEVER SETTLES. `subsetArrivedAndSettled` refuses a vacuous subset by construction,
+ * so a row that returns with nobody online - HEAL-REVOKE-7 `--order first`, which exists to do
+ * exactly that - reports a device that could not heal instead of the fastest PASS on the board.
+ * The caller's guard knows which rows meant it: `theSettlePredicateKnewWhatToWaitFor` demands a
+ * non-empty world only where the row's own `returnTopology` put someone there.
  *
  * READING A RESPONDER COSTS IT NOTHING. `sidebar()` is one `document.querySelector` in the page: no
  * request, no console line, nothing that reaches the actor's own observer or its gate.
  */
 async function whatTheWorldCanServe(label) {
-  const ids = new Set();
+  const served = new Set();
   const from = {};
+  let owed = null;
+  let owedWhy = "the actor is down, so nobody of the subject's account could be asked";
   for (const which of ["W1", "W2"]) {
     if (!(await isUp(which.toLowerCase()))) {
       from[which] = "down";
@@ -456,9 +460,19 @@ async function whatTheWorldCanServe(label) {
     try {
       const rcx = await client(PORTS[which], new URL(ORIGIN[which]).hostname);
       const seen = await sidebar(rcx);
+      if (which === ACTOR) {
+        // MEMBERSHIP IS PER USER AND IS ASKED OF THAT USER'S OWN CLIENT. Every device this rung
+        // measures - the seed, the returning victim, the reference - belongs to the OWNER, and the
+        // actor is the owner's other device, so its answer IS the subject's owed set. Reading it
+        // here costs no second connection and no second login.
+        const who = await whoAmI(rcx);
+        const mine = await activeGroupIds(rcx, who.userId ?? "");
+        owed = mine.ids ? new Set(mine.ids) : null;
+        owedWhy = mine.why;
+      }
       rcx.close();
       const ready = (seen.tiles ?? []).filter((t) => t.id && t.ready && !t.removed);
-      for (const t of ready) ids.add(t.id);
+      for (const t of ready) served.add(t.id);
       from[which] = `${ready.length} ready of ${seen.rows ?? 0}`;
     } catch (e) {
       // A RESPONDER THAT CANNOT BE READ IS NOT A RESPONDER THAT SERVES NOTHING, and the difference
@@ -467,8 +481,19 @@ async function whatTheWorldCanServe(label) {
       from[which] = `UNREADABLE: ${firstLine(e)}`;
     }
   }
-  note(`${label}: the world can serve ${ids.size} group(s) ${JSON.stringify(from)}`);
-  return { ids, from, settledWhen: subsetSettled(ids) };
+  // THE PEER'S READY ROWS ARE NOT THE SUBJECT'S OWED ROWS, and the arrival proof cannot tell a row
+  // that never came from a row that was never owed. W2 is a DIFFERENT ACCOUNT: at the seed watch it
+  // is still up, and its groups would be demanded of a device that will never be a member of them -
+  // a 600 s stall reported as a defect. So what the world can serve is narrowed to what the subject
+  // is actually owed, and a set that could not be narrowed stays EMPTY and is refused downstream
+  // rather than silently widening back to the loose rule.
+  const ids = owed ? new Set([...served].filter((id) => owed.has(id))) : new Set();
+  from.SUBJECT = owed ? `${owed.size} group(s)` : `UNREADABLE: ${owedWhy}`;
+  note(
+    `${label}: the world serves ${served.size}, the subject is owed ${owed?.size ?? "?"}, ` +
+      `so ${ids.size} group(s) must arrive ${JSON.stringify(from)}`,
+  );
+  return { ids, from, settledWhen: subsetArrivedAndSettled(ids) };
 }
 
 /**
