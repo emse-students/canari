@@ -2901,6 +2901,69 @@ not narrow stays EMPTY so the existing `theSettlePredicateKnewWhatToWaitFor` gua
 unobservable - **never a silent widening back to the loose rule, which is a fallback and would turn a
 stall into a PASS.**
 
+### A premise a row never LIFTS is not a premise, it is a different question
+
+HEAL-REVOKE-7 exists to ask whether the ORDER of a revoked device's return changes where it ends up:
+`--order first` returns before the account's other clients are online, `--order last` after. The
+runner implemented `first` by setting the topology to nothing and leaving it there for the rest of
+the row.
+
+**Nothing about the product could then make that half pass, and the reason is arithmetic rather than
+protocol.** The subset a return must wait for is what the world can SERVE intersected with what the
+subject is OWED, and the servers are read from the account's own online clients - so with none online
+the subset is empty, and `subsetArrivedAndSettled` refuses an empty subset by construction. The watch
+could therefore never terminate whatever the app did. On 2026-08-30 the row sat at `25 rows, 0 ready,
+25 syncing` from its first sample to the 600 s deadline.
+Three expectations - `bothSettled`, `theNewGroupArrived`, `theSettlePredicateKnewWhatToWaitFor` -
+were unsatisfiable by any behaviour of the app, and a `FAIL` would have been recorded against the
+product for a world the rig had built and never taken down.
+
+**A GUARD THAT EXCUSES THE SYMPTOM HIDES THE DESIGN ERROR.** The runner already knew the subset would
+be empty and carried an exemption for it: `theSettlePredicateKnewWhatToWaitFor` demanded a non-empty
+world *only where the row's own topology put someone there*. That reads as care and it was the
+opposite - it let the one row that could never settle stop reporting that it could never settle,
+while every other expectation still failed. The exemption was deleted, not widened: every order now
+reaches the watch in a world that can serve, so an empty subset there is a rig fault in any order.
+
+**The shape of the fix, and why it asserts MORE than before.** Isolation is a PHASE of the row, so it
+is observed, asserted on, and then ended:
+
+1. the device returns with nobody of its own account online;
+2. it is watched for an interval and the state it reaches is RECORDED;
+3. the actor is brought up, and only then does the settle watch open.
+
+The comparison the pair exists for is now between two devices in the same populated world, which is
+the only comparison that means anything.
+
+**STEP 2 WAS AN ASSERTION FOR EXACTLY ONE RUN, AND RETRACTING IT IS THE MORE USEFUL HALF OF THIS
+ENTRY.** It claimed that a row going ready with no client of the account online could only have come
+from a store the revocation should have taken - HEAL-REVOKE-1's P1 by a second door. The window ended
+with one row of 26 ready and the assertion failed on it. **Three causes produce that one row and the
+rig can separate none of them:** `externalJoin` on a community's key-distribution group is a
+documented self-service path that needs no server at all and the 2/12 ORDER PAIR recorded it; a
+Welcome is owed by A MEMBER rather than by another device of yours - the app says so in the line it
+logs, `sendWelcomeRequest… (invited, Welcome owed by a member)` - so any other member of a shared
+conversation can serve one, and killing the account's own clients does not isolate the device from
+them; and the defect the assertion was written for. **An assertion resting on a premise its row never
+established is not a weaker test for being removed - it was never a valid one**, and the honest
+disposition for a measurement whose causes are not separable is to record it and assert nothing.
+Naming the self-servable rows is what would make a claim possible here, and that is a piece of work
+rather than a line.
+
+**THE ONE TIMER, AND WHY IT IS ALLOWED TO EXIST.** Step 2 observes a state that only exists for as
+long as the isolation lasts, so it needs a window. The window is not a constant: it is three times the SEED device's settle
+time, measured minutes earlier in this same world on this same account, so it scales with the size of
+the account rather than assuming one. And it is wrong LENIENTLY in both directions - too short makes
+the negative trivially true and asserts less, too long only costs time - so no setting of it can
+manufacture a failure. **A window that can only ever under-claim is a different object from a
+deadline that decides a verdict**, and the row's real claim remains the final-state equality.
+
+**A NUMBER THAT TWO CAUSES PRODUCE IS EVIDENCE FOR NEITHER, AND THAT APPLIES TO THE WINDOW ITSELF.**
+A low ready count is true of a device that was served nothing and of a device that left `/chat` two
+seconds in. The phase therefore records why it ended alongside what it reached, so a reader can tell
+a window that ran from a window that broke - which is the same discipline that retracted the
+assertion, applied to the measurement that replaced it.
+
 ## What the HEAL rung taught the instrument
 
 Moved off the board on 2026-08-28 with the rest of section 16's prose. These are rules about measuring, not verdicts.

@@ -1143,6 +1143,56 @@ deciding between catching it at the WASM boundary and carrying it upstream to op
 The workaround the tests use is to avoid the shape entirely: the producer is two members committing
 at the same epoch, which is the production shape anyway and returns cleanly.
 
+### P1 - a device DESTROYED the only copy of a group it had just created, and no member can ever join it again (measured 2026-08-30)
+
+Found by HEAL-REVOKE-7 `--order first` on `0044a041`, which FAILs on it. The row's actor W1 creates a
+group, is killed, and is restarted twenty seconds later. On coming back it decides the group is not
+on the server and deletes its own MLS state for it:
+
+    00:31:31  [MLS] forgetGroup 50799ae8... (absent from server)
+    00:31:31  forget_group: group 50799ae8... forgotten (memory + storage, min_epoch=0, re-Welcome expected)
+    00:31:31  [GROUP] Sync own devices failed: Group not found: 50799ae8...
+    00:31:31  [EVICT] Membership of 50799ae8... could not be read before verifying against the server
+
+**THE SAME DEVICE DISPROVES ITS OWN PREMISE FIVE SECONDS LATER.** It tries to get back in, and the
+server answers that the group is perfectly there - then refuses the join for the one reason that
+forgetting it caused:
+
+    00:31:36  [READD] 50799ae8... getGroupMeta -> ok
+    00:31:36  [READD] 50799ae8... externalJoin -> no_base_published
+    00:31:36  [READD] 50799ae8... sendWelcomeRequest (external join refused: no_base_published)
+
+`getGroupMeta -> ok` is the read that settles it: the group was NOT absent from the server, so the
+destruction was gated on a read that was wrong. **A destructive repair must be gated on knowing the
+state is really broken** - this one is gated on a read that fails open in the destructive direction.
+
+**WHAT IT COSTS, AND WHY IT IS A P1 RATHER THAN A LOST CACHE.** W1 was the only device holding the
+group's MLS state, so `min_epoch=0` and "re-Welcome expected" describe a Welcome nobody is left to
+send. The base for an external join was never published and now never can be, which is exactly what
+`no_base_published` reports. Two further devices of the same account were then created and BOTH are
+counted as members by the server - `serverActive: 26` on each - while neither can open the
+conversation: the returning device sat on it amber for 601 s, and a freshly minted device does not
+even get a row for it. **The group is permanently unreachable for every member while the server
+still says they belong to it**, which is the shape the campaign calls worse than an error: it looks
+healthy and is not.
+
+**The trigger, as far as it is established.** Create a group, restart the creating client shortly
+after, before anything else has a copy. That is an ordinary user action - closing the app and
+reopening it - and not a rig-only sequence. What is NOT established is which read answers "absent
+from the server" and why it disagrees with `getGroupMeta` five seconds later; the two are different
+calls and the discriminator is which endpoint each one asks, so the first move is to name the read
+rather than to widen a guard.
+
+**Do not fix it by retrying the read.** The asymmetry is the defect: being wrong about "present"
+costs a wasted sweep, being wrong about "absent" destroys the last copy of a conversation. The
+decision to forget the only local state of a group has to be gated on evidence that can only mean
+one thing, and a `Group not found` from a call that is also the one failing is not it.
+
+**It is distinct from the concurrent-creation race below**, which reaches `forgetGroup` legitimately:
+there a WINNER has published a base and the loser external-joins it. Here there is no winner, and
+`no_base_published` is what says so.
+
+
 ### P3 - one client reads a new salon's distribution group TWICE, concurrently (measured 2026-08-27)
 
 `srvlog.mjs` leaves `published=false base=none active=0 devices=0` unexplained on purpose - it is

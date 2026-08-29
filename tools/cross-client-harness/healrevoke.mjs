@@ -572,8 +572,16 @@ async function whatTheWorldCanServe(label) {
  *
  * It does NOT wipe anything - the point of the row is that REVOCATION did the wiping. If a store
  * survived, this is where it shows, and clearing the origin first would delete the evidence.
+ *
+ * `beforeTheWatch` RUNS AFTER THE DEVICE IS LOGGED IN AND BEFORE THE WORLD IS READ, and exists for
+ * exactly one row. HEAL-REVOKE-7 `--order first` returns with nobody online, which is a PHASE of
+ * that row and not the world it is judged in: a device whose account has no other client online can
+ * never be served a Welcome, so a watch opened there waits for something nothing could send. The
+ * hook is where the isolated phase is observed and then ENDED, so the settle watch that follows
+ * runs against a world that can actually answer - and the equality the row asserts is between two
+ * devices in the same populated world, which is the only comparison that means anything.
  */
-async function comeBack(label) {
+async function comeBack(label, { beforeTheWatch } = {}) {
   // THE OBSERVER GOES UP BEFORE THE LOGIN, BECAUSE THE LOGIN IS THE STEP THAT CAN FAIL. It used
   // to be attached after it, and on 2026-08-29 that left the only interesting console of the run
   // unrecorded: the return reported login ok and landed on /chat, and three milliseconds later the
@@ -589,6 +597,7 @@ async function comeBack(label) {
   await ensureChat(cx).catch(() => null);
   const who = await whoAmI(cx);
   note(`${label}: it is now device ${who.deviceId?.slice(0, 8)} of ${who.userId?.slice(0, 8)}`);
+  const alone = beforeTheWatch ? await beforeTheWatch(cx) : null;
   const target = await whatTheWorldCanServe(label);
   const w = await watchRows(cx, {
     timeoutMs: SETTLE_MS,
@@ -604,7 +613,7 @@ async function comeBack(label) {
       : `still syncing after ${w.elapsedMs}ms`;
   note(`${label}: ${how}`);
   const last = await readAll(cx);
-  return { cx, observer, login, pin, who, watch: w, target, last };
+  return { cx, observer, login, pin, who, watch: w, target, last, alone };
 }
 
 
@@ -945,7 +954,73 @@ if (returnTopology.includes(ACTOR.toLowerCase()) && topology[`${ACTOR.toLowerCas
   process.exit(1);
 }
 
-const back = await comeBack("return");
+/**
+ * THE ISOLATED PHASE OF `--order first`, AND WHY IT ENDS.
+ *
+ * The row asks whether the ORDER of the return changes where the device ENDS UP - not whether a
+ * device alone in the world can heal, which has one answer and it is no. A Welcome can only be
+ * served by another client of the same account, so with none online the sidebar stays amber for as
+ * long as it is left there. Judging the pair on that state would compare a healed device against a
+ * device nothing was allowed to heal, and report the difference as a product defect: the run of
+ * 2026-08-30 did exactly that, stalling at `25 rows, 0 ready, 25 syncing` until the deadline, with
+ * three expectations that could not be met by any behaviour of the app.
+ *
+ * SO THE PHASE IS OBSERVED, ASSERTED ON, AND THEN LIFTED. What the isolation buys is a claim worth
+ * making and previously unmade - that a device with no responder heals NOTHING, rather than
+ * inventing rows from a store that was supposed to be wiped - and the settle watch then runs in the
+ * same populated world the reference is minted into.
+ *
+ * THE WINDOW IS MEASURED AGAINST THIS WORLD, NOT PICKED. The seed device settled in
+ * `seedSettle.elapsedMs` under a world that COULD serve it, minutes earlier and on the same account,
+ * so three times that is an interval in which healing would have been seen had anything been able to
+ * happen. It scales with the size of the account rather than assuming one, which is what a fixed
+ * constant would do. If it were wrong it is wrong LENIENTLY - too short leaves the negative
+ * observation trivially true and asserts less, never more - so nothing here can manufacture a
+ * failure, and the row's real claim stays the final-state equality.
+ */
+const aloneFor = Math.max(20_000, 3 * (seedSettle.elapsedMs ?? 0));
+const back = await comeBack("return", {
+  beforeTheWatch: returnTopology.length > 0
+    ? null
+    : async (cx) => {
+        note(`the return is alone: observing ${aloneFor}ms with nobody able to serve a Welcome`);
+        const readout = await watchRows(cx, {
+          timeoutMs: aloneFor,
+          settledWhen: () => false,
+          log: (m) => console.log(m),
+        });
+        const state = fingerprint(await readAll(cx));
+        // A PHASE THAT ENDED ON A LOGOUT IS NOT A PHASE THAT WAS OBSERVED. `ready === 0` is true of
+        // a device that healed nothing AND of a device that left /chat two seconds in, and the
+        // assertion below cannot tell them apart - so the reason the window ended is recorded, and
+        // the trivial pass is visible in the row rather than hidden behind a zero.
+        note(`alone after ${readout.elapsedMs}ms${readout.abandoned ? ` (ABANDONED on ${readout.abandoned})` : ""}: ${JSON.stringify(state)}`);
+        const lift = [ACTOR.toLowerCase()];
+        note(`the isolated phase is over - bringing ${lift.join(",")} online for the settle watch`);
+        const lifted = await setTopology(lift);
+        note(`topology after the lift ${JSON.stringify(lifted)}`);
+        // A LIFT THE RIG FAILED TO PERFORM IS NOT A RESULT EITHER, and it is the same argument as
+        // the guard above: without the actor, nothing of this account can answer, and the stall
+        // that follows would be written down as the product losing every group.
+        if (lifted[`${ACTOR.toLowerCase()}Ready`] !== true) {
+          record(row.id, "INVALID", {
+            unobservable: `the isolated phase could not be lifted - ${ACTOR} did not come to ready: ${lifted[ACTOR.toLowerCase()]}`,
+            what: row.what,
+            order,
+            revocation,
+            wipe,
+            leftBehind,
+            world: { created: born, deleted: doomed, deletionSucceeded: deleted },
+            topology: { atTheReturn: topology, afterTheLift: lifted },
+            alone: { forMs: readout.elapsedMs, state },
+            timeline,
+          });
+          await restoreTheFleet();
+          process.exit(1);
+        }
+        return { forMs: readout.elapsedMs, state, lifted, abandonedOn: readout.abandoned ?? null };
+      },
+});
 const returnedState = fingerprint(back.last);
 const returnedAmber = stillAmber(back.last);
 note(`returned state ${JSON.stringify(returnedState)} amber=${JSON.stringify(returnedAmber)}`);
@@ -1041,12 +1116,14 @@ const expectations = {
    * first run.
    */
   theWipeWindowWasActuallyRead: wipe.linesRead > 0,
+  // NO EXEMPTION ANY MORE, AND THAT IS THE POINT OF THE FIX. This used to excuse an empty world
+  // wherever `returnTopology` was empty, which was `--order first` - and an excused empty world is
+  // a watch with nothing to wait for, so the row could only ever end in a stall. The isolated phase
+  // is now lifted before the watch opens, so every order reaches this line with a world that can
+  // serve, and a subset that is still empty here is a rig fault in any order.
   theSettlePredicateKnewWhatToWaitFor: seedTarget.ids.size > 0 &&
     freshTarget.ids.size > 0 &&
-    // ONLY WHERE THE ROW PUT SOMEONE THERE. HEAL-REVOKE-7 `--order first` returns with nobody
-    // online on purpose, so an empty world is that row's SUBJECT and not a rig that failed to
-    // measure - the topology the row declared is what decides which of the two it is.
-    (returnTopology.length === 0 || back.target.ids.size > 0),
+    back.target.ids.size > 0,
   /** Every sample carries both clocks, which is what makes a stall diagnosable off-machine. */
   timelineIsStamped: timeline.every((m) => typeof m.at === "number" && typeof m.wall === "string"),
 };
@@ -1054,6 +1131,30 @@ const expectations = {
 // Row 8 is the deletion row, so its own subject must have been set up: a deletion that never
 // happened cannot be shown not to come back, and a PASS there would be vacuous.
 if (row.id === "HEAL-REVOKE-8") expectations.theDeletionActuallyHappened = deleted === true;
+
+// THE ISOLATED PHASE IS RECORDED AND NOT ASSERTED ON, AND THE REASON IS A PREMISE THAT TURNED OUT
+// TO BE FALSE. This carried `nothingHealedWithNobodyOnline` for exactly one run, on the argument
+// that a row going ready with no client of ITS ACCOUNT online must have come from a store the wipe
+// should have taken - HEAL-REVOKE-1's P1 by a second door. On 2026-08-30 the window ended with ONE
+// row of 26 ready, and the assertion failed on it.
+//
+// THE ROW CANNOT TELL THE TWO CAUSES APART, WHICH IS WHY IT NOW ASSERTS NEITHER. A device can reach
+// a group with nobody serving it at all - `externalJoin` on the community's key-distribution group
+// is a documented, legitimate self-service path, and the 2/12 ORDER PAIR recorded exactly that
+// shape. And a Welcome is owed by A MEMBER, not by another device of yours - the app says so in the
+// line it logs, `sendWelcomeRequest… (invited, Welcome owed by a member)` - so any other member of a
+// shared conversation can serve one, and killing the account's own clients does not isolate the
+// device from them. One ready row is consistent with a legitimate self-join, with a peer member
+// answering, and with the defect the assertion was written for. A rig that cannot separate them
+// must not pick one, and an assertion resting on a premise this row never established is not a
+// weaker test for being removed - it was never a valid one.
+//
+// What the phase still buys is the MEASUREMENT, which nothing else here takes: how far a returning
+// device gets before any of its own devices is back - 1 of 26 in 20 s, against 25 of 26 within
+// sixteen seconds of the lift. It goes in the detail with the reason the window ended, and no
+// expectation reads it. Naming the self-servable rows is what would make a claim possible here, and
+// that is a piece of work, not a line.
+void back.alone;
 
 const missing = unmet(expectations);
 const verdict = missing.length === 0 ? "PASS" : "FAIL";
@@ -1094,6 +1195,10 @@ const detail = {
     samples: back.watch.samples,
     doomedGroup: doomedAfterReturn,
     newGroup: bornAfterReturn,
+    // Null for every row that never isolated, so a reader can tell "did not apply" from "was zero".
+    alone: back.alone
+      ? { forMs: back.alone.forMs, state: back.alone.state, abandonedOn: back.alone.abandonedOn }
+      : null,
   },
   reference: {
     deviceId: fresh.now?.deviceId ?? null,
@@ -1110,7 +1215,7 @@ const detail = {
   // fresh one. Empty is the PASS.
   equalityGap: gap,
   usability,
-  topology,
+  topology: back.alone ? { atTheReturn: topology, afterTheLift: back.alone.lifted } : topology,
   fleetAtTheEnd: (() => {
     try {
       return onlineDevicesOf(victimBefore.userId).map(installTag);
