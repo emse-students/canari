@@ -1154,6 +1154,46 @@ Three decisions follow, and the first is the one that matters:
   reader that cannot resolve the event it is pointed at reports its own period as the product's
   behaviour.
 
+**AND THE ROW GAINS THE PROBE IT WAS ALWAYS DESIGNED AROUND AND HAS NEVER HAD** (branch, 2026-08-29).
+This row's design has said since it was written that *an amber sidebar that cannot be clicked fails
+the row*, and every instrument built for it clicked a `data-ready="true"` tile - which measures the
+opposite half, *a healed conversation opens*. The amber half was unmeasurable for a plain reason:
+until the late topology there was no amber row alive long enough to click. `amberListCost` clicks a
+SYNCING tile during the alone window, which this topology guarantees for `ALONE_MS`, and times the
+app's acknowledgement.
+
+**It asserts the TIMING and never the outcome, and the distinction is the whole probe.** A
+conversation with no MLS state that declines to open is legitimate product behaviour; a list that
+does not react at all is a frozen app, and only the second is a finding. So `answeredBy` records what
+the app did and `answeredInMs` how long it took, and only the second reaches an expectation. The
+three usability numbers a run now carries are three different apps: `amberList` is a click on a
+syncing tile with nothing healed, `usability.whileAmber` a click on a ready tile mid-heal, and
+`usability.afterSettle` a click on a healed sidebar.
+
+**The behaviour was OBSERVED before the probe was written, on a bench built for it.** A fresh device
+with W1 killed and the phone stopped cannot be served by anybody, so its sidebar stays amber
+indefinitely - HEAL-NEW-1 measured ten rows amber for 600 s - which makes it the one place this
+question can be poked at by hand. Measured there on 2026-08-29, 10 rows / 0 ready / 10 syncing: a
+click on a syncing tile is answered in **35 ms**, the tile goes selected AND a composer appears, the
+route does not change and no toast is raised. **So today the product opens a syncing conversation**,
+and the probe still does not assume it will tomorrow - selection alone answers the row.
+
+**That needed one product change, and it is an instrument rather than a behaviour.** The only
+statement a tile made that it had received a click was its SELECTED STYLE, a Tailwind class string; a
+reader matching it would report a frozen app the day the style is restyled, which is the "Sync" badge
+mistake in different clothes. `ConversationTile` now publishes `data-selected` beside `data-ready` and
+`data-removed`, for the reason written in its own markup comment. Nothing renders differently.
+
+**What the re-scope does to the expectations, since a set that is not audited drifts:** it GAINS
+`wentAmberBeforeTheResponderArrived` and `ourOwnDeviceArrivedLate`, LOSES
+`ourOwnDeviceWasInTheFleet` (which is the `at: "start"` predicate), KEEPS the five that describe the
+mint and the reader, and still asserts NOTHING about healing - `expect` stays `either`, so a green
+sidebar is not this row passing. `navigableWhileAmber` moves from asserted to **asserted only where it
+was askable**: it needs a sample holding a ready row and a syncing row at once, which only a staggered
+heal produces, and demanding one would fail the row for the shape of the heal rather than for the app.
+What makes a run `INVALID` is no longer that coexistence but the amber-alone window failing to open at
+all - the premise the rig owes, which is what `INVALID` has always been for.
+
 **So the census was never the wrong question - it was the RIGHT one, asked of a device the server had
 refused.** Reading `auth_sessions` instead made the row pass while the device was unusable, which is
 worse than the failure it replaced. The primitive now reads BOTH facts and reports the pair: a session

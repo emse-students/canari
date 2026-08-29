@@ -331,6 +331,80 @@ export async function navigationCost(cx) {
   }
 }
 
+/**
+ * WHETHER AN AMBER SIDEBAR STILL ANSWERS A CLICK - the other half of the design, and the half
+ * nothing had ever measured.
+ *
+ * `navigationCost` clicks a READY tile, so it answers "a healed conversation opens". HEAL-NEW-15's
+ * design has always named a second finding beside it - "an amber sidebar that cannot be clicked
+ * fails the row" - and no instrument asked it: on every topology tried before 2026-08-29 the heal
+ * was over before any reader opened, so there was never an amber row to click. A late responder
+ * guarantees one for the whole alone window, which is what makes this askable at all.
+ *
+ * THE ASSERTION IS THAT THE CLICK WAS ANSWERED, NOT THAT THE CONVERSATION OPENED. A syncing
+ * conversation the product declines to open is legitimate - there is no MLS state to render - while
+ * a list that does not react at all is the finding, because that is a frozen app. So the two are
+ * recorded apart: `answeredBy` says WHAT the app did, `answeredInMs` how long it took, and only the
+ * timing is ever asserted on. Measured on a fresh isolated device on 2026-08-29, before this was
+ * written: the tile went selected AND a composer appeared, both within 35 ms. Today it opens; the
+ * day it stops opening, `selected` alone still says the list is alive, and the row keeps its
+ * meaning instead of reporting a freeze that is not there.
+ *
+ * IT READS `data-selected`, NOT THE SELECTED STYLE. Selection was published as a hook the same day
+ * for the reason `data-ready` exists: matching the Tailwind class string would make a restyle
+ * indistinguishable from a dead list, which is the badge mistake wearing different clothes.
+ *
+ * A REMOVED TILE IS NOT A SYNCING ONE and is never the target: it is dead rather than in transit,
+ * it shows no badge, and clicking it asks HEAL-NEW-7's question instead of this one.
+ */
+export async function amberListCost(cx) {
+  const t0 = Date.now();
+  const id = await evaluate(
+    cx,
+    `(function () {
+       var t = document.querySelector('.sidebar-panel [data-conversation-tile][data-ready="false"]:not([data-removed="true"])');
+       if (!t) return '';
+       t.scrollIntoView({ block: 'center' });
+       t.click();
+       return t.getAttribute('data-conversation-tile') || '';
+     })()`,
+  );
+  if (!id) return { clicked: false, why: "no syncing row to click" };
+  const deadline = Date.now() + 20_000;
+  for (;;) {
+    const seen = JSON.parse(
+      await evaluate(
+        cx,
+        `(function () {
+           var t = document.querySelector('.sidebar-panel [data-conversation-tile=' + ${JSON.stringify(JSON.stringify(id))} + ']');
+           return JSON.stringify({
+             selected: t ? t.getAttribute('data-selected') === 'true' : null,
+             opened: !!document.querySelector('.chat-composer-footer .chat-composer-editor'),
+           });
+         })()`,
+      ),
+    );
+    if (seen.selected === true || seen.opened === true) {
+      const by = [seen.selected === true ? "selected" : null, seen.opened ? "opened" : null]
+        .filter(Boolean)
+        .join("+");
+      return { clicked: true, tile: cut(id), answeredInMs: Date.now() - t0, answeredBy: by, ...seen };
+    }
+    // A tile that left the sidebar cannot answer, and waiting out the deadline on it would report a
+    // frozen list for a row that simply healed and re-rendered under the click.
+    if (seen.selected === null)
+      return { clicked: true, tile: cut(id), answeredInMs: null, why: "the tile left the sidebar" };
+    if (Date.now() > deadline)
+      return {
+        clicked: true,
+        tile: cut(id),
+        answeredInMs: null,
+        why: "the list did not react to the click in 20s",
+      };
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
 /** One full read: who the device is, what it shows, what the server says. */
 export async function readAll(cx) {
   const who = await whoAmI(cx);

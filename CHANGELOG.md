@@ -13,6 +13,16 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Added
 
+- **A conversation tile now says whether it is SELECTED, in the markup.** `ConversationTile`
+  publishes `data-selected` beside the `data-conversation-tile` / `data-ready` / `data-removed` hooks
+  it already carried, and nothing renders differently. It exists because one question had no
+  statement to read: HEAL-NEW-15 asks whether a sidebar still answers a click while it is amber - a
+  list that does not react is a frozen app - and the only sign a tile gave that a click had landed
+  was its SELECTED STYLE, a Tailwind class string. A reader matching that string would report a
+  freeze the day the style is restyled, which is the "Sync" badge mistake in different clothes: the
+  badge is a Paraglide message, so counting it counts the translation. A fact the component already
+  holds is published rather than inferred from how it is painted.
+
 - **An Android vitals watch, because nothing here could see the field** (`tools/play-vitals/`).
   Every Android gate in this repository proves the app compiles and that R8 did not crash; none runs
   the app on a stranger's phone, which is where all three Android defects so far were found. The

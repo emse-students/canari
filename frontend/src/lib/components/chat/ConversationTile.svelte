@@ -140,12 +140,20 @@
   Three separate attributes rather than one status word because `isReady` and `isRemoved` are
   independent facts with opposite meanings: a removed group is dead, not in transit, and folding
   them into one value is how a permanent placeholder gets read as a heal in progress.
+
+  `data-selected` IS THE SAME ARGUMENT ABOUT A DIFFERENT SENTENCE: until 2026-08-29 the only
+  statement this tile made that it had received a click was the SELECTED STYLE, a Tailwind class
+  string. HEAL-NEW-15 asks whether an amber sidebar still answers a click at all - a list that does
+  not react is the finding - and a reader matching that class string would report "the app froze"
+  the day the selected style is restyled, which is the badge mistake in another costume. Selection
+  is a fact the component already holds; published, it survives a repaint.
 -->
 <button
   onclick={onClick}
   data-conversation-tile={conversationId}
   data-ready={isReady}
   data-removed={isRemoved}
+  data-selected={isSelected}
   class="group flex w-full items-center gap-4 rounded-[1.25rem] p-3.5 text-left transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-[0.98]
     {isSelected
     ? 'border border-black/5 bg-white/60 shadow-sm backdrop-blur-md dark:border-white/10 dark:bg-black/40'

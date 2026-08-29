@@ -49,7 +49,7 @@ import { onlineDevicesOf } from "./presence.mjs";
 import { bringToReady } from "./ready-repair.mjs";
 import { finishObserved, record, unmet } from "./results.mjs";
 import { splitBySubset, subsetSettled } from "./servable.mjs";
-import { activeGroupIds, cut, navigationCost, readAll, sidebar, whoAmI, watch as watchRows } from "./syncrows.mjs";
+import { activeGroupIds, amberListCost, cut, navigationCost, readAll, sidebar, whoAmI, watch as watchRows } from "./syncrows.mjs";
 import { report } from "./watch.mjs";
 
 const argv = process.argv.slice(2);
@@ -129,10 +129,21 @@ const ROWS = {
   15: {
     id: "HEAL-NEW-15",
     responder: "w1",
-    at: "start",
+    // LATE, AND THE RE-SCOPE IS THE ROW'S THIRD INVALID WRITTEN DOWN (trunk, 2026-08-29). The row's
+    // own words are "N rows amber, and the user navigates and sends", and on a responder present
+    // from the start there are no N rows amber: W1 is a member of all eleven of the owner's groups,
+    // so the heal is over in about two seconds. Three runs measured that and refused to record a
+    // green tick over an unasked question. A LATE responder gives `ALONE_MS` of amber alone and then
+    // a STAGGERED heal, which is the only shape in which a ready row and a syncing row coexist at
+    // all. Nothing is lost: row 3 owns the start-topology heal and row 15 was never in an order pair.
+    at: "late",
     what: "is the app usable while the sidebar is amber",
     expect: "either",
     usability: true,
+    // A 2 000 ms CADENCE CANNOT SEE A TWO-SECOND WINDOW. Every other row waits on a settle where the
+    // period is noise; this one is pointed at a transition, and a reader that cannot resolve the
+    // event it is aimed at reports its own period as the product's behaviour.
+    sampleEveryMs: 250,
   },
 };
 
@@ -376,12 +387,12 @@ note(`topology ${JSON.stringify(topology)}`);
 // the fresh device healed in silence, so no reader of this row's could open on the amber window.
 note("minting a device the server has never seen");
 const minted = await becomeANewDevice({ report: (s) => note(`newdevice: ${s}`) });
+// The PIN gate is no longer read here: it moved into `confirmEnrolment` with the rest of the
+// post-observation work on 2026-08-29, and it is reported with the enrolment below.
 note(
   `minted ${JSON.stringify({
     wipe: minted.nothingSurvivedTheWipe,
     noHumanStep: minted.landedWithoutAHumanStep,
-    pinGate: minted.pinGate,
-    pinOk: minted.pinOk,
   })}`,
 );
 const cx = minted.cx;
@@ -458,6 +469,18 @@ if (row.responder === null && !fleet.readable) {
 let wentAmber = null;
 /** The fleet as it stood once a `late` own-account responder had actually connected. */
 let lateFleet = null;
+/**
+ * WHAT THE LIST DID WHEN IT WAS CLICKED WHILE IT WAS AMBER - HEAL-NEW-15's own question, and the
+ * half of its design nothing had ever measured.
+ *
+ * IT IS TAKEN HERE AND NOWHERE ELSE. The alone window is the only stretch this rung can GUARANTEE is
+ * amber: the device is provably by itself, nothing can answer a `welcome_request`, and it lasts
+ * `ALONE_MS`. Every attempt to ask this question after a responder existed died the same way - the
+ * heal was over before any reader opened - and a fourth widening of the watch would have died with
+ * them. `navigationCost`, the ready-row probe, cannot substitute: it clicks a `data-ready="true"`
+ * tile, and during the alone window there are none.
+ */
+let amberList = null;
 if (row.at === "late") {
   const deadline = Date.now() + ALONE_MS;
   for (;;) {
@@ -471,6 +494,10 @@ if (row.at === "late") {
       break;
     }
     await new Promise((r) => setTimeout(r, 2000));
+  }
+  if (row.usability && (wentAmber?.what ?? "").startsWith("amber alone")) {
+    amberList = await amberListCost(cx);
+    note(`the amber list answered a click: ${JSON.stringify(amberList)}`);
   }
   note(`starting the late responder ${row.responder}`);
   const late = await setTopology([row.responder]);
@@ -586,6 +613,13 @@ note(`watching the sidebar for up to ${SETTLE_MS / 1000}s`);
 const w = await watchRows(cx, {
   timeoutMs: SETTLE_MS,
   log: (m) => console.log(m),
+  // THE CADENCE IS THE ROW'S, NOT THE READER'S. A row waiting on a settle can sample every two
+  // seconds because the period is noise beside the wait; a row pointed at a TRANSITION cannot, and
+  // one that samples slower than the event it is aimed at reports its own period as the product's
+  // behaviour. Row 15 is the only one aimed at a transition, so it is the only one that names a
+  // cadence - and it names it here rather than moving the default, which would change what nine
+  // other rows measure to fix one.
+  ...(row.sampleEveryMs ? { everyMs: row.sampleEveryMs } : {}),
   ...(servable ? { settledWhen: subsetSettled(servable.ids) } : {}),
   ...(row.usability ? { onSample: takeTheAmberSample } : {}),
 });
@@ -631,17 +665,32 @@ note(
     addressableWithinMs: minted.addressableWithinMs,
     addressableWasAlreadyTrue: minted.addressableWasAlreadyTrue,
     abandonedPurged: minted.abandonedPurged,
+    pinGate: minted.pinGate,
+    pinOk: minted.pinOk,
   })}`,
 );
 
-if (row.usability && !whileAmber) {
+/**
+ * THE ONE THING THAT MAKES THIS ROW UNASKABLE, AND IT IS NO LONGER THE COEXISTENCE.
+ *
+ * Until 2026-08-29 the row refused itself unless some sample held a ready row and a syncing row at
+ * once - the condition `navigationCost` needs to be meaningful. On the LATE topology the question
+ * moved: the click the row exists for lands on a SYNCING tile during the alone window, which this
+ * topology guarantees for `ALONE_MS`, and it needs no ready row at all. So what makes the run
+ * unaskable is the amber window itself failing to open - and that is a fact about the rig's premise,
+ * not about the app, which is exactly what `INVALID` is for.
+ *
+ * THE COEXISTENCE IS NOW A RECORDED FACT INSTEAD. If the staggered heal turns out to be atomic
+ * across all eleven rows, `navigableWhileAmber` is simply never observed, and that is a finding about
+ * the product worth writing down - it is asserted below only where a sample actually held both.
+ */
+if (row.usability && !(amberList?.clicked === true)) {
   await invalid(
-    w.hookThrew
-      ? `the amber probe threw at +${Math.round(w.hookThrew.at / 1000)}s (${w.hookThrew.why}), so the click this row exists for was never timed`
-      : `no sample ever held a ready row and a syncing row at once, so "usable WHILE it heals" was never askable on this run - the watch's first sample was ${watchOpenedAfterLiveMs}ms after the client went live and ${w.settled ? `the sidebar settled in ${w.elapsedMs}ms` : `it stalled for ${w.elapsedMs}ms`}`,
+    `the amber-alone window never opened, so the click this row exists for had no syncing row to land on - ${wentAmber?.what ?? "(no amber mark)"}${amberList ? `, and the probe said: ${amberList.why}` : ""}`,
     {
+      wentAmber,
+      amberList,
       watchOpenedAfterLiveMs,
-      hookThrew: w.hookThrew,
       afterSettle: usability.afterSettle,
       settledInMs: w.settled ? w.elapsedMs : null,
       stalledForMs: w.settled ? null : w.elapsedMs,
@@ -705,7 +754,26 @@ if (row.responder === "w1" && row.at === "late")
 // recorded beside it and is not this expectation: a click honoured by an app that has finished
 // healing says nothing about an app that has not, and reading it here is how `48b65d08` met every
 // expectation on the board while the question went unasked.
-if (row.usability) expectations.navigableWhileAmber = usability?.whileAmber?.openedInMs != null;
+/**
+ * THE ROW'S QUESTION, AND IT IS THE CLICK ON THE AMBER LIST.
+ *
+ * "An amber sidebar that cannot be clicked fails the row" has been this row's design since it was
+ * written and nothing had ever measured it: every earlier topology healed before a reader opened, so
+ * the only probe that ran clicked a row that was already green. This one lands on a SYNCING tile
+ * inside a window the late topology guarantees, and it asserts the TIMING and not the outcome - a
+ * conversation with no MLS state that declines to open is legitimate product behaviour, while a list
+ * that does not react at all is a frozen app. What the app did is recorded beside it as `answeredBy`.
+ */
+if (row.usability) expectations.amberListAnswersAClick = amberList?.answeredInMs != null;
+/**
+ * AND THE READY-ROW CLICK IS ASSERTED ONLY WHERE IT WAS ASKABLE. It needs a sample holding a ready
+ * row and a syncing row at once, which only a STAGGERED heal produces; if the eleven rows go green
+ * together there is no such instant, and demanding one would fail the row for the shape of the heal
+ * rather than for the app. Where the instant existed the click must have been honoured; where it did
+ * not, `usability.whileAmber` stays null and the samples say why. A predicate over a state that never
+ * occurred is not evidence - the same reasoning that makes an empty servable subset `INVALID`.
+ */
+if (row.usability && whileAmber) expectations.navigableWhileAmber = whileAmber.openedInMs != null;
 
 const missing = unmet(expectations);
 const verdict = missing.length === 0 ? "PASS" : "FAIL";
@@ -750,6 +818,11 @@ const detail = {
   finalState,
   laggards: w.final ? w.final.syncing : null,
   usability,
+  // THE ROW'S OWN MEASUREMENT, BESIDE THE TWO IT ALREADY HAD. `amberList` is the click on a syncing
+  // tile during the alone window; `usability.whileAmber` the click on a ready one mid-heal;
+  // `usability.afterSettle` the click on a healed sidebar. Three different apps, three numbers.
+  amberList,
+  wentAmber,
   fleet,
   lateFleet,
   topology,

@@ -40,7 +40,7 @@ import { ensureChat, client, countMessage, openDM, send } from "./chat.mjs";
 import { installTag, userTag } from "./devices.mjs";
 import { isUp, killBrowser, startBrowser } from "./launch.mjs";
 import { ORIGIN, PORTS, SITE, peerNameFor } from "./names.mjs";
-import { becomeANewDevice } from "./newdevice.mjs";
+import { becomeANewDeviceAndConfirm } from "./newdevice.mjs";
 import { onlineDevicesOf } from "./presence.mjs";
 import { record, unmet } from "./results.mjs";
 import { psql } from "./ssh.mjs";
@@ -428,7 +428,12 @@ else note(`${PEER} was already down`);
 // for that step. It is taken away first all the same: the enrolment must happen with the peer absent,
 // which is the condition the row names.
 note("enrolling a second device of the owner while the peer is absent");
-const minted = await becomeANewDevice({ report: (s) => note(`newdevice: ${s}`) });
+// BOTH HALVES, AND THAT IS WHAT THE `AndConfirm` IS FOR. The mint was split at the live client on
+// 2026-08-29 so HEAL-NEW-15 could observe between the halves; this row has nothing to ask there, and
+// calling only the first half left `now` and `enrolled` undefined - so the guard below refused MULTI-8
+// and MULTI-9 unconditionally, on a device that had enrolled perfectly. A caller with no question to
+// ask in between calls the pair, which is the whole reason the pair exists.
+const minted = await becomeANewDeviceAndConfirm({ report: (s) => note(`newdevice: ${s}`) });
 const newDeviceId = minted.now?.deviceId ?? null;
 note(`the new device is ${newDeviceId ? installTag(newDeviceId) : "(none)"}`);
 if (!newDeviceId || !minted.enrolled) {

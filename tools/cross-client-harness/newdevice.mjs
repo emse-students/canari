@@ -268,33 +268,21 @@ export async function becomeANewDevice({ report = stage } = {}) {
   // would only capture the logged-out launcher; later would miss the lines every HEAL-NEW row reads.
   const observer = await watch(cx, device);
 
-  // The PIN is account-level (`PinVerifier`, `POST /api/mls/security/pin-check`), so a new device
-  // enters the SAME one - which is why this costs no human step either.
+  // THE HANDOVER IS HERE, AND IT MOVED AHEAD OF THE PIN PROBE ON 2026-08-29. `pin.mjs` used to run
+  // between the landing and this line, and on a brand-new device it finds no modal and spends its
+  // whole 25 s deadline doing it - measured again the day this moved, 25.4 s of the 36.7 s the mint
+  // took. That is 25 s during which the fresh device is live, enumerating and healing with no reader
+  // able to exist, which on this rung is not overhead but the observation window itself: HEAL-NEW-15
+  // asks what the app does WHILE it is amber, and on a fast topology the whole amber window fits
+  // inside that one call. So the client is handed over the moment it is on /chat, and the PIN probe
+  // joins the rest of the post-observation work in `confirmEnrolment`.
   //
-  // WHETHER A GATE APPEARS AT ALL IS AN OBSERVATION, NOT THIS PRIMITIVE'S CLAIM. What the primitive
-  // asserts is narrow and it is the thing nine rows rest on: this browser is now a device the server
-  // has never seen, of the same account, enrolled, reached without a human. Whether the app also
-  // challenges a brand-new device for the account PIN is a different question about the product, and
-  // smuggling it in here answers it by accident - a fresh device that enrolled with no gate shown
-  // would fail a row that never set out to ask, and the finding would arrive labelled as a broken
-  // primitive rather than as the security question it is. Measured on 2026-08-28: no gate is shown.
-  // Named, recorded, and left for a row of its own to judge.
-  const pinStatus = landedWithoutAHumanStep ? run("pin.mjs", ["--device", device]) : null;
-  const pinGate =
-    pinStatus === null
-      ? "not reached"
-      : pinStatus === 0
-        ? "answered"
-        : pinStatus === 2
-          ? "none shown"
-          : `refused (exit ${pinStatus})`;
-  const pinOk = pinStatus === 0 || pinStatus === 2;
-  report(`the PIN gate: ${pinGate}`);
+  // NOTHING IS WEAKENED BY THE MOVE. No expectation on any row reads `pinGate` or `pinOk`: whether
+  // the app challenges a brand-new device is a question about the PRODUCT, recorded here since
+  // 2026-08-28 as `pinGate: "none shown"` and judged by rung 17, which is where it belongs. And if a
+  // gate ever IS shown, a reader placed between the halves sees it immediately - the first sidebar
+  // sample reads `panel: false` - which is a better answer than twenty blind seconds.
   await ensureChat(cx).catch(() => null);
-
-  // THE HANDOVER POINT. From here the device is live on /chat and enumerating; `liveAt` is the origin
-  // every later duration is measured from, and it is a wall stamp because the second half may run
-  // after a caller has spent ten minutes watching the sidebar.
   const liveAt = Date.now();
   report("the client is LIVE on /chat - the mint hands over here");
 
@@ -311,8 +299,6 @@ export async function becomeANewDevice({ report = stage } = {}) {
     loggedOut,
     landedWithoutAHumanStep,
     challenge,
-    pinGate,
-    pinOk,
     theAccountHadRoomForOneMore,
     spent,
   };
@@ -344,9 +330,39 @@ export async function confirmEnrolment({
   was,
   knownBefore,
   liveAt,
+  landedWithoutAHumanStep,
   port: devicePort = port,
   report = stage,
 }) {
+  // The PIN is account-level (`PinVerifier`, `POST /api/mls/security/pin-check`), so a new device
+  // enters the SAME one - which is why this costs no human step either.
+  //
+  // WHETHER A GATE APPEARS AT ALL IS AN OBSERVATION, NOT THIS PRIMITIVE'S CLAIM. What the primitive
+  // asserts is narrow and it is the thing nine rows rest on: this browser is now a device the server
+  // has never seen, of the same account, enrolled, reached without a human. Whether the app also
+  // challenges a brand-new device for the account PIN is a different question about the product, and
+  // smuggling it in here answers it by accident - a fresh device that enrolled with no gate shown
+  // would fail a row that never set out to ask, and the finding would arrive labelled as a broken
+  // primitive rather than as the security question it is. Measured on 2026-08-28: no gate is shown.
+  // Named, recorded, and left for a row of its own to judge.
+  //
+  // IT RUNS IN THIS HALF SINCE 2026-08-29, for the reason `becomeANewDevice`'s handover comment
+  // gives: it is a blocking spawn that costs its full deadline on a device that shows no gate, and
+  // in the first half that cost is paid out of the only window in which a row can watch the app
+  // heal. It is unlocking a client the caller has finished observing, which is exactly when an
+  // unlock is free.
+  const pinStatus = landedWithoutAHumanStep ? run("pin.mjs", ["--device", device]) : null;
+  const pinGate =
+    pinStatus === null
+      ? "not reached"
+      : pinStatus === 0
+        ? "answered"
+        : pinStatus === 2
+          ? "none shown"
+          : `refused (exit ${pinStatus})`;
+  const pinOk = pinStatus === 0 || pinStatus === 2;
+  report(`the PIN gate: ${pinGate}`);
+
   await sleep(8_000);
 
   const nowRaw = await evaluate(cx, DEVICE_ID_NOW);
@@ -442,6 +458,8 @@ export async function confirmEnrolment({
 
   return {
     now,
+    pinGate,
+    pinOk,
     aFreshIdWasMinted,
     theServerHadNeverSeenIt,
     theSameAccountCameBack,
