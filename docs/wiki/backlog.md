@@ -784,6 +784,12 @@ handset, which is hardware and belongs with the lettered device checks. Everythi
 COMPILING has been wrong three times on this project.
 
 
+**RECURRENCE 2026-08-30, and it makes the count part of the shape.** HEAL-REVOKE-8's server window
+carries the SAME TEN refusals, same error verbatim, same single Android device, on a different row and
+a different build. Ten is therefore not an artefact of the run that first showed it. The phone was
+force-stopped throughout, which changes nothing: FCM rejects the payload for size before any device
+state is consulted.
+
 ### P3 - the WASM warns about a missing MLS state on every device that is SUPPOSED not to have one (measured 2026-08-29)
 
 `mls-wasm/src/lib.rs` warns `device_key_b64 provided but no encrypted state - key ignored, creating
@@ -1338,6 +1344,48 @@ already walks rows in order and row ids are timestamps. The second needs no WASM
 should be changed on the strength of a reading of it.
 
 **How to confirm it is gone:** GRP-8 goes clean. It is the only check that re-adds a removed member.
+
+
+**RECURRENCE 2026-08-30, AND IT WIDENS THE POPULATION THIS ENTRY CLAIMS.** Read off six
+HEAL-REVOKE-5 runs, builds `96bdd1bb` through `0044a041`. **The device losing the frames was never
+evicted from the group it loses them in** - it is a fresh device of the same user, joining for the
+first time after a revocation wipe. So the entitlement floor cannot be keyed on
+`readmittedAfterEviction` alone, which is what the fix above proposes: that branch never runs here.
+**A floor belongs at every entitlement START, however the entitlement was acquired.** And "how to
+confirm it is gone: GRP-8, the only check that re-adds a removed member" is incomplete for the same
+reason - HEAL-REVOKE-5's reference observer reaches this branch with no eviction anywhere in the row.
+
+**What was measured.** 107 distinct `LOST frame` fingerprints over the six runs, growing run over run
+(1, 8, 8, 9, 30, 51). In the run of record, 50 of 51 fall in ONE group of the 23 the owner is a member
+of. They are not chat text: the fingerprint's first field is `frame.length` in base 36, so the sizes
+read straight off it - median 52 KB, max 84 KB, 5.6 MB over the six runs.
+
+**A SECOND AND MUCH LARGER POPULATION SITS BEHIND THE SAME GROUP**, reported in aggregate rather than
+per frame:
+
+    [HISTORY] 642f389a... holds 8005 frame(s) it can never read - reconciling (e.g. 5p:1cx1kog, ...)
+    [HISTORY] 642f389a... holds 3005 frame(s) it can never read - reconciling (e.g. 5p:1cx1kog, ...)
+
+`5p` is 205 bytes, so these are small frames and a different population from the 52 KB ones above. The
+example fingerprints are IDENTICAL across all three observers of one run, so that backlog is stable.
+
+**WHAT IS NOT ESTABLISHED, AND THE INFERENCE THAT MUST NOT BE DRAWN FROM IT.** No fingerprint repeats
+across any two runs, and **that is not evidence the frames are new messages.** `frameFingerprint` is
+FNV-1a over the CIPHERTEXT bytes, and `historyManifest.ts` answers a reconciliation by re-encrypting
+the peer's durable copy at the CURRENT generation - so the very same message re-sent to a new device
+fingerprints differently every time. Zero overlap discriminates nothing here, and a reading of it as
+"fresh traffic each run" was formed and retracted before it reached this page.
+
+**The cheap discriminator, for whoever takes it.** The digest that precedes the burst asks with
+nothing held - `[HISTORY_DIGEST] Sent for 642f389a... - ids mode, 0 id(s), asking from
+2026-05-31T00:00:00.000Z` - so whether the 52 KB frames ARE that answer is settled by putting the
+`Sent` stamp beside the burst, which lands inside a single second. Worth one look before anything is
+changed: if the reconciliation's own answer is what arrives unreadable, the repair is feeding the
+loss it was sent to cure.
+
+**One more line from the same window, unqueued elsewhere and not chased here:**
+`[HISTORY_RECONCILE] no probe sender yet - 642f389a... deferred until one is installed`, five times
+across two groups before the first digest goes out.
 
 
 ### P3 - a `history_bundle` restores the EDITED flag without the edited body

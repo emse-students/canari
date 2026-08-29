@@ -30,7 +30,7 @@ is the numbered ladder below, top to bottom - the only copy of that order.**
 | 13 LIFE | 8 | - | `pending` |
 | 14 NOTIF | 21 | - | `pending` |
 | 15 CALL | 20 | - | `pending` - no runner exists |
-| 16 HEAL | 31 | `48b65d08`, HEAL-NEW-3/11 `ebef7f3c`, HEAL-NEW-2/12/15 `038c7e8d` | 7/31 taken: 3 `PASS`, HEAL-NEW-0/2/12/15 `PASS-DIRTY`; the 2/12 ORDER PAIR is EQUAL, adjudicated on the campaign page; 1 and 3 owe an ungated re-run |
+| 16 HEAL | 32 | `48b65d08`, HEAL-NEW-3/11 `ebef7f3c`, HEAL-NEW-2/12/15 `038c7e8d`, HEAL-REVOKE-5/8 `0044a041` | 9/32 taken: 3 `PASS`, HEAL-NEW-0/2/12/15 and HEAL-REVOKE-5/8 `PASS-DIRTY`; the 2/12 ORDER PAIR is EQUAL, adjudicated on the campaign page; 1 and 3 owe an ungated re-run |
 | 17 PIN | 10 | - | `pending` - no runner exists |
 | 18 CORRUPT | 10 | - | `pending` - no runner exists |
 
@@ -399,10 +399,10 @@ four wipe defects found by hand:
 | HEAL-REVOKE-2 | The revoked device reconnects: is it like-new, holding nothing from before? The blacklist can make this row pass while HEAL-REVOKE-1 fails | `W1 W2` | `pending` |
 | HEAL-REVOKE-3 | First reconnection after revocation resynchronises as a NEW device would, history included - a shortfall must be REPORTED, not silently partial | `W1 W2` | `pending` |
 | HEAL-REVOKE-4 | The heal-on-diff mechanism catches up what the first reconnection missed, and the TRIGGER CONDITIONS are part of the assertion | `W1 W2` | `pending` |
-| HEAL-REVOKE-5 | Revoked, then the account CHANGES a lot while it is away, then it returns | `W1 W2` `+user` | `INVALID` on `48b65d08` - the instrument; re-run owed |
+| HEAL-REVOKE-5 | Revoked, then the account CHANGES a lot while it is away, then it returns | `W1 W2` `+user` | `PASS-DIRTY` on `0044a041` - back 23/23 in 8.0s, reference 23/23, gap empty |
 | HEAL-REVOKE-6 | The same, where the revoked device is **the phone** - A1's store is SQLite behind the native layer, not the WebView IndexedDB the web wipe clears, so "the wipe ran" is a different claim and must be read from the native store | `+A1` `+user` | `pending` - the instrument is in, the victim must be A1 |
 | HEAL-REVOKE-7 | The **ORDER** of the return: back BEFORE the other devices are online, and back AFTER | `W1 W2` `+user` | `INVALID` on `48b65d08` - the instrument; both orders untried |
-| HEAL-REVOKE-8 | A group **DELETED while the device was revoked** must not return as a Sync row | `W1 W2` `+user` | `INVALID` on `48b65d08` - the instrument; untried |
+| HEAL-REVOKE-8 | A group **DELETED while the device was revoked** must not return as a Sync row | `W1 W2` `+user` | `PASS-DIRTY` on `0044a041` - 24/24 both, the deleted group absent from BOTH |
 | HEAL-REVOKE-9 | Revoked while **OFFLINE**: the wipe is DEFERRED, not lost, and must not fire while the server is unreachable | `W1 W2` | `pending` - written 2026-08-28 |
 | HEAL-NEW-0 | The rig can mint a device the server has never seen, repeatably, on ONE 2FA | `+user` | **`PASS-DIRTY` on `48b65d08`** - a newer ledger `FAIL` is dirt only, P3 |
 | HEAL-NEW-1 | Fresh device, **nothing else online** - external join is the only path there is | `+user` | **`PASS` on `48b65d08`** - isolation real, ten amber for 600 s |
