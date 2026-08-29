@@ -174,3 +174,79 @@ describe('what a revoked device stops before it deletes anything', () => {
     expect(tearDownBody).toContain('unregisterMlsStatePersister();');
   });
 });
+
+/**
+ * The wipe's own first act is what let a login start and undo it.
+ *
+ * Measured on prod 2026-08-29: a `device_revoked` frame arrived, `wipeRevokedDevice` began, and 3 ms
+ * later a login started - because `tearDownLiveSession` had set `isLoggedIn` false, and that is one
+ * of the flags `loginImpl` reads to decide nobody owns the flow. The login's own revocation check
+ * could not be answered (the wipe had already killed the session) so it read "not revoked", and it
+ * reopened `CanariDB_<userId>` 24 ms before the delete. `deleteDatabase` does not fail on an open
+ * connection, it BLOCKS: the store SURVIVED on a device its owner had declared lost.
+ *
+ * A latch over the WHOLE wipe, not a device id: between clearing `mls_device_id_<userId>` and
+ * deleting the stores there is a window in which no identity exists to recognise. The ORDER is the
+ * fix and the order is what these pin.
+ */
+describe('a login can never race the wipe that erases it', () => {
+  it('raises the latch BEFORE the teardown that clears isLoggedIn', () => {
+    const wipe = wipeRevokedDeviceBody;
+    const latch = wipe.indexOf('ctx.setWipingRevokedDevice(true);');
+    expect(latch).toBeGreaterThan(-1);
+    // Strictly before the teardown - raising it afterwards leaves exactly the gap that was measured.
+    expect(wipe.indexOf("tearDownLiveSession(ctx, cb, 'revoked');")).toBeGreaterThan(latch);
+  });
+
+  it('releases the latch in a finally, so a failed wipe cannot lock a real user out', () => {
+    expect(wipeRevokedDeviceBody).toMatch(
+      /finally\s*\{\s*ctx\.setWipingRevokedDevice\(false\);\s*\}/
+    );
+  });
+
+  it('makes loginImpl refuse while the latch is up, and say which flag won', () => {
+    // The guard is only worth having if it is read where a login decides to proceed, and only
+    // debuggable if the log names it - the other three are named for exactly that reason.
+    expect(loginImplBody).toContain('ctx.isWipingRevokedDevice()');
+    expect(loginImplBody).toContain('wipingRevokedDevice=${ctx.isWipingRevokedDevice()}');
+  });
+});
+
+/**
+ * What a revoked LIVE device is handed to when the wipe is done.
+ *
+ * The two login-path call sites throw a `LoginFailure`, which is right: a person is standing at
+ * the gate and the modal is where the answer belongs. The push handler is the third site and it
+ * used the same seam, which was wrong for a reason the callbacks make concrete - the background
+ * service binds `onLoginFailed` to the saved-PIN handler, so a revocation REOPENED THE PIN PROMPT
+ * on a device the line above had just returned to a fresh install. There was no PIN to enter, no
+ * device id and no session; measured on prod 2026-08-29 the client simply sat on /chat with no
+ * sidebar until the prompt drew a 401 of its own.
+ *
+ * `onSessionExpired` is the seam for an authentication loss, and the one the background service
+ * wires unconditionally. These pin the choice, not the wording.
+ */
+describe('a revoked live device is logged out, not asked for its PIN', () => {
+  /** The push handler from the line that announces the revocation to the next registration. */
+  const liveRevocationTail = (() => {
+    const at = loginImplBody.indexOf('[SECURITY] This device was revoked by its owner');
+    expect(at).toBeGreaterThan(-1);
+    const end = loginImplBody.indexOf('onWelcomeRequest', at);
+    expect(end).toBeGreaterThan(at);
+    return loginImplBody.slice(at, end);
+  })();
+
+  it('wipes first, then hands over to the session-expired seam', () => {
+    const wipe = liveRevocationTail.indexOf('await wipeRevokedDevice(ctx, cb);');
+    expect(wipe).toBeGreaterThan(-1);
+    // The order is the point: handing over before the wipe would navigate away from the device
+    // being erased, and nothing would finish erasing it.
+    expect(liveRevocationTail.indexOf('cb.onSessionExpired?.();')).toBeGreaterThan(wipe);
+  });
+
+  it('never reopens the PIN prompt for a device that no longer has one', () => {
+    // THE CALL, NOT THE NAME - the comment above the fix names the seam it replaced, on purpose,
+    // and a guard that cannot tell an explanation from a call site fails on its own documentation.
+    expect(liveRevocationTail).not.toContain('cb.onLoginFailed?.(');
+  });
+});

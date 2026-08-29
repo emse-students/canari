@@ -916,6 +916,44 @@ present-from-the-start row AND an arrives-late row, and why the verdict is an EQ
 difference in the FINAL state between two orders is a `FAIL`; a difference in the TIME to reach it
 is dirt carrying a number.** Reconciliation that depends on who booted first is not reconciliation.
 
+### The HEAL-REVOKE-7 ORDER PAIR, NOT adjudicated 2026-08-30 - what it found instead
+
+**The pair has no verdict and must not be given one from half a comparison.** `--order last` never
+ran: W1's browser profile lost its CAS session between the two halves and now sits on
+`Authentification renforcee`, the step-up page, so the preflight refuses - correctly - and the one
+step no tool here can answer is owed to a human. The board cell says `INVALID`, which is the honest
+state of the ROW; the pair's question is untouched.
+
+**Two things were established on the way, and neither needs the pair to be believed.**
+
+**The row could not previously ask its own question.** `--order first` set the topology to nothing
+and left it there for the rest of the run, so the subset a return waits for was empty by construction
+and the watch could never terminate whatever the app did - `25 rows, 0 ready, 25 syncing` from the
+first sample to the 600 s deadline, with three expectations unsatisfiable by any behaviour of the
+product. Isolation is now a PHASE: observed, recorded, then lifted, so the equality the pair asserts
+is between two devices in the same populated world. The reasoning is in
+[testing-methodology](testing-methodology.md#a-premise-a-row-never-lifts-is-not-a-premise-it-is-a-different-question),
+including an assertion this added and RETRACTED after one run.
+
+**And the fixed row immediately found a P1 that no other row on this board could reach.** The actor
+destroyed the only copy of a group it had created seconds earlier, because a purge compared a live
+local read against an older server list; every member stayed counted by the server and none could
+ever open the conversation. Prod's own timestamp settled the mechanism - the group's `createdAt` is
+the same second as the line that forgot it - and it is fixed, with a test shown to fail without the
+fix. Story in `CHANGELOG.md`, mechanism on
+[chat](frontend/modules/chat.md#the-orphan-purge-compares-two-reads-and-their-order-decides-whether-it-destroys-a-new-group).
+
+**What the pair still owes, once W1 can log in again:** both halves, adjacent, one fleet and one
+bundle, under the runner as it now stands - the `--order first` measurement taken before the
+retraction is not comparable with a `--order last` taken after it.
+
+**`node rows.mjs` NOW SAYS "runner is now 4bfefd4080ab" FOR HEAL-REVOKE-5 AND -8, AND NEITHER OWES A
+RE-RUN FOR IT.** Every change is confined to the isolated-return path: `beforeTheWatch` is null for
+any row whose `returnTopology` is non-empty, so 5 and 8 execute exactly the code they executed, and
+the one shared edit - deleting `theSettlePredicateKnewWhatToWaitFor`'s exemption - removed a
+disjunct that was already false for them, leaving `back.target.ids.size > 0`, which is what they were
+already judged on. The checkSha moved; what those two rows assert did not.
+
 ### The 2 / 12 ORDER PAIR, adjudicated 2026-08-29 - the final states are EQUAL
 
 Both rows ran adjacently on `038c7e8d`, under one fleet and one bundle, and both came back

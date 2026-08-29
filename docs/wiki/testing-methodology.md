@@ -2846,6 +2846,124 @@ exact reading that cost three sessions. **A CLI ENTRY POINT IS A CALLER, NEVER A
 row asserts on has to be reachable by import, or the tool and the runner are two implementations of
 one criterion and only one of them is ever exercised by hand.
 
+### A green sidebar tile does not prove the group is not epoch-forked
+
+Measured on production 2026-08-29, while diagnosing the write-side entrance to the recovery ladder.
+Two conversations, `3ca20e77` and `6e7c9ab1`, had been forked one epoch behind for twenty-four hours:
+every commit W1 staged in them was refused, 191 and 172 times, and no message could enter or leave.
+**Both tiles read `data-ready="true"` on W1's sidebar for the whole of it**, and every `readAll` this
+rung takes reported `syncing: 0`, `amber: []`.
+
+That is not a bug in the tile. `data-ready` says the conversation has a local MLS group and has
+finished its initial load - which was true, and stayed true, because a fork does not unload anything.
+It is the instrument's mistake to have read it as more: **`watchRows`'s settle predicate counts ready
+tiles, so it is green on a device that cannot send or receive in the group it is green about.** The
+fork was found in the SERVER's refusal count and nowhere else; nothing on any screen in this rig
+would ever have said it.
+
+So a settle predicate built on tile readiness bounds exactly one thing - *the list finished loading* -
+and never *this device is in step with the group*. Any row wanting the second has to ask for it, by
+the epoch or by a round trip through the group, and **no row on the board asks**. This is the same
+fault as the `footprint.mjs` reading two paragraphs below and as
+[the column rule](durable-rules.md): a signal is evidence only for the question it was written to
+answer, and readiness was written to answer whether the list had painted.
+
+### A termination proof must be about the unknown ITS OWN row is aimed at
+
+`subsetSettled` was written for HEAL-NEW and reused verbatim by HEAL-REVOKE, and the reuse was wrong
+in a way neither row could report. It reads: *of the rows this device already has, the ones some
+responder could serve are ready.* On HEAL-NEW that is a complete proof, because the server lists a
+fresh device into its groups before the watch opens - the sidebar already holds every row it will
+ever hold, and only the COLOUR is unknown. After a revocation wipe the sidebar starts **empty** and
+the rows arrive one at a time, so PRESENCE is the unknown, and a predicate that looks only at rows
+already present is satisfied by the first one to land.
+
+Measured on `96bdd1bb`, HEAL-REVOKE-5. The returning device recorded `+0ms rows=0` then
+`+6022ms rows=1 ready=1` and was declared settled; the reference, minted through `newdevice.mjs`,
+walked into its own watch already holding twelve. The row's last unmet expectation was
+`itEndedWhereAFreshDeviceEnds`, `rows: 1 vs 12` - the equality failing not because the product healed
+one group of twenty-one, but because **one device was judged after six seconds and the other after a
+minute**, which is [the interval rule](#a-duration-is-evidence-only-for-the-interval-it-was-measured-over-and-a-name-has-to-say-which)
+arriving through the settle predicate instead of through a name.
+
+The fix is a second predicate, `subsetArrivedAndSettled`, and NOT a change to the first: made strict,
+`subsetSettled` would demand the peer responder's own groups of a device that is not a member of them
+and stall HEAL-NEW forever. Two rows with two different unknowns need two proofs, and the self-test
+now carries the pair - including the case that states the defect outright, *the loose predicate calls
+this same sidebar settled*.
+
+The owed set is then an INTERSECTION, and each half alone is a false verdict in a different
+direction. What a responder can serve, without membership, is the peer's rows - demanded of a device
+that will never see them, a 600 s stall reported as a defect. Membership without serving is a row
+nothing online could hand over - the same stall, and the reason the subset rule exists at all. The
+runner reads membership from the actor, which is the subject's own other device, and a set it could
+not narrow stays EMPTY so the existing `theSettlePredicateKnewWhatToWaitFor` guard calls the row
+unobservable - **never a silent widening back to the loose rule, which is a fallback and would turn a
+stall into a PASS.**
+
+### A premise a row never LIFTS is not a premise, it is a different question
+
+HEAL-REVOKE-7 exists to ask whether the ORDER of a revoked device's return changes where it ends up:
+`--order first` returns before the account's other clients are online, `--order last` after. The
+runner implemented `first` by setting the topology to nothing and leaving it there for the rest of
+the row.
+
+**Nothing about the product could then make that half pass, and the reason is arithmetic rather than
+protocol.** The subset a return must wait for is what the world can SERVE intersected with what the
+subject is OWED, and the servers are read from the account's own online clients - so with none online
+the subset is empty, and `subsetArrivedAndSettled` refuses an empty subset by construction. The watch
+could therefore never terminate whatever the app did. On 2026-08-30 the row sat at `25 rows, 0 ready,
+25 syncing` from its first sample to the 600 s deadline.
+Three expectations - `bothSettled`, `theNewGroupArrived`, `theSettlePredicateKnewWhatToWaitFor` -
+were unsatisfiable by any behaviour of the app, and a `FAIL` would have been recorded against the
+product for a world the rig had built and never taken down.
+
+**A GUARD THAT EXCUSES THE SYMPTOM HIDES THE DESIGN ERROR.** The runner already knew the subset would
+be empty and carried an exemption for it: `theSettlePredicateKnewWhatToWaitFor` demanded a non-empty
+world *only where the row's own topology put someone there*. That reads as care and it was the
+opposite - it let the one row that could never settle stop reporting that it could never settle,
+while every other expectation still failed. The exemption was deleted, not widened: every order now
+reaches the watch in a world that can serve, so an empty subset there is a rig fault in any order.
+
+**The shape of the fix, and why it asserts MORE than before.** Isolation is a PHASE of the row, so it
+is observed, asserted on, and then ended:
+
+1. the device returns with nobody of its own account online;
+2. it is watched for an interval and the state it reaches is RECORDED;
+3. the actor is brought up, and only then does the settle watch open.
+
+The comparison the pair exists for is now between two devices in the same populated world, which is
+the only comparison that means anything.
+
+**STEP 2 WAS AN ASSERTION FOR EXACTLY ONE RUN, AND RETRACTING IT IS THE MORE USEFUL HALF OF THIS
+ENTRY.** It claimed that a row going ready with no client of the account online could only have come
+from a store the revocation should have taken - HEAL-REVOKE-1's P1 by a second door. The window ended
+with one row of 26 ready and the assertion failed on it. **Three causes produce that one row and the
+rig can separate none of them:** `externalJoin` on a community's key-distribution group is a
+documented self-service path that needs no server at all and the 2/12 ORDER PAIR recorded it; a
+Welcome is owed by A MEMBER rather than by another device of yours - the app says so in the line it
+logs, `sendWelcomeRequest… (invited, Welcome owed by a member)` - so any other member of a shared
+conversation can serve one, and killing the account's own clients does not isolate the device from
+them; and the defect the assertion was written for. **An assertion resting on a premise its row never
+established is not a weaker test for being removed - it was never a valid one**, and the honest
+disposition for a measurement whose causes are not separable is to record it and assert nothing.
+Naming the self-servable rows is what would make a claim possible here, and that is a piece of work
+rather than a line.
+
+**THE ONE TIMER, AND WHY IT IS ALLOWED TO EXIST.** Step 2 observes a state that only exists for as
+long as the isolation lasts, so it needs a window. The window is not a constant: it is three times the SEED device's settle
+time, measured minutes earlier in this same world on this same account, so it scales with the size of
+the account rather than assuming one. And it is wrong LENIENTLY in both directions - too short makes
+the negative trivially true and asserts less, too long only costs time - so no setting of it can
+manufacture a failure. **A window that can only ever under-claim is a different object from a
+deadline that decides a verdict**, and the row's real claim remains the final-state equality.
+
+**A NUMBER THAT TWO CAUSES PRODUCE IS EVIDENCE FOR NEITHER, AND THAT APPLIES TO THE WINDOW ITSELF.**
+A low ready count is true of a device that was served nothing and of a device that left `/chat` two
+seconds in. The phase therefore records why it ended alongside what it reached, so a reader can tell
+a window that ran from a window that broke - which is the same discipline that retracted the
+assertion, applied to the measurement that replaced it.
+
 ## What the HEAL rung taught the instrument
 
 Moved off the board on 2026-08-28 with the rest of section 16's prose. These are rules about measuring, not verdicts.

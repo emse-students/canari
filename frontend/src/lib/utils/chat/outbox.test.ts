@@ -845,6 +845,44 @@ describe('outbox flusher - an undecided leadership is not a follower (WP-OUTBOX-
     expect(tabOutboxMock.requestLeaderOutboxFlush).not.toHaveBeenCalled();
   });
 
+  /**
+   * ONE ELECTION IS ONE EVENT. Twenty flushes landing in the boot gap used to await the election
+   * twenty times over and log twenty resolutions - measured on HEAL-REVOKE-5, 2026-08-29, inside a
+   * single second. Every waiter still resumed, so this asserts the LOG and not the outcome: the
+   * noise was the whole defect, and a reader who learns to skip a line is how the next one hides.
+   */
+  it('logs one deferral and one decision however many flushes land in the boot gap', async () => {
+    let decide!: (side: 'leader' | 'follower') => void;
+    decidedMock.promise = new Promise((r) => {
+      decide = r;
+    });
+    leadershipMock.mockImplementation(() => 'undecided');
+
+    const lines: string[] = [];
+    const storage = makeStorage();
+    const mlsService = makeMls();
+    const outbox = createOutbox(
+      makeDeps({ mlsService, storage, log: (m: string) => lines.push(m) })
+    );
+
+    const inFlight = [];
+    for (let i = 0; i < 20; i++) inFlight.push(outbox.enqueue(textEntry(`m${i}`, 'g1', 100 + i)));
+    await outboxIdle();
+
+    expect(lines.filter((l) => l.includes('Flush deferred'))).toHaveLength(1);
+
+    leadershipMock.mockImplementation(() => 'leader');
+    decide('leader');
+    await Promise.all(inFlight);
+    await outboxIdle();
+
+    // The number the twenty lines differed by was the wait, which is why none of them deduped.
+    expect(lines.filter((l) => l.includes('Leadership decided as'))).toHaveLength(1);
+    // ...and every entry still went out, so the shared wait released all of them rather than
+    // leaving nineteen behind the one that won the race to `flushing`.
+    await vi.waitFor(() => expect(storage._map.size).toBe(0));
+  });
+
   it('delegates once the election says follower, which is the only time that is true', async () => {
     let decide!: (side: 'leader' | 'follower') => void;
     decidedMock.promise = new Promise((r) => {

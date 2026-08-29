@@ -140,6 +140,27 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   let backoffTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
+   * The ONE wait on the tab election, shared by every flush that arrives while it is undecided.
+   *
+   * BOOT REQUESTS MANY FLUSHES AND THERE IS ONLY ONE ELECTION. Each recovering conversation, each
+   * enqueue and each wake-up calls `runFlush`, so on a device coming up with twenty-odd groups,
+   * twenty of them landed on `getTabLeadership() === 'undecided'` and each awaited the election on
+   * its own. Measured on HEAL-REVOKE-5, 2026-08-29: ONE `Flush deferred` line (identical, so the
+   * dedup key folded it) and TWENTY `Leadership decided as leader after N ms` lines inside one
+   * second, each carrying its own start offset - 6017 ms down to 3871 ms. The flush itself already
+   * coalesces through `flushing`/`rerun`, but only AFTER this gate, so the coalescing could not
+   * reach the waiting.
+   *
+   * NOT A CORRECTNESS FIX AND THAT IS THE POINT. Every waiter resumed and no message was lost; what
+   * twenty lines cost is the reader, and a line its reader learns to skip is the one that hides the
+   * next defect. One election is one event, so it is logged once and waited on once.
+   *
+   * IT IS NEVER RESET, BECAUSE THE ELECTION DOES NOT REOPEN. Once decided, the guard below returns
+   * before this is read at all, so a stale promise cannot be awaited by a later flush.
+   */
+  let theElection: Promise<void> | null = null;
+
+  /**
    * Ids withdrawn by `cancelPending` that a flush already running may still be holding.
    *
    * The durable row is deleted by the cancellation itself, which is what stops every FUTURE flush -
@@ -568,10 +589,14 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // this resolves rather than expires. The wait is logged with what it cost, because a gap nobody
     // can see is how this defect survived two sightings.
     if (getTabLeadership() === 'undecided') {
-      const waitedFrom = Date.now();
-      log('[OUTBOX] Flush deferred - tab leadership undecided; waiting for the election.');
-      const side = await whenTabLeadershipDecided();
-      log(`[OUTBOX] Leadership decided as ${side} after ${Date.now() - waitedFrom} ms.`);
+      if (!theElection) {
+        const waitedFrom = Date.now();
+        log('[OUTBOX] Flush deferred - tab leadership undecided; waiting for the election.');
+        theElection = whenTabLeadershipDecided().then((side) => {
+          log(`[OUTBOX] Leadership decided as ${side} after ${Date.now() - waitedFrom} ms.`);
+        });
+      }
+      await theElection;
     }
     // Encryption belongs to the leader tab, and to it alone. Both tabs of one account hold their
     // own MLS client loaded from a single snapshot, so a send from the tab whose in-memory ratchet

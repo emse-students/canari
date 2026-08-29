@@ -55,3 +55,34 @@ export const subsetSettled = (ids) => (x) => {
   const { inTheSubset } = splitBySubset(x.tiles, ids);
   return inTheSubset.length > 0 && inTheSubset.every((t) => t.ready);
 };
+
+/**
+ * The termination proof for a device whose rows have to ARRIVE first: every owed row is here, ready.
+ *
+ * IT IS A SECOND PREDICATE BECAUSE THE TWO ROWS ASK ABOUT DIFFERENT UNKNOWNS, and collapsing them
+ * would break whichever one lost. On HEAL-NEW the fresh device is listed into its groups by the
+ * server before the watch opens, so its sidebar already HOLDS every row it will ever hold and only
+ * the colour is in doubt - "every present row of the subset is ready" is a complete proof there, and
+ * demanding presence would demand the RESPONDER's own groups, which a different account will never
+ * see. After a revocation wipe the sidebar starts EMPTY and the rows appear one by one, so presence
+ * is the whole question and a predicate that looks only at present rows terminates on the first one.
+ *
+ * IT WAS MEASURED, NOT REASONED. On `96bdd1bb` HEAL-REVOKE-5 recorded `+0ms rows=0` then
+ * `+6022ms rows=1 ready=1` and stopped, against a reference holding twelve - one row of twenty-one
+ * declared a settled device, and the row's last unmet expectation was the equality that comparison
+ * could not meet. Six seconds and a minute are not the same interval, and a duration is evidence
+ * only for the interval it was measured over.
+ *
+ * THE OWED SET IS THE CALLER'S PROBLEM, AND IT MUST BE REACHABLE. This predicate cannot tell an
+ * owed row that never came from a row that was never owed, so a caller that hands it groups the
+ * device is not a member of gets a stall it cannot distinguish from a defect - a false FAIL, the one
+ * direction a rig must never round towards. `healrevoke.mjs` narrows by the subject's own server
+ * membership before calling, and an emptiness it cannot narrow stays empty and is refused here.
+ */
+export const subsetArrivedAndSettled = (ids) => (x) => {
+  if (!x.panel || !(x.rows > 0) || x.unhooked !== 0) return false;
+  if (ids.size === 0) return false;
+  const { inTheSubset } = splitBySubset(x.tiles, ids);
+  const ready = new Set(inTheSubset.filter((t) => t.ready).map((t) => t.id));
+  return ready.size === ids.size;
+};

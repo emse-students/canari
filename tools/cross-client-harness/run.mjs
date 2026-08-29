@@ -409,7 +409,7 @@ async function preflight(devices, { quiet = false } = {}) {
       const hint =
         d === 'A1'
           ? ' - phone off adb, app not running, or app in the BACKGROUND (a backgrounded WebView keeps its devtools socket listed and its forward succeeds, and still never answers CDP)'
-          : ' - browser closed? `node launch.mjs start w1`';
+          : ' - browser closed? `node launch.mjs start ' + d.toLowerCase() + '`';
       problems.push(`${d}: unreachable on ${PORTS[d]}${hint}`);
       continue;
     }

@@ -743,6 +743,73 @@ no check waits on wall-clock time at all. It belongs with the rendering pass, no
 
 ## Messaging convergence
 
+### P2 - ten push notifications were REFUSED by FCM for size in one run, and the guard measures the wrong quantity (measured 2026-08-29)
+
+Read off HEAL-REVOKE-5's server window on `96bdd1bb`, which no cell on the board carries:
+
+```
+WARN [MessagingService] [PUSH_SEND][send-d55b58e9] FCM failed user=d82cd226... device=tauri-...-mtd1qgu3-vnde
+  err=Error: Message is too large. The maximum is 4K (4096 bytes).
+```
+
+**Ten of them, inside one run, all to the same Android device** - the campaign owner's phone. Three
+other devices took one each in the same window, so it is not one device's problem.
+
+**WHAT IS MEASURED, AND IT IS NOT YET THE CAUSE.** `messaging.service.ts` guards with
+`FCM_INLINE_LIMIT = 3_500` applied to `protoB64` ALONE, under a comment that correctly states the
+4 KB budget is the DATA PAYLOAD's. The payload is not the proto: `buildPushDataFields` adds nine more
+entries, and FCM counts key names as well as values - `senderId` is 64 hex characters on this
+deployment, two UUIDs are 36 each, `createdAt` is 24, and `senderName`/`groupName` are unbounded
+user text. The same map is then spread a SECOND time into `apns.payload`. So the guard bounds a
+quantity strictly smaller than the one the limit is about, which is the column rule pointed at a
+byte budget: **a limit is only evidence for the quantity it was measured over.**
+
+**WHICH excess crosses 4096 is NOT measured, and must not be guessed.** A 3 500-byte proto plus the
+fixed fields lands near 3 800 and would fit; a long `groupName`, a long display name, or the APNs
+duplication are each sufficient on their own, and nothing in the log distinguishes them. **The first
+step is not a fix, it is a number**: the failure branch has the payload in hand and logs only the
+error, so serialize it and report the actual byte count and the largest field. Sizing the budget
+from the built fields - proto gets what is left under 4096, never a constant chosen ahead of them -
+is the shape of the fix, but only after the measurement says what it must leave room for.
+
+**WHAT IT COSTS IS UNVERIFIED.** The queue lines in the same window - `message stays in DB queue,
+will be fetched on reconnect` - suggest the MESSAGE survives and only the NOTIFICATION is lost, which
+would make this "a mobile user is never told" rather than "a message disappears". That is a
+reasonable reading of the mechanism and it was NOT checked for these ten, so it is written here as
+the question and not as the answer.
+
+**NOT FIXED INSIDE A CAMPAIGN ROW, deliberately.** The blast radius is another service's push path,
+and it cannot be verified here at all: proving a fix needs a message over the limit pushed to a real
+handset, which is hardware and belongs with the lettered device checks. Everything native verified by
+COMPILING has been wrong three times on this project.
+
+
+**RECURRENCE 2026-08-30, and it makes the count part of the shape.** HEAL-REVOKE-8's server window
+carries the SAME TEN refusals, same error verbatim, same single Android device, on a different row and
+a different build. Ten is therefore not an artefact of the run that first showed it. The phone was
+force-stopped throughout, which changes nothing: FCM rejects the payload for size before any device
+state is consulted.
+
+### P3 - the WASM warns about a missing MLS state on every device that is SUPPOSED not to have one (measured 2026-08-29)
+
+`mls-wasm/src/lib.rs` warns `device_key_b64 provided but no encrypted state - key ignored, creating
+fresh state` whenever a device key arrives with no blob beside it. Everywhere else that is worth a
+warning - a key with no state means something lost one. On a device that has just been wiped to
+factory and re-enrolled it is the expected pair, and it fired three times in one HEAL-REVOKE-5 run:
+the seed, the returning victim, and the reference.
+
+**The discriminator is KNOWN at the call site and is not carried down.** The TypeScript caller knows
+whether it is booting a fresh enrolment or reloading an existing device; the WASM does not, and
+learns it by finding nothing. That is the standing rule about never learning by failing what a fact
+could have told you, pointed at a log line rather than a request: the caller should say which case it
+is, and the warning should fire only where a state was genuinely expected.
+
+**Named per row in `FRESH_CLIENT_NARRATION` until then**, which is a disposition and not a fix: the
+line still fires, and every HEAL row that mints carries it. The blast radius is why it was not done
+inside a campaign row - it is Rust, a WASM regeneration and a frontend rebuild, and it leaves the
+subject of every row that would have found it.
+
+
 ### P2 - a device holds a distribution group the group holds no row for it, and heals by rejoining (measured 2026-08-29)
 
 **Handed back by HEAL-NEW-15's branch on `038c7e8d`, deliberately unacted on because its blast radius
@@ -777,6 +844,15 @@ no conversation group at all, and the reconciliation asked 0 of 1 and 0 of 2 rat
 of eleven - so the "only group the reconciliation did not ask about" correlation cannot be tested at
 this fleet size and is neither confirmed nor refuted here.
 
+**RECURRED ON A DIFFERENT RUNG, AND THE DEVICE COUNT IS NOT A CONSTANT.** HEAL-REVOKE-5 on
+`96bdd1bb`, 2026-08-29: the wipe window logged the line at 23:00:52 with `(3 device(s) for this
+user)` and the reference device logged it at 23:02:55 with `(2 device(s) for this user)` - **two
+different counts in ONE run, two minutes apart**, tracking the live device population as devices were
+revoked and minted. So the `3` recorded above is not part of the shape and nothing should be read
+into it; what is constant across every sighting is the community, `fbddc890`. The population is
+therefore wider than "every freshly minted device": a device that RETURNS from a revocation wipe
+produces it too, which is a second rung and a second build. Not chased here, per the row's brief.
+
 ### P2 - a membership is REFUSED for want of a KeyPackage one second after the device external-joined that very group (measured 2026-08-29)
 
 **It heals, and by the standing rule that is still a defect:** a race that needs a heal in THEORY is
@@ -808,6 +884,13 @@ local group of the entry above within a second of the activation. Two P2s, one g
 apart, twice: **treat "are these one defect" as the first question, not two independent
 investigations.** The discriminator both entries name is still unmeasured - the KeyPackage
 publication's own timestamp against the refusal's.
+
+**RECURRED ON HEAL-REVOKE-5, `96bdd1bb`, 2026-08-29 - same group `315b8a1d`, on the SEED device, at
+21:00:41.** This sighting cannot measure the interval the entry asks for: **no `[MEMBERSHIP_ACTIVE]`
+line for that device appears in the window at all**, and that is explained by the ROW rather than by
+the defect - HEAL-REVOKE-5 revokes the seed roughly ninety seconds later, so the activation had no
+opportunity to happen. Recorded so the absence is not later read as a refusal that never healed. The
+population now includes "a device minted as a revocation row's seed", which is a third rung.
 
 **And on those two rows the refusal was invisible from the client half.** `healnew.mjs` records only
 `observers: { w3 }`; the server window is taken by `run.mjs` per PASS and printed, not written to the
@@ -1060,6 +1143,51 @@ deciding between catching it at the WASM boundary and carrying it upstream to op
 The workaround the tests use is to avoid the shape entirely: the producer is two members committing
 at the same epoch, which is the production shape anyway and returns cleanly.
 
+### FIXED 2026-08-30 - a device DESTROYED the only copy of a group it had just created, and no member could ever join it again
+
+Found by HEAL-REVOKE-7 `--order first` on `0044a041`, which FAILed on it. **Fixed in the same session;
+kept here because the mechanism is one every pruning sweep in this app can reproduce.**
+
+The row's actor creates a group and, within the same second, deletes its own MLS state for it:
+
+    00:31:31  [MLS] forgetGroup 50799ae8... (absent from server)
+    00:31:31  forget_group: group 50799ae8... forgotten (memory + storage, min_epoch=0, re-Welcome expected)
+    00:31:36  [READD] 50799ae8... getGroupMeta -> ok
+    00:31:36  [READD] 50799ae8... externalJoin -> no_base_published
+
+**PROD SETTLED IT, AND THE TIMESTAMP IS THE WHOLE ANSWER.** The row is still there, `deletedAt` null,
+`createdAt = 2026-08-29 22:31:31.905299` - **the same second as the line that forgot it.** So the
+server was never wrong and no two endpoints disagreed: `discoverMissingGroups` fetched the group list,
+awaited it (and `getDismissedGroups` after it), then read `mlsService.getLocalGroups()` LIVE and
+purged everything the older snapshot did not mention. A group born inside that window is absent from
+the snapshot by construction and was deleted for it.
+
+**WHY IT IS A P1 AND NOT A LOST CACHE.** The creating device held the only copy of the tree, so
+`min_epoch=0, re-Welcome expected` describes a Welcome nobody was left to send, and the base an
+external join needs was never published - which is exactly what `no_base_published` reports. Two
+devices created afterwards were both counted as members by the server, `serverActive: 26` on each,
+while neither could open the conversation: the returning device sat on it amber for 601 s and a
+freshly minted one never got a row at all. **The group was permanently unreachable for every member
+while the server still said they belonged to it.**
+
+**THE GUARDS THAT EXISTED WERE AGAINST THE WRONG FAILURE.** Discovery already carried both defences
+WP-GRAINE-1 left - `serverFetchSucceeded`, and `reconcileAbsentLocalGroup` reading the `dm_groups`
+row so that absence from a conversation list is not read as death - and both held while this
+happened. They guard against an unreliable LIST. This was a reliable list that was merely OLDER than
+the local set it was compared against.
+
+**The fix**: capture the local group set BEFORE asking the server, which is what the sibling sweep in
+`initializeConnection.ts` has done since WP-GRAINE-1, in a comment naming this exact hazard. It is
+free of risk in the one direction that matters - capturing early can only SPARE a group, because one
+that really did go away during the fetch is swept on the next pass - so nothing correctly purged
+before is kept now. The regression test was shown to FAIL without the change before it was believed.
+
+**The durable rule already existed and this is its THIRD site** - "a listing has no authority over a
+fact created after its request went out", written for the community rail. Two of the three sites are
+now fixed, and the general question is whether any other sweep compares a live local read against an
+awaited server one.
+
+
 ### P3 - one client reads a new salon's distribution group TWICE, concurrently (measured 2026-08-27)
 
 `srvlog.mjs` leaves `published=false base=none active=0 devices=0` unexplained on purpose - it is
@@ -1261,6 +1389,48 @@ already walks rows in order and row ids are timestamps. The second needs no WASM
 should be changed on the strength of a reading of it.
 
 **How to confirm it is gone:** GRP-8 goes clean. It is the only check that re-adds a removed member.
+
+
+**RECURRENCE 2026-08-30, AND IT WIDENS THE POPULATION THIS ENTRY CLAIMS.** Read off six
+HEAL-REVOKE-5 runs, builds `96bdd1bb` through `0044a041`. **The device losing the frames was never
+evicted from the group it loses them in** - it is a fresh device of the same user, joining for the
+first time after a revocation wipe. So the entitlement floor cannot be keyed on
+`readmittedAfterEviction` alone, which is what the fix above proposes: that branch never runs here.
+**A floor belongs at every entitlement START, however the entitlement was acquired.** And "how to
+confirm it is gone: GRP-8, the only check that re-adds a removed member" is incomplete for the same
+reason - HEAL-REVOKE-5's reference observer reaches this branch with no eviction anywhere in the row.
+
+**What was measured.** 107 distinct `LOST frame` fingerprints over the six runs, growing run over run
+(1, 8, 8, 9, 30, 51). In the run of record, 50 of 51 fall in ONE group of the 23 the owner is a member
+of. They are not chat text: the fingerprint's first field is `frame.length` in base 36, so the sizes
+read straight off it - median 52 KB, max 84 KB, 5.6 MB over the six runs.
+
+**A SECOND AND MUCH LARGER POPULATION SITS BEHIND THE SAME GROUP**, reported in aggregate rather than
+per frame:
+
+    [HISTORY] 642f389a... holds 8005 frame(s) it can never read - reconciling (e.g. 5p:1cx1kog, ...)
+    [HISTORY] 642f389a... holds 3005 frame(s) it can never read - reconciling (e.g. 5p:1cx1kog, ...)
+
+`5p` is 205 bytes, so these are small frames and a different population from the 52 KB ones above. The
+example fingerprints are IDENTICAL across all three observers of one run, so that backlog is stable.
+
+**WHAT IS NOT ESTABLISHED, AND THE INFERENCE THAT MUST NOT BE DRAWN FROM IT.** No fingerprint repeats
+across any two runs, and **that is not evidence the frames are new messages.** `frameFingerprint` is
+FNV-1a over the CIPHERTEXT bytes, and `historyManifest.ts` answers a reconciliation by re-encrypting
+the peer's durable copy at the CURRENT generation - so the very same message re-sent to a new device
+fingerprints differently every time. Zero overlap discriminates nothing here, and a reading of it as
+"fresh traffic each run" was formed and retracted before it reached this page.
+
+**The cheap discriminator, for whoever takes it.** The digest that precedes the burst asks with
+nothing held - `[HISTORY_DIGEST] Sent for 642f389a... - ids mode, 0 id(s), asking from
+2026-05-31T00:00:00.000Z` - so whether the 52 KB frames ARE that answer is settled by putting the
+`Sent` stamp beside the burst, which lands inside a single second. Worth one look before anything is
+changed: if the reconciliation's own answer is what arrives unreadable, the repair is feeding the
+loss it was sent to cure.
+
+**One more line from the same window, unqueued elsewhere and not chased here:**
+`[HISTORY_RECONCILE] no probe sender yet - 642f389a... deferred until one is installed`, five times
+across two groups before the first digest goes out.
 
 
 ### P3 - a `history_bundle` restores the EDITED flag without the edited body
@@ -1539,6 +1709,29 @@ authenticated route, deployed) and the native app (Kotlin, plus an APK rebuild a
 rebuild re-bases A1's build for every phase of the ladder that follows it.
 
 ## The harness itself
+
+### P2 - no row on the board can tell a healthy conversation from an epoch-forked one (measured 2026-08-29)
+
+Two production conversations sat forked one epoch behind for twenty-four hours, refusing 191 and 172
+commits, and **every reading this rig takes was green throughout**: `data-ready="true"` on both tiles,
+`syncing: 0`, `amber: []`. The fork was found in the SERVER's refusal count while chasing something
+else. Reasoning in
+[testing-methodology](testing-methodology.md#a-green-sidebar-tile-does-not-prove-the-group-is-not-epoch-forked);
+this is the queue entry for the gap it leaves.
+
+**What is missing is a predicate, not a runner.** Readiness answers *the list has painted*, which is
+what it was written for. Nothing anywhere in the rig asks *is this device at the group's epoch*,
+though the answer is one field: the client already holds `getEpoch(groupId)`, and the server already
+answers `activeEpoch` on any refused commit and carries it in the commit-log endpoint. A `syncrows`
+reader that put the two side by side would turn a class of defect that is currently found by hand,
+a day late, into a per-row assertion.
+
+**The row it belongs to is not written either.** COMM and MULTI both send and observe arrival, so
+they would catch a fork that blocks traffic *in the window they watch*; neither asks the question of
+a conversation it is not itself using, which is the only place a quiet fork can live. Scope it with
+the four MULTI rows of queue item 3 - same shape, same devices, and the same reason none of ~200
+existing rows would have caught it.
+
 
 ### P3 - an internet scanner can stop a `--repeat`, and separate invocations are the way round it (2026-08-26)
 

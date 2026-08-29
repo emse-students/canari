@@ -238,6 +238,97 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A conversation created while the app was refreshing its group list could be destroyed by its own
+  creator, seconds old, leaving every member unable to ever open it.** The discovery sweep purges the
+  MLS state of any local group the server did not list, and it read the local set AFTER fetching that
+  list - so a group born during the fetch was absent from the snapshot by construction and deleted on
+  that basis. The creating device held the only copy of the tree, so nothing was left for anyone to
+  join from: the server still counted every member, `getGroupMeta` still answered that the group was
+  there, and re-entry was refused with `no_base_published` because the base to join had just been
+  erased. The local set is now captured BEFORE the server is asked, which is what the sibling sweep in
+  `initializeConnection` has done since WP-GRAINE-1. Capturing early can only spare a group - one that
+  really did go away during the fetch is swept on the next pass - so nothing that was correctly purged
+  before is kept now. Measured on prod: a group created at 22:31:31.905 and forgotten inside the same
+  second, with its row still present and `deletedAt` null.
+
+- **One tab election was logged twenty times on a device coming up with twenty-two conversations.**
+  Measured on production 2026-08-29 in HEAL-REVOKE-5's wipe window: a single
+  `[OUTBOX] Flush deferred - tab leadership undecided` followed by TWENTY
+  `[OUTBOX] Leadership decided as leader after N ms` lines inside one second, each carrying its own
+  start offset - 6017 ms down to 3871 ms - so nothing deduplicated them. Boot asks for a flush per
+  recovering conversation, per enqueue and per wake-up; every one of them that landed in the
+  election gap awaited the decision on its own. The flush already coalesces through
+  `flushing`/`rerun`, but only AFTER that gate, so the coalescing could never reach the waiting. No
+  message was ever lost and every waiter resumed - **what the twenty lines cost is the reader**, and
+  a line its reader learns to skip is the one that hides the next defect. The wait is now shared:
+  one election, one promise, one pair of lines.
+
+- **A device revoked while it was RUNNING wiped itself and then sat on a dead `/chat`.** Measured on
+  production 2026-08-29 by HEAL-REVOKE-5, on the build that had just fixed the wipe itself: the
+  `device_revoked` frame arrived, the wipe ran to completion and left nothing of the account - and
+  the client stayed exactly where it was, on `/chat`, with no session, no sidebar and no navigation.
+  It was still there fifteen seconds later. **The wipe was right and the handover was wrong.** The
+  push handler announced the revocation through `onLoginFailed`, which is the correct seam at the two
+  login-path call sites beside it - a person is at the gate, the modal is where the answer belongs -
+  and the wrong one here, where the background service binds that callback to the saved-PIN handler.
+  So a revocation REOPENED THE PIN PROMPT on a device the previous line had returned to a fresh
+  install: no PIN to enter, no device id, no session for it to act on. What finally moved the page
+  was the prompt's own attempt drawing a `401` from `/api/auth/refresh`, several seconds later,
+  through the session-expired path - the right destination reached by accident, by way of a failure.
+  The handler now calls `onSessionExpired`, the seam written for an authentication loss rather than a
+  retryable error and the one callback the background service wires unconditionally: it clears the
+  auth and goes to `/login`. Nothing is lost, because the message it replaces lived in a modal the
+  app abandoned two seconds later anyway.
+
+- **Two real conversations were stuck for good because the recovery ladder could only be entered
+  from the read side.** Found on production 2026-08-29 while HEAL-REVOKE-5's fresh reference device
+  sat at eleven groups of thirteen for eight minutes: the two it never got were being refused
+  `epoch_mismatch` by the server, 191 and 172 times in twenty-four hours, from the one web device
+  that held them. That device was a single epoch behind and could not commit; being the only member
+  online, it was also the only one that could re-admit anybody, so every peer asking to be re-added
+  was stranded behind it and their outboxes stayed frozen - which is what the "vous avez peut-etre
+  des messages en attente" nudge had been reporting to them. **The refusal was documented as
+  retryable and the retry was never going to work.** It is retryable in the case it was written for,
+  two devices committing at once: the loser rolls back, the winner's commit arrives through the
+  fan-out, the retry lands. On a quiet conversation the refused commits are the ONLY traffic, so
+  nothing arrives, and the premise the retry rests on is one nothing establishes. Both rungs of the
+  ladder - `attemptCommitReplay`, then the watchdog's forget + re-Welcome - hung off an incoming
+  frame this device could not decrypt, and a device that is behind but hears nothing never reaches
+  them. **The fix is the entrance, not a rung.** `runCommitTransaction` now calls
+  `catchUpOnRefusedCommit` before throwing the refusal: the EPOCHS decide, not the reason string (a
+  refusal reporting no server epoch ahead of ours is not a gap and touches nothing), rung 1 replays
+  the missed commits under the same MLS lock the read side holds, and a gap it cannot close is left
+  in the epoch-gap registry whose owner - the sync watchdog - already owns rung 2 and the whole
+  re-add cadence. No rung, no timer, no escalation and no fallback was added, and the refusal is
+  still thrown, because catching up is not succeeding.
+  **Both conversations healed within two minutes of the deploy, and by RUNG 2 - which the fix did not
+  predict and the run measured.** Rung 1 fetched the one commit each device was missing and OpenMLS
+  refused to re-apply it (`same-epoch refusal`), because that commit was the device's OWN: the server
+  had accepted it and the local merge never happened, which is the crash-before-merge gap
+  `runCommitTransaction` documents. So this shape of fork is always rung 2, never rung 1, and rung 1
+  runs first anyway because nothing at the refusal can tell the two apart. Last refusal 18:24:00,
+  first accepted commit 18:24:44, the two epochs moved 196 -> 201 and 216 -> 218, and the device
+  immediately sent the two Welcomes it had owed for hours.
+
+- **A revoked device kept the user's message database, because the wipe was racing a login it had
+  itself started.** Found by HEAL-REVOKE-5 on production 2026-08-29, on the build that had just made
+  the survivor visible. `wipeRevokedDevice` opens by tearing the live session down, which sets
+  `isLoggedIn` false - and that is one of the three flags `loginImpl` reads to decide nobody owns
+  the flow. So the wipe's own first act was the event that let a login start: 3 ms after the
+  `device_revoked` frame, one did. It asked the server whether this device was revoked, the question
+  could not be answered because the wipe had already cleared the credentials, and `isDeviceRevoked`
+  answers `false` when it cannot reach the server - correct for the question it was written for
+  (*should I erase myself?*, where a transport failure must never be a verdict) and exactly wrong for
+  the one the login was asking (*may I proceed?*). The login proceeded, reopened
+  `CanariDB_<userId>` 24 ms before the delete, and `deleteDatabase` does not fail on an open
+  connection - it BLOCKS. The store survived on a device its owner had declared lost, and every line
+  except one said the wipe had worked. **The fix excludes the wipe's whole DURATION, not a device
+  identity**: between clearing `mls_device_id_<userId>` and deleting the stores there is a window in
+  which no identity exists to recognise, and a login slipping into it reopens the database just the
+  same. A latch is raised before the first step and released in a `finally`, so it is causal rather
+  than timed, costs one boolean read on every login, and cannot leave a real user locked out. The
+  refusal names itself in the log beside the three flags that were already named.
+
 - **A revoked device kept both of its databases, and every log said the wipe had worked.** Found by
   HEAL-REVOKE-5 on production, 2026-08-29, on a build carrying all three of August's earlier wipe
   fixes: the `device_revoked` frame arrived, the server confirmed it, the reset ran, no step reported

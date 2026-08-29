@@ -1701,6 +1701,70 @@ export const EVICTED_REJOIN_NARRATION = [
 ];
 
 /**
+ * WHAT A CLIENT WITH NO MLS STATE SAYS ON ITS FIRST BOOT - forgiven per row, never in `BENIGN`.
+ *
+ * A HEAL ROW MINTS DEVICES, AND A MINTED DEVICE HAS NO STATE BY CONSTRUCTION. Every sentence here
+ * is the visible end of that one fact, and every one of them is a FINDING on a device that was
+ * supposed to have state - which is why the list is opt-in and why a row names it rather than the
+ * classifier claiming it for the whole campaign.
+ *
+ * THE `RUST::WARN` IS THE ONE TO ARGUE FOR. `lib.rs` warns when a device key arrives with no
+ * encrypted state beside it, and on a device that has just been wiped to factory and re-enrolled
+ * that is exactly the expected pair: the wipe took the state, the enrolment brought the key. The
+ * warning is right everywhere else - a key with no state means something lost one - and the WASM
+ * cannot tell the two apart because the discriminator lives at the CALL SITE. That is queued as a
+ * product noise item; until it is carried down, the row names the line rather than demoting it.
+ *
+ * THE `[DOM]` LINE IS THE BROWSER'S, NOT THE APP'S. Chrome emits it at `verbose` against any form
+ * carrying a password field, which the login and PIN screens do. Nothing in this repository can
+ * silence it and nothing in this repository caused it.
+ *
+ * THE `[PIPELINE]` NEEDLE KEEPS ITS TRAILING CHARACTER AS `.`, for the reason `COLD_START_NARRATION`
+ * gives over its check mark: the app writes a U+2026 ellipsis, this file is ASCII, and a literal
+ * glyph is one a re-encode can mangle into a needle that matches nothing.
+ *
+ * THE OUTBOX PAIR IS PINNED TO ONE ELECTION. It reads singular on purpose - one deferral, one
+ * decision - because that is what the fix of 2026-08-29 made it: a shape that started matching
+ * twenty lines at once again would mean the shared wait had come undone, and this list is not what
+ * should hide it. Nothing here forgives `Flush skipped`, which is a different claim entirely.
+ */
+export const FRESH_CLIENT_NARRATION = [
+  /^\[A\] login returnTo=\S+ uri=\S+ flow=\S+$/,
+  /^\[DOM\] Password forms should have \(optionally hidden\) username fields for accessibility/,
+  /^Initialising MLS\.\.\.$/,
+  /^\[RUST::WARN\] device_key_b64 provided but no encrypted state - key ignored, creating fresh state$/,
+  /^\[OUTBOX\] Flush deferred - tab leadership undecided; waiting for the election\.$/,
+  /^\[OUTBOX\] Leadership decided as (?:leader|follower) after \d+ ms\.$/,
+  /^\[PIPELINE\] Recovery attempt finished for [0-9a-f]{8}.$/,
+];
+
+/**
+ * WHAT THE AUTH STORE SAYS WHILE A DEVICE ERASES ITSELF - two lines, and only for a revoked device.
+ *
+ * `alog('clear')` and `alog('ws-')` are `auth.ts`'s own account of `clearAuth()` and of the live
+ * socket coming down, which are the first two steps of `wipeRevokedDevice`. On the observer of a
+ * device that was just revoked they ARE the wipe working, and they are named nowhere else: on any
+ * other client, a session clearing itself and a socket dropping is the finding.
+ *
+ * IT FORGIVES NO OUTCOME. `[RESET] could not clear` and `[RESET] ... SURVIVED the wipe` are in no
+ * list, here or anywhere, so the one thing this rung exists to catch still breaks `clean`.
+ */
+export const AUTH_TEARDOWN_NARRATION = [/^\[A\] clear$/, /^\[A\] ws-$/];
+
+/**
+ * A CONTENT-FREE DEBUG TAG NAMING A READ, which this project's own logging standard requires.
+ *
+ * `debug: [blocks.listBlockedUsers]` is a function-entry log on the blocks store, emitted wherever a
+ * view that reads the block list mounts - so it appears on EVERY observer, the actor included, and
+ * it carries no value that could be a finding. `CLAUDE.md` mandates a log at function entry; a rule
+ * that then counted one as dirt would be asking the code to break its own standard.
+ *
+ * IT IS PINNED TO THE BARE TAG. Anything the store logs WITH a payload - a count, a failure, a user
+ * - has a different spelling and is not forgiven here.
+ */
+export const BLOCK_LIST_READ_NARRATION = [/^\[blocks\.listBlockedUsers\]$/];
+
+/**
  * THE REFUSAL A CLIENT THAT HAS JUST DELETED ITS OWN COOKIES GETS BACK, forgiven per row.
  *
  * Any runner that mints a device - `newdevice.mjs`, and every row that calls it - clears the Canari

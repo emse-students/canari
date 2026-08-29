@@ -63,8 +63,9 @@ import { onlineDevicesOf } from "./presence.mjs";
 import { stateOf } from "./ready-probe.mjs";
 import { bringToReady } from "./ready-repair.mjs";
 import { finishObserved, record, unmet } from "./results.mjs";
-import { subsetSettled } from "./servable.mjs";
+import { subsetArrivedAndSettled } from "./servable.mjs";
 import {
+  activeGroupIds,
   navigationCost,
   readAll,
   sidebar,
@@ -72,8 +73,11 @@ import {
   whoAmI,
 } from "./syncrows.mjs";
 import {
+  AUTH_TEARDOWN_NARRATION,
+  BLOCK_LIST_READ_NARRATION,
   consoleLines,
   DEVICE_PANEL_NARRATION,
+  FRESH_CLIENT_NARRATION,
   ignoringExpectedLog,
   ignoringExpectedRefusal,
   ignoringOfflineCut,
@@ -113,12 +117,28 @@ import {
 const forgiving = (rep, narration) =>
   ignoringExpectedLog(ignoringExpectedRefusal(rep, MINT_REFUSALS), narration);
 
-/** The victim after it came back: `login.mjs` drove the IdP, and nothing here purged a device. */
-const asAReturningDevice = (rep) => forgiving(rep, OIDC_LOGIN_NARRATION);
+/**
+ * The victim after it came back: `login.mjs` drove the IdP, and nothing here purged a device.
+ *
+ * IT BOOTS WITH NO MLS STATE, which is the row's whole premise - the wipe took it. So it says
+ * everything `FRESH_CLIENT_NARRATION` names, and a row that did not forgive that would be reporting
+ * its own subject as dirt.
+ */
+const asAReturningDevice = (rep) =>
+  forgiving(rep, [
+    ...OIDC_LOGIN_NARRATION,
+    ...FRESH_CLIENT_NARRATION,
+    ...BLOCK_LIST_READ_NARRATION,
+  ]);
 
-/** The reference: a full mint, so the callback's trail AND the abandoned id's purge. */
+/** The reference: a full mint, so the callback's trail, the abandoned id's purge, and a cold client. */
 const asAFreshlyMintedDevice = (rep) =>
-  forgiving(rep, [...OIDC_LOGIN_NARRATION, ...DEVICE_PANEL_NARRATION]);
+  forgiving(rep, [
+    ...OIDC_LOGIN_NARRATION,
+    ...DEVICE_PANEL_NARRATION,
+    ...FRESH_CLIENT_NARRATION,
+    ...BLOCK_LIST_READ_NARRATION,
+  ]);
 
 /**
  * The window in which the device was revoked: its mint, and then its own account of erasing itself.
@@ -134,7 +154,16 @@ const asAFreshlyMintedDevice = (rep) =>
  * row of this rung. The failure spellings still break `clean`, which is the whole point of looking.
  */
 const asTheWipedVictim = (rep) =>
-  forgiving(rep, [...OIDC_LOGIN_NARRATION, ...DEVICE_PANEL_NARRATION]);
+  forgiving(rep, [
+    ...OIDC_LOGIN_NARRATION,
+    ...DEVICE_PANEL_NARRATION,
+    ...FRESH_CLIENT_NARRATION,
+    // THE ONLY OBSERVER HANDED THE TEARDOWN, because it is the only device that was revoked. A
+    // session clearing itself and a socket dropping is this window's subject and everyone else's
+    // finding.
+    ...AUTH_TEARDOWN_NARRATION,
+    ...BLOCK_LIST_READ_NARRATION,
+  ]);
 
 /**
  * The actor: it drove the device panel, and it wiped no cookie of its own.
@@ -143,7 +172,8 @@ const asTheWipedVictim = (rep) =>
  * client that just deleted its cookies; on the actor, which did no such thing, it is the campaign's
  * own owner session dying - and that is a finding, not this row's noise.
  */
-const asTheActor = (rep) => ignoringExpectedLog(rep, DEVICE_PANEL_NARRATION);
+const asTheActor = (rep) =>
+  ignoringExpectedLog(rep, [...DEVICE_PANEL_NARRATION, ...BLOCK_LIST_READ_NARRATION]);
 
 const argv = process.argv.slice(2);
 const opt = (name, fallback = null) => {
@@ -199,15 +229,31 @@ const firstLine = (e) =>
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** Runs one rig script and reports its exit and last line, never its whole output. */
+/**
+ * Runs one rig script and reports its exit and the ONE line that says what happened.
+ *
+ * THE LAST LINE OF A CRASH IS THE LEAST INFORMATIVE LINE OF IT. A thrown error ends with the node
+ * version banner, so a child that died with a precise complaint was reported here as
+ * `tail: "Node.js v24.16.0"` - which named neither the script, nor the state, nor the failure. It
+ * cost a diagnosis on 2026-08-29: HEAL-REVOKE-5 recorded a login that had refused, and the refusal
+ * itself was three lines above the one that got written down.
+ *
+ * So the throw is preferred when there is one, and the last line only otherwise. A script that
+ * exits cleanly still reports what it did on its final line, exactly as before.
+ */
 function runScript(file, args) {
   const r = spawnSync(process.execPath, [file, ...args], {
     encoding: "utf8",
     cwd: import.meta.dirname,
     maxBuffer: 64 * 1024 * 1024,
   });
-  const out = `${r.stdout || ""}${r.stderr || ""}`.trim().split("\n");
-  return { ok: r.status === 0, status: r.status, tail: out.at(-1) ?? "" };
+  const out = `${r.stdout || ""}${r.stderr || ""}`
+    .trim()
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const threw = out.find((l) => /^(?:[A-Za-z]*Error|Uncaught)\b/.test(l));
+  return { ok: r.status === 0, status: r.status, tail: threw ?? out.at(-1) ?? "" };
 }
 
 /**
@@ -255,6 +301,44 @@ async function setTopology(present) {
     acted[`${which}Ready`] = r.ok === true;
   }
   return acted;
+}
+
+/**
+ * PUTS BACK THE FLEET THIS ROW TOOK DOWN - on every exit path, including the ones that fail.
+ *
+ * A ROW'S TEARDOWN IS THE NEXT ROW'S INHERITED STATE. `setTopology([ACTOR])` kills W2 in the row's
+ * first act, because the world must not move while the victim is away, and until 2026-08-29 nothing
+ * ever put it back. The cost is not hypothetical: the run after the first HEAL-REVOKE-5 verdict was
+ * refused by `run.mjs`'s preflight - `W2: unreachable on 9223` - and so was the one after the
+ * second. Twice, for a device the row itself had killed. `devicesFor` demands W1, W2 and W3 of this
+ * rung, so every remaining row would have paid the same toll.
+ *
+ * IT IS `setTopology` AND NOT A SECOND SPELLING OF IT. `bringToReady` already answers a client that
+ * came back signed out - a killed browser keeps its profile but not its in-memory token - by driving
+ * `login.mjs` and then `pin.mjs`, so restoring is the same primitive with the full fleet named. A
+ * restore path that reimplemented any of that would be a second definition of "ready", and this file
+ * has already recorded what those cost.
+ *
+ * W3 IS NOT IN IT, DELIBERATELY. The victim is the row's SUBJECT, and its final state is the
+ * measurement: bringing it to ready here would erase the thing the next reader has to look at, and
+ * `run.mjs`'s preflight is what re-establishes it before a row that needs it.
+ *
+ * IT APPEARS AT FIVE EXITS AND NOT ONE, which is a debt this file's shape owes rather than a choice.
+ * A top-level-await script has no `finally` around it without being restructured, so the call is
+ * placed at each exit that can end the row after the topology has been set. The three `INVALID`
+ * paths need it MOST - they are the ones that end early, and an early end is exactly when a fleet is
+ * left broken.
+ *
+ * IT ALWAYS RUNS AFTER THE ROW IS DURABLE, NEVER BEFORE. Restoring costs a browser start, a login
+ * and a PIN, and a run killed inside that minute would lose a verdict that was already computed -
+ * three cells of this campaign have died that way. `record` is synchronous, so on the `INVALID`
+ * paths the row is on disk by the time this is called; on the two that finish, `finishObserved`
+ * takes it as its `afterRecording` hook and runs it between the write and the exit.
+ */
+async function restoreTheFleet() {
+  const back = await setTopology(["w1", "w2"]);
+  note(`fleet restored ${JSON.stringify(back)}`);
+  return back;
 }
 
 /** A connection to the victim's browser, whatever state its page is in. */
@@ -413,25 +497,32 @@ function classifyWipe(cx) {
  * `servable.mjs` was written for on the HEAL-NEW rung, and this is its second caller.
  *
  * IT IS NOT THE SAME SUBSET AS HEAL-NEW'S, AND THE DIFFERENCE IS THE POINT. There the responder is
- * the PEER, a different account, so `activeGroupIds` - a per-USER question - already narrows it.
- * Here the responder is the owner's own other device: the server says it is a member of every group
- * the victim is in, and the per-user set narrows NOTHING. A device can only answer a re-admission
- * request for a group whose MLS state it HOLDS, and the sidebar says which those are - a ready row.
- * So the subset is the union of the READY rows of every client that is up, which is a strictly
- * stronger statement than membership and is the one the product actually has to satisfy.
+ * the PEER, a different account, and the fresh device already HOLDS every row it will ever hold, so
+ * membership alone is the whole subset. Here the subject's rows have to ARRIVE, so the subset is the
+ * intersection of two facts, and neither one alone is it: a device can only answer a re-admission
+ * request for a group whose MLS state it HOLDS - a ready row in its sidebar - and the subject can
+ * only ever receive a group the SERVER says it is a member of. Serving without membership is the
+ * peer's rows, which the subject will never see; membership without serving is a row nothing online
+ * could hand over. The subset is what satisfies both, and it is the claim the product must meet.
  *
- * AN EMPTY WORLD NEVER SETTLES. `subsetSettled` refuses a vacuous subset by construction, so a row
- * that returns with nobody online - HEAL-REVOKE-7 `--order first`, which exists to do exactly that -
- * reports a device that could not heal instead of the fastest PASS on the board. The caller's guard
- * knows which rows meant it: `theSettlePredicateKnewWhatToWaitFor` demands a non-empty world only
- * where the row's own `returnTopology` put someone there.
+ * AN EMPTY WORLD NEVER SETTLES. `subsetArrivedAndSettled` refuses a vacuous subset by construction,
+ * so a row that returns with nobody online - HEAL-REVOKE-7 `--order first`, which exists to do
+ * exactly that - reports a device that could not heal instead of the fastest PASS on the board.
+ * The caller's guard knows which rows meant it: `theSettlePredicateKnewWhatToWaitFor` demands a
+ * non-empty world only where the row's own `returnTopology` put someone there.
  *
- * READING A RESPONDER COSTS IT NOTHING. `sidebar()` is one `document.querySelector` in the page: no
- * request, no console line, nothing that reaches the actor's own observer or its gate.
+ * READING A RESPONDER IS ALMOST FREE, AND THE EXCEPTION IS NAMED. `sidebar()` is one
+ * `document.querySelector` in the page - no request, no console line. `activeGroupIds` is NOT free:
+ * it issues a refresh and a groups fetch from the actor's own page. They are raw `fetch` calls in
+ * the evaluate context rather than calls through the app's client, so nothing routes them into the
+ * app's logger and the actor's observer sees no line - but the requests are real, and a claim that
+ * reading a responder costs nothing at all would be false and would hide the next surprise.
  */
 async function whatTheWorldCanServe(label) {
-  const ids = new Set();
+  const served = new Set();
   const from = {};
+  let owed = null;
+  let owedWhy = "the actor is down, so nobody of the subject's account could be asked";
   for (const which of ["W1", "W2"]) {
     if (!(await isUp(which.toLowerCase()))) {
       from[which] = "down";
@@ -440,9 +531,19 @@ async function whatTheWorldCanServe(label) {
     try {
       const rcx = await client(PORTS[which], new URL(ORIGIN[which]).hostname);
       const seen = await sidebar(rcx);
+      if (which === ACTOR) {
+        // MEMBERSHIP IS PER USER AND IS ASKED OF THAT USER'S OWN CLIENT. Every device this rung
+        // measures - the seed, the returning victim, the reference - belongs to the OWNER, and the
+        // actor is the owner's other device, so its answer IS the subject's owed set. Reading it
+        // here costs no second connection and no second login.
+        const who = await whoAmI(rcx);
+        const mine = await activeGroupIds(rcx, who.userId ?? "");
+        owed = mine.ids ? new Set(mine.ids) : null;
+        owedWhy = mine.why;
+      }
       rcx.close();
       const ready = (seen.tiles ?? []).filter((t) => t.id && t.ready && !t.removed);
-      for (const t of ready) ids.add(t.id);
+      for (const t of ready) served.add(t.id);
       from[which] = `${ready.length} ready of ${seen.rows ?? 0}`;
     } catch (e) {
       // A RESPONDER THAT CANNOT BE READ IS NOT A RESPONDER THAT SERVES NOTHING, and the difference
@@ -451,8 +552,19 @@ async function whatTheWorldCanServe(label) {
       from[which] = `UNREADABLE: ${firstLine(e)}`;
     }
   }
-  note(`${label}: the world can serve ${ids.size} group(s) ${JSON.stringify(from)}`);
-  return { ids, from, settledWhen: subsetSettled(ids) };
+  // THE PEER'S READY ROWS ARE NOT THE SUBJECT'S OWED ROWS, and the arrival proof cannot tell a row
+  // that never came from a row that was never owed. W2 is a DIFFERENT ACCOUNT: at the seed watch it
+  // is still up, and its groups would be demanded of a device that will never be a member of them -
+  // a 600 s stall reported as a defect. So what the world can serve is narrowed to what the subject
+  // is actually owed, and a set that could not be narrowed stays EMPTY and is refused downstream
+  // rather than silently widening back to the loose rule.
+  const ids = owed ? new Set([...served].filter((id) => owed.has(id))) : new Set();
+  from.SUBJECT = owed ? `${owed.size} group(s)` : `UNREADABLE: ${owedWhy}`;
+  note(
+    `${label}: the world serves ${served.size}, the subject is owed ${owed?.size ?? "?"}, ` +
+      `so ${ids.size} group(s) must arrive ${JSON.stringify(from)}`,
+  );
+  return { ids, from, settledWhen: subsetArrivedAndSettled(ids) };
 }
 
 /**
@@ -460,29 +572,48 @@ async function whatTheWorldCanServe(label) {
  *
  * It does NOT wipe anything - the point of the row is that REVOCATION did the wiping. If a store
  * survived, this is where it shows, and clearing the origin first would delete the evidence.
+ *
+ * `beforeTheWatch` RUNS AFTER THE DEVICE IS LOGGED IN AND BEFORE THE WORLD IS READ, and exists for
+ * exactly one row. HEAL-REVOKE-7 `--order first` returns with nobody online, which is a PHASE of
+ * that row and not the world it is judged in: a device whose account has no other client online can
+ * never be served a Welcome, so a watch opened there waits for something nothing could send. The
+ * hook is where the isolated phase is observed and then ENDED, so the settle watch that follows
+ * runs against a world that can actually answer - and the equality the row asserts is between two
+ * devices in the same populated world, which is the only comparison that means anything.
  */
-async function comeBack(label) {
+async function comeBack(label, { beforeTheWatch } = {}) {
+  // THE OBSERVER GOES UP BEFORE THE LOGIN, BECAUSE THE LOGIN IS THE STEP THAT CAN FAIL. It used
+  // to be attached after it, and on 2026-08-29 that left the only interesting console of the run
+  // unrecorded: the return reported login ok and landed on /chat, and three milliseconds later the
+  // app logged itself out. The row could say the sidebar never came and could not say why, because
+  // the sentence that said why was spoken before anyone was listening.
+  const cx = await victimCx();
+  const observer = await watch(cx, VICTIM);
   note(`${label}: logging the revoked device back in`);
   const login = runScript("login.mjs", ["--device", VICTIM]);
   note(`${label}: login ${JSON.stringify(login)}`);
-  const cx = await victimCx();
-  const observer = await watch(cx, VICTIM);
   const pin = runScript("pin.mjs", ["--device", VICTIM]);
   note(`${label}: pin ${JSON.stringify(pin)}`);
   await ensureChat(cx).catch(() => null);
   const who = await whoAmI(cx);
   note(`${label}: it is now device ${who.deviceId?.slice(0, 8)} of ${who.userId?.slice(0, 8)}`);
+  const alone = beforeTheWatch ? await beforeTheWatch(cx) : null;
   const target = await whatTheWorldCanServe(label);
   const w = await watchRows(cx, {
     timeoutMs: SETTLE_MS,
     settledWhen: target.settledWhen,
     log: (m) => console.log(m),
   });
-  note(
-    `${label}: ${w.settled ? `settled in ${w.elapsedMs}ms` : `still syncing after ${w.elapsedMs}ms`}`,
-  );
+  // THREE OUTCOMES, NOT TWO. A watch that ended on a logout is not a watch that ran out of time,
+  // and reporting both as "still syncing" is what made a ten-minute stall read like a slow heal.
+  const how = w.settled
+    ? `settled in ${w.elapsedMs}ms`
+    : w.abandoned
+      ? `ABANDONED after ${w.elapsedMs}ms - the client is on ${w.abandoned}, so no sidebar was coming`
+      : `still syncing after ${w.elapsedMs}ms`;
+  note(`${label}: ${how}`);
   const last = await readAll(cx);
-  return { cx, observer, login, pin, who, watch: w, target, last };
+  return { cx, observer, login, pin, who, watch: w, target, last, alone };
 }
 
 
@@ -553,6 +684,9 @@ if (actorTopology[`${ACTOR.toLowerCase()}Ready`] !== true) {
     actorTopology,
     timeline,
   });
+  // The row is on disk by now - `record` is synchronous - so a kill during the restore
+  // costs the fleet and never the measurement.
+  await restoreTheFleet();
   process.exit(1);
 }
 
@@ -574,6 +708,9 @@ if (!seeded.enrolled || !seeded.pinOk) {
     timeline,
   });
   seeded.cx.close();
+  // The row is on disk by now - `record` is synchronous - so a kill during the restore
+  // costs the fleet and never the measurement.
+  await restoreTheFleet();
   process.exit(1);
 }
 
@@ -735,7 +872,13 @@ if (row.offline) {
   };
   seeded.cx.close();
   actorCx.close();
-  await finishObserved(row.id, offlineVerdict, offlineDetail, offlineObservers);
+  await finishObserved(
+    row.id,
+    offlineVerdict,
+    offlineDetail,
+    offlineObservers,
+    restoreTheFleet,
+  );
 }
 
 // The victim is live, so it should learn this from a frame rather than at a login gate. Either is
@@ -805,10 +948,79 @@ if (returnTopology.includes(ACTOR.toLowerCase()) && topology[`${ACTOR.toLowerCas
     topology,
     timeline,
   });
+  // The row is on disk by now - `record` is synchronous - so a kill during the restore
+  // costs the fleet and never the measurement.
+  await restoreTheFleet();
   process.exit(1);
 }
 
-const back = await comeBack("return");
+/**
+ * THE ISOLATED PHASE OF `--order first`, AND WHY IT ENDS.
+ *
+ * The row asks whether the ORDER of the return changes where the device ENDS UP - not whether a
+ * device alone in the world can heal, which has one answer and it is no. A Welcome can only be
+ * served by another client of the same account, so with none online the sidebar stays amber for as
+ * long as it is left there. Judging the pair on that state would compare a healed device against a
+ * device nothing was allowed to heal, and report the difference as a product defect: the run of
+ * 2026-08-30 did exactly that, stalling at `25 rows, 0 ready, 25 syncing` until the deadline, with
+ * three expectations that could not be met by any behaviour of the app.
+ *
+ * SO THE PHASE IS OBSERVED, ASSERTED ON, AND THEN LIFTED. What the isolation buys is a claim worth
+ * making and previously unmade - that a device with no responder heals NOTHING, rather than
+ * inventing rows from a store that was supposed to be wiped - and the settle watch then runs in the
+ * same populated world the reference is minted into.
+ *
+ * THE WINDOW IS MEASURED AGAINST THIS WORLD, NOT PICKED. The seed device settled in
+ * `seedSettle.elapsedMs` under a world that COULD serve it, minutes earlier and on the same account,
+ * so three times that is an interval in which healing would have been seen had anything been able to
+ * happen. It scales with the size of the account rather than assuming one, which is what a fixed
+ * constant would do. If it were wrong it is wrong LENIENTLY - too short leaves the negative
+ * observation trivially true and asserts less, never more - so nothing here can manufacture a
+ * failure, and the row's real claim stays the final-state equality.
+ */
+const aloneFor = Math.max(20_000, 3 * (seedSettle.elapsedMs ?? 0));
+const back = await comeBack("return", {
+  beforeTheWatch: returnTopology.length > 0
+    ? null
+    : async (cx) => {
+        note(`the return is alone: observing ${aloneFor}ms with nobody able to serve a Welcome`);
+        const readout = await watchRows(cx, {
+          timeoutMs: aloneFor,
+          settledWhen: () => false,
+          log: (m) => console.log(m),
+        });
+        const state = fingerprint(await readAll(cx));
+        // A PHASE THAT ENDED ON A LOGOUT IS NOT A PHASE THAT WAS OBSERVED. `ready === 0` is true of
+        // a device that healed nothing AND of a device that left /chat two seconds in, and the
+        // assertion below cannot tell them apart - so the reason the window ended is recorded, and
+        // the trivial pass is visible in the row rather than hidden behind a zero.
+        note(`alone after ${readout.elapsedMs}ms${readout.abandoned ? ` (ABANDONED on ${readout.abandoned})` : ""}: ${JSON.stringify(state)}`);
+        const lift = [ACTOR.toLowerCase()];
+        note(`the isolated phase is over - bringing ${lift.join(",")} online for the settle watch`);
+        const lifted = await setTopology(lift);
+        note(`topology after the lift ${JSON.stringify(lifted)}`);
+        // A LIFT THE RIG FAILED TO PERFORM IS NOT A RESULT EITHER, and it is the same argument as
+        // the guard above: without the actor, nothing of this account can answer, and the stall
+        // that follows would be written down as the product losing every group.
+        if (lifted[`${ACTOR.toLowerCase()}Ready`] !== true) {
+          record(row.id, "INVALID", {
+            unobservable: `the isolated phase could not be lifted - ${ACTOR} did not come to ready: ${lifted[ACTOR.toLowerCase()]}`,
+            what: row.what,
+            order,
+            revocation,
+            wipe,
+            leftBehind,
+            world: { created: born, deleted: doomed, deletionSucceeded: deleted },
+            topology: { atTheReturn: topology, afterTheLift: lifted },
+            alone: { forMs: readout.elapsedMs, state },
+            timeline,
+          });
+          await restoreTheFleet();
+          process.exit(1);
+        }
+        return { forMs: readout.elapsedMs, state, lifted, abandonedOn: readout.abandoned ?? null };
+      },
+});
 const returnedState = fingerprint(back.last);
 const returnedAmber = stillAmber(back.last);
 note(`returned state ${JSON.stringify(returnedState)} amber=${JSON.stringify(returnedAmber)}`);
@@ -895,18 +1107,23 @@ const expectations = {
    * reading a report that DRAINS from inside a poll, so the run kept the last four seconds of a
    * two-minute wait and said the device had stayed silent; and the settle predicate accepted a
    * device holding three of eleven groups, so the equality gap was measured against a device that
-   * had not finished arriving. NEITHER FAILURE WAS DISTINGUISHABLE FROM THE PRODUCT FAILING, which
-   * is the whole reason they are expectations and not notes: a zero that could mean "silent" or
-   * "unread" is evidence for nothing, and a rig that cannot tell the two apart must FAIL rather
-   * than pick one. `theWipeWindowWasActuallyRead` is what caught the second one, on its first run.
+   * had not finished arriving - and the guard added then covered only the VACUOUS half of that
+   * second one, an empty subset, leaving the partial-arrival half open until
+   * `subsetArrivedAndSettled` closed it. NEITHER FAILURE WAS DISTINGUISHABLE FROM THE PRODUCT
+   * FAILING, which is the whole reason they are expectations and not notes: a zero that could mean
+   * "silent" or "unread" is evidence for nothing, and a rig that cannot tell the two apart must
+   * FAIL rather than pick one. `theWipeWindowWasActuallyRead` is what caught the second one, on its
+   * first run.
    */
   theWipeWindowWasActuallyRead: wipe.linesRead > 0,
+  // NO EXEMPTION ANY MORE, AND THAT IS THE POINT OF THE FIX. This used to excuse an empty world
+  // wherever `returnTopology` was empty, which was `--order first` - and an excused empty world is
+  // a watch with nothing to wait for, so the row could only ever end in a stall. The isolated phase
+  // is now lifted before the watch opens, so every order reaches this line with a world that can
+  // serve, and a subset that is still empty here is a rig fault in any order.
   theSettlePredicateKnewWhatToWaitFor: seedTarget.ids.size > 0 &&
     freshTarget.ids.size > 0 &&
-    // ONLY WHERE THE ROW PUT SOMEONE THERE. HEAL-REVOKE-7 `--order first` returns with nobody
-    // online on purpose, so an empty world is that row's SUBJECT and not a rig that failed to
-    // measure - the topology the row declared is what decides which of the two it is.
-    (returnTopology.length === 0 || back.target.ids.size > 0),
+    back.target.ids.size > 0,
   /** Every sample carries both clocks, which is what makes a stall diagnosable off-machine. */
   timelineIsStamped: timeline.every((m) => typeof m.at === "number" && typeof m.wall === "string"),
 };
@@ -914,6 +1131,30 @@ const expectations = {
 // Row 8 is the deletion row, so its own subject must have been set up: a deletion that never
 // happened cannot be shown not to come back, and a PASS there would be vacuous.
 if (row.id === "HEAL-REVOKE-8") expectations.theDeletionActuallyHappened = deleted === true;
+
+// THE ISOLATED PHASE IS RECORDED AND NOT ASSERTED ON, AND THE REASON IS A PREMISE THAT TURNED OUT
+// TO BE FALSE. This carried `nothingHealedWithNobodyOnline` for exactly one run, on the argument
+// that a row going ready with no client of ITS ACCOUNT online must have come from a store the wipe
+// should have taken - HEAL-REVOKE-1's P1 by a second door. On 2026-08-30 the window ended with ONE
+// row of 26 ready, and the assertion failed on it.
+//
+// THE ROW CANNOT TELL THE TWO CAUSES APART, WHICH IS WHY IT NOW ASSERTS NEITHER. A device can reach
+// a group with nobody serving it at all - `externalJoin` on the community's key-distribution group
+// is a documented, legitimate self-service path, and the 2/12 ORDER PAIR recorded exactly that
+// shape. And a Welcome is owed by A MEMBER, not by another device of yours - the app says so in the
+// line it logs, `sendWelcomeRequest… (invited, Welcome owed by a member)` - so any other member of a
+// shared conversation can serve one, and killing the account's own clients does not isolate the
+// device from them. One ready row is consistent with a legitimate self-join, with a peer member
+// answering, and with the defect the assertion was written for. A rig that cannot separate them
+// must not pick one, and an assertion resting on a premise this row never established is not a
+// weaker test for being removed - it was never a valid one.
+//
+// What the phase still buys is the MEASUREMENT, which nothing else here takes: how far a returning
+// device gets before any of its own devices is back - 1 of 26 in 20 s, against 25 of 26 within
+// sixteen seconds of the lift. It goes in the detail with the reason the window ended, and no
+// expectation reads it. Naming the self-servable rows is what would make a claim possible here, and
+// that is a piece of work, not a line.
+void back.alone;
 
 const missing = unmet(expectations);
 const verdict = missing.length === 0 ? "PASS" : "FAIL";
@@ -944,6 +1185,9 @@ const detail = {
     deviceId: back.who.deviceId,
     settledInMs: back.watch.settled ? back.watch.elapsedMs : null,
     stalledForMs: back.watch.settled ? null : back.watch.elapsedMs,
+    // WHY IT DID NOT SETTLE, WHEN THE ANSWER IS KNOWN. A stall and a logout are both a null
+    // settledInMs, and only one of them is about the sidebar at all.
+    abandonedOn: back.watch.abandoned,
     waitedFor: back.target.ids.size,
     servableFrom: back.target.from,
     state: returnedState,
@@ -951,6 +1195,10 @@ const detail = {
     samples: back.watch.samples,
     doomedGroup: doomedAfterReturn,
     newGroup: bornAfterReturn,
+    // Null for every row that never isolated, so a reader can tell "did not apply" from "was zero".
+    alone: back.alone
+      ? { forMs: back.alone.forMs, state: back.alone.state, abandonedOn: back.alone.abandonedOn }
+      : null,
   },
   reference: {
     deviceId: fresh.now?.deviceId ?? null,
@@ -967,7 +1215,7 @@ const detail = {
   // fresh one. Empty is the PASS.
   equalityGap: gap,
   usability,
-  topology,
+  topology: back.alone ? { atTheReturn: topology, afterTheLift: back.alone.lifted } : topology,
   fleetAtTheEnd: (() => {
     try {
       return onlineDevicesOf(victimBefore.userId).map(installTag);
@@ -984,4 +1232,4 @@ actorCx.close();
 // of two booleans computed here, which said nothing about the ACTOR and nothing at all about a
 // deploy landing mid-run; `gate()` reads all three observers and outranks the assertion with a
 // VACUOUS when the server was replaced underneath it.
-await finishObserved(row.id, verdict, detail, observers);
+await finishObserved(row.id, verdict, detail, observers, restoreTheFleet);

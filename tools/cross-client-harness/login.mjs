@@ -100,10 +100,63 @@ let formCx = cx;
 // launcher that is not on screen would throw on the very state being asked for. It is also what rule
 // 4 of the campaign requires of every step: the same call has to be safe whatever the previous row
 // left behind, rather than only from one starting page.
-let theIdPAnsweredForUs = await (async () => {
+/**
+ * Whether this browser ALREADY holds a session - asked of the app, never of the address bar.
+ *
+ * A URL IS NOT A SESSION, AND READING IT AS ONE COST HEAL-REVOKE-5 A WHOLE RUN ON 2026-08-29. The
+ * revoked device had just wiped itself and was still PAINTING /chat in the two seconds before its
+ * own redirect to /login landed. This read caught that instant, concluded "the IdP kept its
+ * session, nothing to fill", and exited 0 without logging anyone in. The caller was handed
+ * `ok: true`, the app booted with no credential at all, and the server said so in one line:
+ * `Refresh refused: no canari_refresh cookie`. The row then spent 600 s asking a logged-out page
+ * for a sidebar.
+ *
+ * `canari_saved_user` is what the app itself writes at login and erases at logout, and it is the
+ * same key `currentUserId()` reads before it will even attempt a silent refresh. So the question is
+ * put to the state the product keeps, not to the page it happens to be rendering - which removes
+ * the race rather than waiting it out. It is deliberately CONSERVATIVE: a false negative costs one
+ * redundant login, which this script is idempotent about by design, while a false positive costs
+ * the caller its entire measurement.
+ */
+const holdsASession = async () => {
   const url = await here();
-  return onTheApp(url) && !onTheLauncher(url);
-})();
+  if (!onTheApp(url) || onTheLauncher(url)) return false;
+  return (await evaluate(cx, `!!localStorage.getItem('canari_saved_user')`)) === true;
+};
+
+/**
+ * WHICH OF THE TWO STATES THE APP HAS COMMITTED TO, or null while it is still between them.
+ *
+ * ACTING ON A PAGE THE APP IS ABOUT TO LEAVE IS THE RACE, and reading the URL harder does not
+ * remove it. A freshly wiped client paints /chat for about two seconds before its own redirect to
+ * /login lands, and in that window it is neither authenticated nor on the launcher: the first
+ * version of this file read the URL and claimed a session it did not have, and the second one
+ * clicked a launcher button that was not on screen. Both were the same mistake at different
+ * moments.
+ *
+ * There are exactly two states this script can act on, and each has a POSITIVE proof: the launcher
+ * is a route, a live session is a key the app itself wrote. Anything else is a page mid-decision,
+ * so it is not an answer and is not treated as one - the wait below ends when the app has decided,
+ * never on a clock, and the bound only exists so a page that never decides is REPORTED.
+ */
+const whatTheAppHasCommittedTo = async () => {
+  const url = await here();
+  if (onTheLauncher(url)) return 'launcher';
+  if (onTheApp(url) && (await holdsASession())) return 'session';
+  return null;
+};
+
+let committed = null;
+for (let i = 0; i < 150 && committed === null; i++) {
+  committed = await whatTheAppHasCommittedTo();
+  if (committed === null) await sleep(100);
+}
+if (committed === null) {
+  throw new Error(
+    `the app committed to neither the launcher nor a session within 15s, at ${await here()}`,
+  );
+}
+let theIdPAnsweredForUs = committed === 'session';
 if (theIdPAnsweredForUs) console.log(`[login:${account}] already on the app, no launcher to click`);
 for (let attempt = 1; attempt <= 3 && !onForm && !theIdPAnsweredForUs; attempt++) {
   if (!(await evaluate(cx, `!!document.querySelector('#username')`))) {
@@ -120,8 +173,7 @@ for (let attempt = 1; attempt <= 3 && !onForm && !theIdPAnsweredForUs; attempt++
       onForm = true;
       break;
     }
-    const url = await here();
-    if (onTheApp(url) && !onTheLauncher(url)) {
+    if (await holdsASession()) {
       theIdPAnsweredForUs = true;
       break;
     }

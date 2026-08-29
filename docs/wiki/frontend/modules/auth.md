@@ -394,6 +394,59 @@ transport failure is not - so the wipe happens at the first login WITH a network
 link. One residue follows from the same fact: nobody is there to receive `notifyDeviceRevoked`, so
 the device's `auth_sessions` row lives to its 7-day expiry.
 
+
+#### The wipe's first step is what started the login that undid it
+
+**Step 1 is `tearDownLiveSession`, and one of the things it does is set `isLoggedIn` false.** That
+flag is also one of the three `loginImpl` reads to decide that nobody owns the flow, so the wipe's
+own opening move announces a free slot to the thing most able to defeat it. Measured on production
+2026-08-29, three milliseconds after a `device_revoked` frame: a login started, asked the server
+whether this device was revoked, and got no answer because the wipe had already cleared the
+credentials. `isDeviceRevoked` returns `false` when it cannot reach the server - **right for its own
+question and wrong for that one**. It is written to gate a DESTRUCTIVE act (*should I erase
+myself?*), where a transport failure must never be read as a verdict; the login was asking *may I
+proceed?*, whose safe default is the opposite. One boolean, two questions, opposite defaults.
+
+The login proceeded, reopened `CanariDB_<userId>` twenty-four milliseconds before the delete, and
+`deleteDatabase` does not fail on an open connection - it BLOCKS. The message store survived on a
+device its owner had declared lost, and every line but one reported a clean wipe.
+
+**What is excluded is the wipe's DURATION, not a device identity.** Recognising the revoked
+`deviceId` looks tighter and is not: between clearing `mls_device_id_<userId>` and deleting the
+stores there is a window in which no identity exists to recognise, and a login entering it reopens
+the database just the same. `ctx.setWipingRevokedDevice(true)` is therefore raised BEFORE step 1 and
+released in a `finally` - causal rather than timed, one boolean read on every login, and incapable
+of locking out a user who is legitimately re-enrolling, because the latch is gone by the time the
+wipe returns. `loginImpl` names it in the refusal beside the three flags that were already named,
+for the same reason they are: a swallowed login is otherwise indistinguishable from one that never
+ran. Pinned by source guards in `offlineUnlock.test.ts`, which assert the ORDER - the thing that
+broke.
+
+#### And what the wipe hands over to decides whether the device ever leaves the page
+
+The wipe finishing is not the end of the revocation - something has to take the person off a client
+that no longer has an account. There are three call sites for `wipeRevokedDevice` and they do not
+all have the same next step. The two inside `loginImpl` throw a `LoginFailure`, which is right: a
+person is standing at the PIN gate, the modal is where an answer belongs, and `loginImpl`'s caller is
+holding a submit open waiting for one. The third is the `device_revoked` push handler, and there is
+no gate, no submit and nothing to retry.
+
+It used the same seam anyway, and the callbacks make the consequence concrete. `ChatBackgroundService`
+binds `onLoginFailed` to `onSavedPinFailed`, which sets `showPinModal = true`. So a revocation
+reopened the PIN prompt on a device the line above had just returned to a fresh install: no PIN
+registered locally, no device id, no session for the prompt to act on. Measured on production
+2026-08-29, the client then stayed on `/chat` with no sidebar and no navigation for at least fifteen
+seconds; what eventually moved it was the prompt's own attempt calling `POST /api/auth/refresh`,
+being told `no canari_refresh cookie`, and reaching `handleSessionExpired` - the right destination,
+arrived at by way of a failure, several seconds late.
+
+`onSessionExpired` is that destination named directly. Its contract is an authentication loss rather
+than a retryable error, and it is the one callback `sessionCb()` wires unconditionally rather than as
+an override - `handleSessionExpired` clears the auth and navigates to `/login`. The localized message
+the change drops was only ever shown in a modal the app abandoned two seconds later, so nothing a
+user could read is lost. Pinned in `offlineUnlock.test.ts` by two guards on the handler's own text:
+the handover comes after the wipe, and it is not the retry seam.
+
 ## Mobile unlock flow (Tauri)
 
 Driven by `startLoginFlow()` in `components/layout/ChatBackgroundService.svelte`.

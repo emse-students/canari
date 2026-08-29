@@ -263,6 +263,19 @@ The same reasoning is why a follower promoted to leader **reloads** rather than 
 left off: the gate froze its in-memory state at load time while the leader kept advancing the one on
 disk.
 
+**The election is awaited once, however many flushes are waiting on it.** Leadership has three
+states, and `runFlush` awaits the decision when it reads `undecided` rather than treating it as
+"another tab will do it" (WP-OUTBOX-2). Boot, though, asks for a flush per recovering conversation,
+per enqueue and per wake-up: on a device coming up with twenty-two conversations, twenty of those
+requests landed in the election gap and each awaited it on its own, logging its own resolution -
+twenty `Leadership decided as leader after N ms` lines inside one second, differing by their start
+offset so nothing deduplicated them (measured on HEAL-REVOKE-5, 2026-08-29). `flushing`/`rerun`
+coalesces the WORK, but it sits after this gate and so could never reach the WAITING. The waiters
+now share one promise, `theElection`, created by whichever flush arrives first: one election, one
+deferral line, one decision line. It is never reset because the election does not reopen - once
+decided, the `undecided` guard returns before the promise is read at all. Nothing about correctness
+changed here; every waiter always resumed. What twenty lines cost is the reader.
+
 ### The flusher resolves its token, and does not run while offline
 
 Two rules about *when* the queue is allowed to try, both learned from the offline-unlock work
@@ -1127,6 +1140,31 @@ Then collapse every writer into one - `retireConversation` in `utils/chat/conver
 the only thing that may write that lifecycle - and lock it with a test that reads the SOURCE
 (`conversations.retire.test.ts`), because no unit test can observe a seventh path that does not
 exist yet.
+
+### The orphan purge compares two reads, and their ORDER decides whether it destroys a new group
+
+`discoverMissingGroups` forgets the MLS tree of every local group the server's list did not mention.
+That is only sound for groups that already existed when the server was asked, and until 2026-08-30 it
+was not: the server list was `await`ed (and `getDismissedGroups` after it), and only then was
+`mlsService.getLocalGroups()` read. **A group created inside that window is absent from the snapshot
+by construction**, so the sweep deleted it on evidence that could not have mentioned it.
+
+It is not a theoretical window. On prod a group was created at `22:31:31.905` and its creator logged
+`[MLS] forgetGroup 50799ae8… (absent from server)` inside the same second, with the `dm_groups` row
+still present and `deletedAt` null. What makes it worse than a lost cache is that **the tree is not
+re-fetchable**: the creator held the only copy, so `min_epoch=0, re-Welcome expected` names a Welcome
+nobody is left to send, and the base for an external join was never published - `no_base_published`
+is the app's own report of that. Devices created afterwards were counted as members by the server and
+could never open the conversation.
+
+The local set is now captured **before** the server is asked, which `initializeConnection`'s sweep has
+done since WP-GRAINE-1 - it takes `localGroups` and `serverIds` at one instant and says why in a
+comment. Two copies of one decision, and only one of them carried it.
+
+**The asymmetry is what makes the fix free.** Capturing early can only SPARE a group: one that really
+did disappear during the fetch is simply swept on the next pass, while one that was just born is no
+longer destroyed. A purge whose two error directions cost a delayed sweep and an unrecoverable
+conversation should always be biased towards the first.
 
 ### An exit is owed to the SERVER, and the local purge is not what pays it (DEL-10)
 

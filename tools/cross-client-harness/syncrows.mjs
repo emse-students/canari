@@ -75,9 +75,14 @@ export const cut = (s) => (typeof s === "string" && s.length > 8 ? s.slice(0, 8)
  */
 const SIDEBAR = `(function () {
   var panel = document.querySelector('.sidebar-panel');
-  if (!panel) return JSON.stringify({ panel: false });
+  // THE ROUTE IS IN EVERY SAMPLE, BECAUSE A BARE "panel: false" CANNOT SAY WHY. A client still
+  // booting /chat and a client sitting on /login are the same two bits without it, and on
+  // 2026-08-29 HEAL-REVOKE-5 spent its whole 600 s deadline on the second while its ledger
+  // recorded the first. It is a pathname and nothing else - no query, no hash, no ids.
+  var route = location.pathname;
+  if (!panel) return JSON.stringify({ panel: false, route: route });
   var tiles = [].slice.call(panel.querySelectorAll('[data-conversation-tile]'));
-  var out = { panel: true, rows: tiles.length, ready: 0, syncing: 0, removed: 0, unhooked: 0, tiles: [] };
+  var out = { panel: true, route: route, rows: tiles.length, ready: 0, syncing: 0, removed: 0, unhooked: 0, tiles: [] };
   tiles.forEach(function (t) {
     var r = t.getAttribute('data-ready');
     var rm = t.getAttribute('data-removed') === 'true';
@@ -249,6 +254,14 @@ export async function activeGroupIds(cx, userId) {
  * built on - and a best-effort branch that logs nothing leaves a loss with no trace at all. It is
  * caught, logged at a level that ACCUSES, and returned as `hookThrew` so a caller whose measurement
  * is now missing can say WHY rather than report it as never observable.
+ *
+ * AND A STATE THAT PROVES THE ANSWER WILL NEVER COME ENDS THE LOOP TOO - which is still a proof and
+ * not a clock. A client on `/login` has been logged out: no sidebar is coming, and every second
+ * after that is spent asking a question the page cannot answer. HEAL-REVOKE-5 spent 600 s exactly
+ * there on 2026-08-29, and its ledger recorded eleven identical `panel: false` samples for it. The
+ * verdict does not change - `settled` is still false, the row still fails - but it arrives at once
+ * and it arrives NAMED, in `abandoned`. That is the difference between a stall and a logout, and
+ * the deadline could never tell them apart.
  */
 export async function watch(
   cx,
@@ -257,6 +270,7 @@ export async function watch(
     everyMs = 2000,
     log = () => {},
     settledWhen = (s) => s.panel && s.rows > 0 && s.syncing === 0 && s.unhooked === 0,
+    abandonWhen = (s) => !s.panel && s.route === '/login',
     onSample = null,
   } = {},
 ) {
@@ -264,6 +278,7 @@ export async function watch(
   const samples = [];
   let last = null;
   let settled = false;
+  let abandoned = null;
   let hookThrew = null;
   for (;;) {
     const s = await sidebar(cx);
@@ -293,10 +308,24 @@ export async function watch(
       settled = true;
       break;
     }
+    if (abandonWhen(s)) {
+      abandoned = s.route ?? '(no route in the sample)';
+      log(
+        `[syncrows] ABANDONED at +${(at / 1000).toFixed(1)}s - the client is on ${abandoned}, so no sidebar is coming`,
+      );
+      break;
+    }
     if (Date.now() - t0 >= timeoutMs) break;
     await new Promise((r) => setTimeout(r, everyMs));
   }
-  return { settled, elapsedMs: Date.now() - t0, samples, final: samples.at(-1) ?? null, hookThrew };
+  return {
+    settled,
+    abandoned,
+    elapsedMs: Date.now() - t0,
+    samples,
+    final: samples.at(-1) ?? null,
+    hookThrew,
+  };
 }
 
 /**

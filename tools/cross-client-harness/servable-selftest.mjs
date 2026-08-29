@@ -19,7 +19,7 @@
  * collision would put a group the responder is not in INTO the subset and demand a heal nothing
  * online could serve. That is a false FAIL, the one direction a rig must never round towards.
  */
-import { splitBySubset, subsetSettled } from "./servable.mjs";
+import { splitBySubset, subsetArrivedAndSettled, subsetSettled } from "./servable.mjs";
 
 /** A sidebar read as `syncrows.mjs` returns one: the counts, plus per-tile identity. */
 function sidebar(tiles, { panel = true, unhooked = 0 } = {}) {
@@ -125,6 +125,52 @@ check(
   "and the prefixes really do collide, or the case above proves nothing",
   MINE.slice(0, 8) === THEIRS.slice(0, 8),
   true,
+);
+
+// --- ARRIVAL, the second predicate, whose unknown is presence and not colour ---------------------
+// EACH CASE HERE IS ONE THE LOOSE PREDICATE GETS WRONG OR WOULD GET WRONG, which is the only reason
+// a second rule is allowed to exist. A device coming back from a wipe starts with an EMPTY sidebar.
+check(
+  "a device holding one owed row of two has not arrived, though the row it holds is ready",
+  subsetArrivedAndSettled(new Set([MINE, OTHER]))(sidebar([tile(MINE, true)])),
+  false,
+);
+check(
+  "and the loose predicate calls that same sidebar settled, which is the defect",
+  subsetSettled(new Set([MINE, OTHER]))(sidebar([tile(MINE, true)])),
+  true,
+);
+check(
+  "every owed row present and ready IS arrival",
+  subsetArrivedAndSettled(new Set([MINE, OTHER]))(sidebar([tile(MINE, true), tile(OTHER, true)])),
+  true,
+);
+check(
+  "a row that arrived but is still amber is not arrival",
+  subsetArrivedAndSettled(new Set([MINE, OTHER]))(sidebar([tile(MINE, true), tile(OTHER, false)])),
+  false,
+);
+check(
+  "rows nobody owed do not stand in for the ones that never came",
+  subsetArrivedAndSettled(new Set([MINE, OTHER]))(sidebar([tile(MINE, true), tile(THEIRS, true)])),
+  false,
+);
+check(
+  "an owed row DELETED on the device has not arrived - a dead row is not a heal",
+  subsetArrivedAndSettled(new Set([MINE, OTHER]))(
+    sidebar([tile(MINE, true), tile(OTHER, true, true)]),
+  ),
+  false,
+);
+check(
+  "an empty owed set is refused, so a subject nothing could narrow cannot be the fastest PASS",
+  subsetArrivedAndSettled(new Set())(sidebar([tile(MINE, true)])),
+  false,
+);
+check(
+  "an unhooked reader voids arrival exactly as it voids readiness",
+  subsetArrivedAndSettled(new Set([MINE]))(sidebar([tile(MINE, true)], { unhooked: 2 })),
+  false,
 );
 
 if (bad) {

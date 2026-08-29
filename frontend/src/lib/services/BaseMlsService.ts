@@ -43,6 +43,8 @@ import {
   finishQueueDrainBench,
   recordPendingMessagesFetched,
 } from '$lib/mls-client/catchupBenchmark';
+import { attemptCommitReplay } from '$lib/utils/chat/commitReplay';
+import { markEpochGap, clearEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { classifyIncomingDecryptError } from '$lib/mls-client/mlsDecryptError';
 import { scopeKey, scopeLabel, type DistributionScope } from '$lib/mls-client/distributionScope';
@@ -1977,6 +1979,8 @@ export abstract class BaseMlsService implements IMlsService {
         // Throw without the `server epoch:.., sent:..` marker so the caller treats it as a
         // retryable failure rather than a fork to heal. [[C7]]
         await this.clearPendingCommit(groupId).catch(() => {});
+        // ...and MAKE that retry true, because until now nothing did. See `catchUpOnRefusedCommit`.
+        await this.catchUpOnRefusedCommit(groupId, baseEpoch, validation.currentEpoch);
         throw new Error(`Staged commit rejected: ${validation.reason || 'epoch_mismatch'}`);
       }
       await this.mergePendingCommit(groupId);
@@ -2000,6 +2004,58 @@ export abstract class BaseMlsService implements IMlsService {
     // [distributionGroup](../utils/graine/distributionGroup.ts).
     void this.refreshGroupInfo(groupId);
     return out;
+  }
+
+  /**
+   * Enters the recovery ladder from the WRITE side, on a commit the server refused because our base
+   * epoch is behind its active one.
+   *
+   * **THE LADDER HAD EXACTLY ONE ENTRANCE, AND IT WAS THE READ SIDE.** Both rungs - the
+   * non-destructive {@link attemptCommitReplay}, then the forget + re-Welcome - are reached from
+   * `setupMessageHandler`, when a frame arrives this device cannot decrypt. So a device that is
+   * behind but receives nothing never enters it, and the retry the rejection above is designed for
+   * rests on a premise nothing establishes: that the commit we missed reaches us on its own. On a
+   * quiet conversation it never does, because the only traffic left is our own refused commits.
+   *
+   * The refusal carries the server's `activeEpoch`, so being behind is KNOWN here rather than
+   * inferred, and re-applying the commits we missed is what makes the caller's next retry the one
+   * the design already expects to succeed. When rung 1 cannot close the gap - commits pruned below
+   * the log floor, or one that will not apply - the group is left in the epoch-gap registry, whose
+   * owner is the sync watchdog: it escalates to rung 2, and freezing the outbox until it does keeps
+   * a stale-epoch ciphertext off the wire.
+   *
+   * No rung, no cadence and no escalation is added here. This is the entrance the write side never
+   * had, and the ladder behind it is the one the read side has always used.
+   *
+   * @param baseEpoch - the epoch we staged the commit on, i.e. our local epoch.
+   * @param activeEpoch - the server's own epoch, absent when it refused for any other reason.
+   */
+  private async catchUpOnRefusedCommit(
+    groupId: string,
+    baseEpoch: number,
+    activeEpoch: number | undefined
+  ): Promise<void> {
+    // The EPOCHS decide, not the reason string: a refusal that does not report a server epoch ahead
+    // of ours says nothing about a gap, and re-applying commits would answer a question nobody asked.
+    if (activeEpoch === undefined || activeEpoch <= baseEpoch) return;
+
+    const short = groupId.slice(0, 8);
+    const log = (msg: string) => console.log(msg);
+    log(`[GAP] commit refused on ${short}: we are at ${baseEpoch}, the server at ${activeEpoch}`);
+    markEpochGap(groupId);
+    try {
+      const replay = await attemptCommitReplay(this, groupId, log);
+      if (replay.healed) {
+        clearEpochGap(groupId);
+        scheduleOutboundMlsPersist();
+        return;
+      }
+    } catch (e) {
+      // Swallowed on purpose - the caller is about to throw the refusal, which is the outcome that
+      // matters - but never silently: this is the branch that leaves the group to rung 2.
+      console.warn(`[GAP] replay error for ${short} after a refused commit:`, e);
+    }
+    log(`[GAP] ${short} still behind after rung 1 - left to the sync watchdog for rung 2`);
   }
 
   /**
