@@ -224,6 +224,24 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **The HEAL-REVOKE runner reported two product defects it had invented, and both were blind spots
+  in the instrument.** `classifyWipe` was handed `report(...).lines`, a field the report object has
+  never carried - so it classified an empty array on every call and concluded a revoked device had
+  stayed silent, when nothing had read a line of its console. The server logs said the frame had
+  been routed to that device's live socket. Separately, the settle predicate was the default
+  `rows > 0 && syncing === 0`, which a sidebar holding three of eleven groups satisfies, so the
+  returning device was compared against its reference 2.3 s after its sidebar appeared and the row
+  reported an eight-group loss that had not happened.
+
+  The classifier now reads `timeline` and returns `linesRead`, plus five fields naming WHERE the
+  `device_revoked` chain stopped - frame arrived, check refused, server disagreed, server confirmed,
+  wipe ran. The predicate is anchored to the server's own active-group count for that user, less the
+  groups dismissed while still a member. Two expectations, `theWipeWindowWasActuallyRead` and
+  `theSettlePredicateKnewWhatToWaitFor`, make a rig that could not measure FAIL instead of guessing:
+  a zero meaning "silent" and a zero meaning "unread" must never produce the same row. There is no
+  fallback to the weaker predicate, deliberately.
+
+
 - **The harness recorded a `415` as dirt and nothing in the record could say which request it was.**
   HEAL-NEW-15's gate on `038c7e8d` demoted the row partly on `Failed to load resource: the server
   responded with a status of 415`, and no `badHttp` or `knownBadHttp` entry named it - so the method,

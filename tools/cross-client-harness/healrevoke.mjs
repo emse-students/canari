@@ -63,7 +63,7 @@ import { onlineDevicesOf } from "./presence.mjs";
 import { stateOf } from "./ready-probe.mjs";
 import { bringToReady } from "./ready-repair.mjs";
 import { finishObserved, record, unmet } from "./results.mjs";
-import { navigationCost, readAll, watch as watchRows, whoAmI } from "./syncrows.mjs";
+import { navigationCost, readAll, serverView, watch as watchRows, whoAmI } from "./syncrows.mjs";
 import {
   DEVICE_PANEL_NARRATION,
   ignoringExpectedLog,
@@ -333,22 +333,97 @@ async function revoke(deviceId) {
 }
 
 /**
- * What the victim's own console said about being revoked.
+ * WHAT THE VICTIM'S OWN CONSOLE SAID ABOUT BEING REVOKED - the whole chain, not just its tail.
  *
- * The three discovery paths (`sessionAuth.ts`: the PIN check at login, a `device_revoked` frame on a
- * live session, a vault login asking the server) all end in `wipeRevokedDevice`, whose lines are
- * `[SECURITY] Revoked device detected` and `[RESET] done`. Which one fired is not asserted - a live
- * session should take the frame path, but a row that DEMANDED it would fail on a perfectly correct
- * wipe discovered a second later at the PIN gate. What is asserted is that a wipe happened at all.
+ * IT USED TO READ `rep.lines`, WHICH `report()` DOES NOT RETURN, so every call classified an empty
+ * array and `wipeRan` was `false` on a device that had erased itself perfectly. HEAL-REVOKE-5 spent
+ * 25 minutes on `166169a4` to record `theDeviceWipedItself: false` about an instrument that had
+ * never looked - the campaign's own recurring shape, one level in: a correct mechanism with no
+ * report is found by hand, a day late. It reads `rep.timeline` now, which is EVERY line and every
+ * socket event in one dated sequence, and `linesRead` is returned so a zero can never again pass
+ * for a silent device.
+ *
+ * FIVE SENTENCES, FIVE QUESTIONS, BECAUSE A WIPE THAT DID NOT HAPPEN HAS FOUR DIFFERENT CAUSES and
+ * only the client can tell them apart. The frame is routed by the gateway, decoded, dispatched by
+ * `WebMlsService`, confirmed against the server by `sessionAuth`, and only then does the wipe run:
+ *
+ *   `frameArrived`        `[WS RCV] device_revoked` - the socket got it and the client parsed it.
+ *   `theCheckWasRefused`  the confirmation answered a status, or could not be reached, and
+ *                         `isDeviceRevoked` returned `false` for a reason that is not an answer.
+ *   `theServerDisagreed`  it WAS asked, and said no - a frame addressed to a device the denylist
+ *                         does not hold, which is a different defect from every other line here.
+ *   `theServerConfirmed`  the destructive action was gated on a server fact and passed the gate.
+ *   `revocationSeen`      `resetDeviceAsFreshImpl` reached its own last line.
+ *
+ * A row that FAILS can now say WHERE the chain broke instead of only that it did. Which discovery
+ * path fired is still not asserted - a live session should take the frame, and a wipe found a second
+ * later at the PIN gate is just as correct - but they are now DISTINGUISHABLE, which is the half
+ * that was missing.
  */
-function classifyWipe(lines) {
+function classifyWipe(rep) {
+  const lines = rep?.timeline ?? [];
   const said = (re) => lines.some((l) => re.test(l));
   return {
-    revocationSeen: said(/Revoked device detected|device_revoked/i),
+    linesRead: lines.length,
+    frameArrived: said(/\[WS RCV\] device_revoked - this device was deleted by its owner/),
+    theCheckWasRefused: said(
+      /\[MLS\] revocation check (answered \d+|unreachable) - treated as NOT revoked/,
+    ),
+    theServerDisagreed: said(
+      /\[SECURITY\] device_revoked frame received but the server disagrees - ignored/,
+    ),
+    theServerConfirmed: said(
+      /\[SECURITY\] This device was revoked by its owner - signing out and resetting/,
+    ),
+    revocationSeen: said(/\[SECURITY\] Revoked device detected/),
     wipeRan: said(/\[RESET\] wiping this device/),
     wipeFinished: said(/\[RESET\] done/),
     wipeIncomplete: said(/\[RESET\] finished with \d+ step\(s\) unfinished/),
+    storesSurvived: said(/\[RESET\] \d+ store\(s\) SURVIVED the wipe/),
     stepsFailed: lines.filter((l) => /\[RESET\] could not clear/.test(l)).length,
+  };
+}
+
+
+/**
+ * THE PROOF A DEVICE HAS FINISHED, WHICH "NOTHING IS AMBER" IS NOT.
+ *
+ * `watch`'s default predicate is `rows > 0 && syncing === 0`, and a device that has enumerated THREE
+ * of eleven groups and not yet reached the rest satisfies it exactly. HEAL-REVOKE-5 on `166169a4`
+ * did: the returning device was declared settled 2.3 s after its sidebar appeared, holding 3 rows
+ * against a reference's 11, and the row reported `rows: 3 vs 11` as its equality gap - a
+ * P1-shaped finding, in the WORSE direction, invented entirely by the instrument. There were two
+ * samples in the whole watch, at +7 ms and +2 292 ms, and the second one ended it.
+ *
+ * A DEVICE IS NOT FINISHED UNTIL IT HOLDS A ROW FOR EVERY GROUP THE SERVER SAYS IT IS IN. That count
+ * is a fact the rig can read, from the same endpoint `serverView` already uses, so the predicate
+ * stops being a guess about the sidebar and becomes a comparison against the world. `syncrows.mjs`
+ * says so itself: the predicate is passed in rather than inferred, because only the caller knows
+ * what the world it built could answer for.
+ *
+ * DISMISSED-BUT-STILL-MEMBER ROWS ARE SUBTRACTED, because a dismissed group is legitimately absent
+ * from the sidebar while remaining active on the server - counting it would demand a row the product
+ * is right not to draw, and the watch would burn its whole deadline waiting for one.
+ *
+ * AND WHEN THE COUNT CANNOT BE READ, NOTHING IS ASSUMED. `expected` is `null`, the predicate is
+ * never satisfied, the watch runs to its deadline and `settled` is false - and the row's own
+ * `theSettlePredicateKnewWhatToWaitFor` names the cause, so a stall the rig CAUSED can never be
+ * read as a stall the app produced. A fallback to the weaker predicate would be exactly the
+ * fallback-as-a-path this repository forbids.
+ */
+async function everyGroupTheServerNames(cx, label) {
+  const who = await whoAmI(cx).catch(() => ({}));
+  const server = who.userId ? await serverView(cx, who.userId) : { threw: "no user in the store" };
+  const expected = Number.isFinite(server.active)
+    ? server.active - (server.dismissedStillMember ?? 0)
+    : null;
+  const why = expected === null ? (server.threw ?? "the server view carried no active count") : null;
+  note(`${label}: the server names ${expected ?? `NO count (${why})`} row(s) for this device`);
+  return {
+    expected,
+    why,
+    settledWhen: (x) =>
+      expected !== null && x.panel && x.rows >= expected && x.syncing === 0 && x.unhooked === 0,
   };
 }
 
@@ -369,12 +444,17 @@ async function comeBack(label) {
   await ensureChat(cx).catch(() => null);
   const who = await whoAmI(cx);
   note(`${label}: it is now device ${who.deviceId?.slice(0, 8)} of ${who.userId?.slice(0, 8)}`);
-  const w = await watchRows(cx, { timeoutMs: SETTLE_MS, log: (m) => console.log(m) });
+  const target = await everyGroupTheServerNames(cx, label);
+  const w = await watchRows(cx, {
+    timeoutMs: SETTLE_MS,
+    settledWhen: target.settledWhen,
+    log: (m) => console.log(m),
+  });
   note(
     `${label}: ${w.settled ? `settled in ${w.elapsedMs}ms` : `still syncing after ${w.elapsedMs}ms`}`,
   );
   const last = await readAll(cx);
-  return { cx, observer, login, pin, who, watch: w, last };
+  return { cx, observer, login, pin, who, watch: w, target, last };
 }
 
 /**
@@ -455,7 +535,12 @@ if (!seeded.enrolled || !seeded.pinOk) {
 
 // The victim's own console, from before the revocation, so the wipe's lines are inside the window.
 const seedObserver = seeded.observer;
-const seedSettle = await watchRows(seeded.cx, { timeoutMs: SETTLE_MS, log: (m) => console.log(m) });
+const seedTarget = await everyGroupTheServerNames(seeded.cx, "the seeded device");
+const seedSettle = await watchRows(seeded.cx, {
+  timeoutMs: SETTLE_MS,
+  settledWhen: seedTarget.settledWhen,
+  log: (m) => console.log(m),
+});
 note(
   `the seeded device ${seedSettle.settled ? "settled" : "did NOT settle"} in ${seedSettle.elapsedMs}ms`,
 );
@@ -515,7 +600,7 @@ note(`revocation ${JSON.stringify(revocation)}`);
 // device is minted, because what is being measured is the DEFERRAL and not the return.
 // -------------------------------------------------------------------------------------------
 if (row.offline) {
-  const offlineWipe = classifyWipe((await report(seedObserver)).lines ?? []);
+  const offlineWipe = classifyWipe(await report(seedObserver));
   const whileUnreachable = await deviceResidue(VICTIM, seeded.cx).catch((e) => ({
     error: firstLine(e),
     readable: false,
@@ -541,7 +626,7 @@ if (row.offline) {
       break;
     }
   }
-  const afterWipe = classifyWipe((await report(seedObserver)).lines ?? []);
+  const afterWipe = classifyWipe(await report(seedObserver));
   const where = await evaluate(seeded.cx, "location.pathname").catch(() => null);
   note(
     `after the reload ${JSON.stringify({ landedInMs, residue: landed, wipe: afterWipe, where })}`,
@@ -569,6 +654,9 @@ if (row.offline) {
     /** A wiped device belongs at the door, not on a chat page with nothing in it. */
     itEndedAtTheLoginGate: where === "/login",
     bothSamplesWereReallyRead: whileUnreachable.readable === true && landed.readable === true,
+    /** Same two guards as the live rows: see the block below. A console nobody read says nothing. */
+    theWipeWindowWasActuallyRead: offlineWipe.linesRead > 0 && afterWipe.linesRead > 0,
+    theSettlePredicateKnewWhatToWaitFor: seedTarget.expected !== null,
     timelineIsStamped: timeline.every((m) => typeof m.at === "number" && typeof m.wall === "string"),
   };
   const offlineMissing = unmet(offlineExpectations);
@@ -586,6 +674,7 @@ if (row.offline) {
     seed: {
       deviceId: victimBefore.deviceId,
       settledInMs: seedSettle.settled ? seedSettle.elapsedMs : null,
+      waitedFor: seedTarget.expected,
       state: seedState,
       heldTheDoomedGroup,
     },
@@ -606,8 +695,7 @@ if (row.offline) {
 // accepted; what is waited for is the wipe.
 let wipe = { revocationSeen: false, wipeRan: false, wipeFinished: false };
 for (let i = 0; i < 30; i += 1) {
-  const seen = await report(seedObserver);
-  wipe = classifyWipe(seen.lines ?? []);
+  wipe = classifyWipe(await report(seedObserver));
   if (wipe.wipeFinished || wipe.wipeIncomplete) break;
   await sleep(4000);
 }
@@ -692,7 +780,12 @@ back.cx.close();
 // ---------------------------------------------------------------------------------------------
 note("minting a fresh device as the reference the returned device must equal");
 const fresh = await becomeANewDeviceAndConfirm({ report: (s) => note(`reference: ${s}`) });
-const freshSettle = await watchRows(fresh.cx, { timeoutMs: SETTLE_MS, log: (m) => console.log(m) });
+const freshTarget = await everyGroupTheServerNames(fresh.cx, "the reference");
+const freshSettle = await watchRows(fresh.cx, {
+  timeoutMs: SETTLE_MS,
+  settledWhen: freshTarget.settledWhen,
+  log: (m) => console.log(m),
+});
 note(
   `the reference ${freshSettle.settled ? "settled" : "did NOT settle"} in ${freshSettle.elapsedMs}ms`,
 );
@@ -745,6 +838,21 @@ const expectations = {
   theNewGroupArrivedOnTheReferenceToo: bornOnFresh.ready === true,
   /** The app was navigable while it healed - the second half of the user's question. */
   navigableWhileHealing: usability?.openedInMs != null,
+  /**
+   * THE INSTRUMENT LOOKED, AND KNEW WHAT IT WAS LOOKING FOR. Two guards, both written after the run
+   * of 2026-08-29 in which neither held and the row reported product defects it had invented:
+   * `classifyWipe` was reading a field `report()` does not return, so it classified an empty array
+   * and said the device had stayed silent when nobody had read a line of its console; and the settle
+   * predicate accepted a device holding three of eleven groups, so the equality gap was measured
+   * against a device that had not finished arriving. NEITHER FAILURE WAS DISTINGUISHABLE FROM THE
+   * PRODUCT FAILING, which is the whole reason they are expectations and not notes: a zero that
+   * could mean "silent" or "unread" is evidence for nothing, and a rig that cannot tell the two
+   * apart must FAIL rather than pick one.
+   */
+  theWipeWindowWasActuallyRead: wipe.linesRead > 0,
+  theSettlePredicateKnewWhatToWaitFor: seedTarget.expected !== null &&
+    back.target.expected !== null &&
+    freshTarget.expected !== null,
   /** Every sample carries both clocks, which is what makes a stall diagnosable off-machine. */
   timelineIsStamped: timeline.every((m) => typeof m.at === "number" && typeof m.wall === "string"),
 };
@@ -768,6 +876,7 @@ const detail = {
   seed: {
     deviceId: victimBefore.deviceId,
     settledInMs: seedSettle.settled ? seedSettle.elapsedMs : null,
+    waitedFor: seedTarget.expected,
     state: seedState,
     heldTheDoomedGroup,
   },
@@ -779,6 +888,7 @@ const detail = {
     deviceId: back.who.deviceId,
     settledInMs: back.watch.settled ? back.watch.elapsedMs : null,
     stalledForMs: back.watch.settled ? null : back.watch.elapsedMs,
+    waitedFor: back.target.expected,
     state: returnedState,
     samples: back.watch.samples,
     doomedGroup: doomedAfterReturn,
@@ -787,6 +897,7 @@ const detail = {
   reference: {
     deviceId: fresh.now?.deviceId ?? null,
     settledInMs: freshSettle.settled ? freshSettle.elapsedMs : null,
+    waitedFor: freshTarget.expected,
     state: freshState,
     samples: freshSettle.samples,
     doomedGroup: doomedOnFresh,

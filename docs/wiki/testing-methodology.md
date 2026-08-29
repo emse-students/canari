@@ -2295,6 +2295,42 @@ network line from a script's, and both the renderer and the de-duplication key n
 `source === 'network'`. The negative control is a self-test case, because a narrowing that quietly
 restored the old collapsing would look identical from a green run.
 
+## A ZERO THAT COULD MEAN "SILENT" OR "UNREAD" IS A DEFECT IN THE INSTRUMENT, NOT A FINDING
+
+**Measured 2026-08-29 on HEAL-REVOKE-5, which spent twenty-five minutes recording two product
+defects it had invented.** The row reported `theDeviceWipedItself: false` about a revoked device, and
+an equality gap of `rows: 3 vs 11` against its reference. Both are P1-shaped. Neither was real.
+
+**The first: `classifyWipe` was reading a field `report()` does not return.** It was called as
+`classifyWipe((await report(obs)).lines ?? [])`; the report object carries `timeline`, and has never
+carried `lines`. So the classifier ran over `[]` on every call, every `said(...)` was `false`, and
+the runner concluded the device had stayed silent - when nothing had read a single line of its
+console. The server logs said the opposite and settled it: the delivery service signalled the
+revocation, the gateway routed the control frame to the victim's live socket, and the disk sample
+taken independently showed two databases still present. **The `?? []` is the whole story**: it turned
+a field that did not exist into a defensible-looking empty, and an empty console into a verdict.
+
+**The second: the settle predicate accepted a device that had not finished arriving.** `watch`'s
+default is `rows > 0 && syncing === 0`, which a sidebar holding three of eleven groups with nothing
+amber satisfies exactly. The returning device was declared settled at 2 292 ms - the second of two
+samples in the entire watch - and its state was then compared with a reference that had eleven. The
+row reported the gap in the WORSE direction, as a device that had lost eight groups.
+
+**The rule both leave: a measurement whose zero is indistinguishable from "not measured" must FAIL
+rather than pick one.** `classifyWipe` now returns `linesRead`, and `theWipeWindowWasActuallyRead`
+asserts it above zero, so a silent device and an unread console can never again produce the same
+row. The predicate is now anchored to a count the rig can READ - the server's own active-group count
+for that user, less the groups dismissed while still a member - and when that count cannot be read
+`expected` is `null`, the predicate is never satisfied, and
+`theSettlePredicateKnewWhatToWaitFor` names the cause. **There is deliberately no fallback to the
+weaker predicate**: falling back would restore exactly the reading that produced the phantom gap,
+and a fallback is a signal, never a path.
+
+**The transferable half is that both failures were invisible from the verdict.** A `FAIL` with five
+unmet expectations reads as a product in trouble; nothing in it says the instrument never looked.
+That is what makes these guards expectations rather than notes - they are cheap, they cost one field
+each, and the alternative is a campaign whose worst findings are the ones nobody can trust.
+
 ## A CADENCE READ OFF A HEAL-NEW LOG MEASURES THE RIG, UNLESS IT IS SCOPED TO ONE DOCUMENT
 
 **Measured 2026-08-29 on HEAL-NEW-2 and -12, and it would have been misread in BOTH directions.**
