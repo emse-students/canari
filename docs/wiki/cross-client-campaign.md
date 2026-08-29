@@ -981,6 +981,21 @@ The cells carried these as prose; they are design, and the board is a state tabl
   wider deadline. `navigationCost` was also cleared of the fear that it would destroy its own watch:
   measured on the post-click client, `.sidebar-panel [data-conversation-tile]` still reads 10 rows
   and 0 unhooked with a composer open, so no non-navigating probe is owed.
+  **THE SPLIT SHIPPED ON `56090443` AND THE ROW IS STILL UNASKABLE - one layer earlier again, and
+  this time the number says where.** `becomeANewDevice` now returns at the live client and
+  `confirmEnrolment` holds the settle, the database poll and the abandoned-id purge, called after the
+  watch. It did exactly what it was designed to do: `watchOpenedAfterLiveMs` fell from about 49 000 ms
+  to **1 118 ms**. The first sample still read 10 rows, 10 ready, 0 syncing, and the watch settled in
+  1 ms. The heal was over long before either: the console has all ten `welcome_request`s sent between
+  +12.9 s and +14.9 s of the row and every row ready by +15 s, while the client did not reach the
+  handover until +37.6 s. **The remaining 22 s are the LOGIN half, and 25 of them are one call** -
+  `pin.mjs` polling for an unlock modal a brand-new device never shows, recorded as `pinGate: "none
+  shown"` since 2026-08-28. So on this topology the amber window is about two seconds wide, it opens
+  before the app has finished logging in, and no reader placed after the login can see it.
+  **That makes the row a RE-SCOPING question and not another instrument round:** either the responder
+  has to be one that heals slowly (row 11's late W1, row 2's peer subset), or the observation has to
+  start inside the login, which is a different primitive. The trunk decides which; a third widening of
+  the watch would not reach it.
 
 ### The HEAL rung's first two nights, and the device cap under all of it
 

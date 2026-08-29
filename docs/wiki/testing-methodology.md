@@ -2617,6 +2617,34 @@ They now import one `GATE_EXPR` from `gate-probe.mjs`, and `gone` is that expres
 `gate-probe-selftest.mjs` classifies eleven pages, four of which are the ones that used to be
 misread - `/settings`, prose anywhere, the device panel, and a fresh phone's biometric offer.
 
+### An `INVALID` that carries no console cannot say why the question was unaskable
+
+**Measured 2026-08-29.** `healnew.mjs` had six `INVALID` exits and not one attached its observer,
+though the observer is installed before the wipe and exists on every one of those paths. So the row
+could say *the sidebar was already green* and nothing about WHY - and on HEAL-NEW-15 that was the
+row's own question. The console held the answer the whole time: ten `welcome_request`s answered in
+two seconds, twenty seconds before the runner believed the client was live.
+
+Six copies of a record-close-exit sequence is also five places for the next field to be forgotten in.
+One helper takes the report ONCE - reporting twice on one observer drains the second read - and it
+uses `record`, never `finishObserved`: an `INVALID` is already not a pass, and `gate()` exists to
+downgrade a verdict about the product, which an unaskable question is not.
+
+### A duration is evidence only for the interval it was measured over, and a NAME has to say which
+
+The same change moved the enrolment poll from inside the mint to after the row's watch. The numbers
+did not change shape - `Date.now() - askedAt` still - but their meaning did completely: the poll now
+starts minutes after the device went live, so what used to be the enrolment latency became "no later
+than this". Renaming them `registeredWithinMs` / `addressableWithinMs`, measured from an explicit
+`liveAt`, and pairing each with `registeredWasAlreadyTrue` / `addressableWasAlreadyTrue` is what keeps
+a reader from doing arithmetic the number cannot support. The first run after the split recorded
+`10152 ms` with `alreadyTrue: true` - a bound and an admission, where the old name would have read as
+a ten-second enrolment.
+
+**And a field nothing sets is worse than a missing one.** `enrolledInMs` was reported by two call
+sites and returned by nothing, so the ledger carried `null` under a name that reads like a
+measurement. It was removed with the split; the fields that exist replaced it.
+
 ### A criterion must be shown to FAIL on a dirty device before a green from it is worth anything
 
 `footprint.mjs` existed for one reason: `[RESET] done - nothing of this device remains` is a claim
