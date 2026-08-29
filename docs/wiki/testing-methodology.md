@@ -2516,6 +2516,29 @@ force-stopped, but not the devtools forward - `phone.mjs` owns that - so a row t
 leaves it running and INVISIBLE, which reads exactly like a dead cable to the next row that needs
 it. The baseline re-arms it for the same reason it starts the browsers.
 
+### A primitive that navigates the client owes putting it back, and splitting one is where that debt comes due
+
+`confirmEnrolment` ends by driving `purge-devices.mjs` through the new device's own settings panel,
+which is the only way to reclaim the slot the mint abandoned. It therefore leaves the client on
+`/settings`, a page with no sidebar on it.
+
+That cost nothing for as long as the mint was one call: every caller ran the whole thing first and
+navigated to `/chat` itself afterwards, so the debt was always paid by accident. Split at the live
+client on 2026-08-29 - so a row can watch the heal in the window the second half used to occupy -
+the second half now runs LAST, and whatever reads the sidebar after it reads `/settings`.
+
+HEAL-NEW-15 is where it came due. Its closing `readAll` reported `{panel: false}`, and two
+expectations that are claims ABOUT THE SIDEBAR - `rowsWereEnumerated` and `readerMatchesMarkup` -
+were recorded false against a page that never had one. **A `FAIL` naming the product, produced
+entirely by the instrument's own navigation.** The same left-behind route is why that run's debris
+sweep declined W3, which is the tell: one cause, two victims, and neither of them the app.
+
+**Fix it where the navigation happens, not where the reading does.** A reader defended at each call
+site is defended once per site anyone remembers; the primitive that moved the client is the only
+place that knows it moved. It restores with `ensureChat` and not a `goto`, because a `goto` re-mounts
+the PIN gate and would hand the caller a locked client - the debris sweep's complaint in the other
+direction.
+
 ### A poll does not make a predicate true, it only proves how long it is false
 
 The night before, `sameAccountEnrolled` was read once after a fixed sleep and said `false` at +20.7 s

@@ -645,7 +645,10 @@ if (usability) note(`usability ${JSON.stringify(usability)}`);
 // THE MINT'S SECOND HALF, AND IT RUNS HERE FOR TWO REASONS. It blocks the event loop for tens of
 // seconds, so above this line it would be the reason no observation of the heal could exist; and its
 // last step drives `purge-devices.mjs` through THIS client's device panel, so it navigates the very
-// page a watch or a usability probe reads. Both readers are finished by now.
+// page a watch or a usability probe reads. Both readers are finished by now - and the `last read`
+// below, which is NOT, is served because the primitive returns the client to /chat itself. It did
+// not until `038c7e8d`, and this row is where that debt came due: the closing read landed on
+// /settings and two claims about the SIDEBAR were recorded against a page that has none.
 //
 // IT IS ALSO BEFORE THE `INVALID` BELOW, so a row that could not ask its question still reclaims the
 // slot its own mint abandoned. The earlier `invalid()` exits do not get that - a row refused on its
@@ -750,12 +753,11 @@ if (row.at === "late")
   );
 if (row.responder === "w1" && row.at === "late")
   expectations.ourOwnDeviceArrivedLate = lateFleet?.readable === true && lateFleet.extra.length > 0;
-// AND IT READS THE AMBER HALF, WHICH IS THE ONLY HALF THAT ANSWERS THE ROW. The post-settle click is
-// recorded beside it and is not this expectation: a click honoured by an app that has finished
-// healing says nothing about an app that has not, and reading it here is how `48b65d08` met every
-// expectation on the board while the question went unasked.
 /**
- * THE ROW'S QUESTION, AND IT IS THE CLICK ON THE AMBER LIST.
+ * THE ROW'S QUESTION, AND IT IS THE CLICK ON THE AMBER LIST. The post-settle click is recorded beside
+ * it and is NOT this expectation: a click honoured by an app that has finished healing says nothing
+ * about an app that has not, and reading it here is how `48b65d08` met every expectation on the board
+ * while the question went unasked.
  *
  * "An amber sidebar that cannot be clicked fails the row" has been this row's design since it was
  * written and nothing had ever measured it: every earlier topology healed before a reader opened, so

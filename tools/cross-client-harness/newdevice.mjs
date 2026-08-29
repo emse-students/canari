@@ -442,6 +442,22 @@ export async function confirmEnrolment({
     );
   }
 
+  // AND IT PUTS THE CLIENT BACK, BECAUSE IT IS WHAT MOVED IT. `purge-devices.mjs` drives the device
+  // panel on `/settings`, so this call returns with the client on a page that has no sidebar on it.
+  // Before the mint was split every caller navigated to `/chat` itself, AFTER the whole mint, and the
+  // debt was invisible; split, the second half runs last and whatever reads the sidebar next reads
+  // `/settings`. It cost HEAL-NEW-15 a run on `038c7e8d`: the row's closing `readAll` reported
+  // `{panel: false}`, and `rowsWereEnumerated` and `readerMatchesMarkup` - two claims ABOUT THE
+  // SIDEBAR - were recorded false against a page that never had one. The same left-behind route is
+  // why the run's debris sweep declined W3.
+  //
+  // `ensureChat` and not a `goto`: it clicks "Discussions", so the client-side navigation keeps the
+  // session it already holds. A `goto` re-mounts the PIN gate and would hand the caller a locked
+  // client - which is the debris sweep's complaint in the other direction.
+  const restored = await ensureChat(cx).catch((e) => `failed: ${e.message}`);
+  if (restored !== "already" && restored !== "navigated")
+    report(`the client could not be returned to /chat after the purge: ${restored}`);
+
   // A BOUND IS SAID TO BE A BOUND. "within 61s of going live, and it was already true when asked" is
   // a different sentence from "it took 61s", and only the first one is what this call can know.
   const bound = (ms, alreadyTrue) =>

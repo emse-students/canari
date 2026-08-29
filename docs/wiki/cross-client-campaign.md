@@ -1194,6 +1194,30 @@ heal produces, and demanding one would fail the row for the shape of the heal ra
 What makes a run `INVALID` is no longer that coexistence but the amber-alone window failing to open at
 all - the premise the rig owes, which is what `INVALID` has always been for.
 
+**MEASURED ON THE NEW TOPOLOGY, `PASS-DIRTY` on `038c7e8d`** (branch, 2026-08-29). The window opened
+exactly as designed: ten rows amber alone 27 s after the mint, W1 started only then and arriving 9 s
+later, the heal staggered over 858 ms once it did. **The click on the amber list was answered in
+26 ms** - selected AND opened - and a mid-heal sample holding 4 ready and 6 syncing made
+`navigableWhileAmber` askable, answered in 10 ms; a healed sidebar answered in 165 ms. Three clicks,
+three different apps, all under a fifth of a second. `laggards: 0`, `finalState` 10/10 ready.
+
+**Its first run FAILed on the instrument, and the cause was the mint split itself** - the second half
+now runs last and leaves the client on `/settings`, so the row's closing sidebar read had no sidebar
+under it. Fixed where the navigation happens; the reasoning is in
+[testing-methodology](testing-methodology.md#a-primitive-that-navigates-the-client-owes-putting-it-back-and-splitting-one-is-where-that-debt-comes-due),
+and it matters beyond this row because every HEAL-NEW row reaches that same closing read.
+
+**This is the rung's FIRST verdict to have passed `gate()`** - HEAL-NEW-1, -3 and -11 predate it. The
+dirt is mint-shaped and none of it is this row's subject: a `POST /api/auth/refresh -> 401` from a
+client that has just wiped every cookie, a 415 no `badHttp` entry names, the OIDC callback's `debug:`
+trail and the purge's `[DevicePanel]` lines in a production console. **One line is HEAL's own and goes
+back to the trunk**: 60 s after external-joining the community distribution group at epoch 56, the
+device found `the group holds NO row for it ... the local group is stale, rejoining` and joined again
+at 57. A race that heals cleanly is still a defect. Reconciliation asked **10/11 groups in 794 ms**;
+the unasked one is that same distribution group. No deferrals at all this run - zero
+`no probe sender yet`, zero `no member online for` - and no `[MEMBERSHIP_ACTIVE] REFUSED` and no
+`[KP] Publication failed`.
+
 **So the census was never the wrong question - it was the RIGHT one, asked of a device the server had
 refused.** Reading `auth_sessions` instead made the row pass while the device was unusable, which is
 worse than the failure it replaced. The primitive now reads BOTH facts and reports the pair: a session
