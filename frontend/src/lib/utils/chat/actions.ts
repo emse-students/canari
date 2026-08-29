@@ -392,6 +392,31 @@ export async function discoverMissingGroups(params: {
     deletedAt?: string | null;
   }[] = [];
   let serverFetchSucceeded = false;
+  /**
+   * THE LOCAL SET IS CAPTURED BEFORE THE SERVER LIST, AND THE ORDER IS THE WHOLE POINT.
+   *
+   * The purge below destroys the MLS tree of any local group the server did not list, so it is only
+   * sound for groups that already existed when the server was asked. Reading the local set AFTER the
+   * fetch - which is what this did - puts every group created DURING the fetch into the comparison
+   * against a snapshot that could not possibly contain it, and the sweep then deletes the only copy
+   * of a group that is seconds old. It is not a rare window: `getDismissedGroups` is awaited between
+   * the two reads as well.
+   *
+   * MEASURED, NOT REASONED. On 2026-08-30 a group was created at 22:31:31.905 and forgotten by its
+   * creator inside the same second - `[MLS] forgetGroup 50799ae8… (absent from server)` - and prod
+   * still holds the row, `deletedAt` null. Five seconds later the same device asked the server
+   * directly and was told the group is there, then refused its own re-entry with
+   * `no_base_published`, because the base it would have external-joined was the state it had just
+   * deleted. Every other member is left counted by the server and unable to open it.
+   *
+   * `initializeConnection` has taken both reads at one instant since WP-GRAINE-1 and says so where
+   * it does it; this is the second copy of that decision, which had the guard against an unreliable
+   * LIST and not the one against a list that is merely OLDER than what it is compared to.
+   *
+   * Capturing early can only ever SPARE a group - one that became absent during the fetch is simply
+   * swept on the next pass - so the change cannot destroy anything this did not already destroy.
+   */
+  const localGroupsWhenTheServerWasAsked = mlsService.getLocalGroups();
   try {
     serverGroups = await mlsService.getUserGroups(userId);
     serverFetchSucceeded = true;
@@ -422,7 +447,7 @@ export async function discoverMissingGroups(params: {
     // for conversations, and a community's key-distribution group is excluded from it by
     // construction. See `reconcileAbsentLocalGroup` - the same decision `initializeConnection`
     // takes, in one place, because two copies of it diverging is what WP-GRAINE-1 was.
-    for (const groupId of mlsService.getLocalGroups()) {
+    for (const groupId of localGroupsWhenTheServerWasAsked) {
       if (isChannelConversationId(groupId)) continue;
       if (serverGroupIds.has(groupId)) continue;
       const fate = await reconcileAbsentLocalGroup(mlsService, groupId);

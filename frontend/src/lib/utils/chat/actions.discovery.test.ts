@@ -414,6 +414,36 @@ describe('discoverMissingGroups orphan cleanup', () => {
     expect(deleteConversation).not.toHaveBeenCalled();
     expect(mlsService.forgetGroup).not.toHaveBeenCalled();
   });
+
+  it('does NOT forget a group created while the server list was being fetched', async () => {
+    // THE RACE THAT DESTROYED A REAL CONVERSATION, on prod on 2026-08-30. The purge compares local
+    // groups against a server snapshot, so a group born DURING the fetch is absent from the snapshot
+    // by construction - and the sweep used to read the local set afterwards, which is the only way
+    // the two can disagree about a group that is seconds old. The creator held the sole copy of the
+    // tree, so forgetting it left every member counted by the server and unable to ever join.
+    let theFetchHasStarted = false;
+    const mlsService = makeMls({
+      getUserGroups: vi.fn().mockImplementation(async () => {
+        theFetchHasStarted = true;
+        return [];
+      }),
+      // Empty when the server is asked, holding the new group by the time the loop would run.
+      getLocalGroups: vi.fn(() => (theFetchHasStarted ? ['born-during-the-fetch'] : [])),
+    });
+
+    await discoverMissingGroups({
+      mlsService,
+      userId: 'user-a',
+      deviceKeyB64: '1234',
+      conversations: new Map<string, Conversation>(),
+      deleteConversation: vi.fn().mockResolvedValue(undefined),
+      saveConversation: vi.fn().mockResolvedValue(undefined),
+      log: vi.fn(),
+    });
+
+    expect(mlsService.forgetDistributionGroupById).not.toHaveBeenCalled();
+    expect(mlsService.forgetGroup).not.toHaveBeenCalled();
+  });
 });
 
 /**

@@ -1143,54 +1143,49 @@ deciding between catching it at the WASM boundary and carrying it upstream to op
 The workaround the tests use is to avoid the shape entirely: the producer is two members committing
 at the same epoch, which is the production shape anyway and returns cleanly.
 
-### P1 - a device DESTROYED the only copy of a group it had just created, and no member can ever join it again (measured 2026-08-30)
+### FIXED 2026-08-30 - a device DESTROYED the only copy of a group it had just created, and no member could ever join it again
 
-Found by HEAL-REVOKE-7 `--order first` on `0044a041`, which FAILs on it. The row's actor W1 creates a
-group, is killed, and is restarted twenty seconds later. On coming back it decides the group is not
-on the server and deletes its own MLS state for it:
+Found by HEAL-REVOKE-7 `--order first` on `0044a041`, which FAILed on it. **Fixed in the same session;
+kept here because the mechanism is one every pruning sweep in this app can reproduce.**
+
+The row's actor creates a group and, within the same second, deletes its own MLS state for it:
 
     00:31:31  [MLS] forgetGroup 50799ae8... (absent from server)
     00:31:31  forget_group: group 50799ae8... forgotten (memory + storage, min_epoch=0, re-Welcome expected)
-    00:31:31  [GROUP] Sync own devices failed: Group not found: 50799ae8...
-    00:31:31  [EVICT] Membership of 50799ae8... could not be read before verifying against the server
-
-**THE SAME DEVICE DISPROVES ITS OWN PREMISE FIVE SECONDS LATER.** It tries to get back in, and the
-server answers that the group is perfectly there - then refuses the join for the one reason that
-forgetting it caused:
-
     00:31:36  [READD] 50799ae8... getGroupMeta -> ok
     00:31:36  [READD] 50799ae8... externalJoin -> no_base_published
-    00:31:36  [READD] 50799ae8... sendWelcomeRequest (external join refused: no_base_published)
 
-`getGroupMeta -> ok` is the read that settles it: the group was NOT absent from the server, so the
-destruction was gated on a read that was wrong. **A destructive repair must be gated on knowing the
-state is really broken** - this one is gated on a read that fails open in the destructive direction.
+**PROD SETTLED IT, AND THE TIMESTAMP IS THE WHOLE ANSWER.** The row is still there, `deletedAt` null,
+`createdAt = 2026-08-29 22:31:31.905299` - **the same second as the line that forgot it.** So the
+server was never wrong and no two endpoints disagreed: `discoverMissingGroups` fetched the group list,
+awaited it (and `getDismissedGroups` after it), then read `mlsService.getLocalGroups()` LIVE and
+purged everything the older snapshot did not mention. A group born inside that window is absent from
+the snapshot by construction and was deleted for it.
 
-**WHAT IT COSTS, AND WHY IT IS A P1 RATHER THAN A LOST CACHE.** W1 was the only device holding the
-group's MLS state, so `min_epoch=0` and "re-Welcome expected" describe a Welcome nobody is left to
-send. The base for an external join was never published and now never can be, which is exactly what
-`no_base_published` reports. Two further devices of the same account were then created and BOTH are
-counted as members by the server - `serverActive: 26` on each - while neither can open the
-conversation: the returning device sat on it amber for 601 s, and a freshly minted device does not
-even get a row for it. **The group is permanently unreachable for every member while the server
-still says they belong to it**, which is the shape the campaign calls worse than an error: it looks
-healthy and is not.
+**WHY IT IS A P1 AND NOT A LOST CACHE.** The creating device held the only copy of the tree, so
+`min_epoch=0, re-Welcome expected` describes a Welcome nobody was left to send, and the base an
+external join needs was never published - which is exactly what `no_base_published` reports. Two
+devices created afterwards were both counted as members by the server, `serverActive: 26` on each,
+while neither could open the conversation: the returning device sat on it amber for 601 s and a
+freshly minted one never got a row at all. **The group was permanently unreachable for every member
+while the server still said they belonged to it.**
 
-**The trigger, as far as it is established.** Create a group, restart the creating client shortly
-after, before anything else has a copy. That is an ordinary user action - closing the app and
-reopening it - and not a rig-only sequence. What is NOT established is which read answers "absent
-from the server" and why it disagrees with `getGroupMeta` five seconds later; the two are different
-calls and the discriminator is which endpoint each one asks, so the first move is to name the read
-rather than to widen a guard.
+**THE GUARDS THAT EXISTED WERE AGAINST THE WRONG FAILURE.** Discovery already carried both defences
+WP-GRAINE-1 left - `serverFetchSucceeded`, and `reconcileAbsentLocalGroup` reading the `dm_groups`
+row so that absence from a conversation list is not read as death - and both held while this
+happened. They guard against an unreliable LIST. This was a reliable list that was merely OLDER than
+the local set it was compared against.
 
-**Do not fix it by retrying the read.** The asymmetry is the defect: being wrong about "present"
-costs a wasted sweep, being wrong about "absent" destroys the last copy of a conversation. The
-decision to forget the only local state of a group has to be gated on evidence that can only mean
-one thing, and a `Group not found` from a call that is also the one failing is not it.
+**The fix**: capture the local group set BEFORE asking the server, which is what the sibling sweep in
+`initializeConnection.ts` has done since WP-GRAINE-1, in a comment naming this exact hazard. It is
+free of risk in the one direction that matters - capturing early can only SPARE a group, because one
+that really did go away during the fetch is swept on the next pass - so nothing correctly purged
+before is kept now. The regression test was shown to FAIL without the change before it was believed.
 
-**It is distinct from the concurrent-creation race below**, which reaches `forgetGroup` legitimately:
-there a WINNER has published a base and the loser external-joins it. Here there is no winner, and
-`no_base_published` is what says so.
+**The durable rule already existed and this is its THIRD site** - "a listing has no authority over a
+fact created after its request went out", written for the community rail. Two of the three sites are
+now fixed, and the general question is whether any other sweep compares a live local read against an
+awaited server one.
 
 
 ### P3 - one client reads a new salon's distribution group TWICE, concurrently (measured 2026-08-27)

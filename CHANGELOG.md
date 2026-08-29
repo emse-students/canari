@@ -238,6 +238,19 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A conversation created while the app was refreshing its group list could be destroyed by its own
+  creator, seconds old, leaving every member unable to ever open it.** The discovery sweep purges the
+  MLS state of any local group the server did not list, and it read the local set AFTER fetching that
+  list - so a group born during the fetch was absent from the snapshot by construction and deleted on
+  that basis. The creating device held the only copy of the tree, so nothing was left for anyone to
+  join from: the server still counted every member, `getGroupMeta` still answered that the group was
+  there, and re-entry was refused with `no_base_published` because the base to join had just been
+  erased. The local set is now captured BEFORE the server is asked, which is what the sibling sweep in
+  `initializeConnection` has done since WP-GRAINE-1. Capturing early can only spare a group - one that
+  really did go away during the fetch is swept on the next pass - so nothing that was correctly purged
+  before is kept now. Measured on prod: a group created at 22:31:31.905 and forgotten inside the same
+  second, with its row still present and `deletedAt` null.
+
 - **One tab election was logged twenty times on a device coming up with twenty-two conversations.**
   Measured on production 2026-08-29 in HEAL-REVOKE-5's wipe window: a single
   `[OUTBOX] Flush deferred - tab leadership undecided` followed by TWENTY

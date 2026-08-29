@@ -150,10 +150,26 @@ crois qu'il n'y a plus rien avant"*). In this order, and nothing else first:**
    classifier - **shipped for the HEAL-NEW rows on 2026-08-29 as `withoutTheMintsOwnNoise` in
    `healnew.mjs`, and `healrevoke.mjs` still has no such list.** **-2 and -12 are `PASS-DIRTY` on
    `038c7e8d` and the ORDER PAIR is EQUAL** (adjudicated on the campaign page, with the server half
-   both cells cannot carry). What is owed, in order:
-   **the four HEAL-REVOKE rows - 5, the 7 ORDER PAIR (first and last), 8 and 9** - then WRITE the owed HEAL-REVOKE cell - predicate `residue: 0` on a
+   both cells cannot carry).
+   **BLOCKED ON A HUMAN SINCE 2026-08-30, AND NOTHING ON THIS RUNG CAN MOVE UNTIL IT IS ANSWERED:
+   W1's `chrome-w1` profile lost its CAS session and sits on `Authentification renforcee`.** The
+   preflight refuses it correctly (`still unknown on /cas/login after 4 repair(s)`), and the 2FA is
+   the one step no tool here can answer - so **the user must log W1 back in once**, after which
+   `login.mjs --device W1` is enough again. W2 and W3 are fine; only W1 is out.
+   **HEAL-REVOKE-5 and -8 are `PASS-DIRTY` on `0044a041`**, both with `unmet: []` and an empty
+   equality gap - 8 reads its two doomed-group fields TOGETHER, absent from the returning device AND
+   from a freshly minted one whose view is purely the server's. **HEAL-REVOKE-7 is `INVALID`**: the
+   pair is UNADJUDICATED and owes both halves adjacently under the runner as it now stands, because
+   the `first` measurement predates a retraction (campaign page, section 16). What is owed, in order:
+   **W1's 2FA, then the 7 ORDER PAIR, then 9** - then WRITE the owed HEAL-REVOKE cell - predicate `residue: 0` on a
    phone, `identityKeys: 0` everywhere, the offline variant driven by a reload. The device cap that
-   voided five cells is not in play: the owner spends **4 of 15 slots**, measured.
+   voided five cells is not in play: the owner spends **4 of 15 slots**, measured before and after.
+   **`--order first` FOUND A P1 AND IT IS FIXED**: a purge compared a live local read against an older
+   server list, so a device destroyed the only copy of a group it had created seconds earlier and no
+   member could ever join it. Prod's `createdAt` is the same second as the forget line. Story in
+   `CHANGELOG.md`, mechanism on [chat](docs/wiki/frontend/modules/chat.md), and it is the THIRD site
+   of a rule already in [durable-rules](docs/wiki/durable-rules.md) - **the open question is whether
+   any other sweep compares a live local read against an awaited server one.**
    **AND HEAL-NEW-1 AND -3 ARE RE-RUNS OWED, for the INSTRUMENT and not for the product**: both were
    taken before `healnew.mjs` and `healrevoke.mjs` were put on `gate()`, so neither passed the dirt
    and mid-run-redeploy gate every other rung's `PASS` passed

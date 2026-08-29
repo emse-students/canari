@@ -1141,6 +1141,31 @@ the only thing that may write that lifecycle - and lock it with a test that read
 (`conversations.retire.test.ts`), because no unit test can observe a seventh path that does not
 exist yet.
 
+### The orphan purge compares two reads, and their ORDER decides whether it destroys a new group
+
+`discoverMissingGroups` forgets the MLS tree of every local group the server's list did not mention.
+That is only sound for groups that already existed when the server was asked, and until 2026-08-30 it
+was not: the server list was `await`ed (and `getDismissedGroups` after it), and only then was
+`mlsService.getLocalGroups()` read. **A group created inside that window is absent from the snapshot
+by construction**, so the sweep deleted it on evidence that could not have mentioned it.
+
+It is not a theoretical window. On prod a group was created at `22:31:31.905` and its creator logged
+`[MLS] forgetGroup 50799ae8… (absent from server)` inside the same second, with the `dm_groups` row
+still present and `deletedAt` null. What makes it worse than a lost cache is that **the tree is not
+re-fetchable**: the creator held the only copy, so `min_epoch=0, re-Welcome expected` names a Welcome
+nobody is left to send, and the base for an external join was never published - `no_base_published`
+is the app's own report of that. Devices created afterwards were counted as members by the server and
+could never open the conversation.
+
+The local set is now captured **before** the server is asked, which `initializeConnection`'s sweep has
+done since WP-GRAINE-1 - it takes `localGroups` and `serverIds` at one instant and says why in a
+comment. Two copies of one decision, and only one of them carried it.
+
+**The asymmetry is what makes the fix free.** Capturing early can only SPARE a group: one that really
+did disappear during the fetch is simply swept on the next pass, while one that was just born is no
+longer destroyed. A purge whose two error directions cost a delayed sweep and an unrecoverable
+conversation should always be biased towards the first.
+
 ### An exit is owed to the SERVER, and the local purge is not what pays it (DEL-10)
 
 Deleting a group is two halves - tell the server, then destroy the local MLS state - and

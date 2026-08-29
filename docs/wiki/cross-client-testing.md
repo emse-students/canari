@@ -401,7 +401,7 @@ four wipe defects found by hand:
 | HEAL-REVOKE-4 | The heal-on-diff mechanism catches up what the first reconnection missed, and the TRIGGER CONDITIONS are part of the assertion | `W1 W2` | `pending` |
 | HEAL-REVOKE-5 | Revoked, then the account CHANGES a lot while it is away, then it returns | `W1 W2` `+user` | `PASS-DIRTY` on `0044a041` - back 23/23 in 8.0s, reference 23/23, gap empty |
 | HEAL-REVOKE-6 | The same, where the revoked device is **the phone** - A1's store is SQLite behind the native layer, not the WebView IndexedDB the web wipe clears, so "the wipe ran" is a different claim and must be read from the native store | `+A1` `+user` | `pending` - the instrument is in, the victim must be A1 |
-| HEAL-REVOKE-7 | The **ORDER** of the return: back BEFORE the other devices are online, and back AFTER | `W1 W2` `+user` | `INVALID` on `48b65d08` - the instrument; both orders untried |
+| HEAL-REVOKE-7 | The **ORDER** of the return: back BEFORE the other devices are online, and back AFTER | `W1 W2` `+user` | `INVALID` on `0044a041` - `first` found the orphaned-group P1 (FIXED); the pair is unadjudicated, blocked on W1's CAS 2FA |
 | HEAL-REVOKE-8 | A group **DELETED while the device was revoked** must not return as a Sync row | `W1 W2` `+user` | `PASS-DIRTY` on `0044a041` - 24/24 both, the deleted group absent from BOTH |
 | HEAL-REVOKE-9 | Revoked while **OFFLINE**: the wipe is DEFERRED, not lost, and must not fire while the server is unreachable | `W1 W2` | `pending` - written 2026-08-28 |
 | HEAL-NEW-0 | The rig can mint a device the server has never seen, repeatably, on ONE 2FA | `+user` | **`PASS-DIRTY` on `48b65d08`** - a newer ledger `FAIL` is dirt only, P3 |
