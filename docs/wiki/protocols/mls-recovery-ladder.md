@@ -33,6 +33,17 @@ This document describes how the **client** recovers from MLS and delivery-queue 
    epoch-gap registry for the sync watchdog to escalate. **No rung, no cadence and no escalation was
    added** — the two rungs, their order and their single owner are unchanged.
 
+   **WHICH RUNG ACTUALLY SERVES THIS, MEASURED: rung 2, always.** Both production groups healed within
+   two minutes of the deploy, and rung 1 could not help either of them. It fetched the single commit
+   each device was missing and OpenMLS refused to re-apply it (`same-epoch refusal`), because that
+   commit was the device's OWN — the server accepted it and the local merge never happened, the
+   crash-before-merge gap `runCommitTransaction` documents one comment above the submission. That is
+   the shape a write-side refusal has by construction: a device refused at `baseEpoch` while the
+   server sits at `baseEpoch + 1` is usually the author of the commit that made the difference. Rung 1
+   still runs first, because nothing available at the refusal distinguishes it from a peer's commit we
+   merely missed, and it is non-destructive when it is wrong. What the log then says is the
+   difference: `replayed 0 commit(s) … healed=false` followed by `still behind after rung 1`.
+
    **Rung 2 recovery is self-service first.** The re-add seam `requestReAdd` tries **`externalJoin`** before any peer Welcome: it fetches the latest GroupInfo (**`GET /api/mls/group-info/:groupId`**, membership-gated), builds a native openmls external commit, and submits it under the standard epoch gate (**`POST /api/mls/commit`** at the GroupInfo's base epoch; on an epoch race it discards the group and retries with a fresher GroupInfo — no peer liveness required). The committer refreshes the stored GroupInfo after every accepted commit (**`POST /api/mls/group-info/:groupId`**, monotonic). Only when no GroupInfo is available does it fall back to a `welcome_request` (a reachable member re-adds us via a Welcome). The reboot/CAS/successor machinery was fully retired — external join is the self-service recovery; welcome_request is the thin fallback.
 
    **A joiner publishes the base its OWN commit created, inside the submission (2026-08-26).** An

@@ -258,8 +258,15 @@ which is also where every release up to and including v0.13.1 now lives.
   the missed commits under the same MLS lock the read side holds, and a gap it cannot close is left
   in the epoch-gap registry whose owner - the sync watchdog - already owns rung 2 and the whole
   re-add cadence. No rung, no timer, no escalation and no fallback was added, and the refusal is
-  still thrown, because catching up is not succeeding. The two conversations heal themselves on the
-  first commit after the deploy.
+  still thrown, because catching up is not succeeding.
+  **Both conversations healed within two minutes of the deploy, and by RUNG 2 - which the fix did not
+  predict and the run measured.** Rung 1 fetched the one commit each device was missing and OpenMLS
+  refused to re-apply it (`same-epoch refusal`), because that commit was the device's OWN: the server
+  had accepted it and the local merge never happened, which is the crash-before-merge gap
+  `runCommitTransaction` documents. So this shape of fork is always rung 2, never rung 1, and rung 1
+  runs first anyway because nothing at the refusal can tell the two apart. Last refusal 18:24:00,
+  first accepted commit 18:24:44, the two epochs moved 196 -> 201 and 216 -> 218, and the device
+  immediately sent the two Welcomes it had owed for hours.
 
 - **A revoked device kept both of its databases, and every log said the wipe had worked.** Found by
   HEAL-REVOKE-5 on production, 2026-08-29, on a build carrying all three of August's earlier wipe
