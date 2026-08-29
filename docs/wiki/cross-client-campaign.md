@@ -947,6 +947,13 @@ fix. Story in `CHANGELOG.md`, mechanism on
 bundle, under the runner as it now stands - the `--order first` measurement taken before the
 retraction is not comparable with a `--order last` taken after it.
 
+**`node rows.mjs` NOW SAYS "runner is now 4bfefd4080ab" FOR HEAL-REVOKE-5 AND -8, AND NEITHER OWES A
+RE-RUN FOR IT.** Every change is confined to the isolated-return path: `beforeTheWatch` is null for
+any row whose `returnTopology` is non-empty, so 5 and 8 execute exactly the code they executed, and
+the one shared edit - deleting `theSettlePredicateKnewWhatToWaitFor`'s exemption - removed a
+disjunct that was already false for them, leaving `back.target.ids.size > 0`, which is what they were
+already judged on. The checkSha moved; what those two rows assert did not.
+
 ### The 2 / 12 ORDER PAIR, adjudicated 2026-08-29 - the final states are EQUAL
 
 Both rows ran adjacently on `038c7e8d`, under one fleet and one bundle, and both came back
