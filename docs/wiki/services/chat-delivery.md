@@ -344,6 +344,43 @@ What the remaining 847 rows say is that there was nothing else of this shape: th
 queue is **84**, on a real user's phone whose key package predates it — the ordinary profile the
 threshold was set against, not a second runaway.
 
+#### The placeholder that took a conversation's first seat, cleaned by hand (2026-08-30)
+
+The `(userId='unknown', deviceId='pending')` member — cause, guards and story in `CHANGELOG.md` — had
+no product control that could revoke it: the revoke path above needs a real device to revoke, and this
+was not one. It was removed by hand on prod with the owner's go-ahead, in the order the rule above
+gives, and the counts are here because the frames are gone and this is the only record of what they
+were.
+
+| | before | after |
+| --- | --- | --- |
+| `dm_device_group_memberships` | 1 (`active`) | **0** |
+| `key_package` | 1 | **0** |
+| `one_time_key_package` | 50 | **0** |
+| `queued_message` | 194 | **0** |
+| real device rows in that DM | 8 | **8** |
+
+**The allowlist is an IDENTITY, and that is what made it safe** — the mistake the defect itself was:
+a shape allowlist is not an identity allowlist. `unknown` and `pending` are two literals no client can
+produce, since a real `userId` is 64 hex characters and a real `deviceId` is `web-<64 hex>-…` or
+`tauri-<64 hex>-…`. The post-check used `OR` where the delete used `AND`, a deliberately WIDER
+predicate, so it proves no row of that shape survives anywhere rather than merely that the delete ran.
+
+**What the frames were**, read before deletion: 194 in a single group from two senders — 117 commits
+and 77 application frames, **no Welcome at all**, spanning 2026-08-27 22:04 to 2026-08-30 15:28.
+Bodies are ciphertext no device could ever open, so the shape is the entire evidence.
+
+**A CLOCK NEARLY SAID THE BLEEDING HAD STOPPED.** The newest frame was 2 h 47 old at measurement,
+which reads like the guards had closed it. Bucketed by hour against ALL traffic to the same group,
+the ghost took 2 frames where real members took 6, then 5 against 15, then 1 against 3 — about one in
+four, **unchanged across the deploy that shipped the guards**. The quiet was nobody writing in the
+conversation. The guards stop a NEW placeholder; only removing the membership row stopped this one.
+
+**What this did NOT do.** The server row is not the MLS tree. If the placeholder ever took a leaf,
+only a Remove commit from a member drops it, and no server query can tell — the group sat at epoch
+118 and the placeholder held a `key_package`, so an Add is likely to have happened. That question is
+answered from a member's own client, not from here.
+
 #### WP-PENDING-1 verified on hardware, and what the run could not establish
 
 The defect: a single `AbortController(10_000)` wrapped the **whole** paginated pull, and nothing was

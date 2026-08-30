@@ -178,17 +178,18 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
    unexplained.
 
 2. **A PLACEHOLDER HELD A MEMBER'S PLACE IN A REAL CONVERSATION - the user's lost messages, and the
-   ghost, are ONE P1. CAUSE FOUND, GUARDS SHIPPED 2026-08-28, CLEANUP AND ONE PROOF OWED.** Owed, in
-   this order: **the DEPLOY IS DONE (0.14.14, 2026-08-30 12:24 UTC), so the CLEANUP is unblocked -
-   and it is BIGGER AND STILL GROWING**: 193 queued frames at 13:11 UTC, not 72, the newest two
-   minutes old, plus 1 `key_package` and 50 `one_time_key_package` rows. The guards stop a NEW ghost;
-   nothing revokes the one that exists. Drop the membership row FIRST, then the key packages, then
-   the frames, allowlisted on `"userId"='unknown' AND "deviceId"='pending'`, and READ the frames
-   before deleting them. Numbers, order and what the cleanup does NOT do (the MLS tree is not the
-   server row) are in [backlog](docs/wiki/backlog.md). **IT IS WAITING ON THE OWNER'S GO-AHEAD, asked
-   2026-08-30 and not yet given** - it deletes prod rows, so it is not taken on an agent's judgement. And **do NOT assert the guards fixed the
-   activation** - an active member polled six times, was answered `invitations=8` and committed none,
-   and only a CLIENT log separates the causes.
+   ghost, are ONE P1. THE SERVER ESTATE IS GONE (cleaned by hand on the owner's go-ahead,
+   2026-08-30): 1 membership row, 1 `key_package`, 50 `one_time_key_package` and 194 frames deleted,
+   zero left on all four tables, the DM keeping its 8 real device rows.** Counts, the frames read
+   before deletion and why the allowlist was safe are on
+   [chat-delivery](docs/wiki/services/chat-delivery.md#the-placeholder-that-took-a-conversations-first-seat-cleaned-by-hand-2026-08-30);
+   not restated here. **TWO THINGS STAY OPEN AND NEITHER IS A DATABASE QUESTION:** whether the
+   placeholder left a LEAF in the MLS tree - the server row is not the tree, the group is at epoch
+   118, and only a MEMBER'S CLIENT can read it - and **do NOT assert the guards fixed the
+   activation**, since an active member polled six times, was answered `invitations=8` and committed
+   none, which only a CLIENT log separates. **A CLOCK NEARLY SAID THE BLEEDING HAD STOPPED**: the
+   newest frame was 2 h 47 old, and the quiet was nobody writing - bucketed against real traffic the
+   ghost took one frame in four, unchanged across the deploy that shipped the guards.
 
 3. **THE SERVER-SIDE P2s ARE THE AGREED NEXT WORK, point by point** (user, 2026-08-30, while the
    campaign is hardware-blocked). **Three are done: the chat-gateway CORS wildcard** -

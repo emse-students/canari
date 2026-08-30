@@ -859,33 +859,22 @@ five rows then reported that a wiped profile does not publish - a phantom produc
 this file overnight. `newdevice.mjs` now asserts the account has a slot BEFORE it wipes anything, and
 purges the id each mint abandons.
 
-### P1 - the ghost membership already on prod: a cleanup nothing revokes, waiting on the owner's go-ahead
+### P1 - the placeholder is GONE from prod; what it may have left in the MLS TREE is not answered
 
-**The defect, its cause and the guards that shipped 2026-08-28 are in `CHANGELOG.md` and on
-[chat-delivery](services/chat-delivery.md); none of it is restated here.** What matters for the work
-below is one fact: the guards stop a NEW placeholder being published, and **nothing revokes the one
-that already exists** - a `(userId='unknown', deviceId='pending')` membership row that has been an
-`active` member of group `7da231f8-119c-4ce2-884f-55f5c94c903f` since 2026-08-27 21:00:13 UTC, so
-every message and commit sent in that conversation is still fanned out to a member nobody holds.
+**The defect, its cause, the guards of 2026-08-28 and the hand cleanup of 2026-08-30 - with every
+count and the evidence the deleted frames carried - are in `CHANGELOG.md` and on
+[chat-delivery](services/chat-delivery.md#the-placeholder-that-took-a-conversations-first-seat-cleaned-by-hand-2026-08-30).
+None of it is restated here.** The server estate is zero on all four tables and the DM kept its eight
+real device rows. Two things are open, and neither is a database question.
 
-**WHAT IS STILL OWED, in order and not before.**
-
-1. **THE DEPLOY IS DONE (0.14.14, CD green 2026-08-30 12:24 UTC), SO THE CLEANUP IS UNBLOCKED - AND
-   RE-MEASURING IT FIRST CHANGED WHAT IT IS.** The estate is bigger than this entry said and **it is
-   still growing**: at 13:11 UTC on 2026-08-30 the ghost held **193** queued frames, not 72 - 116
-   commits and 77 application frames, every one of them `(recipientId='unknown', deviceId='pending')`
-   in the single group `7da231f8`, **the newest two minutes old**. It also holds 1 `key_package` and
-   **50 `one_time_key_package`** rows, which are what keep it addressable. The guards stop a NEW
-   placeholder being published; nothing revokes the one that exists, so every message and commit sent
-   in that conversation is still fanned out to a member nobody holds.
-   **Order follows the standing rule - when something keeps refilling, deleting it is not the fix:**
-   drop the `dm_device_group_memberships` row FIRST (it is what names the ghost as a destination),
-   then the key packages, then the queued frames. The allowlist is one identity, matched exactly:
-   `"userId"='unknown' AND "deviceId"='pending'`. **Cleaning before reading destroys the evidence for
-   (2), so (2) is answered from the frames while they are still there.**
-   **What this does NOT do, and must not be claimed:** the server row is not the MLS tree. If the
-   placeholder ever took a leaf, only a Remove commit from a member drops it, and whether it has one
-   is exactly the open half in (2).
+1. **WHETHER IT LEFT A LEAF, which no server query can answer.** The server row is not the MLS tree:
+   if a commit ever Added the placeholder, only a Remove commit from a member drops it, and deleting
+   the row did not. The group sat at **epoch 118** and the placeholder held a `key_package`, so an
+   Add is likely rather than certain. **It is answered from a member's own client** - both members
+   are the account owners, so either can read the tree of `7da231f8-119c-4ce2-884f-55f5c94c903f` and
+   say how many leaves it carries and whether one has no owner. Until then, that conversation may be
+   encrypting to a member that does not exist, which costs nothing cryptographically and makes the
+   roster wrong.
 2. **NOT ESTABLISHED: whether the ghost is what stopped the activation.** The peer's real devices
    were `pending` and an active member device of the OWNER's account was online and polling
    throughout - the server answered it `invitations=8` at 23:03, 23:03, 23:09, 23:10, 23:11 and
