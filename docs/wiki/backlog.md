@@ -743,6 +743,145 @@ no check waits on wall-clock time at all. It belongs with the rendering pass, no
 
 ## Messaging convergence
 
+### FIXED 2026-08-30 - a group was FORGOTTEN 291 ms after it was created, by a concurrent sweep, and creation reported SUCCESS
+
+**This is the answer to the open question the previous P1 left**, asked in `CLAUDE.md` in those
+words: *whether any other sweep compares a live local read against an awaited server one*. It does,
+it is a different sweep with a different tag and a different predicate, and it is worse - the other
+one needed a group to be created during a fetch, this one fires during the creation itself.
+
+**THE EVIDENCE IS ON ONE CLOCK, DELIBERATELY.** Prod's `createdAt` and the browser console are two
+clocks and must not be subtracted; everything below is the ACTOR's own console, in order, from
+HEAL-REVOKE-7 `--order last`:
+
+```
+03:20:44.572  [RUST::INFO] create_group: 8868be1c...
+03:20:44.780  [GROUP] My other devices: 2 (tauri-...-vnde, web-...-m84y)
+03:20:44.830  [RUST::INFO] add_members_bulk to group: 8868be1c... (2 key packages)
+03:20:44.863  [RUST::INFO] forget_group: 8868be1c..., min_epoch=0
+03:20:44.870  [SYNC] WASM removed (conversation row held with no membership left): 8868be1c...
+03:20:44.901  Error syncing own devices: Group not found: 8868be1c...
+03:20:44.969  [OK] Group "HGRPejyu9" created.
+```
+
+**The window is in the ORDER OF CREATION ITSELF**, `createNewGroup` in
+`frontend/src/lib/utils/chat/groupCreation.ts`: `createRemoteGroup` puts the `dm_groups` row up,
+`createGroup` puts the LOCAL MLS group up, and only then does `registerMember` create the membership
+that makes it appear in `GET /api/mls/users/:id/groups`. **Between the second and the third, the
+group exists locally and is absent from the server LIST** - so any concurrent reader sees exactly the
+shape a dead group has.
+
+**AND THE REDUCER CANNOT TELL THEM APART, BECAUSE IT NEVER ASKS.**
+`decideAbsentLocalGroupFate` (`groupLifecycle.ts`) reaches `forget` under the reason *"conversation
+row held with no membership left"* from two facts only: the `dm_groups` row is `active`, and it
+carries no distribution scope. **It never reads a membership.** The name of the branch states a fact
+the code does not have - the strongest form of the rule this repo already carries, that a column is
+only evidence for the question it was written to answer.
+
+`initializeConnection`'s sweep is the caller, and its comment claims the snapshot makes it safe:
+*"Uses the `localGroups` snapshot captured at the start of the function (same instant as
+`serverIds`): prevents purging groups joined during the async operations in step 2."* That guard is
+real and it is about groups joined inside its OWN step 2. It says nothing about a group another flow
+is creating concurrently, and that is the case here.
+
+**WHAT IT COSTS, MEASURED, NOT FEARED.** The group is unreachable for everyone, permanently:
+
+- the creator answered `welcome_request` with `Group not found` **for 20 minutes**, every 60 s, to
+  two different devices (`03:21:03` through `03:41:12`);
+- `externalJoin` refused it `no_base_published` - the base that would have been joined is the state
+  that was just deleted, the same downstream shape as the previous P1;
+- prod holds the group ALIVE with the creator `active` and every other device stuck `pending`
+  (1 active / 3 pending, against 2 active / 2 pending for the sibling group of the run 5 minutes
+  earlier that did not hit the race);
+- two devices sat amber on it to the 600 s deadline, and the row FAILed on
+  `theNewGroupArrived: false`.
+
+**A SECOND DEFECT RIDES ON THE FIRST, AND IT IS WHY NOBODY SAW THIS.** The `catch` in
+`createNewGroup` logs the failure and CONTINUES, so 68 ms after the group became unusable the same
+console says `[OK] Group "HGRPejyu9" created.` and the conversation is inserted in the list. A user
+is shown a working group; every one of its members is locked out for ever.
+
+**NOT THE SAME DEFECT AS THE FIXED ONE, AND NOT EITHER QUEUED P2.** There is no
+`[MLS] forgetGroup ... (absent from server)` line anywhere in the run - the `actions.ts` sweep, whose
+ordering was fixed on 2026-08-30, did not fire. This is `initializeConnection`'s sweep, reached
+through `[SYNC]`. It is also neither the `no_key_package` refusal nor the stale-distribution-group
+rejoin.
+
+**IT IS A RACE, AND IT IS NOT RARE.** The adjacent `--order first` half, same runner, same bundle,
+minutes earlier, created its group cleanly and both devices reached it ready. One of two adjacent
+runs lost the group.
+
+**FIXED, ARCHITECTURALLY, THE SAME DAY** (user: *"si quelque chose depend du temps, c'est mauvais
+signe... on veut des choses logiques, deterministes, pas des race conditions"*). The window is gone
+rather than narrowed, and no clock, lock or retry is involved:
+
+1. **`createNewGroup` and `createDirectConversation` register the membership BEFORE creating the
+   local MLS group**, so "held in `getLocalGroups()`" implies "named by `getUserGroups`" for every
+   reader that will ever exist. This is the real fix - it removes the interval instead of teaching
+   each reader to dodge it.
+2. **`initializeConnection` captures the local set BEFORE awaiting the server list**, the same
+   inversion already fixed in `actions.ts`. Capturing early can only SPARE.
+3. **Neither path announces a group whose local MLS state is gone**, asserted as a fact
+   (`getLocalGroups().includes(id)`) and never by inspecting an error message.
+
+**THE FIX THAT WOULD NOT HAVE WORKED, RECORDED SO IT IS NOT TRIED AGAIN.** The destructive reducer's
+milder sibling `decideAbsentGroupFate` already takes `isStillUserMember` and names this exact hazard;
+giving `decideAbsentLocalGroupFate` the same signal looks like the clean answer and is not.
+`getGroupUserMembers` reads `dm_group_members` - written by `registerMember`, the call that had not
+run yet - so inside the window it returns an honest empty 200 and the group is forgotten with MORE
+confidence. A second read that races the same write is not a discriminator. **What remains open and
+is NOT this defect:** that reducer still reaches `forget` under the reason *"conversation row held
+with no membership left"* from a row being `active` with no distribution scope, having never read a
+membership. Worth closing on its own terms; it was not what destroyed this group.
+
+Tests: `groupCreation.order.test.ts` (new, three cases) and one case in
+`initializeConnection.sync.test.ts`; each was shown to FAIL with its fix reverted. Story in
+`CHANGELOG.md`, mechanism on [chat](frontend/modules/chat.md#a-group-must-be-nameable-by-the-server-before-it-is-holdable-here-or-every-sweep-is-a-hazard),
+rule (fourth site, plus the announcement rule) in [durable-rules](durable-rules.md).
+
+**WHAT THE ORIGINAL ENTRY SAID ABOUT WHERE A FIX BELONGS, kept because it was the reasoning:** Making the sweep skip a
+newly-created group is the same patch as the previous P1 and would work; it leaves the reducer still
+concluding non-membership from an absence it never checked, for the next caller. The architectural
+fix is to remove the overlap: the local group must not be visible to any sweep before the membership
+that makes it findable exists - and the branch that destroys state must require the fact its name
+claims. Per the standing directive, a reconciliation that repairs this afterwards is a witness, never
+a fix. **The swallowing `catch` must also stop reporting success over a group with no MLS state.**
+
+
+### P2 - the notification quick reply is reported broken, and the THREE usual causes are already ruled out (user, 2026-08-30)
+
+**The report.** The user answers a DM from the notification shade, without opening the app, and the
+reply does not arrive. Their own reading of it was "nothing can be sent on mobile while the app is
+killed". **That reading is wrong, and ruling it out is most of the value of this entry** - a later
+session must not spend the day re-deriving it from the same intuition.
+
+**Three causes eliminated by reading the design, before any measurement:**
+
+| Suspected cause | Why it is not that |
+| --- | --- |
+| The app is killed, so nothing can encrypt | Mobile MLS is NATIVE, not WASM: `TauriMlsService` invokes Rust and the state is on the FILESYSTEM (`mls_bin_write_lock`), never IndexedDB. No WebView is needed to encrypt |
+| There is no background send path | There is, and the quick reply is built and delivered ENTIRELY natively - `canari_native_build_text_message_proto`, then the shared drain: encrypt via JNI/FFI, POST `/api/mls/push/send` |
+| The device key is behind the biometric prompt a receiver cannot show | Android holds it at `setUserAuthenticationRequired(false)` ON PURPOSE, with the wiki's own warning never to set `setUnlockedDeviceRequired(true)` "which is exactly when a push arrives" ([auth](frontend/modules/auth.md)) |
+
+**What is actually true is that NOBODY HAS MEASURED IT SINCE THE FIXES.** `NOTIF-6` is `pending`,
+annotated *reported broken on an old APK*; check K is `owed` on both platforms. The WP-NOTIF-1 (a),
+(b) and (c) work landed AFTER that report, and check K says of the (c) half: *"it is the half most
+likely to still be wrong, because unlike (a) and (b) it has no compile check worth the name - it is
+pure TS + Rust, so it built the moment it was written."* That is this repo's own recurring shape - a
+green build is not a working system - so the report is credible and its cause is simply unknown.
+
+**THE FIRST MOVE IS THE MEASUREMENT, NOT A PATCH.** Writing a fix against a suspected cause nobody
+has observed is the move `CLAUDE.md` forbids for iOS lifecycle bugs, for the same reason: nothing
+here could tell whether it worked. Run [check K](device-verification.md#k-the-notification-quick-reply---owed-on-both-platforms)
+on **0.14.12** - it separates the three remaining causes in one pass, and each has a distinct line:
+
+- the broadcast never reaches the receiver -> no `CanariNotificationActionReceiver` line at all;
+- the native encrypt or POST fails -> no `sendQueuedMessagePush: HTTP 201`, no `1 sent, 0 remaining`;
+- it leaves and vanishes locally -> those lines present, and no `[OUTBOX_MIRROR]` adoption on reopen.
+
+K2 (airplane mode, the undelivered reply) is the half to run second, and the one to distrust.
+
+
 ### P2 - ten push notifications were REFUSED by FCM for size in one run, and the guard measures the wrong quantity (measured 2026-08-29)
 
 Read off HEAL-REVOKE-5's server window on `96bdd1bb`, which no cell on the board carries:

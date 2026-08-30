@@ -238,6 +238,24 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A newly created group could be DESTROYED by a sweep milliseconds after it was created, leaving
+  a conversation nobody - not even its creator - could ever open.** Measured on 2026-08-30 by the
+  HEAL-REVOKE-7 campaign row, on one clock: `create_group` at 44.572, `add_members_bulk` at 44.830,
+  and at 44.863 the connection sweep called `forget_group` on that very id, logging
+  `[SYNC] WASM removed (conversation row held with no membership left)`. 31 ms later the creator
+  could no longer find its own group and answered every `welcome_request` with `Group not found`
+  for twenty minutes, to two different devices; the group is alive on the server with its creator
+  `active` and every other device stuck `pending`. Two independent causes, both closed. **The
+  sweep read the local group set AFTER awaiting the server list**, so a group born during that
+  fetch was compared against a list that could not possibly name it - the local set is now captured
+  BEFORE the fetch, which can only ever spare a group. **And group creation registered the local
+  MLS group before the membership that makes it visible**, opening the window in the first place -
+  the membership is now registered first, in both the group and the direct-conversation paths, so
+  "held locally" implies "named by the server" with no interval to get right. Additionally,
+  creation no longer reports success when the local MLS state has vanished: the catch that
+  tolerates a single device's failed Welcome was also swallowing the group's own disappearance and
+  walking on to `[OK] Group created.`, presenting a conversation that could never work.
+
 - **A conversation created while the app was refreshing its group list could be destroyed by its own
   creator, seconds old, leaving every member unable to ever open it.** The discovery sweep purges the
   MLS state of any local group the server did not list, and it read the local set AFTER fetching that

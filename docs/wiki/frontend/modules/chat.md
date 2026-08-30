@@ -1157,14 +1157,70 @@ nobody is left to send, and the base for an external join was never published - 
 is the app's own report of that. Devices created afterwards were counted as members by the server and
 could never open the conversation.
 
-The local set is now captured **before** the server is asked, which `initializeConnection`'s sweep has
-done since WP-GRAINE-1 - it takes `localGroups` and `serverIds` at one instant and says why in a
-comment. Two copies of one decision, and only one of them carried it.
+The local set is now captured **before** the server is asked.
+
+**AND THE SENTENCE THAT STOOD HERE WAS WRONG, WHICH IS THE MOST USEFUL THING ON THIS PAGE.** It said
+`initializeConnection`'s sweep had taken both reads at one instant since WP-GRAINE-1 and said so in a
+comment, so only this copy of the decision needed fixing. The comment said that; **the code did the
+opposite**, reading `getLocalGroups()` after awaiting `getUserGroups`. The audit cleared that site by
+reading its prose, and it went on to destroy a group 291 ms old the following night - see the section
+below. A comment is a claim about code, never evidence of it, and an audit that accepts one has
+audited nothing.
 
 **The asymmetry is what makes the fix free.** Capturing early can only SPARE a group: one that really
 did disappear during the fetch is simply swept on the next pass, while one that was just born is no
 longer destroyed. A purge whose two error directions cost a delayed sweep and an unrecoverable
 conversation should always be biased towards the first.
+
+### A group must be NAMEABLE by the server before it is HOLDABLE here, or every sweep is a hazard
+
+The purge above was one of two readers with the same inversion, and fixing readers one at a time was
+the wrong shape of answer. The window they were all falling into is opened by the ORDER OF CREATION
+ITSELF.
+
+`createNewGroup` used to run `createRemoteGroup` -> `createGroup` (local MLS) -> `registerMember`.
+Only the third call writes `dm_group_members`, and that table is what `GET /api/mls/users/:id/groups`
+answers from - the single list every sweep consults to decide whether a local group still belongs to
+anything. **Between the second and the third call the group exists locally and cannot be named by the
+server**, which is indistinguishable, to any reader, from a group that is genuinely dead.
+
+Measured by HEAL-REVOKE-7 on 2026-08-30, on the creator's own console and one clock only (prod's
+timestamps are a different clock and are deliberately not subtracted from these):
+
+```
+44.572  [RUST::INFO] create_group: 8868be1c...
+44.830  [RUST::INFO] add_members_bulk to group: 8868be1c... (2 key packages)
+44.863  [RUST::INFO] forget_group: 8868be1c..., min_epoch=0
+44.870  [SYNC] WASM removed (conversation row held with no membership left): 8868be1c...
+44.901  Error syncing own devices: Group not found: 8868be1c...
+44.969  [OK] Group "HGRPejyu9" created.
+```
+
+The consequences are the ones the section above already describes, and they are permanent: the
+creator answered `welcome_request` with `Group not found` every 60 s for twenty minutes to two
+different devices, `externalJoin` refused `no_base_published`, and the group sits on prod alive with
+its creator `active` and every other device `pending`. The adjacent run five minutes earlier, same
+build, created its group cleanly - the race is real and it is not rare.
+
+**The membership is now registered before the local group is created**, in the group path and in the
+direct-conversation path both, so `getLocalGroups().includes(id)` implies the server already names
+it. There is no interval left to reason about.
+
+**A DISCRIMINATING EXTRA READ WOULD NOT HAVE WORKED, AND IT IS WORTH KNOWING WHY.** The obvious fix
+is to give the destructive reducer the signal its milder sibling already has: `decideAbsentGroupFate`
+takes `isStillUserMember` and keeps a group on `true` or `null`, naming this very hazard - *"may be
+stale for a group we just created/joined"*. But `getGroupUserMembers` reads `dm_group_members`, the
+table `registerMember` had not yet written, so inside the window it returns a genuine empty 200 and
+the reducer would have forgotten the group with more confidence, not less. **A second read that
+races the same write is not a discriminator.** The reducer's `forget` branch still names a fact it
+never checks - "conversation row held with no membership left", concluded from a row being `active`
+with no distribution scope - and that remains worth closing, but it was never what saved this group.
+
+**Creation also stopped announcing success it cannot back.** The catch around the bulk add tolerates
+one device's failed Welcome on purpose; it was also swallowing the group's own disappearance, which
+is how `[OK] Group created.` came 68 ms after the state was gone. Both paths now assert the fact the
+announcement claims before making it, and a failure there hands the outer catch a server-side orphan
+to delete - no group at all being strictly better than an unusable one.
 
 ### An exit is owed to the SERVER, and the local purge is not what pays it (DEL-10)
 

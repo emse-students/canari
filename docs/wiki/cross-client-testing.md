@@ -30,7 +30,7 @@ is the numbered ladder below, top to bottom - the only copy of that order.**
 | 13 LIFE | 8 | - | `pending` |
 | 14 NOTIF | 21 | - | `pending` |
 | 15 CALL | 20 | - | `pending` - no runner exists |
-| 16 HEAL | 32 | `48b65d08`, HEAL-NEW-3/11 `ebef7f3c`, HEAL-NEW-2/12/15 `038c7e8d`, HEAL-REVOKE-5/8 `0044a041` | 9/32 taken: 3 `PASS`, HEAL-NEW-0/2/12/15 and HEAL-REVOKE-5/8 `PASS-DIRTY`; the 2/12 ORDER PAIR is EQUAL, adjudicated on the campaign page; 1 and 3 owe an ungated re-run |
+| 16 HEAL | 33 | `48b65d08`, HEAL-NEW-3/11 `ebef7f3c`, HEAL-NEW-2/12/15 `038c7e8d`, HEAL-REVOKE-5/8 `0044a041` | 9/33 taken: 3 `PASS`, HEAL-NEW-0/2/12/15 and HEAL-REVOKE-5/8 `PASS-DIRTY`; the 2/12 ORDER PAIR is EQUAL, adjudicated on the campaign page; 1 and 3 owe an ungated re-run |
 | 17 PIN | 10 | - | `pending` - no runner exists |
 | 18 CORRUPT | 10 | - | `pending` - no runner exists |
 
@@ -367,7 +367,7 @@ transform is active.
 
 ## 16 - HEAL - does a broken group repair itself?
 
-Thirty-two rows, three groups, four runners (`heal.mjs`, `healrevoke.mjs --row N`, `heal-a1.mjs`,
+Thirty-three rows, three groups, four runners (`heal.mjs`, `healrevoke.mjs --row N`, `heal-a1.mjs`,
 `healnew.mjs --row N`): `HEAL-*` breaks a device that already held the group, `HEAL-REVOKE-*` asserts
 that revocation is a WIPE, `HEAL-NEW-*` asks what a device the server has never seen can recover.
 Every row that mints a device is `+user`. The break is a restored snapshot of the web MLS database,
@@ -410,6 +410,7 @@ four wipe defects found by hand:
 | HEAL-NEW-3 | Fresh device, **another device of the SAME user online** (W1) | `+user` | **`PASS`** on `ebef7f3c` - 10/10 ready; ungated, re-run owed |
 | HEAL-NEW-4 | Fresh device, the only possible responder is **the phone, foreground** | `+A1` `+user` | `pending` |
 | HEAL-NEW-5 | The same, **phone BACKGROUNDED** - a responder that cannot answer must not leave a group on Sync with nothing owed, which is what says whether the ladder terminates on a PROOF or on a clock | `+A1` `+user` | `pending` |
+| HEAL-NEW-5b | The same with the phone **KILLED**, not backgrounded - the case a user actually creates, and the one no row asked about before 2026-08-30. A responder that is not merely slow but ABSENT must still leave every group either served or explicitly owed, never amber for ever | `+A1` `+user` | `pending` - written 2026-08-30 |
 | HEAL-NEW-6 | **The new device IS the phone**, enrolled after the account has history - this is MULTI-3, and it stops being `SKIPPED` the moment a 2FA is being paid anyway | `+A1` `+user` | `pending` |
 | HEAL-NEW-7 | **A DELETED conversation must not come back as a Sync row** - three causes to tell apart, and only two are visible to a new device | `+user` | `pending` |
 | HEAL-NEW-8 | **N conversations at once: do they ALL repair?** The assertion is a COUNT plus the identity of every laggard, never a sample | `+user` | `pending` |

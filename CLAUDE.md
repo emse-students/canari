@@ -220,7 +220,28 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
    question whose answer is a POPULATION. **Four rows are written into rung 12 MULTI** (7-10), all
    needing only `W1 W2`, on the board.
 
-4. **DEFERRED PAST THE LADDER - seven UX and rendering items**, substance in
+4. **A GROUP WAS FORGOTTEN 291 ms AFTER ITS CREATION BY A CONCURRENT SWEEP - P1, found by
+   HEAL-REVOKE-7 and FIXED 2026-08-30, answering the open question the previous P1 left.** Yes, another sweep compares a live local read against an older server one: it
+   is `initializeConnection`'s, tagged `[SYNC]`, and the window is inside `createNewGroup` itself -
+   the LOCAL group exists between `createGroup` and `registerMember`, so the server LIST cannot name
+   it yet. `decideAbsentLocalGroupFate` then forgets it under "conversation row held with no
+   membership left" **without ever reading a membership**. Fixed at the WRITE, not at the readers:
+   the membership is now registered before the local group exists, in both creation paths, so the
+   window is gone rather than narrowed. Story in `CHANGELOG.md`, mechanism on
+   [chat](docs/wiki/frontend/modules/chat.md), rule (its FOURTH site) in
+   [durable-rules](docs/wiki/durable-rules.md). **Two things must not be re-derived:** the obvious
+   `isStillUserMember` fix would NOT have worked, and the reducer still concludes a non-membership
+   it never reads - both in [backlog](docs/wiki/backlog.md). **A DEPLOY IS OWED before any further
+   HEAL verdict about a newly created group.**
+
+5. **THE PHONE'S TURN, VALIDATED BY THE USER 2026-08-30**, in this order and no other: **check K on
+   0.14.12** (the notification quick reply the user reports broken - the three usual causes are
+   ALREADY RULED OUT in [backlog](docs/wiki/backlog.md), so the first move is the MEASUREMENT, never
+   a patch); then the new **HEAL-NEW-5b**, the killed-responder row no cell asked about before;
+   then **HEAL-REVOKE-6** and the six other `+A1` HEAL rows. A1 is plugged back in and adb sees it;
+   the CDP forward wants `node phone.mjs 9333`.
+
+6. **DEFERRED PAST THE LADDER - seven UX and rendering items**, substance in
    [backlog](docs/wiki/backlog.md) and nowhere else, named here only so none is forgotten: the POSTS
    search that loads the whole base; the EMOJI picker that neither scrolls nor stays on screen;
    HEAL's partially-restored old client; **ONE BUNDLED EMOJI FONT everywhere** (Noto Color Emoji,
@@ -230,11 +251,11 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
    dead row, the device controls and the iOS bars want ONE pass over `app.css`, not seven local
    patches.
 
-5. **THE SFU RUNS SIX webrtc MAJORS NOBODY HAS PLACED A CALL ON.** It compiles, clippy is clean and
+7. **THE SFU RUNS SIX webrtc MAJORS NOBODY HAS PLACED A CALL ON.** It compiles, clippy is clean and
    its ten tests pass - none of which runs the ICE stack. What settles it is ONE relay-path call,
    which is rung 15 CALL and has no runner. **A release must not carry this unplaced.**
 
-6. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** - asked by the user 2026-08-25
+8. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** - asked by the user 2026-08-25
    (*"le meme point de depart, independamment de ce qui a pu se passer avant"*). The PHASE-level half
    is `run.mjs`'s preflight; the per-STEP half is pulled forward the moment a rung is blocked by an
    inherited state, as HEAL-REVOKE was. Contract and audit in [backlog](docs/wiki/backlog.md).

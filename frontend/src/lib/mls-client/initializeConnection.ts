@@ -161,6 +161,31 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
     }
   }
 
+  // THE LOCAL SET IS CAPTURED BEFORE THE SERVER LIST, AND THE ORDER IS THE WHOLE POINT.
+  //
+  // Step 3 below destroys the MLS tree of any local group the server did not list. That is only
+  // sound for groups that already existed when the server was asked: reading the local set AFTER
+  // the awaited fetch - which is what this did - puts every group created DURING the fetch into a
+  // comparison against a snapshot that could not possibly contain it, and the sweep then deletes
+  // the only copy of a group that is milliseconds old.
+  //
+  // MEASURED, NOT REASONED, on 2026-08-30 by HEAL-REVOKE-7. One clock, the creator's own console:
+  // `create_group: 8868be1c` at 44.572, `add_members_bulk` at 44.830, then this very sweep at
+  // 44.863 - `forget_group: 8868be1c, min_epoch=0`, logged as `[SYNC] WASM removed (conversation
+  // row held with no membership left)`. 31 ms later the creator could no longer find its own
+  // group, and it answered `welcome_request` with `Group not found` for the next twenty minutes,
+  // to two different devices. The group is alive on prod with its creator `active` and every other
+  // device stuck `pending`, joinable by nobody.
+  //
+  // THE COMMENT THAT USED TO BE HERE CLAIMED THIS WAS ALREADY TRUE - "the `localGroups` snapshot
+  // captured at the start of the function (same instant as `serverIds`)" - and the code did the
+  // opposite, which is why the first audit of this defect cleared this site by reading the prose.
+  // The twin in `actions.ts` was fixed hours earlier and carries the same note.
+  //
+  // Capturing early can only ever SPARE a group - one that became absent during the fetch is
+  // simply swept on the next pass - so this cannot destroy anything the old order did not.
+  const localGroups = new Set(mlsService.getLocalGroups());
+
   // 2. Groupes du serveur
   let groups: UserGroupRow[] = [];
   // `getUserGroups` throws on HTTP errors (502/503/timeout during a CD redeploy).
@@ -177,7 +202,6 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
     // Continue anyway to process device invitations.
   }
 
-  const localGroups = new Set(mlsService.getLocalGroups());
   let stateMutated = false;
 
   // All group IDs known to the server (used to purge WASM orphans in step 3).
@@ -218,8 +242,10 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
   }
 
   // 3. Purge WASM state for groups no longer known to the server.
-  // Uses the `localGroups` snapshot captured at the start of the function (same instant
-  // as `serverIds`): prevents purging groups joined during the async operations in step 2.
+  // Uses the `localGroups` snapshot captured BEFORE the server list was fetched, which is what
+  // makes the comparison sound - see the note at that capture. It also keeps the older guarantee
+  // it was written for: a group joined during the async operations in step 2 is not in the
+  // snapshot either, so it cannot be purged here.
   //
   // ABSENCE FROM THE LIST IS A REASON TO ASK, NEVER A REASON TO DESTROY. `getUserGroups` answers
   // for CONVERSATIONS, and a community's Graine key-distribution group is excluded from it by

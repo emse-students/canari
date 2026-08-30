@@ -126,8 +126,24 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
   try {
     groupId = await mlsService.createRemoteGroup(groupDisplayName, true); // true = multi-user group
     conversationKey = groupId;
-    await mlsService.createGroup(groupId);
+
+    // THE MEMBERSHIP IS REGISTERED BEFORE THE LOCAL GROUP EXISTS, AND THE ORDER IS AN INVARIANT.
+    //
+    // `registerMember` is what puts this user into `dm_group_members`, and that table is what
+    // `GET /api/mls/users/:id/groups` answers from - the one list every sweep uses to decide
+    // whether a local group still has anything to belong to. Creating the local MLS group first
+    // opened a window in which the group EXISTS locally and CANNOT be named by the server list, so
+    // a concurrent sweep saw precisely the shape a dead group has and destroyed it (see the note
+    // in `initializeConnection`, and the P1 measured on 2026-08-30).
+    //
+    // Registering first makes the implication hold in one direction for ever: if a group is in
+    // `getLocalGroups()`, the server already names it. There is no interval to get right and no
+    // clock involved - the window is gone rather than narrowed.
+    //
+    // The reverse failure is strictly better and already handled: a membership whose local group
+    // never got created leaves a server-side orphan, which the outer catch deletes.
     await mlsService.registerMember(groupId, userId);
+    await mlsService.createGroup(groupId);
 
     // Add own other devices to the group - use a single bulk commit to avoid
     // epoch fragmentation (sequential addMember would create one commit per device,
@@ -175,6 +191,26 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
     } else {
       // No other devices: still save state after createGroup.
       await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
+    }
+
+    // A GROUP WITH NO LOCAL MLS STATE IS NOT A CREATED GROUP, AND MUST NEVER BE ANNOUNCED AS ONE.
+    //
+    // The member-sync block above catches deliberately: one device's Welcome failing is not a
+    // reason to abort a group, and those devices recover through their own `welcome_request`. But
+    // the same catch also swallowed the case where the group itself had ceased to exist locally,
+    // and execution walked straight on to `[OK] Group created.` - 68 ms after the state was gone,
+    // measured 2026-08-30. The user was shown a working conversation whose every member, the
+    // creator included, was locked out for ever.
+    //
+    // THE CHECK IS A FACT, NOT AN ERROR MESSAGE. Classifying by the text of a caught exception
+    // would make this the one call site that understands that prose; `getLocalGroups()` answers
+    // the only question that matters here - does this device hold the state - and it answers false
+    // exactly when something forgot the group. Failing here hands the outer catch a group to clean
+    // up server-side, which is the correct outcome: no group at all beats an unusable one.
+    if (!mlsService.getLocalGroups().includes(groupId)) {
+      throw new Error(
+        `Local MLS state for ${groupId} disappeared during creation - refusing to present the group`
+      );
     }
 
     conversations.set(conversationKey, {
@@ -614,10 +650,14 @@ export async function startNewConversation(
     });
     maybeSelect(conversationKey);
 
-    await mlsService.createGroup(groupId);
-    log(`[DM] Local MLS group created: ${groupId}`);
+    // SAME INVARIANT AS `createNewGroup`, AND THIS IS THE COMMONER PATH OF THE TWO. The membership
+    // is what makes the group nameable by `getUserGroups`; holding it locally first opens the
+    // window in which a concurrent sweep reads a brand-new conversation as a dead one. See the
+    // long note at the other site.
     await mlsService.registerMember(groupId, userId);
     log(`[DM] Server membership registered for ${userId}`);
+    await mlsService.createGroup(groupId);
+    log(`[DM] Local MLS group created: ${groupId}`);
 
     // Collect ALL devices (contact + own) for a single bulk add
     // Best-effort: a network error fetching our own device list must not abort conversation
@@ -637,6 +677,15 @@ export async function startNewConversation(
     );
 
     await performDirectAdd(groupId, allDevices, contactDeviceIds, contact, deps);
+
+    // The same fact the group path checks, for the same reason: `pending` is an honest placeholder,
+    // `active` is a claim that this device can decrypt the conversation. Never promote on state
+    // that is gone - the outer catch then cleans both estates.
+    if (!mlsService.getLocalGroups().includes(groupId)) {
+      throw new Error(
+        `Local MLS state for ${groupId} disappeared during creation - refusing to activate the conversation`
+      );
+    }
 
     const convo = conversations.get(conversationKey)!;
     conversations.set(conversationKey, { ...convo, lifecycle: 'active' });

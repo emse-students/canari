@@ -199,6 +199,55 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
     expect(mls.forgetGroup).not.toHaveBeenCalledWith('g-live');
   });
 
+  /**
+   * The regression of 2026-08-30: a group born while the server list was in flight.
+   *
+   * `getLocalGroups` used to be read AFTER the awaited `getUserGroups`, so a group created during
+   * that fetch entered the comparison against a list that could not possibly name it. Its
+   * `dm_groups` row is `active` and carries no distribution scope, which is the reducer's `forget`
+   * branch - so the sweep destroyed the only copy of a group milliseconds old, and its creator
+   * then answered `welcome_request` with `Group not found` for twenty minutes.
+   *
+   * The stub reproduces the ONLY thing that matters: what the local set contains depends on whether
+   * the fetch has begun. Reading it first is what makes the group invisible to this sweep.
+   */
+  it('does NOT forget a group created while the server list was being fetched', async () => {
+    let theFetchHasStarted = false;
+    const mls = {
+      generateKeyPackage: vi.fn().mockResolvedValue(undefined),
+      reconcilePublishedKeyPackages: vi.fn().mockResolvedValue(undefined),
+      getUserGroups: vi.fn().mockImplementation(async () => {
+        theFetchHasStarted = true;
+        return [{ groupId: 'g-live', name: 'Equipe', isGroup: true }];
+      }),
+      getLocalGroups: vi
+        .fn()
+        .mockImplementation(() =>
+          theFetchHasStarted ? ['g-live', 'g-born-during-the-fetch'] : ['g-live']
+        ),
+      isDistributionGroup: vi.fn().mockReturnValue(false),
+      // A live conversation row: exactly the shape the reducer forgets on.
+      getGroupServerStatus: vi.fn().mockResolvedValue({ deletedAt: null }),
+      registerDistributionGroup: vi.fn(),
+      noteDistributionGroup: vi.fn(),
+      ...forgetPair(),
+      saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
+      getDeviceId: vi.fn().mockReturnValue('dev-1'),
+      waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await syncConnectionAfterWsOpen({
+      mlsService: mls as any,
+      userId: 'u1',
+      deviceKeyB64: 'pin1',
+      processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
+      log: vi.fn(),
+    });
+
+    expect(mls.forgetGroup).not.toHaveBeenCalledWith('g-born-during-the-fetch');
+    expect(mls.forgetGroup).not.toHaveBeenCalled();
+  });
+
   it('keeps an orphan whose status could not be read - doubt is never a licence to destroy', async () => {
     const mls = {
       generateKeyPackage: vi.fn().mockResolvedValue(undefined),
