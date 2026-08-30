@@ -916,43 +916,55 @@ present-from-the-start row AND an arrives-late row, and why the verdict is an EQ
 difference in the FINAL state between two orders is a `FAIL`; a difference in the TIME to reach it
 is dirt carrying a number.** Reconciliation that depends on who booted first is not reconciliation.
 
-### The HEAL-REVOKE-7 ORDER PAIR, NOT adjudicated 2026-08-30 - what it found instead
+### The HEAL-REVOKE-7 ORDER PAIR, adjudicated 2026-08-30 - the ORDER changes NOTHING, and the row found a P1 doing it
 
-**The pair has no verdict and must not be given one from half a comparison.** `--order last` never
-ran: W1's browser profile lost its CAS session between the two halves and now sits on
-`Authentification renforcee`, the step-up page, so the preflight refuses - correctly - and the one
-step no tool here can answer is owed to a human. The board cell says `INVALID`, which is the honest
-state of the ROW; the pair's question is untouched.
+Both halves ran adjacently on `0f06a4b3`, one fleet, one bundle, after the world was swept clean of
+the orphan the FIRST attempt had left in it. **The comparison the pair exists for:**
 
-**Two things were established on the way, and neither needs the pair to be believed.**
+| | `--order first`, back before the others are online | `--order last`, back after |
+| --- | --- | --- |
+| verdict | `PASS-DIRTY`, `unmet: []` | `FAIL`, on an assertion that is not the pair's |
+| returned device | 11 rows, 11 ready, 0 syncing | 12 rows, 11 ready, 1 syncing |
+| reference, minted minutes later | 11 rows, 11 ready, 0 syncing | 12 rows, 11 ready, 1 syncing |
+| `equalityGap` | `[]` | `[]` |
+| time to settle | 22 150 ms | never settled, 601 356 ms |
 
-**The row could not previously ask its own question.** `--order first` set the topology to nothing
-and left it there for the rest of the run, so the subset a return waits for was empty by construction
-and the watch could never terminate whatever the app did - `25 rows, 0 ready, 25 syncing` from the
-first sample to the 600 s deadline, with three expectations unsatisfiable by any behaviour of the
-product. Isolation is now a PHASE: observed, recorded, then lifted, so the equality the pair asserts
-is between two devices in the same populated world. The reasoning is in
-[testing-methodology](testing-methodology.md#a-premise-a-row-never-lifts-is-not-a-premise-it-is-a-different-question),
-including an assertion this added and RETRACTED after one run.
+**In BOTH orders the returning device ends exactly where a freshly minted device ends. The pair
+PASSES its own question**: the order of the return does not change the final state. The difference
+is in TIME, and in `last` the time is unbounded - which is dirt carrying a number only because both
+devices were held by the SAME cause, equally.
 
-**And the fixed row immediately found a P1 that no other row on this board could reach.** The actor
-destroyed the only copy of a group it had created seconds earlier, because a purge compared a live
-local read against an older server list; every member stayed counted by the server and none could
-ever open the conversation. Prod's own timestamp settled the mechanism - the group's `createdAt` is
-the same second as the line that forgot it - and it is fixed, with a test shown to fail without the
-fix. Story in `CHANGELOG.md`, mechanism on
-[chat](frontend/modules/chat.md#the-orphan-purge-compares-two-reads-and-their-order-decides-whether-it-destroys-a-new-group).
+**THE FIRST ATTEMPT AT THIS PAIR HAD TO BE THROWN AWAY, AND THAT IS THE INSTRUMENT LESSON.** It
+recorded `first` = `FAIL` with `gap: ["rows: 29 vs 28", "syncing: 1 vs 0"]` and `last` = `PASS-DIRTY`
+with an empty gap, which reads exactly like "the order matters". It did not. The whole difference was
+one permanently orphaned group, `50799ae8`, left alive on the server by the previous P1: it appeared
+on the returning device and not on the fresh reference in one half, and on both in the other.
+**A yardstick minted in a world that contains a corpse measures the corpse.** Sweeping it (with
+`cleanup.mjs`, through the shared `debris.mjs` allowlist - 20 live throwaway groups, 0 left) and
+re-running both halves turned `first` from `FAIL` into `PASS-DIRTY` with an empty gap, on identical
+code. Nothing about the product had changed.
 
-**What the pair still owes, once W1 can log in again:** both halves, adjacent, one fleet and one
-bundle, under the runner as it now stands - the `--order first` measurement taken before the
-retraction is not comparable with a `--order last` taken after it.
+**WHY `last` STILL FAILED, AND WHY IT IS NOT THE PAIR'S ANSWER.** Its three unmet expectations are
+`bothSettled`, `theNewGroupArrived` and `theNewGroupArrivedOnTheReferenceToo` - the group the runner
+creates while the victim is away never became ready, on EITHER device. The cause is a P1 this row
+found: the actor created the group and a concurrent sweep forgot it 291 ms later, so the only member
+who could serve a Welcome answered `Group not found` for twenty minutes. Fixed the same day in
+`edb8d7ab` - story in `CHANGELOG.md`, mechanism on
+[chat](frontend/modules/chat.md#a-group-must-be-nameable-by-the-server-before-it-is-holdable-here-or-every-sweep-is-a-hazard).
+**The equality the pair asserts was met anyway, because both devices were equally locked out** - which
+is precisely the shape this group of rows was designed to distinguish from a device ending with LESS.
 
-**`node rows.mjs` NOW SAYS "runner is now 4bfefd4080ab" FOR HEAL-REVOKE-5 AND -8, AND NEITHER OWES A
-RE-RUN FOR IT.** Every change is confined to the isolated-return path: `beforeTheWatch` is null for
-any row whose `returnTopology` is non-empty, so 5 and 8 execute exactly the code they executed, and
-the one shared edit - deleting `theSettlePredicateKnewWhatToWaitFor`'s exemption - removed a
-disjunct that was already false for them, leaving `back.target.ids.size > 0`, which is what they were
-already judged on. The checkSha moved; what those two rows assert did not.
+**What the row owes: half B re-run on a build carrying the fix.** The pair's adjudication does not
+depend on it - the order question is settled in both worlds - but HEAL-REVOKE-7 cannot carry a
+passing cell while its last `last` is a `FAIL`.
+
+**Two things the run says that no cell carries.** The isolated phase healed **0 of 11** rows in
+20 099 ms with nobody online, `abandonedOn: null` - the third such sample (0/29, 1/26, 0/11), and the
+reason the assertion written there on 2026-08-29 was retracted: the count is not deterministic, only
+the failure to settle is. And **the server window was `NOT CLEAN` for both halves** and is not on the
+ledger: `chat-gateway` 997 then 1 349 lines, `chat-delivery-service` 4 171 then 4 599 with 41 and 84
+unexplained, `core-service` 9 then 8, `social-service` 28 then 66; media, call and frontend-ssr clean
+throughout. `run.mjs` prints that window per pass and `gate()` never sees it.
 
 ### The 2 / 12 ORDER PAIR, adjudicated 2026-08-29 - the final states are EQUAL
 
