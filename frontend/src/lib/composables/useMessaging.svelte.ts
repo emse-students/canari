@@ -33,6 +33,7 @@ import {
   messageTime,
 } from '$lib/utils/chat/messageOrder';
 import { isOwnMessage } from '$lib/utils/chat/messageUtils';
+import { isUnreadForUser, watermarkFor } from '$lib/utils/chat/readState';
 import {
   MAX_DISTINCT_MESSAGE_REACTIONS,
   activeReactions,
@@ -438,7 +439,13 @@ export function useMessaging() {
     }
 
     const isConversationOpen = ctx.selectedContact === normalized;
-    const shouldMarkUnread = !isOwn && !isConversationOpen;
+    // The same question the batch path asks, which until 2026-08-30 it did not: this one forgot
+    // the watermark AND counted system messages, so a replayed frame taking the single path could
+    // still raise a badge for something already read, and a "X joined" notice raised one for
+    // something nobody reads at all.
+    const shouldMarkUnread =
+      !isConversationOpen &&
+      isUnreadForUser(newMsg, watermarkFor(convo.readWatermarks, ctx.userId.toLowerCase()));
     const nextUnreadCount = shouldMarkUnread
       ? (convo.unreadCount ?? 0) + 1
       : isConversationOpen
@@ -632,8 +639,16 @@ export function useMessaging() {
     }
 
     const isConversationOpen = ctx.selectedContact === normalized;
-    const addedFromOthers = brandNew.filter((m) => !m.isOwn && !m.isSystem).length;
-    const nextUnreadCount = isConversationOpen ? 0 : (convo.unreadCount ?? 0) + addedFromOthers;
+    // COUNTED AGAINST THIS USER'S OWN WATERMARK, not against "arrived just now". The two are the
+    // same thing only for live traffic; a reconciliation delivers frames that are new to THIS
+    // device and were read long ago on another one, and counting those raised a badge the next
+    // read receipt in the same replay immediately cleared. Interleaved, the pair made a
+    // conversation flash read/unread for the whole reconciliation. The watermark is persisted on
+    // the conversation, so it is already loaded before any of this runs - the count was ignoring a
+    // fact it held. Deriving it here makes the result independent of the order frames arrive in.
+    const myWatermark = watermarkFor(convo.readWatermarks, ctx.userId.toLowerCase());
+    const addedUnread = brandNew.filter((msg) => isUnreadForUser(msg, myWatermark)).length;
+    const nextUnreadCount = isConversationOpen ? 0 : (convo.unreadCount ?? 0) + addedUnread;
 
     const withUpgrades = convo.messages.map((m) => upgradedById.get(m.id) ?? m);
     const merged = mergeMessagesInInputOrder(withUpgrades, brandNew);

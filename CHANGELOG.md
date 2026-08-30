@@ -238,6 +238,23 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A conversation flashed read / unread / read for the whole of a history reconciliation.** The
+  unread badge is meant to be derived from this user's own read watermark - `countUnreadForUser` -
+  and two of the four sites that write it already were. Both add paths were not: they inferred
+  "unseen" from "arrived just now", which is the same thing only for live traffic. A replay delivers
+  frames that are new to THIS device yet were read long ago on another one, interleaved with the read
+  receipts that zero the count, so applying each in arrival order replayed the conversation's entire
+  read history in fast-forward.
+
+  The watermark is persisted on the conversation and already loaded before any frame arrives, so
+  nothing had to be fetched: the count was ignoring a fact it held. Deriving it makes the answer
+  independent of the order frames arrive in, which is the property the blinking violated and the one
+  the new tests pin - including that they fail against the old code.
+
+  It also settled a disagreement between the two paths: the batch one had always excluded system
+  messages from the count and the single one had not, so a "X joined" notice raised a badge for
+  something nobody reads, on one path only.
+
 - **A mention showed the mentioned person's raw id before their name, and kept showing it if the
   name never resolved.** `splitTextWithMentions` passed the user id to `getUserDisplayNameSync` as
   its own fallback, putting back the one value that function is careful never to return - so a cold

@@ -597,6 +597,30 @@ never agree to move back; and the pre-watermark `read_receipt` frame is still DE
 into an instant using the messages the device holds - see
 [legacy-compatibility](../legacy-compatibility.md).
 
+#### The unread count is DERIVED from the watermark, on every path that writes it
+
+The badge is not a tally kept up to date by whoever adds a message; it is `countUnreadForUser`
+applied to this user's own watermark. Four sites write it, and until 2026-08-30 only two asked that
+question - the history-bundle merge and the post-replay recount. Both add paths, `addMessageToChat`
+and `batchAddMessages`, inferred "unseen" from "arrived just now".
+
+**That proxy is exactly what a reconciliation breaks.** A replay delivers frames that are new to THIS
+device and were read long ago on another one, and it delivers them interleaved with the read receipts
+that zero the count. Applied in arrival order, the pair replays the conversation's entire read
+history in fast-forward: the tile flashed read / unread / read for as long as the reconciliation ran
+(reported from real use, 2026-08-30). The count was not merely late - it was answering a different
+question from the one the badge asks.
+
+The watermark is persisted on the conversation and is therefore already loaded before any frame
+arrives, so nothing had to be fetched to fix this: the add paths were ignoring a fact they held.
+Deriving makes the result independent of the ORDER frames arrive in, which is the property the blink
+violated and the one the tests pin.
+
+Aligning the two also settled a disagreement between them: `batchAddMessages` had always excluded
+system messages from the count, and `addMessageToChat` had not, so a "X joined" notice raised a badge
+for something nobody reads - on one path only. `isUnreadForUser` is now the single place that decides,
+which is what keeps the four sites from drifting again.
+
 #### The two hydration paths are MIRRORS and must be edited together
 
 `toConversationMeta` and the in-memory seed in `loadExistingConversations` build the same object from
