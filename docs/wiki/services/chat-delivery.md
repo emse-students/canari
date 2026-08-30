@@ -684,11 +684,36 @@ module state that latches).
 
 Both platforms are delivered through **Firebase Cloud Messaging**; there is no direct
 APNs provider in the backend. For each `PushToken`, `MessagingService` issues one
-`getMessaging().send()` carrying:
+`getMessaging().send()` carrying **only the half that token's platform reads**:
 
-- a `data` map — read by Android's `onMessageReceived` (fires foreground **and** background);
-- an `android` block (`priority: high`, 24 h TTL);
-- an `apns` block, shaped by `buildApnsRequest` in `push-payload.ts`.
+- an Android token gets the `data` map — read by `onMessageReceived` (fires foreground **and**
+  background) — plus an `android` block (`priority: high`, 24 h TTL);
+- an iOS token gets the `apns` block alone, shaped by `buildApnsRequest` in `push-payload.ts`,
+  which spreads the same fields into a self-contained APNs payload.
+
+**Why it is split, and it was not until 2026-08-30.** Every message used to carry both blocks, so
+the ciphertext travelled **twice** in one message - and FCM sizes the MESSAGE, not the half the
+device will read. On the shape that failed: `data` 3 789 B + `apns` 4 005 B = **7 794 B against a
+4 096 B limit**, for a proto the guard had passed. That refused ten pushes in one run, to one
+Android device, twice over (2026-08-29 and 2026-08-30, `Message is too large. The maximum is 4K`).
+FCM ignores the `apns` block for an Android token and the `data` map is redundant for an iOS one,
+so nothing was gained by sending both. `push-payload.spec.ts` pins the arithmetic, including the
+case where each representation alone fits and their sum does not.
+
+**The inline-ciphertext budget is computed from the fields, never chosen ahead of them.** The guard
+was `Buffer.byteLength(protoB64) <= 3_500` applied to the ciphertext ALONE, under a comment
+correctly stating the 4 KB budget belongs to the payload - so it bounded a quantity strictly
+smaller than the one the limit is about. `inlineProtoBudget` now builds the payload with an empty
+proto, measures **both** representations and leaves what the tighter one allows: the APNs framing
+plus its `aps` block costs about 216 B more than the raw data map, and one payload is built for all
+of a user's devices. What it protects against is `senderName` and `groupName`, which are unbounded
+user text that nothing upstream caps. A proto that does not fit is not an error - the client fetches
+the ciphertext instead - but it is logged, because a budget routinely too small is the fixed fields
+growing and nothing else watches them.
+
+A size refusal now logs `[PUSH_SIZE]` naming what was actually sent, both representations and the
+largest single field: FCM's own error names no quantity at all, which is why ten identical refusals
+said only "too large".
 
 FCM applies the `android` block to Android tokens and **relays the `apns` block to Apple's
 APNs** for iOS tokens, using the APNs `.p8` auth key uploaded in the Firebase console

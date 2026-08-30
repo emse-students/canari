@@ -4,6 +4,10 @@ import {
   buildPushDataFields,
   buildApnsRequest,
   buildInternalApnsRequest,
+  inlineProtoBudget,
+  measureDataFields,
+  measureApnsPayload,
+  FCM_DATA_LIMIT,
   PushMessageInput,
 } from './push-payload';
 
@@ -156,5 +160,68 @@ describe('buildInternalApnsRequest', () => {
 
     const form = buildInternalApnsRequest('Sondage', '', { type: 'form_reminder' });
     expect((form.payload.aps as Record<string, unknown>)['thread-id']).toBe('canari_forms');
+  });
+});
+
+describe('the inline-proto budget', () => {
+  /** The shapes production actually carries, which the old 3 500 constant did not account for. */
+  const realistic: PushMessageInput = {
+    ...baseInput,
+    groupId: '7da231f8-119c-4ce2-884f-55f5c94c903f',
+    queuedMessageId: 'c1f0a2b3-4d5e-6f70-8192-a3b4c5d6e7f8',
+    senderId: 'd82cd226e4a94b1f8c3d5e6f70819a2b3c4d5e6f708192a3b4c5d6e7f8091a2b',
+    senderName: 'Jolan Boudin',
+    groupName: 'GRP5-mt5rospko89-R',
+    createdAt: '2026-08-29T13:11:07.482Z',
+  };
+
+  it('counts the keys, not only the values', () => {
+    // 'silent' + 'false' is eleven bytes, and FCM charges for both halves.
+    expect(measureDataFields({ silent: 'false' })).toBe(11);
+  });
+
+  it('is tighter than the data map alone, because the APNs framing costs more', () => {
+    const empty = { ...realistic, proto: '' };
+    const dataBytes = measureDataFields(buildPushDataFields(empty));
+    const apnsBytes = measureApnsPayload(
+      buildApnsRequest(empty, buildPushDataFields(empty)).payload
+    );
+    expect(apnsBytes).toBeGreaterThan(dataBytes);
+    expect(inlineProtoBudget(realistic)).toBe(FCM_DATA_LIMIT - apnsBytes);
+  });
+
+  it('shrinks by exactly what a longer group name costs', () => {
+    const short = inlineProtoBudget({ ...realistic, groupName: 'BDE' });
+    const long = inlineProtoBudget({ ...realistic, groupName: 'BDE'.padEnd(203, 'x') });
+    expect(short - long).toBe(200);
+  });
+
+  it('lands BOTH representations on the limit once the proto fills the budget', () => {
+    const filled = { ...realistic, proto: 'A'.repeat(inlineProtoBudget(realistic)) };
+    const fields = buildPushDataFields(filled);
+    expect(measureDataFields(fields)).toBeLessThanOrEqual(FCM_DATA_LIMIT);
+    expect(measureApnsPayload(buildApnsRequest(filled, fields).payload)).toBe(FCM_DATA_LIMIT);
+  });
+
+  it('refuses to inline anything when unbounded user text has already eaten the budget', () => {
+    // senderName and groupName are display names: nothing upstream caps them.
+    expect(
+      inlineProtoBudget({
+        ...realistic,
+        senderName: 'e'.repeat(2_000),
+        groupName: 'g'.repeat(2_000),
+      })
+    ).toBeLessThan(0);
+  });
+
+  it('THE REFUSAL: the two representations TOGETHER blow the limit that each alone respects', () => {
+    // What the old code sent in a single message - `data` plus an `apns` payload spreading the
+    // same fields - for a proto the old 3 500 constant passed. Ten refusals in one run, twice.
+    const filled = { ...realistic, proto: 'A'.repeat(3_500) };
+    const fields = buildPushDataFields(filled);
+    const dataBytes = measureDataFields(fields);
+    const apnsBytes = measureApnsPayload(buildApnsRequest(filled, fields).payload);
+    expect(dataBytes).toBeLessThan(FCM_DATA_LIMIT);
+    expect(dataBytes + apnsBytes).toBeGreaterThan(FCM_DATA_LIMIT);
   });
 });

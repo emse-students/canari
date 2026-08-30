@@ -59,6 +59,61 @@ export function buildPushDataFields(input: PushMessageInput): Record<string, str
   };
 }
 
+/**
+ * FCM's limit on one message, and the quantity it is measured over: everything the message
+ * carries, KEYS INCLUDED - not the ciphertext alone, which is only its largest entry.
+ */
+export const FCM_DATA_LIMIT = 4096;
+
+/**
+ * Byte size of an FCM `data` map as FCM counts it: every key plus every value.
+ *
+ * @param fields - The flat string map about to be sent as `data`.
+ */
+export function measureDataFields(fields: Record<string, string>): number {
+  let total = 0;
+  for (const [key, value] of Object.entries(fields)) {
+    total += Buffer.byteLength(key, 'utf8') + Buffer.byteLength(value, 'utf8');
+  }
+  return total;
+}
+
+/**
+ * Byte size of an APNs payload: its JSON encoding, which is what is actually transmitted.
+ *
+ * @param payload - The `apns.payload` object handed to FCM.
+ */
+export function measureApnsPayload(payload: object): number {
+  return Buffer.byteLength(JSON.stringify(payload), 'utf8');
+}
+
+/**
+ * How many bytes the inline ciphertext may occupy, given everything else the payload carries.
+ *
+ * WHY THIS IS COMPUTED AND NOT A CONSTANT. The guard here used to be
+ * `Buffer.byteLength(protoB64) <= 3_500`, applied to the ciphertext ALONE under a comment that
+ * correctly stated the 4 KB budget belongs to the PAYLOAD. The payload is not the proto: nine
+ * other entries ride with it, FCM counts key names too, `senderId` is 64 hex characters on this
+ * deployment, two ids are UUIDs, and `senderName` / `groupName` are unbounded USER TEXT. A limit
+ * is only evidence for the quantity it was measured over.
+ *
+ * **The budget is the tighter of the two representations**, because one payload is built and sent
+ * to every one of a user's devices: the FCM data map (~289 B of fixed fields) and the APNs
+ * payload, whose JSON framing plus the `aps` block costs about 216 B more. Sizing against the data
+ * map alone would let a message through that APNs then refuses.
+ *
+ * @param input - The message description, whose `proto` is ignored here.
+ * @returns Bytes available for `proto`; zero or negative when the fixed fields already fill it.
+ */
+export function inlineProtoBudget(input: PushMessageInput): number {
+  const empty: PushMessageInput = { ...input, proto: '' };
+  const dataBytes = measureDataFields(buildPushDataFields(empty));
+  const apnsBytes = measureApnsPayload(buildApnsRequest(empty, buildPushDataFields(empty)).payload);
+  // Both representations already carry the `proto` key with an empty value, so each byte of
+  // ciphertext costs exactly one byte in each - the subtraction is exact, not an estimate.
+  return FCM_DATA_LIMIT - Math.max(dataBytes, apnsBytes);
+}
+
 /** A ready-to-send APNs request: JSON body plus the headers that drive delivery. */
 export interface ApnsRequest {
   /**

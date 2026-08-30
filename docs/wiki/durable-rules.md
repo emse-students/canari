@@ -238,6 +238,12 @@ The largest area here, and the one that has cost the most. `chat` = [chat](front
 `hr` = [history-reconciliation](protocols/history-reconciliation.md),
 `cd` = [chat-delivery](services/chat-delivery.md), `mob` = [mobile](frontend/mobile.md).
 
+**The push payload, and what sizes it**
+
+- **A LIMIT IS ONLY EVIDENCE FOR THE QUANTITY IT WAS MEASURED OVER, and a payload is not its largest field.** The FCM guard capped the ciphertext at 3 500 B under a comment naming the 4 KB PAYLOAD budget - nine other fields, key names included, rode with it uncounted. A budget is computed from the fields that must be there, never chosen ahead of them. [chat-delivery](services/chat-delivery.md#transport--single-gateway-fcm)
+- **SENDING BOTH HALVES SO EITHER PLATFORM CAN READ ONE IS SENDING THE MESSAGE TWICE** - the transport sizes the message, not the half the device will read. `data` 3 789 B + `apns` 4 005 B = 7 794 B against a 4 096 B limit, each half fitting alone. The platform is KNOWN at the call site, so carry the discriminator there rather than paying for both. [chat-delivery](services/chat-delivery.md#transport--single-gateway-fcm)
+- **A REFUSAL THAT NAMES NO QUANTITY IS NOT A MEASUREMENT** - "Message is too large" ten times over says nothing about which field grew. The failure branch holds the payload: report the bytes and the largest field there, or the number is found by hand a day late. [chat-delivery](services/chat-delivery.md#transport--single-gateway-fcm)
+
 **Converging on one answer**
 
 - **APPLYING A MUTATION ON ARRIVAL IS NOT A CONVERGENCE RULE - it is a different answer per device.** `edit_message` was applied unconditionally by all three paths that apply one, so two devices of one account editing one message each applied their own and then took the other's, ending on OPPOSITE bodies, permanently, with no error. Every mutation that two devices can issue at once needs a total order they both compute: `editSupersedes` and `pinStore.supersedes` are that, and a tie needs a rule for the same reason the ordering does. [chat](frontend/modules/chat.md)

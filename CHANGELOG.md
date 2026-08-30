@@ -238,6 +238,34 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **Ten push notifications were refused by FCM for size in one run, twice over, because every
+  message carried its ciphertext twice.** `MessagingService` sent one `getMessaging().send()` per
+  token holding BOTH a `data` map and an `apns` payload that `buildApnsRequest` spreads the same
+  fields into - and FCM sizes the MESSAGE, not the half the device will read. Measured on the shape
+  that failed: `data` 3 789 B + `apns` 4 005 B = **7 794 B against a 4 096 B limit**, each half
+  fitting comfortably on its own. FCM ignores the `apns` block for an Android token and the `data`
+  map is redundant for an iOS one, so each token now carries only the half it reads. The platform
+  was known at the call site the whole time.
+- **The guard that was supposed to prevent it measured the wrong quantity.**
+  `Buffer.byteLength(protoB64) <= 3_500` bounded the ciphertext ALONE, under a comment correctly
+  stating the 4 KB budget belongs to the payload - nine other entries ride with it, FCM counts key
+  names too, `senderId` is 64 hex characters here, and `senderName` / `groupName` are unbounded user
+  text nothing upstream caps. `inlineProtoBudget` now builds the payload with an empty proto,
+  measures **both** representations and leaves what the tighter one allows (the APNs framing and its
+  `aps` block cost ~216 B more than the raw data map, and one payload is built for all of a user's
+  devices). A proto that does not fit is not an error - the client fetches it - but it is logged,
+  because a budget routinely too small is the fixed fields growing.
+- **A size refusal now says what it refused.** FCM's error names no quantity at all, which is why
+  ten identical lines said only "too large"; `[PUSH_SIZE]` reports the bytes actually sent, both
+  representations and the largest single field. The classification is on the error CODE
+  (`messaging/payload-size-limit-exceeded`, or `invalid-argument` narrowed by its message, which is
+  what the v1 endpoint returns), never on prose alone.
+
+  **The iOS half is unverified on hardware.** Dropping the redundant `data` map for an iOS token
+  follows the APNs payload's own self-contained design and is covered by unit tests, but nothing
+  here can prove a real handset still receives the push - that belongs with the lettered device
+  checks, as does the Android half.
+
 - **The chat-gateway served `Access-Control-Allow-Origin: *` in production, and the allowlist CD
   had been writing for it since the iOS login incident reached nothing.** `docker-compose.prod.yml`
   set `ALLOW_ORIGIN: "*"` as a **literal** on that service, and a literal there wins over anything

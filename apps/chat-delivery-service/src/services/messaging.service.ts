@@ -33,6 +33,10 @@ import {
   buildPushDataFields,
   buildApnsRequest,
   buildInternalApnsRequest,
+  inlineProtoBudget,
+  measureDataFields,
+  measureApnsPayload,
+  FCM_DATA_LIMIT,
   PushMessageInput,
 } from './push-payload';
 import {
@@ -397,6 +401,25 @@ export class MessagingService {
   }
 
   /**
+   * Whether FCM refused a message for SIZE rather than for the token or the network.
+   *
+   * Classified on the error CODE, never on its prose: `messaging/payload-size-limit-exceeded` is
+   * the documented code, and `invalid-argument` is what the v1 endpoint returns for the same
+   * condition. The message ("Message is too large. The maximum is 4K (4096 bytes).") is only used
+   * to narrow the second, because `invalid-argument` covers other faults too - and a distinction
+   * carried in prose is one exactly this call site may make.
+   *
+   * @param error - Whatever `getMessaging().send()` threw.
+   */
+  private isPayloadTooLargeError(error: unknown): boolean {
+    const asRecord = typeof error === 'object' && error ? (error as Record<string, unknown>) : {};
+    const code = typeof asRecord.code === 'string' ? asRecord.code : '';
+    if (code === 'messaging/payload-size-limit-exceeded') return true;
+    const message = typeof asRecord.message === 'string' ? asRecord.message : '';
+    return code === 'messaging/invalid-argument' && /too large/i.test(message);
+  }
+
+  /**
    * Send a data-only FCM push to every token registered for a given queued
    * message's recipient.  Data-only means onMessageReceived() fires even when
    * the app is in the background, letting the Android service decrypt and
@@ -440,12 +463,12 @@ export class MessagingService {
     const senderName = await resolveUserDisplayName(this.groupRepo.manager, senderId);
 
     // Inline ciphertext eliminates the extra HTTP round-trip in the Kotlin
-    // service and avoids auth issues when the app is cold-started.
-    // FCM data payloads are limited to 4 KB; skip inline proto for large
-    // messages (media) so the service can fall back gracefully.
+    // service and avoids auth issues when the app is cold-started. FCM caps the
+    // DATA MAP at 4 KB, keys included - so what the ciphertext may occupy is
+    // whatever the other nine fields leave, computed from the fields themselves
+    // (`inlineProtoBudget`). A constant chosen ahead of them bounded the wrong
+    // quantity and let a long sender or group name push the map past the limit.
     const protoB64 = queued.proto ?? queued.content ?? '';
-    const FCM_INLINE_LIMIT = 3_500;
-    const inlineProto = Buffer.byteLength(protoB64, 'utf8') <= FCM_INLINE_LIMIT ? protoB64 : '';
 
     // Shared, transport-agnostic description consumed by both the FCM data
     // payload and the APNs custom keys (see push-payload.ts).
@@ -455,45 +478,71 @@ export class MessagingService {
       senderId,
       senderName,
       groupName,
-      // Empty string when proto is too large; the client falls back to fetching
-      // it from the backend or showing a generic notification.
-      proto: inlineProto,
+      // Filled in below once the budget the other fields leave is known.
+      proto: '',
       // Own-device copies, read receipts and welcome packets are not shown.
       silent: silent || queued.recipientId === senderId,
       isWelcome: !!queued.isWelcome,
       createdAt: queued.createdAt.toISOString(),
     };
+
+    const budget = inlineProtoBudget(messageInput);
+    const protoBytes = Buffer.byteLength(protoB64, 'utf8');
+    const inlineProto = protoBytes > 0 && protoBytes <= budget ? protoB64 : '';
+    messageInput.proto = inlineProto;
+    if (protoBytes > budget) {
+      // Not an error: the client fetches the ciphertext instead. It IS worth a line, because a
+      // budget that is routinely too small is the fixed fields growing, and nothing else watches
+      // them - `senderName` and `groupName` are unbounded user text.
+      this.logger.log(
+        `[PUSH_SEND][${traceId}] proto not inlined: ${protoBytes}B over a ${budget}B budget ` +
+          `(senderName=${Buffer.byteLength(senderName, 'utf8')}B groupName=${Buffer.byteLength(groupName, 'utf8')}B)`
+      );
+    }
+
     const dataFields = buildPushDataFields(messageInput);
+    const dataBytes = measureDataFields(dataFields);
 
     // Single transport for every device: FCM. Android receives the data-only
     // message (onMessageReceived fires foreground + background); iOS pushes are
-    // relayed by FCM to APNs via the apns block below (the .p8 APNs auth key is
+    // relayed by FCM to APNs via the apns block (the .p8 APNs auth key is
     // configured in the Firebase console, so no direct APNs provider is needed).
-    // FCM applies the android block to Android tokens and the apns block to iOS
-    // tokens, ignoring the other. The apns payload is self-contained
-    // (buildApnsRequest spreads dataFields into it) so it does not depend on FCM
-    // merging the top-level data map into the APNs payload.
     const apnsRequest = buildApnsRequest(messageInput, dataFields);
+    const apnsBytes = measureApnsPayload(apnsRequest.payload);
 
+    // ONE BLOCK PER TOKEN, BECAUSE THE PLATFORM IS KNOWN HERE. Every message used to carry BOTH
+    // the `data` map and an `apns` payload that `buildApnsRequest` spreads the same fields into -
+    // so the ciphertext travelled twice in one message, and FCM sizes the message, not the half
+    // the device will read. Measured on the shape that failed: data 3 789 B + apns 4 005 B =
+    // 7 794 B against a 4 096 B limit, for a proto the old guard had passed. That is what refused
+    // ten pushes in one run, twice over (2026-08-29 and 2026-08-30). FCM ignores the apns block
+    // for an Android token and the data map is redundant for an iOS one - the APNs payload is
+    // self-contained by design - so each token now carries exactly the half it reads.
     for (const pt of pushTokens) {
       try {
-        await getMessaging().send({
-          token: pt.token,
-          data: dataFields,
-          android: {
-            priority: 'high',
-            ttl: 86_400_000,
-          },
-          apns: {
-            payload: apnsRequest.payload,
-            headers: {
-              'apns-push-type': apnsRequest.pushType,
-              'apns-priority': String(apnsRequest.priority),
-            },
-          },
-        });
+        await getMessaging().send(
+          pt.platform === 'ios'
+            ? {
+                token: pt.token,
+                apns: {
+                  payload: apnsRequest.payload,
+                  headers: {
+                    'apns-push-type': apnsRequest.pushType,
+                    'apns-priority': String(apnsRequest.priority),
+                  },
+                },
+              }
+            : {
+                token: pt.token,
+                data: dataFields,
+                android: {
+                  priority: 'high',
+                  ttl: 86_400_000,
+                },
+              }
+        );
         this.logger.log(
-          `[PUSH_SEND][${traceId}] FCM sent user=${queued.recipientId} device=${pt.deviceId} platform=${pt.platform} inlineProto=${!!inlineProto}`
+          `[PUSH_SEND][${traceId}] FCM sent user=${queued.recipientId} device=${pt.deviceId} platform=${pt.platform} inlineProto=${!!inlineProto} bytes=${pt.platform === 'ios' ? apnsBytes : dataBytes}`
         );
       } catch (e) {
         if (this.isTerminalPushTokenError(e)) {
@@ -505,6 +554,22 @@ export class MessagingService {
         this.logger.warn(
           `[PUSH_SEND][${traceId}] FCM failed user=${queued.recipientId} device=${pt.deviceId} err=${String(e)}`
         );
+        // A size refusal is the one failure whose cause is entirely in our hands, and the error
+        // FCM returns names no quantity at all - ten of them in one run said only "too large".
+        // The payload is right here, so report what was actually sent: the data map as FCM counts
+        // it, the APNs payload it is ALSO spread into (whether that duplication counts towards the
+        // same 4096 is the open question), and the largest single field.
+        if (this.isPayloadTooLargeError(e)) {
+          const [largestKey, largestValue] = Object.entries(dataFields).reduce((a, b) =>
+            Buffer.byteLength(b[1], 'utf8') > Buffer.byteLength(a[1], 'utf8') ? b : a
+          );
+          this.logger.warn(
+            `[PUSH_SIZE][${traceId}] refused over size on ${pt.platform}: ` +
+              `sent=${pt.platform === 'ios' ? apnsBytes : dataBytes}B (limit ${FCM_DATA_LIMIT}) ` +
+              `data=${dataBytes}B apnsPayload=${apnsBytes}B ` +
+              `largest=${largestKey}:${Buffer.byteLength(largestValue, 'utf8')}B inlineProto=${!!inlineProto}`
+          );
+        }
       }
     }
   }

@@ -816,52 +816,33 @@ Two smaller things found in the same file, neither fixed: `readCachedMessageIdsF
 Whether it should is a product question for the user, not a defect: the board row NOTIF-6b was
 written to ask it and had never been run either way.
 
-### P2 - ten push notifications were REFUSED by FCM for size in one run, and the guard measures the wrong quantity (measured 2026-08-29)
+### P2 - the FCM size refusals: CAUSE FOUND AND FIXED 2026-08-30, hardware proof owed
 
-Read off HEAL-REVOKE-5's server window on `96bdd1bb`, which no cell on the board carries:
+**The cause was arithmetic, and the first hypothesis was wrong.** The guard capped the ciphertext at
+3 500 B, and the reading in this entry was that the nine other fields pushed the DATA MAP past 4096.
+Measured: they do not. With production-shaped ids and ordinary display names the map comes to
+**3 789 B** - under the limit, by 307 bytes. The refusals therefore could not have come from the
+data map alone, and what remained is the `apns` block, into which `buildApnsRequest` spreads the
+same fields: **4 005 B**, also under the limit on its own. FCM sizes the MESSAGE. 3 789 + 4 005 =
+**7 794 B**, and every push carried both. Story in `CHANGELOG.md`, mechanism on
+[chat-delivery](services/chat-delivery.md#transport--single-gateway-fcm), three rules in
+[durable-rules](durable-rules.md); **none of it restated here.**
 
-```
-WARN [MessagingService] [PUSH_SEND][send-d55b58e9] FCM failed user=d82cd226... device=tauri-...-mtd1qgu3-vnde
-  err=Error: Message is too large. The maximum is 4K (4096 bytes).
-```
+**WHAT IS OWED IS THE HARDWARE PROOF, and it is the same proof for both platforms.** Everything
+native verified by COMPILING has been wrong three times on this project, and this changes what
+reaches a real handset:
 
-**Ten of them, inside one run, all to the same Android device** - the campaign owner's phone. Three
-other devices took one each in the same window, so it is not one device's problem.
+- **Android**: a message whose ciphertext is near the budget must arrive and notify. The refusals
+  were reproducible - ten per run, twice - so their absence in a server window is itself evidence,
+  and `[PUSH_SIZE]` now names the bytes if one recurs.
+- **iOS**: the redundant `data` map is no longer sent to an iOS token. The APNs payload is
+  self-contained by design and the comment at the call site has always said so, but no iPhone has
+  received a push built this way. **This is the riskier half**, on the platform whose push
+  acquisition was itself only proven on 2026-08-28.
 
-**WHAT IS MEASURED, AND IT IS NOT YET THE CAUSE.** `messaging.service.ts` guards with
-`FCM_INLINE_LIMIT = 3_500` applied to `protoB64` ALONE, under a comment that correctly states the
-4 KB budget is the DATA PAYLOAD's. The payload is not the proto: `buildPushDataFields` adds nine more
-entries, and FCM counts key names as well as values - `senderId` is 64 hex characters on this
-deployment, two UUIDs are 36 each, `createdAt` is 24, and `senderName`/`groupName` are unbounded
-user text. The same map is then spread a SECOND time into `apns.payload`. So the guard bounds a
-quantity strictly smaller than the one the limit is about, which is the column rule pointed at a
-byte budget: **a limit is only evidence for the quantity it was measured over.**
-
-**WHICH excess crosses 4096 is NOT measured, and must not be guessed.** A 3 500-byte proto plus the
-fixed fields lands near 3 800 and would fit; a long `groupName`, a long display name, or the APNs
-duplication are each sufficient on their own, and nothing in the log distinguishes them. **The first
-step is not a fix, it is a number**: the failure branch has the payload in hand and logs only the
-error, so serialize it and report the actual byte count and the largest field. Sizing the budget
-from the built fields - proto gets what is left under 4096, never a constant chosen ahead of them -
-is the shape of the fix, but only after the measurement says what it must leave room for.
-
-**WHAT IT COSTS IS UNVERIFIED.** The queue lines in the same window - `message stays in DB queue,
-will be fetched on reconnect` - suggest the MESSAGE survives and only the NOTIFICATION is lost, which
-would make this "a mobile user is never told" rather than "a message disappears". That is a
-reasonable reading of the mechanism and it was NOT checked for these ten, so it is written here as
-the question and not as the answer.
-
-**NOT FIXED INSIDE A CAMPAIGN ROW, deliberately.** The blast radius is another service's push path,
-and it cannot be verified here at all: proving a fix needs a message over the limit pushed to a real
-handset, which is hardware and belongs with the lettered device checks. Everything native verified by
-COMPILING has been wrong three times on this project.
-
-
-**RECURRENCE 2026-08-30, and it makes the count part of the shape.** HEAL-REVOKE-8's server window
-carries the SAME TEN refusals, same error verbatim, same single Android device, on a different row and
-a different build. Ten is therefore not an artefact of the run that first showed it. The phone was
-force-stopped throughout, which changes nothing: FCM rejects the payload for size before any device
-state is consulted.
+**What it cost is still unverified**, and stays written as the question: the queue lines in the same
+window (`message stays in DB queue, will be fetched on reconnect`) suggest the MESSAGE survived and
+only the NOTIFICATION was lost. That was never checked for those ten.
 
 ### P3 - the WASM warns about a missing MLS state on every device that is SUPPOSED not to have one (measured 2026-08-29)
 
