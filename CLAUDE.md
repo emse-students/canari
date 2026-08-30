@@ -183,11 +183,14 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
    never had. **THE USER'S PRIORITY, 2026-08-27, verbatim: *"PASS ou PASS-DIRTY sur COMM, DEL, MULTI,
    LIFE, NOTIF, HEAL."*** Those six ARE the target; TAB, CALL, PIN and CORRUPT come after them.
 
-   **Where it stands: rungs 1-10 TAKEN plus 12 MULTI; HEAL is the rung in hand**, 7 of 31 cells taken
-   (3 `PASS`, 4 `PASS-DIRTY`), and five `FAIL`s whose single cause (the per-user device cap) is fixed,
-   so re-running them is cheap. **What is owed, in order:** those re-runs, the four HEAL-REVOKE rows, the new
-   HEAL-REVOKE cell (step 4 above); then re-runs of every DEL and MULTI cell, because both runners
-   have CHANGED since; then LIFE and NOTIF. **A `PASS-DIRTY` does not stop a rung by itself (user,
+   **Where it stands: rungs 1-10 TAKEN plus 12 MULTI; HEAL is the rung in hand**, 10 of 33 cells taken
+   (3 `PASS`, 7 `PASS-DIRTY`), BOTH order pairs adjudicated EQUAL, and the HEAL-REVOKE group closed
+   on the web with **two P1s found and fixed** - a wipe that never fired on a vault login, and a wipe
+   that fired and was BLOCKED by a second `getStorage()` connection (`da0ce2f2`). **What is owed, in
+   order:** the phone's turn as item 5 sets it out, which is where HEAL-REVOKE-6 lives; then
+   **HEAL-REVOKE-1, -2, -3 and -4, which have NO RUNNER and are what actually closes the open P1**;
+   then the ungated re-runs of HEAL-NEW-1 and -3; then re-runs of every DEL and MULTI cell, because
+   both runners have CHANGED since; then LIFE and NOTIF. **A `PASS-DIRTY` does not stop a rung by itself (user,
    2026-08-25); a x5 sweep of the whole ladder accepting nothing short of `PASS` comes AFTER the
    ladder is finished (user, 2026-08-26).** Only CALL, CORRUPT and PIN still have no runner at all.
 
