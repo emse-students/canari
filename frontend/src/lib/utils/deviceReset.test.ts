@@ -18,6 +18,17 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string) => invokeMock(cmd
 const closeMlsDbMock = vi.fn(async () => {});
 vi.mock('$lib/utils/hex', () => ({ closeMlsDb: () => closeMlsDbMock() }));
 
+/**
+ * The message-store connections, closed the same way and asserted the same way: BEFORE the deletes.
+ *
+ * `getStorage()` is a factory, so a page holds as many connections as it has readers - `/posts` was
+ * measured holding two on prod on 2026-08-30 - and the wipe used to take a `closeStorage` callback
+ * that could only ever close the one the caller happened to have. HEAL-REVOKE-9 caught the rest:
+ * `delete deferred`, then `1 store(s) SURVIVED the wipe`.
+ */
+const closeStoresMock = vi.fn(async () => 2);
+vi.mock('$lib/db', () => ({ closeOpenIndexedDbStores: () => closeStoresMock() }));
+
 const forgetMock = vi.fn(async (_alias?: string) => {});
 const disableMock = vi.fn(async (_alias?: string) => {});
 vi.mock('$lib/services/biometric', () => ({
@@ -124,21 +135,24 @@ describe('wipeDeviceToFactory', () => {
     expect(deleted).not.toContain('SomethingElse');
   });
 
-  it('closes the open connection first, or the delete merely blocks', async () => {
-    const order: string[] = [];
-    const closeStorage = vi.fn(async () => void order.push('close'));
-    vi.stubGlobal('caches', {
-      keys: async () => {
-        order.push('caches');
-        return [];
-      },
-      delete: async () => true,
+  it('closes every message-store connection before it deletes anything', async () => {
+    // The property is the ORDER, not the call: a close that lands after the delete leaves exactly
+    // the defect HEAL-REVOKE-9 measured - `deleteDatabase` fires `onblocked` and the store survives.
+    const order = deleted;
+    closeStoresMock.mockImplementationOnce(async () => {
+      order.push('close');
+      return 2;
     });
 
-    await wipeDeviceToFactory(closeStorage);
+    await wipeDeviceToFactory();
 
-    expect(closeStorage).toHaveBeenCalled();
+    expect(closeStoresMock).toHaveBeenCalled();
+    // `deleted` is appended by the stubbed `deleteDatabase`, so a close recorded into the same
+    // array first is the order the defect turned on.
     expect(order[0]).toBe('close');
+    expect(order).toContain('CanariDB_u1');
+    // And it asks NOTHING of its caller: the connections it must close are ones no caller can see.
+    expect(wipeDeviceToFactory.length).toBe(0);
   });
 
   it('reports the steps that failed instead of stopping at the first one', async () => {

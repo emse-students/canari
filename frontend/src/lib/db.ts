@@ -17,7 +17,7 @@ export type {
   StoredGraineSession,
   StoredMessage,
 } from './db/types';
-export { IndexedDbStorage } from './db/indexeddb';
+export { closeOpenIndexedDbStores, IndexedDbStorage } from './db/indexeddb';
 export { SqliteStorage } from './db/sqlite';
 
 import { IndexedDbStorage } from './db/indexeddb';

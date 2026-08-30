@@ -238,6 +238,31 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A device its owner had REVOKED kept its message store, because two readers held it open and the
+  wipe could only close one.** Measured on prod on 2026-08-30 by the HEAL-REVOKE-9 campaign row,
+  which severed a device, revoked it, and then signed back in on it: the wipe logged
+  `[RESET] CanariDB_<userId> is still open elsewhere - delete deferred`, then
+  `[RESET] 1 store(s) SURVIVED the wipe`, and the store was gone only later, when the tab happened
+  to navigate. `indexedDB.deleteDatabase` does not fail on an open connection - it BLOCKS - so a
+  destructive security control finished at a moment nobody controls, on a device declared lost or
+  stolen.
+
+  The cause is that `getStorage()` is a FACTORY, not a singleton: every reader constructs its own
+  `IndexedDbStorage` and opens its own connection, and exactly one of them - the session's - is
+  reachable afterwards through the session context. Loading `/posts` was measured holding two, the
+  second being `ConversationsMiniPanel`, which states in its own comment that it deliberately never
+  closes (it cannot: on Tauri `close()` tears down a pool shared with the live session). The wipe
+  meanwhile took a `closeStorage` callback that **no production call site ever passed**, and which
+  by construction could only ever have closed the one connection the caller happened to hold.
+
+  Fixed where the connections are CREATED, not where they are deleted: `db/indexeddb.ts` now keeps a
+  registry of the connections it has open and exports `closeOpenIndexedDbStores()`, which the wipe
+  calls before it deletes anything - the same answer `closeMlsDb` already gives for
+  `CanariDBMls_<userId>`, and for the same reason, that no caller can see the others. The dead
+  parameter is gone with it. The row now also asserts `noStoreSurvivedTheWipe` on its own, because
+  the product's own accusation was buried inside a compound that said only "the wipe did not
+  finish".
+
 - **A newly created group could be DESTROYED by a sweep milliseconds after it was created, leaving
   a conversation nobody - not even its creator - could ever open.** Measured on 2026-08-30 by the
   HEAL-REVOKE-7 campaign row, on one clock: `create_group` at 44.572, `add_members_bulk` at 44.830,

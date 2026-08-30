@@ -61,6 +61,31 @@ export async function awaitSevered(cx, timeoutMs = 15000) {
 }
 
 /**
+ * The SAME proof, in the other direction: waits until a same-origin request actually ARRIVES.
+ *
+ * `navigator.onLine` is not the counterpart of `awaitSevered` and must never be used as one - a
+ * captive portal reports `true`, and lifting `Network.emulateNetworkConditions` is the driver
+ * acknowledging an order, not the page regaining its link. HEAL-REVOKE-9 asserted its own teardown
+ * from `navigator.onLine` for exactly one run on 2026-08-30, which is the client's opinion of
+ * connectivity standing in for connectivity - the very reading the row was written to refuse.
+ *
+ * A row that cuts a link owes putting it back, and an action that cannot prove it took effect still
+ * yields a verdict - a fictional one. So this is the restore's evidence, symmetric with the cut's.
+ */
+export async function awaitReachable(cx, timeoutMs = 15000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeoutMs) {
+    const reachable = await evaluate(
+      cx,
+      `fetch('/api/version', { cache: 'no-store' }).then(function () { return true; }, function () { return false; })`
+    ).catch(() => false);
+    if (reachable) return { reachable: true, msToReach: Date.now() - t0 };
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  return { reachable: false, msToReach: Date.now() - t0 };
+}
+
+/**
  * Takes the client offline; returns a function restoring it.
  *
  * PROVE THE CUT, do not assume it. `navigator.onLine` flips instantly while an ALREADY OPEN

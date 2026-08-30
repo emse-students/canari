@@ -295,6 +295,27 @@ The same run found the second half: a delete that ERRORS resolved silently, so a
 successful one were the same event, and only the one that happened to log `blocked` could be told
 apart. It logs now.
 
+**AND THE MESSAGE STORE CAME BACK A DAY LATER, WHICH IS WHERE THE REAL SHAPE WAS.** HEAL-REVOKE-9
+measured it on prod on 2026-08-30, on a build carrying everything above: `CanariDB_<userId> is still
+open elsewhere - delete deferred`, then `1 store(s) SURVIVED the wipe`, and the store gone only when
+the tab later happened to navigate. The paragraph above had the reason half right - the session OWNS
+its handle and can hand it over - and the half it had wrong is the one that matters:
+
+**`getStorage()` IS A FACTORY, SO THE NUMBER OF CONNECTIONS IS THE NUMBER OF READERS.** Every call
+constructs a new `IndexedDbStorage` and opens its own connection; only the session's is reachable
+afterwards, through `ctx.getStorage()`. Loading `/posts` was measured holding two - the session's,
+and `ConversationsMiniPanel`'s, which states in its own comment that it never closes and cannot: on
+Tauri `close()` tears down a pool shared with the live session. So the wipe closed one connection of
+two and blocked on the other, and a `closeStorage` parameter could never have closed more than the
+one the caller already had, whoever passed it.
+
+`db/indexeddb.ts` now keeps a REGISTRY of the connections it has open - added on `onsuccess`, removed
+on `close()` - and exports `closeOpenIndexedDbStores()`, which `wipeDeviceToFactory` calls before it
+deletes anything. That is the same answer `closeMlsDb` gives, generalised: **a module that hands out
+connections owns the list of the ones it has open**, because no caller can see the others. The dead
+parameter is gone. The rung asserts it directly now, as `noStoreSurvivedTheWipe`, rather than letting
+the product's own accusation sit inside a compound that said only "the wipe did not finish".
+
 What the wipe reaches, per platform, is therefore:
 
 | Store | Web | Tauri |

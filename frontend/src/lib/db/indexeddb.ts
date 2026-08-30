@@ -67,6 +67,44 @@ export class StorageOpenError extends Error {
  * Used in the web / PWA build; falls back from SqliteStorage when Tauri is not available.
  * Database name is scoped per user: `CanariDB_<userId>`.
  */
+/**
+ * Every `IndexedDbStorage` that currently holds an open connection.
+ *
+ * WHY A REGISTRY AND NOT A PARAMETER. `getStorage()` is a FACTORY, not a singleton: every call
+ * constructs a new `IndexedDbStorage` and opens its own connection to `CanariDB_<userId>`. Only one
+ * of those connections is ever reachable afterwards - the one the session keeps on its context - so
+ * the factory hands out handles whose lifetime belongs to nobody, and `wipeDeviceToFactory` used to
+ * take a `closeStorage` callback that could only ever close the one the caller happened to hold.
+ *
+ * `indexedDB.deleteDatabase` does not fail on an open connection, it BLOCKS. Measured on prod by
+ * HEAL-REVOKE-9 on 2026-08-30: loading `/posts` opens TWO connections - the session's and
+ * `ConversationsMiniPanel`'s, which states in its own comment that it deliberately never closes -
+ * so a device revoked while its owner was on that page logged `CanariDB_... is still open elsewhere
+ * - delete deferred`, then `1 store(s) SURVIVED the wipe`, and kept its message store until some
+ * later moment nobody controls. A destructive security control does not get to finish "later".
+ *
+ * This is the same answer `closeMlsDb` gives for `CanariDBMls_<userId>`: the connection is closed
+ * where it is CREATED, by the module that creates it, because no caller can see the others.
+ */
+const openConnections = new Set<IndexedDbStorage>();
+
+/**
+ * Closes every open connection to a `CanariDB_<userId>` database, so a delete can COMPLETE.
+ *
+ * Returns how many were closed - a wipe that reports nothing cannot be told from a wipe that found
+ * nothing, and those have different fixes. It is safe to call with none open.
+ *
+ * WEB STORES ONLY, AND DELIBERATELY SO. `SqliteStorage.close()` tears down a connection pool shared
+ * with whatever else is running, which is why `ConversationsMiniPanel` cannot close its own handle;
+ * this touches only the WebView's IndexedDB, which every platform has and which every platform's
+ * wipe already deletes unconditionally.
+ */
+export async function closeOpenIndexedDbStores(): Promise<number> {
+  const held = [...openConnections];
+  await Promise.all(held.map((s) => s.close()));
+  return held.length;
+}
+
 export class IndexedDbStorage implements IStorage {
   private readonly dbName: string;
   private db: IDBDatabase | null = null;
@@ -84,6 +122,7 @@ export class IndexedDbStorage implements IStorage {
    * completes at some later moment nobody controls. See {@link IStorage.close}.
    */
   async close(): Promise<void> {
+    openConnections.delete(this);
     if (!this.db) return;
     this.db.close();
     this.db = null;
@@ -125,6 +164,9 @@ export class IndexedDbStorage implements IStorage {
 
       request.onsuccess = () => {
         this.db = request.result;
+        // Registered HERE and nowhere else: an open connection is exactly what defers a delete, so
+        // the set holds what is OPEN rather than what was ever constructed.
+        openConnections.add(this);
         resolve();
       };
 

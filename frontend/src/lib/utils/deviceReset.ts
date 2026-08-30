@@ -1,3 +1,4 @@
+import { closeOpenIndexedDbStores } from '$lib/db';
 import { closeMlsDb } from '$lib/utils/hex';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 
@@ -74,11 +75,15 @@ function recordedKeystoreAliases(): string[] {
  * It does NOT log out: signing out is a server round trip with its own failure mode, and the two are
  * kept separate so the wipe cannot be blocked by an unreachable server.
  *
- * @param closeStorage - closes the open database connection before it is deleted. Without it
- *   `deleteDatabase` merely BLOCKS, and the wipe completes at some later moment nobody controls.
+ * IT CLOSES ITS OWN DOORS, AND IT USED TO ASK THE CALLER TO. `wipeDeviceToFactory(closeStorage)`
+ * put behind a parameter the one connection the caller happened to hold - a parameter no production
+ * call site ever passed - and there was never only one to hold. `getStorage()` is a FACTORY, so
+ * every reader opens its own; `closeOpenIndexedDbStores` closes all of them and `closeMlsDb` closes
+ * the MLS handle, neither of which is a caller's business to know about.
+ *
  * @returns the steps that failed, empty when everything was cleared
  */
-export async function wipeDeviceToFactory(closeStorage?: () => Promise<void>): Promise<string[]> {
+export async function wipeDeviceToFactory(): Promise<string[]> {
   const failures: string[] = [];
   console.log('[RESET] wiping this device back to a fresh install');
 
@@ -91,7 +96,16 @@ export async function wipeDeviceToFactory(closeStorage?: () => Promise<void>): P
     }
   };
 
-  if (closeStorage) await step('the open database connection', closeStorage);
+  // EVERY CONNECTION TO THE MESSAGE STORE, AND THERE IS NEVER ONLY ONE. Measured on prod by
+  // HEAL-REVOKE-9, 2026-08-30: `/posts` holds two - the session's and the mini panel's, which says
+  // in its own comment that it deliberately never closes - so the delete below fired `onblocked`,
+  // the wipe reported `1 store(s) SURVIVED`, and a device its owner had declared lost kept its
+  // message store until a moment nobody controls. `deleteDatabase` does not fail on an open
+  // connection, it BLOCKS.
+  await step('the message store connections', async () => {
+    const closed = await closeOpenIndexedDbStores();
+    if (closed > 0) console.log(`[RESET] closed ${closed} open connection(s) to the message store`);
+  });
 
   // THE CONNECTION NO CALLER CAN PASS. `closeStorage` covers the message store, which the session
   // owns and can therefore hand over; `CanariDBMls_<userId>` is held by a module singleton inside

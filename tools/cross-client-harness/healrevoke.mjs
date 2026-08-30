@@ -10,11 +10,15 @@
  *
  * ROW 9 IS ITS OWN QUESTION AND STOPS EARLIER THAN THE OTHERS. `isDeviceRevoked` answers `false`
  * when it cannot reach the server, because a transport failure is not an answer - so a device
- * revoked while unreachable is SUPPOSED to keep everything until it has a network, and the wipe is
- * supposed to land at the first contact with one. Both halves are assertions: a device that wiped
- * itself while unreachable would mean something read a failure as a revocation, which is how every
- * offline user gets logged out. It therefore does not move the world or mint a reference device -
- * the return equality is rows 5, 7 and 8's subject, and this row is about the DEFERRAL.
+ * revoked while unreachable is SUPPOSED to keep everything until it can ask, and the wipe is
+ * supposed to land the first time somebody SIGNS IN on it. Not the first time it has a network:
+ * `sessionAuth.ts` holds exactly three triggers and every one needs a credential or a live socket,
+ * so a reload that authenticates nobody confirms nothing and must erase nothing. All three halves
+ * are assertions - a device that wiped itself while unreachable would mean something read a failure
+ * as a revocation, which is how every offline user gets logged out; a device that wiped itself on a
+ * bare reload would mean a destructive control fired on an unconfirmed state. It therefore does not
+ * move the world or mint a reference device - the return equality is rows 5, 7 and 8's subject, and
+ * this row is about the DEFERRAL and what ends it.
  *
  * THE ASSERTION IS AN EQUALITY, NOT A REPAIR COUNT (user, 2026-08-27). Revocation orders the device
  * to delete everything, so a revoked device coming back IS a new device - and if that is true, its
@@ -52,11 +56,18 @@
  */
 import { spawnSync } from "node:child_process";
 import { client, ensureChat, evaluate } from "./chat.mjs";
-import { census, installTag, isRegistered, revokedAt } from "./devices.mjs";
+import {
+  census,
+  enrolledDeviceCount,
+  installTag,
+  isRegistered,
+  MAX_DEVICES_PER_USER,
+  revokedAt,
+} from "./devices.mjs";
 import { deviceResidue } from "./footprint.mjs";
 import { createGroup, deleteGroup } from "./groupnav.mjs";
 import { isUp, killBrowser, startBrowser } from "./launch.mjs";
-import { armCut, awaitSevered, cutHard, link } from "./net.mjs";
+import { armCut, awaitReachable, awaitSevered, cutHard, link } from "./net.mjs";
 import { ORIGIN, PORTS, SITE } from "./names.mjs";
 import { becomeANewDeviceAndConfirm } from "./newdevice.mjs";
 import { onlineDevicesOf } from "./presence.mjs";
@@ -750,6 +761,18 @@ note(`the victim holds ${doomed}: ${heldTheDoomedGroup}`);
 
 const victimBefore = await whoAmI(seeded.cx);
 note(`the victim is device ${victimBefore.deviceId?.slice(0, 8)}`);
+/**
+ * WHAT THE ROW SPENDS AGAINST THE ACCOUNT'S CAP, READ BEFORE AND AFTER.
+ *
+ * Every row here revokes a device and enrols another, so each one both frees and spends a slot and
+ * the account should come out level. It is read rather than assumed because the cost of being
+ * wrong is not a failure but a MISREADING: `register-device` answers a full account with a 400 the
+ * client only ever reports as "welcome_request deferred", and five HEAL-NEW rows once blamed the
+ * product for a cap the campaign's own debris had filled. Two numbers, one subtraction, no
+ * diagnosis needed later.
+ */
+const slotsBefore = victimBefore.userId ? enrolledDeviceCount(victimBefore.userId) : null;
+note(`the account spends ${slotsBefore}/${MAX_DEVICES_PER_USER} device slot(s) before this row`);
 
 // Row 9 only: the victim is taken REALLY offline first - no new request AND no surviving socket, or
 // the server could still reach it and the deferral would never be exercised.
@@ -764,21 +787,23 @@ let severance = null;
  * runs in a `finally` covering every throw in the window where the link is down, and its
  * outcome is ASSERTED - a teardown nobody checked is a teardown that silently did not happen.
  */
-const theLink = { cut: false, lift: null, restoredInMs: null, after: null };
+const theLink = { cut: false, lift: null, restoredInMs: null, reachable: null, opinion: null };
 const restoreTheLink = async () => {
   if (!theLink.cut) return;
   const at = Date.now();
   await theLink.lift();
   theLink.cut = false;
-  // The page needs a tick to notice; polled rather than slept, and the reading is what is asserted.
-  for (let i = 0; i < 20; i += 1) {
-    theLink.after = await link(seeded.cx).catch((e) => ({ error: firstLine(e) }));
-    // An unreadable page does not become readable by asking twice - the lift already returned, so
-    // stop rather than spend ten seconds re-asking a connection that is gone. The assertion below
-    // then fails on the reading, which is the honest outcome.
-    if (theLink.after?.onLine === true || theLink.after?.error) break;
-    await sleep(500);
-  }
+  /**
+   * PROVED BY A REQUEST THAT ARRIVES, NEVER BY `navigator.onLine`.
+   *
+   * This assertion read the client's own opinion of its connectivity for exactly one run
+   * (2026-08-30) - and a captive portal reports `true`, which is why this row refuses that reading
+   * everywhere else. `awaitReachable` is `awaitSevered`'s mirror: a same-origin fetch that actually
+   * lands. The opinion is still RECORDED beside it, because the two disagreeing would itself be the
+   * finding, but it is never what decides.
+   */
+  theLink.reachable = await awaitReachable(seeded.cx);
+  theLink.opinion = await link(seeded.cx).catch((e) => ({ error: firstLine(e) }));
   theLink.restoredInMs = Date.now() - at;
   note(`link restored ${JSON.stringify(theLink)}`);
 };
@@ -827,29 +852,100 @@ try {
     }));
     note(`while unreachable ${JSON.stringify({ wipe: offlineWipe, residue: whileUnreachable })}`);
 
-    note("restoring the network and RELOADING - the reload is the trigger, not a frame");
+    /**
+     * THE TRIGGER IS A LOGIN, AND THIS ROW ASKED FOR A RELOAD UNTIL 2026-08-30.
+     *
+     * It failed on `theWipeLandedAfterOneReload`, and the failure was the ROW'S, not the product's.
+     * `sessionAuth.ts` has exactly three triggers and every one of them needs a credential or a
+     * live socket: the PIN path's `resetRequired`, `isDeviceRevoked` on the vault and biometric
+     * login paths, and a `device_revoked` frame re-confirmed against the server before anything is
+     * erased. A page load that finds a dead cookie and stops at the gate hits none of them BY
+     * DESIGN - wiping there would fire a destructive control with no confirmed server fact behind
+     * it, which is the one shape that file exists to refuse.
+     *
+     * SETTLED BY MEASURING, NOT BY ARGUING. After the reload the victim still held `identityKeys:
+     * 1` and two databases fourteen minutes on; one `login.mjs` took it to `identityKeys: 0`. The
+     * owner's own definition names the trigger, verbatim (2026-08-23): *"il doit devenir un
+     * appareil comme neuf s'il essaie de se reconnecter"* - reconnecting, not reopening. Confirmed
+     * by the owner 2026-08-30: the product is the reference and the ROW was re-aimed.
+     *
+     * BOTH SAMPLES ARE KEPT AND BOTH ARE ASSERTED. Dropping the reload would lose the fact that a
+     * reload alone changes nothing, and that fact IS the shape of the deferral.
+     */
+    note("restoring the network and reloading - this alone must NOT be enough");
     await restoreTheLink();
     await seeded.cx.send("Page.reload");
-    const reloadedAt = Date.now();
-    let landed = whileUnreachable;
+    // Waited for a STATE the page reaches, not for a duration.
+    let whereAfterTheReload = null;
+    for (let i = 0; i < 20; i += 1) {
+      await sleep(1000);
+      whereAfterTheReload = await evaluate(seeded.cx, "location.pathname").catch(() => null);
+      if (whereAfterTheReload === "/login") break;
+    }
+    const afterTheReload = await deviceResidue(VICTIM, seeded.cx).catch((e) => ({
+      error: firstLine(e),
+      readable: false,
+      empty: false,
+    }));
+    const reloadWipe = classifyWipe(seeded.cx);
+    note(
+      `after the reload ${JSON.stringify({ where: whereAfterTheReload, residue: afterTheReload, wipe: reloadWipe })}`,
+    );
+
+    note("signing the victim back in - THIS is the trigger the product defines");
+    const loginExit = runScript("login.mjs", ["--device", VICTIM]);
+    const loggedInAt = Date.now();
+    let landed = afterTheReload;
     let landedInMs = null;
+    let afterWipe = reloadWipe;
     for (let i = 0; i < 20; i += 1) {
       await sleep(3000);
+      afterWipe = classifyWipe(seeded.cx);
       landed = await deviceResidue(VICTIM, seeded.cx).catch((e) => ({
         error: firstLine(e),
         readable: false,
         empty: false,
       }));
-      if (landed.empty) {
-        landedInMs = Date.now() - reloadedAt;
+      if (afterWipe.wipeFinished || afterWipe.wipeIncomplete) {
+        landedInMs = Date.now() - loggedInAt;
         break;
       }
     }
-    const afterWipe = classifyWipe(seeded.cx);
-    const where = await evaluate(seeded.cx, "location.pathname").catch(() => null);
+    /**
+     * THE DURABLE MARKER OF THE OLD INSTALL IS ITS DEVICE ID, NOT AN EMPTY DISK.
+     *
+     * The wipe and the re-enrolment are ONE act here - the login that erases the device immediately
+     * builds a new one - so `residue.empty` is not satisfiable at any moment after it, and
+     * asserting it would be asserting a race. `CanariDB_<userId>` cannot discriminate either: same
+     * user, same name. What survives the re-enrolment and still separates "wiped" from "kept
+     * everything" is the ID - a device that kept its store comes back as ITSELF, and one returned
+     * to a fresh install cannot. Measured on W3 2026-08-30 before this was written.
+     */
+    /**
+     * THE RETURN IS A LOGIN *AND* A PIN, BECAUSE THAT IS WHAT THE PRODUCT'S OWN REFUSAL ASKS FOR.
+     *
+     * The first sign-in wipes the device and then REFUSES it - `LoginFailure('device_revoked')` -
+     * with a message that says, in the user's own language, to sign in with the PIN to register as
+     * a new device. So a row that stops at the CAS callback has not performed the return the
+     * product defines; it has performed half of it and would report the other half missing.
+     * Measured on W3 2026-08-30: after one `login.mjs` the profile held no identity at all, and the
+     * PIN gate alone took it to an enrolled device with a new id.
+     *
+     * This asserts no less than before - the new device is still demanded, and the wipe still has
+     * to have FINISHED. It only stops asking the product to skip a step it documents.
+     */
+    const returned = await bringToReady(VICTIM);
+    note(`the victim came back ${JSON.stringify(returned)}`);
+    const backCx = await victimCx();
+    const victimAfter = await whoAmI(backCx).catch(() => ({}));
+    const where = await evaluate(backCx, "location.pathname").catch(() => null);
+    backCx.close();
     note(
-      `after the reload ${JSON.stringify({ landedInMs, residue: landed, wipe: afterWipe, where })}`,
+      `after the login ${JSON.stringify({ loginExit, landedInMs, residue: landed, wipe: afterWipe, where, device: victimAfter.deviceId?.slice(0, 8) })}`,
     );
+
+    const slotsAfter = victimBefore.userId ? enrolledDeviceCount(victimBefore.userId) : null;
+    note(`the account spends ${slotsAfter}/${MAX_DEVICES_PER_USER} device slot(s) after this row`);
 
     const offlineExpectations = {
       theVictimHeldTheWorldFirst: seedSettle.settled === true && heldTheDoomedGroup === true,
@@ -866,20 +962,54 @@ try {
       theWipeWasDeferredWhileUnreachable: whileUnreachable.readable === true &&
         whileUnreachable.empty === false,
       itDidNotClaimToHaveWipedWhileUnreachable: offlineWipe.wipeRan === false,
-      /** And it is not lost: one contact with a network lands it. */
-      theWipeLandedAfterOneReload: landed.empty === true,
-      itSaidSoInItsOwnLog: afterWipe.wipeRan === true && afterWipe.wipeFinished === true,
+      /**
+       * A RELOAD IS NOT THE TRIGGER, AND THIS ASSERTS THAT RATHER THAN TOLERATING IT.
+       *
+       * The device comes back, finds a dead session, stops at the gate - and still holds everything,
+       * because none of the three triggers in `sessionAuth.ts` fired: each needs a credential or a
+       * live socket, so a page load that authenticates nobody confirms nothing. Erasing there would
+       * be a destructive control acting on an unconfirmed state, and the row asserts the product
+       * REFUSES that. Measured on W3 2026-08-30: fourteen minutes past the reload, `identityKeys: 1`.
+       */
+      theReloadWasNotEnoughOnItsOwn: afterTheReload.readable === true &&
+        afterTheReload.empty === false && reloadWipe.wipeRan === false,
+      itStoppedAtTheGateAfterTheReload: whereAfterTheReload === "/login",
+      /** And it is not lost either: the first attempt to SIGN IN spends the deferral. */
+      theVictimCouldReachTheLoginPath: loginExit.ok === true,
+      theWipeRanOnTheLogin: afterWipe.wipeRan === true && afterWipe.wipeFinished === true,
       noWipeStepFailed: afterWipe.wipeIncomplete !== true && afterWipe.stepsFailed === 0,
-      /** A wiped device belongs at the door, not on a chat page with nothing in it. */
-      itEndedAtTheLoginGate: where === "/login",
-      bothSamplesWereReallyRead: whileUnreachable.readable === true && landed.readable === true,
+      /**
+       * NAMED SEPARATELY BECAUSE IT IS THE PRODUCT'S OWN ACCUSATION, AND IT WAS BURIED IN A
+       * COMPOUND. `wipeFinished` is false whenever a store survives, so the first FAIL said only
+       * "the wipe did not finish" about a wipe that had logged, in as many words, `1 store(s)
+       * SURVIVED the wipe: CanariDB_...`. A verdict must name what it found - the P1 fixed on
+       * 2026-08-30 was two `getStorage()` connections nothing closed, and `deleteDatabase` BLOCKS.
+       */
+      noStoreSurvivedTheWipe: afterWipe.storesSurvived === false,
+      /** The return the product documents is a login AND a PIN; both halves have to land. */
+      theVictimCameBackToTheApp: returned.ok === true,
+      /**
+       * WHAT SURVIVES THE RE-ENROLMENT IS THE ID, WHICH IS WHY THE ROW ASSERTS ON IT.
+       *
+       * The wipe and the re-enrolment are one act - `login.mjs` builds a fresh device the moment the
+       * old one is erased - so an empty disk exists for no observable interval and asserting it
+       * would be asserting a race. `CanariDB_<userId>` cannot separate the two installs either:
+       * same user, same name. A device that kept its store comes back as ITSELF; one that was
+       * really wiped cannot.
+       */
+      itCameBackAsANewDevice: !!victimAfter.deviceId &&
+        victimAfter.deviceId !== victimBefore.deviceId,
+      itCameBackAsTheSamePerson: victimAfter.userId === victimBefore.userId,
+      bothDiskSamplesWereReallyRead: whileUnreachable.readable === true &&
+        afterTheReload.readable === true,
       /**
        * THE RIG IS PUT BACK, AND SAYS SO. This is the only row of the rung that breaks the victim's
        * link, so it is the only one that can hand the next row a browser that reaches nothing.
-       * Asserted from the PAGE rather than from the fact that the lift was called: `restoreTheLink`
-       * returning is not the same claim as the client believing it is online again.
+       * Asserted from a REQUEST THAT ARRIVED, never from `navigator.onLine`: lifting the emulation
+       * is the driver acknowledging an order, and the client's opinion of its own connectivity is
+       * the one reading this row exists to refuse. The opinion is recorded beside it, not asserted.
        */
-      theLinkWasRestored: theLink.cut === false && theLink.after?.onLine === true,
+      theLinkWasRestored: theLink.cut === false && theLink.reachable?.reachable === true,
       /** Same two guards as the live rows: see the block below. A console nobody read says nothing. */
       theWipeWindowWasActuallyRead: offlineWipe.linesRead > 0 && afterWipe.linesRead > 0,
       theSettlePredicateKnewWhatToWaitFor: seedTarget.ids.size > 0,
@@ -905,11 +1035,21 @@ try {
         state: seedState,
         heldTheDoomedGroup,
       },
+      slots: { before: slotsBefore, after: slotsAfter, cap: MAX_DEVICES_PER_USER },
       severance,
       link: theLink,
       revocation,
       whileUnreachable: { residue: whileUnreachable, wipe: offlineWipe },
-      afterTheReload: { residue: landed, wipe: afterWipe, landedInMs, where },
+      afterTheReload: { residue: afterTheReload, wipe: reloadWipe, where: whereAfterTheReload },
+      afterTheLogin: {
+        login: loginExit,
+        residue: landed,
+        wipe: afterWipe,
+        wipedInMs: landedInMs,
+        cameBack: returned,
+        where,
+        deviceId: victimAfter.deviceId,
+      },
       timeline,
       unmet: offlineMissing,
       observers: offlineObservers,
@@ -1210,6 +1350,9 @@ if (row.id === "HEAL-REVOKE-8") expectations.theDeletionActuallyHappened = delet
 // that is a piece of work, not a line.
 void back.alone;
 
+const slotsAfter = victimBefore.userId ? enrolledDeviceCount(victimBefore.userId) : null;
+note(`the account spends ${slotsAfter}/${MAX_DEVICES_PER_USER} device slot(s) after this row`);
+
 const missing = unmet(expectations);
 const verdict = missing.length === 0 ? "PASS" : "FAIL";
 
@@ -1222,6 +1365,7 @@ const observers = {
 const detail = {
   what: row.what,
   order,
+  slots: { before: slotsBefore, after: slotsAfter, cap: MAX_DEVICES_PER_USER },
   seed: {
     deviceId: victimBefore.deviceId,
     settledInMs: seedSettle.settled ? seedSettle.elapsedMs : null,

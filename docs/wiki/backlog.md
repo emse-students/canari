@@ -1692,8 +1692,14 @@ name, not readable messages - which is why this is a P2 and not a P1.
 **Closing it would need a decision, not a patch.** Asking the revocation route at the login GATE
 means answering `/api/mls/devices/:userId/:deviceId/revoked` to an unauthenticated caller, which is a
 device-enumeration oracle; the alternative is a local expiry, and a clock is exactly what this
-project refuses to make load-bearing. Both leave the row's own specification open: it currently
-asserts the wipe after a RELOAD, and the trigger the product defines is a LOGIN.
+project refuses to make load-bearing. **That question is what stays open here, and only that one.**
+
+**THE ROW'S OWN SPECIFICATION IS SETTLED (2026-08-30, by the owner: the product is the reference).**
+HEAL-REVOKE-9 asserted the wipe after a RELOAD; the trigger the product defines is a LOGIN, and the
+return it documents is a login AND the PIN its refusal asks for in as many words. The row now
+asserts three things where it asserted one - that a reload alone changes NOTHING and stops at the
+gate, that the login wipes, and that the device comes back with a new id - which is more than it
+demanded before, not less. Re-running it on the re-aimed row is what then found the P1 above.
 
 ### P3 - a `history_bundle` restores the EDITED flag without the edited body
 
