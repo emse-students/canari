@@ -15,6 +15,7 @@ import {
   type JsonLdNode,
 } from '$lib/seo/jsonLd';
 import { mergeSeo, resolveSeoForPath } from '$lib/seo/resolve';
+import { isStaticPageRoute, normalizePath } from '$lib/seo/staticRoutes';
 import { SITE, siteOrigin } from '$lib/seo/site';
 import { markdownToPlainText, truncateForMeta } from '$lib/seo/text';
 import type { SeoMeta } from '$lib/seo/types';
@@ -378,15 +379,19 @@ export async function resolveServerSeo(pathname: string): Promise<SeoMeta> {
 
   const base = resolveSeoForPath(pathname);
 
-  for (const [pattern, enrich] of ENRICHERS) {
-    const match = pathname.match(pattern);
-    if (!match) continue;
-    // `/associations/new` is the creation form, not a slug - the enricher 404s and we fall back.
-    const enriched = await enrich(decodeURIComponent(match[1]), pathname);
-    return cachePut(pathname, enriched ? mergeSeo(base, enriched) : base);
+  // A literal segment beats a parameterised one, here as in SvelteKit's own router: a page that
+  // exists is never an id. Asking anyway is how `/forms/success` spent every payment asking
+  // social-service for a form called `success`.
+  if (!isStaticPageRoute(pathname)) {
+    for (const [pattern, enrich] of ENRICHERS) {
+      const match = pathname.match(pattern);
+      if (!match) continue;
+      const enriched = await enrich(decodeURIComponent(match[1]), pathname);
+      return cachePut(pathname, enriched ? mergeSeo(base, enriched) : base);
+    }
   }
 
   // Structured data is pointless on a page that asks not to be indexed.
-  const jsonLd = base.noindex ? null : await staticPageJsonLd(pathname.replace(/(.)\/$/, '$1'));
+  const jsonLd = base.noindex ? null : await staticPageJsonLd(normalizePath(pathname));
   return cachePut(pathname, jsonLd ? { ...base, jsonLd } : base);
 }

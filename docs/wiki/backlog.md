@@ -34,6 +34,7 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 
 | What | The measurement that closes it |
 | --- | --- |
+| `/forms/success` no longer asks for a form called `success` | after the deploy, social-service logs no `invalid input syntax for type uuid: "success"` across a completed payment - the symptom fired once per payment, so ONE payment settles it. The unit test pins the derived set; only prod pins the silence |
 | a push carries its ciphertext once, not twice | HARDWARE, both platforms, iOS the riskier half - no iPhone has yet received a push built without the redundant `data` map ([chat-delivery](services/chat-delivery.md#transport--single-gateway-fcm)) |
 | a device with no push token now says so | after the next release, a tokenless device either acquires one or prints `[PUSH_UNAVAILABLE]` naming a cause; continued silence with a tokenless device still in `key_package` means a FIFTH cause, not a fixed one |
 | the notification quick reply's 403 | HARDWARE: check K steps 1-5 and **K2**, on A1 which already carries the build - **and the window must be ARMED, a run made without arming proves nothing** ([check K](device-verification.md#the-backgrounded-run-that-failed-and-the-defect-it-found)). The iOS twin is corrected identically and equally unproven |
@@ -2221,32 +2222,6 @@ The server side has a page already - [storage-forecast](infrastructure/storage-f
 is where any measurement belongs.
 
 ## Payments
-
-### P2 - `/forms/success` makes its own SSR ask social-service for a form whose id is `success` (MEASURED 2026-08-27)
-
-**Two lines, one defect, both on prod.** They arrived in the server report of a DEL run at 13:05 and
-belong to no campaign row - the traffic was a real member finishing a cotisation, not the rig:
-
-```
-social-service  ERROR [ExceptionsHandler] QueryFailedError: invalid input syntax for type uuid: "success"
-frontend-ssr    [SEO] http://social-service:3014/api/forms/success answered 500
-```
-
-The SSR of the post-payment page fetches `/api/forms/<the last path segment>`, and on `/forms/success`
-that segment is the literal word `success`. Postgres is then handed `success` for a `uuid` column and
-raises, so the route answers 500 - **every single time that page is rendered**, which is once per
-successful payment. Nothing user-visible has been reported, so the SSR evidently tolerates the 500;
-that is precisely why it has been running unseen.
-
-**Two candidate fixes and they are not equivalent.** A static `/forms/success` route declared BEFORE
-the parameterised one stops the collision at the router, where the wrong reading is made; validating
-the segment as a uuid inside the handler turns the 500 into a 400 and leaves the SSR asking a question
-about a form that does not exist. The first is the fix, the second is the guard - and per
-[durable-rules](durable-rules.md), a fact known at the call site should not be learnt by failing at
-the database.
-
-**NOT FIXED ON PURPOSE.** It surfaced mid-campaign, and a frontend change would redeploy the build
-every open verdict is measured against. Scheduled immediately after the ladder reaches the bottom.
 
 ### Flipping `payment_provider` from Stripe to Lydia (WP-LYDIA-1)
 

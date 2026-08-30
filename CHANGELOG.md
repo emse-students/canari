@@ -238,6 +238,20 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **Every completed payment made social-service answer 500, because the SSR asked it for a form
+  whose id was the word `success`.** `serverSeo.ts` picks an enricher by matching the path against
+  a regex, and `/^\/forms\/([^/]+)\/?$/` cannot tell a form id from a page: `/forms/success` is
+  the post-payment page, and Postgres was handed `success` for a `uuid` column once per payment
+  (measured on prod 2026-08-27). Re-measured against the whole route tree rather than the one
+  incident, it was **four** pages and not one - `/forms/success`, `/forms/cancel`, `/forms/create`
+  and `/associations/new`, the last of which an existing comment had already noticed and shrugged
+  off as "the enricher 404s and we fall back". The table now carries SvelteKit's own precedence
+  rule, which is that a literal segment beats a parameterised sibling: a path a real page owns is
+  never handed to an enricher as an id. The set of those paths is DERIVED from the route tree at
+  build time in the new `staticRoutes.ts`, so a new static route joins it by existing and the fix
+  cannot rot; it is its own module because `serverSeo.ts` reaches `$env/dynamic/private` and
+  therefore cannot be imported by a test, which is why this module had none.
+
 - **A French user met English on two of the three ways a forward can fail.** `forwardMessage`
   handed its one caller a prose `error` string built from inline literals, and the literals were
   not in the same language: `'Conversation introuvable.'` next to `'Nothing to forward.'` and

@@ -57,6 +57,21 @@ Each is best-effort behind a 1.5 s timeout, with a 60 s LRU in front (one shared
 burst of unfurler hits on one path). **A failure degrades the preview; it never fails the page** —
 the page is the app.
 
+**A path a real page owns is never an id.** The table above is matched with a REGEX, which is not
+how SvelteKit routes - there a literal segment always beats a parameterised sibling, so
+`/forms/success` is the post-payment page and not the form whose id is `success`. A regex has no
+such rule, and four real pages were being handed to an enricher as an id: `/forms/success`,
+`/forms/cancel`, `/forms/create` and `/associations/new`. The first three reached Postgres as a
+`uuid`, so social-service answered **500 once per completed payment** (measured on prod
+2026-08-27), silently, because a failed enrichment only degrades the preview.
+
+`src/lib/seo/staticRoutes.ts` carries that precedence rule. Its set of static paths is **derived**
+from the route tree with `import.meta.glob` at build time, not listed, so a new static route joins
+it by existing and the rule cannot rot. It is a separate module because `serverSeo.ts` reaches
+`internalApi.ts` and therefore `$env/dynamic/private`, which no test can import - the same reason
+`sitemap.ts` stands alone. `staticRoutes.test.ts` pins the four collisions, which nothing else
+states now that the set is derived.
+
 **`og:image` must be built from the site origin.** `associationLogoSrc()` falls back to
 `http://localhost:3011` when `window` is undefined — which is exactly the SSR case, so using it here
 would advertise a localhost URL to every unfurler. The absolute URL is composed from the request's

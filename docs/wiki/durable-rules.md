@@ -402,6 +402,7 @@ after its deploy - build the run that DISCRIMINATES, and assert the build id, ne
 - **Cloudflare REPLACES the body of an origin 5xx with its own 16-byte page**, so an `error_page` without `=` reaches nobody behind the tunnel. [nginx](infrastructure/nginx.md)
 - **nginx does not TRUNCATE an oversized upstream header, it 502s** - SvelteKit's `Link: rel=modulepreload` is ~7.5 KB against a 4 KB default. [nginx](infrastructure/nginx.md)
 - **A deploy being green proves the containers started, never that the site ANSWERS** - probe each SHAPE of path. [cicd](cicd.md)
+- **A SECOND route table must carry the FIRST one's precedence, or it answers a different question.** `serverSeo.ts` picks an enricher by regex; SvelteKit resolves a literal segment before a parameterised sibling, and a regex does not. Four real pages were read as ids and `/forms/success` asked for a form called `success` once per payment. The set of static paths is DERIVED from the route tree, never listed. [seo](frontend/seo.md)
 
 ## The edge -> [cloudflare-edge](infrastructure/cloudflare-edge.md), [nginx](infrastructure/nginx.md)
 

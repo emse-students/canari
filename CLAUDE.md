@@ -191,12 +191,12 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
    and only a CLIENT log separates the causes.
 
 3. **THE SERVER-SIDE P2s ARE THE AGREED NEXT WORK, point by point** (user, 2026-08-30, while the
-   campaign is hardware-blocked). **Two are done and MEASURED: the chat-gateway CORS wildcard** -
+   campaign is hardware-blocked). **Three are done: the chat-gateway CORS wildcard** -
    seven origins echoed, an unknown one refused, at both layers on prod
    ([chat-gateway](docs/wiki/services/chat-gateway.md#verifying-it-and-why-the-deploys-colour-is-not-the-proof)) -
-   **and the notification path's raw literals**, whose FRONTEND half shipped. Left, substance for
-   each in [backlog](docs/wiki/backlog.md): `/forms/success` asking social-service for a form whose
-   id is `success`; and the half the literals left, which is not the same size - the server picks
+   **the notification path's raw literals**, whose FRONTEND half shipped, **and `/forms/success`**,
+   which was FOUR pages and not one once re-measured against the whole route tree. Left, substance for
+   each in [backlog](docs/wiki/backlog.md): the half the literals left, which is not the same size - the server picks
    the pre-decryption push body and does NOT know the recipient's language, so it needs a locale
    carried to `push_token`, not a translation. **The FCM size split is fixed and still owes its
    verification, which is HARDWARE and iOS-first.**
