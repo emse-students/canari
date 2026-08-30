@@ -104,6 +104,30 @@ change, recovery, unlock). The rule is deliberately uniform: the device key deri
 exact string typed, so any check a PIN could pass at creation but fail at unlock would lock its
 owner out of their own messages.
 
+### A prompt is declined from a FACT, never from a refusal
+
+`_refreshCredentialProvenDead` latches the moment the server proves the refresh credential dead, and
+`isRefreshCredentialProvenDead()` exports it. It exists to be read by callers that decide something
+BEFORE asking - the encryption-PIN keypad above all, which used to be mounted on a client already
+known to be finished: the user typed a correct PIN, the modal closed a second later, and the login
+gate appeared underneath (measured on W1, 2026-08-28).
+
+Read it only to SKIP work. It is not a logout trigger - the logout is announced once, from
+`setSessionExpiredHandler`, at the moment the latch is set - and reacting to it a second time here
+would be a second answer to a settled question.
+
+**There were four decision sites, not one.** `mayPromptForPin()` is the shared gate, and it is named
+for the question rather than for either of the two independent facts that answer it: the platform
+gates (minimum version, maintenance) refuse an unlock the SERVER would not honour, and the latch
+refuses one the CLIENT could not use. Three sites go through it. `onSavedPinFailed` did not - a
+login that failed because the session is over arrives there like any other rejection - so it checks
+the latch directly, which is synchronous and needs no await.
+
+One site is deliberately ungated, and the code says why: the keypad shown after a successful
+server-side PIN reset. That POST carried a live access token, and the local MLS state is already
+wiped, so declining there would leave the user mid-reset with nothing to unlock and no way to
+finish.
+
 ### Where the key lives
 
 | Storage | Written by | Purpose |

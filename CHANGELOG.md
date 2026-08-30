@@ -238,6 +238,21 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **The encryption-PIN keypad was offered to a client whose credential was already proven dead.**
+  `_refreshCredentialProvenDead` in the auth store held the answer at the moment the prompt mounted,
+  but nothing exported it, so the decision to show the keypad could not read it: the modal was
+  rendered over `/login`, accepted a correct PIN, and closed a second later onto the login gate - a
+  secret asked for nothing (measured on W1, 2026-08-28). The latch is now readable through
+  `isRefreshCredentialProvenDead()`, and consulted before the prompt rather than discovered by being
+  refused. NEVER LEARN BY FAILING WHAT A FACT COULD HAVE TOLD YOU.
+
+  The backlog described "one call site"; there were four. Three go through the gate that already
+  asked whether an unlock was allowed - renamed `mayPromptForPin`, because it now answers with two
+  independent facts rather than one - and the fourth, the re-prompt after a stored PIN is rejected,
+  bypassed it entirely and is guarded directly. The fifth, the keypad shown after a successful
+  server-side PIN reset, is deliberately ungated and says so: that POST carried a live access token
+  and the local MLS state is already wiped, so declining there would strand the user mid-reset.
+
 - **The login button held its "busy" state until AFTER the check that could take twenty-six
   seconds.** Both `handleLogin` and `handlePasswordLogin` awaited `refreshAppVersionCheck()` first
   and only then set `isLoggingIn = true`. The disabled state and the spinner already existed in

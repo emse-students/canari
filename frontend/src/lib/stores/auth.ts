@@ -113,6 +113,23 @@ let _sessionExpiredNotified = false;
  */
 let _refreshCredentialProvenDead = false;
 
+/**
+ * True once the SERVER has proven this client's refresh credential dead, and no new one has arrived.
+ *
+ * Exported so a caller can decline work the answer makes pointless BEFORE starting it, rather than
+ * starting it and reading the refusal. The encryption-PIN prompt is the case that named this: it
+ * was mounted, and accepted a correct PIN, on a client whose credential was already known dead -
+ * the modal then closed a second later and the user landed on the login gate, having typed a secret
+ * for nothing. NEVER LEARN BY FAILING WHAT A FACT COULD HAVE TOLD YOU.
+ *
+ * Read it only to SKIP something. It is not a logout trigger: the logout is announced from
+ * {@link setSessionExpiredHandler} at the moment the latch is set, and a second reaction here would
+ * be a second answer to a question already answered.
+ */
+export function isRefreshCredentialProvenDead(): boolean {
+  return _refreshCredentialProvenDead;
+}
+
 /** Records that a live refresh credential exists again, voiding both verdicts above. */
 function noteRefreshCredentialAlive(): void {
   _refreshCredentialProvenDead = false;

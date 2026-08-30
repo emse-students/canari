@@ -18,7 +18,8 @@ vi.mock('$lib/stores/user', () => ({
   clearUserLocally: vi.fn(),
 }));
 
-const { refresh, setSessionExpiredHandler, setToken } = await import('$lib/stores/auth');
+const { refresh, setSessionExpiredHandler, setToken, isRefreshCredentialProvenDead } =
+  await import('$lib/stores/auth');
 
 /** A refresh response with the given status; 200 carries a syntactically valid JWT. */
 function answer(status: number): Response {
@@ -122,5 +123,28 @@ describe('the session-expired announcement', () => {
     const late = vi.fn();
     setSessionExpiredHandler(late);
     expect(late).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * The latch, read from OUTSIDE the module.
+ *
+ * The verdict was reachable only by asking and being refused, so the encryption-PIN prompt - which
+ * decides before any request - could not consult it, and was mounted on a client whose credential
+ * was already known dead. The user typed a correct PIN, the modal closed a second later, and the
+ * login gate appeared: a secret asked for nothing (measured on W1, 2026-08-28).
+ */
+describe('the dead-credential latch, as a fact a caller can read', () => {
+  it('reads true while the latch is armed', () => {
+    // Chained on the block above, which leaves the latch armed - the same deliberate dependency
+    // every case in this file uses, because that state IS the case under test.
+    expect(isRefreshCredentialProvenDead()).toBe(true);
+  });
+
+  it('reads false again once a new credential arrives', () => {
+    // The accessor must answer the SAME question `refresh()` answers, so what lifts one lifts the
+    // other. A reader that stayed true after a live token would decline a prompt that is now valid.
+    setToken(liveToken());
+    expect(isRefreshCredentialProvenDead()).toBe(false);
   });
 });

@@ -25,7 +25,12 @@
     isRecoverableWithOldPin,
     type LoginErrorCode,
   } from '$lib/composables/session/loginErrors';
-  import { getToken, clearAuth, setSessionExpiredHandler } from '$lib/stores/auth';
+  import {
+    getToken,
+    clearAuth,
+    setSessionExpiredHandler,
+    isRefreshCredentialProvenDead,
+  } from '$lib/stores/auth';
   import { currentUserId } from '$lib/stores/user';
   import {
     globalSession,
@@ -365,8 +370,22 @@
     showBiometricSheet = false;
   }
 
-  /** Returns false when min-version or maintenance gates block MLS unlock. */
-  async function ensurePlatformAllowsUnlock(): Promise<boolean> {
+  /**
+   * Returns false when the encryption PIN must not be asked for at all.
+   *
+   * Two independent facts refuse it, and both are known BEFORE the keypad is mounted. The platform
+   * gates - minimum version, maintenance - refuse an unlock the server would not honour. The dead
+   * refresh credential refuses one the client cannot use: a correct PIN would unlock MLS state for
+   * a session that is already over, and the user would be redirected to the login gate a second
+   * later having typed a secret for nothing (measured on W1, 2026-08-28).
+   *
+   * Named for the question rather than for one of its two answers, because it is now both.
+   */
+  async function mayPromptForPin(): Promise<boolean> {
+    if (isRefreshCredentialProvenDead()) {
+      appendLog('[platform] PIN prompt declined - refresh credential already proven dead.');
+      return false;
+    }
     await refreshAppVersionCheck();
     if (shouldBlockSessionUnlock(isGlobalAdmin())) {
       appendLog('[platform] MLS unlock blocked (maintenance or minimum version gate)');
@@ -377,7 +396,7 @@
 
   /** Opens the PIN modal for the given user, computing isFirstSetup from the server. */
   async function openPinModal(uid: string) {
-    if (!(await ensurePlatformAllowsUnlock())) return;
+    if (!(await mayPromptForPin())) return;
     globalSession.userId = uid;
     isFirstPinSetup = await detectFirstPinSetup(uid);
     showPinModal = true;
@@ -425,8 +444,21 @@
     void goto('/login', { replaceState: true });
   }
 
-  /** Called when a stored PIN is rejected; resets state and shows the PIN modal. */
+  /**
+   * Called when a stored PIN is rejected; resets state and shows the PIN modal again.
+   *
+   * Re-asking is only worth it while a session could still use the answer. A login that failed
+   * BECAUSE the refresh credential is dead arrives here like any other rejection, and putting the
+   * keypad back up then asks for a secret whose verification is already impossible - the same
+   * defect `mayPromptForPin` exists to prevent, reached from the one path that does not go through
+   * it. The latch is synchronous, so the check costs nothing and needs no await here.
+   */
   function onSavedPinFailed(msg: string, code?: LoginErrorCode) {
+    if (isRefreshCredentialProvenDead()) {
+      appendLog('[platform] Stored PIN rejected on a dead session - not re-prompting.');
+      showPinModal = false;
+      return;
+    }
     pinError = msg;
     isFirstPinSetup = false;
     showPinModal = true;
@@ -982,7 +1014,7 @@
     _loginInProgress = true;
     globalSession.isLoginInProgress = true;
     try {
-      if (!(await ensurePlatformAllowsUnlock())) {
+      if (!(await mayPromptForPin())) {
         globalSession.isLoginInProgress = false;
         return;
       }
@@ -1383,6 +1415,9 @@
       appendLog('[PIN_RESET] MLS state wiped - choose a new PIN.');
       globalSession.userId = uid;
       isFirstPinSetup = true;
+      // Deliberately NOT gated on `mayPromptForPin`: the POST above carried a live access token, so
+      // the credential is not dead, and the local MLS state is already wiped. Declining the keypad
+      // here would strand the user mid-reset with nothing to unlock and no way to finish.
       showPinModal = true;
     } catch (e) {
       pinError = e instanceof Error ? e.message : String(e);
@@ -1413,7 +1448,7 @@
     // in +layout.ts sees isLoginInProgress = true and skips fetchUserProfile.
     globalSession.isLoginInProgress = true;
 
-    if (!(await ensurePlatformAllowsUnlock())) {
+    if (!(await mayPromptForPin())) {
       globalSession.isLoginInProgress = false;
       return;
     }

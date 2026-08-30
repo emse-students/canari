@@ -135,26 +135,6 @@ Code: 1006` is a browser the row killed by construction.
 
 
 
-### P2 - the PIN prompt is offered when the answer is already known to be impossible (measured 2026-08-28)
-
-**The half of the stuck-PIN P1 that the fix did not close.** The P1 was that nothing released the
-modal once `refresh()` had latched a dead cookie; that is fixed and its story is in `CHANGELOG.md`.
-What remains is upstream of it: **the encryption-PIN prompt is mounted, and accepts a PIN, on a
-client whose refresh credential is ALREADY proven dead.** Measured on W1 - the dialog was genuinely
-rendered over `/login`, `#encryption-pin` present, and the user could type a correct PIN and submit
-it. With the fix the modal now closes about a second later and the client lands on the login gate,
-which is honest but still asks for a secret for nothing.
-
-**Why it is the same rule as the P1 and not a cosmetic follow-up:** NEVER LEARN BY FAILING WHAT A
-FACT COULD HAVE TOLD YOU. `_refreshCredentialProvenDead` in `frontend/src/lib/stores/auth.ts` holds
-the answer at the moment the prompt mounts. Nothing exports it, so the decision to show the prompt
-cannot read it - the discriminator has to be carried to where the decision is made.
-
-**What is owed:** an accessor on that latch, and one call site - whatever decides `showPinModal` -
-consulting it. The prompt a dead credential deserves is the login gate, not a keypad.
-
-**Not to be done with a timer or a retry limit.** The condition is a fact, not a duration.
-
 ### P2 - iOS carries none of the window-layout work Android already has (user, 2026-08-28)
 
 **Named by the user from real use on an iPhone**, and one of the three is already fixed. The Android
