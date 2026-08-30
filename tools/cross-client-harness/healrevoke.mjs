@@ -754,12 +754,41 @@ note(`the victim is device ${victimBefore.deviceId?.slice(0, 8)}`);
 // Row 9 only: the victim is taken REALLY offline first - no new request AND no surviving socket, or
 // the server could still reach it and the deferral would never be exercised.
 let severance = null;
-let restoreLink = null;
+/**
+ * THE CUT IS THIS ROW'S ONLY DESTRUCTIVE EFFECT ON THE RIG, AND IT OUTLIVES THE PROCESS.
+ *
+ * `cutHard` sets `Network.emulateNetworkConditions` on the victim's TARGET, not on this CDP client,
+ * so closing the connection does not lift it: a runner that dies between the cut and the restore
+ * leaves W3 offline for every check that comes after, and the next row would measure a browser this
+ * one broke. So the restore is a NAMED, IDEMPOTENT step, not one statement in the happy path; it
+ * runs in a `finally` covering every throw in the window where the link is down, and its
+ * outcome is ASSERTED - a teardown nobody checked is a teardown that silently did not happen.
+ */
+const theLink = { cut: false, lift: null, restoredInMs: null, after: null };
+const restoreTheLink = async () => {
+  if (!theLink.cut) return;
+  const at = Date.now();
+  await theLink.lift();
+  theLink.cut = false;
+  // The page needs a tick to notice; polled rather than slept, and the reading is what is asserted.
+  for (let i = 0; i < 20; i += 1) {
+    theLink.after = await link(seeded.cx).catch((e) => ({ error: firstLine(e) }));
+    // An unreadable page does not become readable by asking twice - the lift already returned, so
+    // stop rather than spend ten seconds re-asking a connection that is gone. The assertion below
+    // then fails on the reading, which is the honest outcome.
+    if (theLink.after?.onLine === true || theLink.after?.error) break;
+    await sleep(500);
+  }
+  theLink.restoredInMs = Date.now() - at;
+  note(`link restored ${JSON.stringify(theLink)}`);
+};
+
 if (row.offline) {
   note("taking the victim really offline, before anything revokes it");
   const armed = await armCut(seeded.cx);
   const theCut = await cutHard(seeded.cx);
-  restoreLink = theCut.restore;
+  theLink.lift = theCut.restore;
+  theLink.cut = true;
   const severed = await awaitSevered(seeded.cx).catch((e) => ({ severed: false, why: firstLine(e) }));
   severance = {
     gatewayBackAfterMs: armed.gatewayBackAfterMs,
@@ -770,114 +799,139 @@ if (row.offline) {
   note(`severance ${JSON.stringify(severance)}`);
 }
 
-// ---------------------------------------------------------------------------------------------
-// THE REVOCATION
-// ---------------------------------------------------------------------------------------------
-note("revoking the victim from the device panel, through the product path");
-const revocation = await revoke(victimBefore.deviceId);
-note(`revocation ${JSON.stringify(revocation)}`);
+// EVERYTHING FROM HERE TO THE RESTORE RUNS WITH THE VICTIM'S LINK DOWN. For every other row nothing
+// was cut and the `finally` is a no-op; `process.exit` in `finishObserved` skips it, which costs
+// nothing because the offline branch has already lifted the link by then - idempotently.
+/** Hoisted: the non-offline path below the `finally` reads it too. */
+let revocation;
+try {
 
-// -------------------------------------------------------------------------------------------
-// ROW 9 ENDS HERE, on two samples of the same disk: one while the device cannot be reached, one
-// after a reload with a network. Nothing below applies - the world does not move and no reference
-// device is minted, because what is being measured is the DEFERRAL and not the return.
-// -------------------------------------------------------------------------------------------
-if (row.offline) {
-  const offlineWipe = classifyWipe(seeded.cx);
-  const whileUnreachable = await deviceResidue(VICTIM, seeded.cx).catch((e) => ({
-    error: firstLine(e),
-    readable: false,
-    empty: false,
-  }));
-  note(`while unreachable ${JSON.stringify({ wipe: offlineWipe, residue: whileUnreachable })}`);
+  // ---------------------------------------------------------------------------------------------
+  // THE REVOCATION
+  // ---------------------------------------------------------------------------------------------
+  note("revoking the victim from the device panel, through the product path");
+  revocation = await revoke(victimBefore.deviceId);
+  note(`revocation ${JSON.stringify(revocation)}`);
 
-  note("restoring the network and RELOADING - the reload is the trigger, not a frame");
-  await restoreLink();
-  await seeded.cx.send("Page.reload");
-  const reloadedAt = Date.now();
-  let landed = whileUnreachable;
-  let landedInMs = null;
-  for (let i = 0; i < 20; i += 1) {
-    await sleep(3000);
-    landed = await deviceResidue(VICTIM, seeded.cx).catch((e) => ({
+  // -------------------------------------------------------------------------------------------
+  // ROW 9 ENDS HERE, on two samples of the same disk: one while the device cannot be reached, one
+  // after a reload with a network. Nothing below applies - the world does not move and no reference
+  // device is minted, because what is being measured is the DEFERRAL and not the return.
+  // -------------------------------------------------------------------------------------------
+  if (row.offline) {
+    const offlineWipe = classifyWipe(seeded.cx);
+    const whileUnreachable = await deviceResidue(VICTIM, seeded.cx).catch((e) => ({
       error: firstLine(e),
       readable: false,
       empty: false,
     }));
-    if (landed.empty) {
-      landedInMs = Date.now() - reloadedAt;
-      break;
-    }
-  }
-  const afterWipe = classifyWipe(seeded.cx);
-  const where = await evaluate(seeded.cx, "location.pathname").catch(() => null);
-  note(
-    `after the reload ${JSON.stringify({ landedInMs, residue: landed, wipe: afterWipe, where })}`,
-  );
+    note(`while unreachable ${JSON.stringify({ wipe: offlineWipe, residue: whileUnreachable })}`);
 
-  const offlineExpectations = {
-    theVictimHeldTheWorldFirst: seedSettle.settled === true && heldTheDoomedGroup === true,
-    /** The cut was real: the far end agrees it cannot reach this client. */
-    itWasReallyUnreachable: severance?.severed?.severed === true,
-    theServerRecordedTheRevocation: revocation.revoked === true,
-    theServerForgotTheDevice:
-      revocation.wasAddressable === true && revocation.stillAddressable === false,
-    /**
-     * THE DEFERRAL, WHICH IS THE ROW. A device that cannot ask must not conclude: wiping here would
-     * mean a transport failure had been read as an answer, and every offline user would lose their
-     * device. So the state is asserted PRESENT while unreachable, not merely tolerated.
-     */
-    theWipeWasDeferredWhileUnreachable: whileUnreachable.readable === true &&
-      whileUnreachable.empty === false,
-    itDidNotClaimToHaveWipedWhileUnreachable: offlineWipe.wipeRan === false,
-    /** And it is not lost: one contact with a network lands it. */
-    theWipeLandedAfterOneReload: landed.empty === true,
-    itSaidSoInItsOwnLog: afterWipe.wipeRan === true && afterWipe.wipeFinished === true,
-    noWipeStepFailed: afterWipe.wipeIncomplete !== true && afterWipe.stepsFailed === 0,
-    /** A wiped device belongs at the door, not on a chat page with nothing in it. */
-    itEndedAtTheLoginGate: where === "/login",
-    bothSamplesWereReallyRead: whileUnreachable.readable === true && landed.readable === true,
-    /** Same two guards as the live rows: see the block below. A console nobody read says nothing. */
-    theWipeWindowWasActuallyRead: offlineWipe.linesRead > 0 && afterWipe.linesRead > 0,
-    theSettlePredicateKnewWhatToWaitFor: seedTarget.ids.size > 0,
-    timelineIsStamped: timeline.every((m) => typeof m.at === "number" && typeof m.wall === "string"),
-  };
-  const offlineMissing = unmet(offlineExpectations);
-  const offlineVerdict = offlineMissing.length === 0 ? "PASS" : "FAIL";
-  // THE CUT IS FORGIVEN FIRST, AND ONLY HERE. This row severs the victim's link on purpose, so the
-  // disconnected fetches and the dead socket that follow are the cut working - and `report` cannot
-  // tell a deliberate cut from a real one, so it has to be told. No other row of this rung cuts
-  // anything, which is why the forgiveness is at this call site and not around the shared helper.
-  const offlineObservers = {
-    victim: asTheWipedVictim(ignoringOfflineCut(await report(seedObserver))),
-    actor: asTheActor(await report(actorObserver)),
-  };
-  const offlineDetail = {
-    what: row.what,
-    seed: {
-      deviceId: victimBefore.deviceId,
-      settledInMs: seedSettle.settled ? seedSettle.elapsedMs : null,
-      waitedFor: seedTarget.ids.size,
-    servableFrom: seedTarget.from,
-      state: seedState,
-      heldTheDoomedGroup,
-    },
-    severance,
-    revocation,
-    whileUnreachable: { residue: whileUnreachable, wipe: offlineWipe },
-    afterTheReload: { residue: landed, wipe: afterWipe, landedInMs, where },
-    timeline,
-    unmet: offlineMissing,
-    observers: offlineObservers,
-  };
-  seeded.cx.close();
-  actorCx.close();
-  await finishObserved(
-    row.id,
-    offlineVerdict,
-    offlineDetail,
-    offlineObservers,
-    restoreTheFleet,
+    note("restoring the network and RELOADING - the reload is the trigger, not a frame");
+    await restoreTheLink();
+    await seeded.cx.send("Page.reload");
+    const reloadedAt = Date.now();
+    let landed = whileUnreachable;
+    let landedInMs = null;
+    for (let i = 0; i < 20; i += 1) {
+      await sleep(3000);
+      landed = await deviceResidue(VICTIM, seeded.cx).catch((e) => ({
+        error: firstLine(e),
+        readable: false,
+        empty: false,
+      }));
+      if (landed.empty) {
+        landedInMs = Date.now() - reloadedAt;
+        break;
+      }
+    }
+    const afterWipe = classifyWipe(seeded.cx);
+    const where = await evaluate(seeded.cx, "location.pathname").catch(() => null);
+    note(
+      `after the reload ${JSON.stringify({ landedInMs, residue: landed, wipe: afterWipe, where })}`,
+    );
+
+    const offlineExpectations = {
+      theVictimHeldTheWorldFirst: seedSettle.settled === true && heldTheDoomedGroup === true,
+      /** The cut was real: the far end agrees it cannot reach this client. */
+      itWasReallyUnreachable: severance?.severed?.severed === true,
+      theServerRecordedTheRevocation: revocation.revoked === true,
+      theServerForgotTheDevice:
+        revocation.wasAddressable === true && revocation.stillAddressable === false,
+      /**
+       * THE DEFERRAL, WHICH IS THE ROW. A device that cannot ask must not conclude: wiping here would
+       * mean a transport failure had been read as an answer, and every offline user would lose their
+       * device. So the state is asserted PRESENT while unreachable, not merely tolerated.
+       */
+      theWipeWasDeferredWhileUnreachable: whileUnreachable.readable === true &&
+        whileUnreachable.empty === false,
+      itDidNotClaimToHaveWipedWhileUnreachable: offlineWipe.wipeRan === false,
+      /** And it is not lost: one contact with a network lands it. */
+      theWipeLandedAfterOneReload: landed.empty === true,
+      itSaidSoInItsOwnLog: afterWipe.wipeRan === true && afterWipe.wipeFinished === true,
+      noWipeStepFailed: afterWipe.wipeIncomplete !== true && afterWipe.stepsFailed === 0,
+      /** A wiped device belongs at the door, not on a chat page with nothing in it. */
+      itEndedAtTheLoginGate: where === "/login",
+      bothSamplesWereReallyRead: whileUnreachable.readable === true && landed.readable === true,
+      /**
+       * THE RIG IS PUT BACK, AND SAYS SO. This is the only row of the rung that breaks the victim's
+       * link, so it is the only one that can hand the next row a browser that reaches nothing.
+       * Asserted from the PAGE rather than from the fact that the lift was called: `restoreTheLink`
+       * returning is not the same claim as the client believing it is online again.
+       */
+      theLinkWasRestored: theLink.cut === false && theLink.after?.onLine === true,
+      /** Same two guards as the live rows: see the block below. A console nobody read says nothing. */
+      theWipeWindowWasActuallyRead: offlineWipe.linesRead > 0 && afterWipe.linesRead > 0,
+      theSettlePredicateKnewWhatToWaitFor: seedTarget.ids.size > 0,
+      timelineIsStamped: timeline.every((m) => typeof m.at === "number" && typeof m.wall === "string"),
+    };
+    const offlineMissing = unmet(offlineExpectations);
+    const offlineVerdict = offlineMissing.length === 0 ? "PASS" : "FAIL";
+    // THE CUT IS FORGIVEN FIRST, AND ONLY HERE. This row severs the victim's link on purpose, so the
+    // disconnected fetches and the dead socket that follow are the cut working - and `report` cannot
+    // tell a deliberate cut from a real one, so it has to be told. No other row of this rung cuts
+    // anything, which is why the forgiveness is at this call site and not around the shared helper.
+    const offlineObservers = {
+      victim: asTheWipedVictim(ignoringOfflineCut(await report(seedObserver))),
+      actor: asTheActor(await report(actorObserver)),
+    };
+    const offlineDetail = {
+      what: row.what,
+      seed: {
+        deviceId: victimBefore.deviceId,
+        settledInMs: seedSettle.settled ? seedSettle.elapsedMs : null,
+        waitedFor: seedTarget.ids.size,
+      servableFrom: seedTarget.from,
+        state: seedState,
+        heldTheDoomedGroup,
+      },
+      severance,
+      link: theLink,
+      revocation,
+      whileUnreachable: { residue: whileUnreachable, wipe: offlineWipe },
+      afterTheReload: { residue: landed, wipe: afterWipe, landedInMs, where },
+      timeline,
+      unmet: offlineMissing,
+      observers: offlineObservers,
+    };
+    seeded.cx.close();
+    actorCx.close();
+    await finishObserved(
+      row.id,
+      offlineVerdict,
+      offlineDetail,
+      offlineObservers,
+      restoreTheFleet,
+    );
+  }
+} finally {
+  // THE ONLY EXIT PATH THAT MATTERS HERE IS THE ONE NOBODY PLANNED. The happy path lifted the link
+  // above, before the reload it needs; this catches a revocation that threw, a residue read that
+  // could not be classified, anything at all - and leaves the rig where the next row expects it.
+  await restoreTheLink().catch((e) =>
+    console.error(
+      `healrevoke: THE LINK COULD NOT BE RESTORED - W3 may still be offline: ${firstLine(e)}`,
+    ),
   );
 }
 
