@@ -55,7 +55,7 @@
 - CHANGELOG: features, fixes and breaking changes get an entry under `[Unreleased]` (Keep a Changelog format).
 - ONE-OFF ACTIONS GO TO THE USER (2026-08-25): *"Pour les choses qui ne se font qu'une fois, tu peux me demander de les faire hein."* Building a tool for a single click is that waste.
 - DELEGATION: broad file-gathering goes to a search subagent; a big, risky or native Work Package goes to a background agent through a precise brief in `AGENTS.md`.
-- PROD ACCESS: `ssh canari`, `ssh mitv`, `ssh cercle` (via ProxyJump canari). Postgres is the container `infrastructure-postgres-1`, and `auth_db` is the ONLY database - every service shares it, social-service included (its `DB_DATABASE` default `canari_social` does not exist on prod). User `canari`. **Use the PowerShell tool, never Bash** - Git Bash strips the backslashes out of the cloudflared ProxyCommand. Quote SQL single-outer, doubled-inner: `ssh canari 'docker exec … psql -U canari -d auth_db -x -c "SELECT … WHERE id = ''uuid''"'`.
+- PROD ACCESS: `ssh canari`, `ssh mitv`, `ssh cercle` and `ssh miconnect` (the last two via ProxyJump canari). **`miconnect` is the Authentik box** - its containers are `miconnect-server-1` / `-worker-1` / `-postgresql-1`, and `docker logs miconnect-server-1` is an ACCESS LOG carrying every `/application/o/authorize/` with its status, its `redirect_uri` and the client's `user_agent`; it is what proved the iPad defect below. Postgres is the container `infrastructure-postgres-1`, and `auth_db` is the ONLY database - every service shares it, social-service included (its `DB_DATABASE` default `canari_social` does not exist on prod). User `canari`. **Use the PowerShell tool, never Bash** - Git Bash strips the backslashes out of the cloudflared ProxyCommand. Quote SQL single-outer, doubled-inner: `ssh canari 'docker exec … psql -U canari -d auth_db -x -c "SELECT … WHERE id = ''uuid''"'`.
 
 ## **ARCHITECTURE & CONSTRAINTS**
 
@@ -337,6 +337,23 @@ method at all, so an acknowledgement goes in `tools/play-vitals/known-issues.jso
 fixing commit and REPORTS a recurrence above it rather than muting. And **WP-RESTORE-1** (Zero-Tap Sign-In,
 required April 2027, WebAuthn on a server that has none) is ACCEPTED and scheduled AFTER the campaign
 ([backlog](docs/wiki/backlog.md)).
+
+**APP REVIEW REJECTED 0.14.4 (build 0.14.9) ON 2026-08-30, ON TWO GUIDELINES. ONE IS FIXED IN THE
+TREE AND OWES A BUILD; THE OTHER IS A CLICK THAT IS NOT MINE TO MAKE.**
+
+- **2.1(a) - "the app redirected to an error page after tapping Sign in", on an iPad Air (M3).**
+  CAUSE FOUND, FIXED, TESTED, NOT YET BUILT: an iPad's WebView calls itself `Macintosh`, so the app
+  took the WEB branch of every iOS decision and asked Authentik for `tauri://localhost/auth/callback`.
+  Proof is first-hand, in `docker logs miconnect-server-1` - one `status 400` at 11:28:36 UTC with
+  that URI and that user agent. Story in `CHANGELOG.md`, mechanism on
+  [mobile](docs/wiki/frontend/mobile.md#the-ipad-that-called-itself-a-macintosh-and-the-login-app-review-could-not-finish),
+  rules in [durable-rules](docs/wiki/durable-rules.md); **none of it restated here.** **What is owed:
+  an iOS release build, ONE login on the iPhone showing `uri=fr.emse.canari://callback` (which
+  settles the iPad as well - that page says why), then the resubmission.**
+- **5 (Legal) - CallKit must not be active in an app available in China.** NOT a code item unless we
+  choose to sell there: removing China from the territories in App Store Connect closes it, and that
+  is the user's one-off click, followed by a reply in the review thread. The alternative - keeping
+  China and disabling CallKit by storefront region - is a feature nobody has asked for.
 
 **iOS - three defects found on hardware, all fixed, one proof still owed.** Stories in `CHANGELOG.md`,
 mechanisms on [mobile](docs/wiki/frontend/mobile.md) and

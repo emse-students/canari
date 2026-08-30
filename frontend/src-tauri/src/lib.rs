@@ -613,7 +613,12 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_websocket::init())
-        .plugin(tauri_plugin_store::Builder::default().build());
+        .plugin(tauri_plugin_store::Builder::default().build())
+        // Publishes the COMPILE-TIME target OS to the WebView (window.__TAURI_OS_PLUGIN_INTERNALS__).
+        // The frontend used to read the platform out of navigator.userAgent, which an iPad WKWebView
+        // does not answer honestly: desktop-class browsing reports "Macintosh", so an iPad fell
+        // through every iOS branch - including the OIDC redirect URI, which App Review rejected.
+        .plugin(tauri_plugin_os::init());
 
     #[cfg(all(desktop, not(dev)))]
     let builder = builder.plugin(tauri_plugin_localhost::Builder::new(port).build());

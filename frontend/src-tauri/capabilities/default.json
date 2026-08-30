@@ -41,6 +41,7 @@
     },
     "log:default",
     "log:allow-log",
-    "store:default"
+    "store:default",
+    "os:default"
   ]
 }

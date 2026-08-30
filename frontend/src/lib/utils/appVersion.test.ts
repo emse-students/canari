@@ -1,3 +1,12 @@
+// The runtime this build was compiled for, as the native side reports it. Both detectors under
+// test read it, and nothing else in this file touches either mock.
+const nativeRuntime = vi.hoisted(() => ({ tauri: false, os: 'ios' }));
+vi.mock('$lib/utils/openExternal', () => ({
+  isTauriRuntime: () => nativeRuntime.tauri,
+  openExternal: vi.fn(),
+}));
+vi.mock('@tauri-apps/plugin-os', () => ({ platform: () => nativeRuntime.os }));
+
 import {
   APP_STORE_URL,
   PLAY_STORE_URL,
@@ -8,7 +17,10 @@ import {
   getClientAppVersion,
   getReleaseApkDownloadUrl,
   getReleasePageUrl,
+  isAndroidTauriRuntime,
+  isIosTauriRuntime,
   isMaintenanceBlockingUser,
+  isMobileTauriRuntime,
   parseServerVersionInfo,
   releaseTag,
 } from './appVersion';
@@ -159,6 +171,57 @@ describe('store URLs', () => {
     expect(PLAY_STORE_URL).toBe('https://play.google.com/store/apps/details?id=fr.emse.canari');
     // Geo-neutral: no /us/ segment, Apple redirects to the viewer's storefront.
     expect(APP_STORE_URL).toBe('https://apps.apple.com/app/id6793060521');
+  });
+});
+
+describe('native runtime detection', () => {
+  /** The user agent an iPad WKWebView actually sends - it names no Apple device at all. */
+  const IPAD_WKWEBVIEW_UA =
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)';
+
+  function pretendUserAgent(ua: string) {
+    Object.defineProperty(navigator, 'userAgent', { value: ua, configurable: true });
+  }
+
+  afterEach(() => {
+    nativeRuntime.tauri = false;
+    nativeRuntime.os = 'ios';
+  });
+
+  // The defect App Review rejected on 2026-08-30: an iPad claims to be a Mac, so the old
+  // /iphone|ipad|ipod/ test on navigator.userAgent was false, the app took its web branch and
+  // asked Authentik to redirect to tauri://localhost/auth/callback, which Authentik refused
+  // with the "Redirect URI Error" page the reviewer photographed.
+  it('calls an iPad iOS even though its user agent says Macintosh', () => {
+    nativeRuntime.tauri = true;
+    nativeRuntime.os = 'ios';
+    pretendUserAgent(IPAD_WKWEBVIEW_UA);
+    expect(isIosTauriRuntime()).toBe(true);
+    expect(isMobileTauriRuntime()).toBe(true);
+    expect(isAndroidTauriRuntime()).toBe(false);
+  });
+
+  it('reads Android from the native side, not from the user agent', () => {
+    nativeRuntime.tauri = true;
+    nativeRuntime.os = 'android';
+    pretendUserAgent(IPAD_WKWEBVIEW_UA);
+    expect(isAndroidTauriRuntime()).toBe(true);
+    expect(isIosTauriRuntime()).toBe(false);
+  });
+
+  it('leaves a desktop build off both mobile paths', () => {
+    nativeRuntime.tauri = true;
+    nativeRuntime.os = 'macos';
+    expect(isMobileTauriRuntime()).toBe(false);
+  });
+
+  // On the web there is no native side to ask; an iPhone browser is still not a Tauri build.
+  it('is false everywhere on the web, whatever the device', () => {
+    nativeRuntime.tauri = false;
+    pretendUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15');
+    expect(isIosTauriRuntime()).toBe(false);
+    expect(isAndroidTauriRuntime()).toBe(false);
+    expect(isMobileTauriRuntime()).toBe(false);
   });
 });
 

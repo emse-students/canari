@@ -238,6 +238,29 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **Signing in from an iPad was refused by Authentik with "Redirect URI Error", on every build the
+  App Store has ever had.** App Review found it on an iPad Air (M3) on 2026-08-30 and rejected the
+  submission under guideline 2.1(a); Authentik's own access log carries the single failed request,
+  `status 400` on `/application/o/authorize/` with `redirect_uri=tauri://localhost/auth/callback`
+  and `user_agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15`. **The iPad
+  named itself a Macintosh, and the app believed it.** `isIosTauriRuntime()` tested
+  `navigator.userAgent` against `/iphone|ipad|ipod/`, but desktop-class browsing is WKWebView's
+  DEFAULT content mode (`preferredContentMode: .recommended`) for any view wider than 375 px, so on
+  an iPad that test is false and the app took the WEB side of every iOS decision it makes.
+  `oidcRedirectUri()` then returned `${location.origin}/auth/callback` - `tauri://localhost/...` on
+  iOS - which is not, and must not be, in the provider's allowlist; and `startOidcLogin()` navigated
+  the main WebView to Authentik instead of presenting the `ASWebAuthenticationSession` that carries
+  the callback back through the `fr.emse.canari://callback` deep link. The same blindness filed
+  every iPad as `deviceOs: macos`, sent it down the browser notification path beside the native one,
+  and offered it an APK it cannot install.
+
+  Fixed where the fact lives rather than at the six call sites reading it: `tauri-plugin-os`
+  publishes the COMPILE-TIME target OS into the WebView, and `platform()` - synchronous, so it is a
+  drop-in - is now what `isAndroidTauriRuntime`, `isIosTauriRuntime` and `detectRuntimeDeviceOs`
+  answer from. In a Tauri runtime where the plugin is missing it THROWS instead of quietly reporting
+  "not mobile". The web path still has only the user agent to go on, and it is lied to the same way,
+  so an iPad browser is separated from the Mac it claims to be by `maxTouchPoints`.
+
 - **A reply typed in the notification shade was refused by the server (`HTTP 403`) whenever the app
   was merely BACKGROUNDED instead of killed - and the shade then showed a "sending" spinner that
   never ended.** The push secret has two homes: `pending_push_secret.txt`, written by the WebView

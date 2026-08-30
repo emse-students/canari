@@ -1,4 +1,6 @@
 import { coreUrl } from '$lib/utils/apiUrl';
+import { platform } from '@tauri-apps/plugin-os';
+
 import { isTauriRuntime, openExternal } from '$lib/utils/openExternal';
 
 /** GitHub repository where release artifacts (AppImage, APK) are published. */
@@ -210,20 +212,35 @@ export function getReleasePageUrl(version: string | null): string {
   return `${base}/tag/${releaseTag(trimmed)}`;
 }
 
-/** True on Tauri Android builds (universal APK update flow). */
-export function isAndroidTauriRuntime(): boolean {
-  return (
-    isTauriRuntime() && typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent)
-  );
+/**
+ * The OS this build was COMPILED for, or `null` on the web, where there is no native side.
+ *
+ * Never read from `navigator.userAgent`: an iPad answers that question with "Macintosh".
+ * Desktop-class browsing is WKWebView's default content mode (`preferredContentMode`
+ * `.recommended`) for any view wider than 375 px, so `/iphone|ipad|ipod/` - which is how this
+ * file used to decide - was FALSE on every iPad. The app then took the web branch of each iOS
+ * decision, starting with the OIDC redirect URI: an iPad asked Authentik to redirect to
+ * `tauri://localhost/auth/callback` instead of `fr.emse.canari://callback`, and was refused.
+ * That is the "Redirect URI Error" App Review hit on an iPad Air on 2026-08-30.
+ *
+ * `platform()` is a compile-time constant published by tauri-plugin-os into the WebView, so it
+ * is synchronous like the regexes it replaces, and it cannot be wrong about the device class.
+ * It THROWS in a Tauri runtime where the plugin is not registered - deliberately: a platform
+ * this app cannot name must be loud, never silently "not mobile".
+ */
+function nativePlatform(): string | null {
+  if (!isTauriRuntime()) return null;
+  return platform();
 }
 
-/** True on Tauri iOS builds (App Store update flow, no direct binary download). */
+/** True on Tauri Android builds (universal APK update flow). Phones and tablets alike. */
+export function isAndroidTauriRuntime(): boolean {
+  return nativePlatform() === 'android';
+}
+
+/** True on Tauri iOS builds (App Store update flow, no direct binary download). iPhone AND iPad. */
 export function isIosTauriRuntime(): boolean {
-  return (
-    isTauriRuntime() &&
-    typeof navigator !== 'undefined' &&
-    /iphone|ipad|ipod/i.test(navigator.userAgent)
-  );
+  return nativePlatform() === 'ios';
 }
 
 /**

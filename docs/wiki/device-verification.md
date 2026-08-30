@@ -27,11 +27,12 @@ was not one**: the user reported on 2026-08-01 that a tapped notification still 
 conversation. That is the lesson this file exists for - a check whose verdict is "it looked right"
 is not a check, so H now names the log lines that decide it.
 
-**iOS is NOT OWED - IT IS UNRUNNABLE. There is no iPhone (the user, 2026-08-18.)** Every iOS cell
-below is therefore BLOCKED, not pending, and the distinction is the point: "owed" invites someone to
-plan around it being done shortly, and nothing here will be done until hardware exists. **Do not
-schedule iOS checks, and do not read a blank iOS cell as an oversight.** What follows about how to
-believe an iOS build stands unchanged for whenever that day comes.
+**iOS WAS UNRUNNABLE UNTIL 2026-08-27** - there was no iPhone, and every iOS cell was BLOCKED rather
+than pending (the user, 2026-08-18). An iPhone (iOS 18.7) has run against production since, so iOS
+cells are now OWED and schedulable; check S is the only one that has actually run. **There is still
+no iPad, and on 2026-08-30 that stopped being an academic gap**: App Review ran one, and the login
+defect it found had been in every build the store ever had - check T, and the paragraph there saying
+why an iPhone settles that particular check for both.
 
 Two consequences to carry deliberately rather than rediscover:
 
@@ -42,7 +43,7 @@ Two consequences to carry deliberately rather than rediscover:
   decided on 2026-08-18 to leave it as is. It is recorded because the state is real, not because
   something is owed.
 
-Not one check has ever run on hardware. The iOS half of WP-SEC-1 and WP-IOS-1 has only ever been
+Before 2026-08-27 not one check had ever run on iOS hardware, and only check S has since. The iOS half of WP-SEC-1 and WP-IOS-1 has only ever been
 compiled, and a green CI run is not
 proof a given file compiled - the pbxproj is hand-maintained, so grep the log for
 `SwiftCompile ...<file>.swift` / `CompileC ...<file>.o` before believing any of it. That caveat is
@@ -670,6 +671,30 @@ native here is verified by compiling, which proves nothing about running.
 - Run it in a QUIET WINDOW. The first attempt of 2026-08-28 was voided by five CD deploys in twelve
   minutes: a push to `main` restarts every container and destroys its logs, so a hardware check and a
   push are mutually exclusive, exactly as a campaign run is.
+
+## T. The redirect URI an iOS build asks Authentik for - owed on iOS
+
+**Proves** the fix for App Review's rejection of 2026-08-30 under guideline 2.1(a). **Precondition:**
+a build carrying `tauri-plugin-os`; on anything older the check measures the defect, not the fix.
+
+1. Fresh launch, then tap **Sign in**.
+2. **The verdict is one log line**: `login returnTo=/chat uri=fr.emse.canari://callback`. Any `uri=`
+   containing `tauri://localhost` is a FAIL and is exactly what App Review saw.
+3. The login page must arrive in an `ASWebAuthenticationSession` sheet - it carries a Done button and
+   names the `auth.canari-emse.fr` host above the page. The app's own view navigating to Authentik is
+   the same FAIL wearing different clothes: it is the other half of the branch step 2 measures.
+4. Finish the login. `/auth/callback` runs and the conversation list appears.
+
+**Server-side, for a verdict that does not depend on reading the client's log:**
+`ssh miconnect 'docker logs miconnect-server-1 --since 10m 2>&1 | grep -a authorize | tail -3'`
+prints the request Authentik actually received - its `redirect_uri`, its `status` and the client's
+`user_agent`.
+
+**An iPhone settles this check for the iPad**, which is the one place in this file where hardware we
+do not own is not owed a run of its own: `platform()` is a constant compiled into the iOS target, and
+the iPad's only difference - its user agent - is no longer read by anything
+([mobile](frontend/mobile.md#the-ipad-that-called-itself-a-macintosh-and-the-login-app-review-could-not-finish)).
+It settles NOTHING about iPad layout, which nothing here has ever measured.
 
 ## Traps that outlived the work that found them
 

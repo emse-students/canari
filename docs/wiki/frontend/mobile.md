@@ -1279,6 +1279,7 @@ CONFIGURATION** — and every parity defect found since has been exactly that. A
 | Server CORS allowlist | `apps/*-service/src/cors-origins.ts`, `ALLOW_ORIGIN` in `cd.yml` | Named the Android origins ONLY. Broke iOS login outright - see below. One module per service now, with a test naming each platform's origin individually |
 | Third-party cookie acceptance | `MainActivity.kt` (Android), nothing on iOS | MEASURED 2026-08-27: Android opts in and survives `am force-stop` (1 refresh, 200); iOS presented `cookies=[]` on 120. WKWebView has no equivalent API, so on `tauri://localhost` the credential is carried in a header instead - [`sessions.md`](../sessions.md#the-credential-a-client-carries-itself) |
 | Push token acquisition | `canari_push.mm` (iOS), `MainActivity.kt` + FCM SDK (Android) | MEASURED 2026-08-27: `push_token` held 49 `android` rows and had NEVER held one `ios` row. The iOS launch-time FCM fetch was written as Android's mirror, but iOS has a precondition Android does not - see [below](#the-fcm-token-an-iphone-could-never-obtain-and-the-silence-that-hid-it-for-the-platforms-life). Fixed 2026-08-28; a device now REPORTS the absence, so one `GROUP BY` settles it |
+| Device CLASS inside one platform | `navigator.userAgent`, until 2026-08-30 | An iPad reports itself as `Macintosh` (desktop-class browsing is WKWebView's default), so every iOS branch took its WEB side on an iPad - which is what App Review rejected, see [below](#the-ipad-that-called-itself-a-macintosh-and-the-login-app-review-could-not-finish). The platform is read from `tauri-plugin-os` now, and `appVersion.test.ts` / `mlsPlatform.test.ts` assert it against that exact user agent |
 
 Two rules come out of that table, and they are the ones to apply before adding anything native:
 
@@ -1424,6 +1425,55 @@ took to `push_diagnostic.txt`, the Rust command `get_push_diagnostic` reads it a
 registration outright - the branch that had no observer at all), `app-delegate-absent`. The file is
 deleted the moment a token arrives, so a reason cannot outlive its cause. See
 [check S](../device-verification.md) for the run this must be measured against.
+
+### The iPad that called itself a Macintosh, and the login App Review could not finish
+
+**Measured, prod, 2026-08-30 11:28:36 UTC**, in Authentik's own access log - one line, the only one
+of its kind in five days:
+
+```json
+{"event": "/application/o/authorize/?client_id=...&redirect_uri=tauri%3A%2F%2Flocalhost%2Fauth%2Fcallback&...",
+ "status": 400, "remote": "146.70.98.237",
+ "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)"}
+```
+
+That is App Review, on an iPad Air 11-inch (M3) running iPadOS 26.6, tapping Sign in and being shown
+Authentik's "Redirect URI Error" page. The submission was rejected under guideline 2.1(a).
+
+**The user agent is the whole defect.** WKWebView's default content mode is
+`preferredContentMode: .recommended`, and on an iPad wider than 375 px "recommended" means
+DESKTOP-CLASS BROWSING: the WebView reports `Macintosh; Intel Mac OS X 10_15_7` and names no Apple
+device at all. Note also what the string does NOT contain - no `Version/`, no `Safari/`, no
+`Mobile/15E148` - which is how an in-app WebView differs from Safari, and why nothing about the
+device class survives into it.
+
+`isIosTauriRuntime()` tested that string against `/iphone|ipad|ipod/`. On every iPad the answer was
+false, so the app took the WEB side of each iOS decision in the same binary an iPhone runs
+correctly:
+
+| Reader | What an iPad got instead |
+|---|---|
+| `oidcRedirectUri()` | `${location.origin}/auth/callback` = `tauri://localhost/auth/callback`, which Authentik refuses - the rejection |
+| `startOidcLogin()` | the main WebView navigated to Authentik, instead of the `ASWebAuthenticationSession` whose callback returns through `fr.emse.canari://callback` |
+| `detectRuntimeDeviceOs()` | a device row filed under `deviceOs: macos` |
+| `useMessaging` | the browser notification path beside the native one - a duplicate per message |
+| `buildUpdateTarget()` | an APK, or a reload, in place of the App Store |
+| `CallOverlay`, `ChatBackgroundService` | the desktop RTC and heartbeat branches |
+
+**Fixed at the fact, not at its six readers.** `tauri-plugin-os` publishes the COMPILE-TIME target
+OS into the WebView (`window.__TAURI_OS_PLUGIN_INTERNALS__`), and `platform()` - synchronous, so it
+drops straight into functions that were regex tests - is what the detectors answer from. Where the
+plugin is absent inside a Tauri runtime it THROWS, deliberately: a platform this app cannot name
+must be loud rather than silently "not mobile". Only the web build still reads the user agent,
+because there is no native side to ask; it is lied to identically, so an iPad browser is told apart
+from the Mac it claims to be by `navigator.maxTouchPoints`.
+
+**Why an iPhone run proves this one for the iPad.** `platform()` is a constant compiled into the
+iOS target - it cannot differ between two devices running the same binary - and the iPad's only
+difference, its user agent, is no longer read by anything. So a login on the iPhone that logs
+`uri=fr.emse.canari://callback` establishes the mechanism for both, which is the one case in this
+file where hardware we do not have is not owed a check of its own. What an iPhone would NOT prove is
+anything about iPad LAYOUT, which nothing here has ever measured.
 
 ## Reading live state out of a running WebView, over adb
 

@@ -18,9 +18,12 @@ import WebKit
 /// `UIApplication.open(_:)` - since fr.emse.canari:// is this app's own registered scheme, that
 /// routes straight back into the same app-delegate path the Android deep link already uses.
 ///
-/// UNVERIFIED ON HARDWARE: this repo has never run an iOS build on a device or simulator (see
-/// CLAUDE.md, device-verification ladder). This self-reinvocation path is the one piece of this
-/// plugin with real behavioral uncertainty - it should be the first thing checked once it can be.
+/// VERIFIED ON HARDWARE 2026-08-27 (iPhone, iOS 18.7, against production): the session presented,
+/// the redirect was intercepted, the self-reinvocation routed back into the app and /auth/callback
+/// ran. Nothing in this file needed changing then, and nothing needed changing for the iPad defect
+/// of 2026-08-30 either - what was broken there was the CALLER, which decided from the user agent
+/// whether it was on mobile at all and so never reached this plugin on an iPad. `presentationAnchor`
+/// is device-agnostic by construction, so an iPhone run stands for both.
 class CustomTabsPlugin: Plugin, ASWebAuthenticationPresentationContextProviding {
   /// Keeps the session alive for the duration of the flow - ASWebAuthenticationSession is
   /// deallocated (and its sheet dismissed) the instant nothing retains it.
