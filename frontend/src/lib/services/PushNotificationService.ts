@@ -18,6 +18,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
+import { detectRuntimeDeviceOs } from '$lib/mls-client/mlsPlatform';
 import { currentUserId } from '$lib/stores/user';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { showToast } from '$lib/stores/toast.svelte';
@@ -63,6 +64,10 @@ const BACKGROUND_RETRY_DELAY_MS = 5000;
 
 // Prevents repeated attempts when Google Play Services is unavailable.
 let pushAttempted = false;
+
+// Whether this process has already told the server that this device has no usable token. Guards the
+// report, NOT the attempts: a device keeps trying on every resume, it just stops repeating itself.
+let pushUnavailableReported = false;
 
 /**
  * Reads the FCM token via the Rust `get_fcm_token` command (reads fcm_token.txt).
@@ -142,14 +147,17 @@ export async function startPushService(
   // FCM covers Android (native FCM) and iOS (FCM relays to APNs). The Rust
   // get_fcm_token command exists on all targets but returns null on desktop, so we
   // early-return there to avoid getFcmToken polling for 30 s on every desktop start.
-  const ua = navigator.userAgent;
-  const platform: PushPlatform | null = /android/i.test(ua)
-    ? 'android'
-    : /iphone|ipad|ipod/i.test(ua)
-      ? 'ios'
-      : null;
+  //
+  // THE OS IS ASKED, NEVER THE USER AGENT. Inside a Tauri build `detectRuntimeDeviceOs` answers
+  // with the COMPILE-TIME target; the user-agent test that used to be here read `/iphone|ipad|ipod/`
+  // against an iPad WKWebView that calls itself "Macintosh", so an iPad fell through to `null` and
+  // this whole service returned as "desktop" - no token, and no report either, because the return is
+  // above the reporting path. That is the same defect the login took, at a site its fix did not reach.
+  const deviceOs = detectRuntimeDeviceOs('desktop');
+  const platform: PushPlatform | null =
+    deviceOs === 'android' ? 'android' : deviceOs === 'ios' ? 'ios' : null;
   if (!platform) {
-    console.info('[Push] startPushService noop (desktop - no FCM)');
+    console.info(`[Push] startPushService noop (${deviceOs} - no FCM)`);
     return;
   }
 
@@ -200,9 +208,19 @@ export async function startPushService(
   // onNewToken only writes the new token locally without pushing it to the server.
   // Re-check the token here (fast path, no 30 s re-poll, no re-permission prompt);
   // registerPushToken only sends to the backend if the token has actually changed.
+  //
+  // A FAILURE HERE IS REPORTED, and it used to be thrown away. This path ran on every return to the
+  // foreground and DISCARDED the outcome, so once the first call had set `pushAttempted` a device
+  // could go on failing for ever without a word - the ladder below is the only thing that ever
+  // reported, and it runs once per process. A `no-token` on this path is not a premature verdict:
+  // `registerOnce` answers `ok` when the token is merely unchanged, so reaching `no-token` means the
+  // OS still had nothing to give after the poll.
   if (pushAttempted) {
     console.info('[Push] startPushService re-check (possible token rotation)');
-    await registerOnce();
+    const recheck = await registerOnce();
+    if (!recheck.ok) {
+      await reportGaveUp(apiBaseUrl, bearerToken, deviceId, platform, recheck.reason);
+    }
     return;
   }
 
@@ -246,15 +264,45 @@ export async function startPushService(
   }
 
   console.warn('[Push] startPushService exhausted retries without successful registration');
-  // THE FAILURE IS REPORTED HERE AND NOWHERE EARLIER. Every attempt above can fail for a reason the
-  // next one fixes - that is what the retries are for - so reporting one of those would file a
-  // defect against a device that goes on to work. Reaching this line means the device has given up
-  // and every notification for it is now silently lost, which is exactly the state that had gone
-  // unnoticed on iOS for the platform's whole life. Best-effort by construction: a device that
-  // cannot reach the network cannot report that it cannot reach the network, and failing to file
-  // the report must never be louder than the thing being reported.
-  const reason = outcome.reason === 'no-token' ? await noTokenReason() : outcome.reason;
-  await reportPushUnavailable(apiBaseUrl, bearerToken, deviceId, platform, reason);
+  // THE FAILURE IS REPORTED HERE AND NOWHERE EARLIER ON THIS PATH. Every attempt above can fail for
+  // a reason the next one fixes - that is what the retries are for - so reporting one of those would
+  // file a defect against a device that goes on to work. Reaching this line means the device has
+  // given up and every notification for it is now silently lost, which is exactly the state that had
+  // gone unnoticed on iOS for the platform's whole life.
+  //
+  // WHAT THIS COSTS, STATED SO IT IS NOT REDISCOVERED AS A MYSTERY: the ladder spends up to
+  // 30 s + BACKGROUND_RETRY_ATTEMPTS * (BACKGROUND_RETRY_DELAY_MS + 30 s) - four minutes with the
+  // current constants - before the report is even attempted, because each `registerOnce` polls
+  // `getFcmToken` for 30 s. An app closed or backgrounded inside that window reports nothing, and
+  // that is a real reason for a silent device. The retries are not a clock this design leans on, so
+  // they are not shortened here on a hunch: the window is written down, and shortening it needs a
+  // measurement of how long a token really takes to appear on a slow Android.
+  await reportGaveUp(apiBaseUrl, bearerToken, deviceId, platform, outcome.reason);
+}
+
+/**
+ * Files the "this device has no usable push token" report, at most once per process.
+ *
+ * Best-effort by construction: a device that cannot reach the network cannot report that it cannot
+ * reach the network, and failing to file the report must never be louder than the thing being
+ * reported. The once-per-process guard is what keeps a foreground re-check from filing the same
+ * verdict on every resume; it is deliberately NOT durable, because the question the report answers
+ * ("is this device silent right now") is answered afresh by each process.
+ */
+async function reportGaveUp(
+  apiBaseUrl: string,
+  bearerToken: string,
+  deviceId: string,
+  platform: PushPlatform,
+  reason: 'no-token' | 'rejected'
+): Promise<void> {
+  if (pushUnavailableReported) {
+    console.info('[Push] still unavailable, already reported once this process');
+    return;
+  }
+  pushUnavailableReported = true;
+  const named = reason === 'no-token' ? await noTokenReason() : reason;
+  await reportPushUnavailable(apiBaseUrl, bearerToken, deviceId, platform, named);
 }
 
 /**
@@ -272,7 +320,13 @@ async function reportPushUnavailable(
   reason: string
 ): Promise<void> {
   const userId = currentUserId();
-  if (!userId) return;
+  if (!userId) {
+    // Every swallowed branch logs: this one used to return in silence, which made a dropped report
+    // indistinguishable from a report that was never owed - the exact confusion this endpoint exists
+    // to end.
+    console.warn(`[Push] cannot report unavailable (${reason}): no currentUserId`);
+    return;
+  }
   try {
     const response = await fetch(`${apiBaseUrl}/api/mls/push/unavailable`, {
       method: 'POST',

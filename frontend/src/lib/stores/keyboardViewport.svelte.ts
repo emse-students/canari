@@ -3,6 +3,8 @@
  * reactive state for chat scroll and fixed bottom UI.
  */
 
+import { detectRuntimeDeviceOs } from '$lib/mls-client/mlsPlatform';
+
 export type KeyboardViewportSnapshot = {
   isOpen: boolean;
   /** Visible layout height (px). */
@@ -39,11 +41,14 @@ export type ViewportMeasurement = {
 /** A pinch-zoom scale above this counts as "the user zoomed", not "a keyboard opened". */
 const ZOOM_SCALE_EPSILON = 1.01;
 
+/**
+ * How much the visual viewport must shrink before it counts as a keyboard.
+ *
+ * THE OS IS ASKED, NEVER THE USER AGENT: an iPad WKWebView calls itself "Macintosh", so the
+ * `/iphone|ipad|ipod/` test that used to be here gave every iPad the desktop threshold.
+ */
 function keyboardOpenThresholdPx(): number {
-  const ua = navigator.userAgent.toLowerCase();
-  const isIos = /iphone|ipad|ipod/.test(ua);
-  if (isIos) return 100;
-  return 160;
+  return detectRuntimeDeviceOs() === 'ios' ? 100 : 160;
 }
 
 /**

@@ -25,6 +25,9 @@ Object.defineProperty(globalThis, '__TAURI_INTERNALS__', {
   configurable: true,
 });
 
+const { osPlatformStub } = vi.hoisted(() => ({ osPlatformStub: vi.fn(() => 'android') }));
+vi.mock('@tauri-apps/plugin-os', () => ({ platform: osPlatformStub }));
+
 vi.mock('@tauri-apps/plugin-notification', () => ({
   isPermissionGranted: vi.fn().mockResolvedValue(true),
   requestPermission: vi.fn().mockResolvedValue('granted'),
@@ -39,7 +42,8 @@ beforeEach(() => {
   sessionStorage.clear();
   vi.clearAllMocks();
   tauriInvokeStub.mockImplementation(() => Promise.resolve(null));
-  Object.defineProperty(navigator, 'userAgent', { value: 'android', configurable: true });
+  // The service asks the OS, not the user agent, so this is what decides the platform now.
+  osPlatformStub.mockReturnValue('android');
   globalThis.fetch = vi.fn().mockResolvedValue({
     ok: true,
     json: async () => ({}),
@@ -102,5 +106,74 @@ describe('a device the OS never gives a push token', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('reports a device that keeps failing on a LATER call, not only on the first', async () => {
+    // The foreground re-check used to discard its outcome. Once `pushAttempted` had latched - which
+    // the first successful launch does - a device could go on having no token for ever without the
+    // server ever hearing about it, because the ladder that reports runs once per process. This is
+    // the shape that left PUSH_UNAVAILABLE silent while a real iPhone held no row.
+    vi.resetModules();
+    const { startPushService: freshStart } = await import('./PushNotificationService');
+
+    // First call succeeds, which is what sets the module's `pushAttempted` latch.
+    tauriInvokeStub.mockImplementation((cmd?: string) =>
+      Promise.resolve(cmd === 'get_fcm_token' ? 'tok-1' : null)
+    );
+    await freshStart('https://api', 'jwt', 'dev-1');
+    expect(
+      vi
+        .mocked(globalThis.fetch)
+        .mock.calls.filter(([url]) => String(url).includes('/push/register'))
+    ).toHaveLength(1);
+
+    // The token is then gone: the re-check must file the report the ladder no longer runs.
+    vi.mocked(globalThis.fetch).mockClear();
+    tauriInvokeStub.mockImplementation((cmd?: string) =>
+      Promise.resolve(cmd === 'get_push_diagnostic' ? 'fcm-token-fetch-failed' : null)
+    );
+    vi.useFakeTimers();
+    try {
+      const started = freshStart('https://api', 'jwt', 'dev-1');
+      await vi.advanceTimersByTimeAsync(60_000);
+      await started;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const reports = vi
+      .mocked(globalThis.fetch)
+      .mock.calls.filter(([url]) => String(url).includes('/api/mls/push/unavailable'));
+    expect(reports).toHaveLength(1);
+    expect(JSON.parse((reports[0][1] as RequestInit).body as string).reason).toBe(
+      'fcm-token-fetch-failed'
+    );
+  });
+
+  it('says so instead of returning in silence when there is no user to report for', async () => {
+    // Every swallowed branch logs. A dropped report used to be indistinguishable from a report that
+    // was never owed, which is the exact confusion this endpoint exists to end.
+    vi.resetModules();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const userStore = await import('$lib/stores/user');
+    vi.mocked(userStore.currentUserId).mockReturnValueOnce('user-1').mockReturnValue(null);
+    const { startPushService: freshStart } = await import('./PushNotificationService');
+
+    vi.useFakeTimers();
+    try {
+      const started = freshStart('https://api', 'jwt', 'dev-1');
+      await vi.advanceTimersByTimeAsync(300_000);
+      await started;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(
+      vi
+        .mocked(globalThis.fetch)
+        .mock.calls.filter(([url]) => String(url).includes('/api/mls/push/unavailable'))
+    ).toHaveLength(0);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('no currentUserId'));
+    warn.mockRestore();
   });
 });

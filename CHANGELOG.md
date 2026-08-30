@@ -238,6 +238,56 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **An iPad could never get a push token, and three separate reasons kept it from ever saying so.**
+  `PUSH_UNAVAILABLE` - the report shipped so that a device with no push token would stop being
+  indistinguishable from a device nobody opened - had printed **zero lines for the whole life of the
+  chat-delivery container, on either platform**, while prod showed one iPhone on 0.14.14 holding an
+  FCM token and a second one on the same build holding none. The route was mapped and the server side
+  was fine; the client never called it. Four causes, all in `PushNotificationService.ts`:
+  - **The platform came from the user agent.** `/iphone|ipad|ipod/` against a WKWebView that calls
+    itself `Macintosh` gives `null`, so `startPushService` returned as "desktop - no FCM" before
+    anything was attempted - and that return sits ABOVE the reporting path, so the silence was total.
+    This is the same defect the login took on an iPad Air, at a site its fix did not reach; the OS is
+    now asked through `detectRuntimeDeviceOs`, which answers with the compile-time target inside a
+    Tauri build.
+  - **The foreground re-check discarded its outcome.** Once `pushAttempted` had latched - which the
+    first launch does - every later call ran one `registerOnce()` and threw the result away, and the
+    retry ladder that reports runs once per process. A device could fail for ever without a word. A
+    `no-token` there is not a premature verdict: `registerOnce` answers `ok` when the token is merely
+    unchanged, so reaching it means the OS still had nothing after the poll.
+  - **The report returned in silence when no user id was resolved**, which made a dropped report
+    indistinguishable from a report that was never owed - the exact confusion the endpoint exists to
+    end. Every swallowed branch logs.
+  - **The ladder can take four minutes** (a 30 s token poll, then six retries each with a poll of its
+    own) before the first report is attempted, so an app closed inside that window reports nothing.
+    The constants are NOT shortened on a hunch - the window is written down where the next reader will
+    find it, and shortening it needs a measurement of how long a token really takes on a slow Android.
+
+  Reporting is now guarded by its own once-per-process flag rather than by the accident of which path
+  ran, so a device keeps trying on every resume and simply stops repeating itself. Tests: an iPad
+  whose user agent says `Macintosh` still registers as `ios`, a later call reports what the first one
+  could not, and the missing-user branch is asserted to speak. **The acquisition fix itself is proven
+  on hardware** - `push_token` held no `ios` row in the platform's whole life until 2026-08-28
+  08:07:54 UTC.
+
+- **Two more places asked the user agent whether it was on iOS, found by sweeping the class instead of
+  waiting for the next report.** The iPad login fix had been applied at its own site only, and nobody
+  had enumerated the others:
+  - **A Stripe payment made on an iPad returned to the web, not to the app.** `isMobileTauri()` chose
+    between the `fr.emse.canari://stripe/...` deep link and a web URL by testing
+    `/android|iphone|ipad|ipod/` on the user agent, so an iPad - which says `Macintosh` - was handed
+    the web return URL and a user who had just paid landed somewhere the app could never catch.
+  - **An iPad got the desktop keyboard threshold.** `keyboardOpenThresholdPx()` returned 160 px
+    instead of 100 px, so a shrinking visual viewport had to travel further before it counted as a
+    keyboard.
+
+  Both now ask `detectRuntimeDeviceOs`. The remaining `navigator.userAgent` reads were checked and
+  left alone deliberately: the Firefox test in `CallService` and the Linux test in `useNotifications`
+  are not iOS decisions, `mlsPlatform` is the helper itself (its web fallback recognises iPadOS by
+  touch points), and `authSessions` / `DeviceManagementPanel` describe a REMOTE session's stored
+  string rather than detecting the runtime - a session opened on an iPad is still listed as a Mac
+  there, which is a display fault and not this one.
+
 - **Signing in from an iPad was refused by Authentik with "Redirect URI Error", on every build the
   App Store has ever had.** App Review found it on an iPad Air (M3) on 2026-08-30 and rejected the
   submission under guideline 2.1(a); Authentik's own access log carries the single failed request,

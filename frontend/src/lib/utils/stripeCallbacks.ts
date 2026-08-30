@@ -1,10 +1,19 @@
 import { isTauri } from '@tauri-apps/api/core';
+import { detectRuntimeDeviceOs } from '$lib/mls-client/mlsPlatform';
 import { publicAppUrl } from '$lib/utils/publicAppUrl';
 
-/** True on Tauri Android / iOS - Stripe Checkout must return via app deep link. */
+/**
+ * True on Tauri Android / iOS - Stripe Checkout must return via app deep link.
+ *
+ * THE OS IS ASKED, NEVER THE USER AGENT. This used to test `/android|iphone|ipad|ipod/` against
+ * `navigator.userAgent`, and an iPad WKWebView calls itself "Macintosh" - so an iPad was handed the
+ * WEB return URL and a paying user landed on a page the app could never catch. `detectRuntimeDeviceOs`
+ * answers with the compile-time target inside a Tauri build, which is the only reliable source here.
+ */
 export function isMobileTauri(): boolean {
   if (typeof window === 'undefined' || !isTauri()) return false;
-  return /android|iphone|ipad|ipod/i.test(navigator.userAgent);
+  const os = detectRuntimeDeviceOs('desktop');
+  return os === 'android' || os === 'ios';
 }
 
 function stripeDeepLink(path: 'success' | 'cancel', query: string): string {

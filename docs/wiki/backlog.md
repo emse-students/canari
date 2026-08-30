@@ -77,11 +77,25 @@ device nobody opened - *"the half that cost the platform its life was the silenc
 2026-08-29 10:08 UTC), on either platform. A device with no token and no report is the exact shape that
 commit was written to abolish.
 
-**WHAT IS OWED, AND NONE OF IT NEEDS A PHONE IN HAND:** read `PushNotificationService.ts` and settle
-whether the report is reachable at all on the path a silent device takes - a retry ladder that never
-spends, a throw before the POST, or a caller that never runs. **The log window does NOT cover** the one
+**THE SILENCE IS EXPLAINED AND FIXED 2026-08-30, and it was FOUR causes, not one.** Story in
+`CHANGELOG.md`, none of it restated here; the shape that matters is that the biggest one - the platform
+being read off the user agent, so an iPad WKWebView calling itself `Macintosh` made `startPushService`
+return as "desktop" - sits ABOVE the reporting path, which is why the silence was total rather than
+partial. It is the SAME defect the iPad login took, at a site that fix did not reach.
+
+**WHAT IS STILL OWED, AND IT IS NOW A MEASUREMENT, NOT A DIAGNOSIS.** The fix is verified by three
+unit tests and by nothing else: everything it touches only proves itself on a device that actually
+fails. **Watch `PUSH_UNAVAILABLE` on `infrastructure-chat-delivery-service-1` after the next release**
+- a line naming `no-apns-token`, `fcm-token-fetch-failed`, `apns-registration-refused` or
+`app-delegate-absent` is the instrument working; continued silence with a tokenless device still in
+`key_package` means a fifth cause. **The log window does NOT cover** the one
 `[PUSH_UNAVAILABLE] ... platform=ios reason=no-token` this entry used to quote (28/08 01:23): the
 container postdates it, so that line cannot be re-read and is not evidence about today.
+
+**AND THE ROOT QUESTION IS WIDER THAN THIS FILE:** `875d2fb0` fixed the iPad user-agent defect in the
+auth branch, and this was a second site nobody enumerated. **Every remaining `navigator.userAgent`
+test that decides an iOS behaviour is a candidate for the same bug** and should be swept, not waited
+for.
 
 ### The rest of what an iPhone will find, named by the user before it was looked for (2026-08-27)
 

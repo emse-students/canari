@@ -15,6 +15,9 @@ Object.defineProperty(globalThis, '__TAURI_INTERNALS__', {
   configurable: true,
 });
 
+const { osPlatformStub } = vi.hoisted(() => ({ osPlatformStub: vi.fn(() => 'android') }));
+vi.mock('@tauri-apps/plugin-os', () => ({ platform: osPlatformStub }));
+
 vi.mock('@tauri-apps/plugin-notification', () => ({
   isPermissionGranted: vi.fn().mockResolvedValue(true),
   requestPermission: vi.fn().mockResolvedValue('granted'),
@@ -30,7 +33,8 @@ describe('startPushService - rotation de token FCM', () => {
   beforeEach(() => {
     sessionStorage.clear();
     vi.clearAllMocks();
-    Object.defineProperty(navigator, 'userAgent', { value: 'android', configurable: true });
+    // The service asks the OS, not the user agent, so this is what decides the platform now.
+    osPlatformStub.mockReturnValue('android');
 
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -70,10 +74,7 @@ describe('startPushService - rotation de token FCM', () => {
   });
 
   it('iOS enregistre le token FCM avec platform: ios (FCM relaie vers APNs)', async () => {
-    Object.defineProperty(navigator, 'userAgent', {
-      value: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)',
-      configurable: true,
-    });
+    osPlatformStub.mockReturnValue('ios');
 
     tauriInvokeStub.mockImplementation((cmd: string) => {
       if (cmd === 'get_fcm_token') return Promise.resolve('tok-ios');
@@ -88,11 +89,31 @@ describe('startPushService - rotation de token FCM', () => {
   });
 
   it('desktop (ni Android ni iOS) est un noop : aucune registration', async () => {
-    Object.defineProperty(navigator, 'userAgent', {
-      value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-      configurable: true,
-    });
+    osPlatformStub.mockReturnValue('windows');
     await startPushService('https://api', 'jwt', 'dev-desktop');
     expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it('an iPad whose WebView calls itself Macintosh still registers as ios', async () => {
+    // The regression this file could not have caught before: the platform used to come from the user
+    // agent, and an iPad WKWebView says "Macintosh" - so an iPad fell through to `null` and the whole
+    // service returned as desktop, with no token and no report. `detectRuntimeDeviceOs` answers with
+    // the compile-time target inside a Tauri build, so the lying user agent no longer decides.
+    osPlatformStub.mockReturnValue('ios');
+    Object.defineProperty(navigator, 'userAgent', {
+      value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+      configurable: true,
+    });
+
+    tauriInvokeStub.mockImplementation((cmd: string) => {
+      if (cmd === 'get_fcm_token') return Promise.resolve('tok-ipad');
+      return Promise.resolve(undefined);
+    });
+
+    await startPushService('https://api', 'jwt', 'dev-ipad');
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse((vi.mocked(globalThis.fetch).mock.calls[0][1] as any).body).platform).toBe(
+      'ios'
+    );
   });
 });
