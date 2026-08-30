@@ -1653,7 +1653,7 @@ export async function listAssociationForms(associationId: string): Promise<Assoc
 // ── Stripe Connect status ───────────────────────────────────────────────────
 
 /** Treasurer-facing Stripe Connect lifecycle (mirrors core-service). */
-export type StripeConnectStatus =
+export type ConnectAccountStatus =
   | 'not_started'
   | 'onboarding_required'
   | 'pending'
@@ -1662,14 +1662,14 @@ export type StripeConnectStatus =
   | 'unavailable';
 
 /** Stripe Connect balance for a connected association account. */
-export interface StripeConnectBalance {
+export interface ConnectAccountBalance {
   availableCents: number;
   pendingCents: number;
   currency: string;
 }
 
-export interface StripeConnectStatusResult {
-  status: StripeConnectStatus;
+export interface ConnectAccountStatusResult {
+  status: ConnectAccountStatus;
   chargesEnabled?: boolean;
   payoutsEnabled?: boolean;
   detailsSubmitted?: boolean;
@@ -1678,12 +1678,12 @@ export interface StripeConnectStatusResult {
   disabledReason?: string | null;
   stripeAccountId?: string | null;
   dbOnboardingComplete?: boolean;
-  balance?: StripeConnectBalance | null;
+  balance?: ConnectAccountBalance | null;
   message?: string;
 }
 
 /** Formats a Connect balance amount for display. */
-export function formatStripeConnectAmount(cents: number, currency: string): string {
+export function formatConnectAccountAmount(cents: number, currency: string): string {
   return new Intl.NumberFormat('fr-FR', {
     style: 'currency',
     currency: currency.toUpperCase(),
@@ -1691,8 +1691,8 @@ export function formatStripeConnectAmount(cents: number, currency: string): stri
 }
 
 /** True when the association can accept online payments (live or DB flag). */
-export function isStripeConnectReady(
-  status: StripeConnectStatusResult | null | undefined
+export function isConnectAccountReady(
+  status: ConnectAccountStatusResult | null | undefined
 ): boolean {
   if (!status) return false;
   return status.status === 'active' || !!status.dbOnboardingComplete;
@@ -1707,9 +1707,9 @@ export function canAssociationReceiveFormPayments(asso: Association): boolean {
 }
 
 /** Fetches live Stripe Connect status (requires MANAGE_STRIPE_CONNECT). */
-export async function fetchStripeConnectStatus(
+export async function fetchConnectAccountStatus(
   associationId: string
-): Promise<StripeConnectStatusResult> {
+): Promise<ConnectAccountStatusResult> {
   const base = coreUrl();
   const res = await apiFetch(
     `${base}/api/payments/connect-status/${encodeURIComponent(associationId)}`
@@ -1718,14 +1718,14 @@ export async function fetchStripeConnectStatus(
     const details = await res.text().catch(() => '');
     throw new Error(`connect-status ${res.status}: ${details || res.statusText}`);
   }
-  return (await res.json()) as StripeConnectStatusResult;
+  return (await res.json()) as ConnectAccountStatusResult;
 }
 
 /**
  * Opens the association's Stripe Connect dashboard (payouts, bank account).
  * Requires MANAGE_STRIPE_CONNECT.
  */
-export async function openStripeConnectDashboard(associationId: string): Promise<string> {
+export async function openConnectAccountDashboard(associationId: string): Promise<string> {
   const base = coreUrl();
   const res = await apiFetch(
     `${base}/api/payments/connect-dashboard-link/${encodeURIComponent(associationId)}`,
@@ -1746,7 +1746,7 @@ export async function openStripeConnectDashboard(associationId: string): Promise
  * Unlinks the association's Stripe Connect account from Canari (MANAGE_STRIPE_CONNECT).
  * Local unlink only - the Stripe account itself is untouched and onboarding can be restarted.
  */
-export async function disconnectStripeConnect(associationId: string): Promise<void> {
+export async function disconnectConnectAccount(associationId: string): Promise<void> {
   const base = coreUrl();
   const res = await apiFetch(
     `${base}/api/payments/disconnect-connect-account/${encodeURIComponent(associationId)}`,
@@ -1780,7 +1780,7 @@ export async function disconnectLydiaConnect(associationId: string): Promise<voi
 
 // ── Stripe onboarding ───────────────────────────────────────────────────────
 
-export async function startStripeOnboarding(
+export async function startConnectAccountOnboarding(
   associationId: string,
   existingAccountId?: string,
   opts?: { returnUrl?: string; refreshUrl?: string }

@@ -23,14 +23,14 @@
   interface Props {
     asso: Association;
     /** True once Stripe Connect can collect payments (otherwise products are created inactive). */
-    stripePaymentsReady: boolean;
+    onlinePaymentsReady: boolean;
     /** True while the Stripe account is awaiting verification. */
-    stripePending: boolean;
+    payoutAccountPending: boolean;
     /** Whether the caller can configure Stripe Connect (tweaks the warning copy). */
     canManageStripeConnect: boolean;
   }
 
-  let { asso, stripePaymentsReady, stripePending, canManageStripeConnect }: Props = $props();
+  let { asso, onlinePaymentsReady, payoutAccountPending, canManageStripeConnect }: Props = $props();
 
   /** Card accent color - the association's own, or a deterministic fallback when unset. */
   const cardAccentColor = $derived(asso.color ?? generateAvatarColor(asso.name));
@@ -217,18 +217,18 @@
     </div>
   {/if}
 
-  {#if !stripePaymentsReady}
+  {#if !onlinePaymentsReady}
     <div
       class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn rounded-xl border px-4 py-3 text-sm"
     >
-      {#if stripePending}
-        {m.asso_boutique_stripe_pending()}
+      {#if payoutAccountPending}
+        {m.asso_boutique_payments_pending()}
       {:else}
-        {m.asso_boutique_stripe_not_configured()}
+        {m.asso_boutique_payments_not_configured()}
         {#if canManageStripeConnect}
-          <span class="ml-1">{m.asso_boutique_stripe_see_above()}</span>
+          <span class="ml-1">{m.asso_boutique_payments_see_above()}</span>
         {:else}
-          <span class="ml-1">{m.asso_boutique_stripe_ask_manager()}</span>
+          <span class="ml-1">{m.asso_boutique_payments_ask_manager()}</span>
         {/if}
       {/if}
     </div>

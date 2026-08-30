@@ -34,6 +34,44 @@ The full provider mapping, the open questions and the credentials still owed are
 [`plans/stripe-to-lydia-migration.md`](../../../../plans/stripe-to-lydia-migration.md) (WP-LYDIA-1).
 The sections below describe the **Stripe** path, which is what runs today.
 
+## Where a provider's name may appear, and where it may not
+
+The interface above only pays off if the vendor's name stops leaking through it, and on 2026-08-30 it
+still did in four places. The rule the pass settled on: **a provider's name is true in exactly one
+layer**, and it stays wherever it is a fact.
+
+**It was removed from:**
+
+- **The message catalogue** - 61 Paraglide keys in `fr.json` / `en.json` said Stripe. They now say
+  "prestataire de paiement" / "payment provider", or nothing at all where the sentence did not need
+  one. Zero keys mention a vendor.
+- **Three user-visible strings that were NOT in the catalogue**, and so survived that sweep: the
+  `<h2>` of the association payments panel, which read the raw words `Stripe Connect`; a `title=`
+  attribute in `EditFormsTab`; and three `error = err instanceof Error ? err.message : '...'`
+  fallbacks in the association edit page. All five are Paraglide keys now.
+- **The provider-agnostic contract.** `PaymentProvider.getConnectAccountStatus` returned a
+  `StripeConnectStatusResponse` imported from the Stripe module - so `LydiaPaymentProvider` imported
+  Stripe to declare what it returns. The shape was already neutral; only the name was not. The type
+  is now `ConnectAccountStatusResponse` and lives in `payment-provider.interface.ts`, which owns the
+  vocabulary. The frontend mirror of it (`src/lib/associations/api.ts`) was renamed to match.
+- **Log tags on neutral paths.** `[Stripe] Checkout session created` sat on the shared controller and
+  would have printed for a Lydia checkout. Those two are `[Payments]`. The four inside
+  `StripePaymentProvider` keep the name, because that class IS Stripe.
+
+**It was deliberately KEPT in:**
+
+| What | Why renaming it is a migration, not a rename |
+| --- | --- |
+| `stripeAccountId`, `stripeOnboardingComplete` | per-provider columns; migration 037 gave Lydia its own pair beside them |
+| `MANAGE_STRIPE_CONNECT` / `canManageStripeConnect` | a persisted association permission flag |
+| `STRIPE_WEBHOOK_SECRET` | an environment variable, and Stripe's |
+| `stripe_return=1` | the query param an onboarding already in flight will come back with |
+| `stripeFees.ts`, `StripeNetPayoutHint`, `deriveStripeConnectStatus`, `buildStripeConnectStatusResponse` | the arithmetic and the mapping really are Stripe's; a neutral name here would be the lie |
+
+The last row carries one open consequence: **the payout estimate is Stripe's fee schedule rendered
+under provider-neutral wording**, so it would be wrong the day Lydia goes live. That is a tracked P2
+in [backlog](../../backlog.md), not something this pass fixed.
+
 ## Product purchase flow
 
 ```

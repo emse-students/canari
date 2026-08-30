@@ -1,14 +1,12 @@
 import { BadRequestException, Logger } from '@nestjs/common';
 import Stripe from 'stripe';
-import {
-  buildStripeConnectStatusResponse,
-  type StripeConnectStatusResponse,
-} from './stripeConnectStatus';
+import { buildStripeConnectStatusResponse } from './stripeConnectStatus';
 import type {
   ChargeResult,
   ChargeWithSavedMethodParams,
   CheckoutSessionInfo,
   CheckoutSessionResult,
+  ConnectAccountStatusResponse,
   ConnectBalanceSummary,
   CreateCheckoutSessionParams,
   OnboardingParams,
@@ -115,7 +113,7 @@ export class StripePaymentProvider implements PaymentProvider {
     return { chargesEnabled: account.charges_enabled ?? false };
   }
 
-  async getConnectAccountStatus(accountId: string): Promise<StripeConnectStatusResponse> {
+  async getConnectAccountStatus(accountId: string): Promise<ConnectAccountStatusResponse> {
     if (!this.stripe) throw new BadRequestException('Stripe not configured');
     const account = await this.stripe.accounts.retrieve(accountId);
     this.logger.debug(

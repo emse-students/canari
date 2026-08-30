@@ -39,7 +39,7 @@
   function lineFor(cents: number, label: string): string {
     const net = computeAssociationNetPayoutCents(cents);
     const fee = computeStripeCardFeeCents(cents);
-    return m.stripe_payout_line_for({
+    return m.payout_line_for({
       label,
       payment: formatPriceCents(cents, currency),
       net: formatPriceCents(net, currency),
@@ -53,19 +53,19 @@
     class="space-y-1 rounded-xl border border-amber-200/80 bg-amber-50/70 px-4 py-3 text-xs text-amber-950/90 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-100/90"
     role="note"
   >
-    <p class="font-semibold">{m.stripe_payout_hint_title()}</p>
+    <p class="font-semibold">{m.payout_hint_title()}</p>
     <p class="text-amber-900/80 dark:text-amber-200/80">
-      {m.stripe_payout_hint_fees_note({ feeLabel })}
+      {m.payout_hint_fees_note({ feeLabel })}
     </p>
     {#if grossCents}
-      <p>{lineFor(grossCents, m.stripe_payout_label_public())}</p>
+      <p>{lineFor(grossCents, m.payout_label_public())}</p>
     {/if}
     {#if memberCents}
-      <p>{lineFor(memberCents, m.stripe_payout_label_member())}</p>
+      <p>{lineFor(memberCents, m.payout_label_member())}</p>
     {/if}
     {#if minCents && maxCents}
       <p>
-        {m.stripe_payout_free_amount_range({
+        {m.payout_free_amount_range({
           min: formatPriceCents(computeAssociationNetPayoutCents(minCents), currency),
           max: formatPriceCents(computeAssociationNetPayoutCents(maxCents), currency),
           minPayment: formatPriceCents(minCents, currency),
@@ -74,14 +74,14 @@
       </p>
     {:else if minCents}
       <p>
-        {m.stripe_payout_free_amount_min({
+        {m.payout_free_amount_min({
           payment: formatPriceCents(minCents, currency),
           net: formatPriceCents(computeAssociationNetPayoutCents(minCents), currency),
         })}
       </p>
     {:else if maxCents}
       <p>
-        {m.stripe_payout_free_amount_max({
+        {m.payout_free_amount_max({
           payment: formatPriceCents(maxCents, currency),
           net: formatPriceCents(computeAssociationNetPayoutCents(maxCents), currency),
         })}
@@ -89,7 +89,7 @@
     {/if}
     {#if showOptionSupplementNote && (grossCents || memberCents)}
       <p class="text-amber-900/70 dark:text-amber-200/60">
-        {m.stripe_payout_option_note()}
+        {m.payout_option_note()}
       </p>
     {/if}
   </div>

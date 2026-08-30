@@ -179,7 +179,7 @@
 
   function paymentMethodLabel(method: AssociationPurchase['paymentMethod']): string {
     if (method === 'cash') return m.asso_achats_payment_cash();
-    if (method === 'stripe') return m.asso_achats_payment_stripe();
+    if (method === 'stripe') return m.asso_achats_payment_online();
     return method;
   }
 </script>
@@ -298,7 +298,7 @@
       {#if !canReceiveDelegation}
         <p class="text-amber-warn flex items-start gap-2 text-sm">
           <TriangleAlert size={16} class="mt-0.5 shrink-0" />
-          {m.asso_deleg_parent_not_stripe_ready()}
+          {m.asso_deleg_parent_not_payments_ready()}
         </p>
       {/if}
 

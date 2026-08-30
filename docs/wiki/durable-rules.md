@@ -400,6 +400,13 @@ after its deploy - build the run that DISCRIMINATES, and assert the build id, ne
 - **A range with NO BOUNDS must not read the value it would have compared** - ask whether the discriminator is needed before demanding it be valid.
 - **"Once per account" is a SERVER ROW or it is nothing** - and that row answers one question, "has this account seen X", never "is this account current".
 
+**A vendor's name, and the one layer it is true in** ([payments](frontend/modules/payments.md#where-a-providers-name-may-appear-and-where-it-may-not))
+
+- **A PROVIDER'S NAME IN A SHARED CONTRACT MAKES THE CONTRACT DEPEND ON ONE IMPLEMENTATION**, and nothing fails while that implementation is the only one. `PaymentProvider.getConnectAccountStatus` - the method `LydiaPaymentProvider` implements too - returned a `StripeConnectStatusResponse` imported from the Stripe module, so Lydia imported Stripe to declare its own return type. The SHAPE was already neutral; only the name was not. The type belongs in the contract, the derivation stays in the implementation and KEEPS the vendor's name, because `deriveStripeConnectStatus` really is Stripe's mapping.
+- **A DESIGN CHANGE FALSIFIES THE STRINGS THAT NAMED THE OLD ONE, AND THE CATALOGUE IS ONLY HALF THE SEARCH.** 61 Paraglide keys named Stripe and were rewritten - and the last five user-visible mentions were not keys at all: an `<h2>` reading the raw words `Stripe Connect`, a `title=` attribute, and three `error = ... : 'Stripe error'` fallbacks. Nothing types a string as user-visible, so grep the SOURCE for the vendor as well as the messages.
+- **A GENERIC ROUTE WITH A VENDOR LOG TAG LIES THE DAY THE SECOND VENDOR ARRIVES** - `[Stripe] Checkout session created` sat on the provider-neutral controller. A tag names the LAYER; the ones inside `StripePaymentProvider` are correct exactly because that class is Stripe.
+- **WHAT KEEPS THE VENDOR'S NAME IS WHAT THE VENDOR REALLY OWNS**: per-provider DB columns, a persisted permission flag, an env var, a query param an in-flight flow will still come back with, and fee arithmetic. Renaming any of those is a migration. **And neutral wording over vendor-specific arithmetic is a new defect, not a fix** - the payout estimate is Stripe's schedule under provider-neutral copy, and is tracked as such.
+
 ## The public head, and the two adapters -> [frontend/seo](frontend/seo.md), [nginx](infrastructure/nginx.md)
 
 - **A crawler on this site sees NO content** - Googlebot renders as an anonymous visitor, so it renders the login screen. The injected `<head>` is the whole indexable surface, the SITEMAP the entire link graph. [seo](frontend/seo.md)

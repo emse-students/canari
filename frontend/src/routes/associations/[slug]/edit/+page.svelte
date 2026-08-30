@@ -5,14 +5,14 @@
   import {
     getAssociationBySlug,
     listMembers,
-    startStripeOnboarding,
-    fetchStripeConnectStatus,
-    openStripeConnectDashboard,
-    disconnectStripeConnect,
-    formatStripeConnectAmount,
-    isStripeConnectReady,
+    startConnectAccountOnboarding,
+    fetchConnectAccountStatus,
+    openConnectAccountDashboard,
+    disconnectConnectAccount,
+    formatConnectAccountAmount,
+    isConnectAccountReady,
     fetchActivePaymentProvider,
-    type StripeConnectStatusResult,
+    type ConnectAccountStatusResult,
     type PaymentProviderId,
     mayActOnAssociation,
     ensureAssociationSuperAdmin,
@@ -65,16 +65,16 @@
   /** BDE super-admin (MANAGE_ASSO): may administer this association without being a member. */
   let isSuperAdminUser = $derived(isAssociationSuperAdmin());
 
-  let stripeLoading = $state(false);
-  let stripeDashboardLoading = $state(false);
-  let stripeDisconnecting = $state(false);
-  let stripeConnectStatus = $state<StripeConnectStatusResult | null>(null);
-  let stripeStatusLoading = $state(false);
+  let onboardingLoading = $state(false);
+  let dashboardLoading = $state(false);
+  let disconnecting = $state(false);
+  let connectAccountStatus = $state<ConnectAccountStatusResult | null>(null);
+  let statusLoading = $state(false);
   /** Which payment provider core-service is configured to use (WP-LYDIA-1) - defaults to 'stripe' until fetched. */
   let activePaymentProvider = $state<PaymentProviderId>('stripe');
 
-  let stripePaymentsReady = $derived(
-    isStripeConnectReady(stripeConnectStatus) || !!asso?.stripeOnboardingComplete
+  let onlinePaymentsReady = $derived(
+    isConnectAccountReady(connectAccountStatus) || !!asso?.stripeOnboardingComplete
   );
 
   let editSection = $state<
@@ -142,9 +142,9 @@
       const clean = window.location.pathname;
       window.history.replaceState(null, '', clean);
       if (!asso.stripeOnboardingComplete) {
-        void pollStripeCompletion();
+        void pollOnboardingCompletion();
       } else {
-        console.log('[Stripe] Returned from Stripe - onboarding already complete in DB.');
+        console.log('[Payments] Returned from Stripe - onboarding already complete in DB.');
       }
     }
   });
@@ -178,7 +178,7 @@
         return;
       }
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Association not found';
+      error = err instanceof Error ? err.message : m.asso_edit_load_error();
     } finally {
       loading = false;
     }
@@ -195,124 +195,131 @@
   }
 
   /** Loads live Stripe Connect status from core-service (MANAGE_STRIPE_CONNECT). */
-  async function refreshStripeConnectStatus() {
+  async function refreshConnectAccountStatus() {
     if (!asso || !canManageStripeConnect) return;
-    stripeStatusLoading = true;
+    statusLoading = true;
     try {
-      const live = await fetchStripeConnectStatus(asso.id);
-      stripeConnectStatus = live;
+      const live = await fetchConnectAccountStatus(asso.id);
+      connectAccountStatus = live;
       console.log(
-        `[Stripe] Connect status - status=${live.status} charges=${live.chargesEnabled ?? false} dbComplete=${live.dbOnboardingComplete ?? false}`
+        `[Payments] Connect status - status=${live.status} charges=${live.chargesEnabled ?? false} dbComplete=${live.dbOnboardingComplete ?? false}`
       );
-      if (isStripeConnectReady(live) && !asso.stripeOnboardingComplete) {
+      if (isConnectAccountReady(live) && !asso.stripeOnboardingComplete) {
         const refreshed = await getAssociationBySlug(slug);
         asso = refreshed;
-        stripeConnectStatus = { ...live, dbOnboardingComplete: refreshed.stripeOnboardingComplete };
+        connectAccountStatus = {
+          ...live,
+          dbOnboardingComplete: refreshed.stripeOnboardingComplete,
+        };
       }
     } catch (err) {
-      console.warn('[Stripe] Failed to load Connect status:', err);
+      console.warn('[Payments] Failed to load Connect status:', err);
     } finally {
-      stripeStatusLoading = false;
+      statusLoading = false;
     }
   }
 
   /** Opens the association Stripe Dashboard (payouts / bank account) in the system browser. */
-  async function handleOpenStripeDashboard() {
+  async function handleOpenProviderDashboard() {
     if (!asso) return;
-    stripeDashboardLoading = true;
+    dashboardLoading = true;
     try {
-      const url = await openStripeConnectDashboard(asso.id);
+      const url = await openConnectAccountDashboard(asso.id);
       const { navigateExternal } = await import('$lib/utils/openExternal');
       await navigateExternal(url);
     } catch (err) {
-      console.error('[Stripe] Failed to open dashboard:', err);
-      error = err instanceof Error ? err.message : 'Failed to open Stripe';
+      console.error('[Payments] Failed to open dashboard:', err);
+      error = err instanceof Error ? err.message : m.asso_payments_dashboard_open_error();
     } finally {
-      stripeDashboardLoading = false;
+      dashboardLoading = false;
     }
   }
 
   /** Unlinks the Stripe Connect account from this association so onboarding can be restarted. */
-  async function handleDisconnectStripe() {
+  async function handleDisconnectAccount() {
     if (!asso) return;
     if (
-      !(await showConfirm(m.asso_stripe_disconnect_confirm(), {
+      !(await showConfirm(m.asso_payments_disconnect_confirm(), {
         danger: true,
-        confirmLabel: m.asso_stripe_disconnect_button(),
+        confirmLabel: m.asso_payments_disconnect_button(),
       }))
     )
       return;
-    stripeDisconnecting = true;
+    disconnecting = true;
     try {
-      await disconnectStripeConnect(asso.id);
-      console.log(`[Stripe] Disconnected Connect account for association ${asso.id}`);
+      await disconnectConnectAccount(asso.id);
+      console.log(`[Payments] Disconnected Connect account for association ${asso.id}`);
       asso = { ...asso, stripeAccountId: null, stripeOnboardingComplete: false };
-      stripeConnectStatus = null;
+      connectAccountStatus = null;
     } catch (err) {
-      console.error('[Stripe] Failed to disconnect Connect account:', err);
-      error = err instanceof Error ? err.message : m.asso_stripe_disconnect_error();
+      console.error('[Payments] Failed to disconnect Connect account:', err);
+      error = err instanceof Error ? err.message : m.asso_payments_disconnect_error();
     } finally {
-      stripeDisconnecting = false;
+      disconnecting = false;
     }
   }
 
-  async function handleStripeOnboarding() {
+  async function handleStartOnboarding() {
     if (!asso) return;
-    stripeLoading = true;
+    onboardingLoading = true;
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
     const base = `${origin}/associations/${encodeURIComponent(asso.slug)}/edit`;
     console.log(
-      `[Stripe] Starting onboarding - asso=${asso.id} accountId=${asso.stripeAccountId ?? 'new'}`
+      `[Payments] Starting onboarding - asso=${asso.id} accountId=${asso.stripeAccountId ?? 'new'}`
     );
     try {
-      const result = await startStripeOnboarding(asso.id, asso.stripeAccountId ?? undefined, {
-        returnUrl: `${base}?stripe_return=1`,
-        refreshUrl: `${base}?stripe_return=1`,
-      });
+      const result = await startConnectAccountOnboarding(
+        asso.id,
+        asso.stripeAccountId ?? undefined,
+        {
+          returnUrl: `${base}?stripe_return=1`,
+          refreshUrl: `${base}?stripe_return=1`,
+        }
+      );
       console.log(
-        `[Stripe] Onboarding URL received - accountId=${result.accountId} url=${result.url}`
+        `[Payments] Onboarding URL received - accountId=${result.accountId} url=${result.url}`
       );
       if (result.accountId) {
         asso = { ...asso, stripeAccountId: result.accountId };
       }
       window.location.href = result.url;
     } catch (err) {
-      console.error('[Stripe] Failed to start onboarding:', err);
-      error = err instanceof Error ? err.message : 'Stripe error';
-      stripeLoading = false;
+      console.error('[Payments] Failed to start onboarding:', err);
+      error = err instanceof Error ? err.message : m.asso_payments_onboarding_error();
+      onboardingLoading = false;
     }
   }
 
   /** Polls the association until stripeOnboardingComplete=true or timeout (max 30 s). */
-  async function pollStripeCompletion() {
+  async function pollOnboardingCompletion() {
     const MAX_ATTEMPTS = 10;
     const DELAY_MS = 3000;
-    console.log('[Stripe] Returned from Stripe - waiting for webhook confirmation (max 30 s)…');
+    console.log('[Payments] Returned from Stripe - waiting for webhook confirmation (max 30 s)…');
     for (let i = 1; i <= MAX_ATTEMPTS; i++) {
       await new Promise((r) => setTimeout(r, DELAY_MS));
       try {
         const refreshed = await getAssociationBySlug(slug);
         console.log(
-          `[Stripe] Poll ${i}/${MAX_ATTEMPTS} - stripeOnboardingComplete=${refreshed.stripeOnboardingComplete}`
+          `[Payments] Poll ${i}/${MAX_ATTEMPTS} - stripeOnboardingComplete=${refreshed.stripeOnboardingComplete}`
         );
         if (refreshed.stripeOnboardingComplete) {
           asso = refreshed;
-          console.log('[Stripe] Stripe connection confirmed - onboarding complete.');
-          await refreshStripeConnectStatus();
+          console.log('[Payments] Stripe connection confirmed - onboarding complete.');
+          await refreshConnectAccountStatus();
           return;
         }
         asso = refreshed;
-        await refreshStripeConnectStatus();
-        if (stripeConnectStatus?.status === 'active') {
+        await refreshConnectAccountStatus();
+        if (connectAccountStatus?.status === 'active') {
           asso = await getAssociationBySlug(slug);
           return;
         }
       } catch (e) {
-        console.warn(`[Stripe] Poll ${i} failed:`, e);
+        console.warn(`[Payments] Poll ${i} failed:`, e);
       }
     }
     console.warn(
-      '[Stripe] Webhook not received after 30 s - check the Stripe dashboard and STRIPE_WEBHOOK_SECRET config.'
+      '[Payments] Webhook not received after 30 s - check the Stripe dashboard and STRIPE_WEBHOOK_SECRET config.'
     );
   }
 </script>
@@ -387,7 +394,7 @@
             onclick={() => {
               editSection = 'payments';
               void refreshActivePaymentProvider();
-              if (canManageStripeConnect) void refreshStripeConnectStatus();
+              if (canManageStripeConnect) void refreshConnectAccountStatus();
             }}
             class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'payments'
@@ -515,82 +522,82 @@
             <div class="flex flex-wrap items-start justify-between gap-3">
               <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
                 <CreditCard size={20} />
-                Stripe Connect
+                {m.asso_payments_section_title()}
               </h2>
               <div class="flex items-center gap-2">
                 <button
                   type="button"
-                  onclick={() => void refreshStripeConnectStatus()}
-                  disabled={stripeStatusLoading}
+                  onclick={() => void refreshConnectAccountStatus()}
+                  disabled={statusLoading}
                   class="border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
                 >
-                  <RefreshCw size={14} class={stripeStatusLoading ? 'animate-spin' : ''} />
+                  <RefreshCw size={14} class={statusLoading ? 'animate-spin' : ''} />
                   {m.common_refresh_button()}
                 </button>
                 {#if asso.stripeAccountId}
                   <button
                     type="button"
-                    onclick={() => void handleDisconnectStripe()}
-                    disabled={stripeDisconnecting}
+                    onclick={() => void handleDisconnectAccount()}
+                    disabled={disconnecting}
                     class="border-red-err/30 text-red-err hover:bg-red-err/10 inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
                   >
-                    {stripeDisconnecting
-                      ? m.asso_stripe_disconnect_loading()
-                      : m.asso_stripe_disconnect_button()}
+                    {disconnecting
+                      ? m.asso_payments_disconnect_loading()
+                      : m.asso_payments_disconnect_button()}
                   </button>
                 {/if}
               </div>
             </div>
 
-            {#if stripeStatusLoading && !stripeConnectStatus}
-              <p class="text-text-muted text-sm">{m.asso_stripe_status_verifying()}</p>
-            {:else if stripeConnectStatus?.status === 'active' || stripePaymentsReady}
-              <p class="text-green-ok text-sm font-semibold">{m.asso_stripe_connected_label()}</p>
+            {#if statusLoading && !connectAccountStatus}
+              <p class="text-text-muted text-sm">{m.asso_payments_status_verifying()}</p>
+            {:else if connectAccountStatus?.status === 'active' || onlinePaymentsReady}
+              <p class="text-green-ok text-sm font-semibold">{m.asso_payments_connected_label()}</p>
               <p class="text-text-muted text-xs">
-                {m.asso_stripe_connected_desc()}
+                {m.asso_payments_connected_desc()}
               </p>
-              {#if stripeConnectStatus?.balance}
+              {#if connectAccountStatus?.balance}
                 <div class="border-cn-border bg-cn-bg/50 space-y-3 rounded-xl border p-4">
                   <p class="text-text-main flex items-center gap-2 text-sm font-bold">
                     <Wallet size={18} class="text-cn-dark" />
-                    {m.asso_stripe_balance_title()}
+                    {m.asso_payments_balance_title()}
                   </p>
                   <div class="grid grid-cols-2 gap-3">
                     <div>
-                      <p class="text-text-muted text-xs">{m.asso_stripe_balance_available()}</p>
+                      <p class="text-text-muted text-xs">{m.asso_payments_balance_available()}</p>
                       <p class="text-text-main text-lg font-extrabold tabular-nums">
-                        {formatStripeConnectAmount(
-                          stripeConnectStatus.balance.availableCents,
-                          stripeConnectStatus.balance.currency
+                        {formatConnectAccountAmount(
+                          connectAccountStatus.balance.availableCents,
+                          connectAccountStatus.balance.currency
                         )}
                       </p>
                     </div>
                     <div>
-                      <p class="text-text-muted text-xs">{m.asso_stripe_balance_pending()}</p>
+                      <p class="text-text-muted text-xs">{m.asso_payments_balance_pending()}</p>
                       <p class="text-text-muted text-lg font-extrabold tabular-nums">
-                        {formatStripeConnectAmount(
-                          stripeConnectStatus.balance.pendingCents,
-                          stripeConnectStatus.balance.currency
+                        {formatConnectAccountAmount(
+                          connectAccountStatus.balance.pendingCents,
+                          connectAccountStatus.balance.currency
                         )}
                       </p>
                     </div>
                   </div>
                   <p class="text-text-muted text-xs leading-relaxed">
-                    {m.asso_stripe_balance_pending_note()}
+                    {m.asso_payments_balance_pending_note()}
                   </p>
-                  {#if stripeConnectStatus.payoutsEnabled !== false}
+                  {#if connectAccountStatus.payoutsEnabled !== false}
                     <button
                       type="button"
-                      onclick={() => void handleOpenStripeDashboard()}
-                      disabled={stripeDashboardLoading}
+                      onclick={() => void handleOpenProviderDashboard()}
+                      disabled={dashboardLoading}
                       class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:opacity-50 sm:w-auto"
                     >
-                      {#if stripeDashboardLoading}
+                      {#if dashboardLoading}
                         <RefreshCw size={16} class="animate-spin" />
-                        {m.asso_stripe_manage_payouts_loading()}
+                        {m.asso_payments_manage_payouts_loading()}
                       {:else}
                         <ArrowUpRight size={16} />
-                        {m.asso_stripe_manage_payouts_button()}
+                        {m.asso_payments_manage_payouts_button()}
                       {/if}
                     </button>
                   {/if}
@@ -598,68 +605,68 @@
               {:else if asso.stripeAccountId}
                 <button
                   type="button"
-                  onclick={() => void handleOpenStripeDashboard()}
-                  disabled={stripeDashboardLoading}
+                  onclick={() => void handleOpenProviderDashboard()}
+                  disabled={dashboardLoading}
                   class="border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
                 >
-                  {m.asso_stripe_manage_payouts_link()}
+                  {m.asso_payments_manage_payouts_link()}
                 </button>
               {/if}
-            {:else if stripeConnectStatus?.status === 'pending'}
+            {:else if connectAccountStatus?.status === 'pending'}
               <div
                 class="space-y-2 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sky-900 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-100"
               >
                 <p class="flex items-center gap-2 text-sm font-semibold">
                   <Clock size={18} class="shrink-0" />
-                  {m.asso_stripe_verification_pending_title()}
+                  {m.asso_payments_verification_pending_title()}
                 </p>
                 <p class="text-sm leading-relaxed">
-                  {m.asso_stripe_verification_pending_desc()}
+                  {m.asso_payments_verification_pending_desc()}
                 </p>
-                {#if stripeConnectStatus.pendingVerification && stripeConnectStatus.pendingVerification.length > 0}
+                {#if connectAccountStatus.pendingVerification && connectAccountStatus.pendingVerification.length > 0}
                   <p class="text-xs text-sky-800/80 dark:text-sky-200/80">
-                    {m.asso_stripe_verification_items({
-                      count: stripeConnectStatus.pendingVerification.length,
+                    {m.asso_payments_verification_items({
+                      count: connectAccountStatus.pendingVerification.length,
                     })}
                   </p>
                 {/if}
               </div>
-            {:else if stripeConnectStatus?.status === 'restricted'}
+            {:else if connectAccountStatus?.status === 'restricted'}
               <div
                 class="border-red-err/30 bg-red-err/10 text-red-err space-y-1 rounded-xl border px-4 py-3 text-sm"
               >
-                <p class="font-semibold">{m.asso_stripe_restricted_title()}</p>
+                <p class="font-semibold">{m.asso_payments_restricted_title()}</p>
                 <p>
-                  {m.asso_stripe_restricted_prefix()}<a
+                  {m.asso_payments_restricted_prefix()}<a
                     href="https://dashboard.stripe.com/connect/accounts/{asso.stripeAccountId}"
                     target="_blank"
                     rel="noopener noreferrer"
-                    class="font-semibold underline">{m.asso_stripe_restricted_dashboard_link()}</a
-                  >{m.asso_stripe_restricted_suffix()}
+                    class="font-semibold underline">{m.asso_payments_restricted_dashboard_link()}</a
+                  >{m.asso_payments_restricted_suffix()}
                 </p>
               </div>
-            {:else if stripeConnectStatus?.status === 'unavailable'}
-              <p class="text-amber-warn text-sm">{m.asso_stripe_unavailable()}</p>
+            {:else if connectAccountStatus?.status === 'unavailable'}
+              <p class="text-amber-warn text-sm">{m.asso_payments_unavailable()}</p>
             {:else}
               <p class="text-text-muted text-sm leading-relaxed">
                 {#if asso.stripeAccountId}
-                  {m.asso_stripe_complete_setup()}
+                  {m.asso_payments_complete_setup()}
                 {:else}
-                  {m.asso_stripe_connect_account()}
+                  {m.asso_payments_connect_account()}
                 {/if}
               </p>
-              {#if stripeConnectStatus?.status === 'onboarding_required' || !asso.stripeAccountId}
+              {#if connectAccountStatus?.status === 'onboarding_required' || !asso.stripeAccountId}
                 <button
                   type="button"
-                  onclick={handleStripeOnboarding}
-                  disabled={stripeLoading}
+                  onclick={handleStartOnboarding}
+                  disabled={onboardingLoading}
                   class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-5 py-2.5 text-sm font-bold shadow-sm disabled:opacity-50"
                 >
-                  {stripeLoading
-                    ? m.asso_stripe_onboarding_loading()
+                  {onboardingLoading
+                    ? m.asso_payments_onboarding_loading()
                     : asso.stripeAccountId
-                      ? m.asso_stripe_continue_setup_button()
-                      : m.asso_stripe_configure_button()}
+                      ? m.asso_payments_continue_setup_button()
+                      : m.asso_payments_configure_button()}
                 </button>
               {/if}
             {/if}
@@ -698,8 +705,8 @@
     {#if editSection === 'payments' && canManagePaymentsSection && asso && canManageProducts}
       <EditBoutiqueTab
         {asso}
-        {stripePaymentsReady}
-        stripePending={stripeConnectStatus?.status === 'pending'}
+        {onlinePaymentsReady}
+        payoutAccountPending={connectAccountStatus?.status === 'pending'}
         {canManageStripeConnect}
       />
     {/if}
@@ -711,7 +718,7 @@
     {#if editSection === 'formulaires' && canManageForms && asso}
       <EditFormsTab
         {asso}
-        {stripePaymentsReady}
+        {onlinePaymentsReady}
         {canManageStripeConnect}
         onGoToPayments={() => (editSection = 'payments')}
       />

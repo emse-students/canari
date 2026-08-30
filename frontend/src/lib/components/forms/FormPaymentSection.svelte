@@ -93,19 +93,19 @@
         <p class="text-sm font-semibold text-amber-900 dark:text-amber-100">
           {paymentBlocker === 'no-association'
             ? m.form_payment_needs_association_title()
-            : m.form_payment_needs_stripe_title({ association: associationName })}
+            : m.form_payment_needs_setup_title({ association: associationName })}
         </p>
         <p class="text-xs text-amber-800/80 dark:text-amber-200/70">
           {paymentBlocker === 'no-association'
             ? m.form_payment_needs_association_desc()
-            : m.form_payment_needs_stripe_desc()}
+            : m.form_payment_needs_setup_desc()}
         </p>
         <button
           type="button"
           onclick={() => (requiresPayment = false)}
           class="inline-flex items-center gap-1.5 rounded-xl bg-amber-500/20 px-3 py-1.5 text-xs font-bold text-amber-900 transition-colors hover:bg-amber-500/30 dark:text-amber-100"
         >
-          {m.form_no_stripe_create_free_button()}
+          {m.form_no_payments_create_free_button()}
         </button>
       </div>
     {/if}

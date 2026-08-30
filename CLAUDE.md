@@ -267,7 +267,8 @@ the LOCKFILE.
 
 **THE FIVE THAT CANNOT BE PULLED FORWARD** - none waits on us, each carrying its blocking condition in
 [backlog](docs/wiki/backlog.md), the only copy: the iOS avatar-cache question (needs an iPhone), the
-Lydia flip WP-LYDIA-1 (needs credentials Lydia owes), one MLS client in a SharedWorker,
+Lydia flip WP-LYDIA-1 (needs credentials Lydia owes, and now carries the payout estimate -
+Stripe's fee schedule under provider-neutral copy since 2026-08-30), one MLS client in a SharedWorker,
 `dev.canari-emse.fr` plus the SECOND campaign (post-campaign), and - owed to the user - is a
 MiGallery application worth building?
 

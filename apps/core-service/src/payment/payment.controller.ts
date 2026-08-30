@@ -226,7 +226,7 @@ export class PaymentController {
     if (!(await this.paymentService.isConfigured())) {
       return {
         status: 'unavailable' as const,
-        message: 'Stripe not configured',
+        message: 'No payment provider configured',
       };
     }
 
@@ -444,12 +444,12 @@ export class PaymentController {
         saveForFuture: body.saveForFuture && !body.stripeConnectAccountId,
         idempotencyKey: body.idempotencyKey,
       });
-      this.logger.debug(`[Stripe] Checkout session created: ${session.id}`);
+      this.logger.debug(`[Payments] Checkout session created: ${session.id}`);
       return { ok: true, url: session.url, id: session.id };
     } catch (err: unknown) {
       const stripeErr = err as { raw?: { message?: string }; message?: string };
       const msg = stripeErr?.raw?.message ?? stripeErr?.message ?? String(err);
-      this.logger.error(`[Stripe] create-checkout-session failed: ${msg}`);
+      this.logger.error(`[Payments] create-checkout-session failed: ${msg}`);
       throw new BadRequestException(`Stripe error: ${msg}`);
     }
   }

@@ -76,7 +76,7 @@
   /** Maps a payment method identifier to its display label. */
   function paymentMethodLabel(method: AssociationPurchase['paymentMethod']): string {
     if (method === 'cash') return m.asso_achats_payment_cash();
-    if (method === 'stripe') return m.asso_achats_payment_stripe();
+    if (method === 'stripe') return m.asso_achats_payment_online();
     return method;
   }
 

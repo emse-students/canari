@@ -282,6 +282,6 @@
   {/if}
 
   <p class="text-text-muted text-xs">
-    {m.admin_stripe_connect_hint()}
+    {m.admin_payments_connect_hint()}
   </p>
 </div>

@@ -1,23 +1,7 @@
-/** Lifecycle state of a Stripe Connect Standard account for association treasurers. */
-export type StripeConnectStatus =
-  | 'not_started'
-  | 'onboarding_required'
-  | 'pending'
-  | 'active'
-  | 'restricted';
-
-/** Live Connect status returned to the association edit UI. */
-export type StripeConnectStatusResponse = {
-  status: StripeConnectStatus;
-  chargesEnabled: boolean;
-  payoutsEnabled: boolean;
-  detailsSubmitted: boolean;
-  /** Requirement field keys Stripe is still waiting on (onboarding). */
-  currentlyDue: string[];
-  /** Requirement field keys under Stripe review (pending). */
-  pendingVerification: string[];
-  disabledReason: string | null;
-};
+import type {
+  ConnectAccountStatus,
+  ConnectAccountStatusResponse,
+} from './payment-provider.interface';
 
 /** Minimal Stripe Account shape used for status derivation (testable without SDK). */
 export type StripeAccountStatusInput = {
@@ -35,7 +19,7 @@ export type StripeAccountStatusInput = {
  * Maps a Stripe Connect account snapshot to a treasurer-facing status.
  * `pending` means the association finished onboarding and Stripe is reviewing.
  */
-export function deriveStripeConnectStatus(account: StripeAccountStatusInput): StripeConnectStatus {
+export function deriveStripeConnectStatus(account: StripeAccountStatusInput): ConnectAccountStatus {
   const disabledReason = account.requirements?.disabled_reason?.trim() || null;
   if (disabledReason) {
     return 'restricted';
@@ -57,7 +41,7 @@ export function deriveStripeConnectStatus(account: StripeAccountStatusInput): St
 /** Builds the API payload from a Stripe Account retrieve result. */
 export function buildStripeConnectStatusResponse(
   account: StripeAccountStatusInput
-): StripeConnectStatusResponse {
+): ConnectAccountStatusResponse {
   return {
     status: deriveStripeConnectStatus(account),
     chargesEnabled: account.charges_enabled ?? false,

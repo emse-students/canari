@@ -21,14 +21,14 @@
   interface Props {
     asso: Association;
     /** True once Stripe Connect can collect online payments. */
-    stripePaymentsReady: boolean;
+    onlinePaymentsReady: boolean;
     /** Whether the caller can configure Stripe Connect (tweaks the warning copy). */
     canManageStripeConnect: boolean;
     /** Switches the parent to the Paiements tab. */
     onGoToPayments: () => void;
   }
 
-  let { asso, stripePaymentsReady, canManageStripeConnect, onGoToPayments }: Props = $props();
+  let { asso, onlinePaymentsReady, canManageStripeConnect, onGoToPayments }: Props = $props();
 
   let forms = $state<AssociationForm[]>([]);
   let formsLoading = $state(false);
@@ -136,22 +136,22 @@
     </p>
   </div>
 
-  {#if hasPaidForms && !stripePaymentsReady}
+  {#if hasPaidForms && !onlinePaymentsReady}
     <div
       class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn flex items-start gap-2.5 rounded-xl border px-4 py-3 text-sm"
     >
       <TriangleAlert size={15} class="mt-0.5 shrink-0" />
       <span>
         {#if canManageStripeConnect}
-          {m.asso_forms_stripe_missing_can_manage_prefix()}<strong
-            >{m.asso_forms_stripe_missing_strong()}</strong
-          >{m.asso_forms_stripe_missing_suffix()}<button
+          {m.asso_forms_payments_missing_can_manage_prefix()}<strong
+            >{m.asso_forms_payments_missing_strong()}</strong
+          >{m.asso_forms_payments_missing_suffix()}<button
             type="button"
             class="font-semibold underline hover:no-underline"
-            onclick={onGoToPayments}>{m.asso_forms_stripe_configure_link()}</button
+            onclick={onGoToPayments}>{m.asso_forms_payments_configure_link()}</button
           >.
         {:else}
-          {m.asso_forms_stripe_missing_no_manage()}
+          {m.asso_forms_payments_missing_no_manage()}
         {/if}
       </span>
     </div>
@@ -186,13 +186,13 @@
                   ? `${(form.basePrice / 100).toFixed(2)} €`
                   : m.asso_forms_price_free()}
                 {form.allowCashPayment ? ` · ${m.asso_forms_cash_accepted()}` : ''}
-                {#if form.basePrice > 0 && !stripePaymentsReady}
+                {#if form.basePrice > 0 && !onlinePaymentsReady}
                   <span
                     class="text-amber-warn inline-flex items-center gap-1 font-medium"
-                    title="Stripe Connect not configured - online payments inactive"
+                    title={m.asso_forms_payments_not_configured_title()}
                   >
                     <TriangleAlert size={11} />
-                    {m.asso_forms_stripe_not_configured_badge()}
+                    {m.asso_forms_payments_not_configured_badge()}
                   </span>
                 {/if}
               </p>

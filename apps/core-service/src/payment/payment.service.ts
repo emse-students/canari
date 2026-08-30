@@ -3,13 +3,14 @@ import type Stripe from 'stripe';
 import { StripePaymentProvider } from './stripe-payment-provider';
 import { LydiaPaymentProvider } from './lydia-payment-provider';
 import { PlatformService } from '../platform/platform.service';
-import type { StripeConnectStatusResponse } from './stripeConnectStatus';
+
 import type {
   BusinessLegalProfile,
   ChargeResult,
   CheckoutLineItem,
   CheckoutSessionInfo,
   CheckoutSessionResult,
+  ConnectAccountStatusResponse,
   ConnectBalanceSummary,
   PaymentProvider,
   PaymentProviderId,
@@ -118,7 +119,7 @@ export class PaymentService {
   }
 
   /** Returns treasurer-facing Connect lifecycle state from the live account. */
-  async getConnectAccountStatus(accountId: string): Promise<StripeConnectStatusResponse> {
+  async getConnectAccountStatus(accountId: string): Promise<ConnectAccountStatusResponse> {
     return (await this.getProvider()).getConnectAccountStatus(accountId);
   }
 

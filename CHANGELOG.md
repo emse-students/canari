@@ -107,6 +107,23 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Changed
 
+- **The product no longer says "Stripe" anywhere a user can read it, and the payment contract no
+  longer depends on Stripe to describe itself.** Stripe is not going to be the only processor
+  (`PaymentProvider` already has a Lydia implementation and `GET /api/payments/provider` already
+  says which one is live), so the name was removed from every layer where it was not a fact: 61
+  Paraglide keys in both locales, five user-visible strings that were never keys at all - an `<h2>`
+  reading the raw words `Stripe Connect`, a `title=` attribute and three `'Stripe error'` fallbacks,
+  all now localized - the two log tags on the provider-neutral controller, and the contract itself,
+  where `PaymentProvider.getConnectAccountStatus` returned a `StripeConnectStatusResponse` imported
+  from the Stripe module. That last one is the one that mattered: the shape was already neutral, so
+  `LydiaPaymentProvider` was importing Stripe to declare what it returns. The type moved into
+  `payment-provider.interface.ts` as `ConnectAccountStatusResponse`, with the frontend mirror
+  renamed to match. **What deliberately keeps the name is what Stripe really owns** - the
+  per-provider DB columns, the `MANAGE_STRIPE_CONNECT` permission flag, `STRIPE_WEBHOOK_SECRET`, the
+  `stripe_return` param an in-flight onboarding still comes back with, and the fee arithmetic, which
+  a neutral name would misrepresent. The full map of kept-versus-removed is on
+  [payments](docs/wiki/frontend/modules/payments.md#where-a-providers-name-may-appear-and-where-it-may-not).
+
 - **A cash grant can no longer be recorded against a Cercle top-up product.** The Achats tab let an
   association manager pick the `balance_topup` product for a manual "paid in cash" sale, next to a
   hint admitting it credited nothing on the Cercle. It could not: the outbound webhook is keyed by

@@ -1,4 +1,30 @@
-import type { StripeConnectStatusResponse } from './stripeConnectStatus';
+/**
+ * Lifecycle of an association's payout account, as the edit UI renders it.
+ *
+ * Defined HERE, in the provider-agnostic contract, rather than in the Stripe module it started in:
+ * `LydiaPaymentProvider` implements this method too, and importing a type called
+ * `StripeConnectStatusResponse` to do it made the neutral contract depend on one implementation.
+ * The shape was already neutral - only its name was not.
+ */
+export type ConnectAccountStatus =
+  | 'not_started'
+  | 'onboarding_required'
+  | 'pending'
+  | 'active'
+  | 'restricted';
+
+/** Live payout-account status returned to the association edit UI. */
+export type ConnectAccountStatusResponse = {
+  status: ConnectAccountStatus;
+  chargesEnabled: boolean;
+  payoutsEnabled: boolean;
+  detailsSubmitted: boolean;
+  /** Requirement field keys the provider is still waiting on (onboarding). */
+  currentlyDue: string[];
+  /** Requirement field keys under provider review (pending). */
+  pendingVerification: string[];
+  disabledReason: string | null;
+};
 
 /** One purchasable line, collapsed by the caller into a single total before it reaches the provider. */
 export interface CheckoutLineItem {
@@ -117,7 +143,7 @@ export interface PaymentProvider {
 
   createOnboarding(params: OnboardingParams): Promise<OnboardingResult>;
   getAccountStatus(accountId: string): Promise<{ chargesEnabled: boolean }>;
-  getConnectAccountStatus(accountId: string): Promise<StripeConnectStatusResponse>;
+  getConnectAccountStatus(accountId: string): Promise<ConnectAccountStatusResponse>;
   getConnectBalance(accountId: string): Promise<ConnectBalanceSummary>;
   createConnectDashboardLink(accountId: string): Promise<string>;
 

@@ -2,7 +2,7 @@ import { BadRequestException, Logger } from '@nestjs/common';
 import axios from 'axios';
 import { signLydiaParams } from './lydia-signature';
 import { parseLydiaOrderRef, orderRefToMetadata } from './lydia-order-ref';
-import type { StripeConnectStatusResponse } from './stripeConnectStatus';
+import type { ConnectAccountStatusResponse } from './payment-provider.interface';
 import type {
   ChargeResult,
   ChargeWithSavedMethodParams,
@@ -209,7 +209,7 @@ export class LydiaPaymentProvider implements PaymentProvider {
     );
   }
 
-  async getConnectAccountStatus(_accountId: string): Promise<StripeConnectStatusResponse> {
+  async getConnectAccountStatus(_accountId: string): Promise<ConnectAccountStatusResponse> {
     throw new BadRequestException(
       "Lydia has no live account-status poll - status must be read from Canari's DB, updated by the BUSINESS_VALIDATED webhook (see WP-LYDIA-1)."
     );

@@ -2117,6 +2117,29 @@ is where any measurement belongs.
 
 ## Payments
 
+### P2 - the payout estimate is Stripe's fee schedule, now rendered under provider-neutral wording
+
+Opened 2026-08-30 by the pass that removed Stripe's name from everything it did not own
+([payments](frontend/modules/payments.md#where-a-providers-name-may-appear-and-where-it-may-not)).
+
+`frontend/src/lib/payments/stripeFees.ts` hard-codes Stripe's French pricing (a percentage plus a
+fixed cent amount) and `StripeNetPayoutHint.svelte` renders the result. Both keep the vendor's name,
+deliberately - the arithmetic really is Stripe's, and a neutral name there would be the lie. **What
+changed is the copy above them**: `payout_hint_fees_note` no longer says Stripe, so the number now
+presents itself as "what you will receive" whoever is processing.
+
+While `payment_provider` is `stripe` the estimate is correct and nothing is wrong today. The day
+WP-LYDIA-1 flips it, the hint keeps quoting Stripe's schedule for a Lydia payment, and a treasurer
+has no way to tell. **This is not fixed by renaming anything** - the fee schedule is a per-provider
+FACT, so it belongs behind the same seam the rest of the provider already sits behind: either
+`PaymentProvider` exposes its schedule, or the hint asks `GET /api/payments/provider` (already live,
+already consumed by the association edit page) and picks. The second is cheaper and needs no server
+change; the first is right if a third provider ever appears.
+
+**Its blocking condition is the same as WP-LYDIA-1's**, and deliberately so: Lydia's real fee
+schedule is part of the credentials Lydia still owes, and inventing a placeholder here would ship a
+second wrong number rather than none. Do it in the same work package.
+
 ### Flipping `payment_provider` from Stripe to Lydia (WP-LYDIA-1)
 
 **The code is not the blocker - it is already written and tested.** `PaymentProvider` is an interface

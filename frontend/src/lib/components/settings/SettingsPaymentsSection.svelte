@@ -191,7 +191,7 @@
       class="text-text-main focus-visible:ring-text-muted flex w-full items-center justify-center gap-2 rounded-xl bg-black/5 px-4 py-3.5 text-sm font-bold transition-all outline-none focus-visible:ring-2 active:scale-[0.98] disabled:opacity-50 sm:hidden dark:bg-white/10"
     >
       {#if paymentSetupLoading}
-        <LoaderCircle size={18} class="animate-spin" /> {m.profile_payment_redirect_stripe()}
+        <LoaderCircle size={18} class="animate-spin" /> {m.profile_payment_redirect_provider()}
       {:else}
         <Plus size={18} strokeWidth={2.5} /> {m.profile_payment_add_card_mobile()}
       {/if}
