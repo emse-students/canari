@@ -1787,6 +1787,19 @@ Three separate things, in the order they have to be answered:
    path the MLS teardown it was skipping, on the one path where the service is still live. Story in
    `CHANGELOG.md`, rule in [durable-rules](durable-rules.md).
 
+   **AND A SECOND CAUSE OF THE SAME SYMPTOM WAS FOUND ON 2026-08-30, by HEAL-REVOKE-9, which means
+   the fix above was NECESSARY AND NOT SUFFICIENT.** `getStorage()` is a factory, so the number of
+   open connections is the number of readers; `/posts` was measured holding two, the wipe closed one,
+   `deleteDatabase` fired `onblocked`, and a revoked device kept its message store **with the wipe
+   having run and reported success**. Fixed in `da0ce2f2` at the module that creates the connections,
+   with a registry mirroring `closeMlsDb`. So "the wipe did not fire" and "the wipe fired and was
+   blocked" are two different defects wearing one report, and only the first was known.
+
+   **THIS DOES NOT CLOSE THE ENTRY, AND MUST NOT BE READ AS CLOSING IT.** Points 2 and 3 below are
+   untouched by both fixes, and HEAL-REVOKE-1 - the row that asks this entry's own question - is
+   still `pending` with no runner. What closes it is HEAL-REVOKE-1, -2 and -3 run against a build
+   carrying `da0ce2f2`, not the inference that the cause found must have been the cause reported.
+
    **AND THE PARAGRAPH ABOVE WAS HALF WRONG, CORRECTED BY MEASUREMENT 2026-08-28.** The wipe was
    thorough and the trigger was missing - both true - but the wipe was also **not permanent**, which
    reading it could not show: it ran, deleted everything, and the SYNC_WATCHDOG nobody had stopped
