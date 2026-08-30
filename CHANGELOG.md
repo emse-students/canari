@@ -238,6 +238,29 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **The login button held its "busy" state until AFTER the check that could take twenty-six
+  seconds.** Both `handleLogin` and `handlePasswordLogin` awaited `refreshAppVersionCheck()` first
+  and only then set `isLoggingIn = true`. The disabled state and the spinner already existed in
+  `LoginForm`; they were simply switched on too late, so for the whole duration of a
+  `GET /api/version` - which carries its own retry ladder of 3 x 8 s timeouts plus backoff - the
+  button stayed enabled, showed nothing, and did nothing visible. A press looked ignored, and
+  pressing again was the only move the screen offered. The flag is now raised before the check and
+  lowered on the refusal path, and the preamble both handlers duplicated is one
+  `beginLoginAttempt()`. The backlog had blamed a pre-hydration window instead; with
+  `export const ssr = false` and no prerender on `/login` that window cannot exist - the button is
+  painted by the same JS that wires it.
+- **A `try`/`catch` around the OIDC start caught nothing, and could strand the form.**
+  `handleLogin` called the async `startOidcLogin(...)` without awaiting it, so a rejection resolved
+  outside the `catch` that was written for it: the error was never shown, and `isLoggingIn` stayed
+  true with no way back except a reload. Its password-flow twin four lines below had always awaited.
+  Both now do, through one `failLoginAttempt()` that logs the cause and returns the form to the
+  user - and the message it shows is a Paraglide string wrapping the reason, not a raw technical
+  message rendered as if it were a sentence.
+- **The version check fell back to cached metadata without a word.** Its `catch` is reached only
+  when `/api/version` stayed unreachable through the whole retry ladder, and it then answers with a
+  CACHED verdict about minimum version and maintenance as though it had been measured. A fallback is
+  a signal, never a path: it now says so at `warn`, with the cause.
+
 - **A log line called a routine, self-healing race "Non-recoverable error", and its own comment two
   lines above said the next cycle retries.** It sits in the `WrongEpoch` / `epoch_mismatch` branch
   of the pending-invitation sweep, where another device committed simultaneously and the missing

@@ -142,36 +142,58 @@
   });
 
   // ─── Event handlers ────────────────────────────────────────────────────────
-  async function handleLogin() {
+  /**
+   * Runs the pre-flight both login buttons owe: clear the last error, hold the form busy, and
+   * refuse a login the server would reject for an outdated client.
+   *
+   * The busy flag is raised BEFORE the version check on purpose. `refreshAppVersionCheck()` carries
+   * its own retry ladder (3 x 8 s timeouts plus backoff), and raising the flag after it left that
+   * whole window with the button enabled and no spinner: a press looked ignored, and pressing again
+   * was the only visible move. The disabled state and the spinner already exist in `LoginForm` -
+   * they were simply switched on too late.
+   *
+   * @returns `true` when the caller may start the OIDC flow, `false` when it must not.
+   */
+  async function beginLoginAttempt(): Promise<boolean> {
+    console.debug('[LOGIN] Attempt starting, checking client version.');
     loginError = '';
+    isLoggingIn = true;
     await refreshAppVersionCheck();
     if (isBelowMinClientVersion()) {
+      console.debug('[LOGIN] Refused: client below minClientVersion.');
       loginError = m.auth_update_required({ version: platformInfo?.minClientVersion ?? '?' });
-      return;
+      isLoggingIn = false;
+      return false;
     }
-    isLoggingIn = true;
+    return true;
+  }
+
+  /** Reports a login that never reached Authentik, and hands the form back to the user. */
+  function failLoginAttempt(e: unknown) {
+    const reason = e instanceof Error ? e.message : String(e);
+    console.warn(`[LOGIN] OIDC start failed: ${reason}`);
+    loginError = m.auth_login_failed({ reason });
+    isLoggingIn = false;
+  }
+
+  async function handleLogin() {
+    if (!(await beginLoginAttempt())) return;
     try {
-      startOidcLogin(getSafeReturnTarget());
+      // Awaited: `startOidcLogin` is async, and an unawaited rejection would escape this `catch`
+      // and leave the form busy for ever.
+      await startOidcLogin(getSafeReturnTarget());
       // The browser navigates to Authentik - no need to reset isLoggingIn.
     } catch (e: unknown) {
-      loginError = e instanceof Error ? e.message : String(e);
-      isLoggingIn = false;
+      failLoginAttempt(e);
     }
   }
 
   async function handlePasswordLogin() {
-    loginError = '';
-    await refreshAppVersionCheck();
-    if (isBelowMinClientVersion()) {
-      loginError = m.auth_update_required({ version: platformInfo?.minClientVersion ?? '?' });
-      return;
-    }
-    isLoggingIn = true;
+    if (!(await beginLoginAttempt())) return;
     try {
       await startOidcLogin(getSafeReturnTarget(), { flowSlug: PASSWORD_LOGIN_FLOW_SLUG });
     } catch (e: unknown) {
-      loginError = e instanceof Error ? e.message : String(e);
-      isLoggingIn = false;
+      failLoginAttempt(e);
     }
   }
 

@@ -12,6 +12,7 @@
   "auth_terms": "CGU",
   "auth_maintenance_default": "Canari est en maintenance. Seuls les administrateurs peuvent se connecter.",
   "auth_update_required": "Mettez à jour Canari (minimum {version}) avant de vous connecter.",
+  "auth_login_failed": "La connexion n'a pas pu démarrer : {reason}",
   "auth_pin_required": "Veuillez entrer votre PIN.",
   "auth_pin_min_length": "Le code doit comporter au moins 4 caractères.",
   "auth_redirect_loop_blocked": "Cette page vous renvoie ici en boucle. Reconnectez-vous pour continuer.",

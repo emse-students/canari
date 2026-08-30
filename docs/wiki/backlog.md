@@ -40,6 +40,7 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 | a push carries its ciphertext once, not twice | HARDWARE, both platforms, iOS the riskier half - no iPhone has yet received a push built without the redundant `data` map ([chat-delivery](services/chat-delivery.md#transport--single-gateway-fcm)) |
 | a device with no push token now says so | after the next release, a tokenless device either acquires one or prints `[PUSH_UNAVAILABLE]` naming a cause; continued silence with a tokenless device still in `key_package` means a FIFTH cause, not a fixed one |
 | the notification quick reply's 403 | HARDWARE: check K steps 1-5 and **K2**, on A1 which already carries the build - **and the window must be ARMED, a run made without arming proves nothing** ([check K](device-verification.md#the-backgrounded-run-that-failed-and-the-defect-it-found)). The iOS twin is corrected identically and equally unproven |
+| the login button that took a press and showed nothing | the fix is a reordering, visible in the component's own state, so any cold `/login` press proves it. What is NOT explained is the 2026-08-28 measurement's "no request" over thirty seconds: a version check running its ladder would have issued three. Read the network tail of the next cold login before calling that measurement understood |
 | WP-REGRANT-2, a re-granted member's re-join | COMM-22, four grant/revoke cycles green - and COMM-8 reading `seedAfterTheGrant: true`, never `repaired`, which is a fallback and not a path |
 
 ---
@@ -153,31 +154,6 @@ cannot read it - the discriminator has to be carried to where the decision is ma
 consulting it. The prompt a dead credential deserves is the login gate, not a keypad.
 
 **Not to be done with a timer or a retry limit.** The condition is a fact, not a duration.
-
-### P2 - the login button accepts a click before it is wired, and drops it (measured 2026-08-28)
-
-**What was measured, on W3 against production.** `realClick` dispatched a real mouse click on the
-`/login` launcher's "Se connecter" button. Its page-side recorder - which exists to catch a click
-landing on the wrong element - confirmed the `BUTTON` received the event in the capture phase.
-Nothing happened: no navigation, no request, no console line. Thirty seconds later the browser was
-still on `/login`. The same click by hand two minutes later reached `/chat` in two seconds.
-
-**Why this is not only a rig story.** The harness half is fixed and written up
-([testing-methodology](testing-methodology.md), "A click that was delivered is not a click that was
-acted on") - the step now judges the gesture by its effect and retries. But the product half is
-untouched, and a real person cold-loading `/login` on a slow connection is in exactly that window:
-the button is painted, looks pressable, takes the press, and does nothing. There is no spinner, no
-disabled state, and no second chance except pressing it again.
-
-**What would settle the scope.** How long is the window on a real device and a real network - tens
-of milliseconds, or seconds? That is one performance trace of a cold `/login` load, reading the gap
-between first paint of the button and hydration. If the gap is measurable by a human, the fix is to
-render the launcher's primary action disabled until it is wired, which is a two-line change in the
-component and no new mechanism.
-
-**Why it is P2 and not P1.** Pressing again works, and the session that hits it is a first-visit or
-post-wipe session, not a daily one. It is not a lost session, it is a lost press - but it is the
-FIRST press a new user makes, on the one screen that has no alternative route.
 
 ### P2 - iOS carries none of the window-layout work Android already has (user, 2026-08-28)
 

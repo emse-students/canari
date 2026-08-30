@@ -12,6 +12,7 @@
   "auth_terms": "Terms",
   "auth_maintenance_default": "Canari is under maintenance. Only administrators can sign in.",
   "auth_update_required": "Update Canari (minimum {version}) before signing in.",
+  "auth_login_failed": "Sign-in could not start: {reason}",
   "auth_pin_required": "Please enter your PIN.",
   "auth_pin_min_length": "The PIN must be at least 4 characters.",
   "auth_redirect_loop_blocked": "That page keeps sending you back here. Sign in again to continue.",

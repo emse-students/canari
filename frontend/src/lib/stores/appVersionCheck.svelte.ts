@@ -104,7 +104,12 @@ export async function refreshAppVersionCheck(): Promise<AppVersionCheckResult> {
 
       lastCheck = buildAppVersionCheckResult(serverInfo);
       return lastCheck;
-    } catch {
+    } catch (e) {
+      // A fallback is a signal: reaching this means /api/version stayed unreachable through the
+      // whole retry ladder, and the verdict below is a cached one, not a measured one.
+      console.warn(
+        `[VERSION] /api/version unreachable, falling back to cached metadata: ${e instanceof Error ? e.message : String(e)}`
+      );
       const fallback = buildAppVersionCheckResult(loadCachedServerInfo());
       if (!fallback.upToDate || fallback.belowMinVersion || fallback.maintenance.enabled) {
         lastCheck = fallback;

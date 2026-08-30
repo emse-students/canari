@@ -25,6 +25,32 @@
   -> redirect to /chat
 ```
 
+### The press is not the first thing that happens, and the button must say so
+
+`handleLogin` does not go straight to `startOidcLogin`. It first awaits
+`refreshAppVersionCheck()`, because a client below `minClientVersion` must be refused here rather
+than after a round trip to Authentik. That check calls `GET /api/version` and carries its own
+retry ladder - three 8 s timeouts plus backoff, ~26 s in the worst case - and it swallows every
+failure, answering from cached metadata instead.
+
+So the button's busy flag is raised BEFORE that await, not after it, and lowered again only on the
+refusal path. Until 2026-08-30 the order was the other way round: the whole ladder ran with the
+button enabled, no spinner, and no visible effect, and a press on a degraded connection looked
+ignored. The disabled state and the spinner were already there in `LoginForm` - `disabled={isLoggingIn
+|| loginDisabled}` and a `{#if isLoggingIn}` spinner - so nothing was missing except the moment they
+were switched on. **A busy flag raised after an await leaves the await itself unguarded**, and the
+await is the only part slow enough for anyone to notice.
+
+The preamble is `beginLoginAttempt()`, shared by the OIDC button and the password form, and it
+returns whether the caller may proceed. The two handlers had duplicated it, which is how one of them
+drifted: `handleLogin` called the async `startOidcLogin(...)` without awaiting it, inside a `try` /
+`catch` that therefore caught nothing - a rejection there showed no error and left the form busy for
+ever. Both await it now, and both report through `failLoginAttempt()`.
+
+**The window is not a hydration gap.** `+layout.ts` sets `export const ssr = false` and `/login` is
+not prerendered, so the button does not exist in HTML before JS runs: it is painted by the same
+bundle that wires its handler, and there is no interval in which it is visible but dead.
+
 ## Routes
 
 | Route | Description |
