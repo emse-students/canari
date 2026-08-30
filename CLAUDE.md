@@ -185,16 +185,24 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
    nothing revokes the one that exists. Drop the membership row FIRST, then the key packages, then
    the frames, allowlisted on `"userId"='unknown' AND "deviceId"='pending'`, and READ the frames
    before deleting them. Numbers, order and what the cleanup does NOT do (the MLS tree is not the
-   server row) are in [backlog](docs/wiki/backlog.md). And **do NOT assert the guards fixed the
+   server row) are in [backlog](docs/wiki/backlog.md). **IT IS WAITING ON THE OWNER'S GO-AHEAD, asked
+   2026-08-30 and not yet given** - it deletes prod rows, so it is not taken on an agent's judgement. And **do NOT assert the guards fixed the
    activation** - an active member polled six times, was answered `invitations=8` and committed none,
    and only a CLIENT log separates the causes.
 
-3. **NOTHING ON THE CAMPAIGN BOARD COULD HAVE CAUGHT IT, AND THE GAP IS STRUCTURAL** (checked
+3. **THE SERVER-SIDE P2s ARE THE AGREED NEXT WORK, point by point** (user, 2026-08-30, while the
+   campaign is hardware-blocked): the chat-gateway serving CORS `*` in production with the variable
+   CD sets for it inert; the ten pushes FCM refused for size, where the guard measures the wrong
+   quantity; the notification path shipping raw literals and answering one caller in two languages;
+   and `/forms/success` asking social-service for a form whose id is `success`. Substance for each is
+   in [backlog](docs/wiki/backlog.md). **NONE has been started.**
+
+4. **NOTHING ON THE CAMPAIGN BOARD COULD HAVE CAUGHT IT, AND THE GAP IS STRUCTURAL** (checked
    2026-08-28): of ~200 rows exactly one reads `dm_device_group_memberships`, and none asks a
    question whose answer is a POPULATION. **Four rows are written into rung 12 MULTI** (7-10), all
    needing only `W1 W2`, on the board.
 
-4. **BLOCKED ON HARDWARE - everything the phone owes, in order.** No device is available (user,
+5. **BLOCKED ON HARDWARE - everything the phone owes, in order.** No device is available (user,
    2026-08-30), so none of this can move: the quick-reply re-measurement (fix installed on A1, never
    run, and **its precondition is not ambient** - an unarmed run proves nothing); check K step 5 and
    **K2**; **HEAL-NEW-5b**; **HEAL-REVOKE-6** and the six other `+A1` HEAL rows; the iOS twin of the
@@ -207,7 +215,7 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
    change needs only `gradlew :app:assembleUniversalDebug` in `gen/android`, 58 s; and
    `phone.notifications()` inflates every count it returns, unfixed.
 
-5. **DEFERRED PAST THE LADDER - seven UX and rendering items**, substance in
+6. **DEFERRED PAST THE LADDER - seven UX and rendering items**, substance in
    [backlog](docs/wiki/backlog.md) and nowhere else, named here only so none is forgotten: the POSTS
    search that loads the whole base; the EMOJI picker that neither scrolls nor stays on screen;
    HEAL's partially-restored old client; **ONE BUNDLED EMOJI FONT everywhere** (Noto Color Emoji,
@@ -217,11 +225,11 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
    dead row, the device controls and the iOS bars want ONE pass over `app.css`, not seven local
    patches.
 
-6. **THE SFU RUNS SIX webrtc MAJORS NOBODY HAS PLACED A CALL ON.** It compiles, clippy is clean and
+7. **THE SFU RUNS SIX webrtc MAJORS NOBODY HAS PLACED A CALL ON.** It compiles, clippy is clean and
    its ten tests pass - none of which runs the ICE stack. What settles it is ONE relay-path call,
    which is rung 15 CALL and has no runner. **A release must not carry this unplaced.**
 
-7. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** - asked by the user 2026-08-25
+8. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** - asked by the user 2026-08-25
    (*"le meme point de depart, independamment de ce qui a pu se passer avant"*). The PHASE-level half
    is `run.mjs`'s preflight; the per-STEP half is pulled forward the moment a rung is blocked by an
    inherited state, as HEAL-REVOKE was. Contract and audit in [backlog](docs/wiki/backlog.md).
