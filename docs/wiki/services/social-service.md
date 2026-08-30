@@ -195,6 +195,24 @@ Communities use a deliberately simple, two-level model (no per-channel permissio
   The audience is read AFTER the save, so a salon that has just become private announces to its new
   roster only. On the client, an ABSENT `viewerCanWrite` means unchanged - `renameChannel` reuses the
   same event and must not silence anybody's composer.
+- **A role change is PUSHED to the member it concerns, and to nobody else.** COMM-5 measured that a
+  promotion landed correctly on the server while the peer's own client only learned of it on a full
+  reload - harmless upward, wrong downward, since a demoted administrator goes on being offered every
+  control they just lost for as long as their tab stays open. `workspace.role.changed` carries the new
+  role's WHOLE permission set and the client applies it rather than refetching: a refetch can fail, can
+  be declined while a load is already in flight, and would return exactly what the event already
+  carries. Best-effort and logged - the role is written before the announcement is attempted, so a
+  failed publish leaves the member where they were. **The invariant this rests on, written down because
+  nothing enforces it:** `viewerCanManage` is the only permission-derived value the client caches; the
+  event carries the full list so that the day a second one is cached, only the client handler changes.
+- **Three roles ARE the product** (decided 2026-08-20). The settings grid renders a permission matrix
+  over whichever roles a workspace has - the three seeded ones - and offers no way to add a fourth;
+  `ChannelService.createRole` was dead client code and is deleted. `POST /channels/roles` is KEPT
+  because it is the only way a custom role can exist at all, and the grid renders whatever roles exist,
+  so a role made through the API degrades into read-and-edit rather than breaking anything. **The one
+  wart:** `normalizeRoleLabelToCanonical` folds any unrecognised role name to `member`, so such a role
+  shows in the member list as "Membre" while holding whatever permissions it was given - a display
+  fault waiting for the day somebody uses the route.
 
 #### Message moderation (`channel.moderate`)
 

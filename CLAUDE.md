@@ -129,50 +129,24 @@ Work is tracked as Work Packages by severity: **P1** (security, or a broken user
 [backlog](docs/wiki/backlog.md) both. Since 2026-08-18 nothing is parked: anything new goes into the
 queue below in its place, and its substance into `backlog`.
 
-**RESUMING (paused 2026-08-28 by the user: *"Prepare toi a reprendre directement la campagne, je
-crois qu'il n'y a plus rien avant"*). In this order, and nothing else first:**
+**THE CAMPAIGN IS PAUSED 2026-08-30 FOR WANT OF A PHONE** (user). What is takeable without hardware
+is in the queue below; everything the device owes is collected in queue item 4.
 
-1. `git fetch` then **PUSH** - local commits are unpushed and a push redeploys prod, so it cannot
-   happen during a run. Background, redirect not pipe, read `PUSH_EXIT`, `rm -rf apps/*/dist` first.
-2. `gh run list` - CD GREEN and QUIET before any row.
-3. `node state.mjs` - all four clients were logged in and unlocked at the pause, A1 on a local debug
-   **0.14.12**. If the phone was unplugged, the from-zero sequence is in
-   [the harness README](tools/cross-client-harness/README.md#operating-it), scripted end to end.
-4. **HEAL, the rung in hand. Every verdict is on the BOARD and every adjudication on the CAMPAIGN
-   PAGE - read them, they are not restated here.** W1's SSO lives in the `chrome-w1` profile and
-   `login.mjs --device W1` is enough; nothing on this rung needs a human again unless that profile
-   is lost (its 2FA is the one step no tool here can answer, and it cost a block on 2026-08-30).
+**RESUMING, in this order and nothing else first:** `git fetch` then **PUSH** (a push redeploys prod,
+so it cannot happen during a run - background, redirect not pipe, read `PUSH_EXIT`, `rm -rf apps/*/dist`
+first); `gh run list`, CD green and QUIET before any row; `node state.mjs`; then `node rows.mjs`, which
+settles whether the board still matches the ledger. If the phone was unplugged, the from-zero sequence
+is in [the harness README](tools/cross-client-harness/README.md#operating-it), scripted end to end.
+W1's SSO lives in the `chrome-w1` profile and `login.mjs --device W1` is enough - its 2FA is the one
+step no tool here can answer, and losing that profile costs a re-enrolment.
 
-   **NOTE (2026-08-30): the rung in hand was interrupted by the phone's turn, which found a P1 -
-   see item 5, which is where a resuming session starts.** What follows is HEAL's own state and is
-   unchanged.
-
-   **Owed, in order: RE-RUN 9 on a build carrying `da0ce2f2`.** It has run twice and FAILed twice,
-   and both failures were worth having: the first on a trigger the product does not have (the row
-   asked a RELOAD, the product defines a LOGIN plus the PIN its refusal names - settled by the user
-   2026-08-30, the product is the reference, the row is re-aimed and now asserts THREE things where
-   it asserted one); the second on `noStoreSurvivedTheWipe`, a P1 in the wipe fixed in `da0ce2f2`.
-   Everything before the wipe passes on both runs, and that is the half that matters. **-7 IS TAKEN**,
-   `PASS-DIRTY` on `edb8d7ab`, but only after a SECOND `FAIL` on that same build: the fix stops new
-   corpses and cannot raise the old one, and the group its own P1 had destroyed was still alive,
-   unservable by any device, giving the fresh reference a thirteenth amber row the returning device
-   never built. **Sweep the world after fixing a defect that WRITES state, or the re-run measures the
-   old defect** ([methodology](docs/wiki/testing-methodology.md), and the corpse's whole class is a
-   P2 in [backlog](docs/wiki/backlog.md) with its population). Then **HEAL-NEW-1 and -3 owe re-runs for the INSTRUMENT, not the product**: both predate
-   `gate()`, so neither passed the dirt and mid-run-redeploy gate every other `PASS` passed
-   ([methodology](docs/wiki/testing-methodology.md#a-field-in-the-detail-is-not-a-gate-and-two-heal-runners-believed-it-was)).
-
-   **Two live instrument facts.** BOTH heal runners now carry their noise list, and the disposition
-   is `ignoringExpectedLog` PER ROW, never a wider classifier: `healnew.mjs` has
-   `withoutTheMintsOwnNoise`, and `healrevoke.mjs` has FOUR lists, one per observer, forgiving the
-   mint and never the wipe. And the device cap that voided five cells is not in play: `healrevoke.mjs`
-   now READS the count on both sides of every row (4 then 3 on 2026-08-30), the panel showing only the DELETABLE
-   rows - **re-measure it around every run rather than quoting this.**
-
-   **THE USER ASKED FOR THE LOGS TO BE READ ON EVERY PASS, the reconciliations especially**
-   (2026-08-28): a heal that works is not a heal that was observed. It found the `UserBlock` P1 no
-   row asks about, it showed HEAL-NEW-3's sidebar going green while the reconciliation covered only
-   7 of 11 groups, and on 2026-08-30 it is what turned a `FAIL` into the P1 fixed in `edb8d7ab`.
+**HEAL is the rung in hand, and every verdict is on the BOARD, every adjudication on the CAMPAIGN
+PAGE - they are not restated here.** Two standing instrument facts that are NOT per-row: the
+disposition for expected noise is `ignoringExpectedLog` **per row**, never a wider classifier; and the
+device cap must be **re-measured around every run** rather than quoted. **THE USER ASKED FOR THE LOGS
+TO BE READ ON EVERY PASS, the reconciliations especially** (2026-08-28) - a heal that works is not a
+heal that was observed, and reading them has since found one P1 no row asks about and turned a `FAIL`
+into another.
 
 ### CANARI - THE QUEUE, IN ORDER
 
@@ -182,21 +156,20 @@ deleted from BOTH this file and [backlog](docs/wiki/backlog.md). **Every defect 
 `CHANGELOG.md`, every rule one left is in [durable-rules](docs/wiki/durable-rules.md), every verdict
 is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the three is restated here.**
 
-1. **THE CAMPAIGN ITSELF - RUNNING, by the user's decision of 2026-08-21** (*"C'est parti pour la
-   campagne"*, in autonomy), top of the ladder down, writing the runners the six unrunnable phases
-   never had. **THE USER'S PRIORITY, 2026-08-27, verbatim: *"PASS ou PASS-DIRTY sur COMM, DEL, MULTI,
-   LIFE, NOTIF, HEAL."*** Those six ARE the target; TAB, CALL, PIN and CORRUPT come after them.
+1. **THE CAMPAIGN - PAUSED for want of a phone**, run in autonomy by the user's decision of
+   2026-08-21 (*"C'est parti pour la campagne"*), top of the ladder down. **THE USER'S PRIORITY,
+   2026-08-27, verbatim: *"PASS ou PASS-DIRTY sur COMM, DEL, MULTI, LIFE, NOTIF, HEAL."*** Those six
+   ARE the target; TAB, CALL, PIN and CORRUPT come after them. **Where it stands is on the
+   [board](docs/wiki/cross-client-testing.md), which `node rows.mjs` checks against the ledger - read
+   it rather than any count written here, which has been stale twice.**
 
-   **Where it stands: rungs 1-10 TAKEN plus 12 MULTI; HEAL is the rung in hand**, 10 of 33 cells taken
-   (3 `PASS`, 7 `PASS-DIRTY`), BOTH order pairs adjudicated EQUAL, and the HEAL-REVOKE group closed
-   on the web with **two P1s found and fixed** - a wipe that never fired on a vault login, and a wipe
-   that fired and was BLOCKED by a second `getStorage()` connection (`da0ce2f2`). **What is owed, in
-   order:** the phone's turn as item 5 sets it out, which is where HEAL-REVOKE-6 lives; then
+   **What is owed once a device exists, in order:** the `+A1` rows collected in item 4; then
    **HEAL-REVOKE-1, -2, -3 and -4, which have NO RUNNER and are what actually closes the open P1**;
    then the ungated re-runs of HEAL-NEW-1 and -3; then re-runs of every DEL and MULTI cell, because
-   both runners have CHANGED since; then LIFE and NOTIF. **A `PASS-DIRTY` does not stop a rung by itself (user,
-   2026-08-25); a x5 sweep of the whole ladder accepting nothing short of `PASS` comes AFTER the
-   ladder is finished (user, 2026-08-26).** Only CALL, CORRUPT and PIN still have no runner at all.
+   both runners have CHANGED since; then LIFE and NOTIF. Only CALL, CORRUPT and PIN still have no
+   runner at all. **A `PASS-DIRTY` does not stop a rung by itself (user, 2026-08-25); a x5 sweep of
+   the whole ladder accepting nothing short of `PASS` comes AFTER the ladder is finished (user,
+   2026-08-26).**
 
    **Three things must NOT be read as settled:** DEL-10 passed where it FAILed but nothing names
    what changed and the two runs measured different queues, so its P2 STAYS OPEN; COMM-8 passes with
@@ -206,58 +179,35 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
 
 2. **A PLACEHOLDER HELD A MEMBER'S PLACE IN A REAL CONVERSATION - the user's lost messages, and the
    ghost, are ONE P1. CAUSE FOUND, GUARDS SHIPPED 2026-08-28, CLEANUP AND ONE PROOF OWED.** Owed, in
-   this order: **DEPLOY, then clean the row and its 72 queued frames** (cleaning first lets a client
-   re-create it and destroys the evidence); and **do NOT assert the guards fixed the activation** -
-   an active member polled six times, was answered `invitations=8` and committed none, and only a
-   CLIENT log separates the causes.
+   this order: **the DEPLOY IS DONE (0.14.14, 2026-08-30 12:24 UTC), so the CLEANUP is unblocked -
+   and it is BIGGER AND STILL GROWING**: 193 queued frames at 13:11 UTC, not 72, the newest two
+   minutes old, plus 1 `key_package` and 50 `one_time_key_package` rows. The guards stop a NEW ghost;
+   nothing revokes the one that exists. Drop the membership row FIRST, then the key packages, then
+   the frames, allowlisted on `"userId"='unknown' AND "deviceId"='pending'`, and READ the frames
+   before deleting them. Numbers, order and what the cleanup does NOT do (the MLS tree is not the
+   server row) are in [backlog](docs/wiki/backlog.md). And **do NOT assert the guards fixed the
+   activation** - an active member polled six times, was answered `invitations=8` and committed none,
+   and only a CLIENT log separates the causes.
 
 3. **NOTHING ON THE CAMPAIGN BOARD COULD HAVE CAUGHT IT, AND THE GAP IS STRUCTURAL** (checked
    2026-08-28): of ~200 rows exactly one reads `dm_device_group_memberships`, and none asks a
    question whose answer is a POPULATION. **Four rows are written into rung 12 MULTI** (7-10), all
    needing only `W1 W2`, on the board.
 
-4. **A GROUP WAS FORGOTTEN 291 ms AFTER ITS CREATION BY A CONCURRENT SWEEP - P1, found by
-   HEAL-REVOKE-7 and FIXED 2026-08-30, answering the open question the previous P1 left.** Yes, another sweep compares a live local read against an older server one: it
-   is `initializeConnection`'s, tagged `[SYNC]`, and the window is inside `createNewGroup` itself -
-   the LOCAL group exists between `createGroup` and `registerMember`, so the server LIST cannot name
-   it yet. `decideAbsentLocalGroupFate` then forgets it under "conversation row held with no
-   membership left" **without ever reading a membership**. Fixed at the WRITE, not at the readers:
-   the membership is now registered before the local group exists, in both creation paths, so the
-   window is gone rather than narrowed. Story in `CHANGELOG.md`, mechanism on
-   [chat](docs/wiki/frontend/modules/chat.md), rule (its FOURTH site) in
-   [durable-rules](docs/wiki/durable-rules.md). **Two things must not be re-derived:** the obvious
-   `isStillUserMember` fix would NOT have worked, and the reducer still concludes a non-membership
-   it never reads - both in [backlog](docs/wiki/backlog.md). **A DEPLOY IS OWED before any further
-   HEAL verdict about a newly created group.**
+4. **BLOCKED ON HARDWARE - everything the phone owes, in order.** No device is available (user,
+   2026-08-30), so none of this can move: the quick-reply re-measurement (fix installed on A1, never
+   run, and **its precondition is not ambient** - an unarmed run proves nothing); check K step 5 and
+   **K2**; **HEAL-NEW-5b**; **HEAL-REVOKE-6** and the six other `+A1` HEAL rows; the iOS twin of the
+   same fix; the iPad login that closes App Review 2.1(a). Procedures on
+   [check K](docs/wiki/device-verification.md#the-backgrounded-run-that-failed-and-the-defect-it-found)
+   and [device-verification](docs/wiki/device-verification.md), state on the board, substance in
+   [backlog](docs/wiki/backlog.md). **Rig facts worth not re-learning:** `adb kill-server && adb
+   start-server` when the preflight blames the phone (it also kills any background `logcat`);
+   `node run.mjs --preflight A1` is the whole from-zero sequence after an `install -r`; a Kotlin-only
+   change needs only `gradlew :app:assembleUniversalDebug` in `gen/android`, 58 s; and
+   `phone.notifications()` inflates every count it returns, unfixed.
 
-5. **THE PHONE'S TURN, VALIDATED BY THE USER 2026-08-30. START HERE: A P1 IS FIXED, BUILT,
-   INSTALLED ON A1 AND NEVER RUN.** The quick reply was refused `HTTP 403` whenever the app was
-   merely BACKGROUNDED - the push secret's two stores were read in the wrong order, and a KILLED app
-   healed it before the test could see it, which is why the 2026-08-30 measurement passed. Cause,
-   fix and the three defects it dragged out are in `CHANGELOG.md`, on
-   [mobile](docs/wiki/frontend/mobile.md), in [durable-rules](docs/wiki/durable-rules.md) and in
-   [backlog](docs/wiki/backlog.md); **none of it is restated here.**
-
-   **THE ONE THING OWED IS THE RE-MEASUREMENT, AND ITS PRECONDITION IS NOT AMBIENT** - a run made
-   without arming it proves nothing, because a resume migrates the secret and closes the window.
-   The five steps, the assert that says the window is open, and the three verdict lines are in
-   [check K](docs/wiki/device-verification.md#the-backgrounded-run-that-failed-and-the-defect-it-found).
-   Board rows NOTIF-6 (killed), NOTIF-6c (backgrounded, the FAIL) and NOTIF-6d (the failed-send UI)
-   carry the state. **The iOS twin is corrected identically and is UNPROVEN on hardware** - it joins
-   check S in what a device owes.
-
-   Then, in order: check K **step 5** (the self avatar) and **K2** (airplane mode - a path proven to
-   SEND is not a path proven to QUEUE); then **HEAL-NEW-5b**, the killed-responder row no cell asked
-   about before; then **HEAL-REVOKE-6** and the six other `+A1` HEAL rows.
-
-   **Rig facts worth not re-learning:** the adb daemon died twice mid-session and the preflight blamed
-   the PHONE - `adb kill-server && adb start-server`, which also kills any background `logcat`.
-   `node run.mjs --preflight A1` is the whole from-zero sequence after an `install -r`. A Kotlin-only
-   change does NOT need the Tauri build: `gradlew :app:assembleUniversalDebug` in `gen/android`, 58 s.
-   And `phone.notifications()` returns a bogus trailing pseudo-record (the tail of `dumpsys` after the
-   last `NotificationRecord(` matches PKG), which inflates every count it returns - unfixed.
-
-6. **DEFERRED PAST THE LADDER - seven UX and rendering items**, substance in
+5. **DEFERRED PAST THE LADDER - seven UX and rendering items**, substance in
    [backlog](docs/wiki/backlog.md) and nowhere else, named here only so none is forgotten: the POSTS
    search that loads the whole base; the EMOJI picker that neither scrolls nor stays on screen;
    HEAL's partially-restored old client; **ONE BUNDLED EMOJI FONT everywhere** (Noto Color Emoji,
@@ -267,11 +217,11 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
    dead row, the device controls and the iOS bars want ONE pass over `app.css`, not seven local
    patches.
 
-7. **THE SFU RUNS SIX webrtc MAJORS NOBODY HAS PLACED A CALL ON.** It compiles, clippy is clean and
+6. **THE SFU RUNS SIX webrtc MAJORS NOBODY HAS PLACED A CALL ON.** It compiles, clippy is clean and
    its ten tests pass - none of which runs the ICE stack. What settles it is ONE relay-path call,
    which is rung 15 CALL and has no runner. **A release must not carry this unplaced.**
 
-8. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** - asked by the user 2026-08-25
+7. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** - asked by the user 2026-08-25
    (*"le meme point de depart, independamment de ce qui a pu se passer avant"*). The PHASE-level half
    is `run.mjs`'s preflight; the per-STEP half is pulled forward the moment a rung is blocked by an
    inherited state, as HEAL-REVOKE was. Contract and audit in [backlog](docs/wiki/backlog.md).
@@ -310,33 +260,25 @@ MiGallery application worth building?
 
 ### CANARI - what is open
 
-**Release: the version in the three files is `0.14.12`, bumped and UNTAGGED, and a release carrying
-it is OWED - now URGENTLY, and the reason is a P1 in the field.** Google Play production serves
-**14011**, and `0cf9c3dd` (the `coordinatorlayout` fix, without which EVERY biometric unlock dies in
-the layout inflater) landed at 14:30 on 2026-08-28, AFTER the 0.14.11 bump. Play has reported the
-crash from a real user's Galaxy S23 Ultra. **14012 is the first build that does not have it**, and
-`node tools/play-vitals/vitals.mjs` is what reads the field. v0.14.11 shipped 2026-08-28 09:53 with its Android build green; .10 and .11 both
-MEASURE the wipe defects rather than fixing them, so **no HEAL-REVOKE verdict about a clean device may
-be taken on a build older than 0.14.12.** A1 already runs a local debug 0.14.12; W1/W2/W3 get the web
-half through CD on the next push. **An APK is not reached by a deploy** - `frontendDist: "../build"`
-means the Tauri app EMBEDS the frontend, so a version has to identify its content or
-`minClientVersion` and check S are reasoning about a name. Read `gh run list` rather than this
-paragraph, which has been stale twice. **How A1 is upgraded, and why the CI artefact cannot do it, is
-in [the harness README](tools/cross-client-harness/README.md).**
+**Release: the shipped version is `0.14.14`.** Whether Play has picked a build up is a MEASUREMENT -
+`node tools/play-vitals/vitals.mjs` - and what CI did is `gh run list`; never infer either from a line
+here, which has been stale twice. **No HEAL-REVOKE verdict about a clean device may be taken on a build
+older than 0.14.12** (.10 and .11 MEASURE the wipe defects rather than fixing them). **An APK is not
+reached by a deploy** - `frontendDist: "../build"` means the Tauri app EMBEDS the frontend, so
+`minClientVersion` and check S reason about a NAME unless a version identifies its content. How A1 is
+upgraded, and why the CI artefact cannot do it, is in
+[the harness README](tools/cross-client-harness/README.md).
 
-**Google Play: both mails of 2026-08-26 are CLOSED but for check R**, everything shipped and live;
-thresholds and the two sites that will never clear are on
+**Google Play.** Both mails of 2026-08-26 are closed but for **check R**; thresholds and the two sites
+that will never clear are on
 [mobile](docs/wiki/frontend/mobile.md#plays-q3-2026-quality-requirements-measured-against-this-app),
-the only copy. **Android vitals are now READ FROM HERE**, by a read-only service account, with
-`node tools/play-vitals/vitals.mjs` ([README](tools/play-vitals/README.md)) - crash clusters, their
-stacks, Play's own anomalies, nine metric sets and what each track serves. Both Feb-2027 memory
-measures turned out readable at P50-P99; every RATE is still empty, which is Play withholding a
-distribution for want of installs and NOT a green zero, so **re-read from late September 2026**.
-Archiving a cluster is a console click and no IAM role changes that - the Reporting API has no write
-method at all, so an acknowledgement goes in `tools/play-vitals/known-issues.json`, which names the
-fixing commit and REPORTS a recurrence above it rather than muting. And **WP-RESTORE-1** (Zero-Tap Sign-In,
-required April 2027, WebAuthn on a server that has none) is ACCEPTED and scheduled AFTER the campaign
-([backlog](docs/wiki/backlog.md)).
+the only copy. Vitals are read from here by a read-only service account
+([README](tools/play-vitals/README.md)). **Every RATE is still empty - Play withholding a distribution
+for want of installs, NOT a green zero - so re-read from late September 2026.** Archiving a cluster is
+a console click and the Reporting API has no write method at all, so an acknowledgement goes in
+`tools/play-vitals/known-issues.json`, which names the fixing commit and REPORTS a recurrence above it
+rather than muting. **WP-RESTORE-1** (Zero-Tap Sign-In, required April 2027, WebAuthn on a server that
+has none) is ACCEPTED and scheduled AFTER the campaign ([backlog](docs/wiki/backlog.md)).
 
 **APP REVIEW REJECTED 0.14.4 (build 0.14.9) ON 2026-08-30, ON TWO GUIDELINES. ONE IS FIXED IN THE
 TREE AND OWES A BUILD; THE OTHER IS A CLICK THAT IS NOT MINE TO MAKE.**
@@ -355,19 +297,16 @@ TREE AND OWES A BUILD; THE OTHER IS A CLICK THAT IS NOT MINE TO MAKE.**
   is the user's one-off click, followed by a reply in the review thread. The alternative - keeping
   China and disabling CallKit by storefront region - is a feature nobody has asked for.
 
-**iOS - three defects found on hardware, all fixed, one proof still owed.** Stories in `CHANGELOG.md`,
-mechanisms on [mobile](docs/wiki/frontend/mobile.md) and
-[sessions](docs/wiki/sessions.md#the-credential-a-client-carries-itself), rules in
-[durable-rules](docs/wiki/durable-rules.md#mobile-and-native---frontendmobilefrontendmobilemd). **None restated here.** Two things are
-PROVEN and must not be re-verified: the session HOLDS on the iPhone, and a full iOS/Android parity
-audit read everything else as symmetric. What remains open:
+**iOS.** Two things are PROVEN and must not be re-verified: the session HOLDS on the iPhone, and a full
+iOS/Android parity audit read everything else as symmetric. What remains open:
 
-- **RE-RUN [check S](docs/wiki/device-verification.md) ON A BUILD CARRYING THE APNs FIX.** The SILENCE
-  half is closed and proven on hardware; the ACQUISITION half is fixed and UNPROVEN, because
-  everything native here is verified by COMPILING. What each outcome MEANS is written in check S,
-  along with one inference from the first run that was RETRACTED.
+- **A SECOND iPhone on the SAME build acquires no push token and reports nothing** - a P2 in
+  [backlog](docs/wiki/backlog.md); `PUSH_UNAVAILABLE` has printed zero lines for the whole life of the
+  chat-delivery container, on either platform, though the route is mapped. **Diagnosing it needs no
+  phone.** (The acquisition half itself is proven, on the evidence check S named: an `ios` row in
+  `push_token`.)
 - **The iOS bars** at top and bottom are a P2 in [backlog](docs/wiki/backlog.md) - the keyboard itself
-  is fixed with no web change. They want the same `app.css` pass as queue item 4, with a device in hand.
+  is fixed with no web change. They want the same `app.css` pass as queue item 5, with a device in hand.
 - **`minClientVersion` is raised BY HAND** from `/admin/platform`, and only after a build is shown
   reaching an ORDINARY iOS user: a release can reach App Store Connect, but TestFlight is the BETA
   channel ([legacy-compatibility](docs/wiki/legacy-compatibility.md)).

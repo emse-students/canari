@@ -23,77 +23,65 @@ is an entry nobody trusts to be current.
 
 ## Security - blocked upstream
 
-### ANSWERED - the `libcrux-chacha20poly1305` panic never reached this product
+### ANSWERED - the `libcrux-chacha20poly1305` advisory never reached this product
 
-**It was filed as the one open alert reaching attacker-controlled input on a path that matters. It
-reaches nothing: the crate is not compiled.** The claim rested on reading the lockfile, where
-`libcrux-chacha20poly1305` sits under `openmls_rust_crypto` -> `hpke-rs` -> `hpke-rs-libcrux` ->
-`libcrux-aead`. A lockfile lists what COULD be resolved, including optional dependencies nothing
-turns on, so it never proves a crate is built. `cargo tree -i` does, and it finds no path to
-`libcrux-aead`, `hpke-rs-libcrux` or `libcrux-chacha20poly1305` on any target:
+**The crate is not compiled.** The claim rested on the lockfile, where it sits under
+`openmls_rust_crypto` -> `hpke-rs` -> `hpke-rs-libcrux` -> `libcrux-aead`; a lockfile lists what COULD
+be resolved, including optional dependencies nothing turns on, and `cargo tree -i` finds no path to any
+of the three on any target. The HPKE backend this build uses is `hpke-rs-rust-crypto`. The rule it left
+- **a lockfile entry is not a dependency**, so the first question about any advisory is whether
+`cargo tree -i` can reach the crate at all - is in [durable-rules](durable-rules.md).
 
-| crate                      | in the lockfile | compiled |
-| -------------------------- | --------------- | -------- |
-| `hpke-rs-rust-crypto`      | yes             | **yes**  |
-| `chacha20poly1305` 0.10.1  | yes             | **yes**  |
-| `aes-gcm` 0.10.3           | yes             | **yes**  |
-| `hpke-rs-libcrux`          | yes             | no       |
-| `libcrux-aead`             | yes             | no       |
-| `libcrux-chacha20poly1305` | yes             | no       |
+**Two small things are still owed:**
 
-The HPKE backend this build actually uses is `hpke-rs-rust-crypto`, i.e. the RustCrypto AEADs. The
-libcrux ones are the alternative backend, and nothing selects it. Two libcrux crates ARE compiled -
-`libcrux-sha3` and `libcrux-secrets`, through `hpke-rs` itself - and their advisories are the ones
-that survive; both are pinned by `openmls_rust_crypto 0.5.1`, and a `0.0.x` requirement is exact in
-Cargo semver, so only a stable `openmls_rust_crypto 0.6.0` moves them.
+- **Dismiss the GitHub Dependabot alert.** It is the only one open, it is measured unreachable, and a
+  dismissal is a click in the GitHub UI - a one-off that goes to the user, not a tool.
+- **The `openmls_rust_crypto` provider upgrade.** Two libcrux crates ARE compiled - `libcrux-sha3` and
+  `libcrux-secrets`, through `hpke-rs` itself - and their advisories are the ones that survive. Both are
+  pinned by `openmls_rust_crypto 0.5.1`, and a `0.0.x` requirement is exact in Cargo semver, so only a
+  stable `openmls_rust_crypto 0.6.0` moves them. Each case is an entry in the crate's `.cargo/audit.toml`
+  naming why it cannot be honoured and what lifts it, so `cargo audit` is green with none of them
+  forgotten. A scheduled dependency upgrade, not a live defect.
 
-Every one of these is now an entry in the crate's `.cargo/audit.toml`, each naming why it cannot be
-honoured and what lifts it, so `cargo audit` is green without any of them being forgotten. The
-openmls provider upgrade is still owed - it is what drops the unbuilt crates out of the lockfile and
-unpins the two real ones - but it is a scheduled dependency upgrade, not a live defect, and nothing
-about it is urgent.
+### P2 - iOS push acquisition WORKS, and the diagnostic built to explain a failure has never spoken (measured on prod 2026-08-30)
 
-**The rule this leaves: a lockfile entry is not a dependency.** `cargo audit` reads the lockfile, so
-it reports crates that are never linked; the first question about any advisory is whether
-`cargo tree -i` can reach the crate at all.
+**THE P1 IS CLOSED, ON THE EVIDENCE THIS ENTRY ITSELF NAMED** - *"an `ios` row in `push_token` closes
+it"*. `push_token` held no ios row in the entire life of the platform until **2026-08-28 08:07:54 UTC**,
+hours after `cab0826d` landed (2026-08-28 00:00 UTC, the tree still reading `0.14.8`), which moved the
+FCM-token read out of the bootstrap that could only ever fail and into `didBecomeActive`. That device
+now carries an FCM token AND a `voipToken` on 0.14.14. Cause and fix are on
+[mobile](frontend/mobile.md#the-apns-token-had-nowhere-to-land-because-the-proxy-meant-to-catch-it-installed-nothing),
+story in `CHANGELOG.md`; **neither is restated here.**
 
----
+**WHAT REPLACES IT IS SMALLER AND STRANGER: a second iPhone on the SAME build acquires nothing, and
+says nothing.** `key_package` joined to `push_token` on prod, 2026-08-30 13:09 UTC:
 
-## Open questions
+| device | build | key package registered | FCM token |
+| --- | --- | --- | --- |
+| `0acc3ab9` | 0.14.14 | 30/08 13:08 | **yes**, plus voip |
+| `9855dfaf` | 0.14.14 | 30/08 12:55 | no, 14 minutes later |
+| `9855dfaf` | 0.14.9 | 28/08 13:58 | no, two days later |
+| `0acc3ab9` | 0.14.8 | 27/08 23:11 | no - registered 1 h BEFORE the fix landed |
+| `80a0050b` / `unknown` | 0.14.5 | 27/08 21:14, 21:27 | no - predate the fix |
 
-**They live in [open-questions](open-questions.md), not here.** An item with no severity is a
-QUESTION - its first task is to answer it, not to write code - and mixing those with scheduled defects
-is what made this file hard to read. Nothing is scheduled from that page: an answer either produces an
-entry here or closes the question.
+The bottom three rows are explained by their dates. **The top two are not: same build, same day,
+opposite outcomes.**
 
-## Measurements owed
+**AND THE INSTRUMENT BUILT FOR EXACTLY THIS QUESTION IS SILENT.** `c939470c` shipped
+`POST /api/mls/push/unavailable` so that the absence of a row would stop being indistinguishable from a
+device nobody opened - *"the half that cost the platform its life was the silence"* - and
+`push_diagnostic.txt` so a report would name which of `no-apns-token`, `fcm-token-fetch-failed`,
+`apns-registration-refused` or `app-delegate-absent` it was. The route IS mapped
+(`Mapped {/api/mls/push/unavailable, POST}` at boot), and grepping `PUSH_UNAVAILABLE` over
+`infrastructure-chat-delivery-service-1` returns **zero lines for the container's whole life** (up since
+2026-08-29 10:08 UTC), on either platform. A device with no token and no report is the exact shape that
+commit was written to abolish.
 
-### P1 - iOS could not obtain a push token: CAUSE FOUND AND FIXED 2026-08-28, hardware proof owed
-
-**The report half is CLOSED and proven** - on a fresh 0.14.8 install the server printed
-`[PUSH_UNAVAILABLE] ... platform=ios reason=no-token` at 01:23:39, the first thing this platform has
-ever said about its push chain. The run is [check S](device-verification.md), which carries the
-conditions and the retraction and is not restated here.
-
-**The cause was then found by reading the ORDER, not by shipping another build.** It is written up in
-full on [mobile](frontend/mobile.md#the-apns-token-had-nowhere-to-land-because-the-proxy-meant-to-catch-it-installed-nothing)
-and not repeated here. In one line: `FIRMessaging.APNSToken` is set only by
-`application:didRegisterForRemoteNotificationsWithDeviceToken:`, this app does not own its
-`UIApplicationDelegate` (wry does), and the Firebase App Delegate Proxy that was supposed to bridge
-the two looks for that delegate exactly once - at `[FIRApp configure]`, which runs from `main()`
-before the application exists. It found nil and never retried. Candidate 2 of the two this entry used
-to name was right in substance and wrong about the reason: the proxy had a delegate class to attach
-to, it simply looked before there was one.
-
-**What shipped**: `CanariInstallApnsTokenHook` on `UIApplicationDidFinishLaunching`, plus the
-discriminator this entry asked for - `push_diagnostic.txt` written by the native branch that failed,
-read by `get_push_diagnostic`, reported verbatim. The next `[PUSH_UNAVAILABLE]` says
-`no-apns-token`, `fcm-token-fetch-failed`, `apns-registration-refused` or `app-delegate-absent`.
-
-**WHAT IS OWED IS THE HARDWARE RUN, and it is the only thing that can close this.** Everything native
-here is verified by COMPILING, which proves nothing about running. Re-run [check S](device-verification.md)
-on the build that carries this: an `ios` row in `push_token` closes it; another `[PUSH_UNAVAILABLE]`
-now names which of four causes it was, and none of them is the one just fixed.
+**WHAT IS OWED, AND NONE OF IT NEEDS A PHONE IN HAND:** read `PushNotificationService.ts` and settle
+whether the report is reachable at all on the path a silent device takes - a retry ladder that never
+spends, a throw before the POST, or a caller that never runs. **The log window does NOT cover** the one
+`[PUSH_UNAVAILABLE] ... platform=ios reason=no-token` this entry used to quote (28/08 01:23): the
+container postdates it, so that line cannot be re-read and is not evidence about today.
 
 ### The rest of what an iPhone will find, named by the user before it was looked for (2026-08-27)
 
@@ -752,183 +740,60 @@ no check waits on wall-clock time at all. It belongs with the rendering pass, no
 
 ## Messaging convergence
 
-### FIXED 2026-08-30 - a group was FORGOTTEN 291 ms after it was created, by a concurrent sweep, and creation reported SUCCESS
+### P3 - a reducer concludes "no membership left" from a row it never reads (residue of the 291 ms P1)
 
-**This is the answer to the open question the previous P1 left**, asked in `CLAUDE.md` in those
-words: *whether any other sweep compares a live local read against an awaited server one*. It does,
-it is a different sweep with a different tag and a different predicate, and it is worse - the other
-one needed a group to be created during a fetch, this one fires during the creation itself.
+`decideAbsentLocalGroupFate` (`groupLifecycle.ts`) reaches `forget` under the reason *"conversation row
+held with no membership left"* from two facts only: the `dm_groups` row is `active`, and it carries no
+distribution scope. **It never reads a membership.** The name of the branch states a fact the code does
+not have - the strongest form of the rule this repo already carries, that a column is only evidence for
+the question it was written to answer.
 
-**THE EVIDENCE IS ON ONE CLOCK, DELIBERATELY.** Prod's `createdAt` and the browser console are two
-clocks and must not be subtracted; everything below is the ACTOR's own console, in order, from
-HEAL-REVOKE-7 `--order last`:
+**This is the residue, NOT the P1.** That defect - a group forgotten by `initializeConnection`'s sweep
+291 ms into its own creation, while `createNewGroup`'s swallowing `catch` reported success - was fixed
+architecturally on 2026-08-30 by registering the membership BEFORE the local MLS group exists, in both
+creation paths, so the window is gone rather than narrowed. Story in `CHANGELOG.md`, mechanism on
+[chat](frontend/modules/chat.md#a-group-must-be-nameable-by-the-server-before-it-is-holdable-here-or-every-sweep-is-a-hazard),
+rule (fourth site) in [durable-rules](durable-rules.md). **None of it is restated here.**
 
-```
-03:20:44.572  [RUST::INFO] create_group: 8868be1c...
-03:20:44.780  [GROUP] My other devices: 2 (tauri-...-vnde, web-...-m84y)
-03:20:44.830  [RUST::INFO] add_members_bulk to group: 8868be1c... (2 key packages)
-03:20:44.863  [RUST::INFO] forget_group: 8868be1c..., min_epoch=0
-03:20:44.870  [SYNC] WASM removed (conversation row held with no membership left): 8868be1c...
-03:20:44.901  Error syncing own devices: Group not found: 8868be1c...
-03:20:44.969  [OK] Group "HGRPejyu9" created.
-```
+**THE FIX THAT WOULD NOT WORK, RECORDED SO IT IS NOT TRIED AGAIN.** The milder sibling
+`decideAbsentGroupFate` already takes `isStillUserMember` and names this exact hazard; handing
+`decideAbsentLocalGroupFate` the same signal looks like the clean answer and is not. `getGroupUserMembers`
+reads `dm_group_members` - written by `registerMember` - so a reader racing that write gets an honest
+empty 200 and forgets the group with MORE confidence. A second read that races the same write is not a
+discriminator. **What closes it is making the destructive branch require the fact its name claims, or
+renaming the branch to what it actually knows.**
 
-**The window is in the ORDER OF CREATION ITSELF**, `createNewGroup` in
-`frontend/src/lib/utils/chat/groupCreation.ts`: `createRemoteGroup` puts the `dm_groups` row up,
-`createGroup` puts the LOCAL MLS group up, and only then does `registerMember` create the membership
-that makes it appear in `GET /api/mls/users/:id/groups`. **Between the second and the third, the
-group exists locally and is absent from the server LIST** - so any concurrent reader sees exactly the
-shape a dead group has.
+### P2 - the quick reply's 403 is FIXED, BUILT, INSTALLED ON A1 AND HAS NEVER BEEN RUN (2026-08-30)
 
-**AND THE REDUCER CANNOT TELL THEM APART, BECAUSE IT NEVER ASKS.**
-`decideAbsentLocalGroupFate` (`groupLifecycle.ts`) reaches `forget` under the reason *"conversation
-row held with no membership left"* from two facts only: the `dm_groups` row is `active`, and it
-carries no distribution scope. **It never reads a membership.** The name of the branch states a fact
-the code does not have - the strongest form of the rule this repo already carries, that a column is
-only evidence for the question it was written to answer.
-
-`initializeConnection`'s sweep is the caller, and its comment claims the snapshot makes it safe:
-*"Uses the `localGroups` snapshot captured at the start of the function (same instant as
-`serverIds`): prevents purging groups joined during the async operations in step 2."* That guard is
-real and it is about groups joined inside its OWN step 2. It says nothing about a group another flow
-is creating concurrently, and that is the case here.
-
-**WHAT IT COSTS, MEASURED, NOT FEARED.** The group is unreachable for everyone, permanently:
-
-- the creator answered `welcome_request` with `Group not found` **for 20 minutes**, every 60 s, to
-  two different devices (`03:21:03` through `03:41:12`);
-- `externalJoin` refused it `no_base_published` - the base that would have been joined is the state
-  that was just deleted, the same downstream shape as the previous P1;
-- prod holds the group ALIVE with the creator `active` and every other device stuck `pending`
-  (1 active / 3 pending, against 2 active / 2 pending for the sibling group of the run 5 minutes
-  earlier that did not hit the race);
-- two devices sat amber on it to the 600 s deadline, and the row FAILed on
-  `theNewGroupArrived: false`.
-
-**A SECOND DEFECT RIDES ON THE FIRST, AND IT IS WHY NOBODY SAW THIS.** The `catch` in
-`createNewGroup` logs the failure and CONTINUES, so 68 ms after the group became unusable the same
-console says `[OK] Group "HGRPejyu9" created.` and the conversation is inserted in the list. A user
-is shown a working group; every one of its members is locked out for ever.
-
-**NOT THE SAME DEFECT AS THE FIXED ONE, AND NOT EITHER QUEUED P2.** There is no
-`[MLS] forgetGroup ... (absent from server)` line anywhere in the run - the `actions.ts` sweep, whose
-ordering was fixed on 2026-08-30, did not fire. This is `initializeConnection`'s sweep, reached
-through `[SYNC]`. It is also neither the `no_key_package` refusal nor the stale-distribution-group
-rejoin.
-
-**IT IS A RACE, AND IT IS NOT RARE.** The adjacent `--order first` half, same runner, same bundle,
-minutes earlier, created its group cleanly and both devices reached it ready. One of two adjacent
-runs lost the group.
-
-**FIXED, ARCHITECTURALLY, THE SAME DAY** (user: *"si quelque chose depend du temps, c'est mauvais
-signe... on veut des choses logiques, deterministes, pas des race conditions"*). The window is gone
-rather than narrowed, and no clock, lock or retry is involved:
-
-1. **`createNewGroup` and `createDirectConversation` register the membership BEFORE creating the
-   local MLS group**, so "held in `getLocalGroups()`" implies "named by `getUserGroups`" for every
-   reader that will ever exist. This is the real fix - it removes the interval instead of teaching
-   each reader to dodge it.
-2. **`initializeConnection` captures the local set BEFORE awaiting the server list**, the same
-   inversion already fixed in `actions.ts`. Capturing early can only SPARE.
-3. **Neither path announces a group whose local MLS state is gone**, asserted as a fact
-   (`getLocalGroups().includes(id)`) and never by inspecting an error message.
-
-**THE FIX THAT WOULD NOT HAVE WORKED, RECORDED SO IT IS NOT TRIED AGAIN.** The destructive reducer's
-milder sibling `decideAbsentGroupFate` already takes `isStillUserMember` and names this exact hazard;
-giving `decideAbsentLocalGroupFate` the same signal looks like the clean answer and is not.
-`getGroupUserMembers` reads `dm_group_members` - written by `registerMember`, the call that had not
-run yet - so inside the window it returns an honest empty 200 and the group is forgotten with MORE
-confidence. A second read that races the same write is not a discriminator. **What remains open and
-is NOT this defect:** that reducer still reaches `forget` under the reason *"conversation row held
-with no membership left"* from a row being `active` with no distribution scope, having never read a
-membership. Worth closing on its own terms; it was not what destroyed this group.
-
-Tests: `groupCreation.order.test.ts` (new, three cases) and one case in
-`initializeConnection.sync.test.ts`; each was shown to FAIL with its fix reverted. Story in
-`CHANGELOG.md`, mechanism on [chat](frontend/modules/chat.md#a-group-must-be-nameable-by-the-server-before-it-is-holdable-here-or-every-sweep-is-a-hazard),
-rule (fourth site, plus the announcement rule) in [durable-rules](durable-rules.md).
-
-**WHAT THE ORIGINAL ENTRY SAID ABOUT WHERE A FIX BELONGS, kept because it was the reasoning:** Making the sweep skip a
-newly-created group is the same patch as the previous P1 and would work; it leaves the reducer still
-concluding non-membership from an absence it never checked, for the next caller. The architectural
-fix is to remove the overlap: the local group must not be visible to any sweep before the membership
-that makes it findable exists - and the branch that destroys state must require the fact its name
-claims. Per the standing directive, a reconciliation that repairs this afterwards is a witness, never
-a fix. **The swallowing `catch` must also stop reporting success over a group with no MLS state.**
-
-
-### P2 - the notification quick reply is reported broken, and the THREE usual causes are already ruled out (user, 2026-08-30)
-
-**The report.** The user answers a DM from the notification shade, without opening the app, and the
-reply does not arrive. Their own reading of it was "nothing can be sent on mobile while the app is
-killed". **That reading is wrong, and ruling it out is most of the value of this entry** - a later
-session must not spend the day re-deriving it from the same intuition.
-
-**Three causes eliminated by reading the design, before any measurement:**
-
-| Suspected cause | Why it is not that |
-| --- | --- |
-| The app is killed, so nothing can encrypt | Mobile MLS is NATIVE, not WASM: `TauriMlsService` invokes Rust and the state is on the FILESYSTEM (`mls_bin_write_lock`), never IndexedDB. No WebView is needed to encrypt |
-| There is no background send path | There is, and the quick reply is built and delivered ENTIRELY natively - `canari_native_build_text_message_proto`, then the shared drain: encrypt via JNI/FFI, POST `/api/mls/push/send` |
-| The device key is behind the biometric prompt a receiver cannot show | Android holds it at `setUserAuthenticationRequired(false)` ON PURPOSE, with the wiki's own warning never to set `setUnlockedDeviceRequired(true)` "which is exactly when a push arrives" ([auth](frontend/modules/auth.md)) |
-
-**What is actually true is that NOBODY HAS MEASURED IT SINCE THE FIXES.** `NOTIF-6` is `pending`,
-annotated *reported broken on an old APK*; check K is `owed` on both platforms. The WP-NOTIF-1 (a),
-(b) and (c) work landed AFTER that report, and check K says of the (c) half: *"it is the half most
-likely to still be wrong, because unlike (a) and (b) it has no compile check worth the name - it is
-pure TS + Rust, so it built the moment it was written."* That is this repo's own recurring shape - a
-green build is not a working system - so the report is credible and its cause is simply unknown.
-
-**THE FIRST MOVE IS THE MEASUREMENT, NOT A PATCH.** Writing a fix against a suspected cause nobody
-has observed is the move `CLAUDE.md` forbids for iOS lifecycle bugs, for the same reason: nothing
-here could tell whether it worked. Run [check K](device-verification.md#k-the-notification-quick-reply---owed-on-both-platforms)
-on **0.14.12** - it separates the three remaining causes in one pass, and each has a distinct line:
-
-- the broadcast never reaches the receiver -> no `CanariNotificationActionReceiver` line at all;
-- the native encrypt or POST fails -> no `sendQueuedMessagePush: HTTP 201`, no `1 sent, 0 remaining`;
-- it leaves and vanishes locally -> those lines present, and no `[OUTBOX_MIRROR]` adoption on reopen.
-
-K2 (airplane mode, the undelivered reply) is the half to run second, and the one to distrust.
-
-**MEASURED 2026-08-30 ON 0.14.12: THE CHAIN WORKS, AND THE THREE REMAINING CAUSES ARE ALL
-ELIMINATED.** `handleReply: queued`, then `sendQueuedMessagePush: HTTP 201`, then `1 sent, 0
-remaining`, then `[OUTBOX_MIRROR] 1 background send(s) to reconcile` on reopen - and the reply is in
-the peer's conversation AND in the phone's own. The lines and the provenance are on
-[check K](device-verification.md#k-the-notification-quick-reply---owed-on-both-platforms), the only
-copy.
-
-**SO THE FOURTH CAUSE IS THE ONE LEFT, AND IT IS NOT IN THE CODE: WHICH BUILD THE REPORT WAS AGAINST.**
-Play production served **14011** until 2026-08-30 and the WP-NOTIF-1 work landed after the report, so
-"it does not work" and "it works" can both be true of the same phone a week apart. That is the whole
-value of dating a symptom against a build, and it is why this entry does not close yet: **what is
-disproven is the defect on 0.14.12, not the user's experience on whatever they were holding.**
-
-**THE FOURTH CAUSE WAS IN THE CODE AFTER ALL, AND THE PARAGRAPH ABOVE IS WHY IT WAS MISSED
-(2026-08-30).** The measurement that "eliminated" the three causes was a KILLED run, and killing the
-app is precisely the branch that repairs the defect before the test reads it. Re-run with the app
-merely BACKGROUNDED - same build, same device, same conversation, ninety seconds later - the reply
-was refused `HTTP 403`. The cause is the push secret's read order: `pending_push_secret.txt` is
-written by the WebView at every `/register` (which mints a NEW secret and invalidates the previous
-one server-side), the Keystore is written only by `processPendingPushSecret` at `onCreate` and at
-`MainActivity.onResume` - both strictly before the registration that writes the file - and
-`retrievePushSecret` preferred the Keystore unconditionally. So from the unlock that mints a secret
-until the next resume, the background sender authenticates with a dead one. A killed app never sees
-it: FCM starts a fresh process, `onCreate` migrates the file first. **The user's report was real, and
-it was a real defect on the CURRENT build - the build question this entry spent its last paragraph on
-was a red herring.**
-
-Fixed at the precedence (the file wins whenever it exists), plus two things the failure branch owed:
-the notification is re-posted so the `RemoteInput` spinner ends and the actions come back, and
-`OutboxRetryWorker.enqueueIfHealthy` is finally called so a failed reply retries in 30 s instead of
+**The cause was the push secret's read order.** `pending_push_secret.txt` is written by the WebView at
+every `/register` - which mints a NEW secret and invalidates the previous one server-side - while the
+Keystore is written only by `processPendingPushSecret` at `onCreate` and `MainActivity.onResume`, both
+strictly before that registration, and `retrievePushSecret` preferred the Keystore unconditionally. So
+from the unlock that mints a secret until the next resume, the background sender authenticates with a
+dead one. Fixed at the precedence (the file wins whenever it exists), plus the two things the failure
+branch owed: the notification is re-posted so the `RemoteInput` spinner ends and the actions come back,
+and `OutboxRetryWorker.enqueueIfHealthy` is finally called so a failed reply retries in 30 s instead of
 at the next login. Story in `CHANGELOG.md`, mechanism on [mobile](frontend/mobile.md), rules in
 [durable-rules](durable-rules.md).
 
-**WHAT THIS ENTRY STILL OWES, AND IT IS THE WHOLE OF IT: THE RE-MEASUREMENT. THE FIX IS WRITTEN,
-BUILT AND INSTALLED ON A1, AND HAS NEVER BEEN RUN.** The exact procedure and the armed precondition
-are on [check K](device-verification.md#the-backgrounded-run-that-failed-and-the-defect-it-found).
-Also still open: **K2** (airplane mode, the reply that must NOT leave - a path proven to SEND is not
-a path proven to QUEUE), and the **iOS twin**, corrected identically and unproven on hardware.
+**THE WHOLE OF WHAT THIS ENTRY OWES IS THE RE-MEASUREMENT, AND ITS PRECONDITION IS NOT AMBIENT.** A run
+made without arming it proves nothing, because a resume migrates the secret and closes the window - which
+is exactly why the KILLED run of that morning passed and the BACKGROUNDED one, ninety seconds later on
+the same build and device, was refused `HTTP 403`. The five steps, the assert that says the window is
+open, and the three verdict lines are on
+[check K](device-verification.md#the-backgrounded-run-that-failed-and-the-defect-it-found). Board rows
+NOTIF-6 (killed), NOTIF-6c (backgrounded, the FAIL) and NOTIF-6d (the failed-send UI) carry the state.
 
+**Also owed: K2** (airplane mode - a path proven to SEND is not a path proven to QUEUE), and the **iOS
+twin**, corrected identically and unproven on hardware.
+
+**THREE CAUSES THAT ARE RULED OUT, kept so no later session re-derives them from the same intuition.**
+The original reading was *"nothing can be sent on mobile while the app is killed"*, and it is wrong:
+mobile MLS is NATIVE, not WASM (`TauriMlsService` invokes Rust, state on the FILESYSTEM), so no WebView
+is needed to encrypt; a background send path exists and the quick reply is built and delivered entirely
+natively; and Android holds the device key at `setUserAuthenticationRequired(false)` on purpose, with the
+wiki's own warning never to set `setUnlockedDeviceRequired(true)`, *"which is exactly when a push
+arrives"*.
 
 ### P2 - the native "Marquer comme lu" still speaks the read model that was replaced on 2026-08-12 (found 2026-08-30)
 
@@ -1282,9 +1147,22 @@ endpoint, so neither guard is allowed to be the only one.
 
 **WHAT IS STILL OWED, in order and not before.**
 
-1. **Deploy, then clean** - in that order. The row and its 72 queued messages (70 ordinary
-   application frames addressed to a ghost) stay until the guards are live, or a client re-creates
-   them. Cleaning first also destroys the evidence for (2).
+1. **THE DEPLOY IS DONE (0.14.14, CD green 2026-08-30 12:24 UTC), SO THE CLEANUP IS UNBLOCKED - AND
+   RE-MEASURING IT FIRST CHANGED WHAT IT IS.** The estate is bigger than this entry said and **it is
+   still growing**: at 13:11 UTC on 2026-08-30 the ghost held **193** queued frames, not 72 - 116
+   commits and 77 application frames, every one of them `(recipientId='unknown', deviceId='pending')`
+   in the single group `7da231f8`, **the newest two minutes old**. It also holds 1 `key_package` and
+   **50 `one_time_key_package`** rows, which are what keep it addressable. The guards stop a NEW
+   placeholder being published; nothing revokes the one that exists, so every message and commit sent
+   in that conversation is still fanned out to a member nobody holds.
+   **Order follows the standing rule - when something keeps refilling, deleting it is not the fix:**
+   drop the `dm_device_group_memberships` row FIRST (it is what names the ghost as a destination),
+   then the key packages, then the queued frames. The allowlist is one identity, matched exactly:
+   `"userId"='unknown' AND "deviceId"='pending'`. **Cleaning before reading destroys the evidence for
+   (2), so (2) is answered from the frames while they are still there.**
+   **What this does NOT do, and must not be claimed:** the server row is not the MLS tree. If the
+   placeholder ever took a leaf, only a Remove commit from a member drops it, and whether it has one
+   is exactly the open half in (2).
 2. **NOT ESTABLISHED: whether the ghost is what stopped the activation.** The peer's real devices
    were `pending` and an active member device of the OWNER's account was online and polling
    throughout - the server answered it `invitations=8` at 23:03, 23:03, 23:09, 23:10, 23:11 and
@@ -1299,10 +1177,13 @@ endpoint, so neither guard is allowed to be the only one.
    row is already in the table, so the predicate is a `WHERE`, not a new column, and it must be
    measured against the whole population before its name is believed.
 
-**THE POPULATION, measured rather than assumed** (`GROUP BY status`, 2026-08-28): 150 `active`, **10
-`pending`, every one older than an hour**, three of them since 2026-08-25 and their queued Welcomes
-since 2026-08-03. **Nine of the ten are `web-`, on Chrome. This is not an iOS defect and not a
-mobile one.**
+**THE POPULATION, RE-MEASURED 2026-08-30 BECAUSE THE FIRST MEASUREMENT NO LONGER DESCRIBES IT**
+(`GROUP BY status`): **125 `active`, 17 `pending`** - against 150 / 10 on 2026-08-28. The stranded
+count did not shrink after the guards, it **grew by seven**, so whatever produces a long-lived
+`pending` is not the placeholder defect and is not fixed. Of the 17: **12 are `web-`, all older than
+an hour, the oldest since 2026-08-25**; 5 are `tauri-`, 3 of them older than an hour. **Still mostly
+Chrome, still not an iOS defect and not a mobile one** - but the predicate in (3) must be aimed at
+this population, not at the one that named the incident.
 
 **One thing was checked and is NOT a defect, so it is not re-derived**: nine of those ten have an
 undelivered Welcome sitting in `queued_message`, which looks like a deadlock and is not.
@@ -1365,51 +1246,6 @@ deciding between catching it at the WASM boundary and carrying it upstream to op
 
 The workaround the tests use is to avoid the shape entirely: the producer is two members committing
 at the same epoch, which is the production shape anyway and returns cleanly.
-
-### FIXED 2026-08-30 - a device DESTROYED the only copy of a group it had just created, and no member could ever join it again
-
-Found by HEAL-REVOKE-7 `--order first` on `0044a041`, which FAILed on it. **Fixed in the same session;
-kept here because the mechanism is one every pruning sweep in this app can reproduce.**
-
-The row's actor creates a group and, within the same second, deletes its own MLS state for it:
-
-    00:31:31  [MLS] forgetGroup 50799ae8... (absent from server)
-    00:31:31  forget_group: group 50799ae8... forgotten (memory + storage, min_epoch=0, re-Welcome expected)
-    00:31:36  [READD] 50799ae8... getGroupMeta -> ok
-    00:31:36  [READD] 50799ae8... externalJoin -> no_base_published
-
-**PROD SETTLED IT, AND THE TIMESTAMP IS THE WHOLE ANSWER.** The row is still there, `deletedAt` null,
-`createdAt = 2026-08-29 22:31:31.905299` - **the same second as the line that forgot it.** So the
-server was never wrong and no two endpoints disagreed: `discoverMissingGroups` fetched the group list,
-awaited it (and `getDismissedGroups` after it), then read `mlsService.getLocalGroups()` LIVE and
-purged everything the older snapshot did not mention. A group born inside that window is absent from
-the snapshot by construction and was deleted for it.
-
-**WHY IT IS A P1 AND NOT A LOST CACHE.** The creating device held the only copy of the tree, so
-`min_epoch=0, re-Welcome expected` describes a Welcome nobody was left to send, and the base an
-external join needs was never published - which is exactly what `no_base_published` reports. Two
-devices created afterwards were both counted as members by the server, `serverActive: 26` on each,
-while neither could open the conversation: the returning device sat on it amber for 601 s and a
-freshly minted one never got a row at all. **The group was permanently unreachable for every member
-while the server still said they belonged to it.**
-
-**THE GUARDS THAT EXISTED WERE AGAINST THE WRONG FAILURE.** Discovery already carried both defences
-WP-GRAINE-1 left - `serverFetchSucceeded`, and `reconcileAbsentLocalGroup` reading the `dm_groups`
-row so that absence from a conversation list is not read as death - and both held while this
-happened. They guard against an unreliable LIST. This was a reliable list that was merely OLDER than
-the local set it was compared against.
-
-**The fix**: capture the local group set BEFORE asking the server, which is what the sibling sweep in
-`initializeConnection.ts` has done since WP-GRAINE-1, in a comment naming this exact hazard. It is
-free of risk in the one direction that matters - capturing early can only SPARE a group, because one
-that really did go away during the fetch is swept on the next pass - so nothing correctly purged
-before is kept now. The regression test was shown to FAIL without the change before it was believed.
-
-**The durable rule already existed and this is its THIRD site** - "a listing has no authority over a
-fact created after its request went out", written for the community rail. Two of the three sites are
-now fixed, and the general question is whether any other sweep compares a live local read against an
-awaited server one.
-
 
 ### P2 - a group that never leaves its creation epoch keeps collecting device invitations nobody can honour (measured on prod 2026-08-30)
 
@@ -1726,55 +1562,27 @@ loss it was sent to cure.
 across two groups before the first digest goes out.
 
 
-### P2 - a device revoked while OFFLINE keeps its store until someone LOGS IN on it, and a reload is not enough (measured 2026-08-30)
+### P2 - a device revoked while OFFLINE keeps its store until someone LOGS IN on it (measured 2026-08-30)
 
-Found by HEAL-REVOKE-9 on `ef9aaba8`, the row written for exactly this question. **The important half
-passed and must not be lost in the noise of the failure**: while the victim was severed
-(`severed: true` in 4 ms, one socket closed) and the owner revoked it through the panel
-(`revoked: true`, `stillAddressable: false` in 2 106 ms), the device's state was **still there** -
-`identityKeys: 1`, 2 databases, 22 localStorage keys - and `wipeRan: false`. A device that cannot ask
-does not conclude. A transport failure is not an answer, and this rung's worst possible outcome would
-have been a wipe here.
+**The product does what it says, and HEAL-REVOKE-9 now asserts three things where it asserted one.**
+While the victim was severed (`severed: true` in 4 ms) and revoked from the owner's panel
+(`stillAddressable: false` in 2 106 ms), its state was still there - `identityKeys: 1`, 2 databases, 22
+localStorage keys, `wipeRan: false`. **A device that cannot ask does not conclude**, and a wipe there
+would have been this rung's worst possible outcome. A reload alone changed nothing
+(`revocationSeen: false`; `footprint.mjs` still read 6.54 MB fourteen minutes later); one
+`login.mjs --device W3` then took it to `identityKeys: 0`, 3.46 MB. **The wipe is DEFERRED, not lost.**
+`sessionAuth.ts` has exactly three triggers and each requires a credential or a live socket, so a page
+load that finds a dead cookie hits none of them - by design, since wiping on an unauthenticated page
+visit is a destructive control firing without a confirmed server fact.
 
-**What failed: `theWipeLandedAfterOneReload` and `itSaidSoInItsOwnLog`.** The network was restored
-(asserted from the page: `onLine: true`, 3 ms) and the page reloaded. The client latched its dead
-cookie - `[A] refresh xlatched (cookie already proven dead - not asking again)` - landed on `/login`,
-and **never learned it had been revoked**: `revocationSeen: false`, `frameArrived: false`,
-`wipeRan: false`. Fourteen minutes later `footprint.mjs --device W3` still read `identityKeys: 1`,
-`canariDatabases: 2`, 6.54 MB.
-
-**THE DISCRIMINATOR, MEASURED RATHER THAN ARGUED.** `login.mjs --device W3` was then run - one login,
-nothing else - and the same probe read `identityKeys: 0`, `localStorageKeys: 0`,
-`sessionStorageKeys: 0`, 3.46 MB, the remaining database being the new session's. **So the wipe is
-DEFERRED, not lost.** The row's title was right and the product does what it says.
-
-**What the product says, read from the code rather than inferred.** `sessionAuth.ts` has exactly
-three triggers and every one of them requires a credential or a live socket: the PIN path's
-`resetRequired`, the vault/biometric login paths' `isDeviceRevoked` call before `init()` (added
-2026-08-26 for this very hole), and the `device_revoked` frame, itself re-confirmed against the
-server before anything is erased. A page load that finds a dead cookie and stops at the gate hits
-none of them - **by design**, and the design is defensible: wiping on an unauthenticated page visit
-means a destructive control fired without a confirmed server fact, which is the shape every comment
-in that file exists to prevent.
-
-**SO THE OPEN QUESTION IS NOT "why did it not wipe", IT IS HOW LONG THE RESIDUE MAY SIT.** On a
-machine that is never logged into again - the stolen-laptop case revocation exists for - the state
-stays on disk indefinitely. What it consists of bounds the severity and should be stated plainly:
-`identityKeys` counts `mls_device_id_<userId>` and `canari_device_key_vault`, i.e. an identifier and
-SEALED key material, over IndexedDB databases encrypted under that device key. It is ciphertext and a
-name, not readable messages - which is why this is a P2 and not a P1.
-
-**Closing it would need a decision, not a patch.** Asking the revocation route at the login GATE
-means answering `/api/mls/devices/:userId/:deviceId/revoked` to an unauthenticated caller, which is a
-device-enumeration oracle; the alternative is a local expiry, and a clock is exactly what this
-project refuses to make load-bearing. **That question is what stays open here, and only that one.**
-
-**THE ROW'S OWN SPECIFICATION IS SETTLED (2026-08-30, by the owner: the product is the reference).**
-HEAL-REVOKE-9 asserted the wipe after a RELOAD; the trigger the product defines is a LOGIN, and the
-return it documents is a login AND the PIN its refusal asks for in as many words. The row now
-asserts three things where it asserted one - that a reload alone changes NOTHING and stops at the
-gate, that the login wipes, and that the device comes back with a new id - which is more than it
-demanded before, not less. Re-running it on the re-aimed row is what then found the P1 above.
+**SO WHAT IS OPEN IS A DECISION, NOT A PATCH: how long the residue may sit.** On a machine never logged
+into again - the stolen-laptop case revocation exists for - it stays on disk indefinitely. It is an
+identifier (`mls_device_id_<userId>`) plus SEALED key material (`canari_device_key_vault`) over databases
+encrypted under that device key: ciphertext and a name, not readable messages, which is why this is a P2.
+Closing it needs a choice between two bad options - asking the revocation route at the login GATE means
+answering `/api/mls/devices/:userId/:deviceId/revoked` to an unauthenticated caller, a device-enumeration
+oracle; the alternative is a local expiry, the exact clock this project refuses to make load-bearing.
+**That question is the whole of what stays open here.**
 
 ### P3 - a `history_bundle` restores the EDITED flag without the edited body
 
@@ -2725,60 +2533,6 @@ fulfillment Stripe's webhook already used, via a shared `order_ref` encoding
 
 ---
 
-### MEASURED 2026-08-20 - a role change does not reach the person it is about
-
-**COMM-5 passes and records `liveWithoutReload: false`.** The promotion itself is immediate and
-correct - `member` -> `moderator` -> `admin` -> `member` on the server, each step landing before the
-next was asked for, and the owner's own panel showing each one. What does not happen is the OTHER
-device learning about it: the peer gained the manage controls only after a full reload, and the wait
-that says so is bounded at 20 s and reported next to the answer.
-
-**Which direction matters is the demotion, not the promotion.** A promoted moderator who cannot
-moderate until they reload is an annoyance. A DEMOTED administrator goes on being offered every
-control they have just lost, for as long as their tab stays open. That is not a security hole - the
-server re-checks every one of them, and the components say so in their own comments ("hiding the
-button is convenience, not the gate") - but it is a person clicking things that will now fail, with
-no explanation on screen.
-
-**DECIDED 2026-08-20 by the user, and SHIPPED the same day: PUSH IT.** `workspace.role.changed`
-carries the new role's whole permission set to the member it concerns and to nobody else, and their
-client applies `viewerCanManage` from the event - it does not refetch, because a refetch can fail,
-can be declined while a load is already in flight, and would return exactly what the event already
-carries. Best-effort and logged: the role is written before the announcement is attempted, so a
-failed publish leaves the member where they were before any of this existed. COMM-5 is now STRICT on
-`liveWithoutReload` and keeps the reload path only to separate "the push did not arrive" from "the
-grant never happened".
-
-**The invariant this rests on, written down because nothing enforces it:** `viewerCanManage` is the
-only permission-derived value the client caches. The event carries the full list so that the day a
-second one is cached, only the client handler changes.
-
-### FOUND 2026-08-20 - a custom role can be created by the API and by nothing else
-
-`POST /channels/roles` exists, `ChannelService.createRole` on the client exists, and **no component
-in the application calls it**. The roles tab renders a permission grid over whichever roles the
-workspace already has - the three defaults - and offers no way to add a fourth. Enumerated, not
-assumed: `createRole` has exactly two non-test references in the frontend tree, its declaration and
-nothing else.
-
-**DECIDED 2026-08-20, by the user: THREE ROLES IS THE PRODUCT.** `ChannelService.createRole` is dead
-client code and is deleted; COMM-6 is rewritten to ask what the grid actually does - that it offers
-exactly the six enforced permissions and no seventh, and that a toggle on it is enforced.
-
-**The server route is KEPT, and this is the reasoning rather than a shrug.** `POST /channels/roles`
-is the only way a custom role can exist at all, and the grid renders whatever roles a workspace has
-- so a role made through the API is visible and editable, just not creatable, and the interface
-degrades into read-and-edit rather than breaking. Deleting the route would also delete the tested
-service method behind it and the migration history that shaped it, for no gain: nothing calls it, so
-nothing costs anything. **The one wart worth writing down:** `normalizeRoleLabelToCanonical` folds
-any unrecognised role name to `member`, so a custom role shows in the member list as "Membre" while
-holding whatever permissions it was given. That is a display fault waiting for the day somebody uses
-the route, not today's problem.
-
-**What is NOT in doubt** is the six: `channel.access` and `channel.send` are out of the registry, out
-of the grid and out of `channel_roles.permissions` by migration, and `RETIRED_PERMISSIONS` keeps
-their names only so an old client's write can be told from a wrong one.
-
 ### P3 - an admin who never joined a private salon is not told when it is deleted
 
 `channelAudience` is the salon's roster, and since 2026-08-19 an administrator reaches a private
@@ -2792,19 +2546,6 @@ what put every private salon's messages, typing, pins and poll tallies on the so
 same server refuses to serve them over REST, and it was closed this week. The shape that would work
 is a separate, contentless `channel.gone` addressed to the community - worth doing only if the stale
 row is ever seen to matter, since a reload clears it and nothing is wrong underneath.
-
-### REPORTED 2026-08-20 - quick reply from the shade does not work, and mark-as-read is unknown
-
-From the user, on the phone, unprompted. **The APK on that device predates the current bundle**, so
-neither observation is attributable to the code as it stands - which is exactly why they are rows
-(NOTIF-6, NOTIF-6b) and not fixes. `CanariNotificationActionReceiver` implements both actions and
-both call `cancelConversationNotification`; device check K recorded the reply path as sending, with
-K2 covering the undelivered case ([device-verification](device-verification.md)).
-
-**Owed in this order:** rebuild the APK, install it, then run NOTIF-6 and NOTIF-6b. A failure on the
-current bundle is a defect; a failure on the old one is the mixed fleet doing what it is.
-
-## Play Store compliance
 
 ### P2 - WP-RESTORE-1: Zero-Tap Sign-In restoration, required by Google Play from April 2027
 
