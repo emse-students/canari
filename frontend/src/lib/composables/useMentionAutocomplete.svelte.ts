@@ -3,6 +3,7 @@ import { SvelteSet } from 'svelte/reactivity';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { coreUrl } from '$lib/utils/apiUrl';
 import { formatMentionToken } from '$lib/utils/mentions';
+import { seedUserDisplayName } from '$lib/utils/users/displayName';
 
 export type MentionUser = { id: string; displayName: string | null };
 
@@ -94,6 +95,12 @@ export function useMentionAutocomplete(opts: {
   /** Replaces the @query token with a stable `@[userId]` mention token. */
   function select(user: MentionUser) {
     if (start < 0) return;
+    // The picked row CARRIES the name, and the editor is about to re-render the token through the
+    // display-name cache. Seeding it here is what makes that read a hit: without it the composer
+    // painted whatever the cache had for a user it had never looked up, which was visibly not the
+    // name for as long as the round trip took. Never learn by failing what a fact could have told
+    // you - and this fact is already in hand.
+    if (user.displayName?.trim()) seedUserDisplayName(user.id, user.displayName.trim());
     const token = formatMentionToken(user.id);
     const text = opts.getText();
     const before = text.slice(0, start);

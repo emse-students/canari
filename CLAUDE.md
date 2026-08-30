@@ -220,15 +220,15 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
    change needs only `gradlew :app:assembleUniversalDebug` in `gen/android`, 58 s; and
    `phone.notifications()` inflates every count it returns, unfixed.
 
-6. **DEFERRED PAST THE LADDER - seven UX and rendering items**, substance in
+6. **DEFERRED PAST THE LADDER - six UX and rendering items**, substance in
    [backlog](docs/wiki/backlog.md) and nowhere else, named here only so none is forgotten: the POSTS
    search that loads the whole base; the EMOJI picker that neither scrolls nor stays on screen;
    HEAL's partially-restored old client; **ONE BUNDLED EMOJI FONT everywhere** (Noto Color Emoji,
    decided 2026-08-23, owing ELEVEN rows to the SECOND campaign); the dead row a deleted group leaves
    every other member; the trash and the pencil on a device row not reading as the same kind of
-   control; and a MENTION rendering as its raw `@[uuid]` token (NOTIF-13 pins it). The emoji, the
-   dead row, the device controls and the iOS bars want ONE pass over `app.css`, not seven local
-   patches.
+   control. The emoji, the dead row, the device controls and the iOS bars want ONE pass over
+   `app.css`, not six local patches. **The raw `@[uuid]` mention is GONE** (2026-08-30) - it was one
+   fallback, not a rendering pass, and NOTIF-13 is now the row that would catch a regression.
 
 7. **THE SFU RUNS SIX webrtc MAJORS NOBODY HAS PLACED A CALL ON.** It compiles, clippy is clean and
    its ten tests pass - none of which runs the ICE stack. What settles it is ONE relay-path call,

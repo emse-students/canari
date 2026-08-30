@@ -23,9 +23,15 @@ export function splitTextWithMentions(text: string): TextMentionPart[] {
     if (uuid) {
       const userId = normalizeMentionUserId(uuid);
       parts.push({
+        // NO FALLBACK, and the id is emphatically not one. `getUserDisplayNameSync` is careful
+        // never to return an id; passing one as the fallback put it straight back, so every
+        // consumer of this parser - chat bodies, notification bodies, conversation previews -
+        // rendered `@3f9a1c...` until something happened to warm the cache. A name that is not
+        // known yet is rendered by the CALLER, which is the only side that can re-render when it
+        // arrives; this function's job ends at the fact.
         type: 'mention',
         userId,
-        label: getUserDisplayNameSync(userId, userId),
+        label: getUserDisplayNameSync(userId),
       });
     } else if (hashtag) {
       parts.push({ type: 'hashtag', value: hashtag });

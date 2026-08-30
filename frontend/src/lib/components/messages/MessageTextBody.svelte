@@ -71,7 +71,7 @@
           {:else}
             {#each splitTextWithMentions(part.text) as mp (`${mp.type}-${'userId' in mp ? mp.userId : ''}-${'value' in mp ? mp.value : ''}`)}
               {#if mp.type === 'mention'}
-                <MessageMentionChip userId={mp.userId} name={mp.label} />
+                <MessageMentionChip userId={mp.userId} />
               {:else if mp.type === 'hashtag'}
                 <span class="font-semibold text-amber-600/80 dark:text-amber-400/70"
                   >#{mp.value}</span

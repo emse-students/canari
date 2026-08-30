@@ -7,7 +7,7 @@
     normalizeMentionUserId,
   } from '$lib/utils/mentions';
   import { isInAppHref } from '$lib/utils/publicAppUrl';
-  import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
+  import { peekUserDisplayName, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import type { Snippet } from 'svelte';
 
   interface Props {
@@ -34,7 +34,10 @@
       mentionLabel = '';
       return;
     }
-    mentionLabel = getUserDisplayNameSync(mentionUserId, mentionUserId);
+    // The absence, not a guess: `peekUserDisplayName` answers `null` when the name is not known
+    // YET, which is not the same as knowing there is none. Passing the id as a fallback put back
+    // the one value `getUserDisplayNameSync` is careful never to return.
+    mentionLabel = peekUserDisplayName(mentionUserId) ?? '';
     void resolveUserDisplayName(mentionUserId).then((name) => {
       if (name) mentionLabel = name;
     });
@@ -54,7 +57,7 @@
     onclick={handleMentionClick}
     class="inline-flex cursor-pointer items-center rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[0.88em] leading-none font-semibold text-amber-700 transition-colors hover:bg-amber-500/20 dark:text-amber-400"
   >
-    @{mentionLabel || mentionUserId}
+    @{mentionLabel}
   </button>
 {:else if isHashtag}
   <span class="font-semibold text-amber-600/80 dark:text-amber-400/70">#{hashtagName}</span>

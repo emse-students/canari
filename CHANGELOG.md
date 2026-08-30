@@ -238,6 +238,22 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A mention showed the mentioned person's raw id before their name, and kept showing it if the
+  name never resolved.** `splitTextWithMentions` passed the user id to `getUserDisplayNameSync` as
+  its own fallback, putting back the one value that function is careful never to return - so a cold
+  name cache rendered `@3f9a1c2b...` in a chat body, a notification body and a conversation preview
+  alike. The parser now returns no id under any circumstance, and the test pins it.
+
+  Most visibly it happened in the COMPOSER, right after picking someone from the @-autocomplete:
+  the picked row carries that person's name, `select()` kept only the id, and the editor then
+  re-rendered the token through a cache that had never looked them up. The name is seeded at the
+  moment it is chosen, so that read is a hit and nothing flashes at all.
+
+  The two mention renderers also stop guessing. `MessageMentionChip` resolves for itself instead of
+  freezing whatever the parser guessed on a cold cache - the parser runs once per body and cannot
+  re-render when a name arrives - and both it and `PostMentionLink` read `peekUserDisplayName`,
+  which answers `null` for "not known yet" rather than offering a word that would be a claim.
+
 - **The encryption-PIN keypad was offered to a client whose credential was already proven dead.**
   `_refreshCredentialProvenDead` in the auth store held the answer at the moment the prompt mounted,
   but nothing exported it, so the decision to show the keypad could not read it: the modal was

@@ -65,6 +65,24 @@ describe('splitTextWithMentions', () => {
     const parts = splitTextWithMentions('hey @alice');
     expect(parts.every((p) => p.type !== 'mention')).toBe(true);
   });
+
+  it('never labels a mention with the user id, however cold the name cache is', () => {
+    // The id used to be passed as its own fallback, which put back the one value
+    // `getUserDisplayNameSync` is careful never to return - so a cold cache rendered
+    // `@3f9a1c2b...` in a chat body, a notification body, a conversation preview and, most
+    // visibly, in the composer right after picking someone from the autocomplete.
+    const parts = splitTextWithMentions(`hey @[${EXAMPLE_MENTION_USER_ID}]`);
+    const mention = parts.find((p) => p.type === 'mention');
+    expect(mention).toBeDefined();
+    expect(mention && 'label' in mention && mention.label).not.toBe(EXAMPLE_MENTION_USER_ID);
+  });
+
+  it('renders the preview without leaking the id either', () => {
+    // The preview is a plain string, so it cannot render an absence and takes whatever the parser
+    // labelled. It is the path a conversation row and a notification body both go through.
+    const out = formatMentionsForPreview(`hey @[${EXAMPLE_MENTION_USER_ID}]`);
+    expect(out).not.toContain(EXAMPLE_MENTION_USER_ID);
+  });
 });
 
 describe('preprocessPostMarkdown', () => {
