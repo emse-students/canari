@@ -890,6 +890,22 @@ on **0.14.12** - it separates the three remaining causes in one pass, and each h
 
 K2 (airplane mode, the undelivered reply) is the half to run second, and the one to distrust.
 
+**MEASURED 2026-08-30 ON 0.14.12: THE CHAIN WORKS, AND THE THREE REMAINING CAUSES ARE ALL
+ELIMINATED.** `handleReply: queued`, then `sendQueuedMessagePush: HTTP 201`, then `1 sent, 0
+remaining`, then `[OUTBOX_MIRROR] 1 background send(s) to reconcile` on reopen - and the reply is in
+the peer's conversation AND in the phone's own. The lines and the provenance are on
+[check K](device-verification.md#k-the-notification-quick-reply---owed-on-both-platforms), the only
+copy.
+
+**SO THE FOURTH CAUSE IS THE ONE LEFT, AND IT IS NOT IN THE CODE: WHICH BUILD THE REPORT WAS AGAINST.**
+Play production served **14011** until 2026-08-30 and the WP-NOTIF-1 work landed after the report, so
+"it does not work" and "it works" can both be true of the same phone a week apart. That is the whole
+value of dating a symptom against a build, and it is why this entry does not close yet: **what is
+disproven is the defect on 0.14.12, not the user's experience on whatever they were holding.**
+
+**THIS ENTRY STAYS OPEN FOR K2**, which measures the opposite outcome - a reply that must NOT leave -
+and has no compile check worth the name. A path proven to SEND is not a path proven to QUEUE.
+
 
 ### P2 - ten push notifications were REFUSED by FCM for size in one run, and the guard measures the wrong quantity (measured 2026-08-29)
 

@@ -226,10 +226,12 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
    it never reads - both in [backlog](docs/wiki/backlog.md). **A DEPLOY IS OWED before any further
    HEAL verdict about a newly created group.**
 
-5. **THE PHONE'S TURN, VALIDATED BY THE USER 2026-08-30**, in this order and no other: **check K on
-   0.14.12** (the notification quick reply the user reports broken - the three usual causes are
-   ALREADY RULED OUT in [backlog](docs/wiki/backlog.md), so the first move is the MEASUREMENT, never
-   a patch); then the new **HEAL-NEW-5b**, the killed-responder row no cell asked about before;
+5. **THE PHONE'S TURN, VALIDATED BY THE USER 2026-08-30**, in this order and no other: **check K
+   steps 1-4 are MEASURED PASS on 0.14.12 (2026-08-30) and the reported defect does NOT reproduce** -
+   lines and provenance on [check K](docs/wiki/device-verification.md), which also says why this is a
+   MEASUREMENT and not a campaign verdict. **Still owed there: step 5 (the self avatar) and K2**, the
+   airplane-mode reply that must NOT be delivered - a path proven to SEND is not a path proven to
+   QUEUE. Then the new **HEAL-NEW-5b**, the killed-responder row no cell asked about before;
    then **HEAL-REVOKE-6** and the six other `+A1` HEAL rows. A1 is plugged back in and adb sees it;
    the CDP forward wants `node phone.mjs 9333`.
 

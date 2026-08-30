@@ -65,7 +65,7 @@ WP-XP-7 removal at once, which means H, I, K and the dev-panel check all ride a 
 | H | WP-DEEPLINK-1 residual | **RE-OPENED** (the v0.11.7 pass missed the DM half) | owed |
 | I | WP-UI-1 residual | PASS v0.11.7 | owed |
 | J | WP-VERIF-4 | PASS v0.11.7 | owed |
-| K | WP-NOTIF-1 | owed | owed |
+| K | WP-NOTIF-1 | **steps 1-4 PASS on A1 0.14.12, 2026-08-30** (every line named below, observed end to end). Step 5 (self avatar) not observed; **K2 still owed** | owed |
 | L | WP-DEV-PANEL-1 | owed | owed |
 | M | WP-POST-DOC-2 | **PASS** on A1 0.13.0, 2026-08-06 (chat half) | `docs/wiki/cross-client-testing.md` |
 | N | Offline unlock + promotion | owed | owed |
@@ -287,6 +287,39 @@ entry plus its local message.
 
 **Verdict lines:** `[OUTBOX_MIRROR]` adoption at login, then the ordinary `[OUTBOX]` flush. A silent
 proto stays `control` and is sent verbatim with no push - that is intended, not a miss.
+
+### Steps 1-4 MEASURED on A1 0.14.12, 2026-08-30 - the reported defect does NOT reproduce
+
+**The report that the quick reply "does not work" is not true of this build.** The whole chain was
+observed, and each of the three causes the [backlog](backlog.md) entry left open is eliminated by a
+line rather than by an argument:
+
+```
+07:20:17  Start proc 17650:fr.emse.canari for broadcast {FirebaseInstanceIdReceiver}
+07:25:46  CanariNotifAction: handleReply: queued id=45ae4d3c group=642f389a
+07:25:46  CanariFCM: drainOutboxBackground: 1 message(s) queued, taking 1
+07:25:50  CanariFCM: sendQueuedMessagePush: HTTP 201 group=642f389a msg=45ae4d3c
+07:25:50  CanariFCM: drainOutboxBackground: 1 sent, 0 remaining
+07:27:22  [OUTBOX_MIRROR] 1 entry/entries written
+07:27:24  [OUTBOX_MIRROR] 1 background send(s) to reconcile
+```
+
+- **The app really was down.** The kill was `phone.killAndProveDead` (`deadInMs: 82`), and the only
+  thing that restarted the process was the FCM broadcast itself - no `MainActivity`, no WebView, no
+  WebSocket. That last part is what makes the rest mean anything.
+- **The push decrypted in the background**: the shade carried the peer's display name and the
+  message text, not one of `GENERIC_BODIES`, and `fcm_message_cache.ndjson` held the plaintext.
+- **Step 4, the half that was missing, HOLDS.** Read on all three clients at once and without
+  navigating any of them: the peer has the reply, and so does the phone's own conversation.
+- **The native residue is clean afterwards**: `fcm_message_cache.ndjson` empty and no
+  `outbox_pending.ndjson` at all, so the entry was adopted rather than stranded.
+
+**PROVENANCE, BECAUSE IT DECIDES WHAT THIS IS WORTH.** The reply at 07:25:46 was typed by a PERSON on
+the device, not by the harness - which is what this file's checks ask for, and why the row can be
+taken at all. But it also means the run had no gate, no dirt classifier and no recorded ledger row:
+**it is a MEASUREMENT, not a campaign verdict**, and NOTIF-6 on the board is not answered by it. Step
+5 (the self avatar in the thread) was never looked at, and **K2 - the airplane-mode reply that must
+NOT be delivered - is untouched and is still the half most likely to be wrong.**
 
 ## L. A revoked device coming back - the dev panel
 
