@@ -238,6 +238,35 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **The chat-gateway served `Access-Control-Allow-Origin: *` in production, and the allowlist CD
+  had been writing for it since the iOS login incident reached nothing.** `docker-compose.prod.yml`
+  set `ALLOW_ORIGIN: "*"` as a **literal** on that service, and a literal there wins over anything
+  in `infrastructure/.env` - so `upsert_env_var "ALLOW_ORIGIN" ...` had never once reached the
+  container. Measured twice, 2026-08-27 and 2026-08-30: `printenv ALLOW_ORIGIN` answered `*`, and
+  `OPTIONS /api/presence` from `https://evil.example` answered `200` with `access-control-allow-origin: *`.
+  It stayed a P2 rather than a P1 because that layer sets no `Allow-Credentials`, so nothing
+  credentialed could be read back - and it is also why the gateway was never implicated in the iOS
+  login failure: it accepted the very origin the four Nest services refused. The service now reads
+  `${ALLOW_ORIGIN:?...}`, which **stops the deploy** when the variable is absent instead of picking
+  a default, because both available defaults are wrong (a wildcard silently re-opens this; a single
+  origin silently cuts every Tauri client off `/api/presence`). The list is enumerated in
+  `.env.example`, written by `cd.yml`, and pinned by new tests that drive a real preflight through
+  the layer - it carries `https://dev.canari-emse.fr`, a proxied CNAME onto this same tunnel that a
+  list built from `FRONTEND_URL` alone would refuse, and `http://127.0.0.1:1420` beside
+  `http://localhost:1420` because that is how `tauri.conf.json` spells its `devUrl` and the gateway
+  matches exactly where the Nest services accept any loopback.
+- **The same variable was feeding three consumers that wanted a single origin, and each held all
+  five entries of it as one.** `frontend-ssr`'s `ORIGIN` - adapter-node's public origin - read
+  `${ALLOW_ORIGIN:-...}` and was measured on prod holding
+  `https://canari-emse.fr,http://localhost:1420,http://tauri.localhost,...`. It now reads
+  `FRONTEND_URL`. The nginx `frontend` service's `ORIGIN`, `VITE_GATEWAY_URL` and
+  `VITE_DELIVERY_URL` read it too and are **deleted**: that image is `nginx:stable-alpine` serving a
+  build with no entrypoint substituting anything, and a `VITE_` variable is baked in at BUILD time
+  by the workflows writing `frontend/.env`. Three dead declarations, all wrong, none observable. The
+  rule left behind - **a variable read by two consumers with different shapes is one of them being
+  wrong** - is in `docs/wiki/durable-rules.md`; the mechanism is on
+  [nginx](docs/wiki/infrastructure/nginx.md).
+
 - **An iPad could never get a push token, and three separate reasons kept it from ever saying so.**
   `PUSH_UNAVAILABLE` - the report shipped so that a device with no push token would stop being
   indistinguishable from a device nobody opened - had printed **zero lines for the whole life of the

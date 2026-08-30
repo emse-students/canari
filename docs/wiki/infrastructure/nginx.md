@@ -96,6 +96,16 @@ instead, which is what actually blocks a credentialed browser call while leaving
 the response correct for everything else. social-service already had it, with the
 comment that explains why; core, media and chat-delivery now match.
 
+### The third layer is the chat-gateway's own, and nginx does not see it
+
+`/api/ws`, `/api/presence` and `/api/admin/presence` are proxied straight to the **chat-gateway**,
+which applies its own `CorsLayer` from `ALLOW_ORIGIN` - so the rule above ("a header two layers can
+set belongs to exactly one of them") is satisfied here by nginx staying out of it entirely. That
+layer served `Access-Control-Allow-Origin: *` in production until 2026-08-30, because the value was
+a literal on the service in `docker-compose.prod.yml` and the allowlist CD wrote never reached the
+container. The measurement, the fix and how to verify an origin list at all are on
+[chat-gateway](../services/chat-gateway.md#cors-the-list-is-a-fact-about-the-clients).
+
 ## The generated config is validated at build time
 
 The `RUN printf` that writes `default.conf` is a shell string: nothing checks it.

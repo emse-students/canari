@@ -24,19 +24,17 @@ async fn health_check() -> impl IntoResponse {
     (StatusCode::OK, "OK")
 }
 
-/// CORS for `/api/ws` (browser `Origin`) and HTTP helpers on the same router.
-/// `ALLOW_ORIGIN=*` allows all. Otherwise use a comma-separated list, e.g.
-/// `https://canari-emse.fr,http://localhost:1420` so local Vite (`Origin: http://localhost:1420`)
-/// is accepted when the chat-gateway runs with a non-wildcard policy.
-fn chat_gateway_cors_layer(allow_origin: &str) -> CorsLayer {
-    let common = CorsLayer::new()
-        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
-        .allow_headers(Any);
-
-    if allow_origin.trim() == "*" {
-        return common.allow_origin(Any);
-    }
-
+/// Splits a comma-separated `ALLOW_ORIGIN` into the exact origins the CORS layer will match.
+///
+/// Blank segments are dropped so a trailing comma is not an error, and a segment that cannot be a
+/// header value is skipped with a WARN naming it - one unusable spelling must not cost the other
+/// four their policy. Note that a `HeaderValue` accepts almost any printable ASCII, so this
+/// rejects malformed BYTES and not malformed ORIGINS: `htp:/typo` parses happily and will simply
+/// match nothing. **The only proof an origin list is right is reading the served
+/// `access-control-allow-origin` back after the deploy**, never the deploy's colour.
+///
+/// @param allow_origin - Raw `ALLOW_ORIGIN` value, e.g. `https://canari-emse.fr,tauri://localhost`.
+fn parse_allowed_origins(allow_origin: &str) -> Vec<HeaderValue> {
     let mut origins: Vec<HeaderValue> = Vec::new();
     for part in allow_origin.split(',') {
         let s = part.trim();
@@ -48,6 +46,30 @@ fn chat_gateway_cors_layer(allow_origin: &str) -> CorsLayer {
             Err(e) => tracing::warn!("ALLOW_ORIGIN segment '{}' ignored: {}", s, e),
         }
     }
+    origins
+}
+
+/// CORS for `/api/ws` (browser `Origin`) and HTTP helpers on the same router.
+/// `ALLOW_ORIGIN=*` allows all. Otherwise use a comma-separated list, e.g.
+/// `https://canari-emse.fr,http://localhost:1420` so local Vite (`Origin: http://localhost:1420`)
+/// is accepted when the chat-gateway runs with a non-wildcard policy.
+///
+/// THE LIST IS A FACT ABOUT THE CLIENTS, AND EVERY CANARI CLIENT MUST BE IN IT. A Tauri WebView
+/// presents one origin per platform and calls this gateway cross-origin (its page is served from
+/// `tauri://localhost`, the API from `https://canari-emse.fr`), so omitting a spelling here costs
+/// that platform `/api/presence` with no server-side error to show for it - the same failure shape
+/// that cost iOS its login through the Nest services' own list (`apps/*/src/cors-origins.ts`,
+/// which this must be kept in step with).
+fn chat_gateway_cors_layer(allow_origin: &str) -> CorsLayer {
+    let common = CorsLayer::new()
+        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+        .allow_headers(Any);
+
+    if allow_origin.trim() == "*" {
+        return common.allow_origin(Any);
+    }
+
+    let origins = parse_allowed_origins(allow_origin);
 
     if origins.is_empty() {
         panic!(
@@ -127,7 +149,18 @@ async fn main() {
     subscribers::spawn_kafka_consumer(kafka_brokers, app_state.connected_users.clone());
 
     // ── CORS configuration ────────────────────────────────────────────────
-    let allow_origin = std::env::var("ALLOW_ORIGIN").unwrap_or_else(|_| "*".to_string());
+    // An UNSET variable means someone is running the binary by hand, and the wildcard keeps that
+    // working. Every compose file names the variable, so reaching this branch under compose means
+    // the policy this service is supposed to enforce silently became "anyone" - it is logged as an
+    // accusation, not as a mode.
+    let allow_origin = std::env::var("ALLOW_ORIGIN").unwrap_or_else(|_| {
+        tracing::warn!(
+            "ALLOW_ORIGIN is not set - falling back to '*', which accepts EVERY origin. Under \
+             docker compose this variable is always declared, so this line means the declaration \
+             was lost."
+        );
+        "*".to_string()
+    });
     tracing::info!("CORS ALLOW_ORIGIN: {}", allow_origin);
     let cors = chat_gateway_cors_layer(&allow_origin);
 
@@ -155,5 +188,127 @@ async fn main() {
     if let Err(e) = axum::serve(listener, app).await {
         tracing::error!("Erreur serveur axum: {}", e);
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, header};
+    use tower::ServiceExt;
+
+    /// The exact value CD writes into `infrastructure/.env`. Pinned here so a change to the
+    /// deployed list has to change a test that says what each entry is for.
+    const PRODUCTION_ALLOW_ORIGIN: &str = "https://canari-emse.fr,https://dev.canari-emse.fr,\
+         http://localhost:1420,http://127.0.0.1:1420,http://tauri.localhost,\
+         https://tauri.localhost,tauri://localhost";
+
+    /// Minimal router carrying only the CORS layer, so what is asserted is the layer and nothing
+    /// downstream of it.
+    fn router(allow_origin: &str) -> Router {
+        Router::new()
+            .route("/api/presence", get(|| async { "ok" }))
+            .layer(chat_gateway_cors_layer(allow_origin))
+    }
+
+    /// Sends a CORS preflight and returns the `access-control-allow-origin` that came back.
+    async fn preflight(allow_origin: &str, origin: &str) -> Option<String> {
+        let response = router(allow_origin)
+            .oneshot(
+                Request::builder()
+                    .method(Method::OPTIONS)
+                    .uri("/api/presence")
+                    .header(header::ORIGIN, origin)
+                    .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        response
+            .headers()
+            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .map(|v| v.to_str().unwrap().to_string())
+    }
+
+    #[test]
+    fn keeps_every_segment_of_the_production_list() {
+        let origins = parse_allowed_origins(PRODUCTION_ALLOW_ORIGIN);
+        assert_eq!(origins.len(), 7, "one entry lost: {origins:?}");
+    }
+
+    #[test]
+    fn drops_blank_segments_rather_than_failing_on_a_trailing_comma() {
+        let origins = parse_allowed_origins("https://canari-emse.fr, ,tauri://localhost,");
+        assert_eq!(origins, ["https://canari-emse.fr", "tauri://localhost"]);
+    }
+
+    #[tokio::test]
+    async fn answers_every_canari_client_with_its_own_origin() {
+        for origin in [
+            "https://canari-emse.fr",
+            "https://dev.canari-emse.fr",
+            "http://localhost:1420",
+            "http://127.0.0.1:1420",
+            "http://tauri.localhost",
+            "https://tauri.localhost",
+            "tauri://localhost",
+        ] {
+            assert_eq!(
+                preflight(PRODUCTION_ALLOW_ORIGIN, origin).await.as_deref(),
+                Some(origin),
+                "{origin} is a Canari client and was refused"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn sends_no_allow_origin_header_to_an_origin_that_is_not_ours() {
+        assert_eq!(
+            preflight(PRODUCTION_ALLOW_ORIGIN, "https://evil.example").await,
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn varies_on_origin_so_a_cache_cannot_serve_one_clients_answer_to_another() {
+        let response = router(PRODUCTION_ALLOW_ORIGIN)
+            .oneshot(
+                Request::builder()
+                    .uri("/api/presence")
+                    .header(header::ORIGIN, "https://canari-emse.fr")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let vary = response
+            .headers()
+            .get(header::VARY)
+            .expect("no Vary: a shared cache would hand one origin's response to the next")
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert!(
+            vary.to_ascii_lowercase().contains("origin"),
+            "vary was {vary}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_wildcard_accepts_anyone() {
+        assert_eq!(
+            preflight("*", "https://evil.example").await.as_deref(),
+            Some("*")
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "no valid HTTP origins")]
+    fn refuses_to_boot_on_an_empty_list_rather_than_serving_a_policy_nobody_chose() {
+        // A SET-BUT-EMPTY variable is not an unset one: `${ALLOW_ORIGIN}` on a missing `.env` key
+        // reaches the container as "", which must stop the boot instead of silently allowing all.
+        let _ = chat_gateway_cors_layer("");
     }
 }

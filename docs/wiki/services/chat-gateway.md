@@ -160,11 +160,76 @@ protect the key was exactly what stopped it being restored. Peers read the user 
 surviving socket's next `refresh_presence`. The decision is covered by five unit tests in
 `state.rs` that need neither Redis nor a socket.
 
-## CORS
+## CORS: the list is a fact about the clients
 
-Configured via the `ALLOW_ORIGIN` environment variable:
-- `*` — allow all origins (development)
-- Comma-separated list — restrict to specific origins (production)
+`ALLOW_ORIGIN` is a comma-separated allowlist, `*` allows all, and `chat_gateway_cors_layer`
+(`main.rs`) turns it into the `CorsLayer` wrapping every route. nginx does not speak CORS for any
+of them - it proxies `/api/ws`, `/api/presence` and `/api/admin/presence` straight through - so
+this layer is the only one answering, which is why the value has to be right here and nowhere else.
+
+**It served `*` in production until 2026-08-30, and the allowlist CD wrote had never reached the
+container.** `docker-compose.prod.yml` set `ALLOW_ORIGIN: "*"` as a **literal** on the service, and
+a literal there wins over anything in `infrastructure/.env`, so `upsert_env_var "ALLOW_ORIGIN" ...`
+in `cd.yml` had been writing a value nothing read since the iOS login incident. Measured twice:
+
+```
+docker exec infrastructure-chat-gateway-1 printenv ALLOW_ORIGIN   -> *
+OPTIONS https://canari-emse.fr/api/presence  Origin: https://evil.example
+  -> 200, access-control-allow-origin: *
+```
+
+That stayed a P2 rather than a P1 because this layer sets no `Allow-Credentials`: nothing
+credentialed could be read back cross-origin. It is also why the gateway was never implicated in
+the iOS login failure - it accepted the very origin the four Nest services refused.
+
+**The service now reads `${ALLOW_ORIGIN:?...}`, which stops the deploy when the variable is absent
+rather than picking a default.** Both available defaults are wrong: a wildcard silently re-opens
+this, and a single origin silently cuts every Tauri client off `/api/presence`. An absent
+declaration is a mistake, and a mistake that picks a policy is worse than one that stops.
+
+### Every entry, and why it is there
+
+Enumerated in `infrastructure/.env.example`, written by `cd.yml`, and pinned by the tests in
+`main.rs` that drive a real preflight through the layer:
+
+| Origin | Client |
+|---|---|
+| `https://canari-emse.fr` | the deployed site (`FRONTEND_URL`) |
+| `https://dev.canari-emse.fr` | a proxied CNAME onto this **same** tunnel, not a second environment - a list built from `FRONTEND_URL` alone would refuse a hostname this stack serves |
+| `http://localhost:1420` | Vite dev server / Tauri desktop dev |
+| `http://127.0.0.1:1420` | the same, spelt as `tauri.conf.json`'s `devUrl` actually spells it |
+| `http://tauri.localhost`, `https://tauri.localhost` | the Tauri WebView on Android and Windows |
+| `tauri://localhost` | the Tauri WebView on iOS, macOS and Linux - WebKit keeps the custom scheme |
+
+The Tauri app calls this gateway **cross-origin** (its page is served from `tauri://localhost`, the
+API from `https://canari-emse.fr`), so dropping a spelling costs that platform `/api/presence` with
+no server-side error to show for it. This list is exact-match where the Nest services accept any
+loopback port, which is why both `localhost` and `127.0.0.1` are spelt out. Keep it in step with
+`TAURI_WEBVIEW_ORIGINS` in `apps/*/src/cors-origins.ts`.
+
+### Verifying it, and why the deploy's colour is not the proof
+
+A `HeaderValue` accepts almost any printable ASCII, so a **wrong** origin parses happily and simply
+matches nothing - only an empty list stops the boot, which the tests pin. What proves the policy is
+reading the header back off the deployed gateway:
+
+```
+OPTIONS https://canari-emse.fr/api/presence  Origin: <each entry>  -> echoes that origin
+OPTIONS https://canari-emse.fr/api/presence  Origin: https://evil.example  -> no ACAO header
+```
+
+The layer also sends `Vary: origin`, which a shared cache needs before it can hold more than one
+client's answer; a test asserts it for the same reason.
+
+### The variable used to feed three consumers that wanted a single origin
+
+`frontend-ssr`'s `ORIGIN` - adapter-node's public origin - read `${ALLOW_ORIGIN:-...}` and was
+measured on prod holding the whole comma-separated list as one origin. It reads `FRONTEND_URL` now.
+The nginx `frontend` service's `ORIGIN`, `VITE_GATEWAY_URL` and `VITE_DELIVERY_URL` read it too and
+are **deleted**: that image is `nginx:stable-alpine` serving a build with no entrypoint
+substituting anything, and a `VITE_` variable is baked in at BUILD time by the workflows writing
+`frontend/.env`. **A variable read by two consumers with different shapes is one of them being
+wrong**, and nothing said so for either.
 
 ## Environment variables
 
@@ -173,5 +238,5 @@ Configured via the `ALLOW_ORIGIN` environment variable:
 | `REDIS_URL` | no | `redis://127.0.0.1/` | Redis connection string |
 | `JWT_SECRET` | yes | - | HS256 JWT secret (shared with core-service) |
 | `KAFKA_BROKERS` | no | `localhost:9092` | Kafka broker list |
-| `ALLOW_ORIGIN` | no | `*` | CORS allowed origins |
+| `ALLOW_ORIGIN` | **yes under compose** | `*` (binary only) | CORS allowlist. `docker-compose.prod.yml` uses `${ALLOW_ORIGIN:?}` and the deploy stops without it; the binary's own `*` default is for running it by hand and logs a WARN accusing the missing declaration |
 | `RUST_LOG` | no | `chat_gateway=debug,tower_http=debug` | Log filter |

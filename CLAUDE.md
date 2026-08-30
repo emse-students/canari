@@ -191,11 +191,13 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
    and only a CLIENT log separates the causes.
 
 3. **THE SERVER-SIDE P2s ARE THE AGREED NEXT WORK, point by point** (user, 2026-08-30, while the
-   campaign is hardware-blocked): the chat-gateway serving CORS `*` in production with the variable
-   CD sets for it inert; the ten pushes FCM refused for size, where the guard measures the wrong
-   quantity; the notification path shipping raw literals and answering one caller in two languages;
-   and `/forms/success` asking social-service for a form whose id is `success`. Substance for each is
-   in [backlog](docs/wiki/backlog.md). **NONE has been started.**
+   campaign is hardware-blocked). Left, substance for each in [backlog](docs/wiki/backlog.md): the
+   ten pushes FCM refused for size, where the guard measures the wrong quantity; the notification
+   path shipping raw literals and answering one caller in two languages; and `/forms/success` asking
+   social-service for a form whose id is `success`. **The chat-gateway CORS wildcard is FIXED in the
+   tree and its verification is OWED ON PROD** - the strict list only exists once CD redeploys, and
+   a wrong origin parses fine and matches nothing, so read `access-control-allow-origin` back off
+   `/api/presence` for each entry after the deploy ([chat-gateway](docs/wiki/services/chat-gateway.md#verifying-it-and-why-the-deploys-colour-is-not-the-proof)).
 
 4. **NOTHING ON THE CAMPAIGN BOARD COULD HAVE CAUGHT IT, AND THE GAP IS STRUCTURAL** (checked
    2026-08-28): of ~200 rows exactly one reads `dm_device_group_memberships`, and none asks a

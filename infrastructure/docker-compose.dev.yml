@@ -296,9 +296,10 @@ services:
     environment:
       NODE_ENV: production
       PORT: '80'
-      ORIGIN: ${ALLOW_ORIGIN:-https://dev.canari-emse.fr}
-      VITE_GATEWAY_URL: ${ALLOW_ORIGIN:-https://dev.canari-emse.fr}
-      VITE_DELIVERY_URL: ${ALLOW_ORIGIN:-https://dev.canari-emse.fr}
+      # ORIGIN / VITE_GATEWAY_URL / VITE_DELIVERY_URL removed here for the same reason as in
+      # `docker-compose.prod.yml`: this image is nginx serving a build, nothing reads them at
+      # runtime, and all three took their value from `ALLOW_ORIGIN` - a CORS allowlist, not an
+      # origin.
     ports:
       - "${FRONTEND_HOST_PORT:-3080}:80"
 

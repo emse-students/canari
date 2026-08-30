@@ -122,7 +122,13 @@ services:
       REDIS_URL: redis://redis:6379
       KAFKA_BROKERS: kafka:29092
       DELIVERY_SERVICE_URL: http://chat-delivery-service:3010
-      ALLOW_ORIGIN: "*"
+      # THE CORS ALLOWLIST, AND THE ONLY SERVICE THAT READS IT. It was a `"*"` LITERAL here until
+      # 2026-08-30, which beat anything in `.env` - so the list CD had been writing since the iOS
+      # incident reached nothing, and this gateway answered every origin on earth. It is not `:-`
+      # with a default: a default is a policy nobody chose, and the two available ones are both
+      # wrong (a wildcard silently re-opens this, a single origin silently cuts every Tauri client
+      # off `/api/presence`). An absent declaration must stop the deploy instead.
+      ALLOW_ORIGIN: ${ALLOW_ORIGIN:?ALLOW_ORIGIN must be set in infrastructure/.env - see .env.example; CD writes it in the deploy job}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
       interval: 30s
@@ -424,7 +430,10 @@ services:
     environment:
       NODE_ENV: production
       PORT: '3000'
-      ORIGIN: ${ALLOW_ORIGIN:-https://canari-emse.fr}
+      # adapter-node's ONE public origin, which is `FRONTEND_URL` and never the CORS allowlist.
+      # This read `${ALLOW_ORIGIN}` until 2026-08-30 and was measured holding all five entries of
+      # it, comma-separated, as a single origin.
+      ORIGIN: ${FRONTEND_URL:-https://canari-emse.fr}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       SOCIAL_SERVICE_URL: http://social-service:3014
       CORE_SERVICE_URL: http://core-service:3012
@@ -443,9 +452,11 @@ services:
     environment:
       NODE_ENV: production
       PORT: '80'
-      ORIGIN: ${ALLOW_ORIGIN:-https://canari-emse.fr}
-      VITE_GATEWAY_URL: ${ALLOW_ORIGIN:-https://canari-emse.fr}
-      VITE_DELIVERY_URL: ${ALLOW_ORIGIN:-https://canari-emse.fr}
+      # ORIGIN / VITE_GATEWAY_URL / VITE_DELIVERY_URL were declared here and read by nothing: this
+      # image is `nginx:stable-alpine` serving a build, with no entrypoint substituting anything,
+      # and a `VITE_` variable is baked in at BUILD time (the workflows write them into
+      # `frontend/.env` before `bun run build`). They are gone - all three took their value from
+      # `ALLOW_ORIGIN`, which is a CORS allowlist and not an origin.
     ports:
       - "${FRONTEND_HOST_PORT:-80}:80"
     depends_on:
