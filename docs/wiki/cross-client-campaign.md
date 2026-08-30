@@ -954,9 +954,17 @@ who could serve a Welcome answered `Group not found` for twenty minutes. Fixed t
 **The equality the pair asserts was met anyway, because both devices were equally locked out** - which
 is precisely the shape this group of rows was designed to distinguish from a device ending with LESS.
 
-**What the row owes: half B re-run on a build carrying the fix.** The pair's adjudication does not
-depend on it - the order question is settled in both worlds - but HEAL-REVOKE-7 cannot carry a
-passing cell while its last `last` is a `FAIL`.
+**SETTLED 2026-08-30, AND IT TOOK TWO RE-RUNS ON THE SAME BUILD.** The first re-run on `edb8d7ab`
+FAILed - `equalityGap: ["rows: 12 vs 13", "syncing: 0 vs 1"]` - on `8868be1c`, **the group the P1 had
+destroyed the night before.** The fix stops new corpses and cannot raise old ones, and the actor
+itself reported `12 ready of 13`, so no device in the fleet could serve it: the fresh reference built
+a thirteenth row and left it amber for ever, the returning device built none. Sweeping it through the
+`debris.mjs` allowlist (three throwaway groups, nothing else touched) and re-running the SAME build
+gave `PASS-DIRTY`, `unmet: []`, `equalityGap: []`, 11 rows / 11 ready / 0 syncing and the same eleven
+ids on both devices. The corpse's own class - a live group whose membership row says `active` for a
+device holding nothing, collecting invitations nobody can honour - is a P2 in
+[backlog](backlog.md) with its population; the instrument rule is in
+[testing-methodology](testing-methodology.md#a-fix-that-prevents-a-state-does-not-repair-the-instances-it-already-made-and-the-next-measurement-measures-those).
 
 **Two things the run says that no cell carries.** The isolated phase healed **0 of 11** rows in
 20 099 ms with nobody online, `abandonedOn: null` - the third such sample (0/29, 1/26, 0/11), and the

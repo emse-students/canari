@@ -3003,3 +3003,36 @@ present, on the same device inside an hour; and for a Tauri origin the verdict i
 halves, computed in one place, with an unreadable native half VOIDING it rather than passing it.
 `logs/Canari.log` is reported separately - the running app rewrites it in milliseconds, the same
 argument that keeps `PARAGLIDE_LOCALE` out of the web criterion.
+
+### A fix that PREVENTS a state does not repair the instances it already made, and the next measurement measures those
+
+HEAL-REVOKE-7 half B was re-run three times on 2026-08-30 and the product changed only once. The
+sequence is the lesson:
+
+1. `FAIL` on `0f06a4b3` - the row's own P1: a group forgotten 291 ms after creation, so it reached
+   neither device.
+2. `FAIL` on `edb8d7ab`, the build carrying the fix. `equalityGap: ["rows: 12 vs 13",
+   "syncing: 0 vs 1"]`, and the single group in the gap was `8868be1c` - **the very group the P1 had
+   destroyed the night before.** The fix stopped new corpses; it could not raise the old one.
+3. `PASS-DIRTY` on the same `edb8d7ab` after `cleanup.mjs` swept it - `unmet: []`, `equalityGap: []`,
+   11 rows and the same eleven ids on both devices. No code moved between 2 and 3.
+
+**So a green build is not a clean world, and the second run's `FAIL` was honest.** The corpse was a
+live group whose `dm_device_group_memberships` row said `active` for a device holding no MLS state:
+the server went on offering it to every device that enrolled afterwards, each landing `pending` for
+ever. A freshly minted reference dutifully built a thirteenth row for it and left it amber; the
+returning device built none. **Both behaviours are defensible and they DIFFER, which is exactly what
+this rung asserts must not happen** - so a defect class the row is not about can fail the row. It is
+recorded as its own P2 in [backlog](backlog.md), with the population, because the answer to "how many
+more of these are there" is a number and nothing on the board asks for one: 22 of the 24 pending
+invitations on live groups were older than an hour, across five groups, three of them real
+conversations rather than harness debris.
+
+**The instrument rule.** After fixing a defect that WRITES bad state, sweep the state before the
+re-run, and say in the cell that you did - otherwise the re-run is measuring the old defect and the
+verdict cannot distinguish "the fix does not work" from "the fix came too late for this row". The
+sweep is an ALLOWLIST every time: here `debris.mjs`'s `HGRP` pattern matched three throwaway groups
+and nothing else, and the three real conversations in the same shape were left untouched deliberately.
+The converse trap is the one the P1 itself was: **a destructive path that decides a group is dead from
+an incomplete read.** Sweeping the world and pruning inside the product are not the same act, and only
+one of them is allowed to guess.

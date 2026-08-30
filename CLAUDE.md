@@ -143,17 +143,23 @@ crois qu'il n'y a plus rien avant"*). In this order, and nothing else first:**
    `login.mjs --device W1` is enough; nothing on this rung needs a human again unless that profile
    is lost (its 2FA is the one step no tool here can answer, and it cost a block on 2026-08-30).
 
-   **Owed, in order:** HEAL-REVOKE-7's half B on the build carrying `edb8d7ab` (the pair itself is
-   ADJUDICATED - the order changes nothing); then **9**; then WRITE the owed HEAL-REVOKE cell -
-   predicate `residue: 0` on a phone, `identityKeys: 0` everywhere, the offline variant driven by a
-   reload. Then **HEAL-NEW-1 and -3 owe re-runs for the INSTRUMENT, not the product**: both predate
+   **Owed, in order: 9**, then WRITE the owed HEAL-REVOKE cell - predicate `residue: 0` on a phone,
+   `identityKeys: 0` everywhere, the offline variant driven by a reload. **-7 IS TAKEN**,
+   `PASS-DIRTY` on `edb8d7ab`, but only after a SECOND `FAIL` on that same build: the fix stops new
+   corpses and cannot raise the old one, and the group its own P1 had destroyed was still alive,
+   unservable by any device, giving the fresh reference a thirteenth amber row the returning device
+   never built. **Sweep the world after fixing a defect that WRITES state, or the re-run measures the
+   old defect** ([methodology](docs/wiki/testing-methodology.md), and the corpse's whole class is a
+   P2 in [backlog](docs/wiki/backlog.md) with its population). Then **HEAL-NEW-1 and -3 owe re-runs for the INSTRUMENT, not the product**: both predate
    `gate()`, so neither passed the dirt and mid-run-redeploy gate every other `PASS` passed
    ([methodology](docs/wiki/testing-methodology.md#a-field-in-the-detail-is-not-a-gate-and-two-heal-runners-believed-it-was)).
 
-   **Two live instrument facts.** `healnew.mjs` has `withoutTheMintsOwnNoise` and **`healrevoke.mjs`
-   still has no such list** - the disposition is `ignoringExpectedLog` PER ROW, never a wider
-   classifier. And the device cap that voided five cells is not in play: the owner spent **4 of 15
-   slots**, measured before and after - **re-measure it around every run rather than quoting this.**
+   **Two live instrument facts.** BOTH heal runners now carry their noise list, and the disposition
+   is `ignoringExpectedLog` PER ROW, never a wider classifier: `healnew.mjs` has
+   `withoutTheMintsOwnNoise`, and `healrevoke.mjs` has FOUR lists, one per observer, forgiving the
+   mint and never the wipe. And the device cap that voided five cells is not in play: the owner spent
+   **3 of 15 slots** on 2026-08-30, measured from the server, the panel showing only the DELETABLE
+   rows - **re-measure it around every run rather than quoting this.**
 
    **THE USER ASKED FOR THE LOGS TO BE READ ON EVERY PASS, the reconciliations especially**
    (2026-08-28): a heal that works is not a heal that was observed. It found the `UserBlock` P1 no

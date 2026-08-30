@@ -148,9 +148,18 @@ then `ignoringExpectedLog` for the OIDC trail and the purge's three lines, in th
 `ignoringExpectedLog` recomputes `clean` over `badHttp` as it finds it. Every needle names a SUCCESS
 spelling - the status pinned to `200`, the state check to `matches: true`, and none of
 `[DevicePanel]`'s five `console.error`/`console.warn` spellings named at all - so a `500` from
-core-service, a mismatched OIDC state or a failed device deletion stays dirt. **What is still open is
-the other rows on this rung**: `healrevoke.mjs` mints devices the same way and has no such list, so
-the first HEAL-REVOKE row to reach `gate()` will meet all three shapes unforgiven.
+core-service, a mismatched OIDC state or a failed device deletion stays dirt.
+
+**CLOSED FOR THE HEAL-REVOKE ROWS TOO, and the claim that it was open was WRONG** (checked in the
+source 2026-08-30, after this file and `CLAUDE.md` had both carried "`healrevoke.mjs` ... has no such
+list" for two days). That runner ships FOUR lists, one per OBSERVER rather than one per row, which is
+the finer cut: `asAReturningDevice` forgives the OIDC trail and a cold client but not the panel it
+never drove; `asAFreshlyMintedDevice` adds the purge; `asTheWipedVictim` is the only one handed
+`AUTH_TEARDOWN_NARRATION`, because a session clearing itself is its subject and everyone else's
+finding; and `asTheActor` forgives NO refusal at all, so a `401` on `/api/auth/refresh` - the wipe
+working, on the victim - stays a finding on the one client that wiped nothing. The wipe's own three
+sentences are deliberately in no list: `NOTABLE` already claims them, so a list would forgive nothing
+and report three dry needles on every row of the rung.
 
 **Two lines from that run are explained and must NOT be re-opened.** `History msg error: Group not
 found: 642f389a...` is the amber probe's own doing - the row clicks a SYNCING tile on purpose, and a
@@ -1327,6 +1336,76 @@ now fixed, and the general question is whether any other sweep compares a live l
 awaited server one.
 
 
+### P2 - a group that never leaves its creation epoch keeps collecting device invitations nobody can honour (measured on prod 2026-08-30)
+
+Found by HEAL-REVOKE-7 `--order last` on `edb8d7ab` - the run that was supposed to confirm the P1
+above and instead FAILed on that P1's RESIDUE. Kept as its own item because the residue turned out to
+name a class, and the class has real conversations in it.
+
+**What the row saw.** `equalityGap: ["rows: 12 vs 13", "syncing: 0 vs 1"]`. The server listed 13
+groups for the subject; the returning device built 12 rows and settled; the freshly minted reference
+built 13, the 13th amber for ever. The extra one was `8868be1c`, the very group the P1 above
+destroyed. The actor itself reported `12 ready of 13` - so no device in the fleet could serve it.
+
+**What prod said, and it is the membership row that lies.** The group was alive (`deletedAt` null,
+`activeEpoch 1`, no rotation payload) and its device memberships read:
+
+    web-...-msgm5z5j-136y   active    2026-08-30 01:20:44.793     <- the creator, holding NOTHING
+    web-...-mtd1d1fc-m84y   pending   2026-08-30 01:20:44.849
+    tauri-...-mtd1qgu3-vnde pending   2026-08-30 01:20:44.849
+    web-...-mtf6rlvn-hkhr   pending   2026-08-30 02:24:18.378     <- this run's reference mint
+
+`active` is written when the creator registers itself, and nothing ever revisits it. The creator's
+local MLS state was gone 291 ms later, so the server went on offering the group to every device that
+enrolled afterwards - including a device minted an hour later, which duly went `pending` and stayed
+there. **A membership row records that an invitation was SENT; nothing reads back whether it was ever
+honoured, and nothing expires it.**
+
+**THE POPULATION, because this is exactly the kind of question no row on the board asks** (measured
+2026-08-30, before the sweep that cleared the instance):
+
+    -- invitations still pending on a LIVE group, by age
+    SELECT CASE WHEN now() - m."createdAt" < interval '1 hour' THEN 'a: < 1h (in flight)'
+                WHEN now() - m."createdAt" < interval '1 day'  THEN 'b: < 1 day'
+                WHEN now() - m."createdAt" < interval '7 days' THEN 'c: < 7 days'
+                ELSE 'd: older' END AS age,
+           count(*) AS pending_rows, count(DISTINCT m."groupId") AS groups,
+           count(DISTINCT m."groupId") FILTER (WHERE g."activeEpoch" <= 1) AS in_epoch1_groups
+    FROM dm_device_group_memberships m JOIN dm_groups g ON g.id = m."groupId"
+    WHERE g."deletedAt" IS NULL AND m.status = 'pending' GROUP BY 1 ORDER BY 1;
+
+    a: < 1h (in flight)    2 rows   2 groups   1 at epoch 1
+    b: < 1 day             9 rows   5 groups   1 at epoch 1
+    c: < 7 days           13 rows   5 groups   3 at epoch 1
+
+**22 of the 24 pending rows on live groups were older than an hour, 13 of them older than a day**, and
+none pointed at a revoked device - they are live devices holding invitations that will not resolve.
+Of the nine live groups sitting at epoch 0 or 1, **four carried pending rows and three of those are
+real conversations, not harness debris** - two DMs from 2026-08-03 and 2026-08-28, and one unnamed
+group from 2026-08-28. The oldest such group is 33 days old. `HGRP` debris was one of the four and
+has been swept; the other three are untouched, deliberately - they are real user data and no
+destructive control here has a reason to name them.
+
+**Do not take `activeEpoch <= 1` for the predicate.** Pending rows exist on healthy groups too
+(epochs 3, 4, 5, 8, 10, 108 and 258 each had one), so "pending" alone is not the signal and "epoch 1"
+alone is not either: a DM created and never written to legitimately sits at epoch 1 with everyone
+`active`. What distinguishes the corpse is a `pending` row that has outlived any plausible delivery -
+which is a duration, and therefore has to be measured against the population before a name is put on
+it, not chosen from this one incident.
+
+**The second fact, and the one that reaches a HEAL row.** The two devices disagree about an
+unservable group: a FRESH device creates a row for it and leaves the tile amber for ever; a RETURNING
+device creates no row at all. Neither is obviously wrong - not showing it is arguably the better of
+the two - but they differ, and "a returned device ends where a fresh device ends" is precisely what
+rung 16 asserts. **So this class can fail a HEAL-REVOKE row that is not about it**, which is how it
+was found, and it is the same family as the dead row a deleted group leaves every other member.
+
+**Not fixed here: the blast radius leaves the row's subject.** Three things want deciding together,
+and the third is the only one that is cheap: whether an invitation should expire; whether a group
+whose creator holds no state should still be offered; and whether an unservable group should present
+a tile at all. Nothing here should be settled by widening a sweep - the P1 above is precisely what
+happens when a destructive path decides a group is dead from an incomplete read.
+
 ### P3 - one client reads a new salon's distribution group TWICE, concurrently (measured 2026-08-27)
 
 `srvlog.mjs` leaves `published=false base=none active=0 devices=0` unexplained on purpose - it is
@@ -1899,6 +1978,44 @@ the set of paths the application owns is knowable without a build, from `fronten
 That satisfies the file's own criterion better than any regex and closes the class instead of the
 instance - the difference [testing-methodology](testing-methodology.md) rule 42 is about.
 
+
+### P3 - two server lines at `LOG` level ARE the server window's unexplained bucket, and they carry full identities (measured 2026-08-30)
+
+Read off HEAL-REVOKE-7's own run window (`srvlog.mjs --since 2026-08-30T02:31:06.469Z`, the pass that
+gave `PASS-DIRTY` on `edb8d7ab`). **52 unexplained lines across four services and not one of them is
+an error.** Recorded because the standing rule is that a line is either expected AND necessary or it
+is the visible end of something upstream, and these are neither - they are the reason the server half
+of this rung has never once been reported clean.
+
+**The two shapes that ARE the bucket**, both `chat-delivery-service`, both `LOG`:
+
+- `[InvitationsController] [DEVICE_MEMBERSHIPS] user=<64 hex> device=<full device id> count=12
+  statuses=<twelve UUIDs, each with :active or :pending>` - emitted on every membership poll, so
+  several per second while any device is settling. It alone is most of the 47.
+- `[MessagingService] [PUSH_SEND] No push token for user=<64 hex> device=<full device id>` - one per
+  addressee with no FCM token, on every send. In this fleet that is every desktop Tauri device, for
+  ever, and one line reads `user=unknown device=pending`.
+
+**They also put full identities in production logs.** Both print the 64-character user id and the
+whole device id rather than the 8-character prefix the client's own logs use, and `social-service`
+adds `[SubmitterFactsService] [FORMS] profile user=<8 hex> promo=<year> formation=<code>` at `DEBUG` -
+a named person's cohort and course, in a log. Nothing here needs the full-length ids to be actionable.
+
+**The other three are explained and must NOT be re-opened.** `[DevicesController] [DELETE_DEVICE] ...
+groupsCleaned=11 keyPackagesDeleted=1 oneTimeKeyPackagesDeleted=35 queuedMessagesDeleted=13
+signalled=true` is a genuine audit line and it is the SERVER-side proof that revocation drains the
+frame queue - corroborated on prod the same day: of 5 621 queued frames across 53 devices, **zero
+belong to any of the 223 revoked devices**. `[KICK] Reset device ... to pending` is the queued
+kick+re-add P3. `Refresh refused: no canari_refresh cookie` twice on `core-service` is the wiped
+victim asking with no cookie - the wipe working, which is this rung's subject.
+
+**One line is worth a look on its own**: `[DEL_MEMBERSHIP] ... group=8c0e53b9... affected=0` - a
+membership delete that matched no row. Harmless, but it means a caller believed in a row that was not
+there, and `affected=0` is the only place that shows.
+
+**NOT changed here, deliberately.** Lowering a level or trimming a field changes what `srvlog.mjs`
+classifies, and doing that between two passes of a running campaign would make the next window
+incomparable with every window already recorded. It is a one-commit job for after the ladder.
 
 ### P2 - a LIVE socket dies in the middle of GRP-3, and no navigation explains it (measured 2026-08-25)
 
