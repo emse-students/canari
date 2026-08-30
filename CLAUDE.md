@@ -143,8 +143,12 @@ crois qu'il n'y a plus rien avant"*). In this order, and nothing else first:**
    `login.mjs --device W1` is enough; nothing on this rung needs a human again unless that profile
    is lost (its 2FA is the one step no tool here can answer, and it cost a block on 2026-08-30).
 
-   **Owed, in order: 9**, then WRITE the owed HEAL-REVOKE cell - predicate `residue: 0` on a phone,
-   `identityKeys: 0` everywhere, the offline variant driven by a reload. **-7 IS TAKEN**,
+   **Owed, in order: RE-RUN 9 on a build carrying `da0ce2f2`.** It has run twice and FAILed twice,
+   and both failures were worth having: the first on a trigger the product does not have (the row
+   asked a RELOAD, the product defines a LOGIN plus the PIN its refusal names - settled by the user
+   2026-08-30, the product is the reference, the row is re-aimed and now asserts THREE things where
+   it asserted one); the second on `noStoreSurvivedTheWipe`, a P1 in the wipe fixed in `da0ce2f2`.
+   Everything before the wipe passes on both runs, and that is the half that matters. **-7 IS TAKEN**,
    `PASS-DIRTY` on `edb8d7ab`, but only after a SECOND `FAIL` on that same build: the fix stops new
    corpses and cannot raise the old one, and the group its own P1 had destroyed was still alive,
    unservable by any device, giving the fresh reference a thirteenth amber row the returning device
@@ -157,8 +161,8 @@ crois qu'il n'y a plus rien avant"*). In this order, and nothing else first:**
    **Two live instrument facts.** BOTH heal runners now carry their noise list, and the disposition
    is `ignoringExpectedLog` PER ROW, never a wider classifier: `healnew.mjs` has
    `withoutTheMintsOwnNoise`, and `healrevoke.mjs` has FOUR lists, one per observer, forgiving the
-   mint and never the wipe. And the device cap that voided five cells is not in play: the owner spent
-   **3 of 15 slots** on 2026-08-30, measured from the server, the panel showing only the DELETABLE
+   mint and never the wipe. And the device cap that voided five cells is not in play: `healrevoke.mjs`
+   now READS the count on both sides of every row (4 then 3 on 2026-08-30), the panel showing only the DELETABLE
    rows - **re-measure it around every run rather than quoting this.**
 
    **THE USER ASKED FOR THE LOGS TO BE READ ON EVERY PASS, the reconciliations especially**

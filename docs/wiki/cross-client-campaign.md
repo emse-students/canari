@@ -773,7 +773,7 @@ not repeated here.
 - **HEAL-REVOKE-4** - `pending` - the TRIGGER CONDITIONS are part of the assertion, not context
 - **HEAL-REVOKE-5** - `INVALID` on `48b65d08` - the shared instrument cause: no enrolled victim, so nothing to revoke. Re-run owed
 - **HEAL-REVOKE-6** - `pending` - **the instrument is in**: `deviceResidue()` is the AND of both halves, and the web-only predicate was still what `healrevoke.mjs` imported until 2026-08-28, so this row would have passed on a dirty phone. What is left is the victim being A1 rather than W3, one re-enrolment per run, measured at no 2FA
-- **HEAL-REVOKE-9** - `pending` - written 2026-08-28, the user's second question and the half no row had ever asked. Measured by hand on W3 first, which is what showed it worth a row
+- **HEAL-REVOKE-9** - **`PASS-DIRTY` on `da0ce2f2`, `unmet: []`** - written 2026-08-28, the user's second question and the half no row had ever asked. It took three runs and the two FAILs were both worth having: the first on a trigger the product does not have (the row asked a RELOAD; the product defines a LOGIN plus the PIN its refusal names - settled by the owner 2026-08-30, the product is the reference), the second on `noStoreSurvivedTheWipe`, a P1 in the wipe fixed in `da0ce2f2`. **The half that matters passed on all three**: severed, revoked, state still present, `wipeRan: false`
 - **HEAL-NEW-0** - **`PASS-DIRTY` on `48b65d08`** - the primitive the other fifteen rest on: nothing left of the identity, the store or the cookie, a never-seen `device_id` minted, and **no credential prompt**, the SSO session living outside the app origin - which is why the group costs ONE 2FA and not eleven. **The ledger's NEWEST row here is a `FAIL` the board deliberately does not take** (`03d015fd`): dirt only, and it measures the classifier - P3 in [backlog](backlog.md)
 - **HEAL-NEW-1** - **`PASS` on `48b65d08`** - the isolation was REAL (both webs killed, the phone force-stopped, `extra: []` after a 915 ms drain), and ten rows stayed amber the full 600 s at `serverActive: 10`, which the condition entails. **It asserts the OUTCOME, not that the app SAYS `no_peer_online`** - HEAL-NEW-5 is where that distinction is made
 - **HEAL-NEW-2** - `pending` on `a35cf4e5`, re-scoped to the `servableSubset` - 1 row of 10. Two earlier `FAIL`s measured the instrument: the device cap on `48b65d08`, then `expect: healed` over ten groups the peer is not in on `3b5cee35`
@@ -1074,11 +1074,20 @@ The cells carried these as prose; they are design, and the board is a state tabl
   lives in the DELETING device's own IndexedDB (`pendingGroupExits.ts`). While the first device still
   owes the server that exit, a new device is *entitled* to re-create the group, and the user sees a
   deleted conversation wearing a Sync badge.
-- **HEAL-REVOKE-9 takes two samples of one disk.** While `cutHard` has the device really unreachable
-  the state must still be PRESENT (`isDeviceRevoked` answers `false` when it cannot ask, because a
-  transport failure is not an answer - a wipe here would mean every offline user loses their device),
-  and after ONE reload with a network it must be empty. It ends there: the return equality is
-  HEAL-REVOKE-5/7/8's subject, this row is the DEFERRAL.
+- **HEAL-REVOKE-9 takes THREE samples of one disk, and it took two until 2026-08-30.** While
+  `cutHard` has the device really unreachable the state must still be PRESENT (`isDeviceRevoked`
+  answers `false` when it cannot ask, because a transport failure is not an answer - a wipe here
+  would mean every offline user loses their device). After a reload with a network it must **still**
+  be present and the page must stop at `/login`: `sessionAuth.ts` holds exactly three triggers and
+  every one needs a credential or a live socket, so a page load that authenticates nobody confirms
+  nothing and must erase nothing. Only the LOGIN spends the deferral, and the return the product
+  documents is a login AND the PIN its own refusal asks for in as many words.
+
+  **THE ROW ASKED FOR A RELOAD AND THE PRODUCT IS THE REFERENCE** (owner, 2026-08-30). It was
+  re-aimed rather than relaxed: it now asserts three things where it asserted one, plus
+  `noStoreSurvivedTheWipe` - and that last one is what caught the P1, two `getStorage()` connections
+  where the wipe closed one. It still ends before the return equality, which is HEAL-REVOKE-5/7/8's
+  subject; this row is the DEFERRAL and what ends it.
 - **HEAL-NEW-8's assertion is a count because the throttles are the question.**
   `RECOVERY_TIMEOUT_MS` allows one attempt per period and `PROBE_COALESCE_MS` collapses a 30 s burst,
   so whether recovery is per-GROUP or per-DEVICE is exactly what a 13-conversation account measures
