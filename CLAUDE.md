@@ -138,48 +138,27 @@ crois qu'il n'y a plus rien avant"*). In this order, and nothing else first:**
 3. `node state.mjs` - all four clients were logged in and unlocked at the pause, A1 on a local debug
    **0.14.12**. If the phone was unplugged, the from-zero sequence is in
    [the harness README](tools/cross-client-harness/README.md#operating-it), scripted end to end.
-4. **HEAL, the rung in hand - THE 2FA IS ANSWERED (user, 2026-08-28: *"J'ai fait l'A2F"*), AND THE
-   BLOCK IS GONE.** W1 now passes `cas.emse.fr` in 14.4 s with no challenge, so the SSO session lives
-   in the `chrome-w1` profile: `login.mjs --device W1` is enough, and nothing here needs a human
-   again unless that profile is lost. **HEAL-NEW-3 and -11 are `PASS` on `ebef7f3c`** (verdict and the two
-   things its log says that the verdict does not are on the board). **HEAL-NEW-15 is `PASS-DIRTY` on `038c7e8d`, and it is the
-   rung's FIRST verdict to have passed `gate()` at all** - the three before it predate the gate and
-   recorded `clean: false` with no dirt detail and no demotion, which is why they owe a re-run. Its
-   dirt is the MINT's own signature on every HEAL-NEW row and is queued as such
-   ([backlog](docs/wiki/backlog.md)); the disposition is `ignoringExpectedLog` per row, never a wider
-   classifier - **shipped for the HEAL-NEW rows on 2026-08-29 as `withoutTheMintsOwnNoise` in
-   `healnew.mjs`, and `healrevoke.mjs` still has no such list.** **-2 and -12 are `PASS-DIRTY` on
-   `038c7e8d` and the ORDER PAIR is EQUAL** (adjudicated on the campaign page, with the server half
-   both cells cannot carry).
-   **BLOCKED ON A HUMAN SINCE 2026-08-30, AND NOTHING ON THIS RUNG CAN MOVE UNTIL IT IS ANSWERED:
-   W1's `chrome-w1` profile lost its CAS session and sits on `Authentification renforcee`.** The
-   preflight refuses it correctly (`still unknown on /cas/login after 4 repair(s)`), and the 2FA is
-   the one step no tool here can answer - so **the user must log W1 back in once**, after which
-   `login.mjs --device W1` is enough again. W2 and W3 are fine; only W1 is out.
-   **HEAL-REVOKE-5 and -8 are `PASS-DIRTY` on `0044a041`**, both with `unmet: []` and an empty
-   equality gap - 8 reads its two doomed-group fields TOGETHER, absent from the returning device AND
-   from a freshly minted one whose view is purely the server's. **HEAL-REVOKE-7 is `INVALID`**: the
-   pair is UNADJUDICATED and owes both halves adjacently under the runner as it now stands, because
-   the `first` measurement predates a retraction (campaign page, section 16). What is owed, in order:
-   **W1's 2FA, then the 7 ORDER PAIR, then 9** - then WRITE the owed HEAL-REVOKE cell - predicate `residue: 0` on a
-   phone, `identityKeys: 0` everywhere, the offline variant driven by a reload. The device cap that
-   voided five cells is not in play: the owner spends **4 of 15 slots**, measured before and after.
-   **`--order first` FOUND A P1 AND IT IS FIXED**: a purge compared a live local read against an older
-   server list, so a device destroyed the only copy of a group it had created seconds earlier and no
-   member could ever join it. Prod's `createdAt` is the same second as the forget line. Story in
-   `CHANGELOG.md`, mechanism on [chat](docs/wiki/frontend/modules/chat.md), and it is the THIRD site
-   of a rule already in [durable-rules](docs/wiki/durable-rules.md) - **the open question is whether
-   any other sweep compares a live local read against an awaited server one.**
-   **AND HEAL-NEW-1 AND -3 ARE RE-RUNS OWED, for the INSTRUMENT and not for the product**: both were
-   taken before `healnew.mjs` and `healrevoke.mjs` were put on `gate()`, so neither passed the dirt
-   and mid-run-redeploy gate every other rung's `PASS` passed
+4. **HEAL, the rung in hand. Every verdict is on the BOARD and every adjudication on the CAMPAIGN
+   PAGE - read them, they are not restated here.** W1's SSO lives in the `chrome-w1` profile and
+   `login.mjs --device W1` is enough; nothing on this rung needs a human again unless that profile
+   is lost (its 2FA is the one step no tool here can answer, and it cost a block on 2026-08-30).
+
+   **Owed, in order:** HEAL-REVOKE-7's half B on the build carrying `edb8d7ab` (the pair itself is
+   ADJUDICATED - the order changes nothing); then **9**; then WRITE the owed HEAL-REVOKE cell -
+   predicate `residue: 0` on a phone, `identityKeys: 0` everywhere, the offline variant driven by a
+   reload. Then **HEAL-NEW-1 and -3 owe re-runs for the INSTRUMENT, not the product**: both predate
+   `gate()`, so neither passed the dirt and mid-run-redeploy gate every other `PASS` passed
    ([methodology](docs/wiki/testing-methodology.md#a-field-in-the-detail-is-not-a-gate-and-two-heal-runners-believed-it-was)).
-   **The user asked for the LOGS to be read on every pass, the reconciliations especially**
-   (2026-08-28): a heal that works is not a heal that was observed. It is what found the `UserBlock`
-   P1 that no row on the board asks about
-   ([methodology](docs/wiki/testing-methodology.md#a-defect-the-ladder-cannot-ask-about-found-by-reading-one-rows-log)),
-   and it is what showed HEAL-NEW-3's sidebar going green on the READD path while the reconciliation
-   itself covered only 7 of 11 groups.
+
+   **Two live instrument facts.** `healnew.mjs` has `withoutTheMintsOwnNoise` and **`healrevoke.mjs`
+   still has no such list** - the disposition is `ignoringExpectedLog` PER ROW, never a wider
+   classifier. And the device cap that voided five cells is not in play: the owner spent **4 of 15
+   slots**, measured before and after - **re-measure it around every run rather than quoting this.**
+
+   **THE USER ASKED FOR THE LOGS TO BE READ ON EVERY PASS, the reconciliations especially**
+   (2026-08-28): a heal that works is not a heal that was observed. It found the `UserBlock` P1 no
+   row asks about, it showed HEAL-NEW-3's sidebar going green while the reconciliation covered only
+   7 of 11 groups, and on 2026-08-30 it is what turned a `FAIL` into the P1 fixed in `edb8d7ab`.
 
 ### CANARI - THE QUEUE, IN ORDER
 
