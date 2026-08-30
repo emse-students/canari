@@ -123,6 +123,10 @@ which is also where every release up to and including v0.13.1 now lives.
   `stripe_return` param an in-flight onboarding still comes back with, and the fee arithmetic, which
   a neutral name would misrepresent. The full map of kept-versus-removed is on
   [payments](docs/wiki/frontend/modules/payments.md#where-a-providers-name-may-appear-and-where-it-may-not).
+- **The achats export no longer names a payment processor either.** Its Paiement column wrote
+  `Espèces` or `Stripe` - a server-composed sentence in a downloaded file, which is the layer a
+  message-catalogue sweep cannot see. It now reads `En ligne`, the app's own label for the same fact
+  (`asso_achats_payment_online`), and says HOW the money arrived rather than through whom.
 
 - **A cash grant can no longer be recorded against a Cercle top-up product.** The Achats tab let an
   association manager pick the `balance_topup` product for a manual "paid in cash" sale, next to a

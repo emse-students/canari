@@ -192,15 +192,21 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
    ghost took one frame in four, unchanged across the deploy that shipped the guards.
 
 3. **THE SERVER-SIDE P2s ARE THE AGREED NEXT WORK, point by point** (user, 2026-08-30, while the
-   campaign is hardware-blocked). **Three are done: the chat-gateway CORS wildcard** -
+   campaign is hardware-blocked). **Four are done: the chat-gateway CORS wildcard** -
    seven origins echoed, an unknown one refused, at both layers on prod
    ([chat-gateway](docs/wiki/services/chat-gateway.md#verifying-it-and-why-the-deploys-colour-is-not-the-proof)) -
-   **the notification path's raw literals**, whose FRONTEND half shipped, **and `/forms/success`**,
-   which was FOUR pages and not one once re-measured against the whole route tree. Left, substance for
-   each in [backlog](docs/wiki/backlog.md): the half the literals left, which is not the same size - the server picks
-   the pre-decryption push body and does NOT know the recipient's language, so it needs a locale
-   carried to `push_token`, not a translation. **The FCM size split is fixed and still owes its
-   verification, which is HARDWARE and iOS-first.**
+   **`/forms/success`**, which was FOUR pages and not one once re-measured against the whole route
+   tree - **Stripe's name, removed from every layer that does not own it**
+   ([payments](docs/wiki/frontend/modules/payments.md#where-a-providers-name-may-appear-and-where-it-may-not)) -
+   **and the notification path's raw literals, BOTH halves. THIS FILE SAID THE SERVER HALF WAS LEFT
+   AND ASKED FOR A `locale` ON `push_token`; THE CODE REJECTS THAT DESIGN IN WRITING** and shipped the
+   other one on 2026-08-19: `push-content.ts` sends `contentKey` + `actorName` + `contentArg` and the
+   DEVICE writes the sentence, because the server is the one layer that cannot know who is reading. Its
+   `legacyTitle` / `legacyBody` are a dated shim, not open work
+   ([legacy-compatibility](docs/wiki/legacy-compatibility.md)). Exactly one server-composed sentence
+   survives - `APNS_FALLBACK_BODY` - and turning it into an APNs `loc-key` is a REGRESSION until the
+   installed iOS base moves, for a reason recorded on that same page. **The FCM size split is fixed
+   and still owes its verification, which is HARDWARE and iOS-first.**
 
 4. **NOTHING ON THE CAMPAIGN BOARD COULD HAVE CAUGHT IT, AND THE GAP IS STRUCTURAL** (checked
    2026-08-28): of ~200 rows exactly one reads `dm_device_group_memberships`, and none asks a

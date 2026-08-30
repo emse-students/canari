@@ -856,7 +856,10 @@ export class ProductsService {
         source: p.source === 'form' ? 'Formulaire' : 'Boutique',
         productName: p.productName,
         amount: p.amountCents / 100,
-        paymentMethod: p.paymentMethod === 'cash' ? 'Espèces' : 'Stripe',
+        // The sheet is French throughout, and this column says HOW rather than THROUGH WHOM:
+        // 'Stripe' named the processor of the day, and the app's own label for the same fact
+        // is `asso_achats_payment_online`.
+        paymentMethod: p.paymentMethod === 'cash' ? 'Espèces' : 'En ligne',
         paidAt: new Date(p.paidAt),
       });
     });

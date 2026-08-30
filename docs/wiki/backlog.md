@@ -1498,34 +1498,57 @@ So the notification reads `Salut @[d82cd226…64 hex…] tu peux regarder ?`.
 cannot be read. And the check that covers the path does not see it - MENTION-2 asserts that the
 notification carries the marker, which is true of a body full of hex.
 
-**THE NAME CANNOT COME FROM THE SERVER'S PUSH PAYLOAD, and that is the whole difficulty.** The
-mentioned ids already ride in cleartext for routing (the documented leak, MENTION-6), but a display
-NAME is not an opaque id: putting it in the payload sends real names of real students through FCM and
-APNs on every mention. This codebase already refused that trade once - the reaction push used to
-carry 80 characters of decrypted message text, composed server-side, and was cut back to an id, an
-emoji and who reacted, for exactly this reason.
+**THE MLS PATH CANNOT BE FIXED SERVER-SIDE, AND THE REASON IS KNOWLEDGE, NOT PRIVACY.** A DM or
+group message reaches the server as ciphertext, so the server does not know a mention happened at all
+- which is exactly why the Kotlin scans the decrypted text for `@[<myUserId>]` rather than being told.
+No payload field can carry a name the sender of the payload cannot compute.
 
-**So the resolution belongs on the device, and it has the shape to do it.** `fetchAvatar(userId)`
-already resolves a stranger's avatar from `GET /api/mls/push/avatar/:targetUserId`, authenticated by
-`requesterId` + `deviceId` + the Keystore push secret, behind a 24 h file cache. A display name wants
-the same three things:
+**The privacy argument this entry used to make is FALSE, and it was worth measuring rather than
+assuming.** It said a display name in the payload would send real names of real students through FCM
+and APNs. Every message push already does: `messaging.service.ts:463` calls `resolveUserDisplayName`
+and ships the result as `senderName` in both the FCM data map and the APNs alert title
+(`push-payload.ts`). So the objection to naming a MENTIONED user is not that names may not travel -
+they already do - it is only that on the MLS path nobody server-side knows which ones to send.
 
-- a sibling endpoint on `push.controller.ts` (there is none today - the routes are listed at
-  `mls/push/{register,fetch-proto,avatar,media,refresh-token,…}`), returning `resolveUserDisplayName`
-  from `utils/display-name.ts`;
-- `fetchDisplayName(userId)` in the service, mirroring `fetchAvatar`'s cache-then-HTTP shape;
-- a substitution pass over the body before the notification is built.
+**The CHANNEL path is therefore a different, much cheaper problem**, and the two should not be
+bundled. `handleChannelMessage` is told `mentioned` by the server, from a cleartext
+`mentionedUserIds` the sender supplies (the documented leak, MENTION-6). The server can resolve those
+ids the same way it already resolves `senderName`, and the only real constraint is SIZE: `senderName`
+and `groupName` are already flagged as unbounded user text against the 4 KB APNs budget
+(`push-payload.ts:97`), and N mentioned names is N times that risk. Bound it - the first mention, or
+nothing.
 
-**The degrade must be decided, not defaulted.** A cache miss with no network - the exact case a
-notification arrives in - must not print hex. Replacing the token with a generic word loses who was
-mentioned; keeping the id keeps it unreadable. Not decided here.
+**For the MLS path the resolution belongs on the device, and this repo has TWO shapes for it.** The
+one this entry originally proposed is a network fetch: `fetchAvatar(userId)` resolves a stranger's
+avatar from `GET /api/mls/push/avatar/:targetUserId`, authenticated by `requesterId` + `deviceId` +
+the Keystore push secret, behind a 24 h file cache, and a sibling endpoint returning
+`resolveUserDisplayName` would mirror it. **The other is cheaper and better suited**, because a
+notification arrives exactly when the device may be offline: `graine_seeds.json` is an app-private
+file the FOREGROUND writes through a Tauri command (`store_graine_seed`) and the push service reads
+with no network at all (`lookupGraineSeed`). The web already keeps a resolved-display-name cache -
+`peekUserDisplayName` / `seedUserDisplayName` in `utils/users/displayName.ts` - so mirroring it is the
+same three pieces the seed mirror has: a Rust command plus its `capabilities/` grant (an ungranted
+Tauri command ships and rejects on a real device), a call site in the resolver, and a Kotlin reader.
+No new server route, no deploy, and no name that the device did not already know.
+
+**Whichever is chosen, it needs a substitution pass over the body before the notification is built.**
+
+**The degrade must be decided, not defaulted - and the web decided it on 2026-08-30.** A cache miss
+with no network is the exact case a notification arrives in, and it must not print hex. The mention
+chip and the post mention link both stopped using the id as its own fallback that day: an unresolved
+mention renders as a bare `@`, because a name that is not known YET is not the same fact as a name
+that does not exist, and only the second may be painted. The notification has no second chance to
+re-render, which argues for the same answer rather than a different one - a bare `@` is honest, and
+`@[d82cd226...]` is not. Confirm against the native side before building.
 
 **iOS is presumed to have the same gap and cannot be checked** - no iPhone in the estate
 (`device-verification.md`). `push-payload.ts` builds the APNs half from the same fields.
 
-**Cost, stated because it is why this is not a drive-by fix:** it crosses the server (a new
-authenticated route, deployed) and the native app (Kotlin, plus an APK rebuild and install), and the
-rebuild re-bases A1's build for every phase of the ladder that follows it.
+**Cost, stated because it is why this is not a drive-by fix:** the channel half is server-only and
+small; the MLS half is native (a Tauri command and its ACL grant, Kotlin, an APK rebuild and install)
+and the rebuild re-bases A1's build for every phase of the ladder that follows it. Neither half can be
+VERIFIED without a phone - a native change is checked by compiling, which proves nothing about
+running.
 
 ## The harness itself
 

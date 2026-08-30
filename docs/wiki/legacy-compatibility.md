@@ -158,6 +158,36 @@ reaching a fallback means the primary path failed.
 the column look load-bearing to anyone auditing it - which is how it survived unnoticed until the
 storage panel raised the question.
 
+### 2027-02-15 - `APNS_FALLBACK_BODY`, the last sentence a server still writes
+
+**Site:** `APNS_FALLBACK_BODY` in
+[`apps/chat-delivery-service/src/services/push-payload.ts`](../../apps/chat-delivery-service/src/services/push-payload.ts),
+the `alert.body` of every visible MLS message push.
+**What it is:** hard-coded French, `'Nouveau message'`, on the one path the 2026-08-19 rework could
+not reach. It is what an iPhone shows when the NSE does not run or fails - the NSE otherwise rewrites
+the alert with the decrypted text, and its own fallback (`notif.message.encrypted`) is properly
+localized. Android never sees it: `buildFallbackText(appLocaleContext(this), senderName)` reads
+`strings.xml`.
+
+**The repair is known and must NOT be applied yet.** APNs resolves an `alert.loc-key` against the
+MAIN APP BUNDLE in the device's language, with no server knowledge at all - exactly the "the device
+writes the sentence" design the rest of the push path already follows, applied to the one string that
+could not follow it. But `notif.message.encrypted` entered `canari_iOS/*.lproj` on **2026-08-15**
+(`e3593d4e`), and the NSE has existed since **2026-07-21**: a build from that four-week window has an
+extension and no key. **iOS shows the RAW KEY when a `loc-key` does not resolve - it does not fall
+back to `body`** - so shipping this today would replace "Nouveau message" with the literal text
+`notif.message.encrypted` on precisely the installs that see the fallback at all. Sending both fields
+does not help, because `loc-key` wins whenever it is present.
+
+**On removal:** once no install older than 2026-08-15 can reach the app - which `minClientVersion`
+decides, and which is raised BY HAND only after a build is shown reaching an ordinary iOS user - drop
+`APNS_FALLBACK_BODY` and send `alert: { title, 'loc-key': 'notif.message.encrypted' }`. Note the one
+semantic difference and accept it: `loc-key` uses the DEVICE's language, while everything else on this
+path uses the in-app Canari locale (`ctx.locale`). They can disagree - and in the state this string is
+shown, no `ctx.locale` was ever read, so the device's language is the only signal there is.
+**Cost of keeping it:** one French sentence for a non-French user, on a path that only opens when the
+extension has already failed.
+
 ### 2027-02-19 - a server-composed `title` / `body` on social and form pushes
 
 **Site:** `PushContent.legacyTitle` / `legacyBody` in
