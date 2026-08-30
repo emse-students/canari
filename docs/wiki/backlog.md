@@ -34,7 +34,6 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 
 | What | The measurement that closes it |
 | --- | --- |
-| chat-gateway CORS is a strict list, not `*` | after CD redeploys, `OPTIONS /api/presence` from each of the seven origins echoes it, and an unknown origin gets no header - a wrong origin parses fine and matches nothing ([chat-gateway](services/chat-gateway.md#verifying-it-and-why-the-deploys-colour-is-not-the-proof)) |
 | a push carries its ciphertext once, not twice | HARDWARE, both platforms, iOS the riskier half - no iPhone has yet received a push built without the redundant `data` map ([chat-delivery](services/chat-delivery.md#transport--single-gateway-fcm)) |
 | a device with no push token now says so | after the next release, a tokenless device either acquires one or prints `[PUSH_UNAVAILABLE]` naming a cause; continued silence with a tokenless device still in `key_package` means a FIFTH cause, not a fixed one |
 | the notification quick reply's 403 | HARDWARE: check K steps 1-5 and **K2**, on A1 which already carries the build - **and the window must be ARMED, a run made without arming proves nothing** ([check K](device-verification.md#the-backgrounded-run-that-failed-and-the-defect-it-found)). The iOS twin is corrected identically and equally unproven |
@@ -526,32 +525,23 @@ precisely the transition being managed right now for `Welcome -> ... pour ...` (
 2026-08-25, both spellings pinned). Doing two of those at once during the ladder buys nothing. It is
 one edit plus one rule swap once the ladder is done.
 
-### P2 - the notification path ships raw literals, and answers the same caller in two languages
+### P2 - the server writes the only notification text a user may ever see, and it is French-only
 
-Found 2026-08-25 while reading `useMessaging.svelte.ts:485` for TAB-1's re-scope. Every user-visible
-string on the notification and forward paths is an inline literal, which the standing rule forbids
-outright (*"User-visible strings use Paraglide - no inline literals, ALWAYS, even in a plain `.ts`
-util, and even when a nearby call site already has raw strings"*):
+The frontend half of this shipped 2026-08-30 (`CHANGELOG.md`); what is left cannot be fixed the same
+way. `push-payload.ts:40` holds `APNS_FALLBACK_BODY = 'Nouveau message'`, the body of the push a
+device shows **before** it decrypts anything - and the one an English user is left with for good
+whenever the iOS NSE cannot decrypt. Nothing in `apps/` has Paraglide, and the server has no reason
+to: the defect is not a missing translation but a MISSING FACT. The server does not know the
+recipient's language.
 
-- `useNotifications.svelte.ts:226-227` - `'Appel entrant'`, `` `${callerName} vous appelle` ``,
-  `'Un contact vous appelle'`, and the `'Canari'` title fallback at `:202`.
-- `useMessaging.svelte.ts:496` - `'Nouveau message'`, the body of every message notification whose
-  preview is empty.
+**Carry the discriminator from where it is already known** rather than picking a language on the
+server's behalf: the client knows its locale at the moment it registers a push token, so `push_token`
+is where it belongs - one column, written by the same call that writes the token, read by
+`buildApnsRequest`. That is a schema change plus a migration, which is why it is an entry and not a
+line: it is not the same size as the literals it finishes.
 
-**The half that is worse than untranslated is INCONSISTENTLY translated.** One function hands its
-caller a French failure and an English one through the same field:
-
-- `useMessaging.svelte.ts:1173` - `error: 'Conversation introuvable.'`
-- `useMessaging.svelte.ts:1205` - `error: 'Nothing to forward.'`
-- `useMessaging.svelte.ts:1227` - `error: 'Conversation not ready.'`
-
-Whatever renders `error` shows whichever it got, so a French user meets English on two of the three
-forward failures. That is not a missing translation but a visible defect, which is why this is P2 and
-its siblings above are not. Nothing types a string as user-visible, so no gate catches any of it -
-the reason the rule says to reach for Paraglide on the FIRST draft.
-
-Not fixed on sight: a frontend change redeploys prod, and prod is the test server - a push during a
-run makes the phase VACUOUS. It belongs to the first work package after the ladder.
+Until then the fallback is French for everyone, and it is the ONLY string in this product a user can
+meet in a language they did not choose.
 
 ### P3 - a Welcome is repaired by kick + re-add, and nothing records which of the two causes it was
 

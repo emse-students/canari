@@ -238,6 +238,20 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A French user met English on two of the three ways a forward can fail.** `forwardMessage`
+  handed its one caller a prose `error` string built from inline literals, and the literals were
+  not in the same language: `'Conversation introuvable.'` next to `'Nothing to forward.'` and
+  `'Conversation not ready.'`, all three rendered verbatim into the same toast. The call site was
+  never at fault - it already falls back to a Paraglide message - so the six user-visible strings
+  on the notification and forward paths now come from `messages/{fr,en}.json` like everything
+  else. The incoming-call title reuses the `call_incoming_label` the call UI already had rather
+  than minting a twin, and the blinking-title fallback reuses `SITE.name`, a brand being a proper
+  noun and not a translatable string. Nothing types a string as user-visible, so no gate caught
+  any of this; what the gate did catch, once the messages namespace was imported, was a local
+  `const m = env.media` shadowing it inside the media-forward branch - the shadow is now named
+  `media`. Both `catch` branches of that function also swallowed their exception into a toast
+  without recording it anywhere, and now log it.
+
 - **Ten push notifications were refused by FCM for size in one run, twice over, because every
   message carried its ciphertext twice.** `MessagingService` sent one `getMessaging().send()` per
   token holding BOTH a `data` map and an `apns` payload that `buildApnsRequest` spreads the same

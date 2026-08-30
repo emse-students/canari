@@ -3,6 +3,8 @@
  * and the channel-membership banner notice.
  */
 import { SvelteMap } from 'svelte/reactivity';
+import { m } from '$lib/paraglide/messages';
+import { SITE } from '$lib/seo/site';
 import { notifNav } from '$lib/stores/notifNav.svelte';
 import { settings } from '$lib/stores/settingsStore.svelte';
 import { isTauriRuntime } from '$lib/utils/openExternal';
@@ -199,7 +201,8 @@ export function useNotifications() {
     originalTitle = document.title;
     let blink = true;
     blinkTitleTimer = setInterval(() => {
-      document.title = blink ? `🔔 ${originalTitle ?? 'Canari'}` : (originalTitle ?? 'Canari');
+      const base = originalTitle ?? SITE.name;
+      document.title = blink ? `🔔 ${base}` : base;
       blink = !blink;
     }, 800);
   }
@@ -223,8 +226,10 @@ export function useNotifications() {
   async function notifyIncomingCall(callerName: string, groupId: string) {
     if (typeof window === 'undefined') return;
 
-    const title = 'Appel entrant';
-    const body = callerName ? `${callerName} vous appelle` : 'Un contact vous appelle';
+    const title = m.call_incoming_label();
+    const body = callerName
+      ? m.notif_call_body_named({ caller: callerName })
+      : m.notif_call_body_unknown();
     const notifId = stableNotifId(`call:${groupId}`);
 
     const onTap = async () => {

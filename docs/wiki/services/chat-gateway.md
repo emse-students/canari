@@ -221,6 +221,22 @@ OPTIONS https://canari-emse.fr/api/presence  Origin: https://evil.example  -> no
 The layer also sends `Vary: origin`, which a shared cache needs before it can hold more than one
 client's answer; a test asserts it for the same reason.
 
+**Measured on prod 2026-08-30**, after the deploy that carried the fix, at BOTH layers - inside the
+network against `http://chat-gateway:3000` and through the public edge - because only the second is
+what a browser meets and only the first isolates this layer from nginx:
+
+```
+ALLOW_ORIGIN in the container   -> all seven entries present  (docker inspect)
+each of the seven origins       -> echoed back verbatim, no '*' anywhere
+https://evil.example.com        -> HTTP 200, no ACAO header
+                                -> vary: origin
+```
+
+A preflight carries no cookies, so `auth_request` cannot see a session on it - the edge answers the
+`OPTIONS` 200 either way, which is why the unknown origin's proof is the ABSENCE of the header and
+never a status code. Run it from `infrastructure-frontend-1`, the one container on that network with
+`curl`.
+
 ### The variable used to feed three consumers that wanted a single origin
 
 `frontend-ssr`'s `ORIGIN` - adapter-node's public origin - read `${ALLOW_ORIGIN:-...}` and was

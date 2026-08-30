@@ -493,7 +493,7 @@ export function useMessaging() {
     if (shouldSendSystemNotification) {
       const preview = getPreviewText(parseEnvelope(content));
       const title = getUserDisplayNameSync(senderId, convo.name);
-      void ctx.sendSystemNotification(title, preview || 'Nouveau message', normalized);
+      void ctx.sendSystemNotification(title, preview || m.notif_new_message(), normalized);
     }
 
     const skipDbSave = options.skipDbSave ?? isChannelConversationId(normalized);
@@ -1170,7 +1170,7 @@ export function useMessaging() {
     ctx: MessagingContext
   ): Promise<{ success: boolean; error?: string }> {
     const convo = ctx.conversations.get(targetName);
-    if (!convo) return { success: false, error: 'Conversation introuvable.' };
+    if (!convo) return { success: false, error: m.chat_forward_error_conversation_missing() };
 
     const env = parseEnvelope(sourceContent);
 
@@ -1202,7 +1202,8 @@ export function useMessaging() {
           return { success: true };
         }
         const channelText = env.kind === 'text' ? env.text.trim() : '';
-        if (!channelText) return { success: false, error: 'Nothing to forward.' };
+        if (!channelText)
+          return { success: false, error: m.chat_forward_error_nothing_to_forward() };
         return await sendChatMessage(channelText, targetName, null, {
           userId: ctx.userId,
           conversation: convo,
@@ -1211,10 +1212,9 @@ export function useMessaging() {
           log: ctx.log,
         });
       } catch (e) {
-        return {
-          success: false,
-          error: `Forward failed: ${e instanceof Error ? e.message : String(e)}`,
-        };
+        const reason = e instanceof Error ? e.message : String(e);
+        ctx.log(`[FORWARD] channel forward failed for "${targetName}": ${reason}`);
+        return { success: false, error: m.chat_forward_error({ reason }) };
       }
     }
 
@@ -1224,32 +1224,32 @@ export function useMessaging() {
       if (env.kind === 'media') {
         // Media forward is an inline upload+send: it still needs a ready MLS group.
         if (convo.lifecycle !== 'active')
-          return { success: false, error: 'Conversation not ready.' };
-        const m = env.media;
+          return { success: false, error: m.chat_forward_error_conversation_not_ready() };
+        const media = env.media;
         const messageId = crypto.randomUUID();
         const protoBytes = encodeAppMessage({
           ...mkMedia({
-            kind: mediaKindFromEnvelope(m.type),
-            mediaId: m.mediaId,
-            key: fromHex(m.key),
-            iv: fromHex(m.iv),
-            mimeType: m.mimeType,
-            size: m.size,
-            fileName: m.fileName ?? '',
+            kind: mediaKindFromEnvelope(media.type),
+            mediaId: media.mediaId,
+            key: fromHex(media.key),
+            iv: fromHex(media.iv),
+            mimeType: media.mimeType,
+            size: media.size,
+            fileName: media.fileName ?? '',
             caption: env.caption,
-            ...(m.width && m.height ? { width: m.width, height: m.height } : {}),
+            ...(media.width && media.height ? { width: media.width, height: media.height } : {}),
           }),
           messageId,
           sentAt: Date.now(),
         });
         await mlsService.sendMessage(convo.id, protoBytes, messageId);
-        const payload = serializeEnvelope(mkMediaEnvelope({ ...m }, env.caption));
+        const payload = serializeEnvelope(mkMediaEnvelope({ ...media }, env.caption));
         await addMessageToChat(ctx.userId, payload, targetName, ctx, { messageId });
         return { success: true };
       }
 
       const text = env.kind === 'text' ? env.text.trim() : '';
-      if (!text) return { success: false, error: 'Nothing to forward.' };
+      if (!text) return { success: false, error: m.chat_forward_error_nothing_to_forward() };
       return await sendChatMessage(text, targetName, null, {
         userId: ctx.userId,
         conversation: convo,
@@ -1258,10 +1258,9 @@ export function useMessaging() {
         log: ctx.log,
       });
     } catch (e) {
-      return {
-        success: false,
-        error: `Forward failed: ${e instanceof Error ? e.message : String(e)}`,
-      };
+      const reason = e instanceof Error ? e.message : String(e);
+      ctx.log(`[FORWARD] MLS forward failed for "${targetName}": ${reason}`);
+      return { success: false, error: m.chat_forward_error({ reason }) };
     }
   }
 
