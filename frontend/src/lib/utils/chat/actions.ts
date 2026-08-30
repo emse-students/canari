@@ -326,7 +326,16 @@ export async function processPendingInvitations(params: {
                 `[PENDING] Membership status of ${inv.deviceId} unreadable: ${String(statusErr).slice(0, 100)}`
               );
             }
-            log(`[PENDING] Non-recoverable error for ${inv.deviceId}: ${errStr.slice(0, 100)}`);
+            // Say what THIS branch knows, which is the WrongEpoch race its own comment describes:
+            // the epoch moved under the Add, the invitation is still pending, the next sweep
+            // retries. It called itself "Non-recoverable error" and was neither - and a line that
+            // overstates its severity teaches its reader to discount the tag, which `[PENDING]`
+            // cannot afford across eighteen lines. The raw error text is dropped with the name: it
+            // was what carried this line into the classifier's generic `epoch` rule, so a rule can
+            // now be anchored and exact instead of depending on how long an error string was.
+            log(
+              `[PENDING] Epoch moved under the Add for ${inv.deviceId} in ${groupId} - invitation still pending, next sweep retries`
+            );
           } else {
             log(`[PENDING] Add error for ${inv.deviceId} to ${groupId}: ${errStr.slice(0, 100)}`);
           }

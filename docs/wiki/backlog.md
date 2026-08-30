@@ -35,6 +35,8 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 | What | The measurement that closes it |
 | --- | --- |
 | `/forms/success` no longer asks for a form called `success` | after the deploy, social-service logs no `invalid input syntax for type uuid: "success"` across a completed payment - the symptom fired once per payment, so ONE payment settles it. The unit test pins the derived set; only prod pins the silence |
+| the `apiFetch` fallback now names its cause | the next run's logs separate "a container is restarting", which needs nothing, from "refresh is broken", which needs everything - they were the identical line. If one cause dominates, its RATE wants measuring against the population before the name "transient" is believed |
+| the `[PENDING]` line that called a routine race "Non-recoverable" | the next run reports it in `notable` from an ANCHORED rule, not from the generic `epoch` rule matching words an error string happened to carry. **The two old spellings stay pinned** until A1 runs a build emitting the new line - an APK embeds its frontend and is not reached by a deploy |
 | a push carries its ciphertext once, not twice | HARDWARE, both platforms, iOS the riskier half - no iPhone has yet received a push built without the redundant `data` map ([chat-delivery](services/chat-delivery.md#transport--single-gateway-fcm)) |
 | a device with no push token now says so | after the next release, a tokenless device either acquires one or prints `[PUSH_UNAVAILABLE]` naming a cause; continued silence with a tokenless device still in `key_package` means a FIFTH cause, not a fixed one |
 | the notification quick reply's 403 | HARDWARE: check K steps 1-5 and **K2**, on A1 which already carries the build - **and the window must be ARMED, a run made without arming proves nothing** ([check K](device-verification.md#the-backgrounded-run-that-failed-and-the-defect-it-found)). The iOS twin is corrected identically and equally unproven |
@@ -206,23 +208,6 @@ none of it because `gen/apple` is a different generated project nothing compared
 
 **This closes by HARDWARE, one item at a time**, like every other iOS finding: three of three defects
 so far were invisible to every gate here.
-
-### P3 - the one fallback in `apiFetch` logs that it was taken and not WHY (seen 2026-08-28)
-
-Seen on A1's logcat during a CD deploy: `[API] getToken failed for GET /api/users/d82cd226... -
-proceeding without auth`, one second after `[A] token→refresh` and a `502`.
-
-**The dangerous half is already guarded, and this is not WP-ANDROID-SESS-1 returning.**
-`apiFetch.ts` catches `SessionExpiredError` separately and refuses the anonymous retry for it, by
-name and with a comment; the fallback is reachable only on a non-401 failure, which is deliberate
-because some routes answer without a token and offline startup depends on it. On that logcat the
-cause was a service restarting mid-deploy - the designed transient path.
-
-**What is missing is the evidence, which the standing rule requires of any fallback**: the line names
-that the fallback was taken and nothing about the cause, so a reader cannot separate "a container is
-restarting", which needs nothing, from "refresh is broken", which needs everything - and the two
-produce the identical line. Log the caught error, and while there decide whether the rate is worth
-measuring against the population before the name "transient" is believed.
 
 ### P3 - nothing records which BUILD each device runs, though two mechanisms already carry it (2026-08-27)
 
@@ -489,42 +474,6 @@ community was alive.
 and reads back what the server fanned out - a different instrument from the COMM runners. `comm22.mjs`
 records `pastEpochFrames` verbatim on every run, so every future run says whether it is back, and the
 cheapest next step is to read those rows rather than to build the probe.
-
-### P3 - a log line calls a routine race "Non-recoverable", and its own comment says otherwise
-
-Found on 2026-08-25 while classifying the whole `[PENDING]` site for `watch.mjs`, so it is a reading
-of the code and not a symptom anyone reported. `actions.ts:312-323` handles an Add that failed on
-`WrongEpoch` or `epoch_mismatch`. Its comment is explicit about what that means - *"Transient
-concurrent race (gap 1): another device committed simultaneously. Check if the invitation is already
-fulfilled; otherwise let the next cycle retry"* - and the retry really happens: the missing commit
-arrives through the queue and the sweep runs again. Then, on the path where the membership does not
-yet read `active`, it logs:
-
-    [PENDING] Non-recoverable error for <device>: <errStr sliced to 100>
-
-**Every word of that is wrong about the branch it sits in.** It is recoverable, by the mechanism the
-comment describes, and nothing about it is an error the reader can act on. A line that overstates
-its own severity is the same defect as one that understates it: it teaches its reader to discount
-the tag, and `[PENDING]` has seventeen other lines that need to be read.
-
-**It also costs the classifier its determinism, and that is the part that made it visible.** The
-line reaches `notable` only because `NOTABLE`'s generic `/epoch|GAP|out-?of-?sync|re-?add|welcome_request/i`
-rule happens to match words the ERROR TEXT carried - and `errStr.slice(0, 100)` can cut them off, at
-which point the identical event lands in `unexplained` and breaks `clean`. So one log call has two
-buckets, chosen by how long an error string was. Both spellings are pinned in
-`classify-selftest.mjs` for exactly that reason, with the seam named rather than smoothed over; that
-is the correct handling of an accident, not a fix for it.
-
-**THE FIX IS THE LINE, NOT THE RULE.** Say what the branch knows - the epoch moved under us, the
-invitation is still pending, the next sweep retries - and drop the raw `errStr` interpolation that is
-carrying the classifier. Then the rule matching it can be anchored and exact like the other
-fourteen, and the `notable`/`unexplained` coin-flip disappears with it.
-
-**Why it is deferred.** It is a product-code string change, so W1 and W2 only see it after a deploy,
-and for the run that straddles that deploy the classifier has to accept both spellings - which is
-precisely the transition being managed right now for `Welcome -> ... pour ...` (fixed to `for` on
-2026-08-25, both spellings pinned). Doing two of those at once during the ladder buys nothing. It is
-one edit plus one rule swap once the ladder is done.
 
 ### P2 - the server writes the only notification text a user may ever see, and it is French-only
 

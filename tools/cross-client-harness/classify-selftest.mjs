@@ -208,12 +208,17 @@ const CASES = [
   ['log', '[01:40:12] [PENDING] KeyPackage retrieved via fallback for web-b78568a3… (> 30 days)', 'unexplained'],
   ['log', '[01:40:12] [PENDING] Kick error for web-b78568a3… in 941d7236…: GroupNotFound', 'unexplained'],
   ['log', '[01:40:12] [PENDING] Add error for web-b78568a3… to 941d7236…: TypeError: undefined', 'unexplained'],
-  // THE INHERITED ACCIDENT, IN BOTH SPELLINGS, exactly as the WELCOME_REQ catch-all is pinned below.
-  // One log call, two buckets: `Non-recoverable error` reaches `notable` only when the generic
-  // `epoch` rule happens to match words the error carried, and `errStr.slice(0, 100)` can cut them
-  // off. The seam is the classifier's, not the app's, and either bucket reports the line. The name
-  // is also wrong - it is the WrongEpoch branch, whose own comment says the next cycle retries -
-  // filed P3 in backlog.md rather than renamed mid-ladder.
+  // THE LINE THAT REPLACED THE INHERITED ACCIDENT, anchored and exact like its fourteen siblings.
+  // It says what the WrongEpoch branch knows and carries no error text, so it cannot be cut into a
+  // different bucket by its own length.
+  ['log',
+   '[01:40:12] [PENDING] Epoch moved under the Add for web-b78568a3… in 941d7236… - invitation still pending, next sweep retries',
+   'notable'],
+  // THE TWO OLD SPELLINGS, KEPT PINNED, exactly as `pour|for` is kept in watch.mjs: A1 EMBEDS its
+  // frontend, so it goes on emitting `Non-recoverable error for X: <errStr>` until an APK carrying
+  // the new line is installed, while W1/W2 change at the next deploy. Both buckets are pinned
+  // because which one the old line reached depended on whether `errStr.slice(0, 100)` cut the word
+  // the generic `epoch` rule matched. Drop them once A1 runs a build with the new line.
   ['log', '[01:40:12] [PENDING] Non-recoverable error for web-b78568a3…: WrongEpoch', 'notable'],
   [
     'log',

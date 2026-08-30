@@ -897,11 +897,13 @@ const NOTABLE = [
   //                  identical line), `Kick error` (an error inside a destructive repair) and `Add
   //                  error` (the catch-all: an unknown error class that left a device unadded).
   //
-  // ONE ACCIDENT IS INHERITED RATHER THAN FIXED, and it is the one the WELCOME_REQ block's own
-  // comment names: `Non-recoverable error for X: <errStr>` reaches `notable` only because the
-  // generic `epoch` rule matches words the error carried, and `errStr.slice(0, 100)` can cut them
-  // off. Both spellings are pinned in the selftest. The line also LIES about itself - it is the
-  // WrongEpoch branch, whose own comment says the next cycle retries - filed P3 in backlog.md.
+  // THE ACCIDENT THIS BLOCK INHERITED IS FIXED AS OF 2026-08-30, in the LINE and not in the rule.
+  // `Non-recoverable error for X: <errStr>` reached `notable` only because the generic `epoch` rule
+  // matched words the error carried, and `errStr.slice(0, 100)` could cut them off - one log call,
+  // two buckets, chosen by string length. It also lied about itself: it sat in the WrongEpoch
+  // branch, whose own comment says the next cycle retries. The line now says that, carries no raw
+  // error text, and has an anchored rule below. The two old spellings stay pinned in the selftest
+  // until A1 runs a build emitting the new one.
   //
   // A DEFINITE `false` FROM THE SERVER, then a bounded cleanup of that group's invitation rows.
   // `notable`: the retention is correct, but a group the server disowns while invitations for it are
@@ -935,6 +937,18 @@ const NOTABLE = [
   // the membership reads `active` and the sweep stops. `notable` - the race is real and self-
   // healing, which is a thing to see rather than a thing to fail on.
   /^\[PENDING\] \S+ already active - skip$/,
+  // THE WrongEpoch RACE NOT YET RESOLVED, which is the same race one line earlier seen from its
+  // other side: the membership still does not read `active`, so the sweep leaves the invitation
+  // for the next cycle. `notable` for the same reason - real concurrency, self-healing.
+  //
+  // IT WAS SPELT `Non-recoverable error for X: <errStr>` UNTIL 2026-08-30, which was wrong about
+  // every word of the branch it sat in, and it reached `notable` only because the generic `epoch`
+  // rule matched words the ERROR TEXT carried - `errStr.slice(0, 100)` could cut them off and drop
+  // the identical event into `unexplained`. Both old spellings stay pinned in the selftest for the
+  // same reason `pour|for` does above, and one more: A1 EMBEDS its frontend, so it keeps emitting
+  // the old line until an APK carrying this build is installed, while W1/W2 change at the next
+  // deploy. They may be dropped once A1 runs a build with this line.
+  /^\[PENDING\] Epoch moved under the Add for \S+ in \S+ - invitation still pending, next sweep retries$/,
   // THE SWEEP'S TALLY, guarded on `totalWelcomes > 0`, so it prints only when Welcomes really went
   // out. `notable` for that reason: it is never routine.
   /^\[PENDING\] \d+ Welcome\(s\) sent\.$/,

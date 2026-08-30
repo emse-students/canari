@@ -238,6 +238,26 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A log line called a routine, self-healing race "Non-recoverable error", and its own comment two
+  lines above said the next cycle retries.** It sits in the `WrongEpoch` / `epoch_mismatch` branch
+  of the pending-invitation sweep, where another device committed simultaneously and the missing
+  commit arrives through the queue. Every word was wrong about the branch, and a line that
+  overstates its severity teaches its reader to discount the tag - which `[PENDING]` cannot afford
+  across eighteen lines. It now says what the branch knows: the epoch moved under the Add, the
+  invitation is still pending, the next sweep retries. Dropping the raw error text with the name
+  also ends a non-determinism in the harness classifier, where this ONE call reached `notable` or
+  `unexplained` depending on whether `errStr.slice(0, 100)` cut off the word its generic `epoch`
+  rule happened to match; the rule is anchored and exact now, like its fourteen siblings. Both old
+  spellings stay pinned in `classify-selftest.mjs` because A1 embeds its frontend and goes on
+  emitting the old line until an APK carrying this build is installed.
+
+- **The one fallback in `apiFetch` said that it had been taken and nothing about why.** A token
+  fetch that fails for a non-401 reason proceeds unauthenticated on purpose - some routes answer
+  without a token and offline startup depends on it - but "a container is restarting mid-deploy",
+  which needs nothing, and "refresh is broken", which needs everything, produced the identical
+  sentence. The caught error's name and message are now in the line, which is what a fallback owes
+  its reader.
+
 - **Every completed payment made social-service answer 500, because the SSR asked it for a form
   whose id was the word `success`.** `serverSeo.ts` picks an enricher by matching the path against
   a regex, and `/^\/forms\/([^/]+)\/?$/` cannot tell a form id from a page: `/forms/success` is

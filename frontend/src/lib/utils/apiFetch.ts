@@ -50,7 +50,13 @@ export async function apiFetch(url: string, init: ApiFetchOptions = {}): Promise
       console.warn(`[API] session expired on ${method} ${logUrl} - no anonymous retry`);
       throw e;
     }
-    console.warn(`[API] getToken failed for ${method} ${logUrl} - proceeding without auth`);
+    // The CAUSE is the whole point of this line. A container restarting mid-deploy needs nothing
+    // and a broken refresh needs everything, and without it the two print the same sentence - which
+    // is what a fallback owes its reader: not that it was taken, but why the primary path failed.
+    const cause = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+    console.warn(
+      `[API] getToken failed for ${method} ${logUrl} - proceeding without auth (${cause})`
+    );
   }
 
   // Do not set a default Content-Type for FormData/Blob bodies - the browser must

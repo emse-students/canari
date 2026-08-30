@@ -73,6 +73,20 @@ describe('apiFetch when no token can be obtained', () => {
     expect((init.headers as Record<string, string>).Authorization).toBeUndefined();
   });
 
+  it('names the cause it fell back FOR, so two very different failures do not read alike', async () => {
+    refreshStatus = 0;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await apiFetch(TARGET);
+
+    const line = warn.mock.calls.map(([m]) => String(m)).find((m) => m.includes('without auth'));
+    expect(line).toBeDefined();
+    // A reader separating "a container is restarting" from "refresh is broken" has only this line.
+    expect(line).toContain('TypeError');
+    expect(line).toContain('Failed to fetch');
+    warn.mockRestore();
+  });
+
   it('sends the Bearer token once the refresh succeeds', async () => {
     refreshStatus = 200;
 
