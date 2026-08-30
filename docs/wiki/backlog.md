@@ -1651,6 +1651,50 @@ loss it was sent to cure.
 across two groups before the first digest goes out.
 
 
+### P2 - a device revoked while OFFLINE keeps its store until someone LOGS IN on it, and a reload is not enough (measured 2026-08-30)
+
+Found by HEAL-REVOKE-9 on `ef9aaba8`, the row written for exactly this question. **The important half
+passed and must not be lost in the noise of the failure**: while the victim was severed
+(`severed: true` in 4 ms, one socket closed) and the owner revoked it through the panel
+(`revoked: true`, `stillAddressable: false` in 2 106 ms), the device's state was **still there** -
+`identityKeys: 1`, 2 databases, 22 localStorage keys - and `wipeRan: false`. A device that cannot ask
+does not conclude. A transport failure is not an answer, and this rung's worst possible outcome would
+have been a wipe here.
+
+**What failed: `theWipeLandedAfterOneReload` and `itSaidSoInItsOwnLog`.** The network was restored
+(asserted from the page: `onLine: true`, 3 ms) and the page reloaded. The client latched its dead
+cookie - `[A] refresh xlatched (cookie already proven dead - not asking again)` - landed on `/login`,
+and **never learned it had been revoked**: `revocationSeen: false`, `frameArrived: false`,
+`wipeRan: false`. Fourteen minutes later `footprint.mjs --device W3` still read `identityKeys: 1`,
+`canariDatabases: 2`, 6.54 MB.
+
+**THE DISCRIMINATOR, MEASURED RATHER THAN ARGUED.** `login.mjs --device W3` was then run - one login,
+nothing else - and the same probe read `identityKeys: 0`, `localStorageKeys: 0`,
+`sessionStorageKeys: 0`, 3.46 MB, the remaining database being the new session's. **So the wipe is
+DEFERRED, not lost.** The row's title was right and the product does what it says.
+
+**What the product says, read from the code rather than inferred.** `sessionAuth.ts` has exactly
+three triggers and every one of them requires a credential or a live socket: the PIN path's
+`resetRequired`, the vault/biometric login paths' `isDeviceRevoked` call before `init()` (added
+2026-08-26 for this very hole), and the `device_revoked` frame, itself re-confirmed against the
+server before anything is erased. A page load that finds a dead cookie and stops at the gate hits
+none of them - **by design**, and the design is defensible: wiping on an unauthenticated page visit
+means a destructive control fired without a confirmed server fact, which is the shape every comment
+in that file exists to prevent.
+
+**SO THE OPEN QUESTION IS NOT "why did it not wipe", IT IS HOW LONG THE RESIDUE MAY SIT.** On a
+machine that is never logged into again - the stolen-laptop case revocation exists for - the state
+stays on disk indefinitely. What it consists of bounds the severity and should be stated plainly:
+`identityKeys` counts `mls_device_id_<userId>` and `canari_device_key_vault`, i.e. an identifier and
+SEALED key material, over IndexedDB databases encrypted under that device key. It is ciphertext and a
+name, not readable messages - which is why this is a P2 and not a P1.
+
+**Closing it would need a decision, not a patch.** Asking the revocation route at the login GATE
+means answering `/api/mls/devices/:userId/:deviceId/revoked` to an unauthenticated caller, which is a
+device-enumeration oracle; the alternative is a local expiry, and a clock is exactly what this
+project refuses to make load-bearing. Both leave the row's own specification open: it currently
+asserts the wipe after a RELOAD, and the trigger the product defines is a LOGIN.
+
 ### P3 - a `history_bundle` restores the EDITED flag without the edited body
 
 Found by enumerating every applier of a message mutation on 2026-08-22, after three defects in that
