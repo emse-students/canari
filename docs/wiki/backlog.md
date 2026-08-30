@@ -19,83 +19,45 @@ entry outright when it ships** - the rule goes to [durable-rules](durable-rules.
 `CHANGELOG.md`, the mechanism to the wiki page that entry points at. An entry describing its own fix
 is an entry nobody trusts to be current.
 
+**NOTHING FIXED BELONGS IN THIS FILE.** Where a fix is in the tree and only its measurement is
+missing, it gets ONE LINE in the table at the top and no entry of its own - a fixed thing mixed in
+with open work is how a queue stops being readable (user, 2026-08-30). Where an entry keeps an open
+half, the shipped half is a pointer, never a retelling.
+
+---
+
+## Owed a VERIFICATION, and nothing else
+
+Each of these is fixed in the tree; what is left is the measurement that would prove it. **Nothing
+about them is open work** - the story is in `CHANGELOG.md`, the mechanism on the wiki page named,
+the rule in [durable-rules](durable-rules.md). Delete the line once the measurement is taken.
+
+| What | The measurement that closes it |
+| --- | --- |
+| chat-gateway CORS is a strict list, not `*` | after CD redeploys, `OPTIONS /api/presence` from each of the seven origins echoes it, and an unknown origin gets no header - a wrong origin parses fine and matches nothing ([chat-gateway](services/chat-gateway.md#verifying-it-and-why-the-deploys-colour-is-not-the-proof)) |
+| a push carries its ciphertext once, not twice | HARDWARE, both platforms, iOS the riskier half - no iPhone has yet received a push built without the redundant `data` map ([chat-delivery](services/chat-delivery.md#transport--single-gateway-fcm)) |
+| a device with no push token now says so | after the next release, a tokenless device either acquires one or prints `[PUSH_UNAVAILABLE]` naming a cause; continued silence with a tokenless device still in `key_package` means a FIFTH cause, not a fixed one |
+| the notification quick reply's 403 | HARDWARE: check K steps 1-5 and **K2**, on A1 which already carries the build - **and the window must be ARMED, a run made without arming proves nothing** ([check K](device-verification.md#the-backgrounded-run-that-failed-and-the-defect-it-found)). The iOS twin is corrected identically and equally unproven |
+| WP-REGRANT-2, a re-granted member's re-join | COMM-22, four grant/revoke cycles green - and COMM-8 reading `seedAfterTheGrant: true`, never `repaired`, which is a fallback and not a path |
+
 ---
 
 ## Security - blocked upstream
 
-### ANSWERED - the `libcrux-chacha20poly1305` advisory never reached this product
+### P3 - the two libcrux crates that ARE compiled are pinned by `openmls_rust_crypto 0.5.1`
 
-**The crate is not compiled.** The claim rested on the lockfile, where it sits under
-`openmls_rust_crypto` -> `hpke-rs` -> `hpke-rs-libcrux` -> `libcrux-aead`; a lockfile lists what COULD
-be resolved, including optional dependencies nothing turns on, and `cargo tree -i` finds no path to any
-of the three on any target. The HPKE backend this build uses is `hpke-rs-rust-crypto`. The rule it left
-- **a lockfile entry is not a dependency**, so the first question about any advisory is whether
-`cargo tree -i` can reach the crate at all - is in [durable-rules](durable-rules.md).
+`libcrux-sha3` and `libcrux-secrets` reach this build through `hpke-rs`, and their advisories are
+the ones that survive. Both are pinned by `openmls_rust_crypto 0.5.1`, and a `0.0.x` requirement is
+exact in Cargo semver - only a stable `openmls_rust_crypto 0.6.0` moves them. Each case is an entry
+in the crate's `.cargo/audit.toml` naming why it cannot be honoured and what lifts it, so
+`cargo audit` is green with none of them forgotten. A scheduled dependency upgrade, not a live
+defect.
 
-**Two small things are still owed:**
-
-- **Dismiss the GitHub Dependabot alert.** It is the only one open, it is measured unreachable, and a
-  dismissal is a click in the GitHub UI - a one-off that goes to the user, not a tool.
-- **The `openmls_rust_crypto` provider upgrade.** Two libcrux crates ARE compiled - `libcrux-sha3` and
-  `libcrux-secrets`, through `hpke-rs` itself - and their advisories are the ones that survive. Both are
-  pinned by `openmls_rust_crypto 0.5.1`, and a `0.0.x` requirement is exact in Cargo semver, so only a
-  stable `openmls_rust_crypto 0.6.0` moves them. Each case is an entry in the crate's `.cargo/audit.toml`
-  naming why it cannot be honoured and what lifts it, so `cargo audit` is green with none of them
-  forgotten. A scheduled dependency upgrade, not a live defect.
-
-### P2 - iOS push acquisition WORKS, and the diagnostic built to explain a failure has never spoken (measured on prod 2026-08-30)
-
-**THE P1 IS CLOSED, ON THE EVIDENCE THIS ENTRY ITSELF NAMED** - *"an `ios` row in `push_token` closes
-it"*. `push_token` held no ios row in the entire life of the platform until **2026-08-28 08:07:54 UTC**,
-hours after `cab0826d` landed (2026-08-28 00:00 UTC, the tree still reading `0.14.8`), which moved the
-FCM-token read out of the bootstrap that could only ever fail and into `didBecomeActive`. That device
-now carries an FCM token AND a `voipToken` on 0.14.14. Cause and fix are on
-[mobile](frontend/mobile.md#the-apns-token-had-nowhere-to-land-because-the-proxy-meant-to-catch-it-installed-nothing),
-story in `CHANGELOG.md`; **neither is restated here.**
-
-**WHAT REPLACES IT IS SMALLER AND STRANGER: a second iPhone on the SAME build acquires nothing, and
-says nothing.** `key_package` joined to `push_token` on prod, 2026-08-30 13:09 UTC:
-
-| device | build | key package registered | FCM token |
-| --- | --- | --- | --- |
-| `0acc3ab9` | 0.14.14 | 30/08 13:08 | **yes**, plus voip |
-| `9855dfaf` | 0.14.14 | 30/08 12:55 | no, 14 minutes later |
-| `9855dfaf` | 0.14.9 | 28/08 13:58 | no, two days later |
-| `0acc3ab9` | 0.14.8 | 27/08 23:11 | no - registered 1 h BEFORE the fix landed |
-| `80a0050b` / `unknown` | 0.14.5 | 27/08 21:14, 21:27 | no - predate the fix |
-
-The bottom three rows are explained by their dates. **The top two are not: same build, same day,
-opposite outcomes.**
-
-**AND THE INSTRUMENT BUILT FOR EXACTLY THIS QUESTION IS SILENT.** `c939470c` shipped
-`POST /api/mls/push/unavailable` so that the absence of a row would stop being indistinguishable from a
-device nobody opened - *"the half that cost the platform its life was the silence"* - and
-`push_diagnostic.txt` so a report would name which of `no-apns-token`, `fcm-token-fetch-failed`,
-`apns-registration-refused` or `app-delegate-absent` it was. The route IS mapped
-(`Mapped {/api/mls/push/unavailable, POST}` at boot), and grepping `PUSH_UNAVAILABLE` over
-`infrastructure-chat-delivery-service-1` returns **zero lines for the container's whole life** (up since
-2026-08-29 10:08 UTC), on either platform. A device with no token and no report is the exact shape that
-commit was written to abolish.
-
-**THE SILENCE IS EXPLAINED AND FIXED 2026-08-30, and it was FOUR causes, not one.** Story in
-`CHANGELOG.md`, none of it restated here; the shape that matters is that the biggest one - the platform
-being read off the user agent, so an iPad WKWebView calling itself `Macintosh` made `startPushService`
-return as "desktop" - sits ABOVE the reporting path, which is why the silence was total rather than
-partial. It is the SAME defect the iPad login took, at a site that fix did not reach.
-
-**WHAT IS STILL OWED, AND IT IS NOW A MEASUREMENT, NOT A DIAGNOSIS.** The fix is verified by three
-unit tests and by nothing else: everything it touches only proves itself on a device that actually
-fails. **Watch `PUSH_UNAVAILABLE` on `infrastructure-chat-delivery-service-1` after the next release**
-- a line naming `no-apns-token`, `fcm-token-fetch-failed`, `apns-registration-refused` or
-`app-delegate-absent` is the instrument working; continued silence with a tokenless device still in
-`key_package` means a fifth cause. **The log window does NOT cover** the one
-`[PUSH_UNAVAILABLE] ... platform=ios reason=no-token` this entry used to quote (28/08 01:23): the
-container postdates it, so that line cannot be re-read and is not evidence about today.
-
-**AND THE ROOT QUESTION IS WIDER THAN THIS FILE:** `875d2fb0` fixed the iPad user-agent defect in the
-auth branch, and this was a second site nobody enumerated. **Every remaining `navigator.userAgent`
-test that decides an iOS behaviour is a candidate for the same bug** and should be swept, not waited
-for.
+**One one-off is owed to the user, not to the code:** dismissing the `libcrux-chacha20poly1305`
+Dependabot alert. It is the only one open and it is measured UNREACHABLE - the crate is not
+compiled, the HPKE backend built is `hpke-rs-rust-crypto`, and `cargo tree -i` finds no path to it
+on any target. The rule that measurement left (**a lockfile entry is not a dependency**) is in
+[durable-rules](durable-rules.md).
 
 ### The rest of what an iPhone will find, named by the user before it was looked for (2026-08-27)
 
@@ -644,38 +606,6 @@ and it stays.
 what the classifier sees on four deletion paths at once, so it lands after the ladder, with its rule
 written in the same commit.
 
-### P1 - a re-granted member stranded by a refused re-join (WP-REGRANT-2) - CODE IS IN, THE PROOF IS OWED
-
-**Every half is now shipped, and none of them has been measured together.** Kept as a P1 for exactly
-that reason: the defect was found by COMM-22 and only COMM-22 can retire it - four grant/revoke cycles
-green. The measurement, the log tables and the three wrong diagnoses this entry went through are in
-`CHANGELOG.md`, and the rules they left are in [durable-rules](durable-rules.md); none of it is
-restated here.
-
-| Half | What it was | Where |
-| --- | --- | --- |
-| The forget was not durable, so a reload restored the stale tree | the strand itself, permanent | shipped 2026-08-25 |
-| Five join refusals flattened into one `false` | the doomed commit resubmitted for 20 minutes | `3ec46d85` - `ExternalJoinOutcome`, six variants |
-| A transport failure relabelled "a newer commit landed" | a retry whose premise a lost packet cannot support | same commit - `reason: 'unreachable'`, claiming nothing |
-| The walk's silent skip, indistinguishable from a walk that never ran | a paragraph of this entry was wrong about it | it logs which condition declined |
-| **The READ refusal flattened the same way** | a 403 reported as `keeping the one this device holds` | 2026-08-26, below |
-
-**The last one was found by reading this entry rather than by a run**, and it is the same defect one
-layer up. `joinDistributionGroup` classified nothing before concluding from local state, so EVERY
-refusal of `getDistributionGroup` reached the `heldLocally` branch first - and a 403 is that route
-ANSWERING, on the membership of the scope, which is the whole reason the GroupInfo is served from
-social-service at all. A revoked member holding the tree therefore logged the sentence written for a
-lost packet, then reconciled its roster and asked for history on a salon it had just been refused.
-The status had been on `ChannelApiError` since that class was introduced; nothing read it. Now the
-three answers are separated BEFORE local state is consulted, and only the refusal that says nothing
-about entitlement falls back on what the device holds. It does NOT drop the tree - that is a
-destructive repair owing its own evidence, and the revoke has already deleted the delivery rows that
-would make the tree worth anything. The test that asserted `/could not read/` for a 403 was pinning
-the defect and now asserts the classification.
-
-**What is owed: a COMM-22 run, and nothing else.** It is on the re-run list for its own reasons
-(web-only, no phone), so the proof costs no extra work.
-
 ### P2 - a bundle of pure DECLINES still goes out as transport, and a dropped decline strands a requester
 
 **The measured case shipped 2026-08-25** - an answer carrying seeds is now `DELIVERY.keyMaterial`,
@@ -748,38 +678,6 @@ empty 200 and forgets the group with MORE confidence. A second read that races t
 discriminator. **What closes it is making the destructive branch require the fact its name claims, or
 renaming the branch to what it actually knows.**
 
-### P2 - the quick reply's 403 is FIXED, BUILT, INSTALLED ON A1 AND HAS NEVER BEEN RUN (2026-08-30)
-
-**The cause was the push secret's read order.** `pending_push_secret.txt` is written by the WebView at
-every `/register` - which mints a NEW secret and invalidates the previous one server-side - while the
-Keystore is written only by `processPendingPushSecret` at `onCreate` and `MainActivity.onResume`, both
-strictly before that registration, and `retrievePushSecret` preferred the Keystore unconditionally. So
-from the unlock that mints a secret until the next resume, the background sender authenticates with a
-dead one. Fixed at the precedence (the file wins whenever it exists), plus the two things the failure
-branch owed: the notification is re-posted so the `RemoteInput` spinner ends and the actions come back,
-and `OutboxRetryWorker.enqueueIfHealthy` is finally called so a failed reply retries in 30 s instead of
-at the next login. Story in `CHANGELOG.md`, mechanism on [mobile](frontend/mobile.md), rules in
-[durable-rules](durable-rules.md).
-
-**THE WHOLE OF WHAT THIS ENTRY OWES IS THE RE-MEASUREMENT, AND ITS PRECONDITION IS NOT AMBIENT.** A run
-made without arming it proves nothing, because a resume migrates the secret and closes the window - which
-is exactly why the KILLED run of that morning passed and the BACKGROUNDED one, ninety seconds later on
-the same build and device, was refused `HTTP 403`. The five steps, the assert that says the window is
-open, and the three verdict lines are on
-[check K](device-verification.md#the-backgrounded-run-that-failed-and-the-defect-it-found). Board rows
-NOTIF-6 (killed), NOTIF-6c (backgrounded, the FAIL) and NOTIF-6d (the failed-send UI) carry the state.
-
-**Also owed: K2** (airplane mode - a path proven to SEND is not a path proven to QUEUE), and the **iOS
-twin**, corrected identically and unproven on hardware.
-
-**THREE CAUSES THAT ARE RULED OUT, kept so no later session re-derives them from the same intuition.**
-The original reading was *"nothing can be sent on mobile while the app is killed"*, and it is wrong:
-mobile MLS is NATIVE, not WASM (`TauriMlsService` invokes Rust, state on the FILESYSTEM), so no WebView
-is needed to encrypt; a background send path exists and the quick reply is built and delivered entirely
-natively; and Android holds the device key at `setUserAuthenticationRequired(false)` on purpose, with the
-wiki's own warning never to set `setUnlockedDeviceRequired(true)`, *"which is exactly when a push
-arrives"*.
-
 ### P2 - the native "Marquer comme lu" still speaks the read model that was replaced on 2026-08-12 (found 2026-08-30)
 
 **The user's lead was right: it changed recently, and the native half did not follow.** `0db47a87`
@@ -815,34 +713,6 @@ Two smaller things found in the same file, neither fixed: `readCachedMessageIdsF
 `handleReply` cancels the notification and writes the cache entry, and sends no receipt of any kind.
 Whether it should is a product question for the user, not a defect: the board row NOTIF-6b was
 written to ask it and had never been run either way.
-
-### P2 - the FCM size refusals: CAUSE FOUND AND FIXED 2026-08-30, hardware proof owed
-
-**The cause was arithmetic, and the first hypothesis was wrong.** The guard capped the ciphertext at
-3 500 B, and the reading in this entry was that the nine other fields pushed the DATA MAP past 4096.
-Measured: they do not. With production-shaped ids and ordinary display names the map comes to
-**3 789 B** - under the limit, by 307 bytes. The refusals therefore could not have come from the
-data map alone, and what remained is the `apns` block, into which `buildApnsRequest` spreads the
-same fields: **4 005 B**, also under the limit on its own. FCM sizes the MESSAGE. 3 789 + 4 005 =
-**7 794 B**, and every push carried both. Story in `CHANGELOG.md`, mechanism on
-[chat-delivery](services/chat-delivery.md#transport--single-gateway-fcm), three rules in
-[durable-rules](durable-rules.md); **none of it restated here.**
-
-**WHAT IS OWED IS THE HARDWARE PROOF, and it is the same proof for both platforms.** Everything
-native verified by COMPILING has been wrong three times on this project, and this changes what
-reaches a real handset:
-
-- **Android**: a message whose ciphertext is near the budget must arrive and notify. The refusals
-  were reproducible - ten per run, twice - so their absence in a server window is itself evidence,
-  and `[PUSH_SIZE]` now names the bytes if one recurs.
-- **iOS**: the redundant `data` map is no longer sent to an iOS token. The APNs payload is
-  self-contained by design and the comment at the call site has always said so, but no iPhone has
-  received a push built this way. **This is the riskier half**, on the platform whose push
-  acquisition was itself only proven on 2026-08-28.
-
-**What it cost is still unverified**, and stays written as the question: the queue lines in the same
-window (`message stays in DB queue, will be fetched on reconnect`) suggest the MESSAGE survived and
-only the NOTIFICATION was lost. That was never checked for those ten.
 
 ### P3 - the WASM warns about a missing MLS state on every device that is SUPPOSED not to have one (measured 2026-08-29)
 
@@ -982,17 +852,11 @@ handed it.
 into the least legible failure it can produce. Every HEAL-NEW row is affected, and it costs nothing
 today only because the owner sits at 3 of 15 slots.
 
-### P2 - a client at the DEVICE CAP still enumerates ten rows it can never join (the P1 half SHIPPED 2026-08-28)
+### P2 - a client at the DEVICE CAP still enumerates ten rows it can never join
 
-**THE P1 IS CLOSED AND ITS STORY IS IN `CHANGELOG.md`, ITS RULES IN
-[durable-rules](durable-rules.md#mls-membership-and-routing); neither is restated here.** The server
-now logs its own refusal with the count it read (`spent=15/15`) and answers
-`DEVICE_LIMIT_REACHED` + `max`; `registerDeviceKeyPackage` throws `DeviceLimitReachedError`; and the
-publication call site logs an accusation and shows the user `chat_device_limit_reached`, naming the
-device list to open. Points 1 and 2 below are therefore done, and only point 3 remains - which is
-why this is a P2: nothing is now silent, and nobody is left without the one instruction that helps.
-
-**What is left**, and it is a rendering-honesty question rather than a mechanism: ten conversations
+**A rendering-honesty question rather than a mechanism**, and a P2 rather than a P1 because nothing
+is silent any more: the refusal is logged with the count it read, the user is shown
+`chat_device_limit_reached` naming the device list to open. What is left: ten conversations
 that can never become ready still wear the "Sync" badge, because the sidebar is enumerated from the
 server's group list and every row starts `isReady: false`. The toast explains the cause once; the
 rows keep claiming a repair is in progress for as long as the device stays refused.
@@ -1055,61 +919,14 @@ five rows then reported that a wiped profile does not publish - a phantom produc
 this file overnight. `newdevice.mjs` now asserts the account has a slot BEFORE it wipes anything, and
 purges the id each mint abandons.
 
-### P1 - a PLACEHOLDER held a member's place in a real conversation, and both directions of it were lost for 134 minutes (measured on prod 2026-08-28; CAUSE FOUND, GUARDS SHIPPED, cleanup owed)
+### P1 - the ghost membership already on prod: a cleanup nothing revokes, waiting on the owner's go-ahead
 
-**This entry replaces the two written earlier the same day.** They described one chain, from its two
-ends, and reading them apart is what made the first account stop one step short.
-
-**THE USER'S SYMPTOM.** Nothing arrived between their message at 23:02 Paris and 01:03; their 01:03
-message never reached the peer; the peer's 01:09 reply never reached them; afterwards both could
-talk again. All five facts are in `chat-delivery`'s log, which happens to start at 00:47 Paris and
-covers the whole episode.
-
-**WHAT THE ROSTER ACTUALLY SAID**, for group `7da231f8-119c-4ce2-884f-55f5c94c903f`:
-
-| device | status | created (UTC) |
-| --- | --- | --- |
-| `pending` / user `unknown` | **`active`** | 21:00:13.26 |
-| the peer's `web-...-mtbep8vs-5oxb` | `pending` | 21:00:14.10 |
-| the peer's `tauri-...-mtc0al5c-9hny` | `pending` | 22:03:36 |
-| the peer's `tauri-...-mtc545la-ebnu` | `active` | **23:14:45** - the reinstall |
-
-**The peer had NO active device in this conversation between 21:00 and 23:14.** A placeholder took
-their place 0.84 s before the real members joined, and held it. So the 01:03 message was fanned out
-to a roster in which the peer did not appear, and the 01:09 reply was encrypted by a device that
-was not in the group at the live epoch. The server said so twenty-one times
-(`No active membership`), every `MSG_FETCH` returned `count=0`, and **there is no `COMMIT` for the
-group in the window at all.**
-
-**THE "HEAL" WAS A REINSTALL, and that is the part that must not be misread.** At 23:14:45 the user
-uninstalled and reinstalled the app by hand for [check S](device-verification.md). That minted a NEW
-device id, which issued a `WELCOME_REQ`, which produced the group's only commit (epoch 2 -> 3).
-**Nothing self-corrected.** An ordinary user would have stayed stranded with no reason to reinstall.
-
-**THE CAUSE, and it is one line of client code.** `BaseMlsService` initialises `userId = 'unknown'`
-and `deviceId = 'pending'`, and `updateInvitationStatus` is the only client call that can CREATE an
-`active` membership row from nothing. Two call sites in `setupMessageHandler` reach it with
-`mlsService.getDeviceId()`, which returns the raw field - so a Welcome processed before the identity
-resolved published the pair, and the server stored it as a member. The class already guarded on both
-literals in three other places (`settleBarrier`, `fetchPendingMessages`, `resolveDeviceId`): the
-value was documented as a non-identity and one seam published it anyway.
-
-**Why the existing ghost guard did not catch it.** `invitations/status` already gates promotion on
-`deviceAddressability` (WP-GHOST-1) - a denylist check plus the presence of a KeyPackage. The
-placeholder registered a KeyPackage under the same pair, so it was addressable. Both literals also
-pass `SAFE_QUERY_VALUE_REGEX` perfectly. **A shape allowlist is not an identity allowlist.**
-
-**WHAT SHIPPED 2026-08-28, at both ends deliberately** - a client of any version reaches that
-endpoint, so neither guard is allowed to be the only one.
-
-- Client: `UNRESOLVED_USER_ID` / `UNRESOLVED_DEVICE_ID` are named constants, the three existing
-  literal comparisons read from them, and `updateInvitationStatus` throws `UnresolvedIdentityError`
-  (typed, carrying `seam` and `field`) rather than publishing. Every call site is fire-and-forget
-  and re-driven, so a refusal costs one cycle. Tests: `BaseMlsService.unresolvedIdentity.test.ts`.
-- Server: `sanitizeIdentityValue` refuses the two literals on the paths that can WRITE an identity -
-  `REGISTER_DEVICE` and `invitations/status`. `kick-stale-device` deliberately keeps the generic
-  sanitizer: it only DEMOTES an existing row, and demoting a placeholder is a step towards cleaning
-  one up. Tests: `sanitize.identity.spec.ts`.
+**The defect, its cause and the guards that shipped 2026-08-28 are in `CHANGELOG.md` and on
+[chat-delivery](services/chat-delivery.md); none of it is restated here.** What matters for the work
+below is one fact: the guards stop a NEW placeholder being published, and **nothing revokes the one
+that already exists** - a `(userId='unknown', deviceId='pending')` membership row that has been an
+`active` member of group `7da231f8-119c-4ce2-884f-55f5c94c903f` since 2026-08-27 21:00:13 UTC, so
+every message and commit sent in that conversation is still fanned out to a member nobody holds.
 
 **WHAT IS STILL OWED, in order and not before.**
 
@@ -1338,7 +1155,7 @@ survived the debris being cleared, so both causes are real and neither was the r
   the design. Its blocker is `peerWroteBefore`, and the first thing owed to it is a re-run on the
   COMM-8 fix, not a runner change.
 
-### P2 - an external joiner's own commit locked the next joiner out; FIXED for that path 2026-08-26, one half left (COMM-22)
+### P2 - a STAGED commit cannot export a base at submit time, and keeps a repair where the external path needs none (COMM-22)
 
 **Reproduced on two builds with one runner**, `d6f61539` (2026-08-25T21:56Z) and `2a4297cb`
 (2026-08-26T17:45Z), `armed: true`, six grant/join/send/revoke/send cycles both times. It is NOT the
@@ -1397,25 +1214,12 @@ hands the ask to a layer certain to refuse it, to discover a group it is not in,
 `stale_base` established exactly that. And *a race that heals cleanly is still a defect* - here it
 does not heal at all.
 
-**THE WINDOW WAS DELETED, NOT NARROWED - and it cost no Rust at all.** An external commit is applied
-to the returned instance at once, unlike a staged add/remove, so the joiner is at `base + 1` the
-moment `join_by_external_commit` returns and can export the base its own commit created *before*
-merging. That base now travels inside `POST /api/mls/commit`, and chat-delivery writes it with the
-epoch advance in ONE transaction: `putGroupInfo(groupId, base, baseEpoch + 1)` inside
-`groupRepo.manager.transaction`. There is no follow-up call left to lose, so the reload that used to
-take it takes nothing, and the `void this.refreshGroupInfo(...)` that followed an accepted external
-join is gone rather than kept alongside. The client refuses to publish at all if its instance is not
-at `gi.baseEpoch + 1` (the base is monotonic; one blob under the wrong epoch would strand the group
-for good), and abandons the join instead - `build_failed`, whose welcome_request fallback already
-exists. Proved by `mls-core/tests/external_join.rs`
-(`a_joiner_exports_the_base_its_own_commit_created_before_merging`: a fourth device holding NOTHING
-joins on the base the joiner exported, and messages converge), by three server specs in
-`messaging.commit-log.spec.ts`, and by two in `BaseMlsService.externalJoin.test.ts` - one of which
-asserts that NOTHING follows the submission.
-
-**Narrowing was considered and rejected**: republishing on *applying* a commit rather than on the next
-read would cut 14 s to under a second, but a two-member salon whose other member is offline still has
-nobody to mint the base, and a shorter race is still a race.
+**The external-join half is shipped and is not restated here** - story in `CHANGELOG.md`, mechanism
+on [mls-protocol](protocols/mls-protocol.md). What matters for the half below is only its shape: the
+window was DELETED rather than narrowed, because an external commit is applied at once and the
+joiner can export the base its own commit created before merging. Narrowing was considered and
+rejected - a two-member salon whose other member is offline still has nobody to mint the base, and
+a shorter race is still a race.
 
 **THE HALF THAT REMAINS, and why it is separate.** An ordinary staged commit (add/remove) cannot
 export a base at submit time: its commit is unapplied, so the device is still at the OLD epoch and
