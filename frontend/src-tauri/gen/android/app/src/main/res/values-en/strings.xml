@@ -28,6 +28,8 @@
     <string name="notif_reaction_body">reacted %1$s to your message</string>
     <string name="notif_action_reply">Reply</string>
     <string name="notif_action_mark_read">Mark as read</string>
+    <!-- See the French table for why this exists. %1$s is the text the user typed. -->
+    <string name="notif_reply_pending">%1$s · not sent, retrying</string>
     <string name="notif_incoming_call">Incoming call</string>
     <string name="notif_incoming_video_call">Incoming video call</string>
     <string name="notif_action_answer_call">Answer</string>

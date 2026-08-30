@@ -903,9 +903,68 @@ Play production served **14011** until 2026-08-30 and the WP-NOTIF-1 work landed
 value of dating a symptom against a build, and it is why this entry does not close yet: **what is
 disproven is the defect on 0.14.12, not the user's experience on whatever they were holding.**
 
-**THIS ENTRY STAYS OPEN FOR K2**, which measures the opposite outcome - a reply that must NOT leave -
-and has no compile check worth the name. A path proven to SEND is not a path proven to QUEUE.
+**THE FOURTH CAUSE WAS IN THE CODE AFTER ALL, AND THE PARAGRAPH ABOVE IS WHY IT WAS MISSED
+(2026-08-30).** The measurement that "eliminated" the three causes was a KILLED run, and killing the
+app is precisely the branch that repairs the defect before the test reads it. Re-run with the app
+merely BACKGROUNDED - same build, same device, same conversation, ninety seconds later - the reply
+was refused `HTTP 403`. The cause is the push secret's read order: `pending_push_secret.txt` is
+written by the WebView at every `/register` (which mints a NEW secret and invalidates the previous
+one server-side), the Keystore is written only by `processPendingPushSecret` at `onCreate` and at
+`MainActivity.onResume` - both strictly before the registration that writes the file - and
+`retrievePushSecret` preferred the Keystore unconditionally. So from the unlock that mints a secret
+until the next resume, the background sender authenticates with a dead one. A killed app never sees
+it: FCM starts a fresh process, `onCreate` migrates the file first. **The user's report was real, and
+it was a real defect on the CURRENT build - the build question this entry spent its last paragraph on
+was a red herring.**
 
+Fixed at the precedence (the file wins whenever it exists), plus two things the failure branch owed:
+the notification is re-posted so the `RemoteInput` spinner ends and the actions come back, and
+`OutboxRetryWorker.enqueueIfHealthy` is finally called so a failed reply retries in 30 s instead of
+at the next login. Story in `CHANGELOG.md`, mechanism on [mobile](frontend/mobile.md), rules in
+[durable-rules](durable-rules.md).
+
+**WHAT THIS ENTRY STILL OWES, AND IT IS THE WHOLE OF IT: THE RE-MEASUREMENT. THE FIX IS WRITTEN,
+BUILT AND INSTALLED ON A1, AND HAS NEVER BEEN RUN.** The exact procedure and the armed precondition
+are on [check K](device-verification.md#the-backgrounded-run-that-failed-and-the-defect-it-found).
+Also still open: **K2** (airplane mode, the reply that must NOT leave - a path proven to SEND is not
+a path proven to QUEUE), and the **iOS twin**, corrected identically and unproven on hardware.
+
+
+### P2 - the native "Marquer comme lu" still speaks the read model that was replaced on 2026-08-12 (found 2026-08-30)
+
+**The user's lead was right: it changed recently, and the native half did not follow.** `0db47a87`
+migrated read state from `read_receipt` (a list of message ids) to `read_watermark` (an instant) and
+touched **only** `frontend/src/lib/**` - zero native files. `grep read_watermark` over
+`frontend/src-tauri/src` and `frontend/src-tauri/gen` returns nothing. So the shade's "Marquer comme
+lu" still builds a `read_receipt` through `nativeBuildReadReceiptProto`.
+
+It is not dead: `systemMessageHandler.ts` still accepts `read_receipt` and converts it, via
+`watermarkAfterReading`, into the watermark the rest of the app uses. But the conversion is only as
+good as the ids it is given, and those come from `readCachedMessageIdsForGroup`, which reads
+`fcm_message_cache.ndjson` - a file `consumeFcmCache()` CLEARS at every app boot. Two consequences,
+both measured on A1 on 2026-08-30:
+
+- **Cache populated** (the message arrived while the app was down): works.
+  `handleMarkRead: read receipt queued+drained for 1 message(s)`, `HTTP 201`, and W1's row went from
+  `"...\n1\nMR-A1-G3H9"` to `"...\nMR-A1-G3H9"` - the badge cleared on the other device.
+- **Cache empty** (the app has been opened since): takes the
+  `no cached messageId ... no receipt sent` branch. The banner clears locally and **nothing is marked
+  read anywhere** - a silent divergence between this device and every other one, with no error.
+
+`watermarkAfterReading` on an empty list returns 0, so an empty receipt could not help either. **The
+instant the action needs is known at the tap** - it is the moment the user pressed the button - and
+the design sends a set of ids it has to go looking for in a cache written for another purpose. That
+is this repo's own rule about a column only being evidence for the question it was written to answer.
+The fix is to build a `read_watermark` natively and delete the id path; it needs a new
+`nativeBuildReadWatermarkProto` beside the existing proto encoders and the legacy branch kept for
+old clients ([legacy-compatibility](legacy-compatibility.md)).
+
+Two smaller things found in the same file, neither fixed: `readCachedMessageIdsForGroup` filters on
+`groupId` alone although `writeSentMessageToCache` writes a `senderId` right beside it, so a
+"mark as read" can include the user's OWN messages; and **replying does not mark as read** -
+`handleReply` cancels the notification and writes the cache entry, and sends no receipt of any kind.
+Whether it should is a product question for the user, not a defect: the board row NOTIF-6b was
+written to ask it and had never been run either way.
 
 ### P2 - ten push notifications were REFUSED by FCM for size in one run, and the guard measures the wrong quantity (measured 2026-08-29)
 

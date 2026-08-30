@@ -321,6 +321,49 @@ taken at all. But it also means the run had no gate, no dirt classifier and no r
 5 (the self avatar in the thread) was never looked at, and **K2 - the airplane-mode reply that must
 NOT be delivered - is untouched and is still the half most likely to be wrong.**
 
+### The BACKGROUNDED run that failed, and the defect it found
+
+**A KILLED RUN IS THE BRANCH THAT HEALS THIS DEFECT, SO THE PASS ABOVE PROVED LESS THAN IT LOOKED.**
+Re-run on 2026-08-30 with the app merely backgrounded - `am kill` never issued, process alive at
+`proc=LAST`, `foregroundedAtSend: false` - the same reply on the same build, device and conversation
+was refused:
+
+```
+07:55:57  CanariFCM: sendQueuedMessagePush: HTTP 201   <- app KILLED, fresh process
+07:57     MainActivity resumed and unlocked -> /register mints a NEW secret,
+          pending_push_secret.txt written (32 bytes, mtime 07:57)
+07:59:30  CanariFCM: sendQueuedMessagePush: HTTP 403   <- app BACKGROUNDED, same process
+```
+
+The file was still sitting there unconsumed at 08:06, which per the code can only happen when the
+Keystore answered first - with the previous process's secret, which `/register` had already
+invalidated. Cause, fix and rules: [backlog](backlog.md), `CHANGELOG.md`,
+[mobile](frontend/mobile.md), [durable-rules](durable-rules.md). Two further defects fell out of the
+same branch: the `RemoteInput` spinner never ended (screenshot evidence: the action row was gone and
+the reply text sat under a spinner eight minutes on), and no retry was ever scheduled.
+
+**THE RE-MEASUREMENT IS OWED AND IS THE ONLY THING LEFT.** The fix is written, `assembleUniversalDebug`
+is green and the APK is installed on A1 (`install -r`, data kept, 2026-08-30 08:16). It has never
+been run. To re-arm the precondition - it is NOT ambient, and a run made without it proves nothing:
+
+1. `adb shell input keyevent KEYCODE_HOME`, then `am kill fr.emse.canari`, and assert `pidof` is
+   empty. **Never `force-stop`**, which puts the app in the STOPPED state and cancels every FCM
+   broadcast.
+2. `node run.mjs --preflight A1` - it foregrounds, sends the app to `/chat` and unlocks the PIN.
+   That unlock is what calls `/register` and writes the file.
+3. **Assert the precondition is armed**: `run-as fr.emse.canari ls -l /data/data/fr.emse.canari/pending_push_secret.txt`
+   must show 32 bytes. If the file is ABSENT the window is closed (a resume already migrated it) and
+   the run measures nothing - go back to step 1. Use the PowerShell tool for this, never Bash, which
+   rewrites the absolute device path.
+4. `node scratch/k-run.mjs "<marker>" --background`, then answer from the shade.
+5. **Verdict lines:** `retrievePushSecret: newer secret adopted from pending_push_secret.txt -> Keystore`,
+   then `sendQueuedMessagePush: HTTP 201`, then `1 sent, 0 remaining`. A `403` means the fix is
+   wrong, not that the rig is.
+
+One rig note, met twice: the adb daemon died mid-session and the preflight reported the PHONE
+unreachable. `adb kill-server && adb start-server` fixes it, and it kills any background `logcat`
+capture with it.
+
 ## L. A revoked device coming back - the dev panel
 
 **Proves** WP-DEV-PANEL-1. The cause is known and fixed; only the recovery has never been seen run.

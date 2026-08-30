@@ -1224,6 +1224,38 @@ Key FFI functions:
 - `nativeBuildTextMessageProto` / `canari_native_build_text_message_proto` — Reply proto encoder
 - `nativeBuildReadReceiptProto` / `canari_native_build_read_receipt_proto` — Read receipt proto encoder
 
+## The push secret has two homes, and the file is always the newer one
+
+`POST /mls/push/register` mints a fresh `rawSecret` on **every** call and overwrites the stored hash,
+so the previous secret is dead the instant it answers. That secret reaches the background sender by
+two hops, and the second one is slower than the first:
+
+| Store | Written by | When |
+|---|---|---|
+| `pending_push_secret.txt` (app data dir) | the WebView, via `store_push_secret` (`push.rs`) | at every `/register`, i.e. at each login/unlock that re-registers |
+| Android Keystore / iOS Keychain | `CanariApplication.processPendingPushSecret` (also run from `MainActivity.onResume`) / `CanariRetrievePushSecret` | at process start and at each resume - always BEFORE the registration that writes the file |
+
+So the file, whenever it exists, is **newer by construction**, and the Keystore is one registration
+behind for the whole window between an unlock and the next resume. `retrievePushSecret` reads the
+file FIRST for exactly that reason, migrates it into the Keystore, zeroes it over its own byte length
+and deletes it - the same consumption the startup hook does, so the two paths converge on one
+representation and the file's presence never means anything but "newer than the Keystore". An empty
+file is a half-written handoff, not an answer: it is left in place and the Keystore is used.
+
+**Reading the Keystore first is what "the notification quick reply is broken" was.** Every background
+send made from a merely backgrounded app authenticated with an invalidated secret and got `403`,
+while a KILLED app worked perfectly - FCM starts a fresh process, `onCreate` migrates the file, and
+the Keystore is valid again. That asymmetry is why the defect survived a passing measurement; see
+[check K](../device-verification.md#the-backgrounded-run-that-failed-and-the-defect-it-found).
+
+**A failed background send owns the notification it came from.** Android consumes the `RemoteInput`
+when the action fires and draws a spinner it never resolves, so `handleReply`'s failure branch
+re-posts the notification (`repostReplyPending`) rather than leaving it: same id, spinner ended, both
+actions restored, the typed text shown as a pending message attributed to our own `Person`. It also
+calls `OutboxRetryWorker.enqueueIfHealthy`, which the FCM drain's failure path had had all along.
+Neither cancels the send - the entry stays in `outbox_pending.ndjson` and is still adopted at the
+next login by `adoptOrphanedMirrorEntries`.
+
 ## Android / iOS parity, and where it is actually guaranteed
 
 **Code parity was audited file by file at v0.12.0 (2026-08-03) and holds.** The residual

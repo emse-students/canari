@@ -64,8 +64,10 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
     /**
      * Builds a text `AppMessage` proto for the typed reply, queues it into the same
      * `outbox_pending.ndjson` mirror the TS composer writes to, and drains it immediately.
-     * Clears the local notification only once actually delivered (drain returns 0 remaining) -
-     * a queued-but-undelivered reply must keep the notification so the user can retry from the app.
+     * Clears the local notification only once actually delivered (drain returns 0 remaining);
+     * an undelivered reply keeps its notification, but RE-POSTED - see the failure branch, and
+     * [CanariFirebaseMessagingService.repostReplyPending] for why leaving it alone showed the user
+     * a spinner that never ends.
      *
      * A delivered reply is also written to `fcm_message_cache.ndjson` under OUR user id, because
      * nothing else records it locally: the proto is built natively and never becomes a TypeScript
@@ -112,11 +114,21 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
             CanariFirebaseMessagingService.cancelConversationNotification(context, groupId)
         } else {
             // Not delivered: NO cache entry, or the app would show as sent a message that never
-            // left. The notification stays up as the immediate retry affordance, and the entry
-            // stays in outbox_pending.ndjson - where `adoptOrphanedMirrorEntries` (outboxMirror.ts)
-            // now picks it up at the next login and turns it into a real TypeScript outbox entry
-            // plus a local message, instead of it being erased by the next `store_outbox_mirror`.
-            Log.w(TAG, "handleReply: reply still queued (remaining=$remaining) - notification left as-is, adoption owed at next login")
+            // left. The entry stays in outbox_pending.ndjson - where `adoptOrphanedMirrorEntries`
+            // (outboxMirror.ts) picks it up at the next login and turns it into a real TypeScript
+            // outbox entry plus a local message, instead of it being erased by the next
+            // `store_outbox_mirror`. Nothing is lost. But leaving it THERE was not enough, and the
+            // two things missing here were the whole of what the user saw:
+            //  - the notification must be RE-POSTED. Android consumed the RemoteInput the moment
+            //    this action fired and draws an indeterminate spinner it never resolves, so
+            //    "the notification stays up as the retry affordance" was false - it stayed up with
+            //    the actions gone and a spinner running, for good.
+            //  - a deferred retry must be ENQUEUED. Nothing scheduled one here, so a reply that
+            //    failed waited for the next LOGIN, where the FCM drain's own failure path has had
+            //    a 30s/60s/120s backoff all along.
+            Log.w(TAG, "handleReply: reply still queued (remaining=$remaining) - re-posting the notification and scheduling a retry")
+            CanariFirebaseMessagingService.repostReplyPending(context, groupId, text)
+            OutboxRetryWorker.enqueueIfHealthy(context)
         }
     }
 

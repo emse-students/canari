@@ -230,29 +230,174 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // instance - never `attachBaseContext`-ed - is safe to pass there, but NOT as `context`.
 
         /**
-         * Retrieves the push secret, falling back to [pending_push_secret.txt] when the Keystore
-         * entry is absent. This covers the race where Tauri writes the secret while the app is
-         * already running (so [CanariApplication.onCreate] never ran to migrate the file).
-         * On a successful fallback read the secret is migrated into the Keystore immediately.
+         * Retrieves the push secret. `pending_push_secret.txt` WINS over the Keystore whenever it
+         * exists, because it is newer by construction: `POST /mls/push/register` mints a fresh
+         * secret on EVERY call and invalidates the previous one server-side, the WebView writes
+         * that secret to the file (`store_push_secret`), and the only thing that ever moves the
+         * file into the Keystore is [CanariApplication.processPendingPushSecret] - which runs once
+         * per process, at `onCreate`, i.e. strictly BEFORE the registration that wrote the file.
+         *
+         * Reading the Keystore first therefore returned the PREVIOUS process's secret for the whole
+         * life of a process, and the server answered 403 to every background send made from a
+         * merely backgrounded app. A killed app hid it: FCM starts a fresh process, `onCreate`
+         * migrates the file, and the Keystore is fresh again. That asymmetry is the whole of
+         * "the notification quick reply is broken" (WP-NOTIF-1).
+         *
+         * The file is consumed here exactly as at startup - stored into the Keystore, zeroed over
+         * its own byte length, deleted - so the two paths converge on one representation and the
+         * file's presence never means anything but "newer than the Keystore".
          */
         internal fun retrievePushSecret(context: Context): String? {
-            val stored = PushSecretKeystore.retrieve(context)
-            if (stored != null) return stored
-
-            return try {
+            try {
                 val file = File(MlsContextLoader.tauriDataDir(context), "pending_push_secret.txt")
-                if (!file.exists()) return null
-                val rawBytes = file.readBytes()
-                val secret = rawBytes.toString(Charsets.UTF_8).trim()
-                if (secret.isEmpty()) return null
-                PushSecretKeystore.store(context, secret)
-                file.writeBytes(ByteArray(rawBytes.size) { 0 })
-                file.delete()
-                Log.i(TAG, "retrievePushSecret: secret migrated from pending_push_secret.txt -> Keystore")
-                secret
+                if (file.exists()) {
+                    val rawBytes = file.readBytes()
+                    val secret = rawBytes.toString(Charsets.UTF_8).trim()
+                    if (secret.isNotEmpty()) {
+                        PushSecretKeystore.store(context, secret)
+                        file.writeBytes(ByteArray(rawBytes.size) { 0 })
+                        file.delete()
+                        Log.i(TAG, "retrievePushSecret: newer secret adopted from pending_push_secret.txt -> Keystore")
+                        return secret
+                    }
+                    // An empty file is a half-written handoff, not an answer: leave it for the next
+                    // reader and fall through to the Keystore rather than deleting a secret nobody
+                    // has read yet.
+                    Log.w(TAG, "retrievePushSecret: pending_push_secret.txt present but empty - falling through to the Keystore")
+                }
             } catch (e: Exception) {
-                Log.e(TAG, "retrievePushSecret: fallback failed: ${e.message}")
-                null
+                Log.e(TAG, "retrievePushSecret: pending_push_secret.txt unreadable: ${e.message}")
+            }
+
+            val stored = PushSecretKeystore.retrieve(context)
+            if (stored == null) {
+                Log.e(TAG, "retrievePushSecret: no pending file and no Keystore entry - background send cannot authenticate")
+            }
+            return stored
+        }
+
+        /**
+         * Builds the inline "Repondre" action (RemoteInput text field), routed to
+         * [CanariNotificationActionReceiver]. Its PendingIntent MUST be mutable: RemoteInput writes
+         * the typed text into the intent extras when the system delivers the broadcast, which
+         * `FLAG_IMMUTABLE` would silently drop.
+         *
+         * [res] is the locale-resolved context and is passed in rather than derived: [appLocaleContext]
+         * costs one `push_context.json` read per call and is meant to be resolved once per notification.
+         */
+        internal fun buildReplyAction(
+            context: Context,
+            res: Context,
+            groupId: String,
+            notifId: Int,
+        ): NotificationCompat.Action {
+            val remoteInput = RemoteInput.Builder(KEY_TEXT_REPLY)
+                .setLabel(res.getString(R.string.notif_action_reply))
+                .build()
+            val intent = Intent(context, CanariNotificationActionReceiver::class.java).apply {
+                action = ACTION_QUICK_REPLY
+                putExtra(EXTRA_GROUP_ID, groupId)
+            }
+            val pendingIntent = PendingIntent.getBroadcast(
+                context, notifId, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+            )
+            return NotificationCompat.Action.Builder(
+                R.drawable.ic_notification, res.getString(R.string.notif_action_reply), pendingIntent
+            ).addRemoteInput(remoteInput).setAllowGeneratedReplies(true).build()
+        }
+
+        /** Builds the "Marquer comme lu" action, routed to [CanariNotificationActionReceiver]. */
+        internal fun buildMarkReadAction(
+            context: Context,
+            res: Context,
+            groupId: String,
+            notifId: Int,
+        ): NotificationCompat.Action {
+            val intent = Intent(context, CanariNotificationActionReceiver::class.java).apply {
+                action = ACTION_MARK_READ
+                putExtra(EXTRA_GROUP_ID, groupId)
+            }
+            // A distinct requestId (notifId + 1) so this PendingIntent does not collide/merge with
+            // the reply action's (same notifId would make FLAG_UPDATE_CURRENT overwrite one with
+            // the other).
+            val pendingIntent = PendingIntent.getBroadcast(
+                context, notifId + 1, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            return NotificationCompat.Action.Builder(
+                R.drawable.ic_notification, res.getString(R.string.notif_action_mark_read), pendingIntent
+            ).build()
+        }
+
+        /**
+         * Re-posts a conversation's notification after a quick reply failed to leave the device.
+         *
+         * Android consumes the RemoteInput the instant the action fires: it replaces the action row
+         * with an indeterminate spinner and NEVER resolves it on its own. Leaving the notification
+         * untouched - which is what the failure branch used to do, calling it "the immediate retry
+         * affordance" - therefore leaves a notification reading "sending" forever, offering no retry
+         * at all. The reply is NOT lost (it stays in `outbox_pending.ndjson`), so this must not
+         * cancel the send; what it cancels is the spinner.
+         *
+         * Re-posting under the same id ends the spinner, restores both actions, and shows the typed
+         * text as a pending message of the thread, so the shade states what is actually true.
+         * `setOnlyAlertOnce` keeps it silent: nothing new arrived, only our own send failed.
+         *
+         * Best-effort by nature - if the notification is already gone there is nothing to correct.
+         */
+        internal fun repostReplyPending(context: Context, groupId: String, replyText: String) {
+            try {
+                val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                val notifId = getStableNotifId(context, groupId)
+                val existing = manager.activeNotifications.firstOrNull { it.id == notifId }?.notification
+                if (existing == null) {
+                    Log.w(TAG, "repostReplyPending: no active notification for group=${groupId.take(8)} - spinner cannot be cleared")
+                    return
+                }
+                val previous = NotificationCompat.MessagingStyle
+                    .extractMessagingStyleFromNotification(existing)
+                if (previous == null) {
+                    Log.w(TAG, "repostReplyPending: no MessagingStyle on the notification for group=${groupId.take(8)}")
+                    return
+                }
+                val res = appLocaleContext(context)
+                val style = NotificationCompat.MessagingStyle(previous.user)
+                previous.conversationTitle?.let {
+                    style.conversationTitle = it
+                    style.isGroupConversation = previous.isGroupConversation
+                }
+                previous.messages.takeLast(MAX_NOTIF_MESSAGES - 1).forEach { style.addMessage(it) }
+                // Attributed to US, like the in-flight reply Android was drawing, so the thread
+                // reads as the user's own pending message and not as a new incoming one.
+                style.addMessage(
+                    NotificationCompat.MessagingStyle.Message(
+                        res.getString(R.string.notif_reply_pending, replyText),
+                        System.currentTimeMillis(),
+                        previous.user
+                    )
+                )
+                val channel = if (android.os.Build.VERSION.SDK_INT >= 26) {
+                    existing.channelId ?: CHANNEL_MESSAGES
+                } else {
+                    CHANNEL_MESSAGES
+                }
+                val builder = NotificationCompat.Builder(context, channel)
+                    .setSmallIcon(R.drawable.ic_notification)
+                    .setStyle(style)
+                    .setAutoCancel(true)
+                    .setPriority(NotificationCompat.PRIORITY_HIGH)
+                    .setContentIntent(existing.contentIntent)
+                    .setGroup(GROUP_KEY_MESSAGES)
+                    .setOnlyAlertOnce(true)
+                if (groupId.isNotEmpty() && !groupId.startsWith("channel_")) {
+                    builder.addAction(buildReplyAction(context, res, groupId, notifId))
+                    builder.addAction(buildMarkReadAction(context, res, groupId, notifId))
+                }
+                manager.notify(notifId, builder.build())
+                Log.i(TAG, "repostReplyPending: re-posted group=${groupId.take(8)} - spinner cleared, actions restored")
+            } catch (e: Exception) {
+                Log.e(TAG, "repostReplyPending: ${e.message}", e)
             }
         }
 
@@ -2661,8 +2806,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // Quick actions (WP-XP-1): MLS-only (DM/group), never on a channel_ conversation - channels
         // are server-authoritative and do not go through the MLS outbox (see outbox.ts isChannelConversationId).
         if (quickActions && groupId.isNotEmpty() && !groupId.startsWith("channel_")) {
-            notifBuilder.addAction(buildReplyAction(res, groupId, notifId))
-            notifBuilder.addAction(buildMarkReadAction(res, groupId, notifId))
+            notifBuilder.addAction(buildReplyAction(this, res, groupId, notifId))
+            notifBuilder.addAction(buildMarkReadAction(this, res, groupId, notifId))
         }
 
         val notif = notifBuilder.build()
@@ -2673,46 +2818,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // Rebuild the group summary and refresh the launcher badge count (WP-XP-2) now that this
         // conversation's notification is active.
         refreshBadgeSummary(this)
-    }
-
-    /**
-     * Builds the inline "Repondre" action (RemoteInput text field), routed to
-     * [CanariNotificationActionReceiver]. Its PendingIntent MUST be mutable: RemoteInput writes the
-     * typed text into the intent extras when the system delivers the broadcast, which
-     * `FLAG_IMMUTABLE` would silently drop.
-     */
-    private fun buildReplyAction(res: Context, groupId: String, notifId: Int): NotificationCompat.Action {
-        val remoteInput = RemoteInput.Builder(KEY_TEXT_REPLY)
-            .setLabel(res.getString(R.string.notif_action_reply))
-            .build()
-        val intent = Intent(this, CanariNotificationActionReceiver::class.java).apply {
-            action = ACTION_QUICK_REPLY
-            putExtra(EXTRA_GROUP_ID, groupId)
-        }
-        val pendingIntent = PendingIntent.getBroadcast(
-            this, notifId, intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
-        )
-        return NotificationCompat.Action.Builder(
-            R.drawable.ic_notification, res.getString(R.string.notif_action_reply), pendingIntent
-        ).addRemoteInput(remoteInput).setAllowGeneratedReplies(true).build()
-    }
-
-    /** Builds the "Marquer comme lu" action, routed to [CanariNotificationActionReceiver]. */
-    private fun buildMarkReadAction(res: Context, groupId: String, notifId: Int): NotificationCompat.Action {
-        val intent = Intent(this, CanariNotificationActionReceiver::class.java).apply {
-            action = ACTION_MARK_READ
-            putExtra(EXTRA_GROUP_ID, groupId)
-        }
-        // A distinct requestId (notifId + 1) so this PendingIntent does not collide/merge with the
-        // reply action's (same notifId would make FLAG_UPDATE_CURRENT overwrite one with the other).
-        val pendingIntent = PendingIntent.getBroadcast(
-            this, notifId + 1, intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        return NotificationCompat.Action.Builder(
-            R.drawable.ic_notification, res.getString(R.string.notif_action_mark_read), pendingIntent
-        ).build()
     }
 
     /**

@@ -6,7 +6,8 @@
 /// Tauri `app_data_dir` (Application Support/fr.emse.canari) of the CALLING process.
 FOUNDATION_EXPORT NSString *_Nullable CanariTauriDataDir(void);
 
-/// Reads the push secret (Keychain, falling back to pending_push_secret.txt).
+/// Reads the push secret. pending_push_secret.txt WINS over the Keychain when present -
+/// it is newer by construction; see the implementation for why the reverse order 403s.
 FOUNDATION_EXPORT NSString *_Nullable CanariRetrievePushSecret(void);
 
 /// Installs the push handler (FCM delegate + UNUserNotificationCenter).

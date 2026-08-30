@@ -238,6 +238,33 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A reply typed in the notification shade was refused by the server (`HTTP 403`) whenever the app
+  was merely BACKGROUNDED instead of killed - and the shade then showed a "sending" spinner that
+  never ended.** The push secret has two homes: `pending_push_secret.txt`, written by the WebView
+  the moment `POST /mls/push/register` answers, and the platform Keystore/Keychain, which is where
+  the background sender reads it. The only thing that ever moved the file into the Keystore was
+  `CanariApplication.processPendingPushSecret`, at `onCreate` and at `MainActivity.onResume` - i.e.
+  strictly BEFORE the registration that writes the file - while `retrievePushSecret` preferred the
+  Keystore unconditionally. Since `/register` mints a fresh secret on EVERY call and invalidates the
+  previous one server-side, the Keystore held a dead secret from the unlock that minted the new one
+  until the next resume, and every background send in that window was rejected. **A killed app hid
+  it perfectly**: FCM starts a fresh process, `onCreate` migrates the file, and the Keystore is
+  valid again - which is why the killed measurement of 2026-08-30 passed at `HTTP 201` while the
+  backgrounded one 90 seconds later failed at `HTTP 403` on the same build, the same device and the
+  same conversation. The file now WINS whenever it exists, because it is newer by construction. The
+  identical inversion in the iOS twin (`CanariRetrievePushSecret`, Keychain-first) is corrected the
+  same way and is UNPROVEN on hardware.
+- **A quick reply that failed to send left a notification that said "sending" for ever and offered
+  no way to retry.** Android consumes the `RemoteInput` the instant the action fires: it swaps the
+  action row for an indeterminate spinner and never resolves it on its own. The failure branch
+  called the untouched notification "the immediate retry affordance", which it had stopped being -
+  it stayed up with a running spinner and no actions at all. It is now RE-POSTED under the same id,
+  which ends the spinner, restores `Repondre` and `Marquer comme lu`, and shows the typed text as a
+  pending message of the thread. The send is not cancelled - the reply is still in
+  `outbox_pending.ndjson` and still adopted at the next login - only the spinner is.
+- **A quick reply that failed to send scheduled no retry at all, and waited for the next LOGIN.**
+  `OutboxRetryWorker.enqueueIfHealthy` backs the FCM drain's own failure path with a 30s/60s/120s
+  backoff and was never called from the notification receiver. It is now.
 - **A device its owner had REVOKED kept its message store, because two readers held it open and the
   wipe could only close one.** Measured on prod on 2026-08-30 by the HEAL-REVOKE-9 campaign row,
   which severed a device, revoked it, and then signed back in on it: the wipe logged

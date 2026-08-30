@@ -317,8 +317,10 @@ Sweeps every `+push` row left behind above it.
 | NOTIF-4 | Read on W1 while A1 is killed, W1 arriving at the salon AFTERWARDS: notification dismissed on A1 | `+push` | `PASS-DIRTY` on `1f396ac7` - re-run owed, the runner changed |
 | NOTIF-4b | The same, W1 holding the salon ALREADY OPEN when the message lands - the case an unread counter cannot see | `+push` | `pending` |
 | NOTIF-5 | Per-channel level muted on W1: A1 does not notify, message still arrives | `+push` | `pending` |
-| NOTIF-6 | Quick reply from the shade (= device check K) | `+push` | `pending` - reported broken on an old APK |
-| NOTIF-6b | "Marquer comme lu" from the shade: the banner goes AND the salon is read on the other devices - never verified either way | `+push` | `pending` |
+| NOTIF-6 | Quick reply from the shade, app **KILLED** (= device check K) | `+push` | `pending` - MEASURED by hand on 0.14.12, works; not a campaign verdict (no gate, no ledger row). See [check K](device-verification.md) |
+| NOTIF-6c | Quick reply from the shade, app **BACKGROUNDED** - the branch that does NOT restart the process | `+push` | `pending` - **FAILED `HTTP 403` on 0.14.12, P1 found and fixed 2026-08-30; the fix is installed on A1 and NOT yet re-measured** |
+| NOTIF-6d | A quick reply that FAILS to send: the shade's spinner must end, both actions must come back, and a retry must be scheduled | `+push` | `pending` - no runner; the defect it names is fixed and unproven |
+| NOTIF-6b | "Marquer comme lu" from the shade: the banner goes AND the salon is read on the other devices - never verified either way | `+push` | `pending` - MEASURED by hand 2026-08-30: works WITH the cache populated (`HTTP 201`, W1's badge cleared), and silently does nothing with it empty. Replying does NOT mark as read. Native still emits the pre-watermark `read_receipt` - see [backlog](backlog.md) |
 | NOTIF-7 | Tap -> deep link into the conversation, **backgrounded** | `+push` | `pending` |
 | NOTIF-7b | The same with the app **KILLED** | `+push` | `pending` |
 | NOTIF-7c | Tap -> deep link into a CHANNEL, **backgrounded**: the salon is on screen and holds the marker - 7/7b are the DM only | `+push` | `pending` |

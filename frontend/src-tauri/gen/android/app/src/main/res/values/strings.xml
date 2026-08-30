@@ -40,6 +40,11 @@
     <string name="notif_reaction_body">a réagi %1$s à votre message</string>
     <string name="notif_action_reply">Répondre</string>
     <string name="notif_action_mark_read">Marquer comme lu</string>
+    <!-- Shown in place of the inline reply once a quick reply failed to leave the device. Android
+         swaps the action row for a spinner the moment RemoteInput is consumed and never resolves it
+         on its own, so the notification is re-posted with this line: the reply is kept and retried,
+         but the shade must not keep showing "sending" forever. %1$s is the text the user typed. -->
+    <string name="notif_reply_pending">%1$s · non envoyé, nouvelle tentative en cours</string>
     <string name="notif_incoming_call">Appel entrant</string>
     <string name="notif_incoming_video_call">Appel vidéo entrant</string>
     <string name="notif_action_answer_call">Répondre</string>

@@ -143,6 +143,10 @@ crois qu'il n'y a plus rien avant"*). In this order, and nothing else first:**
    `login.mjs --device W1` is enough; nothing on this rung needs a human again unless that profile
    is lost (its 2FA is the one step no tool here can answer, and it cost a block on 2026-08-30).
 
+   **NOTE (2026-08-30): the rung in hand was interrupted by the phone's turn, which found a P1 -
+   see item 5, which is where a resuming session starts.** What follows is HEAL's own state and is
+   unchanged.
+
    **Owed, in order: RE-RUN 9 on a build carrying `da0ce2f2`.** It has run twice and FAILed twice,
    and both failures were worth having: the first on a trigger the product does not have (the row
    asked a RELOAD, the product defines a LOGIN plus the PIN its refusal names - settled by the user
@@ -226,14 +230,32 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
    it never reads - both in [backlog](docs/wiki/backlog.md). **A DEPLOY IS OWED before any further
    HEAL verdict about a newly created group.**
 
-5. **THE PHONE'S TURN, VALIDATED BY THE USER 2026-08-30**, in this order and no other: **check K
-   steps 1-4 are MEASURED PASS on 0.14.12 (2026-08-30) and the reported defect does NOT reproduce** -
-   lines and provenance on [check K](docs/wiki/device-verification.md), which also says why this is a
-   MEASUREMENT and not a campaign verdict. **Still owed there: step 5 (the self avatar) and K2**, the
-   airplane-mode reply that must NOT be delivered - a path proven to SEND is not a path proven to
-   QUEUE. Then the new **HEAL-NEW-5b**, the killed-responder row no cell asked about before;
-   then **HEAL-REVOKE-6** and the six other `+A1` HEAL rows. A1 is plugged back in and adb sees it;
-   the CDP forward wants `node phone.mjs 9333`.
+5. **THE PHONE'S TURN, VALIDATED BY THE USER 2026-08-30. START HERE: A P1 IS FIXED, BUILT,
+   INSTALLED ON A1 AND NEVER RUN.** The quick reply was refused `HTTP 403` whenever the app was
+   merely BACKGROUNDED - the push secret's two stores were read in the wrong order, and a KILLED app
+   healed it before the test could see it, which is why the 2026-08-30 measurement passed. Cause,
+   fix and the three defects it dragged out are in `CHANGELOG.md`, on
+   [mobile](docs/wiki/frontend/mobile.md), in [durable-rules](docs/wiki/durable-rules.md) and in
+   [backlog](docs/wiki/backlog.md); **none of it is restated here.**
+
+   **THE ONE THING OWED IS THE RE-MEASUREMENT, AND ITS PRECONDITION IS NOT AMBIENT** - a run made
+   without arming it proves nothing, because a resume migrates the secret and closes the window.
+   The five steps, the assert that says the window is open, and the three verdict lines are in
+   [check K](docs/wiki/device-verification.md#the-backgrounded-run-that-failed-and-the-defect-it-found).
+   Board rows NOTIF-6 (killed), NOTIF-6c (backgrounded, the FAIL) and NOTIF-6d (the failed-send UI)
+   carry the state. **The iOS twin is corrected identically and is UNPROVEN on hardware** - it joins
+   check S in what a device owes.
+
+   Then, in order: check K **step 5** (the self avatar) and **K2** (airplane mode - a path proven to
+   SEND is not a path proven to QUEUE); then **HEAL-NEW-5b**, the killed-responder row no cell asked
+   about before; then **HEAL-REVOKE-6** and the six other `+A1` HEAL rows.
+
+   **Rig facts worth not re-learning:** the adb daemon died twice mid-session and the preflight blamed
+   the PHONE - `adb kill-server && adb start-server`, which also kills any background `logcat`.
+   `node run.mjs --preflight A1` is the whole from-zero sequence after an `install -r`. A Kotlin-only
+   change does NOT need the Tauri build: `gradlew :app:assembleUniversalDebug` in `gen/android`, 58 s.
+   And `phone.notifications()` returns a bogus trailing pseudo-record (the tail of `dumpsys` after the
+   last `NotificationRecord(` matches PKG), which inflates every count it returns - unfixed.
 
 6. **DEFERRED PAST THE LADDER - seven UX and rendering items**, substance in
    [backlog](docs/wiki/backlog.md) and nowhere else, named here only so none is forgotten: the POSTS

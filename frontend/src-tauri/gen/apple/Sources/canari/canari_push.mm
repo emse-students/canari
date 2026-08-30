@@ -223,7 +223,41 @@ static bool CanariPushSecretStore(NSString *secret) {
   return SecItemAdd((__bridge CFDictionaryRef)add, nil) == errSecSuccess;
 }
 
+// pending_push_secret.txt WINS over the Keychain whenever it exists, because it is newer by
+// construction: POST /mls/push/register mints a fresh secret on EVERY call and invalidates the
+// previous one server-side, the WebView writes that secret to the file (store_push_secret), and
+// the only thing that ever moves the file into the Keychain is this function - reached at process
+// start, i.e. strictly BEFORE the registration that wrote the file.
+//
+// Reading the Keychain first therefore returned the PREVIOUS process's secret for the whole life
+// of a process, and the server answered 403 to every background send made from a merely
+// backgrounded app. Measured on Android, where the code and the server behaviour are the same
+// (WP-NOTIF-1); this is the same defect in the mirrored implementation and is UNPROVEN on iOS
+// hardware - see check S in docs/wiki/device-verification.md.
 NSString *CanariRetrievePushSecret(void) {
+  NSString *dir = CanariTauriDataDir();
+  NSString *path =
+      dir == nil ? nil : [dir stringByAppendingPathComponent:kPendingPushSecretFileName];
+  if (path != nil && [[NSFileManager defaultManager] fileExistsAtPath:path]) {
+    NSData *raw = [NSData dataWithContentsOfFile:path];
+    NSString *secret =
+        raw == nil ? nil
+                   : [[[NSString alloc] initWithData:raw encoding:NSUTF8StringEncoding]
+                         stringByTrimmingCharactersInSet:[NSCharacterSet
+                                                             whitespaceAndNewlineCharacterSet]];
+    if (secret.length > 0) {
+      CanariPushSecretStore(secret);
+      NSMutableData *zeros = [NSMutableData dataWithLength:raw.length];
+      [zeros writeToFile:path atomically:YES];
+      [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+      NSLog(@"[CanariPush] secret plus recent adopte depuis pending_push_secret.txt");
+      return secret;
+    }
+    // An empty/unreadable file is a half-written handoff, not an answer: leave it for the next
+    // reader and fall through to the Keychain rather than deleting a secret nobody has read yet.
+    NSLog(@"[CanariPush] pending_push_secret.txt present mais vide - repli sur le Keychain");
+  }
+
   NSDictionary *query = @{
     (__bridge id)kSecClass : (__bridge id)kSecClassGenericPassword,
     (__bridge id)kSecAttrService : kPushSecretKeychainService,
@@ -239,30 +273,9 @@ NSString *CanariRetrievePushSecret(void) {
       return stored;
     }
   }
-
-  NSString *dir = CanariTauriDataDir();
-  if (dir == nil) {
-    return nil;
-  }
-  NSString *path = [dir stringByAppendingPathComponent:kPendingPushSecretFileName];
-  if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {
-    return nil;
-  }
-  NSData *raw = [NSData dataWithContentsOfFile:path];
-  if (raw == nil) {
-    return nil;
-  }
-  NSString *secret = [[[NSString alloc] initWithData:raw encoding:NSUTF8StringEncoding]
-      stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-  if (secret.length == 0) {
-    return nil;
-  }
-  CanariPushSecretStore(secret);
-  NSMutableData *zeros = [NSMutableData dataWithLength:raw.length];
-  [zeros writeToFile:path atomically:YES];
-  [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
-  NSLog(@"[CanariPush] secret migre depuis pending_push_secret.txt");
-  return secret;
+  NSLog(@"[CanariPush] aucun secret: ni fichier en attente ni Keychain - envoi en arriere-plan "
+        @"impossible");
+  return nil;
 }
 
 // WP-SEC-1: retrieves the MLS device key from the background-accessible Keychain item
