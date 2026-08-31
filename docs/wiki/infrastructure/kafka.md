@@ -55,6 +55,16 @@ connected a producer for handler replies, whose only send path is a reply to a h
 exist - so it could not emit a record, and creating it printed the KafkaJS v2 partitioner warning on
 every boot.
 
+**Verified on prod after the deploy, not inferred from a green pipeline:** the container came up
+`healthy`, `/api/health` answered `{"status":"ok"}`, its boot log carries no Kafka line at all (the
+partitioner warning included), and the group it used to hold is now `Empty` with `0` members - a
+tombstone Kafka expires on its own offsets retention:
+
+```
+GROUP                          STATE   #MEMBERS
+chat-delivery-consumer-server  Empty   0
+```
+
 That warning is what sent anyone looking. The question it raised - *legacy partitioner or default?* -
 had no answer, because **the producer could never send anything, keyed or otherwise**. Setting
 `KAFKAJS_NO_PARTITIONER_WARNING=1` would have hidden the line and kept the producer; the transport
