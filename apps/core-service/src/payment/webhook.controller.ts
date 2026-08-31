@@ -150,7 +150,14 @@ export class PaymentWebhookController {
       if (webhookSecret) {
         const sig = req.headers['stripe-signature'] as string;
         const raw = req.body as Buffer;
-        event = this.stripe.webhooks.constructEvent(raw, sig, webhookSecret);
+        // ASYNC, and not as a precaution. The runtime is `bun dist/main.js`, and bun matches the
+        // `worker` export condition, which stripe-node maps to its web build - so the crypto
+        // provider is `SubtleCryptoProvider`, whose `constructEvent` throws BY DESIGN ("cannot be
+        // used in a synchronous context") because WebCrypto has no synchronous digest. Every
+        // webhook this container ever received was rejected on that throw: 24 deliveries, 0
+        // accepted, over its whole life. `constructEventAsync` is the same verification on either
+        // provider, so this is one path rather than a branch on which build got resolved.
+        event = await this.stripe.webhooks.constructEventAsync(raw, sig, webhookSecret);
       } else if (process.env.NODE_ENV === 'production') {
         this.logger.error(
           'STRIPE_WEBHOOK_SECRET is required in production - refusing unsigned webhook'

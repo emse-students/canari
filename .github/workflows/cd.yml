@@ -4,10 +4,21 @@ on:
   push:
     branches: [main]
   workflow_dispatch: # Permet déclenchement manuel
-  # GITHUB_TOKEN pushes from "Bump version on release" do not trigger `on: push` workflows.
-  # NO `branches:` filter here: the bump run is release-triggered so its head branch is
-  # the TAG (e.g. v0.10.4), not main - a `branches: [main]` filter silently drops it
-  # (bit every release up to v0.10.4: post-release CD never fired).
+  # GITHUB_TOKEN pushes do not trigger `on: push` workflows - github's anti-recursion rule -
+  # so a workflow that pushes to main has to reach CD by one of the two routes below or its
+  # work never deploys. NO `branches:` filter here: the bump run is release-triggered so its
+  # head branch is the TAG (e.g. v0.10.4), not main, and a `branches: [main]` filter silently
+  # drops it (that bit every release up to v0.10.4: post-release CD never fired).
+  #
+  # THE SAME TRAP WAS FOUND A SECOND TIME ON 2026-08-31: `Dependabot auto-merge` had squash
+  # merged five dependency PRs into main between 11:24 and 11:31 and CD had not run once, the
+  # last deploy being a human commit from 11:08. That is not a safety margin - it is main and
+  # production drifting apart with nothing saying so, until an unrelated human push ships the
+  # whole accumulated batch at once. It is NOT listed below on purpose: a `workflow_run` fires
+  # on that workflow's every completion, including the ones where it DECLINES to merge, which
+  # would deploy dozens of times over for nothing. It calls `workflow_dispatch` instead, and
+  # only after a merge actually happened - dispatch being the documented exception to the
+  # anti-recursion rule.
   workflow_run:
     workflows: ['Bump version on release']
     types: [completed]

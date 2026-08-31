@@ -11,7 +11,49 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+
+### Fixed
+
+- **Every Stripe webhook was rejected, and one member paid 130,00 EUR the app never recorded.**
+  `PaymentWebhookController` verified signatures with `stripe.webhooks.constructEvent`, the
+  SYNCHRONOUS form. The runtime is `bun dist/main.js`; bun matches the `worker` export condition;
+  stripe-node maps that to its web build, whose crypto provider is `SubtleCryptoProvider` - and
+  WebCrypto has no synchronous digest, so that call throws by construction. Every delivery since at
+  least 2026-08-27 was answered 400: 24 in the running container's log, 38 events still undelivered
+  at Stripe, 12 of them `checkout.session.completed` on a LIVE key. Eleven were rescued by the
+  browser-return path, which is how a total failure of the authoritative path stayed invisible for
+  four days - a fallback carrying production is a signal, never a path. The twelfth buyer never came
+  back to the site, so nothing marked their submission paid. Fixed by `constructEventAsync`, which
+  is the same verification on either provider rather than a branch on which build got resolved.
+  Three tests now cover the seam, and the first of them pins the provider-dependent fact itself:
+  jest runs on node, where the SAME sdk resolves the NODE build and the synchronous call would have
+  passed, so a test that only signs and verifies cannot catch this class.
+- **A dependency auto-merge split NestJS across two services, and its merges deployed nothing.**
+  `dependabot-auto-merge.yml` squash-merged any Dependabot PR whose checks were green, with no
+  ceiling on the update type at all. It landed `@nestjs/platform-express` 12 into `core-service` and
+  into `chat-delivery-service` while `@nestjs/common` and `@nestjs/core` stayed at 11 - a framework
+  split that CI cannot see, because a peer mismatch is a warning to bun, `tsc` only checks the
+  surface the code uses, and NO test anywhere calls `NestFactory`, so the adapter `platform-express`
+  exists to provide is never instantiated. Behind it queued about thirty more, including `openmls`
+  0.5 -> 0.6 and `webrtc` 0.17 -> 0.20. The five majors are reverted, all four services are coherent
+  on NestJS 11 again, and the workflow now merges only a `semver-patch`, or a `semver-minor` whose
+  new version's major is not 0 - the second clause because cargo calls a 0.x bump a minor and that is
+  exactly where a 0.x breaks. Read from Dependabot's own `update-type` trailer, never from a title.
+- **CD had not run on a single one of those merges.** A squash merge made with `GITHUB_TOKEN`
+  produces a push that triggers nothing, so `main` and production drifted apart with nothing saying
+  so - five merges between 11:24 and 11:31 against a last deploy of 11:08. The same trap had already
+  bitten every release up to v0.10.4 and had been closed for the version bump alone. The auto-merge
+  now dispatches CD explicitly after a merge that actually happened, `workflow_dispatch` being the
+  documented exception to the anti-recursion rule.
+
 ### Added
+
+- **`infrastructure/docker-prune/`** - one daily pass that reclaims dangling images and the build
+  cache, and REPORTS, never deletes, every dangling volume and exited container. No prune ran on
+  `canari` or `mitv` at all. The ledger carries the discriminator a reader would otherwise guess at:
+  the compose project label and whether that project still has containers - with the caveat that
+  `project_is_live` says the project runs, never that its compose still declares the volume, which
+  the three leftover Kafka volumes demonstrate.
 
 - **Marking a conversation read from the notification shade now works when the app has been opened
   since, and REPLYING from the shade marks it read too** (the second is a product decision of
