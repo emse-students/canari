@@ -1475,7 +1475,7 @@ That satisfies the file's own criterion better than any regex and closes the cla
 instance - the difference [testing-methodology](testing-methodology.md) rule 42 is about.
 
 
-### P3 - two server lines at `LOG` level ARE the server window's unexplained bucket, and they carry full identities (measured 2026-08-30)
+### P3 - the server's log SHAPES that a reader has to carry an exception for (measured 2026-08-30, one added 2026-08-31)
 
 Read off HEAL-REVOKE-7's own run window (`srvlog.mjs --since 2026-08-30T02:31:06.469Z`, the pass that
 gave `PASS-DIRTY` on `edb8d7ab`). **52 unexplained lines across four services and not one of them is
@@ -1508,6 +1508,35 @@ victim asking with no cookie - the wipe working, which is this rung's subject.
 **One line is worth a look on its own**: `[DEL_MEMBERSHIP] ... group=8c0e53b9... affected=0` - a
 membership delete that matched no row. Harmless, but it means a caller believed in a row that was not
 there, and `affected=0` is the only place that shows.
+
+**A THIRD SHAPE, on the gateway, and it is the one a HUMAN reader trips over** (measured
+2026-08-31: 15 in 6 hours on prod, and `sed`-grouped they are ONE shape, not several).
+`handlers.rs:529` logs every read error at `ERROR`:
+
+```
+ERROR chat_gateway::handlers: WebSocket Error from <64 hex>: WebSocket protocol error: Connection reset without closing handshake
+```
+
+That is a CLIENT that vanished without a close frame - a tab closed, a phone suspended, a network
+dropped, a container torn down under a live socket. The server did nothing wrong and can do nothing
+about it, so it is expected and NOT necessary at that level, which is the standing rule's own
+definition of noise. It also puts a full 64-character user id in a production log, like the two
+above.
+
+**The fix is a CLASSIFICATION, never a demotion**, and that distinction is the work: the read loop
+must separate "the transport went away", which is routine, from "this client sent something invalid",
+which is not - and it must do that on the error's TYPE, not on its text. `axum::Error` is opaque and
+`into_inner()` yields a `BoxError`; the concrete type is `tungstenite::Error` at whatever version
+axum resolved (0.29 today, and axum does not re-export it). **Adding `tungstenite` as a direct
+dependency to downcast couples this crate to axum's private choice, and the failure mode is silent**
+- an axum bump moves the version, the downcast stops matching, and every reset is an ERROR again with
+nothing to say so. Answer that before writing the code; a test that asserts the classification on a
+constructed error is what would make the coupling loud.
+
+**Two readers already carry the exception for it**, and both would shrink: `EXPECTED_ERRORS` in
+`srvlog.mjs` is a REGEX ON THE MESSAGE TEXT - exactly the thing the repo's rules forbid a decision to
+rest on - and the fixture pinning it is `srvclassify-selftest.mjs:460`.
+[testing-methodology](testing-methodology.md) documents the shape at three places.
 
 **NOT changed here, deliberately.** Lowering a level or trimming a field changes what `srvlog.mjs`
 classifies, and doing that between two passes of a running campaign would make the next window
