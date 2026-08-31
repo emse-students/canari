@@ -26,7 +26,7 @@ zeroize = { version = "1", features = ["zeroize_derive"] }
 test-keystore = []
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 
 [[bench]]
 name = "mls_perf"
