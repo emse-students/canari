@@ -250,6 +250,73 @@ one composite action with one pinned toolchain
 ([mls-wasm](frontend/mls-wasm.md#why-it-is-not-committed)). A build step duplicated per pipeline is
 the same defect wearing a different hat - two toolchains put two cryptos back in the fleet.
 
+## Dependency updates, and the auto-merge that ships them
+
+Dependabot opens the pull requests (`.github/dependabot.yml`); `dependabot-auto-merge.yml` decides
+which of them merge, and `.github/scripts/dependabot-auto-merge.sh` is the decision itself. The
+script is the ONE implementation - the workflow calls it from two triggers and adds nothing.
+
+### What it refuses, and why it is not a semver rule
+
+**A ceiling on an automatic merge is a statement about your tests, never about the version number.**
+The first ceiling written here refused every major and every `0.x` minor, and the measurement that
+condemned it is that 33 pull requests were open and it refused 28 - a queue nobody drains is worse
+than the merge it prevented (user, 2026-08-31: *"Je prefere blinder de test et faire les choses
+automatiquement qu'avoir une review humaine qui n'arrive jamais"*).
+
+`base64` 0.22 -> 0.23 and `axum` 0.7 -> 0.8 break by **not compiling**, which is exactly what the
+suite sees. What a suite cannot see has no relation to semver: a dependency that **writes a format
+something else must still read** changes behaviour while compiling perfectly. So the ceiling is a
+list of dependencies whose failure mode is unobservable here, and **every entry names the test that
+retires it**:
+
+| Family | Why the suite is blind to it | The test that retires it |
+|---|---|---|
+| `openmls*`, `tls_codec*`, `hpke-rs*`, `libcrux*`, `chacha20poly1305`, `aes-gcm`, `argon2`, `ciborium` | nothing opens a group, or a keystore, written by the PREVIOUS version | a cross-version state test |
+| `webrtc*`, `str0m`, `sdp`, `ice`, `turn`, `stun` | the SFU's ten tests never touch the ICE stack | one relay-path call (campaign rung 15 CALL) |
+| bare `typeorm`, major or unclassified | every unit suite mocks its repositories, so nothing watches the ORM return a row | a test that issues a REAL query |
+
+`@nestjs/*` was a fourth entry until 2026-08-31 and is gone, because the test it named now exists:
+`boot-nest-apps` constructs the real `AppModule` on all four services. **That is what a refusal is
+for** - it names a missing gate and it leaves when the gate arrives. Closing that one row moved the
+ceiling from 5 merge / 28 refuse to 26 merge / 6 refuse. The live list is in
+[backlog](backlog.md#p1---the-three-refusals-the-auto-merge-ceiling-makes-and-the-test-that-retires-each).
+
+A refusal is **never** routed to a human queue. It is posted as a comment on the pull request naming
+the missing test, once, behind the marker `<!-- canari-auto-merge-ceiling -->`.
+
+### Why there are two triggers
+
+- **`workflow_run`** on CI/Code Analysis completion - the fast path, seconds after a PR goes green.
+- **`schedule` (hourly) and `workflow_dispatch`** - the convergent path, which enumerates every open
+  Dependabot pull request. This is the one that matters: an event-only automation cannot touch a
+  pull request that was already green when it was installed, and on 2026-08-31 seven mergeable ones
+  sat exactly there. The clock sets how fast the queue drains, never whether the outcome is right.
+
+A sweep may merge several pull requests that were only ever tested apart. That is safe here for one
+reason and it is worth not breaking: **`deploy-to-server` needs `run-ci`**, so a combination that
+breaks fails CI on `main` and the deploy is skipped. `main` can go red; production cannot follow it.
+One dispatch is sent for the whole pass, not one per merge.
+
+### Two traps, both found by testing the gate against real pull requests
+
+- **Dependabot YAML-quotes a dependency name starting with `@`**, so the commit trailer reads
+  `"@nestjs/common"` with the quotes. A `case` on `@nestjs/*` matches nothing - which is how a first
+  draft merged the exact major it was written to refuse. The script strips the quotes.
+- **A "update the requirement to permit the latest version" pull request carries no `update-type`
+  trailer at all** (PR #297, openmls 0.9.0), so any logic keyed on the update type reads an empty
+  string. Treat unknown as major.
+
+The `updated-dependencies` trailers are parsed **as blocks**, never as three independent `sed`
+lists: a grouped pull request carries several, and an update Dependabot could not classify has no
+`update-type`, so three lists pasted side by side would pair the wrong name with the wrong version.
+
+### Verifying a change to it
+
+Run the shipped script, unmodified, against real pull requests, with a `gh` shim on `PATH` that
+passes reads through and intercepts `pr merge`, `pr comment` and `workflow run`. Testing a retyped
+copy proves nothing about the file that runs.
+
 ## Notable CI gotchas
 
 - **A Tauri plugin's JS package and its Rust crate must agree on major.minor, and only a RELEASE used to discover when they did not.** The CLI refuses to build (`tauri-plugin-log (v2.8.0) : @tauri-apps/plugin-log (v2.9.0)`), but nothing else in this pipeline compiles the Tauri app, so an ordinary `bun install` that re-resolves the JS half lands green and kills the next tag - it took out Android Release and AppImage Release on v0.14.6, while iOS Release passed because its path never runs the check. `frontend/scripts/check-tauri-plugin-versions.mjs` (step `Guard the Tauri JS/Rust version parity` in `code-analysis.yml`) now compares the two committed files on every run. Fix the Rust side with `cd frontend/src-tauri && cargo update -p <crate>`.

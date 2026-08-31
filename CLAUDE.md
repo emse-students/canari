@@ -206,15 +206,18 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
    verification, the auto-merge ceiling, the CD dispatch, the split NestJS packages, two drifted
    `Cargo.lock`s and the duplicate `openmls_traits`, `framework-boot.spec.ts` in all four services,
    the real `AppModule` boot job, and the two services that were shipping their tests inside their
-   production image. **What is OPEN is exactly the three rows of
-   [the ceiling table](docs/wiki/backlog.md#p1---the-three-refusals-the-auto-merge-ceiling-makes-and-the-test-that-retires-each)**,
-   and closing a row is what makes a whole class of update merge by itself.
+   production image. **What is OPEN is the two remaining rows of
+   [the ceiling table](docs/wiki/backlog.md#p1---the-three-refusals-the-auto-merge-ceiling-makes-and-the-test-that-retires-each)**
+   - a cross-version MLS state test and one relay-path call - and closing a row is what makes a whole
+   class of update merge by itself. The third row retired the day it was written, because the boot
+   test it named now exists.
 
-   **TWO THINGS ARE OWED BEFORE ANY OF THAT.** `dependabot-auto-merge.yml` is `disabled_manually`
-   and NOTHING is automatic until it is re-enabled - do that only once the `boot-nest-apps` job has
-   a green run, since re-enabling with an untested ceiling is the original defect again. And the
-   same two defects - a ceiling-less auto-merge, and merges that reach no deploy - are still live in
-   **Sky, MiGallery and Portail-etu**, measured 2026-08-31 ([backlog](docs/wiki/backlog.md)).
+   **THE CHAIN IS PROVEN END TO END, 2026-08-31, and this is the fact not to re-derive:** the
+   workflow is `active` again, PR #289 merged with no human at 13:48:44, and CD run `33399025542`
+   started four seconds later with event `workflow_dispatch` on that merge commit. A dependency
+   update reaching production unattended had never happened here before. **The same two defects - a
+   ceiling-less auto-merge, and merges that reach no deploy - are still live in Sky, MiGallery and
+   Portail-etu**, measured 2026-08-31 ([backlog](docs/wiki/backlog.md)).
 
    **A RULE THIS SESSION COST THREE TIMES OVER: test the gate against the real thing.** The ceiling
    was tested by running its own loop body over all 33 open pull requests, and that found two

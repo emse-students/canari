@@ -23,6 +23,21 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **An auto-merge that could only act on an event it happened to catch.** `dependabot-auto-merge.yml`
+  was triggered by `workflow_run` and nothing else, so it could evaluate a pull request only in the
+  seconds after one of its CI runs finished. A pull request whose checks had completed earlier -
+  before the workflow existed, while it was disabled, during a runner outage - would never be named
+  by another event, and would sit open forever however green and however mergeable. The measurement:
+  minutes after the workflow was re-enabled and had merged its first pull request unaided, seven
+  more sat `CLEAN` and untouched, and no future event would ever reach them. The workflow now also
+  runs **hourly and on demand**, sweeping every open Dependabot pull request through the same
+  decision, so the correct state is reached from any starting state rather than only from the event
+  that arrived. The clock is not load-bearing: it sets how fast the queue drains, never whether the
+  outcome is right, and termination is durable state on GitHub - merged, or carrying the comment
+  that names its missing test. The decision itself moved to `.github/scripts/dependabot-auto-merge.sh`
+  so both entry points run ONE implementation, and it was verified by running that exact script
+  against five real pull requests behind a `gh` shim that intercepts every mutating call.
+
 - **The auto-merge ceiling's first entry retired, on evidence.** `boot-nest-apps` went green on all
   four services, so the `@nestjs/*` case is deleted from `dependabot-auto-merge.yml`. Re-measured
   the same way it was written - the workflow's own loop body against every open pull request's real
