@@ -222,9 +222,9 @@ session cannot "finish" the work by undoing a measurement.
 **What is left is JUDGEMENT, not migration** - MiGallery's lint warnings, the `resolve()` question
 three repos park differently, Tailwind class sorting on Portail-etu - plus one parked P2, **NestJS
 11 -> 12** across four deployed services ([backlog](docs/wiki/backlog.md#tooling)). Exactly ONE
-Dependabot alert is open, `libcrux-chacha20poly1305`, measured UNREACHABLE: it needs **dismissing**
-on GitHub, not fixing, and the first question about any advisory is whether `cargo tree -i` reaches
-the crate at all, because `cargo audit` reads the LOCKFILE.
+Dependabot alert is open. The first question about any advisory is whether `cargo tree -i` reaches
+the crate at all, because `cargo audit` reads the LOCKFILE - which is how the last one was closed as
+UNREACHABLE rather than fixed.
 
 **SIX THINGS CANNOT BE PULLED FORWARD**, each carrying its blocking condition in
 [backlog](docs/wiki/backlog.md), the only copy: the MLS + Graine explanation owed to the USER, not to
@@ -242,9 +242,9 @@ is not reached by a deploy** - `frontendDist: "../build"` means the Tauri app EM
 `minClientVersion` and check S reason about a NAME unless a version identifies its content
 ([harness README](tools/cross-client-harness/README.md)).
 
-**APP REVIEW REJECTED 0.14.4 ON 2026-08-30, ON TWO GUIDELINES, AND NEITHER IS OPEN CODE:** 2.1(a) is
-fixed in the tree and owes an iOS build plus ONE iPhone login; 5 (Legal) is a territory removed in
-App Store Connect, which is the user's click. What each waits on, and Play's own thresholds, are on
+**APP REVIEW REJECTED 0.14.4 ON 2026-08-30 ON TWO GUIDELINES; ONE IS ANSWERED** (the territory, by
+the user, 2026-08-31). **What is left is 2.1(a)**, fixed in the tree and owing an iOS build plus ONE
+iPhone login. What it waits on, and Play's own thresholds, are on
 [mobile](docs/wiki/frontend/mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on);
 how the vitals are read, why every RATE is EMPTY rather than green, and what an acknowledgement is
 are in [the tool's README](tools/play-vitals/README.md). Only **check R** is left of the two mails of

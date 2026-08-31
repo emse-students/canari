@@ -60,11 +60,10 @@ in the crate's `.cargo/audit.toml` naming why it cannot be honoured and what lif
 `cargo audit` is green with none of them forgotten. A scheduled dependency upgrade, not a live
 defect.
 
-**One one-off is owed to the user, not to the code:** dismissing the `libcrux-chacha20poly1305`
-Dependabot alert. It is the only one open and it is measured UNREACHABLE - the crate is not
-compiled, the HPKE backend built is `hpke-rs-rust-crypto`, and `cargo tree -i` finds no path to it
-on any target. The rule that measurement left (**a lockfile entry is not a dependency**) is in
-[durable-rules](durable-rules.md).
+The rule the `libcrux-chacha20poly1305` measurement left - **a lockfile entry is not a
+dependency**, because `cargo audit` reads the lockfile while `cargo tree -i` reads what is actually
+compiled - is in [durable-rules](durable-rules.md). That alert is dismissed (user, 2026-08-31) and
+no Dependabot alert is open.
 
 ### The rest of what an iPhone will find, named by the user before it was looked for (2026-08-27)
 
