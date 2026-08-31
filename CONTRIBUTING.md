@@ -102,7 +102,7 @@ Before contributing, read the architecture overview:
 
 Key rules:
 
-- **No direct database access across services** — each service owns its database. Use HTTP APIs or Kafka for cross-service communication.
+- **No direct database access across services** — each service owns its database. Use HTTP APIs or Redis pub/sub for cross-service communication.
 - **Nginx is the single entry point** — all client traffic goes through Nginx. Do not expose service ports directly in production.
 - **Auth via `auth_request`** — Nginx validates every request through `core-service` before it reaches backend services.
 - **MLS state is client-owned** — the server never decrypts MLS messages. It only routes opaque ciphertexts.

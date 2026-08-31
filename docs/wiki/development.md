@@ -276,7 +276,6 @@ All services + infrastructure run in Docker with host port mapping. Dev host por
 | social-service | 3014 | 3114 |
 | Redis | 6379 | 6380 |
 | PostgreSQL | 5432 | 5433 |
-| Kafka | 9092 | 9093 |
 | Garage S3 API | 3900 | 19100 |
 
 ### Dockerfiles
@@ -334,7 +333,7 @@ Rust >= 1.93 required (enforced by `rust-toolchain.toml`). Relevant crates:
 |---|---|---|
 | `chat-gateway` | `apps/chat-gateway/` | WebSocket gateway |
 | `call-service` | `apps/call-service/` | WebRTC SFU |
-| `shared-rust` | `libs/shared-rust/` | Shared Kafka event types |
+| `shared-rust` | `libs/shared-rust/` | Shared Rust event types |
 | `mls-core` | `frontend/mls-core/` | Core MLS operations |
 | `mls-wasm` | `frontend/mls-wasm/` | WASM bindings for mls-core |
 | `src-tauri` | `frontend/src-tauri/` | Tauri 2 native app |

@@ -24,7 +24,7 @@
 import { pathToFileURL } from 'node:url';
 import { ssh } from './ssh.mjs';
 
-/** The application containers. Infrastructure (redis, kafka, postgres, garage) is deliberately out. */
+/** The application containers. Infrastructure (redis, postgres, garage) is deliberately out. */
 const SERVICES = [
   'chat-gateway',
   'chat-delivery-service',
@@ -454,6 +454,14 @@ const BENIGN = [
   // printing its own route table: 90 `RouterExplorer Mapped`, 14 `RoutesResolver`, the microservice
   // start, and kafkajs joining its consumer group. Not one carries information about the run.
   //
+  // THE LAST TWO OF THOSE FOUR ARE GONE FROM HERE AND MUST NOT COME BACK. No service connects a
+  // microservice any more and no broker exists to join a consumer group on - the Kafka transport
+  // left chat-delivery on 2026-08-31 and the broker left with it. A forgiving rule for a line that
+  // can no longer be printed forgives whoever prints it NEXT, so `[NestMicroservice] Nest
+  // microservice successfully started`, `[ServerKafka] ...` and kafkajs's negative-timeout warning
+  // are now UNEXPLAINED on purpose: seeing one means something re-introduced a transport, and that
+  // is a finding, not a boot banner.
+  //
   // SILENT HERE BECAUSE THE BOOT IS ALREADY LOUD SOMEWHERE ELSE. `[NestApplication] Nest application
   // successfully started` is in NOTABLE and stays there, so a restart under a check is still SEEN -
   // once, in one line, which is the whole content of the event. That is the discrimination being
@@ -467,8 +475,6 @@ const BENIGN = [
   // runtime line cannot accidentally wear either.
   /\[RouterExplorer\] Mapped \{[^}]*\} route/,
   /\[RoutesResolver\] \w+Controller \{[^}]*\}:/,
-  /\[NestMicroservice\] Nest microservice successfully started/,
-  /\[ServerKafka\] INFO \[ConsumerGroup\] Consumer has joined the group /,
   // THE THREE BOOT LINES THAT COME BEFORE THE ROUTE TABLE, and they were missed for the reason the
   // block above was written at all: the window that produced that rule started mid-deploy, so Nest's
   // FIRST lines were outside it and only its route table was inside. The deploy of 2026-08-24 landed
@@ -477,38 +483,6 @@ const BENIGN = [
   // check is SEEN, and none of these says anything the boot has not already said once.
   /\[NestFactory\] Starting Nest application\.\.\.$/,
   /\[InstanceLoader\] \w+ dependencies initialized \+\d+ms$/,
-  /\[ServerKafka\] INFO \[Consumer\] Starting \{/,
-  // A BUG IN KAFKAJS, READ IN KAFKAJS, AND NOT FIXABLE FROM HERE - one Node warning per boot, in
-  // three lines because that is how `process.emitWarning` prints.
-  //
-  //     (node:1) TimeoutNegativeWarning: -1787527257599 is a negative number.
-  //     Timeout duration was set to 1.
-  //
-  // ATTRIBUTED RATHER THAN GUESSED, and the arithmetic is the attribution. `requestQueue/index.js`
-  // initialises `this.throttledUntil = -1` (l.57) and schedules its throttle check at
-  // `this.throttledUntil - Date.now()` (l.312); with no request pending, nothing clamps it, so the
-  // delay IS minus the wall clock. -1787527257599 is `-1 - 1787527257598`, and 1787527257598 is
-  // 2026-08-23T23:20:57Z - the second the line was printed. Nothing else could produce that number.
-  //
-  // Harmless: Node floors the delay at 1 ms, the callback runs `checkPendingRequests()` against an
-  // empty queue, and `TimeoutNegativeWarning` is emitted ONCE PER PROCESS by Node itself, so it can
-  // never flood a window. Not fixable either - kafkajs 2.2.4 is the project's last release and has
-  // been unmaintained since 2023, so there is no version to move to. Classified here for the reason
-  // the AirControl 404 above is: the fix is not in this repository, and leaving it would make every
-  // window straddling a deploy dirty for ever.
-  //
-  // THE MAGNITUDE IS THE PIN, because the line does not carry its origin. Node prints the same
-  // sentence whoever computed the delay, so a rule on the sentence alone would forgive a negative
-  // timeout of OURS - and the only reason this one is forgiven is that somebody read where it came
-  // from. What cannot be faked is the number: `-1 - Date.now()` is minus the wall clock, thirteen
-  // digits opening `17` today and `18` from 2027-01-15. Our own code computing a delay late would be
-  // out by seconds or minutes, never by fifty-six years, so it will not match and will be read.
-  //
-  // It stops matching around 2033, when the epoch grows a digit. That is the correct failure: the
-  // line returns to `unexplained` and somebody reads it again.
-  /^\(node:\d+\) TimeoutNegativeWarning: -1[78]\d{11} is a negative number\.$/,
-  /^Timeout duration was set to 1\.$/,
-  /^\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)$/,
   // THE DISMISSAL NO-OPS, whose loud siblings are in NOTABLE above. Asking that a group not be
   // dismissed when it never was is the ordinary path through every re-add, and asking twice from two
   // devices is what one re-add looks like on an account with two. Nothing changed, so nothing is

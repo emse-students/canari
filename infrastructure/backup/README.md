@@ -13,7 +13,7 @@ Sauvegarde complete de toutes les donnees persistantes, avec une copie locale
 | media-service (`infrastructure_media_meta`) | tar du volume + depot restic | metadonnees media |
 | PostgreSQL Authentik (`miconnect`) | `pg_dump` | identites, config OIDC |
 
-Non sauvegarde car transitoire : Kafka, Redis, Zookeeper.
+Non sauvegarde car transitoire : Redis.
 
 Chaque execution produit une archive unique `canari-backup-AAAAMMJJ-HHMMSS.tar.gz`.
 

@@ -40,10 +40,6 @@ describe('isChannelEventFrame', () => {
     }
   });
 
-  it('routes the one frame whose name carries no family', () => {
-    expect(isChannelEventFrame('post_created')).toBe(true);
-  });
-
   /** Frames owned by other branches of the socket handler must NOT be swallowed by this one. */
   it('leaves the socket layer its own frames', () => {
     for (const type of [
@@ -54,6 +50,9 @@ describe('isChannelEventFrame', () => {
       'epoch_rejected',
       'ping',
       'pong',
+      // The frame this table used to route to a handler with no branch for it. Its only sender was
+      // a Kafka consumer nothing ever fed, both of which went on 2026-08-31.
+      'post_created',
       '',
     ]) {
       expect(isChannelEventFrame(type)).toBe(false);

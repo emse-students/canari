@@ -93,6 +93,26 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Removed
 
+- **Kafka, Zookeeper, and the one consumer that kept them alive.** A `confluentinc/cp-kafka` and a
+  `cp-zookeeper` ran on production carrying nothing: 42 hours into an uptime, with every service up,
+  `kafka-topics --list` answered `__consumer_offsets` and no application topic at all. chat-gateway
+  consumed `post.created` under group `chat-gateway-broadcast` and logged `UnknownTopicOrPartition`
+  at every boot, because the topic has never existed - no `kafka` symbol appears anywhere in
+  social-service. It was broken at three levels, not one: nothing produced the topic; the shared
+  crate spelled it `post_created` while the subscription used `post.created`, so a producer written
+  against the constant would have published past its only consumer; and `post_created` was routed to
+  `handleChannelEvent`, which has no branch for it, so a record that HAD arrived would have reached
+  that handler's final `[ERROR] Unhandled channel event type` line on every connected client. The
+  broadcast was also unfiltered - a post in a private community would have gone to every socket on
+  the server, where the Redis path it should have used delivers to named recipients. Gone with it:
+  `spawn_kafka_consumer`, the `rdkafka` dependency and the four apt packages it needed in the image,
+  `KAFKA_BROKERS` from three compose files, the `post_created` client route, four now-dead noise
+  rules in the campaign classifier (their return is a finding now, not a boot banner), and
+  `docs/wiki/infrastructure/kafka.md`. Two containers and 1.09 GiB of resident memory reclaimed,
+  against the 6.4 MiB chat-gateway uses to do the real work. `docs/diagrams/message.uml` was
+  corrected in the same pass: it drew the gateway producing records for a "Chat History Service"
+  that has never existed in this repository.
+
 - **The Cercle test top-up on `/admin/cercle`, and every line that served it.** The button credited
   5 EUR to the pressing admin's own Cercle account through the production path on a synthetic
   `pi_canari_test_` intent. Nothing about it was simulated except the card: it moved a real balance

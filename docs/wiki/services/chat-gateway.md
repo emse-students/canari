@@ -10,7 +10,6 @@ The chat-gateway is the real-time transport layer. It:
 
 - Accepts WebSocket connections from clients and routes MLS frames to the correct recipient.
 - Manages online presence in Redis.
-- Broadcasts Kafka events (post creation) to all connected WebSocket clients.
 
 It does **not** perform encryption, store messages, or make business logic decisions — those belong to `chat-delivery-service`.
 
@@ -126,12 +125,28 @@ Published by `social-service` for channel membership changes, role updates, etc.
 
 The gateway fans out the frame to all connected devices of each listed user.
 
-## Kafka consumer
+## No Kafka consumer, and no broker - removed 2026-08-31
 
-Subscribes to the `post.created` topic (group `chat-gateway-broadcast`). On each message, it broadcasts a `{ type: "post_created", data: <post payload> }` frame to **all** connected WebSocket clients.
+This gateway subscribed to a `post.created` topic under group `chat-gateway-broadcast` and
+broadcast every record to **all** connected sockets as `{ type: "post_created", data: ... }`. It was
+correct code with three separate reasons never to run:
 
-- Auto-commit disabled; offsets committed manually after delivery attempts (at-least-once).
-- Offset is committed even if no clients are connected (to avoid replay storms after restarts).
+1. **Nothing produced the topic, ever.** No `kafka` symbol exists anywhere in social-service.
+   Measured on prod 2026-08-31: `kafka-topics --list` returned `__consumer_offsets` and nothing
+   else, 42 hours into an uptime. The consumer logged `UnknownTopicOrPartition` at every boot.
+2. **The two names never matched.** `libs/shared-rust` declared `TOPIC_POST_CREATED = "post_created"`
+   while this file subscribed to the literal `"post.created"` - a producer written against the
+   shared constant would have published past its only consumer, silently.
+3. **The client had no branch for the frame.** `post_created` was routed to `handleChannelEvent`,
+   which implements no case for it, so a delivered record would have reached that handler's final
+   `[ERROR] Unhandled channel event type` line on every connected client.
+
+The consumer, `rdkafka`, and the `kafka` + `zookeeper` containers were removed together. They cost
+1.09 GiB resident on production; this gateway does its whole job in 6.4 MiB.
+
+**If real-time posts are wanted, they belong on the Redis path above**, which already carries eleven
+event families and targets named recipients. The Kafka broadcast had no such filter: a post in a
+private community would have gone to every socket on the server.
 
 ## Presence
 
@@ -253,6 +268,5 @@ wrong**, and nothing said so for either.
 |---|---|---|---|
 | `REDIS_URL` | no | `redis://127.0.0.1/` | Redis connection string |
 | `JWT_SECRET` | yes | - | HS256 JWT secret (shared with core-service) |
-| `KAFKA_BROKERS` | no | `localhost:9092` | Kafka broker list |
 | `ALLOW_ORIGIN` | **yes under compose** | `*` (binary only) | CORS allowlist. `docker-compose.prod.yml` uses `${ALLOW_ORIGIN:?}` and the deploy stops without it; the binary's own `*` default is for running it by hand and logs a WARN accusing the missing declaration |
 | `RUST_LOG` | no | `chat_gateway=debug,tower_http=debug` | Log filter |

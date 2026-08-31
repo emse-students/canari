@@ -245,41 +245,6 @@ entry, and an iOS build to verify - none of it measurable from this machine.
 which the user has accepted; this is an upgrade to both, worth doing when native work is being done
 anyway rather than as an emergency.
 
-### P2 - KAFKA CARRIES NOTHING, and one live consumer waits on a topic nobody produces (measured on prod 2026-08-31)
-
-**Found by answering the partitioner-warning P3, whose own fix shipped the same day.** That item
-asked one question - does anything here produce a KEYED record? - and the measurement went past it:
-nothing produces at all.
-
-```
-kafka-topics --list          -> __consumer_offsets           (Kafka's own; no application topic)
-kafka-consumer-groups --list -> chat-delivery-consumer-server (now removed)
---describe --group chat-gateway-broadcast -> does not exist
-docker logs chat-gateway     -> [kafka] Subscribed to topic 'post.created'
-                                [kafka] Receive error: UnknownTopicOrPartition
-```
-
-42 hours of uptime, every service up. **`confluentinc/cp-kafka` and `cp-zookeeper` run on prod for
-this.** The wiki claimed a `chat.messages` topic driving push notifications and a `post_created`
-topic from social-service; both were fiction, and [kafka](infrastructure/kafka.md) now records what
-is really there.
-
-**What is NOT dead:** `spawn_kafka_consumer` in chat-gateway is live, correct code - group
-`chat-gateway-broadcast`, manual offset commits, at-least-once - that would broadcast a new post to
-every connected client the moment something produced `post.created`. Nothing ever has.
-
-**AND THE TWO NAMES DO NOT MATCH.** `libs/shared-rust` defines `TOPIC_POST_CREATED = "post_created"`;
-`subscribers.rs` subscribes to the literal `"post.created"`. A producer written against the shared
-crate would publish where nothing listens, and the mismatch would look exactly like the silence
-there is now. Whoever wires this up fixes the name first, in one place.
-
-**THE DECISION IS THE USER'S, and it is one of two.** Either social-service produces `post.created`
-when a post is created, and the feature the consumer was written for finally works; or the consumer
-goes and the broker with it, reclaiming two containers. **Do not split the difference** - a consumer
-kept "for later" beside a broker nobody feeds is what produced this entry. Whichever way it goes,
-`docker-compose.dev.yml` points chat-gateway at `kafka:29093`, which no listener binds (prod
-correctly uses `29092`); that is only invisible because nothing produces.
-
 ### P3 - the last node runtime: four jest suites that will not run under bun (decided 2026-08-27, AFTER the campaign)
 
 **Scheduled, not parked, and the decision behind it is the user's** (2026-08-27): npm leaves now,

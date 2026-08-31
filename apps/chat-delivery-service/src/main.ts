@@ -5,7 +5,7 @@ import * as bodyParser from 'body-parser';
 import { buildAllowedOrigins, corsOriginDelegate } from './cors-origins';
 
 /**
- * THIS SERVICE CONNECTS NO KAFKA TRANSPORT, AND THAT IS DELIBERATE.
+ * THIS SERVICE CONNECTS NO KAFKA TRANSPORT, AND NEITHER DOES ANY OTHER - THERE IS NO BROKER.
  *
  * It used to call `connectMicroservice({ transport: Transport.KAFKA })`, and it has never had a
  * single `@MessagePattern` or `@EventPattern` handler. Nest's `ServerKafka` still created and
@@ -15,8 +15,10 @@ import { buildAllowedOrigins, corsOriginDelegate } from './cors-origins';
  * and the sole consumer group was this service's own, subscribed to nothing.
  *
  * `KAFKAJS_NO_PARTITIONER_WARNING=1` would have hidden the line while leaving the producer; the
- * producer is gone instead. **Kafka itself is still in use** - `chat-gateway` consumes
- * `post.created` - so the broker stays and nothing here speaks for that path.
+ * producer went instead, and the same day so did the broker - `chat-gateway`'s consumer was the
+ * one remaining client and it subscribed to a topic no code has ever produced. Real-time fan-out
+ * in this system is Redis pub/sub, which delivers to named recipients; see
+ * `docs/wiki/services/chat-gateway.md`.
  */
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);

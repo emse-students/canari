@@ -9,7 +9,11 @@ Canari shares types and event definitions across services via two libraries in t
 **Stack**: Rust  
 **Source**: `libs/shared-rust/Cargo.toml`
 
-Defines the canonical event structs. One crate depends on it: `apps/chat-gateway` (`Cargo.toml`).
+**THIS CRATE IS DEAD AS OF 2026-08-31 AND SHOULD BE DELETED.** It defines Kafka event structs and
+topic constants for a broker that no longer exists. `apps/chat-gateway/Cargo.toml` names it as a
+path dependency and its source contains no `shared_rust` at all; no TypeScript imports the generated
+bindings either. Nothing in this repository reads a line of it.
+
 `ts-rs` mirrors each struct into TypeScript so a future TS consumer cannot drift from the Rust
 definition.
 
@@ -19,17 +23,17 @@ definition.
 |---|---|---|
 | `MessageSentEvent` | `TOPIC_CHAT_MESSAGES` (`chat_messages`) | nowhere |
 | `MessageReadEvent` | `TOPIC_MESSAGE_READ` (`message_read`) | nowhere |
-| `PostCreatedEvent` | `TOPIC_POST_CREATED` (`post_created`) | `apps/chat-gateway/src/subscribers.rs`, as the literal `"post.created"` - **a DOT, not the constant's underscore** |
+| `PostCreatedEvent` | `TOPIC_POST_CREATED` (`post_created`) | nowhere, since 2026-08-31 |
 
-That third column is MEASURED, not intended, and it says these structs describe a contract only part
-of the system speaks. Read it before treating any of them as a live Kafka topic. An earlier version
-of this table named a producer and a consumer for all three; none of those routes exists in the repo.
+That third column is MEASURED, not intended, and it says these structs describe a contract nothing
+in the system speaks. An earlier version of this table named a producer and a consumer for all
+three; none of those routes has ever existed in the repo.
 
-**And the one consumer that does exist does not use the constant, nor even its spelling.**
-`subscribers.rs` subscribes to `post.created`; `TOPIC_POST_CREATED` is `post_created`. A producer
-written against this crate would publish to a topic that consumer never reads, and the two would sit
-there agreeing on a struct and disagreeing on a name. Measured 2026-08-31, with the rest of the Kafka
-estate, on [kafka](infrastructure/kafka.md).
+**The one consumer that did exist never used the constant, nor even its spelling.** `subscribers.rs`
+subscribed to `post.created` while `TOPIC_POST_CREATED` is `post_created`, so a producer written
+against this crate would have published to a topic that consumer never read - the two agreeing on a
+struct and disagreeing on a name. It went with the broker; see
+[chat-gateway](services/chat-gateway.md#no-kafka-consumer-and-no-broker---removed-2026-08-31).
 
 ### The TypeScript mirror
 

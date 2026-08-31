@@ -16,7 +16,6 @@ In production, Cloudflare Tunnel exposes `http://localhost:8080`, which forwards
 | **core-service** | NestJS | 3012 | PostgreSQL | OIDC auth (Authentik), users, Stripe payments |
 | **social-service** | NestJS | 3014 | PostgreSQL | Posts, forms, channels/communities, associations |
 | Redis | - | 6379 | - | Presence, pub/sub, history streams |
-| Kafka | Confluent 7.5 | 9092 / 29092 | - | Async event bus |
 | PostgreSQL | - | 5432 | `auth_db` | Relational data |
 | Garage | - | 3900 / 3903 | - | Media blobs (S3-compatible; formerly MinIO on 9000/9001) |
 | Coturn | - | 3478 / 5349 | - | STUN/TURN WebRTC (local dev only; production uses Cloudflare TURN) |
@@ -96,19 +95,25 @@ Access token lives in memory only (never localStorage). Refresh token is an Http
 
 `chat:channel_events` types: `channel.member.joined`, `channel.member.kicked`, `channel.message.created`.
 
-### Kafka (async events) - EMPTY, measured on prod 2026-08-31
+### There is no message bus, and there has never been anything on one
 
-**No application topic exists on the broker, and nothing produces one.** This table used to claim a
-`chat.messages` topic driving push notifications and a `post_created` topic from social-service;
-neither ever existed. Push is sent directly by chat-delivery over the FCM gateway and has never
-touched Kafka.
+**Redis pub/sub above is the whole of asynchronous fan-out in this system.** A Confluent Kafka
+broker and its Zookeeper ran here until 2026-08-31 and carried nothing: `kafka-topics --list`
+answered `__consumer_offsets` and no application topic, 42 hours into an uptime with every service
+up. This page used to claim a `chat.messages` topic driving push notifications and a `post_created`
+topic from social-service; neither ever existed, and push has always been sent directly by
+chat-delivery over the FCM gateway.
 
-| Topic | Producer | Consumer | State |
-|---|---|---|---|
-| `post.created` | **nobody** | chat-gateway (group `chat-gateway-broadcast`) | topic absent; consumer logs `UnknownTopicOrPartition` and receives nothing |
+Two clients kept the broker alive and neither moved a byte. chat-delivery-service connected a Kafka
+transport declaring no `@MessagePattern` or `@EventPattern` at all. chat-gateway consumed
+`post.created`, which nothing has ever produced - and a record that HAD arrived would have been
+broadcast to every connected socket as `post_created`, a frame `handleChannelEvent` has no branch
+for and would have logged as unhandled. Both went, and the two containers with them: 1.09 GiB of
+resident memory, against the 6.4 MiB chat-gateway itself uses to do the real work.
 
-chat-delivery-service connected a Kafka transport with no handlers at all until 2026-08-31, when it
-was removed. Full measurement and the open question on [kafka](infrastructure/kafka.md).
+**Real-time fan-out belongs on Redis here**, which already carries eleven event families and
+delivers them to named recipients - see the table above. Kafka offered replay, multi-group fan-out
+and volume, and this system asked for none of the three.
 
 ## MLS message flow (online)
 
@@ -237,4 +242,3 @@ UML sequence diagrams for key flows are in [`docs/diagrams/`](../diagrams/):
 - **Single Nginx entry point**: all services are private; only Nginx is exposed. This centralises auth and simplifies firewall rules.
 - **MLS encryption in WASM**: all encryption/decryption happens client-side. The server stores only ciphertexts.
 - **Media encryption**: client generates a CEK (AES-256-GCM) before upload; key travels in the MLS ciphertext. The media-service sees only opaque blobs.
-- **At-least-once delivery**: the Kafka consumer in chat-gateway commits offsets only after successful delivery attempts - a property of code that currently receives nothing, since no producer exists ([kafka](infrastructure/kafka.md)).

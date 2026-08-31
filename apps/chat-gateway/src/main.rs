@@ -143,11 +143,6 @@ async fn main() {
     // ── Redis pub/sub subscriber ──────────────────────────────────────────
     subscribers::spawn_redis_subscriber(redis_client.clone(), app_state.connected_users.clone());
 
-    // ── Kafka consumer: broadcast `post.created` events to all clients ────
-    let kafka_brokers =
-        std::env::var("KAFKA_BROKERS").unwrap_or_else(|_| "localhost:9092".to_string());
-    subscribers::spawn_kafka_consumer(kafka_brokers, app_state.connected_users.clone());
-
     // ── CORS configuration ────────────────────────────────────────────────
     // An UNSET variable means someone is running the binary by hand, and the wildcard keeps that
     // working. Every compose file names the variable, so reaching this branch under compose means

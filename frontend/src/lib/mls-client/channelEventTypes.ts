@@ -13,13 +13,18 @@
  *
  * A ROUTING TABLE SPREAD ACROSS TWO FILES AS A STRING PREFIX IS A CONTRACT NOBODY DECLARES. It lives
  * here now, both clients ask it, and adding a family is one edit rather than two silent omissions.
+ *
+ * IT ALSO ROUTED `post_created`, WHICH NO SERVER HAS EVER SENT. The gateway broadcast it on
+ * receiving a Kafka `post.created` record; nothing ever produced that topic, `handleChannelEvent`
+ * had no branch for the type, and a frame that DID arrive would have reached its final
+ * `[ERROR] Unhandled channel event type` line on every connected client. The consumer and the
+ * broker went on 2026-08-31, so the entry named a sender that cannot exist. Routing a name to a
+ * handler that does not implement it is not forward compatibility - it is a defect with a test
+ * pinning it green.
  */
 
 /** Families of server frame the channel-event handler owns, matched by prefix. */
 const CHANNEL_EVENT_PREFIXES = ['channel.', 'workspace.'] as const;
-
-/** Frames the handler owns whose names carry no family. */
-const CHANNEL_EVENT_EXACT = ['post_created'] as const;
 
 /**
  * Whether `type` is a frame `handleChannelEvent` is responsible for.
@@ -30,6 +35,5 @@ const CHANNEL_EVENT_EXACT = ['post_created'] as const;
  */
 export function isChannelEventFrame(type: string): boolean {
   if (!type) return false;
-  if ((CHANNEL_EVENT_EXACT as readonly string[]).includes(type)) return true;
   return CHANNEL_EVENT_PREFIXES.some((prefix) => type.startsWith(prefix));
 }

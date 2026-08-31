@@ -48,7 +48,7 @@ Browser / Tauri (Native App)
     |-> core-service:3012      (NestJS)     OIDC auth (Authentik), users, Stripe
     `-> social-service:3014    (NestJS)     Posts, forms, channels, associations
 
-Infrastructure: PostgreSQL · Redis · Kafka · Garage
+Infrastructure: PostgreSQL · Redis · Garage
 ```
 
 > In production, Cloudflare Tunnel terminates TLS and forwards to `localhost:8080` → Nginx.
@@ -184,7 +184,7 @@ canari/
 │   └── src-tauri/             # Tauri 2 native app
 ├── libs/
 │   ├── proto/                 # Protobuf schema (canari.proto)
-│   └── shared-rust/           # Shared Rust types (Kafka events)
+│   └── shared-rust/           # Shared Rust event types
 ├── infrastructure/
 │   ├── local/                 # Docker Compose & Dockerfiles (dev)
 │   ├── docker-compose.prod.yml

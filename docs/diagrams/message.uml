@@ -1,41 +1,55 @@
 @startuml
-actor "Alice (Expéditeur)" as UserA
+' THE PERSISTENCE HALF OF THIS DIAGRAM WAS FICTION UNTIL 2026-08-31. It showed the gateway producing
+' a Kafka record consumed by a "Chat History Service" that has never existed in this repository.
+' There was no such service, no such topic, and the broker was removed once it was measured empty.
+' What is drawn below is the flow the code actually takes, per docs/wiki/architecture.md.
+actor "Alice (Expediteur)" as UserA
 participant "Client A (MLS)" as ClientA
-participant "Chat Gateway (DS)" as Gateway
-participant "Redis (Pub/Sub)" as Redis
-participant "Kafka (Topic: chat-messages)" as Kafka
+participant "chat-delivery-service (DS)" as Delivery
+participant "Redis (Stream + Pub/Sub)" as Redis
+participant "chat-gateway" as Gateway
 participant "Client B (MLS)" as ClientB
-participant "Chat History Service" as History
-participant "PostgreSQL (auth_db)" as Postgres
 
 UserA -> ClientA: Tape "Bonjour"
 
 note right of ClientA
   MLS Application Message
-  1. Récupération État Groupe
+  1. Recuperation Etat Groupe
   2. Protect(plain_text) -> MLS Ciphertext
 end note
 
-ClientA -> Gateway: WebSocket Send {type: "mls_message", payload: "..."}
+ClientA -> Delivery: POST /api/mls/send
+{proto, groupId, recipientId, deviceId}
 
-note right of Gateway: Gateway agit comme\nDelivery Service (DS)
+note right of Delivery: chat-delivery-service agit
+comme Delivery Service (DS)
 
-Gateway -> Gateway: Validate Payload Size/Type
+Delivery -> Delivery: Validate Payload Size/Type
 
-par Distribution Temps Réel (Fan-out)
-    Gateway -> Redis: PUBLISH "chat_events" (MLS Blob)
-    Redis -> Gateway: OnMessage (Gateway Instance B)
-    Gateway -> ClientB: WebSocket Message {type: "mls_message", payload: "..."}
-else Persistance Asynchrone
-    Gateway -> Kafka: Produce Record
-    Kafka --> History: Consommation Event
-    History -> Postgres: Sauvegarde Blob MLS (Opaque) dans queued_message
+group Persistance
+    Delivery -> Redis: XADD history:{groupId} (Blob MLS opaque)
+end
+
+group Distribution Temps Reel (fan-out)
+    Delivery -> Redis: PUBLISH "chat:messages"
+(un message par device destinataire)
+    Redis -> Gateway: OnMessage
+    Gateway -> Gateway: Lookup connected_users["userId:deviceId"]
+    alt device connecte
+        Gateway -> ClientB: WebSocket {proto, senderId, senderDeviceId, groupId}
+    else device hors ligne
+        note right of Gateway
+          Rien n'est envoye. Le message reste
+          dans la file et est recupere au
+          retour par GET /api/mls/messages/
+        end note
+    end
 end
 
 ClientB -> ClientB: MLS Process(Ciphertext)
 note right of ClientB
-  Déchiffrement & 
-  Mise à jour État Groupe (Ratchet)
+  Dechiffrement &
+  Mise a jour Etat Groupe (Ratchet)
 end note
 
 ClientB --> UserA: (Optionnel) Delivery Receipt

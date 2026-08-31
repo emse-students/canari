@@ -1,15 +1,18 @@
 # ── Build stage ──────────────────────────────────────────────────────────────
 FROM rust:slim-bookworm AS builder
 
-# System deps for rdkafka (cmake build feature)
-RUN apt-get update && apt-get install -y cmake pkg-config libssl-dev g++ libcurl4-openssl-dev zlib1g-dev && rm -rf /var/lib/apt/lists/*
+# System deps for `aws-lc-sys`, the rustls backend reqwest resolves to: it builds its C sources
+# with cmake and a C++ compiler. `pkg-config`, `libssl-dev`, `libcurl4-openssl-dev` and `zlib1g-dev`
+# were here for rdkafka and left with it - the lockfile carries no `openssl-sys`, `curl-sys`,
+# `libz-sys` or `pkg-config` crate at all, so nothing remains to probe them.
+RUN apt-get update && apt-get install -y cmake g++ && rm -rf /var/lib/apt/lists/*
 
 # Reproduce the path layout expected by the path dependency:
 #   apps/chat-gateway/Cargo.toml → shared-rust = { path = "../../libs/shared-rust" }
 WORKDIR /build
 
-# Copy all sources in one shot (pas de dummy binary - la cache GHA causait le déploiement
-# du stub fn main(){} au lieu du vrai binaire)
+# Copy all sources in one shot - no dummy binary: the GHA cache made it deploy the stub
+# `fn main(){}` instead of the real one.
 COPY libs/shared-rust ./libs/shared-rust
 COPY libs/proto ./libs/proto
 COPY apps/chat-gateway ./apps/chat-gateway
@@ -19,7 +22,9 @@ RUN cd apps/chat-gateway && cargo build --release
 # ── Runtime stage ─────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y ca-certificates libssl3 curl zlib1g && rm -rf /var/lib/apt/lists/*
+# `curl` is the healthcheck's command, `ca-certificates` the trust store reqwest needs. `libssl3`
+# and `zlib1g` were what rdkafka linked against dynamically and went with it.
+RUN apt-get update && apt-get install -y ca-certificates curl && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/apps/chat-gateway/target/release/chat-gateway /usr/local/bin/chat-gateway
 

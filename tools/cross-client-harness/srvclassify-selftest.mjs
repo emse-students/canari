@@ -93,13 +93,13 @@ const BENIGN_CASES = [
   // reason the rule reads the count instead of the endpoint name.
   `${NEST}[MembersController] [DISMISS] user=aaaaaaaa group=g recorded=0`,
   `${NEST}[MembersController] [UNDISMISS] user=aaaaaaaa group=g lifted=0`,
-  // A CONTAINER'S BOOT BANNER, all four spellings. Silent because the boot itself is announced once
-  // in NOTABLE - see the `Nest application successfully started` case below, which is the sibling
-  // that makes this silence safe rather than a hole.
+  // A CONTAINER'S BOOT BANNER, both remaining spellings. Silent because the boot itself is announced
+  // once in NOTABLE - see the `Nest application successfully started` case below, which is the
+  // sibling that makes this silence safe rather than a hole. The microservice and Kafka spellings
+  // left this list on 2026-08-31 with the transport that printed them; they are asserted
+  // UNEXPLAINED further down, which is what makes their return a finding.
   `${NEST}[RouterExplorer] Mapped {/api/mls/groups/:groupId, DELETE} route +0ms`,
   `${NEST}[RoutesResolver] MembersController {/api}: +0ms`,
-  `${NEST}[NestMicroservice] Nest microservice successfully started +1ms`,
-  `${NEST}[ServerKafka] INFO [ConsumerGroup] Consumer has joined the group {"timestamp":"2026-08-21T20:06:21.247Z","groupId":"chat-delivery-consumer-server"}`,
   // THE GROUP LIFECYCLE, which every check that builds a group produces and nothing classified until
   // 2026-08-21 - twenty-four unexplained lines from one READ-10 run, all of them its own fixture.
   `${NEST}[GroupsController] [CREATE_GROUP][create-grp-6126d2fe] name="READ10-mt3bjpjl" createdBy=aaaaaaaa isGroup=true creatorDevice=web-a-b groupId=g`,
@@ -571,15 +571,21 @@ console.log(`${prefixOk ? 'ok  ' : 'FAIL'} benign       any caller may lack a we
 const boot = [
   ['nest announcing itself', `${NEST}[NestFactory] Starting Nest application...`, 'benign'],
   ['a module finishing its wiring', `${NEST}[InstanceLoader] TypeOrmCoreModule dependencies initialized +38ms`, 'benign'],
-  ['the kafka consumer coming up', `${NEST}[ServerKafka] INFO [Consumer] Starting {"timestamp":"2026-08-23T23:20:57.602Z","logger":"kafkajs","groupId":"chat-delivery-consumer-server"}`, 'benign'],
-  // kafkajs 2.2.4 schedules its throttle check at `this.throttledUntil - Date.now()` with
-  // `throttledUntil = -1`, so the delay is minus the wall clock. Three lines, once per process.
-  ["kafkajs's negative throttle timer", '(node:1) TimeoutNegativeWarning: -1787527257599 is a negative number.', 'benign'],
-  ['the clamp it reports', 'Timeout duration was set to 1.', 'benign'],
-  ['the hint Node prints after it', '(Use `node --trace-warnings ...` to show where the warning was created)', 'benign'],
-  // AND THE ONE THAT MUST NOT BE FORGIVEN WITH IT. The line does not carry its origin - Node prints
-  // the same sentence whoever computed the delay - so the magnitude is the only discriminator there
-  // is. A timer of ours that fires late is out by seconds, never by fifty-six years.
+  // EVERY KAFKA SPELLING IS UNEXPLAINED NOW, AND THAT IS THE POINT. These six lines were forgiven
+  // while chat-delivery connected a Kafka transport and chat-gateway consumed `post.created`. Both
+  // went on 2026-08-31 along with the broker, so no service can print any of them: a rule still
+  // forgiving them would forgive whatever RE-INTRODUCED a transport, silently, in a window nobody
+  // reads twice. The kafkajs warning goes with them - the package is in no `package.json` at all.
+  ['a microservice starting where none should', `${NEST}[NestMicroservice] Nest microservice successfully started +1ms`, 'unexplained'],
+  ['a consumer group being joined', `${NEST}[ServerKafka] INFO [ConsumerGroup] Consumer has joined the group {"timestamp":"2026-08-21T20:06:21.247Z","groupId":"chat-delivery-consumer-server"}`, 'unexplained'],
+  ['a kafka consumer coming up', `${NEST}[ServerKafka] INFO [Consumer] Starting {"timestamp":"2026-08-23T23:20:57.602Z","logger":"kafkajs","groupId":"chat-delivery-consumer-server"}`, 'unexplained'],
+  // kafkajs 2.2.4 scheduled its throttle check at `this.throttledUntil - Date.now()` with
+  // `throttledUntil = -1`, so the delay was minus the wall clock. Three lines, once per process.
+  ["kafkajs's negative throttle timer", '(node:1) TimeoutNegativeWarning: -1787527257599 is a negative number.', 'unexplained'],
+  ['the clamp it reports', 'Timeout duration was set to 1.', 'unexplained'],
+  ['the hint Node prints after it', '(Use `node --trace-warnings ...` to show where the warning was created)', 'unexplained'],
+  // A negative timeout of OUR OWN making was never forgiven either, and its case is kept because it
+  // is the one this family could still plausibly produce.
   ['a negative timeout that is not the wall clock', '(node:1) TimeoutNegativeWarning: -4200 is a negative number.', 'unexplained'],
 ];
 for (const [name, line, want] of boot) {

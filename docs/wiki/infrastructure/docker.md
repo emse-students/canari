@@ -13,7 +13,7 @@
 
 ```
 frontend (Nginx:80)
-  |-- chat-gateway:3000         <- depends on redis, kafka
+  |-- chat-gateway:3000         <- depends on redis
   |-- call-service:3004          <- depends on Cloudflare TURN (no internal deps)
   |-- chat-delivery-service:3010 <- depends on postgres, redis
   |-- media-service:3011         <- depends on garage
@@ -23,8 +23,6 @@ frontend (Nginx:80)
 Infrastructure:
   postgres:5432    <- auth_db (core, chat-delivery, social)
   redis:6379       <- presence, pub/sub, history streams
-  kafka:29092      <- async events
-  zookeeper:2181   <- Kafka coordinator
   garage:3900/3903 <- media blobs (S3 API / admin API)
 ```
 
@@ -164,7 +162,6 @@ In dev, each service is offset from its canonical port to avoid conflicts with l
 | frontend (Nginx) | 80 | 3080 |
 | Redis | 6379 | 6380 |
 | PostgreSQL | 5432 | 5433 |
-| Kafka (external) | 9092 | 9093 |
 | Garage S3 API | 3900 | configurable (`GARAGE_API_HOST_PORT`, default 19010 prod / 19100 dev) |
 
 ## Images
@@ -194,7 +191,7 @@ docker compose -f docker-compose.dev.yml up -d
 
 ## Health checks
 
-chat-delivery-service, Garage, Redis, and Kafka have health checks. Other services depend on `service_started` (no health check gate). The frontend starts once all backend services are running.
+chat-delivery-service, Garage and Redis have health checks. Other services depend on `service_started` (no health check gate). The frontend starts once all backend services are running.
 
 ## Volumes
 

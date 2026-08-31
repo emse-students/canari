@@ -8,7 +8,6 @@ The chat-gateway is the real-time transport layer. It:
 
 - Accepts WebSocket connections from clients and routes MLS frames to the correct recipient.
 - Manages online presence in Redis (`user:online:{userId}:{deviceId}`, 20-second TTL).
-- Broadcasts Kafka events (post creation) to all connected WebSocket clients.
 - Relays welcome requests to online group members; queues them in Redis for offline targets.
 
 It does **not** perform encryption, store messages, or make business logic decisions - those belong to `chat-delivery-service`.
@@ -39,9 +38,13 @@ If the target device is not connected, the message stays in the database queue a
 
 Published by `social-service` for workspace and channel updates. The gateway fans out each frame to all connected devices of affected users.
 
-### Kafka consumer - Post creation broadcast
+### No Kafka consumer, and no broker - removed 2026-08-31
 
-Subscribes to `post.created` topic (group `chat-gateway-broadcast`). Broadcasts `{ type: "post_created", data: <post payload> }` to **all** connected WebSocket clients (at-least-once delivery, manual offset commits).
+This service consumed `post.created` and rebroadcast every record to all connected sockets. Nothing
+ever produced the topic, the shared constant spelled it `post_created` while the subscription used
+`post.created`, and the client had no branch for the frame. The consumer, `rdkafka` and the
+`kafka` + `zookeeper` containers went together. Full reasoning in
+[the wiki](../../docs/wiki/services/chat-gateway.md#no-kafka-consumer-and-no-broker---removed-2026-08-31).
 
 ## Connection Lifecycle
 
@@ -58,7 +61,6 @@ Subscribes to `post.created` topic (group `chat-gateway-broadcast`). Broadcasts 
 |---|---|---|---|
 | `REDIS_URL` | no | `redis://127.0.0.1/` | Redis connection string |
 | `JWT_SECRET` | yes | - | HS256 JWT secret (shared with core-service) |
-| `KAFKA_BROKERS` | no | `localhost:9092` | Kafka broker list |
 | `ALLOW_ORIGIN` | no | `*` | CORS allowed origins (comma-separated list for production) |
 | `RUST_LOG` | no | `chat_gateway=debug,tower_http=debug` | Log filter |
 
@@ -69,7 +71,7 @@ cd apps/chat-gateway
 cargo run --release
 ```
 
-Requires running Redis and Kafka instances.
+Requires a running Redis instance.
 
 ## See also
 

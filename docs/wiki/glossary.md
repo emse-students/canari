@@ -79,7 +79,7 @@ Canonical definitions for terms and acronyms used across Canari's documentation 
 |---|---|
 | `infrastructure/local/Dockerfile.frontend` | Nginx config — source of truth for all routing |
 | `apps/chat-delivery-service/src/app.controller.ts` | Full MLS REST API |
-| `apps/chat-gateway/src/main.rs` | WebSocket gateway, Redis pub/sub, Kafka consumer |
+| `apps/chat-gateway/src/main.rs` | WebSocket gateway, Redis pub/sub |
 | `apps/call-service/src/main.rs` | WebRTC SFU |
 | `libs/proto/canari.proto` | Protobuf schema (wire format) |
 | `frontend/mls-core/` | Shared Rust MLS logic |
