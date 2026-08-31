@@ -14,6 +14,27 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **Two copies of `openmls_traits` in the MLS dependency graph, and two lockfiles that described a
+  tree the manifests did not.** `frontend/mls-core/Cargo.toml` declared
+  `openmls_memory_storage = "0.6.0"` next to `openmls_traits = "0.5.0"` and `openmls = "0.8.1"`;
+  the 0.6 storage crate pulls `openmls_traits` 0.6, so the committed lock carried BOTH versions of
+  the trait crate that defines `StorageProvider` and `OpenMlsProvider`. The dependency was never
+  used - `openmls_rust_crypto` owns the memory storage internally, as the comment at
+  `state.rs:114` already said - so nothing failed to compile and nothing turned red. It arrived
+  through Dependabot PR #292, a `0.5 -> 0.6` bump the auto-merge had no ceiling to refuse. Removed
+  the unused dependency; one copy of the traits crate remains in all three locks.
+- **Nothing in this repository ever read a `Cargo.lock`.** The bun side has installed with
+  `--frozen-lockfile` since day one; no cargo invocation in CI, in `cd.yml` or in the `Makefile`
+  passed `--locked`, so cargo regenerated the lock in place on every run and every gate was green
+  about a graph the repository does not describe. Measured at `main` on 2026-08-31: two of the five
+  locks (`frontend/mls-wasm`, `frontend/src-tauri`) no longer satisfied their manifests, one of them
+  since PR #293 bumped `base64` to 0.23 without either of them following. Added one step to the Rust
+  matrix in `ci.yml` - `cargo metadata --locked` - which resolves the graph and refuses to write.
+  It is stated once for every component rather than appended to five `cmd` strings, and it covers
+  the Tauri crate, which is deliberately outside the `fmt`/`clippy` gate. The change-detection
+  filter already fans a `mls-core` change out to `mls-wasm` and `src-tauri`, so both drifted PRs
+  would have gone red on themselves.
+
 - **Every Stripe webhook was rejected, and one member paid 130,00 EUR the app never recorded.**
   `PaymentWebhookController` verified signatures with `stripe.webhooks.constructEvent`, the
   SYNCHRONOUS form. The runtime is `bun dist/main.js`; bun matches the `worker` export condition;

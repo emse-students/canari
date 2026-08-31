@@ -231,6 +231,32 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev             libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev             libjavascriptcoregtk-4.1-dev
 
+      # The bun side of this repo has been installed with `--frozen-lockfile` since day one; the
+      # Rust side had NOTHING. Nothing read the committed `Cargo.lock` at all, so cargo silently
+      # regenerated it on every run and every gate was green about a graph the repository does not
+      # describe. On 2026-08-31 two of the five locks were drifted at `main`, and one of the two
+      # carried TWO copies of `openmls_traits` (0.5.0 and 0.6.0) - a Dependabot bump of a crate the
+      # code never used, which by itself cannot fail to compile and so was invisible to `cargo test`.
+      #
+      # `cargo metadata --locked` resolves the graph and refuses to write, which is exactly the
+      # question: does the committed lock still satisfy the manifests? It is ONE step for every
+      # component instead of a `--locked` appended to five `cmd` strings that live in JSON in three
+      # different places - the same gate, stated once. It also covers the Tauri crate, which is
+      # deliberately outside the `check` gate below.
+      #
+      # `mls-core` commits no lock ON PURPOSE - it is only ever consumed as a dependency and
+      # resolves inside its consumer's lock, as `.gitignore` says next to the `*.lock` rule. It is
+      # not skipped silently: the change filter above fans any `mls-core` change out to `mls-wasm`
+      # AND `src-tauri`, so its graph is asserted twice, in the two locks that actually ship.
+      - name: Refuse a lockfile the manifests no longer describe
+        working-directory: ${{ matrix.component.path }}
+        run: |
+          if [[ ! -f Cargo.lock ]]; then
+            echo "no committed Cargo.lock here by design - asserted through this crate's consumers"
+            exit 0
+          fi
+          cargo metadata --locked --format-version 1 > /dev/null
+
       - name: Check Formatting
         if: matrix.component.check == true
         working-directory: ${{ matrix.component.path }}
