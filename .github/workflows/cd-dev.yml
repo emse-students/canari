@@ -101,7 +101,7 @@ jobs:
                 apps/social-service/*|infrastructure/local/Dockerfile.social-service)
                   add_service social-service
                   ;;
-                apps/chat-gateway/*|libs/shared-rust/*|libs/proto/*|infrastructure/local/Dockerfile.chat-gateway)
+                apps/chat-gateway/*|libs/proto/*|infrastructure/local/Dockerfile.chat-gateway)
                   add_service chat-gateway
                   ;;
                 apps/call-service/*|infrastructure/local/Dockerfile.call-service)

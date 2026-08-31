@@ -121,7 +121,6 @@ updates:
       - "/frontend/mls-wasm"
       - "/frontend/src-tauri"
       - "/frontend/src-tauri/plugins/tauri-plugin-customtabs"
-      - "/libs/shared-rust"
     rebase-strategy: auto
     schedule:
       interval: "weekly"

@@ -55,7 +55,7 @@ bun run format         # oxfmt (NOT prettier - this repo has no prettier config)
 
 ## Code quality (Rust)
 
-From any Rust crate (`apps/chat-gateway/`, `apps/call-service/`, `libs/shared-rust/`, `frontend/mls-core/`):
+From any Rust crate (`apps/chat-gateway/`, `apps/call-service/`, `frontend/mls-core/`):
 
 ```bash
 cargo clippy --all-targets --all-features

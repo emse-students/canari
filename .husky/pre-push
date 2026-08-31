@@ -25,7 +25,7 @@ if [ -z "$CHANGED_FILES" ]; then
   exit 0
 fi
 
-echo "$CHANGED_FILES" | grep -Eq '^(\.github/workflows/|\.husky/|Makefile|libs/shared-rust/)' && RUN_ALL=1 || RUN_ALL=0
+echo "$CHANGED_FILES" | grep -Eq '^(\.github/workflows/|\.husky/|Makefile)' && RUN_ALL=1 || RUN_ALL=0
 echo "$CHANGED_FILES" | grep -Eq '^frontend/' && RUN_FRONTEND=1 || RUN_FRONTEND=0
 echo "$CHANGED_FILES" | grep -Eq '^apps/chat-delivery-service/' && RUN_DELIVERY=1 || RUN_DELIVERY=0
 echo "$CHANGED_FILES" | grep -Eq '^apps/chat-gateway/' && RUN_GATEWAY=1 || RUN_GATEWAY=0

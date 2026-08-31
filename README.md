@@ -183,8 +183,7 @@ canari/
 │   ├── mls-wasm/              # WASM bindings (wasm-bindgen)
 │   └── src-tauri/             # Tauri 2 native app
 ├── libs/
-│   ├── proto/                 # Protobuf schema (canari.proto)
-│   └── shared-rust/           # Shared Rust event types
+│   └── proto/                 # Protobuf schema (canari.proto)
 ├── infrastructure/
 │   ├── local/                 # Docker Compose & Dockerfiles (dev)
 │   ├── docker-compose.prod.yml

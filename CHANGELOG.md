@@ -150,6 +150,19 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Removed
 
+- **`libs/shared-rust`, which nothing in this repository read a line of.** It defined three Kafka
+  event structs, their topic constants and a `ts-rs` mirror into committed TypeScript bindings.
+  `apps/chat-gateway/Cargo.toml` named it as a path dependency while the gateway's source contained
+  no `shared_rust` at all, and no TypeScript imported the bindings; the one consumer that ever
+  existed - the gateway's Kafka subscriber, deleted the same day - never used the constant, nor even
+  its spelling. What a dead crate costs is not its size, it is every mechanism that has to enumerate
+  the repo: a CI matrix entry with its own change-propagation flag (chat-gateway was rebuilt whenever
+  it changed), two CD path filters, a Dependabot directory, a CODEOWNERS line, a `git add` in the
+  version bump, a `LOCAL_CRATES` entry in `bump-app-version.sh`, a Makefile target inside `make
+  test`, a branch in both Husky hooks, and a `COPY` in two Dockerfiles. All are gone, the
+  chat-gateway lock is 44 lines shorter, and its tests and clippy are clean without it. The stale
+  `libs/shared-ts/` build output left on disk by that package's deletion on 2026-08-27 went with it.
+
 - **Kafka, Zookeeper, and the one consumer that kept them alive.** A `confluentinc/cp-kafka` and a
   `cp-zookeeper` ran on production carrying nothing: 42 hours into an uptime, with every service up,
   `kafka-topics --list` answered `__consumer_offsets` and no application topic at all. chat-gateway

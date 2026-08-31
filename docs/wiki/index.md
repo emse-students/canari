@@ -12,7 +12,7 @@
 ### Architecture
 
 - [Architecture overview](architecture.md) — service topology, Nginx routing, auth flow
-- [Shared libraries](libs.md) — proto, shared-rust
+- [Shared libraries](libs.md) — proto
 - [Glossary](glossary.md) — acronyms and terminology
 
 ### Protocols
@@ -95,4 +95,3 @@
 | Available commands | `Makefile` |
 | Server bootstrap | [`infrastructure/MIGRATION.md`](../../infrastructure/MIGRATION.md) |
 | Protobuf schema | [`libs/proto/canari.proto`](../../libs/proto/canari.proto) |
-| Shared event types | [`libs/shared-rust/src/lib.rs`](../../libs/shared-rust/src/lib.rs) |

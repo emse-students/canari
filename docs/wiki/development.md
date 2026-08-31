@@ -58,7 +58,6 @@ bun run dev
 | Target | What it does |
 |---|---|
 | `make test` | Runs all test suites (libs + gateway + delivery + frontend) |
-| `make test-libs` | `cargo test` in `libs/shared-rust` |
 | `make test-gateway` | `cargo test` in `apps/chat-gateway` |
 | `make test-history` | `npm test` in `apps/chat-delivery-service` |
 | `make test-frontend` | `npm test` (Vitest) in `frontend/` |
@@ -333,7 +332,6 @@ Rust >= 1.93 required (enforced by `rust-toolchain.toml`). Relevant crates:
 |---|---|---|
 | `chat-gateway` | `apps/chat-gateway/` | WebSocket gateway |
 | `call-service` | `apps/call-service/` | WebRTC SFU |
-| `shared-rust` | `libs/shared-rust/` | Shared Rust event types |
 | `mls-core` | `frontend/mls-core/` | Core MLS operations |
 | `mls-wasm` | `frontend/mls-wasm/` | WASM bindings for mls-core |
 | `src-tauri` | `frontend/src-tauri/` | Tauri 2 native app |

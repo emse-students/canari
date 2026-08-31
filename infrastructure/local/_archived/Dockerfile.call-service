@@ -7,7 +7,6 @@ RUN apt-get update && apt-get install -y cmake pkg-config libssl-dev g++ libcurl
 WORKDIR /build
 
 # Copy all sources in one shot
-COPY libs/shared-rust ./libs/shared-rust
 COPY libs/proto ./libs/proto
 COPY apps/_archived/call-service ./apps/_archived/call-service
 

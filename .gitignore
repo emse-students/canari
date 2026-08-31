@@ -107,7 +107,7 @@ lcov-report/
 # A lockfile is committed when the package it locks is itself built into a SHIPPED
 # artefact, so that CI, Docker and a developer machine all resolve the exact same
 # dependency tree instead of floating ranges. A crate that only ever gets consumed
-# as a dependency (mls-core, shared-rust) resolves inside its consumer's lock and
+# as a dependency (mls-core) resolves inside its consumer's lock and
 # keeps none of its own - hence no exception for those.
 # These negations must stay AFTER the `*.lock` above: the last matching pattern wins.
 !frontend/bun.lock

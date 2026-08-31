@@ -117,8 +117,8 @@ cargo_package_name() {
 
 bump_cargo_lock_version() {
   # Cargo.lock pins the version of every LOCAL crate too, and a lock does not live
-  # next to the crate it pins: mls-core is pinned in src-tauri's lock, shared-rust in
-  # chat-gateway's. Left alone, those entries lag a release behind until some unrelated
+  # next to the crate it pins: mls-core is pinned in src-tauri's lock, and a workspace
+  # member in its workspace's. Left alone, those entries lag a release behind until some unrelated
   # commit happens to run cargo and sweeps the regenerated lock in. Patch every block
   # whose package name is one we just bumped.
   local file="$1"
@@ -165,7 +165,6 @@ discover_cargo_files() {
     "$ROOT/frontend/src-tauri/Cargo.toml"
     "$ROOT/frontend/mls-wasm/Cargo.toml"
     "$ROOT/frontend/mls-core/Cargo.toml"
-    "$ROOT/libs/shared-rust/Cargo.toml"
   )
   local cargo
 
@@ -205,7 +204,7 @@ while IFS= read -r f; do
 done < <(discover_cargo_files)
 
 # Every lock sits next to a manifest we just bumped; a crate with no lock of its own
-# (mls-core, shared-rust) is still patched inside its consumer's, via LOCAL_CRATES.
+# (mls-core) is still patched inside its consumer's, via LOCAL_CRATES.
 while IFS= read -r f; do
   bump_cargo_lock_version "$(dirname "$f")/Cargo.lock" "$VERSION" "$LOCAL_CRATES"
 done < <(discover_cargo_files)

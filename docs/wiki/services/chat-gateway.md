@@ -136,7 +136,9 @@ correct code with three separate reasons never to run:
    else, 42 hours into an uptime. The consumer logged `UnknownTopicOrPartition` at every boot.
 2. **The two names never matched.** `libs/shared-rust` declared `TOPIC_POST_CREATED = "post_created"`
    while this file subscribed to the literal `"post.created"` - a producer written against the
-   shared constant would have published past its only consumer, silently.
+   shared constant would have published past its only consumer, silently. That crate was itself
+   deleted on 2026-08-31: with the broker gone it described a contract nothing in the system
+   spoke, and this gateway named it as a path dependency without using a line of it.
 3. **The client had no branch for the frame.** `post_created` was routed to `handleChannelEvent`,
    which implements no case for it, so a delivered record would have reached that handler's final
    `[ERROR] Unhandled channel event type` line on every connected client.

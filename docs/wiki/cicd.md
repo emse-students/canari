@@ -10,7 +10,7 @@ Runs on every push and pull request to `main`:
 
 | Job | What it checks |
 |---|---|
-| **Rust tests** | `cargo test` across all crates (`shared-rust`, `chat-gateway`) |
+| **Rust tests** | `cargo test` across all crates (`chat-gateway`, `call-service`, `mls-core`) |
 | **TypeScript tests** | NestJS tests in `chat-delivery-service` |
 | **Frontend tests** | `vitest` in `frontend/` |
 | **Frontend lint** | `oxlint` + `oxvelte` + `oxfmt --check` + `svelte-check` (0 errors required) |
@@ -213,7 +213,7 @@ learns to patch has to be added there too, or the bump silently leaves it uncomm
 
 A `Cargo.lock` pins the version of every LOCAL crate as well, and it does **not** live next to the
 crate it pins: `mls-core` is pinned in `frontend/src-tauri/Cargo.lock` **and** in
-`frontend/mls-wasm/Cargo.lock`, `shared-rust` in `apps/chat-gateway/Cargo.lock`. So the script
+`frontend/mls-wasm/Cargo.lock`. So the script
 collects the `[package] name` of every manifest it bumps and rewrites every matching `[[package]]`
 block in every lock — a per-crate patch, not a per-directory one.
 
@@ -224,8 +224,8 @@ unrelated commit happened to run cargo and the pre-commit sweep carried the rege
 
 Which locks are committed is a separate decision, kept in `.gitignore`: a lock is committed when the
 package it locks is itself built into a **shipped artefact** (`frontend/src-tauri`, `frontend/mls-wasm`,
-`apps/*`), and ignored when the crate is only ever consumed as a dependency (`mls-core`,
-`shared-rust`) — those resolve inside their consumer's lock. The negations must sit **after** the
+`apps/*`), and ignored when the crate is only ever consumed as a dependency (`mls-core`) —
+those resolve inside their consumer's lock. The negations must sit **after** the
 generic `*.lock` line: last matching pattern wins, and for two releases a `*.lock` added lower in the
 file silently overrode the `!apps/*/Cargo.lock` written above it. `frontend/src-tauri/Cargo.lock`
 survived only because a tracked file ignores `.gitignore` entirely.

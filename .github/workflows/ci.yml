@@ -39,7 +39,7 @@ jobs:
           set -euo pipefail
 
           # ── Full matrices (used as fallback) ──
-          ALL_RUST='[{"name":"Shared Rust Lib","path":"libs/shared-rust","cmd":"cargo test","check":true},{"name":"Chat Gateway","path":"apps/chat-gateway","cmd":"cargo test","check":true},{"name":"Call Service (SFU)","path":"apps/call-service","cmd":"cargo test","check":true},{"name":"Frontend MLS Core","path":"frontend/mls-core","cmd":"cargo test","check":true},{"name":"Frontend MLS WASM","path":"frontend/mls-wasm","cmd":"cargo build --target wasm32-unknown-unknown --release","wasm":true,"check":true},{"name":"Frontend Native (Tauri)","path":"frontend/src-tauri","cmd":"cargo check --all-targets","tauri":true}]'
+          ALL_RUST='[{"name":"Chat Gateway","path":"apps/chat-gateway","cmd":"cargo test","check":true},{"name":"Call Service (SFU)","path":"apps/call-service","cmd":"cargo test","check":true},{"name":"Frontend MLS Core","path":"frontend/mls-core","cmd":"cargo test","check":true},{"name":"Frontend MLS WASM","path":"frontend/mls-wasm","cmd":"cargo build --target wasm32-unknown-unknown --release","wasm":true,"check":true},{"name":"Frontend Native (Tauri)","path":"frontend/src-tauri","cmd":"cargo check --all-targets","tauri":true}]'
           ALL_TS='["apps/core-service","apps/social-service","apps/chat-delivery-service","apps/media-service"]'
 
           run_all() {
@@ -77,19 +77,11 @@ jobs:
             run_all; exit 0
           fi
 
-          # ── Shared-lib flags (propagate to dependents) ──
-          shared_rust=false
-          if has '^libs/shared-rust/' || has '^libs/proto/'; then
-            shared_rust=true
-          fi
-
           # ── Rust matrix ──
           rust=()
-          if [[ "$shared_rust" == "true" ]]; then
-            rust+=('{"name":"Shared Rust Lib","path":"libs/shared-rust","cmd":"cargo test","check":true}')
-          fi
-          # chat-gateway depends on shared-rust
-          if [[ "$shared_rust" == "true" ]] || has '^apps/chat-gateway/'; then
+          # chat-gateway generates its protobufs from `libs/proto`; since `libs/shared-rust`
+          # was deleted on 2026-08-31 that is its ONLY path dependency inside this repo.
+          if has '^libs/proto/' || has '^apps/chat-gateway/'; then
             rust+=('{"name":"Chat Gateway","path":"apps/chat-gateway","cmd":"cargo test","check":true}')
           fi
           # THE SFU, WHICH NOTHING HERE COMPILED UNTIL 2026-08-27 - the same hole as the native

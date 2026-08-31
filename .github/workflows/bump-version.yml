@@ -49,7 +49,6 @@ jobs:
           git add frontend/src-tauri/Cargo.lock frontend/mls-wasm/Cargo.lock
           git add frontend/src-tauri/gen/apple/canari.xcodeproj/project.pbxproj
           git add frontend/src-tauri/gen/apple/canari_iOS/Info.plist
-          git add libs/shared-rust/Cargo.toml
           shopt -s nullglob
           git add libs/*/package.json
           git add apps/*/package.json apps/*/Cargo.toml apps/*/Cargo.lock

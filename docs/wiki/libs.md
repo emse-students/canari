@@ -2,79 +2,9 @@
 
 **Source**: `libs/`
 
-Canari shares types and event definitions across services via two libraries in the monorepo.
-
-## libs/shared-rust
-
-**Stack**: Rust  
-**Source**: `libs/shared-rust/Cargo.toml`
-
-**THIS CRATE IS DEAD AS OF 2026-08-31 AND SHOULD BE DELETED.** It defines Kafka event structs and
-topic constants for a broker that no longer exists. `apps/chat-gateway/Cargo.toml` names it as a
-path dependency and its source contains no `shared_rust` at all; no TypeScript imports the generated
-bindings either. Nothing in this repository reads a line of it.
-
-`ts-rs` mirrors each struct into TypeScript so a future TS consumer cannot drift from the Rust
-definition.
-
-### Event types
-
-| Struct | Topic constant | Where that topic name appears outside this crate |
-|---|---|---|
-| `MessageSentEvent` | `TOPIC_CHAT_MESSAGES` (`chat_messages`) | nowhere |
-| `MessageReadEvent` | `TOPIC_MESSAGE_READ` (`message_read`) | nowhere |
-| `PostCreatedEvent` | `TOPIC_POST_CREATED` (`post_created`) | nowhere, since 2026-08-31 |
-
-That third column is MEASURED, not intended, and it says these structs describe a contract nothing
-in the system speaks. An earlier version of this table named a producer and a consumer for all
-three; none of those routes has ever existed in the repo.
-
-**The one consumer that did exist never used the constant, nor even its spelling.** `subscribers.rs`
-subscribed to `post.created` while `TOPIC_POST_CREATED` is `post_created`, so a producer written
-against this crate would have published to a topic that consumer never read - the two agreeing on a
-struct and disagreeing on a name. It went with the broker; see
-[chat-gateway](services/chat-gateway.md#no-kafka-consumer-and-no-broker---removed-2026-08-31).
-
-### The TypeScript mirror
-
-`cargo test` regenerates `libs/shared-rust/bindings/*.ts` through `ts-rs`, and those files are
-COMMITTED. That is the whole mechanism: change a struct, run the tests, and the drift shows up as a
-dirty working tree in the same commit as the Rust change. Nothing imports them today - they exist so
-the contract is written down in both languages, generated from one source.
-
-Until 2026-08-27 they were written into `libs/shared-ts/src/types/` instead. That package is deleted;
-see the note at the end of this page.
-
-### Key fields
-
-```rust
-pub struct MessageSentEvent {
-    pub id: Uuid,
-    pub sender_id: String,
-    pub username: String,
-    pub content: String,
-    pub timestamp: DateTime<Utc>,
-    pub conversation_id: Option<String>,
-}
-
-pub struct PostCreatedEvent {
-    pub id: Uuid,
-    pub author_id: String,
-    pub content: String,
-    pub media_urls: Vec<String>,
-    pub timestamp: DateTime<Utc>,
-}
-```
-
-### Topic constants
-
-| Constant | Value |
-|---|---|
-| `TOPIC_CHAT_MESSAGES` | `"chat_messages"` |
-| `TOPIC_MESSAGE_READ` | `"message_read"` |
-| `TOPIC_POST_CREATED` | `"post_created"` |
-
----
+Canari shares ONE thing across services: the protobuf schema. Two other libraries lived here
+and both are deleted - their entries are at the foot of this page, kept because what they cost
+while dead is the reason to look for the next one.
 
 ## libs/proto
 
@@ -104,7 +34,6 @@ files are GENERATED and not in git; `bun run generate` builds them alongside the
 ## See also
 
 - [`protocols/websocket-protocol.md`](protocols/websocket-protocol.md) — Full binary protocol specification
-- [`architecture.md`](architecture.md) — Kafka topic usage in context
 - [`protocols/mls-protocol.md`](protocols/mls-protocol.md) — How `AppMessage` fits into MLS encryption
 
 ---
@@ -126,3 +55,29 @@ written at the head of each copy: `internal/service-urls.ts` and `internal-secre
 `core-service` and `social-service`. That trade is still the right one - a shared package would add a
 build stage to two more production images to save four lines each. A THIRD copy is the signal to
 reconsider, and recreating the package is a twenty-minute job.
+
+---
+
+## libs/shared-rust, deleted 2026-08-31
+
+The second dead library, removed the same day as the broker it existed for. It defined three Kafka
+event structs (`MessageSentEvent`, `MessageReadEvent`, `PostCreatedEvent`), their three topic
+constants, and a `ts-rs` mirror of each into committed TypeScript bindings.
+
+**Nothing in the repository read a line of it.** `apps/chat-gateway/Cargo.toml` named it as a path
+dependency and the gateway's source contained no `shared_rust`; no TypeScript imported the generated
+bindings. The one consumer that ever existed - the gateway's Kafka subscriber - never used the
+constant, nor even its spelling: it subscribed to `post.created` while `TOPIC_POST_CREATED` is
+`post_created`, so a producer written against this crate would have published past its only reader.
+See [chat-gateway](services/chat-gateway.md#no-kafka-consumer-and-no-broker---removed-2026-08-31).
+
+It cost the same shape of tax `shared-ts` did: a CI matrix entry with its own change-propagation
+flag, two CD path filters, a Dependabot directory, a CODEOWNERS line, a `git add` in the version
+bump, a `LOCAL_CRATES` entry in `bump-app-version.sh`, a Makefile target inside `make test`, a branch
+in both Husky hooks, and a `COPY` in two Dockerfiles. **A dead dependency is not free because it is
+small; it is expensive because every mechanism that enumerates the repo has to name it.**
+
+The `ts-rs` mirror is worth remembering as a mechanism even though its subject is gone: `cargo test`
+regenerated the bindings and they were COMMITTED, so drift showed up as a dirty working tree in the
+same commit as the Rust change. That is a good pattern for a contract written in two languages - it
+was simply guarding a contract nobody spoke.

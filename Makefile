@@ -1,4 +1,4 @@
-.PHONY: all install install-node install-bun install-rust install-oxvelte install-wasm-pack install-frontend install-services install-hooks setup-env setup-env-prod production production-check build-frontend reload-services test test-libs test-gateway test-history test-frontend test-harness bench-mls clean run-ci lint-frontend
+.PHONY: all install install-node install-bun install-rust install-oxvelte install-wasm-pack install-frontend install-services install-hooks setup-env setup-env-prod production production-check build-frontend reload-services test test-gateway test-history test-frontend test-harness bench-mls clean run-ci lint-frontend
 
 # Cible par défaut : installation complète et déploiement LOCAL
 .DEFAULT_GOAL := all
@@ -255,11 +255,10 @@ setup-env-prod:
 	@./scripts/setup-env.sh --prod
 
 # Cible principale
-test: test-libs test-gateway test-history test-frontend test-harness
+test: test-gateway test-history test-frontend test-harness
 	@echo ""
 	@echo "${BOLD}📊 BILAN DES TESTS${RESET}"
 	@echo "---------------------------------------------------"
-	@echo "${GREEN}✅ Shared Rust Lib         : PASS${RESET}"
 	@echo "${GREEN}✅ Chat Gateway (Rust)     : PASS${RESET}"
 	@echo "${GREEN}✅ Delivery Service (TS)   : PASS${RESET}"
 	@echo "${GREEN}✅ Frontend (Vitest)       : PASS${RESET}"
@@ -315,11 +314,6 @@ bench-mls:
 	@echo "${BLUE}📊 Running mls-core Criterion benchmarks…${RESET}"
 	@cd frontend/mls-core && cargo bench -p mls-core --bench mls_perf
 	@echo "${GREEN}✅ MLS benchmarks done${RESET}"
-
-# Tests Libs Rust
-test-libs:
-	@echo "${BLUE}🧪 Testing Shared Rust Lib…${RESET}"
-	@cd libs/shared-rust && $(RUST_TEST_CMD)
 
 # Tests Gateway Rust
 test-gateway:

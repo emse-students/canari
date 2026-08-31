@@ -7,13 +7,12 @@ FROM rust:slim-bookworm AS builder
 # `libz-sys` or `pkg-config` crate at all, so nothing remains to probe them.
 RUN apt-get update && apt-get install -y cmake g++ && rm -rf /var/lib/apt/lists/*
 
-# Reproduce the path layout expected by the path dependency:
-#   apps/chat-gateway/Cargo.toml → shared-rust = { path = "../../libs/shared-rust" }
+# Reproduce the path layout `build.rs` expects: it compiles the protobufs from `libs/proto`,
+# resolved relative to the crate root.
 WORKDIR /build
 
 # Copy all sources in one shot - no dummy binary: the GHA cache made it deploy the stub
 # `fn main(){}` instead of the real one.
-COPY libs/shared-rust ./libs/shared-rust
 COPY libs/proto ./libs/proto
 COPY apps/chat-gateway ./apps/chat-gateway
 

@@ -12,7 +12,6 @@ frontend/mls-wasm/ @DeMASKe @Unaty498
 # Rust services
 apps/chat-gateway/ @DeMASKe @Unaty498
 apps/call-service/ @DeMASKe @Unaty498
-libs/shared-rust/ @DeMASKe @Unaty498
 
 # NestJS services
 apps/chat-delivery-service/ @DeMASKe @Unaty498
