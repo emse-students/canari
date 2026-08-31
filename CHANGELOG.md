@@ -11,8 +11,24 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Removed
+
+- **The Nest scaffold that read as end-to-end coverage and had never run.**
+  `apps/core-service/test/app.e2e-spec.ts` was the untouched generator output: it asserted
+  `Hello World!` on `/` against a service whose global prefix is `api`, and its `testRegex` lived in
+  a `test:e2e` script no workflow and no `Makefile` target ever called. Deleted with its
+  `jest-e2e.json`, the two dead `test:e2e` scripts in core-service and social-service, and
+  `supertest` plus `@types/supertest`, which nothing else imported. Two `format` scripts also still
+  globbed a `test/` directory that no longer exists in either service.
 
 ### Fixed
+
+- **The pre-commit hook failed any commit that DELETES a file.** Its `restage` helper re-adds each
+  path the auto-fixers may have rewritten, and a comment asserted that `git add -A -- <path>`
+  carried a staged deletion through. It does not: after `git rm`, the path is in neither the index
+  nor the worktree, so the pathspec matches nothing and git exits 128 - taking the whole commit
+  with it. It now skips a path that is not on disk, which needs no re-staging anyway: no formatter
+  rewrites a file that is not there, and the deletion is already staged as its author left it.
 
 - **Two copies of `openmls_traits` in the MLS dependency graph, and two lockfiles that described a
   tree the manifests did not.** `frontend/mls-core/Cargo.toml` declared
@@ -68,6 +84,18 @@ which is also where every release up to and including v0.13.1 now lives.
   documented exception to the anti-recursion rule.
 
 ### Added
+
+- **`src/framework-boot.spec.ts` in all four NestJS services - the gate the split walked through.**
+  Two tests, no infrastructure. The first reads every installed `@nestjs/*` package's own
+  `peerDependencies` and asserts each accepts the `@nestjs/common` and `@nestjs/core` it will
+  actually be handed: that is the warning bun prints and nobody sees, turned into a failure that
+  names the package and both versions. The second calls the real `NestFactory.create`, listens on
+  port 0 and serves a request through the real express adapter, because no amount of type-checking
+  substitutes for building the object a version skew lives inside. Verified against the incident by
+  reinstalling `@nestjs/platform-express@12` on a core at 11: the declared half printed both
+  violations, the boot half died on `No driver (HTTP) has been selected`. The file is duplicated per
+  service on purpose - four bun packages, four `node_modules`, and the subject of the test is which
+  versions THIS service resolved.
 
 - **`infrastructure/docker-prune/`** - one daily pass that reclaims dangling images and the build
   cache, and REPORTS, never deletes, every dangling volume and exited container. No prune ran on

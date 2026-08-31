@@ -8,8 +8,8 @@
     "test": "jest --passWithNoTests",
     "lint": "oxlint -c ../../.oxlintrc.nest.json .",
     "lint:fix": "oxlint -c ../../.oxlintrc.nest.json --fix .",
-    "format": "oxfmt -c ../../oxfmt.json --write \"src/**/*.ts\" \"test/**/*.ts\"",
-    "format:check": "oxfmt -c ../../oxfmt.json --check \"src/**/*.ts\" \"test/**/*.ts\""
+    "format": "oxfmt -c ../../oxfmt.json --write \"src/**/*.ts\"",
+    "format:check": "oxfmt -c ../../oxfmt.json --check \"src/**/*.ts\""
   },
   "dependencies": {
     "@nestjs/common": "^11.2.3",

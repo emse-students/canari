@@ -378,3 +378,12 @@ measurement, and `git pull` his work in. **It does not concern ours and owes no 
 architecturalement regle, pas mettre des pansements avec des timeouts ou autre, je veux que tout soit
 deterministe, reproductible, explicable. Et doit marcher avec une conversation de toute les
 tailles"*; *"pense factorisation, proprete, simplicite"*.
+
+**AND ON DEPENDENCIES, 2026-08-31, WHICH DECIDES THE SHAPE OF EVERY GATE:** *"Je prefere blinder de
+test et faire les choses automatiquement qu'avoir une review humaine qui n'arrive jamais"*, and
+*"pour avoir un projet qui peut 'vivre tout seul'"*. **So a refusal in `dependabot-auto-merge.yml` is
+NEVER a routing decision to a human queue - it is a statement that a gate is MISSING, and it must
+NAME the test that would lift it.** A queue nobody drains is worse than the merge it prevented: 33
+pull requests were open the day this was written. The three refusals standing on 2026-08-31, each
+with the test that retires it, are in
+[backlog](docs/wiki/backlog.md#p1---the-three-refusals-the-auto-merge-ceiling-makes-and-the-test-that-retires-each).

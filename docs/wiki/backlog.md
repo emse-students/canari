@@ -2152,23 +2152,36 @@ not chosen yet. Read the reasoning on
 **Do NOT re-enable an auto-merge anywhere before its ceiling is in.** Canari's is disabled right now
 for exactly that reason.
 
-### P2 - no test anywhere starts a Nest application, and that is the gate the split walked through
+### P2 - the real `AppModule` still boots nowhere, and that is what a framework MAJOR needs
 
-**Measured 2026-08-31:** `git grep -ln NestFactory -- 'apps/**/*.spec.ts'` returns NOTHING.
-`NestFactory` appears in four files, all of them a `main.ts`. So 200 tests in core-service and 306
-in chat-delivery-service instantiate controllers and services by hand, with mocks, and **nothing ever
-builds the HTTP adapter** - which is the only thing `@nestjs/platform-express` provides. When that
-package went to 12 against a `@nestjs/core` at 11, the one object the mismatch lives inside was
-never constructed by any gate.
+**The framework-coherence half SHIPPED on 2026-08-31** and is not open work: every service now
+carries `src/framework-boot.spec.ts`, which asserts two things without any infrastructure - that
+every installed `@nestjs/*` package's own `peerDependencies` accept the `@nestjs/common` and
+`@nestjs/core` it will actually be handed, and that `NestFactory.create` really welds the injector
+to the express adapter and serves a request through it. Reproduced against the incident: with
+`@nestjs/platform-express@12` on a core at 11, the declared half names both violations in prose and
+the boot half dies on `No driver (HTTP) has been selected`. 8 tests, four services, no network.
 
-**What is owed is one smoke test per service**: `NestFactory.create(AppModule)` against an in-memory
-or throwaway configuration, a request to the health route, and shut down. It turns "it compiles" into
-"it starts", which is the distinction the whole incident turned on, and it is the gate that makes an
-automatic dependency merge defensible at all.
+**What that gate does NOT reach, and why it matters for the auto-merge ceiling:** the probe module
+imports nothing but `common`, `core` and `platform-express`, so `@nestjs/typeorm`,
+`@nestjs/config`, `@nestjs/throttler`, `@nestjs/schedule` and `@nestjs/axios` are covered only by
+their DECLARED peer ranges. A major that keeps its peer range honest and changes behaviour inside a
+dynamic module passes. The real `AppModule` has never been constructed by any test in this
+repository - `TypeOrmModule.forRootAsync` connects on init, which is exactly why nobody did it.
 
-**The trap to avoid**: a smoke test that mocks the adapter proves nothing - the adapter IS the
-subject. It has to be the real `NestFactory` with the real platform package, or it is a different
-test wearing the name.
+**What is owed**: one job with a Postgres service container that calls `NestFactory.create(AppModule)`
+against a throwaway database, hits `/api/health`, and shuts down. It is the gate that would let the
+ceiling accept a grouped `@nestjs/*` MAJOR automatically, which is the point - the standing
+directive is that a refusal names the missing test rather than routing to a human queue.
+
+**Two traps.** A smoke test that mocks the adapter proves nothing: the adapter IS the subject. And
+`synchronize: process.env.NODE_ENV !== 'production'` means the boot will CREATE the schema, so the
+job needs a disposable database and must never be pointed at anything else.
+
+**The scaffold that pretended to be this test is deleted.** `apps/core-service/test/app.e2e-spec.ts`
+was the untouched Nest skeleton: it did boot `AppModule`, it asserted `Hello World!` on `/` against
+a service whose global prefix is `api`, and its `testRegex` was in no command CI ever ran. It went
+with its `jest-e2e.json`, the two dead `test:e2e` scripts and `supertest`, which nothing else used.
 
 ### P3 - `submissions.formId` names a form nothing keeps, and 28 rows point at deleted ones
 

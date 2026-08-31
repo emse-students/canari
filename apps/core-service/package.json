@@ -9,8 +9,8 @@
     "build": "nest build",
     "lint": "oxlint -c ../../.oxlintrc.nest.json .",
     "lint:fix": "oxlint -c ../../.oxlintrc.nest.json --fix .",
-    "format": "oxfmt -c ../../oxfmt.json --write \"src/**/*.ts\" \"test/**/*.ts\"",
-    "format:check": "oxfmt -c ../../oxfmt.json --check \"src/**/*.ts\" \"test/**/*.ts\"",
+    "format": "oxfmt -c ../../oxfmt.json --write \"src/**/*.ts\"",
+    "format:check": "oxfmt -c ../../oxfmt.json --check \"src/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
@@ -18,8 +18,7 @@
     "test": "jest --passWithNoTests",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
-    "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:e2e": "jest --config ./test/jest-e2e.json"
+    "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand"
   },
   "dependencies": {
     "@nestjs/common": "^11.2.3",
@@ -48,12 +47,10 @@
     "@types/jest": "^30.0.0",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^26.4.0",
-    "@types/supertest": "^7.2.1",
     "jest": "^30.4.2",
     "oxfmt": "^0.65.0",
     "oxlint": "^1.80.0",
     "oxlint-tsgolint": "^7.0.2001",
-    "supertest": "^7.2.2",
     "ts-jest": "^29.4.12",
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",
