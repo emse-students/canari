@@ -49,6 +49,24 @@ const RELATIVE_API_FETCH = /\bfetch\(\s*[`'"]\/api\//;
  */
 const RELATIVE_API_SRC = /\bsrc=[{]?\s*[`'"]\/api\//;
 
+/**
+ * The same defect one INDIRECTION over, and the one the two checks above cannot see.
+ *
+ * `setCardIcon` and the logo endpoints store their result as the app-relative
+ * `/api/media/public/<mediaId>?v=...`, so the offending string never appears in the source at all -
+ * it arrives at runtime in a field and is bound as `src={card.iconUrl}`. There is no literal `/api/`
+ * to match and no `fetch` to inspect, and on mobile the result is exactly the silent placeholder
+ * described above. That is how `CardTile` shipped with every partner logo and every product icon
+ * missing in the Tauri builds while both checks above stayed green.
+ *
+ * So the field NAMES the backend stores such a path under are the thing to guard: a binding of one
+ * must route through an absolutizer - `apiAssetUrl` or `associationLogoSrc` - and never reach `src`
+ * raw. Wrapping the field in a call is what makes a site pass, because the absolutizer's name then
+ * sits between `src={` and the field.
+ */
+const RAW_STORED_ASSET_SRC =
+  /\bsrc=\{\s*[A-Za-z_$][\w$]*(?:\s*[?.]*\.\s*[\w$]+)*\.(?:iconUrl|logoUrl)\b|\bsrc=\{\s*(?:iconUrl|logoUrl)\b/;
+
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir)) {
@@ -84,6 +102,19 @@ describe('API calls are addressed absolutely', () => {
       `Wrap the path in apiAssetUrl() from $lib/utils/apiUrl. On mobile a relative /api/ src is ` +
         `served index.html by the Tauri asset server: the image fails to decode, onerror fires, and ` +
         `a component with a placeholder shows the placeholder forever - silently.`
+    ).toEqual([]);
+  });
+
+  it('never binds a stored iconUrl/logoUrl field straight into a src attribute', () => {
+    const offenders = sourceFiles(SRC)
+      .filter((file) => RAW_STORED_ASSET_SRC.test(readFileSync(file, 'utf8')))
+      .map((file) => relative(SRC, file).replace(/\\/g, '/'));
+
+    expect(
+      offenders,
+      `The backend stores iconUrl/logoUrl as the app-relative /api/media/public/<id>, so binding ` +
+        `one raw breaks it on mobile with no literal /api/ in the source for the checks above to ` +
+        `catch. Pass it through apiAssetUrl() (or associationLogoSrc()) first.`
     ).toEqual([]);
   });
 });

@@ -61,6 +61,34 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **Claiming a partnership code answered 500 for every user, on every card, since the feature
+  shipped.** Migration 047 declared `partnership_codes."claimedByUserId"` as `uuid`. A user id in
+  this estate is the 64-character hex digest carried in `x-user-id`, so the FIRST statement
+  `claimPoolCode` runs - the "does this student already hold a code" lookup - died in Postgres with
+  SQLSTATE 22P02, `invalid input syntax for type uuid`, and the route returned
+  `{"statusCode":500}`. Not a race and not load-dependent: no claim could ever have succeeded, and
+  prod confirmed it, holding zero claimed rows against a live card. `shared_code` and `text` cards
+  never touch that column, which is why the tab looked healthy. Migration 056 widens the column to
+  `varchar(255)`, matching every other user-id column in the service; the partial unique index the
+  idempotence guarantee relies on is rebuilt by `ALTER TYPE` and keeps its predicate. Nothing caught
+  it because every service spec mocks its repositories, so no column type is ever exercised - the
+  same blind spot the `typeorm` boot probe above was written for. `user-id-column.spec.ts` now reads
+  the DECLARED metadata and fails on any user-id-shaped column typed `uuid`, across the service
+  rather than at the one column that broke.
+
+- **Every partnership and product icon was missing in the mobile builds.** The backend stores a
+  card icon as the app-relative `/api/media/public/<mediaId>?v=...`. In a Tauri build the page is
+  served from `tauri://localhost` (iOS) or `http://tauri.localhost` (Android), where that path
+  resolves against the SHELL rather than the proxy: the asset server answers `index.html`, the image
+  fails to decode, `onerror` fires and the fallback glyph shows forever. Nothing throws and nothing
+  is logged. `apiAssetUrl` existed for exactly this and `CardTile` never called it, so all five card
+  lists - shop, association detail, partnerships, boutique and their two manage tabs - were affected
+  on mobile only. `CardIconEditor` had the identical bug, found by the new test rather than by
+  reading, and left a president re-uploading an icon that had uploaded fine. The two literal-path
+  checks in `apiUrl.absolute.test.ts` could not see either, because the offending string never
+  appears in the source - it arrives at runtime in a field. A third check now guards the field NAMES
+  the backend stores such a path under.
+
 - **A boot probe that failed for the wrong reason.** `framework-boot.spec.ts` compiles a module and
   binds a socket, and it runs beside three other services' suites in the pre-push hook: it took
   25.9 s on a loaded machine against jest's 5 s default and failed the push. It now carries an

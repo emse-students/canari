@@ -1,9 +1,14 @@
 <script lang="ts">
   import type { Component, Snippet } from 'svelte';
   import { contrastColor } from '$lib/utils/color';
+  import { apiAssetUrl } from '$lib/utils/apiUrl';
 
   interface Props {
-    /** Custom icon image (e.g. a partner brand's logo); falls back to `fallbackIcon` when null/unset. */
+    /**
+     * Custom icon image (e.g. a partner brand's logo); falls back to `fallbackIcon` when null/unset.
+     * An app-relative path is accepted and absolutized through `apiAssetUrl` - the backend stores
+     * these as `/api/media/public/<id>`, which reaches no API from a Tauri origin.
+     */
     iconUrl?: string | null;
     /** Lucide (or compatible) icon component rendered when no custom `iconUrl` is set. */
     fallbackIcon: Component;
@@ -30,6 +35,17 @@
   }: Props = $props();
 
   const trimmedBadge = $derived(badgeText?.trim() ?? '');
+  /**
+   * The icon path made fetchable from the runtime actually running.
+   *
+   * `setCardIcon` stores `iconUrl` as the app-relative `/api/media/public/<mediaId>?v=...`. On the
+   * web that resolves against the shared origin and needs nothing. In a Tauri build the page is
+   * served from `tauri://localhost` (iOS) or `http://tauri.localhost` (Android), where the same path
+   * resolves against the SHELL and the request leaves for an origin serving no API: the image never
+   * arrives, nothing throws and nothing is logged. Absolutizing here rather than at the five call
+   * sites keeps every card - products, partnerships, shop - on one answer.
+   */
+  const resolvedIconUrl = $derived(iconUrl ? apiAssetUrl(iconUrl) : null);
   /**
    * The accent reaches the three places that need it through TWO variables rather than being
    * inlined per element: the hover outline lives in a scoped `:hover` rule, and a stylesheet
@@ -81,10 +97,10 @@
     <div
       class="border-cn-border bg-cn-surface-alt ml-auto flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border p-1.5"
     >
-      {#if iconUrl}
+      {#if resolvedIconUrl}
         <!-- Decorative: the caller renders the name this logo stands for as text in `children`,
              and an alt here could only be a literal, which Paraglide forbids. -->
-        <img src={iconUrl} alt="" class="h-full w-full object-contain" />
+        <img src={resolvedIconUrl} alt="" class="h-full w-full object-contain" />
       {:else}
         <FallbackIcon size={20} class="text-text-muted" />
       {/if}

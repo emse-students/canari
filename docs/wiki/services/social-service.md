@@ -479,6 +479,40 @@ then writes the badge from what remains — computed from the array already in h
 | POST | `/api/associations/:id/partnerships` | Create a partnership card (`MANAGE_PARTNERSHIPS`) |
 | POST | `/api/associations/:id/partnerships/:cardId/claim` | Claim a partnership (any logged-in member; `membersOnly` gated server-side) |
 
+### A user id is not a UUID, and one partnership column said it was
+
+`partnership_codes."claimedByUserId"` was created `uuid` by migration 047. A user id in this estate
+is the **64-character hex digest** carried in `x-user-id` - every other user-id column in this
+service (`association_members`, `channel_members`, `form_submissions`,
+`document_reviewer_grants`, `association_role_history`) is `varchar(255)` for exactly that reason.
+
+So `POST /api/associations/:id/partnerships/:cardId/claim` answered **500 for every user, on every
+`code_pool` card, from the day the feature shipped**. The failure is in the FIRST statement
+`claimPoolCode` runs - the `findClaimedCode` lookup that makes re-claiming idempotent - and Postgres
+rejects the parameter before reading a row:
+
+```
+invalid input syntax for type uuid: "d82cd2268993451edb547bdd7ff2784..."   -- SQLSTATE 22P02
+```
+
+Three things about the shape of this defect are worth keeping:
+
+- **It was total, not marginal.** No claim could ever have succeeded. Prod confirmed it: one code
+  row, zero claimed, against a live card - and *zero rows in the state a feature exists to produce
+  is a measurement, not a quiet period.*
+- **The tab looked healthy.** `shared_code` and `text` cards return straight off the card row and
+  never touch the column, so only the pooled mode broke.
+- **Seventeen green unit tests said nothing**, and could not have: `partnerships.service.spec.ts`
+  mocks the repository, so no column type is ever exercised. A `uuid`/`varchar` mismatch is only ever
+  checked by Postgres, and nothing in CI asks Postgres.
+
+Migration 056 widens the column. `ALTER TYPE` rebuilds the partial unique index
+`idx_partnership_codes_card_claimant` and keeps its predicate, so the concurrency guarantee
+`claimPoolCode` documents survives untouched; nothing is converted, because no row could ever have
+been written. The replacement gate is `user-id-column.spec.ts`, which reads the DECLARED entity
+metadata - no database needed - and fails on any user-id-shaped column typed `uuid` anywhere in the
+service, rather than pinning the one column that broke.
+
 ### An association row carries two secrets, and three reads spread it whole
 
 `GET /api/associations`, `/api/associations/:id` and `/api/associations/slug/:slug` sit under the
