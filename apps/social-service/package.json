@@ -7,6 +7,7 @@
     "start:dev": "nest start --watch",
     "build": "nest build",
     "test": "jest --passWithNoTests",
+    "test:boot": "jest --config ./jest-boot.json --runInBand",
     "smoke": "node scripts/smoke-test.mjs",
     "lint": "oxlint -c ../../.oxlintrc.nest.json .",
     "lint:fix": "oxlint -c ../../.oxlintrc.nest.json --fix .",

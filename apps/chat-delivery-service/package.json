@@ -6,6 +6,7 @@
     "start": "ts-node src/main.ts",
     "start:dev": "nest start --watch",
     "test": "jest --passWithNoTests",
+    "test:boot": "jest --config ./jest-boot.json --runInBand",
     "lint": "oxlint -c ../../.oxlintrc.nest.json .",
     "lint:fix": "oxlint -c ../../.oxlintrc.nest.json --fix .",
     "format": "oxfmt -c ../../oxfmt.json --write \"src/**/*.ts\"",

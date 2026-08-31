@@ -23,6 +23,21 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **The auto-merge ceiling refused by semver, and a queue formed behind it.** Written that morning,
+  it turned away every major and every minor whose new version's major was 0. Measured against all
+  33 open pull requests the same afternoon, it refused 28 - which is the failure, not the feature.
+  The ceiling now refuses only dependencies whose failure mode nothing here can OBSERVE, each entry
+  naming the test that retires it, and posts that reason as a comment on the pull request instead of
+  sitting silent. Testing it against real Dependabot commit messages rather than imagined ones found
+  two defects in the first draft: Dependabot YAML-quotes a dependency name beginning with `@`, so
+  the `@nestjs/*` case matched nothing and would have merged the very major it was written to refuse;
+  and a "update the requirement to permit the latest version" pull request carries no `update-type`
+  trailer at all, which is how `openmls` 0.9.0 arrives.
+- **social-service and media-service compiled their test files into their production images.**
+  Neither had a `tsconfig.build.json`, so `nest build` fell back to `tsconfig.json`, which excludes
+  nothing: 111 compiled spec artefacts in one `dist/` and 9 in the other. Both now carry the same
+  build config as the other two services, and all four `dist/` trees hold zero.
+
 - **The pre-commit hook failed any commit that DELETES a file.** Its `restage` helper re-adds each
   path the auto-fixers may have rewritten, and a comment asserted that `git add -A -- <path>`
   carried a staged deletion through. It does not: after `git rm`, the path is in neither the index
@@ -84,6 +99,17 @@ which is also where every release up to and including v0.13.1 now lives.
   documented exception to the anti-recursion rule.
 
 ### Added
+
+- **`src/app-module.boot-spec.ts` and the `boot-nest-apps` CI job - the real application, booted.**
+  `NestFactory.create(AppModule)` against a real Postgres, a real Redis and a real S3 endpoint, a
+  request to the health route, then a clean shutdown. Nothing in this repository had ever
+  constructed the actual application module: `NestFactory` appeared in four files and all four were
+  a `main.ts`. The infrastructure list was measured rather than guessed - booting media-service
+  failed on `connect ECONNREFUSED 127.0.0.1:3900` because `StorageService.onModuleInit` calls
+  `bucketExists`, so the job starts MinIO too. The file sits in `src/` because `rootDir` is `./src`,
+  is kept out of the ordinary suite by its name alone (`.*\.spec\.ts$` needs a literal dot before
+  `spec`, which `.boot-spec.ts` has not) rather than by a skip, and out of `dist/` by the build
+  config. It is the gate `dependabot-auto-merge.yml` names when it refuses a framework major.
 
 - **`src/framework-boot.spec.ts` in all four NestJS services - the gate the split walked through.**
   Two tests, no infrastructure. The first reads every installed `@nestjs/*` package's own

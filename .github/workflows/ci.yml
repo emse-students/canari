@@ -272,6 +272,124 @@ jobs:
         run: ${{ matrix.component.cmd }}
 
   # =================================================================================================
+  # THE REAL APPLICATION, BOOTED
+  # =================================================================================================
+  # `src/framework-boot.spec.ts` runs in the matrix above and proves the HTTP framework packages
+  # cohere. It cannot prove more than that: its probe module imports nothing, so every dynamic module
+  # a service actually uses - `TypeOrmModule.forRoot`, `ConfigModule`, `ThrottlerModule`,
+  # `ScheduleModule` - is covered there only by the peer range it happens to declare.
+  #
+  # THIS JOB CONSTRUCTS THE ACTUAL `AppModule`. Until 2026-08-31 nothing in this repository ever did:
+  # `NestFactory` appeared in four files and all four were a `main.ts`. That is the gate a
+  # `@nestjs/platform-express` 11 -> 12 auto-merge walked straight through, and it is the gate
+  # `dependabot-auto-merge.yml` names when it refuses a framework major - so this job is what
+  # eventually lets those merge on their own.
+  #
+  # IT NEEDS REAL INFRASTRUCTURE, AND THE LIST WAS MEASURED RATHER THAN GUESSED: booting
+  # media-service failed on `connect ECONNREFUSED 127.0.0.1:3900` because `StorageService.onModuleInit`
+  # calls `bucketExists`, which is a network round trip. Mocking it away would have made the adapter
+  # under test a mock, which is the one thing a boot test may never do.
+  #
+  # EVERY DATABASE HERE IS DISPOSABLE, and that is load-bearing: all four services set
+  # `synchronize: process.env.NODE_ENV !== 'production'`, so a boot CREATES and ALTERS the schema.
+  boot-nest-apps:
+    name: Boot the real AppModule (${{ matrix.service }})
+    needs: [changes]
+    if: ${{ needs.changes.outputs.ts-matrix != '[]' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.changes.outputs.ts-matrix) }}
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: canari
+          POSTGRES_PASSWORD: boot-probe
+          POSTGRES_DB: boot_probe
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U canari"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      # jest runs under node here for the same reason it does in the matrix above - see the note on
+      # `node --run test` there.
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      # MinIO speaks the S3 API that `StorageService` uses, and stands in for Garage. It is started
+      # with `docker run` rather than declared as a service container because the image needs a
+      # command (`server /data`) and `services:` cannot set one.
+      - name: Start an S3 endpoint for media-service
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=boot-probe \
+            -e MINIO_ROOT_PASSWORD=boot-probe-secret \
+            minio/minio:latest server /data
+          # Wait on the endpoint ANSWERING, not on a clock. MinIO's liveness route needs no
+          # credentials, and a 403 would still prove the server is up - so any HTTP reply ends it.
+          for i in $(seq 1 30); do
+            if curl -fsS -o /dev/null "http://127.0.0.1:9000/minio/health/live"; then
+              echo "S3 endpoint up after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "S3 endpoint never answered"; docker logs minio; exit 1
+
+      - name: Install Dependencies
+        working-directory: ${{ matrix.service }}
+        run: bun install --frozen-lockfile
+
+      # Every service gets every variable. Naming them per service would be a second place to keep
+      # in sync with `app.module.ts`, and an unused variable costs nothing; a missing one costs a red
+      # job that says `is required` about a service somebody else changed.
+      - name: Boot it
+        working-directory: ${{ matrix.service }}
+        env:
+          NODE_ENV: test
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_USERNAME: canari
+          DB_PASSWORD: boot-probe
+          DB_DATABASE: boot_probe
+          POSTGRES_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
+          REDIS_HOST: localhost
+          REDIS_PORT: '6379'
+          GARAGE_ENDPOINT: localhost
+          GARAGE_PORT: '9000'
+          GARAGE_USE_SSL: 'false'
+          GARAGE_REGION: us-east-1
+          GARAGE_BUCKET: boot-probe
+          GARAGE_ACCESS_KEY_ID: boot-probe
+          GARAGE_SECRET_ACCESS_KEY: boot-probe-secret
+          JWT_SECRET: boot-probe-jwt-secret
+          INTERNAL_SECRET: boot-probe-internal-secret
+          INTERNAL_SHARED_SECRET: boot-probe-internal-shared-secret
+        run: node --run test:boot
+
+  # =================================================================================================
   # TYPESCRIPT BACKEND MATRIX
   # =================================================================================================
   test-typescript-backend:

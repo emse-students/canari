@@ -1,0 +1,14 @@
+{
+  "//": "GENERATED SHAPE, NOT A HAND-WRITTEN ONE. Every key below is this service's own `jest` block from package.json, with `rootDir` and `testRegex` overridden so the boot spec outside `src/` is the only file this config runs. Written that way because the first draft WAS hand-written and omitted `transformIgnorePatterns`, which three of the four services need for the ESM-only `uuid` - the boot died on a SyntaxError from a dependency rather than on anything about the application. Coverage keys are dropped: this config collects none.",
+  "moduleFileExtensions": [
+    "js",
+    "json",
+    "ts"
+  ],
+  "rootDir": ".",
+  "testRegex": "\\.boot-spec\\.ts$",
+  "transform": {
+    "^.+\\.(t|j)s$": "ts-jest"
+  },
+  "testEnvironment": "node"
+}

@@ -2152,36 +2152,37 @@ not chosen yet. Read the reasoning on
 **Do NOT re-enable an auto-merge anywhere before its ceiling is in.** Canari's is disabled right now
 for exactly that reason.
 
-### P2 - the real `AppModule` still boots nowhere, and that is what a framework MAJOR needs
+### P1 - the three refusals the auto-merge ceiling makes, and the test that retires each
 
-**The framework-coherence half SHIPPED on 2026-08-31** and is not open work: every service now
-carries `src/framework-boot.spec.ts`, which asserts two things without any infrastructure - that
-every installed `@nestjs/*` package's own `peerDependencies` accept the `@nestjs/common` and
-`@nestjs/core` it will actually be handed, and that `NestFactory.create` really welds the injector
-to the express adapter and serves a request through it. Reproduced against the incident: with
-`@nestjs/platform-express@12` on a core at 11, the declared half names both violations in prose and
-the boot half dies on `No driver (HTTP) has been selected`. 8 tests, four services, no network.
+**`dependabot-auto-merge.yml` refuses only what this repository has no gate for**, and every refusal
+names its missing test in a comment on the pull request. The standing directive is that a refusal is
+never a routing decision to a human queue (user, 2026-08-31), so THIS TABLE IS THE WORK: each row
+closed is a whole class of update that starts merging on its own.
 
-**What that gate does NOT reach, and why it matters for the auto-merge ceiling:** the probe module
-imports nothing but `common`, `core` and `platform-express`, so `@nestjs/typeorm`,
-`@nestjs/config`, `@nestjs/throttler`, `@nestjs/schedule` and `@nestjs/axios` are covered only by
-their DECLARED peer ranges. A major that keeps its peer range honest and changes behaviour inside a
-dynamic module passes. The real `AppModule` has never been constructed by any test in this
-repository - `TypeOrmModule.forRootAsync` connects on init, which is exactly why nobody did it.
+Measured against all 33 open pull requests on 2026-08-31, by running the workflow's own loop body
+against their real commit messages: **5 merge, 28 refuse - and 22 of the 28 are the same row.**
 
-**What is owed**: one job with a Postgres service container that calls `NestFactory.create(AppModule)`
-against a throwaway database, hits `/api/health`, and shuts down. It is the gate that would let the
-ceiling accept a grouped `@nestjs/*` MAJOR automatically, which is the point - the standing
-directive is that a refusal names the missing test rather than routing to a human queue.
+| Refused | Why the suite cannot see it | The test that retires it | State |
+| --- | --- | --- | --- |
+| `@nestjs/*` and `typeorm` MAJORS, or an unclassified bump of either (22 PRs, collapsing to ~4 once grouped) | `src/framework-boot.spec.ts` boots a probe module that imports only `common`, `core` and `platform-express`, so every DYNAMIC module is covered by its declared peer range alone | `src/app-module.boot-spec.ts` + the `boot-nest-apps` job | **WRITTEN 2026-08-31, owed its first green run.** Once CI shows it passing on all four services, DELETE the `@nestjs/*` case from the ceiling |
+| `openmls*`, `tls_codec*`, `hpke-rs*`, `libcrux*`, `chacha20poly1305`, `aes-gcm`, `argon2`, `ciborium` (5 PRs) | every one of them writes a format something else must still read - a group at epoch 118, or a keystore sealed on a device that is not going to be re-enrolled. A wire, encoding or key-derivation change compiles clean and passes every suite | a cross-version state test: serialise a group and a keystore with the CURRENT version, commit the bytes as a fixture, and assert the NEW version still opens them | not started |
+| `webrtc` and the ICE crates (1 PR) | the SFU has ten tests and not one touches the ICE stack | one relay-path call - campaign rung 15 CALL, which has no runner | not started, and the SFU is already SIX majors unplaced (see its own P1 above) |
 
-**Two traps.** A smoke test that mocks the adapter proves nothing: the adapter IS the subject. And
-`synchronize: process.env.NODE_ENV !== 'production'` means the boot will CREATE the schema, so the
-job needs a disposable database and must never be pointed at anything else.
+**Do not widen this list to feel safe.** Every entry costs the queue it blocks, and the honest test
+of a new one is: name the failure, then name the test that would have caught it. If you cannot name
+the test, the entry is a guess.
 
-**The scaffold that pretended to be this test is deleted.** `apps/core-service/test/app.e2e-spec.ts`
-was the untouched Nest skeleton: it did boot `AppModule`, it asserted `Hello World!` on `/` against
-a service whose global prefix is `api`, and its `testRegex` was in no command CI ever ran. It went
-with its `jest-e2e.json`, the two dead `test:e2e` scripts and `supertest`, which nothing else used.
+### P3 - social-service has no root health route, and the other three do
+
+core-service, media-service and chat-delivery-service each expose `GET /api/health` from a
+`HealthController` with an empty `@Controller()`. social-service exposes none: its nearest liveness
+route is `GET /api/channels/health`, which belongs to `ChannelsController` and answers about the
+channel service specifically. Found while writing the boot test, which has to ask a different URL of
+that one service.
+
+It is P3 because nothing is broken today - but a probe, a load balancer or a future readiness gate
+that assumes the shape the other three share will silently point at nothing here, and an asymmetry
+nobody chose is the kind that gets discovered during an incident.
 
 ### P3 - `submissions.formId` names a form nothing keeps, and 28 rows point at deleted ones
 
