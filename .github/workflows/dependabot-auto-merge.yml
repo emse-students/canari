@@ -36,10 +36,25 @@ name: Dependabot auto-merge
 
 on:
   workflow_run:
-    workflows: ["CI", "Code Analysis"]
+    # `CD - Deploy to Production` IS THE CONVERGENT TRIGGER, and the other two are the fast path.
+    # CD is the workflow that runs on every push to `main`, so its completion is the closest thing
+    # this repository has to "somebody did something", and this workflow answers it with a FULL
+    # SWEEP rather than with one pull request. See the schedule below for why that stopped being
+    # the schedule's job.
+    workflows: ["CI", "Code Analysis", "CD - Deploy to Production"]
     types: [completed]
   schedule:
     # Minute 17 rather than 0: the hour boundary is the busiest slot on shared runners.
+    #
+    # KEPT, BUT NO LONGER LOAD-BEARING - AND THE MEASUREMENT THAT DEMOTED IT IS THIS. On 2026-08-31
+    # this cron had produced ZERO runs in the three hours since it landed on `main`, with the repo
+    # neither a fork nor archived and the workflow `active`. Scheduled delivery here is not merely
+    # late, it is unreliable: `code-analysis.yml` asks for `0 2 * * *` and actually ran at 03:01,
+    # 03:09, 08:05, 08:24, 08:47, 12:37 and 14:10 UTC on seven consecutive days. GitHub does not
+    # queue the slots an hourly cron misses, it DROPS them, so an hourly schedule on this
+    # repository is a wish rather than a trigger. The comfortable rule this falsifies: a clock
+    # whose only cost when wrong is LATENCY is fine - but this clock's failure mode is NOT
+    # RUNNING AT ALL, which is the difference between a slow queue and a queue nobody drains.
     - cron: "17 * * * *"
   workflow_dispatch:
 
@@ -63,10 +78,17 @@ jobs:
     # The scheduled and manual paths carry no event to inspect; the author check that actually
     # protects the merge is inside the script, which runs for every pull request either way. This
     # condition only keeps the `workflow_run` path from waking on unrelated CI.
+    #
+    # TWO SHAPES OF `workflow_run` ARE ACCEPTED, and they mean different things. A run triggered by
+    # DEPENDABOT'S OWN pull request is the fast path: evaluate that one pull request, seconds after
+    # its checks finish. A run triggered by a PUSH TO MAIN is the convergent path: sweep the whole
+    # open queue, because a push is the one event this repository sees often and reliably.
     if: >-
       github.event_name != 'workflow_run' ||
       (github.event.workflow_run.event == 'pull_request' &&
-      github.event.workflow_run.actor.login == 'dependabot[bot]')
+      github.event.workflow_run.actor.login == 'dependabot[bot]') ||
+      (github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main')
     steps:
       # PINNED TO `main`, NOT TO THE EVENT: on the `workflow_run` path the pull request under
       # evaluation is Dependabot's, and this job holds write permissions. The decision script must
@@ -87,7 +109,11 @@ jobs:
           list="$RUNNER_TEMP/prs.txt"
           : > "$list"
 
-          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+          # ONLY a Dependabot pull request's own run narrows this to one pull request. Every other
+          # entry point - a push to main that finished CD, the schedule, a manual dispatch - takes
+          # the sweep, because none of them is ABOUT a particular branch.
+          entry="${{ github.event_name }}/${{ github.event.workflow_run.event }}"
+          if [ "$entry" = "workflow_run/pull_request" ]; then
             # Exactly the pull request whose checks just finished.
             gh api "repos/$REPO/commits/$HEAD_SHA/pulls" \
               --jq '.[] | select(.state=="open") | .number' | head -n1 >> "$list"

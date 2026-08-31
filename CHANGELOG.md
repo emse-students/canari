@@ -40,6 +40,16 @@ which is also where every release up to and including v0.13.1 now lives.
   holding the only shared copy of conversation history; that half is written up in
   [`backlog`](docs/wiki/backlog.md) rather than changed here, because it restarts that store.
 
+- **The dependency sweep no longer depends on a clock that does not run.** Its convergent pass -
+  the one that drains pull requests no event describes - was an hourly cron, and three hours after
+  it landed `event=schedule` had produced **zero** runs of that workflow in all four repositories.
+  Not configuration: none is a fork, none archived, every workflow `active`, and Canari alone has
+  183 scheduled runs of other workflows. It is delivery - `code-analysis.yml` asks for `0 2 * * *`
+  and ran at 03:01, 03:09, 08:05, 08:24, 08:47, 12:37 and 14:10 UTC on seven consecutive days, and
+  GitHub drops the slots an hourly cron misses rather than queueing them. The sweep now also runs on
+  the completion of whatever workflow each repository executes on a push to `main`, answered with a
+  full sweep rather than with the one branch that caused it. The cron keeps its slot as a bonus.
+
 ### Removed
 
 - **`@types/uuid`, which had been dead for as long as it had been declared.** `uuid` 14 ships its

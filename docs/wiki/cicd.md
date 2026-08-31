@@ -289,13 +289,33 @@ list is in
 A refusal is **never** routed to a human queue. It is posted as a comment on the pull request naming
 the missing test, once, behind the marker `<!-- canari-auto-merge-ceiling -->`.
 
-### Why there are two triggers
+### Why there are three triggers, and why the clock is the weakest of them
 
-- **`workflow_run`** on CI/Code Analysis completion - the fast path, seconds after a PR goes green.
-- **`schedule` (hourly) and `workflow_dispatch`** - the convergent path, which enumerates every open
-  Dependabot pull request. This is the one that matters: an event-only automation cannot touch a
-  pull request that was already green when it was installed, and on 2026-08-31 seven mergeable ones
-  sat exactly there. The clock sets how fast the queue drains, never whether the outcome is right.
+- **`workflow_run` on a Dependabot pull request's own CI** - the fast path, seconds after that one
+  pull request goes green. Narrow by construction: it names a branch.
+- **`workflow_run` on `CD - Deploy to Production`** - the convergent path. CD is what runs on every
+  push to `main`, so its completion is the closest thing this repository has to "somebody did
+  something", and it is answered with a FULL SWEEP of every open Dependabot pull request.
+- **`schedule` (hourly) and `workflow_dispatch`** - also full sweeps, and the schedule is a bonus
+  rather than the mechanism.
+
+The convergent path is the one that matters: an event-only automation cannot touch a pull request
+that was already green when it was installed, and on 2026-08-31 seven mergeable ones sat exactly
+there.
+
+**THE SCHEDULE WAS THAT PATH FOR ABOUT THREE HOURS, AND A MEASUREMENT TOOK THE JOB AWAY FROM IT.**
+The cron `17 * * * *` landed on `main` at 14:32 UTC on 2026-08-31 and had produced **zero** runs by
+17:00 - two slots missed - with the repository neither a fork nor archived and the workflow
+`active`. It is not a registration delay peculiar to a new cron either: `code-analysis.yml` asks for
+`0 2 * * *` and actually ran at 03:01, 03:09, 08:05, 08:24, 08:47, 12:37 and **14:10** UTC on seven
+consecutive days. Scheduled delivery on a public repository is best-effort, and **GitHub does not
+queue the slots an hourly cron misses - it drops them.**
+
+That falsifies the comfortable justification the sweep was written with. A clock is acceptable when
+a wrong clock costs only latency; this clock's failure mode is NOT RUNNING AT ALL, which is the
+difference between a slow queue and a queue nobody drains. So the convergent trigger is now an event
+that happens whenever anybody works - a push to `main` - and the cron is kept for the case where
+nothing is pushed for days, at the reliability GitHub actually offers.
 
 ### Why a green pull request is not enough
 
