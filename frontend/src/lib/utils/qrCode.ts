@@ -32,6 +32,7 @@
  */
 
 import type { QRCode as QrSymbol } from 'qrcode';
+import { slugify } from '$lib/utils/textFold';
 
 /**
  * Error correction level. 'H' recovers 30% of the codewords, and that budget is what pays for
@@ -682,14 +683,6 @@ export async function renderQrPng(
  * cover - still gets a usable name rather than a bare extension.
  */
 export function qrFileName(label: string): string {
-  const slug = label
-    .toLowerCase()
-    .normalize('NFD')
-    // NFD split the accents off; \p{Mn} is every combining mark it produced.
-    .replace(/\p{Mn}/gu, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 48)
-    .replace(/-+$/, '');
+  const slug = slugify(label, 48);
   return slug ? `canari-qr-${slug}.png` : 'canari-qr.png';
 }

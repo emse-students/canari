@@ -6,6 +6,7 @@
   import { isGlobalAdmin } from '$lib/stores/user';
   import { goto } from '$app/navigation';
   import { m } from '$lib/paraglide/messages';
+  import { foldForSearch } from '$lib/utils/textFold';
 
   interface AdminUser {
     id: string;
@@ -20,21 +21,13 @@
   let feedback = $state<Record<string, string>>({});
   let searchQuery = $state('');
 
-  /** Strips accents and lowercases for locale-insensitive comparison. */
-  function normalize(s: string): string {
-    return s
-      .normalize('NFD')
-      .replace(/\p{Diacritic}/gu, '')
-      .toLowerCase();
-  }
-
   let filtered = $derived(
     searchQuery.trim()
       ? (() => {
-          const terms = normalize(searchQuery).split(/\s+/).filter(Boolean);
+          const terms = foldForSearch(searchQuery).split(/\s+/).filter(Boolean);
           return users.filter((u) => {
-            const name = normalize(u.displayName ?? '');
-            const id = normalize(u.id);
+            const name = foldForSearch(u.displayName ?? '');
+            const id = foldForSearch(u.id);
             return terms.every((t) => name.includes(t) || id.includes(t));
           });
         })()

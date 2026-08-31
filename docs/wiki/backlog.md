@@ -43,6 +43,7 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 | the login button that took a press and showed nothing | the fix is a reordering, visible in the component's own state, so any cold `/login` press proves it. What is NOT explained is the 2026-08-28 measurement's "no request" over thirty seconds: a version check running its ladder would have issued three. Read the network tail of the next cold login before calling that measurement understood |
 | the last server-composed sentence now asks the device which language it reads | after the next release, `[PUSH_REGISTER]` prints `locale=fr` or `locale=en` rather than `unstated` for a device that has restarted once - every client re-registers on its next start because the skip predicate changed shape. The VISIBLE half needs an iPhone AND a failed NSE, which is why the log line is the measurement |
 | acknowledging a conversation from the notification shade | HARDWARE, both platforms. On A1: send from W1, background the app, tap **Marquer comme lu**, then OPEN the app - the badge must be gone, which is the half that needed `read_watermarks.ndjson`. Then the same with a quick REPLY, which now means the same thing. `logcat` must show `sendReadWatermark: queued+drained at=<ms>` with the SENDER's instant, never a value near `now`. Board row **NOTIF-6b**, and the iOS twin is written identically and equally unproven |
+| search folds accents now, everywhere it folds case | **SEARCH-5, and it needs `W1 W2` only - no hardware.** Its five `PASS`es asserted the pre-fix behaviour (the row was written to RECORD the gap), so they are VOID and the runner's prediction is flipped. A run answering `noAccentFound=true` closes this; SEARCH-1, -3 and -6 are ASCII-only and unaffected |
 | WP-REGRANT-2, a re-granted member's re-join | COMM-22, four grant/revoke cycles green - and COMM-8 reading `seedAfterTheGrant: true`, never `repaired`, which is a fallback and not a path |
 
 ---
@@ -1692,18 +1693,6 @@ the day one copy is fixed and ten are not, which is the shape `recon.mjs`'s firs
 had. So this waits for the same wholesale moment: convert all eight, re-run the phases together.
 
 ## Search
-
-### P3 - in-conversation search folds case but not diacritics, in all three places that match
-
-Split out of the `ChatArea.svelte` logging item when that shipped on 2026-08-31; it was never the
-same defect. `useConversations.svelte.ts:438,480` decide which messages match,
-`messageDisplay.ts:218 splitWithHighlight` draws the highlight, and `ChatArea.svelte:622` folds the
-query. On a French corpus "reunion" cannot find the same word spelled with an accent.
-
-SEARCH-5 predicts exactly this and PASSES when it holds, so it is a FINDING the board records rather
-than a check failure - see the SEARCH section of [cross-client-testing](cross-client-testing.md).
-**Fixing it means one shared fold used by all three**, or the highlight stops agreeing with the
-match it is drawn over.
 
 ### P2 - the posts search escapes the feed's filters, and scans the whole base before it answers anything
 

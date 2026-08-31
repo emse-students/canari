@@ -807,6 +807,54 @@ for the search, how many messages were actually looked at.
 the ordinary case for most of a conversation - logging it would put a line on every search over
 normal history. It is named here so the next reader does not re-open it.
 
+## One fold behind every search box (2026-08-31)
+
+Seven places in this app removed accents from a string, each with its own spelling of "which marks",
+and the search boxes removed none: they folded CASE only, with a plain `String.toLowerCase()`. On a
+corpus that is French, "reunion" could not find the word it is the unaccented spelling of. The
+campaign's SEARCH-5 was written to record exactly that, and PASSED by asserting the defect.
+
+`$lib/utils/textFold.ts` is now the only copy, and everything goes through it:
+
+| What | Uses |
+| --- | --- |
+| the in-conversation matcher (`ChatArea.svelte`), the local-store one (`MainChatPage.svelte`), the store search (`useConversations.svelte.ts`) | `foldForSearch` on BOTH sides |
+| the highlighter (`splitWithHighlight`, `chat/messageDisplay.ts`) | `foldWithIndex`, and slices the ORIGINAL |
+| the sidebar filter (`conversationMatchesQuery`, `chat/conversations.ts`) | `foldForSearch` on BOTH sides |
+| the admin user filter (`routes/admin/users`) | `foldForSearch` |
+| five slug builders - workspaces, QR file names, `admin/carte`, `associations/new`, `lists/new` | `slugify` |
+| the native-string guardrail's own comparison (`nativeStrings.test.ts`) | `foldForSearch` |
+
+**BOTH SIDES, ALWAYS.** Folding only the query is the half-fix that looks like it works: every
+unaccented query still finds every unaccented word, and the defect shows up only on the text this
+app actually carries.
+
+### Why the highlighter needs a MAP and not a length assumption
+
+The matcher and the `<mark>` highlighter are the same seam, and the highlight must land on the
+characters that matched. Folding is not length-preserving: a precomposed `e-acute` folds one
+character to one, but the same letter written as `e` + U+0301 folds TWO to one, and one string can
+hold both spellings. An offset found in folded space and used against the original is therefore
+wrong by the number of accents before it - a drift that is invisible in tests written in ASCII and
+visible in every French message.
+
+So `foldWithIndex` returns `sourceIndex`, mapping each folded character back to the offset it came
+from, plus an end sentinel so a match running to the last character still has an addressable end.
+`splitWithHighlight` finds in `folded` and slices `text`, with two cursors rather than one derived
+from the other. It walks CODE POINTS, so an emoji is one unit and never two halves of a surrogate
+pair.
+
+### The five slugs disagreed, and one of them was reachable
+
+Three of the five stripped `[U+0300-U+036F]`, one `\p{Mn}`, one `\p{Diacritic}` - three different
+character sets for one idea, so the same association name could slug differently depending on which
+screen created it. `slugify(label, maxLength?)` is the single answer, and its `maxLength` trims
+AFTER truncating: two of the five cut to 48 and one of those left the trailing `-` the trim exists
+to remove.
+
+**What is owed:** SEARCH-5's five runs asserted the pre-fix behaviour and are VOID. The runner's
+prediction is flipped and the row needs `W1 W2` only - no hardware.
+
 ## Pooling history between devices
 
 **Read [history-reconciliation](../../protocols/history-reconciliation.md) first.** It is the

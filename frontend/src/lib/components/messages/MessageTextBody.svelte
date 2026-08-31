@@ -20,7 +20,9 @@
 
   let { textSegments, searchTerm, isDeleted, firstLink }: Props = $props();
 
-  const normalizedSearchTerm = $derived(searchTerm.trim().toLowerCase());
+  // NOT folded here: `splitWithHighlight` folds both sides itself, because it also needs the
+  // map back to the original text and a pre-folded needle would hide that from its signature.
+  const normalizedSearchTerm = $derived(searchTerm.trim());
 
   /** True if the message contains only a link (no surrounding text) - the raw URL is hidden.
    * Excludes GIFs, which render inline inside the <p>. */

@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { foldForSearch } from '$lib/utils/textFold';
 
 /**
  * Native string-resource guardrail, both platforms.
@@ -334,12 +335,11 @@ describe('Native sources, both platforms', () => {
    * sides, so a literal that drops a table value's final full stop still matches.
    */
   function fold(value: string): string {
-    return value
-      .replace(/\\u\{([0-9a-fA-F]+)\}/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
-      .replace(/\\'/g, "'")
-      .normalize('NFD')
-      .replace(/\p{Diacritic}/gu, '')
-      .toLowerCase()
+    return foldForSearch(
+      value
+        .replace(/\\u\{([0-9a-fA-F]+)\}/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+        .replace(/\\'/g, "'")
+    )
       .replace(/^[^\p{L}\p{N}]+/u, '')
       .replace(/[^\p{L}\p{N}]+$/u, '');
   }

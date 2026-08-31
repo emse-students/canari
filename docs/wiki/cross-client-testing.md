@@ -152,8 +152,8 @@ Client-side, in-conversation, substring-only: no server index, no global search.
 | SEARCH-2 | A term only in OLD history: does `searchLimitedToLoaded` tell the truth? | `W1 W2` | `PASS` 5/5 - one `ERROR` in the six, [known intermittent](testing-methodology.md) |
 | SEARCH-3 | Deleted messages excluded; edited messages match their NEW text | `W1 W2` | `PASS` 5/5 |
 | SEARCH-4 | Channel search pulls up to 2000 rows and decrypts them - time it | `W1 W2` | `PASS` 5/5 - 322-474 ms |
-| SEARCH-5 | Accents and case: a French corpus is the real corpus here | `W1 W2` | `PASS` 5/5 |
-| SEARCH-6 | The sidebar filter is a DIFFERENT search - assert it does not claim more | `W1 W2` | `PASS` 5/5 |
+| SEARCH-5 | Accents and case: a French corpus is the real corpus here | `W1 W2` | **VOID, owes a re-run** - the 5/5 asserted the DEFECT (search folded case, not diacritics), which was the finding it was written to record. One shared `foldForSearch` shipped 2026-08-31 and the runner's prediction is flipped, so the old verdict is not comparable with a new one |
+| SEARCH-6 | The sidebar filter is a DIFFERENT search - assert it does not claim more | `W1 W2` | `PASS` 5/5 - the filter now folds accents too, and the row asks nothing about that: its markers are ASCII, so the 5/5 still stands |
 
 ## 6 - MENTION - mentions and what they trigger
 

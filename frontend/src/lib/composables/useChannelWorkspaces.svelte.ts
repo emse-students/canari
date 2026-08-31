@@ -1,4 +1,5 @@
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+import { slugify } from '$lib/utils/textFold';
 import { ChannelService } from '$lib/services/ChannelService';
 import type { WorkspaceDto, ChannelDto } from '$lib/services/ChannelService';
 import type { IMlsService } from '$lib/mlsService';
@@ -438,13 +439,7 @@ export function useChannelWorkspaces() {
 
   /** Converts a workspace display name into a URL-safe slug (lowercase, ASCII, hyphens, max 48 chars). */
   function slugifyWorkspace(name: string): string {
-    return name
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 48);
+    return slugify(name, 48);
   }
 
   /**

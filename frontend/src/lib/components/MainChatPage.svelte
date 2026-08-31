@@ -9,6 +9,7 @@
 
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
+  import { foldForSearch } from '$lib/utils/textFold';
   import { goto } from '$app/navigation';
   import { fade } from 'svelte/transition';
   import { m } from '$lib/paraglide/messages';
@@ -721,7 +722,7 @@
     conversationId: string,
     query: string
   ): Promise<string[] | null> {
-    const q = query.trim().toLowerCase();
+    const q = foldForSearch(query.trim());
     if (q.length < 2) return [];
     // Channels are not persisted locally: search their full server history (decrypt + match),
     // which also merges older hits into the view so the UI can scroll to them.
@@ -731,7 +732,7 @@
     if (!session.storage) return null;
     const msgs = await session.storage.getMessages(conversationId, session.deviceKeyB64);
     return msgs
-      .filter((m) => !m.isDeleted && messageSearchText(m.content).toLowerCase().includes(q))
+      .filter((m) => !m.isDeleted && foldForSearch(messageSearchText(m.content)).includes(q))
       .map((m) => m.id);
   }
 

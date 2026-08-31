@@ -5,6 +5,7 @@
   import Textarea from '$lib/components/ui/Textarea.svelte';
   import { ArrowLeft } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { slugify } from '$lib/utils/textFold';
 
   let name = $state('');
   let slug = $state('');
@@ -14,12 +15,7 @@
   let error = $state('');
 
   function onNameInput() {
-    slug = name
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[̀-ͯ]/g, '')
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '');
+    slug = slugify(name);
   }
 
   async function handleSubmit() {

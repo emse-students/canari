@@ -7,6 +7,7 @@
  * - Storage helpers (save, load history, reload)
  */
 import { SvelteDate, SvelteMap, SvelteSet } from 'svelte/reactivity';
+import { foldForSearch } from '$lib/utils/textFold';
 import type { IStorage } from '$lib/db';
 import type { IMlsService } from '$lib/mlsService';
 import type {
@@ -457,7 +458,7 @@ export function useConversations() {
     query: string,
     ctx: ConversationContext
   ): Promise<string[]> {
-    const q = query.trim().toLowerCase();
+    const q = foldForSearch(query.trim());
     if (q.length < 2) return [];
 
     const { channelService } = await import('$lib/services/ChannelService');
@@ -499,7 +500,7 @@ export function useConversations() {
       } catch {
         /* fall back to the raw content */
       }
-      if (text.toLowerCase().includes(q)) {
+      if (foldForSearch(text).includes(q)) {
         matches.push({ id: message.id, ts: message.timestamp.getTime() });
       }
     }

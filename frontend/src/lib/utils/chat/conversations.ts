@@ -19,6 +19,7 @@ import { migrateFromLocalStorage } from '../migration';
 import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
 import { getUserDisplayNameSync, peekUserDisplayName } from '$lib/utils/users/displayName';
+import { foldForSearch } from '$lib/utils/textFold';
 import { forgetGroupReconciliation } from './historyReconcile';
 import { mergeMessagePage } from './messageMerge';
 import { isUnreadForUser, watermarkFor } from './readState';
@@ -907,7 +908,9 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
  * typing the name printed on the row removed the row. Found by the cross-client campaign's SEARCH-6
  * on 2026-08-22: the current last message matched, the conversation's own name did not.
  *
- * A row is kept on an empty query: the filter narrows a list, it does not build one.
+ * A row is kept on an empty query: the filter narrows a list, it does not build one. The fold is
+ * {@link foldForSearch}, the same one the in-conversation search uses: two search boxes side by side
+ * that disagree about whether "reunion" finds an accented spelling is not a thing anyone can explain.
  *
  * @param displayName the resolved label the row shows - never the persisted conversation key
  * @param lastMessageContent the preview text the row shows beneath the name, '' when there is none
@@ -917,7 +920,7 @@ export function conversationMatchesQuery(
   lastMessageContent: string,
   query: string
 ): boolean {
-  const q = query.trim().toLowerCase();
+  const q = foldForSearch(query.trim());
   if (!q) return true;
-  return displayName.toLowerCase().includes(q) || lastMessageContent.toLowerCase().includes(q);
+  return foldForSearch(displayName).includes(q) || foldForSearch(lastMessageContent).includes(q);
 }

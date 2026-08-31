@@ -37,6 +37,22 @@ which is also where every release up to and including v0.13.1 now lives.
   action and merged at the next login by `consumeNativeReadWatermarks`, which recomputes
   `unreadCount` FROM the merged watermark rather than writing a count beside it.
 
+- **Search now folds accents, everywhere it folds case.** On a corpus that is French, "reunion"
+  could not find the same word spelled with its accent: every matcher and the `<mark>` highlighter
+  ran on a plain `String.toLowerCase()`, which folds case and not diacritics. The half-fix - folding
+  the query alone - is what makes this kind of defect survive review, since every unaccented query
+  still finds every unaccented word; `utils/textFold.ts` folds BOTH sides, at the four matchers, the
+  sidebar filter, the admin user filter and the highlighter. The highlighter needed more than a
+  fold: an offset found in folded text is wrong in the original by the number of accents before it
+  (a precomposed letter folds 1 to 1, the same letter decomposed folds 2 to 1, and one string can
+  hold both), so `foldWithIndex` returns a map back to the source and `splitWithHighlight` matches
+  in folded space and slices in original space. It walks code points, so an emoji stays one unit.
+  Seven hand-rolled copies of "strip the accents" are gone with it, including five slug builders
+  that used THREE different character sets - the same association name could slug differently
+  depending on which screen created it, and two of them left the trailing separator their own trim
+  existed to remove. The campaign's SEARCH-5 was written to RECORD this gap and passed by asserting
+  it; its prediction is flipped and its five runs are void.
+
 - **A backgrounded web tab now says how many messages are waiting, without asking for anything.**
   The title reads `(3) Communautes - Canari` and the favicon carries a red dot, from the same unread
   total the sidebar and the bottom bar already show. Until now the web had exactly ONE out-of-page

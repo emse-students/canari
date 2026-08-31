@@ -32,13 +32,17 @@
  *       from `hooks/` to `composables/` since this was first written. It is stated HERE and on the
  *       board rather than in SEARCH-2's payload: a field in a payload is a measurement, or it is a
  *       comment nobody dates (testing-methodology 31).
- *   CASE/ACCENT FOLDING (`splitWithHighlight`, chat/messageDisplay.ts:218 - same function backs both
- *     the search filter and the `<mark>` highlighter): `text.toLowerCase().indexOf(needle.toLowerCase())`.
- *     Plain `String.toLowerCase()` folds CASE, not DIACRITICS - 'É'.toLowerCase() === 'é', but
- *     'e' !== 'é'. SEARCH-5 measures exactly that seam.
- *   SIDEBAR FILTER (Sidebar.svelte:235 `filteredConversationEntries`): `convo.name` OR the RAW last
- *     message envelope string, both `.toLowerCase().includes(query)`. No `getPreviewText`, no
- *     `parseEnvelope` on the match side, and no history beyond the single last message.
+ *   CASE/ACCENT FOLDING (`foldForSearch` / `foldWithIndex`, utils/textFold.ts - one fold behind
+ *     every matcher and behind the `<mark>` highlighter, since 2026-08-31): NFD, combining marks
+ *     dropped, lower-cased. It folds CASE **and** DIACRITICS, on BOTH sides of the comparison, and
+ *     `foldWithIndex` maps a folded offset back so the highlight lands on the characters that
+ *     matched. Until that date it was a plain `String.toLowerCase()`, which folds case only, and
+ *     SEARCH-5's verdict was the opposite of the one it carries now, so its pre-fix runs are VOID.
+ *   SIDEBAR FILTER (sidebar/Sidebar.svelte `filteredConversationEntries` ->
+ *     `conversationMatchesQuery`, chat/conversations.ts): the row's DISPLAYED name OR its last
+ *     message's preview text, both through the same `foldForSearch` as above since 2026-08-31. No
+ *     history beyond the single last message. SEARCH-6 exists because it once compared
+ *     `convo.name`, the persisted `userId::peerId` key, which no user can see.
  *
  * MISSING HOOKS FOUND WHILE WRITING THIS (see the final report - each is a candidate fix):
  *   - The sidebar's own search `<input>` (SidebarHeaderControls.svelte) carries no class/id/role at
@@ -523,7 +527,7 @@ async function search4() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// SEARCH-5 - accents and case. splitWithHighlight/toLowerCase() folds CASE, not diacritics.
+// SEARCH-5 - accents and case. One `foldForSearch` behind the matcher and the highlighter.
 // ---------------------------------------------------------------------------------------------
 async function search5() {
   const [cx, obs] = await observed(W1, 'SEARCH-5');
@@ -550,12 +554,16 @@ async function search5() {
   const accentUpperCount = await searchCountText(cx);
   const accentUpperFound = accentUpperCount !== '0/0';
 
-  // PREDICTED from the source (messageDisplay.ts:218 splitWithHighlight, plain toLowerCase): the
-  // no-accent query should NOT find it ('é'.toLowerCase() !== 'e'), the accented-uppercase query
-  // SHOULD (case folds fine once the accent already matches). A check that only asserted "search
-  // works" would miss this; the verdict below is about which DIRECTION holds, not whether either
-  // one alone passes or fails.
-  const matchesPrediction = !noAccentFound && accentUpperFound;
+  // PREDICTED from the source (utils/textFold.ts `foldForSearch`, applied to BOTH sides at every
+  // matcher and inside `splitWithHighlight`): BOTH queries find it - the no-accent one because the
+  // TEXT is folded too, the accented-uppercase one because case still folds.
+  //
+  // THIS PREDICTION IS THE OPPOSITE OF THE ONE THIS CHECK CARRIED UNTIL 2026-08-31, and the flip is
+  // the point: until then the fold was a plain `String.toLowerCase()`, which folds case and not
+  // diacritics, so the no-accent query found NOTHING on a French corpus. A `PASS` recorded before
+  // that date asserts the DEFECT, not the fix; it is not comparable with one recorded after, and
+  // every SEARCH-5 verdict older than the fix is VOID.
+  const matchesPrediction = noAccentFound && accentUpperFound;
   await recordObserved('SEARCH-5', matchesPrediction ? 'PASS' : 'FAIL', {
     word,
     noAccentQuery: queryNoAccent,
@@ -565,9 +573,9 @@ async function search5() {
     accentUpperFound,
     accentUpperCount,
     verdictMeaning:
-      "PASS here means the app's accent-insensitivity gap is confirmed exactly as predicted from " +
-      "the source (case folds, diacritics do not) - it is a FINDING either way, not a pass/fail on " +
-      'whether accent-insensitive search "works": it does not, by design of splitWithHighlight.',
+      'PASS here means the search folds ACCENTS as well as case, on both sides, so a French ' +
+      'corpus answers an unaccented query - what `foldForSearch` bought on 2026-08-31. A FAIL ' +
+      'carrying noAccentFound=false is the pre-fix behaviour returning, not a new defect.',
   }, { W1: obs });
   cx.close();
   return matchesPrediction;
@@ -586,8 +594,8 @@ async function search6() {
   await send(cx, `${termA} first last-message`);
   await awaitMessage(cx, termA);
   // Superseding it makes termA true FULL-HISTORY content that is no longer the LAST message - the
-  // one condition the sidebar filter (Sidebar.svelte:235, matches convo.name OR the last message
-  // only) is claimed NOT to look past.
+  // one condition the sidebar filter (`conversationMatchesQuery`: the DISPLAYED name OR the last
+  // message only) is claimed NOT to look past.
   await send(cx, `${termB} second last-message`);
   await awaitMessage(cx, termB);
 

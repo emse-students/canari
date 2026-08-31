@@ -1,4 +1,9 @@
-import { extractFirstUrl, isAngleBracketAutolink, splitTextWithLinks } from './messageDisplay';
+import {
+  extractFirstUrl,
+  isAngleBracketAutolink,
+  splitTextWithLinks,
+  splitWithHighlight,
+} from './messageDisplay';
 
 describe('isAngleBracketAutolink', () => {
   it('detects <url> wrapper', () => {
@@ -102,5 +107,54 @@ describe('splitTextWithLinks', () => {
     const segments = splitTextWithLinks('https://canari-emse.fr/chat');
     const links = segments.filter((s) => s.type === 'link');
     expect(links).toEqual([{ type: 'link', value: 'https://canari-emse.fr/chat' }]);
+  });
+});
+
+describe('splitWithHighlight', () => {
+  /** Rebuilds the original from the parts: a highlighter that loses a character is a corrupted view. */
+  const rejoin = (parts: Array<{ text: string; hit: boolean }>) =>
+    parts.map((p) => p.text).join('');
+
+  it('highlights an accented word found by its unaccented spelling', () => {
+    const text = 'La réunion générale';
+    const parts = splitWithHighlight(text, 'reunion');
+    expect(parts).toEqual([
+      { text: 'La ', hit: false },
+      { text: 'réunion', hit: true },
+      { text: ' générale', hit: false },
+    ]);
+    expect(rejoin(parts)).toBe(text);
+  });
+
+  /**
+   * THE DRIFT THIS EXISTS TO PREVENT. Every accent BEFORE the match shortens the folded text by one,
+   * so a folded offset used against the original starts the highlight that many characters early -
+   * silently, and only on the corpus this app actually carries.
+   */
+  it('lands on the match however many accents precede it', () => {
+    const text = 'ééé canari';
+    const parts = splitWithHighlight(text, 'canari');
+    expect(parts).toEqual([
+      { text: 'ééé ', hit: false },
+      { text: 'canari', hit: true },
+    ]);
+  });
+
+  /** A decomposed original is SHORTER folded than it is long, which no length assumption survives. */
+  it('slices correctly when the original is decomposed', () => {
+    const text = 'Réunion'.normalize('NFD');
+    const parts = splitWithHighlight(text, 'reunion');
+    expect(parts).toEqual([{ text, hit: true }]);
+  });
+
+  it('highlights every occurrence, not just the first', () => {
+    const parts = splitWithHighlight('ab AB ab', 'ab');
+    expect(parts.filter((p) => p.hit).map((p) => p.text)).toEqual(['ab', 'AB', 'ab']);
+    expect(rejoin(parts)).toBe('ab AB ab');
+  });
+
+  it('returns the text untouched when there is nothing to look for', () => {
+    expect(splitWithHighlight('canari', '')).toEqual([{ text: 'canari', hit: false }]);
+    expect(splitWithHighlight('canari', 'perroquet')).toEqual([{ text: 'canari', hit: false }]);
   });
 });

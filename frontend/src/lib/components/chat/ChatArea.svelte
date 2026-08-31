@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { foldForSearch } from '$lib/utils/textFold';
   import { ShieldCheck, TriangleAlert, LoaderCircle, CloudOff } from '@lucide/svelte';
   import {
     ArrowDown,
@@ -620,12 +621,12 @@
   function inMemoryMatches(q: string): string[] {
     if (!chatView) return [];
     return chatView.conversation.messages
-      .filter((m) => searchableText(m).toLowerCase().includes(q))
+      .filter((m) => foldForSearch(searchableText(m)).includes(q))
       .map((m) => m.id);
   }
 
   async function refreshSearchMatches() {
-    const q = searchQuery.trim().toLowerCase();
+    const q = foldForSearch(searchQuery.trim());
     if (!chatView || q.length < 2) {
       searchMatches = [];
       activeSearchIndex = -1;

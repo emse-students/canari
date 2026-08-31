@@ -26,6 +26,21 @@ describe('conversationMatchesQuery', () => {
     );
   });
 
+  /**
+   * The sidebar filter folds accents like the in-conversation search does. Two search boxes side by
+   * side that disagree about whether "reunion" finds the accented spelling is not explicable.
+   */
+  it('finds an accented name and an accented message by their unaccented spelling', () => {
+    expect(conversationMatchesQuery('Renée Lévêque', '', 'renee')).toBe(true);
+    expect(conversationMatchesQuery('Renée Lévêque', '', 'LEVEQUE')).toBe(true);
+    expect(conversationMatchesQuery('Camille Dupont', 'la réunion est reportée', 'reunion')).toBe(
+      true
+    );
+    expect(conversationMatchesQuery('Camille Dupont', 'la reunion est reportee', 'réunion')).toBe(
+      true
+    );
+  });
+
   it('matches on a partial name and ignores case on both sides', () => {
     expect(conversationMatchesQuery('Camille Dupont', '', 'DUP')).toBe(true);
     expect(conversationMatchesQuery('CAMILLE DUPONT', '', 'dup')).toBe(true);

@@ -1,4 +1,5 @@
 import { formatMentionsForPreview } from '$lib/utils/mentions.parse';
+import { foldForSearch, foldWithIndex } from '$lib/utils/textFold';
 
 /** Pure display utilities for rendering message text, URLs, GIFs, and bubble shapes. */
 
@@ -214,28 +215,44 @@ export function splitTextWithLinks(text: string): TextLinkSegment[] {
   return segments;
 }
 
-/** Splits a text string into highlighted and non-highlighted parts for search result display. */
+/**
+ * Splits a text string into highlighted and non-highlighted parts for search result display.
+ *
+ * Matches in FOLDED space and slices in ORIGINAL space, which is the whole reason
+ * {@link foldWithIndex} carries a map back. Folding is not length-preserving - an accent is dropped
+ * - so an offset found in the folded text is wrong in the original by the number of accents before
+ * it, and the highlight would drift a character to the left for every one. Matching in original
+ * space instead is the other wrong answer: it is what made a search for "reunion" highlight nothing
+ * in a message that says the word with its accent, while the message was listed as a hit.
+ */
 export function splitWithHighlight(
   text: string,
   needle: string
 ): Array<{ text: string; hit: boolean }> {
-  if (!needle) return [{ text, hit: false }];
-  const lowerText = text.toLowerCase();
-  const lowerNeedle = needle.toLowerCase();
+  const foldedNeedle = foldForSearch(needle);
+  if (!foldedNeedle) return [{ text, hit: false }];
+  const { folded, sourceIndex } = foldWithIndex(text);
   const parts: Array<{ text: string; hit: boolean }> = [];
-  let cursor = 0;
+  // Two cursors, deliberately: one walks the folded text to find the next hit, the other walks the
+  // original to emit the characters between hits. Keeping one and deriving the other is exactly the
+  // conflation this function exists to avoid.
+  let foldedCursor = 0;
+  let plainCursor = 0;
 
-  while (cursor < text.length) {
-    const idx = lowerText.indexOf(lowerNeedle, cursor);
-    if (idx === -1) {
-      parts.push({ text: text.slice(cursor), hit: false });
-      break;
+  for (;;) {
+    const idx = folded.indexOf(foldedNeedle, foldedCursor);
+    if (idx === -1) break;
+    const start = sourceIndex[idx];
+    const end = sourceIndex[idx + foldedNeedle.length];
+    if (start > plainCursor) {
+      parts.push({ text: text.slice(plainCursor, start), hit: false });
     }
-    if (idx > cursor) {
-      parts.push({ text: text.slice(cursor, idx), hit: false });
-    }
-    parts.push({ text: text.slice(idx, idx + needle.length), hit: true });
-    cursor = idx + needle.length;
+    parts.push({ text: text.slice(start, end), hit: true });
+    plainCursor = end;
+    foldedCursor = idx + foldedNeedle.length;
+  }
+  if (plainCursor < text.length) {
+    parts.push({ text: text.slice(plainCursor), hit: false });
   }
 
   return parts.length > 0 ? parts : [{ text, hit: false }];

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { slugify } from '$lib/utils/textFold';
   import { isCoarsePointerDevice, onCoarsePointerChange } from '$lib/utils/pointerDevice';
   import { goto } from '$app/navigation';
   import { isGlobalAdmin, isAssociationSuperAdmin } from '$lib/stores/user';
@@ -36,16 +37,6 @@
   let newProjectName = $state('');
   let creatingProject = $state(false);
   const busyProjectIds = new SvelteSet<string>();
-
-  /** Derives a URL-safe slug from a free-text label (accent-stripped, hyphenated). */
-  function slugify(label: string): string {
-    return label
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[̀-ͯ]/g, '')
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '');
-  }
 
   async function load() {
     loading = true;
