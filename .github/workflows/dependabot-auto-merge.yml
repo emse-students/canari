@@ -1,235 +1,205 @@
 name: Dependabot auto-merge
 
-# Automatically squash-merges Dependabot pull requests once the full check
-# suite on the PR head commit is green. Triggered when a PR-gating workflow
-# completes, then independently verifies EVERY check-run on the head SHA so it
-# is robust to path-filtered matrix jobs and to repos with several CI
-# workflows: the merge only fires on the completion that leaves nothing
-# pending and nothing failed. No branch protection required.
+# Squash-merges Dependabot pull requests once the full check suite on the PR head commit is green,
+# and only for updates whose failure mode this repository can actually SEE.
 #
-# AND IT MERGES ONLY WHAT THIS REPOSITORY'S GATES CAN ACTUALLY SEE.
+# The decision itself lives in `.github/scripts/dependabot-auto-merge.sh`, one implementation for
+# both entry points below. The header there explains the ceiling; this file explains WHEN it runs.
 #
-# On 2026-08-31 this workflow, which had no ceiling at all, merged
-# `@nestjs/platform-express` 11 -> 12 into core-service ALONE. The result was a
-# framework split across one service - platform-express 12 declaring
-# `peerDependencies: {"@nestjs/common": "^12.0.0", "@nestjs/core": "^12.0.0"}`
-# against two packages pinned at 11.2.3 - and CI was green, because a peer
-# mismatch is a warning to bun and the service still compiles.
+# ---------------------------------------------------------------------------------------------
+# WHY THERE ARE TWO TRIGGERS, AND WHY THE SECOND IS THE IMPORTANT ONE
+# ---------------------------------------------------------------------------------------------
+# `workflow_run` is the fast path: a PR-gating workflow finishes, and the pull request it belongs to
+# is evaluated seconds later. It is also, on its own, NOT ENOUGH - and the measurement that says so
+# is that on 2026-08-31, with this workflow re-enabled and working, seven mergeable green pull
+# requests sat untouched. Their checks had completed days earlier, so no future `workflow_run` would
+# ever name them again. An event-only automation can act on what it happened to catch and on
+# nothing else; it cannot recover from being disabled, from a runner outage, or from being written
+# after the queue it is meant to drain.
 #
-# THE FIRST CEILING WRITTEN THAT DAY REFUSED BY SEMVER: every major, and every
-# minor whose new version's major was 0. It was wrong, and the measurement that
-# says so is that 33 pull requests were open and it refused nearly all of them.
-# A queue nobody drains is worse than the merge it prevented, and the standing
-# directive is explicit (user, 2026-08-31): "Je prefere blinder de test et faire
-# les choses automatiquement qu'avoir une review humaine qui n'arrive jamais."
+# THE HOURLY SWEEP IS THE CONVERGENT PATH: it enumerates every open Dependabot pull request and
+# applies the same decision to each, so the correct state is reached from ANY starting state. The
+# clock is not load-bearing - it decides how quickly the queue drains, never whether the outcome is
+# right - and termination comes from durable state on GitHub: a pull request is merged, or it
+# carries a comment naming the test that would let it merge.
 #
-# SEMVER IS THE WRONG QUESTION. `base64` 0.22 -> 0.23 and `axum` 0.7 -> 0.8 are
-# exactly the kind of break `cargo test` and `tsc` DO see - they stop compiling.
-# What a green suite cannot see is a dependency whose failure mode this repository
-# has no test for at all, and that has nothing to do with the version number:
-# `openmls` can change a wire or state format and compile perfectly, and the SFU's
-# ten tests never touch the ICE stack whatever version of `webrtc` is under them.
+# ---------------------------------------------------------------------------------------------
+# WHY MERGING SEVERAL IN ONE SWEEP IS SAFE
+# ---------------------------------------------------------------------------------------------
+# Two pull requests green in isolation are not evidence that their COMBINATION is green - nothing
+# tests it before the merges. What makes that acceptable here is `cd.yml`: `deploy-to-server` needs
+# `run-ci`, so a combination that breaks fails CI on `main` and the deploy is skipped. `main` can go
+# red; production cannot follow it there. The sweep also dispatches ONE deploy for the whole batch
+# rather than one per merge.
 #
-# SO THE CEILING IS A LIST OF DEPENDENCIES WHOSE FAILURE MODE IS UNOBSERVABLE
-# HERE, AND EVERY ENTRY NAMES THE TEST THAT WOULD RETIRE IT. Anything not on that
-# list merges on a green suite, whatever its update type, because for those the
-# suite IS the evidence. A refusal is never a routing decision to a human queue:
-# it is this workflow saying a gate is missing, and it says so IN A COMMENT ON
-# THE PULL REQUEST, so the gap is readable rather than silent.
-#
-# The list, and the state of each entry, is kept in `docs/wiki/backlog.md`.
+# The list of refusals, and the state of each, is kept in `docs/wiki/backlog.md`.
 
 on:
   workflow_run:
-    workflows: ["CI", "Code Analysis"]
+    # `CD - Deploy to Production` IS THE CONVERGENT TRIGGER, and the other two are the fast path.
+    # CD is the workflow that runs on every push to `main`, so its completion is the closest thing
+    # this repository has to "somebody did something", and this workflow answers it with a FULL
+    # SWEEP rather than with one pull request. See the schedule below for why that stopped being
+    # the schedule's job.
+    workflows: ["CI", "Code Analysis", "CD - Deploy to Production"]
     types: [completed]
+  schedule:
+    # Minute 17 rather than 0: the hour boundary is the busiest slot on shared runners.
+    #
+    # KEPT, BUT NO LONGER LOAD-BEARING - AND THE MEASUREMENT THAT DEMOTED IT IS THIS. On 2026-08-31
+    # this cron had produced ZERO runs in the three hours since it landed on `main`, with the repo
+    # neither a fork nor archived and the workflow `active`. Scheduled delivery here is not merely
+    # late, it is unreliable: `code-analysis.yml` asks for `0 2 * * *` and actually ran at 03:01,
+    # 03:09, 08:05, 08:24, 08:47, 12:37 and 14:10 UTC on seven consecutive days. GitHub does not
+    # queue the slots an hourly cron misses, it DROPS them, so an hourly schedule on this
+    # repository is a wish rather than a trigger. The comfortable rule this falsifies: a clock
+    # whose only cost when wrong is LATENCY is fine - but this clock's failure mode is NOT
+    # RUNNING AT ALL, which is the difference between a slow queue and a queue nobody drains.
+    - cron: "17 * * * *"
+  workflow_dispatch:
 
 permissions:
   contents: write
   pull-requests: write
-  # `gh workflow run cd.yml` after a merge. Without it the dispatch 403s and the deploy is
-  # skipped exactly as silently as the push that never triggered one.
+  # `gh workflow run cd.yml` after a merge. Without it the dispatch 403s and the deploy is skipped
+  # exactly as silently as the push that never triggered one.
   actions: write
+
+# One sweep at a time. Two overlapping passes would each read a pre-merge mergeability and race on
+# the same branches; `cancel-in-progress: false` because a pass that is already merging must finish.
+concurrency:
+  group: dependabot-auto-merge
+  cancel-in-progress: false
 
 jobs:
   auto-merge:
+    name: Merge what this repository has a gate for
     runs-on: ubuntu-latest
-    # Only act on Dependabot PR runs. Fail-closed on everything else.
+    # The scheduled and manual paths carry no event to inspect; the author check that actually
+    # protects the merge is inside the script, which runs for every pull request either way. This
+    # condition only keeps the `workflow_run` path from waking on unrelated CI.
+    #
+    # TWO SHAPES OF `workflow_run` ARE ACCEPTED, and they mean different things. A run triggered by
+    # DEPENDABOT'S OWN pull request is the fast path: evaluate that one pull request, seconds after
+    # its checks finish. A run triggered by a PUSH TO MAIN is the convergent path: sweep the whole
+    # open queue, because a push is the one event this repository sees often and reliably.
     if: >-
-      github.event.workflow_run.event == 'pull_request' &&
-      github.event.workflow_run.actor.login == 'dependabot[bot]'
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.actor.login == 'dependabot[bot]') ||
+      (github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main')
     steps:
-      - name: Refuse only what this repository has no gate for
+      # PINNED TO `main`, NOT TO THE EVENT: on the `workflow_run` path the pull request under
+      # evaluation is Dependabot's, and this job holds write permissions. The decision script must
+      # come from the trunk, never from the branch it is judging.
+      - name: Check out the decision script from main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          sparse-checkout: .github/scripts
+
+      - name: Collect the pull requests to evaluate
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
+          list="$RUNNER_TEMP/prs.txt"
+          : > "$list"
 
-          # Dependabot writes one `updated-dependencies` block per dependency into the commit
-          # message, with typed fields. A grouped PR carries several, and EVERY one has to pass.
-          # The blocks are read AS BLOCKS rather than as three independent `sed` lists: an update
-          # Dependabot could not classify carries no `update-type` at all, and three lists pasted
-          # side by side would then pair the wrong name with the wrong version, silently.
-          message=$(gh api "repos/$REPO/commits/$HEAD_SHA" --jq '.commit.message')
-
-          parsed=$(awk '
-            /^ *- dependency-name:/ {
-              if (name != "") print name "|" type "|" version
-              name = $0; sub(/^ *- dependency-name: */, "", name); type = ""; version = ""
-              next
-            }
-            /^ *dependency-version:/ { version = $0; sub(/^ *dependency-version: */, "", version) }
-            /^ *update-type:/ { type = $0; sub(/^ *update-type: *version-update:semver-/, "", type) }
-            END { if (name != "") print name "|" type "|" version }
-          ' <<< "$message")
-
-          if [ -z "$parsed" ]; then
-            echo "No updated-dependencies block on $HEAD_SHA - refusing to guess."
-            echo "allowed=false" >> "$GITHUB_ENV"
-            echo "reasons=- this commit carries no machine-readable updated-dependencies block, so nothing here can tell what it changes." >> "$GITHUB_ENV"
-            exit 0
+          # ONLY a Dependabot pull request's own run narrows this to one pull request. Every other
+          # entry point - a push to main that finished CD, the schedule, a manual dispatch - takes
+          # the sweep, because none of them is ABOUT a particular branch.
+          entry="${{ github.event_name }}/${{ github.event.workflow_run.event }}"
+          if [ "$entry" = "workflow_run/pull_request" ]; then
+            # Exactly the pull request whose checks just finished.
+            gh api "repos/$REPO/commits/$HEAD_SHA/pulls" \
+              --jq '.[] | select(.state=="open") | .number' | head -n1 >> "$list"
+          else
+            # The sweep. `--state open` and the author filter are what make this convergent rather
+            # than a re-run of whatever the last event happened to be.
+            gh pr list --repo "$REPO" --author app/dependabot --state open \
+              --limit 100 --json number --jq '.[].number' >> "$list"
           fi
 
-          # The loop reads from a redirection rather than a pipe, so the counters below belong to
-          # the CURRENT shell - a piped `while` runs in a subshell and its state is discarded.
-          refused=0
-          reasons_file="$RUNNER_TEMP/ceiling-reasons.md"
-          : > "$reasons_file"
-          while IFS='|' read -r name type version; do
-            [ -z "$name" ] && continue
-            # Dependabot YAML-quotes any dependency name that starts with `@`, so the trailer for a
-            # scoped npm package reads `"@nestjs/common"`, quotes included. Matching without
-            # stripping them silently misses the entire scope - which is how a first draft of this
-            # ceiling merged the exact `@nestjs/common` major it was written to refuse.
-            name="${name%\"}"
-            name="${name#\"}"
-            gate=""
-            case "$name" in
-              openmls|openmls_*|tls_codec|tls_codec_derive|hpke-rs*|libcrux*|chacha20poly1305|aes-gcm|argon2|ciborium)
-                # Not only the protocol crates: everything that WRITES A FORMAT SOMEONE ELSE MUST
-                # STILL READ belongs here. `argon2` derives the at-rest device key, `chacha20poly1305`
-                # seals it, `ciborium` serialises the keystore. A parameter or encoding change in any
-                # of them compiles perfectly and locks every existing device out of its own data.
-                gate="a cross-version state test. Nothing here opens a group, or a keystore, written by the PREVIOUS version, so a wire, encoding or key-derivation change compiles clean, passes every suite, and is discovered by a member whose conversation stopped decrypting" ;;
-              webrtc|webrtc-*|str0m|sdp|ice|turn|stun)
-                gate="one relay-path call. The SFU has ten tests and not one of them touches the ICE stack; that is campaign rung 15 CALL, which has no runner yet" ;;
-              @nestjs/*|typeorm)
-                # `major` OR unknown: a "update the requirement to permit the latest version" pull
-                # request carries NO update-type trailer at all - PR #297 is one - and an unclassified
-                # bump of the framework is not a thing to be relaxed about.
-                if [ "$type" = "major" ] || [ -z "$type" ]; then
-                  gate="a real AppModule boot against a throwaway Postgres. src/framework-boot.spec.ts covers the HTTP adapter and every package peer range, but no test has ever constructed the actual application module, so a major that changes behaviour inside a dynamic module passes"
-                fi ;;
-            esac
+          echo "PR_LIST=$list" >> "$GITHUB_ENV"
+          echo "$(wc -l < "$list") pull request(s) to evaluate:"
+          cat "$list"
 
-            if [ -n "$gate" ]; then
-              echo "  REFUSED: $name -> $version ($type): $gate"
-              refused=$((refused + 1))
-              # Accumulated in a FILE, not a shell variable: a multi-line value assembled inline
-              # would have to carry a literal newline, and a literal newline inside a YAML block
-              # scalar has to be indented like the rest of the block or it ends the scalar.
-              echo "- \`$name\` -> \`$version\`: $gate." >> "$reasons_file"
-            else
-              echo "  ok: $name -> $version ($type) - the suite is evidence about this one"
+      - name: Apply the ceiling to each
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          merged=0
+          while IFS= read -r pr; do
+            [ -z "$pr" ] && continue
+            echo "::group::PR #$pr"
+            # The script never fails a pull request it merely declines, so a single unmergeable
+            # branch cannot stop the sweep.
+            if .github/scripts/dependabot-auto-merge.sh "$pr" | tee "$RUNNER_TEMP/out-$pr.txt"; then :; fi
+            if grep -q "^MERGED $pr\$" "$RUNNER_TEMP/out-$pr.txt"; then
+              merged=$((merged + 1))
             fi
-          done <<< "$parsed"
+            if grep -q "^STALE $pr\$" "$RUNNER_TEMP/out-$pr.txt"; then
+              echo "$pr" >> "$RUNNER_TEMP/stale.txt"
+            fi
+            echo "::endgroup::"
+          done < "$PR_LIST"
 
-          if [ "$refused" -ne 0 ]; then
-            echo "allowed=false" >> "$GITHUB_ENV"
-            {
-              echo "reasons<<REASONS_EOF"
-              cat "$reasons_file"
-              echo "REASONS_EOF"
-            } >> "$GITHUB_ENV"
-            echo "$refused update(s) have no gate here; this PR waits for one to be written."
-            exit 0
-          fi
-          echo "allowed=true" >> "$GITHUB_ENV"
+          echo "merged=$merged" >> "$GITHUB_ENV"
+          echo "merged $merged pull request(s) this pass"
 
-      # A REFUSAL THAT SAYS NOTHING IS THE QUEUE NOBODY DRAINS. The comment names the missing test,
-      # so the pull request carries its own reason for sitting there. It is posted ONCE: this
-      # workflow fires on every check-suite completion, and a marker line is cheaper and more
-      # reliable than reasoning about how many runs a push produced.
-      - name: Say what gate is missing, once
-        if: env.allowed == 'false'
+      # THE BUDGET FOR RE-TESTING WHAT MAIN NOW GATES ON. The script marks a pull request STALE when
+      # its head is not built on current `main`, because its green checks were then produced by
+      # workflow definitions `main` no longer carries - PR #272 was `CLEAN` with no
+      # `Boot the real AppModule` run at all, that job having been written after its CI last ran.
+      # Updating the branch re-runs CI under today's definitions and the next pass reads a verdict
+      # that means something.
+      #
+      # CAPPED, because each update is a full CI run and every merge makes every other branch stale
+      # at once: without a ceiling one sweep would launch thirty. Three an hour drains a queue this
+      # size in a day, unattended, and bounds what a bad day can cost. The cap is a budget, not a
+      # correctness argument - nothing here is wrong if it never fires, only slower.
+      - name: Re-test at most three branches whose checks predate what main gates on
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-          REASONS: ${{ env.reasons }}
         run: |
-          set -euo pipefail
-          MARKER='<!-- canari-auto-merge-ceiling -->'
+          set -uo pipefail
+          list="$RUNNER_TEMP/stale.txt"
+          if [ ! -s "$list" ]; then echo "nothing stale."; exit 0; fi
 
-          pr=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" \
-                 --jq '.[] | select(.state=="open") | .number' | head -n1)
-          if [ -z "${pr:-}" ]; then echo "No open PR for $HEAD_SHA."; exit 0; fi
+          echo "$(wc -l < "$list") stale; updating at most 3."
+          head -n 3 "$list" | while IFS= read -r pr; do
+            [ -z "$pr" ] && continue
+            # 422 here is normal and not an error: GitHub answers it when the branch is already up
+            # to date or cannot be updated cleanly. Dependabot rebases the conflicting ones itself.
+            if gh api --method PUT "repos/$REPO/pulls/$pr/update-branch" --silent 2>&1; then
+              echo "  #$pr: branch updated, CI will re-run under current main"
+            else
+              echo "  #$pr: could not be updated; Dependabot will rebase it"
+            fi
+          done
 
-          if gh api "repos/$REPO/issues/$pr/comments" --paginate --jq '.[].body' | grep -qF "$MARKER"; then
-            echo "Already explained on #$pr."
-            exit 0
-          fi
-
-          gh pr comment "$pr" --repo "$REPO" --body "$MARKER
-          **Not auto-merged: this repository has no gate that would see this one fail.**
-
-          $REASONS
-          This is not a semver judgement - a break that stops the tree compiling is caught by the
-          suite and merges on its own. It is a statement that a TEST IS MISSING. Write the one named
-          above and this whole class of update starts merging by itself; the list is in
-          docs/wiki/backlog.md."
-
-      - name: Merge when the whole check suite is green
-        if: env.allowed == 'true'
+      # A squash merge made with GITHUB_TOKEN produces a push that triggers NOTHING - github's
+      # anti-recursion rule - so CD never saw a single one of these merges and main drifted from
+      # production silently. `workflow_dispatch` is the documented exception to that rule, so this
+      # is the one call that closes the gap. ONE dispatch for the whole pass, not one per merge:
+      # the deploy builds `main` as it now stands, and that is the same artefact either way.
+      - name: Dispatch one deploy if anything merged
+        # Both halves are load-bearing. The step above runs without `set -e` so one unmergeable
+        # branch cannot stop a sweep, which means it can also end early and leave `merged` never
+        # written - and an UNSET value is not equal to '0', so testing only that would dispatch a
+        # deploy on the one path where nothing is known to have merged.
+        if: env.merged != '' && env.merged != '0'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
-
-          # Resolve the open Dependabot PR whose head is this commit.
-          pr=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" \
-                 --jq '.[] | select(.state=="open") | .number' | head -n1)
-          if [ -z "${pr:-}" ]; then
-            echo "No open PR for $HEAD_SHA; nothing to do."
-            exit 0
-          fi
-          echo "Evaluating checks for PR #$pr ($HEAD_SHA)"
-
-          # Inspect every check-run on the head commit. Merge only if at least
-          # one exists, all are completed, and none reported a bad conclusion.
-          runs=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs" --paginate \
-                   --jq '.check_runs[] | "\(.name)|\(.status)|\(.conclusion // "")"')
-
-          total=0; pending=0; bad=0
-          while IFS='|' read -r name status conclusion; do
-            [ -z "$name" ] && continue
-            # Ignore this workflow's own run if it ever surfaces as a check.
-            case "$name" in "Dependabot auto-merge"*) continue ;; esac
-            total=$((total + 1))
-            [ "$status" != "completed" ] && pending=$((pending + 1))
-            case "$conclusion" in
-              success|skipped|neutral|"") ;;
-              *) bad=$((bad + 1)); echo "  FAIL: $name -> $conclusion" ;;
-            esac
-          done <<< "$runs"
-
-          echo "checks: total=$total pending=$pending bad=$bad"
-          if [ "$total" -eq 0 ]; then echo "No checks yet; skip."; exit 0; fi
-          if [ "$bad" -ne 0 ]; then echo "A check failed; not merging."; exit 0; fi
-          if [ "$pending" -ne 0 ]; then echo "Checks still running; will re-evaluate on next completion."; exit 0; fi
-
-          echo "All checks green -> merging PR #$pr"
-          gh pr merge "$pr" --repo "$REPO" --squash --delete-branch
-
-          # A squash merge made with GITHUB_TOKEN produces a push that triggers NOTHING -
-          # github's anti-recursion rule - so CD never saw a single one of these merges and
-          # main drifted from production silently. `workflow_dispatch` is the documented
-          # exception to that rule, so this is the one call that closes the gap, and it is
-          # here rather than in a `workflow_run` on this workflow because that would also
-          # fire on every completion where nothing was merged at all.
-          echo "Dispatching CD for the merge of #$pr"
+          echo "Dispatching CD for $merged merge(s)"
           gh workflow run cd.yml --repo "$REPO" --ref main

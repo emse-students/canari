@@ -1,4 +1,5 @@
 import { NestFactory } from '@nestjs/core';
+import { DataSource } from 'typeorm';
 import { AppModule } from './app.module';
 
 /**
@@ -55,5 +56,36 @@ describe('the real AppModule boots', () => {
     }
     // Generous, because this boot connects to Postgres and synchronises a schema. It is a ceiling
     // on a hang, not a wait anybody expects to use.
+  }, 120_000);
+
+  it('issues a real query through every entity the app registered', async () => {
+    // THE GATE THAT RETIRES `typeorm` FROM THE AUTO-MERGE CEILING. The test above proves the schema
+    // BUILDS - `forRootAsync` resolves, every entity's metadata is constructed, `synchronize` runs -
+    // and stops there. The ORM ITSELF was never watched returning a row: all 1105 unit tests mock
+    // their repositories, so a major that changed how a query is BUILT would pass every one of them
+    // and fail in production on the first request.
+    //
+    // EVERY ENTITY, NOT A NAMED ONE. A gate that picks its subject by name does not cover the entity
+    // nobody added to the list, and this repository has already paid for that shape. `find` builds a
+    // SELECT through the metadata, the query builder and the driver, which is the whole path an ORM
+    // major moves.
+    const app = await NestFactory.create(AppModule, { logger: ['error', 'warn'] });
+
+    try {
+      // `init` rather than `listen`: no request is made here, and binding a socket would be a second
+      // reason for this test to fail.
+      await app.init();
+
+      const dataSource = app.get(DataSource, { strict: false });
+      expect(dataSource.entityMetadatas.length).toBeGreaterThan(0);
+
+      for (const metadata of dataSource.entityMetadatas) {
+        // `take: 1` because the assertion is that the query RUNS, not what it returns - the schema
+        // is freshly synchronised and every table is empty. A thrown query is the failure.
+        await dataSource.getRepository(metadata.target).find({ take: 1 });
+      }
+    } finally {
+      await app.close();
+    }
   }, 120_000);
 });

@@ -297,6 +297,13 @@ jobs:
     needs: [changes]
     if: ${{ needs.changes.outputs.ts-matrix != '[]' }}
     runs-on: ubuntu-latest
+    # A HANG MUST BECOME A RED JOB, NOT A BURNT RUNNER. The first run of this job proved the point:
+    # chat-delivery-service BOOTED - `Tests: 1 passed` - and then printed `Jest did not exit one
+    # second after the test run has completed`, because its Redis client had no lifecycle hook and
+    # `app.close()` left the socket open. The test's own 120 s timeout cannot see that: the test had
+    # already passed. Without this ceiling the job sat in_progress for over an hour and would have
+    # held the default six. The leak itself is fixed; this is what makes the NEXT one cheap.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -316,7 +323,14 @@ jobs:
           --health-timeout 5s
           --health-retries 10
       redis:
-        image: redis:7-alpine
+        # 8, BECAUSE PRODUCTION RUNS 8.8.0 - measured on the box, not read off a tag. This was `7`
+        # while `infrastructure/docker-compose.prod.yml` said `redis:alpine`, so the gate proving a
+        # service can talk to Redis was proving it against a DIFFERENT MAJOR from the one it will
+        # meet. It mattered the day `ioredis` went to 6, whose breaking change is RESP3 by default:
+        # a handshake exercised here against 7 says nothing certain about 8, and the reverse.
+        # The floating `redis:alpine` on the production side is the other half of this and is NOT
+        # fixed here - see docs/wiki/backlog.md, it restarts a Redis holding conversation history.
+        image: redis:8-alpine
         ports:
           - 6379:6379
         options: >-
@@ -325,7 +339,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2

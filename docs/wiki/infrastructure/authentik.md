@@ -5,6 +5,21 @@
 
 Canari uses Authentik as its OpenID Connect identity provider. Authentik is deployed as a separate Docker Compose stack alongside the main application stack.
 
+## The box, and the log that settles an OIDC question
+
+Authentik does NOT run on `canari`. It is its own host, reached as **`ssh miconnect`** (via
+ProxyJump through `canari`, so PowerShell and not Bash - see
+[databases](databases.md#reaching-it-from-a-workstation)). Its containers are `miconnect-server-1`,
+`miconnect-worker-1` and `miconnect-postgresql-1`.
+
+**`docker logs miconnect-server-1` is an ACCESS LOG**, and it is the instrument for any question
+about a login that failed on a client you cannot attach a debugger to. Every
+`/application/o/authorize/` appears with its status, its `redirect_uri` and the client's
+`user_agent` - which is what proved the iPad defect
+([mobile](../frontend/mobile.md#the-ipad-that-called-itself-a-macintosh-and-the-login-app-review-could-not-finish)):
+one `status 400` carrying `tauri://localhost/auth/callback` from a user agent calling itself
+`Macintosh`. Read it before theorising about a client-side branch.
+
 ## Deployment
 
 The CD pipeline ([`cicd.md`](../cicd.md), job `deploy-to-server`):

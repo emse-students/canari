@@ -111,8 +111,16 @@ describe('the NestJS packages installed in this service cohere', () => {
         const given = byName.get(core)!;
         const accepted = majorsAccepted(range);
         if (!accepted.has(majorOf(given.version))) {
+          // THE VIOLATION CARRIES ITS OWN REMEDY, because the only reader this test ever gets is
+          // somebody scrolling a red CI log on a Dependabot pull request, and a list of mismatches
+          // with no instruction is the queue nobody drains. Both directions are named: the package
+          // may be the laggard, or the framework may be the one that moved too far.
           violations.push(
-            `${pkg.name}@${pkg.version} wants ${core} ${range}, but ${given.version} is installed`
+            `${pkg.name}@${pkg.version} wants ${core} ${range}, but ${given.version} is installed. ` +
+              `Either ${pkg.name} has no release accepting ${core} ${majorOf(given.version)} yet - ` +
+              `in which case hold ${CORE_PACKAGES.join(' and ')} (and @nestjs/platform-express, ` +
+              `@nestjs/testing) at a major it does accept, in THIS service only - or it has one, and ` +
+              `this pull request should carry that bump too.`
           );
         }
       }
@@ -140,5 +148,10 @@ describe('the NestJS packages installed in this service cohere', () => {
     } finally {
       await app.close();
     }
-  });
+    // A CEILING ON NON-TERMINATION, NEVER A PERFORMANCE ASSERTION - and jest's 5 s default is the
+    // wrong one here. This boot compiles a module and binds a socket, and it runs beside three
+    // other services' suites in the pre-push hook: it took 25.9 s on a loaded developer machine
+    // and failed for the timeout rather than for anything it measures. Nothing about how long a
+    // boot takes is under test; that it FINISHES is.
+  }, 60_000);
 });

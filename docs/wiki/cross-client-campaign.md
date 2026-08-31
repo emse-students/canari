@@ -104,6 +104,18 @@ production.
 
 Decided with the user, not to be re-litigated.
 
+- **Six rungs ARE the target, and the other four come after them.** The campaign runs in autonomy
+  by the user's decision of 2026-08-21 (*"C'est parti pour la campagne"*), top of the ladder down,
+  and their priority of 2026-08-27 is verbatim: *"PASS ou PASS-DIRTY sur COMM, DEL, MULTI, LIFE,
+  NOTIF, HEAL."* TAB, CALL, PIN and CORRUPT are reached only once those six read one of the two.
+- **A `PASS-DIRTY` does not stop a rung by itself** (user, 2026-08-25). The x5 sweep of the whole
+  ladder accepting nothing short of `PASS` comes AFTER the ladder is finished (user, 2026-08-26) -
+  so a dirty verdict is a row on the second pass, never a blocker on the first.
+- **The order the rungs are owed in, once a device exists**, is not the ladder's order: the `+A1`
+  rows first; then **HEAL-REVOKE-1 to -4, which have NO RUNNER and are what actually closes the open
+  P1**; then the ungated re-runs of HEAL-NEW-1 and -3; then every DEL and MULTI cell, because both
+  runners have CHANGED since their verdicts were taken; then LIFE and NOTIF. CALL, CORRUPT and PIN
+  have no runner at all.
 - **A defect is fixed and pushed the moment it is found.** Prod is the test server, so the fix is
   verified RUNNING, which is the only thing this campaign is for. Consequence accepted: every deploy
   invalidates the loaded bundle, so `reload.mjs` runs again after each one.
@@ -324,6 +336,12 @@ real device. Three lessons generalise to every future one:
   page, and the comparison must read `performance.getEntriesByType('resource')`, not `script[src]` -
   SvelteKit boots from an inline module, so a selector-based assertion finds nothing and silently
   asserts nothing.
+
+**Leon pushes to Canari's `main` too**, and the same reasoning applies to every commit of his:
+`git fetch` at the START of a session and again before any measurement, then `git pull` his work in.
+His work does not concern the campaign and owes no pass of its own (user, 2026-08-21) - but a verdict
+taken against a tree that is behind `main` is a verdict about something nobody is running, and that
+is how a cell becomes wrong without anyone touching it.
 
 ## The negative rows - what does NOT exist
 
