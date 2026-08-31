@@ -107,6 +107,18 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Changed
 
+- **A failed in-conversation search now leaves a trace.** `ChatArea.svelte` is 1206 lines, carries
+  the whole search UI, and had no logging of any kind. Two of its branches discarded a failure in
+  silence, and in both the discarded value collided with a legitimate one: `onSearchAll` throwing
+  became `ids = null`, which is also how a channel says "nothing is persisted locally, use the
+  loaded window"; and `onRequestOlderFromPeers()` throwing became `'unavailable'`, which is one of
+  the three answers that call returns on purpose. So a user reporting "search found nothing" left
+  nothing anywhere saying whether the query ran, threw, or ran against a truncated corpus. Both now
+  log at a level that accuses, naming the conversation and how much was actually searched. The UI is
+  unchanged - it has one thing to say either way - and the third `catch` in the file
+  (`searchableText`) is deliberately left silent, because `parseEnvelope` throwing is the ordinary
+  case for a plain-text message and logging it would be noise on every search.
+
 - **The MLS client no longer accuses a device of losing a state it was never supposed to have.**
   `WasmMlsClient::new` warned `device_key_b64 provided but no encrypted state - key ignored,
   creating fresh state` whenever a device key arrived without a snapshot beside it. That pair means

@@ -783,6 +783,30 @@ DM and a DM message into a channel. Only the transport differs (MLS group vs cha
 a media forward re-sends the same envelope in both cases, so no blob is re-uploaded and the CEK
 travels with it.
 
+## What a failed search leaves behind
+
+`ChatArea.svelte` carries the whole in-conversation search UI and, until 2026-08-31, no logging of
+any kind. Two of its branches discarded a failure in silence, and in both the discarded value
+collided with a value the happy path returns on purpose:
+
+| Branch | On failure it became | Which also means |
+| --- | --- | --- |
+| `onSearchAll(convId, q)` | `ids = null` | "this is a channel - nothing is persisted locally, use the loaded window" |
+| `onRequestOlderFromPeers()` | `'unavailable'` | one of the three answers that call returns deliberately |
+
+So the two were indistinguishable at every consumer, and both landed on the same
+`searchLimitedToLoaded = isChannel`. A user reporting that search found nothing left no trace
+anywhere saying whether the query ran, threw, or ran against a truncated corpus.
+
+**The UI still collapses them, and that is correct** - there is one thing to tell the user either
+way. The LOG is where they stay apart: both branches now `console.warn` naming the conversation and,
+for the search, how many messages were actually looked at.
+
+**One `catch` in that file is deliberately left silent.** `searchableText`'s
+`catch { return message.content; }` fires when `parseEnvelope` rejects a plain-text body, which is
+the ordinary case for most of a conversation - logging it would put a line on every search over
+normal history. It is named here so the next reader does not re-open it.
+
 ## Pooling history between devices
 
 **Read [history-reconciliation](../../protocols/history-reconciliation.md) first.** It is the

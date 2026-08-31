@@ -542,10 +542,16 @@
     if (onRequestOlderFromPeers && !hasMoreInDb && scrollbackState === 'idle') {
       scrollbackState = 'asking';
       scrollbackAskedAt = oldestHeldAt;
-      scrollbackState = (await onRequestOlderFromPeers().catch(() => 'unavailable')) as Exclude<
-        ScrollbackState,
-        'asking'
-      >;
+      // `unavailable` IS one of the answers this call returns deliberately, so mapping a throw
+      // onto it makes a failed ask and a declined one the same value at every reader. The state
+      // still collapses - the UI has one thing to say either way - but the log keeps them apart,
+      // which is all a reader gets when someone reports that history stopped here.
+      scrollbackState = (await onRequestOlderFromPeers().catch((e: unknown) => {
+        console.warn(
+          `[ChatArea] peer scrollback request threw for ${chatView?.conversation.id.slice(0, 8) ?? 'no-conversation'}… - reported as unavailable: ${String(e).slice(0, 200)}`
+        );
+        return 'unavailable';
+      })) as Exclude<ScrollbackState, 'asking'>;
     }
   }
 
@@ -635,7 +641,14 @@
     if (onSearchAll) {
       try {
         ids = await onSearchAll(convId, q);
-      } catch {
+      } catch (e: unknown) {
+        // `null` is also how a channel says "nothing is persisted locally, use the loaded
+        // window", so the two land on the same fallback and the user is told the same thing.
+        // Only this line separates a search that COULD NOT RUN from one that had nothing to run
+        // over - and without it a report of "search finds nothing" leaves no trace at all.
+        console.warn(
+          `[ChatArea] full-history search FAILED for ${convId.slice(0, 8)}… - falling back to the ${chatView?.conversation.messages.length ?? 0} loaded message(s): ${String(e).slice(0, 200)}`
+        );
         ids = null;
       }
     }
