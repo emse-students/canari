@@ -118,11 +118,46 @@ jobs:
             if grep -q "^MERGED $pr\$" "$RUNNER_TEMP/out-$pr.txt"; then
               merged=$((merged + 1))
             fi
+            if grep -q "^STALE $pr\$" "$RUNNER_TEMP/out-$pr.txt"; then
+              echo "$pr" >> "$RUNNER_TEMP/stale.txt"
+            fi
             echo "::endgroup::"
           done < "$PR_LIST"
 
           echo "merged=$merged" >> "$GITHUB_ENV"
           echo "merged $merged pull request(s) this pass"
+
+      # THE BUDGET FOR RE-TESTING WHAT MAIN NOW GATES ON. The script marks a pull request STALE when
+      # its head is not built on current `main`, because its green checks were then produced by
+      # workflow definitions `main` no longer carries - PR #272 was `CLEAN` with no
+      # `Boot the real AppModule` run at all, that job having been written after its CI last ran.
+      # Updating the branch re-runs CI under today's definitions and the next pass reads a verdict
+      # that means something.
+      #
+      # CAPPED, because each update is a full CI run and every merge makes every other branch stale
+      # at once: without a ceiling one sweep would launch thirty. Three an hour drains a queue this
+      # size in a day, unattended, and bounds what a bad day can cost. The cap is a budget, not a
+      # correctness argument - nothing here is wrong if it never fires, only slower.
+      - name: Re-test at most three branches whose checks predate what main gates on
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          list="$RUNNER_TEMP/stale.txt"
+          if [ ! -s "$list" ]; then echo "nothing stale."; exit 0; fi
+
+          echo "$(wc -l < "$list") stale; updating at most 3."
+          head -n 3 "$list" | while IFS= read -r pr; do
+            [ -z "$pr" ] && continue
+            # 422 here is normal and not an error: GitHub answers it when the branch is already up
+            # to date or cannot be updated cleanly. Dependabot rebases the conflicting ones itself.
+            if gh api --method PUT "repos/$REPO/pulls/$pr/update-branch" --silent 2>&1; then
+              echo "  #$pr: branch updated, CI will re-run under current main"
+            else
+              echo "  #$pr: could not be updated; Dependabot will rebase it"
+            fi
+          done
 
       # A squash merge made with GITHUB_TOKEN produces a push that triggers NOTHING - github's
       # anti-recursion rule - so CD never saw a single one of these merges and main drifted from

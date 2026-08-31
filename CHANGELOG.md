@@ -61,6 +61,17 @@ which is also where every release up to and including v0.13.1 now lives.
   Naming `std::hint::black_box` directly - stable since Rust 1.66, and this repository requires
   1.97 - compiles on either version.
 
+- **An auto-merge that would have walked past the gate written to stop it.** A check-run's
+  conclusion is evidence about the workflow that produced it, and PR #272 - `@nestjs/platform-express`
+  11 -> 12 in media-service alone, the exact framework split this whole day started from - was
+  `CLEAN`, mergeable, every check green, with no `Boot the real AppModule` run in its suite at all
+  because that job was written after its CI last ran. An absent check and an inapplicable one look
+  identical, so "nothing failed" cannot be the merge condition. The script now refuses any head not
+  built on current `main` and marks it stale; the workflow updates at most three such branches per
+  pass, re-running their CI under today's definitions. Found by running the shipped script against
+  real pull requests - which also caught an unescaped backtick pair silently deleting a filename
+  from a refusal comment, bash having run it as a command substitution.
+
 - **An auto-merge that could only act on an event it happened to catch.** `dependabot-auto-merge.yml`
   was triggered by `workflow_run` and nothing else, so it could evaluate a pull request only in the
   seconds after one of its CI runs finished. A pull request whose checks had completed earlier -

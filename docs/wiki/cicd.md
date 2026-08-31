@@ -293,6 +293,24 @@ the missing test, once, behind the marker `<!-- canari-auto-merge-ceiling -->`.
   pull request that was already green when it was installed, and on 2026-08-31 seven mergeable ones
   sat exactly there. The clock sets how fast the queue drains, never whether the outcome is right.
 
+### Why a green pull request is not enough
+
+A check-run's conclusion is evidence about the workflow that PRODUCED it. PR #272 bumps
+`@nestjs/platform-express` 11 -> 12 in media-service alone - the split that started all of this -
+and was `CLEAN` with every check green: its suite has no `Boot the real AppModule` run at all,
+because that job was written after its CI last ran. **An absent check and an inapplicable one look
+identical**, so "nothing failed" is not a merge condition.
+
+The script therefore refuses any head not built on current `main` and marks it `STALE`; the workflow
+updates at most **three** such branches per pass, which re-runs their CI under today's definitions.
+The cap is a budget, not a correctness argument: every merge makes every other branch stale at once,
+so an uncapped sweep would launch one full CI run per open pull request. Three an hour drains a
+thirty-deep queue in a day, unattended.
+
+A consequence worth knowing rather than fighting: because a merge staleness-invalidates everything
+else, roughly one pull request merges per pass. That is the correct behaviour - each one is tested
+against the exact `main` it lands on.
+
 A sweep may merge several pull requests that were only ever tested apart. That is safe here for one
 reason and it is worth not breaking: **`deploy-to-server` needs `run-ci`**, so a combination that
 breaks fails CI on `main` and the deploy is skipped. `main` can go red; production cannot follow it.

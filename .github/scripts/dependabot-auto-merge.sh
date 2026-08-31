@@ -101,13 +101,13 @@ while IFS='|' read -r name type version; do
       # frozen fixture can only ever see one of them. `cross_version_state.rs` proves today's code
       # opens a group and a frame minted by v0.14.14; nothing here proves a frame minted TODAY is
       # readable by the v0.14.14 clients still in the fleet, and only an old binary could.
-      gate="the FORWARD half of a cross-version test. `tests/cross_version_state.rs` now covers the backward half - today opening what v0.14.14 wrote - but a wire format is read by OTHER devices on OTHER versions, and nothing here runs an old binary against a frame minted by the new one"
+      gate="the FORWARD half of a cross-version test. \`tests/cross_version_state.rs\` now covers the backward half - today opening what v0.14.14 wrote - but a wire format is read by OTHER devices on OTHER versions, and nothing here runs an old binary against a frame minted by the new one"
       ;;
     aes-gcm)
       # NOT at-rest, despite sitting beside the crates that are: this is the per-epoch key that
       # opens an inline channel-message push in `src-tauri/src/mobile/background.rs`, sealed by
       # ANOTHER member's device. Cross-device, and with no fixture at all on either side.
-      gate="a channel-push fixture. This AEAD opens a push sealed by another member's device (`decrypt_channel_message`), so both directions are cross-version, and nothing in src-tauri freezes one"
+      gate="a channel-push fixture. This AEAD opens a push sealed by another member's device (\`decrypt_channel_message\`), so both directions are cross-version, and nothing in src-tauri freezes one"
       ;;
     webrtc | webrtc-* | str0m | sdp | ice | turn | stun)
       gate="one relay-path call. The SFU has ten tests and not one of them touches the ICE stack; that is campaign rung 15 CALL, which has no runner yet"
@@ -161,6 +161,32 @@ $(cat "$reasons_file")
 This is not a semver judgement - a break that stops the tree compiling is caught by the suite and
 merges on its own. It is a statement that a TEST IS MISSING. Write the one named above and this
 whole class of update starts merging by itself; the list is in \`docs/wiki/backlog.md\`."
+  exit 0
+fi
+
+# -----------------------------------------------------------------------------------------------
+# A GREEN CHECK IS EVIDENCE ABOUT THE WORKFLOW THAT PRODUCED IT
+# -----------------------------------------------------------------------------------------------
+# NOT about the workflow on `main` today. Measured 2026-08-31 and it is the reason this section
+# exists: PR #272 bumps `@nestjs/platform-express` 11 -> 12 in media-service ALONE - the exact split
+# that started all of this - and it was `CLEAN`, mergeable, every check green. Its check suite has
+# no `Boot the real AppModule` run at all, because that job did not exist when its CI last ran. The
+# gate written to catch that pull request would have been walked straight past by the automation
+# written to respect it.
+#
+# So a head that is not built on current `main` is not merged on its old checks. Its branch is
+# updated instead, which re-runs CI under the definitions `main` carries now, and the next pass
+# reads a verdict that means something. The caller decides HOW MANY to update per sweep, because
+# each one costs a full CI run; this only says which.
+main_sha=$(gh api "repos/$REPO/commits/main" --jq '.sha') || {
+  echo "#$pr: could not read main; skipping rather than merging on an unknown base."
+  exit 0
+}
+base_sha=$(gh pr view "$pr" --repo "$REPO" --json baseRefOid --jq '.baseRefOid')
+
+if [ "$base_sha" != "$main_sha" ]; then
+  echo "#$pr: built on ${base_sha:0:8}, main is ${main_sha:0:8} - its checks predate what main gates on now."
+  echo "STALE $pr"
   exit 0
 fi
 
