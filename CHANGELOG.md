@@ -107,6 +107,18 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Changed
 
+- **chat-delivery no longer connects a Kafka transport it never had a handler for.** Every boot
+  printed the KafkaJS v2 partitioner warning, and the question it raised - legacy partitioner or
+  default? - turned out to have no answer: the service declares no `@MessagePattern` or
+  `@EventPattern` at all, so the producer Nest creates for handler replies could never send a
+  record, keyed or otherwise. Measured on prod: the broker held only `__consumer_offsets`, and the
+  one consumer group was this service's own, subscribed to nothing.
+  `KAFKAJS_NO_PARTITIONER_WARNING=1` would have hidden the line and kept the producer; the
+  transport is gone instead, with `@nestjs/microservices`, `kafkajs`, and the service's
+  `KAFKA_BROKERS` / `depends_on: kafka` in both compose files. **chat-gateway's Kafka consumer is
+  untouched** - though the same measurement found that nothing produces the topic it waits on, which
+  is now a P2 for the user to decide.
+
 - **A failed in-conversation search now leaves a trace.** `ChatArea.svelte` is 1206 lines, carries
   the whole search UI, and had no logging of any kind. Two of its branches discarded a failure in
   silence, and in both the discarded value collided with a legitimate one: `onSearchAll` throwing

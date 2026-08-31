@@ -96,12 +96,19 @@ Access token lives in memory only (never localStorage). Refresh token is an Http
 
 `chat:channel_events` types: `channel.member.joined`, `channel.member.kicked`, `channel.message.created`.
 
-### Kafka (async events)
+### Kafka (async events) - EMPTY, measured on prod 2026-08-31
 
-| Topic | Producer | Consumer | Payload type |
+**No application topic exists on the broker, and nothing produces one.** This table used to claim a
+`chat.messages` topic driving push notifications and a `post_created` topic from social-service;
+neither ever existed. Push is sent directly by chat-delivery over the FCM gateway and has never
+touched Kafka.
+
+| Topic | Producer | Consumer | State |
 |---|---|---|---|
-| `chat.messages` | chat-delivery-service | chat-delivery-service (push notif) | `MessageSentEvent` |
-| `post_created` | social-service | chat-gateway | `PostCreatedEvent` |
+| `post.created` | **nobody** | chat-gateway (group `chat-gateway-broadcast`) | topic absent; consumer logs `UnknownTopicOrPartition` and receives nothing |
+
+chat-delivery-service connected a Kafka transport with no handlers at all until 2026-08-31, when it
+was removed. Full measurement and the open question on [kafka](infrastructure/kafka.md).
 
 ## MLS message flow (online)
 
@@ -230,4 +237,4 @@ UML sequence diagrams for key flows are in [`docs/diagrams/`](../diagrams/):
 - **Single Nginx entry point**: all services are private; only Nginx is exposed. This centralises auth and simplifies firewall rules.
 - **MLS encryption in WASM**: all encryption/decryption happens client-side. The server stores only ciphertexts.
 - **Media encryption**: client generates a CEK (AES-256-GCM) before upload; key travels in the MLS ciphertext. The media-service sees only opaque blobs.
-- **At-least-once delivery**: Kafka consumer in chat-gateway commits offsets only after successful delivery attempts.
+- **At-least-once delivery**: the Kafka consumer in chat-gateway commits offsets only after successful delivery attempts - a property of code that currently receives nothing, since no producer exists ([kafka](infrastructure/kafka.md)).

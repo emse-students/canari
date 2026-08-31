@@ -1,24 +1,25 @@
 import { NestFactory } from '@nestjs/core';
-import { Transport, MicroserviceOptions } from '@nestjs/microservices';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import * as bodyParser from 'body-parser';
 import { buildAllowedOrigins, corsOriginDelegate } from './cors-origins';
 
+/**
+ * THIS SERVICE CONNECTS NO KAFKA TRANSPORT, AND THAT IS DELIBERATE.
+ *
+ * It used to call `connectMicroservice({ transport: Transport.KAFKA })`, and it has never had a
+ * single `@MessagePattern` or `@EventPattern` handler. Nest's `ServerKafka` still created and
+ * connected a producer for handler REPLIES, whose only send path is a reply to a handler that does
+ * not exist - so it could never emit a record, and its creation printed the KafkaJS partitioner
+ * warning on every boot. Measured on prod 2026-08-31: the broker held only `__consumer_offsets`,
+ * and the sole consumer group was this service's own, subscribed to nothing.
+ *
+ * `KAFKAJS_NO_PARTITIONER_WARNING=1` would have hidden the line while leaving the producer; the
+ * producer is gone instead. **Kafka itself is still in use** - `chat-gateway` consumes
+ * `post.created` - so the broker stays and nothing here speaks for that path.
+ */
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-
-  app.connectMicroservice<MicroserviceOptions>({
-    transport: Transport.KAFKA,
-    options: {
-      client: {
-        brokers: (process.env.KAFKA_BROKERS || 'localhost:9092').split(','),
-      },
-      consumer: {
-        groupId: 'chat-delivery-consumer',
-      },
-    },
-  });
 
   app.use(bodyParser.json({ limit: '10mb' }));
 
@@ -40,7 +41,6 @@ async function bootstrap() {
   });
 
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
-  await app.startAllMicroservices();
   await app.listen(process.env.PORT || 3010);
 }
 

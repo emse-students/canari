@@ -15,7 +15,7 @@
 frontend (Nginx:80)
   |-- chat-gateway:3000         <- depends on redis, kafka
   |-- call-service:3004          <- depends on Cloudflare TURN (no internal deps)
-  |-- chat-delivery-service:3010 <- depends on postgres, redis, kafka
+  |-- chat-delivery-service:3010 <- depends on postgres, redis
   |-- media-service:3011         <- depends on garage
   |-- core-service:3012          <- depends on postgres
   |-- social-service:3014        <- depends on postgres, core-service, media-service

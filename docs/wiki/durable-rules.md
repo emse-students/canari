@@ -498,6 +498,7 @@ The link-preview pipeline, the SSRF guard, the favicon cascade and the undici se
 Every unchecked seam - Tauri command names, plugin ACLs, `push_context.json`, `mlsWorkerProtocol.ts`,
 `LoginErrorCode` - is enumerated on [development](development.md#contracts-the-compiler-does-not-check).
 
+- **BEFORE ANSWERING A WARNING'S QUESTION, CHECK THAT THE THING ASKING IT SHOULD EXIST.** The KafkaJS partitioner warning asked legacy-or-default, and the honest answer was neither: chat-delivery declared no handler, so the producer Nest made for replies could never send. An env var would have silenced a line about a producer that should not have been created. **A warning is evidence about the component, not only about its configuration** - and the measurement that settles it is on the RUNNING system (`kafka-topics --list` returned no application topic in 42 hours), never in the source alone. [kafka](infrastructure/kafka.md)
 - **A `catch` THAT RETURNS A VALUE THE HAPPY PATH ALSO RETURNS DELETES THE FAILURE.** `onSearchAll` throwing became `null`, which is also "this channel persists nothing locally"; `onRequestOlderFromPeers()` throwing became `'unavailable'`, one of the three answers it returns on purpose. Both then read identically at every consumer, so nothing downstream could ever separate them. Collapsing the two in the UI is often right - there is one thing to tell the user - but the LOG is where they must stay apart, and it is all a best-effort path leaves behind. [chat](frontend/modules/chat.md)
 What must not be forgotten between the pages:
 

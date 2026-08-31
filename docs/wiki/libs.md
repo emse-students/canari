@@ -19,11 +19,17 @@ definition.
 |---|---|---|
 | `MessageSentEvent` | `TOPIC_CHAT_MESSAGES` (`chat_messages`) | nowhere |
 | `MessageReadEvent` | `TOPIC_MESSAGE_READ` (`message_read`) | nowhere |
-| `PostCreatedEvent` | `TOPIC_POST_CREATED` (`post_created`) | `apps/chat-gateway/src/subscribers.rs`, as a literal |
+| `PostCreatedEvent` | `TOPIC_POST_CREATED` (`post_created`) | `apps/chat-gateway/src/subscribers.rs`, as the literal `"post.created"` - **a DOT, not the constant's underscore** |
 
 That third column is MEASURED, not intended, and it says these structs describe a contract only part
 of the system speaks. Read it before treating any of them as a live Kafka topic. An earlier version
 of this table named a producer and a consumer for all three; none of those routes exists in the repo.
+
+**And the one consumer that does exist does not use the constant, nor even its spelling.**
+`subscribers.rs` subscribes to `post.created`; `TOPIC_POST_CREATED` is `post_created`. A producer
+written against this crate would publish to a topic that consumer never reads, and the two would sit
+there agreeing on a struct and disagreeing on a name. Measured 2026-08-31, with the rest of the Kafka
+estate, on [kafka](infrastructure/kafka.md).
 
 ### The TypeScript mirror
 
