@@ -221,6 +221,39 @@ that were open the whole time. **Enumerate what a mechanism WRITES before conclu
 observe it**; a CI system that deploys leaves refs in a repository, lines in a journal and a process
 on a host, and any one of them answers.
 
+### Dependency updates: the same three defects everywhere, and the ceiling that does NOT copy
+
+The auto-merge workflow was one file copied into four repositories, so **all four carried all three
+of its defects**: no ceiling, so it merged anything green; one trigger, `workflow_run`, so it could
+only act on an event it happened to catch; and a merge that reached no deploy, because a squash made
+with `GITHUB_TOKEN` raises no `push` event. All four are fixed (2026-08-31). The state, and what is
+still unproven, is the table on [backlog](backlog.md).
+
+**The script copies; the ceiling does not, and that is the whole design.** An entry is a dependency
+whose failure would be INVISIBLE to that repository's own suite - never a semver judgement, because
+a break that stops the tree compiling is caught and merges on its own. So each repository was
+MEASURED separately, and the four answers came out genuinely different:
+
+| Repo | Its answer | Why |
+| --- | --- | --- |
+| **Canari** | five entries | a wire format read by other devices on other versions, a channel-push seal, an ICE stack ten tests never touch - none of it observable from a build |
+| **Sky** | EMPTY | all three candidates were closed by WRITING the test: a frozen star-map layout, a packaged-server boot, and a markdown-escaping gate |
+| **MiGallery** | two | `jspdf` (a PDF nothing ever opens) and `form-data` (the streaming multipart body of the one path a photo takes in). `sharp` was the largest and is closed by `tests/face-crop.test.ts` |
+| **Portail-etu** | EMPTY | both candidates closed the same way - the boot step and the markdown gate |
+
+**An empty ceiling is a correct answer**: it says that repository's suite is evidence about
+everything it depends on. What is NOT acceptable is an entry with no named test, which is a refusal
+nobody can ever lift - the queue the whole mechanism exists to avoid (user, 2026-08-31: *"Je prefere
+blinder de test et faire les choses automatiquement qu'avoir une review humaine qui n'arrive
+jamais"*).
+
+**Writing the ceilings is what found the defects.** Not one of them was visible to any gate in its
+own repository: Sky's star map rotating on every `rebuild-db` and its bios rendering raw `<iframe>`;
+MiGallery's undeclared `@types/node`, its image caches that stopped caching for ever if their
+directory vanished, and two dependencies nothing imported; Portail-etu's bios with the same
+`<iframe>` hole and an adapter nothing ever started outside production. **Asking "what would break
+here without anything going red" is a better bug-finder than looking for bugs.**
+
 ## 7. Line endings
 
 `.gitattributes` pinning the working tree to LF: **all five, as of 2026-08-19** (Canari and Le Cercle
@@ -799,6 +832,16 @@ what it lists is a real backlog and nobody has ruled on it:
 
 The first three rows are correctness, not style. **Do not blanket-fix: `{@html}` and the two
 `parametres` warnings each need a judgement.**
+
+**Re-measured 2026-08-31: 70 warnings in 16 files**, down from 88 without anyone ruling on the
+table above - the dependency work of that day removed files and rewrote others. **The count is the
+wrong thing to track**; the table's first three rows are, and none of them is closed. Read the
+current list from `bun run lint` rather than from a number here, which has now been stale once.
+
+**The sibling counts, same day, same command:** Sky 8 warnings in 4 files, all
+`svelte/require-each-key` - the same correctness class as MiGallery's largest row, and small enough
+to close in one pass. Portail-etu is at **zero**, on both `lint` and `lint:svelte`, which is what
+makes it the reference for what the other two are carrying.
 
 ### le-cercle - DONE AND MERGED (2026-08-27)
 

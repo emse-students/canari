@@ -821,6 +821,28 @@ Environment and tooling traps that belong to no one subsystem. Each cost a run.
 - **REMOVING A BUILD PLUGIN REMOVES WHAT IT WAS QUIETLY DOING, AND THE BUILD STAYS GREEN.** Swapping MiGallery's Tailwind from the PostCSS wrapper to the Vite plugin deletes `postcss.config.cjs` - and autoprefixer with it. That config listed autoprefixer as an afterthought, but it was writing **forty of the forty-five** `-webkit-backdrop-filter` declarations in the built CSS and all five `-webkit-user-select`: every glass surface would have lost its blur on Safari and iOS, with a passing suite and a 200 from the container. Before deleting a step in an asset pipeline, DIFF ITS OUTPUT - declaration by declaration, not by eye - and check the replacement on the platform that will run it, because a native binary can fall back silently. [ecosystem-convergence](ecosystem-convergence.md#11-the-cross-repo-convergence-plan-repo-by-repo)
 - **A LINT RULE THAT COVERS THE MINORITY OF THE FILES READS AS A GUARANTEE.** `lucide-svelte` and `@lucide/svelte` both resolve and both render, so nothing announces a stray import; oxlint's `no-restricted-imports` was the obvious guard and was MEASURED to fire on `.ts` while oxvelte does not apply it inside a `.svelte` `<script>` block - which is where almost every icon import lives. Two linters are two rule sets: prove a rule fires in EVERY file kind it is meant to cover, or use a mechanism that does. [ecosystem-convergence](ecosystem-convergence.md#11-the-cross-repo-convergence-plan-repo-by-repo)
 - **A TYPE THAT STOPPED BEING TRUE KEEPS TYPECHECKING WHILE A COMPATIBILITY SHIM SURVIVES.** Three MiGallery components typed their `icon` prop as `ComponentType<SvelteComponent>`, the Svelte 4 CLASS shape; no lucide icon had satisfied it since the package moved to runes, and it compiled only against the legacy shim the deprecated package still shipped. Twenty errors across seventeen call sites appeared the instant the shim left. **A green typecheck dates from the last time the types were re-derived, not from today.** [ecosystem-convergence](ecosystem-convergence.md#11-the-cross-repo-convergence-plan-repo-by-repo)
+- **A PACKAGE THAT IS PRESENT IS NOT A PACKAGE THAT IS DECLARED, AND A TYPECHECK CAN PASS BY
+  ACCIDENT FOR MONTHS.** MiGallery declared no `@types/node` anywhere: it was installed only as an
+  OPTIONAL PEER of vite and vitest, and `fs`, `path`, `process` and `Buffer` resolved because it
+  happened to be on disk. A `@inlang/paraglide-js` MINOR resolved it away and produced **147 errors
+  in 37 files with no source change** - a red pull request that reads as "this update is broken"
+  and is nothing of the kind. **What a build uses, the manifest declares**, and the tell is that
+  the failing update has no relationship to the thing that failed. The mirror of it is also true:
+  `undici` and `@playwright/test` were declared and imported nowhere, and a dependency nothing uses
+  is a pull request every month about nothing. [cicd](cicd.md)
+- **A PRECONDITION ESTABLISHED ONCE AT IMPORT IS NOT ESTABLISHED.** MiGallery's three image caches
+  called `ensureCacheDir` at module load. A directory that went away under a running process - a
+  volume remount, a cleanup job, a `data/` cleared by hand - was never recreated, so every write
+  threw for the rest of that process's life and every cover, crop and OG card was recomputed on
+  every request for ever, behind a log line nobody reads. When the operation is idempotent and
+  costs nothing, establish the precondition WHERE IT IS USED: `mkdir -p` next to the write is the
+  only version that survives the world changing under it. Import time answers "was it true when we
+  started", which is not the question. [cicd](cicd.md)
+- **A TEARDOWN IS NOT AN ASSERTION.** `bun:sqlite` closed its handle correctly and Windows still
+  held the file, so `rmSync` on a temp directory raised EBUSY and the suite reported a FAILURE
+  after all 269 tests had passed - and the pre-push hook then refused every push from that machine.
+  Nothing had been asserted about that directory. A cleanup that the platform refuses is reported
+  and stepped over; any other errno is re-thrown, because that one is a fact about the test.
 - **A CARET IS A RANGE; THE LOCKFILE IS THE PIN, AND ONLY THE LOCKFILE ANSWERS "WHICH BINARY".**
   Five packages here declared oxlint as `^1.74.0` or `^1.80.0` - two numbers, which already looks
   like drift worth fixing. The lockfiles said three: 1.75.0 in chat-delivery, media and social,

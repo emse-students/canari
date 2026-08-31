@@ -2123,19 +2123,33 @@ feature is therefore coherent with E2EE - it removes a password prompt, not a re
 
 ## Tooling
 
-### P2 - three other repos carry ALL THREE dependency defects Canari just had (measured 2026-08-31)
+### DONE 2026-08-31 - all four repos carry the ceiling, the sweep and the dispatch
 
 **Canari's `dependabot-auto-merge.yml` merged any green Dependabot PR with no ceiling at all, its
-merges reached CD not once, and it could only ever act on an event it happened to catch.** All three
-are fixed here. **None is fixed in Sky, MiGallery or Portail-etu**, and the workflow is the same file
-in all four - it was copied.
+merges reached CD not once, and it could only ever act on an event it happened to catch.** The
+workflow was the same file in all four repositories - it had been copied - so all four had all
+three defects. All four are fixed. What is NOT yet proven is in the row below the table.
 
-| Repo | A ceiling | Does an auto-merge deploy? | Can it drain a queue it did not watch open? |
+| Repo | Its ceiling | Does an auto-merge deploy? | Can it drain a queue it did not watch open? |
 | --- | --- | --- | --- |
-| **Canari** | fixed 2026-08-31 | fixed 2026-08-31, by an explicit `workflow_dispatch` | fixed 2026-08-31, by an hourly sweep |
-| **Sky** | none - `grep -c 'update-type\|semver'` is 0 | NO. `deploy.yml` listens to `CI (Bun)`, which a `GITHUB_TOKEN` push does not trigger either | NO - `workflow_run` only |
-| **MiGallery** | none, same measurement | NO, and worse: `cd.yml` has no `workflow_run` at all | NO - `workflow_run` only |
-| **Portail-etu** | none, same measurement | NO. `deploy.yml` listens to `Run Tests`, the same blind spot | NO - `workflow_run` only |
+| **Canari** | `@nestjs/*`, the at-rest trio, the protocol crates, `aes-gcm`, the SFU stack | yes, an explicit `workflow_dispatch` on `cd.yml` | an hourly sweep at :17 |
+| **Sky** | EMPTY, measured - all three candidates closed by writing the test | yes, `deploy.yml` dispatched, its `verify` job re-running CI on the merged tree | an hourly sweep at :17 |
+| **MiGallery** | `jspdf`/`jspdf-autotable`, `form-data`; `sharp` closed by `tests/face-crop.test.ts` | yes, `cd.yml` dispatched; its `run-ci` job already gated `build-image` | an hourly sweep at :23 |
+| **Portail-etu** | EMPTY, measured - both candidates closed by writing the gate | yes, `deploy.yml` dispatched, with a new `verify` job so the dispatch is no longer ungated | an hourly sweep at :41 |
+
+**THE MERGE HALF IS PROVEN, THE CONVERGENT HALF IS NOT.** Measured 2026-08-31 16:05 UTC: the fast
+path runs and is visible - sweeps at 14:55-15:00 UTC merged, dispatched, and CD went green at 15:06.
+But **`event=schedule` has produced ZERO runs, on any repository**, and Canari's cron has been on
+`main` since 14:32 UTC, so the 15:17 slot passed with nothing. Two readings fit: GitHub's documented
+latency on a freshly registered schedule, or it does not fire here at all. **Nobody may claim the
+queue converges until a scheduled run is seen** - the whole argument for the sweep is that it
+recovers from a state no event describes, and an unproven recovery path is exactly the mechanism
+this repository has twice been caught believing in. `gh api ".../dependabot-auto-merge.yml/runs?event=schedule"`
+settles it in one call, and until it returns a row this line stands.
+
+**Two things the sweep still does not do**, neither of which the ceiling is about: nothing REPAIRS a
+pull request that is red, and nothing reports whether a pass ran at all. The second is what makes
+the paragraph above possible.
 
 **Le Cercle is on GitLab and has no GitHub workflow**, so it is out of scope for this one.
 

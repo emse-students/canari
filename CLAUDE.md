@@ -173,8 +173,9 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md).**
    the remaining rows of [the ceiling
    table](docs/wiki/backlog.md#p1---the-three-refusals-the-auto-merge-ceiling-makes-and-the-test-that-retires-each)**,
    each naming the test that retires it - closing one makes a whole CLASS of update merge by itself.
-   **The same two defects, a ceiling-less auto-merge and merges that reach no deploy, are still live
-   in Sky, MiGallery and Portail-etu** (measured 2026-08-31, [backlog](docs/wiki/backlog.md)).
+   **The four repositories now all carry the ceiling, the sweep and the dispatch** (2026-08-31);
+   what is NOT proven is that the hourly sweep FIRES - `event=schedule` has returned zero runs
+   anywhere, and one `gh api` call settles it ([backlog](docs/wiki/backlog.md)).
 
 4. **NOTHING ON THE CAMPAIGN BOARD COULD HAVE CAUGHT IT, AND THE GAP IS STRUCTURAL** (2026-08-28):
    no row asks a question whose answer is a POPULATION rather than an event. **Four rows are written
