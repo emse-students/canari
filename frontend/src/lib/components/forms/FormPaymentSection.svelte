@@ -10,9 +10,9 @@
   } from '$lib/components/ui/controlClasses';
   import StripeNetPayoutHint from '$lib/components/payments/StripeNetPayoutHint.svelte';
   import FormSection from './FormSection.svelte';
-  import PriceGridEditor from './PriceGridEditor.svelte';
-  import { emptyMatrix, priceRange, type PriceMatrix } from '$lib/forms/priceMatrix';
-  import type { FormationOption } from '$lib/forms/criteriaOptions';
+  import PriceGridEditor from '$lib/components/pricing/PriceGridEditor.svelte';
+  import { emptyMatrix, priceRange, type PriceMatrix } from '$lib/pricing/priceMatrix';
+  import type { FormationOption } from '$lib/pricing/criteriaOptions';
   import { Check, CreditCard } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 

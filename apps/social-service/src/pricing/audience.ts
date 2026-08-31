@@ -8,7 +8,7 @@
  */
 
 /** Everything a criterion may look at. Assembled once per request, never re-fetched per bucket. */
-export interface SubmitterFacts {
+export interface PricingFacts {
   /** ENTRY year from the identity provider - "la promo 2024" entered in 2024. Null when unset. */
   promo: number | null;
   /** Formation/track from the identity provider; null when unset. */
@@ -97,7 +97,7 @@ export interface AudienceCondition {
 /** True when the submitter holds a cotisation the bucket accepts. */
 function matchesCotisation(
   bucket: Pick<CotisationBucket, 'anyTier' | 'variantKeys'>,
-  facts: SubmitterFacts
+  facts: PricingFacts
 ): boolean {
   if (facts.cotisationTiers.length === 0) return false;
   if (bucket.anyTier) return true;
@@ -111,17 +111,17 @@ function matchesCotisation(
  * A null promo matches nothing - it is not a year, and treating it as one would put somebody in a
  * priced cell on the strength of a missing value.
  */
-function matchesPromo(values: number[], facts: SubmitterFacts): boolean {
+function matchesPromo(values: number[], facts: PricingFacts): boolean {
   return facts.promo !== null && values.includes(facts.promo);
 }
 
 /** True when the submitter's formation is one of the bucket's values. Case-sensitive, as stored. */
-function matchesFormation(values: string[], facts: SubmitterFacts): boolean {
+function matchesFormation(values: string[], facts: PricingFacts): boolean {
   return facts.formation !== null && values.includes(facts.formation);
 }
 
 /** True when the submitter selected one of the bucket's options for that question. */
-function matchesAnswer(questionId: string, optionIds: string[], facts: SubmitterFacts): boolean {
+function matchesAnswer(questionId: string, optionIds: string[], facts: PricingFacts): boolean {
   const selected = facts.answers[questionId];
   if (!selected?.length) return false;
   return selected.some((id) => optionIds.includes(id));
@@ -135,7 +135,7 @@ function matchesAnswer(questionId: string, optionIds: string[], facts: Submitter
  * refuses overlapping buckets within a dimension (`findOverlappingBuckets`), so at most one can
  * ever match. First-match is how the loop ends, not how ties are broken.
  */
-export function bucketFor(dimension: Dimension, facts: SubmitterFacts): string {
+export function bucketFor(dimension: Dimension, facts: PricingFacts): string {
   switch (dimension.kind) {
     case 'cotisation':
       return dimension.buckets.find((b) => matchesCotisation(b, facts))?.id ?? OTHERS_BUCKET_ID;
@@ -154,7 +154,7 @@ export function bucketFor(dimension: Dimension, facts: SubmitterFacts): string {
 }
 
 /** True when the submitter satisfies every criterion present in the condition. */
-export function matchesCondition(condition: AudienceCondition, facts: SubmitterFacts): boolean {
+export function matchesCondition(condition: AudienceCondition, facts: PricingFacts): boolean {
   if (condition.cotisation && !matchesCotisation(condition.cotisation, facts)) return false;
   if (condition.promo && !matchesPromo(condition.promo.values, facts)) return false;
   if (condition.formation && !matchesFormation(condition.formation.values, facts)) return false;

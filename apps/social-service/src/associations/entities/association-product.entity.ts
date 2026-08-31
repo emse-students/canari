@@ -1,3 +1,4 @@
+import type { PriceMatrix } from '../../pricing/price-matrix';
 import {
   Entity,
   Column,
@@ -105,11 +106,47 @@ export class AssociationProduct {
   webhookSecret: string | null;
 
   /**
+   * The pricing grid: the criteria this product discriminates on, and one price per combination.
+   * NULL means one price for everybody - `amountCents`, and the `memberPriceTag` pair below.
+   *
+   * The same matrix a form prices on (`pricing/price-matrix.ts`), for the same reason: a
+   * cotisation is priced on the promo, the formation and the forfait already held, and expressing
+   * that as an ordered list of rules needs a priority rule to get wrong. The cells partition the
+   * population, so exactly one applies to any buyer.
+   *
+   * A grid REPLACES the fixed pricing rather than layering on it: when it is set, `amountCents`,
+   * `amountCentsMember` and `memberPriceTag` decide nothing, and the tier-upgrade discount is
+   * expressed as a `cotisation` dimension instead. Two mechanisms for "some people pay less" is
+   * the priority rule again, wearing a different hat.
+   *
+   * A cell may be `null`, meaning the combination is not sold - which is a purchase REFUSED, not
+   * a price of zero.
+   */
+  @Column('jsonb', { nullable: true })
+  priceMatrix: PriceMatrix | null;
+
+  /**
    * Whether the product is available to buyers.
    * Forced to false until the association completes Stripe Connect onboarding.
    */
   @Column({ default: true })
   isActive: boolean;
+
+  /**
+   * True when this product is inactive ONLY because payments could not be taken when it was
+   * created - not because anybody decided it should be off sale.
+   *
+   * `isActive` alone cannot answer that, and reading it as if it could is what left the BDE's
+   * cotisation unbuyable for as long as it existed: the product was forced inactive before Stripe
+   * onboarding finished, onboarding finished, and nothing ever went back. A column is only
+   * evidence for the question it was written to answer, so this is that question, written down.
+   *
+   * It is the ALLOWLIST `releaseWithheldProducts` acts on: a product an admin took off sale is
+   * never resurrected, because setting `isActive` by hand clears this flag - the admin now owns
+   * the state.
+   */
+  @Column({ default: false })
+  activationWithheld: boolean;
 
   @Column({ type: 'int', default: 0 })
   sortOrder: number;

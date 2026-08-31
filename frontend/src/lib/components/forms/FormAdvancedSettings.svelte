@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { MembershipTier } from '$lib/associations/api';
   import type { AudienceCondition } from '$lib/forms/api';
-  import type { FormationOption } from '$lib/forms/criteriaOptions';
+  import type { FormationOption } from '$lib/pricing/criteriaOptions';
   import type {
     CotisationGrantBlocker,
     FormCotisationSettings,
@@ -14,7 +14,7 @@
     controlClass,
   } from '$lib/components/ui/controlClasses';
   import AudienceConditionEditor from './AudienceConditionEditor.svelte';
-  import CotisationTierPicker from './CotisationTierPicker.svelte';
+  import CotisationTierPicker from '$lib/components/pricing/CotisationTierPicker.svelte';
   import FormSection from './FormSection.svelte';
   import { Settings2 } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';

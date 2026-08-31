@@ -42,6 +42,7 @@
   import AssociationMemberRow from '$lib/components/associations/AssociationMemberRow.svelte';
   import AssociationCalendarSection from '$lib/components/associations/AssociationCalendarSection.svelte';
   import ProductPurchaseButton from '$lib/components/shop/ProductPurchaseButton.svelte';
+  import { gridPriceIsProvisional, gridPriceLabel, gridRefuses } from '$lib/pricing/viewerPrice';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -429,7 +430,13 @@
                     <p class="text-text-muted mt-0.5 text-xs">{product.description}</p>
                   {/if}
                   <p class="text-text-muted mt-1 text-xs">
-                    {#if product.amountCents}
+                    <!--
+                      A grid answers first and alone: while one is set the product's own amount
+                      decides nothing, so printing it would name a figure no checkout charges.
+                    -->
+                    {#if gridPriceLabel(product) !== null}
+                      {gridPriceLabel(product)}
+                    {:else if product.amountCents}
                       {(product.amountCents / 100).toFixed(2)} {product.currency.toUpperCase()}
                     {:else if product.allowCustomAmount}
                       {m.asso_product_custom_price()}
@@ -464,10 +471,18 @@
                     </div>
                   {/if}
                 </div>
+                {#if gridRefuses(product)}
+                  <p class="text-xs text-amber-700 dark:text-amber-400">
+                    {m.shop_price_unavailable_hint()}
+                  </p>
+                {:else if gridPriceIsProvisional(product, userId !== null)}
+                  <p class="text-text-muted text-xs">{m.shop_price_profile_hint()}</p>
+                {/if}
                 <ProductPurchaseButton
                   {product}
                   customAmountEuros={shopCustomAmounts[product.id]}
                   variant="yellow"
+                  disabled={gridRefuses(product)}
                   class="w-full"
                 />
               </div>

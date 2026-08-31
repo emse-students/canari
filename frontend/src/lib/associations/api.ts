@@ -5,6 +5,7 @@ import { setAssociationSuperAdmin, setContentModerator } from '$lib/stores/userS
 import { downloadDecryptedFile } from '$lib/utils/fileDownload';
 // Type-only: `carte/publish` transitively imports this module, so a value import would cycle.
 import type { PublishedCarte } from '$lib/carte/publish';
+import type { PriceMatrix } from '$lib/pricing/priceMatrix';
 
 /**
  * Permission flags for association members (mirrors the backend enum).
@@ -1197,6 +1198,25 @@ export interface AssociationProduct {
    * `listAllProducts`, same as `viewerIsCotisant`.
    */
   viewerActiveTier?: string | null;
+  /**
+   * The pricing grid: the criteria this product discriminates on, and one price per combination.
+   * Null means one price for everybody - `amountCents`, plus the `memberPriceTag` pair.
+   *
+   * While it is set it is the ONLY pricing: `amountCents`, `amountCentsMember` and
+   * `memberPriceTag` decide nothing, server-side included, and the editor hides them.
+   */
+  priceMatrix: PriceMatrix | null;
+  /**
+   * What THIS viewer pays, resolved server-side. Present on the shop and public listings; absent
+   * on the admin listing, which shows the catalogue rather than one person's prices.
+   */
+  viewerPrice?: ViewerPrice;
+  /**
+   * True when the product is off sale ONLY because the association could not take payments when
+   * it was created - it goes on sale by itself once it can. Distinct from a deliberate
+   * withdrawal, which this never claims. Admin listing only.
+   */
+  activationWithheld?: boolean;
   /** Arbitrary tag names gating purchase eligibility (buyer must hold ANY). Overrides `membersOnly`. */
   requiredTags: string[] | null;
   /** Named cotisation tier (e.g. "avec-alcool"), suffixed onto the derived cotisation tag. Null = base/single tier. */
@@ -1226,6 +1246,22 @@ export interface AssociationProduct {
   maxPurchasesTotal: number | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * What one viewer pays for one product, decided by the server.
+ *
+ * `kind` is the discriminator and not a nicety: "there is no grid" and "the grid closed this
+ * combination" would otherwise both arrive as a null price, and the second one has to stop the
+ * sale while the first falls back to `amountCents`.
+ */
+export interface ViewerPrice {
+  /** `fixed`: `amountCents` and the member-price pair apply. `grid`: the matrix decided. */
+  kind: 'fixed' | 'grid';
+  /** Cents for this viewer under the grid; null = not sold to them. Always null when `fixed`. */
+  amountCents: number | null;
+  /** True when the grid rests on promo/formation, so a logged-out viewer sees the "others" cell. */
+  dependsOnProfile: boolean;
 }
 
 /** A completed purchase with buyer display name. */
@@ -1266,6 +1302,8 @@ export interface CreateProductPayload {
   memberPriceTag?: string;
   /** Arbitrary tag names gating purchase eligibility (buyer must hold ANY). Overrides `membersOnly`. */
   requiredTags?: string[];
+  /** The pricing grid. Setting one makes it the only pricing on this product. */
+  priceMatrix?: PriceMatrix;
   allowCustomAmount?: boolean;
   customAmountMinCents?: number;
   customAmountMaxCents?: number;
@@ -1287,7 +1325,10 @@ export type UpdateProductPayload = Omit<
   | 'memberPriceTag'
   | 'requiredTags'
   | 'variantKey'
+  | 'priceMatrix'
 > & {
+  /** Pass null to drop the grid and go back to one price for everybody. */
+  priceMatrix?: PriceMatrix | null;
   maxPurchasesPerUser?: number | null;
   maxPurchasesTotal?: number | null;
   /** Pass null to clear the fixed price (custom-amount-only products). */

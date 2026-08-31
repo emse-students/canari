@@ -21,15 +21,15 @@ import { AssociationPermissionFlag } from '../associations/entities/association-
 import { resolveStripeCallbackUrl } from '../common/stripe-callback-url';
 import { UserTagService } from '../users/user-tag.service';
 import { PurchaseRecordService } from '../users/purchase-record.service';
-import { SubmitterFactsService } from './submitter-facts.service';
+import { PricingFactsService } from '../pricing/pricing-facts.service';
 import {
   bucketFor,
   dimensionsNeedProfile,
   matchesCondition,
   needsProfile,
   type AudienceCondition,
-  type SubmitterFacts,
-} from './pricing/audience';
+  type PricingFacts,
+} from '../pricing/audience';
 import {
   pricedQuestionIds,
   pricingViewFor,
@@ -37,9 +37,13 @@ import {
   type CellValue,
   type PriceMatrix,
   type PricingView,
-} from './pricing/price-matrix';
-import { parseAudienceCondition, parsePriceMatrix, type CriteriaContext } from './pricing/validate';
-import { normaliseCondition, visibleItemIds } from './pricing/visibility';
+} from '../pricing/price-matrix';
+import {
+  parseAudienceCondition,
+  parsePriceMatrix,
+  type CriteriaContext,
+} from '../pricing/validate';
+import { normaliseCondition, visibleItemIds } from './visibility';
 
 /** Generates a short random ID with the given prefix, e.g. "item_a3b9x1". */
 function makeId(prefix: string): string {
@@ -74,7 +78,7 @@ export class FormsService {
     private readonly associationsService: AssociationsService,
     private readonly userTagService: UserTagService,
     private readonly purchaseRecordService: PurchaseRecordService,
-    private readonly submitterFacts: SubmitterFactsService
+    private readonly pricingFacts: PricingFactsService
   ) {}
 
   /**
@@ -206,14 +210,14 @@ export class FormsService {
     form: Form,
     userId: string | undefined,
     answers: Record<string, string[]> = {}
-  ): Promise<SubmitterFacts> {
+  ): Promise<PricingFacts> {
     const conditions: (AudienceCondition | null)[] = [
       form.submitCondition,
       ...(form.items ?? []).map((item: any) => normaliseCondition(item)),
     ];
     const needProfile =
       dimensionsNeedProfile(form.priceMatrix?.dimensions ?? []) || conditions.some(needsProfile);
-    return this.submitterFacts.build({
+    return this.pricingFacts.build({
       userId,
       associationId: form.associationId,
       answers,
@@ -230,7 +234,7 @@ export class FormsService {
    */
   private priceFor(
     form: Form,
-    facts: SubmitterFacts
+    facts: PricingFacts
   ): { baseCents: CellValue; appliedBuckets: { dimensionId: string; label: string }[] } {
     if (!form.priceMatrix) return { baseCents: form.basePrice, appliedBuckets: [] };
     const baseCents = resolveCellPrice(form.priceMatrix, facts);
@@ -243,7 +247,7 @@ export class FormsService {
   }
 
   /** Refuses a submitter the form is not open to. Enforced here, not only by hiding the form. */
-  private assertMaySubmit(form: Form, facts: SubmitterFacts): void {
+  private assertMaySubmit(form: Form, facts: PricingFacts): void {
     if (!form.submitCondition) return;
     if (matchesCondition(form.submitCondition, facts)) return;
     this.logger.debug(`[FORMS] submit refused by audience condition form=${form.id.slice(0, 8)}`);

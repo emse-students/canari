@@ -28,6 +28,10 @@ import {
   fetchActivePaymentProvider,
   type PaymentTarget,
 } from './payment-delegation.util';
+import { PricingFactsService } from '../pricing/pricing-facts.service';
+import { dimensionsNeedProfile, type PricingFacts } from '../pricing/audience';
+import { resolveCellPrice, type CellValue, type PriceMatrix } from '../pricing/price-matrix';
+import { parsePriceMatrix, type CriteriaContext } from '../pricing/validate';
 
 /** Delays used between Cercle webhook delivery attempts (ms). The first one is not waited. */
 const CERCLE_RETRY_DELAYS = [1_000, 5_000, 15_000];
@@ -64,7 +68,40 @@ const ALLOWED_ICON_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 export type ShopProduct = AssociationProduct & {
   viewerIsCotisant: boolean;
   viewerActiveTier: string | null;
+  viewerPrice: ViewerPrice;
 };
+
+/**
+ * What one viewer pays for one product, resolved server-side.
+ *
+ * `kind` is the discriminator and not a nicety: "there is no grid" and "the grid closed this
+ * combination" are different answers that would otherwise both arrive as a null price, and the
+ * second one has to stop the sale while the first one falls back to `amountCents`. A client left
+ * to tell them apart would tell them apart wrongly.
+ *
+ * Resolved here rather than mirrored in the browser because the inputs are not the browser's to
+ * know: the promo and the formation come from another service, and the forfait held comes from a
+ * tag derivation this side owns.
+ */
+export interface ViewerPrice {
+  /** `fixed`: `amountCents` and the member-price pair apply. `grid`: the matrix decided. */
+  kind: 'fixed' | 'grid';
+  /**
+   * Cents this viewer pays under the grid. `null` means the grid does not sell this combination,
+   * so the purchase is refused rather than priced. Always `null` when `kind` is `fixed`, where the
+   * product's own columns are the answer.
+   */
+  amountCents: number | null;
+  /**
+   * True when the grid rests on the promo or the formation, so a logged-out viewer is being shown
+   * the "everyone else" cell rather than their own. What lets the page say so instead of quoting a
+   * figure that changes the moment they sign in.
+   */
+  dependsOnProfile: boolean;
+}
+
+/** The answer for a product with no grid: its own columns price it, exactly as before. */
+const FIXED_PRICE: ViewerPrice = { kind: 'fixed', amountCents: null, dependsOnProfile: false };
 
 /**
  * A product as returned to a client: the Cercle HMAC key is replaced by a boolean saying whether
@@ -115,7 +152,8 @@ export class ProductsService {
     private readonly config: ConfigService,
     private readonly userTagService: UserTagService,
     private readonly purchaseRecordService: PurchaseRecordService,
-    private readonly associationsService: AssociationsService
+    private readonly associationsService: AssociationsService,
+    private readonly pricingFacts: PricingFactsService
   ) {}
 
   /**
@@ -154,12 +192,203 @@ export class ProductsService {
     return resolvePaymentTarget(asso, parent, provider);
   }
 
+  // ── Pricing grid ──────────────────────────────────────────────────────────
+
+  /**
+   * The criteria a product's grid may be built from.
+   *
+   * `questions` is EMPTY and that is the whole refusal of an `answer` dimension here: a product is
+   * not a form and has nothing to answer. Expressing it as an empty catalogue rather than a second
+   * list of permitted kinds means there is one rule, not two that can disagree.
+   *
+   * Tiers are enumerated regardless of `isActive`, like everywhere else that recognizes a forfait:
+   * a grid may price on a tier that is no longer sold but is still held.
+   */
+  private async criteriaContextFor(associationId: string): Promise<CriteriaContext> {
+    const tiers = await this.productRepo.find({
+      where: { associationId, type: 'membership' },
+      select: { variantKey: true },
+    });
+    return { tierKeys: tierVariantKeys(tiers), questions: new Map() };
+  }
+
+  /**
+   * Validates a grid a client sent, or refuses it. `null` clears the grid.
+   *
+   * Structural validation lives in `parsePriceMatrix` for the same reason forms put it there: a
+   * criterion's validity depends on the association's own tiers, which no decorator can see.
+   */
+  private async parseProductMatrix(
+    associationId: string,
+    raw: unknown
+  ): Promise<PriceMatrix | null> {
+    if (raw === null || raw === undefined) return null;
+    const matrix = parsePriceMatrix(raw, await this.criteriaContextFor(associationId), 'product');
+    this.logger.debug(
+      `[SHOP] pricing grid accepted: association=${associationId.slice(0, 8)} ` +
+        `dimensions=${matrix.dimensions.map((d) => d.kind).join(',')} ` +
+        `cells=${Object.keys(matrix.cells).length}`
+    );
+    return matrix;
+  }
+
+  /**
+   * What one buyer pays for one gridded product, in cents - or `null` when the grid does not sell
+   * their combination.
+   *
+   * The refusal is the grid's own decision and must be honoured, never rounded up to `amountCents`:
+   * a cell set to unavailable is an association saying this forfait is not offered to these people,
+   * and charging them a plausible number instead is how a wrong price ships quietly.
+   */
+  private async resolveGridPrice(
+    matrix: PriceMatrix,
+    userId: string,
+    associationId: string
+  ): Promise<CellValue> {
+    const facts = await this.pricingFacts.build({
+      userId,
+      associationId,
+      needProfile: dimensionsNeedProfile(matrix.dimensions),
+    });
+    return resolveCellPrice(matrix, facts, 'product');
+  }
+
+  /**
+   * Annotates a batch of products with what THIS viewer pays, one core-service call for the lot.
+   *
+   * The profile is one person's and is fetched once; the cotisation half differs per association
+   * and comes from `statusByAssoc`, which the caller has already loaded in bulk. Doing it per
+   * product instead would ask core-service the same question once per row.
+   *
+   * `statusByAssoc` carries at most one tier per association, which is not a simplification: the
+   * sibling-tier XOR is enforced in the same transaction as every grant, so a cotisant holds
+   * exactly one forfait of a given association, or none.
+   */
+  private async viewerPricesFor(
+    products: AssociationProduct[],
+    userId: string | undefined,
+    statusByAssoc: Map<string, { isCotisant: boolean; activeTier: string | null }>
+  ): Promise<Map<string, ViewerPrice>> {
+    const prices = new Map<string, ViewerPrice>();
+    // `!= null`, not `!== null`: a product assembled in memory rather than read from a row carries
+    // `undefined` here, and "no grid" is the same answer whichever of the two says it.
+    const gridded = products.filter(
+      (p): p is AssociationProduct & { priceMatrix: PriceMatrix } => p.priceMatrix != null
+    );
+    if (gridded.length === 0) return prices;
+
+    const needProfile = gridded.some((p) => dimensionsNeedProfile(p.priceMatrix.dimensions));
+    const profile = await this.pricingFacts.profileFor(userId, needProfile);
+
+    for (const product of gridded) {
+      const status = statusByAssoc.get(product.associationId);
+      const facts: PricingFacts = {
+        ...profile,
+        // No status at all means no cotisation for this association; `activeTier: null` alongside
+        // `isCotisant` means the BASE tier, which is a value and not a missing one.
+        cotisationTiers: status?.isCotisant ? [status.activeTier] : [],
+        answers: {},
+      };
+      const dependsOnProfile = dimensionsNeedProfile(product.priceMatrix.dimensions);
+      let amountCents: number | null;
+      try {
+        amountCents = resolveCellPrice(product.priceMatrix, facts, 'product');
+      } catch (e) {
+        // A cell missing at read time is a broken invariant, not a price. Completeness is enforced
+        // at save, so this means a grid was written by something that skipped the validator - and
+        // the listing must say "not for sale" rather than quote a number nobody chose.
+        this.logger.error(
+          `[SHOP] pricing grid INCOMPLETE product=${product.id.slice(0, 8)} - listed as unavailable: ` +
+            `${e instanceof Error ? e.message : String(e)}`
+        );
+        amountCents = null;
+      }
+      prices.set(product.id, { kind: 'grid', amountCents, dependsOnProfile });
+    }
+    return prices;
+  }
+
+  // ── Withheld activation ───────────────────────────────────────────────────
+
+  /**
+   * Puts on sale the products that were only ever inactive because payments could not be taken.
+   *
+   * Called when an association's payment target becomes ready - its own Stripe or Lydia onboarding
+   * completing, or a delegation to a parent being approved. Before this existed nothing ever went
+   * back: the BDE cotisation was created while onboarding was unfinished, onboarding finished, and
+   * the product stayed invisible in the boutique and refused at checkout, with no screen anywhere
+   * able to turn it on. Measured 2026-08-31, prod held 5 products and 0 active ones.
+   *
+   * `activationWithheld` is the ALLOWLIST, never `isActive = false`: a product an admin took off
+   * sale is not a product waiting to be released, and the two are only the same column by
+   * accident. Setting `isActive` by hand clears the flag, so an admin's decision always wins.
+   *
+   * Idempotent, and silent when there is nothing to release - it runs on every onboarding event.
+   */
+  async releaseWithheldProducts(associationId: string): Promise<number> {
+    const asso = await this.assoRepo.findOne({ where: { id: associationId } });
+    if (!asso) throw new NotFoundException('Association not found');
+
+    const paymentTarget = await this.resolvePaymentTargetFor(asso);
+    if (!paymentTarget.ready) {
+      this.logger.debug(
+        `[SHOP] nothing released for association=${associationId.slice(0, 8)}: payment target not ready ` +
+          `(provider=${paymentTarget.provider} delegated=${paymentTarget.delegated})`
+      );
+      return 0;
+    }
+
+    const { affected } = await this.productRepo.update(
+      { associationId, activationWithheld: true },
+      { isActive: true, activationWithheld: false }
+    );
+    const count = affected ?? 0;
+    if (count > 0) {
+      this.logger.log(
+        `[SHOP] released ${count} withheld product(s) for association=${associationId.slice(0, 8)}: ` +
+          `payments are ready (provider=${paymentTarget.provider} delegated=${paymentTarget.delegated})`
+      );
+    }
+    return count;
+  }
+
+  /**
+   * The same release for an association AND every club whose payments it serves.
+   *
+   * A parent finishing its onboarding makes its approved delegating children ready too, and their
+   * products were withheld for exactly the reason that just went away. Sweeping only the
+   * association whose row changed would leave every delegating club waiting on an event that has
+   * already happened - the same day-late, found-by-hand failure this mechanism exists to end.
+   */
+  async releaseWithheldForAssociationAndDelegates(associationId: string): Promise<number> {
+    const children = await this.assoRepo.find({
+      where: { paymentParentAssociationId: associationId, paymentDelegationStatus: 'approved' },
+      select: { id: true },
+    });
+    let total = await this.releaseWithheldProducts(associationId);
+    for (const child of children) {
+      // One failing club must not stop the others: this runs after a state change that is already
+      // committed, so a throw here would lose every release queued behind it.
+      try {
+        total += await this.releaseWithheldProducts(child.id);
+      } catch (e) {
+        this.logger.error(
+          `[SHOP] release FAILED for delegating child=${child.id.slice(0, 8)} of ` +
+            `parent=${associationId.slice(0, 8)}: ${e instanceof Error ? e.message : String(e)}`
+        );
+      }
+    }
+    return total;
+  }
+
   // ── CRUD ──────────────────────────────────────────────────────────────────
 
   /**
    * Returns all active products across all associations (login required, listed on /shop), each
    * annotated with `viewerIsCotisant`/`viewerActiveTier` for `userId` so the client can gate/label
-   * members-only products without mirroring the cotisation-tag derivation.
+   * members-only products without mirroring the cotisation-tag derivation, and with `viewerPrice`
+   * - what a gridded product costs THIS viewer, since a grid rests on facts a browser has no way
+   * to evaluate.
    */
   async listAllActive(userId: string): Promise<ShopProduct[]> {
     const products = await this.productRepo.find({
@@ -169,12 +398,14 @@ export class ProductsService {
     const statusByAssoc = await this.cotisantStatusFor(userId, [
       ...new Set(products.map((p) => p.associationId)),
     ]);
+    const viewerPrices = await this.viewerPricesFor(products, userId, statusByAssoc);
     return products.map((p) => {
       const status = statusByAssoc.get(p.associationId);
       return this.toSafeProduct({
         ...p,
         viewerIsCotisant: status?.isCotisant ?? false,
         viewerActiveTier: status?.activeTier ?? null,
+        viewerPrice: viewerPrices.get(p.id) ?? FIXED_PRICE,
       });
     });
   }
@@ -234,13 +465,27 @@ export class ProductsService {
     return result;
   }
 
-  /** Returns active products for a single association ordered by sortOrder. */
-  async listByAssoc(associationId: string): Promise<SafeProduct[]> {
+  /**
+   * Returns active products for a single association ordered by sortOrder, each carrying what the
+   * caller would pay (`viewerPrice`).
+   *
+   * `userId` is OPTIONAL because this listing is the public association page, read while logged
+   * out as often as not. A guest has no promo, no formation and no forfait, so a grid resolves
+   * them to its "everyone else" cell - an answer, not a failure, and `dependsOnProfile` is what
+   * lets the page say the figure may change once they sign in.
+   */
+  async listByAssoc(associationId: string, userId?: string): Promise<SafeProduct[]> {
     const products = await this.productRepo.find({
       where: { associationId, isActive: true },
       order: { sortOrder: 'ASC', createdAt: 'ASC' },
     });
-    return products.map((p) => this.toSafeProduct(p));
+    const statusByAssoc = userId
+      ? await this.cotisantStatusFor(userId, [associationId])
+      : new Map<string, { isCotisant: boolean; activeTier: string | null }>();
+    const viewerPrices = await this.viewerPricesFor(products, userId, statusByAssoc);
+    return products.map((p) =>
+      this.toSafeProduct({ ...p, viewerPrice: viewerPrices.get(p.id) ?? FIXED_PRICE })
+    );
   }
 
   /** Returns all products for admin (including inactive), ordered by sortOrder. */
@@ -308,11 +553,20 @@ export class ProductsService {
       tagExpiresAt = derived.expiresAt;
     }
 
+    // A grid is validated against the association's own tiers, so it is parsed here rather than
+    // by a decorator - and a refusal is a price somebody would not have had.
+    const { priceMatrix: rawMatrix, ...withoutMatrix } = rest;
+    const priceMatrix = await this.parseProductMatrix(associationId, rawMatrix);
+
     // Payments may be served by an approved parent's account (delegation), so gate on the
     // resolved target's readiness rather than this association's own onboarding flag.
     const paymentTarget = await this.resolvePaymentTargetFor(asso);
+    // What the caller ASKED for, which is what makes the difference between a product deliberately
+    // created off sale and one the platform withheld. Only the second is ever released later.
+    const wantedActive = dto.isActive ?? true;
     const product = this.productRepo.create({
-      ...rest,
+      ...withoutMatrix,
+      priceMatrix,
       currency: 'eur',
       associationId,
       grantedTagName,
@@ -325,9 +579,19 @@ export class ProductsService {
         : { allowRepeatPurchase: rest.allowRepeatPurchase }),
       webhookUrl: webhookUrl ?? null,
       webhookSecret: webhookSecret ?? null,
-      // Product is inactive until payments can be taken (own or delegated Stripe account ready).
-      isActive: paymentTarget.ready ? (dto.isActive ?? true) : false,
+      // Product is inactive until payments can be taken (own or delegated account ready).
+      isActive: paymentTarget.ready ? wantedActive : false,
+      // ... and it remembers that this is why, so `releaseWithheldProducts` can put it on sale the
+      // day the account is. `isActive = false` alone could never say it: it is the same value a
+      // deliberate withdrawal writes, and a release driven by it would resurrect those too.
+      activationWithheld: !paymentTarget.ready && wantedActive,
     });
+    if (product.activationWithheld) {
+      this.logger.log(
+        `[SHOP] product created WITHHELD for association=${associationId.slice(0, 8)}: payments not ready ` +
+          `(provider=${paymentTarget.provider} delegated=${paymentTarget.delegated}) - it goes on sale by itself once they are`
+      );
+    }
     return this.toSafeProduct(await this.productRepo.save(product));
   }
 
@@ -369,6 +633,30 @@ export class ProductsService {
       throw new BadRequestException('customAmountMinCents must be ≤ customAmountMaxCents');
     }
 
+    // Setting `isActive` by hand is the admin taking ownership of the state: whatever the platform
+    // withheld and why stops being true the moment somebody decides for themselves. Putting a
+    // product on sale while payments cannot be taken is refused rather than accepted and quietly
+    // undone - it would list a product whose every checkout 400s.
+    if (dto.isActive !== undefined) {
+      if (dto.isActive) {
+        const asso = await this.assoRepo.findOne({ where: { id: associationId } });
+        if (!asso) throw new NotFoundException('Association not found');
+        const paymentTarget = await this.resolvePaymentTargetFor(asso);
+        if (!paymentTarget.ready) {
+          throw new BadRequestException(
+            paymentTarget.delegated
+              ? 'The parent association this club delegates payments to has not completed onboarding, so nothing can be put on sale yet.'
+              : 'Complete the online-payment onboarding before putting a product on sale.'
+          );
+        }
+      }
+      product.activationWithheld = false;
+    }
+
+    if (dto.priceMatrix !== undefined) {
+      product.priceMatrix = await this.parseProductMatrix(associationId, dto.priceMatrix);
+    }
+
     const retagging =
       product.type === 'membership' &&
       dto.variantKey !== undefined &&
@@ -376,7 +664,11 @@ export class ProductsService {
         ? await this.planTierRetag(product, dto.variantKey ?? null)
         : null;
 
-    Object.assign(product, dto, { currency: 'eur' });
+    // `priceMatrix` is resolved above and deliberately kept out of the blanket assign: the DTO
+    // holds the RAW document a client sent, and copying it over the parsed one would store a grid
+    // nothing validated.
+    const { priceMatrix: _rawMatrix, ...assignable } = dto;
+    Object.assign(product, assignable, { currency: 'eur' });
     // Same rule as on creation, and it also repairs a top-up product created before it existed:
     // saving the product from /admin/cercle is enough to make it repeatable and unlimited again.
     if (product.type === 'balance_topup') {
@@ -772,7 +1064,24 @@ export class ProductsService {
     await this.assertCanPurchase(product, userId, isCotisant);
 
     let amountCents: number;
-    if (product.amountCents !== null) {
+    if (product.priceMatrix) {
+      // A grid REPLACES the fixed pricing, it never layers on it: `amountCents`, `amountCentsMember`
+      // and `memberPriceTag` decide nothing while one is set. Two mechanisms for "some people pay
+      // less" would need an order between them, and an order that decides money is the priority
+      // rule this whole design exists in order not to have.
+      const cell = await this.resolveGridPrice(product.priceMatrix, userId, associationId);
+      if (cell === null) {
+        this.logger.log(
+          `[SHOP] purchase refused by the grid: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} - ` +
+            'the association marked this combination as not sold'
+        );
+        throw new BadRequestException('This is not available for your situation.');
+      }
+      amountCents = cell;
+      this.logger.debug(
+        `[SHOP] grid price applied: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} amount=${amountCents}`
+      );
+    } else if (product.amountCents !== null) {
       const qualifiesForMemberPrice = product.memberPriceTag
         ? await this.userTagService.hasActiveTag(userId, product.memberPriceTag)
         : isCotisant;
@@ -1133,6 +1442,16 @@ export class ProductsService {
     let amountCents: number;
     if (dto.amountCents != null) {
       amountCents = dto.amountCents;
+    } else if (product.priceMatrix) {
+      // The beneficiary is known, so their cell is known: falling back to `amountCents` here would
+      // record a cash sale at a price the grid never quoted, and `amountCents` may not even be set.
+      const cell = await this.resolveGridPrice(product.priceMatrix, dto.userId, associationId);
+      if (cell === null) {
+        throw new BadRequestException(
+          'The pricing grid does not sell this product to that person, so there is no amount to record.'
+        );
+      }
+      amountCents = cell;
     } else if (product.amountCents != null) {
       amountCents = product.amountCents;
     } else {

@@ -35,6 +35,7 @@ import { FollowsModule } from '../follows/follows.module';
 import { PushService } from '../push/push.service';
 import { UserTagModule } from '../users/user-tag.module';
 import { PurchaseRecordModule } from '../users/purchase-record.module';
+import { PricingModule } from '../pricing/pricing.module';
 
 @Module({
   imports: [
@@ -61,6 +62,7 @@ import { PurchaseRecordModule } from '../users/purchase-record.module';
     FollowsModule,
     UserTagModule,
     PurchaseRecordModule,
+    PricingModule,
   ],
   providers: [
     AssociationsService,

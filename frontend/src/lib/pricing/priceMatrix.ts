@@ -240,13 +240,17 @@ export function matrixOf(raw: unknown): PriceMatrix | null {
 }
 
 /**
- * The payload, in cents - or null, which is how a form says it has no grid.
+ * The payload, in cents - or null, which is how a form or a product says it has no grid.
  *
- * Null must be SENT rather than omitted: on the edit screen an absent field leaves the stored value
+ * Null must be SENT rather than omitted: on an edit screen an absent field leaves the stored value
  * alone, so a grid the manager just switched off would stay on.
+ *
+ * `enabled` is the surrounding switch that makes a grid meaningful at all - a form's
+ * `requiresPayment`, and nothing on a product, which is always for sale. Off, the grid is dropped
+ * rather than kept as dead state nobody can see.
  */
-export function matrixPayload(matrix: PriceMatrix | null, requiresPayment: boolean): unknown {
-  if (!matrix || !requiresPayment || matrix.dimensions.length === 0) return null;
+export function matrixPayload(matrix: PriceMatrix | null, enabled = true): unknown {
+  if (!matrix || !enabled || matrix.dimensions.length === 0) return null;
   const cells: Record<string, CellValue> = {};
   for (const key of allCellKeys(matrix.dimensions)) {
     const value = matrix.cells[key];

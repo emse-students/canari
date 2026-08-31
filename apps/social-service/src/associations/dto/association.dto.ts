@@ -457,6 +457,19 @@ export class CreateProductDto {
   @IsOptional()
   requiredTags?: string[];
 
+  /**
+   * The pricing grid, as an untyped document - `{ dimensions, cells }`.
+   *
+   * Structurally validated by `parsePriceMatrix`, not by nested decorators: a criterion's validity
+   * depends on things a decorator cannot see (the association's own cotisation tiers), and a
+   * `@ValidateNested` tree would still need that function, leaving two places to keep in step.
+   *
+   * Setting it makes the grid the ONLY pricing on this product: `amountCents`, `amountCentsMember`
+   * and `memberPriceTag` stop deciding anything.
+   */
+  @IsOptional()
+  priceMatrix?: unknown;
+
   @IsBoolean()
   @IsOptional()
   allowCustomAmount?: boolean;
@@ -570,6 +583,16 @@ export class UpdateProductDto {
   @IsString({ each: true })
   @IsOptional()
   requiredTags?: string[] | null;
+
+  /**
+   * The pricing grid, as an untyped document - `{ dimensions, cells }`. Pass `null` to drop the
+   * grid and go back to `amountCents` for everybody.
+   *
+   * Validated by `parsePriceMatrix`. While it is set, `amountCents`, `amountCentsMember` and
+   * `memberPriceTag` decide nothing on this product.
+   */
+  @IsOptional()
+  priceMatrix?: unknown;
 
   @IsBoolean()
   @IsOptional()

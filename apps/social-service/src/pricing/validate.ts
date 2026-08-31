@@ -1,6 +1,11 @@
 import { BadRequestException } from '@nestjs/common';
 import { OTHERS_BUCKET_ID, type AudienceCondition, type Dimension } from './audience';
-import { assertMatrixValid, type CellValue, type PriceMatrix } from './price-matrix';
+import {
+  assertMatrixValid,
+  type CellValue,
+  type PriceMatrix,
+  type PricedSubject,
+} from './price-matrix';
 
 /**
  * Turns the untyped documents a client sends into the typed criteria this module evaluates, or
@@ -18,7 +23,12 @@ import { assertMatrixValid, type CellValue, type PriceMatrix } from './price-mat
 export interface CriteriaContext {
   /** `variantKey`s the beneficiary association sells; `null` is the base tier. */
   tierKeys: (string | null)[];
-  /** The form's questions and the option ids each offers. */
+  /**
+   * The questions the answer dimension may price on, and the option ids each offers.
+   *
+   * EMPTY for a boutique product, which has no questions - which is also what refuses an `answer`
+   * dimension there, rather than a second list of allowed kinds that could disagree with this one.
+   */
   questions: Map<string, Set<string>>;
 }
 
@@ -121,7 +131,7 @@ export function parseAudienceCondition(
     const questionId = typeof a.questionId === 'string' ? a.questionId : '';
     const options = ctx.questions.get(questionId);
     if (!options) {
-      throw new BadRequestException(`${where}.answer names a question that is not in this form.`);
+      throw new BadRequestException(`${where}.answer names a question that does not exist here.`);
     }
     const optionIds = asStringArray(a.optionIds, `${where}.answer.optionIds`);
     for (const id of optionIds) {
@@ -215,7 +225,9 @@ function parseDimension(raw: unknown, ctx: CriteriaContext, index: number): Dime
       const questionId = typeof doc.questionId === 'string' ? doc.questionId : '';
       const options = ctx.questions.get(questionId);
       if (!options) {
-        throw new BadRequestException(`${where}.questionId is not a question of this form.`);
+        throw new BadRequestException(
+          `${where}.questionId names a question that does not exist here.`
+        );
       }
       if (options.size === 0) {
         throw new BadRequestException(
@@ -254,7 +266,11 @@ function parseDimension(raw: unknown, ctx: CriteriaContext, index: number): Dime
  * non-overlapping groups, and the cell count. Kept as two functions because the second is the one a
  * test wants to call with a hand-written matrix, without a form or an association in sight.
  */
-export function parsePriceMatrix(raw: unknown, ctx: CriteriaContext): PriceMatrix {
+export function parsePriceMatrix(
+  raw: unknown,
+  ctx: CriteriaContext,
+  subject: PricedSubject = 'form'
+): PriceMatrix {
   const doc = asRecord(raw, 'priceMatrix');
   if (!Array.isArray(doc.dimensions)) {
     throw new BadRequestException('priceMatrix.dimensions must be a list.');
@@ -266,6 +282,6 @@ export function parsePriceMatrix(raw: unknown, ctx: CriteriaContext): PriceMatri
     dimensions: doc.dimensions.map((d, i) => parseDimension(d, ctx, i)),
     cells: cells as Record<string, CellValue>,
   };
-  assertMatrixValid(matrix);
+  assertMatrixValid(matrix, undefined, subject);
   return matrix;
 }

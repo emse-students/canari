@@ -3,8 +3,8 @@
   import { CONTROL_HINT_CLASS } from '$lib/components/ui/controlClasses';
   import type { MembershipTier } from '$lib/associations/api';
   import type { AudienceCondition } from '$lib/forms/api';
-  import PromoPicker from './PromoPicker.svelte';
-  import type { FormationOption } from '$lib/forms/criteriaOptions';
+  import PromoPicker from '$lib/components/pricing/PromoPicker.svelte';
+  import type { FormationOption } from '$lib/pricing/criteriaOptions';
   import { m } from '$lib/paraglide/messages';
 
   /**

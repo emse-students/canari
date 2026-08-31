@@ -1,5 +1,5 @@
 import { FormsService } from './forms.service';
-import { OTHERS_BUCKET_ID } from './pricing/audience';
+import { OTHERS_BUCKET_ID } from '../pricing/audience';
 
 /**
  * The price actually charged, end to end through `submit`.
@@ -71,7 +71,7 @@ describe('FormsService pricing, through submit', () => {
         transaction: jest.fn((_level: string, run: (m: unknown) => Promise<void>) => run(manager)),
       },
     };
-    const submitterFacts: any = {
+    const pricingFacts: any = {
       build: jest.fn((input: { answers?: Record<string, string[]> }) => {
         if (opts.factsError) return Promise.reject(opts.factsError);
         return Promise.resolve({
@@ -95,9 +95,9 @@ describe('FormsService pricing, through submit', () => {
       { isMember: jest.fn(), assertPaymentsReady: jest.fn(), callerHasFlag: jest.fn() } as any,
       { listCotisationTiers: jest.fn(() => Promise.resolve([])) } as any,
       { create: jest.fn() } as any,
-      submitterFacts
+      pricingFacts
     );
-    return { service, submitterFacts, saved };
+    return { service, pricingFacts, saved };
   }
 
   const form = (over: Record<string, unknown> = {}) => ({
@@ -368,15 +368,15 @@ describe('FormsService pricing, through submit', () => {
   /** A form asking nothing of the identity provider must not be able to be blocked by it. */
   describe('core-service is only asked when a criterion needs it', () => {
     it('asks for no profile when the grid uses cotisation and answers only', async () => {
-      const { service, submitterFacts } = makeService({ form: form() });
+      const { service, pricingFacts } = makeService({ form: form() });
       await submit(service, {});
-      expect(submitterFacts.build).toHaveBeenCalledWith(
+      expect(pricingFacts.build).toHaveBeenCalledWith(
         expect.objectContaining({ needProfile: false })
       );
     });
 
     it('asks for the profile when a criterion is a formation', async () => {
-      const { service, submitterFacts } = makeService({
+      const { service, pricingFacts } = makeService({
         form: form({
           priceMatrix: {
             dimensions: [
@@ -391,13 +391,13 @@ describe('FormsService pricing, through submit', () => {
         }),
       });
       await submit(service, {});
-      expect(submitterFacts.build).toHaveBeenCalledWith(
+      expect(pricingFacts.build).toHaveBeenCalledWith(
         expect.objectContaining({ needProfile: true })
       );
     });
 
     it('asks for the profile when a QUESTION is gated on one', async () => {
-      const { service, submitterFacts } = makeService({
+      const { service, pricingFacts } = makeService({
         form: form({
           priceMatrix: null,
           items: [
@@ -412,7 +412,7 @@ describe('FormsService pricing, through submit', () => {
         }),
       });
       await submit(service, {});
-      expect(submitterFacts.build).toHaveBeenCalledWith(
+      expect(pricingFacts.build).toHaveBeenCalledWith(
         expect.objectContaining({ needProfile: true })
       );
     });

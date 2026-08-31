@@ -6,9 +6,9 @@
   import { CONTROL_HINT_CLASS, controlClass } from '$lib/components/ui/controlClasses';
   import type { MembershipTier } from '$lib/associations/api';
   import type { FormItem } from '$lib/forms/api';
-  import type { Bucket, Dimension } from '$lib/forms/priceMatrix';
+  import type { Bucket, Dimension } from '$lib/pricing/priceMatrix';
   import PromoPicker from './PromoPicker.svelte';
-  import type { FormationOption } from '$lib/forms/criteriaOptions';
+  import type { FormationOption } from '$lib/pricing/criteriaOptions';
   import { m } from '$lib/paraglide/messages';
 
   /**

@@ -8,10 +8,10 @@ import {
   resolveCellPrice,
   type PriceMatrix,
 } from './price-matrix';
-import { OTHERS_BUCKET_ID, type Dimension, type SubmitterFacts } from './audience';
+import { OTHERS_BUCKET_ID, type Dimension, type PricingFacts } from './audience';
 
 describe('price matrix', () => {
-  const facts = (over: Partial<SubmitterFacts> = {}): SubmitterFacts => ({
+  const facts = (over: Partial<PricingFacts> = {}): PricingFacts => ({
     promo: null,
     formation: null,
     cotisationTiers: [],

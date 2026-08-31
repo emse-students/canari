@@ -21,7 +21,7 @@ import { FormsService } from './forms.service';
 import { AssociationsService } from '../associations/associations.service';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { UserTagService } from '../users/user-tag.service';
-import { SubmitterFactsService } from './submitter-facts.service';
+import { PricingFactsService } from '../pricing/pricing-facts.service';
 
 /** Manages form resources including submissions, payment status, XLSX exports, and purchase history. */
 @Controller('forms')
@@ -31,7 +31,7 @@ export class FormsController {
     private readonly associationsService: AssociationsService,
     private readonly purchaseRecordService: PurchaseRecordService,
     private readonly userTagService: UserTagService,
-    private readonly submitterFacts: SubmitterFactsService
+    private readonly pricingFacts: PricingFactsService
   ) {}
 
   /** Creates a new form owned by the calling user. */
@@ -146,7 +146,7 @@ export class FormsController {
   @UseGuards(NginxAuthGuard)
   @Get('criteria/formations')
   async formations() {
-    return this.submitterFacts.listFormations();
+    return this.pricingFacts.listFormations();
   }
 
   /** Returns whether the calling user has already submitted the specified form, with payment status. */

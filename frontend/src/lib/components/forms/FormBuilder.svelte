@@ -4,7 +4,7 @@
   import Toggle from '$lib/components/ui/Toggle.svelte';
   import AudienceConditionEditor from './AudienceConditionEditor.svelte';
   import type { MembershipTier } from '$lib/associations/api';
-  import type { FormationOption } from '$lib/forms/criteriaOptions';
+  import type { FormationOption } from '$lib/pricing/criteriaOptions';
   import { Trash2, X, Plus, GripVertical, ImagePlus, GitBranch, ChevronDown } from '@lucide/svelte';
   import { QUESTION_TYPES } from '$lib/forms/questionTypes';
   import { m } from '$lib/paraglide/messages';

@@ -16,9 +16,9 @@
     removeDimension,
     type DimensionKind,
     type PriceMatrix,
-  } from '$lib/forms/priceMatrix';
-  import type { FormationOption } from '$lib/forms/criteriaOptions';
-  import { gridProblemMessage } from '$lib/forms/gridProblem';
+  } from '$lib/pricing/priceMatrix';
+  import type { FormationOption } from '$lib/pricing/criteriaOptions';
+  import { gridProblemMessage } from '$lib/pricing/gridProblem';
   import { m } from '$lib/paraglide/messages';
 
   /**

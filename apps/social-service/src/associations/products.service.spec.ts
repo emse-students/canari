@@ -9,6 +9,7 @@ import { AssociationProduct } from './entities/association-product.entity';
 import { WebhookDelivery } from './entities/webhook-delivery.entity';
 import { Association } from './entities/association.entity';
 import { AssociationsService } from './associations.service';
+import { PricingFactsService } from '../pricing/pricing-facts.service';
 import { UserTagService } from '../users/user-tag.service';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 
@@ -25,6 +26,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       find: jest.fn(() => Promise.resolve([])),
       create: jest.fn((x: unknown) => x),
       save: jest.fn((x: unknown) => Promise.resolve(x)),
+      update: jest.fn(() => Promise.resolve({ affected: 0 })),
       manager,
     };
     // Mirrors the real repo closely enough for the webhook dispatcher: `save` returns the entity
@@ -93,6 +95,13 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       uploadPublicImage: jest.fn(() => Promise.resolve('media1')),
       deleteMediaBestEffort: jest.fn(() => Promise.resolve()),
     };
+    // Only reached by a product carrying a pricing grid; the default fixtures carry none.
+    const pricingFacts = {
+      build: jest.fn(() =>
+        Promise.resolve({ promo: null, formation: null, cotisationTiers: [], answers: {} })
+      ),
+      profileFor: jest.fn(() => Promise.resolve({ promo: null, formation: null })),
+    };
 
     const service = new ProductsService(
       productRepo as unknown as Repository<AssociationProduct>,
@@ -102,11 +111,13 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       config,
       userTagService as unknown as UserTagService,
       purchaseRecordService as unknown as PurchaseRecordService,
-      associationsService as unknown as AssociationsService
+      associationsService as unknown as AssociationsService,
+      pricingFacts as unknown as PricingFactsService
     );
 
     return {
       service,
+      pricingFacts,
       productRepo,
       deliveryRepo,
       assoRepo,
@@ -1202,6 +1213,308 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         'old-media',
         'Bearer token'
       );
+    });
+  });
+
+  describe('pricing grid on a product (promo/formation/cotisation)', () => {
+    /** Two promos and the generated "everyone else" bucket - the smallest grid worth pricing on. */
+    const promoGrid = (cells: Record<string, number | null>) => ({
+      dimensions: [
+        {
+          id: 'd1',
+          kind: 'promo' as const,
+          buckets: [
+            { id: 'b1', label: '1A', values: [2025] },
+            { id: 'b2', label: '2A', values: [2024] },
+          ],
+        },
+      ],
+      cells,
+    });
+
+    it('prices a purchase from the grid and ignores the member-price columns entirely', async () => {
+      const { service, productRepo, assoRepo, userTagService, pricingFacts } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      productRepo.findOne.mockResolvedValue(
+        // Both fixed levers are set and BOTH must be ignored: a grid replaces them, it never
+        // layers on them, or an order between the two would decide money.
+        product({
+          amountCents: 1000,
+          amountCentsMember: 500,
+          priceMatrix: promoGrid({ b1: 7000, b2: 9000, _others: 12000 }),
+        })
+      );
+      userTagService.hasActiveTag.mockResolvedValue(true);
+      pricingFacts.build.mockResolvedValue({
+        promo: 2024,
+        formation: 'ICM',
+        cotisationTiers: [],
+        answers: {},
+      });
+
+      const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1');
+      expect(result.amountCents).toBe(9000);
+    });
+
+    it('prices an unrecognised promo from the generated "everyone else" cell', async () => {
+      const { service, productRepo, assoRepo, pricingFacts } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      productRepo.findOne.mockResolvedValue(
+        product({ priceMatrix: promoGrid({ b1: 7000, b2: 9000, _others: 12000 }) })
+      );
+      // A promo nobody named, and a null promo, are the same answer: nobody is ever unpriced.
+      pricingFacts.build.mockResolvedValue({
+        promo: null,
+        formation: null,
+        cotisationTiers: [],
+        answers: {},
+      });
+
+      const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1');
+      expect(result.amountCents).toBe(12000);
+    });
+
+    it('REFUSES the purchase when the grid marks the combination as not sold', async () => {
+      const { service, productRepo, assoRepo, pricingFacts } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      productRepo.findOne.mockResolvedValue(
+        // `null` is a decision, not a price of zero and not a missing cell: the association does
+        // not sell this forfait to that cohort, so the sale stops rather than falling back.
+        product({
+          amountCents: 1000,
+          priceMatrix: promoGrid({ b1: 7000, b2: null, _others: 12000 }),
+        })
+      );
+      pricingFacts.build.mockResolvedValue({
+        promo: 2024,
+        formation: null,
+        cotisationTiers: [],
+        answers: {},
+      });
+
+      await expect((service as any).resolvePurchase('asso1', 'prod1', 'user1')).rejects.toThrow(
+        BadRequestException
+      );
+    });
+
+    it('does not ask core-service for a profile when no dimension needs one', async () => {
+      const { service, productRepo, assoRepo, pricingFacts } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      productRepo.findOne.mockResolvedValue(
+        product({
+          priceMatrix: {
+            dimensions: [
+              {
+                id: 'd1',
+                kind: 'cotisation' as const,
+                buckets: [{ id: 'b1', label: 'Cotisant', anyTier: true }],
+              },
+            ],
+            cells: { b1: 500, _others: 1000 },
+          },
+        })
+      );
+      pricingFacts.build.mockResolvedValue({
+        promo: null,
+        formation: null,
+        cotisationTiers: [null],
+        answers: {},
+      });
+
+      const result = await (service as any).resolvePurchase('asso1', 'prod1', 'user1');
+      expect(result.amountCents).toBe(500);
+      // The point of the flag: a grid resting only on cotisation must not be blocked by, or wait
+      // on, a service it does not need.
+      expect(pricingFacts.build).toHaveBeenCalledWith(
+        expect.objectContaining({ needProfile: false })
+      );
+    });
+
+    it('refuses a grid that prices on a question, which only a form has', async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      productRepo.find.mockResolvedValue([{ variantKey: null }]);
+
+      await expect(
+        service.create(
+          'asso1',
+          {
+            name: 'Cotisation',
+            type: 'other',
+            amountCents: 1000,
+            priceMatrix: {
+              dimensions: [
+                {
+                  id: 'd1',
+                  kind: 'answer',
+                  questionId: 'q1',
+                  buckets: [{ id: 'b1', label: 'Menu', values: ['o1'] }],
+                },
+              ],
+              cells: { b1: 100, _others: 200 },
+            },
+          } as any,
+          false
+        )
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('refuses an incomplete grid at save time rather than at purchase time', async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      productRepo.find.mockResolvedValue([{ variantKey: null }]);
+
+      await expect(
+        service.create(
+          'asso1',
+          {
+            name: 'Cotisation',
+            type: 'other',
+            amountCents: 1000,
+            // `_others` is missing, so somebody would arrive with no price at all.
+            priceMatrix: promoGrid({ b1: 7000, b2: 9000 }),
+          } as any,
+          false
+        )
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('stores the PARSED grid, never the raw document a client sent', async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      productRepo.findOne.mockResolvedValue(product({ id: 'prod1' }));
+      productRepo.find.mockResolvedValue([{ variantKey: null }]);
+
+      await service.update(
+        'asso1',
+        'prod1',
+        {
+          // A field the parser does not keep: what lands in the column must be the normalised
+          // document, or a grid nothing validated is what gets evaluated later.
+          priceMatrix: { ...promoGrid({ b1: 1, b2: 2, _others: 3 }), junk: 'nope' },
+        } as any,
+        false
+      );
+      const saved = productRepo.save.mock.calls[0][0] as any;
+      expect(saved.priceMatrix).toEqual(promoGrid({ b1: 1, b2: 2, _others: 3 }));
+      expect(saved.priceMatrix.junk).toBeUndefined();
+    });
+  });
+
+  describe('a product withheld for want of a payment account is released, once there is one', () => {
+    const notReady = () =>
+      asso({ stripeOnboardingComplete: false, stripeAccountId: null, cotisationMode: null });
+
+    it('marks a product WITHHELD when the caller wanted it on sale but payments are not ready', async () => {
+      const { service, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(notReady());
+
+      const created = await service.create(
+        'asso1',
+        { name: 'Sweat', type: 'other', amountCents: 2500 } as any,
+        false
+      );
+      expect(created.isActive).toBe(false);
+      expect(created.activationWithheld).toBe(true);
+    });
+
+    it('does NOT mark a product withheld when the caller asked for it off sale', async () => {
+      const { service, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(notReady());
+
+      // Nothing was withheld here: the admin decided. Releasing it later would put on sale a
+      // product nobody ever asked to sell - which is why the flag records the ASK, not the state.
+      const created = await service.create(
+        'asso1',
+        { name: 'Sweat', type: 'other', amountCents: 2500, isActive: false } as any,
+        false
+      );
+      expect(created.isActive).toBe(false);
+      expect(created.activationWithheld).toBe(false);
+    });
+
+    it('creates an active, unwithheld product when payments are ready', async () => {
+      const { service, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+
+      const created = await service.create(
+        'asso1',
+        { name: 'Sweat', type: 'other', amountCents: 2500 } as any,
+        false
+      );
+      expect(created.isActive).toBe(true);
+      expect(created.activationWithheld).toBe(false);
+    });
+
+    it('releases only the WITHHELD products, never one an admin took off sale', async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      productRepo.update.mockResolvedValue({ affected: 2 });
+
+      expect(await service.releaseWithheldProducts('asso1')).toBe(2);
+      // The allowlist IS the where clause: `isActive: false` would sweep up deliberate withdrawals.
+      expect(productRepo.update).toHaveBeenCalledWith(
+        { associationId: 'asso1', activationWithheld: true },
+        { isActive: true, activationWithheld: false }
+      );
+    });
+
+    it('releases nothing while the payment target is still not ready', async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(notReady());
+
+      expect(await service.releaseWithheldProducts('asso1')).toBe(0);
+      expect(productRepo.update).not.toHaveBeenCalled();
+    });
+
+    it("releases a delegating club's products when its PARENT completes onboarding", async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      const parent = asso({ id: 'parent1' });
+      const club = asso({
+        id: 'club1',
+        stripeOnboardingComplete: false,
+        stripeAccountId: null,
+        paymentParentAssociationId: 'parent1',
+        paymentDelegationStatus: 'approved',
+      });
+      assoRepo.findOne.mockImplementation(({ where: { id } }: { where: { id: string } }) =>
+        Promise.resolve(id === 'parent1' ? parent : club)
+      );
+      // The delegating children of parent1 - the association whose row just changed is not the
+      // only one whose payments just became possible.
+      assoRepo.find.mockResolvedValue([{ id: 'club1' }]);
+      productRepo.update.mockResolvedValue({ affected: 1 });
+
+      expect(await service.releaseWithheldForAssociationAndDelegates('parent1')).toBe(2);
+      expect(productRepo.update).toHaveBeenCalledWith(
+        { associationId: 'club1', activationWithheld: true },
+        { isActive: true, activationWithheld: false }
+      );
+    });
+
+    it('refuses to put a product on sale while payments cannot be taken', async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(notReady());
+      productRepo.findOne.mockResolvedValue(product({ isActive: false }));
+
+      // Accepting it would list a product whose every checkout 400s. Refusing says why, once.
+      await expect(service.update('asso1', 'prod1', { isActive: true }, false)).rejects.toThrow(
+        BadRequestException
+      );
+    });
+
+    it('hands the state to the admin: setting isActive by hand clears the withheld flag', async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      productRepo.findOne.mockResolvedValue(
+        product({ isActive: false, activationWithheld: true } as any)
+      );
+
+      await service.update('asso1', 'prod1', { isActive: false }, false);
+      const saved = productRepo.save.mock.calls[0][0] as any;
+      // Deliberately off sale from now on, so the next onboarding event must leave it alone.
+      expect(saved.isActive).toBe(false);
+      expect(saved.activationWithheld).toBe(false);
     });
   });
 });

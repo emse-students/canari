@@ -1,5 +1,5 @@
-import type { AudienceCondition } from '../pricing/audience';
-import type { PriceMatrix } from '../pricing/price-matrix';
+import type { AudienceCondition } from '../../pricing/audience';
+import type { PriceMatrix } from '../../pricing/price-matrix';
 import {
   Entity,
   Column,

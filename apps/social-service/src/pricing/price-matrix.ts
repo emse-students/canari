@@ -4,7 +4,7 @@ import {
   findOverlappingBuckets,
   OTHERS_BUCKET_ID,
   type Dimension,
-  type SubmitterFacts,
+  type PricingFacts,
 } from './audience';
 
 /**
@@ -31,6 +31,27 @@ export interface PriceMatrix {
   /** Cents or `null`, keyed by `cellKey`. Complete, or the form is refused at save time. */
   cells: Record<string, CellValue>;
 }
+
+/**
+ * What the grid prices, for the two messages whose wording depends on it.
+ *
+ * A whole sentence per subject rather than a noun slotted into a template: these strings reach a
+ * manager, and a sentence assembled from parts is the kind that ends up reading like a machine.
+ */
+export type PricedSubject = 'form' | 'product';
+
+const NO_CELL_MESSAGE: Record<PricedSubject, (key: string) => string> = {
+  form: (key) =>
+    `This form has no price for your situation (cell "${key}"). Its manager must complete the pricing grid.`,
+  product: (key) =>
+    `This product has no price for your situation (cell "${key}"). Its association must complete the pricing grid.`,
+};
+
+const ALL_UNAVAILABLE_MESSAGE: Record<PricedSubject, string> = {
+  form: 'Every combination of this grid is marked unavailable, so nobody could answer. Close the form instead.',
+  product:
+    'Every combination of this grid is marked unavailable, so nobody could buy this. Take the product off sale instead.',
+};
 
 /** Whether a key carries a decision - a price, or an explicit "does not exist". */
 export function hasCell(cells: Record<string, CellValue>, key: string): boolean {
@@ -59,7 +80,7 @@ export function allCellKeys(dimensions: Dimension[]): string[] {
 }
 
 /** Which cell a submitter falls in. Exactly one, always - `others` in each dimension that misses. */
-export function cellKeyFor(matrix: PriceMatrix, facts: SubmitterFacts): string {
+export function cellKeyFor(matrix: PriceMatrix, facts: PricingFacts): string {
   return cellKey(matrix.dimensions.map((d) => bucketFor(d, facts)));
 }
 
@@ -71,12 +92,14 @@ export function cellKeyFor(matrix: PriceMatrix, facts: SubmitterFacts): string {
  * because the matrix is complete at save time and charging a plausible number instead of saying so
  * is how a wrong price ships quietly. A fallback here is a signal, never a path.
  */
-export function resolveCellPrice(matrix: PriceMatrix, facts: SubmitterFacts): CellValue {
+export function resolveCellPrice(
+  matrix: PriceMatrix,
+  facts: PricingFacts,
+  subject: PricedSubject = 'form'
+): CellValue {
   const key = cellKeyFor(matrix, facts);
   if (!hasCell(matrix.cells, key)) {
-    throw new BadRequestException(
-      `This form has no price for your situation (cell "${key}"). Its manager must complete the pricing grid.`
-    );
+    throw new BadRequestException(NO_CELL_MESSAGE[subject](key));
   }
   return matrix.cells[key];
 }
@@ -92,7 +115,11 @@ export function resolveCellPrice(matrix: PriceMatrix, facts: SubmitterFacts): Ce
  *   design exists in order not to have;
  * - a missing or extra cell means the grid is not the grid the dimensions describe.
  */
-export function assertMatrixValid(matrix: PriceMatrix, maxCells = 400): void {
+export function assertMatrixValid(
+  matrix: PriceMatrix,
+  maxCells = 400,
+  subject: PricedSubject = 'form'
+): void {
   const { dimensions, cells } = matrix;
   if (dimensions.length === 0) {
     throw new BadRequestException('A pricing grid needs at least one criterion.');
@@ -155,12 +182,11 @@ export function assertMatrixValid(matrix: PriceMatrix, maxCells = 400): void {
       throw new BadRequestException(`Price "${key}" must be a whole number of cents, at least 0.`);
     }
   }
-  // A grid where every combination is unavailable is a form nobody may answer. That is a closed
-  // form, not a priced one, and saying so here beats every submitter meeting the same refusal.
+  // A grid where every combination is unavailable is a form nobody may answer, or a product
+  // nobody may buy. That is a closed thing, not a priced one, and saying so once here beats every
+  // person meeting the same refusal one at a time.
   if (required.every((k) => cells[k] === null)) {
-    throw new BadRequestException(
-      'Every combination of this grid is marked unavailable, so nobody could answer. Close the form instead.'
-    );
+    throw new BadRequestException(ALL_UNAVAILABLE_MESSAGE[subject]);
   }
 }
 
@@ -223,7 +249,7 @@ export interface PricingView {
  * not answered yet" is a priced state rather than a gap - which is what lets the page show a total
  * from the first render.
  */
-export function pricingViewFor(matrix: PriceMatrix, facts: SubmitterFacts): PricingView {
+export function pricingViewFor(matrix: PriceMatrix, facts: PricingFacts): PricingView {
   const answerDims: { index: number; dimension: Extract<Dimension, { kind: 'answer' }> }[] = [];
   const resolved: (string | null)[] = matrix.dimensions.map((d, index) => {
     if (d.kind === 'answer') {

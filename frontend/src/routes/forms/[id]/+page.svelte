@@ -22,7 +22,7 @@
     type FormItem,
     type AnswerDimensionView,
   } from '$lib/forms/api';
-  import { OTHERS_BUCKET_ID, cellKey, hasCell, type CellValue } from '$lib/forms/priceMatrix';
+  import { OTHERS_BUCKET_ID, cellKey, hasCell, type CellValue } from '$lib/pricing/priceMatrix';
   import { formatFormOpensAt, formOpensAtIso } from '$lib/posts/postComposerDraft';
   import {
     getCalendarEventLinkedToForm,

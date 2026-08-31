@@ -5,7 +5,7 @@ import {
   needsProfile,
   OTHERS_BUCKET_ID,
   type Dimension,
-  type SubmitterFacts,
+  type PricingFacts,
 } from './audience';
 
 /**
@@ -16,7 +16,7 @@ import {
  * predicate used to take a `now` for `yearsToGraduation`, which is gone.
  */
 describe('audience predicate', () => {
-  const facts = (over: Partial<SubmitterFacts> = {}): SubmitterFacts => ({
+  const facts = (over: Partial<PricingFacts> = {}): PricingFacts => ({
     promo: null,
     formation: null,
     cotisationTiers: [],

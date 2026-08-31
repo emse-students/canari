@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { formSummary } from './summary';
-import { emptyMatrix, type PriceMatrix } from './priceMatrix';
+import { emptyMatrix, type PriceMatrix } from '$lib/pricing/priceMatrix';
 
 /**
  * The save bar's one line. It exists because the two editor screens had drifted: the create page

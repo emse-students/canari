@@ -1,5 +1,5 @@
 import { normaliseCondition, visibleItemIds, type ConditionalItem } from './visibility';
-import type { SubmitterFacts } from './audience';
+import type { PricingFacts } from '../pricing/audience';
 
 /**
  * Server-side question visibility, which did not exist before the pricing grid needed it.
@@ -10,7 +10,7 @@ import type { SubmitterFacts } from './audience';
  * to a hidden question was accepted and its price modifier charged.
  */
 describe('question visibility', () => {
-  const facts = (over: Partial<SubmitterFacts> = {}): SubmitterFacts => ({
+  const facts = (over: Partial<PricingFacts> = {}): PricingFacts => ({
     promo: null,
     formation: null,
     cotisationTiers: [],
@@ -18,7 +18,7 @@ describe('question visibility', () => {
     ...over,
   });
 
-  const ids = (items: ConditionalItem[], f: SubmitterFacts) => [...visibleItemIds(items, f)];
+  const ids = (items: ConditionalItem[], f: PricingFacts) => [...visibleItemIds(items, f)];
 
   it('shows a question with no condition', () => {
     expect(ids([{ id: 'q1' }], facts())).toEqual(['q1']);

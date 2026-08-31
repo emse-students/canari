@@ -11,6 +11,7 @@
     type PartnershipCard,
   } from '$lib/associations/api';
   import { currentUserId } from '$lib/stores/user';
+  import { gridPriceIsProvisional, gridPriceLabel, gridRefuses } from '$lib/pricing/viewerPrice';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import ProductPurchaseButton from '$lib/components/shop/ProductPurchaseButton.svelte';
@@ -97,6 +98,10 @@
 
   /** Returns a human-readable price label for a product. */
   function priceLabel(p: AssociationProduct): string {
+    // A grid answers first and alone: while one is set the product's own amount decides nothing,
+    // server-side included, so printing it here would name a figure no checkout would charge.
+    const gridded = gridPriceLabel(p);
+    if (gridded !== null) return gridded;
     if (p.amountCents !== null) {
       return `${(p.amountCents / 100).toFixed(2)} ${p.currency.toUpperCase()}`;
     }
@@ -138,6 +143,9 @@
    * tag a tier-upgrade price is linked to. Mirrors the server-side check in resolvePurchase.
    */
   function qualifiesForMemberPrice(p: AssociationProduct, siblings: AssociationProduct[]): boolean {
+    // A grid replaces the member price rather than competing with it - the cotisation criterion is
+    // where a gridded product says what a cotisant pays.
+    if (p.viewerPrice?.kind === 'grid') return false;
     if (p.amountCentsMember == null) return false;
     if (!p.memberPriceTag) return p.viewerIsCotisant === true;
     const sibling = upgradeSibling(p, siblings);
@@ -325,9 +333,17 @@
                       <ProductPurchaseButton
                         {product}
                         customAmountEuros={customAmounts[product.id]}
-                        disabled={product.membersOnly && !product.viewerIsCotisant}
+                        disabled={(product.membersOnly && !product.viewerIsCotisant) ||
+                          gridRefuses(product)}
                         class="w-full"
                       />
+                      {#if gridRefuses(product)}
+                        <p class="text-xs text-amber-700 dark:text-amber-400">
+                          {m.shop_price_unavailable_hint()}
+                        </p>
+                      {:else if gridPriceIsProvisional(product, isLoggedIn)}
+                        <p class="text-text-muted text-xs">{m.shop_price_profile_hint()}</p>
+                      {/if}
                       {#if product.membersOnly && !product.viewerIsCotisant}
                         <p class="text-xs text-amber-700 dark:text-amber-400">
                           {m.shop_members_only_hint()}

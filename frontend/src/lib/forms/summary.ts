@@ -1,6 +1,6 @@
 import { m } from '$lib/paraglide/messages';
 import { getLocale } from '$lib/paraglide/runtime';
-import { priceRange, type PriceMatrix } from './priceMatrix';
+import { priceRange, type PriceMatrix } from '$lib/pricing/priceMatrix';
 
 /**
  * The one line the save bar shows: how many questions, and what the form costs.

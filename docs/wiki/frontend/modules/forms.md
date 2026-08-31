@@ -66,13 +66,13 @@ labelled component on the other). Everything shared now lives in one place:
 | `FormQuestionsSection.svelte` | The builder list, drag-and-drop, the type picker |
 | `FormAdvancedSettings.svelte` | The collapsed "advanced" category: responses, audience, cotisation |
 | `FormSaveBar.svelte` | The footer summary and the save button |
-| `PriceGridEditor.svelte` | The dimensions, and the cell grid they cross into |
-| `CriterionEditor.svelte` | One dimension's buckets |
+| `pricing/PriceGridEditor.svelte` | The dimensions, and the cell grid they cross into |
+| `pricing/CriterionEditor.svelte` | One dimension's buckets |
 | `AudienceConditionEditor.svelte` | One condition's criteria, used by the form AND by a question |
-| `forms/priceMatrix.ts` | The matrix state, its cross product, and the payload it becomes |
-| `forms/criteriaOptions.ts` | The promo / formation option lists a criterion offers |
+| `pricing/priceMatrix.ts` | The matrix state, its cross product, and the payload it becomes |
+| `pricing/criteriaOptions.ts` | The promo / formation option lists a criterion offers |
 | `forms/audience.ts` | The pre-save guard against a condition with no criterion |
-| `CotisationTierPicker.svelte` | Picks a tier BY NAME |
+| `pricing/CotisationTierPicker.svelte` | Picks a tier BY NAME |
 | `ui/controlClasses.ts` | The one class string every input and select wears |
 | `ui/Select.svelte`, `ui/Toggle.svelte` | The select and the switch, one geometry each |
 | `forms/cotisationSettings.ts` | The cotisation state, and the payload it becomes |
@@ -136,10 +136,18 @@ Two properties make that work:
   carries the choice, so a supplement on top would charge it twice. The server enforces it
   (`pricedQuestionIds`), and the builder hides the per-option supplement fields for those questions.
 
-`pricing/price-matrix.ts` resolves a submitter to a cell, `pricing/validate.ts` refuses an
+`pricing/price-matrix.ts` resolves a subject to a cell, `pricing/validate.ts` refuses an
 incomplete or self-contradicting matrix at save time, and `pricing/audience.ts` holds
-`matchesCondition` plus `SubmitterFacts` - the promo, formation and cotisation facts assembled by
-`submitter-facts.service.ts`.
+`matchesCondition` plus `PricingFacts` - the promo, formation and cotisation facts assembled by
+`pricing/pricing-facts.service.ts`.
+
+**The module sits at `src/pricing/`, not under `src/forms/`** (moved 2026-08-31). A boutique product
+prices on the same grid, and a shared mechanism kept inside one consumer is a mechanism the second
+consumer copies. `PricedSubject` is the one thing that varies: it selects the wording of a refusal
+("this form" vs "this product") and nothing else, so a single validator can say what is wrong in
+terms the manager on that screen recognises. A product's `CriteriaContext.questions` is EMPTY, which
+is exactly what refuses an `answer` dimension on it - a product has no questions to price on, and
+that refusal costs no code of its own.
 
 ### A cell may say the combination DOES NOT EXIST
 
@@ -249,8 +257,9 @@ cannot disagree.
 enforced `required` on hidden questions while the client sent only visible answers (so a required
 question behind a condition made the form unsubmittable for the people the condition excluded), and
 an answer to a hidden question was accepted with its price modifier charged. Both get much worse once
-an answer can select a price cell, which is why `pricing/visibility.ts` landed with the matrix rather
-than after it.
+an answer can select a price cell, which is why `forms/visibility.ts` landed with the matrix rather
+than after it. It stayed in `forms/` when the rest moved to `src/pricing/`: a product has no
+questions, so nothing outside a form can ever ask it anything.
 
 `visibleItemIds` is memoised, order-independent, and resolves a dependency cycle to *hidden* - a
 question depending on itself has no defensible answer, and hidden is the reading that charges nobody.
@@ -442,9 +451,10 @@ sources, dedup, ordering, naming). The forms module had no test at all before 20
 The matrix carries its own: `pricing/audience.spec.ts` (`matchesCondition`, every criterion shape),
 `pricing/price-matrix.spec.ts` (cell resolution, the `others` bucket, completeness), `validate.ts`'s
 refusals through `forms.service.matrix.spec.ts` (an incomplete grid, a double-counted question, a
-condition with no criterion), `pricing/visibility.spec.ts` (memoisation, cycles, the legacy pair
-ANDed with `showIf`) and `frontend/src/lib/forms/priceMatrix.test.ts` (the cross product and the
-payload).
+condition with no criterion), `forms/visibility.spec.ts` (memoisation, cycles, the legacy pair
+ANDed with `showIf`) and `frontend/src/lib/pricing/priceMatrix.test.ts` (the cross product and the
+payload). What the boutique does with the same grid is covered by `products.service.spec.ts` - see
+[cotisations](../../cotisations.md#a-product-prices-on-the-same-grid-a-form-does).
 
 `frontend/src/lib/utils/qrCode.test.ts` answers the QR claim on PIXELS rather than on the badge's
 arithmetic: it rasterises a symbol in pure JS through the SAME exported geometry the canvas draws

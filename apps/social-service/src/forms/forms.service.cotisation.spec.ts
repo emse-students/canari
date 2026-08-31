@@ -56,7 +56,7 @@ describe('FormsService - cotisation configuration and granting', () => {
     const purchaseRecordService: any = { create: jest.fn(() => Promise.resolve()) };
     // No grid and no profile criterion in this file, so the facts are the empty ones and no
     // cross-service call is expected. `forms.service.matrix.spec.ts` exercises the fetching.
-    const submitterFacts: any = {
+    const pricingFacts: any = {
       build: jest.fn((input: { answers?: Record<string, string[]> }) =>
         Promise.resolve({
           promo: null,
@@ -75,7 +75,7 @@ describe('FormsService - cotisation configuration and granting', () => {
       associationsService,
       userTagService,
       purchaseRecordService,
-      submitterFacts
+      pricingFacts
     );
     return {
       service,
@@ -83,7 +83,7 @@ describe('FormsService - cotisation configuration and granting', () => {
       submissionRepo,
       userTagService,
       associationsService,
-      submitterFacts,
+      pricingFacts,
     };
   }
 

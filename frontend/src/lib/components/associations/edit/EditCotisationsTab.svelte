@@ -28,6 +28,16 @@
     Plus,
     ChevronDown,
   } from '@lucide/svelte';
+  import PriceGridEditor from '$lib/components/pricing/PriceGridEditor.svelte';
+  import {
+    emptyMatrix,
+    matrixOf,
+    matrixPayload,
+    matrixProblem,
+    type PriceMatrix,
+  } from '$lib/pricing/priceMatrix';
+  import { gridProblemMessage } from '$lib/pricing/gridProblem';
+  import { fetchFormations, type FormationOption } from '$lib/pricing/criteriaOptions';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
@@ -73,6 +83,31 @@
 
   let expandedTierId = $state<string | null>(null);
   let savingTierId = $state<string | null>(null);
+  /** Which tier's on-sale switch is in flight, so only that row's control is disabled. */
+  let togglingTierId = $state<string | null>(null);
+
+  /**
+   * The expanded tier's pricing grid, in EUROS, or null when it prices at one flat amount.
+   *
+   * One slot rather than one per tier because only one tier is ever expanded: a second copy would
+   * be a second thing to keep in step with the row being edited.
+   */
+  let editingMatrix = $state<PriceMatrix | null>(null);
+  /** Formation values in use, for the formation criterion's picker. Fetched once per tab. */
+  let formations = $state<FormationOption[]>([]);
+  let formationsLoaded = false;
+
+  /** Blocks the save while the grid cannot be stored - the same codes the editor shows. */
+  let gridProblem = $derived(matrixProblem(editingMatrix));
+
+  /**
+   * The tiers a `cotisation` criterion may discriminate on.
+   *
+   * Only offered when there are siblings: on a single-tier association the buyer of the one
+   * cotisation is by definition not a cotisant yet, so the criterion would name an empty half of
+   * the population and price nobody differently.
+   */
+  let gridTiers = $derived(tierProducts.map((p) => ({ variantKey: p.variantKey, name: p.name })));
 
   // ── Roster ────────────────────────────────────────────────────────────────
   let search = $state('');
@@ -324,8 +359,72 @@
     }
   }
 
+  /**
+   * Opens or closes a tier's editor, loading its grid in euros on the way in.
+   *
+   * The stored grid is in cents and the editor works in euros, like the forms one - `matrixOf` is
+   * the single conversion, so no screen ever does the division itself.
+   */
   function toggleTierEdit(product: AssociationProduct) {
-    expandedTierId = expandedTierId === product.id ? null : product.id;
+    if (expandedTierId === product.id) {
+      expandedTierId = null;
+      editingMatrix = null;
+      return;
+    }
+    expandedTierId = product.id;
+    editingMatrix = matrixOf(product.priceMatrix);
+    void loadFormations();
+  }
+
+  /**
+   * Formation values actually in use, for the criterion picker.
+   *
+   * Fetched once and only when a grid editor is opened: the formation vocabulary is open (a new
+   * one arrives from Authentik with no deploy), so the picker offers what EXISTS rather than an
+   * enum this repository would have to chase.
+   */
+  async function loadFormations() {
+    if (formationsLoaded) return;
+    formationsLoaded = true;
+    try {
+      formations = await fetchFormations();
+    } catch (e) {
+      // Not fatal: every other criterion still works, and the picker says it knows none.
+      formationsLoaded = false;
+      console.error('[Cotisations] Failed to load formations:', e);
+    }
+  }
+
+  /**
+   * Switches a tier between one flat price and a grid.
+   *
+   * Turning it on seeds the grid from the tier's CURRENT price, so flipping the switch changes
+   * nothing anybody pays until a cell is actually edited. Turning it off drops the grid outright:
+   * a kept-but-hidden grid is state nobody can see and the next manager would be surprised by.
+   */
+  function toggleTierGrid(product: AssociationProduct, on: boolean) {
+    editingMatrix = on ? emptyMatrix((product.amountCents ?? 0) / 100) : null;
+  }
+
+  /**
+   * Puts a tier on sale, or takes it off, without opening its editor.
+   *
+   * The server refuses to activate anything while the association cannot take payments, and that
+   * refusal is the message shown here: a tier on sale with no payment account would list a
+   * cotisation whose every checkout fails.
+   */
+  async function handleToggleTierActive(product: AssociationProduct) {
+    togglingTierId = product.id;
+    tiersError = '';
+    try {
+      const updated = await updateProduct(asso.id, product.id, { isActive: !product.isActive });
+      tierProducts = tierProducts.map((p) => (p.id === product.id ? updated : p));
+    } catch (e) {
+      tiersError = e instanceof Error ? e.message : m.asso_cotisations_tier_active_error();
+      console.error('[Cotisations] Failed to toggle tier availability:', e);
+    } finally {
+      togglingTierId = null;
+    }
   }
 
   /**
@@ -346,16 +445,27 @@
       const memberPriceRaw = String(fd.get('memberPriceEuros') ?? '').trim();
       const variantKey = String(fd.get('variantKey') ?? '').trim() || null;
       if (!name) return;
+      if (gridProblem) {
+        tiersError = gridProblemMessage(gridProblem);
+        return;
+      }
+      // A grid replaces the fixed pricing, so the fields it replaces are cleared rather than left
+      // behind: kept values would be dead state the server ignores and the next manager believes.
+      const gridded = editingMatrix !== null;
       const updated = await updateProduct(asso.id, product.id, {
         name,
         variantKey,
-        amountCents: priceRaw ? Math.round(Number(priceRaw) * 100) : null,
-        memberPriceTag: memberPriceTag || null,
+        priceMatrix: matrixPayload(editingMatrix) as PriceMatrix | null,
+        amountCents: gridded ? null : priceRaw ? Math.round(Number(priceRaw) * 100) : null,
+        memberPriceTag: gridded ? null : memberPriceTag || null,
         amountCentsMember:
-          memberPriceTag && memberPriceRaw ? Math.round(Number(memberPriceRaw) * 100) : null,
+          !gridded && memberPriceTag && memberPriceRaw
+            ? Math.round(Number(memberPriceRaw) * 100)
+            : null,
       });
       tierProducts = tierProducts.map((p) => (p.id === product.id ? updated : p));
       expandedTierId = null;
+      editingMatrix = null;
       // A retag renames the tag on every cotisant of this tier, so both the picker and the
       // roster's Forfait column are stale until refetched.
       await Promise.all([loadCotisationTiers(), loadRoster(0, true)]);
@@ -663,17 +773,48 @@
                         {/if}
                       </div>
                       <p class="text-text-muted mt-0.5 text-xs">
-                        {product.amountCents != null
-                          ? `${(product.amountCents / 100).toFixed(2)} €`
-                          : m.asso_cotisations_tier_price_free_label()}
-                        {#if product.memberPriceTag && product.amountCentsMember != null}
-                          · {m.asso_cotisations_tier_upgrade_price_label({
-                            price: (product.amountCentsMember / 100).toFixed(2),
-                          })}
+                        {#if product.priceMatrix}
+                          {m.asso_cotisations_tier_grid_summary()}
+                        {:else}
+                          {product.amountCents != null
+                            ? `${(product.amountCents / 100).toFixed(2)} €`
+                            : m.asso_cotisations_tier_price_free_label()}
+                          {#if product.memberPriceTag && product.amountCentsMember != null}
+                            · {m.asso_cotisations_tier_upgrade_price_label({
+                              price: (product.amountCentsMember / 100).toFixed(2),
+                            })}
+                          {/if}
                         {/if}
                       </p>
+                      <!--
+                        A tier that is not on sale is invisible in the boutique and refused at
+                        checkout, so the row has to SAY so - the whole BDE cotisation sat in that
+                        state for as long as it existed, with no screen able to report it.
+                      -->
+                      {#if !product.isActive}
+                        <p class="text-amber-warn mt-1 text-xs font-semibold">
+                          {product.activationWithheld
+                            ? m.asso_cotisations_tier_withheld_hint()
+                            : m.asso_cotisations_tier_off_sale_hint()}
+                        </p>
+                      {/if}
                     </div>
                     <div class="flex shrink-0 items-center gap-2">
+                      <label
+                        class="flex cursor-pointer items-center gap-2 text-xs font-semibold"
+                        title={m.asso_cotisations_tier_active_hint()}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={product.isActive}
+                          disabled={togglingTierId === product.id}
+                          onchange={() => void handleToggleTierActive(product)}
+                          class="accent-cn-yellow size-4"
+                        />
+                        <span class={product.isActive ? 'text-text-main' : 'text-text-muted'}>
+                          {m.asso_cotisations_tier_active_label()}
+                        </span>
+                      </label>
                       <button
                         type="button"
                         onclick={() => toggleTierEdit(product)}
@@ -725,23 +866,30 @@
                             class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
                           />
                         </div>
-                        <div class="space-y-1">
-                          <label
-                            for="tier-price-{product.id}"
-                            class="text-text-muted text-xs font-semibold"
-                            >{m.asso_cotisations_price_amount_label()}</label
-                          >
-                          <input
-                            id="tier-price-{product.id}"
-                            name="priceEuros"
-                            type="number"
-                            min="0.01"
-                            step="0.01"
-                            value={product.amountCents != null ? product.amountCents / 100 : ''}
-                            placeholder="10.00"
-                            class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
-                          />
-                        </div>
+                        <!--
+                          Hidden while a grid is on, and not merely ignored: a price field still
+                          showing a figure nothing charges is the kind of dead state a manager
+                          reads as the truth.
+                        -->
+                        {#if editingMatrix === null}
+                          <div class="space-y-1">
+                            <label
+                              for="tier-price-{product.id}"
+                              class="text-text-muted text-xs font-semibold"
+                              >{m.asso_cotisations_price_amount_label()}</label
+                            >
+                            <input
+                              id="tier-price-{product.id}"
+                              name="priceEuros"
+                              type="number"
+                              min="0.01"
+                              step="0.01"
+                              value={product.amountCents != null ? product.amountCents / 100 : ''}
+                              placeholder="10.00"
+                              class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
+                            />
+                          </div>
+                        {/if}
                         <div class="space-y-1 sm:col-span-2">
                           <label
                             for="tier-variant-{product.id}"
@@ -760,7 +908,7 @@
                             {m.asso_cotisations_tier_variant_key_change_hint()}
                           </p>
                         </div>
-                        {#if tierProducts.length > 1}
+                        {#if tierProducts.length > 1 && editingMatrix === null}
                           <div class="space-y-1 sm:col-span-2">
                             <label
                               for="tier-upgrade-from-{product.id}"
@@ -799,9 +947,43 @@
                             />
                           </div>
                         {/if}
+                        <div class="space-y-3 sm:col-span-2">
+                          <label class="flex cursor-pointer items-start gap-2">
+                            <input
+                              type="checkbox"
+                              checked={editingMatrix !== null}
+                              onchange={(e) => toggleTierGrid(product, e.currentTarget.checked)}
+                              class="accent-cn-yellow mt-0.5 size-4"
+                            />
+                            <span>
+                              <span class="text-text-main block text-xs font-semibold">
+                                {m.asso_cotisations_tier_grid_toggle_label()}
+                              </span>
+                              <span class="text-text-muted block text-xs">
+                                {m.asso_cotisations_tier_grid_toggle_hint()}
+                              </span>
+                            </span>
+                          </label>
+                          {#if editingMatrix !== null}
+                            <!--
+                              The same editor the forms use, and deliberately so: one grid, one
+                              validator, one resolution. `items` is empty because a product has no
+                              questions to price on, and the cotisation criterion needs siblings to
+                              tell apart.
+                            -->
+                            <PriceGridEditor
+                              bind:matrix={editingMatrix}
+                              basePrice={(product.amountCents ?? 0) / 100}
+                              tiers={gridTiers}
+                              {formations}
+                              items={[]}
+                              hasCotisation={tierProducts.length > 1}
+                            />
+                          {/if}
+                        </div>
                         <button
                           type="submit"
-                          disabled={savingTierId === product.id}
+                          disabled={savingTierId === product.id || gridProblem !== null}
                           class="bg-cn-yellow text-cn-dark w-fit rounded-lg px-4 py-2 text-xs font-bold disabled:opacity-50 sm:col-span-2"
                         >
                           {savingTierId === product.id

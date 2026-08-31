@@ -26,10 +26,10 @@
     emptyCotisationSettings,
     forgetTierSelection,
   } from '$lib/forms/cotisationSettings';
-  import { matrixPayload, matrixProblem, type PriceMatrix } from '$lib/forms/priceMatrix';
-  import { gridProblemMessage } from '$lib/forms/gridProblem';
+  import { matrixPayload, matrixProblem, type PriceMatrix } from '$lib/pricing/priceMatrix';
+  import { gridProblemMessage } from '$lib/pricing/gridProblem';
   import { formSummary } from '$lib/forms/summary';
-  import { fetchFormations, type FormationOption } from '$lib/forms/criteriaOptions';
+  import { fetchFormations, type FormationOption } from '$lib/pricing/criteriaOptions';
   import { firstEmptyCondition } from '$lib/forms/audience';
   import { toFormItemsPayload } from '$lib/forms/itemsPayload';
   import { CircleAlert, ArrowLeft, FileText } from '@lucide/svelte';

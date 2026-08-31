@@ -2,7 +2,7 @@
   import FormBuilder from './FormBuilder.svelte';
   import FormSection from './FormSection.svelte';
   import type { MembershipTier } from '$lib/associations/api';
-  import type { FormationOption } from '$lib/forms/criteriaOptions';
+  import type { FormationOption } from '$lib/pricing/criteriaOptions';
   import { QUESTION_TYPES } from '$lib/forms/questionTypes';
   import { ListChecks, Plus } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';

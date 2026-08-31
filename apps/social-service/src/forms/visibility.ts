@@ -1,4 +1,4 @@
-import { matchesCondition, type AudienceCondition, type SubmitterFacts } from './audience';
+import { matchesCondition, type AudienceCondition, type PricingFacts } from '../pricing/audience';
 
 /** The subset of a form item this module needs. */
 export interface ConditionalItem {
@@ -24,7 +24,7 @@ export interface ConditionalItem {
  * The second becomes far worse once an answer can select a price cell, which is why this lands with
  * the matrix rather than after it.
  */
-export function visibleItemIds(items: ConditionalItem[], facts: SubmitterFacts): Set<string> {
+export function visibleItemIds(items: ConditionalItem[], facts: PricingFacts): Set<string> {
   const byId = new Map(items.map((i) => [i.id, i]));
   const resolved = new Map<string, boolean>();
   const inProgress = new Set<string>();

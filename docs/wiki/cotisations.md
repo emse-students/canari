@@ -102,12 +102,74 @@ base tag alongside a named tier is reported at the named tier rather than at `ti
 **`isActive` gates BUYING a tier, never recognizing one.** Every enumeration of an association's
 tiers - `listCotisationTiers`, `revokeSiblingTierTags`, `isBuyerCotisant`, `cotisantStatusFor`,
 `getCotisantStatusBySlug` - covers all `membership` products regardless of `isActive`. A tier is
-inactive either because it was withdrawn from sale or because the association has no completed
-Stripe Connect onboarding (product creation forces `isActive: false` in that case), and neither fact
-says anything about the cotisants already holding its tag. Filtering on it made every cotisant of an
+inactive either because it was withdrawn from sale or because the association could not take
+payments when it was created (product creation forces `isActive: false` in that case, and records
+WHY in `activationWithheld` - see below), and neither fact says anything about the cotisants already
+holding its tag. Filtering on it made every cotisant of an
 association without a Stripe account report `isCotisant: false` - the Cercle's whole roster locked
 out, silently, with the tags still in the database. Only the boutique listings (`listByAssoc`,
 `listAllActive`) filter on `isActive`, which is what it is for.
+
+### A product withheld for want of a payment account releases itself
+
+`isActive = false` is written by two decisions that must never be confused: an admin taking a product
+off sale, and creation refusing to put one on sale because the association had no usable payment
+target yet. Both wrote the same value and nothing recorded the difference, so **every product on prod
+was inactive - five of five, the boutique empty platform-wide** - and no screen could say why. An
+association would complete its Stripe onboarding and nothing would happen, because the thing that
+would have to change was invisible.
+
+**`activationWithheld` is that missing evidence, and it is an ALLOWLIST**: true only on a product
+whose creation asked for `isActive: true` and was refused for want of a payment target. Releasing
+sweeps `{ associationId, activationWithheld: true }` and nothing else, so a product an admin took off
+sale is never resurrected - and any explicit `isActive` write from the admin UI clears the flag,
+because from that moment the admin's decision is the one on record.
+
+Release fires on the four events that make payments possible, all composed in
+`associations.controller.ts` (the service cannot inject `AssociationsService` - `FormsModule` already
+imports `AssociationsModule`):
+
+| Event | Handler | Scope |
+|---|---|---|
+| Stripe onboarding completes | `markStripeComplete` | the association **and its approved delegating children** |
+| Lydia onboarding completes | `markLydiaComplete` | same |
+| A payment delegation is approved | `approvePaymentDelegation` | the child that gained a payment route |
+
+Each release re-resolves `resolvePaymentTarget` rather than trusting the event: readiness depends on
+the ACTIVE provider and on delegation, and a Stripe completion on an association that switched to
+Lydia proves nothing. The cascade catches per child, so one failing child cannot lose the releases
+behind it. Migration `057` backfills the flag for the products that predate it, inside an
+`IF NOT EXISTS (column)` guard - a CD replay must not re-mark a product an admin has since withdrawn.
+
+The per-tier **on-sale switch** in the Cotisations tab is the other half: `isActive` had no control
+anywhere in the UI, which is why the BDE cotisation sat unbuyable for its whole existence. The switch
+carries the reason a tier is off sale, because "inactive" alone does not say who decided it.
+
+### A product prices on the same grid a form does
+
+`association_products.priceMatrix` is the SAME document a form carries, resolved by the same
+`src/pricing/` module - see
+[forms](frontend/modules/forms.md#pricing-is-a-matrix-so-no-priority-rule-exists-to-get-wrong) for
+why a grid rather than a rule list. Criteria available on a product: **promo, formation and
+cotisation tier**. Not `answer`: a product has no questions, and the empty `CriteriaContext.questions`
+a product is validated against is what refuses one.
+
+**A grid REPLACES the fixed pricing outright.** While `priceMatrix` is set, `amountCents`,
+`amountCentsMember` and `memberPriceTag` decide nothing - `resolvePurchase` and `grantProductPurchase`
+branch on the matrix before they ever look at `amountCents`, and both editors hide the fields it
+replaces rather than leaving figures on screen that nothing charges. That is the whole reason there
+is no priority rule between the two mechanisms: only one of them is ever live.
+
+A null cell is a REFUSAL, not a price of zero: checkout is rejected with "not available for your
+situation", and the listings disable the button rather than offering a press that always fails.
+
+**`viewerPrice` is how a listing shows a gridded price.** Only the server can price a grid (it alone
+holds the viewer's promo and formation), so `listAllActive` and `listByAssoc` annotate each product
+with `{ kind: 'fixed' | 'grid', amountCents, dependsOnProfile }`. `kind` is the discriminator and not
+a nicety: "there is no grid" and "the grid closed this combination" would otherwise both arrive as a
+null price, and only the second must stop the sale. `frontend/src/lib/pricing/viewerPrice.ts` is the
+only reader of it. Profiles are batched - one `profileFor` call per distinct user across the whole
+listing, skipped entirely when no product on the page rests on promo or formation.
 
 **Upgrade pricing (`memberPriceTag`)**: a tier-upgrade product can set `memberPriceTag` to a sibling
 tier's tag name and `amountCentsMember` to the price delta. The reduced price then applies **iff the
@@ -140,6 +202,8 @@ Any boutique product (not just membership) can gate or discount on cotisant stat
   `membersOnly` when set (checked instead of, not in addition to, the asso-wide check); `null`/empty
   falls back to the `membersOnly` behavior above.
 - `amountCentsMember` - reduced price in cents for cotisants (`null` = same as `amountCents`).
+  **Ignored, and hidden by both editors, while `priceMatrix` is set** - the grid's cotisation
+  criterion is where a gridded product says what a cotisant pays.
 
 All three are enforced server-side in `products.service.ts` (`isBuyerCotisant`, `hasAnyActiveTag` +
 `assertCanPurchase`); the client only mirrors the *display*.

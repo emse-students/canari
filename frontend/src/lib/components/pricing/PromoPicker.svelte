@@ -10,7 +10,7 @@
     isPromoYear,
     lastPromoYear,
     promoYears,
-  } from '$lib/forms/criteriaOptions';
+  } from '$lib/pricing/criteriaOptions';
   import { m } from '$lib/paraglide/messages';
 
   /**

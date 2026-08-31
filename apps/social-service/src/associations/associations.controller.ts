@@ -988,10 +988,16 @@ export class AssociationsController {
     return this.productsService.listAllActive(userId);
   }
 
-  /** Returns active products for this association (shown on the public association page). */
+  /**
+   * Returns active products for this association (shown on the public association page).
+   *
+   * `x-user-id` is optional - nginx sets it only for a signed-in caller, and this page is public.
+   * It is passed through so a gridded product quotes the price THIS person pays rather than the
+   * "everyone else" cell; a guest legitimately resolves to that cell.
+   */
   @Get(':id/products')
-  listAssociationProducts(@Param('id') id: string) {
-    return this.productsService.listByAssoc(id);
+  listAssociationProducts(@Param('id') id: string, @Headers('x-user-id') userId?: string) {
+    return this.productsService.listByAssoc(id, userId);
   }
 
   /** Returns all products including inactive ones. Requires MANAGE_PRODUCTS flag. */
@@ -1353,12 +1359,22 @@ export class AssociationsController {
     this.sendXlsxDownload(res, buffer, title, 'achats');
   }
 
-  /** Approves a child's pending delegation request. `:id` is the parent. Requires MANAGE_PRODUCTS. */
+  /**
+   * Approves a child's pending delegation request. `:id` is the parent. Requires MANAGE_PRODUCTS.
+   *
+   * The child can now take payments through the parent's account, so the products it had to leave
+   * off sale for want of one go on sale - see `releaseWithheldProducts`. Composed here rather than
+   * inside `approvePaymentDelegation` for the same reason `provisionCotisationProduct` is: the
+   * products service already depends on the associations service, and the reverse edge would be a
+   * cycle.
+   */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Post(':id/payment-delegation/children/:childId/approve')
-  approvePaymentDelegation(@Param('id') id: string, @Param('childId') childId: string) {
-    return this.service.approvePaymentDelegation(id, childId);
+  async approvePaymentDelegation(@Param('id') id: string, @Param('childId') childId: string) {
+    const result = await this.service.approvePaymentDelegation(id, childId);
+    await this.productsService.releaseWithheldProducts(childId);
+    return result;
   }
 
   /** Rejects a pending request or revokes an approved child's delegation. `:id` is the parent. Requires MANAGE_PRODUCTS. */
@@ -1386,14 +1402,22 @@ export class AssociationsController {
     return this.service.setStripeAccountId(id, body.stripeAccountId);
   }
 
-  /** Marks Stripe onboarding as complete for an association; called internally by core-service. */
+  /**
+   * Marks Stripe onboarding as complete for an association; called internally by core-service.
+   *
+   * This is the instant the association can take money, so it is also the instant its withheld
+   * products go on sale - and its approved delegating clubs' too, since the account that just
+   * became ready is the one serving them. Nothing did this before, which is how a fully onboarded
+   * BDE ended up with a 170 EUR cotisation nobody could buy.
+   */
   @Post(':id/stripe-complete')
-  markStripeComplete(
+  async markStripeComplete(
     @Param('id') id: string,
     @Headers('x-internal-secret') internalSecret: string
   ) {
     assertInternalSecret(internalSecret);
-    return this.service.markStripeOnboardingComplete(id);
+    await this.service.markStripeOnboardingComplete(id);
+    await this.productsService.releaseWithheldForAssociationAndDelegates(id);
   }
 
   /** Unlinks the association's Stripe Connect account; called internally by core-service. */
@@ -1417,11 +1441,21 @@ export class AssociationsController {
     return this.service.setLydiaAccountId(id, body.lydiaAccountId);
   }
 
-  /** Marks Lydia onboarding as complete for an association; called internally by core-service. */
+  /**
+   * Marks Lydia onboarding as complete for an association; called internally by core-service.
+   *
+   * Releases withheld products exactly like `stripe-complete`: which provider is active decides
+   * which pair of columns `resolvePaymentTarget` reads, never whether a product waiting on an
+   * account should be released.
+   */
   @Post(':id/lydia-complete')
-  markLydiaComplete(@Param('id') id: string, @Headers('x-internal-secret') internalSecret: string) {
+  async markLydiaComplete(
+    @Param('id') id: string,
+    @Headers('x-internal-secret') internalSecret: string
+  ) {
     assertInternalSecret(internalSecret);
-    return this.service.markLydiaOnboardingComplete(id);
+    await this.service.markLydiaOnboardingComplete(id);
+    await this.productsService.releaseWithheldForAssociationAndDelegates(id);
   }
 
   /** Unlinks the association's Lydia Business; called internally by core-service. */
