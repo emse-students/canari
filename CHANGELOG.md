@@ -23,6 +23,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Added
 
+- **A real query, through every entity, in the boot job.** The boot test proved the schema BUILDS -
+  `forRootAsync` resolves, metadata is constructed, `synchronize` runs - and stopped there: all 1105
+  unit tests mock their repositories, so nothing in this repository had ever watched TypeORM return
+  a row, and an ORM major that changed how a query is BUILT would have passed every gate and failed
+  on the first production request. `app-module.boot-spec.ts` now issues a `find({ take: 1 })`
+  through every entity the app registered, enumerated from the DataSource's own metadata rather than
+  from a list somebody has to remember to update. media-service carries no such test and asserts
+  why - it declares no `typeorm`, and that assertion fails the day someone gives it a database.
+
 - **The gate that lets a crypto dependency be upgraded without a human.** Every test in `mls-core`
   built its input with the same code it then exercised, so a change to a wire format, an encoding or
   a key derivation moved both halves together and the suite stayed green - the exact hole the

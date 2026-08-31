@@ -130,7 +130,11 @@ jobs:
       # is the one call that closes the gap. ONE dispatch for the whole pass, not one per merge:
       # the deploy builds `main` as it now stands, and that is the same artefact either way.
       - name: Dispatch one deploy if anything merged
-        if: env.merged != '0'
+        # Both halves are load-bearing. The step above runs without `set -e` so one unmergeable
+        # branch cannot stop a sweep, which means it can also end early and leave `merged` never
+        # written - and an UNSET value is not equal to '0', so testing only that would dispatch a
+        # deploy on the one path where nothing is known to have merged.
+        if: env.merged != '' && env.merged != '0'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
