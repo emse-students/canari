@@ -297,6 +297,13 @@ jobs:
     needs: [changes]
     if: ${{ needs.changes.outputs.ts-matrix != '[]' }}
     runs-on: ubuntu-latest
+    # A HANG MUST BECOME A RED JOB, NOT A BURNT RUNNER. The first run of this job proved the point:
+    # chat-delivery-service BOOTED - `Tests: 1 passed` - and then printed `Jest did not exit one
+    # second after the test run has completed`, because its Redis client had no lifecycle hook and
+    # `app.close()` left the socket open. The test's own 120 s timeout cannot see that: the test had
+    # already passed. Without this ceiling the job sat in_progress for over an hour and would have
+    # held the default six. The leak itself is fixed; this is what makes the NEXT one cheap.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:

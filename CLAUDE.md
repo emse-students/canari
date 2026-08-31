@@ -191,23 +191,35 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
    newest frame was 2 h 47 old, and the quiet was nobody writing - bucketed against real traffic the
    ghost took one frame in four, unchanged across the deploy that shipped the guards.
 
-3. **THE SERVER-SIDE P2s ARE THE AGREED NEXT WORK, point by point** (user, 2026-08-30, while the
-   campaign is hardware-blocked). **Four are done: the chat-gateway CORS wildcard** -
-   seven origins echoed, an unknown one refused, at both layers on prod
-   ([chat-gateway](docs/wiki/services/chat-gateway.md#verifying-it-and-why-the-deploys-colour-is-not-the-proof)) -
-   **`/forms/success`**, which was FOUR pages and not one once re-measured against the whole route
-   tree - **Stripe's name, removed from every layer that does not own it**
-   ([payments](docs/wiki/frontend/modules/payments.md#where-a-providers-name-may-appear-and-where-it-may-not)) -
-   **and the notification path's raw literals, BOTH halves.** The social one shipped 2026-08-19 -
-   `push-content.ts` sends `contentKey` + `actorName` + `contentArg` and the DEVICE writes the
-   sentence; its `legacyTitle` / `legacyBody` are a dated shim, not open work
-   ([legacy-compatibility](docs/wiki/legacy-compatibility.md)). **The other could NOT be fixed that
-   way and shipped 2026-08-31**: `APNS_FALLBACK_BODY` is shown when the iOS extension never ran, so
-   the device has composed nothing, and `push_token.locale` (migration 020) carries the language from
-   the app that knows it. Why an APNs `loc-key` is a regression today, and the two predicates the
-   column forced open - the client's skip key and the inline-ciphertext budget - are on
-   [chat-delivery](docs/wiki/services/chat-delivery.md#the-one-sentence-this-server-still-composes-and-the-column-that-tells-it-the-language).
-   **The FCM size split is fixed and still owes its verification, which is HARDWARE and iOS-first.**
+3. **THE SERVER-SIDE P2s** (user, 2026-08-30, while the campaign is hardware-blocked). **Five of
+   six have SHIPPED and their stories are in `CHANGELOG.md`** - the chat-gateway CORS wildcard,
+   `/forms/success`, Stripe's name removed from the layers that do not own it, and BOTH halves of
+   the notification path's raw literals (the second needed `push_token.locale`, migration 020).
+   **ONE thing is left and it is a MEASUREMENT, not code: the FCM size split owes its verification,
+   which is HARDWARE and iOS-first** - it joins queue item 5. Mechanisms on
+   [chat-delivery](docs/wiki/services/chat-delivery.md#the-one-sentence-this-server-still-composes-and-the-column-that-tells-it-the-language)
+   and [payments](docs/wiki/frontend/modules/payments.md); none of it restated here.
+
+3b. **THE DEPENDENCY CHAIN IS THE WORK IN HAND** (user, 2026-08-31: *"pour avoir un projet qui peut
+   'vivre tout seul'"*), and it started from ONE P1: every Stripe webhook had been rejected for four
+   days. What has SHIPPED is in `CHANGELOG.md` and not restated here - the async signature
+   verification, the auto-merge ceiling, the CD dispatch, the split NestJS packages, two drifted
+   `Cargo.lock`s and the duplicate `openmls_traits`, `framework-boot.spec.ts` in all four services,
+   the real `AppModule` boot job, and the two services that were shipping their tests inside their
+   production image. **What is OPEN is exactly the three rows of
+   [the ceiling table](docs/wiki/backlog.md#p1---the-three-refusals-the-auto-merge-ceiling-makes-and-the-test-that-retires-each)**,
+   and closing a row is what makes a whole class of update merge by itself.
+
+   **TWO THINGS ARE OWED BEFORE ANY OF THAT.** `dependabot-auto-merge.yml` is `disabled_manually`
+   and NOTHING is automatic until it is re-enabled - do that only once the `boot-nest-apps` job has
+   a green run, since re-enabling with an untested ceiling is the original defect again. And the
+   same two defects - a ceiling-less auto-merge, and merges that reach no deploy - are still live in
+   **Sky, MiGallery and Portail-etu**, measured 2026-08-31 ([backlog](docs/wiki/backlog.md)).
+
+   **A RULE THIS SESSION COST THREE TIMES OVER: test the gate against the real thing.** The ceiling
+   was tested by running its own loop body over all 33 open pull requests, and that found two
+   defects a review would not have - Dependabot YAML-quotes a name starting with `@`, and a
+   "permit the latest version" pull request carries no `update-type` at all.
 
 4. **NOTHING ON THE CAMPAIGN BOARD COULD HAVE CAUGHT IT, AND THE GAP IS STRUCTURAL** (checked
    2026-08-28): of ~200 rows exactly one reads `dm_device_group_memberships`, and none asks a

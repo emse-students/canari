@@ -1,4 +1,4 @@
-import { Module, Provider } from '@nestjs/common';
+import { Inject, Injectable, Module, OnModuleDestroy, Provider } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
@@ -41,6 +41,27 @@ const RedisProvider: Provider = {
     });
   },
 };
+
+/**
+ * Closes the Redis connection when the application shuts down.
+ *
+ * `RedisProvider` hands back a raw `ioredis` client, and a raw client cannot carry a Nest lifecycle
+ * hook - so nothing ever called `quit()` and `app.close()` left the socket open. In a container
+ * being killed that goes unnoticed; it stopped being invisible the day a test booted the real
+ * `AppModule` and jest would not exit, because an open handle is an open handle whether or not
+ * anything is watching. A separate one-purpose provider is deliberate: wrapping the client in a
+ * service class would change the injection type at every one of its call sites, to fix a shutdown.
+ */
+@Injectable()
+class RedisShutdown implements OnModuleDestroy {
+  constructor(@Inject('REDIS_CLIENT') private readonly redis: Redis) {}
+
+  async onModuleDestroy(): Promise<void> {
+    // `quit` waits for pending replies, unlike `disconnect`, which drops them. Shutting down is not
+    // a reason to lose a command that was already accepted.
+    await this.redis.quit();
+  }
+}
 
 /** Root NestJS module: wires PostgreSQL via TypeORM, Redis, and all MLS controllers. */
 @Module({
@@ -101,6 +122,6 @@ const RedisProvider: Provider = {
     AdminStorageController,
     CallsController,
   ],
-  providers: [RedisProvider, MessagingService, CallsService, ApnsVoipService],
+  providers: [RedisProvider, RedisShutdown, MessagingService, CallsService, ApnsVoipService],
 })
 export class AppModule {}

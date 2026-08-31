@@ -23,6 +23,16 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **chat-delivery-service never closed its Redis connection on shutdown.** `RedisProvider` returns a
+  raw `ioredis` client, and a raw client cannot carry a Nest lifecycle hook, so nothing ever called
+  `quit()` and `app.close()` left the socket open. A killed container hides that completely; it
+  stopped being invisible the first time a test booted the real `AppModule` and jest reported
+  `Jest did not exit one second after the test run has completed` - the boot itself had PASSED. A
+  one-purpose `RedisShutdown` provider now quits the client on destroy, chosen over wrapping the
+  client in a service class because that would change the injection type at every call site in order
+  to fix a shutdown. The `boot-nest-apps` job also gained `timeout-minutes: 15`, so the next hang is
+  a red job in minutes rather than a runner held for six hours.
+
 - **The auto-merge ceiling refused by semver, and a queue formed behind it.** Written that morning,
   it turned away every major and every minor whose new version's major was 0. Measured against all
   33 open pull requests the same afternoon, it refused 28 - which is the failure, not the feature.
