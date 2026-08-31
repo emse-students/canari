@@ -96,18 +96,18 @@ while IFS='|' read -r name type version; do
     # the same fact in both cases: an at-rest envelope is read only by the device that WROTE it, so
     # "does today's code still open yesterday's blob" is the whole question. Measured, not assumed -
     # every `encrypt_blob` call site is state persistence, in `crypto.rs` and `pin_crypto.rs`.
+#
+# `aes-gcm` USED TO HAVE ITS OWN ARM HERE and no longer does, because its gate was written:
+# `src-tauri/src/mobile/cross_version_push.rs` freezes a channel push and a Graine push, and
+# asserts BOTH directions. The forward half needed no old binary the way `openmls` does - an
+# AEAD is deterministic, so re-sealing the frozen plaintext under the frozen key and nonce must
+# reproduce the frozen bytes, and equal bytes are equal in both directions.
     openmls | openmls_* | tls_codec | tls_codec_derive | hpke-rs* | libcrux*)
       # A WIRE FORMAT IS READ BY OTHER DEVICES, ON OTHER VERSIONS, so both directions matter and a
       # frozen fixture can only ever see one of them. `cross_version_state.rs` proves today's code
       # opens a group and a frame minted by v0.14.14; nothing here proves a frame minted TODAY is
       # readable by the v0.14.14 clients still in the fleet, and only an old binary could.
       gate="the FORWARD half of a cross-version test. \`tests/cross_version_state.rs\` now covers the backward half - today opening what v0.14.14 wrote - but a wire format is read by OTHER devices on OTHER versions, and nothing here runs an old binary against a frame minted by the new one"
-      ;;
-    aes-gcm)
-      # NOT at-rest, despite sitting beside the crates that are: this is the per-epoch key that
-      # opens an inline channel-message push in `src-tauri/src/mobile/background.rs`, sealed by
-      # ANOTHER member's device. Cross-device, and with no fixture at all on either side.
-      gate="a channel-push fixture. This AEAD opens a push sealed by another member's device (\`decrypt_channel_message\`), so both directions are cross-version, and nothing in src-tauri freezes one"
       ;;
     webrtc | webrtc-* | str0m | sdp | ice | turn | stun)
       gate="one relay-path call. The SFU has ten tests and not one of them touches the ICE stack; that is campaign rung 15 CALL, which has no runner yet"

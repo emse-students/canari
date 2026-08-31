@@ -11,6 +11,51 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`src-tauri`'s CI entry compiled its tests and never ran them.** The matrix command was
+  `cargo check --all-targets`, scoped on purpose to the defect that created the entry - a broken
+  exhaustive match, so *does it compile*. The crate has since acquired 33 tests, none of which any
+  pipeline had ever executed. It now runs `cargo test --all-targets`, which strictly dominates the
+  old command; the webkit2gtk install that lets the binary link on Linux was already there.
+
+- **Every product in the boutique was off sale, on every association, and nothing said why.** Five
+  products on prod, five inactive, zero buyable - the BDE's 170 EUR cotisation among them, listed on
+  its own admin page as a tier that existed and could not be bought by anyone, ever. Two causes, one
+  symptom. Creating a product while the association cannot take payments forces `isActive: false`,
+  which is right; but nothing recorded that the refusal was TEMPORARY, so completing Stripe
+  onboarding changed nothing, and `isActive` had no control anywhere in the UI to change it by hand
+  either. A new `activationWithheld` column carries the distinction, and it is an ALLOWLIST: a
+  release sweeps only products whose creation asked to be on sale and was refused for want of a
+  payment target, so a product an admin deliberately withdrew is never resurrected. It fires on the
+  four events that make payments possible - Stripe onboarding, Lydia onboarding, a delegation being
+  approved, and the cascade from a parent to its approved delegating children - each re-resolving
+  the payment target rather than trusting the event, because readiness depends on the active
+  provider. Migration `057` backfills the flag behind an `IF NOT EXISTS (column)` guard, so a CD
+  replay cannot re-mark a withdrawn product.
+  ([cotisations](docs/wiki/cotisations.md#a-product-withheld-for-want-of-a-payment-account-releases-itself))
+
+### Added
+
+- **A cotisation tier can be taken off sale, and says so.** A per-tier on-sale switch in the
+  Cotisations tab - the control `isActive` never had. Off-sale tiers stay recognised for the
+  cotisants already holding them, exactly as before; what is new is that the card states which of
+  the two reasons applies, since "inactive" alone does not say who decided it.
+
+- **Boutique products price on the same grid forms do: by promotion, formation and cotisation
+  tier.** The pricing matrix moved out of `src/forms/pricing/` to `src/pricing/` and out of
+  `$lib/forms/` to `$lib/pricing/`, unchanged in substance - one document, one validator, one
+  resolution, now with two consumers instead of one. A product's criteria context carries no
+  questions, which is what refuses an `answer` dimension on it without a line of product-specific
+  code. A grid REPLACES the fixed pricing outright: while one is set, `amountCents`,
+  `amountCentsMember` and `memberPriceTag` decide nothing and both editors hide them, which is why
+  no priority rule between the two mechanisms exists to get wrong. A null cell stays a refusal
+  rather than a price of zero - the shop and the association page disable the button instead of
+  offering a press that always fails. Listings carry a server-resolved `viewerPrice` because only
+  the server holds a viewer's promo and formation; profiles are fetched once per user across a whole
+  page, and not at all when nothing on it prices on a profile.
+  ([cotisations](docs/wiki/cotisations.md#a-product-prices-on-the-same-grid-a-form-does))
+
 ### Changed
 
 - **argon2 0.5 -> 0.6, chacha20poly1305 0.10 -> 0.11 and criterion 0.5 -> 0.8 in `mls-core`, in one
@@ -78,6 +123,19 @@ which is also where every release up to and including v0.13.1 now lives.
   globbed a `test/` directory that no longer exists in either service.
 
 ### Added
+
+- **A cross-version gate for the channel-push AEAD, which retires a whole class of dependency
+  refusal.** `aes-gcm` opens a push sealed by another member's device, and nothing in `src-tauri`
+  froze anything, so every bump of it was refused with no test named that would lift the refusal.
+  `src-tauri/src/mobile/cross_version_push.rs` freezes two artefacts: one sealed under a fixed key,
+  which moves only with the AEAD, and one under a key derived from a Graine seed, which moves with
+  the AEAD or the HKDF - so a failure names its cause instead of starting a bisect. Falsified by
+  flipping a single ciphertext bit: the channel test goes red while the Graine one stays green.
+  Both directions are covered, which is what let the ceiling clause be deleted rather than narrowed
+  - an AEAD is deterministic, so re-sealing the frozen plaintext under the frozen key and nonce must
+  reproduce the frozen bytes, and equal bytes are equal in both directions. It is the first test in
+  `src-tauri`, and it lives in the crate rather than under `tests/` because `mod mobile` exists only
+  under `cfg(test)`.
 
 - **A third family off the auto-merge ceiling: bare `typeorm`.** The boot job proved the schema
   BUILDS - `forRootAsync` resolves, every entity's metadata is constructed, `synchronize` runs - and
