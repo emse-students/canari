@@ -485,9 +485,20 @@ describe('handleHistoryRequest - scrollback', () => {
  * The responder is the only party that knows, so it is the party that says.
  */
 describe('handleHistoryRequest - stating our coverage', () => {
-  /** A floor well above any device window, so `max(floor, window)` is decided by the floor alone. */
-  const FLOOR = at('2026-06-01T00:00:00Z');
+  /**
+   * A floor recent enough to sit above any device window, so `max(floor, window)` is decided by the
+   * floor alone - the same construction as `OUR_FLOOR` above, and for the same reason.
+   *
+   * It is RELATIVE to now on purpose. This was the literal `2026-06-01`, which sat above the
+   * ninety-day window on the day it was written and below it the next morning: the suite went red
+   * at midnight having asserted a wall clock without ever naming one. A date that only works while
+   * it holds a fixed relation to `Date.now()` IS a wall-clock assertion, whatever its spelling.
+   */
+  const FLOOR = Date.now() - 60_000;
+  /** Below the floor and below any device window, whenever this suite happens to run. */
   const BELOW_FLOOR = at('2020-01-01T00:00:00Z');
+  /** A message this device holds INSIDE its own coverage - the only side of the floor that is fixed. */
+  const IN_COVERAGE = FLOOR + 1_000;
 
   it('states where our history begins when the asker asked from below it', async () => {
     noteProbeReceived(GROUP, REQUESTER, {
@@ -520,7 +531,7 @@ describe('handleHistoryRequest - stating our coverage', () => {
   it('says NOTHING when it covers everything that was asked for', async () => {
     // Silence has to keep meaning "I cover your window", or the fast path costs two frames instead
     // of one for the case that matters most - two devices of the same platform, agreeing.
-    const rows = [{ id: 'm1', timestamp: at('2026-07-01T00:00:00Z') }];
+    const rows = [{ id: 'm1', timestamp: IN_COVERAGE }];
     noteProbeReceived(GROUP, REQUESTER, {
       kind: 'state',
       key: await historyStateKey(rows.map(rowOf), FLOOR),
@@ -536,7 +547,7 @@ describe('handleHistoryRequest - stating our coverage', () => {
     // Both devices can hold exactly the same messages over the asker's window and both be missing
     // the years below ours. The key is computed from what each store holds, so it matches happily,
     // and this is the only signal that would send the asker to a member with a longer memory.
-    const rows = [{ id: 'm1', timestamp: at('2026-07-01T00:00:00Z') }];
+    const rows = [{ id: 'm1', timestamp: IN_COVERAGE }];
     noteProbeReceived(GROUP, REQUESTER, {
       kind: 'state',
       key: await historyStateKey(rows.map(rowOf), BELOW_FLOOR),
@@ -562,7 +573,7 @@ describe('handleHistoryRequest - stating our coverage', () => {
 
     await handleHistoryRequest(
       baseParams({
-        storage: storageWith([{ id: 'only-ours', timestamp: at('2026-07-01T00:00:00Z') }], FLOOR),
+        storage: storageWith([{ id: 'only-ours', timestamp: IN_COVERAGE }], FLOOR),
       })
     );
 

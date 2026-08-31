@@ -888,6 +888,14 @@ Environment and tooling traps that belong to no one subsystem. Each cost a run.
 - Before push: `rm -rf apps/*/dist`, then `git pull --rebase --autostash origin main`.
 - Commit signing is ON globally over SSH - all commits Verified, do NOT disable.
 - **Never assert a wall clock in a test**; two isolated browser contexts = two devices.
+- **A LITERAL DATE IS A WALL CLOCK WHENEVER IT MUST OUT-RANK A SLIDING WINDOW**, and it fails
+  on a day nobody chose. `actions.historyRequest.test.ts` pinned `FLOOR = 2026-06-01` under a
+  comment reading "well above any device window"; the window is `now - 90 days`, so the claim
+  was true on 2026-08-30, false on 2026-08-31, and three tests went red at midnight on a commit
+  that touched none of them - blocking the push of unrelated work. The neighbouring block in the
+  same file had it right: `const OUR_FLOOR = Date.now() - 60_000`. **Write the RELATION, not a
+  date that currently satisfies it** - and when a fixture date must sit on a given side of a
+  moving bound, derive it from that bound. [chat](frontend/modules/chat.md)
 - **A FIRE-AND-FORGET CALL IS THE ONE A TEST FORGETS TO MOCK, AND NOTHING FAILS.** `void f().catch(log)` swallows its own rejection, so an unmocked module reaches the REAL host: the frontend suite was sending five live `PUT` at prod per run, its only symptom console noise inside a 215-file run. Mock it and ASSERT it - a call worth making is worth an assertion, and silencing it without one just moves the hole.
 - **A `git push` TO THIS REMOTE FAILS IN THREE WAYS THAT ALL REPORT SUCCESS, all hit 2026-08-27.**
   (1) **A pipe masks the exit code**: `git push ... | sed > log; echo $?` reported success on a
