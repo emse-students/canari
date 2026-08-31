@@ -45,6 +45,9 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 | acknowledging a conversation from the notification shade | HARDWARE, both platforms. On A1: send from W1, background the app, tap **Marquer comme lu**, then OPEN the app - the badge must be gone, which is the half that needed `read_watermarks.ndjson`. Then the same with a quick REPLY, which now means the same thing. `logcat` must show `sendReadWatermark: queued+drained at=<ms>` with the SENDER's instant, never a value near `now`. Board row **NOTIF-6b**, and the iOS twin is written identically and equally unproven |
 | search folds accents now, everywhere it folds case | **SEARCH-5, and it needs `W1 W2` only - no hardware.** Its five `PASS`es asserted the pre-fix behaviour (the row was written to RECORD the gap), so they are VOID and the runner's prediction is flipped. A run answering `noAccentFound=true` closes this; SEARCH-1, -3 and -6 are ASCII-only and unaffected |
 | WP-REGRANT-2, a re-granted member's re-join | COMM-22, four grant/revoke cycles green - and COMM-8 reading `seedAfterTheGrant: true`, never `repaired`, which is a fallback and not a path |
+| the Stripe webhook verifies asynchronously | after the deploy, `docker logs infrastructure-core-service-1` must show a webhook ACCEPTED - which needs a real Stripe delivery, so it is the next live payment, or a resend from the Stripe dashboard. The 38 events sitting undelivered are the cheapest trigger. **The data half is already repaired and needs nothing**: one submission marked paid through `verify-session` with its `cotisant:bde` tag and its `purchase_record`, two expired sessions cancelled, and the two remaining recent `pending` rows confirmed genuinely unpaid by Stripe itself |
+| the auto-merge ceiling refuses a major | the next Dependabot major must open, go green, and NOT merge - its `Dependabot auto-merge` run logging `REFUSED: <version> is a semver-major`. **The workflow is DISABLED right now** and re-enabling it is the user's call, so this measurement cannot be taken until it is |
+| an auto-merge now reaches CD | the first merge after re-enabling must be followed by a CD run whose head is that merge commit. Until then `gh run list --workflow cd.yml` remains the only way to tell a deployed `main` from a merged one |
 
 ---
 
@@ -2122,6 +2125,75 @@ feature is therefore coherent with E2EE - it removes a password prompt, not a re
 
 
 ## Tooling
+
+### P2 - three other repos carry BOTH dependency defects Canari just had (measured 2026-08-31)
+
+**Canari's `dependabot-auto-merge.yml` merged any green Dependabot PR with no ceiling on the update
+type, and its merges reached CD not once.** Both halves are fixed here. **Neither is fixed in Sky,
+MiGallery or Portail-etu**, and the workflow is the same file in all four - it was copied.
+
+| Repo | Ceiling on the update type | Does an auto-merge deploy? |
+| --- | --- | --- |
+| **Canari** | fixed 2026-08-31 | fixed 2026-08-31, by an explicit `workflow_dispatch` |
+| **Sky** | none - `grep -c 'update-type\|semver'` is 0 | NO. `deploy.yml` listens to `CI (Bun)`, which a `GITHUB_TOKEN` push does not trigger either |
+| **MiGallery** | none, same measurement | NO, and worse: `cd.yml` has no `workflow_run` at all |
+| **Portail-etu** | none, same measurement | NO. `deploy.yml` listens to `Run Tests`, the same blind spot |
+
+**Le Cercle is on GitLab and has no GitHub workflow**, so it is out of scope for this one.
+
+**The fix is a copy of what landed here**, and the two clauses matter in both: refuse every major,
+and refuse a minor whose NEW version's major is 0, because that is what a `0.x` bump is. Portail-etu
+and Sky have no `0.x` protocol library today, but the rule costs nothing and the next dependency is
+not chosen yet. Read the reasoning on
+[ecosystem-convergence](ecosystem-convergence.md) and the rules in
+[durable-rules](durable-rules.md); the shape of both patches is in Canari's
+`.github/workflows/dependabot-auto-merge.yml` and `.github/dependabot.yml`.
+
+**Do NOT re-enable an auto-merge anywhere before its ceiling is in.** Canari's is disabled right now
+for exactly that reason.
+
+### P2 - no test anywhere starts a Nest application, and that is the gate the split walked through
+
+**Measured 2026-08-31:** `git grep -ln NestFactory -- 'apps/**/*.spec.ts'` returns NOTHING.
+`NestFactory` appears in four files, all of them a `main.ts`. So 200 tests in core-service and 306
+in chat-delivery-service instantiate controllers and services by hand, with mocks, and **nothing ever
+builds the HTTP adapter** - which is the only thing `@nestjs/platform-express` provides. When that
+package went to 12 against a `@nestjs/core` at 11, the one object the mismatch lives inside was
+never constructed by any gate.
+
+**What is owed is one smoke test per service**: `NestFactory.create(AppModule)` against an in-memory
+or throwaway configuration, a request to the health route, and shut down. It turns "it compiles" into
+"it starts", which is the distinction the whole incident turned on, and it is the gate that makes an
+automatic dependency merge defensible at all.
+
+**The trap to avoid**: a smoke test that mocks the adapter proves nothing - the adapter IS the
+subject. It has to be the real `NestFactory` with the real platform package, or it is a different
+test wearing the name.
+
+### P3 - `submissions.formId` names a form nothing keeps, and 28 rows point at deleted ones
+
+**Measured on prod 2026-08-31.** There is no foreign key at all:
+
+```sql
+SELECT conname FROM pg_constraint WHERE conrelid = 'submissions'::regclass AND contype = 'f';
+-- (0 rows)
+```
+
+Twelve `formId` values in `submissions` match no row in `forms`. Of the 28 orphaned submissions,
+**5 are `paid`** (36,00 EUR in total), 6 `pending` (101,00 EUR never charged), 16 `free` and 1
+`cancelled`. Only one form of the thirteen referenced still exists. The amounts date from May and
+June 2026 and read as forms from the development period, so this is P3 on the money and P3 on the
+count - but not on the shape.
+
+**What it costs today**: five people have a paid line whose title nobody can render, and
+`markPaid`'s own `grantCotisationIfConfigured` would have had nothing to read either. Deleting a form
+also strands whatever `user_tags` its `grantsCotisation` had issued, which no longer names anything.
+
+**The decision this needs is not "add a foreign key"** - a cascade would DELETE paid submissions,
+which is worse than the orphan. The shapes worth weighing are a tombstoned form (soft delete, the
+title survives, the join keeps working) or a denormalised `formTitle` on the submission at write
+time. The first keeps one truth; the second survives a hard delete. Neither is obviously right,
+which is why this is written down rather than done.
 
 ### P2 - NestJS 11 -> 12 across all four services, plus five dependency majors under it
 

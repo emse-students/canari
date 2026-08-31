@@ -125,6 +125,70 @@ Future checkout:
 | `DELETE /api/payments/payment-methods/:id` | Detach saved card |
 | `POST /api/payments/charge-saved-method` | Charge saved card |
 | `POST /api/payments/charge-product-saved-method` | Charge saved card for product |
+| `POST /api/payments/verify-session` | Unguarded. Re-reads a Checkout session from Stripe and marks the linked submission paid **only if Stripe says `paid`** |
+| `POST /api/payments/cancel-session` | Unguarded. The mirror: marks the submission cancelled, refusing outright if the session WAS paid |
+| `POST /api/payments/webhook` | Stripe's own confirmation, signature-verified |
+
+## Two paths confirm a Stripe payment, and only one of them is authoritative (2026-08-31)
+
+**A payment is confirmed twice on purpose, and for four days only the weaker of the two worked.**
+
+`POST /payments/webhook` is the authoritative path: Stripe posts it whether or not the buyer's
+browser ever comes back. `POST /payments/verify-session` is the browser-return path, called when the
+buyer lands back on the site; it asks Stripe for the session, refuses anything Stripe does not call
+`paid`, and then does exactly what the webhook would have done.
+
+### The failure, and why nothing saw it
+
+The webhook verified signatures with `stripe.webhooks.constructEvent` - the SYNCHRONOUS form. The
+runtime is `bun dist/main.js`; **bun matches the `worker` export condition**, stripe-node maps that
+to its web build, and its crypto provider is `SubtleCryptoProvider`, which has no synchronous digest
+and therefore throws by construction:
+
+```
+ERROR [PaymentWebhookController] Webhook signature verification failed
+SubtleCryptoProvider cannot be used in a synchronous context.
+Use `await constructEventAsync(...)` instead of `constructEvent(...)`
+```
+
+Every delivery since at least 2026-08-27 was answered 400. Measured on 2026-08-31: **24 rejections
+and 0 acceptances over the container's whole life**, and **38 events still undelivered at Stripe, 12
+of them `checkout.session.completed` on a LIVE key**.
+
+**Eleven of those twelve buyers were rescued by the browser-return path**, which is precisely why a
+total failure of the authoritative path was invisible for four days. That is the shape the standing
+rule names: a fallback carrying production is a signal, never a path. The twelfth buyer closed the
+tab after paying; nothing else existed to record their 130,00 EUR, and their submission sat
+`pending` - with no cotisation tier and no purchase record - until it was repaired by hand.
+
+### What the fix is, and what it is not
+
+`constructEventAsync` is the same verification on **either** provider, so the call site is one path
+rather than a branch on which build got resolved. Pinning a crypto provider, or forcing the node
+build through an export condition, would both have been a fallback: they make the synchronous call
+work again instead of removing the reason it could not.
+
+**A test on node cannot catch this class.** Jest runs on node, where the same sdk resolves the NODE
+build and `constructEvent` would have passed - so `webhook.controller.spec.ts` pins the
+provider-dependent fact itself, asserting that `constructEvent` THROWS under
+`Stripe.createSubtleCryptoProvider()` and that `constructEventAsync` accepts the same payload. If a
+later edit puts the synchronous call back, the two controller tests stay green and only that one
+says why production would not.
+
+### Repairing a payment the webhook missed
+
+Never by an `UPDATE`. `verify-session` is the repair, because it re-reads the session from Stripe
+before writing anything, and because `markPaid` in social-service does three things, not one:
+
+| Effect | Table |
+| --- | --- |
+| the submission's status | `submissions.paymentStatus` |
+| **the cotisation tier**, when the form sets `grantsCotisation` | `user_tags`, e.g. `cotisant:bde` |
+| the accounting row | `purchase_records` |
+
+A hand-written status update produces the first and silently skips the other two. The granted tag
+carries `{sessionId, submissionId}` in its `metadata`, so a repair stays distinguishable from an
+ordinary grant afterwards.
 
 ## Payment delegation (parent-association routing)
 
