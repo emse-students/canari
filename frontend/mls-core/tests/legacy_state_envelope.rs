@@ -11,7 +11,7 @@ use mls_core::security::{decrypt_blob, derive_key_from_pin_owned, encrypt_blob, 
 
 /// Builds a blob in the legacy envelope, exactly as `encrypt_with_pin` did.
 fn seal_legacy(pin: &str, plain: &[u8]) -> Vec<u8> {
-    let salt = generate_salt();
+    let salt = generate_salt().expect("legacy salt");
     let key = derive_key_from_pin_owned(pin.to_string(), &salt).expect("legacy derivation");
     let sealed = encrypt_blob(&key, plain).expect("legacy encryption");
     let mut blob = Vec::with_capacity(16 + sealed.len());

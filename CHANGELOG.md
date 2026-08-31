@@ -13,6 +13,19 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Changed
 
+- **argon2 0.5 -> 0.6, chacha20poly1305 0.10 -> 0.11 and criterion 0.5 -> 0.8 in `mls-core`, in one
+  commit because one is the only way they merge.** The three are separate Dependabot pull requests
+  and each was red for the same structural reason: `mls-wasm` and `src-tauri` depend on `mls-core`
+  by path and commit their own lockfiles, which Dependabot has no manifest to update. argon2 0.6
+  also needed a code decision - `password_hash::rand_core` is now behind a feature flag, and rather
+  than switch that flag on and carry a second `rand_core` in the graph, the two draws moved to the
+  `rand` 0.10 already declared here. rand 0.10 renamed `OsRng` to `SysRng` and made it fallible, so
+  `generate_salt` returns a `Result` instead of panicking inside the WASM module. chacha 0.11
+  deprecated `Nonce::from_slice`; both call sites now convert by type, which turns the length check
+  in `decrypt_blob` from a comment into something the compiler holds. The at-rest fixtures in
+  `tests/cross_version_state.rs` are what make this safe to take: they read envelopes sealed by the
+  previous versions of exactly these crates.
+
 - **NestJS 11 -> 12 on the two services that could take it, and a measured hold on the two that
   could not.** `media-service` and `core-service` now run `@nestjs/common`, `@nestjs/core` and
   `@nestjs/platform-express` at 12. `chat-delivery-service` and `social-service` are held at 11 by

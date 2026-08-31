@@ -1,12 +1,27 @@
-use argon2::{
-    Argon2,
-    password_hash::rand_core::{OsRng, RngCore},
-};
+use argon2::Argon2;
 use chacha20poly1305::{
     ChaCha20Poly1305, Nonce,
     aead::{Aead, KeyInit},
 };
+use rand::{TryRng, rngs::SysRng};
 use zeroize::Zeroize;
+
+/// Fills `dst` from the operating system's random source.
+///
+/// The OS is the source rather than a userspace CSPRNG because every caller here produces a value
+/// whose UNIQUENESS is the security property: a ChaCha20-Poly1305 nonce that must never repeat
+/// under one key, and an Argon2id salt.
+///
+/// It is a function rather than two call sites because rand 0.10 changed both halves of the old
+/// `password_hash::rand_core::OsRng` at once - the type is now `SysRng`, and drawing from it is
+/// FALLIBLE where `fill_bytes` used to panic. The failure is returned rather than unwrapped: a
+/// panic inside the WASM module is a dead tab with no message, and both callers already carry a
+/// `Result`.
+fn fill_from_os(dst: &mut [u8]) -> Result<(), String> {
+    SysRng
+        .try_fill_bytes(dst)
+        .map_err(|e| format!("OS random source unavailable: {e}"))
+}
 
 /// Derives a 32-byte key from a PIN and salt via Argon2id (default params).
 ///
@@ -35,12 +50,14 @@ pub fn derive_key_from_pin_owned(mut pin: String, salt: &[u8]) -> Result<[u8; 32
 pub fn encrypt_blob(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, String> {
     let cipher = ChaCha20Poly1305::new(key.into());
     let mut nonce_bytes = [0u8; 12];
-    OsRng.fill_bytes(&mut nonce_bytes);
-    let nonce = Nonce::from_slice(&nonce_bytes);
-    let ciphertext = cipher.encrypt(nonce, data).map_err(|e| e.to_string())?;
+    fill_from_os(&mut nonce_bytes)?;
+    // `from` rather than the deprecated `from_slice`: the buffer is a fixed `[u8; 12]`, so the
+    // conversion cannot fail and no error path has to be invented for it.
+    let nonce = Nonce::from(nonce_bytes);
+    let ciphertext = cipher.encrypt(&nonce, data).map_err(|e| e.to_string())?;
 
     let mut result = Vec::new();
-    result.extend_from_slice(nonce);
+    result.extend_from_slice(&nonce);
     result.extend_from_slice(&ciphertext);
     Ok(result)
 }
@@ -51,14 +68,19 @@ pub fn decrypt_blob(key: &[u8; 32], encrypted_data: &[u8]) -> Result<Vec<u8>, St
     }
     let cipher = ChaCha20Poly1305::new(key.into());
     let (nonce_bytes, ciphertext) = encrypted_data.split_at(12);
-    let nonce = Nonce::from_slice(nonce_bytes);
-    cipher.decrypt(nonce, ciphertext).map_err(|e| e.to_string())
+    // The length check above is what makes this infallible, and `try_from` is where that stops
+    // being an assumption: the guard and the conversion now agree in the type system rather than
+    // by a reader noticing they match.
+    let nonce = Nonce::try_from(nonce_bytes).map_err(|e| e.to_string())?;
+    cipher
+        .decrypt(&nonce, ciphertext)
+        .map_err(|e| e.to_string())
 }
 
 /// Generates a random 16-byte salt for the legacy Argon2id format.
 /// Only used by the pre-v0.11.0 backup path in `mls-wasm` (`encrypt_with_pin`).
-pub fn generate_salt() -> [u8; 16] {
+pub fn generate_salt() -> Result<[u8; 16], String> {
     let mut salt = [0u8; 16];
-    OsRng.fill_bytes(&mut salt);
-    salt
+    fill_from_os(&mut salt)?;
+    Ok(salt)
 }

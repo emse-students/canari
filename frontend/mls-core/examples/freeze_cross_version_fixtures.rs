@@ -100,7 +100,7 @@ fn build_peer_state_and_frame() -> (Vec<u8>, Vec<u8>) {
 /// The pre-v0.11.0 at-rest envelope: `[salt (16) || nonce (12) || ciphertext]`, sealed with
 /// Argon2id(PIN, salt). Freezing it locks the derivation parameters as well as the AEAD.
 fn build_pin_envelope() -> Vec<u8> {
-    let salt = generate_salt();
+    let salt = generate_salt().expect("legacy salt");
     let key = derive_key_from_pin_owned(params::PIN.to_string(), &salt).expect("derive from pin");
     let sealed = encrypt_blob(&key, params::SEALED_PLAINTEXT).expect("seal");
 

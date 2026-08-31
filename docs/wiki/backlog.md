@@ -2178,6 +2178,31 @@ their suites are evidence about everything they depend on. Read the reasoning on
 only trigger is `workflow_run`: it cannot touch a pull request that was already green when it was
 installed.
 
+### P2 - a cargo bump in `mls-core` leaves two committed lockfiles Dependabot will never fix
+
+`frontend/mls-core` is a library: its `Cargo.lock` is gitignored. `frontend/mls-wasm` and
+`frontend/src-tauri` are binaries with COMMITTED lockfiles, and both depend on `mls-core` by path -
+so every crate `mls-core` names appears in their locks too.
+
+**Dependabot opens one pull request, against `mls-core/Cargo.toml`, and that pull request is
+incomplete by construction.** There is no manifest to change in the other two directories, so their
+locks keep the old version and CI's `Refuse a lockfile the manifests no longer describe` step fails
+with `cannot update the lock file ... because --locked was passed`. Measured on PR #300 (argon2
+0.5.3 -> 0.6.0): four jobs red, two of them for this reason alone and nothing to do with argon2.
+
+This is not a ceiling refusal - the gate is right to fail, the pull request really is unmergeable -
+and it is not something `@dependabot recreate` can fix either. **It is the one shape of dependency
+update in this repository that CANNOT be merged unattended**, which is what makes it worth a row.
+
+**The remedy, named rather than done:** make `frontend/` a single cargo workspace with ONE
+`Cargo.lock` covering `mls-core`, `mls-wasm` and `src-tauri`. One lock means one resolution, so
+Dependabot's pull request is complete again and the class of failure disappears. It was not done in
+the same pass as the argon2 bump because `src-tauri` is the crate whose build this workstation can
+only COMPILE - never run on iOS or macOS - and restructuring a Tauri build is not a change to make
+where the only available gate is `cargo check`. Until then, a bump of any crate `mls-core` names is
+done by hand in one commit that refreshes all three locks, and the Dependabot pull request is
+superseded rather than merged.
+
 ### P1 - the three refusals the auto-merge ceiling makes, and the test that retires each
 
 **`dependabot-auto-merge.yml` refuses only what this repository has no gate for**, and every refusal

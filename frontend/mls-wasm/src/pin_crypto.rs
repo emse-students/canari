@@ -44,7 +44,7 @@ pub fn encrypt_with_pin(pin: &str, data: &[u8]) -> Result<Vec<u8>, JsValue> {
     let pin_owned = pin.to_string();
     // Still uses the old salt-prefix format for backward compatibility.
     // generate_salt + encrypt_state_with_pin logic inline:
-    let salt = mls_core::security::generate_salt();
+    let salt = mls_core::security::generate_salt().map_err(|e| JsValue::from_str(&e))?;
     let key = mls_core::security::derive_key_from_pin_owned(pin_owned, &salt)
         .map_err(|e| JsValue::from_str(&e))?;
     let ct = mls_core::security::encrypt_blob(&key, data).map_err(|e| JsValue::from_str(&e))?;
