@@ -155,12 +155,20 @@ updates:
     # ORDER MATTERS: first matching group wins, so the specific ones come before the catch-alls.
     groups:
       # The same rule as `nestjs` above, on the crates where getting it wrong is an ENCRYPTION
-      # defect rather than an availability one. openmls, openmls_rust_crypto,
-      # openmls_basic_credential and openmls_memory_storage are one release train: on 2026-08-31
-      # they arrived as four separate 0.5 -> 0.6 pull requests, any one of which could have merged
-      # without the other three. Majors are included so they arrive together and are reviewed
-      # together; the auto-merge ceiling refuses them either way, and refuses a 0.x MINOR too,
-      # because for a 0.x crate the minor is exactly where the breaking change lives.
+      # defect rather than an availability one. openmls, openmls_traits, openmls_rust_crypto and
+      # openmls_basic_credential are one release train: on 2026-08-31 they arrived as four separate
+      # 0.5 -> 0.6 pull requests, and the measurement is that NONE of them can build alone -
+      # openmls 0.9.0 against openmls_traits 0.5.0 fails with 46 errors, all of them one sentence:
+      # `there are multiple different versions of crate openmls_traits in the dependency graph`.
+      # Four green-looking pull requests, four guaranteed red runs, and a reviewer's afternoon.
+      # Majors are included so they arrive together.
+      #
+      # Grouping them does NOT make them automatic, and the two gates answer different halves.
+      # `tests/cross_version_state.rs` answers the half no compiler can: does today's code still
+      # open a group, a frame and a keystore written by the previous version. The COMPILER answers
+      # the other half, and on this bump it spoke first - openmls 0.9.0 adds `OwnPendingCommit` and
+      # `OwnPrivateMessage` to `ProcessedMessageContent`, a semantic change this crate has to make
+      # a decision about rather than absorb.
       openmls:
         patterns:
           - "openmls*"

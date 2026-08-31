@@ -140,5 +140,10 @@ describe('the NestJS packages installed in this service cohere', () => {
     } finally {
       await app.close();
     }
-  });
+    // A CEILING ON NON-TERMINATION, NEVER A PERFORMANCE ASSERTION - and jest's 5 s default is the
+    // wrong one here. This boot compiles a module and binds a socket, and it runs beside three
+    // other services' suites in the pre-push hook: it took 25.9 s on a loaded developer machine
+    // and failed for the timeout rather than for anything it measures. Nothing about how long a
+    // boot takes is under test; that it FINISHES is.
+  }, 60_000);
 });

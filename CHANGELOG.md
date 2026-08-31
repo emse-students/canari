@@ -21,7 +21,36 @@ which is also where every release up to and including v0.13.1 now lives.
   `supertest` plus `@types/supertest`, which nothing else imported. Two `format` scripts also still
   globbed a `test/` directory that no longer exists in either service.
 
+### Added
+
+- **The gate that lets a crypto dependency be upgraded without a human.** Every test in `mls-core`
+  built its input with the same code it then exercised, so a change to a wire format, an encoding or
+  a key derivation moved both halves together and the suite stayed green - the exact hole the
+  auto-merge ceiling refused eight crates for. `tests/cross_version_state.rs` reads four artefacts
+  committed as BYTES under `tests/fixtures/`, written by v0.14.14 and never regenerated: a member's
+  MLS state, an application frame that member has not yet seen, and the at-rest envelope sealed
+  twice - once under a fixed key, which moves only with the AEAD, and once behind the PIN, which
+  moves with the derivation as well. Four rather than one so a failure names WHICH crate moved.
+  `examples/freeze_cross_version_fixtures.rs` mints a generation and REFUSES to overwrite one, since
+  regenerating in place turns the suite into a round-trip that passes by construction. Verified by
+  corrupting one byte of each fixture: all four tests go red, and green again on restore.
+  **`chacha20poly1305`, `argon2` and `ciborium` came off the ceiling on it** - an at-rest envelope is
+  read by the device that sealed it, so the backward direction is the whole question, measured by
+  enumerating every `encrypt_blob` call site rather than assumed. The protocol crates stay: a wire
+  format is read by other devices on other versions, and only an old binary can answer that half.
+
 ### Fixed
+
+- **A boot probe that failed for the wrong reason.** `framework-boot.spec.ts` compiles a module and
+  binds a socket, and it runs beside three other services' suites in the pre-push hook: it took
+  25.9 s on a loaded machine against jest's 5 s default and failed the push. It now carries an
+  explicit 60 s ceiling in all four services - a bound on non-termination, never an assertion about
+  how long a boot takes.
+
+- **A benchmark that stopped compiling on `criterion` 0.8.** `criterion::black_box` is a deprecated
+  re-export, and CI runs `clippy -D warnings`, so the bump died with nine errors in `mls_perf`.
+  Naming `std::hint::black_box` directly - stable since Rust 1.66, and this repository requires
+  1.97 - compiles on either version.
 
 - **An auto-merge that could only act on an event it happened to catch.** `dependabot-auto-merge.yml`
   was triggered by `workflow_run` and nothing else, so it could evaluate a pull request only in the

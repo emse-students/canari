@@ -2163,15 +2163,21 @@ names its missing test in a comment on the pull request. The standing directive 
 never a routing decision to a human queue (user, 2026-08-31), so THIS TABLE IS THE WORK: each row
 closed is a whole class of update that starts merging on its own.
 
-Measured twice on 2026-08-31 by running the workflow's own loop body against the real commit
-messages of every open pull request: **5 merge / 28 refuse in the morning, 26 merge / 6 refuse once
-the first gate was written and green.** That difference is what closing a row buys.
+Measured three times on 2026-08-31 by running the SHIPPED script against every open pull request:
+**5 merge / 28 refuse in the morning; 26 merge / 6 refuse once the first gate was written; and
+7 merge / 5 refuse / 19 held by a real CI failure once the second landed.** The third reading is
+the one that changed the subject: **the ceiling is no longer what holds the queue** - nineteen
+pull requests are red, and they are red because the gates written that day work. #263 bumps
+`@nestjs/common` to 12 in ONE service and dies on `Boot the real AppModule`; #298 dies on a
+deprecated `from_slice`. Both are the suite being evidence, which is the whole design.
 
 | Refused | Why the suite cannot see it | The test that retires it | State |
 | --- | --- | --- | --- |
 | ~~`@nestjs/*` MAJORS (22 PRs)~~ | ~~no test ever constructed the real application module~~ | `src/app-module.boot-spec.ts` + the `boot-nest-apps` job | **CLOSED 2026-08-31.** Green on all four services against a real Postgres, Redis and S3; the case is deleted from the ceiling |
 | bare `typeorm` MAJOR, or an unclassified bump of it | the boot proves the schema BUILDS - `forRootAsync` resolves, every entity's metadata is constructed, `synchronize` runs. The ORM itself is untouched: every unit suite mocks its repositories, so nothing here has ever watched this ORM return a row. Its migrations are NOT the gap; they are raw `.sql` files TypeORM never runs | one test that issues a real query against the boot job's throwaway database and asserts the row that comes back | not started, and it blocks 0 of the 33 open today (they are all `@nestjs/typeorm`, which the boot does cover) |
-| `openmls*`, `tls_codec*`, `hpke-rs*`, `libcrux*`, `chacha20poly1305`, `aes-gcm`, `argon2`, `ciborium` (5 PRs - **now the largest block**) | every one of them writes a format something else must still read - a group at epoch 118, or a keystore sealed on a device that is not going to be re-enrolled. A wire, encoding or key-derivation change compiles clean and passes every suite | a cross-version state test: serialise a group and a keystore with the CURRENT version, commit the bytes as a fixture, and assert the NEW version still opens them | not started |
+| ~~`chacha20poly1305`, `argon2`, `ciborium`~~ | ~~nothing opened a keystore written by the PREVIOUS version~~ | `tests/cross_version_state.rs` + the four frozen artefacts under `tests/fixtures/` | **CLOSED 2026-08-31.** An at-rest envelope is read by the device that SEALED it, so the backward direction is the whole question - measured by enumerating every `encrypt_blob` call site, all of them state persistence. Falsified by corrupting each fixture: all four tests go red |
+| `openmls*`, `tls_codec*`, `hpke-rs*`, `libcrux*` (4 PRs) | a WIRE format is read by OTHER devices on OTHER versions, so the forward direction exists and no frozen fixture can see it | an old binary run against a frame minted by the new one. The backward half is already covered | open. **And the compiler spoke first on this one**: openmls 0.9.0 adds `OwnPendingCommit` and `OwnPrivateMessage` to `ProcessedMessageContent`, so the four PRs need a code decision, not just a gate. Applied together they compile down to that ONE error; apart, none of them builds at all |
+| `aes-gcm` (0 PRs open) | it opens a channel push sealed by ANOTHER member's device (`decrypt_channel_message`), and src-tauri freezes nothing | a channel-push fixture, the src-tauri twin of `cross_version_state.rs` | open. It sits beside the at-rest crates in the manifest and belongs with the wire ones - the crate's neighbours say nothing, its READER decides |
 | `webrtc` and the ICE crates (1 PR) | the SFU has ten tests and not one touches the ICE stack | one relay-path call - campaign rung 15 CALL, which has no runner | not started, and the SFU is already SIX majors unplaced (see its own P1 above) |
 
 **ONE FLAKE IS RECORDED HERE BECAUSE AN UNATTENDED MERGE IS EXACTLY WHAT A FLAKE BREAKS.**

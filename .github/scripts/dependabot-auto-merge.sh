@@ -90,12 +90,24 @@ while IFS='|' read -r name type version; do
   name="${name#\"}"
   gate=""
   case "$name" in
-    openmls | openmls_* | tls_codec | tls_codec_derive | hpke-rs* | libcrux* | chacha20poly1305 | aes-gcm | argon2 | ciborium)
-      # Not only the protocol crates: everything that WRITES A FORMAT SOMEONE ELSE MUST STILL READ
-      # belongs here. `argon2` derives the at-rest device key, `chacha20poly1305` seals it,
-      # `ciborium` serialises the keystore. A parameter or encoding change in any of them compiles
-      # perfectly and locks every existing device out of its own data.
-      gate="a cross-version state test. Nothing here opens a group, or a keystore, written by the PREVIOUS version, so a wire, encoding or key-derivation change compiles clean, passes every suite, and is discovered by a member whose conversation stopped decrypting"
+    # `argon2`, `chacha20poly1305` and `ciborium` WERE REFUSED HERE UNTIL 2026-08-31, and they left
+    # because `tests/cross_version_state.rs` now opens artefacts those three sealed and serialised in
+    # v0.14.14. The reason a backward-only test is ENOUGH for them, and not for the crates below, is
+    # the same fact in both cases: an at-rest envelope is read only by the device that WROTE it, so
+    # "does today's code still open yesterday's blob" is the whole question. Measured, not assumed -
+    # every `encrypt_blob` call site is state persistence, in `crypto.rs` and `pin_crypto.rs`.
+    openmls | openmls_* | tls_codec | tls_codec_derive | hpke-rs* | libcrux*)
+      # A WIRE FORMAT IS READ BY OTHER DEVICES, ON OTHER VERSIONS, so both directions matter and a
+      # frozen fixture can only ever see one of them. `cross_version_state.rs` proves today's code
+      # opens a group and a frame minted by v0.14.14; nothing here proves a frame minted TODAY is
+      # readable by the v0.14.14 clients still in the fleet, and only an old binary could.
+      gate="the FORWARD half of a cross-version test. `tests/cross_version_state.rs` now covers the backward half - today opening what v0.14.14 wrote - but a wire format is read by OTHER devices on OTHER versions, and nothing here runs an old binary against a frame minted by the new one"
+      ;;
+    aes-gcm)
+      # NOT at-rest, despite sitting beside the crates that are: this is the per-epoch key that
+      # opens an inline channel-message push in `src-tauri/src/mobile/background.rs`, sealed by
+      # ANOTHER member's device. Cross-device, and with no fixture at all on either side.
+      gate="a channel-push fixture. This AEAD opens a push sealed by another member's device (`decrypt_channel_message`), so both directions are cross-version, and nothing in src-tauri freezes one"
       ;;
     webrtc | webrtc-* | str0m | sdp | ice | turn | stun)
       gate="one relay-path call. The SFU has ten tests and not one of them touches the ICE stack; that is campaign rung 15 CALL, which has no runner yet"
