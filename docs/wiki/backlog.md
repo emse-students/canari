@@ -2268,16 +2268,45 @@ when its reason does; a hold expressed as an ignore outlives it.
 LABEL: every one of them declares `^11.0.0 || ^12.0.0` or wider, so reading the peer range rather
 than the version number is what let them merge with the framework major still blocked.
 
-**Still owed from the original table, and untouched by the above:** `ioredis` 5 -> 6 on
-chat-delivery and social - a client major on the path every message takes - and `@types/uuid`
-10 -> 11 on media. `@nestjs/microservices` is no longer on the list at all: it was an orphan on disk
-and in the lockfile, declared by nothing, and a clean install removed it along with `kafkajs`.
+**Nothing else from the original table is owed.** `ioredis` is on **6** in both services and
+`@types/uuid` is DELETED rather than bumped - `uuid` 14 ships its own types, so the package had been
+dead for as long as it had been declared. `@nestjs/microservices` is gone the same way: an orphan on
+disk and in the lockfile, declared by nothing, removed by a clean install along with `kafkajs`.
+
+**Why `protocol: 2` was NOT set when taking ioredis 6,** since its one breaking change is "RESP3 by
+default": ioredis 6 also ships `replyMapping`, which defaults to `"legacy"` - map replies arrive as
+flat `[key, value, ...]` arrays and doubles as strings, so **the JavaScript values are identical
+across both protocols**. That is read from the library's own `RedisOptions.d.ts`, not inferred. The
+wire half is answered by the box: production runs **Redis 8.8.0**, and RESP3 has existed since 6.0.
+Neither service subscribes - both are command-and-publish clients - so RESP3's subscriber-mode
+change does not reach them either. Setting `protocol: 2` would have been a dressing on a wound
+nobody has.
 
 **What made this a P2 and still governs any attempt here:** these four services hold the whole
 server side of the product, and the suites that would catch a regression run under **node, never
 bun** - `admin-storage.controller.mls.spec.ts` fails under the bun runtime and is the reason
 `ci.yml` installs with bun and tests with node. Any attempt re-runs all four suites under node
 (14 + 202 + 308 + 588 = 1112 tests) and is proven on prod, not on a green build.
+
+### P2 - NOTHING DECLARES THE REDIS VERSION, AND THE TWO PLACES THAT NAME IT DISAGREED
+
+**Found 2026-08-31 while taking `ioredis` 6.** `infrastructure/docker-compose.prod.yml`,
+`docker-compose.dev.yml` and `infrastructure/local/docker-compose.yml` all say `image: redis:alpine`
+- a floating tag. `ci.yml` said `redis:7-alpine`. The box was measured and runs **8.8.0**, so the
+gate that proves a service can talk to Redis was proving it against a different major from the one
+it meets in production. **The CI half is fixed** (`redis:8-alpine`, with the reason in the file).
+
+**The production half is NOT, and it is deliberately the user's call.** This Redis is persisted and
+`history:{groupId}` is the ONLY shared copy of a conversation's messages - the per-device queue is
+deleted on ACK. Changing the image tag makes `docker compose up -d` recreate the container, so it is
+a restart of a store holding user data, which is a one-off action and not something to slip into a
+dependency commit.
+
+**What makes it worth doing anyway:** a floating tag on a persisted store means ANY deploy can pull
+a new Redis major under it, with nobody deciding and nothing recording that it happened. An RDB/AOF
+file is forward-compatible and not backward, so the jump is silent and the way back is not. Pinning
+to `redis:8-alpine` changes nothing about what is running today - it only removes the ability of a
+future `docker compose pull` to change it by itself.
 
 ### P3 - 108 navigations bypass `resolve()`, and an inherited disable is the only reason nobody sees them
 

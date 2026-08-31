@@ -26,8 +26,26 @@ which is also where every release up to and including v0.13.1 now lives.
   6 -> 12, `@nestjs/axios` 4 -> 12, `@nestjs/typeorm` 11 -> 12. All 1112 tests green.
   ([nestjs-framework](docs/wiki/services/nestjs-framework.md))
 
+- **`ioredis` 5 -> 6 on chat-delivery-service and social-service, without the escape hatch its
+  release notes offer.** The one breaking change is "RESP3 by default, set `protocol: 2` to retain
+  the v5 wire protocol" - and setting it would have been a dressing on a wound nobody has. ioredis 6
+  also ships `replyMapping`, defaulting to `"legacy"`: map replies arrive as flat arrays and doubles
+  as strings, so the JavaScript values are identical across both protocols. Production was measured
+  rather than assumed and runs **Redis 8.8.0**, which has spoken RESP3 since 6.0, and neither
+  service subscribes - both are command-and-publish clients - so RESP3's subscriber-mode change does
+  not reach them. 896 tests green across the two.
+- **The boot job's Redis now matches production's major.** It was `redis:7-alpine` while the box
+  runs 8.8.0, so the gate proving a service can talk to Redis proved it against a different major
+  from the one it meets. The production side names `redis:alpine`, an unpinned tag on a store
+  holding the only shared copy of conversation history; that half is written up in
+  [`backlog`](docs/wiki/backlog.md) rather than changed here, because it restarts that store.
+
 ### Removed
 
+- **`@types/uuid`, which had been dead for as long as it had been declared.** `uuid` 14 ships its
+  own types through its `exports` map, so the stub package was never consulted; media-service builds
+  and its 14 tests pass without it. Deleted rather than bumped to 11, which retires the pull request
+  instead of merging it.
 - **The Nest scaffold that read as end-to-end coverage and had never run.**
   `apps/core-service/test/app.e2e-spec.ts` was the untouched generator output: it asserted
   `Hello World!` on `/` against a service whose global prefix is `api`, and its `testRegex` lived in

@@ -1064,8 +1064,11 @@ the exact `bun run build` then `npm test` sequence - give 34/34 and 563. Ten tes
 suites that never LOADED, not two that disagreed. The failure text was not captured, so there is no
 cause; runs since capture full output so the next occurrence is diagnosable.
 
-**Parked, with its substance in [backlog](backlog.md): NestJS 11 -> 12.** All four services offer
-it, along with `@nestjs/config` 4 -> 12, `@nestjs/schedule` 6 -> 12, `@nestjs/axios` 4 -> 12,
-`ioredis` 5 -> 6 and `@types/uuid` 10 -> 11. That is a framework major across four deployed
-services, not a dependency bump, and it is not going into a commit whose subject is toolchain
-alignment.
+**Was parked here as "NestJS 11 -> 12", and was TAKEN on 2026-08-31** - correctly parked, because
+it was a framework major across four deployed services and not a dependency bump. `@nestjs/config`
+4 -> 12, `@nestjs/schedule` 6 -> 12, `@nestjs/axios` 4 -> 12, `@nestjs/typeorm` 11 -> 12 and
+`ioredis` 5 -> 6 all landed; `@types/uuid` was deleted rather than bumped, `uuid` 14 having shipped
+its own types all along. The framework itself is on 12 in media and core and held at 11 in
+chat-delivery and social by one upstream package. **State and reasoning live on
+[nestjs-framework](services/nestjs-framework.md), the only copy** - do not restate them here, which
+is what made this paragraph wrong twice about its neighbours.

@@ -323,7 +323,14 @@ jobs:
           --health-timeout 5s
           --health-retries 10
       redis:
-        image: redis:7-alpine
+        # 8, BECAUSE PRODUCTION RUNS 8.8.0 - measured on the box, not read off a tag. This was `7`
+        # while `infrastructure/docker-compose.prod.yml` said `redis:alpine`, so the gate proving a
+        # service can talk to Redis was proving it against a DIFFERENT MAJOR from the one it will
+        # meet. It mattered the day `ioredis` went to 6, whose breaking change is RESP3 by default:
+        # a handshake exercised here against 7 says nothing certain about 8, and the reverse.
+        # The floating `redis:alpine` on the production side is the other half of this and is NOT
+        # fixed here - see docs/wiki/backlog.md, it restarts a Redis holding conversation history.
+        image: redis:8-alpine
         ports:
           - 6379:6379
         options: >-

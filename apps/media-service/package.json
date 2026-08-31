@@ -31,7 +31,6 @@
     "@types/fs-extra": "^11.0.4",
     "@types/jest": "^30.0.0",
     "@types/node": "^26.4.0",
-    "@types/uuid": "^10.0.0",
     "jest": "^30.5.0",
     "oxfmt": "^0.65.0",
     "oxlint": "^1.80.0",
