@@ -4,8 +4,8 @@
  */
 import { SvelteMap } from 'svelte/reactivity';
 import { m } from '$lib/paraglide/messages';
-import { SITE } from '$lib/seo/site';
 import { notifNav } from '$lib/stores/notifNav.svelte';
+import { setTabRinging } from '$lib/stores/tabIndicator';
 import { settings } from '$lib/stores/settingsStore.svelte';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import {
@@ -39,10 +39,6 @@ export function useNotifications() {
   let incomingCallNotification: Notification | null = null;
   /** Tauri notification id of the active incoming-call notification, for cancellation. */
   let incomingCallNotifId: number | null = null;
-  /** Timer for blinking the document title on incoming call. */
-  let blinkTitleTimer: ReturnType<typeof setInterval> | null = null;
-  /** Original document title saved before blinking starts. */
-  let originalTitle: string | null = null;
 
   // ---------- Audio ----------
 
@@ -194,29 +190,22 @@ export function useNotifications() {
     }
   }
 
-  /** Starts blinking the document title to attract attention on an incoming call. */
+  /**
+   * Starts blinking the document title to attract attention on an incoming call.
+   *
+   * DELEGATED, because this used to be a SECOND writer of `document.title` and that is what made it
+   * wrong. It saved the current title, blinked over it and restored what it had saved - so an unread
+   * prefix present when a call arrived was captured into that save and reinstated after the call
+   * ended, and one applied during the call was erased by the restore. `tabIndicator` owns the title
+   * now and renders it from (base, unread, bell) each time, which has no such state to lose.
+   */
   function startBlinkingTitle() {
-    if (typeof document === 'undefined') return;
-    stopBlinkingTitle();
-    originalTitle = document.title;
-    let blink = true;
-    blinkTitleTimer = setInterval(() => {
-      const base = originalTitle ?? SITE.name;
-      document.title = blink ? `🔔 ${base}` : base;
-      blink = !blink;
-    }, 800);
+    setTabRinging(true);
   }
 
-  /** Stops the title blink and restores the original document title. */
+  /** Stops the title blink; the tab goes back to whatever the unread count says it should read. */
   function stopBlinkingTitle() {
-    if (blinkTitleTimer !== null) {
-      clearInterval(blinkTitleTimer);
-      blinkTitleTimer = null;
-    }
-    if (originalTitle !== null && typeof document !== 'undefined') {
-      document.title = originalTitle;
-      originalTitle = null;
-    }
+    setTabRinging(false);
   }
 
   /**

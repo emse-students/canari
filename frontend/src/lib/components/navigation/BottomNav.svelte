@@ -12,6 +12,7 @@
   import { APP_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
   import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
+  import { totalUnreadMessages } from '$lib/utils/unreadTotal';
   import { page } from '$app/state';
 
   const pathname = $derived(page.url.pathname);
@@ -33,9 +34,7 @@
   }
 
   const totalUnread = $derived(
-    globalSession.isLoggedIn
-      ? [...globalConvs.conversations.values()].reduce((sum, c) => sum + (c.unreadCount ?? 0), 0)
-      : 0
+    globalSession.isLoggedIn ? totalUnreadMessages(globalConvs.conversations.values()) : 0
   );
 
   /** Unread badge count for a given place. */

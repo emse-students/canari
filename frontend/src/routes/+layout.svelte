@@ -44,6 +44,8 @@
 
   import { globalSession, globalConvs } from '$lib/stores/globalChatSingleton.svelte';
   import { startPushService } from '$lib/services/PushNotificationService';
+  import { setTabUnread, startTabIndicator } from '$lib/stores/tabIndicator';
+  import { totalUnreadMessages } from '$lib/utils/unreadTotal';
   import SeoHead from '$lib/components/seo/SeoHead.svelte';
   import { isTauriRuntime } from '$lib/utils/openExternal';
   import { purgeRetiredAvatarCache } from '$lib/utils/userAvatarCache';
@@ -87,6 +89,7 @@
 
   onMount(() => {
     themeStore.init();
+    startTabIndicator();
 
     // Dismiss the inline splash screen (see app.html) once the first frame is rendered.
     // tick() ensures SvelteKit has completed its initial render before we fade out.
@@ -130,6 +133,17 @@
   $effect(() => {
     if (typeof document === 'undefined') return;
     document.documentElement.classList.toggle('keyboard-open', isKeyboardOpen);
+  });
+
+  // ── The unread signal a backgrounded tab has without a permission ────────────────
+  // Unconditional on purpose. The web `Notification` is the only other out-of-page signal and it
+  // needs a permission the browser spends the FIRST message asking for, so a user who declines had
+  // nothing at all. The title and the icon ask nobody. Logged-out means no conversations to count,
+  // never a stale badge left over from the last session.
+  $effect(() => {
+    setTabUnread(
+      globalSession.isLoggedIn ? totalUnreadMessages(globalConvs.conversations.values()) : 0
+    );
   });
 
   // ── Push notification init ───────────────────────────────────────────────────

@@ -13,6 +13,23 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Added
 
+- **A backgrounded web tab now says how many messages are waiting, without asking for anything.**
+  The title reads `(3) Communautes - Canari` and the favicon carries a red dot, from the same unread
+  total the sidebar and the bottom bar already show. Until now the web had exactly ONE out-of-page
+  unread signal - a browser `Notification` - and it is conditional: `sendSystemNotification` returns
+  early unless the permission is already granted, so the first message arriving while the tab is
+  away is spent on the prompt instead of delivered, and a user who declines once is permanently
+  without any signal at all (the in-app badge has to be looked at to be read, which for a
+  backgrounded tab is not a signal). The title and the favicon need no permission, no service worker
+  and no decision from anyone. `stores/tabIndicator.ts` is now the ONE writer of `document.title`,
+  which is what makes this safe: `useNotifications` used to blink an incoming call's bell by saving
+  the current title, overwriting it and restoring the saved copy, so a prefix present when a call
+  arrived would have been reinstated after it and one applied during the call erased - the blink is
+  behind `setTabRinging` now and the title is a pure render of `(base, unread, bell)` that cannot
+  accumulate. The route's own title is adopted from a `MutationObserver` rather than passed in, so a
+  navigation needs to know nothing. The reduce computing the unread total, which `AppSidebar` and
+  `BottomNav` each carried their own copy of, is `utils/unreadTotal.ts`.
+
 - **Opening an image now pushes a history entry, so the hardware/browser Back button closes the
   lightbox instead of leaving the conversation.** `MediaLightbox` was one of the few full-screen
   overlays in the app that had never been wired into the shared history-overlay stack

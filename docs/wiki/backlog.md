@@ -1347,39 +1347,6 @@ change that - a wipe still needs the device back - but it narrows "comes online"
 the moment a frame is sent" to "logs in at all, by any path", which is the difference between a
 guarantee and a coincidence.
 
-### P3 - the web has exactly ONE out-of-page unread signal, it needs a permission, and the first message is spent asking for it
-
-Measured 2026-08-24 while writing TAB-1, which is how the row got re-scoped: its stated subject was
-"backgrounded tab receives; title/badge updates", and the second half turned out not to exist.
-
-**What the product does.** `useMessaging.svelte.ts:485` posts a web `Notification` for an inbound
-message when `document.visibilityState !== 'visible' || !document.hasFocus()`. That is the only thing
-a user who has switched to another window can perceive. `document.title` and the favicon are never
-touched for an unread message - MSG-8b has measured that four times over and its own recorded
-evidence says so plainly (`title` is `'Communautes - Canari'` before, during and after; the favicon
-never changes). The only other signal is the in-page badge (`'1 non lus'`), which requires the tab to
-be in front to be read - so for a backgrounded user it is not a signal at all.
-
-**Where that leaves a user who has not granted the permission.** `sendSystemNotification` checks
-`Notification.permission !== 'granted'`, calls `requestSystemNotificationPermission()` and RETURNS -
-so the first message that arrives while the tab is away is not delivered as a signal at all: it is
-spent on the prompt. And a user who denied once is in a permanent state where a backgrounded tab has
-no unread signal whatsoever, with nothing to fall back on.
-
-**Why the title and the favicon are the right answer if this is fixed.** They need no permission, no
-service worker and no user decision, they cost one line each, and they are what every other chat on
-the web does. This is not a fallback in the sense the durable rules forbid - there is no primary path
-failing silently here; it is a second, unconditional surface for a signal that currently has exactly
-one conditional one.
-
-**Not decided, and it is the user's call:** whether the permission-less case is worth serving at all,
-given that the Tauri desktop build has its own notification path and the phone has FCM. The web tab
-is the case with no floor under it.
-
-TAB-1 (`tab1.mjs`) now asserts the mechanism that DOES exist - exactly one notification while hidden,
-none while in front, the tag naming the conversation - so this entry is about the gap the row cannot
-assert, not about a defect in what it covers.
-
 ### P2 - an offline deletion is remembered and never replayed, and DEL-10 fails on its own fix (measured 2026-08-26)
 
 **The memory half works; the trigger half does not.** DEL-10 was `FAIL` on `c6eb7b20` because the

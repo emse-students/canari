@@ -1500,6 +1500,41 @@ can attribute.
   GIF/sticker button also works via `commitContent` (see below). GIFs skip canvas compression in
   `useMessaging.handleFilesSelected` so their animation is preserved.
 
+### The tab is an unread signal, and it needs no permission (2026-08-31)
+
+**The web had exactly ONE out-of-page unread signal before this, and it is conditional.**
+`useMessaging` posts a browser `Notification` when the tab is hidden or unfocused;
+`sendSystemNotification` returns early unless `Notification.permission === 'granted'`, so the FIRST
+message that arrives while the tab is away is spent on the permission prompt rather than delivered.
+A user who declines once is then permanently without any signal: the in-app badge has to be looked
+at to be read, which for a backgrounded tab is not a signal at all.
+
+The title and the favicon ask nobody. `stores/tabIndicator.ts` renders `(3) <page title>` and swaps
+a red-dotted copy of the app icon in, unconditionally, from the same unread total the sidebar and
+the bottom bar show - `utils/unreadTotal.ts`, which is where that reduce lives now instead of in
+each of them.
+
+**IT IS THE ONE WRITER OF `document.title`, AND THAT IS THE POINT.** There were two candidates and
+they could not both be right: `SeoHead` renders the route's `<title>` reactively, and
+`useNotifications` blinked an incoming call's bell by SAVING the current title, overwriting it and
+restoring the saved copy. Any prefix present when a call arrived was captured into that save and
+reinstated after it; any applied during the call was erased by the restore. So the blink was moved
+behind `setTabRinging` and the title became a pure render of `(base, unread, bell)` - `formatTabTitle`
+in `utils/tabTitle.ts`, which returns a WHOLE title from an undecorated base and therefore cannot
+accumulate `(3) (3)` however often a reactive effect calls it.
+
+**The route's own title is OBSERVED, never passed in.** A `MutationObserver` on the `<title>`
+element adopts any change this module did not make as the new base, so a navigation, a locale
+switch, or a future title source is picked up without knowing the indicator exists. Writes made
+here are recognised by comparing with the last one written, which is only sound because the render
+is derived rather than edited.
+
+The favicon badge is a DOT, not a number: the count is already in the title where it is legible, and
+a sixteen-pixel glyph redrawn on every arriving message is a race between asynchronous draws for
+nothing. One draw, cached for the page's life, verified against the real asset in Chrome - the
+canvas is same-origin so `toDataURL` does not throw, and the badge centre reads exactly
+`rgb(239, 68, 68)`, the `bg-red-500` the in-app nav dot already uses.
+
 ### Android keyboard media (`commitContent`)
 
 The Android soft keyboard commits rich content (GIF/sticker/image) through the focused editor's
