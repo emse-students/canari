@@ -69,9 +69,9 @@ checksum = "4c7f02d4ea65f2c1853089ffd8d2787bdbc63de2f0d29dedbcf8ccdfa0ccd4cf"
 
 [[package]]
 name = "base64"
-version = "0.22.1"
+version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
+checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
 name = "base64ct"
@@ -725,7 +725,7 @@ dependencies = [
  "rand_core 0.9.5",
  "serde",
  "subtle",
- "tls_codec",
+ "tls_codec 0.4.2",
  "zeroize",
 ]
 
@@ -827,9 +827,9 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "js-sys"
-version = "0.3.100"
+version = "0.3.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2025f20d7a4fa7785846e7b63d10a76d3f1cee98ee5cb79ea59703f95e42162"
+checksum = "0e0c1080212aad755ea003d18543e8768dd432c48819efd73a7bf1e39b7a5a3a"
 dependencies = [
  "cfg-if",
  "futures-util",
@@ -997,7 +997,7 @@ dependencies = [
  "libcrux-sha3",
  "libcrux-traits",
  "rand 0.9.5",
- "tls_codec",
+ "tls_codec 0.4.2",
 ]
 
 [[package]]
@@ -1106,9 +1106,9 @@ dependencies = [
  "log",
  "openmls",
  "openmls_basic_credential",
- "openmls_memory_storage",
+ "openmls_memory_storage 0.6.0",
  "openmls_rust_crypto",
- "openmls_traits",
+ "openmls_traits 0.5.0",
  "rand 0.10.2",
  "serde",
  "serde_json",
@@ -1178,12 +1178,12 @@ dependencies = [
  "fluvio-wasm-timer",
  "getrandom 0.3.4",
  "log",
- "openmls_traits",
+ "openmls_traits 0.5.0",
  "rayon",
  "serde",
  "serde_bytes",
  "thiserror",
- "tls_codec",
+ "tls_codec 0.4.2",
  "zeroize",
 ]
 
@@ -1194,11 +1194,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "983e8be1457dd6f316f409292cec334af3b57b49a19deadc925c83c3c35e15b6"
 dependencies = [
  "ed25519-dalek",
- "openmls_traits",
+ "openmls_traits 0.5.0",
  "p256",
  "rand 0.8.8",
  "serde",
- "tls_codec",
+ "tls_codec 0.4.2",
 ]
 
 [[package]]
@@ -1208,7 +1208,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1a52c927ddb9940acb96d51aebd54b8b9c601c7119e6609622fb3f2cbe16abe3"
 dependencies = [
  "log",
- "openmls_traits",
+ "openmls_traits 0.5.0",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "openmls_memory_storage"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ce927945a16eaa19302ed5ccef052f01ba68f2ba7ae67e4ac4ff2fc661445364"
+dependencies = [
+ "log",
+ "openmls_traits 0.6.0",
  "serde",
  "serde_json",
  "thiserror",
@@ -1228,15 +1241,15 @@ dependencies = [
  "hpke-rs",
  "hpke-rs-crypto",
  "hpke-rs-rust-crypto",
- "openmls_memory_storage",
- "openmls_traits",
+ "openmls_memory_storage 0.5.0",
+ "openmls_traits 0.5.0",
  "p256",
  "rand 0.8.8",
  "rand_chacha 0.3.1",
  "serde",
  "sha2",
  "thiserror",
- "tls_codec",
+ "tls_codec 0.4.2",
 ]
 
 [[package]]
@@ -1246,7 +1259,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4f88ccdd53448dfdbfa5b8da8ba4e527c418fdb966418172bace2e3b41eedd56"
 dependencies = [
  "serde",
- "tls_codec",
+ "tls_codec 0.4.2",
+]
+
+[[package]]
+name = "openmls_traits"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac13edad8698eb1917cbc1dab99591fa1594d84320904fe3fc5121854f95831c"
+dependencies = [
+ "serde",
+ "tls_codec 0.5.0",
 ]
 
 [[package]]
@@ -1764,7 +1787,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0de2e01245e2bb89d6f05801c564fa27624dbd7b1846859876c7dad82e90bf6b"
 dependencies = [
  "serde",
- "tls_codec_derive",
+ "tls_codec_derive 0.4.2",
+ "zeroize",
+]
+
+[[package]]
+name = "tls_codec"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "18cc98286004cea38f717e2b03d990fc774fbfd38a82720de40e5c94365067c8"
+dependencies = [
+ "serde",
+ "serde_bytes",
+ "tls_codec_derive 0.5.0",
  "zeroize",
 ]
 
@@ -1773,6 +1808,17 @@ name = "tls_codec_derive"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2d2e76690929402faae40aebdda620a2c0e25dd6d3b9afe48867dfd95991f4bd"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "tls_codec_derive"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "674f41dd95f76cdeb005c83f9444e20cf43daebef37cde9e49a9ca6f4e87b423"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1850,9 +1896,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen"
-version = "0.2.123"
+version = "0.2.127"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a254a4b10c19a76f09a27640e7ffbf9bc30bf67e16a3bf28aaefa4920fe81563"
+checksum = "1b70935747edd64d89de3efa29d73789b806c15798f8e7dca4d8ac356b50ce70"
 dependencies = [
  "cfg-if",
  "once_cell",
@@ -1863,9 +1909,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-futures"
-version = "0.4.73"
+version = "0.4.77"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "54568702fabf5d4849ce2b90fadfa64168a097eaf4b351ce9df8b687a0086aaf"
+checksum = "6b7777d5cc23d0e91404e53ce2d5e8ec7acae3026b16233dba62cd3246457950"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
@@ -1873,9 +1919,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro"
-version = "0.2.123"
+version = "0.2.127"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24a40fc75b0ec6f3746ceb10d36f53a93dcd68a93b11b6445983945d79eba0dc"
+checksum = "77775f8f3f7217702089053b94958f8f54061a3f663417df76e19cbdcca29bc1"
 dependencies = [
  "quote",
  "wasm-bindgen-macro-support",
@@ -1883,9 +1929,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro-support"
-version = "0.2.123"
+version = "0.2.127"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "908f34bd9b9ce3d4caf07b72dfab63d61504d156856c6bd3cd87fa350cf3985b"
+checksum = "e11d33f857dc2fb11b8bc75aee111aa9cbeb12cd9f25efd3d4c2a3dd4e235284"
 dependencies = [
  "bumpalo",
  "proc-macro2",
@@ -1896,9 +1942,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-shared"
-version = "0.2.123"
+version = "0.2.127"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7acbf7616c27b194bbb550bf77ed0c2c3e5b7fd1260a93082b95fb7f47959b92"
+checksum = "7ef64dbcc55df09c7e5a46182d181c2cfa3e925f3da937ea764728b4bbb9dcbf"
 dependencies = [
  "unicode-ident",
 ]
@@ -1939,9 +1985,9 @@ dependencies = [
 
 [[package]]
 name = "web-sys"
-version = "0.3.100"
+version = "0.3.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e0871acf327f283dc6da28a1696cdc64fb355ba9f935d052021fa77f35cce69"
+checksum = "c435338968042f4f59a557f690a253676d47ce13ceb55d70100e7facf6620a30"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
@@ -2097,18 +2143,18 @@ dependencies = [
 
 [[package]]
 name = "zeroize"
-version = "1.8.2"
+version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b97154e67e32c85465826e8bcc1c59429aaaf107c1e4a9e53c8d8ccd5eff88d0"
+checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
 dependencies = [
  "zeroize_derive",
 ]
 
 [[package]]
 name = "zeroize_derive"
-version = "1.4.3"
+version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85a5b4158499876c763cb03bc4e49185d3cccbabb15b33c627f7884f43db852e"
+checksum = "3c50655cbb0fe3fc43170059e702f1ce5e19b84cec58dc87b037a09935c2f328"
 dependencies = [
  "proc-macro2",
  "quote",
