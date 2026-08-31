@@ -280,6 +280,32 @@ Dependabot's bun ecosystem works - it has been opening `/frontend` PRs on Canari
 only thing that breaks it is a lockfile version we control. Migrating would have traded a working
 tool for a GitHub App install on every repo, to fix a problem that a pinned bun already fixes.
 
+### A label in `dependabot.yml` is a REFERENCE, and the repo has to hold it (2026-08-31)
+
+Reported by the user from a bot comment on PR #253: *"The following labels could not be found:
+github-actions. Please create it before Dependabot can add it to a pull request."* Dependabot does
+not create a label it is told to apply - it opens the PR without it and comments the refusal.
+
+**Four were missing, not the one the comment named**, which is the whole reason to re-measure a
+predicate against its population rather than fix the instance in front of you. Canari held only
+`dependencies` and `rust`; `dependabot.yml` also names `github-actions`, `frontend`, `backend` and
+`docker`, one per ecosystem, and every one of those four ecosystems would have produced the same
+comment on its next PR. All four now exist (`gh label create`), and the four open PRs were labelled
+by hand; the two Dependabot opened afterwards carried their labels on their own, which is the
+measurement that the fix took.
+
+**What it cost while broken is nothing and everything**: no update was blocked, no PR was missed -
+but the labels are what `open-pull-requests-limit` groups are read through, so a repo with a hundred
+dependency PRs was sorting them by title. The check is one command:
+
+```bash
+gh label list --limit 100        # against every `labels:` block in .github/dependabot.yml
+```
+
+**A `dependabot.yml` naming anything the repo must already hold - a label, a reviewer, a milestone -
+is a reference that fails at USE time, in a bot comment nobody is paged for.** Add it to the repo in
+the same commit that adds it to the config.
+
 ### Where each repo stands
 
 | Repo | `.bun-version` | Why that number |
