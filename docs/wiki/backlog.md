@@ -512,29 +512,6 @@ no check waits on wall-clock time at all. It belongs with the rendering pass, no
 
 ## Messaging convergence
 
-### P3 - a reducer concludes "no membership left" from a row it never reads (residue of the 291 ms P1)
-
-`decideAbsentLocalGroupFate` (`groupLifecycle.ts`) reaches `forget` under the reason *"conversation row
-held with no membership left"* from two facts only: the `dm_groups` row is `active`, and it carries no
-distribution scope. **It never reads a membership.** The name of the branch states a fact the code does
-not have - the strongest form of the rule this repo already carries, that a column is only evidence for
-the question it was written to answer.
-
-**This is the residue, NOT the P1.** That defect - a group forgotten by `initializeConnection`'s sweep
-291 ms into its own creation, while `createNewGroup`'s swallowing `catch` reported success - was fixed
-architecturally on 2026-08-30 by registering the membership BEFORE the local MLS group exists, in both
-creation paths, so the window is gone rather than narrowed. Story in `CHANGELOG.md`, mechanism on
-[chat](frontend/modules/chat.md#a-group-must-be-nameable-by-the-server-before-it-is-holdable-here-or-every-sweep-is-a-hazard),
-rule (fourth site) in [durable-rules](durable-rules.md). **None of it is restated here.**
-
-**THE FIX THAT WOULD NOT WORK, RECORDED SO IT IS NOT TRIED AGAIN.** The milder sibling
-`decideAbsentGroupFate` already takes `isStillUserMember` and names this exact hazard; handing
-`decideAbsentLocalGroupFate` the same signal looks like the clean answer and is not. `getGroupUserMembers`
-reads `dm_group_members` - written by `registerMember` - so a reader racing that write gets an honest
-empty 200 and forgets the group with MORE confidence. A second read that races the same write is not a
-discriminator. **What closes it is making the destructive branch require the fact its name claims, or
-renaming the branch to what it actually knows.**
-
 ### P2 - a device holds a distribution group the group holds no row for it, and heals by rejoining (measured 2026-08-29)
 
 **Handed back by HEAL-NEW-15's branch on `038c7e8d`, deliberately unacted on because its blast radius

@@ -171,6 +171,12 @@ export interface AbsentLocalGroupInput {
  * be an unconditional first branch, which made a memory of what the group WAS stand in for whether
  * it still exists - two different questions with two different lifetimes. It is now consulted in
  * the one case where nothing better exists: `unknown`.
+ *
+ * WHAT THIS REDUCER KNOWS IS EXACTLY ITS INPUT, AND EVERY `reason` SAYS SO. Absence from
+ * `getUserGroups` is the CALLER's precondition - it is why this function was called at all, and it
+ * is not re-derivable from anything passed in - so a reason may cite it as a caller's fact and may
+ * cite nothing else it has not read. It notably knows NOTHING about `dm_group_members`, and one
+ * `reason` claimed otherwise for as long as it existed.
  */
 export function decideAbsentLocalGroupFate(input: AbsentLocalGroupInput): LocalGroupFate {
   switch (input.serverStatus.kind) {
@@ -199,15 +205,23 @@ export function decideAbsentLocalGroupFate(input: AbsentLocalGroupInput): LocalG
         // a sweep reading only the community field would destroy every one of them.
         return { action: 'keep', reason: 'key-distribution group, not a conversation' };
       }
-      // A live-or-tombstoned conversation row we hold no membership in: the exclusion or the
-      // deletion is real, and the local tree is what has to go. This is the behaviour the sweeps
-      // always had, now taken on a row that was read rather than on a list that never named it.
-      //
       // A ROW THAT NAMES NO SCOPE IS NOT A SEED CARRIER ANY MORE, whatever this session remembers.
       // Deleting a community clears the distribution columns of its group and tombstones the row,
       // so this is where the carrier of a community that is gone is finally collected - the state
       // that otherwise survives every sweep for ever because the local predicate outlives it.
-      return { action: 'forget', reason: 'conversation row held with no membership left' };
+      //
+      // THE REASON NAMES THE TWO FACTS THIS BRANCH HAS AND NOTHING ELSE. It read
+      // `'conversation row held with no membership left'` until 2026-08-31, and no membership is
+      // ever read here - the input carries a `dm_groups` row and a local predicate. The claim was
+      // wrong in a destructive branch's own log line, which is where a wrong claim costs the most:
+      // it is the sentence a reader reaches for when a group has been forgotten and nobody knows
+      // why, and it sent them to `dm_group_members`, which had nothing to say.
+      return input.serverStatus.kind === 'tombstone'
+        ? { action: 'forget', reason: 'dm_groups row tombstoned and naming no distribution scope' }
+        : {
+            action: 'forget',
+            reason: 'dm_groups row alive, naming no distribution scope, absent from our group list',
+          };
   }
 }
 

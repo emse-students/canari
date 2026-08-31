@@ -37,6 +37,18 @@ which is also where every release up to and including v0.13.1 now lives.
   action and merged at the next login by `consumeNativeReadWatermarks`, which recomputes
   `unreadCount` FROM the merged watermark rather than writing a count beside it.
 
+- **The branch that destroys a group's local MLS state now names the facts it actually read.** It
+  said `conversation row held with no membership left` and reduces no membership at all: its whole
+  input is a `dm_groups` row and one local predicate. That sentence is what a reader reaches for
+  after a group has been forgotten and nobody knows why - it is the reason string in
+  `[SYNC] WASM removed (...)` - and it sent them to `dm_group_members`, which had nothing to say
+  about the decision. It also collapsed two different server states into one line; they are now
+  `dm_groups row alive, naming no distribution scope, absent from our group list` and
+  `dm_groups row tombstoned and naming no distribution scope`. This is the last residue of the
+  291 ms defect of 2026-08-30, whose real fix was registering the membership before the local MLS
+  group exists; handing this reducer a membership signal is the fix that does NOT work, because
+  `getGroupUserMembers` races the very write that was missing and returns an honest empty 200.
+
 - **Search now folds accents, everywhere it folds case.** On a corpus that is French, "reunion"
   could not find the same word spelled with its accent: every matcher and the `<mark>` highlighter
   ran on a plain `String.toLowerCase()`, which folds case and not diacritics. The half-fix - folding

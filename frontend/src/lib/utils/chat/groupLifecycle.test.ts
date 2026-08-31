@@ -216,7 +216,7 @@ describe('decideAbsentLocalGroupFate', () => {
     ).toBe('forget');
   });
 
-  it('forgets a conversation row we hold no membership in - the behaviour the sweep always had', () => {
+  it('forgets a row that names no distribution scope - the behaviour the sweep always had', () => {
     for (const serverStatus of [
       { kind: 'active', meta: { groupId: 'g1' } } as GroupServerStatus,
       {
@@ -228,6 +228,28 @@ describe('decideAbsentLocalGroupFate', () => {
         decideAbsentLocalGroupFate({ isKnownDistributionGroup: false, serverStatus }).action
       ).toBe('forget');
     }
+  });
+
+  /**
+   * A DESTRUCTIVE BRANCH MAY NOT NAME A FACT IT NEVER READ. This one said
+   * `'conversation row held with no membership left'` and reduces no membership at all - its whole
+   * input is a `dm_groups` row and a local predicate. The sentence is what a reader reaches for
+   * after a group has been forgotten and nobody knows why, so a wrong one sends them to the wrong
+   * table. Pinned as a STRING because the string is the deliverable.
+   */
+  it('states only the facts it actually reduced, and never a membership', () => {
+    const reasons = (['active', 'tombstone'] as const).map(
+      (kind) =>
+        decideAbsentLocalGroupFate({
+          isKnownDistributionGroup: false,
+          serverStatus: { kind, meta: { groupId: 'g1', deletedAt: '2026-06-20T00:00:00Z' } },
+        }).reason
+    );
+    expect(reasons).toEqual([
+      'dm_groups row alive, naming no distribution scope, absent from our group list',
+      'dm_groups row tombstoned and naming no distribution scope',
+    ]);
+    for (const reason of reasons) expect(reason).not.toMatch(/member/i);
   });
 });
 

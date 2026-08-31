@@ -1284,9 +1284,17 @@ takes `isStillUserMember` and keeps a group on `true` or `null`, naming this ver
 stale for a group we just created/joined"*. But `getGroupUserMembers` reads `dm_group_members`, the
 table `registerMember` had not yet written, so inside the window it returns a genuine empty 200 and
 the reducer would have forgotten the group with more confidence, not less. **A second read that
-races the same write is not a discriminator.** The reducer's `forget` branch still names a fact it
-never checks - "conversation row held with no membership left", concluded from a row being `active`
-with no distribution scope - and that remains worth closing, but it was never what saved this group.
+races the same write is not a discriminator.**
+
+**The branch's own sentence was the last piece, and it was a rename, not a guard (2026-08-31).** It
+read "conversation row held with no membership left" while reducing no membership at all - its whole
+input is a `dm_groups` row and a local predicate. That is the sentence a reader reaches for after a
+group has been forgotten and nobody knows why, and it sent them to `dm_group_members`, which had
+nothing to say. It now states the two facts it has and separates the two server states it used to
+collapse: `dm_groups row alive, naming no distribution scope, absent from our group list` and
+`dm_groups row tombstoned and naming no distribution scope`. **Every log line quoted in this section
+predates that rename and is left verbatim** - it is evidence of what a run printed, not a claim about
+today's code.
 
 **Creation also stopped announcing success it cannot back.** The catch around the bulk add tolerates
 one device's failed Welcome on purpose; it was also swallowing the group's own disappearance, which

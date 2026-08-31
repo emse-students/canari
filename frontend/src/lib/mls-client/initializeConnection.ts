@@ -172,7 +172,9 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
   // MEASURED, NOT REASONED, on 2026-08-30 by HEAL-REVOKE-7. One clock, the creator's own console:
   // `create_group: 8868be1c` at 44.572, `add_members_bulk` at 44.830, then this very sweep at
   // 44.863 - `forget_group: 8868be1c, min_epoch=0`, logged as `[SYNC] WASM removed (conversation
-  // row held with no membership left)`. 31 ms later the creator could no longer find its own
+  // row held with no membership left)` - the reason string was renamed on 2026-08-31 to state
+  // what that branch actually reduces, so grep `groupLifecycle.ts`, not this quote. 31 ms later
+  // the creator could no longer find its own
   // group, and it answered `welcome_request` with `Group not found` for the next twenty minutes,
   // to two different devices. The group is alive on prod with its creator `active` and every other
   // device stuck `pending`, joinable by nobody.
