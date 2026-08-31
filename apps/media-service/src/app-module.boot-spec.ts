@@ -64,9 +64,9 @@ describe('the real AppModule boots', () => {
     // does not, for one reason: it declares no `typeorm` and holds no entity. That is a fact about
     // today's manifest, not a law, so it is ASSERTED rather than left as a comment - the day someone
     // gives media-service a database, this fails and names the test that has to come with it.
-    const manifest = JSON.parse(
-      readFileSync(join(__dirname, '..', 'package.json'), 'utf8'),
-    ) as { dependencies?: Record<string, string> };
+    const manifest = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf8')) as {
+      dependencies?: Record<string, string>;
+    };
 
     expect(manifest.dependencies?.typeorm).toBeUndefined();
   });

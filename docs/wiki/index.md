@@ -32,6 +32,7 @@
 - [core-service](services/core-service.md) — OIDC auth (Authentik), users, Stripe payments
 - [media-service](services/media-service.md) — Encrypted blob storage (Garage)
 - [social-service](services/social-service.md) — Posts, channels, associations, forms
+- [NestJS framework](services/nestjs-framework.md) — which major each of the four services runs, why they differ, and what an ESM-only framework did to jest
 - [Reporting and blocking](moderation-and-blocking.md) — the one report store, and what a block does and does not close
 
 ### Frontend

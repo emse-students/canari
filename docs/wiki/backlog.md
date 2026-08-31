@@ -2245,35 +2245,39 @@ title survives, the join keeps working) or a denormalised `formTitle` on the sub
 time. The first keeps one truth; the second survives a hard delete. Neither is obviously right,
 which is why this is written down rather than done.
 
-### P2 - NestJS 11 -> 12 across all four services, plus five dependency majors under it
+### P2 - NestJS 12 is HALF DONE, and the other half is one upstream package
 
-Available and deliberately not taken in the toolchain-alignment sweep of 2026-08-27, because a
-framework major across four DEPLOYED services is not a dependency bump. Measured with
-`bun outdated` in each service directory that day:
+**Taken 2026-08-31.** `media-service` and `core-service` run `@nestjs/common`, `@nestjs/core` and
+`@nestjs/platform-express` at **12**. `chat-delivery-service` and `social-service` are held at 11.
+The whole state, the ESM consequences and the mechanism that ends the hold are on
+[nestjs-framework](services/nestjs-framework.md), which is the only copy - do not re-derive it here.
 
-| Package | Current | Latest | Services affected |
-| --- | --- | --- | --- |
-| `@nestjs/common`, `@nestjs/core`, `@nestjs/platform-express`, `@nestjs/testing` | 11.2.3 | 12.0.1 | all four |
-| `@nestjs/typeorm` | 11.0.3 | 12.0.0 | chat-delivery, core, social |
-| `@nestjs/cli`, `@nestjs/schematics` | 11.0.24 / 11.1.0 | 12.0.0 | all four |
-| `@nestjs/config` | 4.0.4 | 12.0.0 | core, social |
-| `@nestjs/schedule` | 6.1.3 | 12.0.1 | social |
-| `@nestjs/axios` | 4.0.1 | 12.0.0 | social |
-| `@nestjs/microservices` | 11.2.3 | 12.0.1 | chat-delivery |
-| `ioredis` | 5.11.1 | 6.0.0 | chat-delivery, social |
-| `@types/uuid` | 10.0.0 | 11.0.0 | media |
+**WHAT IS OPEN IS NOT WORK IN THIS REPOSITORY.** `@nestjs/throttler` has published no release
+declaring NestJS 12; its latest, `6.5.0`, stops at `^11.0.0`. The two held services both rate-limit
+a route with it. With 12 installed, 307 of chat-delivery's 308 tests passed and the only failure was
+`framework-boot.spec.ts` reading throttler's own manifest.
 
-Note the three packages jumping from 4.x and 6.x straight to 12.0.0: `@nestjs/config`,
-`@nestjs/schedule` and `@nestjs/axios` have been renumbered onto the framework's own major, so
-those three diffs are version-scheme changes carrying an unknown amount of behaviour with them and
-must be read, not assumed.
+**It needs nothing done to it, and that is the point.** There is no `dependabot.yml` ignore and no
+ceiling entry: the pull requests raising the framework on those two services stay open and red, and
+the hourly sweep updates their branches once throttler moves, at which point the assertion goes
+green and they merge unattended. A hold expressed as an assertion about the resolved tree expires
+when its reason does; a hold expressed as an ignore outlives it.
 
-**What makes this a P2 rather than hygiene:** these four services hold the whole server side of the
-product, `ioredis` 6 is a client major on the path every message takes, and the suites that would
-catch a regression run under **node, never bun** - `admin-storage.controller.mls.spec.ts` fails
-under the bun runtime and is the reason `ci.yml` installs with bun and tests with node. Any attempt
-here re-runs all four suites under node (271 + 157 + 6 + 563 tests) and is proven on prod, not on a
-green build.
+**Four satellites moved anyway** - `@nestjs/config` 4 -> 12, `@nestjs/schedule` 6 -> 12,
+`@nestjs/axios` 4 -> 12, `@nestjs/typeorm` 11 -> 12. The renumbering onto the framework's major is a
+LABEL: every one of them declares `^11.0.0 || ^12.0.0` or wider, so reading the peer range rather
+than the version number is what let them merge with the framework major still blocked.
+
+**Still owed from the original table, and untouched by the above:** `ioredis` 5 -> 6 on
+chat-delivery and social - a client major on the path every message takes - and `@types/uuid`
+10 -> 11 on media. `@nestjs/microservices` is no longer on the list at all: it was an orphan on disk
+and in the lockfile, declared by nothing, and a clean install removed it along with `kafkajs`.
+
+**What made this a P2 and still governs any attempt here:** these four services hold the whole
+server side of the product, and the suites that would catch a regression run under **node, never
+bun** - `admin-storage.controller.mls.spec.ts` fails under the bun runtime and is the reason
+`ci.yml` installs with bun and tests with node. Any attempt re-runs all four suites under node
+(14 + 202 + 308 + 588 = 1112 tests) and is proven on prod, not on a green build.
 
 ### P3 - 108 navigations bypass `resolve()`, and an inherited disable is the only reason nobody sees them
 

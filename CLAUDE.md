@@ -221,8 +221,11 @@ state and the second sweep's eleven gaps. Its "NOT TO BE RELITIGATED" paragraphs
 session cannot "finish" the work by undoing a measurement.
 
 **What is left is JUDGEMENT, not migration** - MiGallery's lint warnings, the `resolve()` question
-three repos park differently, Tailwind class sorting on Portail-etu - plus one parked P2, **NestJS
-11 -> 12** across four deployed services ([backlog](docs/wiki/backlog.md#tooling)). Exactly ONE
+three repos park differently, Tailwind class sorting on Portail-etu. **NestJS 12 is HALF DONE and
+needs nothing done to it**: media and core run 12, chat-delivery and social are held at 11 by ONE
+upstream package that publishes no NestJS 12 support, and the hold is an ASSERTION on the resolved
+tree rather than an ignore, so it ends unattended - state, mechanism and the ESM consequences on
+[nestjs-framework](docs/wiki/services/nestjs-framework.md), the only copy. Exactly ONE
 Dependabot alert is open. The first question about any advisory is whether `cargo tree -i` reaches
 the crate at all, because `cargo audit` reads the LOCKFILE - which is how the last one was closed as
 UNREACHABLE rather than fixed.

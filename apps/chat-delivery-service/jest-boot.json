@@ -1,5 +1,5 @@
 {
-  "//": "GENERATED SHAPE, NOT A HAND-WRITTEN ONE. Every key below is this service's own `jest` block from package.json, with `rootDir` and `testRegex` overridden so the boot spec outside `src/` is the only file this config runs. Written that way because the first draft WAS hand-written and omitted `transformIgnorePatterns`, which three of the four services need for the ESM-only `uuid` - the boot died on a SyntaxError from a dependency rather than on anything about the application. Coverage keys are dropped: this config collects none.",
+  "//": "GENERATED SHAPE, NOT A HAND-WRITTEN ONE. Every key below is this service's own `jest` block from package.json, with `rootDir` and `testRegex` overridden so the boot spec outside `src/` is the only file this config runs. Written that way because the first draft WAS hand-written, omitted a key the suite needed, and the boot died on a dependency rather than on anything about the application. Coverage keys are dropped: this config collects none. THERE IS NO `transformIgnorePatterns` HERE ANY MORE, AND ITS ABSENCE IS THE POINT. Until NestJS 12 this config and the `jest` block both exempted `uuid` from `transformIgnorePatterns` so ts-jest would rewrite that ESM-only package into CommonJS, which was the only way jest could load it at all. NestJS 12 is itself ESM-only and no exemption scales to a framework, so every jest invocation in package.json now passes `--experimental-vm-modules` - the flag that makes `vm.SourceTextModule` exist and lets jest `require()` a real ES module. With that flag the exemption became WRONG rather than merely unnecessary: ts-jest emitted `exports.x = ...` into a file jest then evaluated as ESM, and `uuid` failed with `ReferenceError: exports is not defined`. See docs/wiki/services/nestjs-framework.md.",
   "moduleFileExtensions": [
     "js",
     "json",
@@ -10,8 +10,5 @@
   "testRegex": "\\.boot-spec\\.ts$",
   "transform": {
     "^.+\\.(t|j)s$": "ts-jest"
-  },
-  "transformIgnorePatterns": [
-    "node_modules/(?!(uuid)/)"
-  ]
+  }
 }

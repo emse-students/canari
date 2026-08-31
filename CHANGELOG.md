@@ -11,6 +11,21 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed
+
+- **NestJS 11 -> 12 on the two services that could take it, and a measured hold on the two that
+  could not.** `media-service` and `core-service` now run `@nestjs/common`, `@nestjs/core` and
+  `@nestjs/platform-express` at 12. `chat-delivery-service` and `social-service` are held at 11 by
+  exactly one thing: `@nestjs/throttler` has published no release declaring NestJS 12 support, and
+  both of them rate-limit a route. With 12 installed, 307 of chat-delivery's 308 tests passed and
+  the one failure was `framework-boot.spec.ts` reading throttler's own manifest - the test written
+  after the 2026-08-31 `platform-express` incident, doing exactly what it was written for. The hold
+  needs no reminder and no `dependabot.yml` ignore: the pull requests stay open and red, and go
+  green by themselves the day throttler ships. Four satellites moved anyway, because their peer
+  ranges accept an 11 core despite the renumbering: `@nestjs/config` 4 -> 12, `@nestjs/schedule`
+  6 -> 12, `@nestjs/axios` 4 -> 12, `@nestjs/typeorm` 11 -> 12. All 1112 tests green.
+  ([nestjs-framework](docs/wiki/services/nestjs-framework.md))
+
 ### Removed
 
 - **The Nest scaffold that read as end-to-end coverage and had never run.**
@@ -60,6 +75,21 @@ which is also where every release up to and including v0.13.1 now lives.
   format is read by other devices on other versions, and only an old binary can answer that half.
 
 ### Fixed
+
+- **Every jest suite in the four services would have died at import under NestJS 12, and the
+  workaround that hid `uuid` became the thing that broke it.** NestJS 12 is ESM-only - `"type":
+  "module"`, no CommonJS build - and while Node 24 and bun both `require()` it without complaint,
+  jest's own module registry only gains `require(esm)` when `vm.SourceTextModule` exists, which
+  needs `--experimental-vm-modules`. The flag is now on every jest invocation **in the command
+  rather than the environment**, because CI runs `node --run test`, which opens no shell and would
+  have silently ignored a `NODE_OPTIONS=` prefix. With the flag, the `transformIgnorePatterns`
+  exemption that let ts-jest rewrite the ESM-only `uuid` into CommonJS stopped being unnecessary and
+  started being wrong - jest evaluated the rewritten file as a module and it failed with
+  `ReferenceError: exports is not defined`. Removed from all four services.
+- **A peer-dependency violation now names its own remedy.** `framework-boot.spec.ts` listed
+  mismatches and left the reader to work out which side had to move; the only reader it ever gets is
+  somebody scrolling a red CI log on a Dependabot pull request, and a list with no instruction is
+  the queue nobody drains.
 
 - **Claiming a partnership code answered 500 for every user, on every card, since the feature
   shipped.** Migration 047 declared `partnership_codes."claimedByUserId"` as `uuid`. A user id in
