@@ -107,6 +107,20 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Changed
 
+- **The MLS client no longer accuses a device of losing a state it was never supposed to have.**
+  `WasmMlsClient::new` warned `device_key_b64 provided but no encrypted state - key ignored,
+  creating fresh state` whenever a device key arrived without a snapshot beside it. That pair means
+  a real loss on a device that has booted before, and is simply the shape of a first enrolment on
+  one that has not - and from inside the constructor the two are identical. So it fired on every
+  fresh client, three times in a single HEAL-REVOKE-5 run, and the cross-client harness carried a
+  needle in `FRESH_CLIENT_NARRATION` forgiving the line per row. The discriminator was never
+  missing, only unshared: `resolveDeviceId` either finds this device's id or mints one. It is now
+  carried down as a required `stateWasExpected` argument - required, so every off-thread client
+  (`mlsKeyPackage.worker`, `mlsCrypto.worker`, which takes it across the worker boundary rather
+  than inferring it from an absent snapshot) has to state which case it is in. The warning now
+  fires only where a state was genuinely expected, the harness needle is gone, and that line
+  appearing again is a finding rather than narration.
+
 - **The last sentence a server wrote for a user is now written in that user's language.**
   `APNS_FALLBACK_BODY` was the hard-coded French `'Nouveau message'` on every visible iOS message
   push - what an iPhone shows when the Notification Service Extension does not run or cannot

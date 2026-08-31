@@ -45,7 +45,7 @@ describe('loadAndInitWasm', () => {
 
   it('fetches wasm by URL, validates magic, inits module, returns WasmMlsClient', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(wasmMagicResponse());
-    const client = await loadAndInitWasm('user-1', 'dev-1', undefined, 'pin');
+    const client = await loadAndInitWasm('user-1', 'dev-1', undefined, 'pin', true);
     expect(fetch).toHaveBeenCalledWith(
       'https://cdn.test/mls.wasm',
       expect.objectContaining({ credentials: 'same-origin' })
@@ -57,7 +57,7 @@ describe('loadAndInitWasm', () => {
 
   it('throws when fetch is not ok', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 404 }));
-    await expect(loadAndInitWasm('u', 'd', undefined, 'p')).rejects.toThrow(
+    await expect(loadAndInitWasm('u', 'd', undefined, 'p', true)).rejects.toThrow(
       /Chargement WASM impossible/
     );
   });
@@ -66,7 +66,7 @@ describe('loadAndInitWasm', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response('<!doctype html>', { status: 200, headers: { 'Content-Type': 'text/html' } })
     );
-    await expect(loadAndInitWasm('u', 'd', undefined, 'p')).rejects.toThrow(/HTML/);
+    await expect(loadAndInitWasm('u', 'd', undefined, 'p', true)).rejects.toThrow(/HTML/);
   });
 
   it('throws when body is not wasm magic', async () => {
@@ -76,7 +76,9 @@ describe('loadAndInitWasm', () => {
         headers: { 'Content-Type': 'application/octet-stream' },
       })
     );
-    await expect(loadAndInitWasm('u', 'd', undefined, 'p')).rejects.toThrow(/signature incorrecte/);
+    await expect(loadAndInitWasm('u', 'd', undefined, 'p', true)).rejects.toThrow(
+      /signature incorrecte/
+    );
   });
 });
 

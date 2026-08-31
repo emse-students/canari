@@ -37,7 +37,8 @@ function asTransferBuffer(bytes: Uint8Array): ArrayBuffer {
 
 async function handleInit(msg: MlsCryptoInitRequest): Promise<void> {
   const initialState = new Uint8Array(msg.state);
-  client = await loadAndInitWasm(msg.userId, msg.deviceId, initialState, undefined);
+  // This session is opened FROM a snapshot the main thread just sent - `msg.state` is required.
+  client = await loadAndInitWasm(msg.userId, msg.deviceId, initialState, undefined, true);
   sessionGroupId = msg.groupId;
   workerScope.postMessage({ type: 'init:ok' });
 }

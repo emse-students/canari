@@ -129,7 +129,8 @@ export class WebMlsService extends BaseMlsService {
    * Returns whether the live client was actually replaced.
    */
   private async reloadClientFromState(state: Uint8Array, deviceKeyB64: string): Promise<boolean> {
-    const candidate = await loadAndInitWasm(this.userId, this.deviceId, state, deviceKeyB64);
+    // `state` is not optional here - a snapshot is what this method exists to reload.
+    const candidate = await loadAndInitWasm(this.userId, this.deviceId, state, deviceKeyB64, true);
     return this.swapClientMonotonic(candidate);
   }
 
@@ -167,7 +168,7 @@ export class WebMlsService extends BaseMlsService {
 
   /** Plain-CBOR (no PIN) variant of {@link reloadClientFromState} for worker catch-up. */
   private async reloadClientFromPlainState(state: Uint8Array): Promise<boolean> {
-    const candidate = await loadAndInitWasm(this.userId, this.deviceId, state, undefined);
+    const candidate = await loadAndInitWasm(this.userId, this.deviceId, state, undefined, true);
     return this.swapClientMonotonic(candidate);
   }
 
@@ -255,6 +256,7 @@ export class WebMlsService extends BaseMlsService {
           deviceKeyB64,
           needed,
           state: workerState?.buffer,
+          stateWasExpected: this.stateWasExpected,
         },
       };
       worker.postMessage(request, workerState ? [workerState.buffer] : []);
@@ -676,7 +678,13 @@ export class WebMlsService extends BaseMlsService {
 
   /** WASM decrypt + client init for a given device key/state; throws on wrong key (no fresh-start). */
   protected async loadStateWithKey(deviceKeyB64: string, state?: Uint8Array): Promise<void> {
-    this.client = await loadAndInitWasm(this.userId, this.deviceId, state, deviceKeyB64);
+    this.client = await loadAndInitWasm(
+      this.userId,
+      this.deviceId,
+      state,
+      deviceKeyB64,
+      this.stateWasExpected
+    );
   }
 
   /** WASM client wrapper - calls `this.client.create_group` to create a new local MLS group. */

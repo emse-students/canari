@@ -143,12 +143,22 @@ export async function migrateLegacyMlsStateBlob(
   }
 }
 
+/**
+ * Builds a WASM MLS client for `userId` / `deviceId`, over `state` when there is one.
+ *
+ * @param stateWasExpected Whether the caller believed this device already held a state. REQUIRED,
+ *   and required in this position on purpose: the WASM warns about a device key arriving with no
+ *   state beside it, which is a loss on a returning device and the ordinary shape of a first
+ *   enrolment. It cannot tell them apart, every caller can, and a parameter the compiler demands is
+ *   what stops the next call site from letting it default to whichever is convenient.
+ */
 export async function loadAndInitWasm(
   userId: string,
   deviceId: string,
   state: Uint8Array | undefined,
-  deviceKeyB64?: string
+  deviceKeyB64: string | undefined,
+  stateWasExpected: boolean
 ): Promise<any> {
   const initWasm = await loadMlsWasmModule();
-  return new initWasm.WasmMlsClient(userId, deviceId, state, deviceKeyB64);
+  return new initWasm.WasmMlsClient(userId, deviceId, state, deviceKeyB64, stateWasExpected);
 }

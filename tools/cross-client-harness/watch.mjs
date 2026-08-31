@@ -1722,12 +1722,14 @@ export const EVICTED_REJOIN_NARRATION = [
  * supposed to have state - which is why the list is opt-in and why a row names it rather than the
  * classifier claiming it for the whole campaign.
  *
- * THE `RUST::WARN` IS THE ONE TO ARGUE FOR. `lib.rs` warns when a device key arrives with no
- * encrypted state beside it, and on a device that has just been wiped to factory and re-enrolled
- * that is exactly the expected pair: the wipe took the state, the enrolment brought the key. The
- * warning is right everywhere else - a key with no state means something lost one - and the WASM
- * cannot tell the two apart because the discriminator lives at the CALL SITE. That is queued as a
- * product noise item; until it is carried down, the row names the line rather than demoting it.
+ * THE `RUST::WARN` IS GONE, AND THIS IS WHAT ITS ABSENCE MEANS. `lib.rs` used to warn whenever a
+ * device key arrived with no encrypted state beside it, which on a device just wiped to factory and
+ * re-enrolled is the expected pair - the wipe took the state, the enrolment brought the key - and a
+ * genuine loss anywhere else. The WASM could not tell the two apart, so this list forgave the line
+ * per row. Since 2026-08-31 the caller states which case it is (`stateWasExpected`), the warning
+ * fires only where a state was genuinely expected, and a needle for it here would match nothing.
+ * **If that line ever appears on a row in this list again, it is a FINDING** - it would mean a
+ * device whose id pre-existed the boot came up without its state.
  *
  * THE `[DOM]` LINE IS THE BROWSER'S, NOT THE APP'S. Chrome emits it at `verbose` against any form
  * carrying a password field, which the login and PIN screens do. Nothing in this repository can
@@ -1746,7 +1748,6 @@ export const FRESH_CLIENT_NARRATION = [
   /^\[A\] login returnTo=\S+ uri=\S+ flow=\S+$/,
   /^\[DOM\] Password forms should have \(optionally hidden\) username fields for accessibility/,
   /^Initialising MLS\.\.\.$/,
-  /^\[RUST::WARN\] device_key_b64 provided but no encrypted state - key ignored, creating fresh state$/,
   /^\[OUTBOX\] Flush deferred - tab leadership undecided; waiting for the election\.$/,
   /^\[OUTBOX\] Leadership decided as (?:leader|follower) after \d+ ms\.$/,
   /^\[PIPELINE\] Recovery attempt finished for [0-9a-f]{8}.$/,

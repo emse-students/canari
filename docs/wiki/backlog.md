@@ -593,26 +593,6 @@ Two smaller things found in the same file, neither fixed: `readCachedMessageIdsF
 Whether it should is a product question for the user, not a defect: the board row NOTIF-6b was
 written to ask it and had never been run either way.
 
-### P3 - the WASM warns about a missing MLS state on every device that is SUPPOSED not to have one (measured 2026-08-29)
-
-`mls-wasm/src/lib.rs` warns `device_key_b64 provided but no encrypted state - key ignored, creating
-fresh state` whenever a device key arrives with no blob beside it. Everywhere else that is worth a
-warning - a key with no state means something lost one. On a device that has just been wiped to
-factory and re-enrolled it is the expected pair, and it fired three times in one HEAL-REVOKE-5 run:
-the seed, the returning victim, and the reference.
-
-**The discriminator is KNOWN at the call site and is not carried down.** The TypeScript caller knows
-whether it is booting a fresh enrolment or reloading an existing device; the WASM does not, and
-learns it by finding nothing. That is the standing rule about never learning by failing what a fact
-could have told you, pointed at a log line rather than a request: the caller should say which case it
-is, and the warning should fire only where a state was genuinely expected.
-
-**Named per row in `FRESH_CLIENT_NARRATION` until then**, which is a disposition and not a fix: the
-line still fires, and every HEAL row that mints carries it. The blast radius is why it was not done
-inside a campaign row - it is Rust, a WASM regeneration and a frontend rebuild, and it leaves the
-subject of every row that would have found it.
-
-
 ### P2 - a device holds a distribution group the group holds no row for it, and heals by rejoining (measured 2026-08-29)
 
 **Handed back by HEAL-NEW-15's branch on `038c7e8d`, deliberately unacted on because its blast radius

@@ -29,6 +29,8 @@ plus the pointer here. Adding a rule there means asking first whether it belongs
 Everything that touches the device key, the PIN, `mls.bin` or an unlock path is on those two pages.
 `desync` = [mls-desync-prevention](protocols/mls-desync-prevention.md).
 
+- **A WARNING THAT CANNOT TELL ITS TWO CASES APART IS NOISE, AND THE FIX IS THE DISCRIMINATOR, NOT AN ENTRY IN AN ALLOWLIST.** `WasmMlsClient::new` warned on every device key arriving with no state beside it: a real loss on a returning device, the ordinary shape of a first enrolment on a new one, and one line for both. So it fired on every fresh client, and the campaign harness grew a needle in `FRESH_CLIENT_NARRATION` forgiving it per row - which is a DISPOSITION, not a fix, and it leaves the line firing where it would have meant something. The fact was already computed one layer up (`resolveDeviceId` finds this device's id or MINTS one) and simply not shared. Carry it (`stateWasExpected`), make it REQUIRED so every off-thread client has to state its case rather than inherit a default, and the line becomes a finding again. [mls-wasm](frontend/mls-wasm.md#statewasexpected-and-why-the-constructor-cannot-work-it-out)
+
 **The send ratchet, and what may replace the client under it**
 
 - **No state replacement may rewind this device's own send RATCHET, and an epoch cannot see that it did** - every such seam needs TWO guards, epoch-monotonic AND not-overtaken-by-a-local-send. [desync](protocols/mls-desync-prevention.md#8-client---no-state-replacement-may-rewind-this-devices-own-send-ratchet)

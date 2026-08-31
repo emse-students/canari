@@ -98,7 +98,7 @@ The primary TypeScript interface to the WASM module, used by `WebMlsService`:
 
 ```typescript
 class WasmMlsClient {
-  static async new(userId: string, deviceId: string, savedState: string | null, deviceKeyB64: string): Promise<WasmMlsClient>
+  static async new(userId: string, deviceId: string, savedState: string | null, deviceKeyB64: string, stateWasExpected: boolean): Promise<WasmMlsClient>
 
   // Key packages
   generateKeyPackage(deviceKeyB64: string): Promise<KeyPackageBundle>
@@ -120,6 +120,42 @@ class WasmMlsClient {
   getLocalGroups(): Promise<string[]>
 }
 ```
+
+### `stateWasExpected`, and why the constructor cannot work it out
+
+The constructor is handed a device key and, sometimes, an encrypted state. **A key with no state
+beside it has two completely different meanings and one shape.** On a device enrolling for the first
+time it is ordinary - there has never been a state to load. On a device that has booted before it
+means a snapshot went missing, which is worth waking someone for.
+
+`lib.rs` used to warn on both, because from inside the constructor they are indistinguishable. The
+result was a warning that fired on every fresh client, which the cross-client harness had to forgive
+per row in `FRESH_CLIENT_NARRATION` - a line nobody could act on, and one whose reader learns to skip
+it. That is the standing rule about never learning by failing what a fact could have told you,
+pointed at a log line rather than a request.
+
+**The fact was already computed one layer up.** `BaseMlsService.resolveDeviceId` either finds this
+device's id or mints one, and that IS the question:
+
+| Where the device id came from | `stateWasExpected` | Why |
+| --- | --- | --- |
+| `localStorage` | `true` | This device has booted before; a snapshot should be here. |
+| Native restore (Tauri) | `true` | The id belongs to a device that already enrolled and whose WebView stores were evicted. A state missing there was lost. |
+| Freshly minted | `false` | A first enrolment. There is nothing to have lost. |
+| After `rotateDeviceIdentity` | `false` | A new identity is a new device, and the load that follows deliberately passes no state. |
+
+A factory wipe (`wipeDeviceToFactory`) clears the native app data as well as `localStorage`, so it
+lands on the minted row rather than the native-restore one - a wiped device re-enrols silently, which
+is what it should do.
+
+The flag is **required** at `loadAndInitWasm`, not optional with a default. Every off-thread path
+that builds its own client - `mlsKeyPackage.worker`, `mlsCrypto.worker` - therefore has to state
+which case it is in, and `MlsKeyPackageRequest` carries it across the worker boundary rather than
+guessing from whether a snapshot was attached: the worker is sent a snapshot only when the live
+client has one, so absence there proves nothing.
+
+**If `device_key_b64 provided but no encrypted state` ever appears again, it is a finding.** It now
+means a device whose id pre-existed the boot came up without its state.
 
 ## IMlsService interface
 

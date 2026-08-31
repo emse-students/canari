@@ -1403,6 +1403,20 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /**
+   * Whether this device's id pre-existed this boot, and so whether an MLS state SHOULD be found
+   * beside it.
+   *
+   * Read by the WASM-backed implementation and handed to the client constructor, which otherwise
+   * cannot tell a first enrolment from a device that lost its snapshot - both reach it as a device
+   * key with no state. `false` is the safe default: it is what a service that has not resolved an
+   * id is entitled to claim, and it accuses nothing.
+   *
+   * Set by {@link resolveDeviceId} (found an id / minted one) and cleared by
+   * {@link rotateDeviceIdentity}, which mints a new identity deliberately.
+   */
+  protected stateWasExpected = false;
+
+  /**
    * Resolves (or generates and persists) this device's stable per-user id WITHOUT
    * touching the encrypted MLS state. Safe to call before {@link init}, so the PIN
    * can be verified against the real deviceId before any state decryption /
@@ -1418,8 +1432,16 @@ export abstract class BaseMlsService implements IMlsService {
     const stored = localStorage.getItem(deviceKey);
     let resolved = stored;
     if (!resolved) {
-      resolved = (await this.restoreDeviceIdFromNative(userId)) ?? this.generateDeviceId(userId);
+      const restored = await this.restoreDeviceIdFromNative(userId);
+      // A NATIVE RESTORE COUNTS AS PRE-EXISTING, which is the whole point of that path: it hands
+      // back the id of a device that was already enrolled and whose WebView stores were evicted
+      // from under it, so a state missing THERE is a state that was lost. A factory wipe does not
+      // reach this branch - it clears the native app data too, so the id below is minted instead.
+      this.stateWasExpected = restored !== null;
+      resolved = restored ?? this.generateDeviceId(userId);
       localStorage.setItem(deviceKey, resolved);
+    } else {
+      this.stateWasExpected = true;
     }
     this.deviceId = resolved;
     this.delivery.deviceId = resolved;
@@ -1463,6 +1485,9 @@ export abstract class BaseMlsService implements IMlsService {
     this.deviceId = this.generateDeviceId(this.userId);
     localStorage.setItem(`mls_device_id_${this.userId}`, this.deviceId);
     this.delivery.deviceId = this.deviceId;
+    // A brand new identity has never held a state, and the load below deliberately passes none.
+    // Left true, the abandonment of a device would report itself as a loss.
+    this.stateWasExpected = false;
     // The counters describe the ratchets of the device being abandoned, whose state is about to be
     // discarded for a fresh one starting at generation zero. Carried over, they would burn against
     // sends that, from the peers' side, this device has never made.

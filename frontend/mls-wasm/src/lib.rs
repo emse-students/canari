@@ -100,12 +100,19 @@ impl WasmMlsClient {
     /// When `device_key_b64` is provided with an encrypted state blob, the state is
     /// decrypted with the given key (ChaCha20-Poly1305 direct, no Argon2id). Otherwise,
     /// the state is loaded/created as plain CBOR.
+    ///
+    /// `state_was_expected` says whether the CALLER had reason to believe this device already held
+    /// a state - true when the device id pre-existed this boot, false when it was minted just now.
+    /// Nothing inside this constructor can derive it: a first enrolment and a device that lost its
+    /// snapshot arrive here as the same pair of arguments. Passing it down is what lets the warning
+    /// below accuse the second without crying over the first, which is why the parameter exists.
     #[wasm_bindgen(constructor)]
     pub fn new(
         user_id: &str,
         device_id: &str,
         state_bytes: Option<Vec<u8>>,
         device_key_b64: Option<String>,
+        state_was_expected: bool,
     ) -> Result<WasmMlsClient, JsValue> {
         // Redirect Rust panics to the browser console.
         console_error_panic_hook::set_once();
@@ -128,7 +135,7 @@ impl WasmMlsClient {
             MlsManager::load_with_key(user_id, device_id, Some(blob), &key)
                 .map_err(|e| JsValue::from_str(&e.to_string()))?
         } else {
-            if state_bytes.is_none() && device_key_b64.is_some() {
+            if state_bytes.is_none() && device_key_b64.is_some() && state_was_expected {
                 log::warn!(
                     "device_key_b64 provided but no encrypted state - key ignored, creating fresh state"
                 );

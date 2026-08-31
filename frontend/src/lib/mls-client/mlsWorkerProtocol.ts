@@ -82,6 +82,12 @@ export interface MlsKeyPackageRequest {
     deviceKeyB64: string;
     needed: number;
     state?: ArrayBuffer;
+    /**
+     * Carried from the main thread rather than inferred from `state` being absent: the worker is
+     * handed a snapshot only when the live client has one, so on its own it cannot tell a device
+     * that never had a state from one whose snapshot went missing. See `loadAndInitWasm`.
+     */
+    stateWasExpected: boolean;
   };
 }
 

@@ -32,11 +32,17 @@ workerScope.onmessage = async (event: MessageEvent<MlsKeyPackageRequest>) => {
   const msg = event.data;
   if (!msg || msg.type !== 'generateKeyPackage') return;
 
-  const { userId, deviceId, deviceKeyB64, needed, state } = msg.payload;
+  const { userId, deviceId, deviceKeyB64, needed, state, stateWasExpected } = msg.payload;
   try {
     console.log(`[MLS Worker] generateKeyPackage start needed=${needed}`);
     const initialState = state ? new Uint8Array(state) : undefined;
-    const client = await loadAndInitWasm(userId, deviceId, initialState, deviceKeyB64);
+    const client = await loadAndInitWasm(
+      userId,
+      deviceId,
+      initialState,
+      deviceKeyB64,
+      stateWasExpected
+    );
 
     const fallback = client.generate_key_package() as Uint8Array;
     const poolPackages: ArrayBuffer[] =
