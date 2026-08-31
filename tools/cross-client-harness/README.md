@@ -466,6 +466,11 @@ next one's symptom names the wrong cause.
   preflight reads the phone once and hands it down through `CANARI_A1_BUILD`, and a phase with no
   phone carries no stamp. **A row whose question is not skew needs the APK rebuilt and installed
   first**; a row that WANTS an old client against a new server arms itself by not rebuilding.
+- **When the preflight blames the phone, restart the SERVER before touching the device**: `adb
+  kill-server && adb start-server` clears the state that produces most of them. It also kills any
+  background `logcat`, so a run collecting logs has to start them again afterwards.
+- **`phone.notifications()` INFLATES every count it returns**, unfixed. Any row asserting on a
+  notification COUNT is asserting on that inflation; read the shade itself, or assert on presence.
 - **A phone `offline` in adb is a HUMAN action, and no `adb reconnect` clears it.** The screen has to
   be unlocked and the authorisation prompt accepted on the device itself.
 - A fresh install is a NEW PROCESS, so the old devtools forward is dead and `pin.mjs --device A1`

@@ -37,7 +37,9 @@ granted `serviceusage.services.enable` to do it. The account cannot enable APIs 
 **An empty metric set is not the same as a healthy one.** Play withholds a rate when too few users
 back it, and the API expresses both as zero rows. The report says so rather than printing a green
 zero. As of 2026-08-29 every rate is empty and only the error clusters carry data - this app has too
-few installs for a rate.
+few installs for a rate. **So re-reading the rates before late September 2026 answers nothing** -
+what would fill them is installs, not time, and nothing in this repository moves that number. The
+error clusters are worth reading whenever a release ships; the rates are not.
 
 **`anonRssAndSwapMemoryUsageMetricSet` and `bitmapMemoryUsageMetricSet` are the two measures Play
 ENFORCES from Feb 2027**, and both are readable here, at P50 through P99, with an `appState`

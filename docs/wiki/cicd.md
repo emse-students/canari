@@ -329,6 +329,15 @@ The `updated-dependencies` trailers are parsed **as blocks**, never as three ind
 lists: a grouped pull request carries several, and an update Dependabot could not classify has no
 `update-type`, so three lists pasted side by side would pair the wrong name with the wrong version.
 
+### The chain, proven end to end
+
+On 2026-08-31 a dependency update reached production with no human in it, which had never happened
+in this repository before. PR #289 merged at 13:48:44; CD run `33399025542` started four seconds
+later, event `workflow_dispatch`, on that merge commit; it completed `success` and prod answered
+afterwards. **That is the fact worth not re-deriving** - the three pieces (a ceiling that decides, a
+sweep that converges, a CD dispatch on the merge commit) compose, and a session finding one of them
+apparently idle should look for a refusal it printed rather than assume the chain is broken.
+
 ### Verifying a change to it
 
 Run the shipped script, unmodified, against real pull requests, with a `gh` shim on `PATH` that

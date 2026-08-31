@@ -1528,6 +1528,22 @@ difference, its user agent, is no longer read by anything. So a login on the iPh
 file where hardware we do not have is not owed a check of its own. What an iPhone would NOT prove is
 anything about iPad LAYOUT, which nothing here has ever measured.
 
+### Where the submission stands, and what each half is waiting on
+
+App Review rejected 0.14.4 (build 0.14.9) on 2026-08-30, on TWO guidelines. They are not the same
+kind of item, and answering one with the other's remedy wastes a submission.
+
+**2.1(a) - "the app redirected to an error page after tapping Sign in", on an iPad Air (M3).** CAUSE
+FOUND, FIXED, TESTED, NOT YET BUILT; the section above is the whole story. **What is owed is an iOS
+release build, then ONE login on the iPhone showing `uri=fr.emse.canari://callback`** - which settles
+the iPad as well, for the reason that section gives - and then the resubmission.
+
+**5 (Legal) - CallKit must not be active in an app available in China.** NOT a code item unless we
+choose to sell there. Removing China from the territories in App Store Connect closes it, followed by
+a reply in the review thread: a console click, not a change to this repository. The alternative -
+keeping China and disabling CallKit by storefront region - is a feature nobody has asked for, and
+building it to answer a rejection that a territory list answers would be the expensive way round.
+
 ## Reading live state out of a running WebView, over adb
 
 `android:dev`'s own HMR occasionally stops picking up file changes (observed twice in one session,

@@ -609,6 +609,24 @@ was established by running the command named. This list was rewritten twice in o
 described Sky from memory instead of from a measurement, and each rewrite paid for the same
 discovery again.
 
+### How each repository is REACHED, and what its box refuses
+
+Operational, not architectural, and each line was learnt by being caught by it.
+
+- **Portail-etu (`../refonte-portail-etu`) has NO SSH.** The self-hosted CD runner is the only way
+  in; `deploy.yml` carries a `workflow_dispatch` for it. **A dispatch can return 500 while STILL
+  creating the run** - check `gh run list` before re-dispatching, or two deploys race. The repository
+  is PUBLIC, so every run log must be redacted before it is quoted, and `grep -a` is mandatory
+  (the logs are served as binary and a plain `grep` silently reports "binary file matches"). Flush
+  logs with `pm2 flush`, never `rm` - pm2 keeps the descriptor open and an unlinked file grows
+  invisibly until the disk is full. **`data-export/` holds PII and is never committed.**
+- **le-cercle (`../le-cercle`, `gitlab.emse.fr:aurel.dautry/le-cercle`) is Aurel's repository**, but
+  our rewrite is merged (!5, !6) and we hold push rights. Reading its pipeline needs `glab`, **run
+  from INSIDE that tree** - it resolves the project from the git remote and answers about Canari
+  from anywhere else.
+- **Canari and Portail-etu are both PUBLIC.** Nothing secret may reach either, in code, in a
+  fixture, or in a pasted log.
+
 ### The measured state, 2026-08-27
 
 | Repo | `.bun-version` | Lockfile | oxlint/oxfmt | TS 7 | Gates, as measured |
