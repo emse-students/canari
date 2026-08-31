@@ -117,19 +117,14 @@ while IFS='|' read -r name type version; do
     # against a real Postgres, Redis and S3 endpoint. That is what a refusal is for - it names a
     # missing gate, and it leaves when the gate arrives. It released 22 of the 28 refusals measured
     # that morning.
-    typeorm)
-      # BARE `typeorm`, not `@nestjs/typeorm`: the wrapper is exercised by the boot, which resolves
-      # `forRootAsync`, builds every entity's metadata and synchronises a schema. The ORM ITSELF is
-      # not: no test in this repository issues a real query, because the unit suites mock every
-      # repository. A major that changes how a query is BUILT would pass all 1105 of them and fail
-      # in production. (Its migrations are not the gap - they are raw `.sql` files TypeORM never runs.)
-      #
-      # `major` OR unknown: a "update the requirement to permit the latest version" pull request
-      # carries NO update-type trailer at all - PR #297 is one.
-      if [ "$type" = "major" ] || [ -z "$type" ]; then
-        gate="a test that issues a REAL query. The boot job proves the schema builds; every unit suite mocks its repositories, so nothing here has ever watched this ORM return a row"
-      fi
-      ;;
+    #
+    # BARE `typeorm` WAS REFUSED HERE UNTIL 2026-08-31 TOO, and it left the same way. The boot job
+    # proved the schema BUILDS and stopped there; every unit suite mocks its repositories, so a major
+    # changing how a query is BUILT would have passed all 1105 of them and failed on the first
+    # request in production. `app-module.boot-spec.ts` now issues a real `find` through EVERY entity
+    # the app registered - every one, not a named list, because a gate that picks its subject by name
+    # does not cover the entity nobody added to it. Green on core, social and chat-delivery in CD run
+    # 33403833044; media-service carries a tripwire asserting it still has no ORM at all.
   esac
 
   if [ -n "$gate" ]; then

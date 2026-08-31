@@ -23,6 +23,17 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Added
 
+- **A third family off the auto-merge ceiling: bare `typeorm`.** The boot job proved the schema
+  BUILDS - `forRootAsync` resolves, every entity's metadata is constructed, `synchronize` runs - and
+  stopped there; every unit suite mocks its repositories, so no test in this repository had ever
+  watched the ORM return a row, and a major changing how a query is BUILT would have passed all 1105
+  of them and failed on the first production request. `app-module.boot-spec.ts` now issues a real
+  `find({ take: 1 })` through EVERY entity the app registered, chosen by metadata rather than by a
+  named list, because a gate that picks its subject by name does not cover the entity nobody added
+  to it. Green on core, social and chat-delivery in CD run `33403833044`; media-service, which has
+  no ORM, carries a tripwire that fails the day someone gives it one. The clause is out of
+  `dependabot-auto-merge.sh` - a refusal names a missing gate, and it leaves when the gate arrives.
+
 - **A real query, through every entity, in the boot job.** The boot test proved the schema BUILDS -
   `forRootAsync` resolves, metadata is constructed, `synchronize` runs - and stopped there: all 1105
   unit tests mock their repositories, so nothing in this repository had ever watched TypeORM return

@@ -272,14 +272,18 @@ retires it**:
 
 | Family | Why the suite is blind to it | The test that retires it |
 |---|---|---|
-| `openmls*`, `tls_codec*`, `hpke-rs*`, `libcrux*`, `chacha20poly1305`, `aes-gcm`, `argon2`, `ciborium` | nothing opens a group, or a keystore, written by the PREVIOUS version | a cross-version state test |
+| `openmls*`, `tls_codec*`, `hpke-rs*`, `libcrux*` | a WIRE format is read by other devices on other VERSIONS; `cross_version_state.rs` covers only today opening what v0.14.14 wrote | the FORWARD half - an old binary reading a frame minted by the new one |
+| `aes-gcm` | it opens a channel push sealed by ANOTHER member's device, so both directions are cross-version, and `src-tauri` freezes neither | a channel-push fixture |
 | `webrtc*`, `str0m`, `sdp`, `ice`, `turn`, `stun` | the SFU's ten tests never touch the ICE stack | one relay-path call (campaign rung 15 CALL) |
-| bare `typeorm`, major or unclassified | every unit suite mocks its repositories, so nothing watches the ORM return a row | a test that issues a REAL query |
 
-`@nestjs/*` was a fourth entry until 2026-08-31 and is gone, because the test it named now exists:
-`boot-nest-apps` constructs the real `AppModule` on all four services. **That is what a refusal is
-for** - it names a missing gate and it leaves when the gate arrives. Closing that one row moved the
-ceiling from 5 merge / 28 refuse to 26 merge / 6 refuse. The live list is in
+**Four families have already LEFT this table, which is what a refusal is for** - it names a missing
+gate, and it goes the day the gate arrives. `@nestjs/*` left because `boot-nest-apps` constructs the
+real `AppModule` on all four services, which alone moved the ceiling from 5 merge / 28 refuse to 26
+merge / 6 refuse. `chacha20poly1305`, `argon2` and `ciborium` left because `cross_version_state.rs`
+opens artefacts they sealed in v0.14.14, and for an AT-REST envelope - read only by the device that
+wrote it - that backward direction is the whole question. Bare `typeorm` left because
+`app-module.boot-spec.ts` now issues a real query through every entity the app registered. The live
+list is in
 [backlog](backlog.md#p1---the-three-refusals-the-auto-merge-ceiling-makes-and-the-test-that-retires-each).
 
 A refusal is **never** routed to a human queue. It is posted as a comment on the pull request naming
