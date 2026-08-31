@@ -41,6 +41,7 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 | a device with no push token now says so | after the next release, a tokenless device either acquires one or prints `[PUSH_UNAVAILABLE]` naming a cause; continued silence with a tokenless device still in `key_package` means a FIFTH cause, not a fixed one |
 | the notification quick reply's 403 | HARDWARE: check K steps 1-5 and **K2**, on A1 which already carries the build - **and the window must be ARMED, a run made without arming proves nothing** ([check K](device-verification.md#the-backgrounded-run-that-failed-and-the-defect-it-found)). The iOS twin is corrected identically and equally unproven |
 | the login button that took a press and showed nothing | the fix is a reordering, visible in the component's own state, so any cold `/login` press proves it. What is NOT explained is the 2026-08-28 measurement's "no request" over thirty seconds: a version check running its ladder would have issued three. Read the network tail of the next cold login before calling that measurement understood |
+| the last server-composed sentence now asks the device which language it reads | after the next release, `[PUSH_REGISTER]` prints `locale=fr` or `locale=en` rather than `unstated` for a device that has restarted once - every client re-registers on its next start because the skip predicate changed shape. The VISIBLE half needs an iPhone AND a failed NSE, which is why the log line is the measurement |
 | WP-REGRANT-2, a re-granted member's re-join | COMM-22, four grant/revoke cycles green - and COMM-8 reading `seedAfterTheGrant: true`, never `repaired`, which is a fallback and not a path |
 
 ---
@@ -430,24 +431,6 @@ community was alive.
 and reads back what the server fanned out - a different instrument from the COMM runners. `comm22.mjs`
 records `pastEpochFrames` verbatim on every run, so every future run says whether it is back, and the
 cheapest next step is to read those rows rather than to build the probe.
-
-### P2 - the server writes the only notification text a user may ever see, and it is French-only
-
-The frontend half of this shipped 2026-08-30 (`CHANGELOG.md`); what is left cannot be fixed the same
-way. `push-payload.ts:40` holds `APNS_FALLBACK_BODY = 'Nouveau message'`, the body of the push a
-device shows **before** it decrypts anything - and the one an English user is left with for good
-whenever the iOS NSE cannot decrypt. Nothing in `apps/` has Paraglide, and the server has no reason
-to: the defect is not a missing translation but a MISSING FACT. The server does not know the
-recipient's language.
-
-**Carry the discriminator from where it is already known** rather than picking a language on the
-server's behalf: the client knows its locale at the moment it registers a push token, so `push_token`
-is where it belongs - one column, written by the same call that writes the token, read by
-`buildApnsRequest`. That is a schema change plus a migration, which is why it is an entry and not a
-line: it is not the same size as the literals it finishes.
-
-Until then the fallback is French for everyone, and it is the ONLY string in this product a user can
-meet in a language they did not choose.
 
 ### P3 - a Welcome is repaired by kick + re-add, and nothing records which of the two causes it was
 

@@ -58,6 +58,22 @@ export class PushToken {
   @Column({ type: 'varchar', length: 255, nullable: true })
   voipToken: string | null;
 
+  /**
+   * The language this device reads, as the app knows it - not as a header or an IP suggests.
+   *
+   * It exists for exactly one sentence: `APNS_FALLBACK_BODY`, the alert an iPhone shows when the
+   * Notification Service Extension does not run or cannot decrypt. Every other sentence on this
+   * path is composed BY the device, which is why no other column like this exists and why this one
+   * must not grow readers - the server is the layer that cannot know who is reading, and a second
+   * server-composed sentence is a defect before it is a translation.
+   *
+   * Null means "not told", and reads as the base locale. Written by `POST /mls/push/register`,
+   * which the client re-issues on a language change because its skip predicate keys on the token
+   * AND the locale.
+   */
+  @Column({ type: 'varchar', length: 5, nullable: true })
+  locale: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

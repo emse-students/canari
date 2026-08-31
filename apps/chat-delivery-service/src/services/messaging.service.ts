@@ -32,6 +32,7 @@ import {
 import {
   buildPushDataFields,
   buildApnsRequest,
+  LONGEST_FALLBACK_LOCALE,
   buildInternalApnsRequest,
   inlineProtoBudget,
   measureDataFields,
@@ -507,8 +508,12 @@ export class MessagingService {
     // message (onMessageReceived fires foreground + background); iOS pushes are
     // relayed by FCM to APNs via the apns block (the .p8 APNs auth key is
     // configured in the Firebase console, so no direct APNs provider is needed).
-    const apnsRequest = buildApnsRequest(messageInput, dataFields);
-    const apnsBytes = measureApnsPayload(apnsRequest.payload);
+    // Sized on the longest fallback body, which is what `inlineProtoBudget` admitted the ciphertext
+    // against: the per-device substitution below can only make a payload SHORTER than this.
+    const sizingRequest = buildApnsRequest(messageInput, dataFields, LONGEST_FALLBACK_LOCALE);
+    const apnsBytes = measureApnsPayload(sizingRequest.payload);
+    // Neither depends on the language, so both are decided once for every device.
+    const { pushType: apnsPushType, priority: apnsPriority } = sizingRequest;
 
     // ONE BLOCK PER TOKEN, BECAUSE THE PLATFORM IS KNOWN HERE. Every message used to carry BOTH
     // the `data` map and an `apns` payload that `buildApnsRequest` spreads the same fields into -
@@ -525,10 +530,13 @@ export class MessagingService {
             ? {
                 token: pt.token,
                 apns: {
-                  payload: apnsRequest.payload,
+                  // Built HERE and not once above: the fallback body is the one sentence this
+                  // server still composes, and only the token says which language to compose it
+                  // in. Everything else in the payload is identical across devices.
+                  payload: buildApnsRequest(messageInput, dataFields, pt.locale).payload,
                   headers: {
-                    'apns-push-type': apnsRequest.pushType,
-                    'apns-priority': String(apnsRequest.priority),
+                    'apns-push-type': apnsPushType,
+                    'apns-priority': String(apnsPriority),
                   },
                 },
               }

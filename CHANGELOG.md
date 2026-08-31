@@ -107,6 +107,24 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Changed
 
+- **The last sentence a server wrote for a user is now written in that user's language.**
+  `APNS_FALLBACK_BODY` was the hard-coded French `'Nouveau message'` on every visible iOS message
+  push - what an iPhone shows when the Notification Service Extension does not run or cannot
+  decrypt. It could not follow the 2026-08-19 rework that moved composition to the device, because
+  in the state it is shown the device has composed nothing. So the language is carried instead:
+  `push_token.locale` (migration `020`), written by `POST /mls/push/register` from the app's own
+  `getLocale()`, read only by `buildApnsRequest`. A device that never told us reads as the base
+  locale, and so does a tag the table does not know - refusing a registration over a language would
+  cost that device every notification to spare it one word. **Two predicates had to move with it**:
+  the client skipped registration when the FCM token was unchanged, and `changeLocale` reloads the
+  document while `sessionStorage` survives a reload, so the one registration that records a language
+  change was exactly the one that would have been skipped (the skip key is `<token>|<locale>` now);
+  and the inline-ciphertext budget is computed ONCE for devices that may read different languages, so
+  it is sized on the longest body in the table, derived rather than typed. An APNs `loc-key` would
+  need no column and is a regression today - iOS shows the raw key when it does not resolve, and
+  builds between 2026-07-21 and 2026-08-15 have the extension but not the key table. Details on
+  [chat-delivery](docs/wiki/services/chat-delivery.md#the-one-sentence-this-server-still-composes-and-the-column-that-tells-it-the-language).
+
 - **The product no longer says "Stripe" anywhere a user can read it, and the payment contract no
   longer depends on Stripe to describe itself.** Stripe is not going to be the only processor
   (`PaymentProvider` already has a Lydia implementation and `GET /api/payments/provider` already

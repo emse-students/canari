@@ -7,6 +7,8 @@ import {
   inlineProtoBudget,
   measureDataFields,
   measureApnsPayload,
+  apnsFallbackBody,
+  LONGEST_FALLBACK_LOCALE,
   FCM_DATA_LIMIT,
   PushMessageInput,
 } from './push-payload';
@@ -160,6 +162,68 @@ describe('buildInternalApnsRequest', () => {
 
     const form = buildInternalApnsRequest('Sondage', '', { type: 'form_reminder' });
     expect((form.payload.aps as Record<string, unknown>)['thread-id']).toBe('canari_forms');
+  });
+});
+
+describe('the fallback body, the one sentence this server still composes', () => {
+  const bodyOf = (locale?: string | null) =>
+    (
+      (
+        buildApnsRequest(baseInput, buildPushDataFields(baseInput), locale).payload.aps as Record<
+          string,
+          unknown
+        >
+      ).alert as { body: string }
+    ).body;
+
+  it('writes the language the device told us', () => {
+    expect(bodyOf('fr')).toBe('Nouveau message');
+    expect(bodyOf('en')).toBe('New message');
+  });
+
+  it('reads a device that told us nothing as the base locale', () => {
+    // Every row registered before the column existed, and every client that has not learned to
+    // send it. Null is "not told", which is not the same fact as "told us something unknown" -
+    // both land on the base locale, and neither may throw.
+    expect(bodyOf(undefined)).toBe('Nouveau message');
+    expect(bodyOf(null)).toBe('Nouveau message');
+    expect(bodyOf('')).toBe('Nouveau message');
+  });
+
+  it('accepts a regional tag and a case this server did not write', () => {
+    // The column is bounded, not validated: refusing a registration over a language tag would cost
+    // the device every notification to spare it one word.
+    expect(apnsFallbackBody('fr-FR')).toBe('Nouveau message');
+    expect(apnsFallbackBody('EN')).toBe('New message');
+    expect(apnsFallbackBody('de')).toBe('Nouveau message');
+  });
+
+  it('names the longest language rather than assuming which one it is', () => {
+    // The budget below is sized on this. A literal here would be a copy of the table and would
+    // drift the first time a language is added.
+    expect(apnsFallbackBody(LONGEST_FALLBACK_LOCALE)).toBe('Nouveau message');
+  });
+});
+
+describe('the budget is one number for devices that read different languages', () => {
+  it('admits no ciphertext that a shorter-language payload would then exceed', () => {
+    // THE INVARIANT THE PER-DEVICE BODY COULD HAVE BROKEN. One budget is computed, one ciphertext
+    // is chosen from it, and the payload is then built per device: every language must therefore
+    // produce a payload no larger than the one the budget measured.
+    const budget = inlineProtoBudget(baseInput);
+    const filled = { ...baseInput, proto: 'A'.repeat(budget) };
+    const data = buildPushDataFields(filled);
+    for (const locale of ['fr', 'en', undefined, 'de']) {
+      expect(
+        measureApnsPayload(buildApnsRequest(filled, data, locale).payload)
+      ).toBeLessThanOrEqual(FCM_DATA_LIMIT);
+    }
+  });
+
+  it('does not depend on which device is asking', () => {
+    // `inlineProtoBudget` takes no locale on purpose: it is computed once per message, before any
+    // token is looked at.
+    expect(inlineProtoBudget(baseInput)).toBe(inlineProtoBudget({ ...baseInput }));
   });
 });
 

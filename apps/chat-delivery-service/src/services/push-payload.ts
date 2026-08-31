@@ -33,11 +33,55 @@ export interface PushMessageInput {
 export const APNS_PAYLOAD_LIMIT = 4096;
 
 /**
- * Generic notification text used before the client decrypts the real content.
- * The iOS NSE replaces this with the decrypted preview; if decryption fails the
- * user still sees who the message is from.
+ * Generic notification text used before the client decrypts the real content, per language.
+ *
+ * The iOS NSE replaces this with the decrypted preview; if decryption fails the user still sees who
+ * the message is from. **This is the one sentence in the product a server still composes**, and it
+ * is not a translation that was forgotten - it is the only sentence the device cannot write, because
+ * in the state it is shown the extension never ran. So the language is CARRIED here, from
+ * `push_token.locale`, rather than guessed: see the column's own doc for why nothing else may read
+ * it.
+ *
+ * An APNs `alert.loc-key` would look like the cleaner answer and is a REGRESSION today - iOS shows
+ * the raw key when it does not resolve, and builds older than 2026-08-15 have no key table. The
+ * dated entry is in `docs/wiki/legacy-compatibility.md`.
  */
-const APNS_FALLBACK_BODY = 'Nouveau message';
+const APNS_FALLBACK_BODY: Record<string, string> = {
+  fr: 'Nouveau message',
+  en: 'New message',
+};
+
+/** The language used when a device never told us one, matching the app's own base locale. */
+const BASE_LOCALE = 'fr';
+
+/**
+ * The fallback body for a device's language, or the base locale's when it told us nothing or
+ * something this server has no sentence for.
+ *
+ * @param locale - `push_token.locale`, which is null for every device registered before the column
+ *                 existed and for any client that does not send it.
+ */
+export function apnsFallbackBody(locale?: string | null): string {
+  const key = (locale ?? '').slice(0, 2).toLowerCase();
+  return APNS_FALLBACK_BODY[key] ?? APNS_FALLBACK_BODY[BASE_LOCALE];
+}
+
+/**
+ * The language whose fallback body is the LONGEST, in bytes of UTF-8.
+ *
+ * The inline-ciphertext budget is computed once and the payload it sizes is sent to every one of a
+ * user's devices, which may not read the same language. Sizing on the longest keeps the budget a
+ * single number that is right for all of them - and makes adding a language a change that can only
+ * ever make the budget tighter, never a payload APNs refuses after a per-device substitution has
+ * already made it bigger. Derived, never typed: a literal here is a copy of the table above, and it
+ * would drift the first time the table grows.
+ */
+export const LONGEST_FALLBACK_LOCALE = Object.keys(APNS_FALLBACK_BODY).reduce((longest, key) =>
+  Buffer.byteLength(APNS_FALLBACK_BODY[key], 'utf8') >
+  Buffer.byteLength(APNS_FALLBACK_BODY[longest], 'utf8')
+    ? key
+    : longest
+);
 
 /**
  * Builds the flat `Record<string, string>` data map shared by the FCM data
@@ -108,7 +152,11 @@ export function measureApnsPayload(payload: object): number {
 export function inlineProtoBudget(input: PushMessageInput): number {
   const empty: PushMessageInput = { ...input, proto: '' };
   const dataBytes = measureDataFields(buildPushDataFields(empty));
-  const apnsBytes = measureApnsPayload(buildApnsRequest(empty, buildPushDataFields(empty)).payload);
+  // Sized on the LONGEST fallback body rather than any one device's: the budget is computed once
+  // and the ciphertext it admits is sent to devices that may read different languages.
+  const apnsBytes = measureApnsPayload(
+    buildApnsRequest(empty, buildPushDataFields(empty), LONGEST_FALLBACK_LOCALE).payload
+  );
   // Both representations already carry the `proto` key with an empty value, so each byte of
   // ciphertext costs exactly one byte in each - the subtraction is exact, not an estimate.
   return FCM_DATA_LIMIT - Math.max(dataBytes, apnsBytes);
@@ -139,10 +187,13 @@ export interface ApnsRequest {
  * @param input       Transport-agnostic message description.
  * @param dataFields  Output of {@link buildPushDataFields}, embedded as custom
  *                    top-level keys alongside `aps` for the client to read.
+ * @param locale      The receiving device's language (`push_token.locale`), which decides the
+ *                    fallback body and nothing else. Null for a device that never told us.
  */
 export function buildApnsRequest(
   input: PushMessageInput,
-  dataFields: Record<string, string>
+  dataFields: Record<string, string>,
+  locale?: string | null
 ): ApnsRequest {
   if (input.silent) {
     return {
@@ -161,7 +212,7 @@ export function buildApnsRequest(
     payload: {
       aps: {
         'mutable-content': 1,
-        alert: { title, body: APNS_FALLBACK_BODY },
+        alert: { title, body: apnsFallbackBody(locale) },
         sound: 'default',
         // Groups a conversation's notifications together in the iOS notification centre.
         'thread-id': input.groupId,
@@ -192,11 +243,13 @@ export function buildApnsRequest(
  * @param title  Fallback alert title (channel or asso name).
  * @param body   Fallback alert body; a generic string is used when empty.
  * @param data   Flat string data map sent to the client (already includes type, ids, ...).
+ * @param locale The receiving device's language, used only when `body` is empty.
  */
 export function buildInternalApnsRequest(
   title: string,
   body: string,
-  data: Record<string, string>
+  data: Record<string, string>,
+  locale?: string | null
 ): ApnsRequest {
   const isSilent = data.type === 'channel_read' || data.silent === 'true';
   if (isSilent) {
@@ -226,7 +279,7 @@ export function buildInternalApnsRequest(
     payload: {
       aps: {
         'mutable-content': 1,
-        alert: { title: title || 'Canari', body: body || APNS_FALLBACK_BODY },
+        alert: { title: title || 'Canari', body: body || apnsFallbackBody(locale) },
         sound: 'default',
         'thread-id': threadId,
       },

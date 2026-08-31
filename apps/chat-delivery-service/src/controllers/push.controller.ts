@@ -162,7 +162,14 @@ export class PushController {
   @UseGuards(ThrottlerGuard, HeaderAuthGuard)
   @Post('mls/push/register')
   async registerPushToken(
-    @Body() body: { token: string; deviceId: string; platform?: string; voipToken?: string },
+    @Body()
+    body: {
+      token: string;
+      deviceId: string;
+      platform?: string;
+      voipToken?: string;
+      locale?: string;
+    },
     @Headers('x-user-id') userIdRaw: string
   ) {
     const userId = sanitizeQueryValue(userIdRaw, 'userId');
@@ -180,6 +187,17 @@ export class PushController {
         ? body.voipToken.trim().slice(0, 255)
         : undefined;
 
+    // The language this device reads, for the ONE sentence this server still composes
+    // (`APNS_FALLBACK_BODY`). Stored raw and bounded rather than validated against a list: a value
+    // no fallback table knows falls back to the base locale at read time, and refusing a
+    // registration over it would cost the device every notification to spare it one word.
+    // Undefined - not null - when absent, so the upsert leaves an existing value alone rather than
+    // erasing it with a client that has not learned to send this yet.
+    const locale =
+      typeof body.locale === 'string' && body.locale.trim()
+        ? body.locale.trim().slice(0, 5)
+        : undefined;
+
     // Generate a per-device push secret, hash it for storage so a plaintext DB
     // leak doesn't expose usable push secrets directly.
     const rawSecret = crypto.randomUUID().replace(/-/g, '');
@@ -189,10 +207,21 @@ export class PushController {
     // (e.g. app restart) both find no row then both try to INSERT, with the
     // second hitting the unique(userId, deviceId) constraint.
     await this.pushTokenRepo.upsert(
-      { userId, deviceId, token, platform, pushSecret, ...(voipToken ? { voipToken } : {}) },
+      {
+        userId,
+        deviceId,
+        token,
+        platform,
+        pushSecret,
+        ...(voipToken ? { voipToken } : {}),
+        ...(locale ? { locale } : {}),
+      },
       { conflictPaths: ['userId', 'deviceId'] }
     );
-    this.logger.log(`[PUSH_REGISTER] user=${userId} device=${deviceId} platform=${platform}`);
+    this.logger.log(
+      `[PUSH_REGISTER] user=${userId} device=${deviceId} platform=${platform} ` +
+        `locale=${locale ?? 'unstated'}`
+    );
     // rawSecret returned ONCE - the client must persist it.
     return { status: 'registered', pushSecret: rawSecret };
   }

@@ -23,6 +23,7 @@ import { currentUserId } from '$lib/stores/user';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
+import { getLocale } from '$lib/i18n';
 
 /** Push gateway platform tag sent to the backend (mirrors the server's PushPlatform). */
 type PushPlatform = 'android' | 'ios';
@@ -58,6 +59,13 @@ async function noTokenReason(): Promise<string> {
   }
 }
 
+/**
+ * What was last REGISTERED, as `<fcm token>|<locale>` - not the token alone.
+ *
+ * The value is a skip key, never a token to read: it answers "is a fresh registration owed", and
+ * the answer stopped depending on the token alone when the language joined what registration
+ * carries.
+ */
 const FCM_TOKEN_STORAGE_KEY = 'canari_fcm_token';
 const BACKGROUND_RETRY_ATTEMPTS = 6;
 const BACKGROUND_RETRY_DELAY_MS = 5000;
@@ -108,16 +116,21 @@ export async function registerPushToken(
     return { ok: false, reason: 'no-token' };
   }
 
-  // Skip backend registration when the token has not changed.
+  // SKIP ONLY WHEN NOTHING THE REGISTRATION CARRIES HAS CHANGED, which stopped being the token
+  // alone the day the locale joined it. `changeLocale` reloads the document, and sessionStorage
+  // survives a reload, so a predicate testing the token would have skipped the one registration
+  // that exists to record a language change - leaving the server writing the fallback body in the
+  // language the user had just left, for as long as the FCM token lived.
+  const identity = `${token}|${getLocale()}`;
   const stored = sessionStorage.getItem(FCM_TOKEN_STORAGE_KEY);
-  if (stored === token) {
-    console.info('[Push] Token unchanged, skip backend registration');
+  if (stored === identity) {
+    console.info('[Push] Token and locale unchanged, skip backend registration');
     return { ok: true };
   }
 
   try {
     await registerFn(token);
-    sessionStorage.setItem(FCM_TOKEN_STORAGE_KEY, token);
+    sessionStorage.setItem(FCM_TOKEN_STORAGE_KEY, identity);
     console.info('[Push] FCM token registered successfully');
     return { ok: true };
   } catch (err) {
@@ -186,6 +199,9 @@ export async function startPushService(
           token: pushToken,
           deviceId,
           platform,
+          // The one thing the server cannot know and must not guess: `APNS_FALLBACK_BODY` is the
+          // single sentence it still composes, shown when the iOS extension cannot run.
+          locale: getLocale(),
           ...(voipToken ? { voipToken } : {}),
         }),
       });
@@ -355,8 +371,10 @@ export async function stopPushService(
     return;
   }
 
-  const cachedToken = sessionStorage.getItem(FCM_TOKEN_STORAGE_KEY);
-  if (!cachedToken) {
+  // Presence only - the value is a token AND a locale since the language joined the registration,
+  // and this path never reads the token itself (the unregister route takes the deviceId).
+  const registered = sessionStorage.getItem(FCM_TOKEN_STORAGE_KEY);
+  if (!registered) {
     console.info('[Push] stopPushService noop (no registered token)');
     return;
   }

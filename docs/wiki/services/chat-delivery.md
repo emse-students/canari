@@ -752,6 +752,47 @@ A size refusal now logs `[PUSH_SIZE]` naming what was actually sent, both repres
 largest single field: FCM's own error names no quantity at all, which is why ten identical refusals
 said only "too large".
 
+#### The one sentence this server still composes, and the column that tells it the language
+
+Every other sentence on the push path is written BY the device: `push-content.ts` sends
+`contentKey` + `actorName` + `contentArg` and the native tables build the wording, precisely because
+the server cannot know who is reading. **One sentence cannot follow that rule** - `APNS_FALLBACK_BODY`,
+the `alert.body` of a visible MLS message push. It is what an iPhone shows when the Notification
+Service Extension does not run or cannot decrypt, and in that state the device has composed nothing.
+It was `'Nouveau message'`, hard-coded, for every user in every language.
+
+**So the language is CARRIED to the decision rather than guessed at it.** `push_token.locale`
+(migration `020`) is written by `POST /mls/push/register` from `getLocale()`, the app's own choice -
+the same fact `push_context.json` already mirrors natively for the NSE. `buildApnsRequest` takes it
+and picks from a two-entry table; null reads as the base locale, and so does a tag the table does not
+know, because refusing a registration over a language would cost the device every notification to
+spare it one word.
+
+**Two things this cost, and neither was visible from the column alone.**
+
+- **The client's skip predicate had to be re-visited.** `registerPushToken` skipped the POST when the
+  FCM token was unchanged - and `changeLocale` reloads the document while `sessionStorage` survives a
+  reload, so the one registration that exists to record a language change is exactly the one that
+  would have been skipped. The stored value is now `<token>|<locale>`: a skip key, not a token, and
+  `stopPushService` reads it for presence only. Adding a second discriminator means re-visiting every
+  predicate that tested the first.
+- **The inline-ciphertext budget is one number for devices that may read different languages.** It is
+  computed once per message, the ciphertext it admits is chosen once, and only then is the payload
+  built per device - so a per-device body must never be able to make a payload larger than the one
+  the budget measured. `inlineProtoBudget` sizes on `LONGEST_FALLBACK_LOCALE`, derived from the table
+  rather than typed, so adding a language can only ever make the budget tighter. `push-payload.spec.ts`
+  pins it by filling a payload to the budget and asserting every language still fits; sizing on the
+  short language instead fails three of its tests.
+
+**Why not an APNs `loc-key`, which looks cleaner.** It would need no column at all: iOS resolves it
+against the app's own `Localizable.strings`, in the device's language. It is a REGRESSION today. iOS
+shows the RAW KEY when a `loc-key` does not resolve - it does not fall back to `body`, so sending
+both does not help - and `notif.message.encrypted` entered `canari_iOS/*.lproj` only on 2026-08-15
+(`e3593d4e`) while the NSE has existed since 2026-07-21. A build from that window would show the
+literal text `notif.message.encrypted` on precisely the path this is meant to fix. It also reads the
+DEVICE's language, where everything else here reads the in-app Canari locale.
+
+
 FCM applies the `android` block to Android tokens and **relays the `apns` block to Apple's
 APNs** for iOS tokens, using the APNs `.p8` auth key uploaded in the Firebase console
 (Project Settings → Cloud Messaging → APNs Authentication Key). Visible iOS pushes carry
