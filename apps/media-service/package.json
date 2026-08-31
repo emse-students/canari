@@ -4,7 +4,8 @@
   "scripts": {
     "start": "ts-node src/main.ts",
     "start:dev": "nest start --watch",
-    "test": "jest --passWithNoTests",
+    "test": "node --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js --passWithNoTests",
+    "test:boot": "node --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js --config ./jest-boot.json --runInBand",
     "lint": "oxlint -c ../../.oxlintrc.nest.json .",
     "lint:fix": "oxlint -c ../../.oxlintrc.nest.json --fix .",
     "format": "oxfmt -c ../../oxfmt.json --write \"src/**/*.ts\"",
@@ -12,9 +13,9 @@
     "build": "nest build"
   },
   "dependencies": {
-    "@nestjs/common": "^11.2.3",
-    "@nestjs/core": "^11.2.3",
-    "@nestjs/platform-express": "^11.2.3",
+    "@nestjs/common": "^12.0.1",
+    "@nestjs/core": "^12.0.1",
+    "@nestjs/platform-express": "^12.0.1",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
     "fs-extra": "^11.4.0",
@@ -25,13 +26,12 @@
     "uuid": "^14.0.2"
   },
   "devDependencies": {
-    "@nestjs/cli": "^11.0.24",
+    "@nestjs/cli": "^12.0.0",
     "@types/express": "^5.0.6",
     "@types/fs-extra": "^11.0.4",
     "@types/jest": "^30.0.0",
     "@types/node": "^26.4.0",
-    "@types/uuid": "^10.0.0",
-    "jest": "^30.4.2",
+    "jest": "^30.5.0",
     "oxfmt": "^0.65.0",
     "oxlint": "^1.80.0",
     "oxlint-tsgolint": "^7.0.2001",
@@ -59,9 +59,6 @@
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
     },
-    "transformIgnorePatterns": [
-      "node_modules/(?!(uuid)/)"
-    ],
     "collectCoverageFrom": [
       "**/*.(t|j)s"
     ],

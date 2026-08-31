@@ -250,6 +250,124 @@ one composite action with one pinned toolchain
 ([mls-wasm](frontend/mls-wasm.md#why-it-is-not-committed)). A build step duplicated per pipeline is
 the same defect wearing a different hat - two toolchains put two cryptos back in the fleet.
 
+## Dependency updates, and the auto-merge that ships them
+
+Dependabot opens the pull requests (`.github/dependabot.yml`); `dependabot-auto-merge.yml` decides
+which of them merge, and `.github/scripts/dependabot-auto-merge.sh` is the decision itself. The
+script is the ONE implementation - the workflow calls it from two triggers and adds nothing.
+
+### What it refuses, and why it is not a semver rule
+
+**A ceiling on an automatic merge is a statement about your tests, never about the version number.**
+The first ceiling written here refused every major and every `0.x` minor, and the measurement that
+condemned it is that 33 pull requests were open and it refused 28 - a queue nobody drains is worse
+than the merge it prevented (user, 2026-08-31: *"Je prefere blinder de test et faire les choses
+automatiquement qu'avoir une review humaine qui n'arrive jamais"*).
+
+`base64` 0.22 -> 0.23 and `axum` 0.7 -> 0.8 break by **not compiling**, which is exactly what the
+suite sees. What a suite cannot see has no relation to semver: a dependency that **writes a format
+something else must still read** changes behaviour while compiling perfectly. So the ceiling is a
+list of dependencies whose failure mode is unobservable here, and **every entry names the test that
+retires it**:
+
+| Family | Why the suite is blind to it | The test that retires it |
+|---|---|---|
+| `openmls*`, `tls_codec*`, `hpke-rs*`, `libcrux*` | a WIRE format is read by other devices on other VERSIONS; `cross_version_state.rs` covers only today opening what v0.14.14 wrote | the FORWARD half - an old binary reading a frame minted by the new one |
+| `aes-gcm` | it opens a channel push sealed by ANOTHER member's device, so both directions are cross-version, and `src-tauri` freezes neither | a channel-push fixture |
+| `webrtc*`, `str0m`, `sdp`, `ice`, `turn`, `stun` | the SFU's ten tests never touch the ICE stack | one relay-path call (campaign rung 15 CALL) |
+
+**Four families have already LEFT this table, which is what a refusal is for** - it names a missing
+gate, and it goes the day the gate arrives. `@nestjs/*` left because `boot-nest-apps` constructs the
+real `AppModule` on all four services, which alone moved the ceiling from 5 merge / 28 refuse to 26
+merge / 6 refuse. `chacha20poly1305`, `argon2` and `ciborium` left because `cross_version_state.rs`
+opens artefacts they sealed in v0.14.14, and for an AT-REST envelope - read only by the device that
+wrote it - that backward direction is the whole question. Bare `typeorm` left because
+`app-module.boot-spec.ts` now issues a real query through every entity the app registered. The live
+list is in
+[backlog](backlog.md#p1---the-three-refusals-the-auto-merge-ceiling-makes-and-the-test-that-retires-each).
+
+A refusal is **never** routed to a human queue. It is posted as a comment on the pull request naming
+the missing test, once, behind the marker `<!-- canari-auto-merge-ceiling -->`.
+
+### Why there are three triggers, and why the clock is the weakest of them
+
+- **`workflow_run` on a Dependabot pull request's own CI** - the fast path, seconds after that one
+  pull request goes green. Narrow by construction: it names a branch.
+- **`workflow_run` on `CD - Deploy to Production`** - the convergent path. CD is what runs on every
+  push to `main`, so its completion is the closest thing this repository has to "somebody did
+  something", and it is answered with a FULL SWEEP of every open Dependabot pull request.
+- **`schedule` (hourly) and `workflow_dispatch`** - also full sweeps, and the schedule is a bonus
+  rather than the mechanism.
+
+The convergent path is the one that matters: an event-only automation cannot touch a pull request
+that was already green when it was installed, and on 2026-08-31 seven mergeable ones sat exactly
+there.
+
+**THE SCHEDULE WAS THAT PATH FOR ABOUT THREE HOURS, AND A MEASUREMENT TOOK THE JOB AWAY FROM IT.**
+The cron `17 * * * *` landed on `main` at 14:32 UTC on 2026-08-31 and had produced **zero** runs by
+17:00 - two slots missed - with the repository neither a fork nor archived and the workflow
+`active`. It is not a registration delay peculiar to a new cron either: `code-analysis.yml` asks for
+`0 2 * * *` and actually ran at 03:01, 03:09, 08:05, 08:24, 08:47, 12:37 and **14:10** UTC on seven
+consecutive days. Scheduled delivery on a public repository is best-effort, and **GitHub does not
+queue the slots an hourly cron misses - it drops them.**
+
+That falsifies the comfortable justification the sweep was written with. A clock is acceptable when
+a wrong clock costs only latency; this clock's failure mode is NOT RUNNING AT ALL, which is the
+difference between a slow queue and a queue nobody drains. So the convergent trigger is now an event
+that happens whenever anybody works - a push to `main` - and the cron is kept for the case where
+nothing is pushed for days, at the reliability GitHub actually offers.
+
+### Why a green pull request is not enough
+
+A check-run's conclusion is evidence about the workflow that PRODUCED it. PR #272 bumps
+`@nestjs/platform-express` 11 -> 12 in media-service alone - the split that started all of this -
+and was `CLEAN` with every check green: its suite has no `Boot the real AppModule` run at all,
+because that job was written after its CI last ran. **An absent check and an inapplicable one look
+identical**, so "nothing failed" is not a merge condition.
+
+The script therefore refuses any head not built on current `main` and marks it `STALE`; the workflow
+updates at most **three** such branches per pass, which re-runs their CI under today's definitions.
+The cap is a budget, not a correctness argument: every merge makes every other branch stale at once,
+so an uncapped sweep would launch one full CI run per open pull request. Three an hour drains a
+thirty-deep queue in a day, unattended.
+
+A consequence worth knowing rather than fighting: because a merge staleness-invalidates everything
+else, roughly one pull request merges per pass. That is the correct behaviour - each one is tested
+against the exact `main` it lands on.
+
+A sweep may merge several pull requests that were only ever tested apart. That is safe here for one
+reason and it is worth not breaking: **`deploy-to-server` needs `run-ci`**, so a combination that
+breaks fails CI on `main` and the deploy is skipped. `main` can go red; production cannot follow it.
+One dispatch is sent for the whole pass, not one per merge.
+
+### Two traps, both found by testing the gate against real pull requests
+
+- **Dependabot YAML-quotes a dependency name starting with `@`**, so the commit trailer reads
+  `"@nestjs/common"` with the quotes. A `case` on `@nestjs/*` matches nothing - which is how a first
+  draft merged the exact major it was written to refuse. The script strips the quotes.
+- **A "update the requirement to permit the latest version" pull request carries no `update-type`
+  trailer at all** (PR #297, openmls 0.9.0), so any logic keyed on the update type reads an empty
+  string. Treat unknown as major.
+
+The `updated-dependencies` trailers are parsed **as blocks**, never as three independent `sed`
+lists: a grouped pull request carries several, and an update Dependabot could not classify has no
+`update-type`, so three lists pasted side by side would pair the wrong name with the wrong version.
+
+### The chain, proven end to end
+
+On 2026-08-31 a dependency update reached production with no human in it, which had never happened
+in this repository before. PR #289 merged at 13:48:44; CD run `33399025542` started four seconds
+later, event `workflow_dispatch`, on that merge commit; it completed `success` and prod answered
+afterwards. **That is the fact worth not re-deriving** - the three pieces (a ceiling that decides, a
+sweep that converges, a CD dispatch on the merge commit) compose, and a session finding one of them
+apparently idle should look for a refusal it printed rather than assume the chain is broken.
+
+### Verifying a change to it
+
+Run the shipped script, unmodified, against real pull requests, with a `gh` shim on `PATH` that
+passes reads through and intercepts `pr merge`, `pr comment` and `workflow run`. Testing a retyped
+copy proves nothing about the file that runs.
+
 ## Notable CI gotchas
 
 - **A Tauri plugin's JS package and its Rust crate must agree on major.minor, and only a RELEASE used to discover when they did not.** The CLI refuses to build (`tauri-plugin-log (v2.8.0) : @tauri-apps/plugin-log (v2.9.0)`), but nothing else in this pipeline compiles the Tauri app, so an ordinary `bun install` that re-resolves the JS half lands green and kills the next tag - it took out Android Release and AppImage Release on v0.14.6, while iOS Release passed because its path never runs the check. `frontend/scripts/check-tauri-plugin-versions.mjs` (step `Guard the Tauri JS/Rust version parity` in `code-analysis.yml`) now compares the two committed files on every run. Fix the Rust side with `cd frontend/src-tauri && cargo update -p <crate>`.

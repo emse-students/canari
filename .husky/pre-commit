@@ -18,11 +18,18 @@ fi
 # nothing reports it: the hook's job is to fix what is being committed, not to decide what is.
 # The allowlist is $STAGED_FILES, captured before any fixer ran.
 #
-# `git add -A --` rather than `git add --`, so a staged DELETION survives the round trip instead of
-# failing the pathspec.
+# A STAGED DELETION IS SKIPPED, NOT RE-ADDED. `git add -A -- <path>` was believed to carry one
+# through, and it does not: once `git rm` has taken the path out of the INDEX and the fixers have no
+# file to touch in the WORKTREE either, the pathspec matches nothing anywhere and git exits 128 -
+# which failed a whole commit on 2026-08-31 for deleting a dead test. Nothing needs re-staging in
+# that case: no formatter can have rewritten a file that is not there, and the deletion is already
+# in the index exactly as its author staged it. The `-e` test is the whole fix, and it is a test
+# rather than a swallowed error on purpose - a `|| true` here would also hide a real failure.
 restage() {
   echo "$STAGED_FILES" | grep -E "^$1" | while IFS= read -r staged_path; do
-    [ -n "$staged_path" ] && git add -A -- "$staged_path"
+    [ -z "$staged_path" ] && continue
+    [ -e "$staged_path" ] || continue
+    git add -A -- "$staged_path"
   done
 }
 

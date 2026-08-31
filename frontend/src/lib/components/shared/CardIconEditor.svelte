@@ -3,6 +3,7 @@
   import AssociationLogoCropper from '$lib/components/associations/AssociationLogoCropper.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { m } from '$lib/paraglide/messages';
+  import { apiAssetUrl } from '$lib/utils/apiUrl';
 
   interface Props {
     iconUrl: string | null;
@@ -12,6 +13,15 @@
   }
 
   let { iconUrl, fallbackIcon: FallbackIcon, onUpload, onRemove }: Props = $props();
+
+  /**
+   * The stored icon path made fetchable from the runtime actually running - same reason as
+   * `CardTile`: the backend stores `iconUrl` as the app-relative `/api/media/public/<id>?v=...`,
+   * which resolves against the Tauri shell rather than the proxy and silently yields no image. The
+   * manage screen needs it as much as the student view: without it a president on mobile sees the
+   * icon they just uploaded as missing and re-uploads it.
+   */
+  const resolvedIconUrl = $derived(iconUrl ? apiAssetUrl(iconUrl) : null);
 
   let showCropper = $state(false);
   let busy = $state(false);
@@ -56,8 +66,8 @@
     <div
       class="border-cn-border bg-cn-bg flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border"
     >
-      {#if iconUrl}
-        <img src={iconUrl} alt="" class="h-full w-full object-cover" />
+      {#if resolvedIconUrl}
+        <img src={resolvedIconUrl} alt="" class="h-full w-full object-cover" />
       {:else}
         <FallbackIcon size={22} class="text-text-muted" />
       {/if}

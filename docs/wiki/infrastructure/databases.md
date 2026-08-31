@@ -6,6 +6,21 @@
 **Port**: 5432 (container), 5433 (dev host)  
 **Database**: `auth_db`
 
+## Reaching it from a workstation
+
+`ssh canari`, then `docker exec` into the container `infrastructure-postgres-1` as user `canari`.
+**`auth_db` is the ONLY database** - every service shares it, social-service included, whose
+`DB_DATABASE` default `canari_social` **does not exist on prod**; a command that names it fails and
+the failure looks like a permissions problem.
+
+**Use the PowerShell tool for any of these, never Bash** - Git Bash strips the backslashes out of
+the cloudflared `ProxyCommand` in the SSH config, and the connection dies with an opaque error.
+Quote SQL single-outer, doubled-inner:
+
+```
+ssh canari 'docker exec ... psql -U canari -d auth_db -x -c "SELECT ... WHERE id = ''uuid''"'
+```
+
 Single shared database host for all relational data. The database name is `auth_db`; logical separation is by schema/table prefix, not by database.
 
 Table names below are the live production names (TypeORM's default strategy snake_cases the entity

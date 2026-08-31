@@ -8,8 +8,12 @@
 
 mod support;
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use mls_core::MlsManager;
+// `criterion::black_box` is a re-export deprecated in criterion 0.8 in favour of the std one,
+// stable since Rust 1.66 and so available on every toolchain this repository accepts. Naming
+// std directly makes the bench compile on either criterion version.
+use std::hint::black_box;
 use support::{build_decrypt_fixture, build_persistence_fixture};
 
 const BENCH_KEY: [u8; 32] = [42u8; 32];

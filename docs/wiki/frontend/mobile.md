@@ -1528,6 +1528,16 @@ difference, its user agent, is no longer read by anything. So a login on the iPh
 file where hardware we do not have is not owed a check of its own. What an iPhone would NOT prove is
 anything about iPad LAYOUT, which nothing here has ever measured.
 
+### Where the submission stands, and what each half is waiting on
+
+App Review rejected 0.14.4 (build 0.14.9) on 2026-08-30. Its second guideline was closed in App
+Store Connect on 2026-08-31 and needed no change here.
+
+**What is owed is 2.1(a) - "the app redirected to an error page after tapping Sign in", on an iPad
+Air (M3).** CAUSE FOUND, FIXED, TESTED, NOT YET BUILT; the section above is the whole story.
+**An iOS release build, then ONE login on the iPhone showing `uri=fr.emse.canari://callback`** -
+which settles the iPad as well, for the reason that section gives - and then the resubmission.
+
 ## Reading live state out of a running WebView, over adb
 
 `android:dev`'s own HMR occasionally stops picking up file changes (observed twice in one session,

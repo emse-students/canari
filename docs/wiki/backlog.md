@@ -45,6 +45,7 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 | acknowledging a conversation from the notification shade | HARDWARE, both platforms. On A1: send from W1, background the app, tap **Marquer comme lu**, then OPEN the app - the badge must be gone, which is the half that needed `read_watermarks.ndjson`. Then the same with a quick REPLY, which now means the same thing. `logcat` must show `sendReadWatermark: queued+drained at=<ms>` with the SENDER's instant, never a value near `now`. Board row **NOTIF-6b**, and the iOS twin is written identically and equally unproven |
 | search folds accents now, everywhere it folds case | **SEARCH-5, and it needs `W1 W2` only - no hardware.** Its five `PASS`es asserted the pre-fix behaviour (the row was written to RECORD the gap), so they are VOID and the runner's prediction is flipped. A run answering `noAccentFound=true` closes this; SEARCH-1, -3 and -6 are ASCII-only and unaffected |
 | WP-REGRANT-2, a re-granted member's re-join | COMM-22, four grant/revoke cycles green - and COMM-8 reading `seedAfterTheGrant: true`, never `repaired`, which is a fallback and not a path |
+| the auto-merge ceiling refuses a major | **half taken.** The workflow is enabled again and its shipped loop body was replayed over all 33 open Dependabot PRs: 26 merge, 6 refuse, and the 6 collapse to the two gates below. What replay cannot show is the workflow REFUSING in its own run log, because no major has opened since - so the row stays until a real one does, logging `REFUSED` and staying open |
 
 ---
 
@@ -59,11 +60,10 @@ in the crate's `.cargo/audit.toml` naming why it cannot be honoured and what lif
 `cargo audit` is green with none of them forgotten. A scheduled dependency upgrade, not a live
 defect.
 
-**One one-off is owed to the user, not to the code:** dismissing the `libcrux-chacha20poly1305`
-Dependabot alert. It is the only one open and it is measured UNREACHABLE - the crate is not
-compiled, the HPKE backend built is `hpke-rs-rust-crypto`, and `cargo tree -i` finds no path to it
-on any target. The rule that measurement left (**a lockfile entry is not a dependency**) is in
-[durable-rules](durable-rules.md).
+The rule the `libcrux-chacha20poly1305` measurement left - **a lockfile entry is not a
+dependency**, because `cargo audit` reads the lockfile while `cargo tree -i` reads what is actually
+compiled - is in [durable-rules](durable-rules.md). That alert is dismissed (user, 2026-08-31) and
+no Dependabot alert is open.
 
 ### The rest of what an iPhone will find, named by the user before it was looked for (2026-08-27)
 
@@ -2123,35 +2123,199 @@ feature is therefore coherent with E2EE - it removes a password prompt, not a re
 
 ## Tooling
 
-### P2 - NestJS 11 -> 12 across all four services, plus five dependency majors under it
+### DONE 2026-08-31 - all four repos carry the ceiling, the sweep and the dispatch
 
-Available and deliberately not taken in the toolchain-alignment sweep of 2026-08-27, because a
-framework major across four DEPLOYED services is not a dependency bump. Measured with
-`bun outdated` in each service directory that day:
+**Canari's `dependabot-auto-merge.yml` merged any green Dependabot PR with no ceiling at all, its
+merges reached CD not once, and it could only ever act on an event it happened to catch.** The
+workflow was the same file in all four repositories - it had been copied - so all four had all
+three defects. All four are fixed. What is NOT yet proven is in the row below the table.
 
-| Package | Current | Latest | Services affected |
+| Repo | Its ceiling | Does an auto-merge deploy? | Can it drain a queue it did not watch open? |
 | --- | --- | --- | --- |
-| `@nestjs/common`, `@nestjs/core`, `@nestjs/platform-express`, `@nestjs/testing` | 11.2.3 | 12.0.1 | all four |
-| `@nestjs/typeorm` | 11.0.3 | 12.0.0 | chat-delivery, core, social |
-| `@nestjs/cli`, `@nestjs/schematics` | 11.0.24 / 11.1.0 | 12.0.0 | all four |
-| `@nestjs/config` | 4.0.4 | 12.0.0 | core, social |
-| `@nestjs/schedule` | 6.1.3 | 12.0.1 | social |
-| `@nestjs/axios` | 4.0.1 | 12.0.0 | social |
-| `@nestjs/microservices` | 11.2.3 | 12.0.1 | chat-delivery |
-| `ioredis` | 5.11.1 | 6.0.0 | chat-delivery, social |
-| `@types/uuid` | 10.0.0 | 11.0.0 | media |
+| **Canari** | the at-rest trio, the protocol crates, `aes-gcm`, the SFU stack | yes, an explicit `workflow_dispatch` on `cd.yml` | a full sweep on every CD completion, plus an hourly cron at :17 |
+| **Sky** | EMPTY, measured - all three candidates closed by writing the test | yes, `deploy.yml` dispatched, its `verify` job re-running CI on the merged tree | a full sweep on every `CI (Bun)` completion, plus a cron at :17 |
+| **MiGallery** | `jspdf`/`jspdf-autotable`, `form-data`; `sharp` closed by `tests/face-crop.test.ts` | yes, `cd.yml` dispatched; its `run-ci` job already gated `build-image` | a full sweep on every CD completion, plus a cron at :23 |
+| **Portail-etu** | EMPTY, measured - both candidates closed by writing the gate | yes, `deploy.yml` dispatched, with a new `verify` job so the dispatch is no longer ungated | a full sweep on every `Run Tests` completion, plus a cron at :41 |
 
-Note the three packages jumping from 4.x and 6.x straight to 12.0.0: `@nestjs/config`,
-`@nestjs/schedule` and `@nestjs/axios` have been renumbered onto the framework's own major, so
-those three diffs are version-scheme changes carrying an unknown amount of behaviour with them and
-must be read, not assumed.
+**THE CONVERGENT HALF WAS A CLOCK, AND THE CLOCK DOES NOT FIRE.** Measured 2026-08-31 17:00 UTC:
+`event=schedule` had produced **zero** runs of `dependabot-auto-merge.yml` in ANY of the four
+repositories, and Canari's `17 * * * *` had been on `main` since 14:32 UTC, so two slots passed with
+nothing. None of the four is a fork, none is archived, every workflow reads `state=active`, and
+schedules plainly work in these repositories - Canari alone has 183 scheduled runs of other
+workflows. **The cause is delivery, not configuration:** `code-analysis.yml` asks for `0 2 * * *`
+and actually ran at 03:01, 03:09, 08:05, 08:24, 08:47, 12:37 and **14:10** UTC on seven consecutive
+days. GitHub does not queue the slots an hourly cron misses; it drops them.
 
-**What makes this a P2 rather than hygiene:** these four services hold the whole server side of the
-product, `ioredis` 6 is a client major on the path every message takes, and the suites that would
-catch a regression run under **node, never bun** - `admin-storage.controller.mls.spec.ts` fails
-under the bun runtime and is the reason `ci.yml` installs with bun and tests with node. Any attempt
-here re-runs all four suites under node (271 + 157 + 6 + 563 tests) and is proven on prod, not on a
-green build.
+**So the convergent trigger is no longer the clock.** All four sweeps now also run on the completion
+of the workflow their repository executes on a push to `main` - full sweep, not one pull request -
+which is an event tied to somebody actually working rather than to a schedule the platform honours
+when it feels like it. The cron keeps its slot as a bonus for stretches where nothing is pushed, at
+whatever reliability GitHub offers. **What this closes is the objection that stood here for three
+hours: an unproven recovery path is exactly the mechanism this repository has twice been caught
+believing in.** What it does NOT close is the long quiet stretch - if nobody pushes for a week and
+the cron never fires, only a Dependabot pull request's own CI wakes anything, and that path handles
+its own branch only.
+
+**Two things the sweep still does not do**, neither of which the ceiling is about: nothing REPAIRS a
+pull request that is red, and nothing reports whether a pass ran at all. The second is what makes
+the paragraph above possible.
+
+**Le Cercle is on GitLab and has no GitHub workflow**, so it is out of scope for this one.
+
+**The fix is a copy of what landed here** - `.github/scripts/dependabot-auto-merge.sh` plus the
+workflow that calls it twice - **but the ceiling itself does NOT copy across, and that is the whole
+point.** A first draft here refused by SEMVER, every major and every `0.x` minor, and it was
+measured wrong the same day: 28 of 33 open pull requests refused, a queue nobody would ever drain.
+**Semver is not the question.** A `base64` 0.22 -> 0.23 break stops the tree compiling and the suite
+sees it; what a green suite cannot see is a dependency whose failure mode NOTHING here tests, and
+that has no relation to the version number. So each repo's list is its OWN: the entries are the
+dependencies whose failure would be invisible THERE, and each names the test that would retire it.
+Sky and Portail-etu may well have an empty list, and an empty list is a correct answer - it says
+their suites are evidence about everything they depend on. Read the reasoning on
+[ecosystem-convergence](ecosystem-convergence.md) and the rules in [durable-rules](durable-rules.md).
+
+**Do NOT re-enable an auto-merge anywhere before its ceiling is in**, and do not enable one whose
+only trigger is `workflow_run`: it cannot touch a pull request that was already green when it was
+installed.
+
+### P1 - the three refusals the auto-merge ceiling makes, and the test that retires each
+
+**`dependabot-auto-merge.yml` refuses only what this repository has no gate for**, and every refusal
+names its missing test in a comment on the pull request. The standing directive is that a refusal is
+never a routing decision to a human queue (user, 2026-08-31), so THIS TABLE IS THE WORK: each row
+closed is a whole class of update that starts merging on its own.
+
+Measured three times on 2026-08-31 by running the SHIPPED script against every open pull request:
+**5 merge / 28 refuse in the morning; 26 merge / 6 refuse once the first gate was written; and
+7 merge / 5 refuse / 19 held by a real CI failure once the second landed.** The third reading is
+the one that changed the subject: **the ceiling is no longer what holds the queue** - nineteen
+pull requests are red, and they are red because the gates written that day work. #263 bumps
+`@nestjs/common` to 12 in ONE service and dies on `Boot the real AppModule`; #298 dies on a
+deprecated `from_slice`. Both are the suite being evidence, which is the whole design.
+
+**All three readings PREDATE the `typeorm` row closing**, so the refuse count is now lower than any
+of them and no number here should be quoted as current. The measurement that IS current is the
+hourly sweep's own log - it prints what it merged, what it refused and what it held, every pass.
+
+| Refused | Why the suite cannot see it | The test that retires it | State |
+| --- | --- | --- | --- |
+| ~~`@nestjs/*` MAJORS (22 PRs)~~ | ~~no test ever constructed the real application module~~ | `src/app-module.boot-spec.ts` + the `boot-nest-apps` job | **CLOSED 2026-08-31.** Green on all four services against a real Postgres, Redis and S3; the case is deleted from the ceiling |
+| ~~bare `typeorm` MAJOR, or an unclassified bump of it~~ | **CLOSED 2026-08-31.** The boot proved the schema BUILDS and nothing more - `forRootAsync` resolves, every entity's metadata is constructed, `synchronize` runs - while every unit suite mocks its repositories, so no test had ever watched this ORM return a row and a major changing how a query is BUILT would have passed all 1105 of them | `app-module.boot-spec.ts` now issues a real `find({ take: 1 })` through EVERY entity the app registered, by metadata rather than by a named list | **GREEN on core, social and chat-delivery in CD run `33403833044`**, and the clause is out of `dependabot-auto-merge.sh`. media-service carries no query test and asserts WHY: it declares no `typeorm`, and that assertion fails the day someone gives it a database |
+| ~~`chacha20poly1305`, `argon2`, `ciborium`~~ | ~~nothing opened a keystore written by the PREVIOUS version~~ | `tests/cross_version_state.rs` + the four frozen artefacts under `tests/fixtures/` | **CLOSED 2026-08-31.** An at-rest envelope is read by the device that SEALED it, so the backward direction is the whole question - measured by enumerating every `encrypt_blob` call site, all of them state persistence. Falsified by corrupting each fixture: all four tests go red |
+| `openmls*`, `tls_codec*`, `hpke-rs*`, `libcrux*` (4 PRs) | a WIRE format is read by OTHER devices on OTHER versions, so the forward direction exists and no frozen fixture can see it | an old binary run against a frame minted by the new one. The backward half is already covered | open. **And the compiler spoke first on this one**: openmls 0.9.0 adds `OwnPendingCommit` and `OwnPrivateMessage` to `ProcessedMessageContent`, so the four PRs need a code decision, not just a gate. Applied together they compile down to that ONE error; apart, none of them builds at all |
+| `aes-gcm` (0 PRs open) | it opens a channel push sealed by ANOTHER member's device (`decrypt_channel_message`), and src-tauri freezes nothing | a channel-push fixture, the src-tauri twin of `cross_version_state.rs` | open. It sits beside the at-rest crates in the manifest and belongs with the wire ones - the crate's neighbours say nothing, its READER decides |
+| `webrtc` and the ICE crates (1 PR) | the SFU has ten tests and not one touches the ICE stack | one relay-path call - campaign rung 15 CALL, which has no runner | not started, and the SFU is already SIX majors unplaced (see its own P1 above) |
+
+**ONE FLAKE IS RECORDED HERE BECAUSE AN UNATTENDED MERGE IS EXACTLY WHAT A FLAKE BREAKS.**
+chat-delivery-service's suite failed 1 test in the first of five consecutive local runs on
+2026-08-31 and passed 308/308 in the other four; the failing run was concurrent with a CD build on
+the same machine, and its output was not captured. Not reproduced, not identified. If it recurs,
+capture the suite name before anything else - a green-gated auto-merge that retries into a green run
+will merge on the second try and tell nobody.
+
+**Do not widen this list to feel safe.** Every entry costs the queue it blocks, and the honest test
+of a new one is: name the failure, then name the test that would have caught it. If you cannot name
+the test, the entry is a guess.
+
+### P3 - social-service has no root health route, and the other three do
+
+core-service, media-service and chat-delivery-service each expose `GET /api/health` from a
+`HealthController` with an empty `@Controller()`. social-service exposes none: its nearest liveness
+route is `GET /api/channels/health`, which belongs to `ChannelsController` and answers about the
+channel service specifically. Found while writing the boot test, which has to ask a different URL of
+that one service.
+
+It is P3 because nothing is broken today - but a probe, a load balancer or a future readiness gate
+that assumes the shape the other three share will silently point at nothing here, and an asymmetry
+nobody chose is the kind that gets discovered during an incident.
+
+### P3 - `submissions.formId` names a form nothing keeps, and 28 rows point at deleted ones
+
+**Measured on prod 2026-08-31.** There is no foreign key at all:
+
+```sql
+SELECT conname FROM pg_constraint WHERE conrelid = 'submissions'::regclass AND contype = 'f';
+-- (0 rows)
+```
+
+Twelve `formId` values in `submissions` match no row in `forms`. Of the 28 orphaned submissions,
+**5 are `paid`** (36,00 EUR in total), 6 `pending` (101,00 EUR never charged), 16 `free` and 1
+`cancelled`. Only one form of the thirteen referenced still exists. The amounts date from May and
+June 2026 and read as forms from the development period, so this is P3 on the money and P3 on the
+count - but not on the shape.
+
+**What it costs today**: five people have a paid line whose title nobody can render, and
+`markPaid`'s own `grantCotisationIfConfigured` would have had nothing to read either. Deleting a form
+also strands whatever `user_tags` its `grantsCotisation` had issued, which no longer names anything.
+
+**The decision this needs is not "add a foreign key"** - a cascade would DELETE paid submissions,
+which is worse than the orphan. The shapes worth weighing are a tombstoned form (soft delete, the
+title survives, the join keeps working) or a denormalised `formTitle` on the submission at write
+time. The first keeps one truth; the second survives a hard delete. Neither is obviously right,
+which is why this is written down rather than done.
+
+### P2 - NestJS 12 is HALF DONE, and the other half is one upstream package
+
+**Taken 2026-08-31.** `media-service` and `core-service` run `@nestjs/common`, `@nestjs/core` and
+`@nestjs/platform-express` at **12**. `chat-delivery-service` and `social-service` are held at 11.
+The whole state, the ESM consequences and the mechanism that ends the hold are on
+[nestjs-framework](services/nestjs-framework.md), which is the only copy - do not re-derive it here.
+
+**WHAT IS OPEN IS NOT WORK IN THIS REPOSITORY.** `@nestjs/throttler` has published no release
+declaring NestJS 12; its latest, `6.5.0`, stops at `^11.0.0`. The two held services both rate-limit
+a route with it. With 12 installed, 307 of chat-delivery's 308 tests passed and the only failure was
+`framework-boot.spec.ts` reading throttler's own manifest.
+
+**It needs nothing done to it, and that is the point.** There is no `dependabot.yml` ignore and no
+ceiling entry: the pull requests raising the framework on those two services stay open and red, and
+the hourly sweep updates their branches once throttler moves, at which point the assertion goes
+green and they merge unattended. A hold expressed as an assertion about the resolved tree expires
+when its reason does; a hold expressed as an ignore outlives it.
+
+**Four satellites moved anyway** - `@nestjs/config` 4 -> 12, `@nestjs/schedule` 6 -> 12,
+`@nestjs/axios` 4 -> 12, `@nestjs/typeorm` 11 -> 12. The renumbering onto the framework's major is a
+LABEL: every one of them declares `^11.0.0 || ^12.0.0` or wider, so reading the peer range rather
+than the version number is what let them merge with the framework major still blocked.
+
+**Nothing else from the original table is owed.** `ioredis` is on **6** in both services and
+`@types/uuid` is DELETED rather than bumped - `uuid` 14 ships its own types, so the package had been
+dead for as long as it had been declared. `@nestjs/microservices` is gone the same way: an orphan on
+disk and in the lockfile, declared by nothing, removed by a clean install along with `kafkajs`.
+
+**Why `protocol: 2` was NOT set when taking ioredis 6,** since its one breaking change is "RESP3 by
+default": ioredis 6 also ships `replyMapping`, which defaults to `"legacy"` - map replies arrive as
+flat `[key, value, ...]` arrays and doubles as strings, so **the JavaScript values are identical
+across both protocols**. That is read from the library's own `RedisOptions.d.ts`, not inferred. The
+wire half is answered by the box: production runs **Redis 8.8.0**, and RESP3 has existed since 6.0.
+Neither service subscribes - both are command-and-publish clients - so RESP3's subscriber-mode
+change does not reach them either. Setting `protocol: 2` would have been a dressing on a wound
+nobody has.
+
+**What made this a P2 and still governs any attempt here:** these four services hold the whole
+server side of the product, and the suites that would catch a regression run under **node, never
+bun** - `admin-storage.controller.mls.spec.ts` fails under the bun runtime and is the reason
+`ci.yml` installs with bun and tests with node. Any attempt re-runs all four suites under node
+(14 + 202 + 308 + 588 = 1112 tests) and is proven on prod, not on a green build.
+
+### P2 - NOTHING DECLARES THE REDIS VERSION, AND THE TWO PLACES THAT NAME IT DISAGREED
+
+**Found 2026-08-31 while taking `ioredis` 6.** `infrastructure/docker-compose.prod.yml`,
+`docker-compose.dev.yml` and `infrastructure/local/docker-compose.yml` all say `image: redis:alpine`
+- a floating tag. `ci.yml` said `redis:7-alpine`. The box was measured and runs **8.8.0**, so the
+gate that proves a service can talk to Redis was proving it against a different major from the one
+it meets in production. **The CI half is fixed** (`redis:8-alpine`, with the reason in the file).
+
+**The production half is NOT, and it is deliberately the user's call.** This Redis is persisted and
+`history:{groupId}` is the ONLY shared copy of a conversation's messages - the per-device queue is
+deleted on ACK. Changing the image tag makes `docker compose up -d` recreate the container, so it is
+a restart of a store holding user data, which is a one-off action and not something to slip into a
+dependency commit.
+
+**What makes it worth doing anyway:** a floating tag on a persisted store means ANY deploy can pull
+a new Redis major under it, with nobody deciding and nothing recording that it happened. An RDB/AOF
+file is forward-compatible and not backward, so the jump is silent and the way back is not. Pinning
+to `redis:8-alpine` changes nothing about what is running today - it only removes the ability of a
+future `docker compose pull` to change it by itself.
 
 ### P3 - 108 navigations bypass `resolve()`, and an inherited disable is the only reason nobody sees them
 

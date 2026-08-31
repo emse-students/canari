@@ -11,8 +11,240 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed
+
+- **NestJS 11 -> 12 on the two services that could take it, and a measured hold on the two that
+  could not.** `media-service` and `core-service` now run `@nestjs/common`, `@nestjs/core` and
+  `@nestjs/platform-express` at 12. `chat-delivery-service` and `social-service` are held at 11 by
+  exactly one thing: `@nestjs/throttler` has published no release declaring NestJS 12 support, and
+  both of them rate-limit a route. With 12 installed, 307 of chat-delivery's 308 tests passed and
+  the one failure was `framework-boot.spec.ts` reading throttler's own manifest - the test written
+  after the 2026-08-31 `platform-express` incident, doing exactly what it was written for. The hold
+  needs no reminder and no `dependabot.yml` ignore: the pull requests stay open and red, and go
+  green by themselves the day throttler ships. Four satellites moved anyway, because their peer
+  ranges accept an 11 core despite the renumbering: `@nestjs/config` 4 -> 12, `@nestjs/schedule`
+  6 -> 12, `@nestjs/axios` 4 -> 12, `@nestjs/typeorm` 11 -> 12. All 1112 tests green.
+  ([nestjs-framework](docs/wiki/services/nestjs-framework.md))
+
+- **`ioredis` 5 -> 6 on chat-delivery-service and social-service, without the escape hatch its
+  release notes offer.** The one breaking change is "RESP3 by default, set `protocol: 2` to retain
+  the v5 wire protocol" - and setting it would have been a dressing on a wound nobody has. ioredis 6
+  also ships `replyMapping`, defaulting to `"legacy"`: map replies arrive as flat arrays and doubles
+  as strings, so the JavaScript values are identical across both protocols. Production was measured
+  rather than assumed and runs **Redis 8.8.0**, which has spoken RESP3 since 6.0, and neither
+  service subscribes - both are command-and-publish clients - so RESP3's subscriber-mode change does
+  not reach them. 896 tests green across the two.
+- **The boot job's Redis now matches production's major.** It was `redis:7-alpine` while the box
+  runs 8.8.0, so the gate proving a service can talk to Redis proved it against a different major
+  from the one it meets. The production side names `redis:alpine`, an unpinned tag on a store
+  holding the only shared copy of conversation history; that half is written up in
+  [`backlog`](docs/wiki/backlog.md) rather than changed here, because it restarts that store.
+
+- **The dependency sweep no longer depends on a clock that does not run.** Its convergent pass -
+  the one that drains pull requests no event describes - was an hourly cron, and three hours after
+  it landed `event=schedule` had produced **zero** runs of that workflow in all four repositories.
+  Not configuration: none is a fork, none archived, every workflow `active`, and Canari alone has
+  183 scheduled runs of other workflows. It is delivery - `code-analysis.yml` asks for `0 2 * * *`
+  and ran at 03:01, 03:09, 08:05, 08:24, 08:47, 12:37 and 14:10 UTC on seven consecutive days, and
+  GitHub drops the slots an hourly cron misses rather than queueing them. The sweep now also runs on
+  the completion of whatever workflow each repository executes on a push to `main`, answered with a
+  full sweep rather than with the one branch that caused it. The cron keeps its slot as a bonus.
+
+### Removed
+
+- **`@types/uuid`, which had been dead for as long as it had been declared.** `uuid` 14 ships its
+  own types through its `exports` map, so the stub package was never consulted; media-service builds
+  and its 14 tests pass without it. Deleted rather than bumped to 11, which retires the pull request
+  instead of merging it.
+- **The Nest scaffold that read as end-to-end coverage and had never run.**
+  `apps/core-service/test/app.e2e-spec.ts` was the untouched generator output: it asserted
+  `Hello World!` on `/` against a service whose global prefix is `api`, and its `testRegex` lived in
+  a `test:e2e` script no workflow and no `Makefile` target ever called. Deleted with its
+  `jest-e2e.json`, the two dead `test:e2e` scripts in core-service and social-service, and
+  `supertest` plus `@types/supertest`, which nothing else imported. Two `format` scripts also still
+  globbed a `test/` directory that no longer exists in either service.
+
+### Added
+
+- **A third family off the auto-merge ceiling: bare `typeorm`.** The boot job proved the schema
+  BUILDS - `forRootAsync` resolves, every entity's metadata is constructed, `synchronize` runs - and
+  stopped there; every unit suite mocks its repositories, so no test in this repository had ever
+  watched the ORM return a row, and a major changing how a query is BUILT would have passed all 1105
+  of them and failed on the first production request. `app-module.boot-spec.ts` now issues a real
+  `find({ take: 1 })` through EVERY entity the app registered, chosen by metadata rather than by a
+  named list, because a gate that picks its subject by name does not cover the entity nobody added
+  to it. Green on core, social and chat-delivery in CD run `33403833044`; media-service, which has
+  no ORM, carries a tripwire that fails the day someone gives it one. The clause is out of
+  `dependabot-auto-merge.sh` - a refusal names a missing gate, and it leaves when the gate arrives.
+
+- **A real query, through every entity, in the boot job.** The boot test proved the schema BUILDS -
+  `forRootAsync` resolves, metadata is constructed, `synchronize` runs - and stopped there: all 1105
+  unit tests mock their repositories, so nothing in this repository had ever watched TypeORM return
+  a row, and an ORM major that changed how a query is BUILT would have passed every gate and failed
+  on the first production request. `app-module.boot-spec.ts` now issues a `find({ take: 1 })`
+  through every entity the app registered, enumerated from the DataSource's own metadata rather than
+  from a list somebody has to remember to update. media-service carries no such test and asserts
+  why - it declares no `typeorm`, and that assertion fails the day someone gives it a database.
+
+- **The gate that lets a crypto dependency be upgraded without a human.** Every test in `mls-core`
+  built its input with the same code it then exercised, so a change to a wire format, an encoding or
+  a key derivation moved both halves together and the suite stayed green - the exact hole the
+  auto-merge ceiling refused eight crates for. `tests/cross_version_state.rs` reads four artefacts
+  committed as BYTES under `tests/fixtures/`, written by v0.14.14 and never regenerated: a member's
+  MLS state, an application frame that member has not yet seen, and the at-rest envelope sealed
+  twice - once under a fixed key, which moves only with the AEAD, and once behind the PIN, which
+  moves with the derivation as well. Four rather than one so a failure names WHICH crate moved.
+  `examples/freeze_cross_version_fixtures.rs` mints a generation and REFUSES to overwrite one, since
+  regenerating in place turns the suite into a round-trip that passes by construction. Verified by
+  corrupting one byte of each fixture: all four tests go red, and green again on restore.
+  **`chacha20poly1305`, `argon2` and `ciborium` came off the ceiling on it** - an at-rest envelope is
+  read by the device that sealed it, so the backward direction is the whole question, measured by
+  enumerating every `encrypt_blob` call site rather than assumed. The protocol crates stay: a wire
+  format is read by other devices on other versions, and only an old binary can answer that half.
 
 ### Fixed
+
+- **Every jest suite in the four services would have died at import under NestJS 12, and the
+  workaround that hid `uuid` became the thing that broke it.** NestJS 12 is ESM-only - `"type":
+  "module"`, no CommonJS build - and while Node 24 and bun both `require()` it without complaint,
+  jest's own module registry only gains `require(esm)` when `vm.SourceTextModule` exists, which
+  needs `--experimental-vm-modules`. The flag is now on every jest invocation **in the command
+  rather than the environment**, because CI runs `node --run test`, which opens no shell and would
+  have silently ignored a `NODE_OPTIONS=` prefix. With the flag, the `transformIgnorePatterns`
+  exemption that let ts-jest rewrite the ESM-only `uuid` into CommonJS stopped being unnecessary and
+  started being wrong - jest evaluated the rewritten file as a module and it failed with
+  `ReferenceError: exports is not defined`. Removed from all four services.
+- **A peer-dependency violation now names its own remedy.** `framework-boot.spec.ts` listed
+  mismatches and left the reader to work out which side had to move; the only reader it ever gets is
+  somebody scrolling a red CI log on a Dependabot pull request, and a list with no instruction is
+  the queue nobody drains.
+
+- **Claiming a partnership code answered 500 for every user, on every card, since the feature
+  shipped.** Migration 047 declared `partnership_codes."claimedByUserId"` as `uuid`. A user id in
+  this estate is the 64-character hex digest carried in `x-user-id`, so the FIRST statement
+  `claimPoolCode` runs - the "does this student already hold a code" lookup - died in Postgres with
+  SQLSTATE 22P02, `invalid input syntax for type uuid`, and the route returned
+  `{"statusCode":500}`. Not a race and not load-dependent: no claim could ever have succeeded, and
+  prod confirmed it, holding zero claimed rows against a live card. `shared_code` and `text` cards
+  never touch that column, which is why the tab looked healthy. Migration 056 widens the column to
+  `varchar(255)`, matching every other user-id column in the service; the partial unique index the
+  idempotence guarantee relies on is rebuilt by `ALTER TYPE` and keeps its predicate. Nothing caught
+  it because every service spec mocks its repositories, so no column type is ever exercised - the
+  same blind spot the `typeorm` boot probe above was written for. `user-id-column.spec.ts` now reads
+  the DECLARED metadata and fails on any user-id-shaped column typed `uuid`, across the service
+  rather than at the one column that broke.
+
+- **Every partnership and product icon was missing in the mobile builds.** The backend stores a
+  card icon as the app-relative `/api/media/public/<mediaId>?v=...`. In a Tauri build the page is
+  served from `tauri://localhost` (iOS) or `http://tauri.localhost` (Android), where that path
+  resolves against the SHELL rather than the proxy: the asset server answers `index.html`, the image
+  fails to decode, `onerror` fires and the fallback glyph shows forever. Nothing throws and nothing
+  is logged. `apiAssetUrl` existed for exactly this and `CardTile` never called it, so all five card
+  lists - shop, association detail, partnerships, boutique and their two manage tabs - were affected
+  on mobile only. `CardIconEditor` had the identical bug, found by the new test rather than by
+  reading, and left a president re-uploading an icon that had uploaded fine. The two literal-path
+  checks in `apiUrl.absolute.test.ts` could not see either, because the offending string never
+  appears in the source - it arrives at runtime in a field. A third check now guards the field NAMES
+  the backend stores such a path under.
+
+- **A boot probe that failed for the wrong reason.** `framework-boot.spec.ts` compiles a module and
+  binds a socket, and it runs beside three other services' suites in the pre-push hook: it took
+  25.9 s on a loaded machine against jest's 5 s default and failed the push. It now carries an
+  explicit 60 s ceiling in all four services - a bound on non-termination, never an assertion about
+  how long a boot takes.
+
+- **A benchmark that stopped compiling on `criterion` 0.8.** `criterion::black_box` is a deprecated
+  re-export, and CI runs `clippy -D warnings`, so the bump died with nine errors in `mls_perf`.
+  Naming `std::hint::black_box` directly - stable since Rust 1.66, and this repository requires
+  1.97 - compiles on either version.
+
+- **An auto-merge that would have walked past the gate written to stop it.** A check-run's
+  conclusion is evidence about the workflow that produced it, and PR #272 - `@nestjs/platform-express`
+  11 -> 12 in media-service alone, the exact framework split this whole day started from - was
+  `CLEAN`, mergeable, every check green, with no `Boot the real AppModule` run in its suite at all
+  because that job was written after its CI last ran. An absent check and an inapplicable one look
+  identical, so "nothing failed" cannot be the merge condition. The script now refuses any head not
+  built on current `main` and marks it stale; the workflow updates at most three such branches per
+  pass, re-running their CI under today's definitions. Found by running the shipped script against
+  real pull requests - which also caught an unescaped backtick pair silently deleting a filename
+  from a refusal comment, bash having run it as a command substitution.
+
+- **An auto-merge that could only act on an event it happened to catch.** `dependabot-auto-merge.yml`
+  was triggered by `workflow_run` and nothing else, so it could evaluate a pull request only in the
+  seconds after one of its CI runs finished. A pull request whose checks had completed earlier -
+  before the workflow existed, while it was disabled, during a runner outage - would never be named
+  by another event, and would sit open forever however green and however mergeable. The measurement:
+  minutes after the workflow was re-enabled and had merged its first pull request unaided, seven
+  more sat `CLEAN` and untouched, and no future event would ever reach them. The workflow now also
+  runs **hourly and on demand**, sweeping every open Dependabot pull request through the same
+  decision, so the correct state is reached from any starting state rather than only from the event
+  that arrived. The clock is not load-bearing: it sets how fast the queue drains, never whether the
+  outcome is right, and termination is durable state on GitHub - merged, or carrying the comment
+  that names its missing test. The decision itself moved to `.github/scripts/dependabot-auto-merge.sh`
+  so both entry points run ONE implementation, and it was verified by running that exact script
+  against five real pull requests behind a `gh` shim that intercepts every mutating call.
+
+- **The auto-merge ceiling's first entry retired, on evidence.** `boot-nest-apps` went green on all
+  four services, so the `@nestjs/*` case is deleted from `dependabot-auto-merge.yml`. Re-measured
+  the same way it was written - the workflow's own loop body against every open pull request's real
+  commit message - the ceiling went from 5 merge / 28 refuse to **26 merge / 6 refuse**. What is
+  left is two gates: a cross-version MLS state test (5 pull requests) and one relay-path call (1).
+  Bare `typeorm` stays refused with a narrower and more honest reason than before: the boot proves
+  the schema builds, but every unit suite mocks its repositories, so nothing here has ever watched
+  this ORM return a row.
+
+- **chat-delivery-service never closed its Redis connection on shutdown.** `RedisProvider` returns a
+  raw `ioredis` client, and a raw client cannot carry a Nest lifecycle hook, so nothing ever called
+  `quit()` and `app.close()` left the socket open. A killed container hides that completely; it
+  stopped being invisible the first time a test booted the real `AppModule` and jest reported
+  `Jest did not exit one second after the test run has completed` - the boot itself had PASSED. A
+  one-purpose `RedisShutdown` provider now quits the client on destroy, chosen over wrapping the
+  client in a service class because that would change the injection type at every call site in order
+  to fix a shutdown. The `boot-nest-apps` job also gained `timeout-minutes: 15`, so the next hang is
+  a red job in minutes rather than a runner held for six hours.
+
+- **The auto-merge ceiling refused by semver, and a queue formed behind it.** Written that morning,
+  it turned away every major and every minor whose new version's major was 0. Measured against all
+  33 open pull requests the same afternoon, it refused 28 - which is the failure, not the feature.
+  The ceiling now refuses only dependencies whose failure mode nothing here can OBSERVE, each entry
+  naming the test that retires it, and posts that reason as a comment on the pull request instead of
+  sitting silent. Testing it against real Dependabot commit messages rather than imagined ones found
+  two defects in the first draft: Dependabot YAML-quotes a dependency name beginning with `@`, so
+  the `@nestjs/*` case matched nothing and would have merged the very major it was written to refuse;
+  and a "update the requirement to permit the latest version" pull request carries no `update-type`
+  trailer at all, which is how `openmls` 0.9.0 arrives.
+- **social-service and media-service compiled their test files into their production images.**
+  Neither had a `tsconfig.build.json`, so `nest build` fell back to `tsconfig.json`, which excludes
+  nothing: 111 compiled spec artefacts in one `dist/` and 9 in the other. Both now carry the same
+  build config as the other two services, and all four `dist/` trees hold zero.
+
+- **The pre-commit hook failed any commit that DELETES a file.** Its `restage` helper re-adds each
+  path the auto-fixers may have rewritten, and a comment asserted that `git add -A -- <path>`
+  carried a staged deletion through. It does not: after `git rm`, the path is in neither the index
+  nor the worktree, so the pathspec matches nothing and git exits 128 - taking the whole commit
+  with it. It now skips a path that is not on disk, which needs no re-staging anyway: no formatter
+  rewrites a file that is not there, and the deletion is already staged as its author left it.
+
+- **Two copies of `openmls_traits` in the MLS dependency graph, and two lockfiles that described a
+  tree the manifests did not.** `frontend/mls-core/Cargo.toml` declared
+  `openmls_memory_storage = "0.6.0"` next to `openmls_traits = "0.5.0"` and `openmls = "0.8.1"`;
+  the 0.6 storage crate pulls `openmls_traits` 0.6, so the committed lock carried BOTH versions of
+  the trait crate that defines `StorageProvider` and `OpenMlsProvider`. The dependency was never
+  used - `openmls_rust_crypto` owns the memory storage internally, as the comment at
+  `state.rs:114` already said - so nothing failed to compile and nothing turned red. It arrived
+  through Dependabot PR #292, a `0.5 -> 0.6` bump the auto-merge had no ceiling to refuse. Removed
+  the unused dependency; one copy of the traits crate remains in all three locks.
+- **Nothing in this repository ever read a `Cargo.lock`.** The bun side has installed with
+  `--frozen-lockfile` since day one; no cargo invocation in CI, in `cd.yml` or in the `Makefile`
+  passed `--locked`, so cargo regenerated the lock in place on every run and every gate was green
+  about a graph the repository does not describe. Measured at `main` on 2026-08-31: two of the five
+  locks (`frontend/mls-wasm`, `frontend/src-tauri`) no longer satisfied their manifests, one of them
+  since PR #293 bumped `base64` to 0.23 without either of them following. Added one step to the Rust
+  matrix in `ci.yml` - `cargo metadata --locked` - which resolves the graph and refuses to write.
+  It is stated once for every component rather than appended to five `cmd` strings, and it covers
+  the Tauri crate, which is deliberately outside the `fmt`/`clippy` gate. The change-detection
+  filter already fans a `mls-core` change out to `mls-wasm` and `src-tauri`, so both drifted PRs
+  would have gone red on themselves.
 
 - **Every Stripe webhook was rejected, and one member paid 130,00 EUR the app never recorded.**
   `PaymentWebhookController` verified signatures with `stripe.webhooks.constructEvent`, the
@@ -47,6 +279,29 @@ which is also where every release up to and including v0.13.1 now lives.
   documented exception to the anti-recursion rule.
 
 ### Added
+
+- **`src/app-module.boot-spec.ts` and the `boot-nest-apps` CI job - the real application, booted.**
+  `NestFactory.create(AppModule)` against a real Postgres, a real Redis and a real S3 endpoint, a
+  request to the health route, then a clean shutdown. Nothing in this repository had ever
+  constructed the actual application module: `NestFactory` appeared in four files and all four were
+  a `main.ts`. The infrastructure list was measured rather than guessed - booting media-service
+  failed on `connect ECONNREFUSED 127.0.0.1:3900` because `StorageService.onModuleInit` calls
+  `bucketExists`, so the job starts MinIO too. The file sits in `src/` because `rootDir` is `./src`,
+  is kept out of the ordinary suite by its name alone (`.*\.spec\.ts$` needs a literal dot before
+  `spec`, which `.boot-spec.ts` has not) rather than by a skip, and out of `dist/` by the build
+  config. It is the gate `dependabot-auto-merge.yml` names when it refuses a framework major.
+
+- **`src/framework-boot.spec.ts` in all four NestJS services - the gate the split walked through.**
+  Two tests, no infrastructure. The first reads every installed `@nestjs/*` package's own
+  `peerDependencies` and asserts each accepts the `@nestjs/common` and `@nestjs/core` it will
+  actually be handed: that is the warning bun prints and nobody sees, turned into a failure that
+  names the package and both versions. The second calls the real `NestFactory.create`, listens on
+  port 0 and serves a request through the real express adapter, because no amount of type-checking
+  substitutes for building the object a version skew lives inside. Verified against the incident by
+  reinstalling `@nestjs/platform-express@12` on a core at 11: the declared half printed both
+  violations, the boot half died on `No driver (HTTP) has been selected`. The file is duplicated per
+  service on purpose - four bun packages, four `node_modules`, and the subject of the test is which
+  versions THIS service resolved.
 
 - **`infrastructure/docker-prune/`** - one daily pass that reclaims dangling images and the build
   cache, and REPORTS, never deletes, every dangling volume and exited container. No prune ran on

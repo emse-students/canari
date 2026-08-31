@@ -189,9 +189,9 @@ describe('PaymentWebhookController Stripe signature verification', () => {
     // This is the throw that rejected every webhook. It is asserted, not avoided: if a later
     // edit puts `constructEvent` back, the controller test below goes green on node and only
     // this one says why production would not.
-    expect(() => stripe.webhooks.constructEvent(payload, header, SECRET, undefined, subtle)).toThrow(
-      /synchronous context/
-    );
+    expect(() =>
+      stripe.webhooks.constructEvent(payload, header, SECRET, undefined, subtle)
+    ).toThrow(/synchronous context/);
 
     const event = await stripe.webhooks.constructEventAsync(
       payload,
