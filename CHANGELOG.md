@@ -13,6 +13,30 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Added
 
+- **Marking a conversation read from the notification shade now works when the app has been opened
+  since, and REPLYING from the shade marks it read too** (the second is a product decision of
+  2026-08-31). Both actions were separate ideas of what reading means and are now one function per
+  platform. The frame they send is a `read_watermark` - the instant model the app itself moved to on
+  2026-08-12 in `0db47a87`, which touched only `frontend/src/lib/**` and left the native half
+  speaking the `read_receipt` it replaced. That mattered because the ids a `read_receipt` names came
+  from `fcm_message_cache.ndjson`, a file `consumeFcmCache()` CLEARS at every app boot: with the
+  cache empty the action took a `no cached messageId ... no receipt sent` branch, cleared the banner
+  locally and marked nothing read anywhere - a silent divergence between this device and every other
+  one, with no error. The instant is now stamped into the notification's own action intent
+  (`EXTRA_SENT_AT`, `userInfo["sentAt"]`) from the decrypted message's `sentAt`, so nothing is looked
+  up; it is the SENDER's clock and never this device's, because watermarks merge by `max` and a fast
+  phone would otherwise mark unseen messages read permanently. The id path, the cache lookup and
+  `build_read_receipt_app_message` are deleted; the receiving side keeps accepting `read_receipt`
+  from older clients.
+
+- **And the badge now clears on the phone whose button was pressed.** The `read_watermark` frame
+  reaches peers and our own other devices through the outbox, but MLS does not echo a message back
+  to its sender, so nothing ever told the acting device's own conversation row: the user
+  acknowledged a conversation from the shade, opened the app, and found it unread - indistinguishable
+  from the action having done nothing. `read_watermarks.ndjson` is the missing half, written by the
+  action and merged at the next login by `consumeNativeReadWatermarks`, which recomputes
+  `unreadCount` FROM the merged watermark rather than writing a count beside it.
+
 - **A backgrounded web tab now says how many messages are waiting, without asking for anything.**
   The title reads `(3) Communautes - Canari` and the favicon carries a red dot, from the same unread
   total the sidebar and the bottom bar already show. Until now the web had exactly ONE out-of-page
@@ -351,6 +375,15 @@ which is also where every release up to and including v0.13.1 now lives.
   outright. Lint, format, `nest build` and 157 / 6 / 563 / 271 jest tests under node, all green.
 
 ### Fixed
+
+- **Seven control events were one non-silent push away from being shown to the user as
+  `evenement de groupe (history_digest)`.** `format_system_event_text` (`proto_fields.rs`) silences
+  control frames by NAME and renders everything else with its raw event name, and its list had never
+  been reconciled with what the app actually sends: `read_watermark`, `channel_invitation` and the
+  six `history_*` sync frames were all missing. Nothing had fired, because control frames are sent
+  `silent` and the silent branch returns before the preview is reached - but that is a property of a
+  different layer, and the classifier is now complete and pinned by a test that enumerates the
+  vocabulary.
 
 - **A conversation flashed read / unread / read for the whole of a history reconciliation.** The
   unread badge is meant to be derived from this user's own read watermark - `countUnreadForUser` -

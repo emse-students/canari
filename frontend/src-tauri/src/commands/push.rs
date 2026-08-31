@@ -164,38 +164,74 @@ pub(crate) fn get_voip_token(app: tauri::AppHandle) -> Option<String> {
     }
 }
 
-/// Reads {app_data_dir}/fcm_message_cache.ndjson, clears the file and returns the entries.
-/// Called at boot right after login to pre-inject messages already decrypted when the FCM push
-/// arrived - avoids waiting for the full MLS sync (~10s).
-#[tauri::command]
-pub(crate) fn read_and_clear_fcm_cache(app: tauri::AppHandle) -> Vec<serde_json::Value> {
+/// Reads an app-private NDJSON hand-off file, DELETES it, and returns its parsed lines.
+///
+/// The native notification paths (Android service, iOS NSE and app extension) leave facts for the
+/// frontend in app-private NDJSON files, and every one of them wants the same three properties:
+/// an absent file is "nothing to say" and not an error, a line that will not parse is dropped
+/// rather than failing the batch, and the file is REMOVED before the caller is answered so no boot
+/// can replay it. Two readers spelled that out separately; a third was about to.
+///
+/// `tag` names the caller in the logs, and is the only thing that differs between them.
+fn take_ndjson_handoff(
+    app: &tauri::AppHandle,
+    file_name: &str,
+    tag: &str,
+) -> Vec<serde_json::Value> {
     let data_dir = match app.path().app_data_dir() {
         Ok(d) => d,
         Err(e) => {
-            log::warn!("[FCM_CACHE] app_data_dir() failed: {e}");
+            log::warn!("[{tag}] app_data_dir() failed: {e}");
             return vec![];
         }
     };
-    let path = data_dir.join("fcm_message_cache.ndjson");
+    let path = data_dir.join(file_name);
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return vec![],
         Err(e) => {
-            log::warn!("[FCM_CACHE] read failed: {e}");
+            log::warn!("[{tag}] read failed: {e}");
             return vec![];
         }
     };
     // Clear immediately so the next boot does not replay the same entries.
     if let Err(e) = std::fs::remove_file(&path) {
-        log::warn!("[FCM_CACHE] delete failed: {e}");
+        log::warn!("[{tag}] delete failed: {e}");
     }
     let entries: Vec<serde_json::Value> = content
         .lines()
         .filter(|l| !l.trim().is_empty())
         .filter_map(|l| serde_json::from_str(l).ok())
         .collect();
-    log::info!("[FCM_CACHE] {} entry/entries read", entries.len());
+    log::info!("[{tag}] {} entry/entries read", entries.len());
     entries
+}
+
+/// Reads {app_data_dir}/fcm_message_cache.ndjson, clears the file and returns the entries.
+/// Called at boot right after login to pre-inject messages already decrypted when the FCM push
+/// arrived - avoids waiting for the full MLS sync (~10s).
+#[tauri::command]
+pub(crate) fn read_and_clear_fcm_cache(app: tauri::AppHandle) -> Vec<serde_json::Value> {
+    take_ndjson_handoff(&app, "fcm_message_cache.ndjson", "FCM_CACHE")
+}
+
+/// Reads {app_data_dir}/read_watermarks.ndjson, clears the file and returns the entries.
+///
+/// WHAT THIS CHANNEL EXISTS FOR. Marking a conversation read from the notification shade is two
+/// separate facts, and only one of them travelled: the `read_watermark` frame reaches PEERS and
+/// our other devices through the outbox, but nothing told THIS device's own database, whose
+/// conversation row is what draws the badge. So the user acknowledged a conversation from the
+/// shade, opened the app, and found it unread again - which is indistinguishable from the action
+/// having done nothing at all.
+///
+/// Each line is `{"groupId": "...", "at": <ms>}`, written by the Android action receiver and the
+/// iOS notification-response handler at the instant they queue the frame, and merged into the
+/// conversations at the next login by `consumeNativeReadWatermarks` (readWatermarkCache.ts). The
+/// merge is `max`, so replaying one is harmless - but the file is cleared here anyway, because a
+/// hand-off that accumulates is a hand-off that eventually costs a boot.
+#[tauri::command]
+pub(crate) fn read_and_clear_read_watermarks(app: tauri::AppHandle) -> Vec<serde_json::Value> {
+    take_ndjson_handoff(&app, "read_watermarks.ndjson", "READ_WATERMARK")
 }
 
 /// Rewrites {app_data_dir}/outbox_pending.ndjson from the current outbox snapshot.

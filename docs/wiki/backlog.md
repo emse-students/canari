@@ -42,6 +42,7 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 | the notification quick reply's 403 | HARDWARE: check K steps 1-5 and **K2**, on A1 which already carries the build - **and the window must be ARMED, a run made without arming proves nothing** ([check K](device-verification.md#the-backgrounded-run-that-failed-and-the-defect-it-found)). The iOS twin is corrected identically and equally unproven |
 | the login button that took a press and showed nothing | the fix is a reordering, visible in the component's own state, so any cold `/login` press proves it. What is NOT explained is the 2026-08-28 measurement's "no request" over thirty seconds: a version check running its ladder would have issued three. Read the network tail of the next cold login before calling that measurement understood |
 | the last server-composed sentence now asks the device which language it reads | after the next release, `[PUSH_REGISTER]` prints `locale=fr` or `locale=en` rather than `unstated` for a device that has restarted once - every client re-registers on its next start because the skip predicate changed shape. The VISIBLE half needs an iPhone AND a failed NSE, which is why the log line is the measurement |
+| acknowledging a conversation from the notification shade | HARDWARE, both platforms. On A1: send from W1, background the app, tap **Marquer comme lu**, then OPEN the app - the badge must be gone, which is the half that needed `read_watermarks.ndjson`. Then the same with a quick REPLY, which now means the same thing. `logcat` must show `sendReadWatermark: queued+drained at=<ms>` with the SENDER's instant, never a value near `now`. Board row **NOTIF-6b**, and the iOS twin is written identically and equally unproven |
 | WP-REGRANT-2, a re-granted member's re-join | COMM-22, four grant/revoke cycles green - and COMM-8 reading `seedAfterTheGrant: true`, never `repaired`, which is a fallback and not a path |
 
 ---
@@ -532,42 +533,6 @@ reads `dm_group_members` - written by `registerMember` - so a reader racing that
 empty 200 and forgets the group with MORE confidence. A second read that races the same write is not a
 discriminator. **What closes it is making the destructive branch require the fact its name claims, or
 renaming the branch to what it actually knows.**
-
-### P2 - the native "Marquer comme lu" still speaks the read model that was replaced on 2026-08-12 (found 2026-08-30)
-
-**The user's lead was right: it changed recently, and the native half did not follow.** `0db47a87`
-migrated read state from `read_receipt` (a list of message ids) to `read_watermark` (an instant) and
-touched **only** `frontend/src/lib/**` - zero native files. `grep read_watermark` over
-`frontend/src-tauri/src` and `frontend/src-tauri/gen` returns nothing. So the shade's "Marquer comme
-lu" still builds a `read_receipt` through `nativeBuildReadReceiptProto`.
-
-It is not dead: `systemMessageHandler.ts` still accepts `read_receipt` and converts it, via
-`watermarkAfterReading`, into the watermark the rest of the app uses. But the conversion is only as
-good as the ids it is given, and those come from `readCachedMessageIdsForGroup`, which reads
-`fcm_message_cache.ndjson` - a file `consumeFcmCache()` CLEARS at every app boot. Two consequences,
-both measured on A1 on 2026-08-30:
-
-- **Cache populated** (the message arrived while the app was down): works.
-  `handleMarkRead: read receipt queued+drained for 1 message(s)`, `HTTP 201`, and W1's row went from
-  `"...\n1\nMR-A1-G3H9"` to `"...\nMR-A1-G3H9"` - the badge cleared on the other device.
-- **Cache empty** (the app has been opened since): takes the
-  `no cached messageId ... no receipt sent` branch. The banner clears locally and **nothing is marked
-  read anywhere** - a silent divergence between this device and every other one, with no error.
-
-`watermarkAfterReading` on an empty list returns 0, so an empty receipt could not help either. **The
-instant the action needs is known at the tap** - it is the moment the user pressed the button - and
-the design sends a set of ids it has to go looking for in a cache written for another purpose. That
-is this repo's own rule about a column only being evidence for the question it was written to answer.
-The fix is to build a `read_watermark` natively and delete the id path; it needs a new
-`nativeBuildReadWatermarkProto` beside the existing proto encoders and the legacy branch kept for
-old clients ([legacy-compatibility](legacy-compatibility.md)).
-
-Two smaller things found in the same file, neither fixed: `readCachedMessageIdsForGroup` filters on
-`groupId` alone although `writeSentMessageToCache` writes a `senderId` right beside it, so a
-"mark as read" can include the user's OWN messages; and **replying does not mark as read** -
-`handleReply` cancels the notification and writes the cache entry, and sends no receipt of any kind.
-Whether it should is a product question for the user, not a defect: the board row NOTIF-6b was
-written to ask it and had never been run either way.
 
 ### P2 - a device holds a distribution group the group holds no row for it, and heals by rejoining (measured 2026-08-29)
 

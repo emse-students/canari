@@ -18,7 +18,7 @@ use super::background::{
     decrypt_push_message_with_key, parse_outbox_entries_json, process_welcome_background_with_key,
     send_messages_background_with_key,
 };
-use super::proto_fields::{build_read_receipt_app_message, build_text_app_message};
+use super::proto_fields::{build_read_watermark_app_message, build_text_app_message};
 
 fn json_to_c_string(value: serde_json::Value) -> *mut c_char {
     CString::new(value.to_string())
@@ -429,21 +429,15 @@ pub unsafe extern "C" fn canari_native_build_text_message_proto(
         .into_raw()
 }
 
-/// Builds a plaintext `AppMessage` read-receipt (system) proto (base64, heap-allocated C string)
-/// for the "mark as read" notification quick action. `message_ids_json` is a JSON array of message
-/// id strings (read from `fcm_message_cache.ndjson` on the ObjC side). Sent through the outbox
-/// drain like the reply above, but marked `silent` by the caller so it triggers the existing
+/// Builds a plaintext `AppMessage` read-watermark (system) proto (base64, heap-allocated C string)
+/// for the "mark as read" and quick-reply notification actions. `at` is the sender's `sent_at` for
+/// the message the notification is about, carried in the notification's `userInfo` - never this
+/// device's clock, for the reason [`build_read_watermark_app_message`] states. Sent through the
+/// outbox drain like the reply above, but marked `silent` by the caller so it triggers the existing
 /// cross-device notification-cancel path instead of a peer push.
 #[no_mangle]
-pub unsafe extern "C" fn canari_native_build_read_receipt_proto(
-    message_ids_json: *const c_char,
-) -> *mut c_char {
-    if message_ids_json.is_null() {
-        return CString::new("").unwrap().into_raw();
-    }
-    let ids: Vec<String> =
-        serde_json::from_str(&str_from_c_str(message_ids_json)).unwrap_or_default();
-    let bytes = build_read_receipt_app_message(&ids);
+pub unsafe extern "C" fn canari_native_build_read_watermark_proto(at: i64) -> *mut c_char {
+    let bytes = build_read_watermark_app_message(at);
     CString::new(STANDARD.encode(&bytes))
         .unwrap_or_else(|_| CString::new("").expect("static empty"))
         .into_raw()

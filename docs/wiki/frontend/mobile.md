@@ -1222,7 +1222,60 @@ Key FFI functions:
 - `nativeDecryptMessage` / `canari_native_decrypt_message` — MLS decrypt in background
 - `nativeDecryptMedia` / `canari_native_decrypt_media` — Media blob decrypt
 - `nativeBuildTextMessageProto` / `canari_native_build_text_message_proto` — Reply proto encoder
-- `nativeBuildReadReceiptProto` / `canari_native_build_read_receipt_proto` — Read receipt proto encoder
+- `nativeBuildReadWatermarkProto` / `canari_native_build_read_watermark_proto` — Read-watermark proto encoder
+
+## Acknowledging a conversation from the notification shade
+
+**"Marquer comme lu" and a quick REPLY are the same acknowledgement** - a user who answered a
+conversation has read it (product decision, 2026-08-31). Both call one function on each platform
+(`sendReadWatermark` in `CanariNotificationActionReceiver.kt`, `CanariSendReadWatermark` in
+`canari_push.mm`), so neither can drift into its own idea of what reading means.
+
+### The instant is carried, never looked up
+
+The frame is `AppMessage{ system: SystemMsg{ event: "read_watermark", data: {"at"} } }`, built by
+`build_read_watermark_app_message` (`proto_fields.rs`) and reached through
+`nativeBuildReadWatermarkProto` / `canari_native_build_read_watermark_proto`. `at` comes from the
+notification's own intent - `EXTRA_SENT_AT` on Android, `userInfo["sentAt"]` on iOS - stamped when
+the notification was posted, from the decrypted message's `sentAt`.
+
+That is the whole correction. Until 2026-08-31 the action built a `read_receipt` naming message
+**ids**, and got them from `fcm_message_cache.ndjson` - a file `consumeFcmCache()` CLEARS at every
+app boot. Once the app had been opened after a notification arrived, the list was empty and the
+action sent **nothing**, silently, because an empty list is indistinguishable from a conversation
+with nothing to acknowledge. A fact the notification already holds must not be re-derived from a
+cache written for another purpose and outliving nothing.
+
+`at` is also never this device's clock. Watermarks merge by `max` across devices, so a phone running
+fast would mark future messages read permanently and unfixably - the rule `watermarkAfterReading`
+(`readState.ts`) states for the foreground path, holding identically here. `at <= 0` means "this
+notification predates the extra": the action says nothing rather than inventing something. Since
+`extract_full_message_info` always emits a `sentAt` key (0 when the proto carries none), the
+`sentAt`-defaults-to-now branches in both platforms' decrypt-result parsers are unreachable from
+here.
+
+### Two destinations, because the frame only reaches the other side
+
+| Destination | Carrier | What it fixes |
+| --- | --- | --- |
+| peers, and our own other devices | the outbox entry (`silent`, `durable`), drained in the background | their badge, their read ticks |
+| **this** device's own database | `read_watermarks.ndjson`, merged at the next login | the badge on the phone the user is holding |
+
+The second half is easy to lose and was: the control frame goes out to the group, and MLS does not
+echo it back to its sender, so nothing told this device's conversation row. The user acknowledged a
+conversation from the shade, opened the app, and found it unread - which reads exactly like the
+action having done nothing at all.
+
+`read_watermarks.ndjson` is one line per conversation (`{"groupId", "at"}`), collapsed on write
+keeping the larger `at`, which bounds it by the number of conversations rather than by a cap that
+could drop the very entry it was written for. `read_and_clear_read_watermarks` (`push.rs`) reads and
+DELETES it; `consumeNativeReadWatermarks` (`readWatermarkCache.ts`) merges it at login, after
+`consumeFcmCache` so the messages it covers are already in memory, and recomputes `unreadCount`
+FROM the merged watermark rather than writing a count beside it.
+
+The receiving side still accepts the legacy `read_receipt` and converts it through
+`watermarkAfterReading` - that shim is for clients older than this change, and is dated in
+[legacy-compatibility](../legacy-compatibility.md). Nothing in this repo sends one any more.
 
 ## The push secret has two homes, and the file is always the newer one
 

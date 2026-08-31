@@ -25,6 +25,10 @@ static NSString *const kPendingPushSecretFileName = @"pending_push_secret.txt";
 static NSString *const kPushContextFileName = @"push_context.json";
 static NSString *const kMlsBinFileName = @"mls.bin";
 static NSString *const kFcmCacheFileName = @"fcm_message_cache.ndjson";
+/// Cross-process hand-off: what the notification shade acknowledged while the app was not running.
+/// Read and cleared by the `read_and_clear_read_watermarks` Tauri command. Android twin: the same
+/// name in CanariFirebaseMessagingService.appendReadWatermark.
+static NSString *const kReadWatermarkFileName = @"read_watermarks.ndjson";
 static const NSUInteger kMaxFcmCacheEntries = 50;
 static const int kWelcomeRaceRetries = 3;
 static const useconds_t kWelcomeRaceRetryDelayUs = 1800000;
@@ -964,49 +968,6 @@ void CanariDrainAppGroupFcmCache(void) {
   }
 }
 
-/**
- * Reads `fcm_message_cache.ndjson` (bounded, written by `CanariWriteFcmCache` on every decrypted
- * push) and returns the messageIds cached for `groupId` - used by the "mark as read" quick action
- * (WP-XP-1) to know which messages to cover in the read receipt. iOS twin of Android's
- * readCachedMessageIdsForGroup in CanariNotificationActionReceiver.kt.
- */
-static NSArray<NSString *> *CanariReadCachedMessageIdsForGroup(NSString *groupId) {
-  NSString *dir = CanariTauriDataDir();
-  if (dir == nil || groupId.length == 0) {
-    return @[];
-  }
-  NSString *path = [dir stringByAppendingPathComponent:kFcmCacheFileName];
-  NSMutableArray<NSString *> *messageIds = [NSMutableArray array];
-  [g_cacheLock lock];
-  @try {
-    NSString *content = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
-    if (content.length == 0) {
-      return @[];
-    }
-    for (NSString *line in [content componentsSeparatedByString:@"\n"]) {
-      if (line.length == 0) {
-        continue;
-      }
-      id json = [NSJSONSerialization JSONObjectWithData:[line dataUsingEncoding:NSUTF8StringEncoding]
-                                                options:0
-                                                  error:nil];
-      if (![json isKindOfClass:[NSDictionary class]]) {
-        continue;
-      }
-      NSDictionary *o = (NSDictionary *)json;
-      NSString *entryGroupId =
-          [o[kFcmCacheGroupIdKey] isKindOfClass:[NSString class]] ? o[kFcmCacheGroupIdKey] : @"";
-      NSString *messageId =
-          [o[kFcmCacheMessageIdKey] isKindOfClass:[NSString class]] ? o[kFcmCacheMessageIdKey] : @"";
-      if ([entryGroupId isEqualToString:groupId] && messageId.length > 0) {
-        [messageIds addObject:messageId];
-      }
-    }
-  } @finally {
-    [g_cacheLock unlock];
-  }
-  return messageIds;
-}
 
 /**
  * Number of distinct unread conversations among `delivered`, ignoring `excludedIds`.
@@ -1066,11 +1027,15 @@ static void CanariUpdateAppBadge(void) {
       }];
 }
 
+/// `sentAt` is the SENDER's instant for the message this notification is about, in ms, and it is
+/// stamped into `userInfo` so the quick actions can acknowledge the conversation without looking
+/// anything up - see `CanariSendReadWatermark`. 0 means unknown, which those actions read as "say
+/// nothing" rather than substituting a clock.
 static void CanariShowLocalNotification(NSString *title, NSString *body, NSString *deepLink,
                                       NSString *threadId, int notifId,
                                       NSString *_Nullable attachmentPath,
                                       NSString *_Nullable groupId, BOOL timeSensitive,
-                                      NSString *_Nullable subtitle) {
+                                      NSString *_Nullable subtitle, long long sentAt) {
   // WP-XP-7: per-conversation notifications use the groupId as thread, not the flat
   // "canari_messages" thread. Suppress the foreground guard ONLY for the old flat thread;
   // per-conversation notifications should still post (they might be from a conversation
@@ -1110,6 +1075,9 @@ static void CanariShowLocalNotification(NSString *title, NSString *body, NSStrin
   // server-authoritative and do not go through the MLS outbox (see outbox.ts isChannelConversationId).
   if (groupId.length > 0 && ![groupId hasPrefix:@"channel_"]) {
     userInfo[@"groupId"] = groupId;
+    if (sentAt > 0) {
+      userInfo[@"sentAt"] = @(sentAt);
+    }
     content.categoryIdentifier = kCanariMessageCategoryId;
   }
   if (userInfo.count > 0) {
@@ -1812,6 +1780,121 @@ static int CanariDrainOutboxBackground(CanariPushContext *ctx) {
 }
 
 /**
+ * Records "this conversation is read up to `at`" in `read_watermarks.ndjson`, the cross-process
+ * file the app merges at boot (`consumeNativeReadWatermarks`). Android twin: appendReadWatermark in
+ * CanariFirebaseMessagingService.kt.
+ *
+ * THE FRAME IS NOT ENOUGH. The `read_watermark` control event queued alongside this reaches PEERS
+ * and our own other devices; nothing carries it to THIS device's database, whose conversation row
+ * draws the badge. Without it the user acknowledged a conversation from the shade, opened the app
+ * and found it unread - which looks exactly like the action having done nothing.
+ *
+ * ONE LINE PER CONVERSATION, keeping the larger `at`: the merge on the far side is `max` anyway, so
+ * collapsing here bounds the file by the number of conversations rather than by a cap that could
+ * drop the very entry it was written for.
+ */
+static void CanariAppendReadWatermark(NSString *groupId, long long at) {
+  NSString *dir = CanariTauriDataDir();
+  if (dir == nil || groupId.length == 0 || at <= 0) {
+    NSLog(@"[CanariPush] appendReadWatermark: group=%@ at=%lld -> nothing to record", groupId, at);
+    return;
+  }
+  NSString *path = [dir stringByAppendingPathComponent:kReadWatermarkFileName];
+  [g_cacheLock lock];
+  @try {
+    NSMutableDictionary<NSString *, NSNumber *> *byGroup = [NSMutableDictionary dictionary];
+    NSString *content = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
+    for (NSString *line in [content componentsSeparatedByString:@"\n"]) {
+      if (line.length == 0) {
+        continue;
+      }
+      id json = [NSJSONSerialization JSONObjectWithData:[line dataUsingEncoding:NSUTF8StringEncoding]
+                                                options:0
+                                                  error:nil];
+      if (![json isKindOfClass:[NSDictionary class]]) {
+        continue;
+      }
+      NSDictionary *o = (NSDictionary *)json;
+      NSString *g = [o[@"groupId"] isKindOfClass:[NSString class]] ? o[@"groupId"] : @"";
+      long long a = [o[@"at"] respondsToSelector:@selector(longLongValue)] ? [o[@"at"] longLongValue] : 0;
+      if (g.length > 0 && a > 0 && a > byGroup[g].longLongValue) {
+        byGroup[g] = @(a);
+      }
+    }
+    if (at > byGroup[groupId].longLongValue) {
+      byGroup[groupId] = @(at);
+    }
+    NSMutableArray<NSString *> *lines = [NSMutableArray array];
+    for (NSString *g in byGroup) {
+      NSData *data = [NSJSONSerialization dataWithJSONObject:@{@"groupId" : g, @"at" : byGroup[g]}
+                                                    options:0
+                                                      error:nil];
+      if (data != nil) {
+        [lines addObject:[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding]];
+      }
+    }
+    NSString *body = [[lines componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"];
+    [body writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    NSLog(@"[CanariPush] appendReadWatermark: group=%@ at=%lld recorded for the next boot", groupId, at);
+  } @finally {
+    [g_cacheLock unlock];
+  }
+}
+
+/**
+ * Announces "I have read this conversation up to `at`", from the notification shade. Android twin:
+ * sendReadWatermark in CanariNotificationActionReceiver.kt, which carries the full reasoning.
+ *
+ * ONE ANSWER FOR BOTH ACTIONS: marking read and replying are the same acknowledgement (product
+ * decision, 2026-08-31). `at` comes from the notification's own `userInfo`, never from a cache -
+ * the id-based `read_receipt` this replaces read `fcm_message_cache.ndjson`, which the app CLEARS
+ * at every boot, so "mark as read" sent NOTHING once the app had been opened since the notification
+ * arrived. And never from the clock: watermarks merge by `max`, so a fast clock would mark future
+ * messages read permanently and unfixably.
+ */
+static void CanariSendReadWatermark(NSString *groupId, long long at) {
+  if (groupId.length == 0) {
+    return;
+  }
+  if (at <= 0) {
+    NSLog(@"[CanariPush] sendReadWatermark: no sentAt in userInfo group=%@ - nothing announced", groupId);
+    return;
+  }
+  CanariAppendReadWatermark(groupId, at);
+
+  CanariPushContext *ctx = CanariLoadPushContext();
+  if (ctx == nil) {
+    NSLog(@"[CanariPush] sendReadWatermark: push_context.json missing -> frame not queued");
+    return;
+  }
+  char *protoPtr = canari_native_build_read_watermark_proto(at);
+  if (protoPtr == nil) {
+    NSLog(@"[CanariPush] sendReadWatermark: canari_native_build_read_watermark_proto failed");
+    return;
+  }
+  NSString *protoB64 = [NSString stringWithUTF8String:protoPtr];
+  canari_free_string(protoPtr);
+  if (protoB64.length == 0) {
+    return;
+  }
+
+  CanariOutboxEntry *entry = [[CanariOutboxEntry alloc] init];
+  entry.entryId = [[NSUUID UUID] UUIDString];
+  entry.groupId = groupId;
+  entry.proto = protoB64;
+  entry.sentAt = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
+  // Silent, but durable: a read watermark sent from the notification shade is the same mutation as
+  // one sent from the app, and must reach a device that was offline.
+  entry.silent = YES;
+  entry.durable = YES;
+  NSMutableArray<CanariOutboxEntry *> *entries = [CanariReadOutboxMirror() mutableCopy];
+  [entries addObject:entry];
+  CanariRewriteOutboxMirror(entries);
+  CanariDrainOutboxBackground(ctx);
+  NSLog(@"[CanariPush] sendReadWatermark: queued+drained at=%lld group=%@", at, groupId);
+}
+
+/**
  * Notification quick action (WP-XP-1): builds a plaintext text `AppMessage` proto for the typed
  * reply (via the Rust FFI, no TS runtime involved), queues it into the same `outbox_pending.ndjson`
  * mirror the composer writes to, and drains it immediately. The notification is cleared only once
@@ -1819,7 +1902,7 @@ static int CanariDrainOutboxBackground(CanariPushContext *ctx) {
  * notification so the user can retry from the app. Android twin: handleReply in
  * CanariNotificationActionReceiver.kt.
  */
-static void CanariHandleQuickReplyAction(NSString *groupId, NSString *text) {
+static void CanariHandleQuickReplyAction(NSString *groupId, NSString *text, long long notifiedAt) {
   if (groupId.length == 0 || text.length == 0) {
     NSLog(@"[CanariPush] handleQuickReplyAction: groupId/text missing");
     return;
@@ -1861,6 +1944,10 @@ static void CanariHandleQuickReplyAction(NSString *groupId, NSString *text) {
     // the reply is never dropped before the durable one exists.
     CanariWriteSentMessageToCache(groupId, ctx.userId, messageId, text, sentAt);
     CanariCancelConversationNotification(groupId);
+    // ANSWERING A CONVERSATION IS READING IT (product decision, 2026-08-31). Only on the delivered
+    // branch: a reply still sitting in the outbox has not been seen by anyone, and announcing a
+    // read state for it would state something no peer can yet corroborate.
+    CanariSendReadWatermark(groupId, notifiedAt);
   } else {
     // Not delivered: NO cache entry, or the app would show as sent a message that never left.
     // The notification stays up, which is the only retry affordance - `store_outbox_mirror`
@@ -1872,67 +1959,32 @@ static void CanariHandleQuickReplyAction(NSString *groupId, NSString *text) {
 }
 
 /**
- * Notification quick action (WP-XP-1): clears this device's local notification immediately
- * (visible part of "mark as read"), then best-effort sends a silent `read_receipt` system event for
- * every cached message of this conversation - reusing the same silent-push cross-device-cancel path
- * already used when a conversation is read in the foreground. No cached messageId (cache
- * evicted/never decrypted) -> notification is still cleared, just no receipt is sent. Android twin:
- * handleMarkRead in CanariNotificationActionReceiver.kt.
+ * Notification quick action (WP-XP-1): clears this device's local notification immediately (the
+ * visible half of "mark as read"), then announces the watermark the notification carries.
+ *
+ * The notification is cleared FIRST and unconditionally: it is the half the user asked for and can
+ * see, and it must not depend on the push context being loadable.
  */
-static void CanariHandleMarkReadAction(NSString *groupId) {
+static void CanariHandleMarkReadAction(NSString *groupId, long long sentAt) {
   if (groupId.length == 0) {
     return;
   }
   CanariCancelConversationNotification(groupId);
+  CanariSendReadWatermark(groupId, sentAt);
+}
 
-  NSArray<NSString *> *messageIds = CanariReadCachedMessageIdsForGroup(groupId);
-  if (messageIds.count == 0) {
-    NSLog(@"[CanariPush] handleMarkReadAction: no cached messageId group=%@ - notification cleared, no receipt",
-          groupId);
-    return;
-  }
-  CanariPushContext *ctx = CanariLoadPushContext();
-  if (ctx == nil) {
-    NSLog(@"[CanariPush] handleMarkReadAction: push_context.json missing -> receipt aborted");
-    return;
-  }
-  NSData *idsData = [NSJSONSerialization dataWithJSONObject:messageIds options:0 error:nil];
-  if (idsData == nil) {
-    return;
-  }
-  NSString *idsJson = [[NSString alloc] initWithData:idsData encoding:NSUTF8StringEncoding];
-  char *protoPtr = canari_native_build_read_receipt_proto(idsJson.UTF8String);
-  if (protoPtr == nil) {
-    NSLog(@"[CanariPush] handleMarkReadAction: nativeBuildReadReceiptProto failed");
-    return;
-  }
-  NSString *protoB64 = [NSString stringWithUTF8String:protoPtr];
-  canari_free_string(protoPtr);
-  if (protoB64.length == 0) {
-    return;
-  }
-
-  CanariOutboxEntry *entry = [[CanariOutboxEntry alloc] init];
-  entry.entryId = [[NSUUID UUID] UUIDString];
-  entry.groupId = groupId;
-  entry.proto = protoB64;
-  entry.sentAt = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
-  // Silent, but durable: a read receipt sent from the notification shade is the same mutation as
-  // one sent from the app, and must reach a device that was offline.
-  entry.silent = YES;
-  entry.durable = YES;
-  NSMutableArray<CanariOutboxEntry *> *entries = [CanariReadOutboxMirror() mutableCopy];
-  [entries addObject:entry];
-  CanariRewriteOutboxMirror(entries);
-  CanariDrainOutboxBackground(ctx);
-  NSLog(@"[CanariPush] handleMarkReadAction: read receipt queued+drained for %lu message(s) group=%@",
-        (unsigned long)messageIds.count, groupId);
+/// The `sentAt` a notification carries, or 0. APNs delivers `userInfo` values as `NSNumber` when
+/// the app posted the notification itself and as `NSString` when they came off the wire, so both
+/// answer here rather than at the two call sites.
+static long long CanariNotifiedSentAt(NSDictionary *userInfo) {
+  id raw = userInfo[@"sentAt"];
+  return [raw respondsToSelector:@selector(longLongValue)] ? [raw longLongValue] : 0;
 }
 
 static void CanariShowPendingSyncNotification(void) {
   NSString *body = CanariLocalized(@"notif.outbox.pending");
   CanariShowLocalNotification(@"Canari", body, @"fr.emse.canari://chat", @"canari_messages",
-                              kPendingSyncNotifId, nil, nil, NO, nil);
+                              kPendingSyncNotifId, nil, nil, NO, nil, 0);
   NSLog(@"[CanariPush] showPendingSyncNotification");
 }
 
@@ -2337,7 +2389,7 @@ static void CanariShowMessageNotification(NSString *senderName, NSString *groupN
   // already carries the sender Person). NSE twin: applyMessageContent in NotificationService.swift.
   NSString *subtitle = isGroup ? senderName : nil;
   CanariShowLocalNotification(title, body, deepLink, threadId, notifId, attachmentPath,
-                              groupId, mentionsMe, subtitle);
+                              groupId, mentionsMe, subtitle, decrypted != nil ? decrypted.sentAt : 0);
 }
 
 static void CanariRefreshTokenOnBackend(CanariPushContext *ctx, NSString *secret, NSString *token) {
@@ -3021,7 +3073,7 @@ static void CanariHandleFcmData(NSDictionary *data) {
     NSString *deepLink = [NSString stringWithFormat:@"fr.emse.canari://chat/%@", groupId];
     NSLog(@"[CanariPush] reaction group=%@ actor=%@", groupId, actorId);
     CanariShowLocalNotification(actorName, CanariReactionBody(emoji), deepLink, groupId,
-                                CanariStableNotifId(groupId), attachmentPath, nil, NO, nil);
+                                CanariStableNotifId(groupId), attachmentPath, nil, NO, nil, 0);
     return;
   }
 
@@ -3042,7 +3094,7 @@ static void CanariHandleFcmData(NSDictionary *data) {
       deepLink = [NSString stringWithFormat:@"fr.emse.canari://form/%@", formId];
     }
     NSString *thread = [msgType isEqualToString:@"form_reminder"] ? @"canari_forms" : @"canari_social";
-    CanariShowLocalNotification(title, body, deepLink, thread, 0, nil, nil, NO, nil);
+    CanariShowLocalNotification(title, body, deepLink, thread, 0, nil, nil, NO, nil, 0);
     return;
   }
 
@@ -3356,9 +3408,11 @@ static void CanariInstallApnsTokenHook(void) {
     if ([response isKindOfClass:[UNTextInputNotificationResponse class]]) {
       text = ((UNTextInputNotificationResponse *)response).userText ?: @"";
     }
+    long long notifiedAt = CanariNotifiedSentAt(userInfo);
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
       CanariHandleQuickReplyAction(groupId, [text stringByTrimmingCharactersInSet:
-                                                        [NSCharacterSet whitespaceAndNewlineCharacterSet]]);
+                                                        [NSCharacterSet whitespaceAndNewlineCharacterSet]],
+                                   notifiedAt);
       completionHandler();
     });
     return;
@@ -3366,8 +3420,9 @@ static void CanariInstallApnsTokenHook(void) {
   if ([response.actionIdentifier isEqualToString:kCanariMarkReadActionId]) {
     NSString *groupId =
         [userInfo[@"groupId"] isKindOfClass:[NSString class]] ? userInfo[@"groupId"] : @"";
+    long long notifiedAt = CanariNotifiedSentAt(userInfo);
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-      CanariHandleMarkReadAction(groupId);
+      CanariHandleMarkReadAction(groupId, notifiedAt);
       completionHandler();
     });
     return;

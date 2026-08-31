@@ -70,6 +70,7 @@ import { saveDeviceKey, clearDeviceKey, clearDeviceKeyAndWrapKey } from '$lib/ut
 import { wipeDeviceToFactory } from '$lib/utils/deviceReset';
 import { startPushService, stopPushService } from '$lib/services/PushNotificationService';
 import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
+import { consumeNativeReadWatermarks } from '$lib/utils/chat/readWatermarkCache';
 import { adoptOrphanedMirrorEntries, reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
 import { mergeFcmMessagesIntoConversations } from '$lib/utils/chat/fcmMemoryMerge';
 import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
@@ -947,6 +948,13 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     endStartupCatchupPhase({
       messageCount: Array.isArray(fcmInjected) ? fcmInjected.length : 0,
     });
+
+    // What the notification shade acknowledged while the app was not running. AFTER the FCM cache:
+    // the watermark's whole job is to recompute `unreadCount`, and it must count the messages that
+    // pre-injection just added, not the ones that were there a moment ago.
+    await consumeNativeReadWatermarks(cb.conversations, ctx.getUserId(), cb.saveConversation).catch(
+      (e) => cb.log(`[READ_WATERMARK] Merge pass failed: ${String(e)}`)
+    );
 
     try {
       const localMlsGroups = new SvelteSet(mlsService.getLocalGroups());

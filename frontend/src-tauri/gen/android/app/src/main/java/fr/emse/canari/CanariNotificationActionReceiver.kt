@@ -6,10 +6,7 @@ import android.content.Intent
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.RemoteInput
-import java.io.File
 import java.util.UUID
-import org.json.JSONArray
-import org.json.JSONObject
 
 /**
  * Handles the notification quick actions (WP-XP-1): inline "Repondre" (RemoteInput) and
@@ -47,7 +44,7 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
                     CanariFirebaseMessagingService.ACTION_QUICK_REPLY ->
                         handleReply(appContext, intent, groupId)
                     CanariFirebaseMessagingService.ACTION_MARK_READ ->
-                        handleMarkRead(appContext, groupId)
+                        handleMarkRead(appContext, intent, groupId)
                     CanariFirebaseMessagingService.ACTION_CALL_DECLINE ->
                         handleCallDecline(appContext, intent)
                     else -> Log.w(TAG, "onReceive: unknown action ${intent.action}")
@@ -76,6 +73,7 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
      * the app - which is exactly the "the reply does not work" report.
      */
     private fun handleReply(context: Context, intent: Intent, groupId: String) {
+        val notifiedAt = intent.getLongExtra(CanariFirebaseMessagingService.EXTRA_SENT_AT, 0L)
         val text = RemoteInput.getResultsFromIntent(intent)
             ?.getCharSequence(CanariFirebaseMessagingService.KEY_TEXT_REPLY)
             ?.toString()?.trim()
@@ -112,6 +110,10 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
                 context, groupId, pushCtx.userId, messageId, text, sentAt
             )
             CanariFirebaseMessagingService.cancelConversationNotification(context, groupId)
+            // ANSWERING A CONVERSATION IS READING IT (product decision, 2026-08-31). Only on the
+            // delivered branch: a reply still sitting in the outbox has not been seen by anyone,
+            // and announcing a read state for it would state something no peer can yet corroborate.
+            sendReadWatermark(context, groupId, notifiedAt)
         } else {
             // Not delivered: NO cache entry, or the app would show as sent a message that never
             // left. The entry stays in outbox_pending.ndjson - where `adoptOrphanedMirrorEntries`
@@ -127,74 +129,77 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
             //    failed waited for the next LOGIN, where the FCM drain's own failure path has had
             //    a 30s/60s/120s backoff all along.
             Log.w(TAG, "handleReply: reply still queued (remaining=$remaining) - re-posting the notification and scheduling a retry")
-            CanariFirebaseMessagingService.repostReplyPending(context, groupId, text)
+            CanariFirebaseMessagingService.repostReplyPending(context, groupId, text, notifiedAt)
             OutboxRetryWorker.enqueueIfHealthy(context)
         }
     }
 
     /**
-     * Clears this device's local notification immediately (visible part of "mark as read"), then
-     * best-effort sends a silent `read_receipt` system event for every cached message of this
-     * conversation, reusing the same silent-push cross-device-cancel path already used when a
-     * conversation is read in the foreground (see `CanariFirebaseMessagingService.onMessageReceived`
-     * silent-push handling). No cached messageId (cache evicted/never decrypted) -> notification is
-     * still cleared, just no receipt is sent.
+     * Announces "I have read this conversation up to `at`", from the notification shade.
+     *
+     * ONE ANSWER FOR BOTH ACTIONS. Marking read and replying are the same acknowledgement - a user
+     * who answered a conversation has read it - so they call this rather than each carrying their
+     * own idea of what reading means. That equivalence is a product decision (2026-08-31), and it is
+     * cheap precisely because the watermark is one instant and not a set of ids.
+     *
+     * WHY `at` IS PASSED IN AND NOT LOOKED UP. It comes from the notification's own intent
+     * ([CanariFirebaseMessagingService.EXTRA_SENT_AT]), stamped when the notification was posted.
+     * The id-based `read_receipt` this replaces read `fcm_message_cache.ndjson` instead, which the
+     * app CLEARS at every boot (`consumeFcmCache`): once the app had been opened after a
+     * notification arrived, "mark as read" found an empty list and sent NOTHING, silently, because
+     * an empty list is indistinguishable from a conversation with nothing to acknowledge. A fact
+     * the notification already holds must not be re-derived from a cache that outlives nothing.
+     *
+     * WHY NOT THE CLOCK. Watermarks merge by `max` across devices, so a phone whose clock runs fast
+     * would mark future messages read permanently and unfixably - the same rule the foreground path
+     * states in `watermarkAfterReading` (readState.ts). `at <= 0` therefore means "this notification
+     * predates the extra": nothing is sent, rather than something invented.
+     *
+     * TWO DESTINATIONS, because the frame only reaches the OTHER side. The outbox entry carries it
+     * to peers and to our own other devices; `appendReadWatermark` leaves it where THIS device's
+     * app will merge it at the next boot, which is what actually clears the badge on the phone the
+     * user is holding.
      */
-    private fun handleMarkRead(context: Context, groupId: String) {
-        CanariFirebaseMessagingService.cancelConversationNotification(context, groupId)
-
-        val messageIds = readCachedMessageIdsForGroup(context, groupId)
-        if (messageIds.isEmpty()) {
-            Log.d(TAG, "handleMarkRead: no cached messageId for group=${groupId.take(8)} - notif cleared, no receipt sent")
+    private fun sendReadWatermark(context: Context, groupId: String, at: Long) {
+        if (at <= 0L) {
+            Log.w(TAG, "sendReadWatermark: no sentAt on the intent for group=${groupId.take(8)} - nothing announced")
             return
         }
+        CanariFirebaseMessagingService.appendReadWatermark(context, groupId, at)
+
         val pushCtx = MlsContextLoader.loadPushContext(context)
         if (pushCtx == null) {
-            Log.e(TAG, "handleMarkRead: push_context.json absent -> abort receipt")
+            Log.e(TAG, "sendReadWatermark: push_context.json absent -> frame not queued")
             return
         }
         val service = CanariFirebaseMessagingService()
-        val protoB64 = service.nativeBuildReadReceiptProto(JSONArray(messageIds).toString())
+        val protoB64 = service.nativeBuildReadWatermarkProto(at)
         if (protoB64.isEmpty()) {
-            Log.e(TAG, "handleMarkRead: nativeBuildReadReceiptProto failed")
+            Log.e(TAG, "sendReadWatermark: nativeBuildReadWatermarkProto failed")
             return
         }
-
         val entries = CanariFirebaseMessagingService.readOutboxMirror(context) +
             CanariFirebaseMessagingService.OutboxMirrorEntry(
-                // Silent, but durable: a read receipt sent from the notification shade is the same
-                // mutation as one sent from the app, and must reach a device that was offline.
+                // Silent, but durable: a read watermark sent from the notification shade is the
+                // same mutation as one sent from the app, and must reach a device that was offline.
                 UUID.randomUUID().toString(), groupId, protoB64, System.currentTimeMillis(),
                 silent = true, durable = true
             )
         CanariFirebaseMessagingService.rewriteOutboxMirror(context, entries)
         CanariFirebaseMessagingService.drainOutboxBackground(context, service, pushCtx)
-        Log.d(TAG, "handleMarkRead: read receipt queued+drained for ${messageIds.size} message(s) group=${groupId.take(8)}")
+        Log.d(TAG, "sendReadWatermark: queued+drained at=$at group=${groupId.take(8)}")
     }
 
     /**
-     * Reads `fcm_message_cache.ndjson` (bounded, written by
-     * [CanariFirebaseMessagingService] on every decrypted push - see `writeFcmCache`) and returns
-     * the messageIds cached for [groupId].
+     * Clears this device's local notification immediately (visible part of "mark as read"), then
+     * announces the read watermark carried by the notification's intent.
+     *
+     * The notification is cleared FIRST and unconditionally: it is the half the user asked for and
+     * can see, and it must not depend on MLS state being loadable in a broadcast receiver.
      */
-    private fun readCachedMessageIdsForGroup(context: Context, groupId: String): List<String> {
-        return try {
-            val file = File(MlsContextLoader.tauriDataDir(context), "fcm_message_cache.ndjson")
-            if (!file.exists()) return emptyList()
-            file.readLines().filter { it.isNotBlank() }.mapNotNull { line ->
-                try {
-                    val o = JSONObject(line)
-                    if (o.optString("groupId") == groupId) {
-                        o.optString("messageId").takeIf { it.isNotEmpty() }
-                    } else null
-                } catch (e: Exception) {
-                    null
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "readCachedMessageIdsForGroup: ${e.message}")
-            emptyList()
-        }
+    private fun handleMarkRead(context: Context, intent: Intent, groupId: String) {
+        CanariFirebaseMessagingService.cancelConversationNotification(context, groupId)
+        sendReadWatermark(context, groupId, intent.getLongExtra(CanariFirebaseMessagingService.EXTRA_SENT_AT, 0L))
     }
 
     /**

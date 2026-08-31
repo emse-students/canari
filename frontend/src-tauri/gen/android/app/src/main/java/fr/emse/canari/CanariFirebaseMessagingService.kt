@@ -98,6 +98,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         const val ACTION_QUICK_REPLY = "fr.emse.canari.ACTION_QUICK_REPLY"
         const val ACTION_MARK_READ   = "fr.emse.canari.ACTION_MARK_READ"
         const val EXTRA_GROUP_ID     = "groupId"
+        /**
+         * The `sentAt` of the newest message the notification is about, in ms, as stated by its
+         * SENDER. Carried in the action intents so "mark as read" and a quick reply can name the
+         * instant they acknowledge without looking anything up - see
+         * [CanariNotificationActionReceiver.sendReadWatermark] for why a lookup was wrong.
+         */
+        const val EXTRA_SENT_AT      = "sentAt"
         const val KEY_TEXT_REPLY     = "canari_quick_reply_text"
 
         /** Incoming-call ring (WP-XP-5): decline action + extras for the ring notification. */
@@ -290,6 +297,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             res: Context,
             groupId: String,
             notifId: Int,
+            sentAt: Long,
         ): NotificationCompat.Action {
             val remoteInput = RemoteInput.Builder(KEY_TEXT_REPLY)
                 .setLabel(res.getString(R.string.notif_action_reply))
@@ -297,6 +305,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val intent = Intent(context, CanariNotificationActionReceiver::class.java).apply {
                 action = ACTION_QUICK_REPLY
                 putExtra(EXTRA_GROUP_ID, groupId)
+                putExtra(EXTRA_SENT_AT, sentAt)
             }
             val pendingIntent = PendingIntent.getBroadcast(
                 context, notifId, intent,
@@ -313,10 +322,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             res: Context,
             groupId: String,
             notifId: Int,
+            sentAt: Long,
         ): NotificationCompat.Action {
             val intent = Intent(context, CanariNotificationActionReceiver::class.java).apply {
                 action = ACTION_MARK_READ
                 putExtra(EXTRA_GROUP_ID, groupId)
+                putExtra(EXTRA_SENT_AT, sentAt)
             }
             // A distinct requestId (notifId + 1) so this PendingIntent does not collide/merge with
             // the reply action's (same notifId would make FLAG_UPDATE_CURRENT overwrite one with
@@ -346,7 +357,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          *
          * Best-effort by nature - if the notification is already gone there is nothing to correct.
          */
-        internal fun repostReplyPending(context: Context, groupId: String, replyText: String) {
+        internal fun repostReplyPending(
+            context: Context,
+            groupId: String,
+            replyText: String,
+            sentAt: Long,
+        ) {
             try {
                 val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                 val notifId = getStableNotifId(context, groupId)
@@ -391,8 +407,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     .setGroup(GROUP_KEY_MESSAGES)
                     .setOnlyAlertOnce(true)
                 if (groupId.isNotEmpty() && !groupId.startsWith("channel_")) {
-                    builder.addAction(buildReplyAction(context, res, groupId, notifId))
-                    builder.addAction(buildMarkReadAction(context, res, groupId, notifId))
+                    builder.addAction(buildReplyAction(context, res, groupId, notifId, sentAt))
+                    builder.addAction(buildMarkReadAction(context, res, groupId, notifId, sentAt))
                 }
                 manager.notify(notifId, builder.build())
                 Log.i(TAG, "repostReplyPending: re-posted group=${groupId.take(8)} - spinner cleared, actions restored")
@@ -508,6 +524,58 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 put("type",       "text")
             }
             appendFcmCacheEntry(context, entry, messageId, groupId)
+        }
+
+        /**
+         * Records "this conversation is read up to `at`" in `read_watermarks.ndjson`, the
+         * cross-process file the app merges at boot (`consumeNativeReadWatermarks`).
+         *
+         * THE FRAME IS NOT ENOUGH, and that is the whole reason this file exists. The
+         * `read_watermark` control event queued alongside this call reaches PEERS and our own other
+         * devices; nothing carries it to THIS device's database, whose conversation row draws the
+         * badge. Without it the user acknowledged a conversation from the shade, opened the app and
+         * found it unread - which looks exactly like the action having done nothing.
+         *
+         * ONE LINE PER CONVERSATION, keeping the larger `at`: the merge on the far side is `max`
+         * anyway, so collapsing here bounds the file by the number of conversations instead of by a
+         * ring-buffer cap that could drop the very entry it was written for.
+         */
+        internal fun appendReadWatermark(context: Context, groupId: String, at: Long) {
+            if (groupId.isEmpty() || at <= 0L) {
+                Log.w(TAG, "appendReadWatermark: group=${groupId.take(8)} at=$at -> nothing to record")
+                return
+            }
+            try {
+                val file = File(MlsContextLoader.tauriDataDir(context).also { it.mkdirs() }, "read_watermarks.ndjson")
+                CACHE_LOCK.lock()
+                try {
+                    val byGroup = LinkedHashMap<String, Long>()
+                    if (file.exists()) {
+                        for (line in file.readLines()) {
+                            if (line.isBlank()) continue
+                            try {
+                                val o = JSONObject(line)
+                                val g = o.optString("groupId")
+                                val a = o.optLong("at", 0L)
+                                if (g.isNotEmpty() && a > 0L) byGroup[g] = maxOf(byGroup[g] ?: 0L, a)
+                            } catch (e: Exception) {
+                                Log.w(TAG, "appendReadWatermark: unparsable line dropped: ${e.message}")
+                            }
+                        }
+                    }
+                    byGroup[groupId] = maxOf(byGroup[groupId] ?: 0L, at)
+                    file.writeText(
+                        byGroup.entries.joinToString("\n") { (g, a) ->
+                            JSONObject().apply { put("groupId", g); put("at", a) }.toString()
+                        } + "\n"
+                    )
+                } finally {
+                    CACHE_LOCK.unlock()
+                }
+                Log.d(TAG, "appendReadWatermark: group=${groupId.take(8)} at=$at recorded for the next boot")
+            } catch (e: Exception) {
+                Log.w(TAG, "appendReadWatermark: failed: ${e.message}")
+            }
         }
 
         /** Stable ring-notification ID for a callId (distinct range, no counter collision). */
@@ -1117,9 +1185,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
     /**
      * Builds a plaintext `AppMessage` read-receipt (system) proto (base64) for the "mark as read"
-     * quick action. `messageIdsJson` is a JSON array of message id strings. Returns "" on failure.
+     * quick action and for a quick reply, which means the same thing. `at` is the SENDER's
+     * `sentAt` for the message the notification is about, never this device's clock: watermarks
+     * merge by `max` across devices, so a fast clock would mark future messages read permanently
+     * and unfixably. Returns "" only if the JVM could not allocate the string.
      */
-    external fun nativeBuildReadReceiptProto(messageIdsJson: String): String
+    external fun nativeBuildReadWatermarkProto(at: Long): String
 
     /** Structured result of the MLS decryption, extracted from the JSON returned by Rust. */
     data class DecryptedMessage(
@@ -1478,7 +1549,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 decrypted?.text?.contains("@[$myUserId]", ignoreCase = true) == true
             val channel = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES
             Log.d(TAG, "showNotification: groupId=$groupId senderName=$senderName body=${body.take(60)} hasAvatar=${avatarBitmap != null} hasMedia=${media != null} mentionsMe=$mentionsMe")
-            showNotification(senderName, groupName, body, largeIcon, groupId, media?.first, media?.second, channel)
+            showNotification(
+                senderName, groupName, body, largeIcon, groupId, media?.first, media?.second,
+                channel, sentAt = decrypted?.sentAt ?: 0L,
+            )
 
             // Woken by this incoming message: try to send our own pending outgoing messages
             // (text/reply/control), without waiting for a Welcome push or a reopen. Since the
@@ -2715,6 +2789,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * is exactly what a reaction wants, which is why this is a parameter and not a second path.
          */
         quickActions: Boolean = true,
+        /**
+         * The SENDER's `sentAt` for the message this notification is about, in ms. Handed to the
+         * quick actions so acknowledging the conversation from the shade names an instant taken
+         * from the messages themselves. 0 when unknown, which the actions read as "say nothing".
+         */
+        sentAt: Long = 0L,
     ) {
         if (MainActivity.isInForeground) {
             Log.d(TAG, "showNotification: app in foreground -> notification suppressed (groupId=${groupId.take(8)})")
@@ -2806,8 +2886,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // Quick actions (WP-XP-1): MLS-only (DM/group), never on a channel_ conversation - channels
         // are server-authoritative and do not go through the MLS outbox (see outbox.ts isChannelConversationId).
         if (quickActions && groupId.isNotEmpty() && !groupId.startsWith("channel_")) {
-            notifBuilder.addAction(buildReplyAction(this, res, groupId, notifId))
-            notifBuilder.addAction(buildMarkReadAction(this, res, groupId, notifId))
+            notifBuilder.addAction(buildReplyAction(this, res, groupId, notifId, sentAt))
+            notifBuilder.addAction(buildMarkReadAction(this, res, groupId, notifId, sentAt))
         }
 
         val notif = notifBuilder.build()

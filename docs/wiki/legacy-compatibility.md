@@ -59,6 +59,28 @@ working clients to protect them from a warning that was accurate all along - see
 
 ## The diary
 
+### No date yet - the `read_receipt` system event, accepted from clients that predate the watermark
+
+**Site:** `systemMessageHandler.ts`, the `event === 'read_watermark' || event === 'read_receipt'`
+branch - the second name, and the `watermarkAfterReading` conversion behind it.
+**Shim:** before `0db47a87` (2026-08-12) read state travelled as a LIST OF MESSAGE IDS. The app has
+sent an instant ever since, and as of 2026-08-31 so does the native notification shade, which was
+the last emitter of the old shape anywhere in this repo. Incoming `read_receipt` frames are still
+translated: the ids we hold give the instant directly, and ids we do not hold say nothing we could
+have acted on anyway.
+**Why it is not just "old clients":** a `read_receipt` is a MESSAGE, so it can arrive from any peer
+running any build, and history replay can hand one back long after every device has updated. The
+population is not "installs older than X", it is "frames older than X", which no version gate
+retires.
+**Removal condition:** `minClientVersion` at or above the first release carrying the native
+watermark AND no `read_receipt` observed in a history bundle for a full retention window (90 days),
+because a stored frame outlives the client that wrote it. Until someone measures the second half
+this entry has no date - a date here would be a guess about what is sitting in the frame table.
+**Cost of keeping it:** one string comparison and one `watermarkAfterReading` call on a branch that
+already runs. It is cheap; what it must not become is the reason nobody notices that the two names
+mean subtly different things - ids are a SET and an instant is an ORDER, and the translation is
+lossy in exactly one direction.
+
 ### No date yet - the refresh COOKIE accepted from a `tauri://localhost` client
 
 **Site:** `presentedRefreshToken()` in `apps/core-service/src/auth/auth.controller.ts` - the last

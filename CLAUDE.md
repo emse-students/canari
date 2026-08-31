@@ -217,7 +217,8 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md); none of the thr
 5. **BLOCKED ON HARDWARE - everything the phone owes, in order.** No device is available (user,
    2026-08-30), so none of this can move: the quick-reply re-measurement (fix installed on A1, never
    run, and **its precondition is not ambient** - an unarmed run proves nothing); check K step 5 and
-   **K2**; **HEAL-NEW-5b**; **HEAL-REVOKE-6** and the six other `+A1` HEAL rows; the iOS twin of the
+   **K2**; **NOTIF-6b**, whose 2026-08-30 hand measurement is void because the mechanism it measured
+   is deleted; **HEAL-NEW-5b**; **HEAL-REVOKE-6** and the six other `+A1` HEAL rows; the iOS twin of the
    same fix; the iPad login that closes App Review 2.1(a). Procedures on
    [check K](docs/wiki/device-verification.md#the-backgrounded-run-that-failed-and-the-defect-it-found)
    and [device-verification](docs/wiki/device-verification.md), state on the board, substance in

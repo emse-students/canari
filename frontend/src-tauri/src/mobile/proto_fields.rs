@@ -144,8 +144,29 @@ fn format_system_event_text(event: &str, data: &str) -> Option<String> {
         "memberLeft" => Some("a quitté le groupe".to_string()),
         "groupDeleted" => Some("a supprimé la conversation".to_string()),
         // Control / sync frames: no user-visible notification preview.
-        "read_receipt" | "delete_message" | "edit_message" | "remove_reaction" | "pin"
-        | "unpin" | "history_bundle" => None,
+        //
+        // EVERY name the app can put in a `SystemMsg` and mean "machinery", because the fallback
+        // arm below does not fail safe - it prints the raw event name to the user as "evenement de
+        // groupe (history_digest)". Control frames are sent `silent` and a silent push returns
+        // before this is reached, so the arm is a trap rather than live noise; the trap is that
+        // ONE frame sent non-silent, or one server-side default flipped, turns the whole history
+        // protocol into notifications. The list drifted once already: `read_watermark` replaced
+        // `read_receipt` on 2026-08-12 and was never added here.
+        "read_receipt"
+        | "read_watermark"
+        | "delete_message"
+        | "edit_message"
+        | "remove_reaction"
+        | "pin"
+        | "unpin"
+        | "channel_invitation"
+        | "history_bundle"
+        | "history_coverage"
+        | "history_digest"
+        | "history_digest_request"
+        | "history_pull"
+        | "history_range"
+        | "history_state" => None,
         _ => Some(format!("événement de groupe ({event})")),
     }
 }
@@ -410,16 +431,28 @@ pub fn build_text_app_message(message_id: &str, sent_at: i64, content: &str) -> 
     wrap_app_message(1, &text_msg, message_id, sent_at)
 }
 
-/// Builds a plaintext `AppMessage{ system: SystemMsg{ event: "read_receipt", data } }` proto for
-/// the "mark as read" notification quick action. `data` is `{"messageIds":[...]}` (same shape
-/// `sendReadReceipt` in messaging.ts sends). `message_id`/`sent_at` are left unset: control events
-/// never carry them (`enqueueControlEvent` encodes the system message verbatim, with no envelope
-/// fields). Silent-sent by the caller (existing `silent` outbox flag) so it triggers the same
-/// cross-device notification-cancel path as a foreground read receipt, never a peer push.
-pub fn build_read_receipt_app_message(message_ids: &[String]) -> Vec<u8> {
-    let data = serde_json::json!({ "messageIds": message_ids }).to_string();
+/// Builds a plaintext `AppMessage{ system: SystemMsg{ event: "read_watermark", data: {"at"} } }`
+/// proto for the "mark as read" notification quick action, and for a quick reply - which means the
+/// same thing, since a user who answered a conversation has read it.
+///
+/// AN INSTANT, NOT A LIST OF IDS, and that is the whole point of this function. The id-based
+/// `read_receipt` this replaces was read out of `fcm_message_cache.ndjson`, which the app CLEARS at
+/// every boot (`consumeFcmCache`), so "mark as read" from the shade sent nothing at all whenever
+/// the app had been opened since the notification arrived - silently, because an empty id list is
+/// indistinguishable from a conversation with nothing to acknowledge.
+///
+/// `at` MUST be the sender's `sent_at` for the message the notification is about, carried down from
+/// the push, and never this device's clock: watermarks merge by `max` across devices, so a phone
+/// whose clock runs fast would mark future messages read permanently and unfixably. That is the
+/// same rule `watermarkAfterReading` (readState.ts) states for the foreground path.
+///
+/// `message_id`/`sent_at` on the envelope are left unset like every other control event
+/// (`enqueueControlEvent` encodes the system message with no envelope fields). Sent `silent` by the
+/// caller, so it reaches peers and our own other devices without ringing any of them.
+pub fn build_read_watermark_app_message(at: i64) -> Vec<u8> {
+    let data = serde_json::json!({ "at": at }).to_string();
     let mut system_msg = Vec::with_capacity(data.len() + 24);
-    write_string_field(&mut system_msg, 1, "read_receipt");
+    write_string_field(&mut system_msg, 1, "read_watermark");
     write_string_field(&mut system_msg, 2, &data);
     wrap_app_message(5, &system_msg, "", 0)
 }
@@ -460,19 +493,48 @@ mod tests {
     }
 
     #[test]
-    fn build_read_receipt_app_message_is_silent_control() {
-        let bytes = build_read_receipt_app_message(&["m1".to_string(), "m2".to_string()]);
-        // Mirrors proto_fields' own classification: read_receipt is a control event with no
-        // user-visible preview - extract_full_message_info must reject it, not fabricate text.
-        let info = extract_full_message_info(&bytes);
-        assert_eq!(info["ok"], false);
-        // But the raw system fields must still be present and decodable.
+    fn build_read_watermark_app_message_carries_the_instant_and_stays_silent() {
+        let bytes = build_read_watermark_app_message(1_700_000_000_000);
+        // Silent like every control frame: no preview may be fabricated for it.
+        assert_eq!(extract_full_message_info(&bytes)["ok"], false);
         let system_msg = find_length_delimited_field(&bytes, 5).expect("system field present");
         let event = find_length_delimited_field(&system_msg, 1).unwrap();
-        assert_eq!(String::from_utf8(event).unwrap(), "read_receipt");
+        assert_eq!(String::from_utf8(event).unwrap(), "read_watermark");
         let data = find_length_delimited_field(&system_msg, 2).unwrap();
         let data_json: serde_json::Value = serde_json::from_slice(&data).unwrap();
-        assert_eq!(data_json["messageIds"], serde_json::json!(["m1", "m2"]));
+        // The number, not a string: `systemMessageHandler` reads it as `Number(data.at)` and a
+        // quoted instant would parse the same, which is exactly how such a drift stays invisible.
+        assert_eq!(data_json["at"], serde_json::json!(1_700_000_000_000i64));
+    }
+
+    /// EVERY name the app can send as a system event must be classified, because the fallback arm
+    /// prints the raw name at the user. This pins the list against `mkSystem` call sites in
+    /// `messaging.ts` and `historySystemEvents.ts` - the drift it catches is a NEW event name
+    /// shipped on the TypeScript side with nothing here taught about it.
+    #[test]
+    fn no_control_frame_previews_its_own_name() {
+        for event in [
+            "read_receipt",
+            "read_watermark",
+            "delete_message",
+            "edit_message",
+            "remove_reaction",
+            "pin",
+            "unpin",
+            "channel_invitation",
+            "history_bundle",
+            "history_coverage",
+            "history_digest",
+            "history_digest_request",
+            "history_pull",
+            "history_range",
+            "history_state",
+        ] {
+            assert!(
+                format_system_event_text(event, "{}").is_none(),
+                "{event} would be shown to the user as a notification"
+            );
+        }
     }
 
     #[test]

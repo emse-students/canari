@@ -645,6 +645,13 @@ class NotificationService: UNNotificationServiceExtension {
       // registers via CanariRegisterNotificationCategories; iOS retains it across app termination.
       // MLS DM/group only - channels go through handleChannelMessage and get no quick actions.
       content.categoryIdentifier = "canari_message_category"
+      // The instant those actions acknowledge. The killed-app path is the ONE that cannot look it
+      // up afterwards - `fcm_message_cache.ndjson` is cleared at every boot - so the notification
+      // has to carry it. `media` is the decrypted message; without it the actions say nothing
+      // rather than substituting a clock (canari_push.mm CanariSendReadWatermark).
+      if let sentAt = media?.sentAt, sentAt > 0 {
+        content.userInfo["sentAt"] = sentAt
+      }
     }
     // No group-summary text here: UNMutableNotificationContent.summaryArgument was deprecated in
     // iOS 15.0 and is ignored by the system, and the deployment target is 18.2 - so there is no

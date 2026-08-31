@@ -41,9 +41,9 @@ use crate::commands::mls::{
 use crate::commands::push::{
     check_push_secret_health, forget_graine_channel, forget_graine_sessions, get_fcm_token,
     get_push_diagnostic, get_voip_token, load_push_context, read_and_clear_fcm_cache,
-    read_and_clear_outbox_sent, read_and_clear_pending_call_accept, read_outbox_mirror,
-    set_push_context_locale, store_graine_seed, store_outbox_mirror, store_push_context,
-    store_push_secret,
+    read_and_clear_outbox_sent, read_and_clear_pending_call_accept, read_and_clear_read_watermarks,
+    read_outbox_mirror, set_push_context_locale, store_graine_seed, store_outbox_mirror,
+    store_push_context, store_push_secret,
 };
 use crate::commands::storage::{
     clear_app_data, delete_mls_state, get_installer_package, get_local_storage_usage,
@@ -499,31 +499,26 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
         .unwrap_or_else(|_| env.new_string("").unwrap())
 }
 
+/// Builds the `read_watermark` control proto for the "mark as read" and quick-reply notification
+/// actions. `at` is the sender's `sent_at` for the message the notification is about, carried down
+/// from the push - never this device's clock, for the reason
+/// [`mobile::proto_fields::build_read_watermark_app_message`] states.
+///
+/// Infallible by construction (no string to decode, no JSON to parse), so unlike its neighbours it
+/// has no error branch to log: an empty return would mean the JVM could not allocate a string.
 #[cfg(target_os = "android")]
 #[no_mangle]
-pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeBuildReadReceiptProto<
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeBuildReadWatermarkProto<
     'a,
 >(
-    mut env: jni::JNIEnv<'a>,
+    env: jni::JNIEnv<'a>,
     _service: jni::objects::JObject<'a>,
-    message_ids_json: jni::objects::JString<'a>,
+    at: jni::sys::jlong,
 ) -> jni::objects::JString<'a> {
     use base64::{engine::general_purpose::STANDARD, Engine as _};
 
-    let result = (|| -> Result<String, String> {
-        let json_str: String = env
-            .get_string(&message_ids_json)
-            .map_err(|e| e.to_string())?
-            .into();
-        let ids: Vec<String> = serde_json::from_str(&json_str).map_err(|e| e.to_string())?;
-        let bytes = mobile::proto_fields::build_read_receipt_app_message(&ids);
-        Ok(STANDARD.encode(&bytes))
-    })();
-
-    let out = result.unwrap_or_else(|e| {
-        log::error!("[MARK_READ] nativeBuildReadReceiptProto failed: {e}");
-        String::new()
-    });
+    let bytes = mobile::proto_fields::build_read_watermark_app_message(at);
+    let out = STANDARD.encode(&bytes);
     env.new_string(&out)
         .unwrap_or_else(|_| env.new_string("").unwrap())
 }
@@ -893,6 +888,7 @@ pub fn run() {
             get_installer_package,
             get_local_storage_usage,
             read_and_clear_fcm_cache,
+            read_and_clear_read_watermarks,
             store_outbox_mirror,
             read_outbox_mirror,
             read_and_clear_outbox_sent,

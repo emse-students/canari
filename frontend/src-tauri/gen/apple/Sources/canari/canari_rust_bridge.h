@@ -88,7 +88,7 @@ char *canari_native_build_text_message_proto(
     long long sent_at,
     const char *content);
 
-char *canari_native_build_read_receipt_proto(const char *message_ids_json);
+char *canari_native_build_read_watermark_proto(long long at);
 
 int canari_native_cleanup_pending_db(const char *files_dir);
 
