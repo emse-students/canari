@@ -185,6 +185,23 @@ if [ "$base_sha" != "$main_sha" ]; then
   exit 0
 fi
 
+# A HEAD DEPENDABOT DID NOT WRITE IS UNMERGEABLE BY EVERY PATH, AND NOTHING ELSE HERE WOULD SAY SO.
+# GitHub parks the `pull_request` run of a branch pushed by anything other than Dependabot in
+# `action_required` - waiting for a human to click Approve - and Dependabot then declines the branch
+# for good ("this PR has been edited by someone other than Dependabot"). Such a branch is not stale:
+# its base can be current `main`, so the check above passes it straight through to a merge decision
+# that reads checks which will never complete. It would sit there forever.
+#
+# This is measured rather than inferred, on the state itself and not on how the state came about, so
+# a branch touched by a maintainer, by a bad rebase, or by an earlier version of this very workflow
+# converges the same way: it is rebuilt, and the rebuild is Dependabot's.
+head_author=$(gh api "repos/$REPO/commits/$head_sha" --jq '.author.login // ""')
+if [ "$head_author" != "dependabot[bot]" ]; then
+  echo "#$pr: head ${head_sha:0:8} was written by '${head_author:-unknown}', not dependabot[bot] - its checks cannot run unattended."
+  echo "STALE $pr"
+  exit 0
+fi
+
 # -----------------------------------------------------------------------------------------------
 # THE MERGE
 # -----------------------------------------------------------------------------------------------

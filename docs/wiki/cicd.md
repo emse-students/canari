@@ -326,10 +326,10 @@ because that job was written after its CI last ran. **An absent check and an ina
 identical**, so "nothing failed" is not a merge condition.
 
 The script therefore refuses any head not built on current `main` and marks it `STALE`; the workflow
-updates at most **three** such branches per pass, which re-runs their CI under today's definitions.
-The cap is a budget, not a correctness argument: every merge makes every other branch stale at once,
-so an uncapped sweep would launch one full CI run per open pull request. Three an hour drains a
-thirty-deep queue in a day, unattended.
+asks Dependabot to rebuild at most **three** such branches per pass, which re-runs their CI under
+today's definitions. The cap is a budget, not a correctness argument: every merge makes every other
+branch stale at once, so an uncapped sweep would launch one full CI run per open pull request. Three
+a pass drains a thirty-deep queue in a day, unattended.
 
 A consequence worth knowing rather than fighting: because a merge staleness-invalidates everything
 else, roughly one pull request merges per pass. That is the correct behaviour - each one is tested
@@ -339,6 +339,40 @@ A sweep may merge several pull requests that were only ever tested apart. That i
 reason and it is worth not breaking: **`deploy-to-server` needs `run-ci`**, so a combination that
 breaks fails CI on `main` and the deploy is skipped. `main` can go red; production cannot follow it.
 One dispatch is sent for the whole pass, not one per merge.
+
+### Who pushes the refresh decides whether it is a refresh at all
+
+Rebuilding a stale branch is the sweep's one write to somebody else's pull request, and **which
+identity performs it is part of the mechanism**. The step was written as
+`PUT /repos/{owner}/{repo}/pulls/{n}/update-branch`, the obvious API for the job. It pushes a merge
+commit authored by `github-actions[bot]`, and on 2026-08-31 that cost three things at once, across
+seven pull requests:
+
+1. **The re-triggered `pull_request` run is created as `action_required`** - parked until a human
+   clicks Approve. A push authored by Dependabot is not. Twenty runs were sitting there.
+2. **Dependabot then refuses the branch permanently.** Asked to rebase, it answers: *"Looks like this
+   PR has been edited by someone other than Dependabot. That means Dependabot can't rebase it -
+   sorry!"*
+3. **The workflow's own entry condition** admits a `workflow_run` whose actor is `dependabot[bot]`,
+   so even a human approval would not have let the branch back into the fast path.
+
+The branch was left unmergeable by every path, and it was no longer *stale* - `update-branch` had
+made its base current `main`, so the check above passed it straight through to a merge decision
+reading checks that would never complete. Meanwhile every push to `main` made another branch stale
+and fed another one in. **The step written to drain the queue was the one filling it.**
+
+The refresh is now a `@dependabot recreate` comment. `recreate` rather than `rebase` because it ends
+in the same state whatever was done to the branch before - a freshly generated branch on current
+`main`, authored by Dependabot - where `rebase` refuses an edited branch, which is precisely the
+state the old step spent a day creating. Dependabot answers asynchronously, so the step reads nothing
+back: the next pass measures the outcome on durable state, whether the pull request's base is current
+`main`, and a request that was ignored simply leaves the branch stale to be asked again.
+
+Detection is on the STATE and never on how the state arose. The script reads the head commit's author
+and marks any pull request whose head is not `dependabot[bot]` for rebuilding - so a branch touched by
+a maintainer, by a bad rebase, or by an earlier version of this very workflow converges the same way,
+and the six branches the old step had already trapped were healed by the sweep itself rather than by
+hand.
 
 ### Two traps, both found by testing the gate against real pull requests
 

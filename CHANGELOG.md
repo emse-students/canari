@@ -104,6 +104,19 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **The sweep that drains the dependency queue was the thing filling it.** When a Dependabot branch
+  was too old to be judged on its own green checks, the sweep refreshed it with
+  `PUT /pulls/{n}/update-branch` - which pushes a merge commit authored by `github-actions[bot]`.
+  GitHub parks the `pull_request` run such a push re-triggers in `action_required`, waiting for a
+  human to click Approve; Dependabot then refuses the branch for good ("this PR has been edited by
+  someone other than Dependabot"); and the workflow's own entry condition admits only runs whose
+  actor is `dependabot[bot]`, so no approval could have let it back in. Seven pull requests and
+  twenty parked runs were in that state, and every push to `main` fed another one in. The refresh is
+  now a `@dependabot recreate` comment, so the push carries the identity GitHub already trusts, and
+  the sweep additionally marks any pull request whose head Dependabot did not write - detecting the
+  state rather than its cause, which healed the seven without a hand touching them. Applied to all
+  four repositories. ([cicd](docs/wiki/cicd.md#who-pushes-the-refresh-decides-whether-it-is-a-refresh-at-all))
+
 - **Every jest suite in the four services would have died at import under NestJS 12, and the
   workaround that hid `uuid` became the thing that broke it.** NestJS 12 is ESM-only - `"type":
   "module"`, no CommonJS build - and while Node 24 and bun both `require()` it without complaint,
