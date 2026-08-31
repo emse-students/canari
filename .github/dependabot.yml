@@ -101,7 +101,27 @@ updates:
       - "dependencies"
       - "backend"
     open-pull-requests-limit: 10
+    # ORDER MATTERS: a dependency joins the FIRST group whose patterns match it, and the two
+    # catch-alls below match on `dependency-type` alone, so anything specific has to come first.
     groups:
+      # A FRAMEWORK MOVES AS ONE PIECE OR IT DOES NOT MOVE.
+      #
+      # On 2026-08-31 `@nestjs/platform-express` 11 -> 12 arrived as its own pull request, was
+      # merged on a green CI, and left `@nestjs/common` and `@nestjs/core` at 11 in core-service
+      # and chat-delivery-service both - `platform-express@12` declaring `peerDependencies:
+      # {"@nestjs/common": "^12.0.0", "@nestjs/core": "^12.0.0"}` against two packages pinned at
+      # 11.2.3. Nothing in CI could see it: a peer mismatch is a warning to bun, tsc checks only
+      # the surface the code uses, and no test calls `NestFactory`, so the adapter that package
+      # exists to provide is never instantiated.
+      #
+      # This group includes MAJORS on purpose - it is the one case where a major must not arrive
+      # alone. It does not make the update automatic: the auto-merge ceiling still refuses any
+      # major, so this decides that a human reviews ONE coherent pull request per service rather
+      # than eight incoherent ones.
+      nestjs:
+        patterns:
+          - "@nestjs/*"
+        update-types: ["major", "minor", "patch"]
       development-dependencies:
         dependency-type: "development"
         update-types: ["minor", "patch"]
@@ -132,7 +152,19 @@ updates:
       - "dependencies"
       - "rust"
     open-pull-requests-limit: 10
+    # ORDER MATTERS: first matching group wins, so the specific ones come before the catch-alls.
     groups:
+      # The same rule as `nestjs` above, on the crates where getting it wrong is an ENCRYPTION
+      # defect rather than an availability one. openmls, openmls_rust_crypto,
+      # openmls_basic_credential and openmls_memory_storage are one release train: on 2026-08-31
+      # they arrived as four separate 0.5 -> 0.6 pull requests, any one of which could have merged
+      # without the other three. Majors are included so they arrive together and are reviewed
+      # together; the auto-merge ceiling refuses them either way, and refuses a 0.x MINOR too,
+      # because for a 0.x crate the minor is exactly where the breaking change lives.
+      openmls:
+        patterns:
+          - "openmls*"
+        update-types: ["major", "minor", "patch"]
       development-dependencies:
         dependency-type: "development"
         update-types: ["minor", "patch"]
