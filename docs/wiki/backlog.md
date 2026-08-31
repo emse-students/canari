@@ -2159,14 +2159,23 @@ names its missing test in a comment on the pull request. The standing directive 
 never a routing decision to a human queue (user, 2026-08-31), so THIS TABLE IS THE WORK: each row
 closed is a whole class of update that starts merging on its own.
 
-Measured against all 33 open pull requests on 2026-08-31, by running the workflow's own loop body
-against their real commit messages: **5 merge, 28 refuse - and 22 of the 28 are the same row.**
+Measured twice on 2026-08-31 by running the workflow's own loop body against the real commit
+messages of every open pull request: **5 merge / 28 refuse in the morning, 26 merge / 6 refuse once
+the first gate was written and green.** That difference is what closing a row buys.
 
 | Refused | Why the suite cannot see it | The test that retires it | State |
 | --- | --- | --- | --- |
-| `@nestjs/*` and `typeorm` MAJORS, or an unclassified bump of either (22 PRs, collapsing to ~4 once grouped) | `src/framework-boot.spec.ts` boots a probe module that imports only `common`, `core` and `platform-express`, so every DYNAMIC module is covered by its declared peer range alone | `src/app-module.boot-spec.ts` + the `boot-nest-apps` job | **WRITTEN 2026-08-31, owed its first green run.** Once CI shows it passing on all four services, DELETE the `@nestjs/*` case from the ceiling |
-| `openmls*`, `tls_codec*`, `hpke-rs*`, `libcrux*`, `chacha20poly1305`, `aes-gcm`, `argon2`, `ciborium` (5 PRs) | every one of them writes a format something else must still read - a group at epoch 118, or a keystore sealed on a device that is not going to be re-enrolled. A wire, encoding or key-derivation change compiles clean and passes every suite | a cross-version state test: serialise a group and a keystore with the CURRENT version, commit the bytes as a fixture, and assert the NEW version still opens them | not started |
+| ~~`@nestjs/*` MAJORS (22 PRs)~~ | ~~no test ever constructed the real application module~~ | `src/app-module.boot-spec.ts` + the `boot-nest-apps` job | **CLOSED 2026-08-31.** Green on all four services against a real Postgres, Redis and S3; the case is deleted from the ceiling |
+| bare `typeorm` MAJOR, or an unclassified bump of it | the boot proves the schema BUILDS - `forRootAsync` resolves, every entity's metadata is constructed, `synchronize` runs. The ORM itself is untouched: every unit suite mocks its repositories, so nothing here has ever watched this ORM return a row. Its migrations are NOT the gap; they are raw `.sql` files TypeORM never runs | one test that issues a real query against the boot job's throwaway database and asserts the row that comes back | not started, and it blocks 0 of the 33 open today (they are all `@nestjs/typeorm`, which the boot does cover) |
+| `openmls*`, `tls_codec*`, `hpke-rs*`, `libcrux*`, `chacha20poly1305`, `aes-gcm`, `argon2`, `ciborium` (5 PRs - **now the largest block**) | every one of them writes a format something else must still read - a group at epoch 118, or a keystore sealed on a device that is not going to be re-enrolled. A wire, encoding or key-derivation change compiles clean and passes every suite | a cross-version state test: serialise a group and a keystore with the CURRENT version, commit the bytes as a fixture, and assert the NEW version still opens them | not started |
 | `webrtc` and the ICE crates (1 PR) | the SFU has ten tests and not one touches the ICE stack | one relay-path call - campaign rung 15 CALL, which has no runner | not started, and the SFU is already SIX majors unplaced (see its own P1 above) |
+
+**ONE FLAKE IS RECORDED HERE BECAUSE AN UNATTENDED MERGE IS EXACTLY WHAT A FLAKE BREAKS.**
+chat-delivery-service's suite failed 1 test in the first of five consecutive local runs on
+2026-08-31 and passed 308/308 in the other four; the failing run was concurrent with a CD build on
+the same machine, and its output was not captured. Not reproduced, not identified. If it recurs,
+capture the suite name before anything else - a green-gated auto-merge that retries into a green run
+will merge on the second try and tell nobody.
 
 **Do not widen this list to feel safe.** Every entry costs the queue it blocks, and the honest test
 of a new one is: name the failure, then name the test that would have caught it. If you cannot name

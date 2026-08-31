@@ -23,6 +23,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **The auto-merge ceiling's first entry retired, on evidence.** `boot-nest-apps` went green on all
+  four services, so the `@nestjs/*` case is deleted from `dependabot-auto-merge.yml`. Re-measured
+  the same way it was written - the workflow's own loop body against every open pull request's real
+  commit message - the ceiling went from 5 merge / 28 refuse to **26 merge / 6 refuse**. What is
+  left is two gates: a cross-version MLS state test (5 pull requests) and one relay-path call (1).
+  Bare `typeorm` stays refused with a narrower and more honest reason than before: the boot proves
+  the schema builds, but every unit suite mocks its repositories, so nothing here has ever watched
+  this ORM return a row.
+
 - **chat-delivery-service never closed its Redis connection on shutdown.** `RedisProvider` returns a
   raw `ioredis` client, and a raw client cannot carry a Nest lifecycle hook, so nothing ever called
   `quit()` and `app.close()` left the socket open. A killed container hides that completely; it

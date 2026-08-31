@@ -115,12 +115,23 @@ jobs:
                 gate="a cross-version state test. Nothing here opens a group, or a keystore, written by the PREVIOUS version, so a wire, encoding or key-derivation change compiles clean, passes every suite, and is discovered by a member whose conversation stopped decrypting" ;;
               webrtc|webrtc-*|str0m|sdp|ice|turn|stun)
                 gate="one relay-path call. The SFU has ten tests and not one of them touches the ICE stack; that is campaign rung 15 CALL, which has no runner yet" ;;
-              @nestjs/*|typeorm)
+              # `@nestjs/*` WAS REFUSED HERE UNTIL 2026-08-31, and the entry is gone because the
+              # test it named now exists and is green on all four services: `boot-nest-apps` builds
+              # the real `AppModule` against a real Postgres, Redis and S3 endpoint. That is what a
+              # refusal is for - it names a missing gate, and it leaves when the gate arrives. It
+              # released 22 of the 28 refusals measured that morning.
+              typeorm)
+                # BARE `typeorm`, not `@nestjs/typeorm`: the wrapper is exercised by the boot, which
+                # resolves `forRootAsync`, builds every entity's metadata and synchronises a schema.
+                # The ORM ITSELF is not: no test in this repository issues a real query, because the
+                # unit suites mock every repository. A major that changes how a query is BUILT would
+                # pass all 1105 of them and fail in production. (Its migrations are not the gap -
+                # they are raw `.sql` files that TypeORM never runs.)
+                #
                 # `major` OR unknown: a "update the requirement to permit the latest version" pull
-                # request carries NO update-type trailer at all - PR #297 is one - and an unclassified
-                # bump of the framework is not a thing to be relaxed about.
+                # request carries NO update-type trailer at all - PR #297 is one.
                 if [ "$type" = "major" ] || [ -z "$type" ]; then
-                  gate="a real AppModule boot against a throwaway Postgres. src/framework-boot.spec.ts covers the HTTP adapter and every package peer range, but no test has ever constructed the actual application module, so a major that changes behaviour inside a dynamic module passes"
+                  gate="a test that issues a REAL query. The boot job proves the schema builds; every unit suite mocks its repositories, so nothing here has ever watched this ORM return a row"
                 fi ;;
             esac
 
