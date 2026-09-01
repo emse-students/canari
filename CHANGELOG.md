@@ -61,6 +61,37 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **The Carte de la Vie Asso listed every roster by GIVEN name.** Reported 2026-09-01: the
+  right-hand directory printed "Alice Martin" under A, where a directory is read by surname. The
+  sort was doing what it was told - the only name a roster row carried was `displayName`, one
+  joined-up string, so ordering it alphabetically orders it on whichever token comes first.
+  Splitting that string was rejected: which token is the family name is a GUESS, and it guesses wrong
+  on a compound surname (`Van Dupont` would file under D), on a nickname and on a mononym, which are
+  the cases a directory has to get right because a reader finds a person under one letter only. So
+  `listMembers` now returns `firstName` and `lastName` beside the display name - the same two mirror
+  columns `listMembersPublic` has always given portail-etu, so nothing new is exposed - and
+  `orderByFamilyName` in `frontend/src/lib/carte/generator.ts` is the ONE comparator both render
+  paths call: family name, then given name, with a member the mirror has no family name for sorting
+  under the name that is printed for them. The editor's directory footer and `publish.ts`'s
+  `directoryLine` held a copy of the sort each, which is how the preview and the published document
+  could have diverged; they now share it. Roster order is untouched - the president is still the
+  first row and the bureau the admins after it, in the order an author arranged. A carte published
+  before this keeps its old order until it is published again, the directory lines being baked into
+  the document as strings.
+  ([carte-vie-asso](docs/wiki/carte-vie-asso.md#the-directory-is-ordered-by-family-name-and-that-needs-two-columns))
+
+- **Two of the four dependency sweeps had never run once, and reported success every time.**
+  `.github/scripts/dependabot-auto-merge.sh` landed in Sky and Portail-etu without its executable
+  bit, so every pass answered `Permission denied` on every pull request, printed `merged 0` and went
+  GREEN - six consecutive passes in Sky alone. What hid it was a deliberate swallow: the step wrapped
+  the call in `if ...; then :; fi` so that one unmergeable branch could not stop the sweep, and that
+  swallowed "the script could not run" in the same breath. **The script declines by PRINTING, never
+  by status**, so a non-zero status there was never a refusal and never should have been survivable.
+  It now fails the step with a `::error::` naming the exit code and the distinction, the script is
+  invoked through `bash` so a mode bit cannot decide whether the chain runs at all, and the bit is
+  restored in both repositories. Found by READING a run log; four days of counting deliveries had
+  said the schedule was healthy, and every one of those deliveries was a no-op.
+
 - **A version bump wrote CRLF into five files, and git showed nothing.** `jq` under Git Bash on
   Windows emits CRLF; the awk-based bumps in `scripts/bump-app-version.sh` emit LF. So the two
   jq-based functions - the four service `package.json` files and `tauri.conf.json` - came back with

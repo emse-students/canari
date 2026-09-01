@@ -2,6 +2,7 @@
   import { getInitials } from '$lib/utils/avatar';
   import { apiAssetUrl } from '$lib/utils/apiUrl';
   import type { CarteStyle } from '$lib/carte/theme';
+  import { orderByFamilyName } from '$lib/carte/generator';
   import type { PosterModel, PosterBubble, PosterMemberRef } from '$lib/carte/generator';
   import {
     STAGE_WIDTH,
@@ -860,8 +861,7 @@
                       style:line-height="1.35"
                       style:color={theme.directoryMutedColor}
                     >
-                      {[...asso.members]
-                        .sort((a, b) => a.name.localeCompare(b.name))
+                      {orderByFamilyName(asso.members)
                         .map((mem: PosterMemberRef) =>
                           mem.role ? `${mem.name} (${mem.role})` : mem.name
                         )

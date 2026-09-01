@@ -25,6 +25,7 @@
  */
 
 import type { CarteStyle } from './theme';
+import { orderByFamilyName } from './generator';
 import type { PosterBubble, PosterModel } from './generator';
 import { getInitials } from '$lib/utils/avatar';
 import {
@@ -319,8 +320,7 @@ function toUnit(bubble: PositionedBubble, data: PosterBubble): PublishedCarteUni
 
 /** Formats one association's roster exactly as the directory prints it. */
 function directoryLine(asso: PosterBubble): string {
-  return [...asso.members]
-    .sort((a, b) => a.name.localeCompare(b.name))
+  return orderByFamilyName(asso.members)
     .map((mem) => (mem.role ? `${mem.name} (${mem.role})` : mem.name))
     .join(' - ');
 }

@@ -14,8 +14,15 @@ import {
 } from './layout';
 import type { PosterBubble, PosterMemberRef, PosterModel } from './generator';
 
+/**
+ * A roster reference. Fixture names read "Given Family", so the parts are split off here instead of
+ * being repeated at every call site - the split is a FIXTURE convenience and never how production
+ * resolves the two, which arrive as their own columns (see `orderByFamilyName`). A one-word name
+ * stands for a member the users mirror has no family name for.
+ */
 function member(id: string, name: string, role = '', isAdmin = true): PosterMemberRef {
-  return { userId: id, name, role, isAdmin };
+  const [firstName, ...rest] = name.split(' ');
+  return { userId: id, name, firstName, lastName: rest.join(' ') || null, role, isAdmin };
 }
 
 function content(overrides: Partial<PosterBubble> = {}): PosterBubble {
@@ -189,14 +196,25 @@ describe('buildPublishedCarte', () => {
     expect(build({ decorations: [{ ...deco, bold: false }] }).texts[0].weight).toBe(500);
   });
 
-  it('prints the directory roster alphabetically, with roles in parentheses', () => {
+  it('prints the directory roster by family name, with roles in parentheses', () => {
+    // Ordering on the printed name would put Alice first; a directory is read by surname.
     const members = [member('u1', 'Zoe Bernard', 'Presidente'), member('u2', 'Alice Martin', '')];
     const out = build({ content: { a1: content({ members }) } });
     expect(out.directory?.zones[0]).toEqual({
       label: 'Culture, Arts',
-      assos: [{ assoId: 'a1', line: 'Alice Martin - Zoe Bernard (Presidente)' }],
+      assos: [{ assoId: 'a1', line: 'Zoe Bernard (Presidente) - Alice Martin' }],
     });
     expect(out.directory?.heading).toBe('Annuaire des membres');
+  });
+
+  it('sorts a shared family name by given name, and a member without one under the printed name', () => {
+    const members = [
+      member('u1', 'Yves Martin'),
+      member('u2', 'Alice Martin'),
+      member('u3', 'Bernard'),
+    ];
+    const out = build({ content: { a1: content({ members }) } });
+    expect(out.directory?.zones[0].assos[0].line).toBe('Bernard - Alice Martin - Yves Martin');
   });
 
   it('omits the directory the author hid, and widens the title band in its place', () => {

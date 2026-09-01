@@ -32,6 +32,35 @@ export const MAX_DEVICES_PER_USER = 15;
 export const STALE_PENDING_INVITATION_MS = 14 * 24 * 60 * 60 * 1000;
 
 /**
+ * Age past which a `pending` DeviceGroupMembership is REPORTED (never touched) by the hourly
+ * stranded-membership report.
+ *
+ * The row alone cannot say which of two opposite situations it is in, and that ambiguity is the
+ * whole reason the report exists. `registerMember` writes a `pending` row for EVERY device of the
+ * invited user - each one that still has a KeyPackage inside {@link RETENTION_WINDOW_MS} - while
+ * the Welcome only ever goes to the devices `addMembersBulk` actually managed to add. A device
+ * whose KeyPackage was rejected is therefore left holding a roster row it was never given the keys
+ * for: it looks like a member to every reader, receives nothing, and raises no notification. The
+ * queued Welcome is what separates the two, so the report reads it rather than guessing.
+ *
+ * Measured on production 2026-09-01: a phone sat exactly like that for **3 h 41** on a
+ * brand-new DM - registered at 20:45:47, no Welcome ever queued, self-healed by external join at
+ * 00:26:54 - and nothing anywhere said so. It was found by reading the tables by hand.
+ *
+ * One hour is deliberately far above a Welcome in flight (seconds for an online device, its own
+ * reconnect otherwise) and far below {@link STALE_PENDING_INVITATION_MS}, which DELETES these rows:
+ * a stranded device is named roughly thirteen days before the purge erases the evidence. It also
+ * matches the predicate the 2026-08-30 measurement of this population had to invent by hand
+ * ("older than an hour"), which is the only calibration available until a second incident refines
+ * it - and a predicate that named one incident must be re-measured before it is believed about the
+ * next, which is why the report prints the whole partition and not just the offenders.
+ */
+export const STRANDED_PENDING_MEMBERSHIP_MS = 60 * 60 * 1000;
+
+/** How many stranded memberships the hourly report names in its WARN line. */
+export const STRANDED_MEMBERSHIP_REPORT_TOP_N = 10;
+
+/**
  * Per-device undelivered-queue depth above which the hourly queue report escalates from a
  * log line to a WARN.
  *

@@ -16,6 +16,8 @@ import {
   QUEUE_BYTES_WARN_PER_DEVICE,
   QUEUE_DEPTH_WARN_PER_DEVICE,
   QUEUE_DEPTH_REPORT_TOP_N,
+  STRANDED_PENDING_MEMBERSHIP_MS,
+  STRANDED_MEMBERSHIP_REPORT_TOP_N,
 } from './retention.constants';
 import { activeRevocationCutoff } from './utils/revocation';
 import {
@@ -43,6 +45,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   private cleanupStalePendingInvitationsInterval: ReturnType<typeof setInterval>;
   private cleanupExpiredRevocationsInterval: ReturnType<typeof setInterval>;
   private reportQueueDepthInterval: ReturnType<typeof setInterval>;
+  private reportStrandedMembershipsInterval: ReturnType<typeof setInterval>;
   private initialSweepTimeout: ReturnType<typeof setTimeout>;
 
   /**
@@ -188,9 +191,19 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       );
     }, ONE_HOUR);
 
+    // Observe the roster. Also purely a report, and it exists for the same reason as the one
+    // above: a device registered as a member but never added to the MLS group was found only by
+    // reading the tables by hand, 3 h 41 after it stopped being able to receive anything.
+    this.reportStrandedMembershipsInterval = setInterval(() => {
+      void this.reportStrandedDeviceMemberships().catch((e) =>
+        this.logger.error('[CRON] reportStrandedDeviceMemberships failed', e)
+      );
+    }, ONE_HOUR);
+
     this.logger.log(
       '[CRON] Stale device detection (1h), message cleanup (1h), ' +
-        'stale device GC (1h), queue depth report (1h), orphaned Redis groups cleanup (6h), ' +
+        'stale device GC (1h), queue depth report (1h), stranded membership report (1h), ' +
+        'orphaned Redis groups cleanup (6h), ' +
         'soft-deleted groups purge (24h), stale push tokens purge (24h), ' +
         'orphaned member rows purge (24h), stale pending invitations purge (24h), ' +
         'expired device revocations purge (24h) scheduled'
@@ -222,8 +235,10 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       ['cleanupStalePendingInvitations', () => this.cleanupStalePendingInvitations()],
       ['cleanupExpiredRevocations', () => this.cleanupExpiredRevocations()],
       ['pruneExpiredCommitLog', () => this.messagingService.pruneExpiredCommitLog()],
-      // Last on purpose: it reports the queue as the GC leaves it, not as it found it.
+      // Last on purpose: they report the estate as the GC leaves it, not as it found it -
+      // `cleanupStalePendingInvitations` above is the job that deletes what the second one reads.
       ['reportQueueDepth', () => this.reportQueueDepth()],
+      ['reportStrandedDeviceMemberships', () => this.reportStrandedDeviceMemberships()],
     ];
     for (const [name, run] of jobs) {
       // One failing job must never cost the others their only run of the deployment.
@@ -273,6 +288,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     clearInterval(this.cleanupStalePendingInvitationsInterval);
     clearInterval(this.cleanupExpiredRevocationsInterval);
     clearInterval(this.reportQueueDepthInterval);
+    clearInterval(this.reportStrandedMembershipsInterval);
     clearTimeout(this.initialSweepTimeout);
   }
 
@@ -441,6 +457,83 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
           `a live device is falling behind, a stale one is debris)`
       );
     }
+  }
+
+  /**
+   * Names the devices that hold a group roster seat they were never given the keys for.
+   *
+   * PURELY A REPORT: it deletes nothing and changes nothing. `cleanupStalePendingInvitations`
+   * already purges these rows - fourteen days later, silently, which is why this population could
+   * grow for a week and be discovered only by reading the tables by hand.
+   *
+   * THE PARTITION IS THE POINT, because a `pending` row on its own is evidence for nothing. Two
+   * opposite situations wear it: a Welcome sitting in the queue for a device that is merely
+   * offline (healthy - the add worked, delivery is owed), and a device `addMembersBulk` SKIPPED
+   * for an invalid KeyPackage, which `registerMember` had already given a roster row. The second
+   * one is a member to every reader, receives no frame, and raises no notification, for as long as
+   * nothing wakes it. The queued Welcome separates them exactly, so it is read rather than
+   * guessed - the one fact the row itself cannot carry.
+   *
+   * Both halves are printed even when the second is empty. The threshold is calibrated on a single
+   * incident (see {@link STRANDED_PENDING_MEMBERSHIP_MS}), and a predicate that named one incident
+   * has to be re-measured against the population it actually runs on before its name is believed;
+   * printing the whole partition is what makes that possible from the log alone.
+   */
+  private async reportStrandedDeviceMemberships() {
+    const cutoff = new Date(Date.now() - STRANDED_PENDING_MEMBERSHIP_MS);
+    const pending = await this.deviceGroupRepo.find({
+      where: { status: 'pending', updatedAt: LessThan(cutoff) },
+    });
+    if (pending.length === 0) {
+      this.logger.log(
+        '[CRON] reportStrandedDeviceMemberships: no pending membership older than ' +
+          `${STRANDED_PENDING_MEMBERSHIP_MS / 60000}min`
+      );
+      return;
+    }
+
+    // One grouped query for the whole candidate set rather than one per row: this population is
+    // small by construction (it is bounded by the 14-day purge) but it is not bounded per user.
+    const welcomed = await this.queuedMessageRepo
+      .createQueryBuilder('q')
+      .select('q.deviceId', 'deviceId')
+      .addSelect('q.groupId', 'groupId')
+      .where('q.isWelcome = :isWelcome', { isWelcome: true })
+      .andWhere('q.deviceId IN (:...deviceIds)', {
+        deviceIds: [...new Set(pending.map((p) => p.deviceId))],
+      })
+      .groupBy('q.deviceId')
+      .addGroupBy('q.groupId')
+      .getRawMany<{ deviceId: string; groupId: string }>();
+
+    // ` ` cannot occur in either identifier, so the pair key is unambiguous - a plain `:` or
+    // `-` join would be, since a deviceId already contains both.
+    const owedAWelcome = new Set(welcomed.map((w) => `${w.deviceId} ${w.groupId}`));
+    const stranded = pending.filter(
+      (p) => !owedAWelcome.has(`${p.deviceId} ${p.groupId}`)
+    );
+
+    this.logger.log(
+      `[CRON] reportStrandedDeviceMemberships: ${pending.length} pending membership(s) past the ` +
+        `window - ${pending.length - stranded.length} awaiting a queued Welcome, ` +
+        `${stranded.length} with no Welcome ever queued`
+    );
+    if (stranded.length === 0) return;
+
+    // ONE line, not one per row: this fires hourly, and a report whose reader learns to skip it is
+    // the one that hides the next defect. The oldest are named because age is what separates a row
+    // minted minutes ago from the class that cost a conversation its notifications.
+    const named = [...stranded]
+      .sort((a, b) => a.updatedAt.getTime() - b.updatedAt.getTime())
+      .slice(0, STRANDED_MEMBERSHIP_REPORT_TOP_N)
+      .map((m) => `${m.deviceId}@${m.groupId}(${m.updatedAt.toISOString()})`)
+      .join(' ');
+    this.logger.warn(
+      `[CRON] reportStrandedDeviceMemberships: ${stranded.length} device(s) hold a roster seat ` +
+        `with no Welcome ever queued - they were registered as members and never added to the MLS ` +
+        `group, so they receive nothing and notify nothing. Oldest ` +
+        `${Math.min(stranded.length, STRANDED_MEMBERSHIP_REPORT_TOP_N)}: ${named}`
+    );
   }
 
   /**

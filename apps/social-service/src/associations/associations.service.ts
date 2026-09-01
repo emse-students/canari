@@ -502,6 +502,8 @@ export class AssociationsService {
       .createQueryBuilder('m')
       .select(['m.id', 'm.associationId', 'm.userId', 'm.role', 'm.permissions', 'm.createdAt'])
       .addSelect('u."displayName"', 'displayName')
+      .addSelect('u."firstName"', 'firstName')
+      .addSelect('u."lastName"', 'lastName')
       .leftJoin('users', 'u', 'u.id = m."userId"')
       .where('m."associationId" = :associationId', { associationId })
       .orderBy('m."sortOrder"', 'ASC')
@@ -518,6 +520,12 @@ export class AssociationsService {
         isAdmin: permissions > 0,
         createdAt: r.m_createdAt,
         displayName: r.displayName || null,
+        // The name PARTS, alongside the joined-up one. A caller that has to order a roster the way
+        // a directory is read - by surname - cannot get there from `displayName`: that column is a
+        // free-form name the user chose, so splitting it is a guess about which token is the
+        // family name. `listMembersPublic` has exposed the same two columns since it was written.
+        firstName: r.firstName || null,
+        lastName: r.lastName || null,
       };
       // Always expose the caller's own bitmask so the frontend can gate by specific flag.
       if (opts?.includePermissions || r.m_userId === opts?.callerId) {

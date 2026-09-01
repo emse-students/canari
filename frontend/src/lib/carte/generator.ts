@@ -40,8 +40,40 @@ export interface PosterLayout {
 export interface PosterMemberRef {
   userId: string;
   name: string;
+  /** Given name from the roster row, when the users mirror has one. Sorting only. */
+  firstName: string | null;
+  /** Family name from the roster row, when the users mirror has one. Sorting only. */
+  lastName: string | null;
   role: string;
   isAdmin: boolean;
+}
+
+/**
+ * Orders a roster the way a printed directory is READ: by family name, then given name.
+ *
+ * Reported 2026-09-01 - the poster listed "Alice Martin" under A. `name` is one joined-up string,
+ * so every alphabetical sort over it is a sort on the GIVEN name; the family name has to come from
+ * its own field, which is why the member row now carries both parts. Splitting `name` on whitespace
+ * was rejected: it is a guess about which token is the family name, and it guesses wrong on a
+ * compound surname ("Van Dupont"), on a nickname and on a mononym.
+ *
+ * A member the mirror has no family name for sorts under the name that is PRINTED for them - the
+ * only string a reader can look them up by, and therefore the only key that keeps the list
+ * scannable.
+ *
+ * @param members - Roster references, in any order; not mutated.
+ * @returns A new array, sorted by family name then given name.
+ */
+export function orderByFamilyName(members: PosterMemberRef[]): PosterMemberRef[] {
+  const key = (mem: PosterMemberRef) => ({
+    family: mem.lastName?.trim() || mem.name,
+    given: mem.firstName?.trim() || '',
+  });
+  return [...members].sort((a, b) => {
+    const ka = key(a);
+    const kb = key(b);
+    return ka.family.localeCompare(kb.family) || ka.given.localeCompare(kb.given);
+  });
 }
 
 /** One association rendered as a colored blob unit on the poster. */
@@ -80,6 +112,8 @@ function toMemberRef(mem: AssociationMember): PosterMemberRef {
   return {
     userId: mem.userId,
     name: mem.displayName?.trim() || mem.userId,
+    firstName: mem.firstName?.trim() || null,
+    lastName: mem.lastName?.trim() || null,
     role: mem.role?.trim() || '',
     isAdmin: mem.isAdmin || false,
   };
@@ -121,7 +155,8 @@ export function buildPosterModel(
       .slice(1)
       .filter((mem) => mem.isAdmin)
       .map(toMemberRef);
-    // Directory lists every member; kept in roster order here, sorted alphabetically at render time.
+    // Directory lists every member; kept in roster order here, ordered by family name at render
+    // time (see `orderByFamilyName`) - the bureau below needs the roster order this preserves.
     const members = roster.map(toMemberRef);
     return {
       assoId: a.id,

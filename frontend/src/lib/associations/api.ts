@@ -115,6 +115,10 @@ export interface AssociationMember {
   associationId: string;
   userId: string;
   displayName: string | null;
+  /** Given name from the users mirror, when the mirror has one. */
+  firstName: string | null;
+  /** Family name from the users mirror - the key any roster ordered like a directory sorts on. */
+  lastName: string | null;
   role: string;
   /** True if the member has at least one permission flag set. */
   isAdmin: boolean;

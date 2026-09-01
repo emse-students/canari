@@ -127,6 +127,34 @@ with no photo gets a 404 there, and its `<img>` is then **removed** from the DOM
 `<img>` is still an `<img>` to the rasteriser" below, which is what the word "img" printed on a
 poster was.
 
+## The directory is ordered by FAMILY NAME, and that needs two columns
+
+Reported 2026-09-01: the right-hand directory printed each roster ordered by GIVEN name - "Alice
+Martin" filed under A. There was no sort bug. The only name a roster row carried was `displayName`,
+one joined-up string, and every alphabetical sort over it is a sort on whatever token happens to come
+first.
+
+**Splitting that string was rejected.** Which token is the family name is a GUESS, and it is wrong on
+a compound surname (`Van Dupont` files under D), on a nickname, and on a mononym - the exact cases a
+directory has to get right, because a reader scanning for someone finds them under one letter only.
+So `listMembers` now selects `u."firstName"` and `u."lastName"` alongside the display name, the same
+two columns `listMembersPublic` has always exposed to portail-etu, and `PosterMemberRef` carries
+them.
+
+`orderByFamilyName` in `generator.ts` is the ONE comparator: family name, then given name, then a
+member the mirror has no family name for sorting under the name that is PRINTED for them - the only
+string a reader can look them up by. Both render paths call it (`PosterCanvas.svelte`'s directory
+footer and `publish.ts`'s `directoryLine`), which is what keeps the preview and the published
+document identical; they held a copy of the sort each before this.
+
+Roster order is untouched: `bubble.president` is still the first row and `bubble.bureau` still the
+admins after it, in the order an author arranged with `sortOrder`. Only the directory listing is
+alphabetical, and it always was.
+
+**A published carte does not re-sort itself.** `buildPublishedCarte` bakes each directory line into a
+string, so a map published before this fix keeps the old order until it is published again from the
+editor.
+
 ## Phasing
 
 - **P0 - Foundations** (DONE): `category` migration + admin control; `poster_project` table +
