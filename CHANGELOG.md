@@ -11,6 +11,38 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A dependency bump took production down for 33 minutes, and the rule that was supposed to stop it
+  did not exist.** Dependabot proposed `postgres 15-alpine -> 18-alpine` in `/infrastructure`, the
+  auto-merge sweep took it at 10:33 on a fully green check suite, and the deploy it dispatched
+  recreated the container. PostgreSQL 18 refused to start on the existing `postgres_data`: 18+ needs
+  `pg_upgrade` and also moved the expected mount from `/var/lib/postgresql/data` to
+  `/var/lib/postgresql` with a major-version subdirectory beneath it. `auth_db` is the only database,
+  so all eight backend services lost their store while the frontend kept answering 200 - the CD run
+  itself failed one step later, on `Run database migrations`, after thirty fruitless `pg_isready`
+  attempts. Restored by pinning the image back to 15 and recreating the container; the data was never
+  touched, PostgreSQL 15.18 came back reporting a clean shutdown at 10:34:31 with no recovery, and
+  the 80 recorded migrations already matched the 80 in the tree, so nothing was half-applied.
+  **Three separate things had to be wrong at once.** The ceiling in
+  `.github/scripts/dependabot-auto-merge.sh` refuses updates by NAME and `postgres` was simply never
+  written into it. Two comments elsewhere asserted the ceiling "refuses any major", which it has
+  never done - `update-type` was parsed and then used for nothing but a log line. And the obvious
+  correction would not have worked either: replaying the real trailer parses to `postgres||18-alpine`
+  with an EMPTY `update-type`, because `15-alpine -> 18-alpine` is not a semver comparison Dependabot
+  can make, so a "refuse every major" rule would have called it unclassified and merged it too. The
+  name table now lives in `.github/scripts/lib/ceiling.sh`, and `tests/ceiling.test.sh` derives the
+  images it demands coverage for by **reading `docker-compose.prod.yml`** rather than from a list -
+  so the next stateful service is covered by whoever declares it, not by whoever remembers this. The
+  sweep runs that test before it may merge anything. **The datastore arm refuses a MAJOR CROSSING and
+  nothing else**, comparing the proposed version against the major production actually runs, because
+  refusing the whole name was the first draft and it would have frozen two harmless open pull requests
+  (`redis 8.8-alpine -> 8.10-alpine`): an on-disk format is stable within a major, and a digest
+  nothing updates is the freeze `dependabot.yml` was written to prevent. It fails closed - an
+  unparseable or absent version is refused - and `adminer`, which mounts no volume, is deliberately
+  allowed across a major, which is what keeps the arm about STATE rather than about being a container.
+  The upgrade to 18 is now a planned migration with a procedure, in `docs/wiki/backlog.md`.
+
 ### Changed
 
 - **The three containers prod actually runs are pinned by digest, and something now watches them.**

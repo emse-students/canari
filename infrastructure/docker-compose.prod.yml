@@ -58,7 +58,20 @@ services:
 
   postgres:
     # Same rule. The tag pinned the MAJOR only, so every patch arrived unannounced.
-    image: postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+    #
+    # THE MAJOR HERE IS NOT A FREE CHOICE, AND MOVING IT IS NOT A DEPENDENCY BUMP. Dependabot
+    # proposed `15-alpine -> 18-alpine` on 2026-09-01, the auto-merge took it on a fully green suite,
+    # and the deploy that followed recreated this container: PostgreSQL 18 exited on startup against
+    # the existing `postgres_data` - `there appears to be PostgreSQL data in /var/lib/postgresql/data`
+    # - because 18+ needs `pg_upgrade` AND moved the expected mount to `/var/lib/postgresql` with a
+    # major-version subdirectory under it. `auth_db` is the ONLY database, so all eight backend
+    # services went down for 33 minutes while the frontend kept serving 200s.
+    #
+    # No gate in this repository can see that failure: `make run-ci`, `boot-nest-apps` and every
+    # compose stack create their cluster from an EMPTY volume, which is the one case that always
+    # works. `postgres` is therefore refused by name in `.github/scripts/lib/ceiling.sh`, and the
+    # upgrade to 18 is a planned migration with its own procedure - see `docs/wiki/backlog.md`.
+    image: postgres:15-alpine@sha256:3d0f7584ed7d04e27fa050d6683a74746608faf21f202be78460d679cc56461f
     restart: always
     expose:
       - "5432"

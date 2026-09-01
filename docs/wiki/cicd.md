@@ -275,6 +275,8 @@ retires it**:
 | `openmls*`, `tls_codec*`, `hpke-rs*`, `libcrux*` | a WIRE format is read by other devices on other VERSIONS; `cross_version_state.rs` covers only today opening what v0.14.14 wrote | the FORWARD half - an old binary reading a frame minted by the new one |
 | `aes-gcm` | it opens a channel push sealed by ANOTHER member's device, so both directions are cross-version, and `src-tauri` freezes neither | a channel-push fixture |
 | `webrtc*`, `str0m`, `sdp`, `ice`, `turn`, `stun` | the SFU's ten tests never touch the ICE stack | one relay-path call (campaign rung 15 CALL) |
+| `stripe` | the SDK's literal `apiVersion` type stops a silent API crossing at COMPILE time, but nothing here proves the app still reads what a new API SENDS | fixtures per API version, over the webhook events and object fields the service actually reads |
+| `postgres`, `redis`, `garage` - **a major crossing only** | a datastore major is refused by the data ALREADY ON DISK, and every gate here creates its cluster from an EMPTY volume - the one case that always works | starting the new major against a data directory written by the old one, and proving the documented upgrade path carries it |
 
 **Four families have already LEFT this table, which is what a refusal is for** - it names a missing
 gate, and it goes the day the gate arrives. `@nestjs/*` left because `boot-nest-apps` constructs the
@@ -288,6 +290,64 @@ list is in
 
 A refusal is **never** routed to a human queue. It is posted as a comment on the pull request naming
 the missing test, once, behind the marker `<!-- canari-auto-merge-ceiling -->`.
+
+#### The table is DERIVED, because its failure mode is an absence (2026-09-01)
+
+**The last two rows of that table cost a production outage, and the entry that would have prevented
+it was not wrong - it was missing.** `postgres 15-alpine -> 18-alpine` merged at 10:33 on a fully
+green suite, the dispatched deploy recreated the container, PostgreSQL 18 exited on startup against
+the existing `postgres_data`, and eight services lost `auth_db` - the only database - for 33 minutes.
+The CD run went red one step later, on `Run database migrations`, after thirty `pg_isready` attempts.
+**The frontend kept answering 200 throughout**, which is why nothing looked wrong from outside.
+
+Three things had to be true at once, and each is worth keeping:
+
+- **A datastore major is the one failure mode this repository structurally cannot see.** `make
+  run-ci`, `boot-nest-apps` and every compose stack initialise an EMPTY volume. Green means "18 can
+  create a fresh cluster" and carries no information about the cluster production has.
+- **Two comments asserted the ceiling "refuses any major".** It never has. `update-type` is parsed
+  and used for nothing but a log line, deliberately - see the top of this section - and a comment
+  claiming a rule is not the rule.
+- **The obvious correction would not have worked either.** Replaying the real trailer parses to
+  `postgres||18-alpine`: `update-type` is **empty**, because `15-alpine -> 18-alpine` is not a semver
+  comparison Dependabot can make. A "refuse every major" rule would have called it unclassified and
+  merged it exactly as the name table did. For a Docker tag the NAME is the only discriminator there
+  is.
+
+So the repair is not the missing row. The table moved to `.github/scripts/lib/ceiling.sh`, and
+`.github/scripts/tests/ceiling.test.sh` **reads `docker-compose.prod.yml`** and demands an arm for
+every third-party image that mounts a named volume - the same reasoning
+`app-module.boot-spec.ts` uses to walk every registered entity rather than a named few. The next
+stateful service is covered by whoever declares it. The test asserts the other direction too, so the
+table cannot quietly widen into the blanket refusal this section exists to argue against, and the
+sweep runs it **before** it may merge anything (`infrastructure/docker-compose.prod.yml` is in the
+job's `sparse-checkout` for exactly that reason - the two move together).
+
+**And the arm is no wider than the hazard, which took a second draft to get right.** Refusing the
+whole NAME was the obvious reaction to the outage, and it is the opposite mistake: an on-disk format
+is stable *within* a major, so `redis 8.8-alpine -> 8.10-alpine` cannot meet the failure mode, and
+two open pull requests (#306, #308) would have been frozen by it - turning "silently moving" into
+"silently ageing", which is precisely what these digest pins were given a Dependabot ecosystem to
+prevent. So the discriminator is the major **production runs**, read out of the compose file rather
+than assumed, and three properties follow:
+
+- **It fails closed.** An absent or unparseable `dependency-version`, or an image the compose file
+  does not name, is refused. A false refusal costs one comment; the false pass cost 33 minutes.
+- **A stateless image is allowed even across a major.** `adminer` mounts no volume, so there is no
+  old data for a new version to refuse - and that line is what keeps the arm about STATE rather than
+  about being a container.
+- **Replayed against the live queue** the day it was written: #309 (`postgres 18-alpine`) refused,
+  #306 and #308 (`redis 8.10-alpine`) allowed, #307 (`adminer`, digest only) allowed.
+
+One operational consequence, learned twice on the day: **a fix applied to the box is erased by the
+next deploy.** `cd.yml` runs `git reset --hard origin/main`, so pinning the image back over SSH
+restores service in seconds and survives exactly until the next dispatch - which is what happened at
+13:29, when a deploy from an origin still carrying 18 took production down a second time. The manual
+repair buys time to write the real one; it is never the repair.
+
+Postgres is pinned at 15 until the upgrade procedure exists; that is a deliberate deferral, with the
+two reasons 18 refuses the directory, in
+[backlog](backlog.md#p2---postgresql-is-held-at-15-because-18-needs-a-migration-nobody-has-performed-after-the-outage-of-2026-09-01).
 
 ### Why there are three triggers, and why the clock is the weakest of them
 

@@ -53,6 +53,44 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 
 ## CI and the chain that runs unattended
 
+### P2 - PostgreSQL is held at 15 because 18 needs a migration nobody has performed (after the outage of 2026-09-01)
+
+**This is a DEFERRAL the user chose, not a defect** (2026-09-01: *"remettre 18 est pas si genant si on
+fait la migration, mais on verra ca plus tard"*). Nothing is broken while it waits; the point of the
+entry is that the reason for the pin is a missing PROCEDURE, so a later session cannot read
+`postgres:15-alpine` as neglect and bump it back.
+
+**What happened, in one line:** the auto-merge shipped `15-alpine -> 18-alpine`, the deploy recreated
+the container, PostgreSQL 18 exited on startup against the existing `postgres_data`, and all eight
+backend services lost `auth_db` - the only database - for 33 minutes. The full account is in
+`CHANGELOG.md`; the rule it left is in
+[durable-rules](durable-rules.md#release-and-ci---cicdcicdmd). The image is refused by name in
+`.github/scripts/lib/ceiling.sh` now, so Dependabot's next attempt is declined with its reason
+rather than merged.
+
+**Why it is not a one-line bump.** PostgreSQL 18 refuses the data directory for TWO independent
+reasons, and a procedure has to answer both:
+
+1. **The catalogue.** A 15 cluster is not readable by 18 - `pg_upgrade` needs BOTH binaries present
+   at once, which no single official image carries. Either a `tianon/postgres-upgrade`-style
+   throwaway container, or a `pg_dumpall` / restore, which is the simple option and the one with
+   downtime proportional to the database.
+2. **The mount moved.** The 18+ images expect a single mount at `/var/lib/postgresql` and place the
+   cluster in a major-version subdirectory beneath it; this repository mounts `postgres_data` at
+   `/var/lib/postgresql/data`. So `docker-compose.prod.yml`, `docker-compose.dev.yml` and
+   `infrastructure/local/docker-compose.yml` all change shape, not just a tag - and the `pg_isready`
+   / `psql` invocations in `cd.yml`'s migration step run inside that container.
+
+**What retires this entry, and it is the same thing that lifts the refusal:** a test that starts the
+NEW major against a data directory written by the OLD one and proves the upgrade path carries it.
+That is the gate `lib/ceiling.sh` names, and writing it makes a whole class of datastore update
+merge by itself - the same shape as `boot-nest-apps` releasing 22 refusals on 2026-08-31. It also
+covers `redis` and `garage`, which sit behind the same arm for the same reason and have never been
+upgraded across a major either.
+
+**One thing to measure BEFORE choosing between dump/restore and `pg_upgrade`:** the size of
+`auth_db` on prod, which decides whether the downtime is seconds or an evening. Nobody has looked.
+
 ### P2 - the one rebuild the auto-merge cannot perform, and the credential that would let it
 
 **The chain is unattended everywhere except here.** When `.github/workflows/` or `.github/scripts/`

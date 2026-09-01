@@ -172,6 +172,15 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md).**
    each naming the test that retires it - closing one makes a whole CLASS of update merge by itself
    - and **the one rebuild no `GITHUB_TOKEN` may perform**, a credential decision owed to the USER:
    [backlog](docs/wiki/backlog.md#p2---the-one-rebuild-the-auto-merge-cannot-perform-and-the-credential-that-would-let-it).
+   **THE CHAIN TOOK PROD DOWN ONCE, 2026-09-01: `postgres 15-alpine -> 18-alpine` auto-merged green
+   and PG 18 refused prod's data directory** - 33 min, all eight services, frontend still 200. Fixed
+   and restored; the story is in `CHANGELOG.md`, the rule in `durable-rules`, the mechanism on
+   [cicd](docs/wiki/cicd.md#the-table-is-derived-because-its-failure-mode-is-an-absence-2026-09-01).
+   **The ceiling's name table is now DERIVED from `docker-compose.prod.yml`**, so a stateful image
+   cannot be forgotten again. What stays open is the user's deferral: **PG 15 -> 18 is a MIGRATION,
+   parked deliberately** (2026-09-01, *"on verra ca plus tard"*), and the test that retires it also
+   releases `redis` and `garage`:
+   [backlog](docs/wiki/backlog.md#p2---postgresql-is-held-at-15-because-18-needs-a-migration-nobody-has-performed-after-the-outage-of-2026-09-01).
 
 4. **NOTHING ON THE CAMPAIGN BOARD COULD HAVE CAUGHT IT, AND THE GAP IS STRUCTURAL** (2026-08-28):
    no row asks a question whose answer is a POPULATION rather than an event. **Four rows are written

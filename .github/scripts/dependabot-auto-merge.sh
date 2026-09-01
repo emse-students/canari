@@ -28,6 +28,12 @@ pr="${1:?usage: dependabot-auto-merge.sh <pr-number>}"
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=lib/gate-moves.sh
 . "$(dirname "$0")/lib/gate-moves.sh"
+# THE NAME TABLE MOVED OUT FOR THE SAME REASON, ON 2026-09-01, and it cost a production outage to
+# learn it: a `case` inline here could not be asked what it covered, so nobody noticed `postgres`
+# was absent from it until PostgreSQL 18 refused to start on production's data directory. See
+# `lib/ceiling.sh` and `tests/ceiling.test.sh`.
+# shellcheck source=lib/ceiling.sh
+. "$(dirname "$0")/lib/ceiling.sh"
 
 MARKER='<!-- canari-auto-merge-ceiling -->'
 
@@ -58,6 +64,14 @@ echo "#$pr: head=$head_sha mergeable=$mergeable"
 # BLOCKS rather than as three independent `sed` lists: an update Dependabot could not classify
 # carries no `update-type` at all, and three lists pasted side by side would then pair the wrong
 # name with the wrong version, silently.
+#
+# `update-type` IS REPORTED AND DECIDES NOTHING, deliberately, and this has to be said out loud
+# because two comments elsewhere in this repository claimed the opposite until 2026-09-01 - that the
+# ceiling "refuses any major". It never has: the only thing consulted is the NAME. A major that
+# breaks the tree stops it compiling and the suite refuses it without help, and a blanket major
+# refusal would build the queue nobody drains. The cost of the false claim was that `postgres
+# 15-alpine -> 18-alpine` looked covered by a rule that did not exist, and production lost every
+# backend service for 33 minutes. What protects a datastore now is its NAME, in `lib/ceiling.sh`.
 message=$(gh api "repos/$REPO/commits/$head_sha" --jq '.commit.message') || {
   echo "#$pr: could not read its head commit; skipping."
   exit 0
@@ -94,58 +108,10 @@ while IFS='|' read -r name type version; do
   # `@nestjs/common` major it was written to refuse.
   name="${name%\"}"
   name="${name#\"}"
-  gate=""
-  case "$name" in
-    # `argon2`, `chacha20poly1305` and `ciborium` WERE REFUSED HERE UNTIL 2026-08-31, and they left
-    # because `tests/cross_version_state.rs` now opens artefacts those three sealed and serialised in
-    # v0.14.14. The reason a backward-only test is ENOUGH for them, and not for the crates below, is
-    # the same fact in both cases: an at-rest envelope is read only by the device that WROTE it, so
-    # "does today's code still open yesterday's blob" is the whole question. Measured, not assumed -
-    # every `encrypt_blob` call site is state persistence, in `crypto.rs` and `pin_crypto.rs`.
-#
-# `aes-gcm` USED TO HAVE ITS OWN ARM HERE and no longer does, because its gate was written:
-# `src-tauri/src/mobile/cross_version_push.rs` freezes a channel push and a Graine push, and
-# asserts BOTH directions. The forward half needed no old binary the way `openmls` does - an
-# AEAD is deterministic, so re-sealing the frozen plaintext under the frozen key and nonce must
-# reproduce the frozen bytes, and equal bytes are equal in both directions.
-    openmls | openmls_* | tls_codec | tls_codec_derive | hpke-rs* | libcrux*)
-      # A WIRE FORMAT IS READ BY OTHER DEVICES, ON OTHER VERSIONS, so both directions matter and a
-      # frozen fixture can only ever see one of them. `cross_version_state.rs` proves today's code
-      # opens a group and a frame minted by v0.14.14; nothing here proves a frame minted TODAY is
-      # readable by the v0.14.14 clients still in the fleet, and only an old binary could.
-      gate="the FORWARD half of a cross-version test. \`tests/cross_version_state.rs\` now covers the backward half - today opening what v0.14.14 wrote - but a wire format is read by OTHER devices on OTHER versions, and nothing here runs an old binary against a frame minted by the new one"
-      ;;
-    webrtc | webrtc-* | str0m | sdp | ice | turn | stun)
-      gate="one relay-path call. The SFU has ten tests and not one of them touches the ICE stack; that is campaign rung 15 CALL, which has no runner yet"
-      ;;
-    stripe)
-      # THE COMPILER ALREADY DOES HALF OF THIS, AND THE HALF IT DOES IS THE SAFE HALF. The SDK types
-      # `apiVersion` as the string LITERAL its release was cut against, and this service pins that
-      # value in one exported constant (`src/payment/stripe-api-version.ts`). So an SDK bump that
-      # still compiles cannot change which API the app talks to - the constant governs - and it
-      # merges on its own like anything else. An SDK bump that CROSSES an API version stops the
-      # tree compiling, in four files at once, which is exactly the coupling being made visible.
-      #
-      # What no gate here can answer is the other half: whether the app still reads what the new API
-      # sends. An API version decides webhook payload shapes and object fields, so crossing one is a
-      # decision about PAYMENTS, and today the only evidence is Stripe's changelog and somebody
-      # reading it. That is not a semver judgement this script can make.
-      gate="a test that pins this service's Stripe surface to FIXTURES per API version - the webhook events \`webhook.controller.ts\` handles and the fields \`stripe-payment-provider.ts\` and \`users.service.ts\` read - so that crossing an API version is PROVED rather than read in a changelog. The SDK's literal type already refuses a silent crossing: if this update stopped the tree compiling, \`STRIPE_API_VERSION\` and \`stripe\` have to move together, deliberately"
-      ;;
-    # `@nestjs/*` WAS REFUSED HERE UNTIL 2026-08-31, and the entry is gone because the test it named
-    # now exists and is green on all four services: `boot-nest-apps` builds the real `AppModule`
-    # against a real Postgres, Redis and S3 endpoint. That is what a refusal is for - it names a
-    # missing gate, and it leaves when the gate arrives. It released 22 of the 28 refusals measured
-    # that morning.
-    #
-    # BARE `typeorm` WAS REFUSED HERE UNTIL 2026-08-31 TOO, and it left the same way. The boot job
-    # proved the schema BUILDS and stopped there; every unit suite mocks its repositories, so a major
-    # changing how a query is BUILT would have passed all 1105 of them and failed on the first
-    # request in production. `app-module.boot-spec.ts` now issues a real `find` through EVERY entity
-    # the app registered - every one, not a named list, because a gate that picks its subject by name
-    # does not cover the entity nobody added to it. Green on core, social and chat-delivery in CD run
-    # 33403833044; media-service carries a tripwire asserting it still has no ORM at all.
-  esac
+  # The table, and every reason in it, is `lib/ceiling.sh` - one place, with self-tests. The VERSION
+  # is passed because one arm needs it: a datastore is refused only when the update crosses the major
+  # production runs, a patch within a major being exactly what the digest pin exists to let through.
+  gate=$(gate_for_dependency "$name" "$version")
 
   if [ -n "$gate" ]; then
     echo "  REFUSED: $name -> $version ($type): $gate"

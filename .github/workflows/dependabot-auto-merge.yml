@@ -136,7 +136,14 @@ jobs:
         uses: actions/checkout@v7
         with:
           ref: main
-          sparse-checkout: .github/scripts
+          # `infrastructure/docker-compose.prod.yml` IS PART OF THE DECISION, not a convenience:
+          # `tests/ceiling.test.sh` derives the stateful images it demands coverage for from that
+          # file rather than from a hardcoded list, so the next stateful service is covered by
+          # whoever declares it. Without this path the test cannot read the compose file and fails
+          # closed - which is the right direction, and still a stopped sweep.
+          sparse-checkout: |
+            .github/scripts
+            infrastructure/docker-compose.prod.yml
 
       # THE PREDICATE IS TESTED IN THE RUN THAT USES IT. `lib/gate-moves.sh` decides whether a
       # green-but-older check suite is still evidence, and the half that matters - a truncated
@@ -145,6 +152,15 @@ jobs:
       # merges anything on a predicate that no longer holds.
       - name: Verify the staleness predicate before trusting it
         run: bash .github/scripts/tests/gate-moves.test.sh
+
+      # AND THE TABLE THAT DECIDES WHAT MERGES, which had no test at all until it cost an outage.
+      # On 2026-09-01 `postgres 15-alpine -> 18-alpine` merged on a green suite because `postgres`
+      # was absent from the ceiling, and PostgreSQL 18 then refused production's data directory.
+      # `tests/ceiling.test.sh` reads the stateful images out of `docker-compose.prod.yml` rather
+      # than from a list, so the omission is named HERE, in the run that would do the merging,
+      # instead of by eight services going down.
+      - name: Verify the ceiling covers every stateful image production runs
+        run: bash .github/scripts/tests/ceiling.test.sh
 
       - name: Collect the pull requests to evaluate
         env:
