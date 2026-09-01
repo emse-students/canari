@@ -4,7 +4,11 @@ services:
   # Infrastructure (dépendances partagées)
   # ─────────────────────────────────────────────────────
   redis:
-    image: redis:alpine
+    # PINNED BY DIGEST TO WHAT PRODUCTION IS PROVEN TO RUN, not to whatever the tag resolved to
+    # the morning somebody rebuilt. `redis:alpine` is a FLOATING MAJOR - it was serving 8.8.0 on
+    # 2026-09-01 and a `docker compose pull` could have moved it to 9 without a line changing
+    # here. The tag before the `@` is documentation: the digest is what is fetched.
+    image: redis:8.8-alpine@sha256:9d317178eceac8454a2284a9e6df2466b93c745529947f0cd42a0fa9609d7005
     restart: always
     # Bounded on purpose. Redis holds presence, rendezvous digests and history streams and was
     # running with maxmemory 0 / noeviction, i.e. unbounded growth on a 16 GB host - the forecast
@@ -53,7 +57,8 @@ services:
       start_period: 40s
 
   postgres:
-    image: postgres:15-alpine
+    # Same rule. The tag pinned the MAJOR only, so every patch arrived unannounced.
+    image: postgres:15-alpine@sha256:3d0f7584ed7d04e27fa050d6683a74746608faf21f202be78460d679cc56461f
     restart: always
     expose:
       - "5432"
@@ -65,7 +70,9 @@ services:
       - postgres_data:/var/lib/postgresql/data
 
   adminer:
-    image: adminer:latest
+    # Same rule, and this was the worst of the three: `:latest`, on a database admin UI, in
+    # PRODUCTION. The image carries no version label, so the digest is the only name it has.
+    image: adminer@sha256:983261ecc40a4aaf11e25aeda8ef821f5a43a9f024b3967c81cbcc0e6ce43ba3
     restart: unless-stopped
     ports:
       - "127.0.0.1:8888:8080"

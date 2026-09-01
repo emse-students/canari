@@ -196,3 +196,29 @@ updates:
       - "dependencies"
       - "docker"
     open-pull-requests-limit: 5
+
+  # --- Compose images -----------------------------------------------------------------------------
+  # THE `docker` ECOSYSTEM ABOVE READS DOCKERFILES, AND NOTHING WAS READING THE COMPOSE FILES. That
+  # is where the third-party images actually live - redis, postgres, adminer - and all three were
+  # floating on 2026-09-01: `redis:alpine` was a floating MAJOR serving 8.8.0, `postgres:15-alpine`
+  # floated every patch, and `adminer:latest` was a database admin UI on `:latest` in PRODUCTION.
+  # They are pinned by digest now, to what production was proven to be running.
+  #
+  # WHICH IS EXACTLY WHY THIS ENTRY HAS TO EXIST. A digest nothing updates is a FREEZE, not a pin -
+  # it converts "silently moving" into "silently ageing", and the second failure mode is the one
+  # nobody notices for a year. This is the mechanism that keeps the pin honest.
+  - package-ecosystem: "docker-compose"
+    directories:
+      - "/infrastructure"
+      - "/infrastructure/local"
+    rebase-strategy: auto
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "chore(deps):"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "docker"
+    open-pull-requests-limit: 5

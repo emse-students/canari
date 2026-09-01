@@ -13,6 +13,19 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Changed
 
+- **The three containers prod actually runs are pinned by digest, and something now watches them.**
+  `redis:8.8-alpine`, `postgres:15-alpine` and `adminer` were named by TAG alone in all three compose
+  files, so what a `docker compose pull` fetched was whatever the registry pointed those tags at that
+  day: a rebuild could change the running Redis without one line of this repository changing, and no
+  diff would ever show it. Each is now `tag@sha256:...`, and the digests are the ones READ OFF PROD
+  rather than the newest published today - a pin whose value is "latest at the moment I wrote it"
+  records nothing and silently upgrades the box the first time it is applied. Adminer carries no
+  version label at all, which makes its digest the only name it has. A digest nothing updates is a
+  FREEZE rather than a pin, so `.github/dependabot.yml` gains a `docker-compose` ecosystem over
+  `/infrastructure` and `/infrastructure/local`: the pin now ages through a pull request the ceiling
+  judges like any other. `coturn/coturn` in the local file is deliberately NOT pinned - it carries no
+  tag either, and no digest for it was measured.
+
 - **Audio and video calling is held off, and the two store declarations that describe it went with
   it.** App Review refused the `voip` `UIBackgroundModes` entry under guideline 2.5.4 on 2026-08-31,
   unable to locate any VoIP service. They were right about the build they ran: on any iPad

@@ -4,7 +4,11 @@ services:
   # Infrastructure (dépendances partagées)
   # ─────────────────────────────────────────────────────
   redis:
-    image: redis:alpine
+    # PINNED BY DIGEST TO WHAT PRODUCTION IS PROVEN TO RUN, not to whatever the tag resolved to
+    # the morning somebody rebuilt. `redis:alpine` is a FLOATING MAJOR - it was serving 8.8.0 on
+    # 2026-09-01 and a `docker compose pull` could have moved it to 9 without a line changing
+    # here. The tag before the `@` is documentation: the digest is what is fetched.
+    image: redis:8.8-alpine@sha256:9d317178eceac8454a2284a9e6df2466b93c745529947f0cd42a0fa9609d7005
     # Same bound as production, so an eviction only ever shows up in one of the two environments
     # because of load - never because the policies differ.
     command: ["redis-server", "--maxmemory", "1gb", "--maxmemory-policy", "volatile-lru"]
@@ -17,7 +21,8 @@ services:
       retries: 10
 
   postgres:
-    image: postgres:15-alpine
+    # Same rule. The tag pinned the MAJOR only, so every patch arrived unannounced.
+    image: postgres:15-alpine@sha256:3d0f7584ed7d04e27fa050d6683a74746608faf21f202be78460d679cc56461f
     ports:
       - "5433:5432"
     environment:
