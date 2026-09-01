@@ -1039,6 +1039,18 @@ jobs:
         working-directory: ${{ env.DEPLOY_PATH }}
         run: |
           echo "⏳ Waiting for critical services to be running…"
+          # THE THREE DATASTORES ARE IN THIS LIST BECAUSE THEY WERE NOT, ON 2026-09-01. A postgres
+          # major crossing crash-looped the only database for 33 minutes and this gate named seven
+          # APPLICATION services and none of the three things they all depend on. It happened not to
+          # matter that day - the migration step fails earlier, and a starved social-service does
+          # enter `Restarting` - but a gate that catches its own dependency only through a downstream
+          # symptom is the named-list defect this repository keeps paying for: it does not cover the
+          # entity nobody added to it. A datastore that crash-loops for any OTHER reason - a full
+          # disk, a corrupted volume - must fail the deploy by its own name.
+          #
+          # `Restarting` is safe to treat as fatal for these: an ordinary `up -d` recreate goes
+          # Created -> Running, and Docker reports `Restarting` only after a non-zero exit brought
+          # the restart policy in.
           critical_services=(
             chat-gateway
             call-service
@@ -1047,14 +1059,22 @@ jobs:
             core-service
             social-service
             frontend
+            postgres
+            redis
+            garage
           )
+
+          # ONE LIST, NOT TWO. The array and the regex below were maintained separately, which is
+          # precisely how they came to disagree - the regex is derived from the array now, so a
+          # service cannot be added to one and forgotten in the other.
+          critical_pattern=$(IFS='|'; echo "${critical_services[*]}")
 
           ready=0
           for _ in {1..36}; do
             running_services=$(eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml ps --status running --services" || true)
             ps_all=$(eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml ps --all" || true)
 
-            if echo "$ps_all" | grep -E "(chat-gateway|call-service|chat-delivery-service|media-service|core-service|social-service|frontend)" | grep -E "Restarting|Exit|Dead|unhealthy" >/dev/null; then
+            if echo "$ps_all" | grep -E "($critical_pattern)" | grep -E "Restarting|Exit|Dead|unhealthy" >/dev/null; then
               echo "❌ One or more critical services are unhealthy/restarting/exited"
               echo "$ps_all"
               exit 1

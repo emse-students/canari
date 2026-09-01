@@ -181,6 +181,11 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md).**
    parked deliberately** (2026-09-01, *"on verra ca plus tard"*), and the test that retires it also
    releases `redis` and `garage`:
    [backlog](docs/wiki/backlog.md#p2---postgresql-is-held-at-15-because-18-needs-a-migration-nobody-has-performed-after-the-outage-of-2026-09-01).
+   **AND THE BIGGEST THING IT EXPOSED IS OWED TO THE USER: NOTHING TELLS ANYBODY PROD IS DOWN.** Both
+   outages were reported by the user; the red CD run was the only signal and nobody is paged for one,
+   while the frontend answered 200 throughout - so a probe must hit `/api/version`, which needs the
+   database. A decision then one click, NOT a tool to build:
+   [backlog](docs/wiki/backlog.md#p2---nothing-tells-anybody-production-is-down-and-both-outages-of-2026-09-01-were-reported-by-the-user-owed-to-the-user-a-decision-then-one-click).
 
 4. **NOTHING ON THE CAMPAIGN BOARD COULD HAVE CAUGHT IT, AND THE GAP IS STRUCTURAL** (2026-08-28):
    no row asks a question whose answer is a POPULATION rather than an event. **Four rows are written

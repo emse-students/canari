@@ -42,6 +42,15 @@ which is also where every release up to and including v0.13.1 now lives.
   unparseable or absent version is refused - and `adminer`, which mounts no volume, is deliberately
   allowed across a major, which is what keeps the arm about STATE rather than about being a container.
   The upgrade to 18 is now a planned migration with a procedure, in `docs/wiki/backlog.md`.
+  **Two adjacent gaps found while closing it, both the same named-list defect.** `make
+  test-ci-scripts` ran only `gate-moves.test.sh`, so the new ceiling test would have executed inside
+  the sweep and nowhere else - a pull request breaking `lib/ceiling.sh` would have gone green and
+  been caught on `main`; it is in the target now. And `cd.yml`'s `Wait for services to be healthy`
+  enumerated seven APPLICATION services and none of the three datastores they all depend on, keeping
+  its list in an array AND a duplicated regex - so the gate could not fail on the very container that
+  was crash-looping, and only caught it through a starved `social-service` entering `Restarting`. The
+  regex is derived from the array now, and `postgres`, `redis` and `garage` are in it; verified
+  against the actual `docker compose ps` line the outage produced.
 
 ### Changed
 

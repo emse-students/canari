@@ -53,6 +53,33 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 
 ## CI and the chain that runs unattended
 
+### P2 - NOTHING TELLS ANYBODY PRODUCTION IS DOWN, and both outages of 2026-09-01 were reported by the user (owed to the USER: a decision, then one click)
+
+**This is the largest thing the postgres outage exposed, and it is not a code defect.** Production
+lost every backend service twice on 2026-09-01, for 33 minutes and then again after a manual deploy,
+and on both occasions the thing that raised the alarm was **the user noticing**. Nothing in this
+repository or on the box would have said so.
+
+**What DID report, and why it was not enough.** The CD run went red both times, on `Run database
+migrations` - so the mechanism worked and the signal existed. Nobody is paged for a red run, and a
+GitHub notification in a mailbox is not a page. Worse, the frontend kept answering **200** throughout:
+`frontendDist` is embedded and nginx serves it without touching a service, so every external check
+that reads the homepage saw a healthy site while `auth_db` was unreachable. **A liveness probe must
+hit something that needs the database** - `/api/version` and `/api/chat-delivery-health` both do, and
+both returned 502 the whole time.
+
+**What is owed to the user is a DECISION, not a tool** (`CLAUDE.md`: one-off actions go to the user).
+The cheapest honest option is an external probe on `/api/version` and `/api/chat-delivery-health`
+with a notification - Cloudflare already fronts all three zones and can do it, or any uptime service.
+It is a few clicks in a dashboard, and building a poller in this repository to replace them would be
+exactly the waste that rule names.
+
+**One thing that would be code, and is worth doing whichever way the above goes:** CD's health checks
+(`Health Check`, `Wait for services to be healthy`) run AFTER the migration step, so a deploy that
+fails on migrations never reaches them and reports only "migrations failed" - true, and silent about
+the estate being down. Reaching them on the failure path, or asserting the datastores before
+migrations, would make the run say what actually happened.
+
 ### P2 - PostgreSQL is held at 15 because 18 needs a migration nobody has performed (after the outage of 2026-09-01)
 
 **This is a DEFERRAL the user chose, not a defect** (2026-09-01: *"remettre 18 est pas si genant si on
