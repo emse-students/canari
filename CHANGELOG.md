@@ -61,6 +61,46 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **"This conversation has been deleted", on a conversation created seconds earlier.** Reported from
+  a member's phone on 2026-09-01: he opened a brand-new DM, typed a message that the peer received
+  normally, and the banner appeared anyway. The server never deleted anything - the group is alive,
+  both members are in `dm_group_members`, there is no tombstone and no dismissal. The banner came
+  from the creator's own client. `startNewConversation` published the conversation row and selected
+  it immediately after `createRemoteGroup`, BEFORE `registerMember` wrote the roster row; a direct
+  conversation is keyed by its groupId, and the SYNC_WATCHDOG treats every key in `conversations` as
+  a group to recover, every 5 s. So for the length of two network calls the new group was a recovery
+  candidate whose own creator the server answered 403 - and `requestReAdd` classifies that as
+  `NotAGroupMemberError`, a TERMINATING answer that retires the conversation. Two writers of
+  `lifecycle` were racing and the retire landed last. The row is now written ONCE, already `active`,
+  after the local-state check, exactly as `createNewGroup` has done since 2026-08-30: a field
+  written once cannot lose a race for it. `groupCreation.order.test.ts` now guards the DM path too,
+  which it never did - the invariant was documented there and implemented only in the group path.
+
+- **Every received DM polled the server for a group id that cannot exist, twice every five seconds.**
+  Found while diagnosing the above. A DM created on this device is keyed by its groupId; one learnt
+  from a Welcome is keyed by the PEER'S USER ID (`deriveConversationIdentity`) - two conventions in
+  one map. The watchdog and `recovery.ts` read the key AS a group id, so on the receiving side of
+  every DM they asked about an id no `dm_groups` row can carry. The answer is a CONFIRMED ABSENT,
+  which returns before the throttle is armed, so it repeated on every poll for the whole session.
+  Worse than the noise: `stopRecovering` could never find the row it was meant to retire, and the
+  idempotence check never fired, so a recovery that HAD its terminating answer went on asking. The
+  watchdog now takes the id from the row, and the three lookups in `recovery.ts` find the
+  conversation by `id` - correct under both conventions. Re-keying the store is a data migration and
+  is deliberately not this.
+
+- **A device could hold a group roster seat it was never given the keys for, and nothing said so.**
+  `registerMember` writes a `pending` row for every device of the invited user, while the Welcome
+  only reaches the devices `addMembersBulk` actually managed to add - a device whose KeyPackage was
+  rejected is left looking like a member, receiving nothing and notifying nothing.
+  `warnSkippedKeyPackages` logged it in the INVITER's console and nowhere else. Measured on
+  production: a phone sat exactly like that on a new DM for **3 h 41** - registered at 20:45:47, no
+  Welcome ever queued, self-healed by external join at 00:26:54 - which is why the peer received the
+  message on a web session and got no notification on his phone. New hourly
+  `reportStrandedDeviceMemberships` partitions the pending rows on the one fact the row itself
+  cannot carry - is a Welcome actually queued for this device AND this group - and warns only on the
+  half that was never added. It deletes nothing; the fourteen-day purge still owns that, and the
+  report now names these rows about thirteen days before that purge erases the evidence.
+
 - **The Carte de la Vie Asso listed every roster by GIVEN name.** Reported 2026-09-01: the
   right-hand directory printed "Alice Martin" under A, where a directory is read by surname. The
   sort was doing what it was told - the only name a roster row carried was `displayName`, one

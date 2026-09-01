@@ -33,6 +33,7 @@ The chat-delivery-service is the MLS API layer. It:
 | 1h | Clean expired queued messages |
 | 1h | Full GC of stale device entries |
 | 1h | Report queue depth (observation only, deletes nothing) |
+| 1h | Report stranded pending device memberships (observation only, deletes nothing) |
 | 6h | Clean orphaned Redis `group:members:*` keys |
 | 24h | Purge soft-deleted groups (> 90 days old), with everything they own |
 | 24h | Purge stale push tokens (> 90 days) |
@@ -510,6 +511,42 @@ payload** from **undecodable payload** with a sample of ids; `unackedFrames.ts` 
 refusals by reason with a sample of group ids, and `fetchPendingMessages` reports it **after
 `waitForMessageQueueIdle`** - the rows are enqueued, not handled, so what was refused is only known
 once the queue has drained. Silent when there is nothing to say.
+
+### A roster seat is not a key, and only a Welcome tells the two apart
+
+`addGroupMember` writes a `dm_device_group_memberships` row with `status: 'pending'` for **every**
+device of the invited user that holds a `KeyPackage` in the retention window. The Welcome, on the
+other hand, only reaches the devices the inviter's `addMembersBulk` actually managed to add - a
+device whose KeyPackage the WASM layer rejects lands in `skippedDeviceIds` and is dropped there. The
+two counts are written by different actors and nothing compared them, so a device could hold a seat
+on a group's roster it had never been given the keys for: present in the roster, receiving nothing,
+notifying nothing. `warnSkippedKeyPackages` logged it in the **inviter's** console and nowhere else,
+which is the one place nobody reads - a correct mechanism with no report.
+
+It was found by hand, a day late, exactly as the rule predicts. A member created a new DM on
+2026-09-01; the peer's phone got its pending row at `20:45:47.420` and **no `queued_message` with
+`isWelcome = true` was ever written for it**, while the account's four other devices each got one.
+It sat stranded for **3 h 41**, until the phone healed itself by external join at `00:26:54` and
+republished its key package at `00:53` with 39 one-time key packages. The peer read the message on a
+web session and got no notification on his phone, which is how the defect surfaced at all.
+
+`reportStrandedDeviceMemberships` (hourly, added 2026-09-01) closes the gap on the server, where
+both facts are known. It selects the `pending` rows older than `STRANDED_PENDING_MEMBERSHIP_MS`
+(1 h - long enough that an ordinary invitation in flight is never counted) and partitions them with
+ONE grouped query against `queued_message` on the pair the row cannot carry by itself: **is a
+Welcome actually queued for this device AND this group**.
+
+- **awaiting a queued Welcome** - healthy. The Welcome exists, the device is simply offline. Logged,
+  never warned; this half is the population the WARN would otherwise drown in.
+- **no Welcome ever queued** - the defect. WARNed, naming the oldest
+  `STRANDED_MEMBERSHIP_REPORT_TOP_N` as `deviceId@groupId(ISO)`, because a count cannot be chased and
+  a device id can.
+
+It deletes nothing - `purgeOrphanedMemberRows` and the fourteen-day queue retention still own that -
+and the point of the hour-scale threshold is that the report names these rows about thirteen days
+before the purge erases the evidence that would explain them. `app.controller.stranded-memberships.spec.ts`
+pins the partition, the threshold boundary and the shape of the WARN; as with `reportQueueDepth`, a
+mocked repository never parses SQL, so the builder's output is verified only by the deploy log.
 
 ### A revoked device id does not come back for ten years
 

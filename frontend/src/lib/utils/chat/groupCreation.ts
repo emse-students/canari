@@ -638,22 +638,24 @@ export async function startNewConversation(
     log(`[DM] Remote group created: ${groupId}`);
     const conversationKey = groupId;
 
-    conversations.set(conversationKey, {
-      id: groupId,
-      contactName: contact,
-      name: contact,
-      messages: [],
-      lifecycle: 'pending',
-      mlsStateHex: null,
-      conversationType: 'direct',
-      directPeerId: contact,
-    });
-    maybeSelect(conversationKey);
-
-    // SAME INVARIANT AS `createNewGroup`, AND THIS IS THE COMMONER PATH OF THE TWO. The membership
-    // is what makes the group nameable by `getUserGroups`; holding it locally first opens the
-    // window in which a concurrent sweep reads a brand-new conversation as a dead one. See the
-    // long note at the other site.
+    // THE ROW IS NOT PUBLISHED UNTIL THE GROUP IS REACHABLE, AND THAT IS THE WHOLE INVARIANT.
+    //
+    // The SYNC_WATCHDOG enumerates `conversations` BY KEY and treats every key as a groupId
+    // (`sessionWatchdogs.ts`), every 5 s. A direct conversation is keyed by its groupId, so the
+    // instant this row exists the group is a recovery candidate - and until `registerMember`
+    // lands, `GET /api/mls/groups/:id/*` answers 403 to its own creator, because the roster it
+    // checks is still empty. `requestReAdd` reads that refusal as `NotAGroupMemberError`, which
+    // is a TERMINATING answer: `stopRecovering` retires the conversation, and the creator is
+    // shown "this conversation has been deleted" over a group they created seconds earlier.
+    //
+    // Reported from production on 2026-09-01 (group `ab47add3`): the banner appeared on the
+    // creator's phone while the message he had just typed was delivered normally to the peer -
+    // the two writers of `lifecycle` were racing, and the retire simply landed last.
+    //
+    // Publishing the row only once `getLocalGroups()` holds the group DELETES the overlap rather
+    // than narrowing it: the watchdog's first branch (`localGroups.has(id)` -> healthy, skip)
+    // then covers every poll there has ever been. This mirrors `createNewGroup`, which presents
+    // its conversation once, at the end, for the same reason and after the same check.
     await mlsService.registerMember(groupId, userId);
     log(`[DM] Server membership registered for ${userId}`);
     await mlsService.createGroup(groupId);
@@ -687,8 +689,20 @@ export async function startNewConversation(
       );
     }
 
-    const convo = conversations.get(conversationKey)!;
-    conversations.set(conversationKey, { ...convo, lifecycle: 'active' });
+    // Published `active` in one write, never `pending` first: there is no reader left that could
+    // see the intermediate state, and a row that is only ever written once cannot lose a race
+    // against a concurrent writer of the same field.
+    conversations.set(conversationKey, {
+      id: groupId,
+      contactName: contact,
+      name: contact,
+      messages: [],
+      lifecycle: 'active',
+      mlsStateHex: null,
+      conversationType: 'direct',
+      directPeerId: contact,
+    });
+    maybeSelect(conversationKey);
     saveConversation(conversationKey);
     log(`[OK] Secure channel established with ${contact}.`);
     console.log(`[DM] 1v1 conversation with ${contact} ready (groupId=${groupId})`);

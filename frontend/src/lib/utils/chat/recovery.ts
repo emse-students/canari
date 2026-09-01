@@ -59,8 +59,30 @@ export interface RecoveryDeps {
  *
  * @returns `true` if the WASM MLS state was mutated (caller must then persist).
  */
+/**
+ * The conversation carrying `groupId`, found BY ITS `id` rather than by its map key.
+ *
+ * THE KEY IS NOT THE GROUP ID, AND THIS MODULE IS ADDRESSED BY GROUP ID. A direct conversation
+ * created on THIS device is keyed by its groupId (`startNewConversation`), while one learnt from a
+ * Welcome is keyed by the PEER'S USER ID (`deriveConversationIdentity`) - two conventions in one
+ * map, and every `conversations.get(groupId)` in here silently missed the second. The consequences
+ * were not symmetric: the idempotence check in {@link requestReAdd} stopped short-circuiting on an
+ * already-`removed` conversation, and {@link stopRecovering} could never retire one, so a recovery
+ * that had its terminating ANSWER went on asking anyway.
+ *
+ * Re-keying the store is a data migration and is not this. Reading by `id` is correct under BOTH
+ * conventions, which is why the lookup that was already written this way - the phantom purge below,
+ * the one place that never had the bug - is now the only one.
+ */
+function findByGroupId(
+  conversations: SvelteMap<string, Conversation>,
+  groupId: string
+): [string, Conversation] | undefined {
+  return [...conversations.entries()].find(([, c]) => c.id === groupId);
+}
+
 async function purgePhantomConversation(groupId: string, deps: RecoveryDeps): Promise<boolean> {
-  const entry = [...deps.conversations.entries()].find(([, c]) => c.id === groupId);
+  const entry = findByGroupId(deps.conversations, groupId);
   if (entry?.[1].lifecycle === 'removed') return false; // kept until manual local deletion
   const mutated = deps.mlsService.getLocalGroups().includes(groupId);
   if (mutated) deps.mlsService.forgetGroup(groupId);
@@ -99,12 +121,12 @@ async function stopRecovering(
 ): Promise<void> {
   cancelReAdd(groupId, timers);
   clearGroupNotReady(deps.userId, groupId);
-  const convo = deps.conversations.get(groupId);
-  if (!convo || convo.lifecycle === 'removed') return;
+  const entry = findByGroupId(deps.conversations, groupId);
+  if (!entry || entry[1].lifecycle === 'removed') return;
   deps.log(`[READD] ${groupId.slice(0, 8)}... ${reason} - marking removed`);
   await retireConversation({
     conversations: deps.conversations,
-    key: groupId,
+    key: entry[0],
     groupId,
     saveConversation: deps.saveConversation,
     patch: { id: groupId },
@@ -138,7 +160,7 @@ export async function requestReAdd(
   timers: Map<string, ReturnType<typeof setTimeout>> = new Map()
 ): Promise<void> {
   // Idempotence: an already-dead conversation does not restart a network recovery.
-  const known = deps.conversations.get(groupId);
+  const known = findByGroupId(deps.conversations, groupId)?.[1];
   if (known?.lifecycle === 'removed') return;
 
   // Throttle: this seam is invoked by the watchdog every poll and by reactive paths on demand.

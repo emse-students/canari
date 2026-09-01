@@ -41,8 +41,23 @@ export function startSyncWatchdogImpl(ctx: SessionContext, cb: ChatSessionCallba
 
     // Union of candidate groups: live conversations + not-ready registry (covers pre-conversation
     // unknown groups). A single set so each group is evaluated once per poll.
+    //
+    // THE GROUP ID COMES FROM THE ROW, NEVER FROM THE MAP KEY. Both are strings and for a
+    // conversation created on this device they are equal, which is why reading the key survived so
+    // long - but a direct conversation learnt from a Welcome is keyed by the PEER'S USER ID
+    // (`deriveConversationIdentity`), and feeding that to `requestReAdd` asked the server about a
+    // group id no `dm_groups` row can ever carry. The answer is a CONFIRMED ABSENT, which returns
+    // before the throttle is armed - so every received DM cost two HTTP round trips every five
+    // seconds, for the whole session, while the recovery those calls exist to drive never ran for
+    // any of them.
+    //
+    // The channel exclusion stays on the KEY, which is what names a channel (`channel_<id>`); the
+    // guard below still covers ids coming from the not-ready registry.
     const candidates = new SvelteSet<string>();
-    for (const [id] of cb.conversations) candidates.add(id);
+    for (const [key, convo] of cb.conversations) {
+      if (isChannelConversationId(key)) continue;
+      candidates.add(convo.id);
+    }
     for (const id of enumerateNotReadyGroups(recoveryDeps.userId)) candidates.add(id);
 
     for (const id of candidates) {

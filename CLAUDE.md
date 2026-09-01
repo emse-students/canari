@@ -206,6 +206,15 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md).**
    preflight; the per-STEP half is pulled forward the moment a rung is blocked by an inherited state,
    as HEAL-REVOKE was. Contract and audit in [backlog](docs/wiki/backlog.md).
 
+9. **A NEW DM RETIRED ITSELF ON ITS CREATOR'S SCREEN, AND A DEVICE HELD A ROSTER SEAT IT HAD NO KEYS
+   FOR** (reported 2026-09-01, prod group `ab47add3`). Both are FIXED and their stories are in
+   `CHANGELOG.md`; the mechanisms are on
+   [chat](docs/wiki/frontend/modules/chat.md#the-conversation-row-is-the-recovery-ladders-input-so-publishing-it-early-arms-the-ladder-2026-09-01)
+   and [chat-delivery](docs/wiki/services/chat-delivery.md#a-roster-seat-is-not-a-key-and-only-a-welcome-tells-the-two-apart).
+   **What is OPEN is one P2: the hourly report NAMES a stranded device and still cannot say why its
+   KeyPackage was skipped**, because `addMembersBulk` discards the reason with the id -
+   [backlog](docs/wiki/backlog.md#p2---a-device-was-given-a-roster-seat-and-never-a-welcome-and-why-its-keypackage-was-skipped-is-unmeasured-measured-on-prod-2026-09-01).
+
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 
 The user's standing mandate, verbatim: *"Je veux de l'homogeneite et les meilleurs standards de

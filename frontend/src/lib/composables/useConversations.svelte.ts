@@ -938,7 +938,7 @@ export function useConversations() {
           // We still have valid local MLS state: avoid destructive auto-repair
           // (new group creation) and keep operating while sync converges.
           ctx.log(
-            `[WARN] Appartenance serveur absente pour ${convo.id}, réparation lourde ignorée (état MLS local présent).`
+            `[WARN] Server membership missing for ${convo.id}, heavy repair skipped (local MLS state present).`
           );
           console.warn(
             `[VERIFY] Server membership missing for ${convo.id} but local MLS state present - skipping repair`
@@ -947,7 +947,11 @@ export function useConversations() {
         }
 
         try {
-          await requestReAdd(contactName, {
+          // `convo.id`, not `contactName`: this function is reached through the map KEY, and for a
+          // direct conversation learnt from a Welcome that key is the peer's user id. `requestReAdd`
+          // is addressed by GROUP id - the same distinction `localGroups.has(convo.id)` two lines
+          // above already makes.
+          await requestReAdd(convo.id, {
             mlsService,
             storage: ctx.storage,
             userId: ctx.userId,

@@ -1302,6 +1302,59 @@ is how `[OK] Group created.` came 68 ms after the state was gone. Both paths now
 announcement claims before making it, and a failure there hands the outer catch a server-side orphan
 to delete - no group at all being strictly better than an unusable one.
 
+### The conversation row is the recovery ladder's input, so publishing it early ARMS the ladder (2026-09-01)
+
+The section above closed the window where a group is holdable before it is nameable. This is the
+same window seen from the other end, and it survived the fix because the two halves are written in
+different functions.
+
+`startNewConversation` published its conversation row - and SELECTED it, putting it on screen -
+immediately after `createRemoteGroup`, before `registerMember` and before the local MLS group
+existed. But the conversation map is not a view model: `startSyncWatchdogImpl` reads it every 5 s and
+treats every row as a group that must have local WASM state, driving `requestReAdd` for the ones that
+do not. **The instant the row exists, the group is a recovery candidate.** Inside that window
+`group-info/:id` is gated on `dm_group_members` and answers 403 to the group's own creator, which the
+recovery seam correctly types as `NotAGroupMemberError` - a TERMINATING answer, whose termination is
+`stopRecovering` -> `retireConversation`.
+
+So the creator of a brand-new DM was shown *"Cette conversation a ete supprimee"* on a conversation
+nobody had deleted. It was reported on 2026-09-01 for prod group `ab47add3`, whose `dm_groups` row is
+alive, whose two members are both in `dm_group_members`, which has no tombstone, no dismissal and one
+commit. The message he typed **was delivered**: two writers of `lifecycle` were racing and the retire
+happened to land after the activation, which is why the defect looked cosmetic and was not.
+
+The row is now written ONCE, already `active`, after every prerequisite - the same shape
+`createNewGroup` has had since 2026-08-30. A field written once cannot lose a race for it, and there
+is no intermediate state left for a reader to catch.
+
+**What hid it for a day was a comment.** The DM path carried *"SAME INVARIANT AS `createNewGroup`"*
+above the early publish, and `groupCreation.order.test.ts` - the test named for this exact
+invariant - covered only the group path. The rule about a comment citing a precedent applies to a
+comment citing a SIBLING FUNCTION just as hard: the guarding test now asserts the order on both
+paths.
+
+### A DM has two keys, depending on which side created it
+
+`conversations` is keyed by `groupId` for a DM created on this device, and by the PEER'S USER ID for
+one learnt from a Welcome - `deriveConversationIdentity` returns the other participant out of an
+`"a::b"` group name, and that becomes `contactName`, which is the key. Both are opaque strings, both
+are stable, and the store works fine; what does not work is any reader that spells
+`for (const [id] of conversations)` and hands `id` to something expecting a group id.
+
+Two did. The sync watchdog asked the server to recover a group id no `dm_groups` row can carry, for
+every DM this device had RECEIVED - so the answer was a confirmed absent, which returns before the
+throttle is armed, so nothing paced it: two HTTP round trips every five seconds, per received DM, for
+the whole session, driving a recovery that could never fire for any of them. And `stopRecovering`
+looked the conversation up by key, so on that same population it could not find the row it existed to
+retire, and `requestReAdd`'s idempotence check never matched - a recovery holding its own terminating
+answer went on asking.
+
+The readers are fixed, not the store: the watchdog takes the id from `convo.id`, and `recovery.ts`
+resolves a group id through one exported `findByGroupId` helper. Re-keying a persisted store is a
+data migration and would have to carry every device's existing rows; correcting three lookups is a
+repair. **Treat `[key]` destructuring over this map as a defect on sight** - the key names the
+conversation, `id` names the group, and only one of them is on the wire.
+
 ### An exit is owed to the SERVER, and the local purge is not what pays it (DEL-10)
 
 Deleting a group is two halves - tell the server, then destroy the local MLS state - and

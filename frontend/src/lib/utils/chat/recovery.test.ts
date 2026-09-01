@@ -243,6 +243,44 @@ describe('requestReAdd', () => {
     expect(localStorage.getItem('mls_not_ready_since:user-a:left')).toBeNull();
   });
 
+  /**
+   * THE MAP KEY IS NOT THE GROUP ID, and this module is addressed by group id.
+   *
+   * A direct conversation created on this device is keyed by its groupId; one learnt from a Welcome
+   * is keyed by the PEER'S USER ID (`deriveConversationIdentity`). Every lookup in here used
+   * `conversations.get(groupId)`, which finds the first and misses the second - so on the receiving
+   * side of every DM the terminating answer was read, logged and then dropped on the floor: nothing
+   * was retired, and the idempotence check below could never fire either. The two cases are
+   * separated because they failed in opposite directions - one never terminating, one re-terminating
+   * for ever.
+   */
+  it('retires a conversation keyed by the PEER, not by the group id', async () => {
+    const deps = makeDeps({
+      mlsService: makeMls({
+        externalJoin: vi.fn().mockRejectedValue(new NotAGroupMemberError('g-dm')),
+      }),
+      conversations: makeConversations([
+        ['peer-user-id', { id: 'g-dm', name: 'A DM we were removed from', lifecycle: 'active' }],
+      ]),
+    });
+
+    await requestReAdd('g-dm', deps, new Map());
+
+    expect(deps.conversations.get('peer-user-id')?.lifecycle).toBe('removed');
+  });
+
+  it('short-circuits an already-removed conversation keyed by the PEER', async () => {
+    const deps = makeDeps({
+      conversations: makeConversations([['peer-user-id', { id: 'g-dm', lifecycle: 'removed' }]]),
+    });
+
+    await requestReAdd('g-dm', deps, new Map());
+
+    // Idempotence is the whole contract of step 1: a dead conversation starts no network recovery.
+    expect(deps.mlsService.getGroupMeta).not.toHaveBeenCalled();
+    expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
+  });
+
   it('and a second call then does nothing at all - terminated by a proof, not by the throttle', async () => {
     const deps = makeDeps({
       mlsService: makeMls({

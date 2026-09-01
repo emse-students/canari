@@ -681,6 +681,40 @@ ledger row - so `node rows.mjs` and every HEAL-NEW cell are silent about it, and
 reading the run's stdout. Nothing here is wrong, but a HEAL-NEW verdict says "clean on the web
 client", never "clean on the server".
 
+### P2 - a device was given a roster seat and never a Welcome, and WHY its KeyPackage was skipped is unmeasured (measured on prod 2026-09-01)
+
+**The report is in; the CAUSE is not.** `reportStrandedDeviceMemberships` (hourly, chat-delivery)
+now names every `pending` device membership older than an hour with no `queued_message` carrying
+`isWelcome = true` for that device AND that group - see
+[chat-delivery](services/chat-delivery.md#a-roster-seat-is-not-a-key-and-only-a-welcome-tells-the-two-apart)
+for the mechanism and the measurement. What it cannot say is why the inviter's `addMembersBulk`
+dropped the device into `skippedDeviceIds` in the first place.
+
+The sighting: a new DM on 2026-09-01, group `ab47add3`. The peer's phone
+(`tauri-...mtd1qgu3-vnde`) got its pending row at `20:45:47.420` and no Welcome, while the account's
+four other devices each got one. It stayed stranded **3 h 41**, healed itself by external join at
+`00:26:54`, and republished its key package at `00:53` with 39 one-time key packages. The user
+received the message on a web session (`mthfj460`, active at `20:45:48.309`) and got **no
+notification on his phone** - which is the only reason anyone noticed.
+
+**What has to be named before a fix is written**, and all of it is knowable:
+
+- Which KeyPackage the inviter was handed for that device, and why WASM rejected it. `addMembersBulk`
+  currently discards the reason with the device - `skippedDeviceIds` is a list of ids and nothing
+  else, so the one fact that would classify this is thrown away at the only place it exists.
+- Whether it is the last-resort KeyPackage or a one-time one. **All four of the peer's web devices
+  showed 0 one-time key packages remaining** at the time, which makes a spent OTK pool the first
+  hypothesis to test, not the conclusion - the phone's own pool is the number that matters and it was
+  not read before the device healed.
+- Whether the 3 h 41 is the external-join ladder's ordinary latency for a device in this state or a
+  device that only healed because it happened to be opened. Nothing here paces that heal.
+
+**Until the reason is typed, the skip is a count.** The rule that a skip printing a count cannot name
+its own cause applies exactly: `warnSkippedKeyPackages` prints ids, and the two causes it collapses -
+a genuinely unusable KeyPackage and a device whose pool is momentarily empty - want opposite fixes
+(reject and re-mint, versus wait and retry). Carry the reason out of the WASM boundary alongside the
+id, then the server report can partition on it instead of on the queue.
+
 ### P2 - a HEAL verdict says "clean on the web client" and never "clean on the server" (measured 2026-08-29)
 
 **Instrument debt, and it qualifies every verdict this rung has taken.** `healnew.mjs` and
