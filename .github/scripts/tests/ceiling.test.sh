@@ -90,7 +90,9 @@ while read -r name vols; do
   # Dependabot never proposes them. They are written `${REGISTRY:-ghcr.io}/...`, so BOTH shapes have
   # to be skipped - matching only the literal registry left `${REGISTRY` looking like a third-party
   # image with a volume, which is a false accusation and would have made this file un-greenable.
-  case "$name" in ghcr.io/* | '${'*) continue ;; esac
+  # `\$\{` rather than `'\${'`: the brace is meant literally, and quoting it made shellcheck read
+  # an unexpanded expression (SC2016).
+  case "$name" in ghcr.io/* | \$\{*) continue ;; esac
   [ "${vols:-0}" -eq 0 ] && continue
   seen=$((seen + 1))
 

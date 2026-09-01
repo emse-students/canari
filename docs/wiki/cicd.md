@@ -530,6 +530,18 @@ Run the shipped script, unmodified, against real pull requests, with a `gh` shim
 passes reads through and intercepts `pr merge`, `pr comment` and `workflow run`. Testing a retyped
 copy proves nothing about the file that runs.
 
+**And lint it before pushing, because this workstation has no `shellcheck` and CI does.** A change to
+these scripts went red on 2026-09-01 for two findings a local run would have named in one second
+(`SC1091` - `# shellcheck source-path=SCRIPTDIR` is **per-command, not per-file**, so a second
+`source` needs its own copy - and `SC2016` on a `'${'` case pattern that meant the brace literally).
+Fetch the pinned version into a scratch directory and use the invocation `ci.yml` uses:
+
+```sh
+curl -sSL -o sc.zip https://github.com/koalaman/shellcheck/releases/download/v0.10.0/shellcheck-v0.10.0.zip
+# unzip, then, from the repo root:
+./shellcheck.exe -x .github/scripts/*.sh .github/scripts/lib/*.sh .github/scripts/tests/*.sh
+```
+
 ## Notable CI gotchas
 
 - **A Tauri plugin's JS package and its Rust crate must agree on major.minor, and only a RELEASE used to discover when they did not.** The CLI refuses to build (`tauri-plugin-log (v2.8.0) : @tauri-apps/plugin-log (v2.9.0)`), but nothing else in this pipeline compiles the Tauri app, so an ordinary `bun install` that re-resolves the JS half lands green and kills the next tag - it took out Android Release and AppImage Release on v0.14.6, while iOS Release passed because its path never runs the check. `frontend/scripts/check-tauri-plugin-versions.mjs` (step `Guard the Tauri JS/Rust version parity` in `code-analysis.yml`) now compares the two committed files on every run. Fix the Rust side with `cd frontend/src-tauri && cargo update -p <crate>`.

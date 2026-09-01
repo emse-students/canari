@@ -32,6 +32,9 @@ pr="${1:?usage: dependabot-auto-merge.sh <pr-number>}"
 # learn it: a `case` inline here could not be asked what it covered, so nobody noticed `postgres`
 # was absent from it until PostgreSQL 18 refused to start on production's data directory. See
 # `lib/ceiling.sh` and `tests/ceiling.test.sh`.
+# `source-path` IS PER-COMMAND, NOT PER-FILE - the copy above the gate-moves source does not
+# reach this one, and shellcheck answered SC1091 for it in CI.
+# shellcheck source-path=SCRIPTDIR
 # shellcheck source=lib/ceiling.sh
 . "$(dirname "$0")/lib/ceiling.sh"
 
