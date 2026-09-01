@@ -187,7 +187,15 @@ jobs:
           # `.github/scripts/` decides which Dependabot pull requests merge unattended, so its own
           # sources are the whole trigger. Note it is NOT reached by the `ci.yml` short-circuit at
           # the top of this step: a change to a script is not a change to this workflow.
-          if has '^\.github/scripts/'; then
+          #
+          # AND ITS OWN SOURCES ARE NOT THE WHOLE TRIGGER ANY MORE, because one of those self-tests
+          # is DERIVED. `tests/ceiling.test.sh` reads `docker-compose.prod.yml` and demands the
+          # auto-merge ceiling name every third-party image mounting a named volume - so the pull
+          # request that ADDS a stateful service is the one case the assertion exists for, and it was
+          # the one case that did not run it. The compose file is part of the input, so it is part of
+          # the trigger; the `Makefile` is here because it decides WHICH self-tests run at all
+          # (`test-ci-scripts` executed only one of the two until 2026-09-01).
+          if has '^\.github/scripts/' || has '^infrastructure/docker-compose\.prod\.yml' || has '^Makefile'; then
             echo "scripts=true" >> "$GITHUB_OUTPUT"
           else
             echo "scripts=false" >> "$GITHUB_OUTPUT"

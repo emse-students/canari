@@ -50,7 +50,11 @@ which is also where every release up to and including v0.13.1 now lives.
   its list in an array AND a duplicated regex - so the gate could not fail on the very container that
   was crash-looping, and only caught it through a starved `social-service` entering `Restarting`. The
   regex is derived from the array now, and `postgres`, `redis` and `garage` are in it; verified
-  against the actual `docker compose ps` line the outage produced.
+  against the actual `docker compose ps` line the outage produced. **And a derived test has to watch
+  what it derives from**: `test-ci-scripts` was triggered by `.github/scripts/` alone, so the pull
+  request that ADDS a stateful service - the one case the coverage assertion exists for - was the one
+  case that never ran it. `infrastructure/docker-compose.prod.yml` and the `Makefile` are part of the
+  trigger now.
 
 ### Changed
 
