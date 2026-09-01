@@ -2887,6 +2887,31 @@ with no `domain:` attribute, which is what already keeps prod and dev from shari
 ([auth.controller.ts](../../apps/core-service/src/auth/auth.controller.ts)). The tunnel token readable
 in `ps aux` is a separate P2, deliberately not folded in here.
 
+**FOLDED IN FROM THE APRIL CLONE, which was then deleted 2026-09-01.** Its `DEV_BRANCH_SETUP.md`
+described a stack that no longer exists - MongoDB, Kafka and MinIO, none of which this repo runs - and
+a branch workflow (feature -> PR -> `dev` -> PR -> `main`) that the decisions above replace outright.
+Its "push" section recommended disabling the Husky hooks and cited a git setting that does not exist
+(`core.sharen`), which is reason enough not to archive it: it is a document that teaches the opposite
+of FACE THE BLOCKAGE. Both it and `DISPLAY_LOCATIONS.md` remain in `main`'s history (the clone sat at
+`5ce5ddc`, an ancestor of `main`), so deleting 24 MB of stale worktree lost nothing. **Four things
+survived and are inputs to phase 1:**
+
+- **The dev frontend's host port is `3080`**, which the current `docker-compose.dev.yml` port set does
+  not make obvious next to the service ports (5433, 6380, 3100, 3110-3114). It is what the tunnel must
+  route `dev.canari-emse.fr` to.
+- **The two-directory layout on one machine** - `/home/canari/canari` and `/home/canari/canari-dev` -
+  is what the April attempt already assumed, and it matches the decision taken above.
+- **Its nginx claim is WRONG and the correction matters.** It asserted that nginx needs vhost entries
+  for both `dev.canari-emse.fr` and `canari-emse.fr`. It does not: dev runs its OWN frontend container
+  and therefore its own nginx, so there are TWO instances and the tunnel picks between them by port
+  (prod `8888`, dev `3080`). Nothing about prod's nginx changes, which is the whole point of the
+  single-public-entry-point rule - a second environment must not edit the first one's entry point.
+- **It tagged dev images `dev`, a MUTABLE tag, and that now collides with a durable rule.** Since
+  2026-08-30 the containers production runs are identified by DIGEST, not by a tag. Whether dev may use
+  a mutable tag is a decision that has to be made deliberately rather than inherited from this
+  document: a mutable tag means a dev redeploy cannot be reproduced, which sits badly with the standing
+  demand that everything be deterministic and reproducible.
+
 **OWED BY THE USER before phase 1 can start** - one-off actions, per the standing directive: a
 Cloudflare API token with DNS **and** Access scope on the zone (granted, and it goes to agent memory,
 never to this public repo - today's token has neither, so not even a DNS record can be read); the
