@@ -115,8 +115,13 @@ merge by itself - the same shape as `boot-nest-apps` releasing 22 refusals on 20
 covers `redis` and `garage`, which sit behind the same arm for the same reason and have never been
 upgraded across a major either.
 
-**One thing to measure BEFORE choosing between dump/restore and `pg_upgrade`:** the size of
-`auth_db` on prod, which decides whether the downtime is seconds or an evening. Nobody has looked.
+**MEASURED 2026-09-01: `auth_db` is 84 MB.** That settles the choice - a dump and restore of 84 MB
+is seconds, not an evening, so `pg_upgrade` and its requirement that both binaries live in one image
+buy nothing here and should not be built. The remaining halves of this item are unchanged: 18 also
+moved the expected mount from `/var/lib/postgresql/data` to `/var/lib/postgresql` with a
+major-version subdirectory, so the compose changes with the image, and the ceiling arm in
+`.github/scripts/lib/ceiling.sh` is what holds the bump back until both are done. Re-measure the size
+before the window rather than quoting this line - it is a number that only grows.
 
 ### P2 - the one rebuild the auto-merge cannot perform, and the credential that would let it
 
@@ -2794,6 +2799,37 @@ object storage, its own push credentials (an FCM sender is per-project, so a sha
 test notification to a real phone), and whether its data is ever restored from prod - which would
 carry real people's ciphertext onto a machine with weaker rules. Scope that first; the tunnel and the
 DNS are the easy half, and they are already in hand.
+
+**MEASURED 2026-09-01, before any of it is scoped - four facts, three of them worse than the note
+above assumed.**
+
+- **`dev.canari-emse.fr` is not merely an alias, it is a PUBLIC one.** It answers `200` and
+  `/api/version` returns `{"version":"0.14.15","minClientVersion":"0.14.0"}` - byte for byte what
+  `canari-emse.fr` returns, because it is the same containers. Anyone told "use the dev site" today
+  is typing into production, and the name is doing the opposite of its job.
+- **`/home/canari/canari-dev/` already exists, and it is a trap.** It is a clone stranded on a
+  `master` branch at `5ce5ddc` (2026-04-24), four months and one whole toolchain behind: it still
+  carries `.prettierrc`, `.prettierignore` and `.pre-commit-config.yaml`, none of which this repo has
+  used since the move to oxfmt. It also holds a `DEV_BRANCH_SETUP.md` that exists in NO commit of
+  this repository - a design document that lives only on the box, which is exactly the failure
+  `CLAUDE.md` forbids. Read it and fold what survives into this page, then delete the clone; do not
+  let `cd-dev.yml` deploy into that directory on top of it.
+- **`cd-dev.yml` is dormant, not missing** - 734 lines, `on: push: branches: [dev]`, last run
+  2026-05-09, and the `dev` branch does not exist on origin, so its trigger can never fire. **It
+  reads the SAME secrets as production**, Garage keys and `FIREBASE_SERVICE_ACCOUNT_JSON` included,
+  and `docker-compose.dev.yml` defaults `GARAGE_BUCKET` to the same `canari-media`. Its host ports
+  are offset (5433, 6380, 3100, 3104, 3110-3114) so nothing collides, and its volumes are separate
+  by compose project - but `redis_data` is absent from its `volumes:` block entirely, so a dev Redis
+  keeps the shared message log in a container filesystem. Waking that workflow up as it stands is
+  how a test notification reaches a real phone.
+- **The box has room, so capacity is not a reason to host dev elsewhere:** 70 GB free of 125 GB, and
+  15 GiB of 16 GiB RAM available with the whole production estate running at ~800 MiB.
+
+**One thing found while measuring, unrelated to dev and owed a decision:** the tunnel runs as
+`cloudflared --no-autoupdate tunnel run --token <token>` under root, which means its ingress lives in
+the Cloudflare dashboard rather than in a file on the box - and **the token is visible in `ps aux` to
+every user on the machine.** A token-based tunnel also means a second environment's hostname is a
+dashboard change, not a repo change, so nothing in this repository would record it.
 
 ### A SECOND campaign, for everything that is not chat - asked for 2026-08-16
 
