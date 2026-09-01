@@ -75,6 +75,12 @@ changing it without a commit.
 Generate strong values: `openssl rand -hex 32` (secrets), `openssl rand -base64 60`
 (`MICONNECT_AUTHENTIK_SECRET_KEY`).
 
+> **The dev environment needs its OWN value for every secret above, not a copy of production's.**
+> `JWT_SECRET` is the one that must differ on principle rather than on hygiene: sharing it would make
+> a token minted by either environment valid in the other, which is the whole isolation gone. The same
+> holds for the Garage keys and the Authentik client. What those secrets are NAMED is part of the CD
+> unification, which has not landed - see [section 9](#9-the-dev-environment-devcanari-emsefr).
+
 ## 4. SSH access for offsite backup (mitv)
 
 Backups push to `mitv` via SSH. On the new server:
@@ -200,6 +206,28 @@ services. Without it the site still works - previews just stay generic.
 There is **no static `index.html` fallback any more**: `adapter-node` does not emit one, so
 Nginx answers a navigation with 502 if `frontend-ssr` is down. Both images must be deployed
 from the same build; the CD rebuilds them together for exactly that reason.
+
+## 9. The dev environment (`dev.canari-emse.fr`)
+
+**Nothing here is required to bring production up, and on a fresh host there is nothing to do.** The
+second estate is optional, and it does not exist yet: every mechanism is committed and tested, but no
+pipeline deploys it. It is recorded here because it is a bootstrap concern the moment somebody does
+wire it, and because two of its prerequisites are credentials that only a human can create.
+
+How it is put together, what its data copy strips, and why a green dev deploy is NOT evidence for a
+PostgreSQL major upgrade are on
+[`docs/wiki/infrastructure/dev-environment.md`](../docs/wiki/infrastructure/dev-environment.md), the
+only copy. What a bootstrap owes:
+
+| | |
+|---|---|
+| Compose file | [`infrastructure/docker-compose.dev.yml`](docker-compose.dev.yml), deployed as the compose project **`canari-dev`** - the project name is what keeps the two estates apart, since compose gives each its own network and volumes |
+| Host ports | `3080` for the frontend (production uses `8080`) and `19100`/`19101` for Garage tooling (production `19010`/`19011`). Loopback-only, and these are the only two bindings that differ - production publishes no host port for any internal service |
+| Reverse proxy | one cloudflared ingress rule pointing `dev.canari-emse.fr` at `http://localhost:3080`. GET the tunnel config, save the original, change the single rule, PUT |
+| Secrets | its own value for everything in [section 3](#3-github-secrets) - see the note there |
+| Authentik | its own OIDC client, creatable on the box: `docker exec miconnect-server-1 ak shell -c ...` |
+| Data | `infrastructure/dev/copy-prod-to-dev.sh` on the box. Supports `--dry-run`, which changes nothing and reports what it would do. It refuses to write anywhere but the `canari-dev` compose project, and that refusal is a re-read Docker label rather than a flag |
+| Owed by a human | a dev Firebase project (push), a dev Android keystore and its backup location, and a Cloudflare Access service token for the test harness |
 
 ## Quick checklist
 

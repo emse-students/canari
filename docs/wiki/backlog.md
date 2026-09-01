@@ -2797,6 +2797,13 @@ that real members use.
 later session.** Where a decision went against the recommendation, the reason is recorded with it, so
 that reason is what a future session must argue with rather than the choice.
 
+> **This item holds the DECISIONS. How the environment is actually put together - the isolation, the
+> two host ports, the copy and its three strips, the declared version gap, the two variables that
+> identify a dev deployment - is on
+> [dev-environment](infrastructure/dev-environment.md), the only copy.** Six of the eight steps have
+> shipped; what is left is the CD wiring (sequenced last on purpose), the tunnel ingress edit, and the
+> credentials owed by the user. That page's closing section is the map.
+
 **Shape.** Same machine as production (70 GB and 15 GiB free, measured), own compose project
 `canari-dev`, resource limits so a dev container cannot starve prod, running permanently. Own
 Postgres, own Redis **with** a `redis_data` volume, own Garage instance with its own keys, own RPC and
@@ -2830,11 +2837,28 @@ environment is refused by the other, and that non-interchangeability is a test.
 **Exposure.** Web AND API behind Cloudflare Access on the existing admin group, because the earlier
 answer left a full production copy reachable by any directory account - the API is where the data is,
 so protecting only the web protected nothing. **The harness crosses Access with a service token**
-injected as `CF-Access-Client-Id` / `CF-Access-Client-Secret` headers by the Playwright context, the
-user having required that *"lors de nos tests automatises, il faut que les instances des navigateurs
-puissent y acceder librement"*: an interactive SSO page cannot be crossed by an automated run, an
-egress-IP bypass breaks silently when the address changes, and a per-profile SSO session would add a
-non-scriptable step to the from-zero sequence beside SETUP-4's 2FA. No adminer in dev.
+injected as `CF-Access-Client-Id` / `CF-Access-Client-Secret` headers, the user having required that
+*"lors de nos tests automatises, il faut que les instances des navigateurs puissent y acceder
+librement"*: an interactive SSO page cannot be crossed by an automated run, an egress-IP bypass
+breaks silently when the address changes, and a per-profile SSO session would add a non-scriptable
+step to the from-zero sequence beside SETUP-4's 2FA. No adminer in dev.
+
+**CORRECTION, 2026-09-01, on the MECHANISM and on when it may be built.** The line above said "by
+the Playwright context". **There is no Playwright in this repository at all** - measured:
+`newContext`, `launchPersistentContext`, `extraHTTPHeaders`, `connectOverCDP`, `chromium.launch` and
+`puppeteer` return nothing across `tools/cross-client-harness/*.mjs`. The harness drives real Chrome
+over raw CDP (`cdp.mjs`, 887 lines, a websocket per target), so the mechanism is
+`Network.setExtraHTTPHeaders` on each attached target after `Network.enable`, not a browser-context
+option.
+
+**And it is deliberately NOT built yet, which is a disposition rather than an omission.** There is no
+Access application, no dev environment and no service token, so the crossing cannot be exercised -
+and an arming path nobody can exercise is an untested code path inside the ONE instrument the whole
+campaign depends on, in a file whose profiles cost a re-enrolment and SETUP-4's 2FA to lose. The
+honest split is to build it in the session that can prove it crosses. What that session owes: read
+the pair from the environment, return no headers at all when unset (so today's behaviour is
+untouched), one `Network.setExtraHTTPHeaders` call at target attach, and one assertion in an existing
+`*-selftest.mjs` that an unset pair injects nothing.
 
 **Trigger: deployed from `main` on every push, with no `dev` branch at all.** One trigger, no possible
 divergence, and `WORK ON main` stays intact. Dev deploys BEFORE prod and **a failed dev migration

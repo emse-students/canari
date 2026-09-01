@@ -33,6 +33,7 @@
 | What Google Play sees that no gate here does | [tools/play-vitals/README.md](tools/play-vitals/README.md) |
 | What is owed on real hardware | [docs/wiki/device-verification.md](docs/wiki/device-verification.md) |
 | Secrets, services, bootstrap steps | `infrastructure/MIGRATION.md` |
+| The second estate: isolation, the prod copy, the declared version gap | [dev-environment.md](docs/wiki/infrastructure/dev-environment.md) |
 | A shim kept alive for old clients, and its removal date | [docs/wiki/legacy-compatibility.md](docs/wiki/legacy-compatibility.md) |
 | What a report is, and what a block does and does not close | [docs/wiki/moderation-and-blocking.md](docs/wiki/moderation-and-blocking.md) |
 | The cross-repo convergence plan, repo by repo | [ecosystem-convergence.md](docs/wiki/ecosystem-convergence.md#11-the-cross-repo-convergence-plan-repo-by-repo) |
@@ -167,25 +168,18 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md).**
    which started from ONE P1: every Stripe webhook rejected for four days. All four repositories
    carry the ceiling, the sweep and the dispatch; how they fit together and what each trigger is
    worth are on [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them),
-   the only copy. **What is OPEN is the remaining rows of [the ceiling
-   table](docs/wiki/backlog.md#p1---the-three-refusals-the-auto-merge-ceiling-makes-and-the-test-that-retires-each)**,
-   each naming the test that retires it - closing one makes a whole CLASS of update merge by itself
-   - and **the one rebuild no `GITHUB_TOKEN` may perform**, a credential decision owed to the USER:
-   [backlog](docs/wiki/backlog.md#p2---the-one-rebuild-the-auto-merge-cannot-perform-and-the-credential-that-would-let-it).
-   **THE CHAIN TOOK PROD DOWN ONCE, 2026-09-01: `postgres 15-alpine -> 18-alpine` auto-merged green
-   and PG 18 refused prod's data directory** - 33 min, all eight services, frontend still 200. Fixed
-   and restored; the story is in `CHANGELOG.md`, the rule in `durable-rules`, the mechanism on
-   [cicd](docs/wiki/cicd.md#the-table-is-derived-because-its-failure-mode-is-an-absence-2026-09-01).
-   **The ceiling's name table is now DERIVED from `docker-compose.prod.yml`**, so a stateful image
-   cannot be forgotten again. What stays open is the user's deferral: **PG 15 -> 18 is a MIGRATION,
-   parked deliberately** (2026-09-01, *"on verra ca plus tard"*), and the test that retires it also
-   releases `redis` and `garage`:
-   [backlog](docs/wiki/backlog.md#p2---postgresql-is-held-at-15-because-18-needs-a-migration-nobody-has-performed-after-the-outage-of-2026-09-01).
-   **AND THE BIGGEST THING IT EXPOSED IS OWED TO THE USER: NOTHING TELLS ANYBODY PROD IS DOWN.** Both
-   outages were reported by the user; the red CD run was the only signal and nobody is paged for one,
-   while the frontend answered 200 throughout - so a probe must hit `/api/version`, which needs the
-   database. A decision then one click, NOT a tool to build:
-   [backlog](docs/wiki/backlog.md#p2---nothing-tells-anybody-production-is-down-and-both-outages-of-2026-09-01-were-reported-by-the-user-owed-to-the-user-a-decision-then-one-click).
+   the only copy - as is the outage of 2026-09-01 (`postgres 15-alpine -> 18-alpine` auto-merged
+   green, PG 18 refused prod's data directory, 33 min) and the DERIVED name table that answered it.
+   **FOUR THINGS OPEN, each in [backlog](docs/wiki/backlog.md) and nowhere else:** the remaining rows
+   of [the ceiling table](docs/wiki/backlog.md#p1---the-three-refusals-the-auto-merge-ceiling-makes-and-the-test-that-retires-each),
+   each naming the test that retires it - closing one makes a whole CLASS of update merge by itself;
+   [the one rebuild no `GITHUB_TOKEN` may perform](docs/wiki/backlog.md#p2---the-one-rebuild-the-auto-merge-cannot-perform-and-the-credential-that-would-let-it),
+   a credential decision owed to the USER; [PG 15 -> 18, a MIGRATION parked deliberately](docs/wiki/backlog.md#p2---postgresql-is-held-at-15-because-18-needs-a-migration-nobody-has-performed-after-the-outage-of-2026-09-01)
+   (user, *"on verra ca plus tard"*), whose test also releases `redis` and `garage`; and - the biggest
+   thing the outage exposed, owed to the USER as a decision then ONE click - **[nothing tells anybody
+   prod is down](docs/wiki/backlog.md#p2---nothing-tells-anybody-production-is-down-and-both-outages-of-2026-09-01-were-reported-by-the-user-owed-to-the-user-a-decision-then-one-click)**:
+   both outages were reported by the user, a red CD run pages nobody, and the frontend answered 200
+   throughout - so a probe must hit `/api/version`, which needs the database.
 
 4. **NOTHING ON THE CAMPAIGN BOARD COULD HAVE CAUGHT IT, AND THE GAP IS STRUCTURAL** (2026-08-28):
    no row asks a question whose answer is a POPULATION rather than an event. **Four rows are written
@@ -237,27 +231,21 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md).**
    [there too](docs/wiki/backlog.md#p2---a-device-was-given-a-roster-seat-and-never-a-welcome-and-why-its-keypackage-was-skipped-is-unmeasured-measured-on-prod-2026-09-01),
    and the two want reading together.
 
-10. **`dev.canari-emse.fr` BECOMES A REAL SECOND ENVIRONMENT - SCOPED WITH THE USER 2026-09-01, and
-    every decision, measurement and refusal is in
-    [backlog](docs/wiki/backlog.md#devcanari-emsefr-becomes-a-real-second-environment---decided-2026-08-17),
-    the only copy. Do not re-litigate them, and do not restate them here.** **The shape in one line:**
-    one `cd.yml` parameterised by environment, deployed from `main` on every push, dev first and **a
-    failed dev migration blocks prod** - the free gate this item exists for. Today the name is
-    production wearing a second hat, so anyone told to "use dev" is typing into prod. **BUILT: the
-    compose file** (it had never worked - host port offsets on container-to-container addresses),
-    **the prod->dev copy** with a direction guard that cannot invert, and **the declared major gap**;
-    each with a DERIVED self-test, five suites in `make test-ci-scripts`. **The correction that must
-    not be undone: a green dev deploy does NOT retire the ceiling arm the 2026-09-01 outage was
-    missing** - the copy is logical, so it cannot fail the way prod failed, and only
-    `in_place_upgrade` on a binary copy of prod's `PGDATA` lifts anything
-    ([cicd](docs/wiki/cicd.md#a-refusal-is-retired-by-a-declared-gap-in-dev-and-exactly-one-kind-of-evidence-counts)).
-    **LEFT: the CD wiring, sequenced last on purpose** - editing prod's CD before dev serves anything
-    is how a third outage happens; `cd-dev.yml` (734 dormant lines wired to PRODUCTION secrets) dies
-    with it. Mobile is phase 2. **Phase 1 is blocked on ONE credential and it is NOT DNS:** the name is
-    already a proxied CNAME onto the tunnel, so one INGRESS rule must move to dev's port `3080`
-    (`Account -> Cloudflare Tunnel`), plus the two account-scoped Access permissions. **Authentik is
-    NOT blocked** (`ssh miconnect`, then `docker exec miconnect-server-1 ak shell -c`, verified);
-    **Stripe is dropped from dev outright** (user).
+10. **`dev.canari-emse.fr` BECOMES A REAL SECOND ENVIRONMENT.** Decisions (scoped with the user
+    2026-09-01, not to be re-litigated) in
+    [backlog](docs/wiki/backlog.md#devcanari-emsefr-becomes-a-real-second-environment---decided-2026-08-17);
+    every mechanism AND the map of what is still owed, by whom, in
+    [dev-environment](docs/wiki/infrastructure/dev-environment.md). **Read those two - nothing is
+    restated here.** Today the name is prod wearing a second hat, so anyone told to "use dev" is
+    typing into prod. **SIX OF EIGHT STEPS SHIPPED**, each with a DERIVED self-test (five suites in
+    `make test-ci-scripts`). **TWO CORRECTIONS THAT MUST NOT BE UNDONE: a green dev deploy does NOT
+    retire the ceiling arm the 2026-09-01 outage was missing** - the copy is logical, so only
+    `in_place_upgrade` on a binary copy of prod's `PGDATA` lifts anything - and **`+dev.<sha7>` may
+    never enter `version`**, which clients turn into a release tag and so into a 404 download URL.
+    **LEFT: the CD wiring, sequenced LAST on purpose** - editing prod's CD before dev serves anything
+    is how a third outage happens, and `cd-dev.yml` (734 dormant lines wired to PRODUCTION secrets)
+    dies with it. **Blocked on ONE credential, and it is NOT DNS:** one tunnel INGRESS rule to port
+    `3080` (`Account -> Cloudflare Tunnel`), plus the two account-scoped Access permissions.
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 

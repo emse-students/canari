@@ -52,6 +52,10 @@ Infrastructure: PostgreSQL · Redis · Garage
 ```
 
 > In production, Cloudflare Tunnel terminates TLS and forwards to `localhost:8080` → Nginx.
+>
+> The same host also carries a second, complete estate for `dev.canari-emse.fr` — the compose project
+> `canari-dev`, reached on `localhost:3080`, with its own network, volumes and secrets. It is not
+> deployed yet; see [dev-environment](docs/wiki/infrastructure/dev-environment.md).
 
 ## Quick start
 
