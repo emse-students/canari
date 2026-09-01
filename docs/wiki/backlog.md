@@ -2914,7 +2914,21 @@ survived and are inputs to phase 1:**
 
 **WHAT IS ACTUALLY BLOCKED, narrowed by measurement 2026-09-01 - it is ONE credential, not four.**
 
-- **Cloudflare is the only real blocker, and the missing permission is NAMED.** The stored token reads
+- **CORRECTED 2026-09-01 BY MEASUREMENT: the blocker was never DNS.** There is **no DNS record to
+  create** - `dev.canari-emse.fr` already exists as a proxied CNAME onto the same tunnel as every other
+  hostname in the zone, and the tunnel's INGRESS is what maps a hostname to a local port. That ingress
+  routes `dev.canari-emse.fr` to `http://localhost:8080`, **the identical service production is on**,
+  which is the whole reason the dev name serves prod. **The single change the environment needs is that
+  one rule repointed to `http://localhost:3080`**, the dev frontend's host port. The operative
+  permission is therefore `Account -> Cloudflare Tunnel`, NOT `Zone -> DNS`; the pre-existing token
+  READS the tunnel configuration while the DNS-scoped token added for this work is refused with `1001`.
+  Whether that token holds `Edit` or only `Read` is deliberately UNMEASURED: the only way to test it is
+  to write to a live ingress object that `canari-emse.fr` rides, so a malformed PUT would take
+  production off the internet. The edit is made once dev exists, by GET, single-rule change, PUT, with
+  the original saved first. **The hostname-to-service map itself stays out of this PUBLIC repo** - it
+  names the admin hosts, and that exclusion was already a deliberate decision; it is in agent memory.
+- **The DNS permission, described here as it was believed before the measurement above, and still
+  worth having:** The stored token reads
   zones (`/zones?name=` returns the id) but is refused on `/zones/{id}/dns_records` with `10000`, so it
   holds `Zone:Zone:Read` and not `Zone:DNS`. **The permission needed appears only on a policy whose
   RESOURCE is a zone**; a policy scoped to "entire account" offers `Account DNS Settings`, `DNS
