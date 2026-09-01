@@ -154,6 +154,50 @@ add, no entitlement, no `Info.plist` key - and the two ways to make the cookie f
 more than they buy (serving the app from `https://canari-emse.fr` inside the WebView would end
 offline launch, and Tauri has no https-origin mode on iOS anyway).
 
+## The cookie's own attributes are a DEPLOYMENT fact, not a per-request one
+
+`secure` and `sameSite` decide whether a refresh credential crosses the network protected. Until
+2026-09-01 `auth.controller.ts` decided them per request, from `Origin` or `Referer`:
+
+```ts
+if (this.isProduction) return false;
+const origin = req.get('origin') || req.get('referer') || '';
+return origin.includes('localhost') || origin.includes('tauri.localhost');
+```
+
+**Two things were wrong with that, and the second is why it had to change now.**
+
+- **`Origin` is written by the caller.** Outside production, anything sending
+  `Origin: http://localhost` was handed a refresh cookie with `Secure` off and `SameSite=lax`, on the
+  strength of a header it chose itself. Production was safe - `isProduction` short-circuits - so the
+  exposure was confined to any deployment whose `NODE_ENV` was not `production`, which is exactly the
+  state a new environment starts in.
+- **A SECOND HTTPS ENVIRONMENT WAS UNREPRESENTABLE.** The only way to ask for production's attributes
+  was to *be* production. `dev.canari-emse.fr` is served over HTTPS behind the same tunnel and must
+  keep them, so the domain could never be the discriminator - and the rewritten
+  `docker-compose.dev.yml` had in fact left `NODE_ENV` off all four NestJS services, which would have
+  put a live HTTPS environment straight into the origin-sniffing branch.
+
+So the decision is now read once, from configuration, and there is deliberately **no default**:
+
+- `NODE_ENV=production` forces the safe attributes, and `ALLOW_INSECURE_COOKIES=true` alongside it is
+  a startup **error** rather than something silently overridden - a deployment that believes it asked
+  for one thing should not be told nothing.
+- Whenever `NODE_ENV` is anything else, `ALLOW_INSECURE_COOKIES` must be explicitly `true` or
+  `false`, or the controller refuses to start and names both values in the message. A variable nobody
+  set is not an answer to "may this credential travel unprotected".
+- `true` belongs to `infrastructure/local/` alone, which is served over plain HTTP on localhost where
+  a `Secure` cookie is never sent back. Every deployed estate uses `false`, and CI's
+  `boot-nest-apps` job sets `false` so it exercises the same branch.
+
+`clearCookie` reads the same field, because the browser only drops a cookie when the attributes
+match - a second copy of the decision would be a way for logout to silently stop working.
+
+Two derived tests hold the wiring: `compose-wiring.test.sh` requires every NestJS service in a
+deployed compose file to declare `NODE_ENV`, with the service list read out of `apps/*/package.json`
+rather than written down, and `auth.controller.spec.ts` asserts the attributes are identical for
+`Origin: http://localhost` and `Origin: https://canari-emse.fr`.
+
 ## The credential a client carries itself
 
 Where the cookie cannot live, the credential travels explicitly: sent in `X-Canari-Refresh`, returned

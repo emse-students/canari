@@ -13,6 +13,25 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **The refresh cookie's `Secure` and `SameSite` were chosen from a header the caller writes.**
+  `auth.controller.ts` decided them per request from `Origin`/`Referer`, so outside production
+  anything sending `Origin: http://localhost` was handed a refresh cookie with `Secure` off and
+  `SameSite=lax`. Production was never exposed - `isProduction` short-circuits first - but the
+  branch was reachable by any deployment whose `NODE_ENV` was not `production`, which is the state a
+  new environment starts in. It also made a second HTTPS environment unrepresentable: the only way
+  to ask for production's attributes was to *be* production. The decision is now read once from
+  `ALLOW_INSECURE_COOKIES`, with **no default** - a variable nobody set is not an answer to whether a
+  credential may travel unprotected - and `ALLOW_INSECURE_COOKIES=true` together with
+  `NODE_ENV=production` is a startup error rather than something silently overridden. `clearCookie`
+  reads the same field, since a browser only drops a cookie whose attributes match.
+- **And the rewritten dev compose had left `NODE_ENV` off all four NestJS services**, which is how a
+  live HTTPS environment would have landed in that sniffing branch. Production declares it on all
+  four; the dev file declared it on neither service nor frontend.
+  `.github/scripts/tests/compose-wiring.test.sh` now requires every NestJS service in a deployed
+  compose file to declare it, with the service list DERIVED from `apps/*/package.json` naming
+  `@nestjs/core` - so the two Rust services are not asked for a variable they never read, and the
+  next NestJS app is covered on the day it is created.
+
 - **A green dev deploy would have retired the ceiling that the outage of 2026-09-01 produced, and it
   is not evidence for it.** Found while building `infrastructure/dev/version-gap.yml`, before it
   shipped. The plan had PostgreSQL 18 starting in the dev environment on a copy of production's data

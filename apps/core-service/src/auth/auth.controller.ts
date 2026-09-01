@@ -73,6 +73,14 @@ export class AuthController {
   private readonly authentikClientId: string;
   private readonly authentikClientSecret: string;
   private readonly isProduction: boolean;
+  /**
+   * Whether the refresh cookie may be issued without `Secure` and with `SameSite=lax`.
+   *
+   * A DEPLOYMENT FACT, READ FROM CONFIGURATION - never from the request, and never from the domain.
+   * There is deliberately no default: the value decides whether a credential crosses the network
+   * unprotected, and a variable nobody set is not an answer to that.
+   */
+  private readonly allowInsecureCookies: boolean;
   /** Shared secret used to sign X-Internal-Token HMAC headers for inter-service auth. */
   private readonly internalSecret: string;
 
@@ -90,35 +98,57 @@ export class AuthController {
     this.jwtSecret = secret;
     this.isProduction = process.env.NODE_ENV === 'production';
 
+    // THE COOKIE'S SECURITY ATTRIBUTES COME FROM CONFIGURATION, AND THAT IS A REPAIR (2026-09-01).
+    // Until this commit they were decided per request, from `Origin` or `Referer`: outside
+    // production, any caller sending `Origin: http://localhost` was handed a refresh cookie with
+    // `Secure` off and `SameSite=lax`, on the strength of a header the caller writes. It also made
+    // a SECOND HTTPS environment unrepresentable - the only way to ask for production's attributes
+    // was to be production - which is exactly what `dev.canari-emse.fr` needs, since it is served
+    // over HTTPS behind the tunnel and must keep them.
+    const insecureCookies = process.env.ALLOW_INSECURE_COOKIES;
+    if (this.isProduction) {
+      // Refused rather than ignored: silently overriding it would hide a deployment that believes
+      // it asked for something else.
+      if (insecureCookies === 'true') {
+        throw new Error(
+          'ALLOW_INSECURE_COOKIES=true with NODE_ENV=production would issue the refresh cookie ' +
+            'without Secure over HTTPS. Remove the variable, or set it to false.'
+        );
+      }
+      this.allowInsecureCookies = false;
+    } else {
+      if (insecureCookies !== 'true' && insecureCookies !== 'false') {
+        throw new Error(
+          'ALLOW_INSECURE_COOKIES must be set to "true" or "false" whenever NODE_ENV is not ' +
+            '"production" (it is currently ' +
+            JSON.stringify(process.env.NODE_ENV ?? null) +
+            '). Use true for a stack served over plain HTTP on localhost, false for anything ' +
+            'reached over HTTPS. It has no default on purpose: the value decides whether the ' +
+            'refresh cookie carries Secure.'
+        );
+      }
+      this.allowInsecureCookies = insecureCookies === 'true';
+    }
+
     this.authentikBaseUrl = (process.env.AUTHENTIK_BASE_URL || '').replace(/\/+$/, '');
     this.authentikClientId = process.env.AUTHENTIK_CLIENT_ID || '';
     this.authentikClientSecret = process.env.AUTHENTIK_CLIENT_SECRET || '';
     this.internalSecret = process.env.INTERNAL_SHARED_SECRET?.trim() ?? '';
   }
 
-  private isDevEnvironment(req: Request): boolean {
-    // In production, secure cookies (SameSite=none, Secure=true) are required because the
-    // mobile app (tauri.localhost) makes cross-origin requests to the server.
-    if (this.isProduction) {
-      return false;
-    }
-
-    const origin = req.get('origin') || req.get('referer') || '';
-    return (
-      origin.includes('localhost') ||
-      origin.includes('127.0.0.1') ||
-      origin.includes('tauri.localhost')
-    );
-  }
-
-  /** Set the refresh token as an HttpOnly cookie with environment-aware security settings. */
-  private setRefreshCookie(req: Request, res: Response, token: string): void {
-    const isDev = this.isDevEnvironment(req);
-
+  /**
+   * Sets the refresh token as an HttpOnly cookie.
+   *
+   * The attributes are the DEPLOYMENT's, not the request's - see {@link allowInsecureCookies}. Every
+   * environment reached over HTTPS, production and `dev.canari-emse.fr` alike, gets
+   * `Secure` with `SameSite=none`, because the mobile app calls in cross-origin from
+   * `tauri.localhost`.
+   */
+  private setRefreshCookie(res: Response, token: string): void {
     res.cookie(REFRESH_COOKIE, token, {
       httpOnly: true,
-      secure: isDev ? false : true, // dev: HTTP allowed; prod: HTTPS required
-      sameSite: isDev ? 'lax' : 'none', // dev: lax (avoid cross-origin blocking); prod: none (cross-origin)
+      secure: !this.allowInsecureCookies,
+      sameSite: this.allowInsecureCookies ? 'lax' : 'none',
       path: '/api/auth',
       maxAge: REFRESH_MAX_AGE * 1000, // express uses milliseconds
     });
@@ -235,14 +265,17 @@ export class AuthController {
     }
   }
 
-  /** Clear the refresh cookie with environment-aware security settings. */
-  private clearRefreshCookie(req: Request, res: Response): void {
-    const isDev = this.isDevEnvironment(req);
-
+  /**
+   * Clears the refresh cookie.
+   *
+   * The attributes MUST match the ones it was set with, or the browser keeps the cookie - which is
+   * why this reads the same {@link allowInsecureCookies} and not a second copy of the decision.
+   */
+  private clearRefreshCookie(res: Response): void {
     res.clearCookie(REFRESH_COOKIE, {
       httpOnly: true,
-      secure: isDev ? false : true,
-      sameSite: isDev ? 'lax' : 'none',
+      secure: !this.allowInsecureCookies,
+      sameSite: this.allowInsecureCookies ? 'lax' : 'none',
       path: '/api/auth',
     });
   }
@@ -361,7 +394,7 @@ export class AuthController {
     // the page's own JavaScript, so it stays the preferred transport wherever it survives - and
     // `tauri://localhost` covers desktop builds where it may well survive. The body copy is added
     // only for origins whose engine can refuse the cookie, and only they are told to carry it.
-    this.setRefreshCookie(req, res, refresh_token);
+    this.setRefreshCookie(res, refresh_token);
     const bodyTransport = usesBodyRefreshTransport(req.get('origin'));
     if (bodyTransport) {
       this.logger.debug(
@@ -444,7 +477,7 @@ export class AuthController {
         // log becomes a census of visitors and stops being read at all.
         this.logger.debug(`Refresh refused: ${detail}`);
       }
-      this.clearRefreshCookie(req, res);
+      this.clearRefreshCookie(res);
       throw new UnauthorizedException('No refresh token - please log in again');
     }
 
@@ -454,11 +487,11 @@ export class AuthController {
         algorithms: ['HS256'],
       }) as RefreshClaims;
     } catch {
-      this.clearRefreshCookie(req, res);
+      this.clearRefreshCookie(res);
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
     if (payload.type !== 'refresh') {
-      this.clearRefreshCookie(req, res);
+      this.clearRefreshCookie(res);
       throw new UnauthorizedException('Invalid token type');
     }
 
@@ -470,7 +503,7 @@ export class AuthController {
     if (this.platformService.isAccessBlockedByMaintenance(platformConfig, isAdmin)) {
       // Do NOT touch the session here: maintenance is a temporary refusal, and
       // consuming the rotation would sign the user out of a healthy session.
-      this.clearRefreshCookie(req, res);
+      this.clearRefreshCookie(res);
       throw new ServiceUnavailableException({
         code: 'MAINTENANCE',
         message:
@@ -489,14 +522,14 @@ export class AuthController {
     // token nothing had verified against a row, which is precisely the property this table exists
     // to remove.
     if (!sessionId || !payload.jti) {
-      this.clearRefreshCookie(req, res);
+      this.clearRefreshCookie(res);
       this.logger.warn('Refresh token carries no session - refusing rather than adopting it');
       throw new UnauthorizedException('Session revoked or expired - please log in again');
     }
 
     const result = await this.authSessions.rotate(sessionId, payload.jti, client);
     if (result.status === 'replayed' || result.status === 'unknown') {
-      this.clearRefreshCookie(req, res);
+      this.clearRefreshCookie(res);
       throw new UnauthorizedException(
         result.status === 'replayed'
           ? 'Refresh token reused - session revoked, please log in again'
@@ -513,7 +546,7 @@ export class AuthController {
     // Rotate on BOTH transports the caller can hold, for the reason above. From this moment the old
     // value is spent, and 60 s from now it reads as a replay that revokes the row - so a client
     // carrying its own copy must persist the new one before relying on it.
-    this.setRefreshCookie(req, res, new_refresh);
+    this.setRefreshCookie(res, new_refresh);
     if (usesBodyRefreshTransport(req.get('origin'))) {
       return { access_token, refresh_token: new_refresh };
     }
@@ -537,7 +570,7 @@ export class AuthController {
   ): Promise<{ ok: true }> {
     const sessionId = this.currentSessionId(req);
     if (sessionId) await this.authSessions.revoke(sessionId);
-    this.clearRefreshCookie(req, res);
+    this.clearRefreshCookie(res);
     return { ok: true };
   }
 
@@ -617,7 +650,7 @@ export class AuthController {
     // Scoped to the caller: a session id is an identifier, never an authorization.
     const ok = await this.authSessions.revokeOwned(userId, id);
     if (ok && this.currentSessionId(req) === id) {
-      this.clearRefreshCookie(req, res);
+      this.clearRefreshCookie(res);
     }
     return { ok };
   }

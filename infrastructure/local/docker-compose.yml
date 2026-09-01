@@ -105,6 +105,11 @@ services:
     environment:
       PORT: "3010"
       NODE_ENV: development
+      # This stack is served over plain HTTP on localhost, where a `Secure` cookie is
+      # never sent back - so the refresh cookie drops it here, and ONLY here. There is
+      # no default: the value decides whether a credential crosses the network
+      # unprotected, so every non-production deployment has to say which it is.
+      ALLOW_INSECURE_COOKIES: "true"
       # Vite SPA origin (PIN check MLS CORS); align with your dev URL (default SvelteKit port).
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:1420}
       POSTGRES_URL: postgres://admin:password@postgres:5432/auth_db
@@ -178,6 +183,11 @@ services:
     environment:
       PORT: "3011"
       NODE_ENV: development
+      # This stack is served over plain HTTP on localhost, where a `Secure` cookie is
+      # never sent back - so the refresh cookie drops it here, and ONLY here. There is
+      # no default: the value decides whether a credential crosses the network
+      # unprotected, so every non-production deployment has to say which it is.
+      ALLOW_INSECURE_COOKIES: "true"
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:1420}
       JWT_SECRET: ${JWT_SECRET}
       # Shared secret gating server-to-server DELETE /media/:id (social-service cleanup).
@@ -209,6 +219,11 @@ services:
     environment:
       PORT: "3012"
       NODE_ENV: development
+      # This stack is served over plain HTTP on localhost, where a `Secure` cookie is
+      # never sent back - so the refresh cookie drops it here, and ONLY here. There is
+      # no default: the value decides whether a credential crosses the network
+      # unprotected, so every non-production deployment has to say which it is.
+      ALLOW_INSECURE_COOKIES: "true"
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-me}
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-dev-internal-shared-secret-change-me}
       ENABLE_DEV_ROUTES: "${ENABLE_DEV_ROUTES:-false}"
@@ -248,6 +263,11 @@ services:
     environment:
       PORT: "3014"
       NODE_ENV: development
+      # This stack is served over plain HTTP on localhost, where a `Secure` cookie is
+      # never sent back - so the refresh cookie drops it here, and ONLY here. There is
+      # no default: the value decides whether a credential crosses the network
+      # unprotected, so every non-production deployment has to say which it is.
+      ALLOW_INSECURE_COOKIES: "true"
       DB_HOST: postgres
       DB_PORT: "5432"
       DB_USERNAME: admin

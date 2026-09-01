@@ -16,16 +16,22 @@ const JWT_SECRET = 'test-secret-not-the-production-one';
 /** Minimal Express response double: records what the controller wrote. */
 function makeRes() {
   const cookies: Record<string, string> = {};
+  // The OPTIONS, not just the value: `secure` and `sameSite` decide whether a refresh credential
+  // crosses the network protected, so they are part of what this double has to be able to show.
+  const cookieOptions: Record<string, Record<string, unknown>> = {};
+  const clearedOptions: Record<string, Record<string, unknown>> = {};
   const cleared: string[] = [];
   const headers: Record<string, string> = {};
   let statusCode = 0;
   const res = {
-    cookie: (name: string, value: string) => {
+    cookie: (name: string, value: string, options?: Record<string, unknown>) => {
       cookies[name] = value;
+      cookieOptions[name] = options ?? {};
       return res;
     },
-    clearCookie: (name: string) => {
+    clearCookie: (name: string, options?: Record<string, unknown>) => {
       cleared.push(name);
+      clearedOptions[name] = options ?? {};
       return res;
     },
     set: (name: string, value: string) => {
@@ -42,7 +48,9 @@ function makeRes() {
   return {
     res: res as unknown as Response,
     cookies,
+    cookieOptions,
     cleared,
+    clearedOptions,
     headers,
     status: () => statusCode,
   };
@@ -89,6 +97,9 @@ describe('AuthController sessions', () => {
   beforeEach(() => {
     process.env.JWT_SECRET = JWT_SECRET;
     process.env.NODE_ENV = 'test';
+    // Required outside production, and deliberately without a default: the controller refuses
+    // to start rather than guess whether the refresh cookie should carry `Secure`.
+    process.env.ALLOW_INSECURE_COOKIES = 'false';
 
     sessions = {
       create: jest.fn().mockResolvedValue({
@@ -121,6 +132,76 @@ describe('AuthController sessions', () => {
 
   afterEach(() => {
     delete process.env.JWT_SECRET;
+    delete process.env.ALLOW_INSECURE_COOKIES;
+  });
+
+  describe('refresh cookie attributes', () => {
+    /**
+     * Until 2026-09-01 these attributes were decided per request, from `Origin` or `Referer`, so
+     * outside production a caller could ask for its own credential to be sent without `Secure`
+     * simply by claiming to come from localhost. They are now a deployment fact.
+     */
+    const buildController = (): AuthController =>
+      new AuthController(
+        { findOne: jest.fn().mockResolvedValue({ id: 'user-1', admin: false }) } as never,
+        {
+          getConfig: jest.fn().mockResolvedValue({}),
+          isAccessBlockedByMaintenance: jest.fn().mockReturnValue(false),
+        } as never,
+        sessions as unknown as AuthSessionsService
+      );
+
+    const cookieOptionsFor = async (origin: string): Promise<Record<string, unknown>> => {
+      sessions.rotate.mockResolvedValue({
+        status: 'rotated',
+        tokenId: 'jti-2',
+        expiresAt: new Date(Date.now() + 1000),
+      } as RotateResult);
+      const req = makeReq({
+        origin,
+        cookies: {
+          canari_refresh: signRefresh({
+            sub: 'user-1',
+            type: 'refresh',
+            sid: 'sid-1',
+            jti: 'jti-1',
+          }),
+        },
+      });
+      const out = makeRes();
+      await buildController().refreshToken(req, out.res);
+      return out.cookieOptions['canari_refresh'] ?? {};
+    };
+
+    it('ignores the Origin header, which the caller writes', async () => {
+      const fromLocalhost = await cookieOptionsFor('http://localhost:1420');
+      const fromProd = await cookieOptionsFor('https://canari-emse.fr');
+
+      expect(fromLocalhost['secure']).toBe(true);
+      expect(fromLocalhost['sameSite']).toBe('none');
+      expect(fromLocalhost).toEqual(fromProd);
+    });
+
+    it('drops Secure only when the deployment says so', async () => {
+      process.env.ALLOW_INSECURE_COOKIES = 'true';
+      const options = await cookieOptionsFor('http://localhost:1420');
+
+      expect(options['secure']).toBe(false);
+      expect(options['sameSite']).toBe('lax');
+    });
+
+    it('refuses to start when nothing says which attributes to use', () => {
+      delete process.env.ALLOW_INSECURE_COOKIES;
+
+      expect(() => buildController()).toThrow(/ALLOW_INSECURE_COOKIES must be set/);
+    });
+
+    it('refuses an insecure cookie in production rather than ignoring the request for one', () => {
+      process.env.NODE_ENV = 'production';
+      process.env.ALLOW_INSECURE_COOKIES = 'true';
+
+      expect(() => buildController()).toThrow(/without Secure over HTTPS/);
+    });
   });
 
   describe('refresh', () => {

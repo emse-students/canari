@@ -2893,10 +2893,15 @@ still holds, that is folded into the dev wiki page, and the clone is then DELETE
 anything deploys there. `auth_db` is renamed during the PostgreSQL 18 window, rehearsed in dev first.
 Dev is excluded from `backup.sh` by a positive list. No TURN in dev while `CALLS_ENABLED = false`.
 `MIGALLERY_API_URL`, which the dev compose still defaults to the production `https://gallery.mitv.fr`,
-is cut. Cookie attributes are prod's: `isDev` must be driven by an explicit variable, never by the
-domain, so dev keeps `secure: true` and `sameSite: 'none'` - and the refresh cookie stays host-only
-with no `domain:` attribute, which is what already keeps prod and dev from sharing it
-([auth.controller.ts](../../apps/core-service/src/auth/auth.controller.ts)). The tunnel token readable
+is cut. Cookie attributes are prod's - **DONE 2026-09-01, and it was worse than the plan assumed:**
+`isDev` was not merely domain-derived, it was decided per request from `Origin`/`Referer`, so outside
+production any caller claiming localhost got its own refresh credential without `Secure`. Now read
+once from `ALLOW_INSECURE_COOKIES`, no default, with `true` + `NODE_ENV=production` a startup error;
+and the rewritten dev compose had left `NODE_ENV` off all four NestJS services, which is exactly how
+a live HTTPS environment would have reached that branch - a derived test now forbids it
+([sessions](sessions.md#the-cookies-own-attributes-are-a-deployment-fact-not-a-per-request-one)). The
+refresh cookie stays host-only with no `domain:` attribute, which is what already keeps prod and dev
+from sharing it ([auth.controller.ts](../../apps/core-service/src/auth/auth.controller.ts)). The tunnel token readable
 in `ps aux` is a separate P2, deliberately not folded in here.
 
 **FOLDED IN FROM THE APRIL CLONE, which was then deleted 2026-09-01.** Its `DEV_BRANCH_SETUP.md`

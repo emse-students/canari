@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 #
-# Asserts that no container-to-container address in a compose file uses a HOST-side port.
+# Asserts two things about every compose file that describes a DEPLOYED estate: that no
+# container-to-container address uses a HOST-side port, and that every NestJS service is told it is
+# in production. Both are wiring, both were wrong in the same file, and both fail silently.
 #
 # WHY THIS EXISTS. `infrastructure/docker-compose.dev.yml` was written in April 2026 by offsetting
 # every port so a dev stack could sit beside production on one machine - and the offsets were applied
@@ -15,6 +17,18 @@
 # that map. A service added later is covered by whoever declares it, and a port changed later moves
 # the expectation with it. That is the same shape as `ceiling.test.sh`, and for the same reason - a
 # hand-written list of what to check fails by omission, silently.
+#
+# THE SECOND CHECK, added 2026-09-01 after the rewrite of the dev file left it out. Production sets
+# `NODE_ENV` on all four NestJS services; the rewritten dev file set it on neither frontend nor any
+# service, and the consequence was not cosmetic. With `NODE_ENV` unset a NestJS app is not in
+# production mode, and `auth.controller.ts` then decided the refresh cookie's `secure` and `sameSite`
+# from the request's own `Origin` header - so a client sending `Origin: http://localhost` to an
+# HTTPS-served environment would have been handed an insecure cookie. The dev environment is
+# explicitly required to keep production's cookie attributes.
+#
+# The service list is DERIVED from `apps/*/package.json` declaring `@nestjs/core`, not written here:
+# the two Rust services must NOT be required to set it, and the next NestJS app must be, on the day
+# it is created rather than on the day someone remembers this file.
 #
 # Run by `make test-ci-scripts` and by CI whenever a compose file or this script changes.
 
@@ -171,6 +185,70 @@ for file in infrastructure/docker-compose.prod.yml infrastructure/docker-compose
     continue
   fi
   check_file "$file"
+done
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Every NestJS service in a deployed compose file is told it is in production
+# ─────────────────────────────────────────────────────────────────────────────
+printf '\nevery NestJS service in a deployed estate declares NODE_ENV:\n'
+
+# A NestJS app is one whose package declares the framework. Derived, so the two Rust services are
+# not required to set a variable they never read, and the next NestJS app is covered on creation.
+nest_apps=""
+for dir in apps/*/; do
+  [ -f "$dir/package.json" ] || continue
+  if grep -q '"@nestjs/core"' "$dir/package.json"; then
+    nest_apps="$nest_apps $(basename "$dir")"
+  fi
+done
+
+if [ -z "$nest_apps" ]; then
+  fail "no NestJS app could be derived from apps/*/package.json - the parse is broken, not the compose"
+else
+  count=$(echo "$nest_apps" | wc -w | tr -d ' ')
+  if [ "$count" -lt 4 ]; then
+    fail "only $count NestJS app(s) derived; this repository has at least four"
+  else
+    pass
+    printf '  derived %s NestJS app(s):%s\n' "$count" "$nest_apps"
+  fi
+fi
+
+# The value of NODE_ENV for one service in one file, or nothing when the service does not set it.
+service_node_env() {
+  awk -v want="$2" '
+    /^  [a-zA-Z0-9_-]+:[[:space:]]*$/ { svc = $1; sub(/:$/, "", svc); next }
+    svc != want { next }
+    /^      NODE_ENV:[[:space:]]/ { v = $2; gsub(/"/, "", v); print v; exit }
+  ' "$1"
+}
+
+for file in infrastructure/docker-compose.prod.yml infrastructure/docker-compose.dev.yml; do
+  [ -f "$file" ] || continue
+  for app in $nest_apps; do
+    # A service the file does not run at all is not this check's business; only a service that is
+    # there and silent about NODE_ENV is.
+    if ! grep -qE "^  $app:[[:space:]]*$" "$file"; then
+      continue
+    fi
+    value=$(service_node_env "$file" "$app")
+    # Production writes `${NODE_ENV:-production}` so the value can be overridden from `.env`, and
+    # that whole literal is what the parse returns. What this check is about is the EFFECTIVE value,
+    # so a `${VAR:-default}` wrapper is reduced to its default before being judged - which is also
+    # what makes `${NODE_ENV:-development}` fail rather than pass on a technicality.
+    effective=$(printf '%s' "$value" | sed -E 's/^[$][{][A-Za-z_][A-Za-z0-9_]*:-([^}]*)[}]$/\1/')
+    case "$effective" in
+    "")
+      fail "$file runs $app and does not set NODE_ENV - it would not be in production mode, and the refresh cookie's attributes would then be decided by the request's Origin header"
+      ;;
+    production)
+      pass
+      ;;
+    *)
+      fail "$file sets NODE_ENV=$value for $app; a deployed estate must be in production mode"
+      ;;
+    esac
+  done
 done
 
 printf '\n'

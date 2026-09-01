@@ -416,6 +416,10 @@ jobs:
         working-directory: ${{ matrix.service }}
         env:
           NODE_ENV: test
+          # Required whenever NODE_ENV is not `production`: `auth.controller.ts` refuses to
+          # start rather than guess whether the refresh cookie should carry `Secure`. `false`
+          # is the value a deployed estate uses, so this boot exercises the same branch.
+          ALLOW_INSECURE_COOKIES: 'false'
           DB_HOST: localhost
           DB_PORT: '5432'
           DB_USERNAME: canari

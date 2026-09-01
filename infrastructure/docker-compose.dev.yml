@@ -162,6 +162,11 @@ services:
     expose:
       - "3010"
     environment:
+      # PINNED, not inherited from `.env` the way production allows: with NODE_ENV unset a
+      # NestJS service here is not in production mode, and `auth.controller.ts` then decided
+      # the refresh cookie's `secure` and `sameSite` from the request's own Origin header.
+      # Dev is served over HTTPS behind the tunnel and must keep production's attributes.
+      NODE_ENV: production
       PORT: "3010"
       POSTGRES_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/auth_db
       REDIS_HOST: redis
@@ -247,6 +252,11 @@ services:
     expose:
       - "3011"
     environment:
+      # PINNED, not inherited from `.env` the way production allows: with NODE_ENV unset a
+      # NestJS service here is not in production mode, and `auth.controller.ts` then decided
+      # the refresh cookie's `secure` and `sameSite` from the request's own Origin header.
+      # Dev is served over HTTPS behind the tunnel and must keep production's attributes.
+      NODE_ENV: production
       PORT: "3011"
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       # Shared secret gating server-to-server DELETE /media/:id (social-service cleanup).
@@ -273,6 +283,11 @@ services:
     expose:
       - "3012"
     environment:
+      # PINNED, not inherited from `.env` the way production allows: with NODE_ENV unset a
+      # NestJS service here is not in production mode, and `auth.controller.ts` then decided
+      # the refresh cookie's `secure` and `sameSite` from the request's own Origin header.
+      # Dev is served over HTTPS behind the tunnel and must keep production's attributes.
+      NODE_ENV: production
       PORT: "3012"
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required - see .env.example}"
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
@@ -320,6 +335,11 @@ services:
     expose:
       - "3014"
     environment:
+      # PINNED, not inherited from `.env` the way production allows: with NODE_ENV unset a
+      # NestJS service here is not in production mode, and `auth.controller.ts` then decided
+      # the refresh cookie's `secure` and `sameSite` from the request's own Origin header.
+      # Dev is served over HTTPS behind the tunnel and must keep production's attributes.
+      NODE_ENV: production
       PORT: "3014"
       DB_HOST: postgres
       DB_PORT: "5432"
