@@ -222,7 +222,7 @@ only copy. What a bootstrap owes:
 | | |
 |---|---|
 | Compose file | [`infrastructure/docker-compose.dev.yml`](docker-compose.dev.yml), deployed as the compose project **`canari-dev`** - the project name is what keeps the two estates apart, since compose gives each its own network and volumes |
-| Host ports | `3080` for the frontend (production uses `8080`) and `19100`/`19101` for Garage tooling (production `19010`/`19011`). Loopback-only, and these are the only two bindings that differ - production publishes no host port for any internal service |
+| Host ports | `3080` for the frontend (production uses `8080`) and `19100`/`19101` for Garage tooling (production `19010`/`19011`). **Both of dev's are bound to `127.0.0.1`** - stricter than production, whose frontend port is published on every interface - and these are the only two bindings that differ, since production publishes no host port for any internal service |
 | Reverse proxy | one cloudflared ingress rule pointing `dev.canari-emse.fr` at `http://localhost:3080`. GET the tunnel config, save the original, change the single rule, PUT |
 | Secrets | its own value for everything in [section 3](#3-github-secrets) - see the note there |
 | Authentik | its own OIDC client, creatable on the box: `docker exec miconnect-server-1 ak shell -c ...` |

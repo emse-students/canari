@@ -39,12 +39,18 @@ away by a difference in configuration.
 
 Production publishes **no** host port for any internal service - it uses `expose:`, which is
 container-side only. So there is nothing for a second project to collide with, and the offsets the
-first version of this file carried were unnecessary. Exactly two bindings differ, both loopback-only:
+first version of this file carried were unnecessary. Exactly two bindings differ:
 
 | | production | dev | why it is published at all |
 |---|---|---|---|
-| `frontend` | `8080` | `3080` | the cloudflared tunnel reaches Nginx through the host |
-| `garage` API / admin | `19010` / `19011` | `19100` / `19101` | tooling (`garage` CLI) attaches from the host |
+| `frontend` | `8080`, on all interfaces | `3080`, loopback only | the cloudflared tunnel reaches Nginx through the host |
+| `garage` API / admin | `19010` / `19011`, loopback only | `19100` / `19101`, loopback only | tooling (`garage` CLI) attaches from the host |
+
+Two details the compose files do not say plainly. Production's frontend port is `8080` on the BOX but
+`${FRONTEND_HOST_PORT:-80}` in `docker-compose.prod.yml` - the value comes from the generated `.env`,
+so reading the file alone gives `80`. And production binds it on every interface while dev binds it
+to `127.0.0.1`; dev is the stricter of the two, deliberately, since nothing but the tunnel has any
+business reaching it.
 
 **A CONTAINER-SIDE ADDRESS IS NEVER OFFSET.** The version of the dev compose file replaced on
 2026-09-01 had never worked, for exactly this reason: it applied the host offsets to the container
