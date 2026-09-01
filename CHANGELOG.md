@@ -50,6 +50,15 @@ which is also where every release up to and including v0.13.1 now lives.
   `source-path=SCRIPTDIR` directive beside each `.`, and it was proved able to FAIL before being
   trusted: an unquoted `rm $f` spliced into the library came back as SC2086.
 
+- **The auto-merge ceiling now names why a `stripe` bump can sit red.** #304 fails CI in four files
+  because the SDK's `apiVersion` literal moved to `2026-08-26.dahlia` and the service pins
+  `2026-06-24.dahlia` - which is the coupling working exactly as `stripe-api-version.ts` describes
+  it. But a pull request that can never merge without a payments decision has to SAY so rather than
+  sit red, so the ceiling carries a `stripe` arm naming the gate that would retire the class:
+  fixtures per API version for the events this service handles and the fields it reads. The half
+  the compiler already covers is stated in the same breath - an SDK bump that still compiles cannot
+  change which API the app talks to, because the constant governs, so it merges on its own.
+
 ### Fixed
 
 - **A version bump wrote CRLF into five files, and git showed nothing.** `jq` under Git Bash on

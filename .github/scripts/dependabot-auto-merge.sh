@@ -118,6 +118,20 @@ while IFS='|' read -r name type version; do
     webrtc | webrtc-* | str0m | sdp | ice | turn | stun)
       gate="one relay-path call. The SFU has ten tests and not one of them touches the ICE stack; that is campaign rung 15 CALL, which has no runner yet"
       ;;
+    stripe)
+      # THE COMPILER ALREADY DOES HALF OF THIS, AND THE HALF IT DOES IS THE SAFE HALF. The SDK types
+      # `apiVersion` as the string LITERAL its release was cut against, and this service pins that
+      # value in one exported constant (`src/payment/stripe-api-version.ts`). So an SDK bump that
+      # still compiles cannot change which API the app talks to - the constant governs - and it
+      # merges on its own like anything else. An SDK bump that CROSSES an API version stops the
+      # tree compiling, in four files at once, which is exactly the coupling being made visible.
+      #
+      # What no gate here can answer is the other half: whether the app still reads what the new API
+      # sends. An API version decides webhook payload shapes and object fields, so crossing one is a
+      # decision about PAYMENTS, and today the only evidence is Stripe's changelog and somebody
+      # reading it. That is not a semver judgement this script can make.
+      gate="a test that pins this service's Stripe surface to FIXTURES per API version - the webhook events \`webhook.controller.ts\` handles and the fields \`stripe-payment-provider.ts\` and \`users.service.ts\` read - so that crossing an API version is PROVED rather than read in a changelog. The SDK's literal type already refuses a silent crossing: if this update stopped the tree compiling, \`STRIPE_API_VERSION\` and \`stripe\` have to move together, deliberately"
+      ;;
     # `@nestjs/*` WAS REFUSED HERE UNTIL 2026-08-31, and the entry is gone because the test it named
     # now exists and is green on all four services: `boot-nest-apps` builds the real `AppModule`
     # against a real Postgres, Redis and S3 endpoint. That is what a refusal is for - it names a
