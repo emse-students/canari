@@ -162,6 +162,47 @@ if [ -f "$CD" ]; then
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
+printf "\nthe dev estate's host port agrees everywhere it is named\n"
+# ═════════════════════════════════════════════════════════════════════════════
+
+# ONE NUMBER, FOUR FILES, AND NOTHING MADE THEM AGREE. `3080` is the port the cloudflared tunnel's
+# ingress rule points at, and it appears as the compose file's default, as this deploy script's
+# fallback, as the value CD writes into dev's `.env`, and as the URL the refresh workflow probes after
+# a restore. Change one and the estate does not break loudly: the compose file publishes one port
+# while the health check polls another, so the deploy fails with a timeout that blames the
+# application. Nothing here can tell whether the TUNNEL agrees - that lives in Cloudflare's dashboard
+# - but the four in this repository can be held against each other.
+dev_ports=""
+add_port() {
+  local label="$1" value="$2"
+  if [ -z "$value" ]; then
+    fail "could not read the dev host port from $label"
+  else
+    dev_ports="$dev_ports $label=$value"
+  fi
+}
+
+add_port "docker-compose.dev.yml" \
+  "$(grep -oE '\$\{FRONTEND_HOST_PORT:-[0-9]+\}' infrastructure/docker-compose.dev.yml | head -1 |
+    grep -oE '[0-9]+' || true)"
+add_port "deploy-environment.sh" \
+  "$(grep -A4 '^dev)' infrastructure/deploy/deploy-environment.sh |
+    grep -oE 'DEFAULT_FRONTEND_PORT=[0-9]+' | grep -oE '[0-9]+' || true)"
+add_port "cd.yml" \
+  "$(grep -oE 'FRONTEND_HOST_PORT=[0-9]+' "$CD" | head -1 | grep -oE '[0-9]+' || true)"
+add_port "dev-refresh.yml" \
+  "$(grep -oE '127\.0\.0\.1:[0-9]+/api/version' .github/workflows/dev-refresh.yml | head -1 |
+    grep -oE ':[0-9]+' | tr -d ':' || true)"
+
+# shellcheck disable=SC2086 # deliberate word splitting over the accumulated label=value pairs
+distinct="$(printf '%s\n' $dev_ports | cut -d= -f2 | sort -u | wc -l | tr -d ' ')"
+if [ "$distinct" = "1" ]; then
+  pass "all four name the same port:$dev_ports"
+else
+  fail "the dev host port disagrees between files:$dev_ports"
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
 printf '\nthe manifest is well formed\n'
 # ═════════════════════════════════════════════════════════════════════════════
 
