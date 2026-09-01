@@ -13,6 +13,32 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A green dev deploy would have retired the ceiling that the outage of 2026-09-01 produced, and it
+  is not evidence for it.** Found while building `infrastructure/dev/version-gap.yml`, before it
+  shipped. The plan had PostgreSQL 18 starting in the dev environment on a copy of production's data
+  and serving `/api/version` as the test that retires the `postgres` refusal in `lib/ceiling.sh`. It
+  is not: the copy is `pg_dump` replayed into a cluster the new major initialised ITSELF, from empty,
+  so it never touches a data directory written by the old major and cannot fail the way production
+  failed. It would have gone green on 18 while saying nothing about `pg_upgrade` or the 18+ move of
+  the mount point, and the next `postgres` major would have auto-merged on that green - the same
+  outage, this time behind a gate that reads as proof. Each declared gap now states which of four
+  questions it answers, and `lib/ceiling.sh` accepts only `in_place_upgrade` with a non-empty proof,
+  releasing exactly the major it was proven for. Proved against fixtures: the wrong evidence value, a
+  claim with no proof, a missing file, a neighbouring major and a sibling image are all still refused.
+  A literal `\n` in `ci.yml`'s shellcheck invocation, which would have had it lint a file named `n`
+  instead of `infrastructure/dev/*.sh`, is fixed in the same pass.
+
+### Added
+
+- **The major versions dev runs ahead of production are DECLARED, and the declaration is held against
+  both compose files.** `infrastructure/dev/version-gap.yml`, one row per stateful image, with
+  `.github/scripts/tests/dev-gap.test.sh` asserting it. The row set is DERIVED from the images
+  production mounts a named volume for - so a stateful service added later is covered by whoever
+  declares it, not by whoever remembers the file - and the naive gate is deliberately avoided:
+  asserting dev and prod pin the same major would fire on the very difference the environment exists
+  to carry. `compose_stateful_images` and the new `third_party_stateful_images` moved into
+  `lib/ceiling.sh` so the two tests deriving from them cannot drift apart.
+
 - **The dev environment's database copy, and the guard that makes its direction unable to invert.**
   `infrastructure/dev/copy-prod-to-dev.sh` copies production's `auth_db` into the dev environment and
   strips what a copy must not carry. Its source and target compose projects are `readonly` literals

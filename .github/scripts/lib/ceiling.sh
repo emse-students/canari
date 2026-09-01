@@ -49,6 +49,73 @@ prod_image_major() {
   ' "$CEILING_PROD_COMPOSE" 2>/dev/null
 }
 
+# Emits `<image-name> <named-volume-count>` for every service in a compose file. The image name is
+# the reference up to the first `:` - exactly what Dependabot writes into `dependency-name` - and a
+# mount counts as a NAMED volume when its source is neither absolute nor relative, i.e. not a bind
+# mount of configuration. Indentation is the block structure: services at two spaces, keys at four.
+#
+# IT LIVES HERE, NOT IN A TEST, because two tests now derive their subject from it - `ceiling.test.sh`
+# asks which images the table must cover, and `dev-gap.test.sh` asks which images must declare a
+# version gap - and a parser copied into both would drift in one of them silently.
+compose_stateful_images() {
+  awk '
+    /^  [a-zA-Z0-9_-]+:[[:space:]]*$/ { if (image != "") print image, vols; image = ""; vols = 0; inv = 0; next }
+    /^    image:[[:space:]]/ { image = $2; sub(/:.*$/, "", image); inv = 0; next }
+    /^    volumes:[[:space:]]*$/ { inv = 1; next }
+    /^    [a-zA-Z]/ { inv = 0 }
+    inv && /^      - [a-zA-Z0-9_]+:/ { vols++ }
+    END { if (image != "") print image, vols }
+  ' "${1:-$CEILING_PROD_COMPOSE}"
+}
+
+# The subset of the above that a dependency gate is about: THIRD-PARTY images that hold state.
+#
+# Our own service images are built from this tree, so the suite that builds them IS the gate and
+# Dependabot never proposes them. They are written `${REGISTRY:-ghcr.io}/...`, so BOTH shapes have to
+# be skipped - matching only the literal registry left `${REGISTRY` looking like a third-party image
+# with a volume, which is a false accusation. `\$\{` rather than a quoted `'\''${'\''`: the brace is
+# meant literally, and quoting it made shellcheck read an unexpanded expression (SC2016).
+third_party_stateful_images() {
+  local name vols
+  while read -r name vols; do
+    [ -z "$name" ] && continue
+    case "$name" in ghcr.io/* | \$\{*) continue ;; esac
+    [ "${vols:-0}" -eq 0 ] && continue
+    printf '%s %s\n' "$name" "$vols"
+  done <<EOF
+$(compose_stateful_images "${1:-$CEILING_PROD_COMPOSE}")
+EOF
+}
+
+# The declared major gap between dev and production, and what each gap has been PROVEN to
+# demonstrate. Overridable so the self-tests can drive the lift off fixtures rather than off the
+# state of the real environment.
+: "${CEILING_VERSION_GAP:=$(dirname "${BASH_SOURCE[0]}")/../../../infrastructure/dev/version-gap.yml}"
+
+# Prints the major dev is declared to run for image "$1", IF AND ONLY IF that gap has been proven by
+# an in-place upgrade of production's OWN data directory. Prints nothing in every other case.
+#
+# IT FAILS CLOSED, AND THE REASON IS A MEASUREMENT RATHER THAN CAUTION. The dev environment is loaded
+# by `infrastructure/dev/copy-prod-to-dev.sh`, which is a LOGICAL copy - `pg_dump` replayed into a
+# cluster the new major initialised itself, from empty. So "dev runs 18 and serves" is evidence about
+# a SCHEMA, not about a data directory, and it cannot fail the way production failed on 2026-09-01.
+# Accepting it here would have re-armed that outage behind a gate that reads as proof. Of the four
+# `evidence` values in `version-gap.yml` only `in_place_upgrade` answers the question this arm asks,
+# and a row claiming it without a `proof` is a claim nobody can check, so it is refused too.
+dev_proven_major() {
+  awk -v want="$1" '
+    # A row header: a key at column zero. Comments and the indented fields below are not headers.
+    /^[^[:space:]#][^:]*:[[:space:]]*$/ {
+      key = $0; sub(/:[[:space:]]*$/, "", key); inrow = (key == want); next
+    }
+    !inrow { next }
+    /^  dev_major:/ { v = $2; gsub(/"/, "", v); dev = v; next }
+    /^  evidence:/  { ev = $2; next }
+    /^  proof:/     { p = $0; sub(/^  proof:[[:space:]]*/, "", p); gsub(/"/, "", p); proof = p; next }
+    END { if (ev == "in_place_upgrade" && proof != "" && dev != "") print dev }
+  ' "$CEILING_VERSION_GAP" 2>/dev/null
+}
+
 # Prints the gate this repository lacks for "$1", or nothing at all when the check suite is already
 # evidence about it. The name is matched AFTER quote-stripping by the caller.
 gate_for_dependency() {
@@ -91,7 +158,14 @@ gate_for_dependency() {
         # Same major: the on-disk format production already has is the one this image reads.
         return 0
       fi
-      echo "a test that starts this image's NEW major against a data directory written by the OLD one, and proves the documented upgrade path carries it - for postgres, \`pg_upgrade\` plus the 18+ mount move from \`/var/lib/postgresql/data\` to \`/var/lib/postgresql\`. This update crosses the major production runs (\`${__ceiling_current:-unreadable}\` -> \`${__ceiling_proposed:-unreadable}\`), and every gate here initialises an EMPTY volume - so a green suite only ever proves the new major can create a fresh cluster, while the failure mode is the cluster production already HAS, which nothing in this repository looks at. Production lost all eight services this way on 2026-09-01. A patch or minor within the same major is not refused; see \`docs/wiki/backlog.md\`"
+      # A DECLARED AND PROVEN GAP IN DEV RELEASES EXACTLY THE MAJOR IT WAS PROVEN FOR, and nothing
+      # else - not the next major, and not a sibling image that happens to sit in the same arm.
+      __ceiling_proven=$(dev_proven_major "$1")
+      if [ -n "$__ceiling_proposed" ] && [ -n "$__ceiling_proven" ] &&
+        [ "$__ceiling_proven" = "$__ceiling_proposed" ]; then
+        return 0
+      fi
+      echo "a test that starts this image's NEW major against a data directory written by the OLD one, and proves the documented upgrade path carries it - for postgres, \`pg_upgrade\` plus the 18+ mount move from \`/var/lib/postgresql/data\` to \`/var/lib/postgresql\`. This update crosses the major production runs (\`${__ceiling_current:-unreadable}\` -> \`${__ceiling_proposed:-unreadable}\`), and every gate here initialises an EMPTY volume - so a green suite only ever proves the new major can create a fresh cluster, while the failure mode is the cluster production already HAS, which nothing in this repository looks at. Production lost all eight services this way on 2026-09-01. A patch or minor within the same major is not refused. To retire this refusal, rehearse the upgrade in dev and record it in \`infrastructure/dev/version-gap.yml\` with \`evidence: in_place_upgrade\` - note that a green dev deploy alone is NOT that evidence, because the dev copy is logical and builds its cluster from empty; see \`docs/wiki/backlog.md\`"
       ;;
 
     # ---------------------------------------------------------------------------------------------

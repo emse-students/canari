@@ -66,34 +66,13 @@ expect_allowed() {
 # -------------------------------------------------------------------------------------------------
 # THE TEST THE OUTAGE ASKED FOR: every stateful image in production is in the table
 # -------------------------------------------------------------------------------------------------
-# Emits `<dependency-name> <named-volume-count>` per service. The dependency name is the image
-# reference up to the first `:` - exactly what Dependabot writes into `dependency-name` - and a mount
-# counts as a named volume when its source is neither absolute nor relative, i.e. not a bind mount of
-# configuration. Indentation is the block structure: services at two spaces, their keys at four.
-compose_stateful_images() {
-  awk '
-    /^  [a-zA-Z0-9_-]+:[[:space:]]*$/ { if (image != "") print image, vols; image = ""; vols = 0; inv = 0; next }
-    /^    image:[[:space:]]/ { image = $2; sub(/:.*$/, "", image); inv = 0; next }
-    /^    volumes:[[:space:]]*$/ { inv = 1; next }
-    /^    [a-zA-Z]/ { inv = 0 }
-    inv && /^      - [a-zA-Z0-9_]+:/ { vols++ }
-    END { if (image != "") print image, vols }
-  ' "$compose"
-}
-
+# The parse itself is `third_party_stateful_images` in `lib/ceiling.sh`, shared with
+# `dev-gap.test.sh`; see the reasoning there.
 echo "a MAJOR crossing is refused for every stateful third-party image production runs:"
 
 seen=0
 while read -r name vols; do
   [ -z "$name" ] && continue
-  # Our own service images are built from this tree, so the suite that builds them IS the gate, and
-  # Dependabot never proposes them. They are written `${REGISTRY:-ghcr.io}/...`, so BOTH shapes have
-  # to be skipped - matching only the literal registry left `${REGISTRY` looking like a third-party
-  # image with a volume, which is a false accusation and would have made this file un-greenable.
-  # `\$\{` rather than `'\${'`: the brace is meant literally, and quoting it made shellcheck read
-  # an unexpanded expression (SC2016).
-  case "$name" in ghcr.io/* | \$\{*) continue ;; esac
-  [ "${vols:-0}" -eq 0 ] && continue
   seen=$((seen + 1))
 
   # The crossing is CONSTRUCTED from what production runs rather than hardcoded, so this assertion
@@ -110,7 +89,7 @@ while read -r name vols; do
   # And the same-major direction, on the pin itself: a patch must keep flowing, or the digest pin
   # becomes the freeze `dependabot.yml` was written to prevent.
   expect_allowed "$name" "$current"
-done <<< "$(compose_stateful_images)"
+done <<< "$(third_party_stateful_images "$compose")"
 
 # A parse that silently matched nothing would make the loop above vacuously green - the exact shape
 # of failure this file exists to prevent. Production runs three stateful third-party images.

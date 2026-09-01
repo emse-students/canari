@@ -673,4 +673,5 @@ jobs:
           tar -xJf "$archive" -C "$RUNNER_TEMP"
           "$RUNNER_TEMP/shellcheck-${SHELLCHECK_VERSION}/shellcheck" --version
           "$RUNNER_TEMP/shellcheck-${SHELLCHECK_VERSION}/shellcheck" -x \
-            .github/scripts/*.sh .github/scripts/lib/*.sh .github/scripts/tests/*.sh \n            infrastructure/dev/*.sh
+            .github/scripts/*.sh .github/scripts/lib/*.sh .github/scripts/tests/*.sh \
+            infrastructure/dev/*.sh

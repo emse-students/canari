@@ -349,6 +349,45 @@ Postgres is pinned at 15 until the upgrade procedure exists; that is a deliberat
 two reasons 18 refuses the directory, in
 [backlog](backlog.md#p2---postgresql-is-held-at-15-because-18-needs-a-migration-nobody-has-performed-after-the-outage-of-2026-09-01).
 
+#### A refusal is retired by a DECLARED gap in dev, and exactly one kind of evidence counts
+
+The datastore arm names the test that would lift it, and the dev environment is where that test can
+be run: dev is deliberately allowed to run a stateful image one major ahead of production, on a copy
+of production's data. `infrastructure/dev/version-gap.yml` is where the result is declared, one row
+per stateful image, and `lib/ceiling.sh` consults it - a row whose gap is declared **and proven**
+releases exactly the major it was proven for, and nothing else.
+
+**The reason it is a declaration and not a comparison** is that the obvious gate - assert dev and
+prod pin the same major - would fire on the very difference the environment exists to carry, and
+would be deleted the first time it did. So the difference is stated, and what is asserted is that the
+statement matches both compose files. `tests/dev-gap.test.sh` derives the row set from the images
+production mounts a named volume for, so a stateful service added later is covered by whoever
+declares it rather than by whoever remembers this file.
+
+**AND THE PART THAT MATTERS MOST WAS FOUND WHILE BUILDING IT: A GREEN DEV DEPLOY IS NOT THE EVIDENCE
+THE CEILING ASKS FOR.** The plan for the dev environment said that PostgreSQL 18 starting in dev on a
+copy of production's data and serving `/api/version` would be the test that retires the `postgres`
+refusal. It would not have been, and believing it would have re-armed the 2026-09-01 outage behind a
+gate that reads as proof. `infrastructure/dev/copy-prod-to-dev.sh` is a **logical** copy - `pg_dump`
+replayed into a cluster the new major initialised itself, from empty - so it never touches a data
+directory written by the old major, and cannot fail the way production failed. It would have gone
+green on 18 while saying nothing about `pg_upgrade` or the 18+ move of the mount point from
+`/var/lib/postgresql/data` to `/var/lib/postgresql`. The next `postgres` major would then have
+auto-merged on that green.
+
+So each row states WHICH question its gap answers, and only one of the four answers lifts anything:
+
+| `evidence` | What it demonstrates | Lifts |
+| --- | --- | --- |
+| `none` | There is no gap; dev runs production's major. | nothing |
+| `fresh_cluster` | The new major serves a cluster it created from empty. This is what every gate here already proves, and it is the one case that always works. | nothing |
+| `logical_restore` | The new major serves this application's schema and data after a dump and restore. Worth having - it catches a schema or query the new major rejects - but the cluster is still one the new major built. **This is what the dev environment produces on its own.** | nothing |
+| `in_place_upgrade` | The new major serves production's OWN data directory, carried across by the documented upgrade path, with the mount layout the new image expects. | the refusal named in `lifts` |
+
+It fails closed on every other input, proved against fixtures: the wrong evidence value, an
+`in_place_upgrade` with an empty `proof`, a missing gap file, a different major, and a sibling image
+in the same arm are all still refused.
+
 ### Why there are three triggers, and why the clock is the weakest of them
 
 - **`workflow_run` on a Dependabot pull request's own CI** - the fast path, seconds after that one

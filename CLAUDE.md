@@ -238,24 +238,26 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md).**
    and the two want reading together.
 
 10. **`dev.canari-emse.fr` BECOMES A REAL SECOND ENVIRONMENT - SCOPED WITH THE USER 2026-09-01, and
-    every decision is in [backlog](docs/wiki/backlog.md#devcanari-emsefr-becomes-a-real-second-environment---decided-2026-08-17),
-    the only copy. Do not re-litigate them here.** Three facts govern the work and each was MEASURED,
-    not assumed: the name already answers `200` with prod's own `/api/version`, so it is production
-    wearing a second name and anyone told to "use dev" is typing into prod; `cd-dev.yml` is dormant
-    (734 lines, its `dev` branch gone) yet wired to PRODUCTION secrets, so waking it as it stands is
-    how a test push reaches a real phone; and a four-month-stale clone already occupies
-    `/home/canari/canari-dev`, holding a design document that exists in no commit. **The shape in one
-    line:** one `cd.yml` parameterised by environment, deployed from `main` on every push, dev first
-    and **a failed dev migration blocks prod** - the free gate this item exists for. **The user chose a
-    FULL unscrubbed copy of prod against the recommendation**, for usability, after being shown that
-    copied chat is unreadable without the device's MLS keys; that choice is what makes the other prize
-    real - Postgres 18 starting in dev on a directory written by prod's 15 is the test that retires the
-    ceiling arm the outage of 2026-09-01 was missing. Mobile is phase 2. **Phase 1 is blocked on
-    exactly ONE credential**, narrowed by measurement: a Cloudflare token carrying `Zone -> DNS -> Edit`
-    on the zone - a policy scoped to the ACCOUNT cannot grant it, which is what made the first attempt
-    look granted - plus the two account-scoped Access permissions. **Authentik is NOT blocked**
-    (`ssh miconnect`, then `docker exec miconnect-server-1 ak shell -c`, verified), and **Stripe is
-    dropped from dev outright** (user).
+    every decision, measurement and refusal is in
+    [backlog](docs/wiki/backlog.md#devcanari-emsefr-becomes-a-real-second-environment---decided-2026-08-17),
+    the only copy. Do not re-litigate them, and do not restate them here.** **The shape in one line:**
+    one `cd.yml` parameterised by environment, deployed from `main` on every push, dev first and **a
+    failed dev migration blocks prod** - the free gate this item exists for. Today the name is
+    production wearing a second hat, so anyone told to "use dev" is typing into prod. **BUILT: the
+    compose file** (it had never worked - host port offsets on container-to-container addresses),
+    **the prod->dev copy** with a direction guard that cannot invert, and **the declared major gap**;
+    each with a DERIVED self-test, five suites in `make test-ci-scripts`. **The correction that must
+    not be undone: a green dev deploy does NOT retire the ceiling arm the 2026-09-01 outage was
+    missing** - the copy is logical, so it cannot fail the way prod failed, and only
+    `in_place_upgrade` on a binary copy of prod's `PGDATA` lifts anything
+    ([cicd](docs/wiki/cicd.md#a-refusal-is-retired-by-a-declared-gap-in-dev-and-exactly-one-kind-of-evidence-counts)).
+    **LEFT: the CD wiring, sequenced last on purpose** - editing prod's CD before dev serves anything
+    is how a third outage happens; `cd-dev.yml` (734 dormant lines wired to PRODUCTION secrets) dies
+    with it. Mobile is phase 2. **Phase 1 is blocked on ONE credential and it is NOT DNS:** the name is
+    already a proxied CNAME onto the tunnel, so one INGRESS rule must move to dev's port `3080`
+    (`Account -> Cloudflare Tunnel`), plus the two account-scoped Access permissions. **Authentik is
+    NOT blocked** (`ssh miconnect`, then `docker exec miconnect-server-1 ak shell -c`, verified);
+    **Stripe is dropped from dev outright** (user).
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 

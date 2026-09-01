@@ -2851,11 +2851,23 @@ Accepted cost: dev never pre-validates a commit, it is where things are tried af
 indistinguishable from prod on screen. `minClientVersion` is per-environment by virtue of the separate
 database. A GitHub release does not build dev.
 
-**Dev is deliberately ONE MAJOR AHEAD, and a successful dev deploy LIFTS a ceiling.** This is the
-strongest outcome of the item and it is what the outage of 2026-09-01 was missing: Postgres 18 starting
-in dev, on a data directory written by prod's 15, and serving `/api/version`, is exactly the test that
-[the ceiling table](#p1---the-three-refusals-the-auto-merge-ceiling-makes-and-the-test-that-retires-each)
-demands. **The user's choice of a full copy is what makes this credible** - a synthetic seeder would
+**Dev is deliberately ONE MAJOR AHEAD, and a PROVEN gap lifts a ceiling.** ~~Postgres 18 starting in
+dev, on a data directory written by prod's 15, and serving `/api/version`, is exactly the test that the
+ceiling table demands.~~ **CORRECTED 2026-09-01 WHILE BUILDING IT, and this is the most important
+correction in this item: a green dev deploy is NOT that test.** The copy is `pg_dump` replayed into a
+cluster the new major initialised itself, from empty - a LOGICAL copy, which never touches a data
+directory written by the old major and therefore cannot fail the way production failed. It would have
+gone green on 18 while saying nothing about `pg_upgrade` or the 18+ move of the mount point from
+`/var/lib/postgresql/data` to `/var/lib/postgresql`, and the next `postgres` major would have
+auto-merged on it - the outage of 2026-09-01 re-armed behind a gate that reads as proof. So
+`infrastructure/dev/version-gap.yml` makes each row declare WHICH of four questions its gap answers
+(`none`, `fresh_cluster`, `logical_restore`, `in_place_upgrade`) and `lib/ceiling.sh` accepts only
+`in_place_upgrade`, with a non-empty `proof`, releasing exactly the major it was proven for. All three
+rows read `none` today, which is the honest state. What the dev environment buys on its own is a
+`logical_restore` - real, worth having, and lifting nothing. The
+[ceiling table](#p1---the-three-refusals-the-auto-merge-ceiling-makes-and-the-test-that-retires-each)
+is therefore retired by a rehearsal on a BINARY copy of prod's `PGDATA`, which is a separate piece of
+work and is not what deploying dev does. **The user's choice of a full copy is what makes this credible** - a synthetic seeder would
 have proved nothing about a real data directory - so the tension recorded earlier between "safe empty
 dev" and "dev that can lift a ceiling" is resolved in favour of the copy. The major gap between dev
 and prod is therefore EXPECTED and must be DECLARED in a file, with a test asserting the declared gap

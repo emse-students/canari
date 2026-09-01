@@ -1,0 +1,99 @@
+# THE MAJOR VERSIONS DEV RUNS AHEAD OF PRODUCTION, DECLARED - AND WHAT EACH GAP ACTUALLY PROVES.
+#
+# ==================================================================================================
+# WHY THIS FILE EXISTS
+# ==================================================================================================
+# Dev is deliberately allowed to run a stateful image one major ahead of production, because that is
+# the only place this repository can learn whether an upgrade path works before Dependabot proposes
+# it. On 2026-09-01 `postgres 15-alpine -> 18-alpine` auto-merged on a fully green suite and
+# PostgreSQL 18 refused to start on production's data directory; all eight backend services went down
+# with `auth_db`. `lib/ceiling.sh` now refuses that class of update, and the refusal NAMES the test
+# that would retire it. This file is where that test's result is declared.
+#
+# A gap must be DECLARED rather than inferred, because the alternative - a test asserting dev and
+# prod pin the same major - would fire on the very difference the environment exists to carry, and
+# would be deleted the first time it did.
+#
+# ==================================================================================================
+# THE CORRECTION THAT SHAPES THIS FILE, FOUND WHILE WRITING IT (2026-09-01)
+# ==================================================================================================
+# The plan recorded in `docs/wiki/backlog.md` said that "Postgres 18 starting in dev, on a data
+# directory written by prod's 15, and serving /api/version" would be the test the ceiling demands.
+# THAT IS NOT WHAT THE DEV ENVIRONMENT WOULD HAVE PROVED, and believing it would have re-armed the
+# outage behind a gate that looks like evidence.
+#
+# `infrastructure/dev/copy-prod-to-dev.sh` copies production with `pg_dump` and restores with `psql`.
+# That is a LOGICAL copy: it replays SQL into a cluster the new major initialised ITSELF, from empty.
+# It never touches a data directory written by the old major, so it cannot fail the way production
+# failed - and it would have gone green on PostgreSQL 18 while proving nothing whatsoever about
+# `pg_upgrade` or the 18+ move of the mount point from `/var/lib/postgresql/data` to
+# `/var/lib/postgresql`. The next `postgres` major would then have auto-merged on that green, and the
+# 33 minutes of 2026-09-01 would have happened again, this time with a gate pointing at it.
+#
+# A COLUMN IS ONLY EVIDENCE FOR THE QUESTION IT WAS WRITTEN TO ANSWER. So every row here declares
+# WHICH question its gap answers, and `lib/ceiling.sh` accepts exactly one of the four answers.
+#
+# ==================================================================================================
+# THE FIELDS
+# ==================================================================================================
+#   prod_major   The major production pins today. ASSERTED against `docker-compose.prod.yml` - this
+#                file cannot go stale when production moves.
+#   dev_major    The major dev pins today. ASSERTED against `docker-compose.dev.yml` - this file
+#                cannot claim a gap that does not exist, nor miss one that does.
+#   evidence     What running that major in dev has actually demonstrated. One of:
+#
+#                  none              There is no gap. dev_major == prod_major and nothing is claimed.
+#
+#                  fresh_cluster     The new major starts and serves on a cluster it created from
+#                                    empty. This is what `make run-ci` and every compose stack here
+#                                    already prove, and it is the one case that always works. It
+#                                    lifts NOTHING.
+#
+#                  logical_restore   The new major serves this application's schema and data after a
+#                                    `pg_dump` / restore. Worth having - it catches a schema or a
+#                                    query the new major rejects - but the cluster is still one the
+#                                    new major built itself. It lifts NOTHING, and this is the value
+#                                    the dev environment produces on its own.
+#
+#                  in_place_upgrade  The new major serves production's OWN data directory, carried
+#                                    across by the documented upgrade path, with the mount layout the
+#                                    new image expects. THIS is the ceiling's question, and the only
+#                                    value that lifts a refusal.
+#
+#   proof        Where that was observed: a CD run URL, or a dated note naming the box and the
+#                command. Required whenever `evidence` is not `none`. A row claiming evidence with no
+#                proof is a claim nobody can check, which is worse than no claim.
+#   lifts        The ceiling refusal this row releases. Permitted only on `in_place_upgrade`.
+#
+# `tests/dev-gap.test.sh` asserts every one of those rules, and derives the ROW SET from the images
+# production mounts a named volume for - so the next stateful service is covered on the day it is
+# declared, by whoever declares it, rather than on the day someone remembers this file.
+#
+# ==================================================================================================
+# THE ROWS
+# ==================================================================================================
+# All three are `none` today, and that is the honest state: the dev environment does not yet serve
+# anything, so it runs prod's majors exactly. `docs/wiki/backlog.md` holds the deferral - PG 15 -> 18
+# is a migration nobody has performed (user, 2026-09-01: "on verra ca plus tard") - and the row below
+# is where its rehearsal gets recorded when it happens.
+
+postgres:
+  prod_major: "15"
+  dev_major: "15"
+  evidence: none
+  proof: ""
+  lifts: ""
+
+redis:
+  prod_major: "8"
+  dev_major: "8"
+  evidence: none
+  proof: ""
+  lifts: ""
+
+dxflrs/garage:
+  prod_major: "2"
+  dev_major: "2"
+  evidence: none
+  proof: ""
+  lifts: ""
