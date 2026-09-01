@@ -241,9 +241,15 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md).**
     [backlog](docs/wiki/backlog.md#devcanari-emsefr-becomes-a-real-second-environment---decided-2026-08-17).
     **Read those two - nothing is restated here.** Today the name is still prod wearing a second hat,
     so anyone told to "use dev" is typing into prod. **THE SWITCH IS `vars.DEV_ENVIRONMENT_ENABLED`,
-    ABSENT, so every dev job skips and CD is unchanged.** To turn it on: the tunnel INGRESS rule to
-    `3080` (`Account -> Cloudflare Tunnel`), the `DEV_*` secrets (14 required, the list IS
-    `infrastructure/deploy/env-manifest.tsv`), then the variable. **THREE CORRECTIONS THAT MUST NOT BE
+    ABSENT, so every dev job skips and CD is unchanged.** To turn it on, in this order and no other: the
+    `DEV_*` secrets (**12 of the 14 required were created 2026-09-02**; the two left are
+    `DEV_AUTHENTIK_CLIENT_ID` / `DEV_AUTHENTIK_CLIENT_SECRET` and need a dev OIDC client beside
+    production's - writing to the identity provider's DB is not done unattended, and the attempt was
+    refused), then the variable, then a dev deploy proved on `127.0.0.1:3080` over SSH, and the
+    tunnel INGRESS rule to `3080` **LAST** - moved any earlier it turns a name serving production
+    into a 502. Dev is a NET, not a sandbox: one trigger deploys both estates, and whether a
+    dev-only dispatch should exist is a decision owed to the USER in
+    [backlog](docs/wiki/backlog.md#devcanari-emsefr-becomes-a-real-second-environment---decided-2026-08-17). **THREE CORRECTIONS THAT MUST NOT BE
     UNDONE:** a green dev deploy does NOT retire the ceiling arm the 2026-09-01 outage was missing -
     the copy is logical, so only `in_place_upgrade` on a binary copy of prod's `PGDATA` lifts
     anything; **`+dev.<sha7>` may never enter `version`**, which clients turn into a release tag and
