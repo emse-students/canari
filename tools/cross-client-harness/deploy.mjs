@@ -38,7 +38,12 @@ import { execFileSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-/** The workflow that restarts production. `cd-dev.yml` deploys elsewhere and is not this. */
+/**
+ * The workflow that restarts production, and since 2026-09-01 the only CD workflow there is:
+ * `cd-dev.yml` was deleted, dormant and wired to production's own secrets. When the CD is unified
+ * onto one environment-parameterised workflow this name stays correct, but the rig will have to say
+ * WHICH environment it means.
+ */
 export const DEPLOY_WORKFLOW = 'cd.yml';
 
 /** The repository root - `gh` resolves the repo from the working directory, and the rig runs in `tools/`. */

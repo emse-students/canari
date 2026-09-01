@@ -188,6 +188,22 @@ which is also where every release up to and including v0.13.1 now lives.
   `CallService.callsEnabled.test.ts` asserts the on state today so the flip is not a leap of faith.
   ([calls module](docs/wiki/frontend/modules/calls.md), [backlog](docs/wiki/backlog.md))
 
+### Removed
+
+- **`cd-dev.yml`, 734 dormant lines whose manual trigger would have deployed a second estate using
+  production's own secrets.** Its `push: branches: [dev]` trigger could never fire - there is no `dev`
+  branch, by decision - but `workflow_dispatch` could, from the Actions UI, and the workflow read the
+  same `JWT_SECRET`, the same Garage keys, the same `FIREBASE_SERVICE_ACCOUNT_JSON` and the same
+  `canari-media` bucket as production. A shared signing secret makes a token minted by either
+  environment valid in the other, which is the entire isolation the dev environment exists to have,
+  and a shared FCM sender is how a test notification reaches a real member's phone. The file had not
+  run since 2026-05-09 and had drifted to unusable in four months, which is the argument for one
+  environment-parameterised `cd.yml` rather than a second file. The deletion was pulled forward ahead
+  of that unification rather than bundled with it, because the hazard existed today and the file was
+  no loss as a reference: the dev arm will be written from `cd.yml`, which works, not from one that
+  never did. Recoverable at `a8ac1828` if ever wanted.
+  ([dev-environment](docs/wiki/infrastructure/dev-environment.md), [backlog](docs/wiki/backlog.md))
+
 ### Added
 
 - **`.github/scripts/` is linted, not merely parsed, in all four repositories.** It is the only code

@@ -17,8 +17,8 @@ Runs on every push and pull request to `main`:
 | **Build** | the generated sources first - [`.github/actions/build-mls-wasm`](../../.github/actions/build-mls-wasm/action.yml) then `bun run proto:gen` - then `bun run build` |
 
 **The generated sources are not in git** (`frontend/src/lib/wasm/`, `src/lib/proto/canari.{js,d.ts}`),
-so EVERY pipeline that ships a client builds them: `cd.yml`, `cd-dev.yml`, the three release
-workflows, and `ci.yml` because the gates import them. One composite action, one pinned
+so EVERY pipeline that ships a client builds them: `cd.yml`, the three release workflows, and
+`ci.yml` because the gates import them. One composite action, one pinned
 `wasm-pack`, one cache key over `mls-wasm/**` + `mls-core/**` + `rust-toolchain.toml` - the
 committed binary went a crypto fix stale precisely because only some pipelines rebuilt it
 ([mls-wasm](frontend/mls-wasm.md#why-it-is-not-committed)).

@@ -82,9 +82,9 @@ SAME - so collapsing the mirror is a rename and not a credential change. Two sec
 stale: `MINIO_ROOT_USER` and `MINIO_ROOT_PASSWORD`, which `cd-dev.yml` still required and wrote for
 a service removed on 2026-08-14, and which nothing in `docker-compose.dev.yml` ever read. Both are
 gone from the workflow; **delete the two repository secrets once a dev deploy has answered**. That
-gate is looser than it reads: `cd-dev.yml` is itself due to be deleted when the CD is unified onto
-one environment-parameterised workflow ([dev-environment](dev-environment.md)), and once it is, no
-workflow names those two secrets at all and they can go unconditionally.
+gate is GONE: `cd-dev.yml` was deleted on 2026-09-01
+([dev-environment](dev-environment.md#what-is-still-owed-and-by-whom)), so no workflow names those
+two secrets any more and they can be deleted unconditionally. One click, owed to the user.
 
 `.env` is regenerated from `.env.example` on every deploy and drops keys that are no longer in it,
 so the stale `MINIO_*` lines on the prod host disappear on the next deploy rather than needing a

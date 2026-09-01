@@ -235,7 +235,8 @@ testing the frontend - `svelte-check` and Vitest both import the generated bindi
 
 ### Why it is not committed
 
-It was, until 2026-08-18, and it went stale. Only `cd.yml` and `cd-dev.yml` rebuilt it; the three
+It was, until 2026-08-18, and it went stale. Only `cd.yml` and `cd-dev.yml` rebuilt it (the latter
+was deleted on 2026-09-01, dormant and wired to production's secrets); the three
 release pipelines (`android-release`, `ios-release`, `appimage-release`) shipped whatever the tree
 happened to hold. The result was two different cryptos in the fleet: the web ran the current
 `mls-core`, the phone and the desktop app ran the binary from the last commit that thought to

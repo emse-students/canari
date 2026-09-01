@@ -3049,16 +3049,20 @@ above assumed.**
   carries `.prettierrc`, `.prettierignore` and `.pre-commit-config.yaml`, none of which this repo has
   used since the move to oxfmt. It also holds a `DEV_BRANCH_SETUP.md` that exists in NO commit of
   this repository - a design document that lives only on the box, which is exactly the failure
-  `CLAUDE.md` forbids. Read it and fold what survives into this page, then delete the clone; do not
-  let `cd-dev.yml` deploy into that directory on top of it.
-- **`cd-dev.yml` is dormant, not missing** - 734 lines, `on: push: branches: [dev]`, last run
-  2026-05-09, and the `dev` branch does not exist on origin, so its trigger can never fire. **It
-  reads the SAME secrets as production**, Garage keys and `FIREBASE_SERVICE_ACCOUNT_JSON` included,
-  and `docker-compose.dev.yml` defaults `GARAGE_BUCKET` to the same `canari-media`. Its host ports
-  are offset (5433, 6380, 3100, 3104, 3110-3114) so nothing collides, and its volumes are separate
-  by compose project - but `redis_data` is absent from its `volumes:` block entirely, so a dev Redis
-  keeps the shared message log in a container filesystem. Waking that workflow up as it stands is
-  how a test notification reaches a real phone.
+  `CLAUDE.md` forbids. Read it and fold what survives into this page, then delete the clone. The
+  hazard that used to accompany this - `cd-dev.yml` deploying into that directory on top of it - is
+  gone with the workflow, so what is left is purely to recover the document before the clone goes.
+- **`cd-dev.yml` was dormant, not missing - and is now DELETED (2026-09-01, `a8ac1828` is the last
+  commit holding it).** 734 lines, `on: push: branches: [dev]`, last run 2026-05-09, and the `dev`
+  branch does not exist on origin, so its trigger could never fire - but `workflow_dispatch` could,
+  and **it read the SAME secrets as production**, Garage keys and `FIREBASE_SERVICE_ACCOUNT_JSON`
+  included, with `docker-compose.dev.yml` then defaulting `GARAGE_BUCKET` to the same `canari-media`.
+  Its host ports were offset (5433, 6380, 3100, 3104, 3110-3114) so nothing collided, and its volumes
+  were separate by compose project - but `redis_data` was absent from its `volumes:` block entirely,
+  so a dev Redis would have kept the shared message log in a container filesystem. Waking it up as it
+  stood was how a test notification reaches a real phone, which is why the deletion was pulled forward
+  ahead of the CD unification rather than bundled with it. It was no loss as a reference: the dev arm
+  will be written from `cd.yml`, which works, not from a file that never did.
 - **The box has room, so capacity is not a reason to host dev elsewhere:** 70 GB free of 125 GB, and
   15 GiB of 16 GiB RAM available with the whole production estate running at ~800 MiB.
 

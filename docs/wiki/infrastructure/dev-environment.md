@@ -222,8 +222,13 @@ The tracked items live in [backlog](../backlog.md); this is the map.
 **Owed by the CD wiring**, sequenced last on purpose - editing production's CD before dev serves
 anything is how a third outage happens:
 
-- unify `cd.yml` into one environment-parameterised workflow and delete the dormant `cd-dev.yml`
-  (734 lines wired to production secrets)
+- unify `cd.yml` into one environment-parameterised workflow. **`cd-dev.yml` is already gone**,
+  deleted on 2026-09-01 ahead of the unification rather than with it: its `push: branches: [dev]`
+  trigger could never fire, but its `workflow_dispatch` could, and it read PRODUCTION's secrets -
+  the same `JWT_SECRET`, the same Garage keys, the same `canari-media` bucket - which is precisely
+  the isolation this environment exists to have. It was never a useful reference for the dev arm
+  either, having never worked; recover it from git if ever needed
+  (`git show a8ac1828:.github/workflows/cd-dev.yml`)
 - the dev-before-prod migration gate
 - write `VITE_DEPLOY_ENVIRONMENT` and `DEPLOY_BUILD`
 - the copy workflow's trigger

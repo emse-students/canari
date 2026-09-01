@@ -243,8 +243,9 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md).**
     `in_place_upgrade` on a binary copy of prod's `PGDATA` lifts anything - and **`+dev.<sha7>` may
     never enter `version`**, which clients turn into a release tag and so into a 404 download URL.
     **LEFT: the CD wiring, sequenced LAST on purpose** - editing prod's CD before dev serves anything
-    is how a third outage happens, and `cd-dev.yml` (734 dormant lines wired to PRODUCTION secrets)
-    dies with it. **Blocked on ONE credential, and it is NOT DNS:** one tunnel INGRESS rule to port
+    is how a third outage happens. **`cd-dev.yml` is already DELETED** (734 dormant lines whose
+    `workflow_dispatch` read PRODUCTION's secrets; `a8ac1828` still holds it).
+    **Blocked on ONE credential, and it is NOT DNS:** one tunnel INGRESS rule to port
     `3080` (`Account -> Cloudflare Tunnel`), plus the two account-scoped Access permissions.
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
