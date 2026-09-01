@@ -13,6 +13,26 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **Nothing stopped two production deploys from running at once, and on 2026-09-02 three did.**
+  `cd.yml` declared no `concurrency:` group, so three runs were in flight against
+  `/home/canari/canari` simultaneously - each able to `git reset --hard` and `docker compose up`
+  while another was mid-flight. Production came out of it answering `/api/version` normally, which
+  is exactly why the gap had never been named: the race heals cleanly almost every time. It does
+  not need a burst of human pushes either - the dependency sweep dispatches this workflow on its
+  own schedule, so two deploys can overlap with nobody at the keyboard, and the dev arm doubles the
+  exposure with a second checkout two runs would race on identically. One group now covers both
+  estates, because they live on one machine and one run deploys both, with
+  `cancel-in-progress: false`: a killed deploy leaves containers half-recreated and the checkout on
+  a commit whose images were never pulled, a state no later run is written to recognise. What makes
+  the pending runs GitHub drops harmless is a property of something else - `detect-changed-services`
+  measures against the `prod-deployed` tag rather than the previous push, so the surviving run
+  rebuilds everything the dropped ones would have; that tag is also the second reason to serialise,
+  since overlapping runs can have one write it while the other is still deploying. The assertion in
+  `deploy-env.test.sh` is DERIVED from `runs-on: self-hosted` rather than from a list of workflow
+  names - there is exactly one such runner, and a typed list would pass on the day somebody adds the
+  third workflow. Both halves proved able to fail: removing the block and flipping
+  `cancel-in-progress` each named themselves.
+
 - **The refresh cookie's `Secure` and `SameSite` were chosen from a header the caller writes.**
   `auth.controller.ts` decided them per request from `Origin`/`Referer`, so outside production
   anything sending `Origin: http://localhost` was handed a refresh cookie with `Secure` off and

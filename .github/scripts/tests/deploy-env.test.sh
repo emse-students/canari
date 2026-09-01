@@ -410,6 +410,38 @@ else
   pass "dev can be given its own push credentials, so the notification path is testable there"
 fi
 
+printf '\nnothing that touches the one machine may run twice at once\n'
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# DERIVED FROM THE RUNNER, NOT FROM A LIST. `runs-on: self-hosted` IS the statement "this job reaches
+# the box that serves production and dev" - there is exactly one such runner - so every workflow that
+# asks for it must also say what it may not overlap with. A hand-written list of workflows to check
+# would pass on the day somebody adds the third one, which is the failure mode this whole suite is
+# built against.
+#
+# It proved able to fail: on 2026-09-02 `cd.yml` had no `concurrency:` at all and three deploy runs
+# were in flight against `/home/canari/canari` simultaneously.
+for wf in .github/workflows/*.yml; do
+  grep -q 'runs-on: self-hosted' "$wf" || continue
+  name="$(basename "$wf")"
+  if grep -q '^concurrency:' "$wf"; then
+    group="$(grep -A2 '^concurrency:' "$wf" | sed -n 's/^ *group: *//p' | head -1)"
+    pass "$name reaches the machine and serialises itself (group: $group)"
+  else
+    fail "$name runs on the self-hosted runner and declares no 'concurrency:' group, so two of its runs can reset the same checkout and recreate the same containers at once"
+  fi
+done
+
+# CANCELLING A DEPLOY MIDWAY IS WORSE THAN QUEUEING BEHIND ONE, and the difference is one word.
+# A killed run leaves containers half-recreated and the checkout on a commit whose images were never
+# pulled - a state no later run is written to recognise. Asserted separately from the group's
+# presence because `cancel-in-progress: true` would satisfy the check above while doing the harm.
+if grep -A2 '^concurrency:' "$CD" | grep -q 'cancel-in-progress: false'; then
+  pass "the deploy workflow queues behind a running deploy instead of killing it"
+else
+  fail "cd.yml does not declare 'cancel-in-progress: false' - a cancelled deploy leaves the estate in whatever state the kill found"
+fi
+
 printf '\n'
 if [ "$FAIL" -ne 0 ]; then
   printf '%s of %s assertions FAILED\n' "$FAIL" "$((PASS + FAIL))"

@@ -146,6 +146,41 @@ The `deploy-to-server` job runs on a self-hosted GitHub Actions runner (label `s
 - Has SSH access to `mitv` (offsite backup server)
 - Runs as the `canari` system user
 
+### There is one runner, so a workflow that asks for it must say what it may not overlap with
+
+`cd.yml` declares `concurrency: { group: cd-deploy, cancel-in-progress: false }`. Until 2026-09-02 it
+declared nothing, and three deploy runs were in flight against `/home/canari/canari` at once - each
+able to `git reset --hard` and `docker compose up` while another was mid-flight. Production came out
+of it answering normally, which is why the gap had gone unnamed: the race heals cleanly almost every
+time.
+
+Three details decide the shape, and only the first is obvious.
+
+- **One group covers BOTH estates.** They are two checkouts on one machine and one run deploys both,
+  so a per-environment group would let a dev deploy and a prod deploy overlap on the same Docker
+  daemon.
+- **`cancel-in-progress: false`.** A killed deploy leaves containers half-recreated and the checkout
+  on a commit whose images were never pulled - a state nothing downstream is written to recognise.
+  Queueing behind a running deploy is the only safe answer.
+- **What makes the runs GitHub drops harmless is a property of the DETECTOR, not of this block.**
+  At most one run waits per group; the rest are cancelled while pending. That would lose work if
+  `detect-changed-services` measured against the previous push - it measures against the
+  `prod-deployed` tag, i.e. what actually reached production, so the surviving run rebuilds
+  everything the dropped ones would have. **That tag is also the second reason to serialise**:
+  overlapping runs can have one write `prod-deployed` while the other is still deploying, which makes
+  the baseline claim a deploy that had not finished.
+
+`deploy-env.test.sh` asserts this, DERIVED from `runs-on: self-hosted` rather than from a list of
+workflow names - there is exactly one such runner, and a typed list would pass on the day somebody
+adds the third workflow. `dev-refresh.yml` carries its own `dev-refresh` group and satisfies the same
+rule.
+
+**Still open, and not covered by either group:** a dev refresh and a dev deploy can overlap, the
+refresh stopping dev's containers to restore while `deploy-dev` brings them up on new images. A
+workflow may declare only one group, so joining them would put a Monday-04:00 database restore in
+front of a production hotfix - a cost paid on the production path for a dev-only race. It is named
+here rather than fixed silently.
+
 ## Release workflow
 
 ```

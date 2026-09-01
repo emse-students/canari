@@ -23,6 +23,30 @@ on:
     workflows: ['Bump version on release']
     types: [completed]
 
+# TWO DEPLOYS OF THE SAME ESTATE MUST NOT OVERLAP, and until 2026-09-02 nothing said so. Three runs
+# were in flight against `/home/canari/canari` at once, each able to `git reset --hard` and
+# `docker compose up` while another was mid-flight; `dependabot-auto-merge.yml` and `dev-refresh.yml`
+# both serialise themselves, and the workflow that actually touches production did not. It does not
+# take a burst of human pushes either - the dependency sweep dispatches this workflow on its own
+# schedule. The dev arm doubles the exposure, `/home/canari/canari-dev` being a second checkout two
+# runs would race on identically, which is why ONE group covers both estates: they live on one
+# machine and one run deploys both.
+#
+# `cancel-in-progress: false` because cancelling a deploy halfway leaves the estate in whatever state
+# the kill found - containers half-recreated, the checkout reset to a commit whose images never got
+# pulled. Queueing behind it is the only safe answer.
+#
+# WHAT MAKES A CANCELLED PENDING RUN HARMLESS, which is the non-obvious half: GitHub keeps at most
+# one run waiting per group and cancels the rest while they are still pending, so a burst of pushes
+# drops the intermediate ones. That would lose work if `detect-changed-services` measured against the
+# previous PUSH - but it measures against the `prod-deployed` tag, which is what actually reached
+# production, so the surviving run rebuilds everything the dropped ones would have. The tag is also a
+# second reason to serialise: overlapping runs can have one write `prod-deployed` while the other is
+# still deploying, which makes the baseline claim a deploy that had not finished.
+concurrency:
+  group: cd-deploy
+  cancel-in-progress: false
+
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ${{ github.repository }}
