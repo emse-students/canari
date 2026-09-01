@@ -35,6 +35,31 @@ Deploys to the production server on push to `main`, manual trigger, or after a r
 
 `GITHUB_TOKEN` pushes from the version-bump workflow do **not** trigger `on: push`. CD is chained via `workflow_run` instead (no `branches:` filter — GitHub would silently drop release-triggered parents).
 
+#### It deploys TWO estates, and dev goes first
+
+Since 2026-09-01 `cd.yml` also carries three jobs for `dev.canari-emse.fr` — `build-frontend-dev`,
+`build-frontend-images-dev` and `deploy-dev` — and `deploy-to-server` **waits on `deploy-dev` and
+refuses to proceed if it failed**. That order is the point of having a second environment: a migration
+that will break production breaks dev first, on a copy of production's data, while production is still
+serving.
+
+All of it is gated on the repository variable `vars.DEV_ENVIRONMENT_ENABLED`, which is **absent
+today**, so every dev job skips and CD behaves exactly as before. It is a `vars` and not a `secrets`
+entry so its value shows in the run log — a silent gate is one nobody can debug. Setting it to
+anything but `true` is also the escape hatch if a broken dev estate ever holds production's releases
+hostage.
+
+**The deploy body is two scripts, not inlined YAML.** `infrastructure/deploy/render-env.sh` resolves
+every `.env` key from `infrastructure/deploy/env-manifest.tsv` and refuses to write a partial file;
+`infrastructure/deploy/deploy-environment.sh` then takes the environment as an argument. Dev reads
+`DEV_<NAME>` for every secret and never the bare name, so a missing dev secret is EMPTY rather than
+production's value. **Production's own deploy job is deliberately NOT on these scripts yet** — it
+moves once dev has exercised them. Everything about the estate itself is on
+[dev-environment](infrastructure/dev-environment.md), the only copy.
+
+`dev-refresh.yml` copies production's data into dev weekly (Mondays 04:00 UTC) and on demand, behind
+the same gate.
+
 ### Mobile CD (`ios-release.yml`, `android-release.yml`, `appimage-release.yml`)
 
 Triggered on release (`vX.Y.Z` tag). Each builds the Tauri app for its platform:

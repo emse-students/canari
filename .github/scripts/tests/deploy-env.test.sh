@@ -124,6 +124,44 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
+printf '\ncd.yml passes every dev secret the manifest asks for - also DERIVED\n'
+# ═════════════════════════════════════════════════════════════════════════════
+
+# The other direction of the same problem. `render-env.sh` reads `DEV_<NAME>` from its environment,
+# and GitHub only puts a secret there if the workflow names it - so a manifest row whose secret
+# `cd.yml` never passes resolves to EMPTY. For a `required` row that fails the deploy loudly, which
+# is the correct direction; for a `warn` row it degrades silently, which is not. Either way the fix
+# is one line in `cd.yml`, and this is what says so at CI time rather than at deploy time.
+if [ -f "$CD" ]; then
+  want_dev="$(manifest_rows | awk -F'\t' '$3 != "skip" && $4 ~ /^secret:/ { sub(/^secret:/, "", $4); print "DEV_" $4 }' | sort -u)"
+  absent=""
+  while read -r name; do
+    [ -z "$name" ] && continue
+    grep -q "secrets\.${name} }}" "$CD" || absent="$absent $name"
+  done <<<"$want_dev"
+  if [ -n "$absent" ]; then
+    fail "cd.yml never passes these dev secrets, so render-env.sh resolves them to empty:$absent"
+  else
+    pass "cd.yml passes all $(printf '%s\n' "$want_dev" | wc -l | tr -d ' ') dev secrets the manifest names"
+  fi
+
+  # And the reverse, which is the one that would leak: a bare production secret name inside the dev
+  # deploy job. The whole isolation rests on dev's job seeing DEV_ names ONLY.
+  dev_job="$(awk '/^  deploy-dev:/{f=1} f && /^  [a-z-]+:$/ && !/^  deploy-dev:/{f=0} f' "$CD")"
+  if [ -z "$dev_job" ]; then
+    fail "could not locate the deploy-dev job in cd.yml to audit its secret references"
+  else
+    bare="$(printf '%s' "$dev_job" | grep -oE 'secrets\.[A-Z_0-9]+' | sed 's/secrets\.//' |
+      grep -vE '^(DEV_|GITHUB_TOKEN$)' | sort -u | tr '\n' ' ')"
+    if [ -n "$bare" ]; then
+      fail "the deploy-dev job references production secrets by their bare name: $bare"
+    else
+      pass "the deploy-dev job references DEV_ secrets only"
+    fi
+  fi
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
 printf '\nthe manifest is well formed\n'
 # ═════════════════════════════════════════════════════════════════════════════
 

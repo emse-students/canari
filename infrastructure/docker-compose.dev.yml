@@ -24,6 +24,15 @@
 # See docs/wiki/backlog.md for every decision taken with the user on 2026-09-01, including why this
 # environment carries a full copy of production and what the copy procedure must strip.
 
+# THE PROJECT NAME IS DECLARED HERE, AND UNTIL 2026-09-01 IT WAS NOT - which made the promise at the
+# top of this file false. A compose project with no `name:` is named after the DIRECTORY the file sits
+# in, and both deployed compose files sit in `infrastructure/`. So this file, run the obvious way,
+# would have joined production's project: `postgres_data` resolves to `infrastructure_postgres_data`,
+# which is production's live database, and the network to production's network. Isolation was one
+# forgotten `-p` away from being nothing at all, and "pass the right flag" is not a property of a
+# system - it is a thing somebody remembers. Now the file carries its own identity.
+name: canari-dev
+
 # Ceilings, not reservations. Dev shares a host with production, and the point is that a dev
 # container which misbehaves cannot starve the estate real members use.
 x-dev-limits: &dev-limits
@@ -370,8 +379,19 @@ services:
   #
   # THE PREVIOUS VERSION OF THIS FILE HAD NO SUCH SERVICE AT ALL, while production's frontend
   # depends on it - one more sign the file predated the estate it claimed to mirror.
+  # THE TWO FRONTEND IMAGES ARE NOT SHARED WITH PRODUCTION, AND EVERY OTHER IMAGE HERE IS. That
+  # asymmetry is the point. A backend image reads its whole configuration from .env at runtime, so
+  # dev running production's `latest` backend binaries means a difference in behaviour between the
+  # two estates can never be explained by a different build - which is the only thing that makes a
+  # test environment worth having. The frontend is the exception because SvelteKit inlines
+  # `import.meta.env.*` at BUILD time: the API origins, the Authentik client id and the
+  # `VITE_DEPLOY_ENVIRONMENT` that raises the permanent "test environment" banner are all baked in.
+  # A shared frontend image would therefore point dev's browser at production and show no banner.
+  #
+  # `dev` is mutable, like production's `latest`, which is why CD pulls before it brings the estate
+  # up - `up -d` alone sees no reason to recreate a container whose tag has not changed.
   frontend-ssr:
-    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/frontend-ssr:${TAG:?TAG is required - CD passes an immutable tag}
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/frontend-ssr:${FRONTEND_TAG:-dev}
     restart: always
     <<: *dev-limits
     environment:
@@ -396,7 +416,7 @@ services:
   # `http://localhost:3080`. Dev runs its OWN nginx, so production's single public entry point is
   # never edited to accommodate a second environment.
   frontend:
-    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/frontend:${TAG:?TAG is required - CD passes an immutable tag}
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/frontend:${FRONTEND_TAG:-dev}
     restart: always
     <<: *dev-limits
     environment:

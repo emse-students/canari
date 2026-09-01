@@ -1,3 +1,13 @@
+# THE PROJECT NAME IS PINNED, AND THIS IS A NO-OP TODAY ON PURPOSE. `infrastructure` is what the
+# project is called right now, because that is the directory this file sits in and nothing declared
+# otherwise - measured on the server, whose volumes are `infrastructure_postgres_data`,
+# `infrastructure_redis_data` and so on. Writing it down changes nothing and buys two things. Moving
+# or renaming the checkout no longer renames the project, which would orphan every volume and start
+# production on an empty database. And it makes `docker-compose.dev.yml`'s own `name: canari-dev` a
+# guarantee rather than a hope: two files in one directory, each carrying its own identity, cannot be
+# merged into one estate by a caller who forgets `-p`.
+name: infrastructure
+
 services:
 
   # ─────────────────────────────────────────────────────

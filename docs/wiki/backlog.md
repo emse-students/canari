@@ -2800,15 +2800,33 @@ that reason is what a future session must argue with rather than the choice.
 > **This item holds the DECISIONS. How the environment is actually put together - the isolation, the
 > two host ports, the copy and its three strips, the declared version gap, the two variables that
 > identify a dev deployment - is on
-> [dev-environment](infrastructure/dev-environment.md), the only copy.** Six of the eight steps have
-> shipped; what is left is the CD wiring (sequenced last on purpose), the tunnel ingress edit, and the
-> credentials owed by the user. That page's closing section is the map.
+> [dev-environment](infrastructure/dev-environment.md), the only copy.** **ALL EIGHT STEPS HAVE
+> SHIPPED** (2026-09-01), the CD wiring included. What is left is owed by the USER and is three
+> things: the tunnel ingress rule to `3080`, the `DEV_*` secrets, and setting
+> `vars.DEV_ENVIRONMENT_ENABLED` to `true` - until which every dev job skips and CD is unchanged.
+> That page's closing section is the map.
 
 **Shape.** Same machine as production (70 GB and 15 GiB free, measured), own compose project
 `canari-dev`, resource limits so a dev container cannot starve prod, running permanently. Own
 Postgres, own Redis **with** a `redis_data` volume, own Garage instance with its own keys, own RPC and
-admin secrets, and a bucket named `canari-media-dev`. Secrets carried by a GitHub environment named
-`dev`, not by prefixed repo secrets.
+admin secrets, and a bucket named `canari-media-dev`. ~~Secrets carried by a GitHub environment named
+`dev`, not by prefixed repo secrets.~~
+
+> **THIS ONE DECISION WAS REVERSED WHILE BUILDING IT, 2026-09-01, and the reversal is recorded here
+> rather than made quietly - it is the only scoped decision this chantier went against.** GitHub
+> resolves `secrets.FOO` inside a job declaring `environment: dev` in this order: the environment's
+> own secret, then the REPOSITORY secret. So an environment where somebody forgot one secret does not
+> fail - it silently inherits production's value for it. That is a fail-OPEN mechanism, and it is
+> precisely the defect the deleted `cd-dev.yml` shipped: it read the bare names and would have run a
+> second estate on production's own `JWT_SECRET`, making a token minted by either valid in the other.
+>
+> Dev therefore reads `DEV_<NAME>` and **never** the bare name, so a missing dev secret is EMPTY and a
+> `required` row refuses the deploy before a container is touched - fail-CLOSED. The GitHub environment
+> still exists and `deploy-dev` still declares `environment: development`, for its deployment URL and
+> any protection rules; the two mechanisms do not conflict, because the job no longer depends on
+> environment scoping for isolation. The intent behind the original decision - dev secrets kept apart
+> from production's - is fully served; only the mechanism changed, for a reason that would otherwise
+> have re-created the exact hazard this environment exists to remove.
 
 **Data: a FULL copy of production, unscrubbed - the user's choice, against the recommendation.** The
 reason is usability: *"le plus proche de la prod est mieux quand-meme, sinon complique de se connecter
@@ -2878,8 +2896,10 @@ path, because the frontend turns that field into a release tag and a GitHub down
 `v0.14.15+dev.abc1234` - a 404. The permanent, non-dismissible **"test environment" banner** is built
 (`EnvironmentBanner.svelte`, driven by the build-time `VITE_DEPLOY_ENVIRONMENT`, unset meaning
 production so a missing variable never brands prod) - non-negotiable given the copy is
-indistinguishable from prod on screen. **Both variables are still unwritten by any pipeline**, which
-is the CD wiring, deliberately last. `minClientVersion` is per-environment by virtue of the separate
+indistinguishable from prod on screen. **Both variables are written by the pipeline as of 2026-09-01**:
+`build-frontend-dev` writes `VITE_DEPLOY_ENVIRONMENT=development` into the dev bundle, and
+`render-env.sh --build dev.<sha7>` writes `DEPLOY_BUILD` into dev's `.env` only - the manifest marks
+that row `skip` for production, so a tagged release keeps `build: null`. `minClientVersion` is per-environment by virtue of the separate
 database. A GitHub release does not build dev.
 
 **Dev is deliberately ONE MAJOR AHEAD, and a PROVEN gap lifts a ceiling.** ~~Postgres 18 starting in

@@ -11,10 +11,15 @@ with the user on 2026-09-01 and marked not to be re-litigated - are in
 [backlog](../backlog.md); the merge-ceiling half is on [cicd](../cicd.md); the cookie half is on
 [sessions](../sessions.md).
 
-**IT DOES NOT EXIST YET.** Every mechanism described below is built, tested and committed, but
-nothing deploys it: the CD wiring is sequenced last on purpose (see
-[what is still owed](#what-is-still-owed-and-by-whom)). Until then production is the only
-environment, and every default here is chosen so that absence reads as production.
+**EVERYTHING IS BUILT, AND ONE SWITCH IS OFF.** The CD wiring landed on 2026-09-01: `cd.yml` now
+carries three dev jobs and `dev-refresh.yml` keeps the copy current. All of them are gated on the
+repository variable `vars.DEV_ENVIRONMENT_ENABLED`, which is **absent**, so every dev job skips and
+CD behaves exactly as it did before. What the estate still needs before that switch can be turned on
+is one tunnel ingress rule and the `DEV_*` secrets - see
+[what is still owed](#what-is-still-owed-and-by-whom).
+
+Until then production is the only environment, and every default here is chosen so that absence
+reads as production.
 
 ---
 
@@ -28,6 +33,18 @@ against [`infrastructure/docker-compose.dev.yml`](../../../infrastructure/docker
 production is the project `infrastructure`. A compose project gets its own network and its own named
 volumes, so a dev container cannot resolve a production service by name and cannot mount a
 production volume. This is not configuration a value can get wrong.
+
+**AND UNTIL 2026-09-01 THE SENTENCE ABOVE WAS FALSE, WHICH IS THE WORST DEFECT THIS FILE HAS HELD.**
+A compose project with no top-level `name:` is named after the DIRECTORY its file sits in - and both
+deployed compose files sit in `infrastructure/`. Neither declared one. So the dev file, run the
+obvious way with `-f` and no `-p`, would have joined production's project: dev's `postgres_data`
+resolves to `infrastructure_postgres_data`, which is production's live database (measured on the
+server: `infrastructure_postgres_data`, `infrastructure_redis_data`, `infrastructure_garage_data`),
+and dev's network to production's network. The isolation was one forgotten flag away from being
+nothing at all, and "pass the right flag" is not a property of a system - it is a thing somebody
+remembers. Both files now carry their own `name:`, production's pinned to the value it already has
+so that moving the checkout can never rename the project and orphan every volume.
+`compose-wiring.test.sh` asserts that each deployed file declares one and that no two agree.
 
 **By value - conventional.** Every `${...}` in the dev compose file is filled from the dev
 environment's own secrets: its own `JWT_SECRET` (so a token minted by one environment is refused by
@@ -212,6 +229,7 @@ Run by `make test-ci-scripts`, which is a CI job:
 | [`dev-copy-guards.test.sh`](../../../.github/scripts/tests/dev-copy-guards.test.sh) | the payment columns from the entity declarations |
 | [`dev-gap.test.sh`](../../../.github/scripts/tests/dev-gap.test.sh) | the row set from production's compose file's named stateful images |
 | [`ceiling.test.sh`](../../../.github/scripts/tests/ceiling.test.sh) | the stateful image names from `docker-compose.prod.yml` |
+| [`deploy-env.test.sh`](../../../.github/scripts/tests/deploy-env.test.sh) | the expected `.env` key set from `cd.yml`'s own `upsert_env_var` calls, and the dev secret list from the manifest - it also asserts that `deploy-dev` references no production secret by its bare name |
 
 Every one of them reads its subject from a source of truth rather than a hand-written list, for the
 same reason: the failure mode of a guard list is an ABSENCE, and an absence in a hand-written list
@@ -219,33 +237,121 @@ passes silently.
 
 ---
 
+## 8. How it is deployed
+
+One workflow, `cd.yml`, with three added jobs and a fourth that refreshes the data. Every one of them
+is gated on `vars.DEV_ENVIRONMENT_ENABLED == 'true'`, a repository VARIABLE rather than a secret so
+its value is visible in the run log - whether a second estate is being deployed is not a secret, and
+a silent gate is one nobody can debug.
+
+| job | where | what it does |
+|---|---|---|
+| `build-frontend-dev` | GitHub runner | builds the frontend from the `DEV_*` secrets, with `VITE_DEPLOY_ENVIRONMENT=development` |
+| `build-frontend-images-dev` | GitHub runner | pushes `frontend:dev` and `frontend-ssr:dev`, plus an immutable `dev-<sha>` |
+| `deploy-dev` | the server | renders `.env`, then runs [`deploy-environment.sh`](../../../infrastructure/deploy/deploy-environment.sh) |
+| `refresh` in [`dev-refresh.yml`](../../../.github/workflows/dev-refresh.yml) | the server | weekly, copies production's data into dev |
+
+### Two images are dev's own, and every other one is shared
+
+A backend image reads its whole configuration from `.env` at runtime, so dev runs production's
+`latest` backend binaries. That is a feature and not a shortcut: it means a difference in behaviour
+between the two estates can never be explained by a different build, which is the only thing that
+makes a test environment worth having.
+
+The frontend is the exception, because SvelteKit inlines `import.meta.env.*` at BUILD time - the API
+origins, the Authentik client id and the `VITE_DEPLOY_ENVIRONMENT` that raises the banner are all
+baked into the bundle. A shared frontend image would point dev's browser at production and show no
+banner. So the dev compose file reads `${FRONTEND_TAG:-dev}` for its two frontends and `${TAG}` for
+everything else.
+
+`dev` is a mutable tag, like production's `latest`, which is why the deploy PULLS before it brings
+the estate up: `up -d` alone sees no reason to recreate a container whose tag has not changed.
+
+### The deploy is two scripts, and the order is load-bearing
+
+[`render-env.sh`](../../../infrastructure/deploy/render-env.sh) runs FIRST and resolves every key
+before writing anything. A missing required secret fails there, with the previous dev deployment
+still up, rather than starting a half-configured estate. Only then does
+[`deploy-environment.sh`](../../../infrastructure/deploy/deploy-environment.sh) touch a container.
+
+**The isolation is an indirection, not a document.** A manifest row says `secret:JWT_SECRET`;
+production reads `JWT_SECRET`, dev reads `DEV_JWT_SECRET` and never the bare name. So a dev secret
+nobody created is EMPTY rather than production's value, and a `required` row then refuses the deploy.
+GitHub environment-scoped secrets would have failed OPEN here - a forgotten dev secret resolving
+silently to the repo-level production value - which is exactly what the deleted `cd-dev.yml` did.
+
+**The required-service gate is inverted relative to production's.** `deploy-environment.sh` derives
+the list from the compose file and exempts only what is named in `NON_CRITICAL` (`adminer`). The
+workflow it replaces named ten services by hand, and that shape is the defect: on 2026-09-01 it named
+seven application services and none of the three datastores, and `frontend-ssr` was in NEITHER
+version - so an estate whose server-side renderer never came up would still have deployed green.
+
+**And it health-checks `/api/version`, which production's deploy does not.** Every other check passes
+with the database on the floor: nginx answers `/`, and the two liveness routes are deliberately
+anonymous. `/api/version` reads the database, so it is the cheapest end-to-end statement that the
+estate is really serving - the exact statement missing during the 33-minute outage of 2026-09-01,
+throughout which the frontend answered 200.
+
+### Dev deploys BEFORE production, and a failed dev deploy stops it
+
+Decided with the user, and it is the point of the whole environment: a migration that will break
+production breaks dev first, on a copy of production's data, while production is still serving.
+
+**The hazard is real and the escape is one switch.** A dev estate broken for a reason of its own - a
+mis-set `DEV_*` secret, its Authentik client revoked - would hold production's releases hostage.
+Setting `DEV_ENVIRONMENT_ENABLED` to anything but `true` skips dev and unblocks production at once.
+
+### Its own checkout, and its own deployed tag
+
+The dev estate is deployed from `/home/canari/canari-dev`, a separate clone, because two estates
+sharing one working tree would race: a `git reset --hard` for one rewrites the compose file the other
+is being deployed from. `deploy-dev` creates that clone if it is absent, so the starting point is
+reproducible rather than a directory somebody once made differently.
+
+It records `dev-deployed` and deliberately not `prod-deployed`: that tag is the change detector's
+input, so a dev deploy writing it would tell the next push that production already runs this commit
+and skip its rebuild entirely.
+
+---
+
 ## What is still owed, and by whom
 
 The tracked items live in [backlog](../backlog.md); this is the map.
 
-**Owed by the user** - credentials nothing here can create:
+**Owed by the user, but NOT blocking the estate** - each buys one capability dev does without:
 
 - the Cloudflare Access service token for the harness (needs `Account -> Cloudflare Tunnel` plus the
-  two account-scoped Access permissions)
-- a dev Firebase project, for push
-- a dev Android keystore, and where it is backed up
+  two account-scoped Access permissions); without it the campaign rig cannot drive dev
+- a dev Firebase project, for push; without it `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` is empty and dev
+  sends no notifications, which the deploy reports as a warning rather than a failure
+- a dev Android keystore, and where it is backed up; mobile is phase 2
 
-**Owed by the CD wiring**, sequenced last on purpose - editing production's CD before dev serves
-anything is how a third outage happens:
+**The CD wiring is DONE** (2026-09-01), and it is section 8. `cd-dev.yml` is gone, deleted ahead of
+the unification rather than with it: its `push: branches: [dev]` trigger could never fire, but its
+`workflow_dispatch` could, and it read PRODUCTION's secrets - the same `JWT_SECRET`, the same Garage
+keys, the same `canari-media` bucket - which is precisely the isolation this environment exists to
+have. It was never a useful reference for the dev arm either, having never worked; recover it from git
+if ever needed (`git show a8ac1828:.github/workflows/cd-dev.yml`).
 
-- unify `cd.yml` into one environment-parameterised workflow. **`cd-dev.yml` is already gone**,
-  deleted on 2026-09-01 ahead of the unification rather than with it: its `push: branches: [dev]`
-  trigger could never fire, but its `workflow_dispatch` could, and it read PRODUCTION's secrets -
-  the same `JWT_SECRET`, the same Garage keys, the same `canari-media` bucket - which is precisely
-  the isolation this environment exists to have. It was never a useful reference for the dev arm
-  either, having never worked; recover it from git if ever needed
-  (`git show a8ac1828:.github/workflows/cd-dev.yml`)
-- the dev-before-prod migration gate
-- write `VITE_DEPLOY_ENVIRONMENT` and `DEPLOY_BUILD`
-- the copy workflow's trigger
+**Owed by the user, and this is the whole list** - three things, none of which anything here can
+create:
 
-**One tunnel ingress edit**: repoint `dev.canari-emse.fr` at `http://localhost:3080`. GET the
-config, save the original, change the single rule, PUT - never probed by writing.
+1. **One tunnel INGRESS rule**: `dev.canari-emse.fr` -> `http://localhost:3080`, in
+   `Account -> Cloudflare Tunnel`. DNS already resolves; today the name is a proxied CNAME onto
+   production's own tunnel, which is why anyone told to "use dev" is currently typing into
+   production. If it is ever done through the API rather than the dashboard: GET the config, save the
+   original, change the single rule, PUT - and never probe it by writing.
+2. **The `DEV_*` repository secrets.** 14 are required and the deploy refuses without them; 9 are
+   optional and each degrades one named feature. The list, with what each absence costs, is
+   [`infrastructure/deploy/env-manifest.tsv`](../../../infrastructure/deploy/env-manifest.tsv) -
+   every row whose DEV column is not `skip`, prefixed `DEV_`.
+3. **Setting `DEV_ENVIRONMENT_ENABLED` to `true`**, once the two above exist. Until then every dev
+   job skips and CD is unchanged.
+
+**Owed by production, LATER and deliberately not yet.** `deploy-to-server` still carries its own
+~780 lines of inlined shell. It moves onto `deploy-environment.sh` once the dev estate has actually
+exercised that script - rewriting production's deploy path with no way to test it, on the day of two
+outages, is how a third one happens. One implementation, proven before it is imposed.
 
 **One thing that cannot be verified until Access exists.** The campaign harness must reach dev
 freely (user, 2026-09-01), and it drives real Chrome over CDP rather than Playwright - so the

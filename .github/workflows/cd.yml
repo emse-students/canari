@@ -28,6 +28,12 @@ env:
   IMAGE_PREFIX: ${{ github.repository }}
   DOMAIN: canari-emse.fr
   DEPLOY_PATH: /home/canari/canari
+  # The second estate, on the SAME machine. A separate checkout because two estates sharing one
+  # working tree would race - a `git reset --hard` for one rewrites the compose file the other is
+  # being deployed from - and a separate compose project (`canari-dev`, declared in the file itself)
+  # because that is what gives it its own network and its own volumes.
+  DEV_DOMAIN: dev.canari-emse.fr
+  DEV_DEPLOY_PATH: /home/canari/canari-dev
   # After a version-bump push, checkout `main` tip (workflow_run SHA is the pre-push commit).
   CHECKOUT_REF: ${{ github.event_name == 'workflow_run' && 'main' || github.sha }}
 
@@ -427,17 +433,364 @@ jobs:
           cache-from: type=gha,ignore-error=true
           cache-to: type=gha,mode=min,ignore-error=true
 
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # THE DEV ESTATE - dev.canari-emse.fr
+  #
+  # THREE JOBS, AND THEY RUN BEFORE PRODUCTION DEPLOYS. That order was decided with the user and is
+  # the whole reason a second environment exists: a migration that will break production breaks dev
+  # first, on a copy of production's data, while production is still serving. `deploy-to-server`
+  # therefore waits on `deploy-dev` and refuses to proceed if it FAILED - while tolerating `skipped`,
+  # which is the state whenever the gate below is off.
+  #
+  # THE GATE IS A REPOSITORY VARIABLE, NOT A SECRET, AND IT IS ABSENT TODAY. `vars.DEV_ENVIRONMENT
+  # _ENABLED` unset means every job here skips and this file behaves exactly as it did before - which
+  # is what makes it safe to merge before the tunnel ingress rule and the DEV_* secrets exist. It is
+  # a `vars` and not a `secrets` entry so its value is visible in the run log: whether a second
+  # estate is being deployed is not a secret, and a silent gate is one nobody can debug.
+  #
+  # WHAT IS DELIBERATELY NOT HERE. No mobile build (phase 2, decided with the user), no Stripe, and
+  # no separate backend images - see `docker-compose.dev.yml` beside the frontend services for why
+  # sharing production's backend images is a feature rather than a shortcut.
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+  # The dev frontend is a SEPARATE BUILD, not a re-tag, because SvelteKit inlines
+  # `import.meta.env.*` at build time: the API origins, the Authentik client id and
+  # `VITE_DEPLOY_ENVIRONMENT` are baked into the bundle. Re-tagging production's image would point
+  # dev's browser at production and show no banner.
+  build-frontend-dev:
+    name: Build Frontend (dev)
+    needs: detect-changed-services
+    # `workflow_dispatch` builds it unconditionally, and that is the BOOTSTRAP. The change detector
+    # answers "did the frontend change since the last deploy", which is the wrong question the first
+    # time: no `frontend:dev` image exists yet, so a push that happens not to touch the frontend
+    # would deploy an estate referencing an image the registry does not have. A manual dispatch is
+    # therefore always sufficient to bring the dev estate up from nothing.
+    if: |
+      vars.DEV_ENVIRONMENT_ENABLED == 'true' &&
+      (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') &&
+      (needs.detect-changed-services.outputs.frontend_changed == 'true' ||
+       github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: ".bun-version"
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v6
+        with:
+          path: |
+            frontend/node_modules
+            ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('frontend/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: |
+          bun install --frozen-lockfile
+          bunx svelte-kit sync
+
+      - name: Build MLS WASM
+        uses: ./.github/actions/build-mls-wasm
+
+      - name: Generate protobuf bindings
+        working-directory: frontend
+        run: bun run proto:gen
+
+      # THE THREE SECRETS DEV CANNOT BE BUILT WITHOUT, and they are the DEV_ ones. A missing
+      # `DEV_BASE_URL` would otherwise produce a bundle whose every API origin is the empty string,
+      # which builds fine and then fails in a browser with no server-side trace. Note there is no
+      # fallback to the bare `BASE_URL`: falling back would build a dev image pointing at
+      # production, which is precisely the accident this whole environment is meant to prevent.
+      - name: Validate the dev frontend build secrets
+        env:
+          DEV_BASE_URL: ${{ secrets.DEV_BASE_URL }}
+          DEV_AUTHENTIK_URL: ${{ secrets.DEV_AUTHENTIK_URL }}
+          DEV_AUTHENTIK_CLIENT_ID: ${{ secrets.DEV_AUTHENTIK_CLIENT_ID }}
+        run: |
+          missing=0
+          for name in DEV_BASE_URL DEV_AUTHENTIK_URL DEV_AUTHENTIK_CLIENT_ID; do
+            if [ -z "${!name}" ]; then
+              echo "::error::$name is not set. The dev frontend is built from the dev secrets only - there is no fallback to production's, because that would build a dev image pointing at production."
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ]
+
+      - name: Create the dev frontend .env
+        working-directory: frontend
+        env:
+          DEV_BASE_URL: ${{ secrets.DEV_BASE_URL }}
+          DEV_AUTHENTIK_URL: ${{ secrets.DEV_AUTHENTIK_URL }}
+          DEV_AUTHENTIK_CLIENT_ID: ${{ secrets.DEV_AUTHENTIK_CLIENT_ID }}
+          ANDROID_APP_LINK_SHA256: ${{ secrets.ANDROID_APP_LINK_SHA256 }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          KLIPY_API_KEY: ${{ secrets.KLIPY_API_KEY }}
+        run: |
+          # Same shape as the production build above, from the DEV_ secrets. Every URL is dev's own
+          # origin; nginx routes /ws, /api/ and /media/ on that same host.
+          echo "VITE_FRONTEND_URL=${DEV_BASE_URL}" >> .env
+          echo "VITE_GATEWAY_URL=${DEV_BASE_URL}" >> .env
+          echo "VITE_CALL_URL=${DEV_BASE_URL}" >> .env
+          echo "VITE_DELIVERY_URL=${DEV_BASE_URL}" >> .env
+          echo "VITE_MEDIA_URL=${DEV_BASE_URL}" >> .env
+          echo "VITE_SOCIAL_URL=${DEV_BASE_URL}" >> .env
+          echo "VITE_CORE_URL=${DEV_BASE_URL}" >> .env
+          echo "VITE_AUTHENTIK_URL=${DEV_AUTHENTIK_URL}" >> .env
+          echo "VITE_AUTHENTIK_CLIENT_ID=${DEV_AUTHENTIK_CLIENT_ID}" >> .env
+
+          # WHAT RAISES THE PERMANENT "test environment" BANNER, and the one line that makes this
+          # build different from production's. `deployEnvironment()` treats UNSET as production on
+          # purpose, so the failure mode of forgetting it is a missing banner on dev - visible to
+          # whoever is looking at it - rather than a banner on production.
+          echo "VITE_DEPLOY_ENVIRONMENT=development" >> .env
+
+          # NO VITE_STRIPE_PUBLISHABLE_KEY. Dev has no payment credentials at all (decided with the
+          # user), and a publishable key whose secret half is absent produces a checkout that opens
+          # and then fails - worse than a button that is not there.
+
+          if [ -n "$ANDROID_APP_LINK_SHA256" ]; then
+            echo "VITE_ANDROID_APP_LINK_SHA256=${ANDROID_APP_LINK_SHA256}" >> .env
+          fi
+          if [ -n "$APPLE_TEAM_ID" ]; then
+            echo "VITE_APPLE_TEAM_ID=${APPLE_TEAM_ID}" >> .env
+          fi
+          if [ -n "$KLIPY_API_KEY" ]; then
+            echo "VITE_KLIPY_KEY=${KLIPY_API_KEY}" >> .env
+          fi
+
+      - name: Build the dev frontend
+        working-directory: frontend
+        env:
+          BUILD_WEB: '1'
+        run: bun run build
+
+      - name: Upload the dev frontend build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-build-dev
+          path: frontend/build/
+          include-hidden-files: true
+          retention-days: 7
+
+  # Exactly two images, and they are the only ones dev does not share with production.
+  build-frontend-images-dev:
+    name: Build & Push Frontend Images (dev)
+    runs-on: ubuntu-latest
+    needs: [detect-changed-services, build-frontend-dev]
+    if: |
+      always() &&
+      vars.DEV_ENVIRONMENT_ENABLED == 'true' &&
+      needs.build-frontend-dev.result == 'success'
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      # Same reason as the production matrix: one image's failure must not cancel its sibling.
+      fail-fast: false
+      matrix:
+        image:
+          - name: frontend
+            dockerfile: ./infrastructure/local/Dockerfile.frontend
+          - name: frontend-ssr
+            dockerfile: ./infrastructure/local/Dockerfile.frontend-ssr
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+
+      - name: Download the dev frontend build artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: frontend-build-dev
+          path: frontend/build/
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # `dev` is the mutable tag the dev compose file reads; `dev-<sha>` is the immutable one that
+      # says WHICH commit an estate is running, since `dev` alone cannot answer that afterwards.
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.image.dockerfile }}
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.image.name }}:dev
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.image.name }}:dev-${{ github.sha }}
+          cache-from: type=gha,ignore-error=true
+          cache-to: type=gha,mode=min,ignore-error=true
+
+  deploy-dev:
+    name: Deploy to dev.canari-emse.fr
+    runs-on: self-hosted
+    needs: [run-ci, detect-changed-services, build-docker-images, build-frontend-images-dev]
+    if: |
+      always() &&
+      vars.DEV_ENVIRONMENT_ENABLED == 'true' &&
+      (github.event_name == 'workflow_run' || github.ref == 'refs/heads/main') &&
+      (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') &&
+      (needs.run-ci.result == 'success' || needs.run-ci.result == 'skipped') &&
+      needs.detect-changed-services.result == 'success' &&
+      (needs.build-docker-images.result == 'success' || needs.build-docker-images.result == 'skipped') &&
+      (needs.build-frontend-images-dev.result == 'success' || needs.build-frontend-images-dev.result == 'skipped')
+    permissions:
+      contents: write
+      packages: read
+    environment:
+      name: development
+      url: https://${{ env.DEV_DOMAIN }}
+    steps:
+      # ONE NAMED STARTING POINT, whatever happened before. The dev estate has its OWN checkout,
+      # separate from production's, because two estates sharing one working tree would race: a
+      # `git reset --hard` for one rewrites the compose file the other is being deployed from. The
+      # clone is done here rather than by hand so the state is reproducible - a directory somebody
+      # created once, differently, is exactly the inherited state this repository keeps paying for.
+      - name: Ensure the dev checkout exists and is at this commit
+        run: |
+          set -euo pipefail
+          if [ ! -d "$DEV_DEPLOY_PATH/.git" ]; then
+            echo "no dev checkout at $DEV_DEPLOY_PATH - cloning"
+            rm -rf "$DEV_DEPLOY_PATH"
+            git clone --no-checkout \
+              "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" \
+              "$DEV_DEPLOY_PATH"
+          fi
+          cd "$DEV_DEPLOY_PATH"
+          git remote set-url origin \
+            "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          git fetch origin main
+          git reset --hard origin/main
+          echo "dev checkout at $(git rev-parse --short HEAD)"
+
+      # Renders infrastructure/.env for the dev estate and NOTHING ELSE, from the DEV_ secrets only.
+      # The list is the manifest's own `secret:` rows that dev does not skip; a row added there and
+      # not here is caught by `.github/scripts/tests/deploy-env.test.sh`, which derives this block.
+      #
+      # IT RUNS BEFORE ANY CONTAINER IS TOUCHED, and refuses to write a partial file: a missing
+      # required secret fails here, with the previous dev deployment still up.
+      - name: Render the dev environment
+        working-directory: ${{ env.DEV_DEPLOY_PATH }}
+        env:
+          DEV_JWT_SECRET: ${{ secrets.DEV_JWT_SECRET }}
+          DEV_AUTHENTIK_URL: ${{ secrets.DEV_AUTHENTIK_URL }}
+          DEV_AUTHENTIK_CLIENT_ID: ${{ secrets.DEV_AUTHENTIK_CLIENT_ID }}
+          DEV_AUTHENTIK_CLIENT_SECRET: ${{ secrets.DEV_AUTHENTIK_CLIENT_SECRET }}
+          DEV_BASE_URL: ${{ secrets.DEV_BASE_URL }}
+          DEV_POSTGRES_USER: ${{ secrets.DEV_POSTGRES_USER }}
+          DEV_POSTGRES_PASSWORD: ${{ secrets.DEV_POSTGRES_PASSWORD }}
+          DEV_GARAGE_RPC_SECRET: ${{ secrets.DEV_GARAGE_RPC_SECRET }}
+          DEV_GARAGE_ADMIN_TOKEN: ${{ secrets.DEV_GARAGE_ADMIN_TOKEN }}
+          DEV_GARAGE_ACCESS_KEY_ID: ${{ secrets.DEV_GARAGE_ACCESS_KEY_ID }}
+          DEV_GARAGE_SECRET_ACCESS_KEY: ${{ secrets.DEV_GARAGE_SECRET_ACCESS_KEY }}
+          DEV_CHANNELS_ENCRYPTION_SECRET: ${{ secrets.DEV_CHANNELS_ENCRYPTION_SECRET }}
+          DEV_INTERNAL_SHARED_SECRET: ${{ secrets.DEV_INTERNAL_SHARED_SECRET }}
+          DEV_CALL_ROOM_SECRET: ${{ secrets.DEV_CALL_ROOM_SECRET }}
+          DEV_INTERNAL_SECRET: ${{ secrets.DEV_INTERNAL_SECRET }}
+          DEV_EXTERNAL_API_KEY: ${{ secrets.DEV_EXTERNAL_API_KEY }}
+          DEV_SKY_API_KEY: ${{ secrets.DEV_SKY_API_KEY }}
+          DEV_FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.DEV_FIREBASE_SERVICE_ACCOUNT_JSON }}
+          DEV_CLOUDFLARE_CALLS_API_TOKEN: ${{ secrets.DEV_CLOUDFLARE_CALLS_API_TOKEN }}
+          DEV_CLOUDFLARE_TURN_KEY_ID: ${{ secrets.DEV_CLOUDFLARE_TURN_KEY_ID }}
+          DEV_MIGALLERY_API_KEY: ${{ secrets.DEV_MIGALLERY_API_KEY }}
+          DEV_GOOGLE_SAFE_BROWSING_API_KEY: ${{ secrets.DEV_GOOGLE_SAFE_BROWSING_API_KEY }}
+          DEV_SERVICE_ACCOUNT_USER_ID: ${{ secrets.DEV_SERVICE_ACCOUNT_USER_ID }}
+        run: |
+          set -euo pipefail
+          bash infrastructure/deploy/render-env.sh \
+            --environment dev \
+            --domain "${{ env.DOMAIN }}" \
+            --build "dev.$(git rev-parse --short=7 HEAD)" \
+            --out infrastructure/.env
+
+          # The host port the tunnel's ingress rule points at. It is not a secret and not a
+          # per-deployment decision, so it is written here rather than carried as one - the compose
+          # file's own default is the same number, and this makes the two agree in writing.
+          if ! grep -q '^FRONTEND_HOST_PORT=' infrastructure/.env; then
+            echo "FRONTEND_HOST_PORT=3080" >> infrastructure/.env
+          fi
+          # The two garage tooling ports, offset from production's because these ARE published.
+          grep -q '^GARAGE_API_HOST_PORT=' infrastructure/.env || echo "GARAGE_API_HOST_PORT=19100" >> infrastructure/.env
+          grep -q '^GARAGE_ADMIN_HOST_PORT=' infrastructure/.env || echo "GARAGE_ADMIN_HOST_PORT=19101" >> infrastructure/.env
+
+      # `TAG=latest` for the shared backend images, `FRONTEND_TAG=dev` for the two that are dev's
+      # own. `--pull-services` carries the backend services the detector saw change, minus the two
+      # frontends, which are pulled unconditionally because their `dev` tag has just moved.
+      - name: Deploy the dev estate
+        working-directory: ${{ env.DEV_DEPLOY_PATH }}
+        env:
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_TOKEN: ${{ github.token }}
+          FRONTEND_TAG: dev
+          CHANGED_SERVICES: ${{ needs.detect-changed-services.outputs.services_args }}
+          FRONTEND_IMAGES_BUILT: ${{ needs.build-frontend-images-dev.result }}
+        run: |
+          set -euo pipefail
+          pull="$CHANGED_SERVICES"
+          if [ "$FRONTEND_IMAGES_BUILT" = "success" ]; then
+            case " $pull " in
+            *" frontend "*) ;;
+            *) pull="$pull frontend frontend-ssr" ;;
+            esac
+          fi
+          bash infrastructure/deploy/deploy-environment.sh \
+            --environment dev \
+            --path "${{ env.DEV_DEPLOY_PATH }}" \
+            --tag latest \
+            --registry "${{ env.REGISTRY }}" \
+            --image-prefix "${{ env.IMAGE_PREFIX }}" \
+            --pull-services "$pull"
+
+      # The dev estate's own baseline, and deliberately NOT `prod-deployed`: that tag is the change
+      # detector's input, so a dev deploy writing it would tell the next push that production
+      # already runs this commit and skip its rebuild entirely.
+      - name: Record the deployed commit
+        if: success()
+        run: |
+          set -euo pipefail
+          git -C "${{ env.DEV_DEPLOY_PATH }}" tag -f dev-deployed "${{ github.sha }}"
+          git -C "${{ env.DEV_DEPLOY_PATH }}" push -f \
+            "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" \
+            refs/tags/dev-deployed
+          echo "dev-deployed -> ${{ github.sha }}"
+
   deploy-to-server:
     name: Deploy to Production Server
     runs-on: self-hosted
-    needs: [run-ci, detect-changed-services, build-docker-images]
+    needs: [run-ci, detect-changed-services, build-docker-images, deploy-dev]
+    # THE DEV ESTATE DEPLOYS FIRST, AND A FAILED DEV DEPLOY STOPS THIS ONE. Decided with the user,
+    # and it is the point of having a second environment: a migration that will break production
+    # breaks dev first, on a copy of production's data, while production is still serving. `skipped`
+    # is tolerated because that is dev's state whenever `vars.DEV_ENVIRONMENT_ENABLED` is off - which
+    # it is today, so this clause changes nothing until the dev estate really exists.
+    #
+    # THE HAZARD IS REAL AND THE ESCAPE IS ONE SWITCH: a dev estate broken for a reason of its own -
+    # a mis-set DEV_ secret, its Authentik client revoked - would hold production's releases hostage.
+    # Setting `DEV_ENVIRONMENT_ENABLED` to anything but `true` skips dev and unblocks production
+    # immediately, and that is deliberately a repository VARIABLE so it is visible in the run log.
     if: |
       always() &&
       (github.event_name == 'workflow_run' || github.ref == 'refs/heads/main') &&
       (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') &&
       (needs.run-ci.result == 'success' || needs.run-ci.result == 'skipped') &&
       needs.detect-changed-services.result == 'success' &&
-      (needs.build-docker-images.result == 'success' || needs.build-docker-images.result == 'skipped')
+      (needs.build-docker-images.result == 'success' || needs.build-docker-images.result == 'skipped') &&
+      (needs.deploy-dev.result == 'success' || needs.deploy-dev.result == 'skipped')
     permissions:
       # `write` only for the `prod-deployed` tag the last step moves - the deploy itself reads.
       contents: write

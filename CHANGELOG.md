@@ -49,6 +49,48 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Added
 
+- **`dev.canari-emse.fr` is deployed by the pipeline, behind one switch that is off.** `cd.yml` gained
+  three jobs - `build-frontend-dev`, `build-frontend-images-dev`, `deploy-dev` - plus
+  `dev-refresh.yml`, which copies production's data into dev weekly. All of them are gated on the
+  repository variable `vars.DEV_ENVIRONMENT_ENABLED`, absent today, so every dev job skips and CD is
+  unchanged; it is a `vars` and not a `secrets` entry so its value shows in the run log, because a
+  silent gate is one nobody can debug. **`deploy-to-server` now waits on `deploy-dev` and refuses to
+  proceed if it failed** - the order decided with the user, and the point of the whole environment: a
+  migration that will break production breaks dev first, on a copy of production's data, while
+  production is still serving. The escape hatch, should a dev estate broken for a reason of its own
+  ever hold production's releases hostage, is that same one switch. Two frontend images are dev's own,
+  because SvelteKit bakes `import.meta.env.*` in at build time and a shared image would point dev's
+  browser at production and show no banner; **every backend image is shared**, which is deliberate -
+  it means a behavioural difference between the estates can never be blamed on a different build.
+  Dev has its own checkout at `/home/canari/canari-dev`, created by CD rather than by hand, because
+  two estates sharing one working tree would race: a `git reset --hard` for one rewrites the compose
+  file the other is being deployed from. It records `dev-deployed` and deliberately not
+  `prod-deployed`, which is the change detector's input. **Production's own deploy job is not on the
+  new scripts yet, on purpose** - it moves once dev has exercised them, because rewriting production's
+  deploy path with no way to test it, on a day that already had two outages, is how a third happens.
+
+- **The dev estate's isolation was one forgotten flag away from being nothing at all.** Found while
+  wiring the deploy. A compose project with no top-level `name:` is named after the DIRECTORY its file
+  sits in - and both deployed compose files sit in `infrastructure/`. Neither declared one, while
+  `docker-compose.dev.yml`'s own header promised isolation "under a distinct compose project name". So
+  the dev file, run the obvious way with `-f` and no `-p`, would have joined production's project:
+  dev's `postgres_data` resolves to `infrastructure_postgres_data`, which is production's live
+  database (measured on the server), and dev's network to production's network. Both files now carry
+  their own `name:` - `canari-dev` and, pinned to the value it already has, `infrastructure`, so that
+  moving the checkout can never rename the project and orphan every volume. `compose-wiring.test.sh`
+  asserts each declares one and that no two agree, and it names the file when one does not.
+
+- **`deploy-environment.sh` inverts the required-service gate, which closes the class rather than the
+  instance.** The workflow it will replace names ten services by hand, and that shape is the defect:
+  on 2026-09-01 it named seven application services and none of the three datastores they all depend
+  on, and even after those were added `frontend-ssr` was in NEITHER version - so an estate whose
+  server-side renderer never came up would still have deployed green. The script derives the list from
+  the compose file and exempts only what is written down (`adminer`), so a service added later is
+  covered on the day it is declared. It also health-checks `/api/version`, which production's deploy
+  does not: every other check passes with the database on the floor - nginx answers `/`, and both
+  liveness routes are deliberately anonymous - and the frontend answered 200 throughout the
+  33-minute outage of 2026-09-01.
+
 - **The deployed environment is now data, not ~270 lines of workflow, and a second environment
   cannot inherit production's secrets by omission.** The 33 keys of `infrastructure/.env` lived as
   hand-written `if [ -n "$X" ]; then upsert; else warn; fi` blocks inside `cd.yml`'s deploy job.

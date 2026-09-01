@@ -75,11 +75,25 @@ changing it without a commit.
 Generate strong values: `openssl rand -hex 32` (secrets), `openssl rand -base64 60`
 (`MICONNECT_AUTHENTIK_SECRET_KEY`).
 
-> **The dev environment needs its OWN value for every secret above, not a copy of production's.**
+> **The dev environment needs its OWN value for every secret above, not a copy of production's, and
+> it reads them under a `DEV_` PREFIX.** A row in
+> [`infrastructure/deploy/env-manifest.tsv`](deploy/env-manifest.tsv) says `secret:JWT_SECRET`;
+> production reads `JWT_SECRET`, dev reads `DEV_JWT_SECRET` **and never the bare name**. That
+> indirection is the isolation: a dev secret nobody created is EMPTY rather than production's value,
+> and the deploy then refuses. GitHub environment-scoped secrets would fail OPEN here - a forgotten
+> dev secret resolving silently to the repo-level production value - which is exactly what the deleted
+> `cd-dev.yml` did.
+>
 > `JWT_SECRET` is the one that must differ on principle rather than on hygiene: sharing it would make
 > a token minted by either environment valid in the other, which is the whole isolation gone. The same
-> holds for the Garage keys and the Authentik client. What those secrets are NAMED is part of the CD
-> unification, which has not landed - see [section 9](#9-the-dev-environment-devcanari-emsefr).
+> holds for the Garage keys and the Authentik client.
+>
+> **Which `DEV_*` secrets to create, and what each absence costs, is the manifest itself** - every row
+> whose DEV column is not `skip`, prefixed `DEV_`. Fourteen are `required` and the deploy refuses
+> without them; nine are `warn` and each degrades one named feature. Rows marked `skip` must NOT be
+> created: Stripe, Lydia, `CERCLE_API_KEY` and the three APNs values are deliberately absent from dev
+> (decided with the user), so that a copy of production's database can never charge a real card, be
+> answered as production by Le Cercle, or ring a real member's phone.
 
 ## 4. SSH access for offsite backup (mitv)
 
@@ -210,9 +224,11 @@ from the same build; the CD rebuilds them together for exactly that reason.
 ## 9. The dev environment (`dev.canari-emse.fr`)
 
 **Nothing here is required to bring production up, and on a fresh host there is nothing to do.** The
-second estate is optional, and it does not exist yet: every mechanism is committed and tested, but no
-pipeline deploys it. It is recorded here because it is a bootstrap concern the moment somebody does
-wire it, and because two of its prerequisites are credentials that only a human can create.
+second estate is optional. Since 2026-09-01 the pipeline that deploys it exists - three jobs in
+`cd.yml` plus `dev-refresh.yml` - but all of them are gated on the repository variable
+`DEV_ENVIRONMENT_ENABLED`, which is absent, so they skip. It is recorded here because turning that
+switch on is a bootstrap concern, and because its prerequisites are credentials only a human can
+create.
 
 How it is put together, what its data copy strips, and why a green dev deploy is NOT evidence for a
 PostgreSQL major upgrade are on
@@ -227,7 +243,11 @@ only copy. What a bootstrap owes:
 | Secrets | its own value for everything in [section 3](#3-github-secrets) - see the note there |
 | Authentik | its own OIDC client, creatable on the box: `docker exec miconnect-server-1 ak shell -c ...` |
 | Data | `infrastructure/dev/copy-prod-to-dev.sh` on the box. Supports `--dry-run`, which changes nothing and reports what it would do. It refuses to write anywhere but the `canari-dev` compose project, and that refusal is a re-read Docker label rather than a flag |
-| Owed by a human | a dev Firebase project (push), a dev Android keystore and its backup location, and a Cloudflare Access service token for the test harness |
+| Deployed from | `/home/canari/canari-dev`, a SEPARATE clone - two estates sharing one working tree would race, a `git reset --hard` for one rewriting the compose file the other is deployed from. `deploy-dev` creates it if absent, so there is nothing to do by hand |
+| Images | the two frontends are dev's own (`frontend:dev`, `frontend-ssr:dev`), because SvelteKit bakes `import.meta.env.*` in at build time; **every backend image is shared with production**, which is deliberate - it means a behavioural difference between the estates can never be blamed on a different build |
+| Deploy order | dev deploys BEFORE production, and a failed dev deploy stops production's. Setting `DEV_ENVIRONMENT_ENABLED` to anything but `true` is the escape hatch |
+| Turning it on | (1) the ingress rule above, (2) the `DEV_*` secrets - see [section 3](#3-github-secrets), (3) set `DEV_ENVIRONMENT_ENABLED` to `true` in `Settings -> Secrets and variables -> Actions -> Variables` |
+| Owed by a human, but NOT blocking | a dev Firebase project (push), a dev Android keystore and its backup location, and a Cloudflare Access service token for the test harness |
 
 ## Quick checklist
 

@@ -231,22 +231,22 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md).**
    [there too](docs/wiki/backlog.md#p2---a-device-was-given-a-roster-seat-and-never-a-welcome-and-why-its-keypackage-was-skipped-is-unmeasured-measured-on-prod-2026-09-01),
    and the two want reading together.
 
-10. **`dev.canari-emse.fr` BECOMES A REAL SECOND ENVIRONMENT.** Decisions (scoped with the user
-    2026-09-01, not to be re-litigated) in
-    [backlog](docs/wiki/backlog.md#devcanari-emsefr-becomes-a-real-second-environment---decided-2026-08-17);
-    every mechanism AND the map of what is still owed, by whom, in
-    [dev-environment](docs/wiki/infrastructure/dev-environment.md). **Read those two - nothing is
-    restated here.** Today the name is prod wearing a second hat, so anyone told to "use dev" is
-    typing into prod. **SIX OF EIGHT STEPS SHIPPED**, each with a DERIVED self-test (five suites in
-    `make test-ci-scripts`). **TWO CORRECTIONS THAT MUST NOT BE UNDONE: a green dev deploy does NOT
-    retire the ceiling arm the 2026-09-01 outage was missing** - the copy is logical, so only
-    `in_place_upgrade` on a binary copy of prod's `PGDATA` lifts anything - and **`+dev.<sha7>` may
-    never enter `version`**, which clients turn into a release tag and so into a 404 download URL.
-    **LEFT: the CD wiring, sequenced LAST on purpose** - editing prod's CD before dev serves anything
-    is how a third outage happens. **`cd-dev.yml` is already DELETED** (734 dormant lines whose
-    `workflow_dispatch` read PRODUCTION's secrets; `a8ac1828` still holds it).
-    **Blocked on ONE credential, and it is NOT DNS:** one tunnel INGRESS rule to port
-    `3080` (`Account -> Cloudflare Tunnel`), plus the two account-scoped Access permissions.
+10. **`dev.canari-emse.fr` IS BUILT AND WAITS ON THREE THINGS ONLY THE USER CAN DO.** All eight steps
+    shipped 2026-09-01, each with a DERIVED self-test (six suites in `make test-ci-scripts`); every
+    mechanism and the map of what is owed are on
+    [dev-environment](docs/wiki/infrastructure/dev-environment.md), the decisions in
+    [backlog](docs/wiki/backlog.md#devcanari-emsefr-becomes-a-real-second-environment---decided-2026-08-17).
+    **Read those two - nothing is restated here.** Today the name is still prod wearing a second hat,
+    so anyone told to "use dev" is typing into prod. **THE SWITCH IS `vars.DEV_ENVIRONMENT_ENABLED`,
+    ABSENT, so every dev job skips and CD is unchanged.** To turn it on: the tunnel INGRESS rule to
+    `3080` (`Account -> Cloudflare Tunnel`), the `DEV_*` secrets (14 required, the list IS
+    `infrastructure/deploy/env-manifest.tsv`), then the variable. **THREE CORRECTIONS THAT MUST NOT BE
+    UNDONE:** a green dev deploy does NOT retire the ceiling arm the 2026-09-01 outage was missing -
+    the copy is logical, so only `in_place_upgrade` on a binary copy of prod's `PGDATA` lifts
+    anything; **`+dev.<sha7>` may never enter `version`**, which clients turn into a release tag and
+    so into a 404 download URL; and **prod's own deploy job stays on its inlined shell** until dev has
+    exercised `infrastructure/deploy/deploy-environment.sh` - one implementation, proven before it is
+    imposed. `cd-dev.yml` is DELETED (`a8ac1828` holds it).
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 

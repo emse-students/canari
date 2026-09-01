@@ -251,6 +251,47 @@ for file in infrastructure/docker-compose.prod.yml infrastructure/docker-compose
   done
 done
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Every deployed compose file declares its own project name, and no two agree
+#
+# THE HAZARD THIS CLOSES IS THE WORST ONE IN THIS FILE'S HISTORY, and it was live until 2026-09-01.
+# A compose project with no `name:` is named after the DIRECTORY the file sits in - and both deployed
+# files sit in `infrastructure/`. Production's volumes on the server really are
+# `infrastructure_postgres_data`, `infrastructure_redis_data` and so on, measured. So the dev file,
+# run the obvious way with `-f` and no `-p`, would have joined production's project: dev's
+# `postgres_data` resolves to production's live database and dev's network to production's network.
+# The dev file's own header promised isolation "under a distinct compose project name" while nothing
+# in it produced one. A precondition that lives in a caller's memory is not a precondition.
+# ─────────────────────────────────────────────────────────────────────────────
+printf '\nevery deployed estate declares its own compose project name:\n'
+
+declared_names=""
+for file in infrastructure/docker-compose.prod.yml infrastructure/docker-compose.dev.yml; do
+  [ -f "$file" ] || continue
+  # Top-level key: no indentation. A `name:` nested under a service is a different key entirely.
+  # `|| true` because a missing key is the case this assertion EXISTS for, and under `pipefail`
+  # grep's exit 1 would otherwise kill the script before it could say so - failing the suite with no
+  # diagnostic at all, which is how a guard costs more than it buys.
+  project="$(grep -E '^name:[[:space:]]*' "$file" 2>/dev/null | head -1 |
+    sed 's/^name:[[:space:]]*//; s/[[:space:]]*$//' || true)"
+  if [ -z "$project" ]; then
+    fail "$file declares no top-level 'name:', so its project is the directory it sits in - which is the same directory as the other deployed estate"
+    continue
+  fi
+  pass
+  printf '  ok    %s -> project %s\n' "$file" "$project"
+  declared_names="$declared_names $project"
+done
+
+# shellcheck disable=SC2086 # deliberate word splitting: the accumulator is a space-separated list
+dupe="$(printf '%s\n' $declared_names | sort | uniq -d)"
+if [ -n "$dupe" ]; then
+  fail "two deployed estates declare the same project name ($dupe), so they share every named volume and their networks"
+else
+  pass
+  printf '  ok    no two deployed estates share a project name\n'
+fi
+
 printf '\n'
 if [ "$failures" -gt 0 ]; then
   printf 'FAILED: %d problem(s) across %d assertion(s)\n' "$failures" "$((checks + failures))"
