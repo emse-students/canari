@@ -1,4 +1,4 @@
-.PHONY: all install install-node install-bun install-rust install-oxvelte install-wasm-pack install-frontend install-services install-hooks setup-env setup-env-prod production production-check build-frontend reload-services test test-gateway test-history test-frontend test-harness bench-mls clean run-ci lint-frontend
+.PHONY: all install install-node install-bun install-rust install-oxvelte install-wasm-pack install-frontend install-services install-hooks setup-env setup-env-prod production production-check build-frontend reload-services test test-gateway test-history test-frontend test-harness test-ci-scripts bench-mls clean run-ci lint-frontend
 
 # Cible par défaut : installation complète et déploiement LOCAL
 .DEFAULT_GOAL := all
@@ -255,7 +255,7 @@ setup-env-prod:
 	@./scripts/setup-env.sh --prod
 
 # Cible principale
-test: test-gateway test-history test-frontend test-harness
+test: test-gateway test-history test-frontend test-harness test-ci-scripts
 	@echo ""
 	@echo "${BOLD}📊 BILAN DES TESTS${RESET}"
 	@echo "---------------------------------------------------"
@@ -283,6 +283,13 @@ test-frontend:
 # these a widened pattern silently stops reporting. `checks-selftest` asserts that every phase
 # DECLARES the devices its scripts actually drive - the fault that left MUT-18 skipping on every run
 # it was ever asked for, blaming the cable instead of a list one file away.
+# THE SELF-TESTS FOR THE AUTOMATION ITSELF. `.github/scripts/` decides which dependency updates
+# merge with nobody watching, so the predicate behind that decision is tested like any other logic -
+# on the inputs a live run never produces, which are the ones that fail closed.
+test-ci-scripts:
+	@echo "${BLUE}🧪 CI script self-tests…${RESET}"
+	@bash .github/scripts/tests/gate-moves.test.sh
+
 test-harness:
 	@echo "${BLUE}🧪 Harness self-tests…${RESET}"
 	@node tools/cross-client-harness/rawcheck.mjs

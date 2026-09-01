@@ -45,8 +45,55 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 | acknowledging a conversation from the notification shade | HARDWARE, both platforms. On A1: send from W1, background the app, tap **Marquer comme lu**, then OPEN the app - the badge must be gone, which is the half that needed `read_watermarks.ndjson`. Then the same with a quick REPLY, which now means the same thing. `logcat` must show `sendReadWatermark: queued+drained at=<ms>` with the SENDER's instant, never a value near `now`. Board row **NOTIF-6b**, and the iOS twin is written identically and equally unproven |
 | search folds accents now, everywhere it folds case | **SEARCH-5, and it needs `W1 W2` only - no hardware.** Its five `PASS`es asserted the pre-fix behaviour (the row was written to RECORD the gap), so they are VOID and the runner's prediction is flipped. A run answering `noAccentFound=true` closes this; SEARCH-1, -3 and -6 are ASCII-only and unaffected |
 | WP-REGRANT-2, a re-granted member's re-join | COMM-22, four grant/revoke cycles green - and COMM-8 reading `seedAfterTheGrant: true`, never `repaired`, which is a fallback and not a path |
+| the auto-merge sweep drains its queue unattended | the next sweep after a merge must merge EVERY pull request that is mergeable, not one. Until 2026-09-01 each merge moved `main` and staleness-invalidated the rest, so the queue drained at one per pass and only while somebody pushed; the predicate now asks whether `.github/workflows/` or `.github/scripts/` moved instead. #302 and #303 are the population sitting on it - both `CLEAN`, both built on `6a356d7e`, neither touched by a gate change. One sweep log showing both merged closes this |
 | the auto-merge ceiling refuses a major | **half taken.** The workflow is enabled again and its shipped loop body was replayed over all 33 open Dependabot PRs: 26 merge, 6 refuse, and the 6 collapse to the two gates below. What replay cannot show is the workflow REFUSING in its own run log, because no major has opened since - so the row stays until a real one does, logging `REFUSED` and staying open |
 | the five products the boutique never sold are buyable | **ONE MANUAL FLIP IS OWED, and it is the user's** (2026-08-31). `activationWithheld` releases a product when payments BECOME ready, and BDE's Stripe onboarding completed long ago - no event will ever fire for it, which is the correct behaviour for an allowlist and the reason a per-tier on-sale switch now exists. So: open `/associations/bde/edit`, Cotisations tab, tick **En vente** on the 170 EUR tier, then buy nothing and simply confirm it appears in `/shop`. The other four associations have no payment account at all, so their products are correctly withheld and release themselves when one arrives - what closes THAT half is the next association to finish onboarding, whose products must go on sale with nobody touching them |
+
+---
+
+## CI and the chain that runs unattended
+
+### P2 - the one rebuild the auto-merge cannot perform, and the credential that would let it
+
+**The chain is unattended everywhere except here.** When `.github/workflows/` or `.github/scripts/`
+really did move under a Dependabot branch, its green checks describe gates that no longer exist and
+the branch has to be rebuilt before any verdict on it means anything. **Neither way of rebuilding it
+is available to a workflow holding only `GITHUB_TOKEN`, and both were tried and measured on
+2026-08-31:**
+
+- `PUT /pulls/{n}/update-branch` pushes a merge commit authored by `github-actions[bot]`, which
+  parks the re-triggered run in `action_required`, makes Dependabot refuse the branch for good, and
+  fails the workflow's own entry filter. It made seven branches unmergeable by every path at once.
+- `@dependabot recreate` is refused when the caller is `github-actions[bot]`: *"Sorry, only users
+  with push access can use that command."* Measured on #303, three seconds after the ask.
+
+So the sweep reports instead - one comment per pull request behind
+`<!-- canari-auto-merge-gates-moved -->` naming the single command that clears it - and a person
+types `@dependabot recreate`. **Closing that gap is a CREDENTIAL decision and therefore the user's**
+([CLAUDE.md](../../CLAUDE.md): one-off actions go to the user): a fine-grained PAT, or a GitHub App
+token minted per run with `actions/create-github-app-token`, either with push access, would make the
+ask succeed and the chain run end to end. The App token is the better shape - it is minted per run,
+scoped to this repository and expires in an hour, where a PAT is long-lived and has to be rotated by
+hand before it silently expires. **Closing the pull request is NOT an alternative**: Dependabot does
+not recreate a version whose pull request was closed unmerged.
+
+**What retires this row:** a sweep log showing a stale branch rebuilt and merged with nobody typing
+anything. Until then the gap is bounded and visible rather than silent, which is the difference that
+mattered.
+
+### P3 - `shellcheck` does not gate `.github/scripts/`, and the scripts are only `bash -n` clean
+
+`.github/scripts/` is the only code in this repository that MERGES things. `make test-ci-scripts`
+now exercises the predicate behind that decision, including the branches a live run never reaches,
+and CI runs it on every change under that directory - but nothing lints the shell itself. The step
+was written and then deliberately removed: the workstation has neither `shellcheck` nor a container
+runtime, so turning it on for everybody would have been a guess about whether it passes, and the
+house rule that `ci.yml` already applies to the Tauri matrix entry is that a gate nobody verified is
+how a pipeline goes red for a reason nobody changed.
+
+**What retires this row:** run `shellcheck .github/scripts/*.sh .github/scripts/lib/*.sh
+.github/scripts/tests/*.sh` once - anywhere it is installed - fix what it names, and restore the
+step in `ci.yml`'s `test-ci-scripts` job, where the comment marking its absence says exactly this.
 
 ---
 

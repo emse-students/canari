@@ -27,6 +27,7 @@ jobs:
       ts-matrix: ${{ steps.matrix.outputs.ts }}
       run-frontend: ${{ steps.matrix.outputs.frontend }}
       run-harness: ${{ steps.matrix.outputs.harness }}
+      run-scripts: ${{ steps.matrix.outputs.scripts }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -47,6 +48,7 @@ jobs:
             echo "ts=$ALL_TS"        >> "$GITHUB_OUTPUT"
             echo "frontend=true"     >> "$GITHUB_OUTPUT"
             echo "harness=true"      >> "$GITHUB_OUTPUT"
+            echo "scripts=true"      >> "$GITHUB_OUTPUT"
           }
 
           # ── Determine base commit ──
@@ -179,6 +181,16 @@ jobs:
             echo "harness=true" >> "$GITHUB_OUTPUT"
           else
             echo "harness=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # -- CI script self-tests --
+          # `.github/scripts/` decides which Dependabot pull requests merge unattended, so its own
+          # sources are the whole trigger. Note it is NOT reached by the `ci.yml` short-circuit at
+          # the top of this step: a change to a script is not a change to this workflow.
+          if has '^\.github/scripts/'; then
+            echo "scripts=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "scripts=false" >> "$GITHUB_OUTPUT"
           fi
 
   # =================================================================================================
@@ -602,3 +614,31 @@ jobs:
       # No install step: the harness has no dependencies outside the Node standard library.
       - name: Run harness self-tests
         run: make test-harness
+
+  # =================================================================================================
+  # CI SCRIPT SELF-TESTS
+  # =================================================================================================
+  # `.github/scripts/` is the only code in this repository that MERGES things, and it does it with
+  # nobody watching. Its staleness predicate decides whether a green-but-older check suite is still
+  # evidence, and the half of it that matters - a truncated compare, an unreadable payload - never
+  # occurs on a good day, so nothing but a test will ever exercise it. Bash only, no dependencies.
+  test-ci-scripts:
+    name: Test CI Scripts (self-tests)
+    needs: [changes]
+    if: ${{ needs.changes.outputs.run-scripts == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.git_ref != '' && inputs.git_ref || github.sha }}
+
+      - name: Run CI script self-tests
+        run: make test-ci-scripts
+
+      # NO `shellcheck` STEP, DELIBERATELY, and this is the same refusal the Tauri matrix entry
+      # above makes. Every one of these scripts is `bash -n` clean, which is all that was verified:
+      # the workstation this was written on has neither shellcheck nor a container runtime, so
+      # turning the linter on for everybody would be a guess about whether it passes, and a
+      # pipeline that goes red for a reason nobody changed is worse than one gate fewer. It is
+      # worth having - the row is in `docs/wiki/backlog.md`, and it is one green run from being
+      # true rather than hoped.

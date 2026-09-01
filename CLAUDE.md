@@ -173,9 +173,13 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md).**
    the remaining rows of [the ceiling
    table](docs/wiki/backlog.md#p1---the-three-refusals-the-auto-merge-ceiling-makes-and-the-test-that-retires-each)**,
    each naming the test that retires it - closing one makes a whole CLASS of update merge by itself.
-   **The four repositories now all carry the ceiling, the sweep and the dispatch** (2026-08-31), and
-   the sweep's convergent trigger is NO LONGER A CLOCK: `event=schedule` returned zero runs on all
-   four, so it is bound to a push to `main` instead ([cicd](docs/wiki/cicd.md#why-there-are-three-triggers-and-why-the-clock-is-the-weakest-of-them)).
+   **The four repositories now all carry the ceiling, the sweep and the dispatch** (2026-08-31), the
+   convergent trigger is a push to `main` rather than the clock - which DOES fire, contrary to what
+   was written here on 2026-08-31, just with hours of jitter - and **the staleness gate no longer
+   fires on every movement of `main`**, which is what made the queue drain one pull request per push
+   and only while somebody pushed. The one rebuild no `GITHUB_TOKEN` may perform, and the credential
+   that would close it, are a decision owed to the USER: [backlog](docs/wiki/backlog.md#p2---the-one-rebuild-the-auto-merge-cannot-perform-and-the-credential-that-would-let-it).
+   Reasoning on [cicd](docs/wiki/cicd.md#why-a-green-pull-request-is-not-enough).
    **NestJS 12 is taken as far as it goes** ([nestjs-framework](docs/wiki/services/nestjs-framework.md)).
 
 4. **NOTHING ON THE CAMPAIGN BOARD COULD HAVE CAUGHT IT, AND THE GAP IS STRUCTURAL** (2026-08-28):

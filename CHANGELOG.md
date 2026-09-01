@@ -13,6 +13,29 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **The dependency queue drained one pull request per push, and only while somebody pushed.** The
+  auto-merge refused to merge a head not built on current `main` - written for PR #272, which was
+  `CLEAN` with every check green and no `Boot the real AppModule` run at all because that job was
+  created after its CI last ran. But every merge moves `main`, so every merge invalidated every
+  remaining pull request in the same instant, and the way out - a rebuild - is something **no
+  workflow holding only `GITHUB_TOKEN` can perform**: `update-branch` leaves a head Dependabot
+  refuses for good, and `@dependabot recreate` is answered *"Sorry, only users with push access can
+  use that command."* (measured on #303, three seconds after the ask). A gate whose only remedy is
+  unavailable is a stop, not a gate. The predicate now asks the question the incident actually poses
+  - did `.github/workflows/` or `.github/scripts/` move between this branch's base and `main`, which
+  is what decides which jobs run and what each asserts - so two dependency merges no longer
+  invalidate anything and one sweep merges everything mergeable. When the gates really did move, the
+  sweep says so on the pull request instead of pretending to fix it.
+  ([cicd](docs/wiki/cicd.md#why-a-green-pull-request-is-not-enough))
+
+- **This file said an hourly `schedule:` produced zero runs; it produces runs.** The claim was made
+  on three hours of observation taken right after the cron landed, and a trigger was rebuilt around
+  it. All four repositories had delivered a scheduled sweep by the next morning. The conclusion
+  barely moves - GitHub drops the slots an hourly cron misses rather than queueing them, so the
+  clock is a floor and not a mechanism - but the reasoning did, and the corrected measurement is now
+  the one written down.
+  ([cicd](docs/wiki/cicd.md#why-there-are-three-triggers-and-why-the-clock-is-the-weakest-of-them))
+
 - **`src-tauri`'s CI entry compiled its tests and never ran them.** The matrix command was
   `cargo check --all-targets`, scoped on purpose to the defect that created the entry - a broken
   exhaustive match, so *does it compile*. The crate has since acquired 33 tests, none of which any
@@ -36,6 +59,15 @@ which is also where every release up to and including v0.13.1 now lives.
   ([cotisations](docs/wiki/cotisations.md#a-product-withheld-for-want-of-a-payment-account-releases-itself))
 
 ### Added
+
+- **Self-tests for the only code here that merges things.** The auto-merge's staleness predicate now
+  lives in `.github/scripts/lib/gate-moves.sh`, apart from its caller so it can be exercised on
+  inputs GitHub will not produce on demand - a compare it cannot read, and one whose file list the
+  API truncated at 300, where a 300-entry answer is indistinguishable from a longer one by
+  inspection and a predicate failing OPEN would merge on a suite nothing checked. Thirteen checks in
+  `.github/scripts/tests/gate-moves.test.sh`, run by `make test-ci-scripts` and by a new CI job on
+  every change under `.github/scripts/`; each was falsified against a mutated predicate before being
+  believed.
 
 - **A cotisation tier can be taken off sale, and says so.** A per-tier on-sale switch in the
   Cotisations tab - the control `isActive` never had. Off-sale tiers stay recognised for the

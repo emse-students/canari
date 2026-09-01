@@ -22,11 +22,19 @@ name: Dependabot auto-merge
 # comes from durable state on GitHub - a pull request is merged, or it carries a comment naming the
 # test that would let it merge - never from how often the sweep runs.
 #
-# WHAT THE SWEEP HANGS OFF IS A PUSH TO `main`, NOT AN HOUR. It was written on an hourly `schedule:`
-# and that cron produced ZERO runs; the reasoning and the measurement are on the `schedule:` block
-# below, which is kept only as a fallback. A push to `main` is the event this repository sees often
-# and reliably, and it is also the event that MAKES pull requests stale, so answering it is the
-# closest the queue gets to converging on the thing that disturbed it.
+# WHAT THE SWEEP HANGS OFF IS A PUSH TO `main` RATHER THAN AN HOUR. The hourly `schedule:` below is
+# kept as a floor and no more; it does fire, with hours of jitter, and the correction to what was
+# written here on 2026-08-31 is on that block. A push to `main` is the event this repository sees
+# often and reliably, and it is also the event that could make a pull request stale, so answering it
+# is the closest the queue gets to converging on the thing that disturbed it.
+#
+# ONE MEASURED LIMIT OF THAT, recorded because it is invisible otherwise: the CD run this workflow
+# DISPATCHES after a merge does not come back here. `workflow_dispatch` is the documented exception
+# that lets `GITHUB_TOKEN` start CD at all, but that run's completion emitted no `workflow_run`
+# event on 2026-08-31 - the sweep of 22:35 was the last thing to happen that night. It matters less
+# than it looks: since the staleness predicate stopped firing on every movement of `main`, ONE sweep
+# merges everything mergeable instead of one pull request per re-trigger, so the chain no longer
+# needs a hop per merge.
 #
 # ---------------------------------------------------------------------------------------------
 # WHY MERGING SEVERAL IN ONE SWEEP IS SAFE
@@ -51,15 +59,17 @@ on:
   schedule:
     # Minute 17 rather than 0: the hour boundary is the busiest slot on shared runners.
     #
-    # KEPT, BUT NO LONGER LOAD-BEARING - AND THE MEASUREMENT THAT DEMOTED IT IS THIS. On 2026-08-31
-    # this cron had produced ZERO runs in the three hours since it landed on `main`, with the repo
-    # neither a fork nor archived and the workflow `active`. Scheduled delivery here is not merely
-    # late, it is unreliable: `code-analysis.yml` asks for `0 2 * * *` and actually ran at 03:01,
-    # 03:09, 08:05, 08:24, 08:47, 12:37 and 14:10 UTC on seven consecutive days. GitHub does not
-    # queue the slots an hourly cron misses, it DROPS them, so an hourly schedule on this
-    # repository is a wish rather than a trigger. The comfortable rule this falsifies: a clock
-    # whose only cost when wrong is LATENCY is fine - but this clock's failure mode is NOT
-    # RUNNING AT ALL, which is the difference between a slow queue and a queue nobody drains.
+    # KEPT, AND THE CLAIM WRITTEN HERE ON 2026-08-31 WAS WRONG - it said this cron had produced ZERO
+    # runs, measured in the three hours after it landed on `main`. It fired at 20:49:08Z the same
+    # evening, and the correction matters more than the demotion: a three-hour window is not enough
+    # to call a trigger dead, and the mechanism that reads it must not be built on the first quiet
+    # interval anybody happened to look at.
+    #
+    # What DOES hold is the shape of the delivery, and it is measured over seven consecutive days
+    # rather than one afternoon: `code-analysis.yml` asks for `0 2 * * *` and actually ran at 03:01,
+    # 03:09, 08:05, 08:24, 08:47, 12:37 and 14:10 UTC. GitHub does not queue the slots an hourly
+    # cron misses, it DROPS them. So this clock arrives, eventually, with hours of jitter - which is
+    # a floor under the worst case and never the thing a verdict waits on.
     - cron: "17 * * * *"
   workflow_dispatch:
 
@@ -158,59 +168,75 @@ jobs:
           echo "merged=$merged" >> "$GITHUB_ENV"
           echo "merged $merged pull request(s) this pass"
 
-      # THE BUDGET FOR RE-TESTING WHAT MAIN NOW GATES ON. The script marks a pull request STALE when
-      # its head is not built on current `main`, because its green checks were then produced by
-      # workflow definitions `main` no longer carries - PR #272 was `CLEAN` with no
-      # `Boot the real AppModule` run at all, that job having been written after its CI last ran.
-      # Rebuilding the branch re-runs CI under today's definitions and the next pass reads a verdict
-      # that means something.
+      # WHAT A STALE PULL REQUEST NEEDS, AND WHY THIS STEP CANNOT PROVIDE IT.
       #
-      # WHY DEPENDABOT IS ASKED TO DO IT, RATHER THAN `PUT /pulls/{n}/update-branch` WHICH IS WHAT
-      # THIS STEP CALLED UNTIL 2026-08-31. That endpoint pushes a merge commit authored by
-      # `github-actions[bot]`, and across seven pull requests here it cost three things at once:
+      # The script marks a pull request STALE only when the definitions that BUILD a check suite -
+      # `.github/workflows/`, `.github/scripts/` - moved between its base and `main`. Then its green
+      # checks describe gates that no longer exist (PR #272 was `CLEAN` with no
+      # `Boot the real AppModule` run at all, that job having been written after its CI last ran),
+      # and the branch has to be rebuilt before any verdict on it means anything.
       #
-      #   1. The `pull_request` run it re-triggers is created as `action_required` - parked until a
-      #      human clicks Approve. A dependabot-authored push is not. Twenty runs were sitting there.
-      #   2. Dependabot then refuses the branch permanently: "Looks like this PR has been edited by
-      #      someone other than Dependabot. That means Dependabot can't rebase it - sorry!"
-      #   3. The entry condition on this workflow admits a `workflow_run` whose actor is
-      #      `dependabot[bot]`, so even a human approval would not have let the branch back in.
+      # NEITHER WAY OF REBUILDING IT IS AVAILABLE TO THIS WORKFLOW, and both were tried:
       #
-      # The refresh made the branch unmergeable BY EVERY PATH, and every push to `main` made another
-      # one stale - so the step written to drain the queue was the one filling it. A queue nobody
-      # drains is worse than the merge it prevented.
+      #   `PUT /pulls/{n}/update-branch` pushes a merge commit authored by `github-actions[bot]`.
+      #   Across seven pull requests on 2026-08-31 that cost three things at once: the `pull_request`
+      #   run it re-triggers is created as `action_required`, parked until a human clicks Approve
+      #   (twenty runs were sitting there); Dependabot then refuses the branch for good ("this PR has
+      #   been edited by someone other than Dependabot"); and the entry condition here admits only a
+      #   `workflow_run` whose actor is `dependabot[bot]`, so even an approval would not let it back
+      #   in. The refresh made the branch unmergeable BY EVERY PATH.
       #
-      # `recreate` rather than `rebase`: it is the one that ends in the same state whatever was done
-      # to the branch before - a freshly generated branch on current `main`, authored by Dependabot.
-      # `rebase` refuses an edited branch, which is precisely the state this step used to create.
+      #   `@dependabot recreate` is refused when the caller is `github-actions[bot]`. Measured on
+      #   #303 on 2026-08-31, three seconds after the ask: "Sorry, only users with push access can
+      #   use that command." The default token is not an account, and Dependabot authorises its
+      #   commands by push access.
       #
-      # CAPPED, because each rebuild is a full CI run and every merge makes every other branch stale
-      # at once: without a ceiling one sweep would launch thirty. Three a pass drains a queue this
-      # size in a day, unattended, and bounds what a bad day can cost. The cap is a budget, not a
-      # correctness argument - nothing here is wrong if it never fires, only slower.
-      - name: Ask Dependabot to rebuild at most three branches whose checks predate what main gates on
+      # So this step REPORTS rather than pretending, and the report is the point: a stale pull
+      # request that says nothing is found by hand, a week late. It names what has to happen, ONCE
+      # per pull request - a comment re-posted every sweep is noise, and noise is what its reader
+      # learns to skip.
+      #
+      # IT IS ALSO THE ONE THING IN THIS CHAIN THAT STILL WANTS A HUMAN, and closing that gap is a
+      # credential decision rather than a code one: a fine-grained PAT or a GitHub App token with
+      # push access would let the ask above succeed. Recorded in `docs/wiki/backlog.md`. Closing the
+      # pull request is NOT the alternative - Dependabot does not recreate a version whose pull
+      # request was closed unmerged.
+      - name: Report the branches whose gates moved under them
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
+          MARKER: "<!-- canari-auto-merge-gates-moved -->"
         run: |
           set -uo pipefail
           list="$RUNNER_TEMP/stale.txt"
-          if [ ! -s "$list" ]; then echo "nothing stale."; exit 0; fi
+          if [ ! -s "$list" ]; then echo "no branch is waiting on a rebuild."; exit 0; fi
 
-          echo "$(wc -l < "$list") stale; asking Dependabot to rebuild at most 3."
-          head -n 3 "$list" | while IFS= read -r pr; do
+          body="$RUNNER_TEMP/gates-moved.md"
+          cat > "$body" <<EOF
+          $MARKER
+          **Not auto-merged: the gates moved under this branch.**
+
+          Its checks were produced by workflow definitions \`main\` no longer carries, so they are
+          not evidence about what \`main\` gates on now. The branch has to be rebuilt before any
+          verdict on it means anything, and this workflow cannot rebuild it: \`update-branch\` leaves
+          a head Dependabot refuses, and \`@dependabot recreate\` is only honoured for an account
+          with push access.
+
+          **Comment \`@dependabot recreate\` here** and the rest is unattended again.
+          EOF
+          sed -i 's/^          //' "$body"
+
+          echo "$(wc -l < "$list") branch(es) waiting on a rebuild this workflow cannot perform."
+          while IFS= read -r pr; do
             [ -z "$pr" ] && continue
-            # Dependabot answers a command asynchronously, so a zero exit here means the request was
-            # posted and nothing more. The next pass measures the outcome the only way that means
-            # anything - whether the pull request's base is current `main`. A request Dependabot
-            # ignored leaves the branch stale, and it is asked again: the same request, on the same
-            # condition, until the condition is gone.
-            if gh pr comment "$pr" --repo "$REPO" --body "@dependabot recreate"; then
-              echo "  #$pr: rebuild requested"
+            if gh api "repos/$REPO/issues/$pr/comments" --paginate --jq '.[].body' | grep -qF "$MARKER"; then
+              echo "  #$pr: already reported"
+            elif gh pr comment "$pr" --repo "$REPO" --body-file "$body"; then
+              echo "  #$pr: reported"
             else
-              echo "  #$pr: could not ask for a rebuild - the pass leaves it stale"
+              echo "  #$pr: could not post the report - it stays silent, which is the defect"
             fi
-          done
+          done < "$list"
 
       # A squash merge made with GITHUB_TOKEN produces a push that triggers NOTHING - github's
       # anti-recursion rule - so CD never saw a single one of these merges and main drifted from

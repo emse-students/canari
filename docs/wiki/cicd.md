@@ -303,19 +303,32 @@ The convergent path is the one that matters: an event-only automation cannot tou
 that was already green when it was installed, and on 2026-08-31 seven mergeable ones sat exactly
 there.
 
-**THE SCHEDULE WAS THAT PATH FOR ABOUT THREE HOURS, AND A MEASUREMENT TOOK THE JOB AWAY FROM IT.**
-The cron `17 * * * *` landed on `main` at 14:32 UTC on 2026-08-31 and had produced **zero** runs by
-17:00 - two slots missed - with the repository neither a fork nor archived and the workflow
-`active`. It is not a registration delay peculiar to a new cron either: `code-analysis.yml` asks for
-`0 2 * * *` and actually ran at 03:01, 03:09, 08:05, 08:24, 08:47, 12:37 and **14:10** UTC on seven
-consecutive days. Scheduled delivery on a public repository is best-effort, and **GitHub does not
-queue the slots an hourly cron misses - it drops them.**
+**THE SCHEDULE WAS THAT PATH FOR ABOUT THREE HOURS, AND A MEASUREMENT TOOK THE JOB AWAY FROM IT -
+THEN A SECOND MEASUREMENT CORRECTED THE FIRST.** The cron `17 * * * *` landed on `main` at 14:32 UTC
+on 2026-08-31 and had produced **zero** runs by 17:00, and this page said on that basis that the
+clock did not fire at all. It does. Counted on 2026-09-01, every one of the four repositories had
+delivered a scheduled sweep - Canari twice, at 20:49 and 00:36 UTC, and Sky, MiGallery and
+Portail-etu once each around 21:30. **A three-hour window is not enough to call a trigger dead**, and
+the correction matters more than the conclusion it barely changes: a mechanism built on the first
+quiet interval somebody happened to look at is built on nothing.
 
-That falsifies the comfortable justification the sweep was written with. A clock is acceptable when
-a wrong clock costs only latency; this clock's failure mode is NOT RUNNING AT ALL, which is the
-difference between a slow queue and a queue nobody drains. So the convergent trigger is now an event
-that happens whenever anybody works - a push to `main` - and the cron is kept for the case where
-nothing is pushed for days, at the reliability GitHub actually offers.
+What the wider measurement does support is the SHAPE of the delivery, and that was always the real
+argument: `code-analysis.yml` asks for `0 2 * * *` and actually ran at 03:01, 03:09, 08:05, 08:24,
+08:47, 12:37 and **14:10** UTC on seven consecutive days. Scheduled delivery on a public repository
+is best-effort, and **GitHub does not queue the slots an hourly cron misses - it drops them.** Two
+deliveries in seven hours is not an hourly clock.
+
+So the clock stays demoted, on the honest ground rather than the dramatic one: it arrives, with
+hours of jitter, which makes it a floor under the worst case and never the thing a verdict waits on.
+The convergent trigger is the event that happens whenever anybody works - a push to `main` - and the
+cron covers the case where nobody does for days.
+
+**One measured limit of the push path, recorded because it is invisible otherwise:** the CD run the
+sweep DISPATCHES after a merge does not come back. `workflow_dispatch` is the documented exception
+that lets `GITHUB_TOKEN` start CD at all, but that run's completion emitted no `workflow_run` event
+on 2026-08-31. It matters less than it looks - since the staleness predicate stopped firing on every
+movement of `main` (below), one sweep merges everything mergeable rather than one pull request per
+re-trigger.
 
 ### Why a green pull request is not enough
 
@@ -325,15 +338,48 @@ and was `CLEAN` with every check green: its suite has no `Boot the real AppModul
 because that job was written after its CI last ran. **An absent check and an inapplicable one look
 identical**, so "nothing failed" is not a merge condition.
 
-The script therefore refuses any head not built on current `main` and marks it `STALE`; the workflow
-asks Dependabot to rebuild at most **three** such branches per pass, which re-runs their CI under
-today's definitions. The cap is a budget, not a correctness argument: every merge makes every other
-branch stale at once, so an uncapped sweep would launch one full CI run per open pull request. Three
-a pass drains a thirty-deep queue in a day, unattended.
+The script therefore refuses to merge on a suite that describes gates `main` no longer carries, and
+marks such a head `STALE`.
 
-A consequence worth knowing rather than fighting: because a merge staleness-invalidates everything
-else, roughly one pull request merges per pass. That is the correct behaviour - each one is tested
-against the exact `main` it lands on.
+**WHAT COUNTS AS "NO LONGER CARRIES" WAS TOO WIDE UNTIL 2026-09-01, AND IT MADE THE QUEUE
+UNDRAINABLE.** The predicate asked whether the branch's base was current `main`. Every merge moves
+`main`, so every merge invalidated every remaining pull request in the same instant - and the only
+way out was a rebuild, which **nothing in CI is permitted to perform**:
+
+- `PUT /pulls/{n}/update-branch` pushes a merge commit authored by `github-actions[bot]`. The
+  `pull_request` run it re-triggers is created as `action_required`, parked for a human; Dependabot
+  then refuses the branch for good; and the workflow's own entry filter admits only
+  `dependabot[bot]`. It made the branch unmergeable by every path at once.
+- `@dependabot recreate` is refused when the caller is `github-actions[bot]`. Measured on #303,
+  three seconds after the ask: *"Sorry, only users with push access can use that command."*
+
+**A gate whose only remedy is unavailable is not a gate, it is a stop** - and it stopped seven
+mergeable pull requests. So the question is now asked the way #272 actually poses it: did the
+definitions that BUILD a check suite move between the branch's base and `main`? Those are
+`.github/workflows/` and `.github/scripts/`, which decide both which jobs run and what each one
+asserts, and nothing else. Two dependency merges landing on `main` change neither, so a suite from
+before them still describes today's gates and the pull request merges. A workflow edit changes both,
+and then the suite proves nothing.
+
+The predicate lives in `.github/scripts/lib/gate-moves.sh`, apart from its caller so that it can be
+exercised on inputs GitHub will not produce on demand: **it fails closed on a compare it cannot
+read, and on one whose file list the API truncated at 300** - a 300-entry answer is
+indistinguishable from a longer one by inspection, so the count is read before the list. Those are
+the branches a live run never reaches, which is exactly why
+`.github/scripts/tests/gate-moves.test.sh` produces them instead, and why `make test-ci-scripts`
+runs on every change under `.github/scripts/`.
+
+**One consequence changed with it.** Under the old predicate roughly one pull request merged per
+pass, because each merge invalidated the rest. Now a single sweep merges everything that is
+mergeable, which is what makes the chain converge without a re-trigger per merge.
+
+**AND ONE THING STILL WANTS A HUMAN.** When the gates really did move, the branch really does need a
+rebuild, and the sweep can only say so: it posts one comment per pull request behind
+`<!-- canari-auto-merge-gates-moved -->` naming the single command that clears it. Closing the pull
+request is not an alternative - Dependabot does not recreate a version whose pull request was closed
+unmerged. Closing the gap is a **credential** decision rather than a code one: a fine-grained PAT or
+a GitHub App token with push access would make `@dependabot recreate` succeed from the workflow. The
+row is in [backlog](backlog.md).
 
 A sweep may merge several pull requests that were only ever tested apart. That is safe here for one
 reason and it is worth not breaking: **`deploy-to-server` needs `run-ci`**, so a combination that
