@@ -26,6 +26,7 @@
 | The story of a defect that shipped | `CHANGELOG.md` |
 | Campaign board: every check, its verdict, its build | [docs/wiki/cross-client-testing.md](docs/wiki/cross-client-testing.md) |
 | Campaign design: the ladder, the scope, the preflight | [docs/wiki/cross-client-campaign.md](docs/wiki/cross-client-campaign.md) |
+| Picking the campaign back up: the delta since the pause, and the restart order | [cross-client-campaign-resume.md](docs/wiki/cross-client-campaign-resume.md) |
 | What a prompt handing ONE row to another session must carry | [cross-client-campaign.md](docs/wiki/cross-client-campaign.md#a-row-handed-to-another-session---the-delegation-contract) |
 | Why a result may be believed | [docs/wiki/testing-methodology.md](docs/wiki/testing-methodology.md) |
 | What the app has that NOTHING watches | [docs/wiki/mechanism-audit.md](docs/wiki/mechanism-audit.md) |
@@ -130,11 +131,12 @@ queue below in its place, and its substance into `backlog`.
 **THE CAMPAIGN IS PAUSED 2026-08-30 FOR WANT OF A PHONE** (user). What is takeable without hardware
 is in the queue below; everything the device owes is queue item 5.
 
-**RESUMING, in this order and nothing else first:** `git fetch` then **PUSH** (a push redeploys prod,
-so it cannot happen during a run - background, redirect not pipe, read `PUSH_EXIT`, `rm -rf apps/*/dist`
-first); `gh run list`, CD green and QUIET before any row; `node state.mjs`; then `node rows.mjs`. If
-the phone was unplugged, the from-zero sequence is scripted end to end in
-[the harness README](tools/cross-client-harness/README.md#operating-it).
+**RESUMING: the ordered restart is [cross-client-campaign-resume](docs/wiki/cross-client-campaign-resume.md),
+the only copy** - `git fetch` then **PUSH**, `gh run list`, prove prod answers, `node state.mjs`,
+`node rows.mjs`. **Two things that page carries and nothing else does: the rig still targets
+PRODUCTION** (89 harness files name `canari-emse.fr` as a literal, so the dev estate does NOT make a
+run safer), **and the dependency sweep can now redeploy prod mid-run with nobody at the keyboard** -
+`gh workflow disable "Dependabot auto-merge"` before a session, `enable` after it.
 
 **HEAL is the rung in hand.** Two instrument facts that are NOT per-row: the disposition for
 expected noise is `ignoringExpectedLog` **per row**, never a wider classifier, and the device cap is

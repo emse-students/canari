@@ -12,8 +12,15 @@ store** meet.
 
 ## Where it runs, and what may never leave it
 
-**Target is PRODUCTION** (`https://canari-emse.fr`). Real accounts, real messages, real FCM. There is
-no staging that carries push.
+**Target is PRODUCTION** (`https://canari-emse.fr`). Real accounts, real messages, real FCM.
+
+**`dev.canari-emse.fr` does not change this, and assuming it does is the mistake that costs a run.**
+The estate exists and may be given its own push credentials, but the rig cannot be pointed at it: 89
+files under `tools/cross-client-harness/` carry `canari-emse.fr` as a literal with no central
+constant, every account would need re-enrolling there, and dev's MLS state and device rows are not
+production's - so a rung that measures a POPULATION would have to run here anyway. The delta since
+the pause, and what else can now redeploy production mid-run, are on
+[cross-client-campaign-resume](cross-client-campaign-resume.md).
 
 **The rig is in this repository**, at `tools/cross-client-harness/` - the scripts that run, not a
 copy of them. **Its STATE is deliberately outside**, in a sibling directory `../canari-harness`: the
