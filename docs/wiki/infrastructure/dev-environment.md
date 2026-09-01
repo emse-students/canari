@@ -356,13 +356,31 @@ create:
    production's own tunnel, which is why anyone told to "use dev" is currently typing into
    production. If it is ever done through the API rather than the dashboard: GET the config, save the
    original, change the single rule, PUT - and never probe it by writing.
-2. **The `DEV_*` repository secrets.** 14 are required and the deploy refuses without them; 12 are
-   optional (9 named in a deploy warning, 3 silent because a default answers for them). The list,
-   with what each absence costs, is
+2. **The `DEV_*` repository secrets. 12 of the 14 required ones were created on 2026-09-02** - the
+   three derived ones (`DEV_AUTHENTIK_URL`, `DEV_BASE_URL`, `DEV_POSTGRES_USER`) and nine generated
+   with `openssl rand`, none copied from production, plus `DEV_INTERNAL_SECRET` and
+   `DEV_EXTERNAL_API_KEY`. The generated values exist in GitHub Secrets and, once dev has deployed
+   once, in `/home/canari/canari-dev/.env` on the box; they are written nowhere else on purpose.
+   **What remains is `DEV_AUTHENTIK_CLIENT_ID` and `DEV_AUTHENTIK_CLIENT_SECRET`, and they need a
+   dev OIDC client that does not exist yet** - see the next paragraph. Of the optional rows, 9 are
+   named in a deploy warning and 3 are silent because a default answers for them. The list, with
+   what each absence costs, is
    [`infrastructure/deploy/env-manifest.tsv`](../../../infrastructure/deploy/env-manifest.tsv) -
    every row whose DEV column is not `skip`, prefixed `DEV_`.
 3. **Setting `DEV_ENVIRONMENT_ENABLED` to `true`**, once the two above exist. Until then every dev
-   job skips and CD is unchanged.
+   job skips and CD is unchanged. It is `gh variable set DEV_ENVIRONMENT_ENABLED --body true`, and
+   the same command with `false` is the escape: turning it on makes a FAILED dev deploy block the
+   production deploy, which is the point of the ordering and also the reason it is the LAST thing
+   flipped rather than the first.
+
+**The dev OIDC client, and why it is not created here.** Authentik has one Canari application
+(provider `pk=1`, `default-provider-authorization-implicit-consent`, `sub_mode=hashed_user_id`, six
+redirect URIs); dev needs a sibling with `https://dev.canari-emse.fr/auth/callback` and its own
+`client_id`/`client_secret`. It is creatable from a workstation with
+`ssh miconnect 'docker exec -i miconnect-server-1 ak shell'` fed a script that copies provider 1's
+flow, signing key and property mappings - **but writing to the identity provider's database is
+exactly the class of action an agent should not perform unattended**, and the attempt on 2026-09-02
+was refused for that reason. Do it in the admin UI, or approve the command explicitly.
 
 **Owed by production, LATER and deliberately not yet.** `deploy-to-server` still carries its own
 ~780 lines of inlined shell. It moves onto `deploy-environment.sh` once the dev estate has actually

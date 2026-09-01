@@ -31,6 +31,14 @@ rend cette regle urgente independamment du reste.
 
 ### 1.2 Les secrets `DEV_*`
 
+> **Etat au 2026-09-02 : 12 des 14 `required` sont deja crees.** Les trois deduits
+> (`DEV_AUTHENTIK_URL`, `DEV_BASE_URL`, `DEV_POSTGRES_USER`) et neuf tires a `openssl rand`, aucun
+> recopie de la production, plus `DEV_INTERNAL_SECRET` et `DEV_EXTERNAL_API_KEY`. Les valeurs
+> generees n'existent que dans les secrets GitHub et, apres le premier deploiement, dans
+> `/home/canari/canari-dev/.env` sur la machine - nulle part ailleurs, volontairement.
+> **Il reste `DEV_AUTHENTIK_CLIENT_ID` et `DEV_AUTHENTIK_CLIENT_SECRET`**, qui sortent du client
+> OIDC de dev (voir la fin de cette section).
+
 Dans **Settings -> Secrets and variables -> Actions -> Secrets**.
 
 La liste exacte n'est pas recopiee ici, parce qu'une liste recopiee devient fausse. Elle **est**
@@ -68,9 +76,17 @@ Trois regles qui comptent :
    d'API du bundle dev, et il n'y a aucun repli vers celle de la production - un repli construirait
    une image dev qui parle a la production.
 
-Le client OIDC Authentik de dev, je peux le creer moi-meme sur la machine
-(`docker exec miconnect-server-1 ak shell -c ...`) : demande-le et je le fais, il faut juste que
-`DEV_AUTHENTIK_CLIENT_ID` / `DEV_AUTHENTIK_CLIENT_SECRET` en sortent.
+**Le client OIDC Authentik de dev - c'est la seule chose qui bloque encore les secrets.** Il faut un
+deuxieme client a cote de celui de la production, avec `https://dev.canari-emse.fr/auth/callback`
+comme URI de redirection, le meme flow (`default-provider-authorization-implicit-consent`), le meme
+`sub_mode` (`hashed_user_id`) et les memes property mappings que le provider `Canari` existant.
+
+J'ai la commande exacte et la machine repond (`ssh miconnect`), mais **ecrire dans la base du
+fournisseur d'identite est precisement le genre d'action qu'un agent ne doit pas faire tout seul** :
+la tentative du 2026-09-02 a ete refusee pour cette raison, et c'est le bon comportement. Deux
+options : tu le crees dans l'UI d'Authentik (Applications -> Providers -> Create -> OAuth2/OpenID),
+ou tu m'autorises explicitement la commande et je le fais en une fois. Dans les deux cas il faut
+finir par les deux secrets `DEV_AUTHENTIK_CLIENT_ID` et `DEV_AUTHENTIK_CLIENT_SECRET`.
 
 ### 1.3 L'interrupteur
 
@@ -132,8 +148,26 @@ client Authentik revoque), il retiendrait les livraisons de la production en ota
 `DEV_ENVIRONMENT_ENABLED` a autre chose que `true` saute dev et debloque la production
 immediatement.
 
+### 2.1 Non, on ne peut pas "pousser sur dev" sans toucher la production
+
+C'est la question naturelle une fois dev allume, et la reponse est non, pas aujourd'hui. Il n'y a
+qu'un seul declencheur - un push sur `main` - et il deploie **les deux** estates a la suite. Dev
+n'est donc pas un endroit ou pousser librement : c'est un **filet** qui casse avant la production sur
+une copie de ses donnees, pas un bac a sable.
+
+Pour pousser sur dev sans livrer la production il faudrait un declencheur separe : soit une branche
+`dev` (ce que la decision du 2026-08-17 a explicitement ecarte - "dev deploie depuis `main`"), soit
+une entree `workflow_dispatch` sur `cd.yml` du genre "dev seulement". La deuxieme est petite et ne
+contredit aucune decision prise ; elle n'existe pas parce que personne ne l'a demandee. **Si c'est ce
+que tu veux, dis-le et je l'ajoute** - c'est un choix, pas un oubli.
+
+En attendant, la maniere de ne pas livrer la production reste celle qui existe deja : ne pas pousser.
+
 **Une regle qui ne change pas :** un run de la campagne de tests et un push sur `main` sont
-**mutuellement exclusifs**. Un deploiement en cours de run a deja invalide trois mesures.
+**mutuellement exclusifs**. Un deploiement en cours de run a deja invalide trois mesures - et depuis
+le 2026-08-31 ce n'est plus seulement toi qui peux pousser : la balayeuse de dependances fusionne et
+declenche `cd.yml` toute seule, toutes les heures. Avant un run :
+`gh workflow disable "Dependabot auto-merge"`, et `enable` apres.
 
 ---
 

@@ -2804,7 +2804,20 @@ that reason is what a future session must argue with rather than the choice.
 > SHIPPED** (2026-09-01), the CD wiring included. What is left is owed by the USER and is three
 > things: the tunnel ingress rule to `3080`, the `DEV_*` secrets, and setting
 > `vars.DEV_ENVIRONMENT_ENABLED` to `true` - until which every dev job skips and CD is unchanged.
-> That page's closing section is the map.
+> **12 of the 14 required secrets were created on 2026-09-02**; the two that remain
+> (`DEV_AUTHENTIK_CLIENT_ID`, `DEV_AUTHENTIK_CLIENT_SECRET`) need a dev OIDC client that does not
+> exist, and writing it into the identity provider's database is not something an agent performs
+> unattended. That page's closing section is the map.
+
+**OPEN, AND OWED TO THE USER AS A DECISION: there is no way to deploy dev WITHOUT deploying
+production** (raised by the user 2026-09-02: *"on peut toujours push sur dev non ?"*). There is one
+trigger - a push to `main` - and it runs both estates in sequence. So dev is a NET that breaks before
+production on a copy of its data, and not a sandbox anybody can push into freely. Two shapes would
+change that, and the choice is the user's: a `dev` branch, which the 2026-08-17 scoping explicitly
+ruled out ("dev deploys from `main`") and which would reintroduce the drift that decision was taken
+to avoid; or a `workflow_dispatch` input on `cd.yml` meaning "dev only", which contradicts nothing
+already decided and is a small change. **It is absent because nobody asked for it, not because it was
+considered and rejected** - which is exactly the distinction this file exists to keep.
 
 **Shape.** Same machine as production (70 GB and 15 GiB free, measured), own compose project
 `canari-dev`, resource limits so a dev container cannot starve prod, running permanently. Own
