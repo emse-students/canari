@@ -2912,11 +2912,38 @@ survived and are inputs to phase 1:**
   document: a mutable tag means a dev redeploy cannot be reproduced, which sits badly with the standing
   demand that everything be deterministic and reproducible.
 
-**OWED BY THE USER before phase 1 can start** - one-off actions, per the standing directive: a
-Cloudflare API token with DNS **and** Access scope on the zone (granted, and it goes to agent memory,
-never to this public repo - today's token has neither, so not even a DNS record can be read); the
-Authentik OIDC client for dev; Stripe test keys and a dev webhook endpoint; and the Cloudflare Access
-service token for the harness. Phase 2 additionally needs the Firebase project and the dev keystore.
+**WHAT IS ACTUALLY BLOCKED, narrowed by measurement 2026-09-01 - it is ONE credential, not four.**
+
+- **Cloudflare is the only real blocker, and the missing permission is NAMED.** The stored token reads
+  zones (`/zones?name=` returns the id) but is refused on `/zones/{id}/dns_records` with `10000`, so it
+  holds `Zone:Zone:Read` and not `Zone:DNS`. **The permission needed appears only on a policy whose
+  RESOURCE is a zone**; a policy scoped to "entire account" offers `Account DNS Settings`, `DNS
+  Firewall`, `DNS View` and the Registrar groups, **none of which grant any right over DNS records** -
+  that mismatch is what made the first attempt look granted when it was not. Phase 1 needs
+  `Zone -> DNS -> Edit` on `canari-emse.fr`, plus, account-scoped, `Access: Apps and Policies -> Edit`
+  and `Access: Service Tokens -> Edit` for the Access application and the harness token. **Beware one
+  false negative:** `/user/tokens/verify` answers `Invalid API Token` for an ACCOUNT-owned token even
+  when it works, so that endpoint must never be used to judge one.
+- **Authentik is NOT blocked - the box can be driven from here** (user, 2026-09-01). The alias is
+  `ssh miconnect`, not `rootz-emse`, which is in no SSH config; Authentik 2026.8.0 runs as
+  `miconnect-server-1`, and `docker exec miconnect-server-1 ak shell -c '...'` executes against the
+  live models, verified by listing the five existing providers. **The `Canari` provider's settings were
+  read so the dev one is a faithful clone rather than a guess:** `client_type` confidential,
+  `sub_mode` `hashed_user_id`, `issuer_mode` **`per_provider`** - which is why a dev token cannot be
+  mistaken for a prod one - claims in the id token, validity 1 min / 5 min / 30 days, and **four custom
+  property mappings that must be carried over or dev logins lose fields prod has**: `Promotion`,
+  `Formation`, `First + Last Names`, `Personnel de l'ecole`, alongside the two default OpenID mappings.
+  Its six redirect URIs (`canari-emse.fr`, both `tauri.localhost` schemes, ports 1420/1421, and
+  `fr.emse.canari://callback`) are the template; the dev provider's are the same list rewritten onto
+  `dev.canari-emse.fr` and `fr.emse.canari.dev://callback`.
+- **Stripe is DROPPED from dev entirely** (user, 2026-09-01: *"oublie. Stripe ne sera pas accessible en
+  dev pour le moment, tant pis"*). No keys, no webhook endpoint, and the payment path is inert there.
+  The copy still CLEARS `stripe_customer_id`, for the same reason as before and now more strongly: with
+  no keys at all, a copied live-mode id could only ever produce a misleading failure.
+
+**Phase 2 alone remains owed to the user:** the Firebase project (the Play service account holds only
+`androidpublisher` and no `serviceusage.services.enable`, so it can neither create a project nor turn
+an API on) and the dev keystore, plus a decision on where that keystore is backed up.
 
 **MEASURED 2026-09-01, before any of it is scoped - four facts, three of them worse than the note
 above assumed.**

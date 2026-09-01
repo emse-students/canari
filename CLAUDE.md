@@ -250,9 +250,12 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md).**
     FULL unscrubbed copy of prod against the recommendation**, for usability, after being shown that
     copied chat is unreadable without the device's MLS keys; that choice is what makes the other prize
     real - Postgres 18 starting in dev on a directory written by prod's 15 is the test that retires the
-    ceiling arm the outage of 2026-09-01 was missing. Mobile is phase 2. **Phase 1 is BLOCKED on
-    one-off actions owed by the user**, listed at the end of that backlog entry, the first being a
-    Cloudflare token with DNS and Access scope - today's has neither.
+    ceiling arm the outage of 2026-09-01 was missing. Mobile is phase 2. **Phase 1 is blocked on
+    exactly ONE credential**, narrowed by measurement: a Cloudflare token carrying `Zone -> DNS -> Edit`
+    on the zone - a policy scoped to the ACCOUNT cannot grant it, which is what made the first attempt
+    look granted - plus the two account-scoped Access permissions. **Authentik is NOT blocked**
+    (`ssh miconnect`, then `docker exec miconnect-server-1 ak shell -c`, verified), and **Stripe is
+    dropped from dev outright** (user).
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 
