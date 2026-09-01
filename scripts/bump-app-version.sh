@@ -19,6 +19,20 @@ normalize_version() {
   echo "$raw"
 }
 
+# JQ ON WINDOWS WRITES CRLF, AND STRIPPING CR IS THE SAFE ANSWER ON JSON SPECIFICALLY.
+# Measured 2026-09-01 under Git Bash: `echo '{"a":1}' | jq .` comes back with every newline as CRLF,
+# while the awk-based bumps below come back LF. That is exactly why one version bump left CRLF in
+# the four service `package.json` files and in `tauri.conf.json` and in nothing else - those are the
+# two functions here that use jq.
+#
+# IT IS INVISIBLE TO GIT. The repository declares `* text=auto eol=lf`, so the blob is normalised
+# and `git status` shows nothing modified; the damage surfaced only as `lineEndings.test.ts` failing
+# a push, naming five files nobody had knowingly touched.
+#
+# Safe on JSON because an unescaped carriage return is not legal inside a JSON string - jq emits a
+# real one as the two characters backslash and `r` - so no CR reaching this filter is data.
+strip_cr() { tr -d '\r'; }
+
 bump_package_json() {
   local file="$1"
   local version="$2"
@@ -28,7 +42,7 @@ bump_package_json() {
   fi
   local tmp
   tmp="$(mktemp)"
-  jq --arg v "$version" '.version = $v' "$file" > "$tmp"
+  jq --arg v "$version" '.version = $v' "$file" | strip_cr > "$tmp"
   mv "$tmp" "$file"
   echo "  package.json  $file → $version"
 }
@@ -38,7 +52,7 @@ bump_tauri_conf() {
   local version="$2"
   local tmp
   tmp="$(mktemp)"
-  jq --arg v "$version" '.version = $v' "$file" > "$tmp"
+  jq --arg v "$version" '.version = $v' "$file" | strip_cr > "$tmp"
   mv "$tmp" "$file"
   echo "  tauri.conf    $file → $version"
 }

@@ -38,6 +38,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A version bump wrote CRLF into five files, and git showed nothing.** `jq` under Git Bash on
+  Windows emits CRLF; the awk-based bumps in `scripts/bump-app-version.sh` emit LF. So the two
+  jq-based functions - the four service `package.json` files and `tauri.conf.json` - came back with
+  CRLF and the three awk ones did not, which is exactly the set that turned up. `* text=auto eol=lf`
+  means git normalises the blob, so `git status` was clean and `git diff` empty; the only thing that
+  ever said so was `lineEndings.test.ts`, failing a push and naming five files nobody had knowingly
+  touched. Both jq writers now strip CR, which is safe on JSON specifically: an unescaped carriage
+  return is not legal inside a string, so no CR reaching that filter is data.
+
 - **A moderate advisory reddened CD on `main`, and nothing in the chain could have fixed it.**
   `GHSA-vcc3-ghjq-m6fr` widened to cover every `decode-uri-component` at or below 0.4.2, reached as
   `minio > query-string > decode-uri-component` in media-service. There is no in-range fix anywhere
