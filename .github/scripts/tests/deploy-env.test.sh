@@ -390,12 +390,24 @@ else
   fail "CERCLE_API_KEY is not skipped in dev"
 fi
 
-# Production's FCM sender must never be reachable from dev: that is how a test notification lands on
-# a real member's phone. The copy script truncates push_token for the same reason.
-if [ "$(manifest_field APNS_VOIP_KEY_P8 3)" = "skip" ]; then
-  pass "APNS_VOIP_KEY_P8 is skipped in dev"
+# PUSH IS DELIBERATELY AVAILABLE ON DEV, AND THE GUARD IS ELSEWHERE. Until 2026-09-02 the three APNs
+# rows were `skip` while `FIREBASE_SERVICE_ACCOUNT_JSON` beside them was `warn` - Android push
+# provided for, iOS not, on the same threat model. That was an oversight, not a policy. What actually
+# stops a test notification reaching a real member is the copy's `TRUNCATE TABLE push_token`, asserted
+# by `dev-copy-guards.test.sh`: a dev estate holds no token of any real device, so the only phone it
+# can reach is one that has itself signed into dev. This asserts the two halves stay CONSISTENT, which
+# is the property that was broken - not which value they hold.
+fcm="$(manifest_field FIREBASE_SERVICE_ACCOUNT_JSON 3)"
+apns="$(manifest_field APNS_VOIP_KEY_P8 3)"
+if [ "$fcm" = "$apns" ]; then
+  pass "iOS and Android push have the same dev disposition ($fcm), so one platform cannot be testable while the other is not"
 else
-  fail "APNS_VOIP_KEY_P8 is not skipped in dev - production's APNs key would ring real devices"
+  fail "dev treats Android push as '$fcm' and iOS push as '$apns' - same threat model, so a difference here is an oversight, not a decision"
+fi
+if [ "$apns" = "skip" ]; then
+  fail "push is skipped on dev, which makes the estate unable to test the notification path at all - if that is really wanted, the guard to point at is the push_token truncation, not the absent key"
+else
+  pass "dev can be given its own push credentials, so the notification path is testable there"
 fi
 
 printf '\n'

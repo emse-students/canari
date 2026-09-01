@@ -27,6 +27,19 @@
 #              absence is the decision, so a warning would be noise. Only `skip` may be silent
 #              about a key production requires.
 #
+# WHAT `skip` IS FOR, AND WHAT IT IS NOT FOR - corrected 2026-09-02 after the user asked why dev
+# could not test push. `skip` is for a credential whose USE would reach a third party that believes
+# it is talking to production: Stripe and Lydia move real money, and CERCLE_API_KEY makes the bar's
+# own checks pass against a copy of the database. No guard inside this repository can undo either.
+#
+# Push is NOT that, and the three APNs rows were `skip` by an oversight that this file made visible:
+# FIREBASE_SERVICE_ACCOUNT_JSON sat one line above them as `warn`, so Android push was provided for
+# and iOS was not, on the same threat model. The threat - a test notification landing on a real
+# member's phone - is already closed by the copy, which does `TRUNCATE TABLE push_token` (asserted by
+# `dev-copy-guards.test.sh`). A dev estate therefore holds NO token of any real device, and the only
+# device it can reach is one that has itself signed into dev. Removing the key on top of that bought
+# nothing and cost the ability to test iOS push at all, which is a large part of what dev is for.
+#
 # SOURCES
 #   secret:NAME    a GitHub secret; dev reads DEV_<NAME>, which is why dev cannot fall back to
 #                  production's value - a missing dev secret is empty, and `required` then fails.
@@ -62,9 +75,9 @@ CLOUDFLARE_CALLS_API_TOKEN	warn	warn	secret:CLOUDFLARE_CALLS_API_TOKEN	calls fai
 CLOUDFLARE_TURN_KEY_ID	warn	warn	secret:CLOUDFLARE_TURN_KEY_ID	calls fail - ice-servers answers 503
 MIGALLERY_API_KEY	warn	warn	secret:MIGALLERY_API_KEY	the avatar service does not work
 GOOGLE_SAFE_BROWSING_API_KEY	warn	warn	secret:GOOGLE_SAFE_BROWSING_API_KEY	links are not checked against Safe Browsing
-APNS_VOIP_KEY_P8	warn	skip	secret:APNS_VOIP_KEY_P8	iOS CallKit VoIP pushes are disabled and iOS falls back to an FCM banner
-APNS_VOIP_KEY_ID	silent	skip	secret:APNS_VOIP_KEY_ID	the APNs key cannot be identified
-APNS_VOIP_TEAM_ID	silent	skip	secret:APNS_VOIP_TEAM_ID	the APNs key cannot be attributed to a team
+APNS_VOIP_KEY_P8	warn	warn	secret:APNS_VOIP_KEY_P8	iOS CallKit VoIP pushes are disabled and iOS falls back to an FCM banner
+APNS_VOIP_KEY_ID	silent	silent	secret:APNS_VOIP_KEY_ID	the APNs key cannot be identified
+APNS_VOIP_TEAM_ID	silent	silent	secret:APNS_VOIP_TEAM_ID	the APNs key cannot be attributed to a team
 SERVICE_ACCOUNT_USER_ID	silent	silent	secret:SERVICE_ACCOUNT_USER_ID	the default from .env.example applies, which is the intended value
 STRIPE_SECRET_KEY	warn	skip	secret:STRIPE_SECRET_KEY	payments are unavailable
 STRIPE_WEBHOOK_SECRET	warn	skip	secret:STRIPE_WEBHOOK_SECRET	Stripe webhooks are rejected

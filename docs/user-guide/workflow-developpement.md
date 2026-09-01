@@ -43,14 +43,14 @@ awk -F'\t' '!/^#/ && NF==5 && $3!="skip" && $4 ~ /^secret:/ \
   infrastructure/deploy/env-manifest.tsv
 ```
 
-23 lignes en tout :
+26 lignes en tout :
 
 - **14 `required`** : sans elles le deploiement dev refuse de partir, avant de toucher un conteneur.
   C'est voulu - un environnement incomplet qui demarre est pire qu'un deploiement rate.
-- **8 `warn`** : le deploiement passe et affiche un avertissement nommant ce qui ne marche pas. On
+- **9 `warn`** : le deploiement passe et affiche un avertissement nommant ce qui ne marche pas. On
   peut les ajouter plus tard.
-- **1 `silent`** (`DEV_SERVICE_ACCOUNT_USER_ID`) : la valeur par defaut de `.env.example` est la bonne,
-  donc son absence ne merite meme pas un avertissement.
+- **3 `silent`** (`DEV_SERVICE_ACCOUNT_USER_ID` et les deux identifiants APNs qui n'ont de sens
+  qu'avec la cle) : leur absence ne merite meme pas un avertissement.
 
 Trois regles qui comptent :
 
@@ -58,10 +58,12 @@ Trois regles qui comptent :
    signature partage rend un jeton emis par un environnement valide dans l'autre, et toute
    l'isolation disparait. Meme chose pour les cles Garage et le client Authentik. Generer :
    `openssl rand -hex 32`.
-2. **Ne PAS creer les lignes `skip`.** Stripe, Lydia, `CERCLE_API_KEY` et les trois valeurs APNs sont
-   volontairement absentes de dev. C'est ce qui garantit qu'une copie de la base de production ne peut
-   pas debiter une vraie carte, repondre au Cercle comme si elle etait la production, ni faire sonner
-   le telephone d'un vrai membre.
+2. **Ne PAS creer les lignes `skip`.** Stripe, Lydia et `CERCLE_API_KEY` sont volontairement absents
+   de dev : c'est ce qui garantit qu'une copie de la base de production ne peut pas debiter une vraie
+   carte ni repondre au Cercle comme si elle etait la production. Les notifications push, elles, ne
+   sont PAS dans ce lot - la copie vide la table `push_token`, donc dev n'a le jeton d'aucun appareil
+   reel. Elles sont simplement optionnelles, et le jour ou tu crees un projet Firebase et une cle
+   APNs de dev, elles marchent.
 3. **`DEV_BASE_URL` = `https://dev.canari-emse.fr`.** C'est de la que sortent toutes les origines
    d'API du bundle dev, et il n'y a aucun repli vers celle de la production - un repli construirait
    une image dev qui parle a la production.

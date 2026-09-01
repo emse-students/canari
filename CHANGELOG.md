@@ -111,8 +111,15 @@ which is also where every release up to and including v0.13.1 now lives.
   from `cd.yml`'s own `upsert_env_var` calls - the failure mode of a guard list is an absence, and an
   absence in a hand-written list passes silently - and it proved able to fail: removing one manifest
   row named it. It also locks the dispositions the user decided rather than merely documenting them,
-  Stripe, Lydia, Le Cercle's key and the APNs key all being `skip` in dev, `skip` and not `warn`
-  because the absence IS the decision and a warning on every deploy would be noise. `cd.yml`
+  Stripe, Lydia and Le Cercle's key being `skip` in dev, `skip` and not `warn` because the absence IS
+  the decision and a warning on every deploy would be noise. **Push was first written into that lot
+  and did not belong there**, which the manifest itself exposed by putting the two halves of push on
+  adjacent lines with opposite dispositions - Android `warn`, iOS `skip`, one threat model. `skip` is
+  for a credential whose USE reaches a third party believing it is talking to production; push
+  reaches devices, and `copy-prod-to-dev.sh` truncates `push_token` before the restore, so dev holds
+  no real device's token to send to. The three APNs rows are now ordinary optional credentials, and
+  the test locks the two halves EQUAL rather than locking either value, so the next person to move
+  one has to move both. `cd.yml`
   itself joined the CI trigger for that job: a derived test whose source sits outside its own
   trigger is a test that passes on the very commit that breaks it.
 

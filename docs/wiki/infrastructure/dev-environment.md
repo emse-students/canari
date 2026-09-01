@@ -213,9 +213,23 @@ and `build` is null - the correct behaviour for production, the only environment
 | | state | why |
 |---|---|---|
 | Stripe / Lydia | no credentials, identifiers stripped | user, 2026-09-01: dev will not reach Stripe for now |
-| Push notifications | no dev FCM project yet | owed by the user; production's sender must not be shared |
-| Mobile builds | phase 2 | a dev keystore and a dev Firebase project are prerequisites |
+| Push notifications | PERMITTED, no dev credentials yet | not a decision, just an absence: both halves are `warn`, so dev sends nothing until a dev FCM project and a dev APNs key exist |
+| Mobile builds | phase 2 | a dev keystore and a dev bundle identifier are prerequisites, and they are the real blocker - not the push credentials |
 | A `dev` branch | none, by decision | dev deploys from `main`, so what is on dev is what is on `main` |
+
+**Push is the one row that changed its mind, and the reason is worth keeping.** The three APNs values
+were first written `skip` alongside Stripe and Lydia, on the reading that a dev estate holding a copy
+of production could ring a real member's phone. It cannot, and the guard is not the missing
+credential: `copy-prod-to-dev.sh` does `TRUNCATE TABLE push_token` before the restore, asserted by
+`dev-copy-guards.test.sh`, so dev holds no real device's token to send to. The manifest made the
+inconsistency visible by putting the two halves of push on adjacent lines - Android `warn`, iOS
+`skip`, one threat model, opposite dispositions - and `deploy-env.test.sh` now locks them EQUAL
+rather than locking either value, so the next person to move one has to move both.
+
+`skip` means something narrower than "absent from dev": a credential whose USE reaches a third party
+that believes it is talking to production. Stripe charges a card, Lydia moves money, `CERCLE_API_KEY`
+makes another estate answer as though production asked. Push reaches devices this estate does not
+know about, which is a different sentence.
 
 ---
 
@@ -322,8 +336,9 @@ The tracked items live in [backlog](../backlog.md); this is the map.
 
 - the Cloudflare Access service token for the harness (needs `Account -> Cloudflare Tunnel` plus the
   two account-scoped Access permissions); without it the campaign rig cannot drive dev
-- a dev Firebase project, for push; without it `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` is empty and dev
-  sends no notifications, which the deploy reports as a warning rather than a failure
+- a dev Firebase project and a dev APNs key, for push; without them
+  `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` and `DEV_APNS_VOIP_KEY_P8` are empty and dev sends no
+  notifications, which the deploy reports as a warning rather than a failure
 - a dev Android keystore, and where it is backed up; mobile is phase 2
 
 **The CD wiring is DONE** (2026-09-01), and it is section 8. `cd-dev.yml` is gone, deleted ahead of
@@ -341,8 +356,9 @@ create:
    production's own tunnel, which is why anyone told to "use dev" is currently typing into
    production. If it is ever done through the API rather than the dashboard: GET the config, save the
    original, change the single rule, PUT - and never probe it by writing.
-2. **The `DEV_*` repository secrets.** 14 are required and the deploy refuses without them; 9 are
-   optional and each degrades one named feature. The list, with what each absence costs, is
+2. **The `DEV_*` repository secrets.** 14 are required and the deploy refuses without them; 12 are
+   optional (9 named in a deploy warning, 3 silent because a default answers for them). The list,
+   with what each absence costs, is
    [`infrastructure/deploy/env-manifest.tsv`](../../../infrastructure/deploy/env-manifest.tsv) -
    every row whose DEV column is not `skip`, prefixed `DEV_`.
 3. **Setting `DEV_ENVIRONMENT_ENABLED` to `true`**, once the two above exist. Until then every dev

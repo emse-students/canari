@@ -90,10 +90,13 @@ Generate strong values: `openssl rand -hex 32` (secrets), `openssl rand -base64 
 >
 > **Which `DEV_*` secrets to create, and what each absence costs, is the manifest itself** - every row
 > whose DEV column is not `skip`, prefixed `DEV_`. Fourteen are `required` and the deploy refuses
-> without them; nine are `warn` and each degrades one named feature. Rows marked `skip` must NOT be
-> created: Stripe, Lydia, `CERCLE_API_KEY` and the three APNs values are deliberately absent from dev
-> (decided with the user), so that a copy of production's database can never charge a real card, be
-> answered as production by Le Cercle, or ring a real member's phone.
+> without them; nine are `warn` and each degrades one named feature; three are `silent` because a
+> default answers for them. Rows marked `skip` must NOT be created: Stripe, Lydia and
+> `CERCLE_API_KEY` are deliberately absent from dev (decided with the user), so that a copy of
+> production's database can never charge a real card nor be answered as production by Le Cercle.
+> **Push is NOT among them** - `copy-prod-to-dev.sh` truncates `push_token`, so dev has no real
+> device to reach, and both halves of push (FCM and the three APNs values) are ordinary optional
+> credentials.
 
 ## 4. SSH access for offsite backup (mitv)
 

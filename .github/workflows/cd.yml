@@ -710,6 +710,13 @@ jobs:
           DEV_MIGALLERY_API_KEY: ${{ secrets.DEV_MIGALLERY_API_KEY }}
           DEV_GOOGLE_SAFE_BROWSING_API_KEY: ${{ secrets.DEV_GOOGLE_SAFE_BROWSING_API_KEY }}
           DEV_SERVICE_ACCOUNT_USER_ID: ${{ secrets.DEV_SERVICE_ACCOUNT_USER_ID }}
+          # Push, iOS half. Available on dev on purpose: what stops a test notification reaching a
+          # real member is the copy's `TRUNCATE TABLE push_token`, not an absent key, so a dev estate
+          # can only reach a phone that has itself signed into dev. Absent, iOS falls back to an FCM
+          # banner and the deploy says so.
+          DEV_APNS_VOIP_KEY_P8: ${{ secrets.DEV_APNS_VOIP_KEY_P8 }}
+          DEV_APNS_VOIP_KEY_ID: ${{ secrets.DEV_APNS_VOIP_KEY_ID }}
+          DEV_APNS_VOIP_TEAM_ID: ${{ secrets.DEV_APNS_VOIP_TEAM_ID }}
         run: |
           set -euo pipefail
           bash infrastructure/deploy/render-env.sh \
