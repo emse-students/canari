@@ -24,6 +24,7 @@
     isBelowMinClientVersion,
   } from '$lib/stores/appVersionCheck.svelte';
   import PlatformGateOverlay from '$lib/components/shared/PlatformGateOverlay.svelte';
+  import EnvironmentBanner from '$lib/components/shared/EnvironmentBanner.svelte';
   import MaintenanceAdminBanner from '$lib/components/shared/MaintenanceAdminBanner.svelte';
   import { isGlobalAdmin } from '$lib/stores/user';
   import MlsFatalErrorBanner from '$lib/components/shared/MlsFatalErrorBanner.svelte';
@@ -307,6 +308,9 @@
      dead. Stacked in one flex column they queue instead, which is the lesson `ChatArea` had already
      learnt for the conversation-scale pair. -->
 <div class="fixed inset-x-0 top-[env(safe-area-inset-top)] z-120 flex flex-col">
+  <!-- FIRST, and it decides for itself whether to render. The others come and go; this one is a
+       property of the whole deployment, so a transient notice must not push it off screen. -->
+  <EnvironmentBanner />
   {#if showMaintenanceAdminBanner}
     <MaintenanceAdminBanner />
   {/if}

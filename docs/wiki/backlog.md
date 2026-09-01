@@ -2846,9 +2846,16 @@ Accepted cost: dev never pre-validates a commit, it is where things are tried af
 734 unusable lines in four months precisely because it was separate. Dev builds its own images
 (the images embed the frontend and therefore the domain), roughly doubling build time, accepted.
 
-**Version.** `bump-version.yml` stays the only writer. Dev carries a build suffix `+dev.<sha7>` in
-`/api/version` and a permanent "test environment" banner in the UI - non-negotiable given the copy is
-indistinguishable from prod on screen. `minClientVersion` is per-environment by virtue of the separate
+**Version.** `bump-version.yml` stays the only writer. **DONE 2026-09-01, with one correction: the
+suffix is a SEPARATE FIELD, not part of `version`.** `/api/version` now returns `build`, fed by
+`DEPLOY_BUILD`; putting `+dev.<sha7>` inside `version` as first described would have broken the update
+path, because the frontend turns that field into a release tag and a GitHub download URL
+(`releaseTag`, `getReleaseApkDownloadUrl`), so a dev client would have been offered an update from
+`v0.14.15+dev.abc1234` - a 404. The permanent, non-dismissible **"test environment" banner** is built
+(`EnvironmentBanner.svelte`, driven by the build-time `VITE_DEPLOY_ENVIRONMENT`, unset meaning
+production so a missing variable never brands prod) - non-negotiable given the copy is
+indistinguishable from prod on screen. **Both variables are still unwritten by any pipeline**, which
+is the CD wiring, deliberately last. `minClientVersion` is per-environment by virtue of the separate
 database. A GitHub release does not build dev.
 
 **Dev is deliberately ONE MAJOR AHEAD, and a PROVEN gap lifts a ceiling.** ~~Postgres 18 starting in

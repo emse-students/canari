@@ -49,6 +49,21 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Added
 
+- **A permanent, non-dismissible "test environment" banner, and a build identity that does not
+  contaminate the version.** The dev environment carries a full copy of production's database, so it
+  is indistinguishable from production on screen - the same members, communities and posts - and
+  somebody who forgets which one they are in will act on what looks like the real thing. The banner
+  is a BUILD-TIME fact (`VITE_DEPLOY_ENVIRONMENT`), so it is up before the first request and stays up
+  when the API is unreachable, and it is not derived from the hostname: that would need editing for
+  every new name and cannot answer for the mobile app, whose origin is `tauri://localhost` in every
+  environment. An unset or unrecognised value means production, so the failure mode of a missing
+  variable is a missing banner on a test box rather than a banner shown to every member.
+  `GET /api/version` gains a `build` field, reported beside the version and never inside it: clients
+  DECIDE on `version` - `compareSemver` parses it, `releaseTag` turns it into `vX.Y.Z`,
+  `getReleaseApkDownloadUrl` builds a GitHub URL from it - so the `+dev.<sha7>` suffix the plan
+  described would have offered dev clients an update from a release that does not exist. A test locks
+  that separation in.
+
 - **The major versions dev runs ahead of production are DECLARED, and the declaration is held against
   both compose files.** `infrastructure/dev/version-gap.yml`, one row per stateful image, with
   `.github/scripts/tests/dev-gap.test.sh` asserting it. The row set is DERIVED from the images
