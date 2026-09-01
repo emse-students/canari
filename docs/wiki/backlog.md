@@ -681,6 +681,124 @@ ledger row - so `node rows.mjs` and every HEAL-NEW cell are silent about it, and
 reading the run's stdout. Nothing here is wrong, but a HEAL-NEW verdict says "clean on the web
 client", never "clean on the server".
 
+### P1 - a device asks for a Welcome for ever, and the member that answers RESETS the row that would have let it heal itself (measured on prod 2026-09-01)
+
+**A LIVELOCK, NOT A WAIT: each side re-creates the other's precondition, and it ran for 20 HOURS on
+the owner's own account.** Reported from the web client 2026-09-01: three conversations stuck on the
+`SYNC` badge for ever, `[READD] ... throttled` printed every 5 s for each, while the SAME
+conversations were healthy on the reporter's phone. Nothing was broken server-side - no tombstone, no
+missing roster row, no revocation - and the recovery loop was running exactly as designed.
+
+**The evidence, all of it read on prod before any code was written:**
+
+| Fact | Value |
+| --- | --- |
+| the enrolling device | `web-d82cd226...-mthfj460-44v8`, first membership rows written 2026-08-31 `16:05:10.586028` |
+| its 12 group memberships | **9 went `active` within 3 s**; **3 stayed `pending`** at the registration instant and were never touched again |
+| `queued_message` for that device | **0 rows, for any group, at any point** - no Welcome was ever queued for it, before OR after the repair attempts |
+| `mls_group_info` for the 3 | present for all three: baseEpoch **283**, **279**, **286** |
+| `key_package` / `revoked_device` | one fresh KeyPackage, no revocation - the device was addable throughout |
+| `one_time_key_package` | **0** - the same spent-pool hypothesis as the P2 below, still untested |
+
+**THE EXPERIMENT THAT SETTLED THE FIRST CAUSE.** The three `pending` rows were flipped to `active` by
+hand at `10:09:37` (an allowlisted UPDATE on that one deviceId, `status = 'pending'` only). Within
+90 s, two of the three healed with no peer involved at all:
+
+```
+10:10:31  COMMIT bee389a8 baseEpoch=286 -> base published with the commit -> epoch=287 ACCEPT
+10:10:31  COMMIT 6e7c9ab1 baseEpoch=279 -> base published with the commit -> epoch=280 ACCEPT
+```
+
+So the device could have freed itself at any moment in those 20 hours, and exactly one `if` forbade
+it. **That is proof on pieces rather than by reasoning, and it is what makes this a P1 rather than a
+suspicion.**
+
+**THE CLOSED LOOP, on the third group (`4f87267a`), read line by line in the delivery log:**
+
+```
+10:18:37  WELCOME_REQ FORWARDED -> tauri-...-mtd1qgu3-vnde     the phone receives it
+10:18:37  ADD_LOCK    acquired=true                            it takes the lock
+10:18:38  [KICK] Reset device web-...-mthfj460-44v8 to pending  it evicts the stale leaf AND RESETS THE ROW
+10:18:42  RELEASE_LOCK released=true                            it releases
+          (no Welcome queued, no commit - the Add never lands)
+10:18:45  WELCOME_REQ FORWARDED -> the same device              and round again
+```
+
+`kickStaleDevice` writes `pending` BEFORE knowing the Add will land, and `pending` is precisely what
+forbids the requester's self-service external join. **Every turn of the repair destroys the only state
+from which the requester could have saved itself**, and the requester's next request re-arms the
+repair. Neither side is idle and neither side is wrong on its own terms.
+
+**AND THE ESCAPE HATCH IS LOCKED FROM THE OTHER SIDE on that group**: `mls_group_info` holds baseEpoch
+**283** while the group is at **284**, published 2026-08-30 `04:36:47` and never refreshed. The server
+says so itself, once a minute - *"the published external-join base is unusable and only a member
+holding the tree can refresh it"*. Only a member's COMMIT republishes a base, which is literally what
+repaired the other two groups; `4f87267a` has had no commit since. So even with the gate corrected,
+that group cannot external-join until somebody commits into it.
+
+**FOUR DEFECTS, each independently sufficient to make the loop infinite:**
+
+- **(A) `pending` is a STATE read as an EVENT.** `readWelcomeOwed` returns "an Add is IN FLIGHT and a
+  member owes me a Welcome" on the strength of the row's status alone
+  ([recovery.ts](../../frontend/src/lib/utils/chat/recovery.ts), step 6), so `requestReAdd` never
+  reaches the external join. The gate itself is legitimate - it is what deleted the GRP-4
+  duplicate-leaf race of 2026-08-26 - but it cannot tell "in flight for 200 ms" from "registered
+  yesterday and never honoured". **The fact that separates them already exists and is already
+  computed, server-side, hourly, by `reportStrandedDeviceMemberships`: is a Welcome actually queued
+  for THIS device and THIS group.** It is simply not carried to where the decision is made; adding it
+  to the existing `GET /api/mls/device-memberships/:userId/:deviceId` response costs no round trip.
+  **The residual question a fix must answer: between `registerMember` and `addMembersBulk` the queue
+  is legitimately empty while an Add really is in flight**, so the queued-Welcome fact alone re-opens
+  GRP-4 in that window - which is why the inviter's own refusal (the P2 below) is the discriminator
+  that closes this properly, and why (A) must not ship as a bare `&& welcomeQueued`.
+- **(B) A destructive repair is not gated on the repair succeeding.** The `[KICK]` writes `pending`
+  first and attempts the Add after. This is the invariant established the same morning by `f46e7660`
+  - **a field written ONCE, after every prerequisite, cannot lose a race for it** - applied to the
+  function next door, for the third time in this area. Write the row when the Add lands, or not at
+  all. This is the P1 half: it is what turns a failure into a loop.
+- **(C) On `stale_base`, the wrong favour is asked.** `requestReAdd` falls back to a `welcome_request`
+  for every external-join refusal, including `stale_base` - a reason no retry can ever satisfy. A
+  Welcome MUTATES the tree, needs the add lock, and replays the race; refreshing the base is a
+  read-only publish by any member holding the tree, needs no lock, changes no epoch, and hands the
+  requester back its ability to serve itself. `stale_base` is already classified at the throw; it
+  wants its own action, not the shared fallback.
+- **(D) The failing `addMember` is reported NOWHERE.** It is swallowed on the answering device, and
+  server-side a `[KICK]` followed by no Welcome and no commit is a nameable population that no report
+  names. The hourly report already owns the neighbouring partition and is the natural home.
+
+**Two more, same session, lower severity but in the same seams:**
+
+- **The key-vs-id audit that `f46e7660` did not finish.** That commit fixed three lookups in
+  `recovery.ts` and the watchdog and wrote the rule *treat any `[key]` destructuring over a
+  heterogeneously-keyed map as a defect on sight* - but never enumerated the consumers. Still reading
+  the map by groupId, in a store where a DM learnt from a Welcome is keyed by the PEER'S USER ID:
+  `processPendingInvitations` (the readiness gate deciding whether an Add is even attempted),
+  `handleWelcomeRequest` (the *"No ready conversation - deferring"* branch, which would decline every
+  such request in silence), the history-serving gate, `recovery.ts` in the promotion after a
+  SUCCESSFUL external join - which would leave the `SYNC` badge on for ever on a conversation that
+  has actually rejoined - and `setupMessageHandler.ts` on the redelivery path. **Unproven as the cause
+  of anything above**, the phone's logs not being available, but a defect on sight by the repo's own
+  rule.
+- **The throttle logs its silent branch.** `[READD] ... throttled` prints on every 5 s poll against a
+  60 s cooldown: 12 lines per group per window, on a branch whose own comment says the throttle
+  *"returns silently"*. Three stuck conversations made 36 lines a minute, which is what the reporter
+  actually saw.
+
+**STATE LEFT ON PROD, 2026-09-01 ~10:20 - a resuming session must not re-derive this:**
+
+- `bee389a8` and `6e7c9ab1`: **healed and `active`**, joined by external commit at epochs 287 and 280.
+- `4f87267a`: **still `pending`** (the `[KICK]` of `10:18:38` undid the manual flip) and **its base is
+  still stale at 283/284**. It will not heal until a member commits into that group. Flipping the row
+  again is pointless on its own - the kick resets it within seconds.
+- The manual UPDATE is the only hand-write performed; nothing was deleted, and the fourteen-day purge
+  still owns those rows.
+
+**What closes this entry:** (B) and (A) in the tree with tests, the `4f87267a` base refreshed by any
+means, and one measurement showing a device enrolled into a group whose Add fails reaching `active` by
+external join without a peer - the sequence of `10:10:31` above, obtained without a hand-written
+UPDATE. The cause of the skipped Add itself is the P2 immediately below, and the two want reading
+together.
+
 ### P2 - a device was given a roster seat and never a Welcome, and WHY its KeyPackage was skipped is unmeasured (measured on prod 2026-09-01)
 
 **The report is in; the CAUSE is not.** `reportStrandedDeviceMemberships` (hourly, chat-delivery)
@@ -715,6 +833,24 @@ a genuinely unusable KeyPackage and a device whose pool is momentarily empty - w
 (reject and re-mint, versus wait and retry). Carry the reason out of the WASM boundary alongside the
 id, then the server report can partition on it instead of on the queue.
 
+### P3 - three RAW NUL bytes in a TypeScript source make the file invisible to ripgrep (found 2026-09-01)
+
+`apps/chat-delivery-service/src/app.controller.ts` carries three literal `\x00` bytes around offset
+25381 - a NUL used, deliberately and correctly, as the separator in a composite `deviceId + groupId`
+map key inside `reportStrandedDeviceMemberships`, but typed as the RAW character instead of the `\0`
+escape. The comment above it means to name the separator and shows an empty pair of backticks,
+because the character it quotes is invisible.
+
+**The cost is not cosmetic: ripgrep classifies the file as binary and reports `binary file matches`
+instead of the matching lines.** During this session that made a search for
+`reportStrandedDeviceMemberships` return the spec file and NOT the implementation, and the first
+conclusion drawn from it was that the implementation did not exist. Anything that greps this repo -
+a session, a hook, a CI step - is lied to the same way. It also violates the repo's ASCII-punctuation
+standard.
+
+The fix is `\0` in the template literal and in the comment, which is byte-identical at runtime, plus
+a check that no other source carries a NUL: `git grep -Il '' -- '*.ts' '*.rs' '*.svelte'` lists every
+file git already considers binary.
 ### P2 - a HEAL verdict says "clean on the web client" and never "clean on the server" (measured 2026-08-29)
 
 **Instrument debt, and it qualifies every verdict this rung has taken.** `healnew.mjs` and

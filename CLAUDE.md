@@ -211,9 +211,17 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md).**
    `CHANGELOG.md`; the mechanisms are on
    [chat](docs/wiki/frontend/modules/chat.md#the-conversation-row-is-the-recovery-ladders-input-so-publishing-it-early-arms-the-ladder-2026-09-01)
    and [chat-delivery](docs/wiki/services/chat-delivery.md#a-roster-seat-is-not-a-key-and-only-a-welcome-tells-the-two-apart).
-   **What is OPEN is one P2: the hourly report NAMES a stranded device and still cannot say why its
-   KeyPackage was skipped**, because `addMembersBulk` discards the reason with the id -
-   [backlog](docs/wiki/backlog.md#p2---a-device-was-given-a-roster-seat-and-never-a-welcome-and-why-its-keypackage-was-skipped-is-unmeasured-measured-on-prod-2026-09-01).
+   **WHAT IS OPEN IS A P1 THE SAME ACCOUNT THEN DEMONSTRATED, AND IT IS THE NEXT THING TAKEN** (user,
+   2026-09-01): a device asked for a Welcome every 60 s for 20 HOURS while the member answering
+   `[KICK]`ed it back to `pending` each time - the one status that forbids the self-service external
+   join. **A livelock, each side re-creating the other's precondition.** Proved on prod by flipping
+   three rows: 2 of 3 healed by external commit in 90 s with no peer at all. Four defects, the
+   evidence, and the state LEFT on prod (`4f87267a` still `pending`, its base stale at 283/284) are
+   in [backlog](docs/wiki/backlog.md#p1---a-device-asks-for-a-welcome-for-ever-and-the-member-that-answers-resets-the-row-that-would-have-let-it-heal-itself-measured-on-prod-2026-09-01),
+   the only copy. Its sibling P2 - the hourly report NAMES a stranded device and still cannot say why
+   its KeyPackage was skipped, `addMembersBulk` discarding the reason with the id - is
+   [there too](docs/wiki/backlog.md#p2---a-device-was-given-a-roster-seat-and-never-a-welcome-and-why-its-keypackage-was-skipped-is-unmeasured-measured-on-prod-2026-09-01),
+   and the two want reading together.
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 
