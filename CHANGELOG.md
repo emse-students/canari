@@ -13,6 +13,20 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **The dev environment's database copy, and the guard that makes its direction unable to invert.**
+  `infrastructure/dev/copy-prod-to-dev.sh` copies production's `auth_db` into the dev environment and
+  strips what a copy must not carry. Its source and target compose projects are `readonly` literals
+  rather than parameters, containers are located by their `com.docker.compose.project` label and the
+  database user is read from the container's own environment - so there is no path, no compose file
+  and no `.env` that being wrong could redirect it, and every write passes through one function that
+  re-reads the target's label on each call. It strips **seven** payment columns across four tables,
+  not the one first planned: five associations hold a real Stripe account id and the two Lydia columns
+  are still empty, which is why they are cleared now rather than after WP-LYDIA-1 fills them. It
+  truncates `push_token`, whose 70 rows belong to production's FCM sender and to real devices. It
+  then VERIFIES rather than asserts, and reports the environment untrustworthy if the counts disagree.
+  `dev-copy-guards.test.sh` DERIVES the payment column list from the entity declarations, so a column
+  added later fails the build until the copy strips it.
+
 - **The dev environment's compose file had never worked, and the reason is one mistake repeated four
   times.** `infrastructure/docker-compose.dev.yml` was written in April 2026 to let a second stack sit
   beside production on one machine, and offset every port to do it - but applied the offsets to the

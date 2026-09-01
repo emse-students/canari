@@ -198,7 +198,7 @@ jobs:
           # `tests/compose-wiring.test.sh` is derived the same way and reads BOTH deployed compose
           # files, so the dev one joins the trigger: the whole reason that test exists is that a
           # compose file was wrong for four months with nothing reading it.
-          if has '^\.github/scripts/' || has '^infrastructure/docker-compose\.(prod|dev)\.yml' || has '^Makefile'; then
+          if has '^\.github/scripts/' || has '^infrastructure/(docker-compose\.(prod|dev)\.yml|dev/)' || has '^Makefile'; then
             echo "scripts=true" >> "$GITHUB_OUTPUT"
           else
             echo "scripts=false" >> "$GITHUB_OUTPUT"
@@ -673,4 +673,4 @@ jobs:
           tar -xJf "$archive" -C "$RUNNER_TEMP"
           "$RUNNER_TEMP/shellcheck-${SHELLCHECK_VERSION}/shellcheck" --version
           "$RUNNER_TEMP/shellcheck-${SHELLCHECK_VERSION}/shellcheck" -x \
-            .github/scripts/*.sh .github/scripts/lib/*.sh .github/scripts/tests/*.sh
+            .github/scripts/*.sh .github/scripts/lib/*.sh .github/scripts/tests/*.sh \n            infrastructure/dev/*.sh

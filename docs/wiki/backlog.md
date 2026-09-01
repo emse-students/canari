@@ -2955,6 +2955,36 @@ survived and are inputs to phase 1:**
   The copy still CLEARS `stripe_customer_id`, for the same reason as before and now more strongly: with
   no keys at all, a copied live-mode id could only ever produce a misleading failure.
 
+**THE COPY IS BUILT AND ITS GUARDS ARE TESTED (2026-09-01):**
+`infrastructure/dev/copy-prod-to-dev.sh`, with
+`.github/scripts/tests/dev-copy-guards.test.sh` holding it to its two properties. Three things came
+out of building it that the plan had wrong:
+
+- **It is SEVEN payment columns across four tables, not the one the plan named.** Measured on prod:
+  `users."stripeCustomerId"`, `associations."stripeAccountId"`, `associations."stripeOnboardingComplete"`,
+  `associations."lydiaAccountId"`, `associations."lydiaOnboardingComplete"`,
+  `purchase_records."stripePaymentIntentId"`, `submissions."stripeSessionId"`. Five associations hold a
+  real `stripeAccountId`; both Lydia columns are still empty, which is precisely why they are stripped
+  now rather than after WP-LYDIA-1 fills them. The two `*OnboardingComplete` columns are NOT NULL
+  booleans and are set `false`, not nulled. **The test DERIVES this list from the entity declarations**,
+  so a column added later fails the build until the copy strips it - proved by injecting a
+  `stripeInvoiceId` and watching 8 columns derive and the new one fail.
+- **The direction is enforced by Docker's own labels, not by a path.** The two compose projects are
+  `readonly` literals, containers are found by `com.docker.compose.project`, and the database user is
+  read from the container's own environment - so the script needs no compose file, no `.env` and no
+  path to be right. Every write goes through one function that RE-READS the target's label per call.
+  Verified on the box: the discovery finds `infrastructure-postgres-1` and reads `POSTGRES_USER=canari`,
+  and a `--dry-run` with no dev environment present refuses with
+  `no running 'postgres' container in project 'canari-dev'` before touching anything.
+- **`push_token` holds 70 rows on prod and no foreign key references it**, so the truncate is safe.
+
+**AND ONE GAP IT EXPOSED, small but real: the platform cannot declare payments DISABLED.**
+`platform_config.payment_provider` is typed `'stripe' | 'lydia'` with no third value, so the copy
+leaves it alone - writing anything else would contradict what the code asserts about the column. The
+consequence is that dev presents Stripe as the live provider and fails on use, with no keys behind it.
+A `'none'` value, refused by the DTO's `@IsIn` today, would let an environment say the truth. Worth
+one line of enum and one migration, and it is not urgent.
+
 **Phase 2 alone remains owed to the user:** the Firebase project (the Play service account holds only
 `androidpublisher` and no `serviceusage.services.enable`, so it can neither create a project nor turn
 an API on) and the dev keystore, plus a decision on where that keystore is backed up.

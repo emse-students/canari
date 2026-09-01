@@ -291,6 +291,7 @@ test-ci-scripts:
 	@bash .github/scripts/tests/gate-moves.test.sh
 	@bash .github/scripts/tests/ceiling.test.sh
 	@bash .github/scripts/tests/compose-wiring.test.sh
+	@bash .github/scripts/tests/dev-copy-guards.test.sh
 
 test-harness:
 	@echo "${BLUE}🧪 Harness self-tests…${RESET}"
