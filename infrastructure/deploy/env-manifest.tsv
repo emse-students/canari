@@ -1,0 +1,73 @@
+# The runtime environment of a deployed Canari estate, one line per key, per environment.
+#
+# WHY THIS IS A TABLE AND NOT CODE. Until 2026-09-01 these 33 keys lived as ~40 hand-written
+# `if [ -n "$X" ]; then upsert; else warn; fi` blocks inside `cd.yml`'s deploy job. That shape has
+# two failure modes this repository has already paid for. A key added to `.env.example` and not to
+# the block list is written by nobody and the service reads the template default - silently. And a
+# second environment cannot be served at all without copying the whole block, which is exactly how
+# `cd-dev.yml` drifted to 734 unusable lines in four months.
+#
+# So the list is DATA, read by `render-env.sh`, and
+# `.github/scripts/tests/deploy-env.test.sh` DERIVES the expected key set from `cd.yml` itself and
+# fails if this file is missing one. The failure mode of a guard list is an absence, and an absence
+# in a hand-written list passes silently.
+#
+# COLUMNS
+#   KEY        the name written into infrastructure/.env
+#   PROD       how production treats it
+#   DEV        how dev.canari-emse.fr treats it
+#   SOURCE     where the value comes from
+#   NOTE       what a reader loses if it is absent - shown in the warning, so it must be true
+#
+# DISPOSITIONS
+#   required   absent -> the deploy FAILS before touching a container. No default, no fallback.
+#   warn       absent -> a ::warning:: naming what stops working, and the deploy continues.
+#   silent     absent -> nothing; the template default in .env.example is the intended value.
+#   skip       NOT WRITTEN AT ALL in this environment, deliberately, and no warning either -
+#              absence is the decision, so a warning would be noise. Only `skip` may be silent
+#              about a key production requires.
+#
+# SOURCES
+#   secret:NAME    a GitHub secret; dev reads DEV_<NAME>, which is why dev cannot fall back to
+#                  production's value - a missing dev secret is empty, and `required` then fails.
+#   literal:VALUE  a constant, identical in both environments.
+#   computed       render-env.sh builds it; see the function of the same name there.
+#
+# Keep this file tab-separated. A space-separated line is a parse error, not a silent misread:
+# render-env.sh refuses a line whose column count is not 5.
+
+#KEY	PROD	DEV	SOURCE	NOTE
+JWT_SECRET	required	required	secret:JWT_SECRET	nothing can mint or verify a session token
+AUTHENTIK_BASE_URL	required	required	secret:AUTHENTIK_URL	no OIDC provider to send anybody to
+AUTHENTIK_CLIENT_ID	required	required	secret:AUTHENTIK_CLIENT_ID	the OIDC client is unidentified and login fails
+AUTHENTIK_CLIENT_SECRET	required	required	secret:AUTHENTIK_CLIENT_SECRET	the token exchange is refused and login fails
+FRONTEND_URL	required	required	secret:BASE_URL	CORS refuses the site's own origin
+POSTGRES_USER	required	required	secret:POSTGRES_USER	no database connection at all
+POSTGRES_PASSWORD	required	required	secret:POSTGRES_PASSWORD	no database connection at all
+GARAGE_RPC_SECRET	required	required	secret:GARAGE_RPC_SECRET	media storage does not start
+GARAGE_ADMIN_TOKEN	required	required	secret:GARAGE_ADMIN_TOKEN	media storage does not start
+GARAGE_ACCESS_KEY_ID	required	required	secret:GARAGE_ACCESS_KEY_ID	media-service cannot authenticate to storage
+GARAGE_SECRET_ACCESS_KEY	required	required	secret:GARAGE_SECRET_ACCESS_KEY	media-service cannot authenticate to storage
+CHANNELS_ENCRYPTION_SECRET	required	required	secret:CHANNELS_ENCRYPTION_SECRET	channel encryption fails
+INTERNAL_SHARED_SECRET	required	required	secret:INTERNAL_SHARED_SECRET	inter-service HMAC auth is disabled, which is a security hole
+CALL_ROOM_SECRET	required	required	secret:CALL_ROOM_SECRET	WebRTC room access control is disabled, which is a security hole
+ALLOW_ORIGIN	computed	computed	computed	the chat-gateway refuses every client, or accepts every origin on earth
+CALL_E2E_ENCRYPTION	literal	literal	literal:false	nothing - it is off in both environments
+INTERNAL_SECRET	warn	warn	secret:INTERNAL_SECRET	social and form push notifications are disabled
+EXTERNAL_API_KEY	warn	warn	secret:EXTERNAL_API_KEY	the external profile API rejects every request, so Sky sees nothing
+SKY_API_KEY	warn	warn	secret:SKY_API_KEY	the Sky parrainage tree on profiles is empty
+CERCLE_API_KEY	warn	skip	secret:CERCLE_API_KEY	/api/public/cotisant-status rejects every request and Le Cercle stops serving cotisants
+FIREBASE_SERVICE_ACCOUNT_JSON	warn	warn	secret:FIREBASE_SERVICE_ACCOUNT_JSON	push notifications are disabled
+CLOUDFLARE_CALLS_API_TOKEN	warn	warn	secret:CLOUDFLARE_CALLS_API_TOKEN	calls fail - ice-servers answers 503
+CLOUDFLARE_TURN_KEY_ID	warn	warn	secret:CLOUDFLARE_TURN_KEY_ID	calls fail - ice-servers answers 503
+MIGALLERY_API_KEY	warn	warn	secret:MIGALLERY_API_KEY	the avatar service does not work
+GOOGLE_SAFE_BROWSING_API_KEY	warn	warn	secret:GOOGLE_SAFE_BROWSING_API_KEY	links are not checked against Safe Browsing
+APNS_VOIP_KEY_P8	warn	skip	secret:APNS_VOIP_KEY_P8	iOS CallKit VoIP pushes are disabled and iOS falls back to an FCM banner
+APNS_VOIP_KEY_ID	silent	skip	secret:APNS_VOIP_KEY_ID	the APNs key cannot be identified
+APNS_VOIP_TEAM_ID	silent	skip	secret:APNS_VOIP_TEAM_ID	the APNs key cannot be attributed to a team
+SERVICE_ACCOUNT_USER_ID	silent	silent	secret:SERVICE_ACCOUNT_USER_ID	the default from .env.example applies, which is the intended value
+STRIPE_SECRET_KEY	warn	skip	secret:STRIPE_SECRET_KEY	payments are unavailable
+STRIPE_WEBHOOK_SECRET	warn	skip	secret:STRIPE_WEBHOOK_SECRET	Stripe webhooks are rejected
+LYDIA_PROVIDER_TOKEN	warn	skip	secret:LYDIA_PROVIDER_TOKEN	Lydia payments are unavailable if selected as the active provider
+LYDIA_PROVIDER_PRIVATE_TOKEN	warn	skip	secret:LYDIA_PROVIDER_PRIVATE_TOKEN	Lydia payments are unavailable if selected as the active provider
+DEPLOY_BUILD	skip	computed	computed	the /api/version build field is null, so two dev deployments of one release are indistinguishable

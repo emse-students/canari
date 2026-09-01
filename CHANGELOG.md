@@ -49,6 +49,31 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Added
 
+- **The deployed environment is now data, not ~270 lines of workflow, and a second environment
+  cannot inherit production's secrets by omission.** The 33 keys of `infrastructure/.env` lived as
+  hand-written `if [ -n "$X" ]; then upsert; else warn; fi` blocks inside `cd.yml`'s deploy job.
+  That shape has two failure modes this repository has paid for: a key added to `.env.example` and
+  not to the block list is written by nobody, and the service reads the template default in silence;
+  and a second environment cannot be served without copying the whole block, which is exactly how
+  `cd-dev.yml` reached 734 unusable lines in four months. The list is now
+  `infrastructure/deploy/env-manifest.tsv`, read by `infrastructure/deploy/render-env.sh`, which
+  takes the environment as an argument. **The isolation is an INDIRECTION, not a document:** a row
+  says `secret:JWT_SECRET`, production reads `JWT_SECRET` and dev reads `DEV_JWT_SECRET` and never
+  the bare name - so a dev secret nobody created is EMPTY rather than production's value, and a
+  `required` row then fails the deploy before a container is touched. GitHub environment-scoped
+  secrets would have failed OPEN here, a forgotten dev secret resolving silently to the repo-level
+  production value. That is precisely what `cd-dev.yml` did, and a shared `JWT_SECRET` makes a token
+  minted by either estate valid in the other. The renderer resolves every row before writing
+  anything, so a missing secret leaves the previous `.env` in place rather than a half-written one
+  that starts and is wrong. `.github/scripts/tests/deploy-env.test.sh` DERIVES the expected key set
+  from `cd.yml`'s own `upsert_env_var` calls - the failure mode of a guard list is an absence, and an
+  absence in a hand-written list passes silently - and it proved able to fail: removing one manifest
+  row named it. It also locks the dispositions the user decided rather than merely documenting them,
+  Stripe, Lydia, Le Cercle's key and the APNs key all being `skip` in dev, `skip` and not `warn`
+  because the absence IS the decision and a warning on every deploy would be noise. `cd.yml`
+  itself joined the CI trigger for that job: a derived test whose source sits outside its own
+  trigger is a test that passes on the very commit that breaks it.
+
 - **A permanent, non-dismissible "test environment" banner, and a build identity that does not
   contaminate the version.** The dev environment carries a full copy of production's database, so it
   is indistinguishable from production on screen - the same members, communities and posts - and
