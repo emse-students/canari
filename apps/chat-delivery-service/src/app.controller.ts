@@ -509,9 +509,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     // ` ` cannot occur in either identifier, so the pair key is unambiguous - a plain `:` or
     // `-` join would be, since a deviceId already contains both.
     const owedAWelcome = new Set(welcomed.map((w) => `${w.deviceId} ${w.groupId}`));
-    const stranded = pending.filter(
-      (p) => !owedAWelcome.has(`${p.deviceId} ${p.groupId}`)
-    );
+    const stranded = pending.filter((p) => !owedAWelcome.has(`${p.deviceId} ${p.groupId}`));
 
     this.logger.log(
       `[CRON] reportStrandedDeviceMemberships: ${pending.length} pending membership(s) past the ` +

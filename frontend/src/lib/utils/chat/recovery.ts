@@ -52,14 +52,6 @@ export interface RecoveryDeps {
 }
 
 /**
- * Removes the local residue of a group CONFIRMED ABSENT from the server: forgets the residual
- * WASM MLS state (if any) and deletes the local conversation. EXCEPTION (rules 2 & 4): a
- * conversation marked `deletedRemotely` (deleted by a peer / exclusion) stays until a LOCAL
- * MANUAL DELETION, even if the server has hard-purged its row - we do not touch it.
- *
- * @returns `true` if the WASM MLS state was mutated (caller must then persist).
- */
-/**
  * The conversation carrying `groupId`, found BY ITS `id` rather than by its map key.
  *
  * THE KEY IS NOT THE GROUP ID, AND THIS MODULE IS ADDRESSED BY GROUP ID. A direct conversation
@@ -81,6 +73,14 @@ function findByGroupId(
   return [...conversations.entries()].find(([, c]) => c.id === groupId);
 }
 
+/**
+ * Removes the local residue of a group CONFIRMED ABSENT from the server: forgets the residual
+ * WASM MLS state (if any) and deletes the local conversation. EXCEPTION (rules 2 & 4): a
+ * conversation marked `deletedRemotely` (deleted by a peer / exclusion) stays until a LOCAL
+ * MANUAL DELETION, even if the server has hard-purged its row - we do not touch it.
+ *
+ * @returns `true` if the WASM MLS state was mutated (caller must then persist).
+ */
 async function purgePhantomConversation(groupId: string, deps: RecoveryDeps): Promise<boolean> {
   const entry = findByGroupId(deps.conversations, groupId);
   if (entry?.[1].lifecycle === 'removed') return false; // kept until manual local deletion
