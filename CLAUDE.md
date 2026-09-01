@@ -134,12 +134,11 @@ first); `gh run list`, CD green and QUIET before any row; `node state.mjs`; then
 the phone was unplugged, the from-zero sequence is scripted end to end in
 [the harness README](tools/cross-client-harness/README.md#operating-it).
 
-**HEAL is the rung in hand, and every verdict is on the BOARD, every adjudication on the CAMPAIGN
-PAGE.** Two instrument facts that are NOT per-row: the disposition for expected noise is
-`ignoringExpectedLog` **per row**, never a wider classifier, and the device cap is **re-measured
-around every run** rather than quoted. **THE USER ASKED FOR THE LOGS TO BE READ ON EVERY PASS, the
-reconciliations especially** (2026-08-28) - a heal that works is not a heal that was observed, and
-reading them has since found one P1 no row asks about and turned a `FAIL` into another.
+**HEAL is the rung in hand.** Two instrument facts that are NOT per-row: the disposition for
+expected noise is `ignoringExpectedLog` **per row**, never a wider classifier, and the device cap is
+**re-measured around every run** rather than quoted. **THE USER ASKED FOR THE LOGS TO BE READ ON
+EVERY PASS, the reconciliations especially** (2026-08-28) - a heal that works is not a heal that was
+observed, and reading them has since found one P1 no row asks about and turned a `FAIL` into another.
 
 ### CANARI - THE QUEUE, IN ORDER
 
@@ -158,29 +157,21 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md).**
    the board itself marks as NOT settled (DEL-10, COMM-8, COMM-23) before believing them.**
 
 2. **A PLACEHOLDER HELD A MEMBER'S PLACE IN A REAL CONVERSATION - the user's lost messages and the
-   ghost are ONE P1. THE SERVER ESTATE IS GONE** (cleaned by hand on the owner's go-ahead,
-   2026-08-30; counts, the frames read before deletion and why the allowlist was safe are on
-   [chat-delivery](docs/wiki/services/chat-delivery.md#the-placeholder-that-took-a-conversations-first-seat-cleaned-by-hand-2026-08-30)).
+   ghost are ONE P1. THE SERVER ESTATE IS GONE**, cleaned by hand on the owner's go-ahead 2026-08-30
+   ([chat-delivery](docs/wiki/services/chat-delivery.md#the-placeholder-that-took-a-conversations-first-seat-cleaned-by-hand-2026-08-30)).
    **WHAT STAYS OPEN IS NOT A DATABASE QUESTION** - whether a LEAF is left in the MLS tree, and
    whether the guards really fixed the activation - and only a MEMBER'S CLIENT can answer either:
    [backlog P1](docs/wiki/backlog.md#p1---the-placeholder-is-gone-from-prod-what-it-may-have-left-in-the-mls-tree-is-not-answered).
 
 3. **THE DEPENDENCY CHAIN** (user, 2026-08-31: *"pour avoir un projet qui peut 'vivre tout seul'"*),
-   which started from ONE P1: every Stripe webhook rejected for four days. What SHIPPED is in
-   `CHANGELOG.md`; how the ceiling, the two triggers, the staleness gate and the CD dispatch fit
-   together - and the proof that the whole chain ran unattended on 2026-08-31 - are on
-   [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them). **What is OPEN is
-   the remaining rows of [the ceiling
+   which started from ONE P1: every Stripe webhook rejected for four days. All four repositories
+   carry the ceiling, the sweep and the dispatch; how they fit together and what each trigger is
+   worth are on [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them),
+   the only copy. **What is OPEN is the remaining rows of [the ceiling
    table](docs/wiki/backlog.md#p1---the-three-refusals-the-auto-merge-ceiling-makes-and-the-test-that-retires-each)**,
-   each naming the test that retires it - closing one makes a whole CLASS of update merge by itself.
-   **The four repositories now all carry the ceiling, the sweep and the dispatch** (2026-08-31), the
-   convergent trigger is a push to `main` rather than the clock - which DOES fire, contrary to what
-   was written here on 2026-08-31, just with hours of jitter - and **the staleness gate no longer
-   fires on every movement of `main`**, which is what made the queue drain one pull request per push
-   and only while somebody pushed. The one rebuild no `GITHUB_TOKEN` may perform, and the credential
-   that would close it, are a decision owed to the USER: [backlog](docs/wiki/backlog.md#p2---the-one-rebuild-the-auto-merge-cannot-perform-and-the-credential-that-would-let-it).
-   Reasoning on [cicd](docs/wiki/cicd.md#why-a-green-pull-request-is-not-enough).
-   **NestJS 12 is taken as far as it goes** ([nestjs-framework](docs/wiki/services/nestjs-framework.md)).
+   each naming the test that retires it - closing one makes a whole CLASS of update merge by itself
+   - and **the one rebuild no `GITHUB_TOKEN` may perform**, a credential decision owed to the USER:
+   [backlog](docs/wiki/backlog.md#p2---the-one-rebuild-the-auto-merge-cannot-perform-and-the-credential-that-would-let-it).
 
 4. **NOTHING ON THE CAMPAIGN BOARD COULD HAVE CAUGHT IT, AND THE GAP IS STRUCTURAL** (2026-08-28):
    no row asks a question whose answer is a POPULATION rather than an event. **Four rows are written
@@ -230,13 +221,8 @@ session cannot "finish" the work by undoing a measurement.
 
 **What is left is JUDGEMENT, not migration** - MiGallery's lint warnings, the `resolve()` question
 three repos park differently, Tailwind class sorting on Portail-etu. **NestJS 12 is HALF DONE and
-needs nothing done to it**: media and core run 12, chat-delivery and social are held at 11 by ONE
-upstream package that publishes no NestJS 12 support, and the hold is an ASSERTION on the resolved
-tree rather than an ignore, so it ends unattended - state, mechanism and the ESM consequences on
-[nestjs-framework](docs/wiki/services/nestjs-framework.md), the only copy. Exactly ONE
-Dependabot alert is open. The first question about any advisory is whether `cargo tree -i` reaches
-the crate at all, because `cargo audit` reads the LOCKFILE - which is how the last one was closed as
-UNREACHABLE rather than fixed.
+needs nothing done to it**, the hold being an ASSERTION on the resolved tree rather than an ignore,
+so it ends unattended: [nestjs-framework](docs/wiki/services/nestjs-framework.md), the only copy.
 
 **SIX THINGS CANNOT BE PULLED FORWARD**, each carrying its blocking condition in
 [backlog](docs/wiki/backlog.md), the only copy: the MLS + Graine explanation owed to the USER, not to
@@ -254,36 +240,27 @@ is not reached by a deploy** - `frontendDist: "../build"` means the Tauri app EM
 `minClientVersion` and check S reason about a NAME unless a version identifies its content
 ([harness README](tools/cross-client-harness/README.md)).
 
-**2.1(a) IS PASSED - App Review reviewed 0.14.14 on 2026-08-31 and never mentioned the login again**,
-having reached two questions a reviewer who could not sign in could not have reached. **The two NEW
-guidelines are both answered in 0.14.15**: 2.3.6 by one radio button in App Store Connect (step 1's
-*"social networks disabled for under-13s"* asserts the Declared Age Range API this app does not use),
-2.5.4 by holding calling off and removing the `voip` declaration with it. Both stories, and Play's
-own thresholds, are on
+**2.1(a) IS PASSED, and the two guidelines that replaced it are both answered in 0.14.15** - one
+App Store Connect radio button for 2.3.6, holding calling off for 2.5.4. Where the submission
+stands, per half, is on
 [mobile](docs/wiki/frontend/mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on);
-how the vitals are read, why every RATE is EMPTY rather than green, and what an acknowledgement is
-are in [the tool's README](tools/play-vitals/README.md). Only **check R** is left of the two mails of
-2026-08-26, and **WP-RESTORE-1** (Zero-Tap Sign-In, April 2027) is ACCEPTED, after the campaign.
+how the vitals are read and why every RATE is EMPTY rather than green are in [the tool's
+README](tools/play-vitals/README.md). Only **check R** is left of the two mails of 2026-08-26, and
+**WP-RESTORE-1** (Zero-Tap Sign-In, April 2027) is ACCEPTED, after the campaign.
 
 **iOS: two things are PROVEN and must not be re-verified** - the session HOLDS on the iPhone, and a
 full parity audit read everything else as symmetric. Four things are open, all in
-[backlog](docs/wiki/backlog.md): a second iPhone on the same build acquiring no push token and
-reporting nothing (**diagnosing it needs no phone**); the top and bottom bars, which want queue item
-6's `app.css` pass; `minClientVersion`, raised BY HAND and only after a build is shown reaching an
-ORDINARY user, TestFlight being the beta channel; and macOS/Linux desktop cookie behaviour, never
-measured, which is exactly what `X-Canari-Refresh` covers. **THREE OF THREE iOS DEFECTS WERE
-INVISIBLE TO EVERY GATE HERE**, so the classes the user named close by HARDWARE, one lettered check
-at a time - **never by a fix written against a suspected lifecycle bug nobody has seen**, because
-nothing here could tell whether it worked.
+[backlog](docs/wiki/backlog.md), one of them (a second iPhone acquiring no push token and reporting
+nothing) **diagnosable with no phone at all**. **THREE OF THREE iOS DEFECTS WERE INVISIBLE TO EVERY
+GATE HERE**, so the classes the user named close by HARDWARE, one lettered check at a time -
+**never by a fix written against a suspected lifecycle bug nobody has seen**, because nothing here
+could tell whether it worked.
 
 ### CANARI - the test campaign
 
 Four files, four jobs, all in WHERE THINGS LIVE above: board = state, campaign page = design,
 methodology = how a result earns belief, README = operating manual. **Read them rather than
-re-deriving state here, and keep no second copy** - the rig at `tools/cross-client-harness/`, its
-STATE outside the work tree at `../canari-harness` (where a credential cannot be committed and
-`git clean -xdf` cannot reach a profile), `rows.mjs`, `debris.mjs`, MUT-20, TAB-7, and why prod IS
-the test server while `dev.canari-emse.fr` is not a second environment all live on those four pages.
+re-deriving anything here, and keep no second copy.**
 
 **Three facts govern every session that touches the rig.** `node rows.mjs` SETTLES whether the board
 matches the ledger - run it before believing a cell; it has caught the board wrong three times. **A
