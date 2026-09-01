@@ -114,6 +114,14 @@ jobs:
           ref: main
           sparse-checkout: .github/scripts
 
+      # THE PREDICATE IS TESTED IN THE RUN THAT USES IT. `lib/gate-moves.sh` decides whether a
+      # green-but-older check suite is still evidence, and the half that matters - a truncated
+      # compare, an unreadable payload - never occurs on a good day, so nothing but a test will
+      # exercise it. Bash only, no dependencies, and a failure here stops the sweep BEFORE it
+      # merges anything on a predicate that no longer holds.
+      - name: Verify the staleness predicate before trusting it
+        run: bash .github/scripts/tests/gate-moves.test.sh
+
       - name: Collect the pull requests to evaluate
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
