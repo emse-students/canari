@@ -323,6 +323,18 @@ hours of jitter, which makes it a floor under the worst case and never the thing
 The convergent trigger is the event that happens whenever anybody works - a push to `main` - and the
 cron covers the case where nobody does for days.
 
+**AND A THIRD MEASUREMENT FOUND THAT COUNTING DELIVERIES WAS THE WRONG QUESTION ENTIRELY.** Both
+counts above are about whether a run was DELIVERED. On 2026-09-01 the logs of those runs were read
+rather than counted, and in two of the four repositories the sweep had never executed at all: the
+script landed without its executable bit, `Permission denied` on every pull request, `merged 0`, and
+the workflow went GREEN - six consecutive passes in Sky, every one reporting success. The step
+swallowed the status by design (`if ...; then :; fi`), so one unmergeable branch could not stop the
+sweep, and it swallowed "the script could not run" with it. **The script declines by PRINTING, never
+by status**, so a non-zero status was never a refusal and never should have been survivable; it is
+fatal and annotated now, and the script is invoked through `bash` so a mode bit cannot decide
+whether the chain runs at all. A count of deliveries would never have found this. Reading one log
+did.
+
 **One measured limit of the push path, recorded because it is invisible otherwise:** the CD run the
 sweep DISPATCHES after a merge does not come back. `workflow_dispatch` is the documented exception
 that lets `GITHUB_TOKEN` start CD at all, but that run's completion emitted no `workflow_run` event

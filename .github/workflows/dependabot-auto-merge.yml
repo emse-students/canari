@@ -161,9 +161,20 @@ jobs:
           while IFS= read -r pr; do
             [ -z "$pr" ] && continue
             echo "::group::PR #$pr"
-            # The script never fails a pull request it merely declines, so a single unmergeable
-            # branch cannot stop the sweep.
-            if .github/scripts/dependabot-auto-merge.sh "$pr" | tee "$RUNNER_TEMP/out-$pr.txt"; then :; fi
+            # THE SCRIPT DECLINES BY PRINTING, NEVER BY STATUS - a refused or unmergeable branch
+            # is a line on stdout and an exit 0 - so a non-zero status here is the script failing
+            # to RUN, and it must be fatal and loud. It was neither: `if ...; then :; fi` swallowed
+            # every cause alike, and on 2026-09-01 that turned out to hide `Permission denied` in
+            # two of the four repositories carrying this workflow. The file had landed without its
+            # executable bit, so the sweep executed NOTHING, printed `merged 0` and went green -
+            # six consecutive passes in Sky, every one of them reporting success. It is invoked
+            # through `bash` now so the mode bit cannot decide whether the chain runs at all.
+            status=0
+            bash .github/scripts/dependabot-auto-merge.sh "$pr" | tee "$RUNNER_TEMP/out-$pr.txt" || status=$?
+            if [ "$status" -ne 0 ]; then
+              echo "::error::the sweep script exited $status on #$pr. It declines by PRINTING, so this is not a refusal - it could not run."
+              exit "$status"
+            fi
             if grep -q "^MERGED $pr\$" "$RUNNER_TEMP/out-$pr.txt"; then
               merged=$((merged + 1))
             fi
