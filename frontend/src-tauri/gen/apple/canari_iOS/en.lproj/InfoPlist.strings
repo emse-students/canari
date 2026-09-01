@@ -4,6 +4,6 @@
    Info.plist. Wired into the pbxproj as an InfoPlist.strings PBXVariantGroup
    (app Resources phase, `en` in knownRegions). */
 "NSCameraUsageDescription" = "Canari uses the camera to take photos and videos to share in your conversations.";
-"NSMicrophoneUsageDescription" = "Canari uses the microphone to record voice messages and make calls.";
+"NSMicrophoneUsageDescription" = "Canari uses the microphone to record voice messages.";
 "NSPhotoLibraryUsageDescription" = "Canari accesses your photos to share in your conversations.";
 "NSFaceIDUsageDescription" = "Canari uses Face ID to unlock the app securely.";

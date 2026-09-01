@@ -2423,6 +2423,15 @@ static void CanariRefreshTokenOnBackend(CanariPushContext *ctx, NSString *secret
 // `read_and_clear_pending_call_accept` Tauri command) and the CallKit session is closed as soon as
 // the app becomes active - the in-app call UI takes over from there.
 
+/// Mirrors CALLS_ENABLED in frontend/src/lib/features.ts, which holds the whole calling surface
+/// off until it has been run on hardware (rung 15 CALL / CALL-13). It is duplicated rather than
+/// read from JS because this code runs BEFORE the webview exists - a PushKit registry is installed
+/// at process start, and there is nothing to ask. The two must be flipped in the same commit,
+/// together with the `voip` UIBackgroundModes entry that Info.plist no longer carries: without that
+/// entry PKPushRegistry can never obtain a token, so installing it here would be a permanent
+/// silent failure rather than a feature.
+static const BOOL kCanariCallsEnabled = NO;
+
 static NSString *const kVoipTokenFileName = @"voip_token.txt";
 static NSString *const kPendingCallAcceptFileName = @"pending_call_accept.json";
 static const int64_t kCallRingTimeoutSec = 60;
@@ -2544,6 +2553,13 @@ static void CanariEnsureCallProvider(void) {
 static void CanariReportIncomingCall(NSString *groupId, NSString *callId, NSString *callerName,
                                      NSString *groupName, BOOL hasVideo) {
   if (callId.length == 0) {
+    return;
+  }
+  // ONE choke point for four callers (VoIP push, legacy FCM ring, decrypted MLS invite, the bogus
+  // -id path): a peer on an older build can still ring this device, and raising a system call UI
+  // for a call the webview will refuse to join is worse than no ring at all.
+  if (!kCanariCallsEnabled) {
+    NSLog(@"[CanariCallKit] calls disabled - not reporting incoming call %@", callId);
     return;
   }
   dispatch_async(dispatch_get_main_queue(), ^{
@@ -3453,7 +3469,11 @@ void CanariPushSetup(void) {
   [UNUserNotificationCenter currentNotificationCenter].delegate = g_notifDelegate;
   CanariRefreshNotificationCategories();
   // Incoming-call ring (WP-XP-5): PushKit VoIP registry + CallKit provider + handover hook.
-  CanariCallKitSetup();
+  if (kCanariCallsEnabled) {
+    CanariCallKitSetup();
+  } else {
+    NSLog(@"[CanariCallKit] calls disabled - PushKit registry and CallKit provider not installed");
+  }
 
   [[NSNotificationCenter defaultCenter]
       addObserverForName:UIApplicationDidFinishLaunchingNotification

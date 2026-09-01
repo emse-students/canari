@@ -89,6 +89,7 @@
   import { channelService } from '$lib/services/ChannelService';
   import { drainNativePendingCallAccept } from '$lib/stores/pendingCallAccept';
   import { warnIfSiblingDeviceInCall } from '$lib/utils/callPresence';
+  import { CALLS_ENABLED } from '$lib/features';
   import { mergeFcmMessagesIntoConversations } from '$lib/utils/chat/fcmMemoryMerge';
   import { subscribeTabMessageUpdates } from '$lib/mls-client/tabMessageSync';
   import { flushActiveMlsStateEncrypted } from '$lib/mls-client/mlsStatePersisterRegistry';
@@ -575,6 +576,10 @@
    * Warns when another device of the same account is already in a call.
    */
   function checkSiblingCallWarning() {
+    // One /api/calls/sibling-status request fires per session start. While calls are held off it
+    // could only ever report a legacy device, and it would say so in a toast about a call this
+    // client cannot join - a request and a line that are both pure noise.
+    if (!CALLS_ENABLED) return;
     const deviceId = globalSession.myDeviceId;
     if (!deviceId || globalSession.callState !== 'idle') return;
     void warnIfSiblingDeviceInCall(deviceId);

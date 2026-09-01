@@ -66,13 +66,26 @@ describe('AndroidManifest FCM registration (anti-régression)', () => {
     expect(manifest).toMatch(/android:name=["']\.CanariNotificationActionReceiver["']/);
   });
 
-  it('requests USE_FULL_SCREEN_INTENT for the call ringtone (WP-XP-5)', () => {
-    // Without it, the CallStyle notification cannot display full-screen on a locked
-    // phone - the incoming call becomes a silent banner.
-    expect(manifest).toContain('android.permission.USE_FULL_SCREEN_INTENT');
-    // And the Kotlin service must expose both WP-XP-5 channels.
+  it('does NOT request USE_FULL_SCREEN_INTENT while calls are held off (CALLS_ENABLED)', () => {
+    // Inverted on 2026-09-01. Play grants this permission only to calling or alarm apps, so it may
+    // not be declared for a surface CALLS_ENABLED hides; this assertion is what stops a manifest
+    // regeneration from quietly re-adding it. The match is on the TAG, not the string: the comment
+    // that replaced it still names the permission, and a `toContain` would pass on that comment -
+    // which is exactly the false green this rewrite exists to prevent.
+    const permissionTags = manifest.match(/<uses-permission[^>]*\/>/g) ?? [];
+    expect(permissionTags.some((t) => t.includes('USE_FULL_SCREEN_INTENT'))).toBe(false);
+    // The ring CHANNELS stay declared: the Kotlin is untouched, only its entry point is gated, and
+    // the channels must survive the hold so a revival needs no notification-settings migration.
     expect(fcmServiceKt).toMatch(/CHANNEL_CALLS\s*=\s*"canari_calls"/);
     expect(fcmServiceKt).toMatch(/CHANNEL_MENTIONS\s*=\s*"canari_mentions"/);
+  });
+
+  it('gates the incoming-call ring on CALLS_ENABLED (WP-XP-5, held off)', () => {
+    // The permission above is the store-facing half; this is the behavioural one. A peer on an
+    // older build still sends call_ring, and showIncomingCallNotification is the single choke point
+    // both of its callers pass through.
+    expect(fcmServiceKt).toMatch(/private const val CALLS_ENABLED = false/);
+    expect(fcmServiceKt).toContain('showIncomingCallNotification: calls disabled');
   });
 
   it('does not reintroduce android:debuggable with placeholder (breaks release merge)', () => {

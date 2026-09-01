@@ -1530,13 +1530,24 @@ anything about iPad LAYOUT, which nothing here has ever measured.
 
 ### Where the submission stands, and what each half is waiting on
 
-App Review rejected 0.14.4 (build 0.14.9) on 2026-08-30. Its second guideline was closed in App
-Store Connect on 2026-08-31 and needed no change here.
+**2.1(a) IS PASSED, and the evidence is what App Review did NOT say.** Build 0.14.14 carries the
+platform fix above (`875d2fb0` is an ancestor of the 0.14.14 bump), it was reviewed on 2026-08-31 on
+the same iPad Air (M3), and the letter that came back opens with *"upon further review, we
+identified additional issues"* and never mentions the login again. A reviewer who could not sign in
+could not have reached the age-rating and VoIP questions it does raise. That is inference from
+silence, so it is written as such - but it is the only reading consistent with the two guidelines
+they did cite. **The iPhone login that would have proven it directly was never run, and is no longer
+owed.**
 
-**What is owed is 2.1(a) - "the app redirected to an error page after tapping Sign in", on an iPad
-Air (M3).** CAUSE FOUND, FIXED, TESTED, NOT YET BUILT; the section above is the whole story.
-**An iOS release build, then ONE login on the iPhone showing `uri=fr.emse.canari://callback`** -
-which settles the iPad as well, for the reason that section gives - and then the resubmission.
+**What the 2026-08-31 letter asks, on a build where both causes were already known:**
+
+| Guideline | What they found | Why they were right, and what answers it |
+|---|---|---|
+| 2.3.6 Accurate Metadata | Age Rating declared In-App Controls; no Parental Controls or Age Assurance in the app | The questionnaire's step 1 had *"Social networking features disabled for users under 13"* set to YES, which by Apple's own definition asserts the Declared Age Range API. The app has no age notion at all. Corrected to NO in App Store Connect on 2026-09-01; nothing in this repository changed. |
+| 2.5.4 Software Requirements | `voip` in `UIBackgroundModes`, no VoIP service located | Literally true of the build they ran: on any iPad `startPushService` returned `desktop - no FCM` before `get_voip_token` was ever called (`48d31eaa`, NOT in 0.14.14), so no `voipToken` was registered and no CallKit ring was deliverable. Answered by holding the whole calling surface off in 0.14.15 - `CALLS_ENABLED`, see [calls module](modules/calls.md) - and removing the declaration with it. |
+
+**0.14.15 also carries `48d31eaa` itself**, which is owed regardless of calls: it is why an iPad
+could not obtain an FCM token either, and therefore received no message notification of any kind.
 
 ## Reading live state out of a running WebView, over adb
 

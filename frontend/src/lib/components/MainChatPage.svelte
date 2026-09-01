@@ -52,6 +52,7 @@
   import ChatArea from './chat/ChatArea.svelte';
   import MessagingSyncOverlay from './chat/MessagingSyncOverlay.svelte';
   import ForwardMessageModal from './chat/ForwardMessageModal.svelte';
+  import { CALLS_ENABLED } from '$lib/features';
   import type { AddMessageToChatOptions, ChatMessage, Conversation } from '$lib/types';
   import type { BulkIngestPhase } from '$lib/mls-client';
 
@@ -947,12 +948,16 @@
           pendingFiles={messaging.pendingMediaFiles}
           onRemovePendingFile={messaging.removePendingMediaFile}
           isUploading={messaging.isUploadingMedia}
-          onStartAudioCall={() => {
-            void startCallForCurrentConversation(false);
-          }}
-          onStartVideoCall={() => {
-            void startCallForCurrentConversation(true);
-          }}
+          onStartAudioCall={CALLS_ENABLED
+            ? () => {
+                void startCallForCurrentConversation(false);
+              }
+            : undefined}
+          onStartVideoCall={CALLS_ENABLED
+            ? () => {
+                void startCallForCurrentConversation(true);
+              }
+            : undefined}
           onOpenMembers={routeMode === 'communities' && isSelectedChannel
             ? convs.toggleChannelMembersDrawer
             : undefined}

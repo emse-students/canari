@@ -18,6 +18,7 @@ import { publishCallPresence } from '$lib/utils/callPresence';
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
 import { getCallSystemMessageContext, recordCallMissed } from '$lib/utils/chat/callSystemMessages';
+import { CALLS_ENABLED } from '$lib/features';
 
 export type CallState = 'idle' | 'calling' | 'incoming' | 'incall' | 'ended';
 
@@ -117,6 +118,18 @@ export class CallService {
   ) {
     if (!callMsg?.callId) return;
 
+    // Calls are held off (see CALLS_ENABLED). This device no longer initiates, but a peer still
+    // running an older build does, and its invite arrives here as an ordinary MLS frame - so the
+    // guard belongs at the signal, not at the button. Logged rather than dropped in silence: this
+    // line is the only evidence that legacy callers are still out there, and it is what tells a
+    // later reader whether the server also needs to refuse the ring.
+    if (!CALLS_ENABLED) {
+      appendLog(
+        `[Call] calls disabled - ignoring signal from ${senderId} in ${groupId} call=${callMsg.callId}`
+      );
+      return;
+    }
+
     appendLog(`[Call] signal from ${senderId} in ${groupId} call=${callMsg.callId}`);
 
     const senderNorm = senderId.toLowerCase();
@@ -175,6 +188,13 @@ export class CallService {
 
   /** Starts an outgoing call in the given MLS group. */
   public async startCall(groupId: string, video: boolean = true) {
+    // The buttons that call this are not rendered while calls are held off (see CALLS_ENABLED);
+    // this guard is the API boundary saying so, so a future caller cannot reopen the surface by
+    // accident without reading why it was closed.
+    if (!CALLS_ENABLED) {
+      appendLog('[Call] calls disabled - startCall refused');
+      return;
+    }
     if (get(this.callState) !== 'idle') return;
 
     this.currentGroupId = groupId;

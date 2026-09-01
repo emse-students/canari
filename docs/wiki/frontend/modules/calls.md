@@ -4,6 +4,30 @@
 **Components**: `src/lib/components/calls/`, `src/lib/composables/useCallSession.svelte.ts`  
 **Service**: `src/lib/services/CallService.ts`
 
+> **THE WHOLE SURFACE IS HELD OFF SINCE 0.14.15 - `CALLS_ENABLED = false`
+> (`frontend/src/lib/features.ts`).** Everything below still describes the code exactly, and none of
+> it was deleted; none of it RUNS. The reason is that it never did: the campaign board carries twenty
+> CALL rows and not one has ever been executed, the SFU has never had a peer connection opened
+> against it, and no iPhone ever registered a PushKit token, so no CallKit ring was ever deliverable.
+> App Review refused the `voip` background mode under guideline 2.5.4 on 2026-08-31 for a VoIP
+> service it could not locate - correctly, on the build it tested.
+>
+> **Five things were switched off together and must come back together, in one commit:**
+>
+> | Switch | Where | What it holds |
+> |---|---|---|
+> | `CALLS_ENABLED` | `frontend/src/lib/features.ts` | call buttons, `startCall`, `handleCallSignal` |
+> | `kCanariCallsEnabled` | `canari_push.mm` | PushKit registry, CallKit provider, `CanariReportIncomingCall` |
+> | `CALLS_ENABLED` | `CanariFirebaseMessagingService.kt` | `showIncomingCallNotification` |
+> | `voip` | `canari_iOS/Info.plist` `UIBackgroundModes` | PushKit tokens (absent = no token, ever) |
+> | `USE_FULL_SCREEN_INTENT` | `AndroidManifest.xml` | the locked-screen CallStyle ring |
+>
+> The two platform declarations are the ones a store checks, and each cuts both ways: declared but
+> unused is a rejection, used but undeclared cannot work. **Revival condition: rung 15 CALL and
+> CALL-13 pass on real hardware** ([board](../../cross-client-testing.md),
+> [backlog](../../backlog.md)). `CallService.callsEnabled.test.ts` already asserts the on state, so
+> the flip has a test the day it happens.
+
 ## Responsibilities
 
 - WebRTC audio/video calls within MLS groups (E2E encrypted).

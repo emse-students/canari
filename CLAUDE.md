@@ -203,9 +203,12 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md).**
    every other member; a device row's trash and pencil not reading as the same kind of control. The
    emoji, the dead row, the device controls and the iOS bars want ONE pass over `app.css`.
 
-7. **THE SFU RUNS SIX webrtc MAJORS NOBODY HAS PLACED A CALL ON.** It compiles, clippy is clean and
-   its ten tests pass - none of which runs the ICE stack. What settles it is ONE relay-path call,
-   rung 15 CALL, which has no runner. **A release must not carry this unplaced.**
+7. **CALLING IS HELD OFF SINCE 0.14.15 - `CALLS_ENABLED = false`** (user, 2026-09-01: not a
+   priority, never properly tested). The SFU's six webrtc majors are still unplaced and rung 15 CALL
+   still has no runner; what changed is that a release no longer carries the surface unplaced. FIVE
+   switches move in ONE commit at revival (two of them store declarations that cut both ways) - the
+   table is on [calls](docs/wiki/frontend/modules/calls.md), the condition and the TURN measurement
+   in [backlog](docs/wiki/backlog.md). **Prod HAS TURN configured and has never used it.**
 
 8. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25: *"le meme
    point de depart, independamment de ce qui a pu se passer avant"*). The PHASE half is `run.mjs`'s
@@ -243,7 +246,7 @@ SECOND campaign; and - owed to the user - is a MiGallery application worth build
 
 ### CANARI - what is open
 
-**Release: the shipped version is `0.14.14`.** Whether Play has picked a build up is a MEASUREMENT
+**Release: the shipped version is `0.14.15`.** Whether Play has picked a build up is a MEASUREMENT
 (`node tools/play-vitals/vitals.mjs`) and what CI did is `gh run list`; never infer either from a
 line here, which has been stale twice. **No HEAL-REVOKE verdict about a clean device may be taken on
 a build older than 0.14.12** (.10 and .11 MEASURE the wipe defects rather than fixing them). **An APK
@@ -251,9 +254,12 @@ is not reached by a deploy** - `frontendDist: "../build"` means the Tauri app EM
 `minClientVersion` and check S reason about a NAME unless a version identifies its content
 ([harness README](tools/cross-client-harness/README.md)).
 
-**APP REVIEW REJECTED 0.14.4 ON 2026-08-30 ON TWO GUIDELINES; ONE IS ANSWERED** (the territory, by
-the user, 2026-08-31). **What is left is 2.1(a)**, fixed in the tree and owing an iOS build plus ONE
-iPhone login. What it waits on, and Play's own thresholds, are on
+**2.1(a) IS PASSED - App Review reviewed 0.14.14 on 2026-08-31 and never mentioned the login again**,
+having reached two questions a reviewer who could not sign in could not have reached. **The two NEW
+guidelines are both answered in 0.14.15**: 2.3.6 by one radio button in App Store Connect (step 1's
+*"social networks disabled for under-13s"* asserts the Declared Age Range API this app does not use),
+2.5.4 by holding calling off and removing the `voip` declaration with it. Both stories, and Play's
+own thresholds, are on
 [mobile](docs/wiki/frontend/mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on);
 how the vitals are read, why every RATE is EMPTY rather than green, and what an acknowledgement is
 are in [the tool's README](tools/play-vitals/README.md). Only **check R** is left of the two mails of

@@ -344,6 +344,12 @@ The largest hole: four unit-test files, zero harness scripts. **A browser withou
 transform degrades the call to SFU-visible DTLS-SRTP silently**, so every row here asserts the
 transform is active.
 
+> **EVERY ROW BELOW NEEDS `CALLS_ENABLED = true` BEFORE IT CAN RUN** (held off since 0.14.15 -
+> [calls](frontend/modules/calls.md)). This is not a change of state: all of them were already
+> `pending` and none had ever been executed. It is a change of PRECONDITION - a run against a
+> shipped build now measures the hold, not the feature, and would read as a false `FAIL`. The order
+> is: flip the switch on a build, run these rows plus CALL-13, then ship the flip.
+
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | CALL-1 | 1:1 audio W1 -> W2: ring, accept, two-way audio, hangup either side | `W1 W2` | `pending` |

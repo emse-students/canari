@@ -46,8 +46,13 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- WP-XP-4: push-token re-registration + outbox drain at boot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <!-- WP-XP-5: full-screen incoming-call ring (CallStyle, locked/idle) -->
-    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <!-- WP-XP-5 declared USE_FULL_SCREEN_INTENT here for the locked-screen CallStyle ring. It is
+         GONE while calls are held off (frontend/src/lib/features.ts, CALLS_ENABLED): Play grants
+         that permission only to apps whose core function is calling or alarms, and declaring it for
+         a surface no user can reach is the Play analogue of the `voip` background mode App Review
+         refused on 2026-08-31. The tag is deleted rather than commented out on purpose - a commented
+         tag still satisfies a `toContain` guardrail, which is how a removal turns into a false
+         green. Restore it in the same commit that flips CALLS_ENABLED. -->
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
 

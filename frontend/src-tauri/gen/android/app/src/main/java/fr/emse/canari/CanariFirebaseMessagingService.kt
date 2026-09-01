@@ -111,6 +111,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         const val ACTION_CALL_DECLINE = "fr.emse.canari.ACTION_CALL_DECLINE"
         const val EXTRA_CALL_ID       = "callId"
 
+        /**
+         * Mirrors CALLS_ENABLED in frontend/src/lib/features.ts, which holds the whole calling
+         * surface off until it has been run on hardware (rung 15 CALL / CALL-13). Duplicated
+         * rather than read from the webview because this service handles pushes while no webview
+         * exists. Flip both in the same commit, and restore USE_FULL_SCREEN_INTENT in
+         * AndroidManifest.xml with them - Play gates that permission on the app being a calling
+         * app, exactly as App Review gates the iOS `voip` background mode.
+         */
+        private const val CALLS_ENABLED = false
+
         /** A ring is abandoned after 60s (same order as the OS phone app). */
         private const val CALL_RING_TIMEOUT_MS = 60_000L
 
@@ -598,6 +608,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             groupName: String,
             hasVideo: Boolean,
         ) {
+            // ONE choke point for both callers (cleartext call_ring push, decrypted MLS invite):
+            // a peer on an older build can still ring this device, and a system call UI for a call
+            // the webview will refuse to join is worse than no ring at all.
+            if (!CALLS_ENABLED) {
+                Log.d(TAG, "showIncomingCallNotification: calls disabled -> ignoring ring call=$callId")
+                return
+            }
             if (MainActivity.isInForeground) {
                 Log.d(TAG, "showIncomingCallNotification: app foreground -> WS/CallOverlay rings, skip")
                 return

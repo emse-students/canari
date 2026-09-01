@@ -355,9 +355,40 @@ renegotiation still lands (`main.rs` has a renegotiation path that no test cover
 **Blocked on nothing but a runner.** This is rung 15 of the ladder, CALL, and CALL is one of the
 three phases with NO runner written - so the measurement cannot be taken until that runner exists.
 Until then the honest statement is that calls are UNVERIFIED on this build, not that they are broken:
-nothing observed them failing, because nothing observed them at all. **Do not let a release carry
-this without the call being placed**, by the runner or by hand - a release is precisely the moment
-the shipping-order hazard turns an unverified change into a user-visible one.
+nothing observed them failing, because nothing observed them at all.
+
+**SETTLED 2026-09-01 BY HOLDING THE SURFACE OFF, not by taking the measurement** (user: *"les appels
+video et audio ne sont pas la priorite, et n'ont pas ete testes en bonne et due forme"*). The
+paragraph that stood here said a release must not carry this unplaced; `CALLS_ENABLED = false`
+(`frontend/src/lib/features.ts`) is how 0.14.15 carries it instead - the buttons are not rendered,
+`handleCallSignal` refuses an invite a legacy peer still sends, and the two system ring surfaces are
+uninstalled at their choke points (`CanariReportIncomingCall`, `showIncomingCallNotification`). The
+platform declarations went with it, because each is a claim about a feature the store can check: the
+iOS `voip` UIBackgroundModes entry (refused by App Review under 2.5.4 on 2026-08-31) and Android's
+`USE_FULL_SCREEN_INTENT`.
+
+**What is still owed is unchanged, and now has a name to flip.** One relay-path call, two peers,
+audio and video, with TURN as production configures it - prod HAS it configured
+(`CLOUDFLARE_TURN_KEY_ID`, `CLOUDFLARE_CALLS_API_TOKEN`, TTL 7200, read off the container
+2026-09-01) and has never once used it. The revival is one commit: `CALLS_ENABLED`, the plist entry,
+the manifest permission, `kCanariCallsEnabled` and Kotlin's `CALLS_ENABLED` all move together, and
+`CallService.callsEnabled.test.ts` is the test that already asserts the on state.
+
+### P3 - the SFU's TURN acquisition fails in silence, twice (2026-09-01)
+
+`fetch_cloudflare_ice_servers` ends both its network call and its JSON decode with `.ok()?`
+(`apps/call-service/src/main.rs`), so a Cloudflare outage, an expired API token and a response shape
+change all produce the same thing: `None`, no line, and a silent slide into `ice_servers_from_env`
+and then STUN-only - on which a relay-only client cannot connect at all. The failure branches BELOW
+these two already log (`[ICE] Cloudflare TURN API failed status=`), which is what makes the omission
+visible as an inconsistency rather than a style. Every swallowed branch logs; these two do not.
+
+Noticed while establishing that the SFU has never had a peer connection opened against it: the
+success line `[ICE] SFU using N Cloudflare TURN server(s)` was absent from the whole container log,
+and it took reading the call site to know that meant "no call" rather than "acquisition failed".
+That ambiguity is the defect. Note also that `docs/wiki/services/call-service.md` claimed the fetch
+happens **on startup**; it happens per peer connection (`resolve_ice_servers()` at the API builder),
+and the page has been corrected.
 
 ### P2 - what made the profile fetches fail on that device at that moment
 

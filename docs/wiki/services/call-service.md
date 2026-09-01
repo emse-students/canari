@@ -94,7 +94,15 @@ All frames are JSON-encoded `SignalMessage`:
 
 ## ICE / TURN configuration
 
-The SFU fetches short-lived TURN credentials from the Cloudflare Calls API on startup:
+The SFU fetches short-lived TURN credentials from the Cloudflare Calls API **once per peer
+connection** (`resolve_ice_servers()`, called from the `APIBuilder` path), not at startup - so a
+process that has never had a caller logs nothing about ICE at all, and silence here means "no call
+was placed", not "acquisition failed". Both are true of production today: calls are held off
+(`CALLS_ENABLED`, see [calls module](../frontend/modules/calls.md)) and the container has logged one
+line since it started. Two of the acquisition's own failure branches are silent, which is what makes
+that ambiguity readable only from the source - [backlog P3](../backlog.md).
+
+The credentials come from:
 
 - `CLOUDFLARE_CALLS_API_TOKEN` — API token for Cloudflare
 - `CLOUDFLARE_TURN_KEY_ID` — TURN key identifier

@@ -11,6 +11,31 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed
+
+- **Audio and video calling is held off, and the two store declarations that describe it went with
+  it.** App Review refused the `voip` `UIBackgroundModes` entry under guideline 2.5.4 on 2026-08-31,
+  unable to locate any VoIP service. They were right about the build they ran: on any iPad
+  `startPushService` returned `desktop - no FCM` before a PushKit token was ever asked for, so no
+  `voipToken` reached the backend and no CallKit ring was deliverable - the same user-agent defect as
+  the 2.1(a) login rejection, at a site its fix did not reach. But the deeper answer was that nobody
+  could have filmed the feature working anyway: twenty CALL rows on the campaign board, **not one
+  ever executed**; an SFU that has never had a peer connection opened against it (one log line since
+  the container started, and TURN credentials are fetched per peer connection, so silence there means
+  no call was ever placed); and not one iOS device that ever held a PushKit token. A surface in that
+  state is not a feature a release should carry. `CALLS_ENABLED` (`frontend/src/lib/features.ts`) is
+  now `false`: the call buttons are not rendered, `startCall` refuses, and `handleCallSignal` ignores
+  the invite a peer on an older build still sends - the guard sits at the signal rather than the
+  button, because that is the half no hidden UI can cover. The system ring surfaces are held at their
+  own choke points on both platforms (`CanariReportIncomingCall`, `showIncomingCallNotification`), so
+  a legacy caller cannot raise a system call UI for a call the webview would then refuse to join.
+  **No code was deleted.** The iOS `voip` mode and Android's `USE_FULL_SCREEN_INTENT` were removed
+  because each is a claim a store checks, and each cuts both ways - declared but unused is a
+  rejection, used but undeclared cannot work - so all five switches carry the same revival condition
+  in their own comment: rung 15 CALL and CALL-13 passing on real hardware, flipped in ONE commit.
+  `CallService.callsEnabled.test.ts` asserts the on state today so the flip is not a leap of faith.
+  ([calls module](docs/wiki/frontend/modules/calls.md), [backlog](docs/wiki/backlog.md))
+
 ### Fixed
 
 - **The dependency queue drained one pull request per push, and only while somebody pushed.** The
