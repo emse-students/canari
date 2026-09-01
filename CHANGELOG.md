@@ -38,6 +38,20 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A moderate advisory reddened CD on `main`, and nothing in the chain could have fixed it.**
+  `GHSA-vcc3-ghjq-m6fr` widened to cover every `decode-uri-component` at or below 0.4.2, reached as
+  `minio > query-string > decode-uri-component` in media-service. There is no in-range fix anywhere
+  in that chain - minio 8.0.7 is the latest release and pins `query-string: ^7.1.3`, which pins
+  `decode-uri-component: ^0.2.2` - and the fixed 0.5.0 is not only outside that range but **ESM-only
+  where `query-string@7` is CommonJS**, so an override would have traded a theoretical denial of
+  service for a certain `ERR_REQUIRE_ESM` at boot. It is instead UNREACHABLE, measured: `decode()`
+  is the only caller of the vulnerable function and only `parse`/`parseUrl`/`extract` reach it,
+  while minio's entire dist calls query-string exactly once, as `stringify`. So the audit carries an
+  allowlist of that one advisory in that one service - never the whole loop, which would hide it in
+  three services nobody checked - **and it asserts the premise in the same step**: CI fails if minio
+  ever starts parsing a query string, or if the `stringify` call site the measurement was taken on
+  disappears. An advisory suppressed on a premise nothing checks is a hole with a comment over it.
+
 - **The dependency queue drained one pull request per push, and only while somebody pushed.** The
   auto-merge refused to merge a head not built on current `main` - written for PR #272, which was
   `CLEAN` with every check green and no `Boot the real AppModule` run at all because that job was

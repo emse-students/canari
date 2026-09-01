@@ -156,14 +156,70 @@ jobs:
       # Every service is audited even after one fails. Aborting on the first would report a
       # single service and call the rest clean by never opening them - the same failure the
       # loop below was written to avoid.
+      #
+      # AN IGNORE IS AN ALLOWLIST OF ONE ADVISORY IN ONE SERVICE, AND IT CARRIES ITS OWN PROOF.
+      # `--ignore` applied to the whole loop would hide an advisory in the three services where
+      # nobody checked whether it is reachable, so it is keyed per service and the log says which
+      # one was suppressed and why.
+      #
+      # THE ONE ENTRY, AND WHY IT IS NOT A FIX. GHSA-vcc3-ghjq-m6fr is a moderate denial of service
+      # in `decode-uri-component` at every version <= 0.4.2, reached as
+      # `minio > query-string > decode-uri-component`. There is no in-range fix anywhere in that
+      # chain: minio 8.0.7 is the latest release and pins `query-string: ^7.1.3`, which pins
+      # `decode-uri-component: ^0.2.2`; the fixed 0.5.0 is outside that range AND is ESM-only,
+      # where `query-string@7` is CommonJS - so forcing it through an override would swap a
+      # theoretical denial of service for a certain `ERR_REQUIRE_ESM` at boot.
+      #
+      # IT IS UNREACHABLE, and that is measured rather than assumed. `decodeComponent` has exactly
+      # one caller inside `query-string`, its private `decode()`, which only `parse`, `parseUrl`
+      # and `extract` reach - and minio's entire dist calls query-string exactly once, at
+      # `helpers.js`, as `querystring.stringify(userTags)`. `stringify` never reaches `decode`.
+      #
+      # SO THE PREMISE IS ASSERTED, not just written down. The step below fails if minio ever
+      # starts PARSING a query string, or if the `stringify` call site it was measured on
+      # disappears - either way the reachability argument is void and the ignore has to be
+      # revisited rather than silently outliving the reason it was granted. An advisory suppressed
+      # on a premise nothing checks is a hole with a comment over it.
       - name: Audit backend service dependencies
         run: |
           set -uo pipefail
+
+          ignores_for() {
+            case "$1" in
+              # GHSA-vcc3-ghjq-m6fr - unreachable, see the header above and the assertion below.
+              media-service) echo "--ignore=GHSA-vcc3-ghjq-m6fr" ;;
+              *) echo "" ;;
+            esac
+          }
+
           failed=""
           for svc in core-service social-service media-service chat-delivery-service; do
             echo "--- $svc"
-            ( cd "apps/$svc" && bun install --frozen-lockfile --ignore-scripts && bun audit --audit-level=moderate ) || failed="$failed $svc"
+            ig=$(ignores_for "$svc")
+            [ -n "$ig" ] && echo "    suppressing, with the reason and the assertion in this workflow: $ig"
+            ( cd "apps/$svc" && bun install --frozen-lockfile --ignore-scripts && bun audit --audit-level=moderate $ig ) || failed="$failed $svc"
           done
+
+          # The premise behind the one ignore. Runs after the loop so `node_modules` exists.
+          echo "--- the premise behind media-service's ignore"
+          dist="apps/media-service/node_modules/minio/dist"
+          if [ ! -d "$dist" ]; then
+            echo "::error::$dist is not there, so the reachability of GHSA-vcc3-ghjq-m6fr cannot be checked. The ignore is not granted."
+            failed="$failed media-service(premise)"
+          else
+            parses=$(grep -rlE 'querystring\.(parse|parseUrl|extract)\b' "$dist" || true)
+            stringifies=$(grep -rlE 'querystring\.stringify\b' "$dist" || true)
+            if [ -n "$parses" ]; then
+              echo "::error::minio now PARSES a query string, so decode-uri-component is reachable and GHSA-vcc3-ghjq-m6fr is no longer unreachable: $parses"
+              failed="$failed media-service(premise)"
+            elif [ -z "$stringifies" ]; then
+              echo "::error::minio no longer calls querystring.stringify either - the call site the ignore was measured on is gone, so the measurement no longer describes this tree."
+              failed="$failed media-service(premise)"
+            else
+              echo "    minio still calls only querystring.stringify; the ignore holds."
+            fi
+          fi
+
           if [ -n "$failed" ]; then
             echo "::error::bun audit failed for:$failed"
             exit 1

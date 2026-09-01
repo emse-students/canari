@@ -81,6 +81,22 @@ not recreate a version whose pull request was closed unmerged.
 anything. Until then the gap is bounded and visible rather than silent, which is the difference that
 mattered.
 
+### P3 - one audit advisory is suppressed because it cannot be reached, and it should stop being
+
+`GHSA-vcc3-ghjq-m6fr` (moderate, denial of service) covers every `decode-uri-component` at or below
+0.4.2 and reaches media-service as `minio > query-string > decode-uri-component`. **It is ignored
+for that one service only**, because nothing in the chain can move - minio 8.0.7 is the latest
+release and pins `query-string: ^7.1.3`, which pins `decode-uri-component: ^0.2.2` - and because the
+fixed 0.5.0 is ESM-only where `query-string@7` is CommonJS, so an override would fail at boot
+instead of at audit. The reachability argument and the assertion that keeps it honest are in
+`.github/workflows/code-analysis.yml`, which is the only copy.
+
+**What retires this row:** minio publishing a release that drops `query-string@7` - or
+`query-string` itself depending on a `decode-uri-component` above 0.4.2. Either makes the ignore
+unnecessary, and it should be deleted the same day, along with the premise assertion beside it.
+Until then the assertion is what stops the suppression outliving its reason: CI fails if minio ever
+parses a query string, or if the `stringify` call site the measurement was taken on disappears.
+
 ### P3 - `shellcheck` does not gate `.github/scripts/`, and the scripts are only `bash -n` clean
 
 `.github/scripts/` is the only code in this repository that MERGES things. `make test-ci-scripts`
