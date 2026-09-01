@@ -1,13 +1,21 @@
 # Docker and services
 
-**Source**: `infrastructure/docker-compose.dev.yml`, `infrastructure/docker-compose.prod.yml`
+**Source**: `infrastructure/local/docker-compose.yml`, `infrastructure/docker-compose.dev.yml`,
+`infrastructure/docker-compose.prod.yml`
 
 ## Compose files
 
-| File | Purpose |
-|---|---|
-| `docker-compose.dev.yml` | Development + CI: all services with host-exposed ports |
-| `docker-compose.prod.yml` | Production: same services but `expose:` only (no host ports) |
+There are THREE, and `docker-compose.dev.yml` does not mean what its name suggests. **It is the
+DEPLOYED second estate, not the local stack** - it was rewritten on 2026-09-01 for that role, and it
+requires an immutable `TAG` and a full set of dev secrets, so `docker compose -f
+docker-compose.dev.yml up` on a workstation fails immediately rather than starting anything. Local
+development is the file under `local/`.
+
+| File | Purpose | Host ports |
+|---|---|---|
+| `local/docker-compose.yml` | **Local development and CI.** Builds from source, plain HTTP, and the only place `ALLOW_INSECURE_COOKIES=true` belongs | yes, all of them |
+| `docker-compose.prod.yml` | **Production**, compose project `infrastructure` | only the frontend (`8080`) and Garage tooling |
+| `docker-compose.dev.yml` | **`dev.canari-emse.fr`**, compose project `canari-dev`, on the SAME host as production - see [dev-environment](dev-environment.md) | only the frontend (`3080`) and Garage tooling |
 
 ## Service graph
 
@@ -73,7 +81,10 @@ them - `GARAGE_DEFAULT_ACCESS_KEY` in `garage` against `MINIO_ACCESS_KEY` in `me
 SAME - so collapsing the mirror is a rename and not a credential change. Two secrets were genuinely
 stale: `MINIO_ROOT_USER` and `MINIO_ROOT_PASSWORD`, which `cd-dev.yml` still required and wrote for
 a service removed on 2026-08-14, and which nothing in `docker-compose.dev.yml` ever read. Both are
-gone from the workflow; **delete the two repository secrets once a dev deploy has answered**.
+gone from the workflow; **delete the two repository secrets once a dev deploy has answered**. That
+gate is looser than it reads: `cd-dev.yml` is itself due to be deleted when the CD is unified onto
+one environment-parameterised workflow ([dev-environment](dev-environment.md)), and once it is, no
+workflow names those two secrets at all and they can go unconditionally.
 
 `.env` is regenerated from `.env.example` on every deploy and drops keys that are no longer in it,
 so the stale `MINIO_*` lines on the prod host disappear on the next deploy rather than needing a
@@ -182,12 +193,14 @@ make reload-services   # restart
 make reset-services    # restart + clear DBs (drops volumes)
 ```
 
-Or directly:
+Or directly - note the path, which is `local/`:
 
 ```bash
-cd infrastructure
-docker compose -f docker-compose.dev.yml up -d
+docker compose -f infrastructure/local/docker-compose.yml --env-file infrastructure/.env up -d
 ```
+
+**Not `infrastructure/docker-compose.dev.yml`.** That file is the deployed dev estate and refuses to
+start without an immutable `TAG`; see the compose-file table above.
 
 ## Health checks
 

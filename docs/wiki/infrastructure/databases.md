@@ -13,6 +13,19 @@
 `DB_DATABASE` default `canari_social` **does not exist on prod**; a command that names it fails and
 the failure looks like a permissions problem.
 
+**THE CONTAINER NAME IS THE ONLY THING THAT SAYS WHICH ESTATE YOU ARE IN, so read it before you
+write.** The same host is to carry a second Postgres for `dev.canari-emse.fr` - compose project
+`canari-dev`, so container `canari-dev-postgres-1`, holding a full copy of production's data
+([dev-environment](dev-environment.md)). Two containers, the same user, the same database name, the
+same table contents: nothing in a `psql` prompt distinguishes them. Prefer selecting by compose
+label over typing a name, which is what `infrastructure/dev/copy-prod-to-dev.sh` does and why it
+cannot be pointed at production:
+
+```
+docker ps --filter label=com.docker.compose.project=infrastructure \
+          --filter label=com.docker.compose.service=postgres --format '{{.Names}}'
+```
+
 **Use the PowerShell tool for any of these, never Bash** - Git Bash strips the backslashes out of
 the cloudflared `ProxyCommand` in the SSH config, and the connection dies with an opaque error.
 Quote SQL single-outer, doubled-inner:
