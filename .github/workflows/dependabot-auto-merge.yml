@@ -105,6 +105,30 @@ jobs:
       (github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'main')
     steps:
+      # THE IDENTITY PERFORMING AN AUTOMATED ACTION IS PART OF THE MECHANISM, AND `GITHUB_TOKEN`
+      # CANNOT PERFORM THIS ONE. When the gates move under a Dependabot branch it has to be rebuilt,
+      # and neither way of doing that is open to this workflow's default identity - measured, both
+      # of them, on 2026-08-31. `PUT /pulls/{n}/update-branch` pushes a commit authored by
+      # `github-actions[bot]`, which parks the re-triggered run in `action_required`, makes
+      # Dependabot refuse the branch for good and fails this workflow's own actor filter; it left
+      # seven branches unmergeable by every path at once. And `@dependabot recreate` is answered
+      # with *"Sorry, only users with push access can use that command"* when the caller is
+      # `github-actions[bot]`.
+      #
+      # So the sweep mints its own identity: an installation token for a GitHub App with Contents
+      # and Pull requests write on this repository. It is minted per RUN and expires in an hour,
+      # which is why an App beats a fine-grained PAT here - there is no long-lived secret to rotate
+      # before it silently expires. It is used for EXACTLY ONE STEP, the rebuild request. The merge
+      # itself stays on `GITHUB_TOKEN` deliberately: a merge made with an App token DOES raise a
+      # `push` event, and the deploy dispatch below exists precisely because a `GITHUB_TOKEN` merge
+      # does not. Swapping it would double every deploy.
+      - name: Mint the identity a rebuild request is honoured for
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.AUTOMERGE_APP_ID }}
+          private-key: ${{ secrets.AUTOMERGE_APP_PRIVATE_KEY }}
+
       # PINNED TO `main`, NOT TO THE EVENT: on the `workflow_run` path the pull request under
       # evaluation is Dependabot's, and this job holds write permissions. The decision script must
       # come from the trunk, never from the branch it is judging.
@@ -220,43 +244,54 @@ jobs:
       # push access would let the ask above succeed. Recorded in `docs/wiki/backlog.md`. Closing the
       # pull request is NOT the alternative - Dependabot does not recreate a version whose pull
       # request was closed unmerged.
-      - name: Report the branches whose gates moved under them
+      # THE SWEEP ASKS FOR THE REBUILD ITSELF NOW, instead of naming the command and waiting for a
+      # person to type it. A queue nobody drains is worse than the merge it prevented (user,
+      # 2026-08-31), and this was the last place in the chain where a human stood in the loop.
+      #
+      # IDEMPOTENCE COMES FROM DURABLE STATE, NOT FROM A COUNTER OR A CLOCK: the marker carries the
+      # HEAD the request was made against. A successful recreate replaces that head, so the marker
+      # stops matching and a later staleness episode asks again; an unsuccessful one leaves the head
+      # where it was, so the pass after this one does not ask twice. The command is the first line
+      # of the body because that is what Dependabot parses.
+      - name: Ask Dependabot to rebuild the branches whose gates moved
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
-          MARKER: "<!-- canari-auto-merge-gates-moved -->"
         run: |
           set -uo pipefail
           list="$RUNNER_TEMP/stale.txt"
           if [ ! -s "$list" ]; then echo "no branch is waiting on a rebuild."; exit 0; fi
 
-          body="$RUNNER_TEMP/gates-moved.md"
-          cat > "$body" <<EOF
-          $MARKER
-          **Not auto-merged: the gates moved under this branch.**
-
-          Its checks were produced by workflow definitions \`main\` no longer carries, so they are
-          not evidence about what \`main\` gates on now. The branch has to be rebuilt before any
-          verdict on it means anything, and this workflow cannot rebuild it: \`update-branch\` leaves
-          a head Dependabot refuses, and \`@dependabot recreate\` is only honoured for an account
-          with push access.
-
-          **Comment \`@dependabot recreate\` here** and the rest is unattended again.
-          EOF
-          sed -i 's/^          //' "$body"
-
-          echo "$(wc -l < "$list") branch(es) waiting on a rebuild this workflow cannot perform."
+          echo "$(wc -l < "$list") branch(es) need rebuilding before their checks mean anything."
           while IFS= read -r pr; do
             [ -z "$pr" ] && continue
-            if gh api "repos/$REPO/issues/$pr/comments" --paginate --jq '.[].body' | grep -qF "$MARKER"; then
-              echo "  #$pr: already reported"
-            elif gh pr comment "$pr" --repo "$REPO" --body-file "$body"; then
-              echo "  #$pr: reported"
+            head=$(gh pr view "$pr" --repo "$REPO" --json headRefOid --jq .headRefOid) || head=""
+            if [ -z "$head" ]; then
+              echo "::warning::#$pr: could not read the head, so the request cannot be made idempotent - not asking."
+              continue
+            fi
+            marker="<!-- auto-merge-recreate $head -->"
+            if gh api "repos/$REPO/issues/$pr/comments" --paginate --jq '.[].body' | grep -qF "$marker"; then
+              echo "  #$pr: already asked for ${head:0:8}; waiting on Dependabot."
+              continue
+            fi
+            body="$RUNNER_TEMP/recreate-$pr.md"
+            cat > "$body" <<EOF
+          @dependabot recreate
+
+          The gate definitions moved between this branch's base and \`main\`, so its checks were
+          produced by workflow definitions \`main\` no longer carries and are not evidence about
+          what \`main\` gates on now. Rebuilding is the only thing that makes a verdict on it mean
+          anything.
+
+          $marker
+          EOF
+            if gh pr comment "$pr" --repo "$REPO" --body-file "$body"; then
+              echo "  #$pr: rebuild requested against ${head:0:8}"
             else
-              echo "  #$pr: could not post the report - it stays silent, which is the defect"
+              echo "::error::#$pr: the rebuild request could not be posted. This is the one step the default identity cannot perform, so a failure here means the App token is missing, expired, or lacks Pull requests write."
             fi
           done < "$list"
-
       # A squash merge made with GITHUB_TOKEN produces a push that triggers NOTHING - github's
       # anti-recursion rule - so CD never saw a single one of these merges and main drifted from
       # production silently. `workflow_dispatch` is the documented exception to that rule, so this
