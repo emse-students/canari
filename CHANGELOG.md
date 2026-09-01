@@ -36,6 +36,20 @@ which is also where every release up to and including v0.13.1 now lives.
   `CallService.callsEnabled.test.ts` asserts the on state today so the flip is not a leap of faith.
   ([calls module](docs/wiki/frontend/modules/calls.md), [backlog](docs/wiki/backlog.md))
 
+### Added
+
+- **`.github/scripts/` is linted, not merely parsed, in all four repositories.** It is the only code
+  in any of them that MERGES things, and until now the whole verification was `bash -n`. `shellcheck
+  -x` now runs before a merge, in each repository's own CI, and the linter is PINNED by version and
+  digest rather than taken from the runner image - `ubuntu-latest` ships a shellcheck whose version
+  is the image's business and moves without this repository changing, and a floating linter is the
+  same defect as an unverified one, arriving later. The step had been refused once for the right
+  reason: nothing here could run it, and a gate nobody ran is how a pipeline goes red for a reason
+  nobody changed. So it was run first, on a throwaway copy, against all four repositories. It named
+  exactly one thing - SC1091, the file it cannot resolve through `$(dirname "$0")` - answered by a
+  `source-path=SCRIPTDIR` directive beside each `.`, and it was proved able to FAIL before being
+  trusted: an unquoted `rm $f` spliced into the library came back as SC2086.
+
 ### Fixed
 
 - **A version bump wrote CRLF into five files, and git showed nothing.** `jq` under Git Bash on

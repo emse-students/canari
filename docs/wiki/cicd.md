@@ -369,6 +369,16 @@ the branches a live run never reaches, which is exactly why
 `.github/scripts/tests/gate-moves.test.sh` produces them instead, and why `make test-ci-scripts`
 runs on every change under `.github/scripts/`.
 
+**And the shell itself is linted, not merely parsed.** `.github/scripts/` is the only code here that
+MERGES things, so `shellcheck -x` gates it before a merge, in each of the four repositories that
+carry these scripts. Two details are the point. The linter is **pinned by version and digest** and
+the runner's own copy is ignored: `ubuntu-latest` ships a shellcheck, but which one is the image's
+business and it moves without this repository changing. And it was **run, and made to fail, before
+it was turned on** - a throwaway copy across all four repositories named exactly one thing, SC1091,
+the source it cannot resolve through `$(dirname "$0")`, which the `source-path=SCRIPTDIR` directive
+beside each `.` answers; then an unquoted `rm $f` spliced into the library came back as SC2086, so
+the gate is known to reject rather than merely to pass.
+
 **One consequence changed with it.** Under the old predicate roughly one pull request merged per
 pass, because each merge invalidated the rest. Now a single sweep merges everything that is
 mergeable, which is what makes the chain converge without a re-trigger per merge.

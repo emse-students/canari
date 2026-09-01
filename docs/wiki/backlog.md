@@ -97,20 +97,6 @@ unnecessary, and it should be deleted the same day, along with the premise asser
 Until then the assertion is what stops the suppression outliving its reason: CI fails if minio ever
 parses a query string, or if the `stringify` call site the measurement was taken on disappears.
 
-### P3 - `shellcheck` does not gate `.github/scripts/`, and the scripts are only `bash -n` clean
-
-`.github/scripts/` is the only code in this repository that MERGES things. `make test-ci-scripts`
-now exercises the predicate behind that decision, including the branches a live run never reaches,
-and CI runs it on every change under that directory - but nothing lints the shell itself. The step
-was written and then deliberately removed: the workstation has neither `shellcheck` nor a container
-runtime, so turning it on for everybody would have been a guess about whether it passes, and the
-house rule that `ci.yml` already applies to the Tauri matrix entry is that a gate nobody verified is
-how a pipeline goes red for a reason nobody changed.
-
-**What retires this row:** run `shellcheck .github/scripts/*.sh .github/scripts/lib/*.sh
-.github/scripts/tests/*.sh` once - anywhere it is installed - fix what it names, and restore the
-step in `ci.yml`'s `test-ci-scripts` job, where the comment marking its absence says exactly this.
-
 ---
 
 ## Security - blocked upstream

@@ -25,6 +25,8 @@ pr="${1:?usage: dependabot-auto-merge.sh <pr-number>}"
 
 # The staleness predicate lives beside this script so it can be exercised on inputs GitHub will
 # not produce on demand; see `lib/gate-moves.sh` and its self-tests.
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=lib/gate-moves.sh
 . "$(dirname "$0")/lib/gate-moves.sh"
 
 MARKER='<!-- canari-auto-merge-ceiling -->'

@@ -11,6 +11,7 @@
 # Usage: .github/scripts/tests/gate-moves.test.sh   (no arguments, no network, no dependencies)
 set -uo pipefail
 
+# shellcheck source-path=SCRIPTDIR
 # shellcheck source=../lib/gate-moves.sh
 . "$(dirname "$0")/../lib/gate-moves.sh"
 
