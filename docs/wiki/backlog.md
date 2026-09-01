@@ -2793,12 +2793,105 @@ The user wants trials to stop happening on prod, which is the right instinct: ev
 authorised on prod only because there is nowhere else, and each one leaves debris on a shared server
 that real members use.
 
-**What has to be decided before any of it is built**, because a second environment is a second copy of
-every secret and every service: whether it gets its own database or a snapshot of prod's, its own
-object storage, its own push credentials (an FCM sender is per-project, so a shared one would send a
-test notification to a real phone), and whether its data is ever restored from prod - which would
-carry real people's ciphertext onto a machine with weaker rules. Scope that first; the tunnel and the
-DNS are the easy half, and they are already in hand.
+**SCOPED WITH THE USER 2026-09-01 - the decisions below are TAKEN and are not to be re-litigated by a
+later session.** Where a decision went against the recommendation, the reason is recorded with it, so
+that reason is what a future session must argue with rather than the choice.
+
+**Shape.** Same machine as production (70 GB and 15 GiB free, measured), own compose project
+`canari-dev`, resource limits so a dev container cannot starve prod, running permanently. Own
+Postgres, own Redis **with** a `redis_data` volume, own Garage instance with its own keys, own RPC and
+admin secrets, and a bucket named `canari-media-dev`. Secrets carried by a GitHub environment named
+`dev`, not by prefixed repo secrets.
+
+**Data: a FULL copy of production, unscrubbed - the user's choice, against the recommendation.** The
+reason is usability: *"le plus proche de la prod est mieux quand-meme, sinon complique de se connecter
+et d'interagir dans de bonnes conditions"*. Two facts were put to the user first and did not change
+it: the server holds only ciphertext, so a copied conversation is **unreadable** on a fresh dev
+client - the MLS keys live on the device and the media CEK is client-generated - and login ease comes
+from the Authentik directory, not from the database. The copy therefore buys realistic users,
+communities, posts, forms, calendar and shop, and buys nothing at all for chat, the most-tested
+surface. **Three consequences are load-bearing and must be built into the copy procedure:** it
+TRUNCATES the push-token table (copied tokens belong to prod's FCM sender, so a dev sender rejects
+every one - safe, but it would log a failure per token, and noise is never acceptable), it CLEARS
+`stripe_customer_id` (live-mode ids are unknown to test-mode keys and fail with a misleading message),
+and it has a guard that categorically refuses the reverse direction. There is no mail transport
+anywhere in this repo, so copied addresses cannot be written to.
+
+**The copy runs as a workflow triggered by each minor release** - `bump-version.yml` fires it - which
+is also what "reset" means here: dev is re-copied from prod, not emptied. That gives the named
+starting point the user asked for in queue item 8, and makes a procedure that touches the production
+database a rehearsed one rather than a rare gesture.
+
+**Login: the same Authentik instance with a dedicated OIDC client, open to the whole directory** -
+also the user's choice over a testers group, for the same usability reason. Redirect URIs limited to
+`dev.canari-emse.fr`. JWT signing secrets are distinct from prod's, so a token minted by one
+environment is refused by the other, and that non-interchangeability is a test.
+
+**Exposure.** Web AND API behind Cloudflare Access on the existing admin group, because the earlier
+answer left a full production copy reachable by any directory account - the API is where the data is,
+so protecting only the web protected nothing. **The harness crosses Access with a service token**
+injected as `CF-Access-Client-Id` / `CF-Access-Client-Secret` headers by the Playwright context, the
+user having required that *"lors de nos tests automatises, il faut que les instances des navigateurs
+puissent y acceder librement"*: an interactive SSO page cannot be crossed by an automated run, an
+egress-IP bypass breaks silently when the address changes, and a per-profile SSO session would add a
+non-scriptable step to the from-zero sequence beside SETUP-4's 2FA. No adminer in dev.
+
+**Trigger: deployed from `main` on every push, with no `dev` branch at all.** One trigger, no possible
+divergence, and `WORK ON main` stays intact. Dev deploys BEFORE prod and **a failed dev migration
+blocks the prod deploy** - the most valuable gate this whole item buys, and it is free: dev runs the
+migration against a copy of prod's data, so a migration that breaks there would have broken prod.
+Accepted cost: dev never pre-validates a commit, it is where things are tried afterwards.
+
+**CD shape: ONE `cd.yml` parameterised by environment**, not a second file - `cd-dev.yml` drifted to
+734 unusable lines in four months precisely because it was separate. Dev builds its own images
+(the images embed the frontend and therefore the domain), roughly doubling build time, accepted.
+
+**Version.** `bump-version.yml` stays the only writer. Dev carries a build suffix `+dev.<sha7>` in
+`/api/version` and a permanent "test environment" banner in the UI - non-negotiable given the copy is
+indistinguishable from prod on screen. `minClientVersion` is per-environment by virtue of the separate
+database. A GitHub release does not build dev.
+
+**Dev is deliberately ONE MAJOR AHEAD, and a successful dev deploy LIFTS a ceiling.** This is the
+strongest outcome of the item and it is what the outage of 2026-09-01 was missing: Postgres 18 starting
+in dev, on a data directory written by prod's 15, and serving `/api/version`, is exactly the test that
+[the ceiling table](#p1---the-three-refusals-the-auto-merge-ceiling-makes-and-the-test-that-retires-each)
+demands. **The user's choice of a full copy is what makes this credible** - a synthetic seeder would
+have proved nothing about a real data directory - so the tension recorded earlier between "safe empty
+dev" and "dev that can lift a ceiling" is resolved in favour of the copy. The major gap between dev
+and prod is therefore EXPECTED and must be DECLARED in a file, with a test asserting the declared gap
+rather than asserting equality.
+
+**Mobile is phase 2, after the web environment actually serves something other than prod.** Then:
+`applicationId` `fr.emse.canari.dev`, `productName` `Canari Dev`, differentiated icon, side-by-side
+installation with prod, a **separate keystore** (a prod keystore leaked through a dev build is
+unrecoverable - Play refuses any key change), four `ANDROID_DEV_*` secrets, and the APK distributed as
+a GitHub artefact with **no Play listing** - a second listing would mean redoing content, data-safety
+and privacy-policy questionnaires for no gain. Three Android details are build-breaking or
+resolution-breaking if missed: `google-services.json` comes from a secret and the Gradle plugin
+validates the package name, so a prod file fails a dev build; the custom scheme `fr.emse.canari`
+(five hosts) must become `fr.emse.canari.dev` or two installed apps claim the same scheme; and the
+App Link on `https://canari-emse.fr` must be replaced by one on `dev.canari-emse.fr`, with prod's
+`assetlinks.json` never listing the dev fingerprint. **Dev gets its own Firebase project** - the user
+is creating it, since the Play service account holds only the `androidpublisher` scope and no
+`serviceusage.services.enable`, so it can neither create a project nor enable an API. iOS and desktop
+are out of scope.
+
+**Also decided:** the April clone at `/home/canari/canari-dev` is read for what `DEV_BRANCH_SETUP.md`
+still holds, that is folded into the dev wiki page, and the clone is then DELETED - blocking, before
+anything deploys there. `auth_db` is renamed during the PostgreSQL 18 window, rehearsed in dev first.
+Dev is excluded from `backup.sh` by a positive list. No TURN in dev while `CALLS_ENABLED = false`.
+`MIGALLERY_API_URL`, which the dev compose still defaults to the production `https://gallery.mitv.fr`,
+is cut. Cookie attributes are prod's: `isDev` must be driven by an explicit variable, never by the
+domain, so dev keeps `secure: true` and `sameSite: 'none'` - and the refresh cookie stays host-only
+with no `domain:` attribute, which is what already keeps prod and dev from sharing it
+([auth.controller.ts](../../apps/core-service/src/auth/auth.controller.ts)). The tunnel token readable
+in `ps aux` is a separate P2, deliberately not folded in here.
+
+**OWED BY THE USER before phase 1 can start** - one-off actions, per the standing directive: a
+Cloudflare API token with DNS **and** Access scope on the zone (granted, and it goes to agent memory,
+never to this public repo - today's token has neither, so not even a DNS record can be read); the
+Authentik OIDC client for dev; Stripe test keys and a dev webhook endpoint; and the Cloudflare Access
+service token for the harness. Phase 2 additionally needs the Firebase project and the dev keystore.
 
 **MEASURED 2026-09-01, before any of it is scoped - four facts, three of them worse than the note
 above assumed.**

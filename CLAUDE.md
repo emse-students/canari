@@ -237,6 +237,23 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md).**
    [there too](docs/wiki/backlog.md#p2---a-device-was-given-a-roster-seat-and-never-a-welcome-and-why-its-keypackage-was-skipped-is-unmeasured-measured-on-prod-2026-09-01),
    and the two want reading together.
 
+10. **`dev.canari-emse.fr` BECOMES A REAL SECOND ENVIRONMENT - SCOPED WITH THE USER 2026-09-01, and
+    every decision is in [backlog](docs/wiki/backlog.md#devcanari-emsefr-becomes-a-real-second-environment---decided-2026-08-17),
+    the only copy. Do not re-litigate them here.** Three facts govern the work and each was MEASURED,
+    not assumed: the name already answers `200` with prod's own `/api/version`, so it is production
+    wearing a second name and anyone told to "use dev" is typing into prod; `cd-dev.yml` is dormant
+    (734 lines, its `dev` branch gone) yet wired to PRODUCTION secrets, so waking it as it stands is
+    how a test push reaches a real phone; and a four-month-stale clone already occupies
+    `/home/canari/canari-dev`, holding a design document that exists in no commit. **The shape in one
+    line:** one `cd.yml` parameterised by environment, deployed from `main` on every push, dev first
+    and **a failed dev migration blocks prod** - the free gate this item exists for. **The user chose a
+    FULL unscrubbed copy of prod against the recommendation**, for usability, after being shown that
+    copied chat is unreadable without the device's MLS keys; that choice is what makes the other prize
+    real - Postgres 18 starting in dev on a directory written by prod's 15 is the test that retires the
+    ceiling arm the outage of 2026-09-01 was missing. Mobile is phase 2. **Phase 1 is BLOCKED on
+    one-off actions owed by the user**, listed at the end of that backlog entry, the first being a
+    Cloudflare token with DNS and Access scope - today's has neither.
+
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 
 The user's standing mandate, verbatim: *"Je veux de l'homogeneite et les meilleurs standards de
@@ -255,11 +272,12 @@ three repos park differently, Tailwind class sorting on Portail-etu. **NestJS 12
 needs nothing done to it**, the hold being an ASSERTION on the resolved tree rather than an ignore,
 so it ends unattended: [nestjs-framework](docs/wiki/services/nestjs-framework.md), the only copy.
 
-**SIX THINGS CANNOT BE PULLED FORWARD**, each carrying its blocking condition in
+**FIVE THINGS CANNOT BE PULLED FORWARD**, each carrying its blocking condition in
 [backlog](docs/wiki/backlog.md), the only copy: the MLS + Graine explanation owed to the USER, not to
 the code (prose and diagrams, no code, user 2026-08-20); the iOS avatar-cache question; WP-LYDIA-1,
-waiting on credentials Lydia owes; one MLS client in a SharedWorker; `dev.canari-emse.fr` and the
-SECOND campaign; and - owed to the user - is a MiGallery application worth building?
+waiting on credentials Lydia owes; one MLS client in a SharedWorker; the SECOND campaign; and - owed
+to the user - is a MiGallery application worth building? **`dev.canari-emse.fr` left this list on
+2026-09-01: it is SCOPED and is queue item 10.**
 
 ### CANARI - what is open
 
