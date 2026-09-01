@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Copies production's database into the dev.canari-emse.fr environment, and strips the three things
-# a copy must never carry.
+# Copies production's database into the dev.canari-emse.fr environment, strips the two things a copy
+# must never carry, and leaves alone the one thing it cannot express.
 #
 # WHY A FULL COPY. Decided with the user on 2026-09-01, against the recommendation, for usability:
 # an empty dev environment is one nobody can log into or interact with meaningfully. Two facts were
@@ -9,9 +9,16 @@
 # conversations are UNREADABLE on a fresh dev client (the MLS keys live on the device and the media
 # CEK is client-generated), and login ease comes from the Authentik directory rather than from this
 # database. So the copy buys realistic users, communities, posts, forms, calendar and shop, and
-# nothing at all for chat. It also buys the thing that matters most: a dev Postgres holding a data
-# directory really written by production's 15 is the only honest test of the major upgrade that took
-# production down on 2026-09-01. See docs/wiki/backlog.md.
+# nothing at all for chat.
+#
+# WHAT IT DOES NOT BUY, AND AN EARLIER VERSION OF THIS HEADER CLAIMED IT DID. The claim was that this
+# leaves "a dev Postgres holding a data directory really written by production's 15", making it the
+# honest test of the major upgrade that took production down on 2026-09-01. It is not. `pg_dump` reads
+# ROWS; the restore below writes a NEW cluster, initialised by whichever major dev is running. The one
+# thing a major upgrade has to survive - production's own PGDATA on disk - is exactly what a logical
+# copy never produces, which is why `infrastructure/dev/version-gap.yml` accepts `logical_restore` as
+# a KIND of evidence and lifts no ceiling for it. Only `in_place_upgrade`, on a binary copy of PGDATA,
+# retires a refusal. See docs/wiki/infrastructure/dev-environment.md and docs/wiki/backlog.md.
 #
 # THE DIRECTION CANNOT INVERT, AND THAT IS ENFORCED, NOT DOCUMENTED. Every destructive statement
 # goes through dev_sql(), which re-reads the target container's `com.docker.compose.project` label

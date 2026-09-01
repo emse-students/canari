@@ -91,7 +91,7 @@ the plain-HTTP local stack. The reasoning is on
 
 ---
 
-## 3. The data: a full copy of production, and the three things it must not carry
+## 3. The data: a full copy of production, the two things it strips, and the one it will not
 
 [`infrastructure/dev/copy-prod-to-dev.sh`](../../../infrastructure/dev/copy-prod-to-dev.sh) dumps
 production's `auth_db`, restores it over dev's, strips what must not travel, and then VERIFIES rather
@@ -103,8 +103,13 @@ first and did not change the decision - the server holds only ciphertext, so cop
 UNREADABLE on a fresh dev client (the MLS keys live on the device, the media CEK is
 client-generated), and login ease comes from the Authentik directory rather than from this database.
 So the copy buys realistic users, communities, posts, forms, calendar and shop, and nothing at all
-for chat. It also buys the thing that matters most for the ceiling: a dev Postgres holding a data
-directory really written by production's 15.
+for chat.
+
+**What it does NOT buy is the ceiling's evidence, and an earlier version of this paragraph said it
+did.** The claim was that the copy leaves "a dev Postgres holding a data directory really written by
+production's 15". It does not: `pg_dump` reads rows and the restore writes a NEW cluster, initialised
+by whatever major is running in dev. The one thing a major upgrade must survive - production's own
+`PGDATA` on disk - is precisely what a logical copy never produces. See section 4.
 
 **The direction cannot invert, and that is enforced rather than documented.** Every destructive
 statement goes through `dev_sql()`, which re-reads the target container's
