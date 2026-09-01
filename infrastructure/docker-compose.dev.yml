@@ -1,7 +1,41 @@
-services:
+# The dev.canari-emse.fr environment. Deployed by CD onto the SAME machine as production, under a
+# distinct compose project name, which is what keeps the two apart: a compose project gets its own
+# network and its own volumes, so nothing here can reach or overwrite production's.
+#
+# THIS FILE IS A REWRITE (2026-09-01). The version it replaces had never worked, and the cause is
+# worth stating because it is easy to repeat: it applied the HOST-side port offsets to the
+# CONTAINER-side addresses too - `redis://redis:6380`, `postgres://...@postgres:5433/auth_db`,
+# `http://core-service:3112`, `DB_PORT: "5433"`. Inside a compose network a service answers on the
+# port it LISTENS on; the number left of the colon in `ports:` exists only on the host and is
+# invisible to peers. Every one of those URLs pointed at a closed port.
+#
+# The offsets themselves turned out to be unnecessary. Production publishes NO host port for any
+# internal service (it uses `expose:`), so there is nothing for a second project to collide with.
+# Exactly two host bindings need to differ, and both are loopback-only:
+#   - the frontend, because the cloudflared tunnel reaches it through the host (3080, vs prod 8080)
+#   - garage's two tooling ports (19100/19101, vs prod 19010/19011)
+#
+# ISOLATION IS BY VALUE, NOT BY THIS FILE. Every `${...}` below is filled from the dev environment's
+# own secrets: its own JWT_SECRET (so a token minted by one environment is refused by the other), its
+# own Garage keys, its own bucket, its own Authentik client. The file is deliberately identical to
+# production wherever it can be, so that a difference in behaviour is never explained by a difference
+# in configuration.
+#
+# See docs/wiki/backlog.md for every decision taken with the user on 2026-09-01, including why this
+# environment carries a full copy of production and what the copy procedure must strip.
 
+# Ceilings, not reservations. Dev shares a host with production, and the point is that a dev
+# container which misbehaves cannot starve the estate real members use.
+x-dev-limits: &dev-limits
+  deploy:
+    resources:
+      limits:
+        cpus: '1.0'
+        memory: 768M
+
+services:
   # ─────────────────────────────────────────────────────
-  # Infrastructure (dépendances partagées)
+  # Datastores
   # ─────────────────────────────────────────────────────
   redis:
     # PINNED BY DIGEST TO WHAT PRODUCTION IS PROVEN TO RUN, not to whatever the tag resolved to
@@ -9,99 +43,138 @@ services:
     # 2026-09-01 and a `docker compose pull` could have moved it to 9 without a line changing
     # here. The tag before the `@` is documentation: the digest is what is fetched.
     image: redis:8.8-alpine@sha256:9d317178eceac8454a2284a9e6df2466b93c745529947f0cd42a0fa9609d7005
-    # Same bound as production, so an eviction only ever shows up in one of the two environments
-    # because of load - never because the policies differ.
-    command: ["redis-server", "--maxmemory", "1gb", "--maxmemory-policy", "volatile-lru"]
-    ports:
-      - "6380:6379"
+    restart: always
+    # Byte-for-byte production's arguments, INCLUDING `--appendonly yes`. The previous version of
+    # this file dropped both the flag and the volume below, so a dev Redis held the shared message
+    # log in a container filesystem and lost it on every recreate - and an eviction here would then
+    # have been explained by a policy difference rather than by load, which is exactly what makes a
+    # second environment useless as a predictor.
+    command:
+      [
+        "redis-server",
+        "--maxmemory",
+        "2gb",
+        "--maxmemory-policy",
+        "volatile-lru",
+        "--appendonly",
+        "yes",
+      ]
+    volumes:
+      - redis_data:/data
+    expose:
+      - "6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          # Above the 2gb maxmemory above, or Redis is killed before its own policy can act.
+          memory: 2560M
 
   postgres:
-    # Same rule. The tag pinned the MAJOR only, so every patch arrived unannounced.
+    # THE MAJOR IS HELD AT 15 HERE ONLY UNTIL THIS ENVIRONMENT EXISTS, AND THEN IT IS THE POINT.
+    # Production is refused `18-alpine` by name in `.github/scripts/lib/ceiling.sh` because no gate
+    # in this repository can see the failure it caused on 2026-09-01: every stack in CI creates its
+    # cluster from an EMPTY volume, the one case that always works. Dev is the missing gate - it
+    # carries a full copy of production's data directory, so an 18 that starts HERE and serves
+    # /api/version is the first real evidence anyone has had. Moving this line is a deliberate
+    # experiment with a declared expected gap, never a dependency bump.
     image: postgres:15-alpine@sha256:3d0f7584ed7d04e27fa050d6683a74746608faf21f202be78460d679cc56461f
-    ports:
-      - "5433:5432"
+    restart: always
+    expose:
+      - "5432"
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-admin}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      # No defaults, deliberately: `admin`/`password` as fallbacks on a host that also runs
+      # production is how a dev database ends up reachable with a guessable credential.
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       POSTGRES_DB: auth_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    # Production has no healthcheck here and depends on `service_started`, which is why a service
+    # can win the race to an unready cluster. Dev gets one, and the app services below wait on it.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d auth_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1536M
+
+  # No adminer. Production runs one behind Access; dev holds a full copy of the same data and does
+  # not need a second web door onto it - `docker exec` reaches the cluster the same way.
 
   # ─────────────────────────────────────────────────────
-  # RUST SERVICES (3000-3009 range)
+  # Rust services
   # ─────────────────────────────────────────────────────
-
-  # Chat Gateway (Rust / Axum) - port 3100 (DEV)
   chat-gateway:
-    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/chat-gateway:${TAG:-dev}
+    # TAG IS REQUIRED, WITH NO DEFAULT. Production defaults to `:latest`; the previous version of
+    # this file defaulted to `:dev`, a MUTABLE tag, which means a redeploy could not be reproduced
+    # and a rollback had no name to roll back to. CD passes the commit sha.
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/chat-gateway:${TAG:?TAG is required - CD passes an immutable tag}
     restart: always
-    build:
-      context: ..
-      dockerfile: infrastructure/local/Dockerfile.chat-gateway
-    ports:
-      - "3100:3000"
+    <<: *dev-limits
+    expose:
+      - "3000"
     environment:
       RUST_LOG: chat_gateway=info,tower_http=info
-      JWT_SECRET: ${JWT_SECRET}
-      REDIS_URL: redis://redis:6380
-      DELIVERY_SERVICE_URL: http://chat-delivery-service:3110
-      ALLOW_ORIGIN: "*"
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      REDIS_URL: redis://redis:6379
+      DELIVERY_SERVICE_URL: http://chat-delivery-service:3010
+      # Never `*`. This environment is publicly resolvable and carries a copy of production's data;
+      # a wildcard allowlist there is a different thing from a wildcard on a laptop.
+      ALLOW_ORIGIN: ${ALLOW_ORIGIN:-https://dev.canari-emse.fr}
     depends_on:
       redis:
         condition: service_healthy
 
   call-service:
-    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/call-service:${TAG:-dev}
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/call-service:${TAG:?TAG is required - CD passes an immutable tag}
     restart: always
-    build:
-      context: ..
-      dockerfile: infrastructure/local/Dockerfile.call-service
-    ports:
-      - "3104:3004"
+    <<: *dev-limits
+    expose:
+      - "3004"
     environment:
       RUST_LOG: info
       PORT: "3004"
-      JWT_SECRET: ${JWT_SECRET}
-      CLOUDFLARE_CALLS_API_TOKEN: ${CLOUDFLARE_CALLS_API_TOKEN:-}
-      CLOUDFLARE_TURN_KEY_ID: ${CLOUDFLARE_TURN_KEY_ID:-}
-      CLOUDFLARE_TURN_TTL_SECONDS: ${CLOUDFLARE_TURN_TTL_SECONDS:-7200}
-      TURN_URL: ${TURN_URL:-}
-      TURN_USERNAME: ${TURN_USERNAME:-}
-      TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      # No TURN and no Cloudflare Calls credentials in dev: `CALLS_ENABLED` is false since 0.14.15
+      # and the surface has never been properly tested, so there is nothing here to point at a
+      # relay. Sharing production's would also mean a dev client consuming production's TURN quota.
       CALL_ROOM_SECRET: ${CALL_ROOM_SECRET:-}
 
   # ─────────────────────────────────────────────────────
-  # NODE.JS SERVICES (3010-3029 range)
+  # Node services
   # ─────────────────────────────────────────────────────
-
-  # Chat Delivery Service (NestJS) - New port 3110 (DEV)
   chat-delivery-service:
-    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/chat-delivery-service:${TAG:-dev}
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/chat-delivery-service:${TAG:?TAG is required - CD passes an immutable tag}
     restart: always
-    build:
-      context: ..
-      dockerfile: infrastructure/local/Dockerfile.chat-delivery-service
-    ports:
-      - "3110:3010"
+    <<: *dev-limits
+    expose:
+      - "3010"
     environment:
       PORT: "3010"
-      POSTGRES_URL: postgres://admin:password@postgres:5433/auth_db
+      POSTGRES_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/auth_db
       REDIS_HOST: redis
-      REDIS_PORT: "6380"
+      REDIS_PORT: "6379"
+      # NO FIREBASE CREDENTIALS UNTIL THE DEV PROJECT EXISTS, and never production's. The copy
+      # carries production's push tokens, which belong to production's sender; a shared sender would
+      # deliver a test notification to a real member's phone. The copy procedure truncates that
+      # table, and a dev sender would reject the rows anyway - two independent reasons, which is
+      # what this needs.
       FIREBASE_SERVICE_ACCOUNT_JSON: ${FIREBASE_SERVICE_ACCOUNT_JSON:-}
-      CLOUDFLARE_CALLS_API_TOKEN: ${CLOUDFLARE_CALLS_API_TOKEN:-}
-      CLOUDFLARE_TURN_KEY_ID: ${CLOUDFLARE_TURN_KEY_ID:-}
-      TURN_URL: ${TURN_URL:-}
-      TURN_USERNAME: ${TURN_USERNAME:-}
-      TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
-      # Rich media notifications (WP-XP-3): the push proxy fetches encrypted blobs from media-service
-      # server-to-server, gated by the shared INTERNAL_SECRET.
+      # Rich media notifications (WP-XP-3): the push proxy fetches encrypted blobs from
+      # media-service server-to-server, gated by the shared INTERNAL_SECRET.
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       MEDIA_SERVICE_URL: ${MEDIA_SERVICE_URL:-http://media-service:3011}
       CALL_ROOM_SECRET: ${CALL_ROOM_SECRET:-}
@@ -110,6 +183,8 @@ services:
       GOOGLE_SAFE_BROWSING_API_KEY: ${GOOGLE_SAFE_BROWSING_API_KEY:-}
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     healthcheck:
       test:
@@ -125,13 +200,19 @@ services:
       start_period: 50s
 
   # ─────────────────────────────────────────────────────
-  # Garage - S3-compatible object storage for encrypted media blobs (replaces MinIO)
+  # Garage - S3-compatible object storage for encrypted media blobs
   # ─────────────────────────────────────────────────────
   garage:
+    # `v2.3.0` is an exact version rather than a floating tag, which is why it is not digest-pinned
+    # the way redis and postgres are - and it matches production exactly, deliberately.
     image: dxflrs/garage:v2.3.0
+    restart: always
     command: ["/garage", "server", "--single-node", "--default-bucket"]
     ports:
-      - "${GARAGE_API_HOST_PORT:-19100}:3900"   # S3 API (host configurable)
+      # Loopback only, and offset from production's 19010/19011 because these two ARE published and
+      # would otherwise be the one real collision on this host.
+      - "127.0.0.1:${GARAGE_API_HOST_PORT:-19100}:3900"
+      - "127.0.0.1:${GARAGE_ADMIN_HOST_PORT:-19101}:3903"
     environment:
       GARAGE_RPC_SECRET: "${GARAGE_RPC_SECRET:?GARAGE_RPC_SECRET is required - see .env.example}"
       GARAGE_ADMIN_TOKEN: "${GARAGE_ADMIN_TOKEN:?GARAGE_ADMIN_TOKEN is required - see .env.example}"
@@ -139,7 +220,10 @@ services:
       # same values media-service reads below, so the two never drift apart.
       GARAGE_DEFAULT_ACCESS_KEY: ${GARAGE_ACCESS_KEY_ID:?GARAGE_ACCESS_KEY_ID is required - set via CD secrets or .env}
       GARAGE_DEFAULT_SECRET_KEY: ${GARAGE_SECRET_ACCESS_KEY:?GARAGE_SECRET_ACCESS_KEY is required - set via CD secrets or .env}
-      GARAGE_DEFAULT_BUCKET: ${GARAGE_BUCKET:-canari-media}
+      # A DIFFERENT NAME FROM PRODUCTION'S `canari-media`. The store is already separate (its own
+      # volumes), so this is not what isolates it - but a shared name is how a copy-paste of an
+      # endpoint, a tool invocation or a support answer ends up pointed at the wrong one.
+      GARAGE_DEFAULT_BUCKET: ${GARAGE_BUCKET:-canari-media-dev}
     volumes:
       - ./garage/garage.toml:/etc/garage.toml:ro
       - garage_meta:/var/lib/garage/meta
@@ -149,21 +233,22 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1024M
 
-  # Media Service (NestJS) - New port 3111 (DEV)
   # Stores only opaque encrypted blobs; never sees decryption keys.
-  # ─────────────────────────────────────────────────────
   media-service:
-    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/media-service:${TAG:-dev}
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/media-service:${TAG:?TAG is required - CD passes an immutable tag}
     restart: always
-    build:
-      context: ..
-      dockerfile: infrastructure/local/Dockerfile.media-service
-    ports:
-      - "3111:3011"
+    <<: *dev-limits
+    expose:
+      - "3011"
     environment:
       PORT: "3011"
-      JWT_SECRET: ${JWT_SECRET}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       # Shared secret gating server-to-server DELETE /media/:id (social-service cleanup).
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       GARAGE_ENDPOINT: ${GARAGE_ENDPOINT:-garage}
@@ -172,7 +257,7 @@ services:
       GARAGE_REGION: ${GARAGE_REGION:-garage}
       GARAGE_ACCESS_KEY_ID: ${GARAGE_ACCESS_KEY_ID:?GARAGE_ACCESS_KEY_ID is required - set via CD secrets or .env}
       GARAGE_SECRET_ACCESS_KEY: ${GARAGE_SECRET_ACCESS_KEY:?GARAGE_SECRET_ACCESS_KEY is required - set via CD secrets or .env}
-      GARAGE_BUCKET: ${GARAGE_BUCKET:-canari-media}
+      GARAGE_BUCKET: ${GARAGE_BUCKET:-canari-media-dev}
       MEDIA_MAX_SIZE_MB: "${MEDIA_MAX_SIZE_MB:-50}"
     volumes:
       - media_meta:/app/media_meta
@@ -180,103 +265,139 @@ services:
       garage:
         condition: service_healthy
 
-  # ─────────────────────────────────────────────────────
-  # Core Service (NestJS) - port 3112 (DEV)
   # Handles Auth, Users, Payment
-  # ─────────────────────────────────────────────────────
   core-service:
-    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/core-service:${TAG:-dev}
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/core-service:${TAG:?TAG is required - CD passes an immutable tag}
     restart: always
-    build:
-      context: ..
-      dockerfile: infrastructure/local/Dockerfile.core-service
-    ports:
-      - "3112:3012"
+    <<: *dev-limits
+    expose:
+      - "3012"
     environment:
       PORT: "3012"
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required - see .env.example}"
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
+      # Left false even here. `ENABLE_DEV_ROUTES` is not "the dev environment's routes" - it opens
+      # endpoints, and this environment is publicly resolvable with a copy of production's data.
       ENABLE_DEV_ROUTES: "${ENABLE_DEV_ROUTES:-false}"
+      # A DEDICATED OIDC CLIENT, on the SAME Authentik instance, so a real account can sign in here
+      # without production's client ever seeing a dev redirect. The provider's `issuer_mode` is
+      # per_provider, so a dev id token cannot be mistaken for a production one.
       AUTHENTIK_BASE_URL: ${AUTHENTIK_BASE_URL:-}
       AUTHENTIK_CLIENT_ID: ${AUTHENTIK_CLIENT_ID:-}
       AUTHENTIK_CLIENT_SECRET: ${AUTHENTIK_CLIENT_SECRET:-}
       DB_HOST: postgres
       DB_PORT: "5432"
-      DB_USERNAME: ${POSTGRES_USER:-admin}
-      DB_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      DB_USERNAME: ${POSTGRES_USER:?POSTGRES_USER is required}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       DB_DATABASE: auth_db
-      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
-      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
-      # Lydia (WP-LYDIA-1) - which provider is actually live is an admin-editable platform_config
-      # setting, not env-driven; these are only the credentials, read by whichever provider is active.
-      LYDIA_ENV: ${LYDIA_ENV:-homologation}
-      LYDIA_PROVIDER_TOKEN: ${LYDIA_PROVIDER_TOKEN:-}
-      LYDIA_PROVIDER_PRIVATE_TOKEN: ${LYDIA_PROVIDER_PRIVATE_TOKEN:-}
+      # NO STRIPE IN DEV (user, 2026-09-01: "oublie. Stripe ne sera pas accessible en dev pour le
+      # moment, tant pis"). The variables are absent rather than empty so that the payment path is
+      # plainly inert instead of half-configured. The copy procedure CLEARS
+      # `stripe_customer_id`: a live-mode id with no keys behind it can only produce a misleading
+      # failure.
+      #
+      # Lydia is likewise absent - WP-LYDIA-1 is still waiting on credentials Lydia owes.
       FORM_URL: http://social-service:3014
       FORM_SERVICE_URL: http://social-service:3014
       # Account deletion fans out to media-service to remove the user's own uploads.
       MEDIA_SERVICE_URL: ${MEDIA_SERVICE_URL:-http://media-service:3011}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-9855dfafdadcbdcfc69bcd1fffc447f9b53536428ef767fd164297ffe49cc4cf}
-      MIGALLERY_API_URL: ${MIGALLERY_API_URL:-https://gallery.mitv.fr}
+      # CUT, NOT INHERITED. The previous version of this file defaulted this to
+      # `https://gallery.mitv.fr`, which is the PRODUCTION MiGallery - a dev environment calling a
+      # real service in another repository's estate. Empty means no MiGallery in dev.
+      MIGALLERY_API_URL: ${MIGALLERY_API_URL:-}
       MIGALLERY_API_KEY: ${MIGALLERY_API_KEY:-}
     depends_on:
       postgres:
-        condition: service_started
+        condition: service_healthy
 
-  # ─────────────────────────────────────────────────────
-  # Social Service (NestJS) - port 3114 (DEV)
   # Handles Channels, Posts, Forms
-  # ─────────────────────────────────────────────────────
   social-service:
-    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/social-service:${TAG:-dev}
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/social-service:${TAG:?TAG is required - CD passes an immutable tag}
     restart: always
-    build:
-      context: ..
-      dockerfile: infrastructure/local/Dockerfile.social-service
-    ports:
-      - "3114:3014"
+    <<: *dev-limits
+    expose:
+      - "3014"
     environment:
       PORT: "3014"
       DB_HOST: postgres
-      DB_PORT: "5433"
-      DB_USERNAME: ${POSTGRES_USER:-admin}
-      DB_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      DB_PORT: "5432"
+      DB_USERNAME: ${POSTGRES_USER:?POSTGRES_USER is required}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       DB_DATABASE: auth_db
       CHANNELS_ENCRYPTION_SECRET: "${CHANNELS_ENCRYPTION_SECRET:?CHANNELS_ENCRYPTION_SECRET is required - see .env.example}"
-      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
-      STRIPE_SUCCESS_URL: ${STRIPE_SUCCESS_URL:-http://localhost:5173/posts?registration=success}
-      STRIPE_CANCEL_URL: ${STRIPE_CANCEL_URL:-http://localhost:5173/posts?registration=cancel}
-      USER_SERVICE_URL: http://core-service:3112
+      # No Stripe here either, so no success/cancel URLs - they pointed at `localhost:5173`.
+      USER_SERVICE_URL: http://core-service:3012
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required - see .env.example}"
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-9855dfafdadcbdcfc69bcd1fffc447f9b53536428ef767fd164297ffe49cc4cf}
       MEDIA_SERVICE_URL: http://media-service:3011
+      # Absent, not inherited: this key reaches Le Cercle's estate, which has no dev environment.
       CERCLE_API_KEY: ${CERCLE_API_KEY:-}
     depends_on:
       postgres:
-        condition: service_started
+        condition: service_healthy
       core-service:
         condition: service_started
       media-service:
         condition: service_started
 
-
-  frontend:
-    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/frontend:${TAG:-dev}
+  # SvelteKit server (adapter-node). Renders NO component - the app stays a SPA - it only
+  # writes each page's Open Graph head into the shell before nginx sends it, which is the
+  # one thing a crawler or an unfurler can see (frontend/src/hooks.server.ts). Reaches the
+  # services directly on this network, never back through nginx, with INTERNAL_SECRET.
+  #
+  # THE PREVIOUS VERSION OF THIS FILE HAD NO SUCH SERVICE AT ALL, while production's frontend
+  # depends on it - one more sign the file predated the estate it claimed to mirror.
+  frontend-ssr:
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/frontend-ssr:${TAG:?TAG is required - CD passes an immutable tag}
     restart: always
+    <<: *dev-limits
+    environment:
+      NODE_ENV: production
+      PORT: '3000'
+      # adapter-node's ONE public origin, which is `FRONTEND_URL` and never the CORS allowlist.
+      ORIGIN: ${FRONTEND_URL:-https://dev.canari-emse.fr}
+      INTERNAL_SECRET: ${INTERNAL_SECRET:-}
+      SOCIAL_SERVICE_URL: http://social-service:3014
+      CORE_SERVICE_URL: http://core-service:3012
+      DELIVERY_SERVICE_URL: http://chat-delivery-service:3010
+    depends_on:
+      social-service:
+        condition: service_started
+      core-service:
+        condition: service_started
+      chat-delivery-service:
+        condition: service_started
+
+  # nginx serving a build. THE ONLY container here that binds a host port, and the only one the
+  # cloudflared tunnel needs to reach: its ingress rule for `dev.canari-emse.fr` points at
+  # `http://localhost:3080`. Dev runs its OWN nginx, so production's single public entry point is
+  # never edited to accommodate a second environment.
+  frontend:
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/frontend:${TAG:?TAG is required - CD passes an immutable tag}
+    restart: always
+    <<: *dev-limits
     environment:
       NODE_ENV: production
       PORT: '80'
-      # ORIGIN / VITE_GATEWAY_URL / VITE_DELIVERY_URL removed here for the same reason as in
+      # ORIGIN / VITE_GATEWAY_URL / VITE_DELIVERY_URL are absent for the same reason as in
       # `docker-compose.prod.yml`: this image is nginx serving a build, nothing reads them at
-      # runtime, and all three took their value from `ALLOW_ORIGIN` - a CORS allowlist, not an
-      # origin.
+      # runtime, and a `VITE_` variable is baked in at BUILD time.
     ports:
-      - "${FRONTEND_HOST_PORT:-3080}:80"
+      # Loopback only. Production binds its frontend on all interfaces; there is no reason for a
+      # second environment to be reachable except through the tunnel.
+      - "127.0.0.1:${FRONTEND_HOST_PORT:-3080}:80"
+    depends_on:
+      frontend-ssr:
+        condition: service_started
 
 volumes:
   postgres_data:
+  # The shared message log. See the redis service above for why this is not optional - the file
+  # this replaces omitted it.
+  redis_data:
   garage_meta:
   garage_data:
   media_meta:

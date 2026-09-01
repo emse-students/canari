@@ -830,6 +830,8 @@ before touching any login, cookie or rotation.
 - **The database cannot tell you what REFERENCES a media object** - an attachment id travels inside the ciphertext, so "is this blob still needed" is answered from the migration record, never from a query.
 - **Before deleting a volume, MOUNT it and ask it** - a throwaway container over the volume costs 30 seconds and is the only measurement that postdates the decision.
 - **A volume outlives the compose file that named it** - every deleted service owes an explicit `docker volume rm`, and there is usually more than one.
+- **A HOST-SIDE PORT OFFSET MUST NEVER APPEAR IN A CONTAINER-TO-CONTAINER ADDRESS.** Inside a compose network a service answers on the port it LISTENS on; the number left of the colon in `ports:` exists only on the host and is invisible to peers. `docker-compose.dev.yml` offset every port so a second stack could share a machine, applied the offsets to the internal URLs as well, and pointed four of them at closed ports - for four months, with nothing reading it. `.github/scripts/tests/compose-wiring.test.sh` now derives each service's listening ports from the file and holds every address against them.
+- **AND THE OFFSETS THEMSELVES WERE UNNECESSARY** - a compose project already gets its own network and its own volumes, and production publishes NO host port for an internal service, so there was nothing to collide with. Before offsetting anything, check whether the thing being avoided is published at all.
 
 ## Shared gotchas -> [development](development.md), [cicd](cicd.md)
 

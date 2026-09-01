@@ -13,6 +13,26 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **The dev environment's compose file had never worked, and the reason is one mistake repeated four
+  times.** `infrastructure/docker-compose.dev.yml` was written in April 2026 to let a second stack sit
+  beside production on one machine, and offset every port to do it - but applied the offsets to the
+  CONTAINER-side addresses as well as the host bindings: `redis://redis:6380`,
+  `postgres://...@postgres:5433/auth_db`, `http://core-service:3112`, `http://chat-delivery-service:3110`
+  and `DB_PORT: "5433"`. Inside a compose network a service answers on the port it LISTENS on, so all
+  five pointed at closed ports. Nothing said so, because nothing had started the file since
+  2026-05-09. **The offsets were not needed in the first place:** a compose project gets its own
+  network and its own volumes, and production publishes no host port for any internal service, so the
+  only genuine collisions were the frontend and Garage's two tooling ports. Rewritten to mirror
+  production exactly where it can, differing only where the environment must: loopback-only bindings,
+  a required immutable `TAG` instead of a mutable `:dev`, the missing `redis_data` volume and
+  `--appendonly yes` restored, the absent `frontend-ssr` service added, `ALLOW_ORIGIN` narrowed from
+  `*`, resource limits so a dev container cannot starve production, a postgres healthcheck the
+  services now wait on, a bucket name distinct from production's, and `MIGALLERY_API_URL` no longer
+  defaulting to the production MiGallery of another repository. `compose-wiring.test.sh` derives every
+  service's listening ports from both deployed compose files and fails on any address that names a
+  host-side one; reintroducing the four April defects produces five failures, and production passes
+  clean.
+
 - **A dependency bump took production down for 33 minutes, and the rule that was supposed to stop it
   did not exist.** Dependabot proposed `postgres 15-alpine -> 18-alpine` in `/infrastructure`, the
   auto-merge sweep took it at 10:33 on a fully green check suite, and the deploy it dispatched

@@ -290,6 +290,7 @@ test-ci-scripts:
 	@echo "${BLUE}🧪 CI script self-tests…${RESET}"
 	@bash .github/scripts/tests/gate-moves.test.sh
 	@bash .github/scripts/tests/ceiling.test.sh
+	@bash .github/scripts/tests/compose-wiring.test.sh
 
 test-harness:
 	@echo "${BLUE}🧪 Harness self-tests…${RESET}"
