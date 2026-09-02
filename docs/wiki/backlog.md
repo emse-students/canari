@@ -142,6 +142,36 @@ the shape that fits the rest of this repository - but which one is taken is a de
 recorded in the table of what is owed to the user above. Upstream, this is dependabot-core's cargo
 updater not copying build scripts; nothing here can fix that.
 
+### P2 - the gate that lets dev protect production cannot tell a broken dev from an unreachable REGISTRY (measured 2026-09-02, first day it ran)
+
+**`deploy-to-server` needs `deploy-dev` to be `success` or `skipped`** ([cd.yml:812](../../.github/workflows/cd.yml)),
+which is the whole point of a second estate: a migration that would break production breaks a copy
+of production's data first, while production keeps serving. The hazard was written into the comment
+above that clause the day it was added - *"a dev estate broken for a reason of its own would hold
+production's releases hostage"* - and it materialised within hours.
+
+**Run `33633156004` (workflow_dispatch, 13:00, 17m38s): everything built, every image pushed, and
+`Deploy to dev.canari-emse.fr` failed in 16 s on**
+
+```
+Image ghcr.io/emse-students/***/frontend:dev Error failed to resolve reference ...
+  net/http: TLS handshake timeout
+```
+
+**A TLS handshake to ghcr.io. Production was not deployed because the other estate could not reach a
+registry** - nothing about the change, nothing about the data, nothing a second environment exists to
+catch. The gate consulted a job RESULT, and a result cannot say whether dev refused the change or
+merely failed to run, which is the same conflation the `build-frontend-dev` comment four lines up
+already records for a laundered skip.
+
+**Owed:** the dev deploy separates the failures it OWNS (a migration refused, a container that will
+not start, `/api/version` unanswered) from the ones it merely observed (a registry timeout, an SSH
+drop), and only the first blocks production. A retry on the pull is not the fix - it narrows the
+window and leaves the conflation - though the pull should retry too. Until then the escape stays one
+visible variable: `gh variable set DEV_ENVIRONMENT_ENABLED --body false`, then re-run.
+
+---
+
 ### P2 - NOTHING TELLS ANYBODY PRODUCTION IS DOWN, and both outages of 2026-09-01 were reported by the user (owed to the USER: a decision, then one click)
 
 **This is the largest thing the postgres outage exposed, and it is not a code defect.** Production
