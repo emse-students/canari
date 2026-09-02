@@ -175,7 +175,9 @@ printf '\nthe two estates never publish the same host port\n'
 # So this asks the RENDERED .env instead. Both estates live on one machine and a published port is
 # machine-wide, so the property is not "dev says 3080" - it is "these two never collide", which is
 # true or false about the outcome and cannot be satisfied by a comment.
+# shellcheck disable=SC2046 # word splitting is the point: each line is one VAR=value assignment
 render prod "$TMP/ports-prod.env" $(prod_env) >"$TMP/ports-prod.log" 2>&1 || true
+# shellcheck disable=SC2046
 render dev "$TMP/ports-dev.env" $(dev_env) $(prod_env) >"$TMP/ports-dev.log" 2>&1 || true
 
 port_of() {
