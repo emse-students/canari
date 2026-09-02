@@ -320,6 +320,25 @@ have opened a hole for as long as it took to notice.
       and tiny, so `/mnt/d` costs nothing, and Git Bash has already let a Windows-shell difference
       through (`jq` and CRLF)
 
+### WP-2 AND WP-3 ARE ONE WORK PACKAGE, not two - found 2026-09-02, before either was written
+
+The checklist below lists them separately and they cannot be committed separately. The coupling is
+mechanical, not stylistic:
+
+- production deploying "at the bump" needs no new trigger - `cd.yml` already has
+  `workflow_run: ['Bump version on release']`, and deleting `on: push` leaves exactly that. Fine.
+- **`deploy-dev` is triggered by a PUSH to a branch today.** Deleting `on: push` leaves it with no
+  trigger at all.
+- re-wiring it to a PRERELEASE tag requires telling a prerelease release from a stable one, and
+  **the `workflow_run` context does not carry that flag**. It has to be passed down by
+  `bump-version.yml` - which is a WP-3 item ("carries the prerelease flag downstream").
+
+So committing WP-2 alone leaves the dev estate unreachable by any deploy until WP-3 lands, and
+`one coherent commit per work package` is what forbids that. **Treat 2+3 as one package**, or accept
+a window in which only production can be deployed. This is a plan-shape decision, so it is recorded
+here rather than settled in passing, and the ORDER inside the merged package still matters: the flag
+must exist before anything keys off it.
+
 ### WP-2 - the branch, and deploy-at-bump
 
 - [ ] `cd.yml`: `on: push` and `workflow_dispatch` removed (section 3 explains why the dispatch goes)
