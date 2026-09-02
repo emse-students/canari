@@ -144,6 +144,11 @@ else
     # escaped inside double-quoted shell strings, so it really holds `\"stripeCustomerId\"`.
     # Restricting to the lines that CALL the guarded function is what stops the comment block above
     # them from satisfying this.
+    #
+    # The single quotes are the point, not an oversight: this searches for the LITERAL two
+    # characters `$sql` as they appear in the source file, and expanding them would search for the
+    # value of a variable this script does not have.
+    # shellcheck disable=SC2016
     if grep '"\$sql"' "$STRIPS" | grep -qF "\\\"$col\\\""; then
       ok "$col is stripped"
     else

@@ -195,6 +195,10 @@ fi
 log "stripping what a copy must not carry…"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# `source-path=SCRIPTDIR` is what makes the `source=` line below resolve at all: shellcheck reads a
+# relative path against ITS OWN working directory, not against the script's, so `source=` alone left
+# it reporting SC1091 "does not exist" for a file that is right there.
+# shellcheck source-path=SCRIPTDIR
 # shellcheck source=../lib/copy-strips.sh
 . "$SCRIPT_DIR/../lib/copy-strips.sh"
 apply_copy_strips dev_sql "$DATABASE" "[copy-prod-to-dev]"

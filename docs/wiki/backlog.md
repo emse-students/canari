@@ -2793,6 +2793,39 @@ feature is therefore coherent with E2EE - it removes a password prompt, not a re
 
 ## Tooling
 
+### P3 - `scripts/` is the one shell directory CI does not shellcheck, and it holds the release's first step (measured 2026-09-03)
+
+`ci.yml`'s shellcheck step globs `.github/scripts/**`, `infrastructure/dev/*.sh` and
+`infrastructure/deploy/*.sh` - and, since 2026-09-03, `scripts/bump-app-version.sh` by name, because
+that file is the first thing a release runs and it was rewritten that day. **The rest of `scripts/`
+is still unchecked**, and running shellcheck 0.11.0 over it by hand found:
+
+| file | findings |
+|---|---|
+| `check-oidc.sh` | SC1090 (non-constant `source`), four SC2015 (`A && B \|\| C` is not if-then-else) |
+| `deploy.sh` | SC2046 - unquoted `export $(cat .env \| xargs)` |
+| `print-android-app-link-fingerprint.sh` | three SC2154 - `keyAlias`, `storePassword`, `keyPassword` referenced but never assigned in the file |
+
+None is obviously a live defect - the last three come from a `keystore.properties` sourced at
+runtime - but the last one is the shape that bites: a variable shellcheck cannot see assigned is
+also a variable a typo would silently empty, in a script that signs an Android release.
+
+Retired by: fixing or annotating each, then widening the glob to `scripts/*.sh` so the directory
+cannot regain findings. Deliberately NOT done in the same commit as the workflow migration: it is a
+cleanup pass over five unrelated files, and mixing it in would have hidden it.
+
+### P3 - CI pins shellcheck 0.10.0, so a local run with a newer one disagrees (measured 2026-09-03)
+
+Installing shellcheck locally (0.11.0) reported two SC2329 findings CI never sees - "this function
+is never invoked" on the `psql` stubs in `deploy-migrations.test.sh`, which exist to be called from
+`eval`ed code. They are annotated now, so the two agree again, but **the class stays open**: the
+pin is a sha256 in `ci.yml` and nothing tells a developer which version to install, so the next
+divergence is found the same way - by a local run disagreeing with a green pipeline, or worse, by a
+green local run disagreeing with a red one.
+
+Retired by: naming the version somewhere a human reads before installing it (the development page,
+or a `.tool-versions`-shaped file), so "what CI runs" is not something you learn by failing.
+
 ### P3 - the root `load` warns on every navigation that it used `window.fetch`, and the fix it asks for buys nothing here (measured 2026-09-03)
 
 The dev server prints, once per navigation:

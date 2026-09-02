@@ -745,4 +745,5 @@ jobs:
           "$RUNNER_TEMP/shellcheck-${SHELLCHECK_VERSION}/shellcheck" --version
           "$RUNNER_TEMP/shellcheck-${SHELLCHECK_VERSION}/shellcheck" -x \
             .github/scripts/*.sh .github/scripts/lib/*.sh .github/scripts/tests/*.sh \
-            infrastructure/dev/*.sh infrastructure/deploy/*.sh
+            infrastructure/dev/*.sh infrastructure/deploy/*.sh \
+            scripts/bump-app-version.sh

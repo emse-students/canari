@@ -64,7 +64,12 @@ describe('the app.html contract', () => {
   const appHtml = readFileSync('src/app.html', 'utf-8');
 
   it('still carries the marker the head block replaces', () => {
-    expect(appHtml).toContain('<!--canari-seo-->');
+    // A META TAG AND NOT A COMMENT SINCE 2026-09-02. The marker used to be `<!--canari-seo-->`,
+    // which Svelte's hydration counts as a node the client render does not have - one unreadable
+    // `hydration_mismatch` warning per page load. This literal has to match `SEO_MARKER` in
+    // `hooks.server.ts` exactly, or the substitution becomes a silent no-op: the build still
+    // succeeds, the server still answers, and every preview goes generic.
+    expect(appHtml).toContain('<meta name="canari-seo-placeholder" data-canari-seo />');
   });
 
   it('still carries the static title the rendered title replaces', () => {

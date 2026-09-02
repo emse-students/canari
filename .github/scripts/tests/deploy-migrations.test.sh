@@ -83,7 +83,7 @@ run_with_draining_psql() {
     # for the sentinel probe, because this section is about the loop and the precondition is the
     # subject of the next one. A stub answering nothing there would make every assertion here a
     # measurement of the guard instead.
-    # shellcheck disable=SC2317 # called only from `eval`ed code, so the body looks unreachable
+    # shellcheck disable=SC2317,SC2329 # called only from `eval`ed code, so the body looks unreachable and the definition looks unused (SC2329 exists from shellcheck 0.11; CI pins 0.10)
     psql() {
       local args="$*"
       cat >/dev/null 2>&1 || true
@@ -163,7 +163,7 @@ run_without_schema() {
     # shellcheck disable=SC2034 # read by the `eval`ed guard, which decides the message per estate
     ENVIRONMENT="$1"
     # `to_regclass` answers `f`: the sentinel is absent, which is a virgin database.
-    # shellcheck disable=SC2317 # called only from `eval`ed code, so the body looks unreachable
+    # shellcheck disable=SC2317,SC2329 # called only from `eval`ed code, so the body looks unreachable and the definition looks unused (SC2329 exists from shellcheck 0.11; CI pins 0.10)
     psql() {
       local args="$*"
       cat >/dev/null 2>&1 || true
