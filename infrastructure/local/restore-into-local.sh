@@ -155,9 +155,42 @@ if [ "$DRY_RUN" -eq 1 ]; then
   exit 0
 fi
 
+# ── 3b. The roles the dump expects must exist, or half of it silently no-ops ──
+# Production's objects are owned by the role `canari`, and a local cluster is initialised with
+# `admin`: every `ALTER ... OWNER TO canari` and `GRANT ... TO canari` in the dump then fails with
+# `role "canari" does not exist`. Measured on the first run: 13 such errors, 54 references, and the
+# restore reported success - the ROWS were all there, so a row count could not see it.
+#
+# DERIVED FROM THE DUMP, not hardcoded: whichever roles a future dump names get created, and a new
+# one does not need anybody to remember this. They are created NOLOGIN - the local services all
+# connect as $LOCAL_USER, so these roles exist to receive ownership and nothing else.
+ROLES=$(gunzip -c "$DUMP" |
+  grep -oE '(OWNER TO|GRANT [A-Z, ]+ ON [^ ]+ TO|REVOKE [A-Z, ]+ ON [^ ]+ FROM) [A-Za-z_]+' |
+  grep -oE '[A-Za-z_]+$' | sort -u)
+for role in $ROLES; do
+  case "$role" in
+    PUBLIC | public | "$LOCAL_USER") continue ;;
+  esac
+  log "ensuring role $role exists (dump assigns ownership to it)"
+  local_sql "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '$role') THEN CREATE ROLE \"$role\" NOLOGIN; END IF; END \$\$;" "$DATABASE"
+done
+
 log "restoring $(du -h "$DUMP" | cut -f1)…"
-gunzip -c "$DUMP" | docker exec -i "$LOCAL_PG" psql -q -U "$LOCAL_USER" -d "$DATABASE" >/dev/null
-log "restore complete"
+# STDERR IS CAPTURED AND COUNTED RATHER THAN DISCARDED. `psql -q >/dev/null` printed its errors to
+# the terminal and let the script conclude success, which is how the missing role above went
+# unreported through a run that ended with "restore verified".
+RESTORE_ERR="$(mktemp "${TMPDIR:-/tmp}/canari-restore-err.XXXXXX")"
+gunzip -c "$DUMP" | docker exec -i "$LOCAL_PG" psql -q -U "$LOCAL_USER" -d "$DATABASE" \
+  >/dev/null 2>"$RESTORE_ERR"
+ERR_COUNT=$(grep -c '^ERROR:' "$RESTORE_ERR" || true)
+if [ "$ERR_COUNT" -gt 0 ]; then
+  printf '[restore-into-local] ERROR psql reported %s error(s) during the restore:\n' "$ERR_COUNT" >&2
+  grep '^ERROR:' "$RESTORE_ERR" | sort | uniq -c | sort -rn | head -20 >&2
+  rm -f "$RESTORE_ERR"
+  fail "the restore is incomplete - a row count cannot see a failed GRANT or a missing role"
+fi
+rm -f "$RESTORE_ERR"
+log "restore complete, psql reported no error"
 
 # ── 4. The strips ────────────────────────────────────────────────────────────
 # The list lives in ONE place because there are two copies of production now, and its failure mode

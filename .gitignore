@@ -1,8 +1,17 @@
 # General
 .DS_Store
+# `.env` ALONE WAS NOT ENOUGH, AND THIS REPOSITORY IS PUBLIC (2026-09-02).
+#
+# `infrastructure/local/env-from-prod.sh` keeps the previous file as `infrastructure/.env.bak` - it
+# has to, because that is where it reads the local auth secrets back from so a re-run does not
+# desynchronise the running containers. `.env` did not match `.env.bak`, so `git add -A` staged
+# 7930 bytes of PRODUCTION credentials, and it was caught in the commit rather than on the remote.
+#
+# `frontend/.gitignore` already had the right rule (`.env.*` with `!.env.example`); this file is now
+# aligned with it. The negation matters: three `.env.example` templates are tracked on purpose.
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 *.log
 *.pid
 *.seed
