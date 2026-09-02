@@ -39,6 +39,7 @@
 | A shim kept alive for old clients, and its removal date | [docs/wiki/legacy-compatibility.md](docs/wiki/legacy-compatibility.md) |
 | What a report is, and what a block does and does not close | [docs/wiki/moderation-and-blocking.md](docs/wiki/moderation-and-blocking.md) |
 | The cross-repo convergence plan, repo by repo | [ecosystem-convergence.md](docs/wiki/ecosystem-convergence.md#11-the-cross-repo-convergence-plan-repo-by-repo) |
+| The 2026-09-02 workflow migration: its decisions, its order, its state | [workflow-migration.md](docs/wiki/workflow-migration.md) |
 
 ## **AGENT DIRECTIVES**
 
@@ -129,6 +130,21 @@ below, its substance into [backlog](docs/wiki/backlog.md), and BOTH copies are d
 ships. **What only the USER can do is ONE table** -
 [backlog](docs/wiki/backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks), pointers
 only; never re-enumerate it here.
+
+### CANARI - THE WORKFLOW MIGRATION IS THE ACTIVE WORK (2026-09-02)
+
+The user cancelled the two-branch model the same day it landed. **`main` is the only branch,
+production deploys at the BUMP and never at a push, work goes through pull requests, development and
+the whole test campaign move LOCAL, and `-alpha.N` pre-releases feed the store tester programmes.**
+Everything about it - the verbatim mandate, the twelve decisions that must not be relitigated, the
+measurements already taken, the single emergency path and the ordered checklist - is on
+[workflow-migration](docs/wiki/workflow-migration.md), the ONLY copy. **Read it before touching any
+workflow, hook, `.env` or campaign page**, and tick its boxes as the work lands.
+
+Two consequences that bite immediately. **Until WP-2's ruleset exists, this chantier commits directly
+on `main`**: the flow it creates cannot govern its own creation, and the directive below flips in
+WP-6, not before. And **a push to `main` still deploys production until WP-2 lands**, so nothing
+half-finished may be pushed - one coherent commit per work package.
 
 ### CANARI - THE QUEUE, IN ORDER
 

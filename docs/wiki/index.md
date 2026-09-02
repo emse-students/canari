@@ -72,6 +72,7 @@
 ### Development & operations
 
 - [Durable rules](durable-rules.md) — the constraints, grouped by area, each linked to the page carrying its reasoning
+- [The 2026-09-02 workflow migration](workflow-migration.md) — main-only, deploy at the bump, pull requests, local development, `-alpha.N` pre-releases: the decisions, the measurements, the ordered checklist
 - [Ecosystem convergence](ecosystem-convergence.md) — The five projects measured side by side: tolerant search, outbound deadlines, the locale under SSR, the head, typed errors, the gates
 - [The search contract](search-contract.md) — What every search box in the ecosystem promises, the tolerance ladder, and the roster measurement that chose its numbers
 - [Development workflow](development.md) — Local setup, Makefile, Docker Compose, pre-commit hooks
