@@ -192,15 +192,23 @@ lightened hook whose gates are not yet in CI is an open hole for the length of t
       `jolan.boudin` through the keyring - the memory note claiming otherwise was LITHIUM's.
       `D:\Documents\Programmation\gitlab-pat.txt` deleted. **Deleting the file did not revoke that
       PAT**, so it is a third rotation owed
-- [ ] **`CF_DNS_TOKEN` rotation - THE USER'S CLICK, and there is no API path.** Measured: the token
-      is `active` with no expiry, and `PUT /user/tokens/{id}/value` on itself answers **403** (a
-      Zone-scoped token cannot roll itself). Its id is `a72613d45b56279ad33b6f777d2b5466`
+- [x] **`CF_DNS_TOKEN` rotation - done by the user 2026-09-02**, who issued replacements after the
+      original leaked into a transcript on 2026-09-01. The workstation could not have done it: the
+      leaked token was `active` with no expiry, and `PUT /user/tokens/{id}/value` on itself answers
+      **403** - a Zone-scoped token cannot roll itself - while the broad `CF_API_TOKEN` the handoff
+      memory carried answers **401** and is dead. **A NEW TOKEN IS NOT A REVOKED OLD ONE**, so what
+      closes this is DELETING the leaked one, not superseding it
 - [ ] **cloudflared tunnel RUN token rotation - the user's click**, dashboard -> the tunnel ->
-      *Refresh token*, then the systemd unit. Tunnel id `7e564786-96b0-4a91-94e6-720032909cfd`
-- [ ] **A THIRD FINDING, unasked for: the broad `CF_API_TOKEN` in the handoff memory is DEAD** -
-      `/user/tokens/verify` answers **401**. Nothing on this workstation holds Cloudflare Access,
-      Zero Trust or tunnel-ingress rights any more, which is also why neither rotation can be
-      automated. Re-issuing it is a decision for the user
+      *Refresh token*, then the systemd unit
+- [ ] **the dead broad token is its own finding**: nothing on this workstation held Cloudflare
+      Access, Zero Trust or tunnel-ingress rights between its death and 2026-09-02. Re-issuing was
+      the user's call and they did it
+- [ ] **NO IDENTIFIER BELONGS ON THIS PAGE.** An earlier revision of it carried the leaked token's
+      id and the tunnel's uuid. Neither authenticates anything, but this repository is PUBLIC and its
+      own convention keeps that inventory out of public docs - the admin-hostname map is in the local
+      memory for exactly this reason. They were removed the same day, and **they remain in one pushed
+      commit**: an edit does not rewrite history. Ids live in
+      `~/.claude/projects/<project>/memory/`, and nowhere in `docs/`
 - [ ] the handoff zip destroyed - **NOT YET, AND NOT BLINDLY.** The bundle is the only copy in the
       world of `claude-account-manager`; it has been preserved to
       `d:\Documents\Programmation\claude-account-manager\` (with LITHIUM's DPAPI vault beside it, for
