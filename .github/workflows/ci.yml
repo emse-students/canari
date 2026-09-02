@@ -747,3 +747,41 @@ jobs:
             .github/scripts/*.sh .github/scripts/lib/*.sh .github/scripts/tests/*.sh \
             infrastructure/dev/*.sh infrastructure/deploy/*.sh \
             scripts/bump-app-version.sh
+
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # THE ONE CHECK A RULESET CAN REQUIRE
+  #
+  # Every job above is CONDITIONAL - `changes` decides which of them run, which is what keeps a
+  # documentation pull request from compiling six Rust crates. That makes each of them useless as a
+  # required check: a rule naming `Test Rust (Chat Gateway)` would be waiting for a job that a
+  # frontend-only change deliberately never starts, and the pull request would sit "expected" for
+  # ever. **A queue nobody drains is worse than the merge it prevented** (the user's standing
+  # directive), and Dependabot's auto-merge is the queue that would jam first.
+  #
+  # This job always runs and reads the RESULTS instead. `success` and `skipped` both pass - a skip
+  # is `changes` saying the job had nothing to do - while `failure` and `cancelled` do not. It is
+  # the only name a branch ruleset should ever list.
+  #
+  # `always()` is what makes it run at all when something upstream failed; without it this job would
+  # itself be skipped by a failed dependency, and a skipped required check is a green one.
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  ci-passed:
+    name: CI passed
+    if: always()
+    needs:
+      [changes, test-rust, boot-nest-apps, test-typescript-backend, test-frontend, test-harness, test-ci-scripts]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job either passed or had nothing to do
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          echo "$RESULTS"
+          failed="$(echo "$RESULTS" | jq -r 'to_entries[] | select(.value.result != "success" and .value.result != "skipped") | "\(.key): \(.value.result)"')"
+          if [ -n "$failed" ]; then
+            echo "::error::CI did not pass:"
+            echo "$failed"
+            exit 1
+          fi
+          echo "✅ every CI job passed or was skipped as having nothing to do"
