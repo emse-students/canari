@@ -196,7 +196,10 @@ if ! dc up -d --remove-orphans; then
     --format '{{.ID}} {{.Image}} {{.Names}} {{.Label "com.docker.compose.project"}}' || true)"
   foreign=0
   if [ -n "$conflicts" ]; then
-    while IFS= read -r row; do
+    # fd 3 for the same reason as `apply_migrations` below: this body runs docker commands, and one
+    # `compose exec` added here would silently eat the rest of the list. Safe today - `printf | awk`
+    # gives awk its own stdin and `docker rm` reads none - and one edit away from not being.
+    while IFS= read -r row <&3; do
       [ -z "$row" ] && continue
       cid="$(printf '%s' "$row" | awk '{print $1}')"
       image="$(printf '%s' "$row" | awk '{print $2}')"
@@ -211,7 +214,7 @@ if ! dc up -d --remove-orphans; then
           "$FRONTEND_HOST_PORT" "$name" "$image" "${owner:-none}"
         foreign=1
       fi
-    done <<<"$conflicts"
+    done 3<<<"$conflicts"
   fi
 
   if [ "$foreign" -ne 0 ]; then
@@ -258,15 +261,29 @@ psql() {
 # silently reverts admin changes made after a one-shot data backfill - migrations 004 and 016 are
 # exactly that. Files must still be idempotent: a deploy that fails mid-run leaves the rest
 # unrecorded, so the next one re-runs them. See infrastructure/MIGRATION.md.
-psql -q -c "CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"
+# THE LOOP READS ON FD 3, AND THAT IS THE WHOLE POINT OF THIS FUNCTION. `psql` here is
+# `docker compose exec -T`, which ATTACHES AND DRAINS STDIN whatever arguments follow it - so with
+# the file list on the loop's own stdin, the ledger query in the FIRST iteration swallowed every
+# remaining line and `read` met EOF. Measured on dev's first bootstrap, 2026-09-02: 80 migration
+# files present, `migrations: 1 applied, 0 already recorded`, and two services crash-looping on
+# `relation "platform_config" does not exist`. Production never saw it because production still runs
+# its own inlined shell - which is exactly why this script had to be exercised on dev first.
+#
+# A dedicated descriptor fixes the CLASS rather than the instance: `</dev/null` on each inner call
+# would work today and would have to be remembered by whoever adds the next one.
+apply_migrations() {
+  psql -q -c "CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"
 
-migrations="$(find apps/*/src/migrations -name '*.sql' 2>/dev/null | sort || true)"
-if [ -z "$migrations" ]; then
-  printf 'no migration files found\n'
-else
+  local migrations applied skipped migration checksum recorded
+  migrations="$(find apps/*/src/migrations -name '*.sql' 2>/dev/null | sort || true)"
+  if [ -z "$migrations" ]; then
+    printf 'no migration files found\n'
+    return 0
+  fi
+
   applied=0
   skipped=0
-  while read -r migration; do
+  while read -r migration <&3; do
     [ -z "$migration" ] && continue
     checksum="$(sha256sum "$migration" | cut -d' ' -f1)"
     recorded="$(psql -At -c "SELECT checksum FROM schema_migrations WHERE filename = '$migration'" || true)"
@@ -285,9 +302,11 @@ else
     psql <"$migration"
     psql -q -c "INSERT INTO schema_migrations (filename, checksum) VALUES ('$migration', '$checksum') ON CONFLICT (filename) DO UPDATE SET checksum = EXCLUDED.checksum"
     applied=$((applied + 1))
-  done <<<"$migrations"
+  done 3<<<"$migrations"
   printf 'migrations: %s applied, %s already recorded\n' "$applied" "$skipped"
-fi
+}
+
+apply_migrations
 
 # ── Every service must be running ────────────────────────────────────────────
 # THE LIST IS DERIVED FROM THE COMPOSE FILE, AND WHAT IS WRITTEN DOWN IS WHAT MAY BE ABSENT. The

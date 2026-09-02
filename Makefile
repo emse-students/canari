@@ -294,6 +294,7 @@ test-ci-scripts:
 	@bash .github/scripts/tests/dev-copy-guards.test.sh
 	@bash .github/scripts/tests/dev-gap.test.sh
 	@bash .github/scripts/tests/deploy-env.test.sh
+	@bash .github/scripts/tests/deploy-migrations.test.sh
 
 test-harness:
 	@echo "${BLUE}🧪 Harness self-tests…${RESET}"

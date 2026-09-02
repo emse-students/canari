@@ -333,6 +333,25 @@ anonymous. `/api/version` reads the database, so it is the cheapest end-to-end s
 estate is really serving - the exact statement missing during the 33-minute outage of 2026-09-01,
 throughout which the frontend answered 200.
 
+**THE FIRST BOOTSTRAP CREATED AN EMPTY DATABASE, AND THE MIGRATION STEP REPORTED SUCCESS.** Measured
+2026-09-02. `apply_migrations` walks `apps/*/src/migrations/*.sql` from a here-string and asks the
+`schema_migrations` ledger about each file before applying it - and `psql` in this script is
+`docker compose exec -T postgres psql`, which ATTACHES AND DRAINS STDIN whatever arguments follow.
+The first iteration read one filename, the ledger query swallowed the other seventy-nine, and `read`
+met EOF: `migrations: 1 applied, 0 already recorded` against 80 files on disk. What surfaced was not
+a failed migration but a SCHEMA-LESS DATABASE - `core-service` and `chat-delivery-service`
+crash-looping on `relation "platform_config" does not exist` and `relation "key_package" does not
+exist`, with postgres, redis, garage and both frontends healthy beside them. The loop reads on fd 3
+now, and `deploy-migrations.test.sh` asserts the OUTCOME against a stdin-draining `psql` stub rather
+than the shape of the loop.
+
+**This is the second half of why production is still on its inlined shell.** The split was written as
+"one implementation, proven before it is imposed", and the estate that met the defect was the one
+that could afford it. It also says something about the order of the steps: `up -d` starts the
+services BEFORE the migrations run, so a virgin database always produces a burst of crash-looping
+application containers, and the readiness gate that follows is what distinguishes "still catching
+up" from "will never come up".
+
 ### Dev deploys BEFORE production, and a failed dev deploy stops it
 
 Decided with the user, and it is the point of the whole environment: a migration that will break

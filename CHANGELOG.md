@@ -13,6 +13,27 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **The dev estate's database was created empty, because a ledger query ate the list of migrations
+  it was iterating.** `deploy-environment.sh` applies every `apps/*/src/migrations/*.sql` in a
+  `while read` loop fed by a here-string, and the first thing each iteration does is ask the ledger
+  whether that file has already run. `psql` in that script is `docker compose exec -T postgres
+  psql`, and **`docker compose exec -T` attaches and drains stdin whatever arguments follow it** -
+  so iteration one read the first filename, the ledger query swallowed the remaining seventy-nine,
+  and `read` met EOF. The deploy printed `migrations: 1 applied, 0 already recorded` with 80 files
+  on disk and went on; `core-service` and `chat-delivery-service` then crash-looped on
+  `relation "platform_config" does not exist` and `relation "key_package" does not exist`, which is
+  how it surfaced - a schema-less database rather than a failed migration step. **Production never
+  saw it because production still deploys from its own inlined shell**, which is precisely the
+  reason that split was kept: one implementation, exercised on dev before it is imposed on prod.
+  The loop now reads on a dedicated descriptor (`read <&3` / `done 3<<<`), which fixes the class
+  rather than the instance - `</dev/null` on each inner call would work today and would have to be
+  remembered by whoever adds the next one - and the second `while read` loop in the same file, whose
+  body runs docker commands and is one `compose exec` away from the same silence, was aligned with
+  it. `deploy-migrations.test.sh` extracts `apply_migrations` FROM the script and runs it against a
+  `psql` stub that drains stdin exactly as `docker compose exec -T` does, asserting that all twelve
+  fixture files are applied; against the pre-fix shape it reports `only 1 of 12`, the production
+  symptom exactly.
+
 - **The dev estate asked for production's host ports, and the override written to prevent it could
   never fire.** `cd.yml` appended three defaults to dev's rendered `.env` in the shape
   `grep -q '^FRONTEND_HOST_PORT=' .env || echo FRONTEND_HOST_PORT=3080` - an "add if missing"
