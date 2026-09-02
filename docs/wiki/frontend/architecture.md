@@ -150,6 +150,39 @@ text run ending at `{#if` as trimmed. Putting `{label}` and `{#if x}` on separat
 the space, because the newline itself is the text node. This is invisible in review and only shows
 up as two words glued together in the rendered UI.
 
+### A prop expression is re-evaluated during TEARDOWN, so an `{#if}` does not protect it
+
+`{#if chatView}<Child prop={chatView.contactName} />{/if}` crashes on unmount. Svelte 5 re-reads a
+child's prop getters while it cleans the reactive subscriptions up, and by then the `$derived` the
+`{#if}` was guarding has already gone `null` - so the guard is proven true, the component is torn
+down, and the getter runs against nothing. The result is an uncaught `TypeError` in the reactive
+graph, which is the worst place for one (see the next section).
+
+**Every nullable `$derived` passed as a prop takes `?.` and a default**, whatever encloses it:
+`prop={chatView?.contactName ?? ''}`. The visual guard is not a temporal guard.
+
+It is worth knowing WHY this was only ever seen on a phone: on desktop V8 the window between the
+value changing and the getter running is imperceptible, while on Android WebView - slower, with a
+more aggressive GC - it is wide enough to hit regularly. A race that "cannot happen" on the machine
+it was written on is a race that happens to users.
+
+### An uncaught error in the reactive graph is PERMANENT until a reload, so boundaries are placed by blast radius
+
+An error thrown from a template, a `$derived` or an `$effect` cleanup corrupts that subtree's signal
+graph for the life of the page - on Android WebView the app simply freezes. `svelte:boundary` is
+therefore placed by what an error would take down with it, not by how important the component looks:
+
+| Where | What it wraps | Shape |
+| --- | --- | --- |
+| `src/routes/+layout.svelte` | `<ChatBackgroundService />` | invisible service - `onerror` that LOGS, no fallback UI |
+| `src/routes/+layout.svelte` | `{@render children?.()}` | every page - `{#snippet failed}` with a retry control |
+| `src/lib/components/MainChatPage.svelte` | the `{#key}` around `ChatArea` | component - `onerror` that logs |
+
+The rule for anything new: a global service or a layout takes a logging `onerror` with no fallback; a
+whole page or a visible feature takes a `failed` snippet with a reset; a light component inside a page
+takes NOTHING - the page's boundary already covers it, and a boundary per component only makes the
+real one harder to find.
+
 ### An anchored dropdown must be portalled, never absolutely positioned
 
 **Every modal body clips on both axes.** `overflow-y-auto` alone is enough: CSS forces the other
