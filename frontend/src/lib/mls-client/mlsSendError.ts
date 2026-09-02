@@ -13,6 +13,8 @@
  * `classifyIncomingDecryptError` is for the receive path. Each consumer keeps its own POLICY.
  */
 
+import { SenderNotActiveError } from './mlsDeliveryApi';
+
 /** Nature of an error raised while encrypting/sending an outgoing MLS application message. */
 export type MlsSendErrorKind =
   /**
@@ -24,6 +26,18 @@ export type MlsSendErrorKind =
    * when it merged (see `isGroupActive`), so the caller logs it as the miss it is.
    */
   | 'evicted'
+  /**
+   * `SENDER_NOT_ACTIVE`: the SERVER refused the frame because this device's membership row is not
+   * `active`, so it holds no leaf and nothing it encrypts could be opened by anyone. Not permanent -
+   * a Welcome or an external commit lifts it - but NOT lifted by re-posting either, which is what
+   * separates it from a network blip that shares its retry.
+   *
+   * Reaching it means the local MLS state and the server's roster DISAGREE about this device: the
+   * outbox asked `isGroupActive` one call earlier and was told yes. That disagreement is the
+   * signature of the Welcome livelock in `docs/wiki/backlog.md`, so the caller logs it as such
+   * rather than as a deferral.
+   */
+  | 'sender-not-active'
   /** Everything else -> transient until proven otherwise; the caller keeps its backoff policy. */
   | 'unknown';
 
@@ -33,7 +47,11 @@ export type MlsSendErrorKind =
  * `EVICTED:` is emitted by `MlsError::Evicted` and by nothing else - it is not a fragment of an
  * OpenMLS message but a token this repository defines, in the same family as `UNRECOVERABLE:` and
  * `ALREADY_MEMBER:`. Matching it is therefore reading a discriminator, not parsing prose.
+ *
+ * The server-side refusal needs no token at all: it never crosses a WASM boundary, so it arrives as
+ * the TYPE the delivery API raised and is recognised as one.
  */
 export function classifyOutgoingSendError(error: unknown): MlsSendErrorKind {
+  if (error instanceof SenderNotActiveError) return 'sender-not-active';
   return String(error).includes('EVICTED:') ? 'evicted' : 'unknown';
 }

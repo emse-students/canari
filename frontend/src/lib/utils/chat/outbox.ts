@@ -527,6 +527,17 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // reaching here means the commit never arrived (a device offline across the whole removal,
       // then sending before it drains). The fallback is a SIGNAL: it is logged as the miss it is,
       // and it must never become the path eviction is normally discovered on.
+      // NOT A DEFERRAL, and the retry below is not what lifts it: the server says this device holds
+      // no leaf in the group, which only a Welcome or an external commit changes. The entry STAYS -
+      // the message is never lost, and it goes out intact once the device is a member - but the line
+      // has to accuse, because reaching here means `isGroupActive` answered YES one call earlier and
+      // the two views of this device's membership disagree. That is the Welcome-livelock signature
+      // in `docs/wiki/backlog.md`, and it is the only place a sender can observe it.
+      if (classifyOutgoingSendError(e) === 'sender-not-active') {
+        log(
+          `[OUTBOX] ${entry.id.slice(0, 8)}… REFUSED by the server: this device holds no leaf in ${terminalId.slice(0, 8)}… while the local MLS state says it is a member - the roster and the tree disagree, and only a Welcome or an external commit lifts it`
+        );
+      }
       if (classifyOutgoingSendError(e) === 'evicted') {
         log(
           `[OUTBOX] ${entry.id.slice(0, 8)}… send REFUSED as evicted, after isGroupActive answered that this device is still a member of ${terminalId.slice(0, 8)}… - the two disagree, and OpenMLS is the one that is right`

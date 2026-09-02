@@ -95,6 +95,33 @@ export class NotAGroupMemberError extends Error {
 }
 
 /**
+ * The delivery service refused an application frame because THIS DEVICE holds no leaf in the group.
+ *
+ * A membership row that is not `active` means the device is not in the ratchet tree, so whatever it
+ * encrypts is undecryptable by construction for every member - the server used to accept such
+ * frames and fan them out, which on production 2026-09-02 turned six messages into thirty rows of
+ * ciphertext nobody could ever open (DM `7da231f8`).
+ *
+ * **TERMINAL FOR THE SEND, AND NOT LIFTED BY ANY RETRY**: only a Welcome or an external commit makes
+ * this device a member, so re-posting the same frame is the shape that spins for ever. The recovery
+ * is the one the ladder already owns, and the frame belongs back in the outbox until it runs.
+ *
+ * Typed rather than message-matched, for the reason every refusal here is: a distinction carried in
+ * prose is one exactly one call site will make.
+ */
+export class SenderNotActiveError extends Error {
+  constructor(
+    readonly groupId: string,
+    readonly status: string | null
+  ) {
+    super(
+      `This device holds no leaf in group ${groupId}${status ? ` (membership ${status})` : ''}`
+    );
+    this.name = 'SenderNotActiveError';
+  }
+}
+
+/**
  * The server refused a membership mutation because a BLOCK stands between the two people.
  *
  * Typed rather than message-matched, like every other refusal here: the neutral wording the server
@@ -838,6 +865,18 @@ export class MlsDeliveryApi {
       }),
     });
     if (!res.ok) {
+      // CLASSIFIED AT THE THROW, because exactly one thing can be said about a `sender_not_active`
+      // that cannot be said about any other failure here: no retry lifts it. See
+      // {@link SenderNotActiveError}.
+      if (res.status === 403) {
+        const body = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          status?: string;
+        };
+        if (body.error === 'sender_not_active') {
+          throw new SenderNotActiveError(groupId, body.status ?? null);
+        }
+      }
       throw new Error(`Message send HTTP error: ${res.status}`);
     }
   }
