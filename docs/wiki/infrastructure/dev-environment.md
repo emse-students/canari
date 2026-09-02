@@ -215,8 +215,21 @@ the update button. A build identity is REPORTING; a version is DECIDED on.
 [`version.service.spec.ts`](../../../apps/core-service/src/version/version.service.spec.ts) asserts
 `version` stays a bare semver while `build` carries the suffix.
 
-Both variables are written by no pipeline yet. Until the CD wiring lands, the banner does not show
-and `build` is null - the correct behaviour for production, the only environment that exists.
+Both variables are now written by the pipeline: `cd.yml` passes `--build dev.<sha7>` to
+`render-env.sh`, which writes `DEPLOY_BUILD` for dev and, by decision, nothing for production. **So a
+non-null `build` IS dev**, and that is the cheapest statement anyone can make about which estate a
+name is serving.
+
+**IT WAS NOT, UNTIL 2026-09-02, AND FOUR TESTS COULD NOT SEE WHY.** The renderer computed it, the
+manifest declared it, [`deploy-build.ts`](../../../apps/core-service/src/platform/deploy-build.ts)
+parsed it, `version.service.spec.ts` covered it - and **neither compose file passed it into any
+container**, so `/api/version` answered `build: null` on dev exactly as it does on production. The
+whole chain was tested end to end except its last link, and the value was about to be used as the
+proof that the tunnel had been moved onto dev - a proof it could never have given. `core-service` is
+what serves `/api/version`, so it is the service that must receive the variable; `deploy-env.test.sh`
+now reads the `core-service` block out of BOTH compose files and demands it. The general form is in
+[durable-rules](../durable-rules.md): a rendered value nothing consumes does not exist, and agreement
+among the producers says nothing about the consumer.
 
 ---
 
@@ -351,6 +364,47 @@ that could afford it. It also says something about the order of the steps: `up -
 services BEFORE the migrations run, so a virgin database always produces a burst of crash-looping
 application containers, and the readiness gate that follows is what distinguishes "still catching
 up" from "will never come up".
+
+**AND FIXING IT EXPOSED THE LAYER UNDERNEATH: THE MIGRATION SET IS NOT A SCHEMA.** With all 80 files
+attempted, the same deploy died on the second one - `002_drop_group_member_left_at.sql` ->
+`relation "dm_group_members" does not exist`. **No file in this repository creates that table.**
+TypeORM does, through `synchronize: process.env.NODE_ENV !== 'production'`, which every service
+therefore disables on BOTH estates. Only 14 of the 80 files contain a `CREATE TABLE`, and a
+derivation over the set names 21 tables it `ALTER`s and never creates (`users`, `platform_config`,
+`posts` among them). So the schema arrives from somewhere else on each estate: production's from an
+ORM boot long ago, **dev's from the copy**. It is not an ordering problem - no permutation of deltas
+builds a table no delta creates.
+
+### A virgin dev estate is SEEDED, not migrated - and this is the order
+
+1. **Deploy.** `render-env.sh`, then `up -d`. Postgres, redis and garage come up healthy; the
+   application services crash-loop on the empty database, which is expected.
+2. **`apply_migrations` REFUSES, and names the remedy.** `require_orm_schema` asks
+   `to_regclass('public.dm_group_members')` once, before touching any file, and on dev prints
+   `seed it first: run the "Refresh dev.canari-emse.fr from production" workflow`. On production the
+   same absence prints that the schema is GONE and not to deploy. This is the
+   "never learn by failing what a fact could have told you" rule applied to a deploy: the
+   discriminator is known before the loop, so it belongs before the loop.
+3. **Run [`dev-refresh.yml`](../../../.github/workflows/dev-refresh.yml).** It restores production's
+   full `pg_dump` (`--clean --if-exists`), so schema, data AND `schema_migrations` arrive together -
+   every delta is already recorded and the next deploy applies only what is genuinely new. It then
+   brings the containers back and proves `/api/version` itself.
+4. **Deploy again.** The migration step now finds a schema and applies whatever prod has not seen.
+
+Measured on the first real bootstrap, 2026-09-02: 355 users copied, dump 20 MB, restore 2 s, push
+tokens truncated and Stripe identifiers cleared, `copy verified`, and dev answered
+`/api/version` on `127.0.0.1:3080` with **11 of 11 containers up** where two had been crash-looping.
+
+**The sentinel is pinned by DERIVATION, not by hand.** `deploy-migrations.test.sh` computes the set
+of tables the migration files reference and never create, and fails if `dm_group_members` ever leaves
+it - so a future migration that creates the table forces a new sentinel instead of quietly leaving a
+guard that passes on an empty database.
+
+**One correction to the refresh workflow came out of the same session.** Its closing gate proves the
+estate answers `/api/version`, which is right for a restore and meaningless for `--dry-run`: the
+first dry run passed every guard, printed `[dry-run] nothing was changed`, then failed on twenty
+502s from the schemaless database it had deliberately not touched. A step that measures an outcome
+belongs behind the condition that produced it.
 
 ### Dev deploys BEFORE production, and a failed dev deploy stops it
 

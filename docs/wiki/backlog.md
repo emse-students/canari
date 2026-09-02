@@ -51,6 +51,34 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 
 ---
 
+## Owed to the USER - decisions, rotations and one-off clicks
+
+**This section holds NO substance.** Every line points at the entry that carries it, and exists only
+so that "what is waiting on me" is one list rather than a sweep of the file (user, 2026-09-02:
+*"Fais moi une liste des choses qu'il me reste a faire"*). Delete a line when its target entry ships
+or its click is made. A line here is a thing NO agent can do - a decision, a credential somebody
+else holds, a console owned by the user, or hardware that does not exist.
+
+| What | Kind | Where the substance is |
+| --- | --- | --- |
+| choose how production says it is down - the probe must hit `/api/version`, which needs the database | decision, then ~1 click | [P2 - nothing tells anybody production is down](#p2---nothing-tells-anybody-production-is-down-and-both-outages-of-2026-09-01-were-reported-by-the-user-owed-to-the-user-a-decision-then-one-click) |
+| should a dev-ONLY trigger exist - today one push deploys both estates and a broken dev BLOCKS production, by design | decision | [dev.canari-emse.fr becomes a real second environment](#devcanari-emsefr-becomes-a-real-second-environment---decided-2026-08-17) |
+| the credential for the one rebuild no `GITHUB_TOKEN` may perform - fine-grained PAT or GitHub App | decision | [P2 - the one rebuild the auto-merge cannot perform](#p2---the-one-rebuild-the-auto-merge-cannot-perform-and-the-credential-that-would-let-it) |
+| PostgreSQL 15 -> 18, parked by the user (*"on verra ca plus tard"*); its test also releases `redis` and `garage` | decision | [P2 - PostgreSQL is held at 15](#p2---postgresql-is-held-at-15-because-18-needs-a-migration-nobody-has-performed-after-the-outage-of-2026-09-01) |
+| is a MiGallery application worth building | decision | [post-campaign projects](#post-campaign-projects---decided-not-scheduled) |
+| rotate `CF_DNS_TOKEN` **and** the cloudflared tunnel run token - both reached a transcript on 2026-09-01 | rotation | agent memory names both; neither may enter this repo |
+| put the BDE 170 EUR tier on sale - an allowlist correctly withholds it and no event will ever fire | 1 click | the verification table above |
+| App Store Connect: the 2.3.6 radio button | 1 click | [mobile](frontend/mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on) |
+| Lydia's credentials, which Lydia owes | blocked upstream | WP-LYDIA-1 |
+| an Android phone and an iPhone - unblocks the whole verification table above and the campaign | hardware | [device-verification](device-verification.md) |
+| copy `canari-harness/` to the second machine to resume the campaign; **SETUP-4's 2FA is no longer owed**, the test accounts carry no MFA | 1 copy | [cross-client-campaign-resume](cross-client-campaign-resume.md) |
+
+**Firebase owes nothing** (asked 2026-09-02): dev reuses the existing `fr.emse.canari` app, and the
+`DEV_*` push secrets are disposition `warn`, so their absence has never blocked a deploy - the fact
+and its test are on [dev-environment](infrastructure/dev-environment.md).
+
+---
+
 ## CI and the chain that runs unattended
 
 ### P2 - NOTHING TELLS ANYBODY PRODUCTION IS DOWN, and both outages of 2026-09-01 were reported by the user (owed to the USER: a decision, then one click)

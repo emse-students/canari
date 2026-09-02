@@ -234,18 +234,24 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md).**
    [there too](docs/wiki/backlog.md#p2---a-device-was-given-a-roster-seat-and-never-a-welcome-and-why-its-keypackage-was-skipped-is-unmeasured-measured-on-prod-2026-09-01),
    and the two want reading together.
 
-10. **`dev.canari-emse.fr` IS BUILT AND WAITS ON THREE THINGS ONLY THE USER CAN DO.** All eight steps
-    shipped 2026-09-01, each with a DERIVED self-test (six suites in `make test-ci-scripts`); every
-    mechanism and the map of what is owed are on
+10. **THE DEV ESTATE IS UP AND SEEDED - 11 containers of 11, answering `/api/version` on
+    `127.0.0.1:3080` with a copy of production (355 users), measured 2026-09-02.** A virgin estate is
+    **SEEDED, NOT MIGRATED**: the 80 `.sql` files are deltas over a schema TypeORM owns, so the
+    deploy REFUSES an empty database and names the refresh workflow, and the order is
+    deploy -> refuse -> `Refresh dev.canari-emse.fr from production` -> deploy. That order, and the
+    three defects the bootstrap found, are on
     [dev-environment](docs/wiki/infrastructure/dev-environment.md), the decisions in
     [backlog](docs/wiki/backlog.md#devcanari-emsefr-becomes-a-real-second-environment---decided-2026-08-17).
-    **Read those two - nothing is restated here.** Today the name is still prod wearing a second hat,
+    **Read those two - nothing is restated here.** Today the NAME is still prod wearing a second hat,
     so anyone told to "use dev" is typing into prod. **THE SWITCH IS `vars.DEV_ENVIRONMENT_ENABLED`,
     NOW `true`.** All 14 `DEV_*` secrets exist and the `canari-dev` Authentik client is created
     (2026-09-02). **ONE STEP IS LEFT, LAST BY DESIGN: the tunnel INGRESS rule, still pointing
-    `dev.canari-emse.fr` at production's `8080`** - it moves to `3080` only after a dev deploy is
-    proved on `127.0.0.1:3080` over SSH, since moving it earlier turns a name serving production
-    into a 502. **And `DEV_ENVIRONMENT_ENABLED=true` means a broken dev deploy now BLOCKS
+    `dev.canari-emse.fr` at production's `8080`** - it moves to `3080` only once a **DEPLOY** (not
+    just the refresh, which has already proved the port) comes out green, since moving it earlier
+    turns a name serving production into a 502. **The proof to read is `build` in `/api/version`**:
+    production renders none by decision, so a non-null build is dev and nothing else - a discriminator
+    that did not work until 2026-09-02, when it was found rendered into `.env` and passed to no
+    container. **And `DEV_ENVIRONMENT_ENABLED=true` means a broken dev deploy now BLOCKS
     production's**, by design; the escape is `gh variable set DEV_ENVIRONMENT_ENABLED --body false`. Dev is a NET, not a sandbox: one trigger deploys both estates, and whether a
     dev-only dispatch should exist is a decision owed to the USER in
     [backlog](docs/wiki/backlog.md#devcanari-emsefr-becomes-a-real-second-environment---decided-2026-08-17). **THREE CORRECTIONS THAT MUST NOT BE

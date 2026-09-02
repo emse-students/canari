@@ -76,7 +76,13 @@ jobs:
       # the script brings them back - but "the containers are back" is not "the estate answers",
       # which is the house rule these two lines exist to honour. `/api/version` needs the database
       # the copy just replaced, so it is the cheapest statement that the restore really worked.
+      # A DRY RUN CHANGES NOTHING, SO IT PROVES NOTHING - and asserting anyway reports the estate's
+      # PRE-EXISTING state as this refresh's failure. Measured 2026-09-02: the first dry run went
+      # green through the copy step and then failed here on twenty 502s, which were the schemaless
+      # dev database the dry run had deliberately not touched. A gate must only assert what the run
+      # it guards actually did.
       - name: Prove the dev estate still answers
+        if: inputs.dry_run != true
         run: |
           set -euo pipefail
           for i in $(seq 1 20); do

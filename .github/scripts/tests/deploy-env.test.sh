@@ -403,6 +403,34 @@ else
   fail "dev did not write the build identity"
 fi
 
+# A RENDERED VALUE NOTHING CONSUMES DOES NOT EXIST, and the four assertions above could not see it.
+# `DEPLOY_BUILD` was computed by the renderer, declared in the manifest, parsed by `deploy-build.ts`
+# and covered by `version.service.spec.ts` - and passed into no container by either compose file, so
+# `/api/version` answered `build: null` on BOTH estates. It was about to be used as the proof that
+# the tunnel had been moved onto dev, which it could never have given. `core-service` is the service
+# that serves `/api/version`, so it is the one that must receive it.
+core_service_env() {
+  awk '
+    /^  core-service:/ { inside = 1; next }
+    inside && /^  [a-z][a-z0-9_-]*:[[:space:]]*$/ { inside = 0 }
+    inside { print }
+  ' "$1"
+}
+# A HERE-STRING, NOT A PIPE, and the first draft was a pipe: `grep -q` exits at its first match, the
+# writer upstream takes SIGPIPE, and `set -o pipefail` reports the pipeline as failed. Whether it
+# fires depends on how much output is still unwritten when grep leaves - so the same assertion passed
+# for the dev file, whose match is near the end of the block, and failed intermittently for the
+# production file, whose match sits 14 lines from it.
+for compose in infrastructure/docker-compose.dev.yml infrastructure/docker-compose.prod.yml; do
+  if [ ! -f "$compose" ]; then
+    fail "$compose is missing"
+  elif grep -qE '^[[:space:]]*DEPLOY_BUILD:' <<<"$(core_service_env "$compose")"; then
+    pass "$(basename "$compose") passes DEPLOY_BUILD to core-service, which is what serves /api/version"
+  else
+    fail "$(basename "$compose") renders DEPLOY_BUILD into .env and never passes it to core-service - /api/version will report build: null whatever the deploy computed"
+  fi
+done
+
 # ═════════════════════════════════════════════════════════════════════════════
 printf '\nthe decisions the user took are locked, not merely documented\n'
 # ═════════════════════════════════════════════════════════════════════════════

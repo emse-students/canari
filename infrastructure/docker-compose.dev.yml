@@ -332,6 +332,14 @@ services:
       # real service in another repository's estate. Empty means no MiGallery in dev.
       MIGALLERY_API_URL: ${MIGALLERY_API_URL:-}
       MIGALLERY_API_KEY: ${MIGALLERY_API_KEY:-}
+      # THE ONE FIELD THAT TELLS THE TWO ESTATES APART AT RUNTIME, and until 2026-09-02 nothing
+      # delivered it. `render-env.sh` computes it, the manifest declares it, `deploy-build.ts`
+      # parses it and `version.service.spec.ts` tests it - and no compose file passed it in, so
+      # `/api/version` answered `build: null` on BOTH estates. A value that is produced and never
+      # consumed does not exist, and it was about to be used as the proof that the tunnel had been
+      # moved onto dev. Production deliberately renders nothing here, so prod stays null and a
+      # non-null build IS dev.
+      DEPLOY_BUILD: ${DEPLOY_BUILD:-}
     depends_on:
       postgres:
         condition: service_healthy

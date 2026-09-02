@@ -13,6 +13,44 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **The migration set is not a schema, and the deploy learned it by failing on an arbitrary file.**
+  With the previous fix in place all 80 migrations were finally attempted on dev's virgin database,
+  and the deploy died on the second one: `002_drop_group_member_left_at.sql` ->
+  `relation "dm_group_members" does not exist`. **No file in this repository creates that table.**
+  TypeORM does, through `synchronize: process.env.NODE_ENV !== 'production'`, which every service
+  therefore disables on both estates - so on both, the schema arrives from somewhere other than
+  these files: production's from an ORM boot long ago, dev's from `copy-prod-to-dev.sh`. Only 14 of
+  the 80 files contain a `CREATE TABLE`, and a derivation over the set names 21 tables it `ALTER`s
+  and never creates. **It is not an ordering problem**, which is what `find | sort` invites you to
+  blame: no permutation of deltas builds a table no delta creates. `apply_migrations` now asks
+  `to_regclass` about a sentinel ONCE, before touching any file, and refuses with the remedy for the
+  estate it is running on - dev's naming the refresh workflow that seeds it, production's saying its
+  schema is GONE and not to deploy. **The sentinel is pinned by derivation rather than by hand**:
+  the test computes the set of tables the migration files reference and never create, and fails if
+  `dm_group_members` ever leaves it, so a future migration that creates the table forces a new
+  sentinel instead of quietly leaving a guard that passes on an empty database. Mutating the call
+  away fails four of the eleven assertions. The bootstrap order a virgin estate actually needs -
+  deploy, refuse, seed, deploy - is on
+  [dev-environment](docs/wiki/infrastructure/dev-environment.md).
+
+- **`/api/version` reported `build: null` on both estates, because the one field that tells them
+  apart was rendered into `.env` and passed to no container.** `render-env.sh` computed
+  `DEPLOY_BUILD`, the manifest declared it, `deploy-build.ts` parsed it and `version.service.spec.ts`
+  covered it - and neither compose file listed it under `core-service`, which is the service that
+  serves `/api/version`. The whole chain was tested end to end except its last link. **It was about
+  to be used as the proof that the tunnel had been moved onto dev**, a proof it could never have
+  given, since production reports null by decision and dev was reporting null by omission.
+  `deploy-env.test.sh` now reads the `core-service` block out of both compose files and demands the
+  variable; removing it from either fails. The general lesson is that a rendered value nothing
+  consumes does not exist, and that agreement among a value's producers says nothing about its
+  consumer.
+
+- **A dry run reported the estate's pre-existing state as its own failure.** `dev-refresh.yml` ends
+  by proving the estate answers `/api/version`, which is the right gate for a restore and
+  meaningless for a `--dry-run` that changed nothing: the first dry run passed every guard, printed
+  `[dry-run] nothing was changed`, then failed on twenty consecutive 502s from the schemaless
+  database it had deliberately not touched. The gate is now behind `if: inputs.dry_run != true`.
+
 - **The dev estate's database was created empty, because a ledger query ate the list of migrations
   it was iterating.** `deploy-environment.sh` applies every `apps/*/src/migrations/*.sql` in a
   `while read` loop fed by a here-string, and the first thing each iteration does is ask the ledger

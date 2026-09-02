@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Does `deploy-environment.sh` apply EVERY migration, or only the first one?
+# Does `deploy-environment.sh` apply EVERY migration, and does it refuse a database the migrations
+# cannot possibly build?
 #
 # WHY THIS TEST EXISTS. On dev's first bootstrap (2026-09-02) the deploy reported
 # `migrations: 1 applied, 0 already recorded` with 80 files on disk, and two services crash-looped
@@ -8,14 +9,23 @@
 # it, and the file list was on the loop's own stdin - so the ledger query in the first iteration
 # swallowed the remaining 79 lines and `read` met EOF.
 #
-# THE SHAPE IS WHY IT IS TESTED FUNCTIONALLY RATHER THAN BY GREP. "The loop reads on fd 3" is a
+# THE SECOND SECTION EXISTS BECAUSE FIXING THAT EXPOSED THE LAYER UNDER IT. With all 80 files
+# attempted, the same deploy died on `002_drop_group_member_left_at.sql` -> `relation
+# "dm_group_members" does not exist`. The migration set is DELTAS, not a schema: only 14 of the 80
+# files contain a CREATE TABLE and none creates the entities' own tables, which TypeORM builds
+# through `synchronize` - disabled on both estates. So an empty database cannot be migrated, and the
+# deploy must say so BEFORE applying anything rather than failing on whichever file happens to
+# reference an ORM table first.
+#
+# THE SHAPE IS WHY BOTH ARE TESTED FUNCTIONALLY RATHER THAN BY GREP. "The loop reads on fd 3" is a
 # sentence about the text; "all N files are applied even when the ledger query eats stdin" is a
 # statement about the outcome, and only the second one still holds the day somebody adds a fourth
-# psql call inside the loop. So the function is extracted from the real script and run against a
+# psql call inside the loop. So the functions are extracted from the real script and run against a
 # `psql` stub that drains stdin exactly as `docker compose exec -T` does.
 set -uo pipefail
 
 SCRIPT="$(cd "$(dirname "$0")/../../.." && pwd)/infrastructure/deploy/deploy-environment.sh"
+REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
 PASS=0
 FAIL=0
 ok() {
@@ -59,16 +69,31 @@ if [ -z "$fn" ]; then
 fi
 ok "apply_migrations() is extractable from the real script"
 
+guard="$(sed -n '/^require_orm_schema() {/,/^}/p' "$SCRIPT")"
+sentinel_decl="$(sed -n '/^readonly ORM_SENTINEL_TABLE=/p' "$SCRIPT")"
+SENTINEL="$(printf '%s' "$sentinel_decl" | sed "s/^readonly ORM_SENTINEL_TABLE='//; s/'$//")"
+
 run_with_draining_psql() {
   (
     cd "$TMP" || exit 1
+    # shellcheck disable=SC2034 # read by the `eval`ed guard and loop, which shellcheck cannot follow
     ENVIRONMENT=dev
     # THE STUB IS THE POINT: it drains stdin on every call, which is what `docker compose exec -T`
-    # does. It answers nothing for the ledger SELECT, so every file counts as unapplied.
+    # does. It answers nothing for the ledger SELECT, so every file counts as unapplied - and `t`
+    # for the sentinel probe, because this section is about the loop and the precondition is the
+    # subject of the next one. A stub answering nothing there would make every assertion here a
+    # measurement of the guard instead.
+    # shellcheck disable=SC2317 # called only from `eval`ed code, so the body looks unreachable
     psql() {
+      local args="$*"
       cat >/dev/null 2>&1 || true
+      case "$args" in
+      *to_regclass*) printf 't\n' ;;
+      esac
       return 0
     }
+    eval "$sentinel_decl"
+    eval "$guard"
     eval "$fn"
     apply_migrations
   )
@@ -94,6 +119,97 @@ if [ "$lines" = "$FILES" ]; then
   ok "$FILES 'applying' lines printed, so the summary is not the only witness"
 else
   fail "$lines 'applying' lines for $FILES files"
+fi
+
+printf '\nthe schema precondition is STATED, not discovered by failing on an arbitrary file\n'
+
+if [ -n "$guard" ]; then
+  ok "require_orm_schema() is extractable from the real script"
+else
+  fail "require_orm_schema() is not a function in deploy-environment.sh - nothing states the migrations' precondition"
+fi
+
+if [ -n "$SENTINEL" ]; then
+  ok "the script names an ORM sentinel table ($SENTINEL)"
+else
+  fail "the script names no ORM sentinel table"
+fi
+
+# DERIVED FROM THE REAL MIGRATION FILES, so this assertion cannot rot into a tautology: the tables
+# the set ALTERs and never CREATEs are exactly the tables it depends on the ORM for. The sentinel
+# must be one of them. The day a migration creates it, this fails and forces a new sentinel rather
+# than leaving a guard that passes on a database with no schema.
+tables_matching() {
+  grep -rhoiE "$1"'[[:space:]]+(IF[[:space:]]+(NOT[[:space:]]+)?EXISTS[[:space:]]+)?"?[a-z_][a-z_0-9]*"?' \
+    "$REPO"/apps/*/src/migrations/*.sql 2>/dev/null |
+    sed -E 's/.*[[:space:]]"?([a-z_][a-z_0-9]*)"?$/\1/' | tr '[:upper:]' '[:lower:]' | sort -u
+}
+altered="$(tables_matching 'ALTER[[:space:]]+TABLE')"
+created="$(tables_matching 'CREATE[[:space:]]+TABLE')"
+orm_owned="$(comm -23 <(printf '%s\n' "$altered") <(printf '%s\n' "$created"))"
+
+if [ -z "$orm_owned" ]; then
+  fail "no table is referenced-but-never-created by the migration set - its premise may have changed and the guard needs rethinking, not a new sentinel"
+elif grep -qx "$SENTINEL" <<<"$orm_owned"; then
+  ok "$SENTINEL is referenced by the migration set and created by no file in it, which is the property the guard tests"
+else
+  fail "$SENTINEL is NOT in the derived set of ORM-owned tables ($(printf '%s' "$orm_owned" | tr '\n' ' ')) - pick the sentinel from that set"
+fi
+
+# The refusal itself, per estate.
+run_without_schema() {
+  (
+    cd "$TMP" || exit 1
+    # shellcheck disable=SC2034 # read by the `eval`ed guard, which decides the message per estate
+    ENVIRONMENT="$1"
+    # `to_regclass` answers `f`: the sentinel is absent, which is a virgin database.
+    # shellcheck disable=SC2317 # called only from `eval`ed code, so the body looks unreachable
+    psql() {
+      local args="$*"
+      cat >/dev/null 2>&1 || true
+      case "$args" in
+      *to_regclass*) printf 'f\n' ;;
+      esac
+      return 0
+    }
+    eval "$sentinel_decl"
+    eval "$guard"
+    eval "$fn"
+    apply_migrations
+  )
+}
+
+dev_out="$(run_without_schema dev </dev/null 2>&1)"
+dev_rc=$?
+if [ "$dev_rc" -ne 0 ]; then
+  ok "a schemaless dev database is REFUSED (exit $dev_rc) instead of half-migrated"
+else
+  fail "a schemaless dev database was accepted - the deploy will die on whichever file references an ORM table first"
+fi
+
+if [ "$(printf '%s\n' "$dev_out" | grep -c '^applying ')" = "0" ]; then
+  ok "and it applies NOTHING, so the refusal leaves the database as it found it"
+else
+  fail "it applied files before refusing"
+fi
+
+if printf '%s' "$dev_out" | grep -q 'Refresh dev.canari-emse.fr from production'; then
+  ok "the dev refusal NAMES the workflow that seeds the database"
+else
+  fail "the dev refusal does not name the seeding workflow - the reader is left to find it"
+fi
+
+prod_out="$(run_without_schema prod </dev/null 2>&1)"
+if printf '%s' "$prod_out" | grep -qi 'restore a backup'; then
+  ok "the production refusal says the schema is GONE and to restore a backup"
+else
+  fail "production and dev get the same remedy, and only one of them has anything to copy from"
+fi
+
+if printf '%s' "$prod_out" | grep -q 'Refresh dev.canari-emse.fr'; then
+  fail "the production refusal points at the DEV refresh workflow - it would copy production onto itself in the reader's mind"
+else
+  ok "and it does not point production at a dev-only remedy"
 fi
 
 printf '\n'
