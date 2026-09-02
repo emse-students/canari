@@ -277,22 +277,129 @@ and it proves COMPILATION, never that a JNI `FindClass` resolves at runtime.
 
 ## Local services (Docker Compose)
 
-**File**: `infrastructure/local/docker-compose.yml`
+**File**: `infrastructure/local/docker-compose.yml`, compose project **`canari-local`** (declared in
+the file - see the comment at its top for why that name is load-bearing).
 
-All services + infrastructure run in Docker with host port mapping. Dev host ports are offset to avoid conflicts:
+**THE PORT TABLE HERE USED TO CARRY OFFSETS (3080, 3100, 3104...) THAT THIS FILE HAS NEVER
+PUBLISHED.** Those were the dev estate's offsets, which
+[dev-environment](infrastructure/dev-environment.md) records as having been unnecessary in the first
+place. Read from the compose file 2026-09-02:
 
-| Service | Container port | Dev host port |
+| Service | Container port | Host port |
 |---|---|---|
-| frontend (Nginx) | 80 | 3080 |
-| chat-gateway | 3000 | 3100 |
-| call-service | 3004 | 3104 |
-| chat-delivery-service | 3010 | 3110 |
-| media-service | 3011 | 3111 |
-| core-service | 3012 | 3112 |
-| social-service | 3014 | 3114 |
-| Redis | 6379 | 6380 |
-| PostgreSQL | 5432 | 5433 |
-| Garage S3 API | 3900 | 19100 |
+| **nginx** (the API gateway) | 80 | **8081** (`CANARI_LOCAL_API_PORT`) |
+| chat-gateway | 3000 | 3000 |
+| call-service | 3004 | 3004 |
+| chat-delivery-service | 3010 | 3010 |
+| media-service | 3011 | 3011 |
+| core-service | 3012 | 3012 |
+| social-service | 3014 | 3014 |
+| Redis | 6379 | 6379 |
+| PostgreSQL | 5432 | 5432 |
+| Garage S3 API | 3900 | 9000 |
+| coturn | 3478 / 5349 | same, plus 49000-49040/udp |
+
+The app itself is NOT in this stack: `bun run dev` serves it from the host on **1420**
+(`strictPort`, and the OIDC client's redirect URIs are registered on 1420/1421 - not 5173).
+
+### Every `/api/*` request goes through nginx, and that is not a preference
+
+**nginx is where a bearer token becomes an identity.** It runs
+`auth_request /internal/auth/verify` against `core-service:3012/api/auth/verify`, then copies four
+headers out of that subrequest onto the upstream request:
+
+| From the auth subrequest | Forwarded as |
+|---|---|
+| `X-User-Id` | `X-User-Id` |
+| `X-Logged-In` | `X-User-Logged-In` |
+| `X-Global-Admin` | `X-Global-Admin` |
+| `X-Internal-Token` | `X-Internal-Token` |
+
+A service reads `X-User-Id` and nothing else; it never validates a JWT itself. So a request that
+did not pass through nginx has no identity at all, and core-service answers it
+`401 Missing X-User-Id header - ensure the request passes through nginx auth`. nginx also sets
+`X-User-Id ""` on the public locations, which is what stops a client supplying its own.
+
+**Until 2026-09-02 the local estate had no nginx**, and `vite.config.js` proxied `/api/*` straight
+to each service. The consequence was found by performing a real login rather than by reading
+anything: Authentik authenticated, `/api/auth/oidc/callback` answered 200, and then `/api/users/me`,
+`/api/users/<id>` and `/api/mls/security/pin-salt/<id>` all answered 401. **A login that succeeds
+and an application that can do nothing.**
+
+Two things that table of per-service proxies also did:
+
+- **It forged one of the four headers.** `/api/mls/` and `/api/calls/` carried
+  `headers: { 'x-user-logged-in': 'true' }`, unconditionally. That is worse than the 401 it avoided:
+  locally, an unauthenticated caller looked logged-in to chat-delivery, on exactly the routes the
+  MLS work is measured on.
+- **It omitted nine route families nginx serves** - `/api/admin`, `/api/groups`, `/api/payments`,
+  `/api/moderation`, `/api/external`, `/api/minesweeper`, `/api/public/`, `/api/media/public/` and
+  the calendar `.ics` feed - so those were simply broken in local development, and nobody had cause
+  to notice.
+
+The dev server now sends every `/api/*` to `http://localhost:8081` and keeps exactly two direct
+proxies, `/channels` and `/ws`, neither of which is under `/api/` and neither of which nginx has a
+location for. nginx reproduces both rewrites the old table performed (`/api/call` -> `/ws` on
+call-service, `/api/chat-delivery-health` -> `/api/health`) and upgrades websockets, so nothing was
+lost in the move.
+
+**The image is production's own** (`infrastructure/local/Dockerfile.frontend`, the single source of
+truth for the nginx config - CLAUDE.md). That has one cost worth knowing before you run
+`make run-services` on a fresh clone: the Dockerfile `COPY`s `frontend/build/client` and
+`frontend/build/prerendered`, which only a **web** build produces - `BUILD_WEB=1 bun run build`,
+adapter-node. A plain `bun run build` is the Tauri path (adapter-static) and leaves a `build/` the
+image cannot use. Extracting the config into a second file would avoid the build and is exactly what
+must not be done: two copies of an nginx config diverge, and this one decides who a caller is.
+
+### The environment a service gets is decided HERE, not in `.env`
+
+`infrastructure/.env` holding a value proves nothing: the compose file has to forward it. A drift
+audit of every environment KEY production passes, against what this file passed, found **17 keys
+missing** on 2026-09-02 - and three of them (`AUTHENTIK_BASE_URL`, `AUTHENTIK_CLIENT_ID`,
+`AUTHENTIK_CLIENT_SECRET`) were why no login could complete, with all three sitting correctly in
+`.env` the whole time. The others decided whether a FEATURE behaved the same locally:
+`GOOGLE_SAFE_BROWSING_API_KEY` (a link is scanned before it renders), `MEDIA_SERVICE_URL`,
+`CERCLE_API_KEY`, the Sky pair, the five `APNS_VOIP_*`.
+
+**That audit is now a GATE, not something to remember to re-run.** The third check of
+`.github/scripts/tests/compose-wiring.test.sh` derives every key production forwards each service
+and fails on any the local file does not - keys only, never values, so it is safe in a public
+pipeline. Run it directly, or through `make test-ci-scripts`:
+
+```sh
+bash .github/scripts/tests/compose-wiring.test.sh   # 52 assertions
+```
+
+Three services production declares are absent locally BY DESIGN and are not drift: `frontend` and
+`frontend-ssr` (the dev server serves the app) and `adminer`. They are named in the script's
+`LOCAL_ABSENT_BY_DESIGN`, so adding a fourth means editing that list and saying why.
+
+### An incomplete `optimizeDeps.include` reloads the page, and a reload is not just slow
+
+`frontend/vite.config.js` pre-declares the packages Vite should bundle at startup. When a package
+is NOT declared, the dev server discovers it the first time a route imports it, re-bundles, and then
+does this:
+
+```
+[vite] (client) optimized dependencies changed. reloading
+```
+
+That is a **full page reload**, not an HMR patch. Measured 2026-09-03 on a cold cache: 36 undeclared
+packages, discovered in four waves, three forced reloads - and the third one **destroyed an OIDC
+login in flight**, because an authorization code is single-use, so the second attempt to redeem it
+fails and the estate looks broken when only the dev server is. The same reload voids a campaign
+measurement mid-run, and Android's WebView cannot survive it at all
+(`Failed to fetch dynamically imported module`).
+
+So the list is not an optimisation, it is a correctness setting, and **anything imported anywhere in
+the app belongs in it** - not just the heavy or the native. To extend it, exercise the new route and
+read the truth out of the dev-server log rather than guessing:
+
+```sh
+bun run dev 2>&1 | grep -E "dependencies optimized|reloading"
+```
+
+A clean startup prints neither line. If it prints either, the config is behind the code.
 
 ### Dockerfiles
 

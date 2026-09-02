@@ -293,6 +293,75 @@ else
 fi
 
 printf '\n'
+# ─────────────────────────────────────────────────────────────────────────────
+# THE THIRD CHECK, added 2026-09-02: an environment KEY production forwards to a
+# service must be forwarded to that same service by the LOCAL compose file.
+#
+# `infrastructure/.env` holding a value proves nothing - the compose file has to
+# pass it. Measured that day: production forwarded 17 keys the local file did
+# not, and three of them (the AUTHENTIK_* trio) were why no local login could
+# ever complete. All three sat correctly in `.env` the whole time, so no amount
+# of reading that file could have found it; a real login did, by answering 401
+# on every authenticated route after a successful OIDC callback.
+#
+# Keys only. A key present in both may still hold a wrong value - a different
+# question, and not one a static check can answer. A key MISSING is a defect no
+# value can fix, and that is what this asserts.
+#
+# The exceptions are NAMED, with reasons, because an unexplained skip list is
+# how a check like this rots into always passing.
+# ─────────────────────────────────────────────────────────────────────────────
+PROD_COMPOSE=infrastructure/docker-compose.prod.yml
+LOCAL_COMPOSE=infrastructure/local/docker-compose.yml
+
+# Services production declares that the local estate deliberately does not run.
+# `frontend` / `frontend-ssr`: the app is served by `bun run dev` on the host.
+# `adminer`: a database UI nobody needs locally, psql being right there.
+LOCAL_ABSENT_BY_DESIGN="frontend frontend-ssr adminer"
+
+# "<service> <KEY>" for every environment key a compose file forwards, taken by
+# indentation: a service is two spaces, `environment:` four, a key six.
+env_keys() {
+  awk '
+    /^  [a-z][a-z0-9-]*:[[:space:]]*$/ { svc = $1; sub(":", "", svc); in_env = 0; next }
+    svc == "" { next }
+    /^    environment:[[:space:]]*$/ { in_env = 1; next }
+    /^    [^[:space:]]/ { in_env = 0; next }
+    in_env && /^      [A-Z][A-Z0-9_]*:/ { key = $1; sub(":", "", key); print svc, key }
+  ' "$1"
+}
+
+printf '\nthe local estate forwards what production forwards:\n'
+prod_pairs="$(env_keys "$PROD_COMPOSE")"
+local_pairs="$(env_keys "$LOCAL_COMPOSE")"
+
+for svc in $(printf '%s\n' "$prod_pairs" | awk '{print $1}' | sort -u); do
+  case " $LOCAL_ABSENT_BY_DESIGN " in
+    *" $svc "*)
+      pass
+      printf '  ok    %s is absent locally by design, so its keys are not owed\n' "$svc"
+      continue
+      ;;
+  esac
+  if ! printf '%s\n' "$local_pairs" | grep -q "^$svc "; then
+    fail "production declares '$svc' with an environment block and the local compose has no such service - wire it, or name it in LOCAL_ABSENT_BY_DESIGN with a reason"
+    continue
+  fi
+  missing=""
+  for key in $(printf '%s\n' "$prod_pairs" | awk -v s="$svc" '$1 == s {print $2}' | sort -u); do
+    if ! printf '%s\n' "$local_pairs" | grep -qx "$svc $key"; then
+      missing="$missing $key"
+    fi
+  done
+  if [ -n "$missing" ]; then
+    fail "$svc: production forwards these and the local estate does not -$missing"
+  else
+    pass
+    printf '  ok    %s forwards every key production does\n' "$svc"
+  fi
+done
+
+printf '\n'
 if [ "$failures" -gt 0 ]; then
   printf 'FAILED: %d problem(s) across %d assertion(s)\n' "$failures" "$((checks + failures))"
   exit 1

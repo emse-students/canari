@@ -14,6 +14,12 @@ const appVersion = appPackage.version || '0.0.0';
 const host = process.env.TAURI_DEV_HOST;
 const devOrigin = host ? `http://${host}:1420` : undefined;
 
+// The host port the LOCAL nginx container publishes (`infrastructure/local/docker-compose.yml`).
+// Every `/api/*` request from the dev server goes here rather than to a service, because nginx is
+// where a bearer token becomes the `X-User-Id` header the services read - see the proxy block
+// below. Overridable for a second estate on one machine, which is why it is not a literal.
+const devApiPort = process.env.CANARI_LOCAL_API_PORT || '8081';
+
 /**
  * Stubs out the WASM loader for Tauri builds (AppImage, Android, etc.).
  *
@@ -85,17 +91,67 @@ export default defineConfig(async () => ({
   // Pre-bundle Tauri/heavy deps at startup so Vite never re-optimizes them
   // mid-session - which triggers an HMR full-reload that Android WebView
   // cannot handle (Failed to fetch dynamically imported module).
+  //
+  // THIS LIST WAS HALF THE DEPENDENCIES, AND AN INCOMPLETE LIST BUYS NOTHING. Measured 2026-09-03
+  // on a cold cache: the optimizer discovered 36 more packages in four waves and forced THREE full
+  // page reloads, the last of them logging the very error this comment was written about. A reload
+  // is not merely slow - it destroyed an OIDC login in flight, because an authorization code is
+  // single-use, so the local estate looked broken when only the dev server was. It would equally
+  // void a campaign measurement mid-run.
+  //
+  // So the rule is: anything imported anywhere in the app belongs here, not just the heavy or
+  // native things. Every entry below was OBSERVED being discovered - none is speculative - and the
+  // way to extend the list is to read `dependencies optimized:` out of the dev-server log after
+  // exercising a new route, never to guess.
   optimizeDeps: {
     include: [
+      '@humanspeak/svelte-markdown',
+      '@lucide/svelte',
       '@tauri-apps/api/app',
       '@tauri-apps/api/core',
       '@tauri-apps/api/window',
       '@tauri-apps/plugin-biometric',
+      '@tauri-apps/plugin-deep-link',
+      '@tauri-apps/plugin-dialog',
+      '@tauri-apps/plugin-fs',
       '@tauri-apps/plugin-http',
+      '@tauri-apps/plugin-log',
       '@tauri-apps/plugin-notification',
+      '@tauri-apps/plugin-opener',
+      '@tauri-apps/plugin-os',
       '@tauri-apps/plugin-sql',
-      '@lucide/svelte',
+      '@tauri-apps/plugin-store',
+      '@tauri-apps/plugin-websocket',
+      '@zumer/snapdom',
+      'emoji-picker-element',
+      'emoji-picker-element/i18n/en',
+      'highlight.js/lib/core',
+      'highlight.js/lib/languages/bash',
+      'highlight.js/lib/languages/c',
+      'highlight.js/lib/languages/cpp',
+      'highlight.js/lib/languages/css',
+      'highlight.js/lib/languages/go',
+      'highlight.js/lib/languages/java',
+      'highlight.js/lib/languages/javascript',
+      'highlight.js/lib/languages/json',
+      'highlight.js/lib/languages/kotlin',
+      'highlight.js/lib/languages/markdown',
+      'highlight.js/lib/languages/php',
+      'highlight.js/lib/languages/plaintext',
+      'highlight.js/lib/languages/python',
+      'highlight.js/lib/languages/rust',
+      'highlight.js/lib/languages/sql',
+      'highlight.js/lib/languages/typescript',
+      'highlight.js/lib/languages/xml',
+      'highlight.js/lib/languages/yaml',
+      'jspdf',
+      'pdfjs-dist',
+      // Both specifiers, because they are two cache entries: the app imports the extensionless one
+      // and the generated `src/lib/proto/canari.js` imports `protobufjs/minimal.js`.
       'protobufjs/minimal',
+      'protobufjs/minimal.js',
+      'qrcode',
+      'svelte-dnd-action',
     ],
   },
 
@@ -116,59 +172,39 @@ export default defineConfig(async () => ({
           port: 1421,
         }
       : undefined,
+    // ONE ENTRY POINT, BECAUSE AUTHENTICATION LIVES IN NGINX AND NOWHERE ELSE.
+    //
+    // This block used to name each service directly - `/api/users` to 3012, `/api/mls/` to 3010,
+    // and so on - which skips nginx, and nginx is what turns a bearer token into the
+    // `X-User-Id` header every service actually reads. So a local login SUCCEEDED and then every
+    // authenticated request answered
+    // `401 Missing X-User-Id header - ensure the request passes through nginx auth`.
+    // Measured 2026-09-02 by performing a real login against the local estate.
+    //
+    // TWO OF THE OLD ENTRIES FORGED PART OF THAT WORK: `/api/mls/` and `/api/calls/` set
+    // `x-user-logged-in: true` by hand, unconditionally. That is worse than the 401 - it made an
+    // unauthenticated caller look logged in, locally only, on exactly the routes the MLS work is
+    // measured on. Both are gone with the rest of the table.
+    //
+    // The nginx config (`infrastructure/local/Dockerfile.frontend`, the single source of truth for
+    // it) covers every `/api/*` route this table did and NINE FAMILIES IT DID NOT - `/api/admin`,
+    // `/api/groups`, `/api/payments`, `/api/moderation`, `/api/external`, `/api/minesweeper`,
+    // `/api/public/`, `/api/media/public/` and the calendar `.ics` feed - which were therefore
+    // broken in local development and are not any more. It reproduces both rewrites this table
+    // performed (`/api/call` -> `/ws`, `/api/chat-delivery-health` -> `/api/health`) and upgrades
+    // websockets, so routing through it loses nothing.
+    //
+    // `/channels` and `/ws` stay direct: they are not under `/api/`, and nginx has no location for
+    // either. `/ws` is the client's own alias for `/api/ws`.
     proxy: {
-      // Proxy chat-delivery MLS API so VITE_DELIVERY_URL is not needed in local dev.
-      '/api/mls/': {
-        target: 'http://localhost:3010',
+      '/api': {
+        target: `http://localhost:${devApiPort}`,
         changeOrigin: true,
-        headers: { 'x-user-logged-in': 'true' },
-      },
-      '/api/calls/': {
-        target: 'http://localhost:3010',
-        changeOrigin: true,
-        headers: { 'x-user-logged-in': 'true' },
-      },
-      '/api/call': {
-        target: 'ws://localhost:3004',
         ws: true,
-        changeOrigin: true,
-        /** @param {string} path */
-        rewrite: (path) => path.replace(/^\/api\/call/, '/ws'),
       },
-      '/api/chat-delivery-health': {
-        target: 'http://localhost:3010',
-        changeOrigin: true,
-        rewrite: () => '/api/health',
-      },
-      '/api/channels': {
-        target: 'http://localhost:3014',
-        changeOrigin: true,
-      },
-      // Proxy /channels API to social-service
+      // Bare `/channels` - social-service's own path, with no `/api` prefix and no nginx location.
       '/channels': {
         target: 'http://localhost:3014',
-        changeOrigin: true,
-      },
-      // Proxy /api/posts API to social-service
-      '/api/posts': {
-        target: 'http://localhost:3014',
-        changeOrigin: true,
-      },
-      // Proxy /ws WebSocket to the chat-gateway so VITE_GATEWAY_URL is not needed in local dev.
-      '/api/presence': { target: 'http://localhost:3000', changeOrigin: true },
-
-      // Added proxies for other services:
-      '/api/version': { target: 'http://localhost:3012', changeOrigin: true },
-      '/api/auth': { target: 'http://localhost:3012', changeOrigin: true },
-      '/api/users': { target: 'http://localhost:3012', changeOrigin: true },
-      '/api/media': { target: 'http://localhost:3011', changeOrigin: true },
-      '/api/forms': { target: 'http://localhost:3014', changeOrigin: true },
-      '/api/associations': { target: 'http://localhost:3014', changeOrigin: true },
-
-      // WebSocket proxy - /api/ws must be listed before the /ws fallback
-      '/api/ws': {
-        target: 'ws://localhost:3000',
-        ws: true,
         changeOrigin: true,
       },
       '/ws': {

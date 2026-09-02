@@ -2793,6 +2793,42 @@ feature is therefore coherent with E2EE - it removes a password prompt, not a re
 
 ## Tooling
 
+### P3 - the root `load` warns on every navigation that it used `window.fetch`, and the fix it asks for buys nothing here (measured 2026-09-03)
+
+The dev server prints, once per navigation:
+
+```
+Loading http://localhost:1420/api/auth/refresh?clientVersion=0.14.15 using `window.fetch`.
+For best results, use the `fetch` that is passed to your `load` function
+```
+
+It comes from `frontend/src/routes/+layout.ts`, whose silent-refresh path calls `refresh()` in
+`$lib/stores/auth.ts:424`. **The warning's two reasons do not apply to this app.** SvelteKit asks for
+the injected `fetch` so that a SERVER render forwards cookies and so that the response is inlined
+into the HTML and not re-fetched at hydration - and this root layout declares `export const ssr =
+false` (Tauri needs SPA mode), guards itself with `if (typeof window === 'undefined') return`, and
+therefore never runs on a server. There is no render to forward for and no hydration fetch to
+deduplicate.
+
+What it WOULD cost to silence: `event.fetch` threaded from the load into `refresh()`, from there
+into `apiFetch`, and into `fetchUserProfile` - a `fetch` parameter through the auth and user stores,
+for a warning about a case the app has ruled out. **That is why it is P3 and not simply "fix it":
+the honest disposition is either that thread or a decision to accept the line, and accepting a line
+is only allowed once somebody has written down why**, which is what this entry does.
+
+Retired by: `ssr = false` disappearing from the root layout (then the fix becomes required, not
+optional), or by SvelteKit offering a per-call opt-out.
+
+### P3 - the local WebSocket closes 1006 on navigation, and nothing says whether that is the unload or a defect (observed 2026-09-03)
+
+`[WS] Disconnected. Code: 1006, Reason: no reason`, twice, between two full page navigations on the
+local estate. 1006 is an ABNORMAL closure - the code a browser synthesises when no close frame
+arrived - which is also exactly what a page unload produces, so **the line cannot distinguish the
+benign case from a gateway dropping the socket.** That is the defect worth fixing whether or not the
+underlying close is: a log line whose reader must guess is one they learn to skip. Measure it by
+closing the socket deliberately on `beforeunload` and seeing whether 1006 stops; if it does, the
+remaining 1006s are real and mean something.
+
 ### DONE 2026-08-31 - all four repos carry the ceiling, the sweep and the dispatch
 
 **Canari's `dependabot-auto-merge.yml` merged any green Dependabot PR with no ceiling at all, its

@@ -210,7 +210,10 @@ restated**. **Every defect story is in `CHANGELOG.md`, every rule one left is in
    HEAL's partially-restored old client; **ONE BUNDLED EMOJI FONT everywhere** (Noto Color Emoji,
    decided 2026-08-23, owing ELEVEN rows to the SECOND campaign); the dead row a deleted group leaves
    every other member; a device row's trash and pencil not reading as the same kind of control. Four
-   of the six want ONE pass over `app.css`.
+   of the six want ONE pass over `app.css`. **Two DEV-LOG lines join them from 2026-09-03**, both in
+   [backlog](docs/wiki/backlog.md) under Tooling: the root `load`'s `window.fetch` warning, whose
+   prescribed fix buys nothing while `ssr = false`, and a WebSocket 1006 that cannot say whether it
+   is the page unload or a real drop.
 
 7. **CALLING IS HELD OFF SINCE 0.14.15 - `CALLS_ENABLED = false`** (user, 2026-09-01: not a
    priority, never properly tested). The SFU's six webrtc majors are unplaced and rung 15 CALL has no

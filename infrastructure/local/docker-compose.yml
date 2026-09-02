@@ -145,6 +145,23 @@ services:
       # Rich media notifications (WP-XP-3): push proxy fetches encrypted blobs from media-service.
       MEDIA_SERVICE_URL: ${MEDIA_SERVICE_URL:-http://media-service:3011}
       CALL_ROOM_SECRET: ${CALL_ROOM_SECRET:-dev-call-room-secret-change-me}
+      # The rest of what production forwards here, added 2026-09-02 after a drift audit of this
+      # whole file found 17 keys production passes and this one did not. The three that mattered
+      # blocked every login (see core-service below); these eight decide whether a FEATURE behaves
+      # the same locally, and their absence would have been found one feature at a time.
+      #
+      # A link in a message is scanned before it renders, so without this key local behaviour and
+      # production behaviour diverge on the very thing the test campaign checks.
+      GOOGLE_SAFE_BROWSING_API_KEY: ${GOOGLE_SAFE_BROWSING_API_KEY:-}
+      MIGALLERY_API_URL: ${MIGALLERY_API_URL:-https://gallery.mitv.fr}
+      MIGALLERY_API_KEY: ${MIGALLERY_API_KEY:-}
+      # VoIP push, iOS only, and inert while `CALLS_ENABLED` is false - forwarded anyway so that
+      # reviving calls is a switch rather than a hunt through this file.
+      APNS_VOIP_TEAM_ID: ${APNS_VOIP_TEAM_ID:-}
+      APNS_VOIP_KEY_ID: ${APNS_VOIP_KEY_ID:-}
+      APNS_VOIP_KEY_P8: ${APNS_VOIP_KEY_P8:-}
+      APNS_VOIP_TOPIC: ${APNS_VOIP_TOPIC:-}
+      APNS_VOIP_SANDBOX: ${APNS_VOIP_SANDBOX:-}
     depends_on:
       redis:
         condition: service_healthy
@@ -265,6 +282,26 @@ services:
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-9855dfafdadcbdcfc69bcd1fffc447f9b53536428ef767fd164297ffe49cc4cf}
       MIGALLERY_API_URL: ${MIGALLERY_API_URL:-https://gallery.mitv.fr}
       MIGALLERY_API_KEY: ${MIGALLERY_API_KEY:-}
+      # WITHOUT THESE THREE, NO LOGIN CAN COMPLETE LOCALLY, AND THE FAILURE BLAMES THE SERVER.
+      # `infrastructure/.env` carried all three correctly and this file forwarded none of them, so
+      # the browser reached `/auth/callback?code=...` - Authentik having authenticated and redirected
+      # perfectly - and `auth.controller.ts` answered `Authentik OIDC is not configured on the
+      # server`. The values were never the problem; the wiring was, and no `.env` edit could have
+      # fixed it. Measured 2026-09-02 by performing a real login, which is the only thing that
+      # could have found it: every file involved was individually correct.
+      AUTHENTIK_BASE_URL: ${AUTHENTIK_BASE_URL:-}
+      AUTHENTIK_CLIENT_ID: ${AUTHENTIK_CLIENT_ID:-}
+      AUTHENTIK_CLIENT_SECRET: ${AUTHENTIK_CLIENT_SECRET:-}
+      # The rest of what production forwards to this service. Not needed by a login, but their
+      # absence is the same defect one feature further on - and a local estate that answers
+      # differently from production for a reason nobody can see is worth less than no estate.
+      MEDIA_SERVICE_URL: ${MEDIA_SERVICE_URL:-http://media-service:3011}
+      EXTERNAL_API_KEY: ${EXTERNAL_API_KEY:-}
+      SKY_API_URL: ${SKY_API_URL:-https://sky.mitv.fr}
+      SKY_API_KEY: ${SKY_API_KEY:-}
+      # Left EMPTY here on purpose, unlike the dev estate which sets `dev.<sha7>`: a build
+      # identifier is what tells a client which estate answered, and a local run is not a deploy.
+      DEPLOY_BUILD: ${DEPLOY_BUILD:-}
     depends_on:
       postgres:
         condition: service_started
@@ -312,6 +349,10 @@ services:
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-9855dfafdadcbdcfc69bcd1fffc447f9b53536428ef767fd164297ffe49cc4cf}
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-dev-internal-shared-secret-change-me}
       DELIVERY_INTERNAL_URL: http://chat-delivery-service:3010
+      # The last of the 17 keys the drift audit found (2026-09-02). Le Cercle is a separate
+      # repository and its API is reached with this key; without it that seam behaves differently
+      # here than in production, silently.
+      CERCLE_API_KEY: ${CERCLE_API_KEY:-}
     depends_on:
       postgres:
         condition: service_started
@@ -319,6 +360,56 @@ services:
         condition: service_started
       media-service:
         condition: service_started
+
+  # ─────────────────────────────────────────────────────
+  # Nginx - THE THING THAT AUTHENTICATES, added 2026-09-02
+  # ─────────────────────────────────────────────────────
+  # This estate had no nginx, and nginx is not a detail of the deployment: it is where a bearer
+  # token becomes the `X-User-Id` header every service reads (`auth_request /internal/auth/verify`
+  # against core-service, then `proxy_set_header X-User-Id $user_id`). Without it a local login
+  # succeeded and every authenticated request answered
+  # `401 Missing X-User-Id header - ensure the request passes through nginx auth`, which is the
+  # service correctly refusing a request nobody had authenticated.
+  #
+  # `frontend/vite.config.js` now sends every `/api/*` here instead of to a service, so the local
+  # topology matches production on the one seam that decides who a caller is. The dev server still
+  # serves the app itself, so this image's static half is unused - it is here for its config, which
+  # `Dockerfile.frontend` is the single source of truth for (CLAUDE.md), and duplicating that config
+  # into a second file is what this deliberately does not do.
+  #
+  # It builds in seconds: that Dockerfile is one stage `FROM nginx:stable-alpine` with no build
+  # arguments and no frontend build inside it.
+  nginx:
+    build:
+      context: ../../
+      dockerfile: infrastructure/local/Dockerfile.frontend
+    ports:
+      # 8081 rather than 80: port 80 is taken often enough on a workstation, and the number is read
+      # from `CANARI_LOCAL_API_PORT` on the vite side so a second estate can move it.
+      - "${CANARI_LOCAL_API_PORT:-8081}:80"
+    depends_on:
+      core-service:
+        condition: service_started
+      chat-delivery-service:
+        condition: service_started
+      social-service:
+        condition: service_started
+      media-service:
+        condition: service_started
+    healthcheck:
+      # `/api/version` needs no authentication and reaches core-service, so a 200 proves both that
+      # nginx started and that it can route - which "the container is up" does not.
+      test:
+        [
+          'CMD',
+          'sh',
+          '-c',
+          'wget -q -O /dev/null http://127.0.0.1/api/version || exit 1',
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
 volumes:
   postgres_data:

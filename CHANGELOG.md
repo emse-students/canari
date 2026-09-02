@@ -13,6 +13,23 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Changed
 
+- **Local development authenticates, because it now has the nginx everything else assumed.** The
+  local estate ran ten containers and no nginx, and the dev server's proxy table named each service
+  directly - so a bearer token never became the `X-User-Id` header the services read, and a login
+  that SUCCEEDED was followed by `401 Missing X-User-Id header` on every authenticated route. Worse,
+  two entries in that table forged part of the missing work: `/api/mls/` and `/api/calls/` set
+  `x-user-logged-in: true` unconditionally, making an unauthenticated caller look logged in on
+  exactly the routes the MLS work is measured on. The table is now one `/api` entry pointing at a
+  local nginx built from production's own image, which also restores NINE route families the table
+  never had. Alongside it, **17 environment keys production forwards that the local compose file did
+  not** - three of them the `AUTHENTIK_*` trio, which is why no login could complete while all three
+  sat correctly in `.env`: holding a value proves nothing, the compose file has to forward it. That
+  class is closed by a GATE rather than an audit, `compose-wiring.test.sh` deriving the expected key
+  set from `docker-compose.prod.yml`. And `optimizeDeps.include` listed half the application's
+  dependencies, so the dev server discovered the rest mid-session and forced three full page
+  reloads - one of which destroyed an OIDC login in flight, an authorization code being single-use.
+  All of it was found by performing the login instead of asserting that the files were right.
+
 - **Dependency updates land on a `dev` branch that deploys the dev estate, and a proof promotes them
   to production.** Asked by the user - *"Est-ce qu'on pourrait dire a Dependabot de push sur la
   branche dev au lieu de la prod ?"* - and the motive is the outage of 2026-09-01: `postgres

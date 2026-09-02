@@ -238,7 +238,7 @@ lightened hook whose gates are not yet in CI is an open hole for the length of t
       the record - it will not decrypt here). Destroy the zip only after WP-1 has taken what it needs
       from the box
 
-### WP-1 - the local estate (DONE except its last box: a real login)
+### WP-1 - the local estate (DONE 2026-09-03)
 
 **Everything but the last box landed 2026-09-02.** The shape differs from what this list planned,
 in one way worth keeping: the plan named ONE script, `infrastructure/dev/dump-prod-to-local.sh`. It
@@ -283,8 +283,41 @@ have had one exit code for three unrelated causes.
       memory would have failed the login it was meant to enable. **It returned `invalid_request` until three fields were copied from the production
       provider** - `grant_types` was EMPTY, `authentication_flow` None, `refresh_token_threshold` 0.
       A field diff against the working provider found it; reading the error text would not have
-- [ ] **verified by a real login and a message sent**, not by a file written. **THE ONLY BOX LEFT
-      IN WP-1** - the estate answers and the data is in it, which is not the same claim
+- [x] **verified by a real login and a message sent, DONE 2026-09-03** - two clients, two browser
+      contexts, `canari-test-alpha` and `canari-test-beta`, both through the production Authentik:
+      OIDC callback 200, first-connection PIN accepted, `register-device` 201 and `prekeys` 201,
+      `Canal E2E etabli.`, a message typed and sent, and **the peer's client received it and
+      DECRYPTED it** - the plaintext appears in beta's conversation list with an unread count of 1.
+      Console at the end: nothing but the avatar 404 that means "this user has no photo", which is
+      the documented answer. **PERFORMING IT FOUND THREE DEFECTS NO FILE COULD HAVE SHOWN, and all
+      three are now fixed** (2026-09-02/03):
+      - **The local estate had NO NGINX, and nginx is where a bearer token becomes an identity.**
+        It runs `auth_request` against core-service and copies four headers onto the upstream
+        request; a service reads `X-User-Id` and never validates a JWT itself. So Authentik
+        authenticated, `/api/auth/oidc/callback` answered **200**, and then every authenticated
+        route answered **401 `Missing X-User-Id header - ensure the request passes through nginx
+        auth`**. A login that succeeds and an application that can do nothing. `vite.config.js`
+        now sends every `/api/*` to a local nginx built from production's own image, and **two of
+        the old per-service proxies were FORGING part of that work** - `/api/mls/` and
+        `/api/calls/` set `x-user-logged-in: true` unconditionally, which made an unauthenticated
+        caller look logged in on exactly the routes the MLS work is measured on. That table also
+        omitted NINE route families nginx serves, so they were simply broken locally
+      - **17 environment keys production forwards, this estate did not** - three of them the
+        `AUTHENTIK_*` trio, which is why no login could complete, with all three sitting correctly
+        in `infrastructure/.env` the whole time. **`.env` holding a value proves nothing: the
+        compose file has to forward it.** Now a GATE rather than an audit -
+        `compose-wiring.test.sh` derives every key production passes and fails on any the local
+        file does not (52 assertions; proved to fail by deleting one). **`ci.yml`'s own trigger
+        missed the new input for one commit** - the local compose file was not in the paths that run
+        the script self-tests, which is the exact shape the comment there warns about; `local/`
+        joined the pattern
+      - **`optimizeDeps.include` in `frontend/vite.config.js` listed HALF the dependencies, and half
+        a list buys nothing.** On a cold cache the optimizer discovered 36 more packages in four
+        waves and forced THREE full page reloads - and **a reload destroyed the OIDC login in
+        flight, because an authorization code is single-use.** The estate looked broken when only
+        the dev server was; the same reload would void a campaign measurement mid-run. The
+        mechanism was already there with the right comment on it, so this was a stale list rather
+        than a missing idea, and the list is now everything OBSERVED being discovered
 - [x] **four latent defects fell out of merely RUNNING the stack**, none of which any gate here
       catches, and they are the argument for the local estate on their own: `.dockerignore` was
       missing `**/*.tsbuildinfo`, so three NestJS services shipped a partial `dist` and died with
@@ -334,10 +367,22 @@ mechanical, not stylistic:
   `bump-version.yml` - which is a WP-3 item ("carries the prerelease flag downstream").
 
 So committing WP-2 alone leaves the dev estate unreachable by any deploy until WP-3 lands, and
-`one coherent commit per work package` is what forbids that. **Treat 2+3 as one package**, or accept
-a window in which only production can be deployed. This is a plan-shape decision, so it is recorded
-here rather than settled in passing, and the ORDER inside the merged package still matters: the flag
-must exist before anything keys off it.
+`one coherent commit per work package` is what forbids that. **DECIDED BY THE USER 2026-09-02: one
+package, one commit.**
+
+**AND THE FLAG DOES NOT NEED PLUMBING AFTER ALL** - found while reading the four consumers, and it
+makes the merged package smaller. After the bump, `frontend/package.json` CARRIES the suffix
+(`0.15.0-alpha.1`), a hyphen in a version IS the semver definition of a pre-release, and all four
+release workflows already read that file at the checked-out commit. So each one can decide for
+itself, from the manifest, with nothing passed between workflows and nothing added to
+`bump-version.yml`. Deriving it from `workflow_run.head_branch` (the tag) would also work for a
+release-triggered run but NOT for the `workflow_dispatch` path, where the head branch is `main`;
+the manifest is right in both.
+
+**The real blocker is one function.** `scripts/bump-app-version.sh` line 14, `normalize_version()`,
+matches `^[0-9]+\.[0-9]+\.[0-9]+$` and EXITS on anything else - so a release tagged
+`v0.15.0-alpha.1` fails on the first step, before any of this matters. That is where the merged
+package starts.
 
 ### WP-2 - the branch, and deploy-at-bump
 
@@ -352,13 +397,37 @@ must exist before anything keys off it.
 - [ ] a ruleset on `main`: pull request required, required checks, admin bypass
 - [ ] `origin/dev` deleted
 - [ ] `dev-refresh.yml` left running (the estate survives)
+- [ ] **the `prod-deployed` tag DELETED, and `detect-changed-services` re-pointed at the last
+      RELEASE tag first** - decided by the user 2026-09-02 against my recommendation to keep it,
+      which is their call and is not to be re-litigated. What they are accepting, stated once so it
+      is on the record: that tag is written by the deploy job and is the only thing that says what
+      production actually received, so **after an emergency push straight to `main` nothing will
+      say which commit prod is serving**. The re-point is not optional and comes FIRST: the change
+      detector measures against that tag rather than the previous push, and that is the only reason
+      a cancelled pending run is harmless (GitHub keeps one waiting run per group and cancels the
+      rest; the survivor rebuilds what the dropped ones would have). Twelve references in `cd.yml`
+      and four wiki pages move with it
 
 ### WP-3 - pre-releases
+
+**THE FIRST STEP FAILS TODAY, AND IT IS ONE FUNCTION.** `scripts/bump-app-version.sh` line 14,
+`normalize_version()`, matches `^[0-9]+\.[0-9]+\.[0-9]+$` and EXITS on anything else - so a release
+tagged `v0.15.0-alpha.1` dies before any store number is computed. Fix that before the rest of this
+package is even testable. The `versionCode` band decided with the user is
+`(major*1e6 + minor*1e3 + patch)*100 + rank`, `rank` 0 for a stable and N for `-alpha.N`, which
+keeps a stable strictly above every alpha of the same version and stays inside Play's 2100000000.
 
 - [ ] `scripts/bump-app-version.sh` accepts `X.Y.Z-alpha.N` and derives BOTH store numbers: a
       monotonic `versionCode` and a numeric `CFBundleShortVersionString` with the counter in
       `CFBundleVersion`
-- [ ] `bump-version.yml` carries the prerelease flag downstream
+- [ ] **NOTHING carries a prerelease flag downstream, and that box is DELETED** (measured
+      2026-09-02, before a line was written). After the bump, `frontend/package.json` itself reads
+      `0.15.0-alpha.1`, all four release workflows already read that file at the checked-out commit,
+      and **a hyphen in a version IS the semver definition of a pre-release** - so each workflow
+      decides for itself with nothing passed between them and nothing added to `bump-version.yml`.
+      The alternative, `workflow_run.head_branch`, is right for a release-triggered run and WRONG
+      for the `workflow_dispatch` path, where the head branch is `main`. **`github.event.release.prerelease`
+      is invisible from a `workflow_run` context**, which is what made a flag look necessary
 - [ ] `android-release.yml`: track `internal` when prerelease, `production` otherwise
 - [ ] `ios-release.yml`: TestFlight INTERNAL group when prerelease
 - [ ] an alpha build carries the DEV `VITE_*` set, a stable build production's, and **the job FAILS
@@ -368,6 +437,15 @@ must exist before anything keys off it.
 - [ ] the first pre-release is `0.15.0-alpha.1` (`0.14.15` stays the stable in the stores)
 
 ### WP-5 - the campaign, from zero
+
+**WHAT THE HARDWARE ANSWERED 2026-09-02, so nobody re-measures it.** Both phones are visible to
+ADB at once, and they are NOT interchangeable: the Mi 9T carries **0.5.0** and the Pixel 6a
+**0.14.15**, a gap of nine releases, so **the Mi 9T is a LEGACY client and reads as one** - it is the
+right device for a `minClientVersion` row and the wrong one for anything measuring current
+behaviour. Both had `screen_off_timeout` raised to 1800000 (30 min), because a screen that sleeps
+mid-run ends the run. A debug build pointed at `dev.canari-emse.fr` has to be BUILT and INSTALLED;
+neither phone can reach the local stack without `adb reverse`, which is per-device and does not
+survive a replug.
 
 - [ ] a new rig root at `D:\Documents\Programmation\canari-harness\`, fresh Chrome profiles, fresh
       test accounts, target LOCAL
