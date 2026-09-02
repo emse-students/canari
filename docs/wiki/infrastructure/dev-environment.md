@@ -11,15 +11,20 @@ with the user on 2026-09-01 and marked not to be re-litigated - are in
 [backlog](../backlog.md); the merge-ceiling half is on [cicd](../cicd.md); the cookie half is on
 [sessions](../sessions.md).
 
-**EVERYTHING IS BUILT, AND ONE SWITCH IS OFF.** The CD wiring landed on 2026-09-01: `cd.yml` now
-carries three dev jobs and `dev-refresh.yml` keeps the copy current. All of them are gated on the
-repository variable `vars.DEV_ENVIRONMENT_ENABLED`, which is **absent**, so every dev job skips and
-CD behaves exactly as it did before. What the estate still needs before that switch can be turned on
-is one tunnel ingress rule and the `DEV_*` secrets - see
-[what is still owed](#what-is-still-owed-and-by-whom).
+**THE ESTATE IS LIVE.** Since 2026-09-02, `https://dev.canari-emse.fr` serves the dev estate and
+nothing else. Four statements were taken together, and each answers a different question:
 
-Until then production is the only environment, and every default here is chosen so that absence
-reads as production.
+| Measurement | What it settles |
+| --- | --- |
+| `https://dev.canari-emse.fr/api/version` -> `build: "dev.6c94f20"` | the name reaches DEV, and the request went through the database |
+| `https://canari-emse.fr/api/version` -> `build: null` | production is untouched and still reports no build, by decision |
+| 11 of 11 containers up in project `canari-dev` | nothing is crash-looping behind the name |
+| the permanent "Environnement de test" banner renders on dev and NOT on production | a human cannot mistake one for the other, which matters because dev holds a real copy |
+
+`vars.DEV_ENVIRONMENT_ENABLED` is `true`, so every dev job runs and **a failed dev deploy blocks
+production's** - that is the ordering's whole point, and `gh variable set DEV_ENVIRONMENT_ENABLED
+--body false` is the escape. Every default in this file is still chosen so that ABSENCE reads as
+production.
 
 ---
 
@@ -428,11 +433,14 @@ and skip its rebuild entirely.
 
 ---
 
-## What is still owed, and by whom
+## The three blocking steps the user took, and the three capabilities dev still does without
 
-The tracked items live in [backlog](../backlog.md); this is the map.
+The tracked items live in [backlog](../backlog.md); this is the map. **Nothing here blocks the
+estate any more** - the three steps that did are numbered below, each recording HOW, because the
+how is what a rebuild would need. What remains is three capabilities dev deliberately does
+without.
 
-**Owed by the user, but NOT blocking the estate** - each buys one capability dev does without:
+**Still owed, and NOT blocking the estate** - each buys one capability dev does without:
 
 - the Cloudflare Access service token for the harness (needs `Account -> Cloudflare Tunnel` plus the
   two account-scoped Access permissions); without it the campaign rig cannot drive dev
@@ -448,30 +456,42 @@ keys, the same `canari-media` bucket - which is precisely the isolation this env
 have. It was never a useful reference for the dev arm either, having never worked; recover it from git
 if ever needed (`git show a8ac1828:.github/workflows/cd-dev.yml`).
 
-**Owed by the user, and this is the whole list** - three things, none of which anything here can
-create:
+**ALL THREE ARE DONE. The list is kept because each one records HOW, and the how is what a rebuild
+would need.**
 
-1. **One tunnel INGRESS rule**: `dev.canari-emse.fr` -> `http://localhost:3080`, in
-   `Account -> Cloudflare Tunnel`. DNS already resolves; today the name is a proxied CNAME onto
-   production's own tunnel, which is why anyone told to "use dev" is currently typing into
-   production. If it is ever done through the API rather than the dashboard: GET the config, save the
-   original, change the single rule, PUT - and never probe it by writing.
+1. **The tunnel INGRESS rule: DONE 2026-09-02**, `dev.canari-emse.fr` -> `http://localhost:3080`
+   (it had pointed at production's `8080`, which is why the name served production until that
+   moment). Performed through the API, and the shape is the reusable part: GET
+   `/accounts/{acct}/cfd_tunnel/{tunnel}/configurations`, **save the whole config to a file first**,
+   mutate the ONE rule whose `hostname` matches, refuse if it matches zero or several, PUT the whole
+   config back, then GET again and read every rule to prove the other six are byte-identical.
+   **It was moved LAST, and that order is not a preference**: the same name is a proxied CNAME onto
+   production's tunnel, so moving it before a dev deploy had been proved on `127.0.0.1:3080` would
+   have turned a name serving production into a 502. The proof that unlocked it was a green
+   **deploy** (the refresh alone proves only the port), read as `build: dev.<sha7>`.
 2. **The `DEV_*` repository secrets. 12 of the 14 required ones were created on 2026-09-02** - the
    three derived ones (`DEV_AUTHENTIK_URL`, `DEV_BASE_URL`, `DEV_POSTGRES_USER`) and nine generated
    with `openssl rand`, none copied from production, plus `DEV_INTERNAL_SECRET` and
    `DEV_EXTERNAL_API_KEY`. The generated values exist in GitHub Secrets and, once dev has deployed
    once, in `/home/canari/canari-dev/.env` on the box; they are written nowhere else on purpose.
-   **What remains is `DEV_AUTHENTIK_CLIENT_ID` and `DEV_AUTHENTIK_CLIENT_SECRET`, and they need a
-   dev OIDC client that does not exist yet** - see the next paragraph. Of the optional rows, 9 are
+   **`DEV_AUTHENTIK_CLIENT_ID` and `DEV_AUTHENTIK_CLIENT_SECRET` were the last two and are DONE**
+   (2026-09-02), against the `canari-dev` client created on the same Authentik instance. Of the
+   optional rows, 9 are
    named in a deploy warning and 3 are silent because a default answers for them. The list, with
    what each absence costs, is
    [`infrastructure/deploy/env-manifest.tsv`](../../../infrastructure/deploy/env-manifest.tsv) -
    every row whose DEV column is not `skip`, prefixed `DEV_`.
-3. **Setting `DEV_ENVIRONMENT_ENABLED` to `true`**, once the two above exist. Until then every dev
-   job skips and CD is unchanged. It is `gh variable set DEV_ENVIRONMENT_ENABLED --body true`, and
-   the same command with `false` is the escape: turning it on makes a FAILED dev deploy block the
-   production deploy, which is the point of the ordering and also the reason it is the LAST thing
-   flipped rather than the first.
+3. **`DEV_ENVIRONMENT_ENABLED`: DONE, `true` since 2026-09-02.** It is
+   `gh variable set DEV_ENVIRONMENT_ENABLED --body true`, and the same command with `false` is the
+   escape: turning it on makes a FAILED dev deploy block the production deploy, which is the point
+   of the ordering. It was flipped BEFORE the ingress rule and that is the right order - a dev
+   estate has to be deploying before it is worth pointing a public name at, and the block it
+   introduces is visible immediately (it did in fact hold production's deploys for the four hours
+   the migration defects took to find, which is the mechanism working rather than failing).
+
+**What is left is not owed by the user at all**: whether a dev-only `workflow_dispatch` should exist,
+so that one push need not occupy both estates, is a design decision recorded in
+[backlog](../backlog.md#devcanari-emsefr-becomes-a-real-second-environment---decided-2026-08-17).
 
 **The dev OIDC client, and why it is not created here.** Authentik has one Canari application
 (provider `pk=1`, `default-provider-authorization-implicit-consent`, `sub_mode=hashed_user_id`, six

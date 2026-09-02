@@ -13,6 +13,21 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A vulnerability was reported by one switch and fixable by none.** A push printed `GitHub found 1
+  vulnerability on the default branch (1 moderate)`, which reads as "the sweep will take it".
+  Nothing would have. Dependabot has two independent halves: `vulnerability-alerts` was on - it is
+  what produced the line - while `automated-security-fixes` was `{"enabled":false}`, so no security
+  pull request is ever opened. The only other route was closed at the same time, `cargo`'s
+  `production-dependencies` group being capped at `update-types: ["patch"]` while the fix was a
+  minor (`serde_with` 3.19.0 -> 3.21.0, GHSA-7gcf-g7xr-8hxj, `frontend/src-tauri/Cargo.lock`).
+  **An advisory with no actor looks exactly like one being handled**, and the version-update
+  restriction had quietly become the security policy - security updates ignore it, but only while
+  the feature that issues them is enabled. `automated-security-fixes` is enabled. The lock was NOT
+  hand-patched: `cargo update -p serde_with --precise` also added `bs58` and dropped three
+  `windows-*` crates, a resolver-wide change on the one target this repository can only verify by
+  compiling, so the gated sweep ships the bump instead. Both switches, and the command that reads
+  each, are on [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them).
+
 - **The migration set is not a schema, and the deploy learned it by failing on an arbitrary file.**
   With the previous fix in place all 80 migrations were finally attempted on dev's virgin database,
   and the deploy died on the second one: `002_drop_group_member_left_at.sql` ->
@@ -155,6 +170,21 @@ which is also where every release up to and including v0.13.1 now lives.
   instead of `infrastructure/dev/*.sh`, is fixed in the same pass.
 
 ### Added
+
+- **`dev.canari-emse.fr` is a real second environment, and the switch is now on.** Since 2026-09-02
+  the name serves the dev estate and nothing else: `build: "dev.<sha7>"` from `/api/version`,
+  11 of 11 containers up in the compose project `canari-dev`, and the permanent "Environnement de
+  test" banner rendering there and not on production. Three things had to happen in this order and
+  the order is the interesting part. `vars.DEV_ENVIRONMENT_ENABLED` went to `true` FIRST, which
+  immediately made a failed dev deploy hold production's - it did, for the four hours the migration
+  defects took to find, which is the mechanism working. The database was then SEEDED rather than
+  migrated, by the refresh workflow, because the migration files are deltas over a schema the ORM
+  owns. **The tunnel ingress rule moved LAST**, from `http://localhost:8080` to
+  `http://localhost:3080`: the name is a proxied CNAME onto production's tunnel, so until a dev
+  deploy had been proved on `127.0.0.1:3080` over SSH, moving it would have turned a name serving
+  production into a 502. Until that move, anybody told to "use dev" was typing into production.
+  The estate, the seed order and the reusable shape of the ingress edit are on
+  [dev-environment](docs/wiki/infrastructure/dev-environment.md).
 
 - **`dev.canari-emse.fr` is deployed by the pipeline, behind one switch that is off.** `cd.yml` gained
   three jobs - `build-frontend-dev`, `build-frontend-images-dev`, `deploy-dev` - plus

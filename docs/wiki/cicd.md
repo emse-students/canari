@@ -326,6 +326,31 @@ Dependabot opens the pull requests (`.github/dependabot.yml`); `dependabot-auto-
 which of them merge, and `.github/scripts/dependabot-auto-merge.sh` is the decision itself. The
 script is the ONE implementation - the workflow calls it from two triggers and adds nothing.
 
+### Security updates are a SECOND switch, and neither `dependabot.yml` nor this page showed it
+
+Dependabot has two independent halves, and only one of them lives in a file anybody reads.
+`repos/{owner}/{repo}/vulnerability-alerts` decides whether an advisory is REPORTED; a separate
+`repos/{owner}/{repo}/automated-security-fixes` decides whether one is ever FIXED by a pull request.
+Until 2026-09-02 the first was on and the second was `{"enabled":false}`, so a push printing
+`GitHub found 1 vulnerability on the default branch` was announcing an advisory with no actor at all.
+Both are read with one call each:
+
+```sh
+gh api repos/emse-students/canari/vulnerability-alerts    # 204 = on, 404 = off
+gh api repos/emse-students/canari/automated-security-fixes
+```
+
+**And the two halves interact in the direction nobody expects.** A security pull request ignores the
+`update-types` restrictions in `dependabot.yml` - but only while the feature that opens it is
+enabled. With it disabled, a conservative version-update rule silently BECOMES the security policy:
+`cargo`'s `production-dependencies` group is capped at `update-types: ["patch"]`, so the minor bump
+that carried GHSA-7gcf-g7xr-8hxj (`serde_with` 3.19.0 -> 3.21.0, in `frontend/src-tauri/Cargo.lock`)
+was unreachable by every route at once. Check both switches, per ecosystem, and do not hand-patch the
+lock instead - `cargo update -p serde_with --precise 3.21.0` also added `bs58` and dropped three
+`windows-*` crates, a resolver-wide change on the one target this repository can only verify by
+compiling. The ceiling that ships the fix is the mechanism; the rule is in
+[durable-rules](durable-rules.md).
+
 ### What it refuses, and why it is not a semver rule
 
 **A ceiling on an automatic merge is a statement about your tests, never about the version number.**

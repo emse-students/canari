@@ -97,6 +97,15 @@ The PostgreSQL database (volume `miconnect_database`) contains all Authentik con
 
 Restore: `./infrastructure/backup/restore.sh --latest-from-mitv --yes` (restores `authentik_db` alongside Canari data).
 
+**THE USER COUNT IS A LIVE POPULATION AND IS NEVER EVIDENCE OF ANYTHING.** Two readings taken hours
+apart on 2026-09-02 gave 465 and then 511, which was chased as a discrepancy after two test accounts
+were created; a third gave 517. There is **no LDAP source** (`LDAPSource.objects.all()` is empty) -
+real people are enrolling continuously, several in the hour that was measured. So a count is a
+snapshot of something moving: compare identities, never totals, and if a total must be quoted, quote
+the instant with it. Every account is `type=internal` (`external` and `service_account` are both
+zero, with one `internal_service_account`), which is why the campaign's dedicated accounts had to be
+`internal` too - see [cross-client-campaign-resume](../cross-client-campaign-resume.md).
+
 ## See also
 
 - [`services/core-service.md`](../services/core-service.md) — OIDC callback, JWT issuance, auth verification

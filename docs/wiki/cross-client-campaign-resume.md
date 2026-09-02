@@ -46,7 +46,10 @@ deploy is in flight".
 **And if it is pointed at dev, one thing has to move with it.** `dev-refresh.yml` re-copies
 production into dev on Mondays at 04:00 UTC and on demand - which would wipe a campaign's fixtures
 mid-run. On dev it needs the same treatment section 3 gives the dependency sweep:
-`gh workflow disable "Refresh dev data"` before the session.
+`gh workflow disable dev-refresh.yml` before the session, `enable` after it. **By FILENAME, not by
+name**: the workflow is called `Refresh dev.canari-emse.fr from production`, and an earlier draft of
+this page told the operator to disable `"Refresh dev data"`, which matches nothing and fails - an
+operator instruction that cannot be pasted is not an instruction.
 
 ---
 
@@ -55,7 +58,7 @@ mid-run. On dev it needs the same treatment section 3 gives the dependency sweep
 | Change | Effect on a run |
 |---|---|
 | A push to `main` now deploys **dev first, then production** | The mutual-exclusion rule is unchanged, but the window is LONGER: one push occupies the pipeline for both estates. |
-| A failed dev deploy **blocks** the production deploy | `main` can be ahead of what production is serving. **Read the build from `/api/version`, never from `git log`** - a verdict stamped with a commit production never received is a verdict about nothing. |
+| A failed dev deploy **blocks** the production deploy | `main` can be ahead of what production is serving, so **`git log` never says what production is running**. `/api/version` gives `version` and `minClientVersion`, which is what a verdict may cite - but NOT the commit: production renders no `build` by decision (a non-null `build` means you are talking to DEV). To learn which commit production actually received, read the `prod-deployed` tag or the last green `Deploy to Production Server`, never the local branch. |
 | `Dependabot auto-merge` sweeps **hourly** and after every CD run, and dispatches `cd.yml` itself | **This is the new hazard.** Production can be redeployed mid-run by a merge nobody performed. See section 3. |
 | The weekly dev refresh, Mondays 04:00 UTC | Stops and restarts DEV's containers only. It touches nothing production serves, so it can never void a row - named here so nobody blames it for one. |
 | Push credentials are now permitted on dev | Irrelevant to the campaign today. It matters only once a dev-built mobile app exists, which is phase 2. |

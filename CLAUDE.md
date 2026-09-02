@@ -249,18 +249,15 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md).**
     `dev.canari-emse.fr` at production's `8080`** - it moves to `3080` only once a **DEPLOY** (not
     just the refresh, which has already proved the port) comes out green, since moving it earlier
     turns a name serving production into a 502. **The proof to read is `build` in `/api/version`**:
-    production renders none by decision, so a non-null build is dev and nothing else - a discriminator
-    that did not work until 2026-09-02, when it was found rendered into `.env` and passed to no
-    container. **And `DEV_ENVIRONMENT_ENABLED=true` means a broken dev deploy now BLOCKS
-    production's**, by design; the escape is `gh variable set DEV_ENVIRONMENT_ENABLED --body false`. Dev is a NET, not a sandbox: one trigger deploys both estates, and whether a
-    dev-only dispatch should exist is a decision owed to the USER in
-    [backlog](docs/wiki/backlog.md#devcanari-emsefr-becomes-a-real-second-environment---decided-2026-08-17). **THREE CORRECTIONS THAT MUST NOT BE
-    UNDONE:** a green dev deploy does NOT retire the ceiling arm the 2026-09-01 outage was missing -
-    the copy is logical, so only `in_place_upgrade` on a binary copy of prod's `PGDATA` lifts
-    anything; **`+dev.<sha7>` may never enter `version`**, which clients turn into a release tag and
-    so into a 404 download URL; and **prod's own deploy job stays on its inlined shell** until dev has
-    exercised `infrastructure/deploy/deploy-environment.sh` - one implementation, proven before it is
-    imposed. `cd-dev.yml` is DELETED (`a8ac1828` holds it).
+    production renders none by decision, so a non-null build is dev and nothing else. **And
+    `DEV_ENVIRONMENT_ENABLED=true` means a broken dev deploy now BLOCKS production's**, by design;
+    the escape is `gh variable set DEV_ENVIRONMENT_ENABLED --body false`. Dev is a NET, not a
+    sandbox: one trigger deploys both estates, and whether a dev-only dispatch should exist is a
+    decision owed to the USER in [backlog](docs/wiki/backlog.md#devcanari-emsefr-becomes-a-real-second-environment---decided-2026-08-17).
+    **THREE CORRECTIONS THAT MUST NOT BE UNDONE are on that wiki page, not here** - the logical copy
+    retiring no PG ceiling arm (§4), `+dev.<sha7>` never entering `version` (§5), and prod's deploy
+    job staying on its inlined shell until dev has exercised the script (§8). `cd-dev.yml` is DELETED
+    (`a8ac1828` holds it).
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 

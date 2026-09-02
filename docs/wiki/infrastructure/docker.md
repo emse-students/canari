@@ -81,10 +81,14 @@ them - `GARAGE_DEFAULT_ACCESS_KEY` in `garage` against `MINIO_ACCESS_KEY` in `me
 SAME - so collapsing the mirror is a rename and not a credential change. Two secrets were genuinely
 stale: `MINIO_ROOT_USER` and `MINIO_ROOT_PASSWORD`, which `cd-dev.yml` still required and wrote for
 a service removed on 2026-08-14, and which nothing in `docker-compose.dev.yml` ever read. Both are
-gone from the workflow; **delete the two repository secrets once a dev deploy has answered**. That
-gate is GONE: `cd-dev.yml` was deleted on 2026-09-01
-([dev-environment](dev-environment.md#what-is-still-owed-and-by-whom)), so no workflow names those
-two secrets any more and they can be deleted unconditionally. One click, owed to the user.
+gone from the workflow, and **the two repository secrets are gone too** - verified 2026-09-02: 69
+repository secrets, none matching `MINIO` (`gh secret list --json name`). Nothing in
+`.github/workflows/`, `infrastructure/deploy/env-manifest.tsv` or `.env.example` names them either;
+the only surviving occurrences are a comment in `docker-compose.prod.yml` and two HARDCODED literals
+in `ci.yml`'s boot probe (`MINIO_ROOT_USER=boot-probe`), which read no secret. **This paragraph said
+"one click, owed to the user" until that was checked**, which would have sent the user to do
+something already done - the reason a doc must name the command that settles it rather than the
+intention.
 
 `.env` is regenerated from `.env.example` on every deploy and drops keys that are no longer in it,
 so the stale `MINIO_*` lines on the prod host disappear on the next deploy rather than needing a
