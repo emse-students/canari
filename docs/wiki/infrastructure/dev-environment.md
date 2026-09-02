@@ -69,6 +69,18 @@ so reading the file alone gives `80`. And production binds it on every interface
 to `127.0.0.1`; dev is the stricter of the two, deliberately, since nothing but the tunnel has any
 business reaching it.
 
+**ALL THREE ARE `computed` MANIFEST ROWS, AND THAT IS THE ONLY DISPOSITION THAT WORKS HERE.** The
+first bootstrap could not bind any of them, because `cd.yml` had set them in dev's `.env` with an
+"add if missing" default - `grep -q '^FRONTEND_HOST_PORT=' .env || echo FRONTEND_HOST_PORT=3080` -
+which can never fire: `render-env.sh` COPIES `infrastructure/.env.example` and then upserts the
+manifest rows over it, and the template declares all three keys with production's values. Dev
+therefore asked for `8080`, `19010` and `19011`, the ports production's own containers hold on the
+machine both estates share. A `computed` row runs inside the render, before the template can decide,
+so it is the only place a per-estate port can be set. The test that covers it renders BOTH
+environments and asserts the RENDERED value - the previous one compared the four DECLARATIONS to
+each other and they agreed, unanimously and wrongly, the deciding value living in a fifth file none
+of them was compared against.
+
 **A CONTAINER-SIDE ADDRESS IS NEVER OFFSET.** The version of the dev compose file replaced on
 2026-09-01 had never worked, for exactly this reason: it applied the host offsets to the container
 addresses too - `redis://redis:6380`, `postgres://...@postgres:5433/auth_db`,
@@ -213,7 +225,7 @@ and `build` is null - the correct behaviour for production, the only environment
 | | state | why |
 |---|---|---|
 | Stripe / Lydia | no credentials, identifiers stripped | user, 2026-09-01: dev will not reach Stripe for now |
-| Push notifications | PERMITTED, no dev credentials yet | not a decision, just an absence: both halves are `warn`, so dev sends nothing until a dev FCM project and a dev APNs key exist |
+| Push notifications | PERMITTED, no dev credentials yet | not a decision, just an absence: both halves are `warn`, so dev sends nothing until a credential is given. Nothing has to be CREATED for it - see below |
 | Mobile builds | phase 2 | a dev keystore and a dev bundle identifier are prerequisites, and they are the real blocker - not the push credentials |
 | A `dev` branch | none, by decision | dev deploys from `main`, so what is on dev is what is on `main` |
 
@@ -230,6 +242,21 @@ rather than locking either value, so the next person to move one has to move bot
 that believes it is talking to production. Stripe charges a card, Lydia moves money, `CERCLE_API_KEY`
 makes another estate answer as though production asked. Push reaches devices this estate does not
 know about, which is a different sentence.
+
+**AND NOTHING HAS TO BE CREATED AT FIREBASE FOR DEV** (asked by the user, 2026-09-02). There is no
+web push in this app: the only file under `frontend/src` that mentions Firebase is
+`androidFcmManifest.test.ts`, a manifest assertion - no VAPID key, no FCM `getToken()`, no push
+handler in a service worker. Push exists exclusively in the native Tauri builds, and mobile is
+phase 2, so on the web-only dev estate a Firebase project would be dead weight;
+`FIREBASE_SERVICE_ACCOUNT_JSON` is `warn` for both estates and is not among the 14 `required`, which
+is why the first dev deploy came up without it. **If push is ever wanted on dev, the blocker is not
+Firebase but the IDENTIFIER**: the app has exactly one bundle id, `fr.emse.canari`, in
+`tauri.conf.json`, the Android `applicationId`/`namespace` and both iOS targets, so a dev build
+would REPLACE production's app on a device rather than sit beside it - that, not a project
+registration, is the expensive part. Production's own credential could then be handed to dev as
+`DEV_FIREBASE_SERVICE_ACCOUNT_JSON` without risk, for the same reason the APNs rows are `warn`: the
+copy truncates `push_token`, so dev has no production device to reach. An APNs auth key is issued
+per Apple TEAM rather than per app, so it needs no new key either.
 
 ---
 

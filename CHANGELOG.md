@@ -13,6 +13,34 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **The dev estate asked for production's host ports, and the override written to prevent it could
+  never fire.** `cd.yml` appended three defaults to dev's rendered `.env` in the shape
+  `grep -q '^FRONTEND_HOST_PORT=' .env || echo FRONTEND_HOST_PORT=3080` - an "add if missing"
+  guard for a key that is never missing, because `render-env.sh` builds `.env` by COPYING
+  `infrastructure/.env.example` and then upserting the manifest rows over it, and the template
+  declares all three. So dev inherited `8080`, `19010` and `19011`, the exact ports production's
+  `frontend` and `garage` containers already hold on the one machine both estates share, and the
+  first bootstrap could not bind them. The three are now `computed` manifest rows, which is the
+  only disposition that runs BEFORE the template can decide. **The test that was supposed to cover
+  this asserted the wrong thing** and is the more useful half of the story: it compared four
+  declarations - `docker-compose.dev.yml`, `deploy-environment.sh`, `dev-refresh.yml` and the
+  workflow - to EACH OTHER, and they agreed, unanimously and wrongly, because the value that
+  actually reached the container came from a fifth file none of them was compared against. It now
+  renders both environments and asserts the OUTCOME: that the two estates never produce the same
+  port, that dev's rendered value differs from the template's, and that every declaration matches
+  what the render produced. Mutating `compute_frontend_host_port` to emit `8080` fails three of the
+  36 assertions.
+
+- **A dev deploy accepted a skipped frontend build as permission to proceed, and shipped a
+  reference to an image that was never pushed.** `deploy-dev` listed neither `build-frontend-dev`
+  nor `build-frontend-images-dev` in its `needs:`, so when the frontend build failed the deploy ran
+  anyway and pointed the stack at `frontend-ssr:dev`. The trap is that **GitHub reports a job whose
+  dependency failed as `skipped`, not as `failed`** - and every gate here was written as
+  `result == 'success' || result == 'skipped'`, because a skip legitimately means "this service did
+  not change". Those two states are indistinguishable in the status alone, so the disjunction has to
+  be paired with a `needs:` edge that makes the upstream failure visible at all; without the edge
+  there is no result to read and the condition is vacuously true.
+
 - **Nothing stopped two production deploys from running at once, and on 2026-09-02 three did.**
   `cd.yml` declared no `concurrency:` group, so three runs were in flight against
   `/home/canari/canari` simultaneously - each able to `git reset --hard` and `docker compose up`

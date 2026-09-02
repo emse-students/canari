@@ -43,11 +43,21 @@ refuses to proceed if it failed**. That order is the point of having a second en
 that will break production breaks dev first, on a copy of production's data, while production is still
 serving.
 
-All of it is gated on the repository variable `vars.DEV_ENVIRONMENT_ENABLED`, which is **absent
-today**, so every dev job skips and CD behaves exactly as before. It is a `vars` and not a `secrets`
-entry so its value shows in the run log — a silent gate is one nobody can debug. Setting it to
-anything but `true` is also the escape hatch if a broken dev estate ever holds production's releases
-hostage.
+All of it is gated on the repository variable `vars.DEV_ENVIRONMENT_ENABLED`, **`true` since
+2026-09-02**. It is a `vars` and not a `secrets` entry so its value shows in the run log — a silent
+gate is one nobody can debug. Setting it to anything but `true` is also the escape hatch if a broken
+dev estate ever holds production's releases hostage, and that is not hypothetical: with the switch
+on, dev's failure is production's block, which is the whole point and also the thing to remember at
+2 a.m.
+
+**A skip is not a success, and `deploy-dev` learned that the hard way.** Its `if:` accepted
+`result == 'skipped'` for the jobs it listed — correct in itself, since a skip legitimately means
+"this service did not change" — but `build-frontend-dev` was not in its `needs:` at all, so a FAILED
+frontend build let the deploy run and point the stack at `frontend-ssr:dev`, an image never pushed.
+GitHub reports a job whose dependency failed as **skipped**, not failed, so the two states are
+indistinguishable from the status alone; what makes the disjunction honest is the `needs:` edge,
+because without it there is no result to read and the condition is vacuously true. Both frontend
+jobs are now in `needs:` and both results are checked.
 
 **The deploy body is two scripts, not inlined YAML.** `infrastructure/deploy/render-env.sh` resolves
 every `.env` key from `infrastructure/deploy/env-manifest.tsv` and refuses to write a partial file;

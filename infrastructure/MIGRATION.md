@@ -228,10 +228,14 @@ from the same build; the CD rebuilds them together for exactly that reason.
 
 **Nothing here is required to bring production up, and on a fresh host there is nothing to do.** The
 second estate is optional. Since 2026-09-01 the pipeline that deploys it exists - three jobs in
-`cd.yml` plus `dev-refresh.yml` - but all of them are gated on the repository variable
-`DEV_ENVIRONMENT_ENABLED`, which is absent, so they skip. It is recorded here because turning that
-switch on is a bootstrap concern, and because its prerequisites are credentials only a human can
-create.
+`cd.yml` plus `dev-refresh.yml` - all gated on the repository variable `DEV_ENVIRONMENT_ENABLED`.
+**On THIS repository that variable is `true` since 2026-09-02, with all 14 `required` `DEV_*`
+secrets present and the `canari-dev` Authentik client created; on a fresh host it is absent and
+every dev job skips.** It is recorded here because turning that switch on is a bootstrap concern,
+and because its prerequisites are credentials only a human can create. **Two traps that cost a
+bootstrap each:** `gh secret set --body -` stores a literal dash instead of reading stdin (use
+`printf '%s' "$v" | gh secret set NAME`), and the ingress rule below is the LAST step, never the
+first - pointed at `3080` before dev answers there, it 502s a name that was serving production.
 
 How it is put together, what its data copy strips, and why a green dev deploy is NOT evidence for a
 PostgreSQL major upgrade are on

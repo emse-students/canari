@@ -31,13 +31,21 @@ rend cette regle urgente independamment du reste.
 
 ### 1.2 Les secrets `DEV_*`
 
-> **Etat au 2026-09-02 : 12 des 14 `required` sont deja crees.** Les trois deduits
-> (`DEV_AUTHENTIK_URL`, `DEV_BASE_URL`, `DEV_POSTGRES_USER`) et neuf tires a `openssl rand`, aucun
-> recopie de la production, plus `DEV_INTERNAL_SECRET` et `DEV_EXTERNAL_API_KEY`. Les valeurs
-> generees n'existent que dans les secrets GitHub et, apres le premier deploiement, dans
-> `/home/canari/canari-dev/.env` sur la machine - nulle part ailleurs, volontairement.
-> **Il reste `DEV_AUTHENTIK_CLIENT_ID` et `DEV_AUTHENTIK_CLIENT_SECRET`**, qui sortent du client
-> OIDC de dev (voir la fin de cette section).
+> **Etat au 2026-09-02 : les 14 `required` existent, tu n'as rien a creer ici.** Trois sont deduits
+> (`DEV_AUTHENTIK_URL`, `DEV_BASE_URL`, `DEV_POSTGRES_USER`), neuf tires a `openssl rand`, aucun
+> recopie de la production, et les deux derniers (`DEV_AUTHENTIK_CLIENT_ID`,
+> `DEV_AUTHENTIK_CLIENT_SECRET`) sortent du client OIDC `canari-dev` cree sur Authentik le meme
+> jour. Les valeurs generees n'existent que dans les secrets GitHub et, apres le premier
+> deploiement, dans `/home/canari/canari-dev/.env` sur la machine - nulle part ailleurs,
+> volontairement.
+>
+> **Les douze premiers ont du etre reecrits le 2026-09-02, parce qu'ils contenaient tous la valeur
+> `-` au lieu de la vraie.** `gh secret set NOM --body -` ne lit PAS l'entree standard : il stocke
+> le tiret litteralement (`--body` prend la valeur en argument, et c'est l'absence de `--body` qui
+> declenche la lecture de stdin). Rien ne le signale, et le symptome est spectaculaire ailleurs :
+> GitHub masque chaque occurrence de la valeur d'un secret dans les logs, donc un secret valant `-`
+> a fait apparaitre `app***shell` et `.svelte***kit` dans le build de dev. La forme correcte est
+> `printf '%s' "$valeur" | gh secret set NOM`, sans `--body`.
 
 Dans **Settings -> Secrets and variables -> Actions -> Secrets**.
 

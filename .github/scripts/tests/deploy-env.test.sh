@@ -162,44 +162,77 @@ if [ -f "$CD" ]; then
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-printf "\nthe dev estate's host port agrees everywhere it is named\n"
+printf '\nthe two estates never publish the same host port\n'
 # ═════════════════════════════════════════════════════════════════════════════
 
-# ONE NUMBER, FOUR FILES, AND NOTHING MADE THEM AGREE. `3080` is the port the cloudflared tunnel's
-# ingress rule points at, and it appears as the compose file's default, as this deploy script's
-# fallback, as the value CD writes into dev's `.env`, and as the URL the refresh workflow probes after
-# a restore. Change one and the estate does not break loudly: the compose file publishes one port
-# while the health check polls another, so the deploy fails with a timeout that blames the
-# application. Nothing here can tell whether the TUNNEL agrees - that lives in Cloudflare's dashboard
-# - but the four in this repository can be held against each other.
-dev_ports=""
-add_port() {
-  local label="$1" value="$2"
-  if [ -z "$value" ]; then
-    fail "could not read the dev host port from $label"
-  else
-    dev_ports="$dev_ports $label=$value"
-  fi
+# THIS SECTION USED TO ASSERT THE WRONG THING, AND THE BUG IT MISSED SHIPPED. It read the four files
+# that NAME the dev frontend port and confirmed they all said 3080. They did. The value that actually
+# reached dev's .env came from a fifth file none of them was compared against -
+# `infrastructure/.env.example`, which declares production's 8080 - because the override in cd.yml
+# was written `grep -q '^KEY=' .env || echo KEY=3080`, and the key is never absent from a file
+# rendered FROM that template. Four declarations agreeing is not the port the estate gets.
+#
+# So this asks the RENDERED .env instead. Both estates live on one machine and a published port is
+# machine-wide, so the property is not "dev says 3080" - it is "these two never collide", which is
+# true or false about the outcome and cannot be satisfied by a comment.
+render prod "$TMP/ports-prod.env" $(prod_env) >"$TMP/ports-prod.log" 2>&1 || true
+render dev "$TMP/ports-dev.env" $(dev_env) $(prod_env) >"$TMP/ports-dev.log" 2>&1 || true
+
+port_of() {
+  # $1 = rendered file, $2 = key
+  grep -E "^$2=" "$1" 2>/dev/null | tail -1 | cut -d= -f2- || true
 }
 
-add_port "docker-compose.dev.yml" \
+for key in FRONTEND_HOST_PORT GARAGE_API_HOST_PORT GARAGE_ADMIN_HOST_PORT; do
+  pp="$(port_of "$TMP/ports-prod.env" "$key")"
+  dp="$(port_of "$TMP/ports-dev.env" "$key")"
+  if [ -z "$pp" ] || [ -z "$dp" ]; then
+    fail "$key is missing from a rendered .env (prod='$pp' dev='$dp') - nothing decides it per environment"
+  elif [ "$pp" = "$dp" ]; then
+    fail "$key renders to $pp for BOTH estates - they share one machine, so one of them cannot bind it"
+  else
+    pass "$key differs between the estates (prod $pp, dev $dp)"
+  fi
+done
+
+# THE TEMPLATE MUST NOT BE WHAT DECIDES, which is the defect above stated as a property: dev's
+# rendered value has to differ from what `.env.example` says, because the template carries
+# production's numbers and dev's file is built from it.
+tmpl_front="$(grep -E '^FRONTEND_HOST_PORT=' infrastructure/.env.example | tail -1 | cut -d= -f2- || true)"
+dev_front="$(port_of "$TMP/ports-dev.env" FRONTEND_HOST_PORT)"
+if [ -n "$tmpl_front" ] && [ "$tmpl_front" = "$dev_front" ]; then
+  fail "dev rendered FRONTEND_HOST_PORT=$dev_front, exactly what .env.example says - the template is deciding, so nothing overrode it for dev"
+else
+  pass "the template's FRONTEND_HOST_PORT ($tmpl_front) does not decide dev's ($dev_front)"
+fi
+
+# AND EVERY DECLARATION IS HELD AGAINST THE RENDERED VALUE, not against the other declarations. The
+# compose default and the refresh probe are what break if dev's port moves, and comparing them to the
+# OUTCOME is precisely what the old version of this section failed to do. Nothing here can tell
+# whether the cloudflared tunnel agrees - that lives in Cloudflare's configuration.
+declared=""
+add_declared() {
+  if [ -z "$2" ]; then fail "could not read the dev host port from $1"; else declared="$declared $1=$2"; fi
+}
+add_declared "docker-compose.dev.yml" \
   "$(grep -oE '\$\{FRONTEND_HOST_PORT:-[0-9]+\}' infrastructure/docker-compose.dev.yml | head -1 |
     grep -oE '[0-9]+' || true)"
-add_port "deploy-environment.sh" \
+add_declared "deploy-environment.sh" \
   "$(grep -A4 '^dev)' infrastructure/deploy/deploy-environment.sh |
     grep -oE 'DEFAULT_FRONTEND_PORT=[0-9]+' | grep -oE '[0-9]+' || true)"
-add_port "cd.yml" \
-  "$(grep -oE 'FRONTEND_HOST_PORT=[0-9]+' "$CD" | head -1 | grep -oE '[0-9]+' || true)"
-add_port "dev-refresh.yml" \
+add_declared "dev-refresh.yml" \
   "$(grep -oE '127\.0\.0\.1:[0-9]+/api/version' .github/workflows/dev-refresh.yml | head -1 |
     grep -oE ':[0-9]+' | tr -d ':' || true)"
 
+disagree=""
 # shellcheck disable=SC2086 # deliberate word splitting over the accumulated label=value pairs
-distinct="$(printf '%s\n' $dev_ports | cut -d= -f2 | sort -u | wc -l | tr -d ' ')"
-if [ "$distinct" = "1" ]; then
-  pass "all four name the same port:$dev_ports"
+for pair in $declared; do
+  case "$pair" in *"=$dev_front") ;; *) disagree="$disagree $pair" ;; esac
+done
+if [ -n "$disagree" ]; then
+  fail "these name a dev port other than the $dev_front the render produces:$disagree"
 else
-  fail "the dev host port disagrees between files:$dev_ports"
+  pass "every declaration agrees with the RENDERED dev port ($dev_front):$declared"
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════

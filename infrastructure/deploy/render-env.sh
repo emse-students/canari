@@ -141,6 +141,30 @@ transform_value() {
   esac
 }
 
+# ── The published host ports ──────────────────────────────────────────────────
+# THREE PORTS THAT MUST DIFFER BETWEEN THE TWO ESTATES, because both run on ONE machine and a port
+# is machine-wide. They were previously written by `cd.yml` in the shape
+# `grep -q '^KEY=' .env || echo KEY=<dev value>`, which never fired once: `render-env.sh` builds
+# .env from `infrastructure/.env.example`, and the template DECLARES all three - 8080, 19010, 19011,
+# production's own numbers. The key was never missing, so the dev override was never applied, and
+# dev's rendered .env asked for production's frontend port. The estate would have refused to start
+# on "port is already allocated" - or, on a restart race, taken production's traffic.
+#
+# The lesson is the shape, not the numbers: an "add it if absent" default is only a default when the
+# key can actually be absent. Computed here instead, so ONE place decides and `render-env.sh` upserts
+# it over whatever the template said.
+compute_frontend_host_port() {
+  if [ "$ENVIRONMENT" = "dev" ]; then printf '3080'; else printf '8080'; fi
+}
+
+# Garage's S3 API and admin ports. Published on 127.0.0.1 only, on both estates, and offset for dev.
+compute_garage_api_host_port() {
+  if [ "$ENVIRONMENT" = "dev" ]; then printf '19100'; else printf '19010'; fi
+}
+compute_garage_admin_host_port() {
+  if [ "$ENVIRONMENT" = "dev" ]; then printf '19101'; else printf '19011'; fi
+}
+
 # ── Pass 1: resolve everything, and fail before writing anything ─────────────
 # Two passes deliberately. A required secret discovered missing halfway through would otherwise
 # leave .env regenerated from the template with some keys upserted and the rest at their template
@@ -171,6 +195,9 @@ while IFS=$'\t' read -r key prod dev source note; do
     case "$key" in
     ALLOW_ORIGIN) value="$(compute_allow_origin "$FRONTEND_URL_VALUE")" ;;
     DEPLOY_BUILD) value="$BUILD" ;;
+    FRONTEND_HOST_PORT) value="$(compute_frontend_host_port)" ;;
+    GARAGE_API_HOST_PORT) value="$(compute_garage_api_host_port)" ;;
+    GARAGE_ADMIN_HOST_PORT) value="$(compute_garage_admin_host_port)" ;;
     *)
       printf 'render-env: %s is marked computed and nothing computes it\n' "$key" >&2
       exit 2

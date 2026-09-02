@@ -2801,13 +2801,16 @@ that reason is what a future session must argue with rather than the choice.
 > two host ports, the copy and its three strips, the declared version gap, the two variables that
 > identify a dev deployment - is on
 > [dev-environment](infrastructure/dev-environment.md), the only copy.** **ALL EIGHT STEPS HAVE
-> SHIPPED** (2026-09-01), the CD wiring included. What is left is owed by the USER and is three
-> things: the tunnel ingress rule to `3080`, the `DEV_*` secrets, and setting
-> `vars.DEV_ENVIRONMENT_ENABLED` to `true` - until which every dev job skips and CD is unchanged.
-> **12 of the 14 required secrets were created on 2026-09-02**; the two that remain
-> (`DEV_AUTHENTIK_CLIENT_ID`, `DEV_AUTHENTIK_CLIENT_SECRET`) need a dev OIDC client that does not
-> exist, and writing it into the identity provider's database is not something an agent performs
-> unattended. That page's closing section is the map.
+> SHIPPED** (2026-09-01), the CD wiring included. **ALL FOURTEEN required secrets exist, the
+> `canari-dev` OIDC client is created on Authentik (`pk=10`), and `DEV_ENVIRONMENT_ENABLED` is
+> `true`** - all done 2026-09-02, the Authentik write only after the user said
+> *"Je valide tes requetes manuellement, vas-y"*, an unattended agent having been refused it first
+> and correctly. **ONE THING IS LEFT AND IT IS THE LAST STEP BY DESIGN: the tunnel INGRESS rule for
+> `dev.canari-emse.fr`, still pointing at `http://localhost:8080`** - production's frontend. Moved
+> before dev answers on `127.0.0.1:3080` it turns a name that serves production into a 502.
+> **A warning about the secrets themselves:** twelve were written with `gh secret set --body -`,
+> which stores a literal dash rather than reading stdin, and all twelve had to be rewritten - the
+> rule is in [durable-rules](durable-rules.md). That page's closing section is the map.
 
 **OPEN, AND OWED TO THE USER AS A DECISION: there is no way to deploy dev WITHOUT deploying
 production** (raised by the user 2026-09-02: *"on peut toujours push sur dev non ?"*). There is one

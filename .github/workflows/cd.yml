@@ -663,7 +663,15 @@ jobs:
   deploy-dev:
     name: Deploy to dev.canari-emse.fr
     runs-on: self-hosted
-    needs: [run-ci, detect-changed-services, build-docker-images, build-frontend-images-dev]
+    needs:
+      [run-ci, detect-changed-services, build-docker-images, build-frontend-dev, build-frontend-images-dev]
+    # `build-frontend-dev` IS IN THIS LIST BECAUSE ITS FAILURE WAS LAUNDERED INTO A SKIP, measured
+    # 2026-09-02. A `skipped` image job means "the frontend did not change, the existing `:dev`
+    # images stand" - but it ALSO means "the build that feeds me failed", because a job whose
+    # dependency fails is reported skipped, not failed. Accepting the skip without asking WHY, this
+    # job deployed an estate referencing `frontend-ssr:dev`, an image that had never been pushed,
+    # and the pull failed at the registry instead of the gate. A status that cannot tell a refusal
+    # from a failure to run must not be the only thing consulted: the builder's own result is.
     if: |
       always() &&
       vars.DEV_ENVIRONMENT_ENABLED == 'true' &&
@@ -672,6 +680,7 @@ jobs:
       (needs.run-ci.result == 'success' || needs.run-ci.result == 'skipped') &&
       needs.detect-changed-services.result == 'success' &&
       (needs.build-docker-images.result == 'success' || needs.build-docker-images.result == 'skipped') &&
+      (needs.build-frontend-dev.result == 'success' || needs.build-frontend-dev.result == 'skipped') &&
       (needs.build-frontend-images-dev.result == 'success' || needs.build-frontend-images-dev.result == 'skipped')
     permissions:
       contents: write
@@ -749,15 +758,12 @@ jobs:
             --build "dev.$(git rev-parse --short=7 HEAD)" \
             --out infrastructure/.env
 
-          # The host port the tunnel's ingress rule points at. It is not a secret and not a
-          # per-deployment decision, so it is written here rather than carried as one - the compose
-          # file's own default is the same number, and this makes the two agree in writing.
-          if ! grep -q '^FRONTEND_HOST_PORT=' infrastructure/.env; then
-            echo "FRONTEND_HOST_PORT=3080" >> infrastructure/.env
-          fi
-          # The two garage tooling ports, offset from production's because these ARE published.
-          grep -q '^GARAGE_API_HOST_PORT=' infrastructure/.env || echo "GARAGE_API_HOST_PORT=19100" >> infrastructure/.env
-          grep -q '^GARAGE_ADMIN_HOST_PORT=' infrastructure/.env || echo "GARAGE_ADMIN_HOST_PORT=19101" >> infrastructure/.env
+          # THE THREE HOST PORTS ARE NOT WRITTEN HERE ANY MORE, and the reason is worth keeping.
+          # They used to be, in the shape `grep -q '^KEY=' .env || echo KEY=<dev value>`, and that
+          # never fired once: render-env.sh builds .env from `infrastructure/.env.example`, which
+          # DECLARES all three at production's numbers. The key was never absent, so the dev override
+          # was never applied and dev's .env asked for production's port 8080. They are `computed`
+          # manifest rows now, upserted by render-env.sh, so one place decides per environment.
 
       # `TAG=latest` for the shared backend images, `FRONTEND_TAG=dev` for the two that are dev's
       # own. `--pull-services` carries the backend services the detector saw change, minus the two

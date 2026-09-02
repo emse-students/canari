@@ -84,3 +84,6 @@ STRIPE_WEBHOOK_SECRET	warn	skip	secret:STRIPE_WEBHOOK_SECRET	Stripe webhooks are
 LYDIA_PROVIDER_TOKEN	warn	skip	secret:LYDIA_PROVIDER_TOKEN	Lydia payments are unavailable if selected as the active provider
 LYDIA_PROVIDER_PRIVATE_TOKEN	warn	skip	secret:LYDIA_PROVIDER_PRIVATE_TOKEN	Lydia payments are unavailable if selected as the active provider
 DEPLOY_BUILD	skip	computed	computed	the /api/version build field is null, so two dev deployments of one release are indistinguishable
+FRONTEND_HOST_PORT	computed	computed	computed	the host port this estate's nginx publishes - 8080 prod, 3080 dev; both estates share one machine so they may never agree
+GARAGE_API_HOST_PORT	computed	computed	computed	garage's S3 API on 127.0.0.1 - 19010 prod, 19100 dev
+GARAGE_ADMIN_HOST_PORT	computed	computed	computed	garage's admin API on 127.0.0.1 - 19011 prod, 19101 dev
