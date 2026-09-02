@@ -36,6 +36,21 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **Four production deploys in a row were red, the deploys all SUCCEEDED, and what failed was an
+  `overrides` pin that had become the thing blocking its own fix.** `bun audit` refused all four TS
+  services on `qs@6.15.2` (GHSA-x5fp-wj9c-mxmx and GHSA-4mjr-xmp4-gh2g, both moderate, reached via
+  `@nestjs/platform-express > express > body-parser > qs`), and the transitive ranges were never the
+  obstacle: `body-parser@2.3.0` asks for `^6.15.2` and `express@5.2.1` for `^6.14.0`, both of which
+  admit the fixed `6.16.0`. **Every service pinned `qs` to exactly `6.15.2` in `overrides`** - a pin
+  added to raise a floor for an earlier advisory, which then held the version DOWN when the next one
+  landed. The four are now `^6.16.0`, a floor rather than a pin, matching how every other override in
+  those manifests is written. All four lockfiles stayed `lockfileVersion: 1`, `--frozen-lockfile`
+  accepted them, and the 1149 tests across the four suites pass - the refresh also carried
+  `babel-plugin-istanbul` 7 -> 8 within its declared range, which is why the suites were run rather
+  than reasoned about. **The red runs said nothing about production**: `Deploy to Production Server`
+  was green in each, so a red CD run conflates "the audit found something" with "the deploy broke",
+  and nobody was told either way.
+
 - **Twelve of sixteen messages a peer sent were fetched by the phone and dropped, and one epoch of
   the conversation can never exist.** Reported as an impression - *"j'ai l'impression de n'avoir
   qu'une petite partie des messages qu'il m'envoie"* - and exact: DM `7da231f8`, 16 sent, 4
