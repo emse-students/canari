@@ -7,6 +7,20 @@
 **/coverage
 **/*.log
 
+# LE FICHIER D'INCRÉMENTAL DE TYPESCRIPT, ET IL PRODUIT UNE IMAGE CASSÉE SANS ÉCHOUER (2026-09-02).
+#
+# `**/dist` ci-dessus sort les sorties du contexte, mais `tsconfig.build.tsbuildinfo` y restait.
+# Les quatre apps ont `"incremental": true`, donc `bunx tsc -p tsconfig.build.json` dans l'image
+# lisait un journal affirmant que tout était déjà émis, alors que `dist/` n'était pas là : il
+# n'émettait qu'une partie de l'arbre. Le build réussit, l'image se construit, et le conteneur
+# meurt au démarrage sur `Cannot find module './entities/user.entity'`.
+#
+# Mesuré : core-service, chat-delivery-service et social-service sortis en (1) après un
+# `rm -rf apps/*/dist` sur l'hôte - le geste que `CLAUDE.md` demande avant chaque push. C'est donc
+# reproductible pour tout développeur, et le mode de défaillance est le pire possible : un succès.
+# Un artefact d'incrémental n'a rien à faire dans un contexte de build, exactement comme `dist`.
+**/*.tsbuildinfo
+
 # Artefacts frontend
 # frontend/build est intentionnellement inclus : le CI y dépose le build Svelte
 # (avec VITE_JWT_SECRET injecté) avant de construire l'image Docker.

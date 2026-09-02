@@ -23,9 +23,40 @@ export class RedisService implements OnModuleDestroy {
       this.logger.log('Connected to Redis');
     });
 
-    this.client.on('error', (err) => {
-      this.logger.error(`Redis error: ${err.message}`);
+    // THE MESSAGE ALONE IS OFTEN EMPTY, AND AN ERROR LINE THAT NAMES NOTHING IS NOT A REPORT.
+    // Measured 2026-09-02 on a local stack that had no `REDIS_URL`: this printed `Redis error: `
+    // with nothing after it, every two seconds, because ioredis raises AggregateError on a failed
+    // connection attempt and its `message` is blank - the cause lives in `code` and in the address
+    // it dialled. Finding out which host it was even trying took reading this file. So the line
+    // carries the DESTINATION, which is what a misconfiguration gets wrong, plus whatever
+    // discriminator the error actually holds, and it falls back to the error's own name rather than
+    // to an empty string.
+    //
+    // THE DESTINATION IS THE HOST AND PORT, NEVER THE URL. A Redis URL may carry `user:password@`,
+    // and a log line is the last place a credential should be reconstructible from.
+    const target = RedisService.describeTarget(redisUrl);
+    this.client.on('error', (err: NodeJS.ErrnoException) => {
+      const cause = err.message || err.code || err.name || 'no cause reported';
+      const detail = err.code && err.message ? ` (${err.code})` : '';
+      this.logger.error(`Redis error against ${target}: ${cause}${detail}`);
     });
+  }
+
+  /**
+   * The `host:port` a Redis URL points at, with any credential removed.
+   *
+   * A connection error has to name where it was going - that is the part a misconfiguration gets
+   * wrong - but a Redis URL may embed `user:password@`, so the userinfo never reaches a log. An
+   * unparseable value is reported as such rather than echoed: whatever it is, it is not a URL, and
+   * printing it raw would put an arbitrary environment value into the logs.
+   */
+  private static describeTarget(redisUrl: string): string {
+    try {
+      const parsed = new URL(redisUrl);
+      return parsed.port ? `${parsed.hostname}:${parsed.port}` : parsed.hostname;
+    } catch {
+      return 'an unparseable REDIS_URL';
+    }
   }
 
   /** Gracefully closes the Redis connection when the NestJS module is destroyed. */

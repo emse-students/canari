@@ -1,5 +1,24 @@
 #!/bin/sh
-# Pre-commit hook - auto-fixes and re-stages rather than blocking.
+# Pre-commit hook - auto-fixes and re-stages, and does NOTHING that only reports.
+#
+# REDUCED ON 2026-09-02, WHEN THE PROJECT MOVED TO PULL REQUESTS (user: "Cela evite les hooks tres
+# longs"). It used to mirror the CI lint job as well - `svelte-check`, strict `oxlint`,
+# `format:check` - which meant every commit paid two to three minutes to learn something the pull
+# request was about to say anyway. What it keeps is the half a hook is actually good at: FIXING.
+# `lint:fix`, `format` and `cargo fmt` all rewrite files, so running them at commit time is the
+# difference between a clean diff and a CI failure about whitespace. Everything that merely REPORTS
+# now lives in `ci.yml`, which runs on the pull request and again at merge on `main`.
+#
+# `.husky/pre-push` WAS DELETED THE SAME DAY, and its four unique gates were moved into CI FIRST -
+# `make test-harness`, the real `wasm32` build, clippy, the frontend suite were already there, and
+# the two that were NOT were added before the hook went: `cargo fmt --check` on `frontend/src-tauri`
+# (its only caller was that hook) and `format:check` on the four NestJS services (only
+# `chat-delivery-service` had a caller, and it was that hook too). Deleting first would have opened
+# exactly the hole those hooks' own comments were written to close.
+#
+# WHY `format` IS NOW RUN FOR THE SERVICES TOO, and was not before: CI gates their formatting since
+# 2026-09-02, so a service commit that is not formatted is a red pull request. The fixer belongs
+# where the file is written.
 
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
 export PATH="$HOME/.cargo/bin:$PATH"
@@ -33,109 +52,32 @@ restage() {
   done
 }
 
+# A change to the shared plumbing fixes everything, because it can reformat anything.
 echo "$STAGED_FILES" | grep -Eq '^(\.github/workflows/|\.husky/|Makefile)' && RUN_ALL=1 || RUN_ALL=0
-echo "$STAGED_FILES" | grep -Eq '^frontend/' && RUN_FRONTEND=1 || RUN_FRONTEND=0
-echo "$STAGED_FILES" | grep -Eq '^apps/chat-delivery-service/' && RUN_DELIVERY=1 || RUN_DELIVERY=0
-echo "$STAGED_FILES" | grep -Eq '^apps/chat-gateway/' && RUN_GATEWAY=1 || RUN_GATEWAY=0
-echo "$STAGED_FILES" | grep -Eq '^apps/social-service/' && RUN_SOCIAL=1 || RUN_SOCIAL=0
-echo "$STAGED_FILES" | grep -Eq '^apps/core-service/' && RUN_CORE=1 || RUN_CORE=0
-echo "$STAGED_FILES" | grep -Eq '^apps/media-service/' && RUN_MEDIA=1 || RUN_MEDIA=0
-# Rust crates under frontend/ are not covered by the JS checks of the frontend block above.
-# cargo fmt is mandatory there: the CI job `cargo fmt -- --check` breaks the CD otherwise.
-echo "$STAGED_FILES" | grep -Eq '^frontend/mls-core/' && RUN_MLS_CORE=1 || RUN_MLS_CORE=0
-echo "$STAGED_FILES" | grep -Eq '^frontend/mls-wasm/' && RUN_MLS_WASM=1 || RUN_MLS_WASM=0
-echo "$STAGED_FILES" | grep -Eq '^frontend/src-tauri/' && RUN_TAURI=1 || RUN_TAURI=0
 
-if [ "$RUN_ALL" -eq 1 ]; then
-  RUN_FRONTEND=1
-  RUN_DELIVERY=1
-  RUN_GATEWAY=1
-  RUN_SOCIAL=1
-  RUN_CORE=1
-  RUN_MEDIA=1
-  RUN_MLS_CORE=1
-  RUN_MLS_WASM=1
-  RUN_TAURI=1
-fi
+# Every bun package that declares `lint:fix` and `format`, and the directory each one owns.
+BUN_PACKAGES="frontend apps/chat-delivery-service apps/core-service apps/media-service apps/social-service"
+# Every Rust crate: `cargo fmt` rewrites, and CI runs `cargo fmt -- --check` on all of them.
+RUST_CRATES="apps/chat-gateway apps/call-service frontend/mls-core frontend/mls-wasm frontend/src-tauri"
 
-if [ "$RUN_FRONTEND" -eq 1 ]; then
-  (cd frontend && bun run lint:fix && bun run format) || {
-    echo "❌ Frontend lint/format failed."
-    exit 1
-  }
-  restage "frontend"
-  # Mirror exactly the CI lint job (lint + check + format:check) so nothing
-  # broken can reach CD. Auto-fix already ran above; these are the strict gates.
-  (cd frontend && bun run check -- --threshold warning && bun run lint && bun run format:check) || {
-    echo "❌ Frontend checks failed (svelte-check / oxlint / oxvelte / format:check)."
-    exit 1
-  }
-fi
+for pkg in $BUN_PACKAGES; do
+  if [ "$RUN_ALL" -eq 1 ] || echo "$STAGED_FILES" | grep -Eq "^$pkg/"; then
+    (cd "$pkg" && bun run lint:fix && bun run format) || {
+      echo "❌ $pkg: lint:fix / format failed."
+      exit 1
+    }
+    restage "$pkg"
+  fi
+done
 
-if [ "$RUN_DELIVERY" -eq 1 ]; then
-  (cd apps/chat-delivery-service && bun run lint:fix) || {
-    echo "❌ chat-delivery-service lint failed."
-    exit 1
-  }
-  restage "apps/chat-delivery-service"
-fi
-
-if [ "$RUN_GATEWAY" -eq 1 ]; then
-  (cd apps/chat-gateway && cargo fmt) || {
-    echo "❌ chat-gateway cargo fmt failed."
-    exit 1
-  }
-  restage "apps/chat-gateway"
-fi
-
-if [ "$RUN_SOCIAL" -eq 1 ]; then
-  (cd apps/social-service && bun run lint:fix) || {
-    echo "❌ social-service lint failed."
-    exit 1
-  }
-  restage "apps/social-service"
-fi
-
-if [ "$RUN_CORE" -eq 1 ]; then
-  (cd apps/core-service && bun run lint:fix) || {
-    echo "❌ core-service lint failed."
-    exit 1
-  }
-  restage "apps/core-service"
-fi
-
-if [ "$RUN_MEDIA" -eq 1 ]; then
-  (cd apps/media-service && bun run lint:fix) || {
-    echo "❌ media-service lint failed."
-    exit 1
-  }
-  restage "apps/media-service"
-fi
-
-# Rust crates under frontend/: auto-format (cargo fmt) then re-stage, like chat-gateway.
-# Catches the formatting problem at commit time instead of letting it break the CD.
-if [ "$RUN_MLS_CORE" -eq 1 ]; then
-  (cd frontend/mls-core && cargo fmt) || {
-    echo "❌ mls-core cargo fmt failed."
-    exit 1
-  }
-  restage "frontend/mls-core"
-fi
-
-if [ "$RUN_MLS_WASM" -eq 1 ]; then
-  (cd frontend/mls-wasm && cargo fmt) || {
-    echo "❌ mls-wasm cargo fmt failed."
-    exit 1
-  }
-  restage "frontend/mls-wasm"
-fi
-
-if [ "$RUN_TAURI" -eq 1 ]; then
-  (cd frontend/src-tauri && cargo fmt) || {
-    echo "❌ src-tauri cargo fmt failed."
-    exit 1
-  }
-  restage "frontend/src-tauri"
-fi
+for crate in $RUST_CRATES; do
+  if [ "$RUN_ALL" -eq 1 ] || echo "$STAGED_FILES" | grep -Eq "^$crate/"; then
+    (cd "$crate" && cargo fmt) || {
+      echo "❌ $crate: cargo fmt failed."
+      exit 1
+    }
+    restage "$crate"
+  fi
+done
 
 exit 0

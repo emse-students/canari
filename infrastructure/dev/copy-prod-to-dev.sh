@@ -186,45 +186,18 @@ fi
 # ── 4. The strips ────────────────────────────────────────────────────────────
 # Each one is here because a copied value points at something REAL, and each reports what it
 # changed - a strip that silently matched nothing is how a schema change disarms this step.
+#
+# THE LIST MOVED TO `infrastructure/lib/copy-strips.sh` ON 2026-09-02, when a SECOND copy of
+# production appeared: the on-demand one into a developer's local stack. The list's failure mode is
+# an absence, `dev-copy-guards.test.sh` derives it from the entity declarations to catch that, and a
+# second hand-written copy would have been covered by nothing. `dev_sql` is passed BY NAME so the
+# allowlist of what may be written stays here, in the script that owns the target.
 log "stripping what a copy must not carry…"
 
-# (a) Push tokens belong to production's FCM sender and to real devices. Two independent reasons to
-# remove them: a shared sender would deliver a test notification to a member's phone, and a dev
-# sender rejects every one of these rows - which would be 70-odd logged failures per send, and noise
-# is never acceptable. No foreign key references push_token, so TRUNCATE is safe (checked).
-dev_sql "TRUNCATE TABLE push_token;" "$DATABASE"
-log "  push_token truncated"
-
-# (b) ALL SEVEN payment-provider columns, across four tables - and it is seven rather than the five
-# the plan first named, because `associations` carries a Lydia pair beside the Stripe pair
-# (WP-LYDIA coexistence). Measured on production 2026-09-01: 5 associations hold a real
-# `stripeAccountId`; both Lydia columns are empty so far, which is exactly why they are stripped now
-# rather than when they are not.
-#
-# There is no Stripe and no Lydia in dev at all (user, 2026-09-01: "oublie. Stripe ne sera pas
-# accessible en dev pour le moment, tant pis"), so each of these is a live identifier with no
-# credential behind it: it could only ever produce a misleading failure. The two
-# `*OnboardingComplete` columns are NOT NULL booleans, so they are set false rather than nulled - an
-# association in dev is not onboarded on an account it cannot reach.
-#
-# `.github/scripts/tests/dev-copy-guards.test.sh` DERIVES this list from the entity declarations and
-# fails if a column is added without being stripped here, because the failure mode of this block is
-# an absence.
-dev_sql "UPDATE users SET \"stripeCustomerId\" = NULL WHERE \"stripeCustomerId\" IS NOT NULL;" "$DATABASE"
-dev_sql "UPDATE associations SET \"stripeAccountId\" = NULL WHERE \"stripeAccountId\" IS NOT NULL;" "$DATABASE"
-dev_sql "UPDATE associations SET \"stripeOnboardingComplete\" = false WHERE \"stripeOnboardingComplete\";" "$DATABASE"
-dev_sql "UPDATE associations SET \"lydiaAccountId\" = NULL WHERE \"lydiaAccountId\" IS NOT NULL;" "$DATABASE"
-dev_sql "UPDATE associations SET \"lydiaOnboardingComplete\" = false WHERE \"lydiaOnboardingComplete\";" "$DATABASE"
-dev_sql "UPDATE purchase_records SET \"stripePaymentIntentId\" = NULL WHERE \"stripePaymentIntentId\" IS NOT NULL;" "$DATABASE"
-dev_sql "UPDATE submissions SET \"stripeSessionId\" = NULL WHERE \"stripeSessionId\" IS NOT NULL;" "$DATABASE"
-log "  payment identifiers cleared: 7 columns across users, associations, purchase_records, submissions"
-
-# (c) platform_config.payment_provider is left ALONE, and that is a decision rather than an
-# oversight. Its type is 'stripe' | 'lydia' with no third value, so there is no way to say "payments
-# are off" - writing anything else would contradict what the code asserts about the column. The
-# consequence is that dev presents Stripe as the live provider and fails on use with no keys behind
-# it. That the platform cannot declare payments disabled is a real gap, recorded in the backlog.
-log "  platform_config.payment_provider left as-is (no 'disabled' value exists - see backlog)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../lib/copy-strips.sh
+. "$SCRIPT_DIR/../lib/copy-strips.sh"
+apply_copy_strips dev_sql "$DATABASE" "[copy-prod-to-dev]"
 
 # ── 5. Verify, do not assert ─────────────────────────────────────────────────
 if [ "$DRY_RUN" -eq 1 ]; then

@@ -1,3 +1,22 @@
+# AN EXPLICIT PROJECT NAME, AND IT IS LOAD-BEARING RATHER THAN COSMETIC (2026-09-02).
+#
+# Without it, Compose derives the project from this file's directory and calls the stack `local`.
+# Measured on the workstation this was written on: a project called `local` ALREADY EXISTED there,
+# belonging to something else entirely - a running `local-kafka-1` container plus `local_mongo_data`,
+# `local_minio_data` and `local_database` volumes. `make run-services` opens with
+# `docker compose down --remove-orphans`, which on a shared project means it would have DELETED that
+# stranger's container as an orphan of ours.
+#
+# It also gives the local database a nameable identity. `infrastructure/local/dump-prod-to-local.sh`
+# writes only to the container carrying this exact label, which is what a destructive control needs -
+# an ALLOWLIST of what it may touch. A name derived from whatever directory the caller happened to
+# invoke from cannot be that, and production's own project is called `infrastructure`.
+#
+# Renaming orphans any pre-existing `local_*` volume of ours: the data lived under the old prefix and
+# the stack starts fresh under `canari-local_*`. That is deliberate - the local database is fed by
+# `make dump-prod`, so it is reproducible by construction and nothing of value is in a volume.
+name: canari-local
+
 services:
 
   # ─────────────────────────────────────────────────────
@@ -273,6 +292,13 @@ services:
       DB_USERNAME: admin
       DB_PASSWORD: password
       DB_DATABASE: auth_db
+      # DRIFT FROM PRODUCTION, FOUND BY RUNNING THE STACK (2026-09-02). `docker-compose.prod.yml`
+      # gives social-service this exact variable and this file did not, so locally its RedisService
+      # fell to its own default of `redis://localhost:6379` - nothing listens on localhost INSIDE the
+      # container - and logged a connection error every two seconds, for ever. Production logs none.
+      # A local stack that differs from production in a way only its log volume reveals is worse than
+      # no local stack: every measurement taken on it inherits the difference.
+      REDIS_URL: redis://redis:6379
       CHANNELS_ENCRYPTION_SECRET: ${CHANNELS_ENCRYPTION_SECRET:-dev-channel-secret-change-me}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_SUCCESS_URL: ${STRIPE_SUCCESS_URL:-http://localhost:1420/posts?registration=success}

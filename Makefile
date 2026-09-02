@@ -1,4 +1,4 @@
-.PHONY: all install install-node install-bun install-rust install-oxvelte install-wasm-pack install-frontend install-services install-hooks setup-env setup-env-prod production production-check build-frontend reload-services test test-gateway test-history test-frontend test-harness test-ci-scripts bench-mls clean run-ci lint-frontend
+.PHONY: check-services all install install-node install-bun install-rust install-oxvelte install-wasm-pack install-frontend install-services install-hooks setup-env setup-env-prod local-env dump-prod production production-check build-frontend reload-services test test-gateway test-history test-frontend test-harness test-ci-scripts bench-mls clean run-ci lint-frontend
 
 # Cible par défaut : installation complète et déploiement LOCAL
 .DEFAULT_GOAL := all
@@ -254,6 +254,32 @@ setup-env-prod:
 	@chmod +x scripts/setup-env.sh
 	@./scripts/setup-env.sh --prod
 
+# ── Local mirroring production (décidé avec l'utilisateur le 2026-09-02) ──────
+# `setup-env` ci-dessus fabrique un environnement local avec des secrets GÉNÉRÉS : aucun tiers ne
+# répond (ni Stripe, ni FCM, ni MiGallery, ni Authentik). `local-env` fait l'autre chose : il
+# reprend les identifiants tiers de la PRODUCTION, régénère les secrets d'authentification, et
+# localise la topologie. Les deux sont légitimes ; celui-ci sert à développer contre le vrai monde.
+#
+# Le snapshot passe par un fichier temporaire hors du dépôt, jamais par le transcript.
+local-env:
+	@echo "${BLUE}🔐 Fabrication de infrastructure/.env + frontend/.env depuis la production…${RESET}"
+	@chmod +x infrastructure/local/env-from-prod.sh
+	@snap=$$(mktemp "$${TMPDIR:-/tmp}/canari-prod-env.XXXXXX"); \
+	  trap 'rm -f "$$snap"' EXIT; \
+	  ssh=$${CANARI_SSH:-$$([ -x /c/WINDOWS/System32/OpenSSH/ssh.exe ] && echo /c/WINDOWS/System32/OpenSSH/ssh.exe || echo ssh)}; \
+	  "$$ssh" -o ConnectTimeout=30 -o BatchMode=yes canari 'cat /home/canari/canari/infrastructure/.env' > "$$snap"; \
+	  ./infrastructure/local/env-from-prod.sh "$$snap"
+	@echo "${GREEN}✅ .env locaux écrits${RESET}"
+
+# Copie la base de production dans la pile locale : dump lecture seule, restauration gardée par un
+# ALLOWLIST du projet compose local, effacements partagés avec la copie vers dev, puis vérification.
+dump-prod:
+	@echo "${BLUE}📦 Copie de la base de production vers la pile locale…${RESET}"
+	@chmod +x infrastructure/local/pull-prod-dump.sh infrastructure/local/restore-into-local.sh
+	@dump=$$(./infrastructure/local/pull-prod-dump.sh | tail -1); \
+	  ./infrastructure/local/restore-into-local.sh "$$dump"
+	@echo "${GREEN}✅ Base locale restaurée et vérifiée${RESET}"
+
 # Cible principale
 test: test-gateway test-history test-frontend test-harness test-ci-scripts
 	@echo ""
@@ -358,7 +384,25 @@ run-services:
 	@echo "${BLUE}ℹ️ call-service (SFU) démarré sur le port 3004${RESET}"
 	@docker compose -f infrastructure/local/docker-compose.yml --env-file infrastructure/.env down --remove-orphans || true
 	@docker compose -f infrastructure/local/docker-compose.yml --env-file infrastructure/.env up -d --build --remove-orphans
-	@echo "${GREEN}✅ Services démarrés${RESET}"
+	@$(MAKE) --no-print-directory check-services
+
+# `up -d` REND 0 DÈS QUE LES CONTENEURS SONT LANCÉS, PAS QUAND ILS TIENNENT (2026-09-02).
+# Mesuré ce jour-là : trois services NestJS sont sortis en (1) quelques secondes après le
+# démarrage - un `dist/` partiel dû à un `.tsbuildinfo` resté dans le contexte Docker - et la
+# cible affichait « ✅ Services démarrés ». C'est la règle de la maison appliquée au Makefile :
+# un portail vert n'est pas un système qui marche. On laisse le temps de mourir, puis on regarde.
+check-services:
+	@sleep 8
+	@dead=$$(docker compose -f infrastructure/local/docker-compose.yml --env-file infrastructure/.env ps -a --format '{{.Service}}\t{{.State}}' | awk -F'\t' '$$2 != "running" { print $$1 }'); \
+	  if [ -n "$$dead" ]; then \
+	    echo "${RED}❌ Services non démarrés :${RESET} $$(echo $$dead | tr '\n' ' ')"; \
+	    for s in $$dead; do \
+	      echo "${YELLOW}── logs $$s ──${RESET}"; \
+	      docker compose -f infrastructure/local/docker-compose.yml --env-file infrastructure/.env logs --tail 15 "$$s"; \
+	    done; \
+	    exit 1; \
+	  fi
+	@echo "${GREEN}✅ Services démarrés et toujours vivants${RESET}"
 
 reload-services:
 	@echo "${BLUE}🔄 Reloading services…${RESET}"
