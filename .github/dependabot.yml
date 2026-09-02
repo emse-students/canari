@@ -19,12 +19,32 @@
 # The grouping is the ecosystem's: dev minor+patch and prod patch collapse into one PR to cut noise,
 # majors arrive alone so they are reviewed alone. Same prefix and labels as Sky, MiGallery and
 # Portail-etu so the five repos read the same in a notification list.
+#
+# ---------------------------------------------------------------------------------------------
+# WHY EVERY BLOCK CARRIES `target-branch: "dev"` (asked by the user, decided 2026-09-02)
+#
+# A dependency update used to be merged straight onto `main`, and `main` deployed BOTH estates in
+# one CD run - so the dev environment, which exists to eat exactly this, was never given the chance
+# to. The measurement is the outage of 2026-09-01: `postgres 15-alpine -> 18-alpine` went green
+# through every gate this repository has, was auto-merged, and PG 18 then refused production's data
+# directory. Production was down 33 minutes. Nothing in CI could have seen it, because the thing
+# that failed was RUNNING against real data, and no gate here runs anything against real data.
+#
+# `dev` does. It carries a copy of production (355 users, measured 2026-09-02), so that same update
+# now refuses the DEV data directory first, on a branch production is not listening to.
+#
+# THIS LINE IS ONLY HALF THE MECHANISM, AND THE OTHER HALF IS THE POINT: a branch nobody promotes is
+# a queue nobody drains, which is worse than the merge it prevented. `promote-dev-to-main` in
+# `cd.yml` advances `main` by itself, and only once the dev estate has ANSWERED /api/version as the
+# commit in question. Delete this line only together with that job.
 
 version: 2
 updates:
   # --- CI ---------------------------------------------------------------------------------------
   - package-ecosystem: "github-actions"
     directory: "/"
+    # EVERY BLOCK TARGETS `dev`, NOT THE DEFAULT BRANCH - see the header for the measurement.
+    target-branch: "dev"
     rebase-strategy: auto
     schedule:
       interval: "weekly"
@@ -42,6 +62,8 @@ updates:
   # the blanket `*.lock` rule.
   - package-ecosystem: "bun"
     directory: "/frontend"
+    # EVERY BLOCK TARGETS `dev`, NOT THE DEFAULT BRANCH - see the header for the measurement.
+    target-branch: "dev"
     rebase-strategy: auto
     schedule:
       interval: "weekly"
@@ -83,6 +105,8 @@ updates:
       - "/apps/social-service"
       - "/apps/media-service"
       - "/apps/chat-delivery-service"
+    # EVERY BLOCK TARGETS `dev`, NOT THE DEFAULT BRANCH - see the header for the measurement.
+    target-branch: "dev"
     rebase-strategy: auto
     schedule:
       interval: "weekly"
@@ -148,6 +172,8 @@ updates:
       - "/frontend/mls-wasm"
       - "/frontend/src-tauri"
       - "/frontend/src-tauri/plugins/tauri-plugin-customtabs"
+    # EVERY BLOCK TARGETS `dev`, NOT THE DEFAULT BRANCH - see the header for the measurement.
+    target-branch: "dev"
     rebase-strategy: auto
     schedule:
       interval: "weekly"
@@ -192,6 +218,8 @@ updates:
   # on node:22-alpine while every other image in the same folder had moved to node:24.
   - package-ecosystem: "docker"
     directory: "/infrastructure/local"
+    # EVERY BLOCK TARGETS `dev`, NOT THE DEFAULT BRANCH - see the header for the measurement.
+    target-branch: "dev"
     rebase-strategy: auto
     schedule:
       interval: "weekly"
@@ -218,6 +246,8 @@ updates:
     directories:
       - "/infrastructure"
       - "/infrastructure/local"
+    # EVERY BLOCK TARGETS `dev`, NOT THE DEFAULT BRANCH - see the header for the measurement.
+    target-branch: "dev"
     rebase-strategy: auto
     schedule:
       interval: "weekly"

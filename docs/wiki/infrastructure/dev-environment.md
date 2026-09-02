@@ -411,14 +411,54 @@ first dry run passed every guard, printed `[dry-run] nothing was changed`, then 
 502s from the schemaless database it had deliberately not touched. A step that measures an outcome
 belongs behind the condition that produced it.
 
-### Dev deploys BEFORE production, and a failed dev deploy stops it
+### Dev is deployed from the `dev` BRANCH, and the promotion is what releases production
 
-Decided with the user, and it is the point of the whole environment: a migration that will break
-production breaks dev first, on a copy of production's data, while production is still serving.
+Asked by the user and decided 2026-09-02. Until that day both estates deployed from `main` in one CD
+run, dev merely going first, and that arrangement had two defects the first week showed:
 
-**The hazard is real and the escape is one switch.** A dev estate broken for a reason of its own - a
-mis-set `DEV_*` secret, its Authentik client revoked - would hold production's releases hostage.
-Setting `DEV_ENVIRONMENT_ENABLED` to anything but `true` skips dev and unblocks production at once.
+- **Dev was given nothing to protect.** A dependency update was merged onto `main` and `main` was
+  already the thing production deployed; dev running first only narrowed the window. The measurement
+  is the outage of 2026-09-01 - `postgres 15-alpine -> 18-alpine` auto-merged green, PG 18 refused
+  production's data directory, 33 minutes down.
+- **Dev could hold production hostage for reasons of its own.** A registry that timed out pulling
+  `frontend:dev` failed `deploy-dev`, and `deploy-to-server` needed it (run `33633156004`).
+
+**The shape now.** Two branches, two estates, and one job between them:
+
+| Branch | What it deploys | What advances it |
+| --- | --- | --- |
+| `dev` | `dev.canari-emse.fr` only | anything - a human push, Dependabot's auto-merge |
+| `main` | production only | `promote-dev-to-main`, and a hand push in an emergency |
+
+`promote-dev-to-main` fast-forwards `main` to the commit `dev` just deployed, then dispatches the
+production deploy (a `GITHUB_TOKEN` push raises no `push` event, so the dispatch is the only route).
+Dependabot targets `dev` in all six ecosystems, so a dependency update now meets a copy of
+production's data before production ever hears of it.
+
+**The proof is not that `deploy-dev` went green.** A green deploy proves the containers started; it
+does not prove the site answers. The promotion probes `/api/version` **on `127.0.0.1:$FRONTEND_HOST_PORT`**
+and requires `build` to be `dev.<sha7>` of the commit being promoted:
+
+- The **loopback**, never the public name, because the cloudflared ingress rule for
+  `dev.canari-emse.fr` still points at production's host port (§5) - a probe on the name would
+  measure production and promote anything at all.
+- The **port is read** from the dev estate's own `.env`, which `render-env.sh` wrote; a number
+  repeated in the workflow would be a second source of truth whose going stale is silent.
+- **`build`** because production renders none by decision, so a non-null `build` identifies the
+  estate, and the `<sha7>` identifies the commit. One read answers both.
+- **`/api/version`** rather than `/`, because it needs the database - the static frontend answered
+  200 through both outages of 2026-09-01.
+
+**The fast-forward is not a force.** If `main` carries a commit `dev` does not - an emergency push
+straight to production - the push is refused and the job goes red, naming the remedy (merge `main`
+into `dev`). Overwriting it would revert a hotfix on the strength of a dev estate that never ran it.
+And `main` already at that commit is reported as *nothing to promote* rather than pushed as a no-op,
+which is what stops a pointless production deploy every time `dev` is recreated from `main`.
+
+**The escape is still one switch.** `DEV_ENVIRONMENT_ENABLED` set to anything but `true` skips the
+dev arm, which skips the promotion with it - so a release then travels by a push straight to `main`.
+A broken dev estate now DELAYS a release instead of blocking one, and the failure is named on the
+`dev` run where it belongs.
 
 ### Its own checkout, and its own deployed tag
 

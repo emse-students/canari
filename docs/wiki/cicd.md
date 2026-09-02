@@ -25,7 +25,8 @@ committed binary went a crypto fix stale precisely because only some pipelines r
 
 ### CD (`cd.yml`)
 
-Deploys to the production server on push to `main`, manual trigger, or after a release version bump:
+Deploys to the production server on push to `main`, manual trigger, or after a release version bump.
+**A push to `dev` deploys the dev estate instead, and nothing else** — see below.
 
 1. Runs CI + CodeQL (skipped on post-release version-bump deploys)
 2. Detects changed services and builds only those Docker images → GHCR
@@ -35,20 +36,37 @@ Deploys to the production server on push to `main`, manual trigger, or after a r
 
 `GITHUB_TOKEN` pushes from the version-bump workflow do **not** trigger `on: push`. CD is chained via `workflow_run` instead (no `branches:` filter — GitHub would silently drop release-triggered parents).
 
-#### It deploys TWO estates, and dev goes first
+#### TWO ESTATES, TWO BRANCHES, AND A PROMOTION BETWEEN THEM
 
-Since 2026-09-01 `cd.yml` also carries three jobs for `dev.canari-emse.fr` — `build-frontend-dev`,
-`build-frontend-images-dev` and `deploy-dev` — and `deploy-to-server` **waits on `deploy-dev` and
-refuses to proceed if it failed**. That order is the point of having a second environment: a migration
-that will break production breaks dev first, on a copy of production's data, while production is still
-serving.
+One workflow, and which branch it was pushed to decides which estate it deploys:
 
-All of it is gated on the repository variable `vars.DEV_ENVIRONMENT_ENABLED`, **`true` since
+| Push to | Jobs that run | What advances the branch |
+| --- | --- | --- |
+| `dev` | `build-frontend-dev`, `build-frontend-images-dev`, `deploy-dev`, `promote-dev-to-main` | anything: a human, Dependabot's auto-merge |
+| `main` | `build-frontend`, `build-docker-images`, `deploy-to-server` | `promote-dev-to-main`, or a hand push in an emergency |
+
+**Until 2026-09-02 both estates deployed from `main` in one run, dev merely going first, and
+`deploy-to-server` waited on `deploy-dev`.** That had two defects the first week showed. Dev was
+given nothing to protect - the update was already on the branch production deploys, so dev running
+first only narrowed the window, which is how `postgres 15-alpine -> 18-alpine` reached production on
+2026-09-01. And dev could hold production hostage for a reason of its own: a ghcr.io TLS handshake
+timeout failed `deploy-dev` and blocked a release (run `33633156004`, its first day).
+
+**So the gate moved upstream.** `promote-dev-to-main` fast-forwards `main` to the commit `dev` just
+deployed and dispatches the production deploy, and it requires the dev estate to have **ANSWERED**
+`/api/version` as that exact commit - a green deploy proving only that containers started.
+`deploy-to-server` no longer names `deploy-dev` in its `needs:` at all: a commit that reaches `main`
+has already run somewhere, so a broken dev estate now DELAYS a release rather than blocking one.
+Dependabot targets `dev`, which is what makes the whole thing worth having. The proof, the
+fast-forward's refusal and the loopback trap are on
+[dev-environment](infrastructure/dev-environment.md#dev-is-deployed-from-the-dev-branch-and-the-promotion-is-what-releases-production),
+the only copy.
+
+All of the dev arm is gated on the repository variable `vars.DEV_ENVIRONMENT_ENABLED`, **`true` since
 2026-09-02**. It is a `vars` and not a `secrets` entry so its value shows in the run log — a silent
-gate is one nobody can debug. Setting it to anything but `true` is also the escape hatch if a broken
-dev estate ever holds production's releases hostage, and that is not hypothetical: with the switch
-on, dev's failure is production's block, which is the whole point and also the thing to remember at
-2 a.m.
+gate is one nobody can debug. Setting it to anything but `true` skips the dev arm and the promotion
+with it, so a release then travels by a push straight to `main` — the emergency path, and the one
+route that bypasses dev by design.
 
 **A skip is not a success, and `deploy-dev` learned that the hard way.** Its `if:` accepted
 `result == 'skipped'` for the jobs it listed — correct in itself, since a skip legitimately means
@@ -325,6 +343,43 @@ the same defect wearing a different hat - two toolchains put two cryptos back in
 Dependabot opens the pull requests (`.github/dependabot.yml`); `dependabot-auto-merge.yml` decides
 which of them merge, and `.github/scripts/dependabot-auto-merge.sh` is the decision itself. The
 script is the ONE implementation - the workflow calls it from two triggers and adds nothing.
+
+### Every update targets `dev`, and a proof promotes it to `main`
+
+Asked by the user 2026-09-02 (*"Est-ce qu'on pourrait dire a Dependabot de push sur la branche dev
+au lieu de la prod ?"*) and decided the same day. All six blocks of `dependabot.yml` carry
+`target-branch: "dev"`.
+
+**What it buys.** Every gate in this repository answers a question about the SOURCE - does it
+compile, do the tests pass, is the lockfile coherent. None of them runs anything against real data,
+and that is the class the outage of 2026-09-01 came from: `postgres 15-alpine -> 18-alpine` passed
+every gate, merged, and PG 18 then refused production's data directory. The dev estate carries a copy
+of production, so that update now refuses the DEV data directory, on a branch production is not
+listening to.
+
+**The `target-branch` line is only half the mechanism, and the other half is the point.** A branch
+nobody promotes is a queue nobody drains, which is worse than the merge it prevented - the user's own
+standing directive rejects it (*"Je prefere blinder de test et faire les choses automatiquement
+qu'avoir une review humaine qui n'arrive jamais"*). So `cd.yml`'s `promote-dev-to-main` advances
+`main` by itself, on a proof that the dev estate ANSWERS as the commit in question. The full shape,
+the proof and the escape hatch are on
+[dev-environment](infrastructure/dev-environment.md#dev-is-deployed-from-the-dev-branch-and-the-promotion-is-what-releases-production),
+the only copy. **Delete the `target-branch` lines only together with that job.**
+
+**Three things in the auto-merge moved with it, and each was a `main` LITERAL that had been correct
+only while everything targeted `main`:**
+
+- The **staleness comparison** now reads the pull request's own `baseRefName`. Against `main` it
+  would have reported the entire `main`..`dev` delta as a gate move, marking every pull request
+  permanently stale - the exact failure the section below already records once.
+- The **deploy dispatched after a merge** is dispatched on the branch the merge landed on
+  (`MERGED_ONTO`, one dispatch per distinct branch). On `main` it would have deployed PRODUCTION a
+  commit `main` does not carry.
+- The **convergent trigger** accepts a push to `dev` as well as to `main`, `dev` now being the branch
+  whose movement can make a remaining pull request stale.
+
+Pull requests opened before that day still carry `main` as their base, which is why all three read
+the base rather than assume it: both generations drain through one sweep.
 
 ### Security updates are a SECOND switch, and neither `dependabot.yml` nor this page showed it
 

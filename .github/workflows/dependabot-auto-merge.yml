@@ -96,14 +96,20 @@ jobs:
     #
     # TWO SHAPES OF `workflow_run` ARE ACCEPTED, and they mean different things. A run triggered by
     # DEPENDABOT'S OWN pull request is the fast path: evaluate that one pull request, seconds after
-    # its checks finish. A run triggered by a PUSH TO MAIN is the convergent path: sweep the whole
-    # open queue, because a push is the one event this repository sees often and reliably.
+    # its checks finish. A run triggered by a PUSH is the convergent path: sweep the whole open
+    # queue, because a push is the one event this repository sees often and reliably.
+    #
+    # `dev` IS IN THAT LIST SINCE 2026-09-02 AND IS NOW THE ONE THAT MATTERS: Dependabot targets
+    # `dev`, so every merge this workflow makes lands there and it is a push to `dev` - not to
+    # `main` - that could make a remaining pull request stale. `main` is kept because it still
+    # moves, by promotion and by the emergency path, and a sweep answering it costs one pass.
     if: >-
       github.event_name != 'workflow_run' ||
       (github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.actor.login == 'dependabot[bot]') ||
       (github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'main')
+      (github.event.workflow_run.head_branch == 'main' ||
+      github.event.workflow_run.head_branch == 'dev'))
     steps:
       # THE IDENTITY PERFORMING AN AUTOMATED ACTION IS PART OF THE MECHANISM, AND `GITHUB_TOKEN`
       # CANNOT PERFORM THIS ONE. When the gates move under a Dependabot branch it has to be rebuilt,
@@ -217,6 +223,11 @@ jobs:
             fi
             if grep -q "^MERGED $pr\$" "$RUNNER_TEMP/out-$pr.txt"; then
               merged=$((merged + 1))
+              # WHICH BRANCH IT LANDED ON DECIDES WHICH ESTATE IS DEPLOYED, and since 2026-09-02 it
+              # is not always the same one: Dependabot targets `dev`, pull requests older than that
+              # day still carry `main`, and a deploy dispatched on the wrong ref would either ship
+              # to production unproven or build dev from a commit dev does not have.
+              sed -n 's/^MERGED_ONTO //p' "$RUNNER_TEMP/out-$pr.txt" >> "$RUNNER_TEMP/bases.txt"
             fi
             if grep -q "^STALE $pr\$" "$RUNNER_TEMP/out-$pr.txt"; then
               echo "$pr" >> "$RUNNER_TEMP/stale.txt"
@@ -311,9 +322,14 @@ jobs:
       # A squash merge made with GITHUB_TOKEN produces a push that triggers NOTHING - github's
       # anti-recursion rule - so CD never saw a single one of these merges and main drifted from
       # production silently. `workflow_dispatch` is the documented exception to that rule, so this
-      # is the one call that closes the gap. ONE dispatch for the whole pass, not one per merge:
-      # the deploy builds `main` as it now stands, and that is the same artefact either way.
-      - name: Dispatch one deploy if anything merged
+      # is the one call that closes the gap. ONE dispatch PER BRANCH, not one per merge: a deploy
+      # builds the branch as it now stands, so several merges onto one branch are one artefact.
+      #
+      # WHICH BRANCH IS READ, NOT ASSUMED, since 2026-09-02. `--ref main` was correct while every
+      # pull request targeted `main`; Dependabot targets `dev` now, and dispatching a `dev` merge
+      # on `main` would deploy PRODUCTION a commit `main` does not even carry - the exact hazard
+      # moving Dependabot to `dev` exists to remove.
+      - name: Dispatch one deploy per branch anything merged onto
         # Both halves are load-bearing. The step above runs without `set -e` so one unmergeable
         # branch cannot stop a sweep, which means it can also end early and leave `merged` never
         # written - and an UNSET value is not equal to '0', so testing only that would dispatch a
@@ -324,5 +340,17 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+          bases="$RUNNER_TEMP/bases.txt"
+          if [ ! -s "$bases" ]; then
+            # `merged` is non-zero and no branch was recorded: the two are written by the same
+            # loop, so this cannot happen without the script's contract having changed underneath.
+            # Deploying a GUESS here is the one thing that must not happen, so it fails loudly.
+            echo "::error::$merged merge(s) reported and no MERGED_ONTO line to name the branch. Refusing to guess which estate to deploy."
+            exit 1
+          fi
           echo "Dispatching CD for $merged merge(s)"
-          gh workflow run cd.yml --repo "$REPO" --ref main
+          sort -u "$bases" | while IFS= read -r ref; do
+            [ -z "$ref" ] && continue
+            echo "  -> cd.yml on $ref"
+            gh workflow run cd.yml --repo "$REPO" --ref "$ref"
+          done

@@ -142,33 +142,43 @@ the shape that fits the rest of this repository - but which one is taken is a de
 recorded in the table of what is owed to the user above. Upstream, this is dependabot-core's cargo
 updater not copying build scripts; nothing here can fix that.
 
-### P2 - the gate that lets dev protect production cannot tell a broken dev from an unreachable REGISTRY (measured 2026-09-02, first day it ran)
+### P2 - a dev deploy still cannot tell a broken CHANGE from an unreachable REGISTRY, and the conflation MOVED rather than went away (measured 2026-09-02, first day it ran)
 
-**`deploy-to-server` needs `deploy-dev` to be `success` or `skipped`** ([cd.yml:812](../../.github/workflows/cd.yml)),
-which is the whole point of a second estate: a migration that would break production breaks a copy
-of production's data first, while production keeps serving. The hazard was written into the comment
-above that clause the day it was added - *"a dev estate broken for a reason of its own would hold
-production's releases hostage"* - and it materialised within hours.
-
-**Run `33633156004` (workflow_dispatch, 13:00, 17m38s): everything built, every image pushed, and
-`Deploy to dev.canari-emse.fr` failed in 16 s on**
+**The original measurement.** `deploy-to-server` used to need `deploy-dev` to be `success` or
+`skipped`, and the hazard written into the comment above that clause the day it was added - *"a dev
+estate broken for a reason of its own would hold production's releases hostage"* - materialised
+within hours. Run `33633156004` (workflow_dispatch, 13:00, 17m38s): everything built, every image
+pushed, and `Deploy to dev.canari-emse.fr` failed in 16 s on
 
 ```
 Image ghcr.io/emse-students/***/frontend:dev Error failed to resolve reference ...
   net/http: TLS handshake timeout
 ```
 
-**A TLS handshake to ghcr.io. Production was not deployed because the other estate could not reach a
-registry** - nothing about the change, nothing about the data, nothing a second environment exists to
-catch. The gate consulted a job RESULT, and a result cannot say whether dev refused the change or
-merely failed to run, which is the same conflation the `build-frontend-dev` comment four lines up
-already records for a laundered skip.
+A TLS handshake to ghcr.io. Production was not deployed because the other estate could not reach a
+registry - nothing about the change, nothing about the data, nothing a second environment exists to
+catch.
 
-**Owed:** the dev deploy separates the failures it OWNS (a migration refused, a container that will
-not start, `/api/version` unanswered) from the ones it merely observed (a registry timeout, an SSH
-drop), and only the first blocks production. A retry on the pull is not the fix - it narrows the
-window and leaves the conflation - though the pull should retry too. Until then the escape stays one
-visible variable: `gh variable set DEV_ENVIRONMENT_ENABLED --body false`, then re-run.
+**WHAT THE BRANCH SPLIT OF 2026-09-02 CHANGED, AND WHAT IT DID NOT.** `deploy-to-server` no longer
+names `deploy-dev` in its `needs:` at all: production is released by `promote-dev-to-main`, so a
+failed dev deploy no longer BLOCKS a release. **But the conflation moved with the gate rather than
+being removed.** A registry timeout on `deploy-dev` still stops the promotion, so the release simply
+does not happen - and "a release that silently did not happen" is the same queue-nobody-drains
+failure in a new place. Two things make it strictly better and neither makes it right: the red run is
+on `dev` where it belongs, and recovering needs a re-run instead of flipping a repository variable.
+
+**Owed, unchanged in substance:** the dev deploy separates the failures it OWNS (a migration refused,
+a container that will not start, `/api/version` unanswered) from the ones it merely observed (a
+registry timeout, an SSH drop), and only the first stops the promotion; an observed failure is
+re-attempted rather than reported. A retry on the pull is not the fix - it narrows the window and
+leaves the conflation - though the pull should retry too.
+
+**And the second half, which the split made newly visible:** nothing reports *"`dev` is green and
+`main` was not advanced"*. That is the same shape as the P2 below - a correct mechanism with no
+report is found by hand, a day late - and the probe owed there (`/api/version`, hitting the database)
+is the same probe. They want doing together. Until then the escape is still one visible variable:
+`gh variable set DEV_ENVIRONMENT_ENABLED --body false`, which skips the dev arm and sends releases
+by the emergency path, a push straight to `main`.
 
 ---
 

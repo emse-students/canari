@@ -14,9 +14,9 @@
 # that does the merging cannot be bypassed by adding a third trigger later.
 #
 # Usage: dependabot-auto-merge.sh <pr-number>
-# Prints `MERGED <pr>` on stdout when it merged, so the caller can dispatch ONE deploy for a sweep
-# that merged several. Never exits non-zero for a pull request it declines to touch: a sweep must
-# not be stopped by one unmergeable branch.
+# Prints `MERGED <pr>` and `MERGED_ONTO <branch>` on stdout when it merged, so the caller can
+# dispatch ONE deploy per branch for a sweep that merged several. Never exits non-zero for a pull
+# request it declines to touch: a sweep must not be stopped by one unmergeable branch.
 set -uo pipefail
 
 pr="${1:?usage: dependabot-auto-merge.sh <pr-number>}"
@@ -40,13 +40,19 @@ pr="${1:?usage: dependabot-auto-merge.sh <pr-number>}"
 
 MARKER='<!-- canari-auto-merge-ceiling -->'
 
-meta=$(gh pr view "$pr" --repo "$REPO" --json author,state,headRefOid,mergeable \
-         --jq '"\(.author.login)|\(.state)|\(.headRefOid)|\(.mergeable)"') || {
+# `baseRefName` IS READ HERE AND NOT ASSUMED, and the reason is that it stopped being constant on
+# 2026-09-02: Dependabot targets `dev` now, while pull requests opened before that day still carry
+# `main`. Everything downstream that used to name `main` as a literal - the staleness comparison,
+# the conflict message, the deploy the caller dispatches - is about THIS pull request's own base,
+# and reading it is what lets both generations drain through one sweep instead of one of them
+# silently deploying the wrong estate.
+meta=$(gh pr view "$pr" --repo "$REPO" --json author,state,headRefOid,mergeable,baseRefName \
+         --jq '"\(.author.login)|\(.state)|\(.headRefOid)|\(.mergeable)|\(.baseRefName)"') || {
   echo "#$pr: could not be read; skipping."
   exit 0
 }
 
-IFS='|' read -r author state head_sha mergeable <<< "$meta"
+IFS='|' read -r author state head_sha mergeable base_ref <<< "$meta"
 
 if [ "$author" != "app/dependabot" ] && [ "$author" != "dependabot[bot]" ]; then
   echo "#$pr: author is '$author', not Dependabot; refusing."
@@ -161,30 +167,37 @@ fi
 # `github-actions[bot]` - measured on #303, three seconds after the ask, "Sorry, only users with
 # push access can use that command." A gate whose only remedy is unavailable is not a gate, it is
 # a stop, and it stopped seven mergeable pull requests.
-main_sha=$(gh api "repos/$REPO/commits/main" --jq '.sha') || {
-  echo "#$pr: could not read main; skipping rather than merging on an unknown base."
+#
+# AND THE BRANCH COMPARED AGAINST IS THE PULL REQUEST'S OWN BASE, not `main`. It was `main` as a
+# literal until 2026-09-02, which was the same thing while everything targeted `main`; with
+# Dependabot targeting `dev` it would have compared a `dev`-based branch's checks against a trunk
+# it was never built on, and reported the whole delta between the two branches as a gate move -
+# every pull request permanently stale, which is precisely the failure this section already
+# records once.
+tip_sha=$(gh api "repos/$REPO/commits/$base_ref" --jq '.sha') || {
+  echo "#$pr: could not read $base_ref; skipping rather than merging on an unknown base."
   exit 0
 }
 base_sha=$(gh pr view "$pr" --repo "$REPO" --json baseRefOid --jq '.baseRefOid')
 
-if [ "$base_sha" != "$main_sha" ]; then
+if [ "$base_sha" != "$tip_sha" ]; then
   # One call: the changed-file count on the first line, then one filename per line - which is
   # exactly the payload `classify_gate_moves` is specified and tested against.
-  compare=$(gh api "repos/$REPO/compare/$base_sha...$main_sha" \
+  compare=$(gh api "repos/$REPO/compare/$base_sha...$tip_sha" \
     --jq '((.files // []) | length), ((.files // []) | .[].filename)') || compare="gh: compare failed"
 
   verdict=$(printf '%s\n' "$compare" | classify_gate_moves)
   case "$verdict" in
     settled\ *)
-      echo "#$pr: built on ${base_sha:0:8}, main is ${main_sha:0:8} - ${verdict#settled } file(s) changed, none of them a gate definition; its checks still describe today's gates."
+      echo "#$pr: built on ${base_sha:0:8}, $base_ref is ${tip_sha:0:8} - ${verdict#settled } file(s) changed, none of them a gate definition; its checks still describe today's gates."
       ;;
     moved\ *)
-      echo "#$pr: built on ${base_sha:0:8}, main is ${main_sha:0:8}, and the gate definitions moved between them: ${verdict#moved }"
+      echo "#$pr: built on ${base_sha:0:8}, $base_ref is ${tip_sha:0:8}, and the gate definitions moved between them: ${verdict#moved }"
       echo "STALE $pr"
       exit 0
       ;;
     *)
-      echo "#$pr: cannot compare ${base_sha:0:8}..${main_sha:0:8} - ${verdict#undecidable }. Treating the gates as moved."
+      echo "#$pr: cannot compare ${base_sha:0:8}..${tip_sha:0:8} - ${verdict#undecidable }. Treating the gates as moved."
       echo "STALE $pr"
       exit 0
       ;;
@@ -255,7 +268,7 @@ fi
 case "$mergeable" in
   MERGEABLE) ;;
   CONFLICTING)
-    echo "#$pr: conflicts with main; Dependabot must rebase it first."
+    echo "#$pr: conflicts with $base_ref; Dependabot must rebase it first."
     exit 0
     ;;
   *)
@@ -267,6 +280,11 @@ esac
 echo "#$pr: all checks green -> merging"
 if gh pr merge "$pr" --repo "$REPO" --squash --delete-branch; then
   echo "MERGED $pr"
+  # THE BRANCH IS NAMED SEPARATELY BECAUSE THE CALLER HAS TO DISPATCH A DEPLOY FOR IT, and it can
+  # no longer assume which one: a `dev` merge must deploy the DEV estate (and be promoted from
+  # there on a proof), a `main` merge deploys production directly. Emitted as its own line rather
+  # than appended to `MERGED $pr`, whose exact-match contract the caller greps for.
+  echo "MERGED_ONTO $base_ref"
 else
   # Not fatal, and deliberately not retried here: whatever refused the merge is durable state that
   # the next pass reads fresh.

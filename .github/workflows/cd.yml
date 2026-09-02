@@ -2,7 +2,21 @@ name: CD - Deploy to Production
 
 on:
   push:
-    branches: [main]
+    # TWO BRANCHES, TWO ESTATES, AND THAT SEPARATION IS THE WHOLE POINT. `dev` deploys
+    # dev.canari-emse.fr and nothing else; `main` deploys production and nothing else. Nothing
+    # advances `main` on its own except `promote-dev-to-main` below, which first requires the dev
+    # estate to have ANSWERED as this exact commit - so a dependency update that would break
+    # production breaks dev first, on a copy of production's data, with nobody at the keyboard.
+    #
+    # Decided with the user 2026-09-02, and the measurement behind it is the outage of 2026-09-01:
+    # `postgres 15-alpine -> 18-alpine` was auto-merged green straight onto `main`, PG 18 refused
+    # production's data directory, and production was down 33 minutes. Dependabot targets `dev` now
+    # (`.github/dependabot.yml`), so that update would have refused the DEV data directory instead.
+    #
+    # A PUSH STRAIGHT TO `main` STILL DEPLOYS PRODUCTION, deliberately: that is the emergency path,
+    # and it is the one case that bypasses dev. The normal path for everything - human commits
+    # included - is `dev`.
+    branches: [main, dev]
   workflow_dispatch: # Permet déclenchement manuel
   # GITHUB_TOKEN pushes do not trigger `on: push` workflows - github's anti-recursion rule -
   # so a workflow that pushes to main has to reach CD by one of the two routes below or its
@@ -491,7 +505,7 @@ jobs:
     # therefore always sufficient to bring the dev estate up from nothing.
     if: |
       vars.DEV_ENVIRONMENT_ENABLED == 'true' &&
-      (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') &&
+      (github.ref == 'refs/heads/dev' || github.event_name == 'workflow_dispatch') &&
       (needs.detect-changed-services.outputs.frontend_changed == 'true' ||
        github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
@@ -675,8 +689,7 @@ jobs:
     if: |
       always() &&
       vars.DEV_ENVIRONMENT_ENABLED == 'true' &&
-      (github.event_name == 'workflow_run' || github.ref == 'refs/heads/main') &&
-      (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') &&
+      (github.ref == 'refs/heads/dev' || github.event_name == 'workflow_dispatch') &&
       (needs.run-ci.result == 'success' || needs.run-ci.result == 'skipped') &&
       needs.detect-changed-services.result == 'success' &&
       (needs.build-docker-images.result == 'success' || needs.build-docker-images.result == 'skipped') &&
@@ -806,28 +819,150 @@ jobs:
             refs/tags/dev-deployed
           echo "dev-deployed -> ${{ github.sha }}"
 
+  # -----------------------------------------------------------------------------------------------
+  # THE PROMOTION, WHICH IS THE HALF THAT MAKES A `dev` BRANCH WORTH HAVING
+  # -----------------------------------------------------------------------------------------------
+  # A branch nothing promotes is a parking lot, and a parking lot is the human queue this repository
+  # refuses on principle (the user, 2026-08-31: "Je prefere blinder de test et faire les choses
+  # automatiquement qu'avoir une review humaine qui n'arrive jamais"). So `dev` is advanced by
+  # anything - a human, or Dependabot's auto-merge - and `main` is advanced by THIS JOB ALONE, on a
+  # PROOF, never on a clock and never on somebody's attention.
+  #
+  # THE PROOF IS NOT "deploy-dev WENT GREEN". A green deploy proves the containers started; it does
+  # not prove the site answers, which is a durable rule here because it has been paid for. The proof
+  # is that the dev estate serves /api/version AS THIS COMMIT - its `build` being `dev.<sha7>`, a
+  # field production renders for nobody, so one read identifies the estate AND the commit. PG 18
+  # refusing a data directory, a migration that will not apply, a container that restart-loops: all
+  # of them fail that read, and production is never told the commit exists.
+  promote-dev-to-main:
+    name: Promote dev to main (release production)
+    runs-on: self-hosted
+    needs: [deploy-dev]
+    # NO `always()`: this job exists for the success path only. `needs: [deploy-dev]` already
+    # requires it, and the condition is spelled out anyway so that a later hand adding `always()`
+    # for some other reason cannot silently turn a failed dev deploy into a production release.
+    if: |
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/dev' &&
+      needs.deploy-dev.result == 'success'
+    permissions:
+      # `contents: write` for the one fast-forward below; `actions: write` for the dispatch, which
+      # is the only way a GITHUB_TOKEN push reaches an `on: push` workflow at all - see the header.
+      contents: write
+      actions: write
+    steps:
+      # 127.0.0.1 AND NOT THE PUBLIC NAME, and that is a trap rather than a preference: the
+      # cloudflared ingress rule for dev.canari-emse.fr still points at PRODUCTION's host port
+      # (docs/wiki/infrastructure/dev-environment.md), so a probe against the public name would pass
+      # by measuring production and would promote absolutely anything. The runner is the machine
+      # both estates live on, so the loopback port IS the dev estate and nothing else.
+      #
+      # THE PORT IS READ, NOT QUOTED. `render-env.sh` decides it per environment and writes it into
+      # the dev estate's own `.env`; a number repeated here would be a second source of truth, and
+      # its going stale would make this proof measure the wrong estate - silently.
+      - name: Prove the dev estate ANSWERS, and answers AS this commit
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          env_file="$DEV_DEPLOY_PATH/infrastructure/.env"
+          port=$(sed -n 's/^FRONTEND_HOST_PORT=//p' "$env_file" | tail -1)
+          if [ -z "$port" ]; then
+            echo "::error::FRONTEND_HOST_PORT is absent from $env_file - the dev estate's port is unknown, so nothing here can prove which estate answered."
+            exit 1
+          fi
+
+          echo "Probing the dev estate on 127.0.0.1:$port ..."
+          # /api/version is served by core-service, which needs the DATABASE - which is why it is
+          # the endpoint asked rather than /, a static frontend that answered 200 throughout both
+          # outages of 2026-09-01.
+          if ! body=$(curl -fsS --max-time 20 "http://127.0.0.1:$port/api/version"); then
+            echo "::error::the dev estate does not answer /api/version on 127.0.0.1:$port. The deploy started the containers and the application does not serve, so production is NOT being told about ${SHA:0:7}."
+            exit 1
+          fi
+          echo "$body"
+
+          build=$(printf '%s' "$body" | sed -n 's/.*"build"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+          expected="dev.${SHA:0:7}"
+          if [ -z "$build" ]; then
+            echo "::error::/api/version answered with no build field. Production renders none by decision, so this is production replying on a port that should be dev's - refusing to promote."
+            exit 1
+          fi
+          case "$build" in
+            "$expected"*) echo "dev serves build=$build, which is this commit." ;;
+            *)
+              echo "::error::dev serves build=$build, expected $expected - the estate is up on some OTHER commit, so nothing here has been proved about ${SHA:0:7}."
+              exit 1
+              ;;
+          esac
+
+      # A FAST-FORWARD, NOT A FORCE. If `main` carries a commit that is not on `dev` - an emergency
+      # push straight to production - this push is REFUSED and this job goes red. That is the right
+      # direction: overwriting it would revert a hotfix on the strength of a dev estate that never
+      # ran it. The remedy is one merge of `main` into `dev`, which the error names.
+      - name: Fast-forward main to this commit
+        id: ff
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          remote="https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+
+          # ALREADY THERE IS NOT A PROMOTION, and saying so is what keeps this idempotent rather
+          # than merely harmless: `main` sits at this commit whenever `dev` was created from it or
+          # reset to it, and a push would then succeed as a no-op while the dispatch below shipped
+          # production a deploy of what production already runs.
+          current=$(git -C "$DEV_DEPLOY_PATH" ls-remote "$remote" refs/heads/main | cut -f1)
+          if [ "$current" = "$SHA" ]; then
+            echo "main is already at ${SHA:0:7} - nothing to promote."
+            echo "promoted=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! git -C "$DEV_DEPLOY_PATH" push "$remote" "$SHA:refs/heads/main"; then
+            echo "::error::main could not be fast-forwarded to ${SHA:0:7}: it carries commits dev does not. Merge main into dev and push dev again - do NOT force this."
+            exit 1
+          fi
+          echo "main -> ${SHA:0:7}"
+          echo "promoted=true" >> "$GITHUB_OUTPUT"
+
+      # THE SAME ANTI-RECURSION RULE THIS FILE'S HEADER IS ABOUT: the push above was made with
+      # `GITHUB_TOKEN`, so it raises no `push` event and the production arm of this very workflow
+      # would never fire. `workflow_dispatch` is the documented exception, and it is the only reason
+      # `actions: write` is requested above.
+      - name: Dispatch the production deploy for the commit just promoted
+        if: steps.ff.outputs.promoted == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh workflow run cd.yml --repo "${{ github.repository }}" --ref main
+          echo "Production deploy dispatched on main."
+
   deploy-to-server:
     name: Deploy to Production Server
     runs-on: self-hosted
-    needs: [run-ci, detect-changed-services, build-docker-images, deploy-dev]
-    # THE DEV ESTATE DEPLOYS FIRST, AND A FAILED DEV DEPLOY STOPS THIS ONE. Decided with the user,
-    # and it is the point of having a second environment: a migration that will break production
-    # breaks dev first, on a copy of production's data, while production is still serving. `skipped`
-    # is tolerated because that is dev's state whenever `vars.DEV_ENVIRONMENT_ENABLED` is off - which
-    # it is today, so this clause changes nothing until the dev estate really exists.
+    needs: [run-ci, detect-changed-services, build-docker-images]
+    # `deploy-dev` IS DELIBERATELY NOT IN THIS LIST ANY MORE, and dev protects production harder for
+    # it. Until 2026-09-02 both estates deployed from `main` in one run and this job merely waited on
+    # the dev one - which meant a dev estate broken for a reason of its OWN (a mis-set DEV_ secret, a
+    # registry that timed out: measured on run 33633156004, its first day) held production's releases
+    # hostage, and it also meant `main` had already moved before dev said anything at all.
     #
-    # THE HAZARD IS REAL AND THE ESCAPE IS ONE SWITCH: a dev estate broken for a reason of its own -
-    # a mis-set DEV_ secret, its Authentik client revoked - would hold production's releases hostage.
-    # Setting `DEV_ENVIRONMENT_ENABLED` to anything but `true` skips dev and unblocks production
-    # immediately, and that is deliberately a repository VARIABLE so it is visible in the run log.
+    # THE GATE IS UPSTREAM OF THIS BRANCH NOW: `main` is advanced only by `promote-dev-to-main`,
+    # which requires the dev estate to ANSWER as the commit being promoted. A commit that reaches
+    # `main` has therefore already run somewhere, so this job has nothing left to wait for - and a
+    # broken dev estate now DELAYS a release instead of blocking one, with the failure named on the
+    # `dev` run where it belongs. The escape hatch is unchanged and still one switch:
+    # `DEV_ENVIRONMENT_ENABLED` set to anything but `true` skips the dev arm, which stops the
+    # promotion - so a release then travels by a push straight to `main`, the emergency path.
     if: |
       always() &&
       (github.event_name == 'workflow_run' || github.ref == 'refs/heads/main') &&
       (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') &&
       (needs.run-ci.result == 'success' || needs.run-ci.result == 'skipped') &&
       needs.detect-changed-services.result == 'success' &&
-      (needs.build-docker-images.result == 'success' || needs.build-docker-images.result == 'skipped') &&
-      (needs.deploy-dev.result == 'success' || needs.deploy-dev.result == 'skipped')
+      (needs.build-docker-images.result == 'success' || needs.build-docker-images.result == 'skipped')
     permissions:
       # `write` only for the `prod-deployed` tag the last step moves - the deploy itself reads.
       contents: write

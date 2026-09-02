@@ -241,13 +241,20 @@ restated**. **Every defect story is in `CHANGELOG.md`, every rule one left is in
     refresh -> deploy, the 80 `.sql` files being deltas over a schema TypeORM owns) and the three
     corrections that must not be undone (its sections 4, 5 and 8). The decisions are in
     [backlog](docs/wiki/backlog.md#devcanari-emsefr-becomes-a-real-second-environment---decided-2026-08-17).
-    **THREE THINGS STAY OPEN.** A broken dev deploy BLOCKS production's, by design, and the escape is
-    `gh variable set DEV_ENVIRONMENT_ENABLED --body false` - **and on its FIRST day the gate fired on
-    something it was never built to catch**: run `33633156004` held production back because dev
-    could not TLS-handshake with ghcr.io ([backlog](docs/wiki/backlog.md#p2---the-gate-that-lets-dev-protect-production-cannot-tell-a-broken-dev-from-an-unreachable-registry-measured-2026-09-02-first-day-it-ran)). One trigger still deploys BOTH estates -
-    whether a dev-only dispatch should exist is owed to the USER. **And prod's deploy job is still
-    its inlined shell**, moving onto `infrastructure/deploy/deploy-environment.sh` only once dev has
-    exercised it: one implementation, proven before it is imposed.
+    **THE BRANCH `dev` EXISTS SINCE 2026-09-02 AND IS WHAT THE DEV ESTATE DEPLOYS** (user's ask).
+    Two branches, two estates: a push to `dev` deploys dev and NOTHING else; `main` deploys
+    production and is advanced only by `promote-dev-to-main`, which requires dev to have ANSWERED
+    `/api/version` as that commit - a green deploy proving only that containers started. Dependabot
+    targets `dev` in all six blocks, so an update meets a copy of production's data first. Mechanism,
+    proof and the loopback trap are on [dev-environment](docs/wiki/infrastructure/dev-environment.md)
+    and [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them), the only
+    copies. **A push straight to `main` still deploys production - the emergency path, by design.**
+    **TWO THINGS STAY OPEN.** A dev deploy still cannot tell a broken CHANGE from an unreachable
+    REGISTRY, and the branch split MOVED that conflation rather than removing it - it now stops the
+    PROMOTION, so a release silently does not happen ([backlog](docs/wiki/backlog.md#p2---a-dev-deploy-still-cannot-tell-a-broken-change-from-an-unreachable-registry-and-the-conflation-moved-rather-than-went-away-measured-2026-09-02-first-day-it-ran)).
+    **And prod's deploy job is still its inlined shell**, moving onto
+    `infrastructure/deploy/deploy-environment.sh` only once dev has exercised it: one implementation,
+    proven before it is imposed.
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 

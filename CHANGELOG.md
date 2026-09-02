@@ -11,6 +11,29 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed
+
+- **Dependency updates land on a `dev` branch that deploys the dev estate, and a proof promotes them
+  to production.** Asked by the user - *"Est-ce qu'on pourrait dire a Dependabot de push sur la
+  branche dev au lieu de la prod ?"* - and the motive is the outage of 2026-09-01: `postgres
+  15-alpine -> 18-alpine` passed every gate this repository has, auto-merged onto `main`, and PG 18
+  then refused production's data directory (33 minutes down). Every gate here asks a question about
+  the SOURCE; none runs anything against real data, and the dev estate carries a copy of production.
+  It was given nothing to protect, though - both estates deployed from `main` in one CD run, dev
+  merely going first. Now: all six `dependabot.yml` blocks carry `target-branch: "dev"`, a push to
+  `dev` deploys `dev.canari-emse.fr` and nothing else, and `main` is advanced only by
+  `promote-dev-to-main` - which requires the dev estate to ANSWER `/api/version` as that exact commit
+  (`build` = `dev.<sha7>`, a field production renders for nobody) before fast-forwarding `main` and
+  dispatching the production deploy. A green deploy proves the containers started; this proves the
+  application serves. **A branch nobody promotes is a queue nobody drains**, which is why the
+  `target-branch` line and that job are one change. `deploy-to-server` correspondingly stopped
+  needing `deploy-dev`: on its first day that edge held a release back because dev could not
+  TLS-handshake with ghcr.io, and a commit reaching `main` has now already run somewhere. Three
+  `main` literals in the auto-merge became reads of the pull request's own base - the staleness
+  comparison (which would otherwise have reported the whole `main`..`dev` delta as a gate move and
+  marked every pull request permanently stale), the branch a post-merge deploy is dispatched on, and
+  the convergent trigger - so pull requests opened before the switch drain through the same sweep.
+
 ### Fixed
 
 - **Twelve of sixteen messages a peer sent were fetched by the phone and dropped, and one epoch of
