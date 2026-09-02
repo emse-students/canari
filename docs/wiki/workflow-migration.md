@@ -386,19 +386,33 @@ package starts.
 
 ### WP-2 - the branch, and deploy-at-bump
 
-- [ ] `cd.yml`: `on: push` and `workflow_dispatch` removed (section 3 explains why the dispatch goes)
-- [ ] `cd.yml`: `build-frontend-dev`, `build-frontend-images-dev`, `promote-dev-to-main` deleted
-- [ ] `cd.yml`: `deploy-dev` kept, re-wired to fire on a PRERELEASE tag
-- [ ] a CI that runs at merge on `main` (the user's ask), and which becomes the convergent trigger
+- [x] `cd.yml`: `on: push` and `workflow_dispatch` removed (section 3 explains why the dispatch goes)
+- [x] `cd.yml`: `build-frontend-dev`, `build-frontend-images-dev`, `promote-dev-to-main` deleted -
+      and `run-ci` / `run-code-analysis` went with them, both being `if: event != workflow_run`,
+      which is now never true. CI runs on the pull request and at merge on `main` instead
+- [x] `cd.yml`: `deploy-dev` kept, re-wired to fire on a PRERELEASE - read from the MANIFEST, by
+      a new `release-kind` job, because `github.event.release.prerelease` does not exist in a
+      `workflow_run` context and `head_branch` says `main` on the hand-dispatched path
+- [x] a CI that runs at merge on `main` (the user's ask), and which becomes the convergent trigger.
+      `workflow_dispatch` added to `ci.yml` too: the auto-merge's `GITHUB_TOKEN` merges raise no
+      push event, so without it the merged COMBINATION would never be tested
       the auto-merge needs
-- [ ] `dependabot-auto-merge.yml`: its `workflow_run` on CD and its `workflow_dispatch` CALL to CD
+- [x] `dependabot-auto-merge.yml`: its `workflow_run` on CD and its `workflow_dispatch` CALL to CD
       both re-pointed at that CI
-- [ ] `.github/dependabot.yml`: the 6 `target-branch: "dev"` removed
+- [x] `.github/dependabot.yml`: the 6 `target-branch: "dev"` removed
 - [ ] a ruleset on `main`: pull request required, required checks, admin bypass
 - [ ] `origin/dev` deleted
-- [ ] `dev-refresh.yml` left running (the estate survives)
-- [ ] **the `prod-deployed` tag DELETED, and `detect-changed-services` re-pointed at the last
-      RELEASE tag first** - decided by the user 2026-09-02 against my recommendation to keep it,
+- [x] `dev-refresh.yml` left running (the estate survives)
+- [x] **the `prod-deployed` tag DELETED, and `detect-changed-services` re-pointed at the last
+      RELEASE first.** What it was re-pointed at is narrower than "the last release tag", and the
+      reason is the moving image tag: production deploys `:latest`, which only a STABLE moves, and
+      dev deploys `:dev`, which only a PRE-RELEASE moves - so the baseline has to be the previous
+      release **of the same kind**, or a service changed since the last alpha but not since the
+      intervening stable would never be rebuilt for dev. The order comes from `gh api .../releases`
+      (newest-first by creation) and NOT from `git tag --sort=v:refname`, which places
+      `v1.0.0-alpha` AFTER `v1.0.0` without `versionsort.suffix`. The tag itself survives under a
+      new name, `prod-released`: it is no longer an input, only the record of what production is
+      serving. The original box read - decided by the user 2026-09-02 against my recommendation to keep it,
       which is their call and is not to be re-litigated. What they are accepting, stated once so it
       is on the record: that tag is written by the deploy job and is the only thing that says what
       production actually received, so **after an emergency push straight to `main` nothing will
@@ -422,7 +436,7 @@ monotonic, and the ceiling (`0.999.999` -> 99999999) is well inside Play's 21000
 multiplies EVERY future code by 100: a one-way step, taken deliberately, because Tauri's own
 derivation (`major*1e6 + minor*1e3 + patch`, which produced 14015) leaves no room for a rank.
 
-- [ ] `scripts/bump-app-version.sh` accepts `X.Y.Z-alpha.N` and writes THREE different strings,
+- [x] `scripts/bump-app-version.sh` accepts `X.Y.Z-alpha.N` and writes THREE different strings,
       which is the part that is easy to get wrong (measured 2026-09-03):
       - the FULL `0.15.0-alpha.1` into `frontend/package.json`, the four `apps/*/package.json`, the
         `libs/*` ones and every `Cargo.toml` + `Cargo.lock` - all of which accept a semver
@@ -444,7 +458,7 @@ derivation (`major*1e6 + minor*1e3 + patch`, which produced 14015) leaves no roo
       `ios-release.yml` already patches the plist with `PlistBuddy` for the export-compliance code,
       so the patch has a home; **what is unknown is whether that home is early enough**, and only a
       macOS run answers it. Do not write the fix against the guess
-- [ ] **NOTHING carries a prerelease flag downstream, and that box is DELETED** (measured
+- [x] **NOTHING carries a prerelease flag downstream, and that box is DELETED** (measured
       2026-09-02, before a line was written). After the bump, `frontend/package.json` itself reads
       `0.15.0-alpha.1`, all four release workflows already read that file at the checked-out commit,
       and **a hyphen in a version IS the semver definition of a pre-release** - so each workflow
@@ -452,13 +466,24 @@ derivation (`major*1e6 + minor*1e3 + patch`, which produced 14015) leaves no roo
       The alternative, `workflow_run.head_branch`, is right for a release-triggered run and WRONG
       for the `workflow_dispatch` path, where the head branch is `main`. **`github.event.release.prerelease`
       is invisible from a `workflow_run` context**, which is what made a flag look necessary
-- [ ] `android-release.yml`: track `internal` when prerelease, `production` otherwise
-- [ ] `ios-release.yml`: TestFlight INTERNAL group when prerelease
-- [ ] an alpha build carries the DEV `VITE_*` set, a stable build production's, and **the job FAILS
+- [x] `android-release.yml`: track `internal` when prerelease, `production` otherwise. **Two
+      tracks became reachable only because each alpha now carries its own `versionCode`** - the
+      old comment there said internal testing "needs its own build cadence", and the band is it
+- [x] `ios-release.yml`: **there is no group to select, and that is the finding.**
+      `altool --upload-app` hands the build to App Store Connect and every INTERNAL tester sees
+      every processed build automatically - internal groups are not opt-in per build, unlike
+      external ones, which is exactly why decision 9 chose them. On iOS the alpha/stable difference
+      is the backend the bundle is built against, and nothing else
+- [x] an alpha build carries the DEV `VITE_*` set, a stable build production's, and **the job FAILS
       when the tag's nature and the backend URL disagree** - this is the one place in the chantier
-      where a mistake ships to phones, so it is an assertion and never a convention
-- [ ] a prerelease tag deploys the dev estate; a stable tag deploys production
-- [ ] the first pre-release is `0.15.0-alpha.1` (`0.14.15` stays the stable in the stores)
+      where a mistake ships to phones, so it is an assertion and never a convention. Written into
+      FOUR workflows, not two: `cd.yml`, `android-release.yml`, `ios-release.yml` and
+      `appimage-release.yml`, the last of which bakes an origin in exactly like the store bundles.
+      There is no fallback from the `DEV_*` secrets to the production ones anywhere - falling back
+      is precisely how an alpha ends up talking to production
+- [x] a prerelease deploys the dev estate; a stable deploys production
+- [ ] the first pre-release is `0.15.0-alpha.1` (`0.14.15` stays the stable in the stores) -
+      **the one box of WP-3 nothing here can tick: it is a release somebody publishes**
 
 ### WP-5 - the campaign, from zero
 
@@ -485,6 +510,10 @@ survive a replug.
 - [ ] `CLAUDE.md` first: "WORK ON `main`, commit directly" is replaced by the PR flow, the
       deploy-at-bump rule, and the release conventions
 - [ ] `durable-rules.md`, `cicd.md`, `infrastructure/dev-environment.md`, `backlog.md`, `index.md`,
+      **PARTLY DONE 2026-09-03**: the sections of `cicd.md` and `dev-environment.md` that WP-2+WP-3
+      falsified were rewritten in that same commit rather than left lying, because a wiki that
+      contradicts the workflows is worse than none. What is left on those two pages is the rest,
+      not the branch model.
       `README.md`, `infrastructure/MIGRATION.md`
 - [ ] `sessions.md`, `infrastructure/databases.md`, `infrastructure/docker.md`,
       `services/chat-gateway.md`

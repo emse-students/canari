@@ -1,8 +1,25 @@
 name: CI
 
+# TWO TRIGGERS, AND THE SECOND ONE IS THE POINT (user, 2026-09-02: work goes through pull requests).
+#
+# `pull_request` is the gate somebody sees before merging. `push` on `main` is the one that says
+# whether the MERGED result is green - a pull request is tested against its own head, and two pull
+# requests that each pass can still break `main` between them. It also covers the case a required
+# check cannot: an admin bypassing the ruleset for an emergency hotfix still gets told, on `main`,
+# what the bypass skipped.
+#
+# NOTHING HERE DEPLOYS. Deployment happens when a release is published (`cd.yml`), so a red run on
+# `main` is a statement about the repository, never about production - which is still serving the
+# last release.
 on:
   pull_request:
-    branches: [main, dev]
+    branches: [main]
+  push:
+    branches: [main]
+  # `dependabot-auto-merge.yml` calls this after a sweep. Its merges are made with `GITHUB_TOKEN`,
+  # which raises no `push` event - github's anti-recursion rule - so without a dispatch the merged
+  # COMBINATION would never be tested and the sweep would never be woken to drain the rest.
+  workflow_dispatch:
   workflow_call:
     inputs:
       git_ref:
@@ -204,6 +221,11 @@ jobs:
           # file is an input, so `local/` is in the pattern below; it was not, for one commit, which
           # is the exact shape this comment warns about.
           #
+          # `scripts/bump-app-version.sh` IS AN INPUT AND DOES NOT LIVE UNDER `.github/` AT ALL.
+          # `tests/bump-version.test.sh` runs that script in a sandbox and reads the manifests back,
+          # so the commit that must run it is a change to the script - the one file the first
+          # pattern here would never match.
+          #
           # `cd.yml` IS AN INPUT, and it is the least obvious entry here. `tests/deploy-env.test.sh`
           # derives the expected key set of a deployed environment FROM `cd.yml`'s own
           # `upsert_env_var` calls - so the change that must run it is a key added THERE and not to
@@ -213,6 +235,7 @@ jobs:
           if has '^\.github/scripts/' \
             || has '^infrastructure/(docker-compose\.(prod|dev)\.yml|dev/|local/|deploy/|\.env\.example)' \
             || has '^\.github/workflows/cd\.yml$' \
+            || has '^scripts/bump-app-version\.sh$' \
             || has '^Makefile'; then
             echo "scripts=true" >> "$GITHUB_OUTPUT"
           else

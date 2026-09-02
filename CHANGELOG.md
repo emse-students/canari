@@ -13,6 +13,51 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Changed
 
+- **Deployment happens at the BUMP, not at a push, and which estate it reaches is decided by the
+  RELEASE.** Asked by the user on 2026-09-02, hours after the two-branch model landed: *"Plus de
+  branche dev. La branche du projet c'est main."* and *"Le deploiement (production, android,
+  ios...) se fait au bump. Pas au push sur main."* `cd.yml` lost `on: push` and its
+  `workflow_dispatch` - a dispatch would simply be a second door, and retrying a half-failed deploy
+  is "Re-run failed jobs" on the run that exists. Publishing a GitHub Release runs the bump, and
+  CD starts from that run's completion: a `X.X.X-alpha.N` pre-release deploys `dev.canari-emse.fr`
+  and feeds the Play internal track and TestFlight, a stable release deploys production.
+  **The manifest decides, because nothing else can**: `github.event.release.prerelease` does not
+  exist in a `workflow_run` context, and `workflow_run.head_branch` carries the tag for a
+  release-triggered bump but says `main` when the bump was dispatched by hand - which would send an
+  alpha to production in silence. A hyphen in a semver version IS the definition of a pre-release,
+  so the file that shipped is the file that answers, on both paths and in all four workflows that
+  need it.
+  **`promote-dev-to-main` and the two duplicated dev frontend jobs are gone**, the first because
+  there is no branch left to promote and the others because a run now deploys exactly one estate.
+  What the promotion provided was real and is written down rather than quietly dropped: an
+  automatic proof, on a copy of production's data, that a commit serves before production is given
+  it. A pre-release provides that when somebody publishes one.
+  **The change detector's baseline is the previous release OF THE SAME KIND**, which is forced by
+  the moving image tag each estate reads - production `:latest`, dev `:dev` - and the order comes
+  from the GitHub API rather than `git tag --sort=v:refname`, which places `v1.0.0-alpha` after
+  `v1.0.0`. The `prod-deployed` tag it used to read was deleted on the user's decision, taken
+  knowing its cost: after an emergency push straight to `main`, nothing says which commit
+  production is serving until the next release. It survives as `prod-released`, a record and no
+  longer an input.
+  **CI gained a run at merge on `main`** - a pull request is tested against its own head, so two
+  that each pass can still break `main` between them - and the Dependabot auto-merge's two cables
+  into CD were re-pointed at it. Nothing it merges deploys anything now, so a red `main` blocks the
+  next release instead of breaking the running one.
+
+- **A release can be a pre-release, which the first step of a release used to refuse.**
+  `scripts/bump-app-version.sh` asserted `^[0-9]+\.[0-9]+\.[0-9]+$` and exited on anything else, so
+  `v0.15.0-alpha.1` died before a single store number was computed. Lifting that is not one regex:
+  one argument now becomes three different strings, and conflating any two breaks a store upload
+  rather than a build. The full `0.15.0-alpha.1` goes to every `package.json` and `Cargo.toml` (and
+  is what the client identifies itself by, so `minClientVersion` compares against it); the numeric
+  core `0.15.0` goes to `tauri.conf.json`, because Apple requires `CFBundleShortVersionString` to
+  be numeric; and a banded integer goes to `bundle.android.versionCode` and `CFBundleVersion`,
+  because Tauri's own derivation ignores the suffix entirely and would ask Play to accept the same
+  code for every alpha of a release. The band is `(major*1e6 + minor*1e3 + patch) * 100 + rank`
+  with `rank` = N for `-alpha.N` and **99** for a stable - not 0, which was the first shape written
+  and would have put `0.15.0` below its own alphas, a code Play refuses. 31 assertions run the real
+  script in a sandbox and read every file back.
+
 - **Local development authenticates, because it now has the nginx everything else assumed.** The
   local estate ran ten containers and no nginx, and the dev server's proxy table named each service
   directly - so a bearer token never became the `X-User-Id` header the services read, and a login

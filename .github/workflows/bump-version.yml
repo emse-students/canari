@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Semver without v prefix (e.g. 0.3.6)'
+        description: 'Semver without v prefix (e.g. 0.15.0, or 0.15.0-alpha.1 for a tester build)'
         required: true
 
 permissions:
@@ -61,4 +61,8 @@ jobs:
           git commit -m "chore: bump version to ${{ steps.version.outputs.version }}"
           git push origin HEAD:main
           echo "pushed=true" >> "$GITHUB_OUTPUT"
-          echo "Pushed version bump; CD will rebuild core-service+frontend (no CI) via workflow_run."
+          # THIS PUSH IS THE ONLY THING THAT DEPLOYS ANYTHING (user, 2026-09-02). `cd.yml` starts on
+          # this run's completion, reads the version out of the manifest this step just wrote, and
+          # sends a pre-release to the dev estate or a stable to production. The three bundle
+          # workflows read the same file for the same decision.
+          echo "Pushed version bump; CD and the release builds start from this run's completion."

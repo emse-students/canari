@@ -313,17 +313,24 @@ passes silently.
 
 ## 8. How it is deployed
 
-One workflow, `cd.yml`, with three added jobs and a fourth that refreshes the data. Every one of them
-is gated on `vars.DEV_ENVIRONMENT_ENABLED == 'true'`, a repository VARIABLE rather than a secret so
-its value is visible in the run log - whether a second estate is being deployed is not a secret, and
-a silent gate is one nobody can debug.
+One workflow, `cd.yml`, with ONE added job since 2026-09-03, and a second that refreshes the data.
+Both are gated on `vars.DEV_ENVIRONMENT_ENABLED == 'true'`, a repository VARIABLE rather than a
+secret so its value is visible in the run log - whether a second estate is being deployed is not a
+secret, and a silent gate is one nobody can debug.
 
 | job | where | what it does |
 |---|---|---|
-| `build-frontend-dev` | GitHub runner | builds the frontend from the `DEV_*` secrets, with `VITE_DEPLOY_ENVIRONMENT=development` |
-| `build-frontend-images-dev` | GitHub runner | pushes `frontend:dev` and `frontend-ssr:dev`, plus an immutable `dev-<sha>` |
+| `build-frontend` | GitHub runner | builds the frontend from the `DEV_*` secrets when the release is a PRE-RELEASE, with `VITE_DEPLOY_ENVIRONMENT=development` |
+| `build-docker-images` | GitHub runner | pushes every changed image, moving `:dev` rather than `:latest` |
 | `deploy-dev` | the server | renders `.env`, then runs [`deploy-environment.sh`](../../../infrastructure/deploy/deploy-environment.sh) |
 | `refresh` in [`dev-refresh.yml`](../../../.github/workflows/dev-refresh.yml) | the server | weekly, copies production's data into dev |
+
+**`build-frontend-dev` and `build-frontend-images-dev` were DELETED.** They were a near-identical
+copy of the production frontend build, and they existed only because one push used to deploy both
+estates at once. A CD run deploys exactly one estate now - a pre-release goes to dev, a stable to
+production - so the single build picks the estate's secrets and the single image job moves the
+estate's tag. The duplication was never harmless: the two had drifted, and the
+`VITE_DEPLOY_ENVIRONMENT` banner lived in the dev copy with nothing saying so.
 
 ### Two images are dev's own, and every other one is shared
 
@@ -338,8 +345,18 @@ baked into the bundle. A shared frontend image would point dev's browser at prod
 banner. So the dev compose file reads `${FRONTEND_TAG:-dev}` for its two frontends and `${TAG}` for
 everything else.
 
+**BOTH ARE `dev` SINCE 2026-09-03, AND THE BACKEND IMAGES STOPPED BEING SHARED BY TAG.** Sharing
+production's `:latest` was right while one push deployed both estates from ONE commit; a pre-release
+and a stable are different commits now, so `latest` belongs to whichever stable shipped last and dev
+would have been reading a build it never asked for. The images are still built from the same
+Dockerfiles and still configured entirely from `.env` - what changed is only which tag each estate
+follows.
+
 `dev` is a mutable tag, like production's `latest`, which is why the deploy PULLS before it brings
-the estate up: `up -d` alone sees no reason to recreate a container whose tag has not changed.
+the estate up: `up -d` alone sees no reason to recreate a container whose tag has not changed. It is
+also why a service a release does not rebuild keeps the image it has - that is what a selective
+rebuild means, and it is why the change detector's baseline must be the previous PRE-RELEASE and not
+the previous release of any kind ([cicd](../cicd.md#cd-cdyml)).
 
 ### The deploy is two scripts, and the order is load-bearing
 
@@ -426,54 +443,42 @@ first dry run passed every guard, printed `[dry-run] nothing was changed`, then 
 502s from the schemaless database it had deliberately not touched. A step that measures an outcome
 belongs behind the condition that produced it.
 
-### Dev is deployed from the `dev` BRANCH, and the promotion is what releases production
+### Dev is the PRE-RELEASE target, and the `dev` branch it used to deploy from is gone
 
-Asked by the user and decided 2026-09-02. Until that day both estates deployed from `main` in one CD
-run, dev merely going first, and that arrangement had two defects the first week showed:
+For one day (2026-09-02) there was a `dev` branch: it deployed this estate, and `promote-dev-to-main`
+fast-forwarded `main` onto it once the estate had ANSWERED `/api/version` as that commit. The user
+cancelled that model the following day - `main` is the only branch, work goes through pull requests,
+and **nothing deploys until a release is published**.
+
+**The shape now.** One branch, two kinds of release:
+
+| The release | What it deploys | What else it feeds |
+| --- | --- | --- |
+| `v0.15.0-alpha.1` (pre-release) | `dev.canari-emse.fr` only | Play *internal* track, TestFlight |
+| `v0.15.0` (stable) | production only | Play `production` track |
+
+`dev-refresh.yml` still copies production's data in every Monday, so an alpha meets
+production-shaped data. What dev is FOR changed with the model: it was a rehearsal stage every
+change passed through, and it is now where a tester build points.
+
+**WHAT WAS LOST, stated because it was real and because a later session must not "restore" it by
+accident.** The promotion was an automatic proof, on a copy of production's data, that a commit
+serves before production is given it - it probed `/api/version` on the loopback and required `build`
+to be `dev.<sha7>` of the commit in question, so PG 18 refusing a data directory, a migration that
+would not apply or a container that restart-looped all failed it and production was never told the
+commit existed. A pre-release provides that only when somebody publishes one. **The trade the user
+chose is a human deciding when the rehearsal happens**, in exchange for one branch and no queue.
+
+The two defects that model was answering are worth keeping, because they say what NOT to rebuild:
 
 - **Dev was given nothing to protect.** A dependency update was merged onto `main` and `main` was
-  already the thing production deployed; dev running first only narrowed the window. The measurement
-  is the outage of 2026-09-01 - `postgres 15-alpine -> 18-alpine` auto-merged green, PG 18 refused
-  production's data directory, 33 minutes down.
+  already what production deployed; dev running first only narrowed the window. The measurement is
+  the outage of 2026-09-01 - `postgres 15-alpine -> 18-alpine` auto-merged green, PG 18 refused
+  production's data directory, 33 minutes down. **That specific hazard is now held off by the fact
+  that a merge deploys nothing at all**, not by an ordering.
 - **Dev could hold production hostage for reasons of its own.** A registry that timed out pulling
-  `frontend:dev` failed `deploy-dev`, and `deploy-to-server` needed it (run `33633156004`).
-
-**The shape now.** Two branches, two estates, and one job between them:
-
-| Branch | What it deploys | What advances it |
-| --- | --- | --- |
-| `dev` | `dev.canari-emse.fr` only | anything - a human push, Dependabot's auto-merge |
-| `main` | production only | `promote-dev-to-main`, and a hand push in an emergency |
-
-`promote-dev-to-main` fast-forwards `main` to the commit `dev` just deployed, then dispatches the
-production deploy (a `GITHUB_TOKEN` push raises no `push` event, so the dispatch is the only route).
-Dependabot targets `dev` in all six ecosystems, so a dependency update now meets a copy of
-production's data before production ever hears of it.
-
-**The proof is not that `deploy-dev` went green.** A green deploy proves the containers started; it
-does not prove the site answers. The promotion probes `/api/version` **on `127.0.0.1:$FRONTEND_HOST_PORT`**
-and requires `build` to be `dev.<sha7>` of the commit being promoted:
-
-- The **loopback**, never the public name, because the cloudflared ingress rule for
-  `dev.canari-emse.fr` still points at production's host port (§5) - a probe on the name would
-  measure production and promote anything at all.
-- The **port is read** from the dev estate's own `.env`, which `render-env.sh` wrote; a number
-  repeated in the workflow would be a second source of truth whose going stale is silent.
-- **`build`** because production renders none by decision, so a non-null `build` identifies the
-  estate, and the `<sha7>` identifies the commit. One read answers both.
-- **`/api/version`** rather than `/`, because it needs the database - the static frontend answered
-  200 through both outages of 2026-09-01.
-
-**The fast-forward is not a force.** If `main` carries a commit `dev` does not - an emergency push
-straight to production - the push is refused and the job goes red, naming the remedy (merge `main`
-into `dev`). Overwriting it would revert a hotfix on the strength of a dev estate that never ran it.
-And `main` already at that commit is reported as *nothing to promote* rather than pushed as a no-op,
-which is what stops a pointless production deploy every time `dev` is recreated from `main`.
-
-**The escape is still one switch.** `DEV_ENVIRONMENT_ENABLED` set to anything but `true` skips the
-dev arm, which skips the promotion with it - so a release then travels by a push straight to `main`.
-A broken dev estate now DELAYS a release instead of blocking one, and the failure is named on the
-`dev` run where it belongs.
+  `frontend:dev` failed `deploy-dev`, and `deploy-to-server` needed it (run `33633156004`). The two
+  arms deploy different commits now and neither waits on the other, so this cannot recur.
 
 ### Its own checkout, and its own deployed tag
 
@@ -482,9 +487,10 @@ sharing one working tree would race: a `git reset --hard` for one rewrites the c
 is being deployed from. `deploy-dev` creates that clone if it is absent, so the starting point is
 reproducible rather than a directory somebody once made differently.
 
-It records `dev-deployed` and deliberately not `prod-deployed`: that tag is the change detector's
-input, so a dev deploy writing it would tell the next push that production already runs this commit
-and skip its rebuild entirely.
+It records `dev-deployed`, and that tag answers a question the estate itself cannot: which commit
+is running here. It is no longer the change detector's input - the detector reads the previous
+release now - and its production counterpart was renamed `prod-released` for the same reason, so
+that nobody reads a stale meaning into either.
 
 ---
 

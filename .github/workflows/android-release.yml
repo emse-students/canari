@@ -20,12 +20,27 @@ jobs:
         with:
           ref: main
 
+      # THE MANIFEST DECIDES WHICH TRACK THIS BUILD IS FOR, and it is the only thing that can.
+      # `github.event.release.prerelease` does not exist in a `workflow_run` context - the event
+      # here is the BUMP run's completion - and `workflow_run.head_branch` says `main` whenever the
+      # bump was dispatched by hand, which would put an alpha on the production track. After the
+      # bump, `frontend/package.json` carries the version, and a hyphen in a semver version IS the
+      # definition of a pre-release.
       - name: Resolve release tag
         id: release_tag
         run: |
+          set -euo pipefail
           VERSION="$(bash scripts/read-app-version.sh)"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Building Canari v${VERSION}"
+          case "$VERSION" in
+            *-*) PRERELEASE=true;  TRACK=internal ;;
+            *)   PRERELEASE=false; TRACK=production ;;
+          esac
+          {
+            echo "version=${VERSION}"
+            echo "prerelease=${PRERELEASE}"
+            echo "track=${TRACK}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Building Canari v${VERSION} for the Play ${TRACK} track"
 
       - name: Setup Java
         uses: actions/setup-java@v6
@@ -136,24 +151,78 @@ jobs:
           ./scripts/print-android-app-link-fingerprint.sh
           echo "::notice::Add this SHA-256 to GitHub secret ANDROID_APP_LINK_SHA256, then redeploy frontend (cd workflow)."
 
+      # AN ALPHA POINTS AT dev.canari-emse.fr AND A STABLE AT PRODUCTION, and the mismatch is an
+      # ASSERTION rather than a convention. This is the one place in the whole migration where a
+      # mistake ships to phones: a store build bakes its backend origin in and cannot be re-pointed
+      # afterwards, so an alpha built against production would let the tester programme write to
+      # real data, and a stable built against dev would point every user at a box wiped every
+      # Monday. Neither failure is visible in a green pipeline.
+      #
+      # There is NO FALLBACK from the DEV_ secrets to the production ones. Falling back is precisely
+      # how an alpha would end up pointing at production; a missing secret stops the build instead.
       - name: Create frontend .env
         working-directory: frontend
         env:
+          IS_PRERELEASE: ${{ steps.release_tag.outputs.prerelease }}
           BASE_URL: ${{ secrets.BASE_URL }}
           AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
           AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
+          DEV_BASE_URL: ${{ secrets.DEV_BASE_URL }}
+          DEV_AUTHENTIK_URL: ${{ secrets.DEV_AUTHENTIK_URL }}
+          DEV_AUTHENTIK_CLIENT_ID: ${{ secrets.DEV_AUTHENTIK_CLIENT_ID }}
           KLIPY_API_KEY: ${{ secrets.KLIPY_API_KEY }}
         run: |
-          echo "VITE_FRONTEND_URL=${BASE_URL}" >> .env
-          echo "VITE_GATEWAY_URL=${BASE_URL}" >> .env
-          echo "VITE_DELIVERY_URL=${BASE_URL}" >> .env
-          echo "VITE_MEDIA_URL=${BASE_URL}" >> .env
-          echo "VITE_CALL_URL=${BASE_URL}" >> .env
-          echo "VITE_SOCIAL_URL=${BASE_URL}" >> .env
-          echo "VITE_CORE_URL=${BASE_URL}" >> .env
-          echo "VITE_AUTHENTIK_URL=${AUTHENTIK_URL}" >> .env
-          echo "VITE_AUTHENTIK_CLIENT_ID=${AUTHENTIK_CLIENT_ID}" >> .env
+          set -euo pipefail
+
+          if [ "$IS_PRERELEASE" = "true" ]; then
+            APP_URL="$DEV_BASE_URL"
+            IDP_URL="$DEV_AUTHENTIK_URL"
+            IDP_CLIENT="$DEV_AUTHENTIK_CLIENT_ID"
+            EXPECTED_HOST="dev.canari-emse.fr"
+          else
+            APP_URL="$BASE_URL"
+            IDP_URL="$AUTHENTIK_URL"
+            IDP_CLIENT="$AUTHENTIK_CLIENT_ID"
+            EXPECTED_HOST="canari-emse.fr"
+          fi
+
+          for name in APP_URL IDP_URL IDP_CLIENT; do
+            if [ -z "${!name}" ]; then
+              echo "::error::${name} is empty for a $([ "$IS_PRERELEASE" = "true" ] && echo pre-release || echo stable) build. The DEV_ and production secret sets are kept separate on purpose - there is no fallback between them."
+              exit 1
+            fi
+          done
+
+          case "$APP_URL" in
+            *"dev.canari-emse.fr"*) URL_ENVIRONMENT=dev ;;
+            *"canari-emse.fr"*) URL_ENVIRONMENT=production ;;
+            *) URL_ENVIRONMENT=unknown ;;
+          esac
+          if [ "$IS_PRERELEASE" = "true" ] && [ "$URL_ENVIRONMENT" != "dev" ]; then
+            echo "::error::This is a PRE-RELEASE but its backend URL resolves to '${URL_ENVIRONMENT}', not ${EXPECTED_HOST}. Refusing to ship an alpha pointing anywhere else to the tester programme."
+            exit 1
+          fi
+          if [ "$IS_PRERELEASE" != "true" ] && [ "$URL_ENVIRONMENT" != "production" ]; then
+            echo "::error::This is a STABLE release but its backend URL resolves to '${URL_ENVIRONMENT}', not ${EXPECTED_HOST}. Refusing to ship a production build pointing anywhere else."
+            exit 1
+          fi
+          echo "Android build targets ${URL_ENVIRONMENT} (${APP_URL})"
+
+          echo "VITE_FRONTEND_URL=${APP_URL}" >> .env
+          echo "VITE_GATEWAY_URL=${APP_URL}" >> .env
+          echo "VITE_DELIVERY_URL=${APP_URL}" >> .env
+          echo "VITE_MEDIA_URL=${APP_URL}" >> .env
+          echo "VITE_CALL_URL=${APP_URL}" >> .env
+          echo "VITE_SOCIAL_URL=${APP_URL}" >> .env
+          echo "VITE_CORE_URL=${APP_URL}" >> .env
+          echo "VITE_AUTHENTIK_URL=${IDP_URL}" >> .env
+          echo "VITE_AUTHENTIK_CLIENT_ID=${IDP_CLIENT}" >> .env
           echo "VITE_CALL_E2E_ENCRYPTION=false" >> .env
+          if [ "$IS_PRERELEASE" = "true" ]; then
+            # The same banner the dev web estate carries, for the same reason: `deployEnvironment()`
+            # treats UNSET as production, so a tester holding an alpha must be told which one it is.
+            echo "VITE_DEPLOY_ENVIRONMENT=development" >> .env
+          fi
           if [ -n "$KLIPY_API_KEY" ]; then
             echo "VITE_KLIPY_KEY=${KLIPY_API_KEY}" >> .env
           fi
@@ -223,19 +292,22 @@ jobs:
             echo "::warning::GOOGLE_PLAY_SERVICE_ACCOUNT_JSON not set; skipping Google Play publish"
           fi
 
-      # Publishes the signed AAB to Google Play on the PRODUCTION track (real public
-      # release, full rollout). NOTE: Google requires the very first production release
-      # to be created MANUALLY in the Play Console (store listing, content rating, etc.)
-      # before the API will accept uploads for fr.emse.canari; subsequent releases are
-      # automatic. Switch `status` to `inProgress` + set `userFraction` here for a
-      # staged rollout instead of 100%.
+      # ONE UPLOAD, TO THE TRACK THE RELEASE NAMED. A pre-release goes to `internal` (the tester
+      # programme, decision 9 of the migration: internal channels only, no Beta App Review in the
+      # loop) and a stable to `production` - real public release, full rollout.
       #
-      # There is deliberately no separate `internal` track upload alongside this: Google
-      # rejects re-uploading the same versionCode to a second track in one job (confirmed
-      # on v0.9.21 - "Version code 9021 has already been used"), so a second step here
-      # would only ever fail. Internal-track testing needs its own build cadence
-      # (different versionCode) if it's ever wanted again.
-      - name: Publish to Google Play (production)
+      # NOTE: Google required the very first production release to be created MANUALLY in the Play
+      # Console (store listing, content rating) before the API would accept uploads for
+      # fr.emse.canari; subsequent releases are automatic. Switch `status` to `inProgress` and set
+      # `userFraction` for a staged rollout instead of 100%.
+      #
+      # STILL EXACTLY ONE TRACK PER JOB, and that is not a stylistic choice: Google rejects
+      # re-uploading the same versionCode to a second track in one job (confirmed on v0.9.21 -
+      # "Version code 9021 has already been used"). The two tracks are reachable now because each
+      # alpha carries its OWN versionCode - `bump-app-version.sh` bands the pre-release counter into
+      # it - which is the thing that was missing when that comment said internal testing "needs its
+      # own build cadence".
+      - name: Publish to Google Play
         if: github.event_name == 'workflow_run' && steps.gplay.outputs.present == 'true'
         uses: r0adkll/upload-google-play@v1
         with:
@@ -243,7 +315,7 @@ jobs:
           packageName: fr.emse.canari
           releaseFiles: ${{ steps.outputs.outputs.aab }}
           # `tracks` (plural) is the non-deprecated input name for the same thing.
-          tracks: production
+          tracks: ${{ steps.release_tag.outputs.track }}
           status: completed
           # NO `changesNotSentForReview`: once the app is fully published, Google always
           # sends changes for review automatically and REJECTS the query parameter

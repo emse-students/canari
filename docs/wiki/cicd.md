@@ -6,7 +6,7 @@ Canari uses GitHub Actions for continuous integration and deployment. The pipeli
 
 ### CI (`ci.yml`)
 
-Runs on every push and pull request to `main`:
+Runs on every pull request to `main`, and again on every push to `main`:
 
 | Job | What it checks |
 |---|---|
@@ -23,59 +23,100 @@ so EVERY pipeline that ships a client builds them: `cd.yml`, the three release w
 committed binary went a crypto fix stale precisely because only some pipelines rebuilt it
 ([mls-wasm](frontend/mls-wasm.md#why-it-is-not-committed)).
 
+**The second trigger is what makes a merge on `main` mean something.** A pull request is tested
+against its own head, so two pull requests that each pass can still break `main` between them; the
+push run is the one that says whether the merged result is green. It also covers what a required
+check cannot - an admin bypassing the ruleset for an emergency hotfix still gets told, on `main`,
+what the bypass skipped. **Nothing here deploys**, so a red run on `main` is a statement about the
+repository and never about production, which is still serving the last release.
+
 ### CD (`cd.yml`)
 
-Deploys to the production server on push to `main`, manual trigger, or after a release version bump.
-**A push to `dev` deploys the dev estate instead, and nothing else** — see below.
+**ONE TRIGGER: the completion of `Bump version on release`** (user, 2026-09-02: *"Le deploiement
+(production, android, ios...) se fait au bump. Pas au push sur main."*). A push to `main` deploys
+nothing, and there is no `workflow_dispatch` either - a dispatch would simply be a second door.
+Retrying a half-failed deploy is "Re-run failed jobs" on the run that already exists.
 
-1. Runs CI + CodeQL (skipped on post-release version-bump deploys)
-2. Detects changed services and builds only those Docker images → GHCR
-3. Self-hosted runner on production: sync `.env`, `docker compose pull` + `up -d`
-4. Runs database migrations
-5. Health check verification
+**WHICH ESTATE IS DECIDED BY THE RELEASE, NOT BY A BRANCH.** Publishing a GitHub Release runs the
+bump, which writes the version into every manifest and pushes it to `main`; CD then reads that
+version back out of `frontend/package.json`:
+
+| The release | What is deployed | Image tag it moves |
+| --- | --- | --- |
+| `v0.15.0-alpha.1` (pre-release) | `dev.canari-emse.fr`, plus the Play *internal* track and TestFlight | `:dev` |
+| `v0.15.0` (stable) | production | `:latest` |
+
+1. `release-kind` reads the version and answers dev-or-production
+2. `detect-changed-services` diffs against the previous release **of the same kind**
+3. Builds the frontend against that estate's `VITE_*` set, then only the changed images → GHCR
+4. Self-hosted runner: sync `.env`, `docker compose pull` + `up -d`
+5. Database migrations, then health checks
+
+**THE MANIFEST DECIDES, AND NOTHING ELSE CAN.** `github.event.release.prerelease` does not exist in
+a `workflow_run` context - the event is the bump run's completion, not the release - and
+`workflow_run.head_branch` carries the tag for a release-triggered bump but says `main` when the
+bump was dispatched by hand, which would silently send an alpha to production. A hyphen in a semver
+version IS the definition of a pre-release, so the file that shipped is the file that decides. The
+three bundle workflows read the same file for the same reason.
 
 `GITHUB_TOKEN` pushes from the version-bump workflow do **not** trigger `on: push`. CD is chained via `workflow_run` instead (no `branches:` filter — GitHub would silently drop release-triggered parents).
 
-#### TWO ESTATES, TWO BRANCHES, AND A PROMOTION BETWEEN THEM
+#### The baseline is the previous release OF THE SAME KIND, and that is forced by the image tags
 
-One workflow, and which branch it was pushed to decides which estate it deploys:
+Production deploys `:latest`, which only a stable release moves; dev deploys `:dev`, which only a
+pre-release moves. A service a release does not rebuild keeps whatever that estate's tag already
+points at - so the honest question is "what changed since the last release THAT ESTATE received".
+Taking the previous release of *either* kind for dev would skip rebuilding a service changed since
+the last alpha but not since the intervening stable, and dev would run a months-old image under a
+tag claiming otherwise. With no previous release of that kind, everything is built: over-building
+is slow, under-building ships an estate referencing an image that does not exist.
 
-| Push to | Jobs that run | What advances the branch |
-| --- | --- | --- |
-| `dev` | `build-frontend-dev`, `build-frontend-images-dev`, `deploy-dev`, `promote-dev-to-main` | anything: a human, Dependabot's auto-merge |
-| `main` | `build-frontend`, `build-docker-images`, `deploy-to-server` | `promote-dev-to-main`, or a hand push in an emergency |
+**The order comes from the GitHub API, not from `git tag --sort=v:refname`**: git's version sort
+places `v1.0.0-alpha` AFTER `v1.0.0` unless `versionsort.suffix` is configured, which is the wrong
+way round for every pre-release. `gh api .../releases` returns them newest-first by creation, which
+is the order they deployed in.
 
-**Until 2026-09-02 both estates deployed from `main` in one run, dev merely going first, and
-`deploy-to-server` waited on `deploy-dev`.** That had two defects the first week showed. Dev was
-given nothing to protect - the update was already on the branch production deploys, so dev running
-first only narrowed the window, which is how `postgres 15-alpine -> 18-alpine` reached production on
-2026-09-01. And dev could hold production hostage for a reason of its own: a ghcr.io TLS handshake
-timeout failed `deploy-dev` and blocked a release (run `33633156004`, its first day).
+**`prod-deployed` is gone, and its replacement answers a different question.** That tag was the
+change detector's INPUT; the detector reads releases now, so the tag survives only as `prod-released`
+- the record of which commit production is serving, written by the deploy that made it true. The
+user took that deletion knowing its cost: **after an emergency push straight to `main`, nothing says
+which commit production is running** until the next release.
 
-**So the gate moved upstream.** `promote-dev-to-main` fast-forwards `main` to the commit `dev` just
-deployed and dispatches the production deploy, and it requires the dev estate to have **ANSWERED**
-`/api/version` as that exact commit - a green deploy proving only that containers started.
-`deploy-to-server` no longer names `deploy-dev` in its `needs:` at all: a commit that reaches `main`
-has already run somewhere, so a broken dev estate now DELAYS a release rather than blocking one.
-Dependabot targets `dev`, which is what makes the whole thing worth having. The proof, the
-fast-forward's refusal and the loopback trap are on
-[dev-environment](infrastructure/dev-environment.md#dev-is-deployed-from-the-dev-branch-and-the-promotion-is-what-releases-production),
-the only copy.
+#### The dev estate is the PRE-RELEASE target, and the promotion is gone
+
+| The release | Jobs that run |
+| --- | --- |
+| pre-release | `release-kind`, `detect-changed-services`, `build-frontend`, `build-docker-images`, `deploy-dev` |
+| stable | the same four, then `deploy-to-server` |
+
+**`build-frontend-dev`, `build-frontend-images-dev` and `promote-dev-to-main` were deleted on
+2026-09-03.** The first two were a near-identical copy of the frontend build, kept only because one
+push used to deploy both estates at once - a run deploys exactly one now, so the single job picks
+the estate's `VITE_*` set and tags the right images. **The frontend cannot be re-tagged from one
+estate to the other**: SvelteKit inlines `import.meta.env.*` at build time, so the API origins, the
+Authentik client id and the "test environment" banner are baked into the bundle.
+
+`promote-dev-to-main` fast-forwarded `main` onto `dev` once the dev estate had ANSWERED
+`/api/version` as that commit. It existed because `dev` was a branch nothing else would advance, and
+a branch nobody promotes is a parking lot. With one branch there is no promotion left to perform.
+
+**WHAT WAS LOST WITH IT, stated because it was real:** an automatic proof, on production-shaped
+data, that a commit serves before production is given it. A pre-release provides that only when
+somebody publishes one. That is the trade the user chose, and it is written here so a later session
+does not "restore" the promotion by accident.
 
 All of the dev arm is gated on the repository variable `vars.DEV_ENVIRONMENT_ENABLED`, **`true` since
 2026-09-02**. It is a `vars` and not a `secrets` entry so its value shows in the run log — a silent
-gate is one nobody can debug. Setting it to anything but `true` skips the dev arm and the promotion
-with it, so a release then travels by a push straight to `main` — the emergency path, and the one
-route that bypasses dev by design.
+gate is one nobody can debug. Setting it to anything but `true` makes a pre-release deploy nothing.
 
 **A skip is not a success, and `deploy-dev` learned that the hard way.** Its `if:` accepted
 `result == 'skipped'` for the jobs it listed — correct in itself, since a skip legitimately means
-"this service did not change" — but `build-frontend-dev` was not in its `needs:` at all, so a FAILED
+"this service did not change" — but the frontend BUILD was not in its `needs:` at all, so a FAILED
 frontend build let the deploy run and point the stack at `frontend-ssr:dev`, an image never pushed.
 GitHub reports a job whose dependency failed as **skipped**, not failed, so the two states are
 indistinguishable from the status alone; what makes the disjunction honest is the `needs:` edge,
-because without it there is no result to read and the condition is vacuously true. Both frontend
-jobs are now in `needs:` and both results are checked.
+because without it there is no result to read and the condition is vacuously true. `build-frontend` is
+in `needs:` and its result is checked, alongside the image job's.
 
 **The deploy body is two scripts, not inlined YAML.** `infrastructure/deploy/render-env.sh` resolves
 every `.env` key from `infrastructure/deploy/env-manifest.tsv` and refuses to write a partial file;
@@ -90,19 +131,64 @@ the same gate.
 
 ### Mobile CD (`ios-release.yml`, `android-release.yml`, `appimage-release.yml`)
 
-Triggered on release (`vX.Y.Z` tag). Each builds the Tauri app for its platform:
+Chained off the same bump run CD is, and each reads `frontend/package.json` for the same
+pre-release decision CD makes:
 
-| Workflow | Output |
-|---|---|
-| `ios-release.yml` | `.ipa` for TestFlight upload (uses `altool`) |
-| `android-release.yml` | `.aab` for Google Play upload |
-| `appimage-release.yml` | `.AppImage` for Linux desktop |
+| Workflow | Output | Stable | Pre-release |
+|---|---|---|---|
+| `android-release.yml` | `.aab` for Google Play | `production` track | `internal` track |
+| `ios-release.yml` | `.ipa` via `altool` | TestFlight, App Store submission by hand | TestFlight |
+| `appimage-release.yml` | `.AppImage` for Linux desktop | attached to the release | attached to the release |
+
+**THERE IS NO TESTFLIGHT GROUP TO SELECT, and that surprised the checklist.** `altool --upload-app`
+hands the build to App Store Connect, and every INTERNAL tester sees every processed build
+automatically - internal groups are not opt-in per build, unlike external ones. That is exactly why
+decision 9 chose internal channels: no Beta App Review in the loop. On iOS the alpha/stable
+difference is the backend the bundle is built against, and nothing else.
+
+**PLAY ACCEPTS TWO TRACKS NOW BECAUSE EACH ALPHA CARRIES ITS OWN `versionCode`.** One upload per job
+is still the rule - Google rejects re-uploading the same `versionCode` to a second track in one job,
+confirmed on v0.9.21 (*"Version code 9021 has already been used"*) - and what changed is that
+`bump-app-version.sh` bands the pre-release counter into the code, so an alpha and its stable are
+different numbers. See the version-bump section for the band.
+
+**AN ALPHA POINTS AT `dev.canari-emse.fr` AND A STABLE AT PRODUCTION, ASSERTED IN ALL THREE.** This
+is the one place in the migration where a mistake ships to phones: a store build bakes its backend
+origin in and cannot be re-pointed afterwards, so an alpha built against production would let the
+tester programme write to real data, and a stable built against dev would point every user at a box
+wiped every Monday. Neither is visible in a green pipeline, so each workflow resolves the URL and
+FAILS on a mismatch. There is no fallback from the `DEV_*` secrets to the production ones - falling
+back is precisely how an alpha ends up talking to production.
 
 ### Version bump (`bump-version.yml`)
 
-Triggered on `release: published` (or manually). Bumps versions across `package.json` / `Cargo.toml` / Tauri / iOS pbxproj (app + NSE). Must stage the explicit file list — any new file the bump script patches must be added to the workflow.
+Triggered on `release: published` (or manually). Must stage the explicit file list — any new file the bump script patches must be added to the workflow.
 
-After a successful bump push, CD runs in **rebuild-only** mode: skips CI and CodeQL, rebuilds `core-service` + `frontend` (so `/api/version` and the SPA match the release tag), then deploys.
+**ONE ARGUMENT BECOMES THREE DIFFERENT STRINGS**, and conflating any two of them breaks a store
+upload rather than a build. `scripts/bump-app-version.sh` is the only place that decides:
+
+| Value | Example | Where it goes | Why |
+|---|---|---|---|
+| the full version | `0.15.0-alpha.1` | every `package.json`, `Cargo.toml`, `Cargo.lock` | all accept a semver pre-release, and `frontend/package.json` is what the client identifies itself by (`VITE_APP_VERSION`, so `minClientVersion` compares against it) |
+| the numeric core | `0.15.0` | `tauri.conf.json`, `CFBundleShortVersionString`, `MARKETING_VERSION` | Apple requires the short version to be numeric; a suffix there is an App Store validation failure |
+| the band | `1500001` | `bundle.android.versionCode`, `CFBundleVersion`, `CURRENT_PROJECT_VERSION` | one integer identifies a build on both stores, and every alpha needs its own |
+
+**THE BAND IS `(major*1e6 + minor*1e3 + patch) * 100 + rank`, `rank` = N for `-alpha.N` and 99 for a
+stable.** 99 and not 0: rank 0 would put `0.15.0` BELOW every alpha of `0.15.0`, and a store refuses
+a code it has already accepted. The order reads `0.15.0-alpha.1` 1500001 < `-alpha.98` 1500098 <
+`0.15.0` 1500099 < `0.15.1-alpha.1` 1500101. Today's `0.14.15` shipped as 14015 under Tauri's own
+derivation (`major*1e6 + minor*1e3 + patch`, which cannot see a suffix), so the band steps up by a
+factor of 100 exactly once and stays monotonic; the ceiling `0.999.999` → 99999999 is well inside
+Play's 2100000000. `alpha.N` is capped at 98 for the same reason.
+
+**ONE THING IS NOT SETTLED, and it must not be guessed:** `tauri ios build` re-syncs both version
+keys from `tauri.conf.json` during the build and Tauri 2.11.4 exposes no iOS build-number override,
+so the committed `CFBundleVersion` may be overwritten on the runner. `ios-release.yml` already
+patches that plist with `PlistBuddy`; if a TestFlight upload is ever refused as a duplicate build,
+that is where it is re-asserted - and only a macOS run can say whether it has to be.
+
+`.github/scripts/tests/bump-version.test.sh` runs the script in a sandbox, reads every file back and
+asserts the ordering directly (31 assertions).
 
 ## GitHub Secrets
 
@@ -161,10 +247,17 @@ All service images are published to GitHub Container Registry:
 ghcr.io/emse-students/canari/<service>:<tag>
 ```
 
-| Tag | Meaning |
-|---|---|
-| `latest` | Latest production build (push to `main`) |
-| `dev` | Latest development build |
+| Tag | Meaning | Moved by |
+|---|---|---|
+| `latest` | what production is deploying | a STABLE release |
+| `dev` | what the dev estate is deploying | a PRE-RELEASE |
+| `<sha>` | the immutable one - this exact commit | every release that builds the image |
+| `v0.15.0-alpha.1` | the release that produced it | every release that builds the image |
+
+**The two moving tags never cross**, and that is what lets one registry feed two estates from two
+different commits. Neither decides what actually runs: both compose files are deployed with an
+explicit tag, and a service a release did not rebuild keeps whatever its estate's tag already points
+at - which is what a selective rebuild means.
 
 ## Self-hosted runner
 
@@ -344,42 +437,43 @@ Dependabot opens the pull requests (`.github/dependabot.yml`); `dependabot-auto-
 which of them merge, and `.github/scripts/dependabot-auto-merge.sh` is the decision itself. The
 script is the ONE implementation - the workflow calls it from two triggers and adds nothing.
 
-### Every update targets `dev`, and a proof promotes it to `main`
+### Every update merges onto `main`, and what protects production is that a merge does not deploy
 
-Asked by the user 2026-09-02 (*"Est-ce qu'on pourrait dire a Dependabot de push sur la branche dev
-au lieu de la prod ?"*) and decided the same day. All six blocks of `dependabot.yml` carry
-`target-branch: "dev"`.
+For one day (2026-09-02) all six blocks of `dependabot.yml` carried `target-branch: "dev"`, asked by
+the user (*"Est-ce qu'on pourrait dire a Dependabot de push sur la branche dev au lieu de la prod
+?"*). The user cancelled the two-branch model the following day; the lines are gone and updates
+merge onto `main` again.
 
-**What it buys.** Every gate in this repository answers a question about the SOURCE - does it
-compile, do the tests pass, is the lockfile coherent. None of them runs anything against real data,
-and that is the class the outage of 2026-09-01 came from: `postgres 15-alpine -> 18-alpine` passed
-every gate, merged, and PG 18 then refused production's data directory. The dev estate carries a copy
-of production, so that update now refuses the DEV data directory, on a branch production is not
-listening to.
+**The danger they answered has MOVED, not gone.** Every gate in this repository answers a question
+about the SOURCE - does it compile, do the tests pass, is the lockfile coherent. None runs anything
+against real data, and that is the class the outage of 2026-09-01 came from: `postgres
+15-alpine -> 18-alpine` passed every gate, merged, and PG 18 then refused production's data
+directory. 33 minutes down.
 
-**The `target-branch` line is only half the mechanism, and the other half is the point.** A branch
-nobody promotes is a queue nobody drains, which is worse than the merge it prevented - the user's own
-standing directive rejects it (*"Je prefere blinder de test et faire les choses automatiquement
-qu'avoir une review humaine qui n'arrive jamais"*). So `cd.yml`'s `promote-dev-to-main` advances
-`main` by itself, on a proof that the dev estate ANSWERS as the commit in question. The full shape,
-the proof and the escape hatch are on
-[dev-environment](infrastructure/dev-environment.md#dev-is-deployed-from-the-dev-branch-and-the-promotion-is-what-releases-production),
-the only copy. **Delete the `target-branch` lines only together with that job.**
+**What stands between that update and production now is that nothing deploys at a merge.** An update
+sits on `main` until somebody publishes a release, and a `X.X.X-alpha.N` pre-release deploys the dev
+estate - which still carries a copy of production - before any stable does. The honest difference is
+WHO DECIDES: the old mechanism ran with nobody at the keyboard, this one runs when a human publishes
+an alpha. The ceiling in `dependabot-auto-merge.yml` is what still refuses the update classes this
+repository cannot see the failure mode of; it is not a substitute for a rehearsal, and
+[backlog](backlog.md) says so.
 
-**Three things in the auto-merge moved with it, and each was a `main` LITERAL that had been correct
-only while everything targeted `main`:**
+**Two cables into CD were cut on 2026-09-03, and one was replaced rather than removed:**
 
-- The **staleness comparison** now reads the pull request's own `baseRefName`. Against `main` it
-  would have reported the entire `main`..`dev` delta as a gate move, marking every pull request
-  permanently stale - the exact failure the section below already records once.
-- The **deploy dispatched after a merge** is dispatched on the branch the merge landed on
-  (`MERGED_ONTO`, one dispatch per distinct branch). On `main` it would have deployed PRODUCTION a
-  commit `main` does not carry.
-- The **convergent trigger** accepts a push to `dev` as well as to `main`, `dev` now being the branch
-  whose movement can make a remaining pull request stale.
+- The **convergent trigger** was `CD - Deploy to Production`'s completion, because CD ran on every
+  push to `main` and was therefore the closest thing to "somebody did something". CD runs once per
+  release now, so hanging the sweep off it would drain the queue once a release. **`CI` took that
+  job**, being what runs on every push to `main`.
+- The **deploy dispatched after a merge** is gone. It existed because a `GITHUB_TOKEN` squash merge
+  raises no `push` event - github's anti-recursion rule - so CD never saw a single merge and `main`
+  drifted from production silently. There is no deploy to dispatch any more. **The dispatch itself
+  survives, pointed at `ci.yml`**: the same anti-recursion rule means CI would not run on `main`
+  either, and CI is what says whether the merged COMBINATION is green and what wakes the next sweep.
 
-Pull requests opened before that day still carry `main` as their base, which is why all three read
-the base rather than assume it: both generations drain through one sweep.
+The **staleness comparison** still reads the pull request's own `baseRefName` rather than a `main`
+literal. It is `main` for everything now, but that line is what would have to change the next time a
+second branch exists, and hardcoding it is what made the previous switch a hazard rather than a
+setting.
 
 ### Security updates are a SECOND switch, and neither `dependabot.yml` nor this page showed it
 

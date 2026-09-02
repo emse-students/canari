@@ -141,10 +141,15 @@ measurements already taken, the single emergency path and the ordered checklist 
 [workflow-migration](docs/wiki/workflow-migration.md), the ONLY copy. **Read it before touching any
 workflow, hook, `.env` or campaign page**, and tick its boxes as the work lands.
 
-Two consequences that bite immediately. **Until WP-2's ruleset exists, this chantier commits directly
-on `main`**: the flow it creates cannot govern its own creation, and the directive below flips in
-WP-6, not before. And **a push to `main` still deploys production until WP-2 lands**, so nothing
-half-finished may be pushed - one coherent commit per work package.
+**WP-0, WP-1, WP-2, WP-3 and WP-4 ARE DONE (2026-09-03).** A push to `main` no longer deploys
+anything - production and the dev estate are reached only by publishing a release, stable or
+`-alpha.N` - and the whole local estate authenticates. What is left is WP-5 (the campaign, from
+zero), WP-6 (the documentation sweep, which flips the directive below), and three acts only the
+USER or a release can perform: the `main` ruleset, deleting `origin/dev`, and publishing
+`0.15.0-alpha.1`.
+
+**Until that ruleset exists, this chantier commits directly on `main`**: the flow it creates cannot
+govern its own creation, and the directive below flips in WP-6, not before.
 
 ### CANARI - THE QUEUE, IN ORDER
 
@@ -259,26 +264,24 @@ restated**. **Every defect story is in `CHANGELOG.md`, every rule one left is in
     measures a re-key rate or reports a commit-log hole, and the phone prints 8 warning lines a
     minute plus a 10 s presence poll.
 
-11. **`dev.canari-emse.fr` IS LIVE - estate, switch and tunnel all done 2026-09-02.** Everything
-    about it is on [dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy: the
-    four measurements that prove it, the SEED order a virgin estate needs (deploy -> refuse ->
-    refresh -> deploy, the 80 `.sql` files being deltas over a schema TypeORM owns) and the three
+11. **`dev.canari-emse.fr` IS LIVE, AND SINCE 2026-09-03 IT IS THE PRE-RELEASE TARGET.** A
+    `X.X.X-alpha.N` release deploys it and feeds the store tester programmes; a stable release
+    deploys production; a push deploys neither. **The `dev` BRANCH and `promote-dev-to-main` are
+    gone** - what the promotion provided (an automatic proof, on a copy of production's data, that
+    a commit serves before production gets it) is now something a human arms by publishing an
+    alpha, and that trade is written on
+    [dev-environment](docs/wiki/infrastructure/dev-environment.md) so nobody "restores" it by
+    accident. Everything else about the estate is on that page, the only copy: the four
+    measurements that prove it, the SEED order a virgin estate needs (deploy -> refuse -> refresh
+    -> deploy, the 80 `.sql` files being deltas over a schema TypeORM owns) and the three
     corrections that must not be undone (its sections 4, 5 and 8). The decisions are in
     [backlog](docs/wiki/backlog.md#devcanari-emsefr-becomes-a-real-second-environment---decided-2026-08-17).
-    **THE BRANCH `dev` EXISTS SINCE 2026-09-02 AND IS WHAT THE DEV ESTATE DEPLOYS** (user's ask).
-    Two branches, two estates: a push to `dev` deploys dev and NOTHING else; `main` deploys
-    production and is advanced only by `promote-dev-to-main`, which requires dev to have ANSWERED
-    `/api/version` as that commit - a green deploy proving only that containers started. Dependabot
-    targets `dev` in all six blocks, so an update meets a copy of production's data first. Mechanism,
-    proof and the loopback trap are on [dev-environment](docs/wiki/infrastructure/dev-environment.md)
-    and [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them), the only
-    copies. **A push straight to `main` still deploys production - the emergency path, by design.**
     **TWO THINGS STAY OPEN.** A dev deploy still cannot tell a broken CHANGE from an unreachable
-    REGISTRY, and the branch split MOVED that conflation rather than removing it - it now stops the
-    PROMOTION, so a release silently does not happen ([backlog](docs/wiki/backlog.md#p2---a-dev-deploy-still-cannot-tell-a-broken-change-from-an-unreachable-registry-and-the-conflation-moved-rather-than-went-away-measured-2026-09-02-first-day-it-ran)).
-    **And prod's deploy job is still its inlined shell**, moving onto
-    `infrastructure/deploy/deploy-environment.sh` only once dev has exercised it: one implementation,
-    proven before it is imposed.
+    REGISTRY ([backlog](docs/wiki/backlog.md#p2---a-dev-deploy-still-cannot-tell-a-broken-change-from-an-unreachable-registry-and-the-conflation-moved-rather-than-went-away-measured-2026-09-02-first-day-it-ran));
+    what changed is only what it now costs - a pre-release that silently does not land, rather than
+    a release that silently does not happen. **And prod's deploy job is still its inlined shell**,
+    moving onto `infrastructure/deploy/deploy-environment.sh` only once dev has exercised it: one
+    implementation, proven before it is imposed.
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 

@@ -22,12 +22,32 @@ jobs:
         with:
           ref: main
 
+      # THE MANIFEST DECIDES WHETHER THIS IS AN ALPHA, for the same reason as everywhere else:
+      # `github.event.release.prerelease` does not exist in a `workflow_run` context, and
+      # `workflow_run.head_branch` says `main` on the hand-dispatched path. A hyphen in the semver
+      # version IS the definition of a pre-release.
+      #
+      # WHAT IT DOES *NOT* CHANGE HERE, and this is worth saying because the checklist expected it
+      # to: there is no TestFlight GROUP to select. `altool --upload-app` hands the build to App
+      # Store Connect and every INTERNAL tester sees every processed build automatically - internal
+      # groups are not opt-in per build, unlike external ones, which is exactly why decision 9 chose
+      # internal channels (no Beta App Review in the loop). The alpha/stable difference on iOS is
+      # therefore the BACKEND the bundle is built against, below, and nothing else. An App Store
+      # submission is still a manual act in App Store Connect.
       - name: Resolve release tag
         id: release_tag
         run: |
+          set -euo pipefail
           VERSION="$(bash scripts/read-app-version.sh)"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Building Canari v${VERSION}"
+          case "$VERSION" in
+            *-*) PRERELEASE=true ;;
+            *)   PRERELEASE=false ;;
+          esac
+          {
+            echo "version=${VERSION}"
+            echo "prerelease=${PRERELEASE}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Building Canari v${VERSION} (prerelease=${PRERELEASE})"
 
       - name: Select Xcode (>= 16.2)
         uses: maxim-lobanov/setup-xcode@v1
@@ -196,26 +216,71 @@ jobs:
           fi
         working-directory: frontend
 
+      # AN ALPHA POINTS AT dev.canari-emse.fr AND A STABLE AT PRODUCTION - the same assertion
+      # android-release.yml makes, for the same reason: a store build bakes its backend origin in
+      # and cannot be re-pointed afterwards, and neither wrong answer is visible in a green
+      # pipeline. No fallback between the two secret sets, ever.
       - name: Create frontend .env
         working-directory: frontend
         env:
+          IS_PRERELEASE: ${{ steps.release_tag.outputs.prerelease }}
           BASE_URL: ${{ secrets.BASE_URL }}
           AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
           AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
+          DEV_BASE_URL: ${{ secrets.DEV_BASE_URL }}
+          DEV_AUTHENTIK_URL: ${{ secrets.DEV_AUTHENTIK_URL }}
+          DEV_AUTHENTIK_CLIENT_ID: ${{ secrets.DEV_AUTHENTIK_CLIENT_ID }}
           KLIPY_API_KEY: ${{ secrets.KLIPY_API_KEY }}
         run: |
-          # Same variable set as android-release.yml: the SvelteKit frontend is shared,
-          # so it needs the identical build-time config (Authentik SSO included).
-          echo "VITE_FRONTEND_URL=${BASE_URL}" > .env
-          echo "VITE_GATEWAY_URL=${BASE_URL}" >> .env
-          echo "VITE_DELIVERY_URL=${BASE_URL}" >> .env
-          echo "VITE_MEDIA_URL=${BASE_URL}" >> .env
-          echo "VITE_CALL_URL=${BASE_URL}" >> .env
-          echo "VITE_SOCIAL_URL=${BASE_URL}" >> .env
-          echo "VITE_CORE_URL=${BASE_URL}" >> .env
-          echo "VITE_AUTHENTIK_URL=${AUTHENTIK_URL}" >> .env
-          echo "VITE_AUTHENTIK_CLIENT_ID=${AUTHENTIK_CLIENT_ID}" >> .env
+          set -euo pipefail
+
+          # Same variable set as android-release.yml: the SvelteKit frontend is shared, so it needs
+          # the identical build-time config (Authentik SSO included).
+          if [ "$IS_PRERELEASE" = "true" ]; then
+            APP_URL="$DEV_BASE_URL"
+            IDP_URL="$DEV_AUTHENTIK_URL"
+            IDP_CLIENT="$DEV_AUTHENTIK_CLIENT_ID"
+          else
+            APP_URL="$BASE_URL"
+            IDP_URL="$AUTHENTIK_URL"
+            IDP_CLIENT="$AUTHENTIK_CLIENT_ID"
+          fi
+
+          for name in APP_URL IDP_URL IDP_CLIENT; do
+            if [ -z "${!name}" ]; then
+              echo "::error::${name} is empty for a $([ "$IS_PRERELEASE" = "true" ] && echo pre-release || echo stable) build. The DEV_ and production secret sets are kept separate on purpose - there is no fallback between them."
+              exit 1
+            fi
+          done
+
+          case "$APP_URL" in
+            *"dev.canari-emse.fr"*) URL_ENVIRONMENT=dev ;;
+            *"canari-emse.fr"*) URL_ENVIRONMENT=production ;;
+            *) URL_ENVIRONMENT=unknown ;;
+          esac
+          if [ "$IS_PRERELEASE" = "true" ] && [ "$URL_ENVIRONMENT" != "dev" ]; then
+            echo "::error::This is a PRE-RELEASE but its backend URL resolves to '${URL_ENVIRONMENT}'. Refusing to send an alpha pointing anywhere but dev to TestFlight."
+            exit 1
+          fi
+          if [ "$IS_PRERELEASE" != "true" ] && [ "$URL_ENVIRONMENT" != "production" ]; then
+            echo "::error::This is a STABLE release but its backend URL resolves to '${URL_ENVIRONMENT}'. Refusing to ship a production build pointing anywhere else."
+            exit 1
+          fi
+          echo "iOS build targets ${URL_ENVIRONMENT} (${APP_URL})"
+
+          echo "VITE_FRONTEND_URL=${APP_URL}" > .env
+          echo "VITE_GATEWAY_URL=${APP_URL}" >> .env
+          echo "VITE_DELIVERY_URL=${APP_URL}" >> .env
+          echo "VITE_MEDIA_URL=${APP_URL}" >> .env
+          echo "VITE_CALL_URL=${APP_URL}" >> .env
+          echo "VITE_SOCIAL_URL=${APP_URL}" >> .env
+          echo "VITE_CORE_URL=${APP_URL}" >> .env
+          echo "VITE_AUTHENTIK_URL=${IDP_URL}" >> .env
+          echo "VITE_AUTHENTIK_CLIENT_ID=${IDP_CLIENT}" >> .env
           echo "VITE_CALL_E2E_ENCRYPTION=false" >> .env
+          if [ "$IS_PRERELEASE" = "true" ]; then
+            echo "VITE_DEPLOY_ENVIRONMENT=development" >> .env
+          fi
           if [ -n "$KLIPY_API_KEY" ]; then
             echo "VITE_KLIPY_KEY=${KLIPY_API_KEY}" >> .env
           fi

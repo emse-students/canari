@@ -40,21 +40,26 @@ name: Dependabot auto-merge
 # WHY MERGING SEVERAL IN ONE SWEEP IS SAFE
 # ---------------------------------------------------------------------------------------------
 # Two pull requests green in isolation are not evidence that their COMBINATION is green - nothing
-# tests it before the merges. What makes that acceptable here is `cd.yml`: `deploy-to-server` needs
-# `run-ci`, so a combination that breaks fails CI on `main` and the deploy is skipped. `main` can go
-# red; production cannot follow it there. The sweep also dispatches ONE deploy for the whole batch
-# rather than one per merge.
+# tests it before the merges. What makes that acceptable is that a merge no longer reaches an estate
+# at all: since 2026-09-03 nothing deploys until a release is published, so a combination that breaks
+# turns CI red on `main` and the next release is simply not cut. `main` can go red; production stays
+# on the release it is serving. The sweep dispatches ONE CI run for the whole batch rather than one
+# per merge, because a run tests the branch as it now stands.
 #
 # The list of refusals, and the state of each, is kept in `docs/wiki/backlog.md`.
 
 on:
   workflow_run:
-    # `CD - Deploy to Production` IS THE CONVERGENT TRIGGER, and the other two are the fast path.
-    # CD is the workflow that runs on every push to `main`, so its completion is the closest thing
-    # this repository has to "somebody did something", and this workflow answers it with a FULL
-    # SWEEP rather than with one pull request. See the schedule below for why that stopped being
-    # the schedule's job.
-    workflows: ["CI", "Code Analysis", "CD - Deploy to Production"]
+    # `CI` IS BOTH THE FAST PATH AND THE CONVERGENT ONE SINCE 2026-09-03, and that is a consequence
+    # of the migration rather than a simplification for its own sake. CD used to run on every push
+    # to `main`, which made its completion the closest thing this repository had to "somebody did
+    # something"; CD now runs only when a release is published, so hanging the sweep off it would
+    # mean the queue converges once a release, which is not a queue that drains.
+    #
+    # CI took that job because CI is now what runs on every push to `main` (see its own `on:`
+    # block). Its completion after a PUSH is the convergent trigger - sweep the whole open queue -
+    # and its completion after a DEPENDABOT PULL REQUEST is the fast path: evaluate that one.
+    workflows: ["CI", "Code Analysis"]
     types: [completed]
   schedule:
     # Minute 17 rather than 0: the hour boundary is the busiest slot on shared runners.
@@ -99,17 +104,15 @@ jobs:
     # its checks finish. A run triggered by a PUSH is the convergent path: sweep the whole open
     # queue, because a push is the one event this repository sees often and reliably.
     #
-    # `dev` IS IN THAT LIST SINCE 2026-09-02 AND IS NOW THE ONE THAT MATTERS: Dependabot targets
-    # `dev`, so every merge this workflow makes lands there and it is a push to `dev` - not to
-    # `main` - that could make a remaining pull request stale. `main` is kept because it still
-    # moves, by promotion and by the emergency path, and a sweep answering it costs one pass.
+    # `main` IS THE ONLY BRANCH AGAIN SINCE 2026-09-03. `dev` was in this list for one day, while
+    # Dependabot targeted it; the user cancelled that model and every pull request lands on `main`,
+    # so a push to `main` is the one event that can make a remaining pull request stale.
     if: >-
       github.event_name != 'workflow_run' ||
       (github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.actor.login == 'dependabot[bot]') ||
       (github.event.workflow_run.event == 'push' &&
-      (github.event.workflow_run.head_branch == 'main' ||
-      github.event.workflow_run.head_branch == 'dev'))
+      github.event.workflow_run.head_branch == 'main')
     steps:
       # THE IDENTITY PERFORMING AN AUTOMATED ACTION IS PART OF THE MECHANISM, AND `GITHUB_TOKEN`
       # CANNOT PERFORM THIS ONE. When the gates move under a Dependabot branch it has to be rebuilt,
@@ -223,10 +226,10 @@ jobs:
             fi
             if grep -q "^MERGED $pr\$" "$RUNNER_TEMP/out-$pr.txt"; then
               merged=$((merged + 1))
-              # WHICH BRANCH IT LANDED ON DECIDES WHICH ESTATE IS DEPLOYED, and since 2026-09-02 it
-              # is not always the same one: Dependabot targets `dev`, pull requests older than that
-              # day still carry `main`, and a deploy dispatched on the wrong ref would either ship
-              # to production unproven or build dev from a commit dev does not have.
+              # WHICH BRANCH IT LANDED ON DECIDES WHICH REF IS TESTED. It is `main` for everything
+              # now that `dev` is gone, but it stays READ rather than assumed: this is the line that
+              # would have to change the next time a second branch exists, and hardcoding it is what
+              # made the previous switch a hazard rather than a setting.
               sed -n 's/^MERGED_ONTO //p' "$RUNNER_TEMP/out-$pr.txt" >> "$RUNNER_TEMP/bases.txt"
             fi
             if grep -q "^STALE $pr\$" "$RUNNER_TEMP/out-$pr.txt"; then
@@ -319,21 +322,26 @@ jobs:
               echo "::error::#$pr: the rebuild request could not be posted. This is the one step the default identity cannot perform, so a failure here means the App token is missing, expired, or lacks Pull requests write."
             fi
           done < "$list"
-      # A squash merge made with GITHUB_TOKEN produces a push that triggers NOTHING - github's
-      # anti-recursion rule - so CD never saw a single one of these merges and main drifted from
-      # production silently. `workflow_dispatch` is the documented exception to that rule, so this
-      # is the one call that closes the gap. ONE dispatch PER BRANCH, not one per merge: a deploy
-      # builds the branch as it now stands, so several merges onto one branch are one artefact.
+      # THIS STEP USED TO DISPATCH A DEPLOY, AND DELETING THAT IS THE POINT OF THE MIGRATION.
       #
-      # WHICH BRANCH IS READ, NOT ASSUMED, since 2026-09-02. `--ref main` was correct while every
-      # pull request targeted `main`; Dependabot targets `dev` now, and dispatching a `dev` merge
-      # on `main` would deploy PRODUCTION a commit `main` does not even carry - the exact hazard
-      # moving Dependabot to `dev` exists to remove.
-      - name: Dispatch one deploy per branch anything merged onto
+      # A squash merge made with GITHUB_TOKEN produces a push that triggers NOTHING - github's
+      # anti-recursion rule - so CD never saw a single one of these merges and `main` drifted from
+      # production silently. `workflow_dispatch` was the documented exception to that rule and was
+      # the one call that closed the gap. **Nothing deploys at a push any more** (user, 2026-09-02),
+      # CD has no dispatch left to call, and a dependency update reaches an estate when the next
+      # release is published - so the gap it closed no longer exists.
+      #
+      # WHAT REPLACES IT IS CI, NOT NOTHING, and that is the half worth stating: the anti-recursion
+      # rule still applies, so a `GITHUB_TOKEN` merge raises no `push` event and CI does not run on
+      # `main` for it either. This dispatch keeps the sweep converging - CI's completion is what
+      # wakes the next pass - and it is also what says whether the merged COMBINATION is green,
+      # which no pull request tested. It cannot reach production: a red CI on `main` blocks the
+      # next release rather than breaking the running one.
+      - name: Dispatch CI for what merged
         # Both halves are load-bearing. The step above runs without `set -e` so one unmergeable
         # branch cannot stop a sweep, which means it can also end early and leave `merged` never
-        # written - and an UNSET value is not equal to '0', so testing only that would dispatch a
-        # deploy on the one path where nothing is known to have merged.
+        # written - and an UNSET value is not equal to '0', so testing only that would dispatch on
+        # the one path where nothing is known to have merged.
         if: env.merged != '' && env.merged != '0'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -344,13 +352,12 @@ jobs:
           if [ ! -s "$bases" ]; then
             # `merged` is non-zero and no branch was recorded: the two are written by the same
             # loop, so this cannot happen without the script's contract having changed underneath.
-            # Deploying a GUESS here is the one thing that must not happen, so it fails loudly.
-            echo "::error::$merged merge(s) reported and no MERGED_ONTO line to name the branch. Refusing to guess which estate to deploy."
+            echo "::error::$merged merge(s) reported and no MERGED_ONTO line to name the branch. Refusing to guess which branch to test."
             exit 1
           fi
-          echo "Dispatching CD for $merged merge(s)"
+          echo "Dispatching CI for $merged merge(s)"
           sort -u "$bases" | while IFS= read -r ref; do
             [ -z "$ref" ] && continue
-            echo "  -> cd.yml on $ref"
-            gh workflow run cd.yml --repo "$REPO" --ref "$ref"
+            echo "  -> ci.yml on $ref"
+            gh workflow run ci.yml --repo "$REPO" --ref "$ref"
           done
