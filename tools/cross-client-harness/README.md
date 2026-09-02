@@ -25,7 +25,7 @@ check spells a name.
 | Outside                        | Why it may not live in the repository                                  |
 | ------------------------------ | ---------------------------------------------------------------------- |
 | `test-accounts.json`           | Logins and PINs for two production accounts. This repository is PUBLIC: outside the work tree they cannot be committed at all, which is a structure; a `.gitignore` rule would only be a policy. |
-| `chrome-w1/` `chrome-w2/`      | These directories ARE W1 and W2 - profile holds the MLS identity, the session and the enrolment. `git clean -xdf` does not spare a gitignored directory, and re-enrolling costs the 2FA step no tool here can answer. |
+| `chrome-w1/` `chrome-w2/`      | These directories ARE W1 and W2 - profile holds the MLS identity, the session and the enrolment. `git clean -xdf` does not spare a gitignored directory. **Since 2026-09-02 losing one no longer costs a 2FA**: the campaign's accounts are dedicated Authentik users that sign in through the service-account link, whose flow has no MFA stage. It still costs a DEVICE, which is what actually changes what a row measures. |
 | `results.ndjson`               | The verdict record. A row carries the condensed dirt of its run, which quotes captured console lines naming real conversations. |
 | `apk/` `a1-baseline/` `logs/`  | Bulk artefacts. No script references them; they are installed and read by hand. |
 
@@ -456,7 +456,9 @@ next one's symptom names the wrong cause.
   - **`npx tauri` does not resolve on this box** (`could not determine executable to run`), and
     `bun tauri` shells out the same way. Call the binary in `node_modules/.bin` directly.
   - **`install -r`, never an uninstall.** It keeps the app data, which is the enrolment and the MLS
-    store; an uninstall costs a re-enrolment and SETUP-4's 2FA, the one step no tool here answers.
+    store; an uninstall costs a re-enrolment. **That is no longer a 2FA** - since 2026-09-02 the
+    accounts sign in by password through the service-account link - but it is still a new DEVICE,
+    with no history for any HEAL row to reason about.
   - **`--target aarch64` is not needed and its absence is not a warning to fix.** A full build prints
     "There are no .so files available to package in the APK for armeabi-v7a, x86, x86_64" and
     packages arm64 alone, which is what the Pixel 6a runs. Measured 2026-08-24 on v0.14.4.

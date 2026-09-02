@@ -317,8 +317,9 @@ re-deriving anything here, and keep no second copy.**
 matches the ledger - run it before believing a cell; it has caught the board wrong three times. **A
 campaign run and a push to `main` are MUTUALLY EXCLUSIVE**, a mid-run deploy having already voided
 three cells, and a killed run can destroy a measurement seconds from being recorded. And **losing a
-`chrome-w1` / `chrome-w2` profile costs a re-enrolment and SETUP-4's 2FA**, the one step no tool
-here can answer.
+`chrome-w1` / `chrome-w2` profile costs a DEVICE** - no longer a 2FA: since 2026-09-02 the campaign
+runs on two dedicated Authentik accounts that sign in through the service-account link, whose flow
+has no MFA stage ([resume, section 2b](docs/wiki/cross-client-campaign-resume.md)).
 
 **Standing architectural directives from the user, verbatim:** *"le probleme doit etre
 architecturalement regle, pas mettre des pansements avec des timeouts ou autre, je veux que tout soit

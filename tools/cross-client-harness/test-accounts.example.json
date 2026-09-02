@@ -7,14 +7,14 @@
       "password": "<password>",
       "pin": "<4+ digit encryption PIN>",
       "clients": ["W1 (Chrome, CDP on 9224)", "A1 (Android)"],
-      "twofa": "<how to obtain the 2FA code, or the recovery note - free text, read by a human>"
+      "twofa": "none, since 2026-09-02 - the campaign signs in through the SERVICE-ACCOUNT link on the login page (PASSWORD_LOGIN_FLOW_SLUG = password-login), whose Authentik flow has no MFA stage. Keep the field: an account that DOES need a code needs somewhere to say how to get one."
     },
     "peer": {
       "username": "<login>",
       "password": "<password>",
       "pin": "<4+ digit encryption PIN>",
       "clients": ["W2 (Chrome, CDP on 9223)"],
-      "twofa": "<how to obtain the 2FA code>"
+      "twofa": "none - same flow as the owner."
     }
   }
 }
