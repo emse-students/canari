@@ -530,8 +530,18 @@ survive a replug.
 
 ### WP-6 - documentation (26 files touched)
 
-- [ ] `CLAUDE.md` first: "WORK ON `main`, commit directly" is replaced by the PR flow, the
-      deploy-at-bump rule, and the release conventions
+- [x] `CLAUDE.md` first: "WORK ON `main`, commit directly" is replaced by the PR flow, the
+      deploy-at-bump rule, and the release conventions - **2026-09-03, and it is the first change in
+      this chantier to arrive by pull request**, which is the only honest way to land the sentence
+      that requires them. Three edits, not one: the directive itself (the loop, the ruleset id, why
+      no approval is required, and that the admin bypass is the emergency path and gets written down
+      when taken); a NEW directive beside it saying nothing deploys on a push, because "commit
+      directly" was never only about the branch - it was also how work reached production, and
+      deleting it without replacing that half would leave a session believing a merge ships; and the
+      WORKFLOW CYCLE line, which named a commit and no longer had anything carrying it. A fourth
+      edit went with them: **"a campaign run and a push to `main` are mutually exclusive" is now "a
+      campaign run and a RELEASE"** - the trigger changed, the danger did not, and a safety rule
+      naming an event that can no longer happen reads as retired rather than as moved
 - [ ] `durable-rules.md`, `cicd.md`, `infrastructure/dev-environment.md`, `backlog.md`, `index.md`,
       **PARTLY DONE 2026-09-03**: the sections of `cicd.md` and `dev-environment.md` that WP-2+WP-3
       falsified were rewritten in that same commit rather than left lying, because a wiki that

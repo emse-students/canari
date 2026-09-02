@@ -46,13 +46,14 @@
 - NO BLIND GREP: never run generic grep or find across the project. Check SESSION STATE first, or ask for exact paths.
 - ASK EARLY: state assumptions explicitly. If uncertain about architecture or a bug, ASK during planning. No guessing.
 - SURGICAL EDITS: touch ONLY requested code. Map changes 1:1 to the prompt.
-- WORK ON `main`. No feature branches, even if a brief says otherwise. Commit directly.
+- **WORK GOES THROUGH A PULL REQUEST, on a branch off `main` - since 2026-09-03, and this replaces "commit directly".** `main` carries a ruleset (id `22152902`, active): no direct push, no force-push, no delete, and one required check, `CI passed`. The loop is `git switch -c`, commit, `gh pr create`, let CI answer, `gh pr merge --squash --delete-branch`. **No approval is required** - a queue nobody drains is worse than the merge it prevented (user, 2026-08-31) - so this costs a minute and buys two things a direct push never gave: a diff somebody can read, and a CI run on the MERGED combination rather than on the branch. **Admin bypass exists and is the EMERGENCY path only**: taking it means production is broken right now, and it is written down in `CHANGELOG.md` when taken.
+- **NOTHING DEPLOYS ON A PUSH - deployment happens at the BUMP** (user, 2026-09-02: *"le deploiement de tout (production, android, ios...) se fait au bump. Pas au push sur main."*). A STABLE release `vX.Y.Z` deploys production and ships the stores; a PRE-RELEASE `vX.Y.Z-alpha.N` deploys `dev.canari-emse.fr` and feeds the store TESTER programmes; a merge to `main` deploys nothing at all and only runs CI. **So a merged fix is not a shipped fix**, and `frontend/package.json`'s version is what decides which kind a release is - a hyphen in it IS the definition of a pre-release, read that way by `cd.yml`'s `release-kind` job and by `scripts/bump-app-version.sh`. The whole model is on [workflow-migration](docs/wiki/workflow-migration.md) and [cicd](docs/wiki/cicd.md), the only copies.
 - NO FALLBACKS: never add a fallback path. Diagnose why the primary path failed and fix it there.
 - FIX, NEVER DEFER: a warning or failure you meet is yours, whether or not you caused it. "Pre-existing" is not a disposition.
 - FACE THE BLOCKAGE: fix the cause of a failing hook (`bun run format`), never stash or bypass it.
 - STATE PRUNING: when updating SESSION STATE, DELETE completed work outright. Its rule goes to `durable-rules`, its story to `CHANGELOG.md`, its mechanism to the wiki page that entry points at. **Do not reconstruct shipped work here.**
 - CLAUDE.md HYGIENE: capped at ~250 lines on purpose, and it is an INDEX first. A rule needing a paragraph belongs in `durable-rules`; a story in `CHANGELOG.md`; a measurement on the topical wiki page. If this file grows, something belongs somewhere else.
-- WORKFLOW CYCLE: Plan -> Ask if uncertain -> Execute (surgical) -> Test -> commit -> update SESSION STATE -> STOP.
+- WORKFLOW CYCLE: Plan -> Ask if uncertain -> Execute (surgical) -> Test -> commit -> pull request -> merge -> update SESSION STATE -> STOP.
 - COMMIT **AND PUSH** IN THE BACKGROUND, ALWAYS - both are minutes long and neither is worth a blocked session. The pre-commit hook sweeps the WHOLE frontend (2-3 min) and re-stages it; a push to this remote routinely exceeds a 5-min foreground timeout. Isolate unrelated dirty files first. `rm -rf apps/*/dist` before `git push`.
 - DOCUMENTATION: technical docs in `docs/wiki/` (English, LLM-oriented, **search it before reading source**). User guides in `docs/user-guide/` (French). UML in `docs/diagrams/`. Root: `README.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `SECURITY.md`. Delete unused code immediately.
 - WIKI IS PREFERRED: update the relevant wiki page alongside code changes - stale wiki is worse than none. Keep `apps/*/README.md` synced with its wiki counterpart. Cross-link freely.
@@ -141,15 +142,17 @@ measurements already taken, the single emergency path and the ordered checklist 
 [workflow-migration](docs/wiki/workflow-migration.md), the ONLY copy. **Read it before touching any
 workflow, hook, `.env` or campaign page**, and tick its boxes as the work lands.
 
-**WP-0, WP-1, WP-2, WP-3 and WP-4 ARE DONE (2026-09-03).** A push to `main` no longer deploys
-anything - production and the dev estate are reached only by publishing a release, stable or
-`-alpha.N` - and the whole local estate authenticates. What is left is WP-5 (the campaign, from
-zero), WP-6 (the documentation sweep, which flips the directive below), and three acts only the
-USER or a release can perform: the `main` ruleset, deleting `origin/dev`, and publishing
-`0.15.0-alpha.1`.
+**WP-0 THROUGH WP-4 ARE DONE (2026-09-03), AND THE FLOW NOW GOVERNS ITSELF.** A push to `main`
+deploys nothing; production and the dev estate are reached only by publishing a release, stable or
+`-alpha.N`; the whole local estate authenticates; `origin/dev` is deleted and the ruleset on `main`
+is active. **Everything from here goes through a pull request**, this chantier included - the
+exemption that let it commit directly existed only until it had built the thing that forbids it.
 
-**Until that ruleset exists, this chantier commits directly on `main`**: the flow it creates cannot
-govern its own creation, and the directive below flips in WP-6, not before.
+What is left: **WP-5** (the campaign, from zero - a new rig root, fresh profiles and accounts, the
+board reset, target LOCAL) and **WP-6** (the documentation sweep - 26 files, the first of which is
+this one). Two boxes nothing here can tick: **publishing `0.15.0-alpha.1`**, which is a release only
+the USER performs, and **the iOS build number**, which needs a macOS run to say whether
+`tauri ios build` clobbers `CFBundleVersion`.
 
 ### CANARI - THE QUEUE, IN ORDER
 
@@ -339,8 +342,9 @@ re-deriving anything here, and keep no second copy.**
 
 **Four facts govern every session that touches the rig.** `node rows.mjs` SETTLES whether the board
 matches the ledger - run it before believing a cell; it has caught the board wrong three times. **A
-campaign run and a push to `main` are MUTUALLY EXCLUSIVE**, a mid-run deploy having already voided
-three cells, and a killed run can destroy a measurement seconds from being recorded - which is also
+campaign run and a RELEASE are MUTUALLY EXCLUSIVE** - it was "a push to `main`" until 2026-09-03,
+and the danger did not go away with the trigger, it MOVED: a mid-run deploy has already voided three
+cells, and the thing that can now start one is somebody publishing a release, and a killed run can destroy a measurement seconds from being recorded - which is also
 why the dependency sweep is disabled around a session, one of the preconditions
 [the resume page](docs/wiki/cross-client-campaign-resume.md) carries and nothing else does (it also
 carries the one that surprises: **the rig still targets PRODUCTION**, so the dev estate does not make
