@@ -25,8 +25,25 @@ which is also where every release up to and including v0.13.1 now lives.
   the feature that issues them is enabled. `automated-security-fixes` is enabled. The lock was NOT
   hand-patched: `cargo update -p serde_with --precise` also added `bs58` and dropped three
   `windows-*` crates, a resolver-wide change on the one target this repository can only verify by
-  compiling, so the gated sweep ships the bump instead. Both switches, and the command that reads
-  each, are on [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them).
+  compiling. Both switches, and the command that reads each, are on
+  [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them). **Enabling the
+  switch then found a THIRD reason nothing would have shipped it**, which is the entry below.
+
+- **The Tauri app has had no automated dependency update for 25 days, and its security alerts have
+  no actor at all.** Enabling `automated-security-fixes` made Dependabot try the `serde_with` bump
+  within the minute - and the job FAILED, which is the only reason anybody learned this. `cargo`
+  refused the manifest before considering any version: `package specifies that it links to
+  tauri-plugin-customtabs but does not have a custom build script`. `build.rs` is committed and
+  present; Dependabot materialises a temp checkout of manifests and lockfiles only, so the `links`
+  key added with the plugin on 2026-08-08 (`7cf394f3`) has made **every** cargo update in
+  `frontend/src-tauri` unparseable since. The population says the same thing: that directory has
+  produced exactly ONE Dependabot pull request ever, #195 on 2026-07-24, two weeks before the
+  plugin - while `/frontend/mls-core`, in the same ecosystem entry, produced three on 2026-08-31.
+  **A dependency graph that stops moving looks exactly like one with nothing to update**, and this
+  one belongs to the artefact that ships to phones. The measurement, the three ways out and the
+  detection that would have named it on day one are in
+  [backlog](docs/wiki/backlog.md#p1---two-of-the-six-cargo-directories-are-invisible-to-dependabot-and-one-of-them-is-the-app-that-ships-to-phones-measured-2026-09-02); `dependabot-cargo-reach.test.sh` now pins the blocked set, so
+  the next one fails on the day it is committed.
 
 - **The migration set is not a schema, and the deploy learned it by failing on an arbitrary file.**
   With the previous fix in place all 80 migrations were finally attempted on dev's virgin database,

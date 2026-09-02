@@ -348,8 +348,29 @@ that carried GHSA-7gcf-g7xr-8hxj (`serde_with` 3.19.0 -> 3.21.0, in `frontend/sr
 was unreachable by every route at once. Check both switches, per ecosystem, and do not hand-patch the
 lock instead - `cargo update -p serde_with --precise 3.21.0` also added `bs58` and dropped three
 `windows-*` crates, a resolver-wide change on the one target this repository can only verify by
-compiling. The ceiling that ships the fix is the mechanism; the rule is in
-[durable-rules](durable-rules.md).
+compiling. The rule is in [durable-rules](durable-rules.md).
+
+### And a manifest can make a whole directory invisible to Dependabot
+
+Enabling the switch above did not ship the fix, because a THIRD refusal was waiting under it, and
+this is the one worth carrying. Dependabot tried within the minute and its update job failed on
+`cargo`'s own parse:
+
+```
+error: failed to get `tauri-plugin-customtabs` as a dependency of package `canari v0.14.15`
+Caused by: package specifies that it links to `tauri-plugin-customtabs`
+           but does not have a custom build script
+```
+
+`build.rs` is committed and present in the working tree. **Dependabot materialises a temp checkout
+of manifests and lockfiles only**, so a `links` key with no build script beside it is a manifest
+cargo refuses to read - and the key arrived with the plugin on 2026-08-08 (`7cf394f3`). Every cargo
+update in `frontend/src-tauri` has been impossible since, security ones included, and nothing said
+so: the graph simply stopped producing pull requests. **The population is the proof, not the log** -
+that directory has produced exactly ONE Dependabot pull request ever, #195 on 2026-07-24, while
+`/frontend/mls-core`, in the same ecosystem entry of `dependabot.yml`, produced three on 2026-08-31.
+The three ways out, and the detection that would have named it on day one rather than 25 days later,
+are in [backlog](backlog.md).
 
 ### What it refuses, and why it is not a semver rule
 

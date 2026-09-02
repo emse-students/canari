@@ -1388,7 +1388,7 @@ from it. A refusal now logs the origin once, budget-capped, at a level that accu
 500 on the request itself, which is a separate incident this repo already had (prod 2026-08-19, on
 `GET /api/media/public/:id`).
 
-Rules, in [`durable-rules.md`](../durable-rules.md#mobile-and-native): a server's origin allowlist is a
+Rules, in [`durable-rules.md`](../durable-rules.md#mobile-and-native---frontendmobile): a server's origin allowlist is a
 fact about its CLIENTS, and a Tauri client has one origin per platform; and platform parity is not a
 property of the native project.
 

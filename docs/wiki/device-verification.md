@@ -571,7 +571,7 @@ nothing to users. Use one only to re-check a fix made after the release was cut.
    enumeration of native UI is a claim about the whole app and must be derived from the LAYOUTS the
    dependencies ship, never from the Kotlin this repo wrote - a layout is a reference no source grep
    sees. Google Play reported the same crash from the field on versionCode 14005 on 2026-08-27,
-   which is what [the vitals watch](../../../tools/play-vitals/README.md) now reads.
+   which is what [the vitals watch](../../tools/play-vitals/README.md) now reads.
 6. **The installed package refuses a device transfer.** `adb shell dumpsys package fr.emse.canari`
    must show `dataExtractionRules` resolved, not just `allowBackup=false` - the attribute that does
    NOT cover device-to-device transfer on Android 12+. Asserting the merged manifest is what the
@@ -773,7 +773,7 @@ people**. `clear_app_data` deleted an entry only when its extension was exactly 
 in that list was added after that filter was written. Fixed with four Rust tests; story in
 `CHANGELOG.md`, mechanism on
 [auth](frontend/modules/auth.md#erasing-a-revoked-device-and-the-125-s-that-undid-it), two rules in
-[durable-rules](durable-rules.md#mls-state-and-keys).
+[durable-rules](durable-rules.md#mls-state-and-keys---mls-protocol-auth).
 
 **AND THE MEASUREMENT ANSWERS YES, ON BOTH HALVES AND ON BOTH DEVICES, 2026-08-28 16:08.** Taken by
 hand on a debug **0.14.12** carrying every fix, A1 in the FOREGROUND, both devices deleted from W1's

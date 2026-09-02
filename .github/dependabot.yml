@@ -133,6 +133,13 @@ updates:
   # Six crates that are ours. The MLS crates are the reason `cargo audit` matters here and not only
   # in CI: openmls and its crypto backend are where a vulnerability would be an encryption defect,
   # not a availability one.
+  #
+  # TWO OF THE SIX DIRECTORIES BELOW ARE DECLARED AND UNREACHABLE, and they are declared anyway so
+  # that the day the block lifts they are already covered. `frontend/src-tauri` and the plugin under
+  # it reach a manifest carrying `links`, which cargo refuses without a build script - and Dependabot
+  # materialises manifests and lockfiles only, never `build.rs`. So both produce nothing, silently,
+  # since 2026-08-08. `.github/scripts/tests/dependabot-cargo-reach.test.sh` pins that set and fails
+  # if it grows; the entry in docs/wiki/backlog.md carries what it costs and the ways out.
   - package-ecosystem: "cargo"
     directories:
       - "/apps/call-service"

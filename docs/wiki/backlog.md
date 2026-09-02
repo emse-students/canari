@@ -46,7 +46,7 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 | search folds accents now, everywhere it folds case | **SEARCH-5, and it needs `W1 W2` only - no hardware.** Its five `PASS`es asserted the pre-fix behaviour (the row was written to RECORD the gap), so they are VOID and the runner's prediction is flipped. A run answering `noAccentFound=true` closes this; SEARCH-1, -3 and -6 are ASCII-only and unaffected |
 | WP-REGRANT-2, a re-granted member's re-join | COMM-22, four grant/revoke cycles green - and COMM-8 reading `seedAfterTheGrant: true`, never `repaired`, which is a fallback and not a path |
 | the auto-merge sweep drains its queue unattended | the next sweep after a merge must merge EVERY pull request that is mergeable, not one. Until 2026-09-01 each merge moved `main` and staleness-invalidated the rest, so the queue drained at one per pass and only while somebody pushed; the predicate now asks whether `.github/workflows/` or `.github/scripts/` moved instead. #302 and #303 are the population sitting on it - both `CLEAN`, both built on `6a356d7e`, neither touched by a gate change. One sweep log showing both merged closes this |
-| a security advisory now has an ACTOR at all | `automated-security-fixes` was `{"enabled":false}` while alerts were on, and the `cargo` ecosystem limits `production-dependencies` to patch - so `serde_with` 3.19.0 -> 3.21.0 (GHSA-7gcf-g7xr-8hxj, medium, `frontend/src-tauri/Cargo.lock`) could be reported and never fixed by anything. Enabled 2026-09-02. **What closes this is alert 210 being taken by a pull request nobody opened by hand**, and the sweep merging it under its own gates; the rule it left is in [durable-rules](durable-rules.md) |
+| a security advisory now has an ACTOR at all | `automated-security-fixes` was `{"enabled":false}` while alerts were on, and the `cargo` ecosystem limits `production-dependencies` to patch - so `serde_with` 3.19.0 -> 3.21.0 (GHSA-7gcf-g7xr-8hxj, medium, `frontend/src-tauri/Cargo.lock`) could be reported and never fixed by anything. Enabled 2026-09-02, and it fired within the minute - **onto a THIRD refusal nobody knew about**, the update job failing on a manifest cargo cannot parse (P1 below). So **this row cannot close on alert 210**: it closes on the first security pull request Dependabot opens for ANY directory, and 210 itself waits on the P1 |
 | the auto-merge ceiling refuses a major | **half taken.** The workflow is enabled again and its shipped loop body was replayed over all 33 open Dependabot PRs: 26 merge, 6 refuse, and the 6 collapse to the two gates below. What replay cannot show is the workflow REFUSING in its own run log, because no major has opened since - so the row stays until a real one does, logging `REFUSED` and staying open |
 | the five products the boutique never sold are buyable | **ONE MANUAL FLIP IS OWED, and it is the user's** (2026-08-31). `activationWithheld` releases a product when payments BECOME ready, and BDE's Stripe onboarding completed long ago - no event will ever fire for it, which is the correct behaviour for an allowlist and the reason a per-tier on-sale switch now exists. So: open `/associations/bde/edit`, Cotisations tab, tick **En vente** on the 170 EUR tier, then buy nothing and simply confirm it appears in `/shop`. The other four associations have no payment account at all, so their products are correctly withheld and release themselves when one arrives - what closes THAT half is the next association to finish onboarding, whose products must go on sale with nobody touching them |
 
@@ -67,6 +67,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | the credential for the one rebuild no `GITHUB_TOKEN` may perform - fine-grained PAT or GitHub App | decision | [P2 - the one rebuild the auto-merge cannot perform](#p2---the-one-rebuild-the-auto-merge-cannot-perform-and-the-credential-that-would-let-it) |
 | PostgreSQL 15 -> 18, parked by the user (*"on verra ca plus tard"*); its test also releases `redis` and `garage` | decision | [P2 - PostgreSQL is held at 15](#p2---postgresql-is-held-at-15-because-18-needs-a-migration-nobody-has-performed-after-the-outage-of-2026-09-01) |
 | is a MiGallery application worth building | decision | [post-campaign projects](#post-campaign-projects---decided-not-scheduled) |
+| how `frontend/src-tauri` gets its cargo updates - Dependabot cannot parse it and the fix that would let it is verified only by an Android AND an iOS build | decision | [P1 - two of the six cargo directories are invisible to Dependabot](#p1---two-of-the-six-cargo-directories-are-invisible-to-dependabot-and-one-of-them-is-the-app-that-ships-to-phones-measured-2026-09-02) |
 | rotate `CF_DNS_TOKEN` **and** the cloudflared tunnel run token - both reached a transcript on 2026-09-01 | rotation | agent memory names both; neither may enter this repo |
 | put the BDE 170 EUR tier on sale - an allowlist correctly withholds it and no event will ever fire | 1 click | the verification table above |
 | App Store Connect: the 2.3.6 radio button | 1 click | [mobile](frontend/mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on) |
@@ -81,6 +82,65 @@ and its test are on [dev-environment](infrastructure/dev-environment.md).
 ---
 
 ## CI and the chain that runs unattended
+
+### P1 - two of the six cargo directories are invisible to Dependabot, and one of them is the app that ships to phones (measured 2026-09-02)
+
+**The Tauri app has had no automated dependency update since 2026-08-08, and its security alerts have
+no actor at all.** Enabling `automated-security-fixes` (the row above) made Dependabot attempt the
+`serde_with` bump within the minute, and the update job FAILED - which is the only reason anybody
+learned this. Cargo refused the manifest before considering any version:
+
+```
+error: failed to get `tauri-plugin-customtabs` as a dependency of package `canari v0.14.15`
+Caused by: failed to parse manifest at `.../plugins/tauri-plugin-customtabs/Cargo.toml`
+Caused by: package specifies that it links to `tauri-plugin-customtabs`
+           but does not have a custom build script
+```
+
+`build.rs` is committed and present in the working tree. **Dependabot materialises a temp checkout of
+manifests and lockfiles only** - it stubs declared lib and bin targets and copies no build script -
+so a `links` key is a manifest cargo will not read. The key arrived with the Android custom-tabs
+plugin on 2026-08-08 (`7cf394f3`, WP-OIDC-TAB-1), and it blocks BOTH declared directories whose graph
+reaches that crate: `/frontend/src-tauri` and `/frontend/src-tauri/plugins/tauri-plugin-customtabs`.
+
+**THE POPULATION IS THE PROOF, AND IT WAS SITTING THERE FOR 25 DAYS.** `/frontend/src-tauri` has
+produced exactly ONE Dependabot pull request ever - #195, 2026-07-24, two weeks before the plugin -
+and the plugin directory none at all, while `/apps/chat-gateway` and `/apps/call-service`, in the
+same ecosystem entry, produced eighteen across 2026-08-26 and 2026-08-31. A dependency graph that
+stops moving looks exactly like one with nothing to update, which is why the absence has to be
+asserted rather than noticed.
+
+**WHAT IS ALREADY DONE: the silence is closed.**
+`.github/scripts/tests/dependabot-cargo-reach.test.sh` (in `make test-ci-scripts`, six assertions)
+reads the cargo directories out of `dependabot.yml`, follows every `path = ` dependency out of each
+root manifest, collects the manifests declaring `links`, and compares the resulting set against a
+pinned one - so a NEW blocked directory fails on the day it is committed and these two cannot be
+forgotten. The derivation is proven on a fixture in the same file rather than trusted, and both
+mutations were checked to fail (removing the `links` key, and pinning a directory `dependabot.yml`
+no longer declares).
+
+**WHAT IS OPEN IS THE CHOICE, AND ITS THREE OPTIONS ARE NOT EQUAL.**
+
+1. **Remove `links` from the plugin manifest.** It is what exposes a build script's metadata to
+   dependents, and this build script is `tauri_plugin::Builder::new(COMMANDS).android_path("android")
+   .ios_path("ios").build()` - the call that tells `tauri-build` where the plugin's Kotlin and Swift
+   live. Dropping it plausibly drops the native half of the plugin from the app, which **compiles
+   fine and fails at runtime on a phone**: exactly the class three iOS defects already came from.
+   Only an Android AND an iOS build, then a login on a device, could clear it. Cheapest to type,
+   most expensive to be wrong about.
+2. **Take the two directories out of `dependabot.yml`.** Honest bookkeeping, no risk, and it makes
+   the shipped mobile artefact permanently unmanaged - the outcome the user's *"un projet qui peut
+   'vivre tout seul'"* is against.
+3. **Keep both declared and update those two directories deliberately**, which is the state today
+   minus the silence. It needs a named trigger, because "somebody remembers" is not a mechanism: a
+   scheduled job that runs `cargo update --dry-run` in `frontend/src-tauri` and opens an issue, or
+   the release checklist doing it before each mobile build. `cargo audit` already runs in CI, so a
+   VULNERABILITY there is visible; a routine bump is not.
+
+Option 3 with a real trigger, plus option 1 attempted behind a mobile build when a device exists, is
+the shape that fits the rest of this repository - but which one is taken is a decision, and it is
+recorded in the table of what is owed to the user above. Upstream, this is dependabot-core's cargo
+updater not copying build scripts; nothing here can fix that.
 
 ### P2 - NOTHING TELLS ANYBODY PRODUCTION IS DOWN, and both outages of 2026-09-01 were reported by the user (owed to the USER: a decision, then one click)
 
@@ -120,7 +180,7 @@ entry is that the reason for the pin is a missing PROCEDURE, so a later session 
 the container, PostgreSQL 18 exited on startup against the existing `postgres_data`, and all eight
 backend services lost `auth_db` - the only database - for 33 minutes. The full account is in
 `CHANGELOG.md`; the rule it left is in
-[durable-rules](durable-rules.md#release-and-ci---cicdcicdmd). The image is refused by name in
+[durable-rules](durable-rules.md#release-and-ci---cicd). The image is refused by name in
 `.github/scripts/lib/ceiling.sh` now, so Dependabot's next attempt is declined with its reason
 rather than merged.
 
@@ -1579,7 +1639,7 @@ Three separate things, in the order they have to be answered:
    memory* is consistent with the wipe having fired all along. **Fixed by `tearDownLiveSession`;
    story in `CHANGELOG.md`, mechanism on
    [auth](frontend/modules/auth.md#erasing-a-revoked-device-and-the-125-s-that-undid-it), two rules
-   in [durable-rules](durable-rules.md#mls-state-and-keys).** It also means the two candidate causes
+   in [durable-rules](durable-rules.md#mls-state-and-keys---mls-protocol-auth).** It also means the two candidate causes
    below are no longer the only two: a third is that the PC was revoked, wiped, and re-created its
    own store - the one the user would have seen as "still had local memory".
 
@@ -1591,7 +1651,7 @@ Three separate things, in the order they have to be answered:
    halves are fixed with a guard test. **It is recorded here so it is not mistaken for a fourth
    candidate cause above: the user's device was a PC, on the web, where that branch always ran.**
    Story in `CHANGELOG.md`, mechanism on the same auth section, two more rules in
-   [durable-rules](durable-rules.md#mls-state-and-keys).
+   [durable-rules](durable-rules.md#mls-state-and-keys---mls-protocol-auth).
 
    **TWO CANDIDATE CAUSES SURVIVE that fix and only the user's own history separates them**, so
    neither is worth code before rung 16 measures it: the removed panel row may have been
@@ -2734,7 +2794,7 @@ the same way, and that difference is the point of this entry.
 
 le-cercle fills up because its pipeline tags every build `le-cercle:<sha>` and a tag is never
 dangling, so the `docker image prune -f` in its deploy reclaimed 0 B for months
-([durable-rules](durable-rules.md#shared-gotchas)). **Our hosts have the opposite shape:** CD pushes
+([durable-rules](durable-rules.md#shared-gotchas---development-cicd)). **Our hosts have the opposite shape:** CD pushes
 to ghcr and the compose files pull `:latest`, so the image a deploy replaces loses its tag and
 becomes dangling - reclaimable by the plainest possible prune. What they have in common is that
 **no prune runs at all.**

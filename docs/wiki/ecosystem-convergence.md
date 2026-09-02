@@ -907,7 +907,7 @@ repository in this ecosystem deploys onto a self-hosted runner that is also the 
 removes DANGLING images while that pipeline tags every build `le-cercle:<sha>`, the other bounded a
 cache by a CLOCK that a per-deploy rewrite outruns. Fourteen images and 1.5 GB of build cache later,
 a merge request could not install its dependencies. Both rules are in
-[durable-rules](durable-rules.md#shared-gotchas), with the two measurements that mislead - image
+[durable-rules](durable-rules.md#shared-gotchas---development-cicd), with the two measurements that mislead - image
 sizes are not additive (eleven images listed at 2.9 GB freed 486 MB) and the build cache, the
 smaller number in `docker system df`, was the bigger half. Verified on the deploy that followed the
 merge: the new block ran for real, reclaimed 839 MB, health check `{"status":"ok","schema":15}`,
@@ -950,7 +950,7 @@ Three things came out of it that are not tidiness:
   --chmod=+x` on both scripts AND by invoking the installer as `sh "$SCRIPT_DIR/install-oxvelte.sh"`,
   so the mode stops being load-bearing at all. **The same trap was live in le-cercle's open merge
   request** and was fixed there in the same pass. The rule is in
-  [durable-rules](durable-rules.md#shared-gotchas); what it cost is that the earlier container
+  [durable-rules](durable-rules.md#shared-gotchas---development-cicd); what it cost is that the earlier container
   simulation had passed, because a Windows Docker bind mount presents every file as executable
   whatever git recorded - it simulates the commands, never the checkout.
 - **The oxvelte shims had to be the POSIX ones, not Canari's.** Copying Canari's bash version was a
@@ -1018,7 +1018,7 @@ because most of them were invisible to the check that would naturally be run for
 social, 1.80.0 in core-service and the frontend - all five running the same repo-level config, so
 a lint verdict depended on the directory you stood in. Fixing what the manifests showed would have
 left one of the three in place. The rule is in
-[durable-rules](durable-rules.md#shared-gotchas).
+[durable-rules](durable-rules.md#shared-gotchas---development-cicd).
 
 **oxfmt 0.59 -> 0.65 is a no-op on this code**, measured rather than feared: 799 frontend files,
 303 service files, 267 MiGallery files, 114 Sky files, zero diffs. Worth having on record - a

@@ -158,7 +158,10 @@ restated**. **Every defect story is in `CHANGELOG.md`, every rule one left is in
    started from ONE P1: every Stripe webhook rejected for four days. The ceiling, the sweep, the
    dispatch, the outage of 2026-09-01 and Dependabot's TWO switches are all on
    [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them), the only copy.
-   **FOUR THINGS OPEN, each in [backlog](docs/wiki/backlog.md) and nowhere else:** the remaining rows
+   **FIVE THINGS OPEN, each in [backlog](docs/wiki/backlog.md) and nowhere else:** **[two of the six
+   cargo directories are invisible to Dependabot](docs/wiki/backlog.md#p1---two-of-the-six-cargo-directories-are-invisible-to-dependabot-and-one-of-them-is-the-app-that-ships-to-phones-measured-2026-09-02)** - the app that
+   ships to phones among them, silent for 25 days, its silence now closed by a derived test and its
+   fix a decision owed to the USER; the remaining rows
    of [the ceiling table](docs/wiki/backlog.md#p1---the-three-refusals-the-auto-merge-ceiling-makes-and-the-test-that-retires-each),
    each naming the test that retires it - closing one makes a whole CLASS of update merge by itself;
    [the one rebuild no `GITHUB_TOKEN` may perform](docs/wiki/backlog.md#p2---the-one-rebuild-the-auto-merge-cannot-perform-and-the-credential-that-would-let-it);
