@@ -923,7 +923,12 @@ external join, one that repaired by a peer's Welcome, one that CANNOT repair bec
 answer, and one that should never have been enumerated at all. All four look the same in the sidebar.
 
 **The cost, stated once: every row here is `+user`,** because a fresh device pays SETUP-4's 2FA -
-which is why MULTI-3 has been `SKIPPED` since `0c31be5d`. The group is only affordable if ONE 2FA
+which is why MULTI-3 has been `SKIPPED` since `0c31be5d`. **THAT PRICE FELL ON 2026-09-02**: the
+campaign moved to two dedicated Authentik accounts that sign in through the service-account link,
+whose flow has no MFA stage, so a fresh device now costs a username and a password. The rows are
+still `+user` in the sense that a human decides when to spend a device, but the 2FA that made a
+group of nine unaffordable is gone, and `newdevice.mjs` is a convenience rather than the primitive
+the whole group rests on. The group is only affordable if ONE 2FA
 buys many rows, so it stands on a primitive the rig does not have: `newdevice.mjs`, clearing the
 Canari ORIGIN (IndexedDB, the device key vault, the refresh cookie) while leaving the CAS/Authentik
 session on its own origin intact, so the next load enrols as a device the server has never seen

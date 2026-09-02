@@ -7,8 +7,20 @@ the time means anything. Everything else lives elsewhere and is never restated h
 [`the README`](../../tools/cross-client-harness/README.md) is the instrument, `CHANGELOG.md` is every
 defect, `CLAUDE.md` is what is open.
 
-Two accounts, anonymised as **owner** (W1, A1) and **peer** (W2). Target is PRODUCTION. **Run order
-is the numbered ladder below, top to bottom - the only copy of that order.**
+Two accounts, **owner** (W1, W3, A1) and **peer** (W2). Target is PRODUCTION. **Run order is the
+numbered ladder below, top to bottom - the only copy of that order.**
+
+**SINCE 2026-09-02 THOSE TWO KEYS NAME DEDICATED TEST ACCOUNTS, NOT REAL PEOPLE** - `canari-test-alpha`
+and `canari-test-beta`, signing in through the service-account link, which has no MFA stage
+([resume, section 2b](cross-client-campaign-resume.md)). **No cell below was edited, and that is
+deliberate**: every verdict here was taken on the previous accounts and remains a true statement
+about the BUILD it names. What changed is the state those accounts hold, and it changes two things.
+**SETUP-4 must be re-run** - "log in as owner, enrol the device, set the PIN" is a precondition, and
+it is no longer satisfied by anything. **And every row whose question is about HISTORY** - the HEAL
+ladder, the DEL rungs, anything reasoning about an existing device or an existing conversation -
+has nothing to reason about until the fixtures are rebuilt, so a `passed` there describes the old
+estate and not the one the next run will meet. Rows that measure a MECHANISM on a named build are
+untouched by the switch.
 
 ## Standing
 
