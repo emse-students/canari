@@ -601,10 +601,13 @@ export class MlsDeliveryApi {
   }
 
   /**
-   * Rung-1 replay: fetches the ordered commits the local client missed (`baseEpoch >= sinceEpoch`)
-   * so it can apply them and catch up instead of dropping state (`GET /api/mls/commits/:groupId`).
-   * `belowFloor` signals the intermediate commits were pruned, so the caller must fall back to
-   * rung-2 (re-Welcome). `activeEpoch` is the epoch to reach after replay.
+   * Rung-1 replay: fetches the ordered, CONTIGUOUS commits the local client missed
+   * (`baseEpoch >= sinceEpoch`) so it can apply them and catch up instead of dropping state
+   * (`GET /api/mls/commits/:groupId`). `activeEpoch` is the epoch to reach after replay.
+   *
+   * Two terminating answers, rung-2 (re-Welcome) owed on either: `belowFloor` when the intermediate
+   * commits were pruned, `gapAt` when an epoch inside the range was never recorded - `commits` then
+   * carries only the applicable prefix, and nothing past `gapAt` is reachable.
    */
   async fetchCommitsSince(
     groupId: string,
@@ -613,6 +616,7 @@ export class MlsDeliveryApi {
     commits: Array<{ baseEpoch: number; proto: string }>;
     activeEpoch: number;
     belowFloor: boolean;
+    gapAt?: number;
   }> {
     const res = await this.f(
       `${this.historyUrl}/api/mls/commits/${encodeURIComponent(groupId)}?sinceEpoch=${sinceEpoch}`,

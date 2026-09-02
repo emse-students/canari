@@ -7,6 +7,12 @@ export interface CommitReplayResult {
   healed: boolean;
   /** True when the commits needed were pruned from the server log - the caller must fall to rung 2. */
   belowFloor: boolean;
+  /**
+   * The epoch the server's commit log cannot supply, when it named one. Like `belowFloor` this is a
+   * TERMINATING answer - rung 1 can never finish - but it says the log is holed in the MIDDLE rather
+   * than short at the start, which is the difference between "too old" and "never written".
+   */
+  gapAt?: number;
   /** Number of commits actually applied. */
   applied: number;
 }
@@ -28,7 +34,7 @@ export async function attemptCommitReplay(
   log: (msg: string) => void
 ): Promise<CommitReplayResult> {
   const startEpoch = mlsService.getEpoch(groupId);
-  const { commits, activeEpoch, belowFloor } = await mlsService.fetchCommitsSince(
+  const { commits, activeEpoch, belowFloor, gapAt } = await mlsService.fetchCommitsSince(
     groupId,
     startEpoch
   );
@@ -36,6 +42,21 @@ export async function attemptCommitReplay(
   if (belowFloor) {
     log(`[GAP] ${groupId.slice(0, 8)}… below commit-log floor - rung-2 re-Welcome needed`);
     return { healed: false, belowFloor: true, applied: 0 };
+  }
+
+  // A HOLE IN THE LOG IS A TERMINATING ANSWER, NOT A SHORTER REPLAY. The server names the first
+  // epoch it cannot supply, and nothing it CAN supply reaches `activeEpoch` past that point - so
+  // applying the prefix is work whose only sequel is the rung-2 that was owed either way.
+  //
+  // Before the server reported the hole this branch did not exist: the prefix was applied, the next
+  // commit threw, the loop below broke on it, and the group sat frozen with `healed=false` until
+  // the sync watchdog's `STUCK_EPOCH_GAP_MS` expired. That is a timer standing in for a fact the
+  // server held all along (measured on prod 2026-09-02, group `7da231f8`, epoch 121 absent).
+  if (gapAt !== undefined) {
+    log(
+      `[GAP] ${groupId.slice(0, 8)}… commit log is holed at epoch ${gapAt} - rung-2 re-Welcome needed`
+    );
+    return { healed: false, belowFloor: false, gapAt, applied: 0 };
   }
 
   let applied = 0;

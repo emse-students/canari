@@ -60,7 +60,13 @@ describe('MessagingService - visibility vs durability', () => {
     };
     return chain;
   };
-  const deviceGroupRepo = { find: jest.fn().mockResolvedValue([]) };
+  // `find` resolves the RECIPIENTS; `findOne` is the sender's own row, which the send path now reads
+  // before addressing anybody - a device whose membership is not `active` holds no leaf in the
+  // ratchet tree, so nothing it encrypts can be opened by any member (see the gate below).
+  const deviceGroupRepo = {
+    find: jest.fn().mockResolvedValue([]),
+    findOne: jest.fn().mockResolvedValue({ status: 'active' }),
+  };
   const queuedMessageRepo = {
     create: jest.fn((e: Record<string, unknown>) => e),
     save: jest.fn((e: Record<string, unknown>) => ({ id: 'q1', ...e })),
@@ -141,6 +147,7 @@ describe('MessagingService - visibility vs durability', () => {
     // `clearAllMocks` keeps implementations, so a set restored by one test would leak into the
     // next; both are stated here so every test starts from "this group has no members".
     deviceGroupRepo.find.mockResolvedValue([]);
+    deviceGroupRepo.findOne.mockResolvedValue({ status: 'active' });
     keyPackageRepo.find.mockResolvedValue([]);
     execResult = [
       [null, '1-0'],
@@ -577,6 +584,47 @@ describe('MessagingService - visibility vs durability', () => {
       await redeliver('u1', 'd1', 'g1');
 
       expect(queuedMessageRepo.save).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * A device whose membership row is not `active` holds NO LEAF in the ratchet tree. Whatever it
+   * encrypts is undecryptable by construction for every member, so accepting such a frame does not
+   * deliver a message - it manufactures one that will fail to open, on every recipient, for ever.
+   *
+   * Measured on prod 2026-09-02 (group `7da231f8`): six messages were accepted from a `pending` web
+   * device, fanned out, ACKed off the queue, and displayed nowhere. The sender saw them sent.
+   * Refusing at the seam is what turns that into an answer the client can act on, and the
+   * discriminator was already in the row the server reads to address the recipients.
+   */
+  describe('a sender holding no leaf may not publish ciphertext', () => {
+    it('refuses a proto frame from a pending device, queueing and logging nothing', async () => {
+      deviceGroupRepo.findOne.mockResolvedValue({ status: 'pending' });
+
+      await expect(service.sendMessage(send({ durable: true }))).rejects.toMatchObject({
+        response: { error: 'sender_not_active', status: 'pending' },
+      });
+
+      expect(queuedMessageRepo.save).not.toHaveBeenCalled();
+      expect(redis.xadd).not.toHaveBeenCalled();
+    });
+
+    it('still accepts the HANDSHAKE frames, which are how a pending device stops being pending', async () => {
+      // A Welcome and a Commit are addressed to the group in the clear-ish: they carry no
+      // application payload and are precisely the path out of `pending`. Refusing them would make
+      // the gate a deadlock.
+      deviceGroupRepo.findOne.mockResolvedValue({ status: 'pending' });
+
+      await expect(service.sendMessage(send({ isWelcome: true }))).resolves.toBeDefined();
+      await expect(service.sendMessage(send({ isCommit: true }))).resolves.toBeDefined();
+    });
+
+    it('accepts a frame from a device with no membership row, which is an external join in flight', async () => {
+      // The row is written by the commit that admits the device, so a send racing just ahead of it
+      // is normal. It is logged, because the same shape is also what a ghost looks like.
+      deviceGroupRepo.findOne.mockResolvedValue(null);
+
+      await expect(service.sendMessage(send({ durable: true }))).resolves.toBeDefined();
     });
   });
 });

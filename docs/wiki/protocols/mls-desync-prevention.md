@@ -8,7 +8,25 @@ Run the MLS service and call-site suites in `frontend` after changing **`runComm
 
 ### 1. Server - epoch-gated commits
 
-- **`POST /api/mls/commit`** — `baseEpoch` must match the group row **`activeEpoch`** (except fast-forward when `activeEpoch === 0`). A **Redis lock** (`mls:commitlock:{groupId}`) serializes concurrent validators so two devices cannot both advance from the same epoch. On success, the commit bytes are stored in the commit-log and **`activeEpoch ← baseEpoch + 1`** atomically, then fanned out. Rejects: **`epoch_mismatch`**, **`concurrent_commit`**. Source: `app.controller.ts` → `validateCommit`.
+- **`POST /api/mls/commit`** — `baseEpoch` must match the group row **`activeEpoch`** (except fast-forward when `activeEpoch === 0`). A **Redis lock** (`mls:commitlock:{groupId}`) serializes concurrent validators so two devices cannot both advance from the same epoch. On success, the commit bytes are stored in the commit-log and **`activeEpoch ← baseEpoch + 1`** atomically, then fanned out. Rejects: **`epoch_mismatch`**, **`concurrent_commit`**, and **a commit carrying no `proto`** — a
+  commit nothing can replay may not advance the epoch. Source: `app.controller.ts` → `validateCommit`.
+
+  **"ATOMICALLY" WAS THIS PAGE'S CLAIM BEFORE IT WAS THE CODE'S, AND THAT COST A CONVERSATION AN
+  EPOCH.** Until 2026-09-02 the insert sat OUTSIDE the transaction that advanced `activeEpoch`,
+  wrapped in `try`/`catch` → `logger.warn` and reasoned as best-effort. `IDX_mls_commit_log_group_epoch`
+  is UNIQUE on `(groupId, baseEpoch)`, so a row skipped there can never be written by anybody: epoch
+  121 of DM `7da231f8` is absent from a log running 0..129, permanently, and every device stopped at
+  121 needs a full rung-2 re-Welcome for the life of the group. The insert now shares the
+  transaction, and a failure fails the commit — one round-trip for the committer instead of a hole
+  for everyone.
+
+- **A SEND FROM A DEVICE THAT HOLDS NO LEAF IS REFUSED, NOT FANNED OUT.** `status = 'active'` gated
+  recipient resolution and nothing gated the SENDER, so a `pending` device's six messages became
+  thirty rows of ciphertext nobody in the group could open (prod, 2026-09-02, 24 seconds).
+  `sendMessage` now reads the sender's own `dm_device_group_memberships` row before resolving any
+  recipient and answers **`403 sender_not_active`** with the status. Handshake frames (Welcome,
+  Commit) are exempt: they are the path OUT of `pending`, and refusing them would make the gate a
+  deadlock. A missing row is logged and allowed — that is an external join in flight.
 
 ### 2. Server - coordinated reset and bootstrap
 
@@ -32,7 +50,17 @@ Run the MLS service and call-site suites in `frontend` after changing **`runComm
 
 - **Rust / WASM epoch gap** — **`frontend/mls-core`** (and Tauri path) detect **message epoch > group epoch** and fail fast so the caller can run **gap recovery** instead of consuming ratchet material incorrectly.
 
-- **Commit-log replay (rung 1)** — on that gap, the pipeline (`setupMessageHandler` → `attemptCommitReplay`) fetches the missed ordered commits from the server commit-log (**`GET /api/mls/commits/:groupId?sinceEpoch=N`**, written atomically with the epoch advance in **`POST /api/mls/commit`**) and re-applies them to catch the epoch up **without dropping state**. Only a below-floor (pruned) or unapplicable commit falls through to the destructive rung-2 forget + re-Welcome. See [`mls-recovery-ladder.md`](mls-recovery-ladder.md) step 4.
+- **Commit-log replay (rung 1)** — on that gap, the pipeline (`setupMessageHandler` → `attemptCommitReplay`) fetches the missed ordered commits from the server commit-log (**`GET /api/mls/commits/:groupId?sinceEpoch=N`**, written atomically with the epoch advance in **`POST /api/mls/commit`**) and re-applies them to catch the epoch up **without dropping state**. Only a below-floor (pruned) commit, a NAMED HOLE, or an unapplicable one falls through to the destructive rung-2 forget + re-Welcome. See [`mls-recovery-ladder.md`](mls-recovery-ladder.md) step 4.
+
+- **A HOLE IN THE MIDDLE OF THE LOG IS AN ANSWER THE SERVER GIVES, not one the client discovers by
+  failing.** `belowFloor` only ever described the START of the requested range, so a device at 120
+  handed `[120, 122, 123, …]` applied 120, threw on 122, froze its outbox and waited out
+  `EPOCH_GAP_ESCALATION_MS` — 30 seconds during which every arriving frame was ACKed and dropped.
+  `getCommitsSince` now walks for contiguity, truncates at the first missing epoch and returns it as
+  **`gapAt`** (also when the log simply stops short of `activeEpoch`); `attemptCommitReplay` treats it
+  as terminating and applies nothing, and `setupMessageHandler` escalates to rung 2 on that proof.
+  PRUNING and a HOLE stay separate: both end rung 1, only the second accuses the commit path, so
+  `belowFloor` suppresses the `gapAt` report rather than doubling it.
 
 - **`connection.ts`** — Rung-2 fallback: stale decrypt / epoch error patterns can trigger **`forgetGroup`** + **`sendReinviteRequest`** when local epoch is behind the message and rung-1 replay could not catch up (see `[RECOVER]` / `[GAP]` logs).
 
@@ -247,11 +275,38 @@ JNI engine load `mls.bin` and advance from it, so releasing it first hands that 
 is already behind. The guard expires on its own after ~30 s, so nothing here rests on a clock - the
 ordering is the guarantee.
 
+### 9. Client - an application frame never straddles a local epoch advance
+
+- **`runAsEpochSend` / `runAsEpochAdvance`** in
+  [`epochSendBarrier.ts`](../../../frontend/src/lib/utils/chat/epochSendBarrier.ts) — a send is
+  encrypt-then-POST with a suspension between them; a commit is stage-accept-merge. Nothing ordered
+  the two, so a frame encrypted at epoch N could reach the wire after this device's own commit had
+  moved every recipient to N+1. **Two past epochs of OpenMLS tolerance is what hid it**: one straddle
+  is survived silently, and two commits in quick succession make the frame undecryptable for good
+  while the sender considers it delivered. Measured on prod 2026-09-02 (DM `7da231f8`): seven frames
+  across commits 128 and 129, the first 36 ms after the commit, four of them lost.
+
+- The overlap is **deleted, not reconciled**. A frame is encrypted AND on the wire before a local
+  commit starts, or it is encrypted after that commit merged; there is no third ordering and no clock
+  in it. Re-encrypting a frame found stale would be a race that heals cleanly, which is still a
+  defect.
+
+- **The barrier is raised only under the MLS mutex, and that is the whole deadlock argument.**
+  `runCommitTransaction` raises it inside `runUnderMlsLock`; the mutex being exclusive, a send that
+  observes a raised barrier provably does not hold the mutex the advance is waiting for. Registered
+  sends never need the mutex themselves (`encryptForSend` is a direct client call), so an advance
+  holding it can wait for them to land. A barrier raised outside the mutex, or a send issued from
+  inside it, reintroduces the cycle.
+
 ## Verification
 
 | Tactic | What must hold | How we check |
 |---|---|---|
 | `baseEpoch` formula | Web and Tauri stage the commit then read the pre-merge epoch in `runCommitTransaction` | `messaging.commit-log.spec.ts` |
+| Commit log shares the advance's fate | A failing commit-log insert fails the commit; a protoless commit advances no epoch | `messaging.commit-log.spec.ts` |
+| A hole is named, not discovered | `getCommitsSince` truncates at the gap and reports `gapAt`; `belowFloor` reports none | `messaging.commit-log.spec.ts`, `commitReplay.test.ts` |
+| A leafless sender is refused | A `pending` device queues zero rows and gets `sender_not_active`; handshake frames still pass | `messaging.durability.spec.ts` |
+| Send / advance never straddle | A frame is posted before a local commit starts, or encrypted after it merged - in both directions, and per group | `epochSendBarrier.test.ts` |
 | Persistence monotonic | Stale encrypted flush cannot lower the stored blob | `hex.mlsVersion.test.ts` |
 | Recovery vs prevention | Desync _handling_ (ACK rules, retries) | [`mls-recovery-ladder.md`](mls-recovery-ladder.md) |
 | Server commit logic | Locks + `activeEpoch` rules | Code review / `app.controller.ts` |

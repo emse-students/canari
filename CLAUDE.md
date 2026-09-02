@@ -219,7 +219,23 @@ restated**. **Every defect story is in `CHANGELOG.md`, every rule one left is in
    [chat](docs/wiki/frontend/modules/chat.md#the-conversation-row-is-the-recovery-ladders-input-so-publishing-it-early-arms-the-ladder-2026-09-01)
    and [chat-delivery](docs/wiki/services/chat-delivery.md#a-roster-seat-is-not-a-key-and-only-a-welcome-tells-the-two-apart).
 
-10. **`dev.canari-emse.fr` IS LIVE - estate, switch and tunnel all done 2026-09-02.** Everything
+10. **TWELVE OF SIXTEEN MESSAGES WERE FETCHED AND DROPPED, AND `mls_commit_log` HAS A PERMANENT HOLE
+    AT EPOCH 121** (prod DM `7da231f8`, measured 2026-09-02 from a user's impression that proved
+    exact). **THE FOUR DEFECTS ARE FIXED 2026-09-02** - story in `CHANGELOG.md`, rules in
+    [durable-rules](docs/wiki/durable-rules.md), mechanisms on
+    [mls-desync-prevention](docs/wiki/protocols/mls-desync-prevention.md) (SS1, SS5, SS9) and
+    [mls-recovery-ladder](docs/wiki/protocols/mls-recovery-ladder.md) step 4. **NOTHING IS DEPLOYED:
+    prod still runs the defects.** What stays open is in
+    [backlog](docs/wiki/backlog.md#p1---twelve-of-sixteen-messages-were-fetched-and-dropped-and-the-commit-log-has-a-permanent-hole-at-epoch-121-measured-on-prod-2026-09-02),
+    the only copy, and **it reads WITH item 9** (same account; the peer's second iPhone `pending`
+    since 27/08 is that P1's signature): the twelve messages, recoverable only from the peer's
+    iPhone; the hole at 121, permanent by construction; **the 13:10 failure arm, NOT established** -
+    reproduce with `clearLogcat()` first and do NOT write a fix against a suspected arm; the green
+    "SECURISE & SYNC" shield on a conversation missing twelve messages; and two siblings - nothing
+    measures a re-key rate or reports a commit-log hole, and the phone prints 8 warning lines a
+    minute plus a 10 s presence poll.
+
+11. **`dev.canari-emse.fr` IS LIVE - estate, switch and tunnel all done 2026-09-02.** Everything
     about it is on [dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy: the
     four measurements that prove it, the SEED order a virgin estate needs (deploy -> refuse ->
     refresh -> deploy, the 80 `.sql` files being deltas over a schema TypeORM owns) and the three

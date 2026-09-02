@@ -13,6 +13,34 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **Twelve of sixteen messages a peer sent were fetched by the phone and dropped, and one epoch of
+  the conversation can never exist.** Reported as an impression - *"j'ai l'impression de n'avoir
+  qu'une petite partie des messages qu'il m'envoie"* - and exact: DM `7da231f8`, 16 sent, 4
+  displayed, every loss AFTER the fetch. Four independent defects, each fixed where it lived. **The
+  commit log was best-effort while the epoch advance it describes was authoritative**: the insert sat
+  outside the transaction that had already moved `activeEpoch`, behind a `catch` -> `warn`, and a
+  commit carrying no `proto` advanced the epoch and recorded nothing at all - which is why epoch 121
+  is absent from a log running 0..129 and, `(groupId, baseEpoch)` being UNIQUE, can never be
+  refilled. The insert now shares the transaction and a protoless commit is refused. **`getCommitsSince`
+  answered "is the floor too high" while being asked "is this replay applicable"**, so a hole in the
+  MIDDLE of the log was discovered by applying the prefix, failing on the next commit and waiting out
+  a 30 s watchdog - during which every arriving frame was ACKed and dropped. It now walks for
+  contiguity and NAMES the epoch it cannot supply, and the client escalates to a re-Welcome on that
+  proof instead of on the clock; pruning and a hole stay separate, only one of them accusing anybody.
+  **A send from a `pending` device was accepted and fanned out to everyone**: the peer's web session
+  held no leaf in the ratchet tree, so its six messages became thirty rows of ciphertext nobody in
+  the group could ever open - the server holding the discriminator at the moment it accepted them.
+  The sender's own membership is now read before any recipient is resolved, handshake frames
+  excepted, they being the path out of `pending`. **And a device emitted application frames between
+  its own commit and that commit's acceptance** - seven of them across epochs 128 and 129, the first
+  36 ms after the commit - making each one a past-epoch frame that two further commits render
+  undecryptable for good. A per-group barrier now deletes the overlap rather than reconciling it:
+  a frame is on the wire before a local commit starts, or encrypted after it merged, and the barrier
+  is raised only under the MLS mutex, which is what keeps it deadlock-free. **None of this recovers
+  the twelve** - their plaintext exists only on the peer's iPhone - and what remains open, including
+  a UI still showing a green "SÉCURISÉ & SYNC" shield on that conversation, is in
+  [backlog](docs/wiki/backlog.md#p1---twelve-of-sixteen-messages-were-fetched-and-dropped-and-the-commit-log-has-a-permanent-hole-at-epoch-121-measured-on-prod-2026-09-02).
+
 - **A vulnerability was reported by one switch and fixable by none.** A push printed `GitHub found 1
   vulnerability on the default branch (1 moderate)`, which reads as "the sweep will take it".
   Nothing would have. Dependabot has two independent halves: `vulnerability-alerts` was on - it is

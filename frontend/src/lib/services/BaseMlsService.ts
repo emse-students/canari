@@ -45,6 +45,7 @@ import {
 } from '$lib/mls-client/catchupBenchmark';
 import { attemptCommitReplay } from '$lib/utils/chat/commitReplay';
 import { markEpochGap, clearEpochGap } from '$lib/utils/chat/epochGapRegistry';
+import { runAsEpochAdvance, runAsEpochSend } from '$lib/utils/chat/epochSendBarrier';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { classifyIncomingDecryptError } from '$lib/mls-client/mlsDecryptError';
 import { scopeKey, scopeLabel, type DistributionScope } from '$lib/mls-client/distributionScope';
@@ -1985,38 +1986,44 @@ export abstract class BaseMlsService implements IMlsService {
     addedDeviceIds: string[];
     skippedDeviceIds: string[];
   }> {
-    const out = await this.runUnderMlsLock(async () => {
-      const staged = await stageFn();
-      // baseEpoch = current (pre-merge) epoch: the staged commit will transition N -> N+1.
-      const baseEpoch = await this.freshEpoch(groupId);
-      // One atomic server round-trip: validate the epoch, and on accept the server records the
-      // commit in the epoch-indexed log (rung-1 replay) AND fans it out to members. If we crash
-      // between this accept and the local merge below, our epoch lags the server by one - a gap the
-      // rung-1 replay heals on the next sync, no longer a destructive fork. [[C7]]
-      const validation = await this.delivery.submitCommit(
-        groupId,
-        baseEpoch,
-        toBase64(staged.commit),
-        opts.excludeDeviceIds
-      );
-      if (!validation.accepted) {
-        // Rejected: roll back the staged commit. The local epoch never moved, so there is NO fork.
-        // Throw without the `server epoch:.., sent:..` marker so the caller treats it as a
-        // retryable failure rather than a fork to heal. [[C7]]
-        await this.clearPendingCommit(groupId).catch(() => {});
-        // ...and MAKE that retry true, because until now nothing did. See `catchUpOnRefusedCommit`.
-        await this.catchUpOnRefusedCommit(groupId, baseEpoch, validation.currentEpoch);
-        throw new Error(`Staged commit rejected: ${validation.reason || 'epoch_mismatch'}`);
-      }
-      await this.mergePendingCommit(groupId);
-      const ratchetTree = opts.exportTree ? await this.exportRatchetTree(groupId) : undefined;
-      return {
-        welcome: staged.welcome,
-        ratchetTree,
-        addedDeviceIds: staged.addedDeviceIds ?? [],
-        skippedDeviceIds: staged.skippedDeviceIds ?? [],
-      };
-    });
+    const out = await this.runUnderMlsLock(async () =>
+      // RAISED UNDER THE MLS MUTEX, WHICH IS WHAT MAKES IT DEADLOCK-FREE: a send that sees this
+      // barrier provably does not hold the mutex, so it blocks nothing the drain inside waits for.
+      // The section covers stage through merge - the whole window in which this device's notion of
+      // the epoch and the server's can disagree. See `epochSendBarrier`.
+      runAsEpochAdvance(groupId, async () => {
+        const staged = await stageFn();
+        // baseEpoch = current (pre-merge) epoch: the staged commit will transition N -> N+1.
+        const baseEpoch = await this.freshEpoch(groupId);
+        // One atomic server round-trip: validate the epoch, and on accept the server records the
+        // commit in the epoch-indexed log (rung-1 replay) AND fans it out to members. If we crash
+        // between this accept and the local merge below, our epoch lags the server by one - a gap the
+        // rung-1 replay heals on the next sync, no longer a destructive fork. [[C7]]
+        const validation = await this.delivery.submitCommit(
+          groupId,
+          baseEpoch,
+          toBase64(staged.commit),
+          opts.excludeDeviceIds
+        );
+        if (!validation.accepted) {
+          // Rejected: roll back the staged commit. The local epoch never moved, so there is NO fork.
+          // Throw without the `server epoch:.., sent:..` marker so the caller treats it as a
+          // retryable failure rather than a fork to heal. [[C7]]
+          await this.clearPendingCommit(groupId).catch(() => {});
+          // ...and MAKE that retry true, because until now nothing did. See `catchUpOnRefusedCommit`.
+          await this.catchUpOnRefusedCommit(groupId, baseEpoch, validation.currentEpoch);
+          throw new Error(`Staged commit rejected: ${validation.reason || 'epoch_mismatch'}`);
+        }
+        await this.mergePendingCommit(groupId);
+        const ratchetTree = opts.exportTree ? await this.exportRatchetTree(groupId) : undefined;
+        return {
+          welcome: staged.welcome,
+          ratchetTree,
+          addedDeviceIds: staged.addedDeviceIds ?? [],
+          skippedDeviceIds: staged.skippedDeviceIds ?? [],
+        };
+      })
+    );
     // The commit advanced the epoch: refresh the external-join base so a member lacking state can
     // self-join at the new epoch. Skipped on reject (the closure above throws before we get here, so
     // the epoch never moved). [[Phase 4]]
@@ -2068,6 +2075,7 @@ export abstract class BaseMlsService implements IMlsService {
     const log = (msg: string) => console.log(msg);
     log(`[GAP] commit refused on ${short}: we are at ${baseEpoch}, the server at ${activeEpoch}`);
     markEpochGap(groupId);
+    let exhausted: string | undefined;
     try {
       const replay = await attemptCommitReplay(this, groupId, log);
       if (replay.healed) {
@@ -2075,12 +2083,24 @@ export abstract class BaseMlsService implements IMlsService {
         scheduleOutboundMlsPersist();
         return;
       }
+      // "Still behind" merges two futures: one where the next frame closes the gap, and one where
+      // NOTHING ever does because the server has no commits to give. The escalation still belongs
+      // to the watchdog - deliberately, see above - but the line must say which of the two this is,
+      // or a log read cannot tell a transient lag from a permanently holed log.
+      if (replay.belowFloor) exhausted = 'the commits are pruned below the log floor';
+      else if (replay.gapAt !== undefined) {
+        exhausted = `the commit log is HOLED at epoch ${replay.gapAt} and can never be refilled`;
+      }
     } catch (e) {
       // Swallowed on purpose - the caller is about to throw the refusal, which is the outcome that
       // matters - but never silently: this is the branch that leaves the group to rung 2.
       console.warn(`[GAP] replay error for ${short} after a refused commit:`, e);
     }
-    log(`[GAP] ${short} still behind after rung 1 - left to the sync watchdog for rung 2`);
+    log(
+      exhausted
+        ? `[GAP] ${short} cannot be caught up by replay - ${exhausted}; rung 2 is OWED, not merely possible (waiting on the sync watchdog)`
+        : `[GAP] ${short} still behind after rung 1 - left to the sync watchdog for rung 2`
+    );
   }
 
   /**
@@ -2739,6 +2759,26 @@ export abstract class BaseMlsService implements IMlsService {
     frameDelivery: FrameDelivery = DELIVERY.visible
   ): Promise<Uint8Array> {
     await this.waitForCatchUpIdle();
+    // ...and nothing straddles a LOCAL epoch advance either: a frame encrypted at epoch N and posted
+    // after this device's own commit moved the group to N+1 is a past-epoch frame for every
+    // recipient, which two further commits make undecryptable for good. The barrier deletes the
+    // overlap rather than detecting it afterwards - see `epochSendBarrier`, which also carries the
+    // lock order this relies on.
+    return runAsEpochSend(groupId, () => this.emitFrame(groupId, messageBytes, frameDelivery));
+  }
+
+  /**
+   * The frame itself: encrypt against the live client, count the advance, checkpoint it, post it.
+   *
+   * Split out of {@link sendMessage} only so the whole of it - encrypt AND post - sits inside one
+   * barrier section. Registering just the post would leave the straddle the barrier exists to
+   * delete, the stale epoch being chosen at the encrypt.
+   */
+  private async emitFrame(
+    groupId: string,
+    messageBytes: Uint8Array,
+    frameDelivery: FrameDelivery
+  ): Promise<Uint8Array> {
     const encryptedBytes = await this.encryptForSend(groupId, messageBytes);
     this.noteLiveMutation();
     // DURABLE, AND BEFORE THE POST. The ratchet has moved by now and stays moved whether or not the

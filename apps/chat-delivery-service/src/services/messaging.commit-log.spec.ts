@@ -2,7 +2,7 @@
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { MessagingService } from './messaging.service';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { GroupMember } from '../entities/group-member.entity';
@@ -43,8 +43,14 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
   };
   const transaction = jest.fn(async (cb: (m: unknown) => Promise<void>) =>
     cb({
-      getRepository: (entity: unknown) =>
-        entity === Group ? { update: groupUpdate } : txGroupInfoRepo,
+      getRepository: (entity: unknown) => {
+        if (entity === Group) return { update: groupUpdate };
+        // THE COMMIT-LOG ROW IS WRITTEN INSIDE THIS TRANSACTION NOW, not best-effort after it: the
+        // epoch advance and the commit that lets everyone else replay it land together or neither
+        // lands. Routing it here is what lets a test see the two writes in one callback.
+        if (entity === MlsCommitLog) return { createQueryBuilder: () => commitInsertBuilder };
+        return txGroupInfoRepo;
+      },
     })
   );
   const groupRepo = { findOne: jest.fn(), save: jest.fn(), manager: { transaction } };
@@ -383,6 +389,45 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       expect(commitInsertBuilder.execute).not.toHaveBeenCalled();
       expect(fanOut).not.toHaveBeenCalled();
     });
+
+    it('refuses a commit with no proto instead of advancing the epoch past it', async () => {
+      // The epoch it would create is one NOTHING can ever replay: the commit-log is keyed UNIQUE on
+      // (groupId, baseEpoch), so the row skipped here cannot be written later by anybody. Every
+      // device that misses that epoch is then owed a full rung-2 re-Welcome for ever.
+      groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });
+      const fanOut = jest.spyOn(service, 'sendMessage');
+
+      await expect(
+        service.validateCommit({ groupId: 'group-1', deviceId: 'device-1', baseEpoch: 5 })
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(groupUpdate).not.toHaveBeenCalled();
+      expect(transaction).not.toHaveBeenCalled();
+      expect(fanOut).not.toHaveBeenCalled();
+    });
+
+    it('fails the whole commit when the log row cannot be written', async () => {
+      // The insert used to sit AFTER the transaction behind a `catch -> warn`, so a failed write
+      // left the group advanced, the committer told `accepted: true`, and the epoch unrefillable.
+      // Inside the transaction the two writes share one fate; the caller retries at the same base.
+      groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });
+      const fanOut = jest.spyOn(service, 'sendMessage');
+      commitInsertBuilder.execute.mockRejectedValueOnce(new Error('deadlock detected'));
+
+      await expect(
+        service.validateCommit({
+          groupId: 'group-1',
+          deviceId: 'device-1',
+          baseEpoch: 5,
+          proto: 'Y29tbWl0',
+          senderId: 'user-1',
+        })
+      ).rejects.toThrow('deadlock detected');
+
+      // The fan-out is the LAST step for exactly this reason: nobody is handed a commit whose
+      // epoch the server did not keep.
+      expect(fanOut).not.toHaveBeenCalled();
+    });
   });
 
   describe('getCommitsSince (membership-gated replay)', () => {
@@ -421,6 +466,61 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       const res = await service.getCommitsSince('group-1', 1, 'member-1');
 
       expect(res.belowFloor).toBe(true);
+      // Pruning is not a hole. Reporting both would accuse the commit path of a defect it did not
+      // commit, and the caller already terminates on `belowFloor`.
+      expect(res.gapAt).toBeUndefined();
+    });
+
+    it('truncates at a hole and NAMES the epoch the log cannot supply', async () => {
+      // Measured on prod 2026-09-02: group `7da231f8` ran 0..129 with 121 absent. The tail is
+      // unreachable - commits apply in order - so handing it back only invites the caller to apply
+      // 120, throw on 122, and wait out a watchdog clock for a fact the server holds right here.
+      groupMemberRepo.findOne.mockResolvedValue({ id: 'm' });
+      groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 124 });
+      commitLogRepo.find.mockResolvedValue([
+        { baseEpoch: 120, commit: 'c120' },
+        { baseEpoch: 122, commit: 'c122' },
+        { baseEpoch: 123, commit: 'c123' },
+      ]);
+      commitLogRepo.findOne.mockResolvedValue({ baseEpoch: 0 });
+
+      const res = await service.getCommitsSince('group-1', 120, 'member-1');
+
+      expect(res.belowFloor).toBe(false);
+      expect(res.gapAt).toBe(121);
+      expect(res.commits).toEqual([{ baseEpoch: 120, proto: 'c120' }]);
+    });
+
+    it('names the hole when the log stops short of the active epoch', async () => {
+      // The same defect from the other end: the log is contiguous but ends before the group does,
+      // so the last epochs were never recorded rather than sitting behind a gap.
+      groupMemberRepo.findOne.mockResolvedValue({ id: 'm' });
+      groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 8 });
+      commitLogRepo.find.mockResolvedValue([
+        { baseEpoch: 5, commit: 'c5' },
+        { baseEpoch: 6, commit: 'c6' },
+      ]);
+      commitLogRepo.findOne.mockResolvedValue({ baseEpoch: 0 });
+
+      const res = await service.getCommitsSince('group-1', 5, 'member-1');
+
+      expect(res.gapAt).toBe(7);
+      expect(res.commits).toHaveLength(2);
+    });
+
+    it('reports no hole when the log reaches the active epoch', async () => {
+      groupMemberRepo.findOne.mockResolvedValue({ id: 'm' });
+      groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 7 });
+      commitLogRepo.find.mockResolvedValue([
+        { baseEpoch: 5, commit: 'c5' },
+        { baseEpoch: 6, commit: 'c6' },
+      ]);
+      commitLogRepo.findOne.mockResolvedValue({ baseEpoch: 0 });
+
+      const res = await service.getCommitsSince('group-1', 5, 'member-1');
+
+      expect(res.gapAt).toBeUndefined();
+      expect(res.belowFloor).toBe(false);
     });
   });
 });

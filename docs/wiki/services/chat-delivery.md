@@ -212,6 +212,30 @@ then the per-group cap may rise. Raising the per-group cap first lets eviction c
 conversations keep a shared copy. Full reasoning in
 [history-reconciliation](../protocols/history-reconciliation.md).
 
+### The SENDER is checked before any recipient is resolved (2026-09-02)
+
+**`status = 'active'` gated recipient resolution twice, and nothing gated the sender.** A device
+whose membership row is not `active` holds NO LEAF in the ratchet tree, so whatever it encrypts is
+undecryptable by construction for every member: accepting the frame does not deliver a message, it
+manufactures one that will fail to open on every recipient, for ever. Measured on production
+2026-09-02, DM `7da231f8`: the peer's `web-...-mtbep8vs-5oxb`, `pending` since 2026-08-27 and still
+holding two undelivered Welcomes, sent six messages in 24 seconds that were fanned to five devices -
+**thirty rows of ciphertext nobody in the group can ever open**. The sender saw them sent.
+
+`sendMessage` now reads the sender's own `dm_device_group_memberships` row before resolving anybody
+and answers **`403 sender_not_active`**, carrying the status so the client learns the fact rather
+than inferring it. Two things the gate must not do, both asserted in `messaging.durability.spec.ts`:
+
+- **Handshake frames are exempt.** A Welcome and a Commit carry no application payload and are
+  precisely the path OUT of `pending`; refusing them makes the gate a deadlock.
+- **A MISSING row is logged, not refused.** The row is written by the commit that admits the device,
+  so a send racing just ahead of it is normal - though the same shape is also what a ghost looks
+  like, which is why it is logged at all.
+
+The discriminator was in the row the server already reads to address the recipients: this is the
+rule about never learning by failing what a fact could have told you, applied to a seam that held
+the fact and forwarded the frame anyway.
+
 ### Who a frame is queued for, and who owns the gateway's routing set
 
 Two different questions that a single `sadd` used to blur together.

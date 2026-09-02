@@ -637,7 +637,12 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     );
   });
 
-  it('epoch gap web (WASM) persisting past threshold → forget + requestReAdd escalation', async () => {
+  it('epoch gap web (WASM) with the commits pruned → forget + requestReAdd AT ONCE', async () => {
+    // `belowFloor` is a PROOF that no later attempt can succeed, so the 30 s wait this test used to
+    // assert bought nothing: a frozen outbox, one wasted round trip per arriving frame, and every
+    // one of those frames ACKed and dropped meanwhile. That is how twelve messages were lost on
+    // prod on 2026-09-02 (DM `7da231f8`). The clock still governs a rung-1 attempt that merely
+    // FAILED - the case below this one.
     vi.useFakeTimers();
     const gid = 'c4444444-4444-4444-8444-444444444444';
     const deps = baseDeps({
@@ -668,6 +673,51 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     ) => Promise<boolean>;
 
     const ok1 = await onMsg('peer', new Uint8Array([1]), gid, false, undefined, false);
+
+    // No clock was advanced between the frame and these assertions.
+    expect(ok1).toBe(true);
+    expect(mls.forgetGroup).toHaveBeenCalledWith(gid);
+    expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(gid, expect.anything(), expect.anything());
+    vi.useRealTimers();
+  });
+
+  it('an epoch gap whose replay merely FAILED still waits out the threshold', async () => {
+    // The other half of the same decision: nothing here says the commits are unobtainable, only
+    // that this attempt did not land. Destroying local state on one bad answer would make every
+    // transient failure a full re-Welcome.
+    vi.useFakeTimers();
+    const gid = 'c7777777-7777-4777-8777-777777777777';
+    const deps = baseDeps({
+      conversations: createTestConversations([
+        [gid, emptyConversation(gid, { lifecycle: 'active' })],
+      ]),
+    });
+    const mls = deps.mlsService as any;
+    mls.getLocalGroups = vi.fn().mockReturnValue([gid]);
+    mls.getEpoch = vi.fn().mockReturnValue(7);
+    mls.processIncomingMessage = vi
+      .fn()
+      .mockRejectedValue(new Error('Process error: epoch gap [msg_epoch=13, group_epoch=7]'));
+    mls.forgetGroup = vi.fn();
+    // The log covers the range and has no hole: rung 1 is entitled to another go.
+    mls.fetchCommitsSince = vi.fn().mockResolvedValue({
+      commits: [{ baseEpoch: 7, proto: 'AQID' }],
+      activeEpoch: 20,
+      belowFloor: false,
+    });
+    const { requestReAdd } = await import('$lib/utils/chat/recovery');
+    vi.mocked(requestReAdd).mockClear();
+    setupMessageHandler(deps as any);
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean,
+      e?: Uint8Array,
+      f?: boolean
+    ) => Promise<boolean>;
+
+    const ok1 = await onMsg('peer', new Uint8Array([1]), gid, false, undefined, false);
     expect(ok1).toBe(true);
     expect(mls.forgetGroup).not.toHaveBeenCalled();
     expect(vi.mocked(requestReAdd)).not.toHaveBeenCalled();
@@ -679,7 +729,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     vi.useRealTimers();
   });
 
-  it('GAP_QUEUED persisting past threshold → forget + requestReAdd escalation', async () => {
+  it('GAP_QUEUED with the commits pruned → forget + requestReAdd AT ONCE', async () => {
     vi.useFakeTimers();
     const gid = 'b3333333-3333-4333-8333-333333333333';
     const deps = baseDeps({
@@ -709,14 +759,10 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       f?: boolean
     ) => Promise<boolean>;
 
-    // First occurrence: arms the escalation, ACK, no forget yet.
+    // The native gap arm reaches the same ladder, so it inherits the same proof: forget +
+    // welcome_request on the FIRST frame, with no timer advanced.
     const ok1 = await onMsg('peer', new Uint8Array([1]), gid, false, undefined, false);
     expect(ok1).toBe(true);
-    expect(mls.forgetGroup).not.toHaveBeenCalled();
-
-    // Past the threshold → forget + welcome_request (via onOutOfSync → requestReAdd).
-    vi.advanceTimersByTime(31_000);
-    await onMsg('peer', new Uint8Array([1]), gid, false, undefined, false);
     expect(mls.forgetGroup).toHaveBeenCalledWith(gid);
     expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(gid, expect.anything(), expect.anything());
     vi.useRealTimers();

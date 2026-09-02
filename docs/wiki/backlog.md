@@ -752,6 +752,183 @@ no check waits on wall-clock time at all. It belongs with the rendering pass, no
 
 ## Messaging convergence
 
+### P1 - twelve of sixteen messages were FETCHED AND DROPPED, and the commit log has a PERMANENT HOLE at epoch 121 (measured on prod 2026-09-02)
+
+**Reported by the user as an impression - *"j'ai l'impression de n'avoir qu'une petite partie des
+messages qu'il m'envoie"* - and it is exact.** DM `7da231f8-119c-4ce2-884f-55f5c94c903f`, created
+2026-08-27, two members (`d82cd226...` / `0acc3ab9...`), not deleted, `activeEpoch` 130.
+
+**What was sent, against what the phone shows** (Paris time; server rows are UTC + 2):
+
+| When | Sent by the peer | Displayed on the Android phone |
+| --- | --- | --- |
+| 30/08 15:11 | 1, from his iPhone | **0** |
+| 02/09 10:44 | 6, from a `pending` web device | **0** |
+| 02/09 11:28 | 2, from his iPhone | 1 |
+| 02/09 13:10-13:11 | 7, from his iPhone | 3 |
+| **total** | **16** | **4** |
+
+**Twelve is a FLOOR, not a total.** `queued_message` is a queue, so only sends still holding an
+undelivered copy on one of the four stale web sessions can be audited at all - nothing before 30/08
+is measurable. The phone FETCHED all sixteen: its queue for this group is empty, it is `active`, and
+it was still being fanned to in other groups at 11:16 the same day. **Every loss is therefore after
+the fetch.**
+
+**The ciphertexts are still on prod** (`proto` non-null, 3-4 copies each, in the web sessions'
+queues), and they are NOT recoverable through them: [group.rs](../../frontend/mls-core/src/group.rs)
+sets `max_past_epochs(2)`, so only the 13:10 batch (epochs 129/130) is still inside the phone's
+retention window and two further commits close it for good. The one path that recovers them is the
+diff against the peer's iPhone, which holds the plaintext.
+
+**FOUR DEFECTS, ALL FOUR FIXED 2026-09-02 - and the entry stays open, because the fixes stop the
+NEXT loss and recover none of these twelve.** (C) and (D) each lose messages on their own, (A)
+strands a device at an epoch nothing can ever refill, and (B) turned all three into a timeout instead
+of an answer:
+
+- **(A) THE CATCH-UP LOG IS BEST-EFFORT WHILE THE EPOCH ADVANCE IS AUTHORITATIVE, and that is why
+  epoch 121 does not exist.** `mls_commit_log` for this group runs 0..129 with **121 missing**:
+  epoch 120 committed 31/08 16:00:12, epoch 122 on 01/09 02:29:46. `IDX_mls_commit_log_group_epoch`
+  is UNIQUE on `(groupId, baseEpoch)`, so **nothing can ever fill it**, and any device stopped at 121
+  is stranded for the life of the group. The cause is the commit path in
+  [messaging.service.ts](../../apps/chat-delivery-service/src/services/messaging.service.ts): the
+  comment claims the insert happens "UNDER THE LOCK (atomic with the advance)", but it sits OUTSIDE
+  the `transaction(...)` that advanced `activeEpoch` four lines above, wrapped in `try`/`catch` ->
+  `logger.warn`, with the reasoning spelled out - *"Storing is best-effort: a failure must not undo
+  the accepted epoch advance."* **The inversion IS the defect**: the record that makes the advance
+  survivable for every other device is optional, while the advance is not. And `if (body.proto)` is a
+  SECOND path to the same hole - a commit carrying no `proto` advances the epoch and records nothing
+  at all, without even the warning.
+  **FIXED 2026-09-02.** The insert is inside the `transaction(...)`, so the advance and the record
+  that makes it survivable share one fate, and a commit carrying no `proto` is refused with a 400
+  before anything moves. A rejected commit costs the committer one round-trip, a lost one costs the
+  conversation. Two tests in `messaging.commit-log.spec.ts`: a rejecting insert fails the whole
+  commit and fans nothing out, and a protoless commit advances no epoch.
+
+- **(B) `getCommitsSince` ANSWERS "IS THE FLOOR TOO HIGH" AND IS ASKED "IS THIS REPLAY APPLICABLE".**
+  Same file. It computes `belowFloor` for a gap at the START and returns every row at or above
+  `sinceEpoch` untouched. A hole in the MIDDLE passes that check: a device at 120 receives
+  `[120, 122, 123, ...]`, `belowFloor` is `false`, and
+  [commitReplay.ts](../../frontend/src/lib/utils/chat/commitReplay.ts) applies 120, fails on 122,
+  breaks, and returns `healed=false`.
+  **This is NOT a permanent stranding and the first draft of this entry wrongly said it was**: the
+  group stays in the epoch-gap registry, and `sessionWatchdogs.ts` forces the forget + re-Welcome
+  once `STUCK_EPOCH_GAP_MS` has passed. So the hole is survivable - **by a CLOCK**, after a failed
+  decrypt, a wasted round-trip and a frozen outbox, when the server could have said so in the
+  response it was already writing. That is the rule about never learning by failing what a fact could
+  have told you, and a termination that is a budget rather than a proof.
+  **FIXED 2026-09-02.** `getCommitsSince` walks for contiguity from `sinceEpoch`, truncates at the
+  first hole and names it as `gapAt` - from either end, a hole in the span or a log stopping short of
+  `activeEpoch`. `belowFloor` suppresses it, PRUNING and a HOLE being different defects and only one
+  of them accusing anybody. `attemptCommitReplay` treats `gapAt` as terminating and applies nothing;
+  `setupMessageHandler` escalates to rung 2 on that proof instead of after `EPOCH_GAP_ESCALATION_MS`,
+  which is where the frames arriving during those 30 s were being ACKed and dropped.
+
+- **(C) A SEND FROM A `pending` DEVICE IS ACCEPTED AND FANNED OUT TO EVERYONE.** `status = 'active'`
+  gates recipient resolution twice in that file, and nothing gates the SENDER. The peer's
+  `web-...-mtbep8vs-5oxb` is `pending` in this group - registered 2026-08-27, still holding two
+  undelivered Welcomes queued 02/09 at 11:07 and 11:10 - and it sent six messages between 10:44:20
+  and 10:44:44 that were fanned to five devices: **30 rows of ciphertext nobody in the group can ever
+  open**, the device not being in the MLS tree. The server held the discriminator at the moment it
+  accepted them, which is the rule about never learning by failing what a fact could have told you.
+  **FIXED 2026-09-02.** `sendMessage` reads the sender's own membership row before resolving any
+  recipient and answers `403 sender_not_active` with the status, so the client learns the fact the
+  server already held. Handshake frames (Welcome, Commit) are exempt - they are the path OUT of
+  `pending`, and refusing them would make the gate a deadlock. A missing row is logged, not refused:
+  that is an external join in flight.
+
+- **(D) A DEVICE EMITS APPLICATION MESSAGES BETWEEN ITS OWN COMMIT AND THAT COMMIT'S ACCEPTANCE.**
+  Measured to the millisecond, `mls_commit_log` against `queued_message`:
+
+  ```
+  13:10:43.234  commit baseEpoch=128
+  13:10:43.270  message                 36 ms later
+  13:10:44.302  commit baseEpoch=129
+  13:10:45.120  message
+  13:10:47.480  message
+  13:10:51.901  message
+  13:10:53.965  message
+  13:10:58.783  message
+  13:11:00.750  message
+  ```
+
+  Seven messages racing two epoch advances the peers cannot have applied yet; three arrived, four did
+  not. A race that heals cleanly would still be a defect, and this one does not heal.
+  **FIXED 2026-09-02.** [epochSendBarrier](../../frontend/src/lib/utils/chat/epochSendBarrier.ts):
+  a frame is encrypted AND on the wire before a local commit starts, or it is encrypted after that
+  commit merged. There is no third ordering and no clock in it. The barrier is raised only under the
+  MLS mutex, which is what makes it deadlock-free - a send that observes it provably does not hold
+  the mutex the advance needs. The overlap is deleted rather than reconciled: a re-encrypt-on-stale
+  retry would have been a race that heals cleanly, which is still a defect.
+
+**WHICH ARM OF `process_message` DROPPED THE 13:10 FOUR IS NOT ESTABLISHED, and the logcat cannot say
+retroactively.** The buffer on the Pixel 6a spanned 08-31 17:57 to 09-02 14:40, but the app's OWN
+lines reached back only to 14:33 - the 13:10 window was already gone. Settling it needs a reproduction
+with `clearLogcat()` first, through
+[phone.mjs](../../tools/cross-client-harness/phone.mjs) (`console_`, `clearLogcat`) and the tag list
+in [verify-on-device.py](../../tools/android/verify-on-device.py) (`LOGCAT_TAGS`). **Do not write a
+fix against a suspected arm** - the candidates in
+[messaging.rs](../../frontend/mls-core/src/messaging.rs) are the epoch-gap fast-fail, the past-epoch
+application arm and the same-epoch refusal, and they carry different fixes.
+
+**And the UI asserts the opposite of the truth**: "Infos de la discussion" shows a green shield
+reading "SÉCURISÉ & SYNC" on this conversation, with twelve messages gone. A device that dropped an
+application frame must say so there.
+
+**WHAT IS STILL OPEN, none of it closed by the four fixes:** the twelve messages themselves, whose
+plaintext exists only on the peer's iPhone; the hole at epoch 121, which is permanent by construction
+and now merely *survivable at once* rather than after 30 s; the arm of `process_message` above; the
+green shield below; and the two entries after this one, which are what would have named all of it
+without a user's impression.
+
+**State left on prod: NOTHING was modified.** The four stale web sessions still hold 87 undelivered
+message rows since 30/08, one of them (`web-...-mtd1d1fc-m84y`) 96 commits behind and therefore
+permanently stuck below the 121 hole. The peer's second iPhone (`tauri-...-mtc0al5c-9hny`) has been
+`pending` since 2026-08-27 with zero one-time KeyPackages - the same signature as the Welcome livelock
+P1 below, and the two want reading together.
+
+---
+
+### P2 - nothing measures a RE-KEY RATE, and nothing would ever report a HOLE in a commit log (2026-09-02)
+
+**129 epochs in six days on a TWO-PERSON DM, and no mechanism said a word.** Group `7da231f8` above:
+
+| Window | Epochs | Committer |
+| --- | --- | --- |
+| 30/08 02:43 -> 03:31 | 89 -> 104, **16 commits in 48 minutes** | one web session |
+| 30/08 04:22 -> 06:36 | 105 -> 116, 12 commits | the Android phone |
+| 31/08 -> 02/09 | 118 -> 129, 12 commits | both peers |
+
+Every commit is a re-key, every re-key is an epoch a lagging device must cross, and this churn is what
+makes the P1's four defects fire at all. Nothing counts commits per group per hour; nothing counts
+sends that are undecryptable by construction (defect C produced thirty such rows in 24 seconds); and
+nothing detects a gap in a commit log - one `GROUP BY` would have named epoch 121 on 31/08.
+
+**Owed:** a counter on the fanout for undecryptable-by-construction sends, and two lines in the hourly
+report - commits per group per hour, and any hole between `min(baseEpoch)` and `activeEpoch - 1`. A
+correct mechanism with no report is found by hand a day late; this one was found by a user's
+impression, four days late.
+
+---
+
+### P3 - the phone prints eight warning lines a minute that mean nothing, and polls presence every ten seconds (measured by logcat 2026-09-02)
+
+Read off the Pixel 6a with `adb logcat` - 147 app lines over seven minutes of an otherwise idle
+session:
+
+- **56 occurrences of `[WS RCV] frame type "pong" reached no handler - the server is sending
+  something this client does not route (see channelEventTypes)`**, at **W** level. A keepalive pong is
+  expected and needs no handler, so the line is the visible end of either a server routing it as a
+  payload frame or a client that should consume it silently. At WARN it pollutes exactly the level a
+  reader scans for real defects.
+- **45 `GET /api/presence` in seven minutes** - one every ten seconds, on a mobile client that already
+  holds a live WebSocket. A clock where a push belongs, and it costs battery and data on every phone.
+
+Both fall under the rule that noise is never acceptable: a line is either expected AND necessary, or
+it is the visible end of something upstream. The first is also part of why the P1's 13:10 window was
+no longer in the buffer when it was needed.
+
+---
+
 ### P2 - a device holds a distribution group the group holds no row for it, and heals by rejoining (measured 2026-08-29)
 
 **Handed back by HEAL-NEW-15's branch on `038c7e8d`, deliberately unacted on because its blast radius

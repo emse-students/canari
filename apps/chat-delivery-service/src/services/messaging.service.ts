@@ -103,9 +103,13 @@ export interface ValidateCommitBody {
   deviceId: string;
   baseEpoch: number;
   /**
-   * Base64 serialised MLS Commit. When present, an accepted commit is recorded in the epoch-indexed
+   * Base64 serialised MLS Commit. REQUIRED: an accepted commit is recorded in the epoch-indexed
    * commit-log (rung-1 replay) and fanned out to members in the SAME call - a single atomic
-   * validate -> store -> broadcast round-trip. Optional for backward compatibility.
+   * validate -> store -> broadcast round-trip.
+   *
+   * Kept optional in the TYPE because it arrives over HTTP and is validated in {@link
+   * validateCommit}, which refuses the call outright when it is absent: a commit nothing can
+   * replay may not advance the epoch, the epoch it would skip being unrefillable for ever.
    */
   proto?: string;
   /** Sender user id, for the fan-out envelope (required when `proto` is present). */
@@ -143,6 +147,16 @@ export interface CommitsSinceResult {
    * rung-1 replay cannot fully catch them up, so the caller must fall back to rung-2 (re-Welcome).
    */
   belowFloor: boolean;
+  /**
+   * The first epoch the log cannot supply, when one exists at or above `sinceEpoch` and below
+   * `activeEpoch`. `commits` is then the applicable PREFIX - everything up to the hole - and no
+   * replay can pass it, so the caller escalates to rung-2 instead of discovering it by failing.
+   *
+   * `belowFloor` is the same question asked about the START of the range and cannot answer this
+   * one: a hole in the MIDDLE leaves the floor perfectly fine. Group `7da231f8` ran 0..129 with 121
+   * absent for two days and every check passed (`docs/wiki/backlog.md`).
+   */
+  gapAt?: number;
 }
 
 /** Commit-log retention: keep ~1 year so rung-1 replay covers almost every gap (commits are tiny). */
@@ -670,6 +684,49 @@ export class MessagingService {
       const { proto } = body;
       if (body.groupId) {
         const groupId = body.groupId;
+
+        // A SEND FROM A DEVICE THAT HOLDS NO LEAF IS UNDECRYPTABLE FOR EVERY RECIPIENT, and the
+        // server holds the fact that says so before it queues a single row. A membership that is
+        // not `active` means no Welcome was ever honoured, so the device is not in the MLS tree:
+        // whatever it encrypts is ciphertext nobody in the group can open, fanned out to every
+        // active device, while its author watches it leave. Measured on prod 2026-09-02:
+        // `web-...-mtbep8vs-5oxb` sat `pending` in group `7da231f8` and sent six messages in 24
+        // seconds - 30 rows of guaranteed garbage (`docs/wiki/backlog.md`).
+        //
+        // Refusing is not a policy preference. Accepting it is the shape the durable rules name
+        // outright: handing an operation to a layer certain to refuse it, in order to classify the
+        // refusal, when the discriminator was already known here.
+        //
+        // HANDSHAKE FRAMES ARE EXEMPT, and that is the whole subtlety. An external-commit join is
+        // performed BY a device that is legitimately not active yet - `validateCommit` promotes it
+        // precisely because such a device never receives a Welcome - so gating commits and Welcomes
+        // here would wall up the one door out of `pending`.
+        const isHandshake = !!body.isCommit || !!body.isWelcome;
+        if (!isHandshake && body.senderId && body.senderDeviceId) {
+          const senderMembership = await this.deviceGroupRepo.findOne({
+            where: { groupId, deviceId: body.senderDeviceId },
+          });
+          if (!senderMembership) {
+            // Not refused: a missing row is a different defect from a `pending` one, with causes
+            // this seam cannot see. It is logged because nothing else would ever show it.
+            this.logger.warn(
+              `[SEND][${traceId}] sender has NO membership row group=${groupId} device=${body.senderDeviceId}`
+            );
+          } else if (senderMembership.status !== 'active') {
+            this.logger.error(
+              `[SEND][${traceId}] REJECT sender_not_active group=${groupId} ` +
+                `device=${body.senderDeviceId} status=${senderMembership.status} - the device holds ` +
+                `no leaf, so nothing it encrypts can be opened by anyone in the group`
+            );
+            throw new ForbiddenException({
+              error: 'sender_not_active',
+              groupId,
+              deviceId: body.senderDeviceId,
+              status: senderMembership.status,
+            });
+          }
+        }
+
         const memberships = await this.deviceGroupRepo.find({
           where: {
             groupId,
@@ -1099,6 +1156,29 @@ export class MessagingService {
       throw new BadRequestException('baseEpoch must be a non-negative integer');
     }
 
+    // A COMMIT THAT CANNOT BE REPLAYED MAY NOT ADVANCE THE EPOCH.
+    //
+    // Without `proto` there is nothing to record, so the counter moves and the log gains no row -
+    // a hole by construction, and a permanent one: `IDX_mls_commit_log_group_epoch` is UNIQUE on
+    // `(groupId, baseEpoch)`, so no later call can ever refill the epoch this one skipped, and
+    // every device that stops there needs a destructive re-Welcome to move again. The old code
+    // took this path in silence, under `if (body.proto)`, without even the warning that the
+    // failure branch below it had.
+    //
+    // `proto` was documented optional for backward compatibility, and nothing needs that: the only
+    // caller, `submitCommit` in `frontend/src/lib/mls-client/mlsDeliveryApi.ts`, has always taken
+    // `protoBase64` as a REQUIRED argument. Held as a const so the epoch-advance transaction below
+    // reads a value the compiler knows is present.
+    const commitProto = body.proto;
+    if (!commitProto) {
+      this.logger.error(
+        `[COMMIT][${traceId}] REJECT no_proto group=${groupId} device=${deviceId} baseEpoch=${baseEpoch}`
+      );
+      throw new BadRequestException(
+        'proto is required: a commit that cannot be replayed may not advance the epoch'
+      );
+    }
+
     this.logger.log(
       `[COMMIT][${traceId}] START group=${groupId} device=${deviceId} baseEpoch=${baseEpoch}`
     );
@@ -1165,41 +1245,47 @@ export class MessagingService {
       // Legacy clients send no `groupInfo`; for them this is the plain advance it always was, and
       // `republishStaleBase` on a holder remains their repair.
       const newBase = typeof body.groupInfo === 'string' && body.groupInfo ? body.groupInfo : null;
+      // THE ADVANCE, THE BASE AND THE REPLAYABLE COMMIT LAND TOGETHER OR NOT AT ALL.
+      //
+      // The log row used to be written AFTER this transaction, best-effort, on the reasoning that
+      // "a failure must not undo the accepted epoch advance" - while the comment above it claimed
+      // it was stored "UNDER THE LOCK (atomic with the advance)". It was under the lock and outside
+      // the transaction, and the two are not the same thing.
+      //
+      // That inversion cost group `7da231f8` its epoch 121 (measured on prod 2026-09-02, see
+      // `docs/wiki/backlog.md`): the counter moved, no replayable commit was recorded, and the
+      // UNIQUE `(groupId, baseEpoch)` index means NOTHING CAN EVER REFILL IT. The log stops being a
+      // log the moment one row is optional, because a reader cannot tell a hole from an end.
+      //
+      // So the priority is reversed: the row that makes this advance survivable for every OTHER
+      // device is not optional, and failing to write it fails the commit. The cost is one retry by
+      // the committer, which `submitCommit` is already built for - it rolls the staged commit back
+      // on a reject - against a loss that no later call can repair.
       await this.groupRepo.manager.transaction(async (m) => {
         await m.getRepository(Group).update({ id: groupId }, { activeEpoch: baseEpoch + 1 });
         if (newBase) {
           await this.putGroupInfo(groupId, newBase, baseEpoch + 1, m);
         }
+        // Keyed by baseEpoch: only one commit can advance from a given epoch (linearization), so
+        // ON CONFLICT DO NOTHING keeps an idempotent retry safe.
+        await m
+          .getRepository(MlsCommitLog)
+          .createQueryBuilder()
+          .insert()
+          .values({
+            groupId,
+            baseEpoch,
+            commit: commitProto,
+            senderDeviceId: deviceId,
+          })
+          .orIgnore()
+          .execute();
       });
       group.activeEpoch = baseEpoch + 1;
       if (newBase) {
         this.logger.log(
           `[COMMIT][${traceId}] base published with the commit group=${groupId} epoch=${group.activeEpoch}`
         );
-      }
-
-      // Record the commit in the epoch-indexed log UNDER THE LOCK (atomic with the advance) so a
-      // device that fell behind can replay it (rung-1). Keyed by baseEpoch - only one commit can
-      // advance from a given epoch (linearization). ON CONFLICT DO NOTHING makes an idempotent
-      // retry safe. Storing is best-effort: a failure must not undo the accepted epoch advance.
-      if (body.proto) {
-        try {
-          await this.commitLogRepo
-            .createQueryBuilder()
-            .insert()
-            .values({
-              groupId,
-              baseEpoch,
-              commit: body.proto,
-              senderDeviceId: deviceId,
-            })
-            .orIgnore()
-            .execute();
-        } catch (e) {
-          this.logger.warn(
-            `[COMMIT][${traceId}] commit-log store failed group=${groupId} epoch=${baseEpoch}: ${String(e)}`
-          );
-        }
       }
 
       // An external-commit join is the ONE path where the committing device may not be a member
@@ -1229,20 +1315,18 @@ export class MessagingService {
       // broadcast is a single atomic unit; delivery is fast (queued rows + Redis publish, FCM is
       // deferred). Best-effort: the commit-log is already the durable source of truth, so a device
       // that misses the realtime fan-out replays it via GET /mls/commits. [[C7]]
-      if (body.proto) {
-        await this.sendMessage({
-          groupId,
-          senderId: body.senderId,
-          senderDeviceId: deviceId,
-          proto: body.proto,
-          isCommit: true,
-          excludeDeviceIds: body.excludeDeviceIds,
-        }).catch((e) =>
-          this.logger.warn(
-            `[COMMIT][${traceId}] commit fan-out failed group=${groupId}: ${String(e)}`
-          )
-        );
-      }
+      await this.sendMessage({
+        groupId,
+        senderId: body.senderId,
+        senderDeviceId: deviceId,
+        proto: commitProto,
+        isCommit: true,
+        excludeDeviceIds: body.excludeDeviceIds,
+      }).catch((e) =>
+        this.logger.warn(
+          `[COMMIT][${traceId}] commit fan-out failed group=${groupId}: ${String(e)}`
+        )
+      );
 
       this.logger.log(`[COMMIT][${traceId}] ACCEPT group=${groupId} newEpoch=${group.activeEpoch}`);
 
@@ -1266,10 +1350,13 @@ export class MessagingService {
   }
 
   /**
-   * Returns the ordered, replayable commits for `groupId` with `baseEpoch >= sinceEpoch` (rung-1).
-   * Membership-gated by the caller. When `sinceEpoch` is below the retained floor (older commits
-   * pruned), sets `belowFloor` so the caller falls back to rung-2 (re-Welcome) instead of a
-   * partial, unusable replay.
+   * Returns the ordered, CONTIGUOUS, replayable commits for `groupId` starting at `sinceEpoch`
+   * (rung-1). Membership-gated by the caller.
+   *
+   * Two ways a replay cannot finish, and each is reported rather than left to be discovered:
+   * `belowFloor` when `sinceEpoch` sits under the retained floor (older commits pruned), and
+   * `gapAt` when an epoch inside the range was never recorded. In both cases the caller owes
+   * rung-2 (re-Welcome); with `gapAt`, `commits` still carries the applicable prefix.
    */
   async getCommitsSince(
     groupId: string,
@@ -1301,10 +1388,57 @@ export class MessagingService {
     });
     const belowFloor = sinceEpoch < activeEpoch && !!oldest && oldest.baseEpoch > sinceEpoch;
 
+    // CONTIGUITY IS THE PROPERTY A REPLAY ACTUALLY NEEDS, and `belowFloor` only ever described the
+    // START of the range. Commits apply in order, so everything past a missing epoch is unreachable:
+    // walk up from `sinceEpoch`, keep the applicable prefix, and NAME the first epoch the log cannot
+    // supply. Handing back the unreachable tail instead invites the caller to fail its way to the
+    // same conclusion - it applies one commit, breaks on the next, reports `healed=false`, freezes
+    // its outbox and waits out `STUCK_EPOCH_GAP_MS` before the watchdog escalates. The server knows
+    // now, in the response it is already writing. Measured on prod 2026-09-02: group `7da231f8` ran
+    // 0..129 with 121 absent for two days and every check passed (`docs/wiki/backlog.md`).
+    const applicable: CommitLogEntry[] = [];
+    let gapAt: number | undefined;
+    let expected = sinceEpoch;
+    for (const r of rows) {
+      // `rows` is ascending and the UNIQUE `(groupId, baseEpoch)` index makes it distinct, so the
+      // only way to miss `expected` is that nothing ever wrote it.
+      if (r.baseEpoch > expected) {
+        gapAt = expected;
+        break;
+      }
+      applicable.push({ baseEpoch: r.baseEpoch, proto: r.commit });
+      expected = r.baseEpoch + 1;
+    }
+    // The same hole seen from the other end: the log stops before the group does, so the last epochs
+    // were never recorded rather than sitting behind a gap.
+    if (gapAt === undefined && expected < activeEpoch) {
+      gapAt = expected;
+    }
+
+    // PRUNING AND A HOLE ARE NOT THE SAME DEFECT, and only one of them accuses anybody: a log that
+    // starts late was TRIMMED on purpose, one missing an epoch inside its own span was NEVER
+    // WRITTEN. Both terminate rung 1 identically, so when `belowFloor` already carries the answer
+    // the gap is dropped rather than reported - an `ERROR` naming a defect that does not exist is
+    // precisely the line its reader learns to skip, and then misses the real one.
+    if (belowFloor) {
+      gapAt = undefined;
+    }
+
+    if (gapAt !== undefined) {
+      // Not a warning about a slow path - an accusation. An unrefillable epoch is a defect in the
+      // commit path that wrote it, and this is the only place that can see it.
+      this.logger.error(
+        `[COMMITS] group=${groupId} COMMIT LOG HOLE at epoch=${gapAt} ` +
+          `(sinceEpoch=${sinceEpoch} activeEpoch=${activeEpoch} applicable=${applicable.length}) - ` +
+          `replay cannot pass it, rung-2 owed`
+      );
+    }
+
     return {
-      commits: rows.map((r) => ({ baseEpoch: r.baseEpoch, proto: r.commit })),
+      commits: applicable,
       activeEpoch,
       belowFloor,
+      ...(gapAt !== undefined ? { gapAt } : {}),
     };
   }
 

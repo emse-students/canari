@@ -885,6 +885,10 @@ async function handleKnownGroup({
       // Rung 1 (non-destructive): fetch the ordered commits we missed from the server commit-log
       // and re-apply them so our epoch catches up - no state loss, no re-Welcome. This is the
       // common case (we simply missed a commit while offline / between frames).
+      // A TERMINATING answer from rung 1, as opposed to a failed attempt at it: the commits are
+      // pruned below the retained floor, or the log is HOLED at an epoch nothing may ever refill.
+      // Either way no later attempt can succeed, so the wait below is pure delay.
+      let rungOneIsExhausted = false;
       try {
         const replay = await attemptCommitReplay(mlsService, groupId, log);
         if (replay.healed) {
@@ -892,19 +896,31 @@ async function handleKnownGroup({
           statePersister.persistNow();
           return true;
         }
+        rungOneIsExhausted = replay.belowFloor || replay.gapAt !== undefined;
       } catch (e) {
         log(`[GAP] replay error for ${groupId.slice(0, 8)}…: ${String(e).slice(0, 80)}`);
       }
 
-      // Rung 2 (destructive, fallback): only once the gap has persisted past the threshold AND
-      // rung-1 could not catch us up (commits pruned below the retained floor, or a commit failed
-      // to apply). Forget the frozen state and request a new Welcome: since the group is no longer
-      // local, the re-Welcome is honoured (not ignored as idempotent) and we rejoin at the current
-      // epoch; message history is backfilled by the history bundle.
-      if (now - since > EPOCH_GAP_ESCALATION_MS) {
+      // Rung 2 (destructive, fallback). Two ways in, and they are not the same claim:
+      //
+      //   - THE SERVER SAID NEVER. Rung 1 came back with a floor or a hole, which is a PROOF that no
+      //     amount of waiting produces the missing commits. Escalating on the clock instead spends
+      //     30 s with a frozen outbox, one wasted round trip per arriving frame, and every one of
+      //     those frames ACKed and dropped in the meantime - which is how twelve messages were lost
+      //     on prod on 2026-09-02 (group `7da231f8`, epoch 121 absent from the commit log).
+      //   - THE ATTEMPT MERELY FAILED. A commit would not apply, the request errored: the next frame
+      //     may well succeed, so this keeps the clock it always had rather than destroying local
+      //     state on one bad answer.
+      //
+      // Forget the frozen state and request a new Welcome: since the group is no longer local, the
+      // re-Welcome is honoured (not ignored as idempotent) and we rejoin at the current epoch;
+      // message history is backfilled by the history bundle.
+      if (rungOneIsExhausted || now - since > EPOCH_GAP_ESCALATION_MS) {
         clearEpochGap(groupId);
         log(
-          `[GAP] ${groupId.slice(0, 8)}… frozen behind >${EPOCH_GAP_ESCALATION_MS / 1000}s and rung-1 replay failed - forget + welcome_request`
+          rungOneIsExhausted
+            ? `[GAP] ${groupId.slice(0, 8)}… rung-1 is exhausted (the server cannot supply the commits) - forget + welcome_request now, not in ${EPOCH_GAP_ESCALATION_MS / 1000}s`
+            : `[GAP] ${groupId.slice(0, 8)}… frozen behind >${EPOCH_GAP_ESCALATION_MS / 1000}s and rung-1 replay failed - forget + welcome_request`
         );
         mlsService.forgetGroup(groupId);
         statePersister.persistNow();

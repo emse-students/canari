@@ -95,4 +95,28 @@ describe('attemptCommitReplay', () => {
     expect(res.applied).toBe(1);
     expect(res.healed).toBe(false); // reached epoch 3, target was 4
   });
+
+  it('stops on a named hole without applying the prefix, because the tail is unreachable', async () => {
+    // Measured on prod 2026-09-02 (group `7da231f8`, epoch 121 absent). Before the server named the
+    // hole this walked into it: apply 120, throw on 122, `healed=false`, outbox frozen, and rung 2
+    // reached only when the watchdog's `STUCK_EPOCH_GAP_MS` expired. A clock standing in for a fact
+    // the server held in the same response.
+    const mls = makeMls({
+      getEpoch: vi.fn().mockReturnValue(120),
+      fetchCommitsSince: vi.fn().mockResolvedValue({
+        commits: [{ baseEpoch: 120, proto: 'AA==' }],
+        activeEpoch: 124,
+        belowFloor: false,
+        gapAt: 121,
+      }),
+    });
+
+    const res = await attemptCommitReplay(mls, 'g', noop);
+
+    expect(res.gapAt).toBe(121);
+    expect(res.healed).toBe(false);
+    expect(res.belowFloor).toBe(false);
+    expect(res.applied).toBe(0);
+    expect(mls.processIncomingMessage).not.toHaveBeenCalled();
+  });
 });

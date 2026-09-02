@@ -460,10 +460,13 @@ export interface IMlsService {
     groups: Array<{ groupId: string; afterStreamId?: string }>
   ): Promise<Map<string, import('./historyTypes').HistoryPage>>;
   /**
-   * Rung-1 replay: fetches the ordered commits this device missed (`baseEpoch >= sinceEpoch`) so a
-   * gap can be healed by re-applying them instead of dropping local state. `belowFloor` signals the
-   * intermediate commits were pruned (fall back to rung-2 re-Welcome); `activeEpoch` is the epoch to
-   * reach after replay.
+   * Rung-1 replay: fetches the ordered, CONTIGUOUS commits this device missed
+   * (`baseEpoch >= sinceEpoch`) so a gap can be healed by re-applying them instead of dropping local
+   * state. `activeEpoch` is the epoch to reach after replay.
+   *
+   * Two terminating answers, and the caller owes rung-2 (re-Welcome) on either: `belowFloor` when
+   * the intermediate commits were pruned, `gapAt` when an epoch inside the range was never recorded
+   * at all - `commits` then carries only the applicable prefix.
    */
   fetchCommitsSince(
     groupId: string,
@@ -472,6 +475,7 @@ export interface IMlsService {
     commits: Array<{ baseEpoch: number; proto: string }>;
     activeEpoch: number;
     belowFloor: boolean;
+    gapAt?: number;
   }>;
   /**
    * Refreshes the server-stored GroupInfo (external-join base) at the current epoch. Best-effort:
