@@ -443,10 +443,13 @@ without.
 **Still owed, and NOT blocking the estate** - each buys one capability dev does without:
 
 - the Cloudflare Access service token for the harness (needs `Account -> Cloudflare Tunnel` plus the
-  two account-scoped Access permissions); without it the campaign rig cannot drive dev
-- a dev Firebase project and a dev APNs key, for push; without them
-  `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` and `DEV_APNS_VOIP_KEY_P8` are empty and dev sends no
-  notifications, which the deploy reports as a warning rather than a failure
+  two account-scoped Access permissions); without it the campaign rig cannot drive dev - which costs
+  nothing today, the rig naming `canari-emse.fr` as a literal in 89 files and so targeting
+  production regardless
+- a dev APNs key, for push. **FIREBASE OWES NOTHING** (settled with the user 2026-09-02): dev reuses
+  the existing `fr.emse.canari` Firebase app, so `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` is not a new
+  project. Both push rows are disposition `warn` in the manifest, so their absence has never blocked
+  a deploy - dev simply sends no notifications
 - a dev Android keystore, and where it is backed up; mobile is phase 2
 
 **The CD wiring is DONE** (2026-09-01), and it is section 8. `cd-dev.yml` is gone, deleted ahead of

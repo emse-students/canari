@@ -124,41 +124,28 @@ REACHED and what its box refuses - Portail-etu having no SSH at all - is on
 [ecosystem-convergence](docs/wiki/ecosystem-convergence.md#how-each-repository-is-reached-and-what-its-box-refuses).
 
 Work is tracked as Work Packages by severity: **P1** (security, or a broken user-facing path), **P2**
-(correctness), **P3** (hygiene). Delete a WP outright once it ships - from HERE and from
-[backlog](docs/wiki/backlog.md) both. Since 2026-08-18 nothing is parked: anything new goes into the
-queue below in its place, and its substance into `backlog`.
-
-**THE CAMPAIGN IS PAUSED 2026-08-30 FOR WANT OF A PHONE** (user). What is takeable without hardware
-is in the queue below; everything the device owes is queue item 5.
-
-**RESUMING: the ordered restart is [cross-client-campaign-resume](docs/wiki/cross-client-campaign-resume.md),
-the only copy** - `git fetch` then **PUSH**, `gh run list`, prove prod answers, `node state.mjs`,
-`node rows.mjs`. **Two things that page carries and nothing else does: the rig still targets
-PRODUCTION** (89 harness files name `canari-emse.fr` as a literal, so the dev estate does NOT make a
-run safer), **and the dependency sweep can now redeploy prod mid-run with nobody at the keyboard** -
-`gh workflow disable "Dependabot auto-merge"` before a session, `enable` after it.
-
-**HEAL is the rung in hand.** Two instrument facts that are NOT per-row: the disposition for
-expected noise is `ignoringExpectedLog` **per row**, never a wider classifier, and the device cap is
-**re-measured around every run** rather than quoted. **THE USER ASKED FOR THE LOGS TO BE READ ON
-EVERY PASS, the reconciliations especially** (2026-08-28) - a heal that works is not a heal that was
-observed, and reading them has since found one P1 no row asks about and turned a `FAIL` into another.
+(correctness), **P3** (hygiene). Nothing is parked since 2026-08-18: anything new goes into the queue
+below, its substance into [backlog](docs/wiki/backlog.md), and BOTH copies are deleted the day it
+ships. **What only the USER can do is ONE table** -
+[backlog](docs/wiki/backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks), pointers
+only; never re-enumerate it here.
 
 ### CANARI - THE QUEUE, IN ORDER
 
 Everything actionable is HERE, one line each; the detail lives where the link says and **is not
-restated**. An item is done when its code, its tests, its doc and its commit are in, and it is then
-deleted from BOTH this file and [backlog](docs/wiki/backlog.md). **Every defect story is in
-`CHANGELOG.md`, every rule one left is in [durable-rules](docs/wiki/durable-rules.md), every verdict
-is on [cross-client-testing](docs/wiki/cross-client-testing.md).**
+restated**. **Every defect story is in `CHANGELOG.md`, every rule one left is in
+[durable-rules](docs/wiki/durable-rules.md), every verdict is on
+[cross-client-testing](docs/wiki/cross-client-testing.md).**
 
-1. **THE CAMPAIGN - PAUSED for want of a phone.** Which six rungs are the target, what a
-   `PASS-DIRTY` does and does not stop, and the ORDER everything is owed in once a device exists are
-   [standing rules on the campaign page](docs/wiki/cross-client-campaign.md#standing-rules-for-every-check),
-   decided with the user and not to be re-litigated here. **Where it stands is on the
-   [board](docs/wiki/cross-client-testing.md), which `node rows.mjs` checks against the ledger - read
-   it rather than any count written here, which has been stale twice, and read the three verdicts
-   the board itself marks as NOT settled (DEL-10, COMM-8, COMM-23) before believing them.**
+1. **THE CAMPAIGN - PAUSED 2026-08-30 for want of a phone** (user), and **HEAL is the rung in
+   hand.** The six target rungs, what a `PASS-DIRTY` does and does not stop, and the ORDER
+   everything is owed in once a device exists are
+   [standing rules](docs/wiki/cross-client-campaign.md#standing-rules-for-every-check), decided with
+   the user and not re-litigated here; the restart order is
+   [cross-client-campaign-resume](docs/wiki/cross-client-campaign-resume.md), the only copy. **Where
+   it stands is the [board](docs/wiki/cross-client-testing.md)** - read it rather than any count
+   written here, which has been stale twice, and read the three verdicts it marks NOT settled
+   (DEL-10, COMM-8, COMM-23) before believing them.
 
 2. **A PLACEHOLDER HELD A MEMBER'S PLACE IN A REAL CONVERSATION - the user's lost messages and the
    ghost are ONE P1. THE SERVER ESTATE IS GONE**, cleaned by hand on the owner's go-ahead 2026-08-30
@@ -168,96 +155,78 @@ is on [cross-client-testing](docs/wiki/cross-client-testing.md).**
    [backlog P1](docs/wiki/backlog.md#p1---the-placeholder-is-gone-from-prod-what-it-may-have-left-in-the-mls-tree-is-not-answered).
 
 3. **THE DEPENDENCY CHAIN** (user, 2026-08-31: *"pour avoir un projet qui peut 'vivre tout seul'"*),
-   which started from ONE P1: every Stripe webhook rejected for four days. All four repositories
-   carry the ceiling, the sweep and the dispatch; how they fit together and what each trigger is
-   worth are on [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them),
-   the only copy - as is the outage of 2026-09-01 (`postgres 15-alpine -> 18-alpine` auto-merged
-   green, PG 18 refused prod's data directory, 33 min) and the DERIVED name table that answered it.
+   started from ONE P1: every Stripe webhook rejected for four days. The ceiling, the sweep, the
+   dispatch, the outage of 2026-09-01 and Dependabot's TWO switches are all on
+   [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them), the only copy.
    **FOUR THINGS OPEN, each in [backlog](docs/wiki/backlog.md) and nowhere else:** the remaining rows
    of [the ceiling table](docs/wiki/backlog.md#p1---the-three-refusals-the-auto-merge-ceiling-makes-and-the-test-that-retires-each),
    each naming the test that retires it - closing one makes a whole CLASS of update merge by itself;
-   [the one rebuild no `GITHUB_TOKEN` may perform](docs/wiki/backlog.md#p2---the-one-rebuild-the-auto-merge-cannot-perform-and-the-credential-that-would-let-it),
-   a credential decision owed to the USER; [PG 15 -> 18, a MIGRATION parked deliberately](docs/wiki/backlog.md#p2---postgresql-is-held-at-15-because-18-needs-a-migration-nobody-has-performed-after-the-outage-of-2026-09-01)
-   (user, *"on verra ca plus tard"*), whose test also releases `redis` and `garage`; and - the biggest
-   thing the outage exposed, owed to the USER as a decision then ONE click - **[nothing tells anybody
-   prod is down](docs/wiki/backlog.md#p2---nothing-tells-anybody-production-is-down-and-both-outages-of-2026-09-01-were-reported-by-the-user-owed-to-the-user-a-decision-then-one-click)**:
-   both outages were reported by the user, a red CD run pages nobody, and the frontend answered 200
-   throughout - so a probe must hit `/api/version`, which needs the database.
+   [the one rebuild no `GITHUB_TOKEN` may perform](docs/wiki/backlog.md#p2---the-one-rebuild-the-auto-merge-cannot-perform-and-the-credential-that-would-let-it);
+   [PG 15 -> 18, a MIGRATION parked deliberately](docs/wiki/backlog.md#p2---postgresql-is-held-at-15-because-18-needs-a-migration-nobody-has-performed-after-the-outage-of-2026-09-01)
+   (user, *"on verra ca plus tard"*), whose test also releases `redis` and `garage`; and **[nothing
+   tells anybody prod is down](docs/wiki/backlog.md#p2---nothing-tells-anybody-production-is-down-and-both-outages-of-2026-09-01-were-reported-by-the-user-owed-to-the-user-a-decision-then-one-click)** -
+   both outages of 2026-09-01 were reported by the USER, a red CD run pages nobody, and the frontend
+   answered 200 throughout, so a probe must hit `/api/version`, which needs the database.
 
 4. **NOTHING ON THE CAMPAIGN BOARD COULD HAVE CAUGHT IT, AND THE GAP IS STRUCTURAL** (2026-08-28):
    no row asks a question whose answer is a POPULATION rather than an event. **Four rows are written
-   into rung 12 MULTI** (7-10), all needing only `W1 W2`, on the board; why each exists is on
+   into rung 12 MULTI** (7-10), all needing only `W1 W2`; why each exists is on
    [the campaign page](docs/wiki/cross-client-campaign.md).
 
-5. **BLOCKED ON HARDWARE - everything the phone owes.** No device is available (user, 2026-08-30).
-   The list, each row with what would arm it, is [the verification table at the top of
-   backlog](docs/wiki/backlog.md#owed-a-verification-and-nothing-else); procedures are on
-   [device-verification](docs/wiki/device-verification.md), state on the board, and the rig's own
-   facts in [the harness README](tools/cross-client-harness/README.md). **The one thing to carry
-   here: a precondition is NOT ambient** - the quick-reply window must be ARMED, and an unarmed run
-   proves nothing at all.
+5. **BLOCKED ON HARDWARE - everything the phone owes** (user, 2026-08-30). The list, each row with
+   what would arm it, is [the verification table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else);
+   procedures on [device-verification](docs/wiki/device-verification.md), state on the board, and the
+   rig's own facts in [the harness README](tools/cross-client-harness/README.md). **The one thing to
+   carry here: a precondition is NOT ambient** - the quick-reply window must be ARMED, and an unarmed
+   run proves nothing at all.
 
 6. **DEFERRED PAST THE LADDER - six UX and rendering items**, substance in
    [backlog](docs/wiki/backlog.md) and nowhere else, named here only so none is forgotten: the POSTS
    search that loads the whole base; the EMOJI picker that neither scrolls nor stays on screen;
    HEAL's partially-restored old client; **ONE BUNDLED EMOJI FONT everywhere** (Noto Color Emoji,
    decided 2026-08-23, owing ELEVEN rows to the SECOND campaign); the dead row a deleted group leaves
-   every other member; a device row's trash and pencil not reading as the same kind of control. The
-   emoji, the dead row, the device controls and the iOS bars want ONE pass over `app.css`.
+   every other member; a device row's trash and pencil not reading as the same kind of control. Four
+   of the six want ONE pass over `app.css`.
 
 7. **CALLING IS HELD OFF SINCE 0.14.15 - `CALLS_ENABLED = false`** (user, 2026-09-01: not a
-   priority, never properly tested). The SFU's six webrtc majors are still unplaced and rung 15 CALL
-   still has no runner; what changed is that a release no longer carries the surface unplaced. FIVE
-   switches move in ONE commit at revival (two of them store declarations that cut both ways) - the
-   table is on [calls](docs/wiki/frontend/modules/calls.md), the condition and the TURN measurement
-   in [backlog](docs/wiki/backlog.md). **Prod HAS TURN configured and has never used it.**
+   priority, never properly tested). The SFU's six webrtc majors are unplaced and rung 15 CALL has no
+   runner; what changed is that a release no longer carries the surface unplaced. FIVE switches move
+   in ONE commit at revival (two are store declarations that cut both ways) - the table is on
+   [calls](docs/wiki/frontend/modules/calls.md), the condition and the TURN measurement in
+   [backlog](docs/wiki/backlog.md). **Prod HAS TURN configured and has never used it.**
 
 8. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25: *"le meme
    point de depart, independamment de ce qui a pu se passer avant"*). The PHASE half is `run.mjs`'s
    preflight; the per-STEP half is pulled forward the moment a rung is blocked by an inherited state,
    as HEAL-REVOKE was. Contract and audit in [backlog](docs/wiki/backlog.md).
 
-9. **A NEW DM RETIRED ITSELF ON ITS CREATOR'S SCREEN, AND A DEVICE HELD A ROSTER SEAT IT HAD NO KEYS
-   FOR** (reported 2026-09-01, prod group `ab47add3`). Both are FIXED and their stories are in
-   `CHANGELOG.md`; the mechanisms are on
-   [chat](docs/wiki/frontend/modules/chat.md#the-conversation-row-is-the-recovery-ladders-input-so-publishing-it-early-arms-the-ladder-2026-09-01)
-   and [chat-delivery](docs/wiki/services/chat-delivery.md#a-roster-seat-is-not-a-key-and-only-a-welcome-tells-the-two-apart).
-   **WHAT IS OPEN IS A P1 THE SAME ACCOUNT THEN DEMONSTRATED, AND IT IS THE NEXT THING TAKEN** (user,
-   2026-09-01): a device asked for a Welcome every 60 s for 20 HOURS while the member answering
-   `[KICK]`ed it back to `pending` each time - the one status that forbids the self-service external
-   join. **A livelock, each side re-creating the other's precondition.** Proved on prod by flipping
-   three rows: 2 of 3 healed by external commit in 90 s with no peer at all. Four defects, the
-   evidence, and the state LEFT on prod (`4f87267a` still `pending`, its base stale at 283/284) are
-   in [backlog](docs/wiki/backlog.md#p1---a-device-asks-for-a-welcome-for-ever-and-the-member-that-answers-resets-the-row-that-would-have-let-it-heal-itself-measured-on-prod-2026-09-01),
+9. **A DEVICE ASKS FOR A WELCOME FOR EVER AND THE MEMBER ANSWERING RESETS THE ROW THAT WOULD HAVE
+   HEALED IT - P1, AND THE NEXT THING TAKEN** (user, 2026-09-01). It asked every 60 s for 20 HOURS
+   while the member answering `[KICK]`ed it back to `pending`, the one status that forbids the
+   self-service external join: **a livelock, each side re-creating the other's precondition.** Proved
+   on prod by flipping three rows - 2 of 3 healed by external commit in 90 s with no peer at all.
+   Four defects, the evidence and the state LEFT on prod (`4f87267a` still `pending`, its base stale
+   at 283/284) are in
+   [backlog](docs/wiki/backlog.md#p1---a-device-asks-for-a-welcome-for-ever-and-the-member-that-answers-resets-the-row-that-would-have-let-it-heal-itself-measured-on-prod-2026-09-01),
    the only copy. Its sibling P2 - the hourly report NAMES a stranded device and still cannot say why
    its KeyPackage was skipped, `addMembersBulk` discarding the reason with the id - is
    [there too](docs/wiki/backlog.md#p2---a-device-was-given-a-roster-seat-and-never-a-welcome-and-why-its-keypackage-was-skipped-is-unmeasured-measured-on-prod-2026-09-01),
-   and the two want reading together.
+   and the two want reading together. The two defects the same account exposed FIRST are fixed, their
+   stories in `CHANGELOG.md` and their mechanisms on
+   [chat](docs/wiki/frontend/modules/chat.md#the-conversation-row-is-the-recovery-ladders-input-so-publishing-it-early-arms-the-ladder-2026-09-01)
+   and [chat-delivery](docs/wiki/services/chat-delivery.md#a-roster-seat-is-not-a-key-and-only-a-welcome-tells-the-two-apart).
 
-10. **THE DEV ESTATE IS UP AND SEEDED - 11 containers of 11, answering `/api/version` on
-    `127.0.0.1:3080` with a copy of production (355 users), measured 2026-09-02.** A virgin estate is
-    **SEEDED, NOT MIGRATED**: the 80 `.sql` files are deltas over a schema TypeORM owns, so the
-    deploy REFUSES an empty database and names the refresh workflow, and the order is
-    deploy -> refuse -> `Refresh dev.canari-emse.fr from production` -> deploy. That order, and the
-    three defects the bootstrap found, are on
-    [dev-environment](docs/wiki/infrastructure/dev-environment.md), the decisions in
+10. **`dev.canari-emse.fr` IS LIVE - estate, switch and tunnel all done 2026-09-02.** Everything
+    about it is on [dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy: the
+    four measurements that prove it, the SEED order a virgin estate needs (deploy -> refuse ->
+    refresh -> deploy, the 80 `.sql` files being deltas over a schema TypeORM owns) and the three
+    corrections that must not be undone (its sections 4, 5 and 8). The decisions are in
     [backlog](docs/wiki/backlog.md#devcanari-emsefr-becomes-a-real-second-environment---decided-2026-08-17).
-    **Read those two - nothing is restated here.** Today the NAME is still prod wearing a second hat,
-    so anyone told to "use dev" is typing into prod. **THE SWITCH IS `vars.DEV_ENVIRONMENT_ENABLED`,
-    NOW `true`.** All 14 `DEV_*` secrets exist and the `canari-dev` Authentik client is created
-    (2026-09-02). **ONE STEP IS LEFT, LAST BY DESIGN: the tunnel INGRESS rule, still pointing
-    `dev.canari-emse.fr` at production's `8080`** - it moves to `3080` only once a **DEPLOY** (not
-    just the refresh, which has already proved the port) comes out green, since moving it earlier
-    turns a name serving production into a 502. **The proof to read is `build` in `/api/version`**:
-    production renders none by decision, so a non-null build is dev and nothing else. **And
-    `DEV_ENVIRONMENT_ENABLED=true` means a broken dev deploy now BLOCKS production's**, by design;
-    the escape is `gh variable set DEV_ENVIRONMENT_ENABLED --body false`. Dev is a NET, not a
-    sandbox: one trigger deploys both estates, and whether a dev-only dispatch should exist is a
-    decision owed to the USER in [backlog](docs/wiki/backlog.md#devcanari-emsefr-becomes-a-real-second-environment---decided-2026-08-17).
-    **THREE CORRECTIONS THAT MUST NOT BE UNDONE are on that wiki page, not here** - the logical copy
-    retiring no PG ceiling arm (§4), `+dev.<sha7>` never entering `version` (§5), and prod's deploy
-    job staying on its inlined shell until dev has exercised the script (§8). `cd-dev.yml` is DELETED
-    (`a8ac1828` holds it).
+    **THREE THINGS STAY OPEN.** A broken dev deploy BLOCKS production's, by design, and the escape is
+    `gh variable set DEV_ENVIRONMENT_ENABLED --body false`. One trigger still deploys BOTH estates -
+    whether a dev-only dispatch should exist is owed to the USER. **And prod's deploy job is still
+    its inlined shell**, moving onto `infrastructure/deploy/deploy-environment.sh` only once dev has
+    exercised it: one implementation, proven before it is imposed.
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 
@@ -267,10 +236,10 @@ avec tous les composants stale corriges PARTOUT, bun a la place de npm PARTOUT e
 
 **Every decision, measurement, guardrail and per-repo state is on
 [ecosystem-convergence](docs/wiki/ecosystem-convergence.md), the ONLY copy - add to its tables rather
-than re-deriving anything here, which is what made this section wrong twice.** Section 8 is the
-package manager, 9 is TS 7, 10 is bun 1.4 and the lockfile-v1 invariant, 11 is the repo-by-repo
-state and the second sweep's eleven gaps. Its "NOT TO BE RELITIGATED" paragraphs exist so a later
-session cannot "finish" the work by undoing a measurement.
+than re-deriving anything here, which is what made this section wrong twice** (section 8 is the
+package manager, 9 is TS 7, 10 is bun 1.4 and the lockfile-v1 invariant, 11 is the repo-by-repo state
+and the second sweep's eleven gaps). Its "NOT TO BE RELITIGATED" paragraphs exist so a later session
+cannot "finish" the work by undoing a measurement.
 
 **What is left is JUDGEMENT, not migration** - MiGallery's lint warnings, the `resolve()` question
 three repos park differently, Tailwind class sorting on Portail-etu. **NestJS 12 is HALF DONE and
@@ -280,35 +249,32 @@ so it ends unattended: [nestjs-framework](docs/wiki/services/nestjs-framework.md
 **FIVE THINGS CANNOT BE PULLED FORWARD**, each carrying its blocking condition in
 [backlog](docs/wiki/backlog.md), the only copy: the MLS + Graine explanation owed to the USER, not to
 the code (prose and diagrams, no code, user 2026-08-20); the iOS avatar-cache question; WP-LYDIA-1,
-waiting on credentials Lydia owes; one MLS client in a SharedWorker; the SECOND campaign; and - owed
-to the user - is a MiGallery application worth building? **`dev.canari-emse.fr` left this list on
-2026-09-01: it is SCOPED and is queue item 10.**
+waiting on credentials Lydia owes; one MLS client in a SharedWorker; and the SECOND campaign.
 
-### CANARI - what is open
+### CANARI - release, store submission, iOS
 
-**Release: the shipped version is `0.14.15`.** Whether Play has picked a build up is a MEASUREMENT
-(`node tools/play-vitals/vitals.mjs`) and what CI did is `gh run list`; never infer either from a
-line here, which has been stale twice. **No HEAL-REVOKE verdict about a clean device may be taken on
-a build older than 0.14.12** (.10 and .11 MEASURE the wipe defects rather than fixing them). **An APK
-is not reached by a deploy** - `frontendDist: "../build"` means the Tauri app EMBEDS the frontend, so
-`minClientVersion` and check S reason about a NAME unless a version identifies its content
-([harness README](tools/cross-client-harness/README.md)).
+**The shipped version is `0.14.15`.** Whether Play has picked a build up is a MEASUREMENT
+(`node tools/play-vitals/vitals.mjs`, and why every RATE is EMPTY rather than green is in
+[its README](tools/play-vitals/README.md)) and what CI did is `gh run list`; never infer either from
+a line here, which has been stale twice. **No HEAL-REVOKE verdict about a clean device may be taken
+on a build older than 0.14.12** (.10 and .11 MEASURE the wipe defects rather than fixing them). **An
+APK is not reached by a deploy** - `frontendDist: "../build"` means the Tauri app EMBEDS the
+frontend, so `minClientVersion` and check S reason about a NAME unless a version identifies its
+content ([harness README](tools/cross-client-harness/README.md)).
 
-**2.1(a) IS PASSED, and the two guidelines that replaced it are both answered in 0.14.15** - one
-App Store Connect radio button for 2.3.6, holding calling off for 2.5.4. Where the submission
-stands, per half, is on
-[mobile](docs/wiki/frontend/mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on);
-how the vitals are read and why every RATE is EMPTY rather than green are in [the tool's
-README](tools/play-vitals/README.md). Only **check R** is left of the two mails of 2026-08-26, and
-**WP-RESTORE-1** (Zero-Tap Sign-In, April 2027) is ACCEPTED, after the campaign.
+**2.1(a) IS PASSED, and the two guidelines that replaced it are both answered in 0.14.15**; where
+the submission stands, per half, is on
+[mobile](docs/wiki/frontend/mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on).
+Only **check R** is left of the two mails of 2026-08-26, and **WP-RESTORE-1** (Zero-Tap Sign-In,
+April 2027) is ACCEPTED, after the campaign.
 
 **iOS: two things are PROVEN and must not be re-verified** - the session HOLDS on the iPhone, and a
-full parity audit read everything else as symmetric. Four things are open, all in
-[backlog](docs/wiki/backlog.md), one of them (a second iPhone acquiring no push token and reporting
-nothing) **diagnosable with no phone at all**. **THREE OF THREE iOS DEFECTS WERE INVISIBLE TO EVERY
-GATE HERE**, so the classes the user named close by HARDWARE, one lettered check at a time -
-**never by a fix written against a suspected lifecycle bug nobody has seen**, because nothing here
-could tell whether it worked.
+full parity audit read everything else as symmetric. Four things are open in
+[backlog](docs/wiki/backlog.md), one (a second iPhone acquiring no push token and reporting nothing)
+**diagnosable with no phone at all**. **THREE OF THREE iOS DEFECTS WERE INVISIBLE TO EVERY GATE
+HERE**, so those classes close by HARDWARE, one lettered check at a time - **never by a fix written
+against a suspected lifecycle bug nobody has seen**, because nothing here could tell whether it
+worked.
 
 ### CANARI - the test campaign
 
@@ -316,13 +282,19 @@ Four files, four jobs, all in WHERE THINGS LIVE above: board = state, campaign p
 methodology = how a result earns belief, README = operating manual. **Read them rather than
 re-deriving anything here, and keep no second copy.**
 
-**Three facts govern every session that touches the rig.** `node rows.mjs` SETTLES whether the board
+**Four facts govern every session that touches the rig.** `node rows.mjs` SETTLES whether the board
 matches the ledger - run it before believing a cell; it has caught the board wrong three times. **A
 campaign run and a push to `main` are MUTUALLY EXCLUSIVE**, a mid-run deploy having already voided
-three cells, and a killed run can destroy a measurement seconds from being recorded. And **losing a
-`chrome-w1` / `chrome-w2` profile costs a DEVICE** - no longer a 2FA: since 2026-09-02 the campaign
-runs on two dedicated Authentik accounts that sign in through the service-account link, whose flow
-has no MFA stage ([resume, section 2b](docs/wiki/cross-client-campaign-resume.md)).
+three cells, and a killed run can destroy a measurement seconds from being recorded - which is also
+why the dependency sweep is disabled around a session, one of the preconditions
+[the resume page](docs/wiki/cross-client-campaign-resume.md) carries and nothing else does (it also
+carries the one that surprises: **the rig still targets PRODUCTION**, so the dev estate does not make
+a run safer, and **losing a `chrome-w1` / `chrome-w2` profile costs a DEVICE**). **THE USER ASKED FOR
+THE LOGS TO BE READ ON EVERY PASS, the reconciliations especially** (2026-08-28) - a heal that works
+is not a heal that was observed, and reading them has since found one P1 no row asks about and turned
+a `FAIL` into another. And two instrument facts that are NOT per-row: the disposition for expected
+noise is `ignoringExpectedLog` **per row**, never a wider classifier, and the device cap is
+**re-measured around every run** rather than quoted.
 
 **Standing architectural directives from the user, verbatim:** *"le probleme doit etre
 architecturalement regle, pas mettre des pansements avec des timeouts ou autre, je veux que tout soit
