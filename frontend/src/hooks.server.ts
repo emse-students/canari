@@ -15,7 +15,16 @@ import { SITE } from '$lib/seo/site';
  * Two literal markers in `app.html` are substituted, and `hooks.server.test.ts` pins both - a
  * renamed marker would otherwise turn this into a silent no-op:
  *
- * - `<!--canari-seo-->` receives the meta/link block;
+ * - `<meta name="canari-seo-placeholder" data-canari-seo />` receives the meta/link
+ *   block. **It is a NODE and not a comment on purpose.** SvelteKit warns
+ *   `Removing comments in transformPageChunk can break Svelte's hydration` whenever a
+ *   transform drops one, because Svelte uses comments as hydration anchors - this marker sits
+ *   in the `<head>` where none of them live, so the warning was harmless and printed on every
+ *   dev start anyway. A warning its reader learns to skip is the one that hides the next
+ *   defect, so the marker stopped being a comment rather than the warning being explained
+ *   away. It carries `data-canari-seo` for a second reason: `SeoHead.svelte` removes every
+ *   such node on mount, so when the substitution does NOT run - the SEO lookup threw, the
+ *   Tauri shell - the placeholder leaves the document instead of lingering in the head;
  * - `<title>Canari - Mines Saint-Etienne</title>` is REPLACED rather than added to, because two
  *   titles in a document means the first one wins and the static one is the first. It carries the
  *   school for the same reason every other title does: it is what a reader sees whenever the
@@ -27,7 +36,7 @@ import { SITE } from '$lib/seo/site';
  * being known at that point. That is strictly better than the bare `app.html` it had before, and
  * per-request enrichment is by definition only reachable where a server is running.
  */
-const SEO_MARKER = '<!--canari-seo-->';
+const SEO_MARKER = '<meta name="canari-seo-placeholder" data-canari-seo />';
 const STATIC_TITLE = `<title>${SITE.defaultTitle}</title>`;
 
 /**

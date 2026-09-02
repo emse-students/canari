@@ -150,6 +150,23 @@ wrong, and each one has already shipped a bug.
   any plugin that exposes commands and is granted in no capability file; an exemption there must
   carry its justification in writing.
 
+### `bun run check` on a machine that skipped `generate` accuses the repository
+
+Three errors, all of them local staleness rather than defects, measured on a reconstituted
+workstation 2026-09-02:
+
+| Error | Actual cause |
+|---|---|
+| `Cannot find module '@tauri-apps/plugin-os'` (twice) | declared in `package.json`, absent from `node_modules` - an incomplete `bun install` |
+| `mlsWasmLoader.ts: Expected 2-4 arguments, but got 5` | `src/lib/wasm/` is GENERATED and not committed, so the local `.d.ts` was behind the Rust source it types |
+
+Neither names its cause, and the second reads exactly like a genuine call-site bug in committed
+code - it is a stale generated declaration file describing a binding that has since grown an
+argument. **`bun install && bun run generate` in `frontend/` first, then believe `check`**;
+`make install-frontend` does both, which is why it exists. Nothing enforces the order, because the
+generated tree's absence is what `.gitignore` guarantees rather than something a gate can detect
+from the source.
+
 ### Silent-degradation traps
 
 - **Never let a capability probe swallow its own failure.** `isKeyPresent` returned `false` on a

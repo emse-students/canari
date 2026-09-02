@@ -25,8 +25,12 @@ const evt = (method: string, pathname: string) =>
   ({ request: { method }, url: { pathname } }) as never;
 
 describe('app.html carries the markers hooks.server.ts substitutes', () => {
-  it('has the SEO comment marker', () => {
-    expect(appHtml).toContain('<!--canari-seo-->');
+  it('has the SEO marker, and it is not a comment', () => {
+    expect(appHtml).toContain('<meta name="canari-seo-placeholder" data-canari-seo />');
+    // A comment marker made SvelteKit warn about hydration on every dev start, because a
+    // transform that drops a comment cannot be told apart from one dropping a hydration anchor.
+    // Asserting its ABSENCE is what stops the cheaper form coming back.
+    expect(appHtml).not.toContain('<!--canari-seo-->');
   });
 
   it('has the exact static title the hook REPLACES, spelt as SITE.defaultTitle', () => {

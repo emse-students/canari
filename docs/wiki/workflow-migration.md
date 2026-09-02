@@ -277,8 +277,10 @@ have had one exit code for three unrelated causes.
       from the dump, creates them `NOLOGIN`, and FAILS on any `^ERROR:` in psql's stderr; and
       `name: canari-local` in the compose file is load-bearing, a foreign project called `local`
       already existing on this machine
-- [x] a `Canari Local` OIDC client on the production Authentik, `http://localhost:5173` redirect
-      URIs. **It returned `invalid_request` until three fields were copied from the production
+- [x] a `Canari Local` OIDC client on the production Authentik. **Its redirect URIs are on `1420`
+      and `1421`, not the `5173` this line used to name** - `vite.config.js` pins
+      `port: 1420, strictPort: true` and `frontend/.env` agrees, so the number written here from
+      memory would have failed the login it was meant to enable. **It returned `invalid_request` until three fields were copied from the production
       provider** - `grant_types` was EMPTY, `authentication_flow` None, `refresh_token_threshold` 0.
       A field diff against the working provider found it; reading the error text would not have
 - [ ] **verified by a real login and a message sent**, not by a file written. **THE ONLY BOX LEFT
