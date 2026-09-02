@@ -413,13 +413,37 @@ package starts.
 **THE FIRST STEP FAILS TODAY, AND IT IS ONE FUNCTION.** `scripts/bump-app-version.sh` line 14,
 `normalize_version()`, matches `^[0-9]+\.[0-9]+\.[0-9]+$` and EXITS on anything else - so a release
 tagged `v0.15.0-alpha.1` dies before any store number is computed. Fix that before the rest of this
-package is even testable. The `versionCode` band decided with the user is
-`(major*1e6 + minor*1e3 + patch)*100 + rank`, `rank` 0 for a stable and N for `-alpha.N`, which
-keeps a stable strictly above every alpha of the same version and stays inside Play's 2100000000.
+package is even testable. The `versionCode` band is `(major*1e6 + minor*1e3 + patch)*100 + rank`,
+**`rank` = N for `-alpha.N` and 99 for a stable** - not 0, which was the first shape written here and
+is wrong: it would put `0.15.0` BELOW every alpha of `0.15.0`, and Play refuses a code it has already
+seen. With 99 the order is `alpha.1` 1500001 < `alpha.98` 1500098 < stable 1500099 <
+`0.15.1-alpha.1` 1500101. Today's `0.14.15` is 14015, so the whole band steps up once and stays
+monotonic, and the ceiling (`0.999.999` -> 99999999) is well inside Play's 2100000000. Note this
+multiplies EVERY future code by 100: a one-way step, taken deliberately, because Tauri's own
+derivation (`major*1e6 + minor*1e3 + patch`, which produced 14015) leaves no room for a rank.
 
-- [ ] `scripts/bump-app-version.sh` accepts `X.Y.Z-alpha.N` and derives BOTH store numbers: a
-      monotonic `versionCode` and a numeric `CFBundleShortVersionString` with the counter in
-      `CFBundleVersion`
+- [ ] `scripts/bump-app-version.sh` accepts `X.Y.Z-alpha.N` and writes THREE different strings,
+      which is the part that is easy to get wrong (measured 2026-09-03):
+      - the FULL `0.15.0-alpha.1` into `frontend/package.json`, the four `apps/*/package.json`, the
+        `libs/*` ones and every `Cargo.toml` + `Cargo.lock` - all of which accept a semver
+        pre-release, and `frontend/package.json` is the one the client identifies itself by
+        (`vite.config.js` defines `VITE_APP_VERSION` from it, so `minClientVersion` compares against
+        it)
+      - the NUMERIC CORE `0.15.0` into `tauri.conf.json`, because Tauri writes that value into
+        `CFBundleShortVersionString` and **Apple requires the short version to be numeric**. A
+        prerelease suffix there is an App Store validation failure, not a cosmetic difference
+      - the BAND `1500001` into an explicit `bundle.android.versionCode`. Left alone Tauri derives
+        `major*1e6 + minor*1e3 + patch` (that is where today's `14004` comes from), which IGNORES the
+        suffix, so `-alpha.1` and `-alpha.2` would both ask Play to accept the same code
+- [ ] **the iOS BUILD number is the one thing not settled from this machine, and it must not be
+      guessed.** `CFBundleVersion` has to differ between two TestFlight uploads of the same short
+      version, the band (`1500001`) is the natural value since Android already uses it, and the
+      committed `Info.plist` can carry it - but `tauri ios build` RE-SYNCS both version keys from
+      `tauri.conf.json` during the build (that re-sync is why `bump_ios_app_infoplist` exists at
+      all), which would put `0.15.0` back into both. Tauri 2.11.4 exposes no iOS version override.
+      `ios-release.yml` already patches the plist with `PlistBuddy` for the export-compliance code,
+      so the patch has a home; **what is unknown is whether that home is early enough**, and only a
+      macOS run answers it. Do not write the fix against the guess
 - [ ] **NOTHING carries a prerelease flag downstream, and that box is DELETED** (measured
       2026-09-02, before a line was written). After the bump, `frontend/package.json` itself reads
       `0.15.0-alpha.1`, all four release workflows already read that file at the checked-out commit,
