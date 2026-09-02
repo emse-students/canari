@@ -170,11 +170,40 @@ on the origin, and the ingress lives in the API. What the box holds is the daemo
 Cloudflare's own apt repository, and a systemd unit whose `ExecStart` carries the tunnel's **run
 token** in plaintext.
 
+**All three tunnel hosts use this model as of 2026-09-02**, and until that day the third did not -
+it ran `--config /root/.cloudflared/config.yml tunnel run` against a local credentials JSON. They
+are now uniform: `--token` in a `600` unit, ingress in the API.
+
+### The host that was locally managed, and why its local file was the stale one
+
+The third host was migrated to the remote model on the same visit. Two things about it are worth
+keeping, because both invert the assumption a reader brings:
+
+- **Cloudflare already held a configuration for that tunnel** (`config_src` already read `cloudflare`,
+  at version 23) while the daemon ran with `--config`, so **the local file was what was in effect and
+  the remote one was invisible.** Switching to `--token` therefore switches which config applies -
+  it is not a no-op, and diffing the two is the whole job. **Never make that switch without the
+  diff.**
+- **The LOCAL file was the stale half**, which is the opposite of the natural guess. It carried two
+  hostnames with no DNS record at all (one of them a duplicate of the Proxmox interface under an
+  older name), and the remote config named the surviving one correctly. So the migration deleted two
+  dead rules and changed nothing live: all seven hostnames returned the same status codes after the
+  switch as the baseline taken before it.
+
+The credentials JSON and `cert.pem` remain on that host and no longer authenticate anything the unit
+uses. They are the only route back to the local model, which is why they were left rather than
+deleted, and the superseded `config.yml` was renamed with `superseded-by-remote-config` in its name
+rather than kept as `config.yml` - a stale file that reads as authoritative is worse than no file.
+
+A consequence for any check reused across hosts: a token-fingerprint comparison run on a
+locally-managed host reads the sha256 of the **empty string**, which compares equal to itself and
+reports success while measuring nothing. **A verification that cannot fail is not a verification** -
+assert the fingerprint is non-empty before comparing it.
+
 **That unit must be `600`.** It shipped as `644 root:root`, which is how the run token ended up in a
 terminal transcript: any login user could `systemctl cat cloudflared` and read it. systemd runs as
 root and never needed it world-readable, so the permission bought nothing and cost a rotation. The
-unit is now `600` on the production origin and on the second tunnel host; **the Authentik host's is
-still `644`**, and why it was left is in [backlog](../backlog.md#p3---the-authentik-host-still-carries-both-defects-the-other-two-had-fixed-measured-2026-09-02).
+unit is `600` on both hosts that carry a token, as of 2026-09-02.
 
 ### Rotating the run token, and the order that matters
 

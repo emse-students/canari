@@ -185,7 +185,12 @@ restated**. **Every defect story is in `CHANGELOG.md`, every rule one left is in
    (user, *"on verra ca plus tard"*), whose test also releases `redis` and `garage`; and **[nothing
    tells anybody prod is down](docs/wiki/backlog.md#p2---nothing-tells-anybody-production-is-down-and-both-outages-of-2026-09-01-were-reported-by-the-user-owed-to-the-user-a-decision-then-one-click)** -
    both outages of 2026-09-01 were reported by the USER, a red CD run pages nobody, and the frontend
-   answered 200 throughout, so a probe must hit `/api/version`, which needs the database.
+   answered 200 throughout, so a probe must hit `/api/version`, which needs the database. **And the
+   chain stops at the repository: [nothing upgrades the HOSTS' OS packages, and nothing reports
+   that they are stale](docs/wiki/backlog.md#p2---nothing-upgrades-the-production-boxs-os-packages-and-nothing-reports-that-they-are-stale-measured-2026-09-02)** -
+   113 behind on prod and 51 on the Authentik box when measured 2026-09-02, both taken to 0 BY HAND
+   the same day, which installs no mechanism and so retires nothing. The three tunnel hosts are
+   uniform and current as of that date ([cloudflare-edge](docs/wiki/infrastructure/cloudflare-edge.md#the-daemon-on-the-origin-and-the-token-it-carries)).
 
 4. **NOTHING ON THE CAMPAIGN BOARD COULD HAVE CAUGHT IT, AND THE GAP IS STRUCTURAL** (2026-08-28):
    no row asks a question whose answer is a POPULATION rather than an event. **Four rows are written

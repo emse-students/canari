@@ -339,34 +339,6 @@ Two facts to carry into that decision, both measured during the manual run:
 - **There is no snapshot to fall back on.** No Proxmox credential exists on the workstation, so the
   only pre-flight is the dry run and the only recovery route is the LAN hop from another tunnel host.
 
-### P3 - the Authentik host still carries both defects the other two had fixed (measured 2026-09-02)
-
-Fixing the production origin measured its two siblings. Two of the three are now closed:
-
-| Host | `cloudflared` | unit permissions | apt |
-|---|---|---|---|
-| production origin | `2026.8.3` | **`600`** | Cloudflare repo present, 0 upgradable |
-| second tunnel host (NAS) | `2026.8.2` | **`600`** | **no Cloudflare repo, so no candidate**, 0 upgradable |
-| Authentik host | **`2026.6.0`** | `644` | not measured |
-
-`644` on the unit is what put a run token into a transcript in the first place: any login user can
-read the `ExecStart`. **The `chmod` was applied to the second host and needs no restart** - systemd
-runs as root and never wanted the file readable. Neither remaining token is known to have leaked, so
-**the fix is the `chmod`, not a rotation**; a rotation is owed only once a token has been read.
-
-**Two things are deliberately left, both for the same reason - the blast radius is the identity
-provider every other service authenticates against:**
-
-- the `chmod` and the daemon upgrade on the Authentik host. Root there is not available the way it is
-  elsewhere: the login account needs a `sudo` password nobody holds, and its only other route is the
-  `docker` group. Escalating through Docker on the identity box is not something to do in passing
-- an OS-wide upgrade there. That is its own decision, and it belongs to the user
-
-The second host is one patch release behind and its apt has no candidate to serve, the Cloudflare
-repository not being configured on it. **Adding an apt source to a NAS appliance to close a
-single-patch gap is not worth the change**; it is recorded so the next reader does not mistake the
-gap for neglect.
-
 ---
 
 ## Security - blocked upstream
