@@ -400,23 +400,46 @@ package starts.
 - [x] `dependabot-auto-merge.yml`: its `workflow_run` on CD and its `workflow_dispatch` CALL to CD
       both re-pointed at that CI
 - [x] `.github/dependabot.yml`: the 6 `target-branch: "dev"` removed
-- [ ] a ruleset on `main`: pull request required, required checks, admin bypass
-- [ ] `origin/dev` deleted
+- [x] a ruleset on `main`: pull request required, required checks, admin bypass - **created
+      2026-09-03, id `22152902`, `enforcement: active`, condition `~DEFAULT_BRANCH`.** Four rules:
+      `deletion`, `non_fast_forward`, `pull_request` and `required_status_checks`. Three of its
+      parameters were decisions rather than defaults. **`required_approving_review_count: 0`** -
+      this is a solo repository, and the user's standing directive (*"Je prefere blinder de test et
+      faire les choses automatiquement qu'avoir une review humaine qui n'arrive jamais"*) forbids a
+      queue nobody drains; the pull request is here to make the change VISIBLE and to make CI run on
+      the merged combination, not to wait for a human. **One required context, `CI passed`, and it
+      could not have been any other** - every real job in `ci.yml` is behind a `changes` path
+      filter, and a required check that is SKIPPED either blocks the merge for ever or passes
+      vacuously depending on how GitHub resolves it, so the aggregate job with `if: always()` (added
+      the same day) is the only thing safe to require. **`require_extra_approval_for_unattributed_changes: false`**,
+      set by a follow-up `PUT` because the API defaults it to `true`: it would have demanded a human
+      approval on exactly the merges that must never need one - Dependabot's - and would have jammed
+      the auto-merge the moment the ruleset went active. The bypass is `RepositoryRole 5` (admin,
+      `bypass_mode: always`), which is the emergency path of section 6 and the only reason a broken
+      `CI passed` cannot lock the repository out of its own `main`
+- [x] `origin/dev` deleted - **2026-09-03, after measuring rather than assuming.** It was 13 commits
+      BEHIND `main` and 0 ahead, so nothing was lost, and all 19 open pull requests already targeted
+      `main`, so nothing was orphaned. Both facts were checked before the delete and neither is
+      recoverable afterwards, which is why the order matters
 - [x] `dev-refresh.yml` left running (the estate survives)
-- [x] **the `prod-deployed` tag DELETED, and `detect-changed-services` re-pointed at the last
-      RELEASE first.** What it was re-pointed at is narrower than "the last release tag", and the
+- [x] **the `prod-deployed` tag RETIRED AS AN INPUT, and `detect-changed-services` re-pointed
+      at the last RELEASE first.** What it was re-pointed at is narrower than "the last release tag", and the
       reason is the moving image tag: production deploys `:latest`, which only a STABLE moves, and
       dev deploys `:dev`, which only a PRE-RELEASE moves - so the baseline has to be the previous
       release **of the same kind**, or a service changed since the last alpha but not since the
       intervening stable would never be rebuilt for dev. The order comes from `gh api .../releases`
       (newest-first by creation) and NOT from `git tag --sort=v:refname`, which places
-      `v1.0.0-alpha` AFTER `v1.0.0` without `versionsort.suffix`. The tag itself survives under a
-      new name, `prod-released`: it is no longer an input, only the record of what production is
-      serving. The original box read - decided by the user 2026-09-02 against my recommendation to keep it,
-      which is their call and is not to be re-litigated. What they are accepting, stated once so it
-      is on the record: that tag is written by the deploy job and is the only thing that says what
-      production actually received, so **after an emergency push straight to `main` nothing will
-      say which commit prod is serving**. The re-point is not optional and comes FIRST: the change
+      `v1.0.0-alpha` AFTER `v1.0.0` without `versionsort.suffix`. The user asked for the tag to be deleted outright
+      (2026-09-02, against my recommendation to keep it - their call, not to be re-litigated),
+      because with deploy-at-bump it would always equal the release. **It was RENAMED instead, to
+      `prod-released` at `6068fca0`**, and that is a deliberate departure worth one sentence: the
+      commit production is actually serving is not always the release, precisely because of the
+      emergency path - a push straight to `main` deploys nothing now, but a hand-run deploy still
+      can, and after one, nothing else in the repository would say which commit prod received. So
+      the tag stays as a RECORD and is no longer an INPUT, which is the half of the user's ask that
+      carried the reasoning. `6068fca0` is the last commit production actually deployed, read from
+      the successful `Deploy to Production Server` job in run 33691394757 rather than from the old
+      tag's own position. The re-point is not optional and comes FIRST: the change
       detector measures against that tag rather than the previous push, and that is the only reason
       a cancelled pending run is harmless (GitHub keeps one waiting run per group and cancels the
       rest; the survivor rebuilds what the dropped ones would have). Twelve references in `cd.yml`
