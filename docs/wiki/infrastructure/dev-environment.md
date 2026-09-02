@@ -57,6 +57,21 @@ the other), its own Garage keys and bucket, its own Authentik client. Beyond tho
 deliberately identical to production, so that a difference in observed behaviour is never explained
 away by a difference in configuration.
 
+### The isolation is per PROJECT, not per HOST - one daemon carries both estates
+
+Neither mechanism above separates the two estates from anything the *host* does to Docker. **They
+share one daemon, and 23 containers across two projects go down together when it restarts.**
+Measured 2026-09-02: an `apt-get upgrade` on the box pulled 12 `docker`/`containerd` packages, which
+restarted the daemon, which restarted every container in both projects at once - all 23 came back
+`Up 27 seconds`, and the public site returned `502` for about thirty seconds in between.
+
+This is not an argument against the upgrade, and nothing here needs changing. It is a limit on what
+the two mechanisms above claim: **dev cannot corrupt production's data, and dev cannot take
+production down - but the host can take both down in one gesture, and no compose-level property
+prevents that.** Anything that reasons "the dev estate is isolated, so operating on it is safe"
+must exclude host-level operations from that sentence. The consequence for scheduling unattended
+host upgrades is in [backlog](../backlog.md#p2---nothing-upgrades-the-production-boxs-os-packages-and-nothing-reports-that-they-are-stale-measured-2026-09-02).
+
 ### The two host ports that differ, and why only two
 
 Production publishes **no** host port for any internal service - it uses `expose:`, which is

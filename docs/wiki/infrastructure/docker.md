@@ -218,3 +218,25 @@ chat-delivery-service, Garage and Redis have health checks. Other services depen
 | `garage_meta` | Garage cluster/bucket/key metadata (LMDB) |
 | `garage_data` | Garage object storage (media blobs) |
 | `media_meta` | media-service metadata sidecar |
+
+## The deploy account is root on the host, by way of the `docker` group
+
+`id -Gn` for the account CI and every operator log in as answers `canari sudo users docker`.
+**Membership of `docker` is equivalent to root on that machine** - a container that bind-mounts `/`
+writes any file on the host, including a systemd unit - and it is required, because that account is
+what deploys.
+
+This is written down because the wrong mental model is the natural one. Nothing else in this
+repository says the deploy account is privileged, so a reader reasonably treats it as an application
+user, and two conclusions follow that are false: that a compromise of it is contained, and that a
+task needing root on that box needs a password it does not have. Neither holds. A rotation of a
+systemd unit's contents was performed through it on 2026-09-02.
+
+Two consequences worth keeping:
+
+- **`sudo` asking for a password on that host is not a security boundary**, it is a speed bump in
+  front of a door the same account can walk through by another route. Treat any capability reachable
+  from `docker` as reachable from that login, full stop.
+- **A destructive control must therefore carry its own allowlist**, which is why the copy and restore
+  scripts name the compose project they may touch rather than trusting the caller's privileges to
+  stop them. The rule is in [durable-rules](../durable-rules.md).

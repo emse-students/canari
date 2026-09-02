@@ -163,6 +163,64 @@ empty** - see above.
 | `http_config_settings` | BIC disabled on the auth subdomain |
 | `http_request_cache_settings` | cache bypassed on the auth subdomain |
 
+## The daemon on the origin, and the token it carries
+
+The tunnel is **remotely managed** (`config_src=cloudflare`): there is no `/etc/cloudflared/config.yml`
+on the origin, and the ingress lives in the API. What the box holds is the daemon, installed from
+Cloudflare's own apt repository, and a systemd unit whose `ExecStart` carries the tunnel's **run
+token** in plaintext.
+
+**That unit must be `600`.** It shipped as `644 root:root`, which is how the run token ended up in a
+terminal transcript: any login user could `systemctl cat cloudflared` and read it. systemd runs as
+root and never needed it world-readable, so the permission bought nothing and cost a rotation. The
+unit is now `600` on the production origin and on the second tunnel host; **the Authentik host's is
+still `644`**, and why it was left is in [backlog](../backlog.md#p3---the-authentik-host-still-carries-both-defects-the-other-two-had-fixed-measured-2026-09-02).
+
+### Rotating the run token, and the order that matters
+
+The rotation is two API calls and a unit rewrite, and it can be done from a workstation with an
+account-scoped token - no dashboard gesture:
+
+1. `PATCH /accounts/{acct}/cfd_tunnel/{id}` with `{"tunnel_secret": "<base64 of 32+ random bytes>"}`
+2. `GET /accounts/{acct}/cfd_tunnel/{id}/token` for the new run token
+3. rewrite the unit's `--token` argument, `daemon-reload`, `restart`
+
+**Step 1 invalidates the old token instantly, so the ability to complete steps 2 and 3 must be
+proven BEFORE step 1 runs.** Verify the credential can read `/token` first: a `PATCH` followed by a
+refusal leaves a tunnel that looks healthy - the running daemon keeps the connections it already
+authenticated - and dies silently at its next restart. That is not a hypothetical; it happened for
+one minute during the 2026-09-02 rotation.
+
+Two more facts that cost time:
+
+- **A run token's length follows the secret's length.** A 32-byte secret yields ~180 characters, a
+  64-byte one ~250. A plausibility check calibrated on one of them rejects the other, so any such
+  guard is a numeric floor, never a digit-shaped pattern.
+- **The restart tears down the session that issues it**, the tunnel being the only door. So the work
+  runs detached (`setsid --fork`) and leaves a verdict in a log, and the verdict is evidence -
+  `Registered tunnel connection` in the journal, then an HTTP code from the front door. A tunnel
+  being up is not the site being up.
+
+The recovery route, exercised before touching anything: the two other tunnel hosts both reach the
+production origin's `:22` over the LAN, so `ssh -J <other-host> <user>@<origin-ip>` gets in when the
+origin's own tunnel is down. **A fallback that has not been exercised is not a fallback** - it was
+tested first, deliberately, and it is the only reason the rotation was safe to attempt.
+
+### Nothing keeps the daemon current, and a dormant timer says otherwise
+
+`cloudflared service install` leaves a `cloudflared-update.timer` behind. On the production origin it
+is **`disabled`, `inactive`, and has never run** - no journal entries at all - while the daemon runs
+with `--no-autoupdate`. The binary was three months behind (`2026.6.0` against `2026.8.3`) and
+nothing said so.
+
+**Enabling that timer would be the wrong fix.** Its `ExecStart` calls `cloudflared update`, which
+replaces the binary in place and would drift it from the version `dpkg` believes is installed - the
+daemon here comes from the apt repository. The package is upgraded with apt, which is safe for one
+measured reason: `dpkg -S /etc/systemd/system/cloudflared.service` finds **no owner** and the package
+declares **no conffile** for it, so an upgrade cannot replace the file carrying the run token. Verify
+that before upgrading on any host, and compare the token's fingerprint across the upgrade so a silent
+replacement is caught rather than assumed away.
+
 ## Working against the API
 
 The account id and token are **not in this repository and must never be** - it is public. They live

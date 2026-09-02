@@ -150,7 +150,7 @@ Measured during WP-0, and each one changes something downstream:
 WP-0 and WP-1 come first because nothing can be verified without them. **WP-4 comes before WP-2**: a
 lightened hook whose gates are not yet in CI is an open hole for the length of the chantier.
 
-### WP-0 - this machine (DONE except the two rotations, which are the user's)
+### WP-0 - this machine (DONE, both rotations included; only the handoff zip is left)
 
 - [x] `~/.ssh/config`: `Host miconnect` added. **The `cercle` block needed no repair** - it was
       already complete here, and the diff that suggested otherwise was a re-ordering. What was
@@ -198,12 +198,35 @@ lightened hook whose gates are not yet in CI is an open hole for the length of t
       **403** - a Zone-scoped token cannot roll itself - while the broad `CF_API_TOKEN` the handoff
       memory carried answers **401** and is dead. **A NEW TOKEN IS NOT A REVOKED OLD ONE**, so what
       closes this is DELETING the leaked one, not superseding it
-- [ ] **cloudflared tunnel RUN token rotation - the user's click**, dashboard -> the tunnel ->
-      *Refresh token*, then the systemd unit
-- [ ] **the dead broad token is its own finding**: nothing on this workstation held Cloudflare
+- [x] **cloudflared tunnel RUN token rotation - DONE 2026-09-02, and it was NOT the user's click.**
+      The line above said it was, which stopped being true the moment they supplied an
+      account-scoped token that can read `/cfd_tunnel/{id}/token`. Rotated by `PATCH`ing the
+      tunnel secret and rewriting the unit; the token in the unit fingerprinted identically to the
+      one the API served, so the leaked value is confirmed dead rather than assumed to be.
+      **Three things this taught, all of which outlive the rotation:**
+      - **The ORDER is not free.** `PATCH` kills the old secret instantly, so the box must be able
+        to receive the new token BEFORE the call is made. Verifying that the credential can *read*
+        `/token` came first, precisely because a `PATCH` followed by a refusal would have left a
+        healthy-looking tunnel that dies at its next restart - which is exactly what happened for
+        one minute when a guard of mine refused a valid token
+      - **A guard calibrated on one sample rejects the next one.** The plausibility floor was a
+        digit-shaped glob (`1[0-9][0-9]`) derived from the 248-char token then in the unit, and the
+        API returned 180. It refused to write, which was right, but for a wrong reason. **A run
+        token's length follows the SECRET's length** (32 bytes -> ~180, 64 -> ~250), so the floor is
+        now a numeric comparison that says what it means
+      - **The leak CLASS is closed, not just the instance.** The unit was `644 root:root`, which is
+        why `systemctl cat` as the `canari` user printed the token into a transcript at all. It is
+        now `600`, and systemd is root so nothing needed it readable
+- [x] **the dead broad token is its own finding**: nothing on this workstation held Cloudflare
       Access, Zero Trust or tunnel-ingress rights between its death and 2026-09-02. Re-issuing was
       the user's call and they did it
-- [ ] **NO IDENTIFIER BELONGS ON THIS PAGE.** An earlier revision of it carried the leaked token's
+- [x] **cloudflared upgraded 2026.6.0 -> 2026.8.3** on the same visit (the user's ask). Checked
+      first, because the trap is real: had the package OWNED
+      `/etc/systemd/system/cloudflared.service`, or declared it a `conffile`, the upgrade could have
+      replaced the file carrying the run token and killed the only door into the box. `dpkg -S`
+      finds no owner and the package declares no conffile for it - measured before the upgrade ran,
+      and the token fingerprint is compared across it so a silent replacement would be CAUGHT
+- [x] **NO IDENTIFIER BELONGS ON THIS PAGE.** An earlier revision of it carried the leaked token's
       id and the tunnel's uuid. Neither authenticates anything, but this repository is PUBLIC and its
       own convention keeps that inventory out of public docs - the admin-hostname map is in the local
       memory for exactly this reason. They were removed the same day, and **they remain in one pushed
@@ -215,30 +238,81 @@ lightened hook whose gates are not yet in CI is an open hole for the length of t
       the record - it will not decrypt here). Destroy the zip only after WP-1 has taken what it needs
       from the box
 
-### WP-1 - the local estate
+### WP-1 - the local estate (DONE except its last box: a real login)
 
-- [ ] `/home/canari/canari/infrastructure/.env` pulled from the box (PowerShell) as the source
-- [ ] `infrastructure/.env` (local) built from it: third-party secrets KEPT as production's (Stripe,
-      Klipy, FCM/APNs, Authentik, Cloudflare TURN, avatar), **and `CHANNELS_ENCRYPTION_SECRET` kept
-      too** - without it the dumped data does not decrypt
-- [ ] `JWT_SECRET`, `INTERNAL_SECRET`, `INTERNAL_SHARED_SECRET`, `CALL_ROOM_SECRET` REGENERATED for
+**Everything but the last box landed 2026-09-02.** The shape differs from what this list planned,
+in one way worth keeping: the plan named ONE script, `infrastructure/dev/dump-prod-to-local.sh`. It
+became FOUR, because fetching, classifying and restoring fail differently and a single script would
+have had one exit code for three unrelated causes.
+
+- [x] `/home/canari/canari/infrastructure/.env` pulled from the box as the source. **Not
+      "(PowerShell)" as this line said** - either tool reaches prod since the `ProxyCommand` was
+      respelled with forward slashes, and the constraint that DOES bite is the opposite one: a
+      binary pipe (`pg_dump | gzip`) must NOT go through PowerShell, which text-encodes stdout and
+      corrupts it. So `pull-prod-dump.sh` dumps on the box and `scp`s the file, and never pipes
+- [x] `infrastructure/.env` (local) built from it by `infrastructure/local/env-from-prod.sh`:
+      third-party secrets KEPT as production's (Stripe, Klipy, FCM/APNs, Authentik, Cloudflare
+      TURN, avatar), **and `CHANNELS_ENCRYPTION_SECRET` kept too** - without it the dumped data does
+      not decrypt. **All 61 variables are CLASSIFIED and an unclassified one is a hard error**, so a
+      variable added to production later cannot be silently carried or silently dropped
+- [x] `JWT_SECRET`, `INTERNAL_SECRET`, `INTERNAL_SHARED_SECRET`, `CALL_ROOM_SECRET` REGENERATED for
       local: sharing them would make a token minted on a laptop valid in production, and they carry
-      no data at rest
-- [ ] `ALLOW_INSECURE_COOKIES=true`, `NODE_ENV=development`, `ENABLE_DEV_ROUTES=true`, localhost
+      no data at rest. **But regenerating them on EVERY run was a defect**: the second run
+      desynchronised the containers already holding the first run's values, and every session died.
+      They are now read back from `infrastructure/.env.bak` when it exists, and only minted when
+      absent - which is what made that backup file exist, and is why the near-miss below happened
+- [x] `ALLOW_INSECURE_COOKIES=true`, `NODE_ENV=development`, `ENABLE_DEV_ROUTES=true`, localhost
       topology (ports, `ALLOW_ORIGIN`, `FRONTEND_URL`)
-- [ ] `frontend/.env` (local) on the localhost ports
-- [ ] `infrastructure/dev/dump-prod-to-local.sh`, derived from `copy-prod-to-dev.sh`, plus a
-      `make dump-prod` target
-- [ ] a `canari-local` OIDC client on the production Authentik, `http://localhost:5173` redirect URIs
-- [ ] **verified by a real login and a message sent**, not by a file written
+- [x] `frontend/.env` (local) on the localhost ports
+- [x] **four scripts, not one**, plus `make local-env` / `make dump-prod`:
+      `local/pull-prod-dump.sh` (read-only, refuses to write inside the work tree, `gunzip -t`
+      against truncation, and a `.meta` sidecar recording what prod held AT DUMP TIME),
+      `local/env-from-prod.sh`, `local/restore-into-local.sh`, and `lib/copy-strips.sh` -
+      **factored out of `dev/copy-prod-to-dev.sh` rather than copied**, so the strip list is one
+      list. The caller passes its OWN guarded sql function by name, which keeps the destructive
+      allowlist with whoever owns the target
+- [x] **362 users restored and VERIFIED against the sidecar**, with `push_token` truncated and 7
+      payment-identifier columns cleared. Two things the run taught: the restore printed
+      `13 x ERROR: role "canari" does not exist` and still reported success, so it now derives roles
+      from the dump, creates them `NOLOGIN`, and FAILS on any `^ERROR:` in psql's stderr; and
+      `name: canari-local` in the compose file is load-bearing, a foreign project called `local`
+      already existing on this machine
+- [x] a `Canari Local` OIDC client on the production Authentik, `http://localhost:5173` redirect
+      URIs. **It returned `invalid_request` until three fields were copied from the production
+      provider** - `grant_types` was EMPTY, `authentication_flow` None, `refresh_token_threshold` 0.
+      A field diff against the working provider found it; reading the error text would not have
+- [ ] **verified by a real login and a message sent**, not by a file written. **THE ONLY BOX LEFT
+      IN WP-1** - the estate answers and the data is in it, which is not the same claim
+- [x] **four latent defects fell out of merely RUNNING the stack**, none of which any gate here
+      catches, and they are the argument for the local estate on their own: `.dockerignore` was
+      missing `**/*.tsbuildinfo`, so three NestJS services shipped a partial `dist` and died with
+      `Cannot find module` while the build stayed green; `make run-services` printed a tick over
+      dead containers, and now calls `check-services`, which lists what is not running and dumps its
+      logs; social-service got no `REDIS_URL` locally though prod gives it one; and its Redis error
+      handler logged an empty message, so it now names the target host:port with userinfo stripped
+- [x] **a near-miss worth more than the work: `git add -A` staged `infrastructure/.env.bak`** -
+      7930 bytes of PRODUCTION credentials - into a commit for a PUBLIC repository. Caught in the
+      commit, not on the remote. The root `.gitignore` had `.env` alone while `frontend/.gitignore`
+      already had the right rule; it now carries `.env.*` with `!.env.example`. The rule this left
+      is in [durable-rules](durable-rules.md)
 
 ### WP-4 - hooks (before WP-2)
 
-- [ ] each of the four things `pre-push` alone covered confirmed present in `ci.yml` -
-      `make test-harness`, the real `wasm32` build, clippy, the frontend suite - and whatever is
-      missing added THERE FIRST
-- [ ] `.husky/pre-commit` reduced to `lint:fix` + `format` + re-staging
-- [ ] `.husky/pre-push` deleted
+**Done 2026-09-02, and in that order: the gates were closed BEFORE the hook that was standing in
+for them was deleted.** Two of the four were genuinely missing, so deleting `pre-push` first would
+have opened a hole for as long as it took to notice.
+
+- [x] each of the four things `pre-push` alone covered confirmed present in `ci.yml` -
+      `make test-harness`, the real `wasm32` build, clippy, the frontend suite - **and the two that
+      were missing added THERE FIRST**: `src-tauri` was built but never `cargo fmt`-checked (the
+      matrix entries now carry `fmt: true` and the step fires on `check` OR `fmt`), and the four
+      NestJS apps all declare `format:check` and nothing ran it (the TS job now derives a
+      `has_format` output and runs it)
+- [x] `.husky/pre-commit` reduced to fixers only - `lint:fix` + `format` across the five bun
+      packages, `cargo fmt` across the five crates, with the existing re-staging allowlist. **It
+      asserts nothing now**: a hook that fails is a hook that gets bypassed, and CI is where a
+      verdict belongs
+- [x] `.husky/pre-push` deleted
 - [ ] optional, and the ONLY job WSL keeps here: run `make test-ci-scripts` and the deploy-script
       tests from the `Debian` distro, which is what `ubuntu-latest` actually is. They are shell-only
       and tiny, so `/mnt/d` costs nothing, and Git Bash has already let a Windows-shell difference
