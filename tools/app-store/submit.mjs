@@ -32,7 +32,7 @@
  *        APP_BUNDLE_ID     the app to act on
  *        MARKETING_VERSION the versionString, e.g. 0.15.0 - numeric, no pre-release suffix
  *        BUILD_NUMBER      the CFBundleVersion the bump wrote, e.g. 1500099
- *        WHATS_NEW_FILE    optional path; defaults to frontend/src-tauri/store/whats-new.txt
+ *        WHATS_NEW_FILE    optional path; defaults to store/whats-new.txt
  *        DRY_RUN           set to 1 to read everything and change nothing
  */
 
@@ -246,7 +246,7 @@ async function main() {
   // bash would be a second opinion about what valid notes are, and the two would drift.
   if (process.argv.includes('--check-notes')) {
     const version = need('MARKETING_VERSION');
-    const file = process.env.WHATS_NEW_FILE || 'frontend/src-tauri/store/whats-new.txt';
+    const file = process.env.WHATS_NEW_FILE || 'store/whats-new.txt';
     const verdict = readWhatsNew({ file, version });
     if (!verdict.ok) {
       // PLAINLY, and not through the catch below: that one prefixes "App Store submission failed",
@@ -264,7 +264,7 @@ async function main() {
   const bundleId = need('APP_BUNDLE_ID');
   const versionString = need('MARKETING_VERSION');
   const buildNumber = need('BUILD_NUMBER');
-  const whatsNewFile = process.env.WHATS_NEW_FILE || 'frontend/src-tauri/store/whats-new.txt';
+  const whatsNewFile = process.env.WHATS_NEW_FILE || 'store/whats-new.txt';
   const dryRun = process.env.DRY_RUN === '1';
 
   const privateKey = Buffer.from(need('ASC_API_KEY_P8'), 'base64').toString('utf8');

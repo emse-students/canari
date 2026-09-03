@@ -164,7 +164,7 @@ logiciel - c'est un humain avec les droits admin, et ca s'ecrit dans `CHANGELOG.
 | le commit n'est pas sur `main` | passer par une pull request - rien ici ne deploie un commit que le tronc ne porte pas |
 | `CI passed` n'est pas vert **sur ce commit** | reparer les tests. Un check **absent** est refuse aussi : ce n'est pas un check qui passe |
 | **la prod serait en avance sur dev** (stables seulement) | publier d'abord une **pre-release sur ce meme commit**. Elle deploie dev en quelques minutes et deplace le repere que cette verification lit ; republier la stable ensuite |
-| les notes App Store ne nomment pas cette version | reecrire `frontend/src-tauri/store/whats-new.txt`, **premiere ligne `version: X.Y.Z`**, puis republier |
+| les notes App Store ne nomment pas cette version | reecrire `store/whats-new.txt`, **premiere ligne `version: X.Y.Z`**, puis republier |
 
 Le quatrieme est la raison d'etre du fichier : *"Je ne veux pas un detecteur de retard, je ne veux
 pas que ca soit possible."* Il n'y a donc pas de rapport a lire - il y a un refus.

@@ -73,7 +73,7 @@ which is also where every release up to and including v0.13.1 now lives.
   and explains nothing.
 
   **The one thing a human owes each stable is the release notes**, and their staleness is made
-  impossible rather than reported: `frontend/src-tauri/store/whats-new.txt` opens with
+  impossible rather than reported: `store/whats-new.txt` opens with
   `version: X.Y.Z`, and the release is refused unless that matches. A plain non-empty check would
   pass for ever on notes nobody updated and the store would publish the previous version's text - a
   file cannot be asked when it was last meant. It is checked in the preflight, before the bump,

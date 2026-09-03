@@ -16,7 +16,7 @@ Store Connect"*.
 
 ## The one thing a human owes each stable release
 
-`frontend/src-tauri/store/whats-new.txt` - the App Store release notes, in French, at most 4000
+`store/whats-new.txt` - the App Store release notes, in French, at most 4000
 characters, **whose first line names the version they are for**:
 
 ```
