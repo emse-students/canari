@@ -303,7 +303,38 @@ parses a query string, or if the `stringify` call site the measurement was taken
 
 ---
 
-### P2 - nothing upgrades the production box's OS packages, and nothing reports that they are stale (measured 2026-09-02)
+### P2 - MOSTLY CLOSED 2026-09-03: the hosts take their security updates and a daily run reports it. What is left is three hosts nobody reports on, and a library nothing restarts
+
+**The mechanism and the report both exist since 2026-09-03**, installed on the user's decision
+(*"unattended-upgrades securite + rapport"*) across all four hosts: security origins only, nothing
+reboots, and `.github/workflows/host-updates.yml` fails a daily run on any finding. The whole
+write-up - the policy, the `#clear` that the file needs to not be decorative, the 30-second `502`
+this scope does NOT incur and the evidence for that, and the two defects the report itself had - is
+[host-updates](infrastructure/host-updates.md), the only copy.
+
+**THREE THINGS STAY OPEN and they are smaller than what closed.**
+
+1. **The report covers PRODUCTION and no other host.** It has to be taken on the box, the runner
+   lives on the production origin, and the runner's key is authorised on none of the other three
+   (measured 2026-09-03). So `mitv`, `cercle` and `miconnect` now apply their security updates with
+   nothing saying whether they still are - which is exactly the shape this row was opened about, one
+   estate smaller. **Retired by** either a key for the runner on the other three (a privilege
+   expansion, so the user's decision), or the Cloudflare Access service token already listed as
+   optional in the dev-environment work, which would let an `ubuntu-latest` job reach all four the
+   way a workstation does.
+2. **`mitv` has needed a REBOOT since 12 July**, for `linux-image-6.12.95+deb12-amd64`, with 8 weeks
+   of uptime. The report names it now; only a human reboots it. A kernel security update that is
+   installed and not running is a security update you do not have.
+3. **A library security fix is installed, not in effect.** `unattended-upgrades` restarts no
+   services, so an `openssl`/`libssl3t64` upgrade leaves every long-running process mapped to the
+   old library until something restarts it. Nothing measures that. **Retired by** reading
+   `needrestart -b` (or `/usr/lib/needrestart/`) into the same report - which turns a silent gap
+   into a named finding without deciding to restart anything.
+
+The original row, kept because it carries the measurement and the trade-off that were priced before
+the decision:
+
+### P2 - nothing upgrades the production box's OS packages, and nothing reports that they are stale (measured 2026-09-02, ANSWERED 2026-09-03)
 
 The chain that keeps *dependencies* current stops at the repository. **The host carrying every
 service has no equivalent, and it had drifted 113 packages behind - 50 of them from
@@ -328,13 +359,17 @@ mechanism, so the count starts climbing again the same day, and nothing will say
 repository's own rule about a correct mechanism with no report, applied to the host instead of the
 code: found by hand, months late.
 
-**What retires it:** `unattended-upgrades` with the security origin enabled, plus a REPORT that names
-the count - because unattended upgrades that silently stop are the same defect one layer down. The
-existing hourly report is the obvious carrier. **The decision is the user's**, because the honest
-version of this has a cost they must accept: an apt upgrade on this box restarts the Docker daemon
-(12 `docker`/`containerd` packages were in the set), which restarts all 23 containers at once and
-gave a **~30-second window of `502`** on the public site. An unattended upgrade means that window
-arrives unannounced, at night, on both estates at once.
+**What retired it, 2026-09-03:** `unattended-upgrades` with the security origin enabled, plus a
+REPORT that names the count - because unattended upgrades that silently stop are the same defect one
+layer down. **The decision was the user's and the cost they were asked to accept did not
+materialise.** The concern was that an apt upgrade on this box restarts the Docker daemon (12
+`docker`/`containerd` packages were in the manual set), which restarts all 23 containers at once and
+gave a ~30-second window of `502` on the public site - so an unattended upgrade would bring that
+window unannounced, at night, on both estates at once. **Security-only scope excludes Docker
+entirely**, and that was verified rather than argued: the Docker CE origin is pinned `-32768`,
+*"Marking not allowed"*, in `unattended-upgrade --dry-run --debug` on a host with Docker updates
+actually pending. Docker moves when a human decides. The evidence is on
+[host-updates](infrastructure/host-updates.md).
 
 Two facts to carry into that decision, both measured during the manual run:
 

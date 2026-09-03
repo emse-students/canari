@@ -70,7 +70,7 @@ the two mechanisms above claim: **dev cannot corrupt production's data, and dev 
 production down - but the host can take both down in one gesture, and no compose-level property
 prevents that.** Anything that reasons "the dev estate is isolated, so operating on it is safe"
 must exclude host-level operations from that sentence. The consequence for scheduling unattended
-host upgrades is in [backlog](../backlog.md#p2---nothing-upgrades-the-production-boxs-os-packages-and-nothing-reports-that-they-are-stale-measured-2026-09-02).
+host upgrades is in [backlog](../backlog.md#p2---mostly-closed-2026-09-03-the-hosts-take-their-security-updates-and-a-daily-run-reports-it-what-is-left-is-three-hosts-nobody-reports-on-and-a-library-nothing-restarts).
 
 ### The two host ports that differ, and why only two
 

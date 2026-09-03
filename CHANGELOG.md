@@ -13,6 +13,25 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Added
 
+- **The four hosts take their security updates by themselves, and a daily run says whether they
+  still are.** The chain that keeps dependencies current stopped at the repository: nothing reasoned
+  about the Debian packages on the boxes those services run on, and the production origin had
+  drifted 113 packages behind - 50 from `stable-security` - before a manual upgrade on 2026-09-02
+  that installed no mechanism and so retired nothing. Chosen by the user: security origins only,
+  never reboot. **Two things were found that nothing could have reported**: `mitv` carried
+  `APT::Periodic::Unattended-Upgrade "1"` with the package ABSENT, and `apt-daily-upgrade.timer`
+  answered `enabled` on all four hosts while not one had anything to do the upgrading - an audit by
+  listing timers would have concluded the estate was current. The same box has needed a reboot since
+  12 July for a kernel security update, with 8 weeks of uptime; that is now a finding, and only a
+  human reboots it. **The `#clear` is what makes the policy real**: an APT configuration LIST
+  accumulates across files rather than overriding, so the first draft's resolved policy opened with
+  `label=Debian` - the whole of stable - on the three trixie boxes, while bookworm shipped that
+  entry commented out and looked correct. **And the cost the backlog had priced did not
+  materialise**: security-only scope pins the Docker CE origin `-32768`, *"Marking not allowed"*, so
+  the 30-second `502` that a Docker daemon restart gives was verified absent rather than argued
+  about. `.github/workflows/host-updates.yml` fails a run on any finding, because there is no
+  alerting in this estate and `gh run list` is the one channel this repository actually reads.
+
 - **`main` is protected, and work arrives by pull request.** Branch ruleset `22152902`, active, on
   the default branch: no direct push, no force-push, no deletion, and one required status check.
   Three of its parameters were decisions rather than defaults. **No approving review is required** -
