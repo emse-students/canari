@@ -82,6 +82,7 @@
 - [Mechanism audit](mechanism-audit.md) - What every part of the app is covered by, measured across the board, the unit tests and the hand pass - and the five things nothing watches
 - [Cross-client testing](cross-client-testing.md) — The campaign board, state only: every check, its verdict, and the commit it ran on
 - [Cross-client campaign](cross-client-campaign.md) — The campaign's design: the ladder, what it is allowed to contain, the standing rules, the preflight, and what does NOT exist
+- [The LITHIUM board, archived](cross-client-testing-archive.md) — every verdict taken between 2026-08-14 and 2026-08-30, against production, on a rig whose ledger was lost: where to look first when a re-run disagrees, and worth nothing as a gate
 - [Resuming the cross-client campaign](cross-client-campaign-resume.md) — The delta since the 2026-08-30 pause and the ordered restart: what the dev estate and the dependency sweep do to a run, and what they do not
 - [Server migration & bootstrap](../../infrastructure/MIGRATION.md) — Bare-metal setup, secrets, data restore, SSH backup
 

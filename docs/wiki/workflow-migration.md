@@ -530,7 +530,23 @@ survive a replug.
 
 - [ ] a new rig root at `D:\Documents\Programmation\canari-harness\`, fresh Chrome profiles, fresh
       test accounts, target LOCAL
-- [ ] the board reset, old verdicts archived in a dated "rig LITHIUM, ledger lost" section
+- [x] the board reset, old verdicts archived in a dated "rig LITHIUM, ledger lost" section -
+      **DONE 2026-09-03, as a separate PAGE rather than a section.**
+      [cross-client-testing-archive](cross-client-testing-archive.md) holds the old board verbatim;
+      the live board keeps the ladder and the rows and returns 142 cells to `pending`. A section
+      inside the board would have doubled a page whose first line is "STATE ONLY, AND IN AS FEW
+      WORDS AS THE STATE ALLOWS", which is the same reason `docs/changelog-archive.md` exists.
+      **Three judgement calls worth recording.** The per-section RUN SUMMARIES ("`0c31be5d`,
+      2026-08-27: 25 rows, 19 `PASS`...") were stripped, but each of them had a design fact or a
+      finding welded to it, and those stayed: GRP's third-device discovery, COMM's
+      `Workspace`-is-not-MLS-membership, DEL's pairing rule. **A finding outlives its ledger** - it
+      is a statement about the system, not a verdict about a run. **`skipped` was not carried over
+      either**, two of the deliberate skips having been justified by the 2FA a re-enrolment used to
+      cost and by the production target, both gone. And **a `pending` cell that carried an
+      EXPECTATION kept it** ("`pending` - the AEAD tag must fail"), because that is the row's
+      question and not its answer. The `VACUOUS` definition changed with the target: on local the
+      thing that redeploys under a run is a `bun run dev` reload, more frequent and less visible
+      than a CD run, so `bundle.mjs` matters MORE here than it did against production
 - [ ] the campaign pages rewritten: the target is local, the phone enters by `adb reverse`, and the
       cookie reservation of section 4 is stated per row
 - [ ] **two standing rules DELETED, and that is a gain** - **but WP-6 has already done half of
