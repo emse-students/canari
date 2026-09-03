@@ -401,6 +401,35 @@ updates, and `/settings` shows the installed version passively. See
 [admin](modules/admin.md#platform-configuration-adminplatform) for the rollout-timing trap that
 comes with raising the minimum.
 
+## A 500 from Apple is not a refusal, and the iOS arm has to be re-runnable
+
+**Measured on `v0.16.1`, 2026-09-03.** The submission chain ran to its last request -
+`PATCH /v1/reviewSubmissions/{id} {submitted: true}` - and Apple answered `500 An unexpected error
+occurred on the server side`. The version, the attached build and the release notes were all in
+place, **and the write had landed**: App Store Connect showed the version added for review minutes
+later. The 500 was a lost response, not a refused effect. The run was red over a release that had
+shipped.
+
+`tools/app-store/submit.mjs` now classifies a refusal instead of treating every non-2xx alike, in
+one exported function (`shouldRetry`, asserted by `submit.test.mjs`):
+
+| | retried | why |
+| --- | --- | --- |
+| 429, 500, 502, 503, 504 | yes, on an idempotent method | Apple never reached a decision |
+| no response at all | yes, on an idempotent method | the request did not arrive |
+| 409, 401, 422, any other 4xx | **no** | Apple is answering; retrying hides what it said |
+| anything on a **POST** | **no** | a 500 leaves it unknown whether the thing was created |
+
+The POST rule is the one that matters. `POST /v1/reviewSubmissions` retried after a 500 would make a
+SECOND review submission; those calls are protected differently, by asking what already exists
+before creating anything.
+
+`ios.yml`'s TestFlight upload now reads `ITMS-4238 / Redundant Binary Upload` as success. The build
+number is derived from the version, so a re-run uploads the same `CFBundleVersion`; without this,
+"Re-run failed jobs" - the recovery every comment in the release chain points at - died on the
+upload, several steps before the request that had actually failed. Narrow on purpose: every other
+altool failure, a validation rejection included, still fails the step.
+
 ## iOS specifics
 
 ### Notification Service Extension (NSE)

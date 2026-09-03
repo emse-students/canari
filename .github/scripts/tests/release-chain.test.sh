@@ -494,6 +494,45 @@ else
   fail 'the preflight no longer checks the release notes - Apple would refuse the submission at the END of a release, after the other store had already shipped'
 fi
 
+printf '\na failed release arm can be re-run, which is the recovery every comment points at\n'
+# =================================================================================================
+# THE CASE, 2026-09-03. `v0.16.1` failed on the LAST request of the App Store chain - the build
+# uploaded, the version created, the notes written, and the submission in fact SUBMITTED, Apple
+# having lost the response rather than refused the write. A red job over a shipped release; and the
+# documented recovery, "Re-run failed jobs", could not even be attempted: the build number is
+# derived from the version, so the re-run would upload the same CFBundleVersion and die on Apple's
+# `ITMS-4238 Redundant Binary Upload` several steps before the one that needed retrying. A recovery
+# door every comment in this chain points at, and nobody had opened.
+if grep -qE 'ITMS-4238\|Redundant Binary Upload' "$WF/ios.yml"; then
+  pass 'a build Apple already holds is this step postcondition, not its failure'
+else
+  fail 'ios.yml treats a redundant upload as a failure - "Re-run failed jobs" cannot reach the submission step'
+fi
+
+# AND THE NARROWNESS IS THE POINT. Every other altool failure must still fail the step; a check
+# that swallowed any error mentioning the build would launder a validation rejection into green.
+if grep -qE 'UPLOAD FAILED\|Error Domain=\|VALIDATION_ERROR' "$WF/ios.yml"; then
+  pass 'and every other altool failure still fails the step'
+else
+  fail 'ios.yml no longer reads altool own failure markers - a rejected upload would report success'
+fi
+
+# THE OTHER HALF OF THE SAME INCIDENT: the 500 itself. `submit.mjs` retries what Apple never
+# answered, and NEVER retries a POST - a 500 there leaves it unknown whether the review submission
+# was created, and a retry would quietly make a second one.
+SUBMIT="$HERE/../../../tools/app-store/submit.mjs"
+if grep -q 'export function shouldRetry' "$SUBMIT"; then
+  pass 'submit.mjs classifies a refusal as an answer or as a failure to answer'
+else
+  fail 'submit.mjs has no retry policy - a 500 from Apple loses the whole submission again'
+fi
+
+if grep -qE "IDEMPOTENT_METHODS = new Set\(\['GET', 'HEAD', 'PATCH', 'PUT', 'DELETE'\]\)" "$SUBMIT"; then
+  pass 'and POST is not in the idempotent set, so a 500 there is never retried'
+else
+  fail 'submit.mjs would retry a POST - a 500 on POST /reviewSubmissions could create a second submission'
+fi
+
 printf '\nthe dependency ceiling is a CHECK, and it is binding\n'
 # =================================================================================================
 # WHAT THIS REPLACES, AND WHY IT HAD TO BECOME A CHECK. Until 2026-09-03 the ceiling was asked only
