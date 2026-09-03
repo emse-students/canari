@@ -83,6 +83,16 @@ expect "a 503 is NOT a finding - a pull request is not walled by npm's downtime"
 expect "the SAME 503 IS a failure for the nightly pass" 1 1 \
   "$OUTAGE_503" REGISTRY_OUTAGE_IS_FAILURE=true
 
+# THE SAME OUTAGE, WORDED BY A DIFFERENT BUN. The portal runs bun 1.3.8 and Canari runs 1.4.0, and on
+# the evening of 2026-09-03 the same npm 503 produced two different lines. The classifier knew only
+# the first and correctly reported the second as a finding - loudly, which is how it got fixed. Both
+# shapes are asserted here so a repository's bun version stops being able to decide the verdict.
+expect "bun 1.3.8's wording of the same outage" 2 1 \
+  'error: audit request failed (status 503)' REGISTRY_OUTAGE_IS_FAILURE=false
+
+expect "and bun 1.3.8's wording is a failure for the nightly pass too" 1 1 \
+  'error: audit request failed (status 503)' REGISTRY_OUTAGE_IS_FAILURE=true
+
 expect "the policy defaults to tolerating an outage when nobody sets it" 2 1 \
   "$OUTAGE_503" IGNORED=1
 

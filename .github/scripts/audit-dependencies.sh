@@ -59,9 +59,18 @@ fi
 ATTEMPTS=3
 BACKOFF_BASE_S=20
 
-# The registry did not answer. Narrow on purpose - see the header. `- [45]0[0-9]$` is bun's shape for
-# an HTTP failure against the advisory endpoint; the named errors are its transport failures.
-TRANSPORT_RE='(registry\.npmjs\.org.* - [45][0-9][0-9]$|ConnectionRefused|ConnectionClosed|ConnectionTimedOut|SocketNotConnected|FailedToOpenSocket|DNSResolveFailed|error: (Timeout|socket hang up))'
+# The registry did not answer. Narrow on purpose - see the header.
+#
+# THE WORDING DIFFERS BY BUN VERSION, AND THAT IS NOT HYPOTHETICAL. The same npm 503 on the same
+# evening produced two different lines in two repositories:
+#
+#     bun 1.4.0   error: POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - 503
+#     bun 1.3.8   error: audit request failed (status 503)
+#
+# The second was met by a classifier that knew only the first, and it did exactly what it should:
+# reported a finding, went red, and was fixed here. That is the whole argument for failing CLOSED on
+# an unrecognised failure - the alternative silently stops auditing and reports success for ever.
+TRANSPORT_RE='(registry\.npmjs\.org.* - [45][0-9][0-9]$|audit request failed \(status [45][0-9][0-9]\)|ConnectionRefused|ConnectionClosed|ConnectionTimedOut|SocketNotConnected|FailedToOpenSocket|DNSResolveFailed|error: (Timeout|socket hang up))'
 
 for attempt in $(seq 1 "$ATTEMPTS"); do
   echo "--- bun audit in $DIR (attempt $attempt/$ATTEMPTS)"

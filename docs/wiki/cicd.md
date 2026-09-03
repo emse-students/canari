@@ -1256,10 +1256,19 @@ three exit codes rather than two:
   half, a tolerated outage quietly becomes a tree nobody has audited in a week, with only warnings
   in closed logs to show for it.
 
-**The unknown case fails CLOSED.** Only a narrow list of recognised transport failures is classified
-as silence; anything else is a finding. The day bun rewords its errors, the gate goes red and
-somebody fixes the pattern - a classifier that fails open on its own blind spot stops auditing and
-reports success for ever. `audit-dependencies.test.sh` asserts that direction explicitly, alongside
+**The unknown case fails CLOSED, and that stopped being hypothetical within the hour.** Only a
+narrow list of recognised transport failures is classified as silence; anything else is a finding.
+**The wording differs by bun version** - the same npm 503, the same evening, in two repositories:
+
+| bun | the line |
+| --- | --- |
+| 1.4.0 | `error: POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - 503` |
+| 1.3.8 | `error: audit request failed (status 503)` |
+
+The portal met the second with a classifier that knew only the first, and it did exactly what it
+should: reported a finding, went red, and was fixed. Both shapes are now asserted, so a repository's
+bun version stops being able to decide the verdict. *A classifier that fails open on its own blind
+spot stops auditing and reports success for ever.* `audit-dependencies.test.sh` asserts that direction explicitly, alongside
 both sides of the distinction, the policy flip, and the fact that the `--ignore=` flags the one
 suppressed advisory rests on still reach the tool.
 
