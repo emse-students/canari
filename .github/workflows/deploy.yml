@@ -56,7 +56,7 @@ on:
 #
 # WHAT MAKES A CANCELLED PENDING RUN HARMLESS, which is the non-obvious half: GitHub keeps at most
 # one run waiting per group and cancels the rest while they are still pending. That would lose work
-# if `detect-changed-services` measured against the previous RUN - but it measures against the
+# if `enumerate-services` measured against the previous RUN - but it measures against the
 # previous RELEASE of the same kind, which is what the target estate actually received, so the
 # surviving run rebuilds everything the dropped ones would have.
 concurrency:
@@ -85,8 +85,8 @@ jobs:
   # second checkout - and where the two store chains read the same answer instead of each
   # deriving its own. `inputs.sha` is therefore the one commit this whole run builds.
 
-  detect-changed-services:
-    name: Detect Changed Services
+  enumerate-services:
+    name: Enumerate the services to build
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.detect.outputs.matrix }}
@@ -95,18 +95,12 @@ jobs:
       any_changed: ${{ steps.detect.outputs.any_changed }}
       frontend_changed: ${{ steps.detect.outputs.frontend_changed }}
     steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ inputs.sha }}
-          fetch-depth: 0
-
-      - name: Detect modified services
+      # NO CHECKOUT, NO HISTORY, NO TOKEN - all three existed for the diff that was deleted on
+      # 2026-09-03. This job reads no file and calls no API: the service list and the dockerfile
+      # map are inline below, and a `fetch-depth: 0` was a full clone of the repository, on every
+      # release, to answer a question nobody asks any more.
+      - name: Name every service, and the dockerfile that builds it
         id: detect
-        env:
-          # `gh api` reads the release list below to find the baseline. Only the default token is
-          # needed - releases are public metadata on a public repository - but `gh` refuses to run
-          # without one being named.
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
@@ -132,155 +126,55 @@ jobs:
             media-service
           )
 
-          CHANGED_SERVICES=()
-
-          add_service() {
-            local service="$1"
-            for existing in "${CHANGED_SERVICES[@]}"; do
-              if [ "$existing" = "$service" ]; then
-                return 0
-              fi
-            done
-            CHANGED_SERVICES+=("$service")
-          }
-
-          HEAD_SHA="$(git rev-parse HEAD)"
-
-          # WHAT THE BASELINE MUST BE, NOW THAT A DEPLOY HAPPENS AT THE BUMP.
+          # EVERY SERVICE, EVERY RELEASE - THE DIFF WAS DELETED ON 2026-09-03 (user: *"On pourrait
+          # retirer ce qui est du detect changed services pour tout recompiler, de toute facon ce
+          # qui prend du temps c'est android et iOS"*).
           #
-          # The question is "which services need rebuilding", and the only honest answer is measured
-          # against what the TARGET ESTATE is actually running. Until 2026-09-03 that was a
-          # `prod-deployed` tag the deploy job wrote on success - deleted with the push trigger,
-          # because a release now says the same thing and says it in one place. **The user decided
-          # this deletion knowing what it costs: after an emergency push straight to `main`, nothing
-          # records which commit production is serving.**
+          # MEASURED ON `v0.16.1-alpha.1`, which is what settles it rather than the argument:
           #
-          # THE BASELINE IS THE PREVIOUS RELEASE OF THE SAME KIND, and "the same kind" is not a
-          # nicety - it is forced by the moving image tag each estate reads. Production deploys
-          # `:latest`, which only a stable release moves; dev deploys `:dev`, which only a
-          # pre-release moves. A service this run does not rebuild keeps whatever that estate's tag
-          # already points at, so the honest question is "what changed since the last release THAT
-          # ESTATE received" - the previous stable for production, the previous PRE-RELEASE for dev.
-          # Taking "either kind" for dev would skip rebuilding a service changed since the last
-          # alpha but not since the intervening stable, and dev would then run an image months old
-          # under a tag claiming otherwise.
+          #     14min  Android                    }
+          #     14min  iOS                        } concurrent
+          #      4min  the slowest docker image   } all concurrent, and therefore entirely
+          #      2min  the frontend build         } inside the 14-minute shadow
+          #      1min  the dev deploy
+          #      0min  this job
           #
-          # Measuring against the previous RUN instead would let a service whose image never shipped
-          # go unrevisited for ever - the next release touches other paths, the detector answers
-          # "media-service unchanged", and a 404 stays live until somebody happens to edit that
-          # directory again. That is exactly what happened on 11 August.
+          # The detection saved nothing a release actually waits for. What it COST was a second
+          # thing that had to be right: a baseline resolved from the previous release of the same
+          # kind, a `git diff` against it, and a hand-written mapping from changed path to service -
+          # a mapping that omits a service silently, and then ships a stale image with nothing
+          # saying so. An optimisation whose failure mode is invisible, buying zero wall clock.
           #
-          # The ORDER comes from the API, not from `git tag --sort=v:refname`: git's version sort
-          # places `v1.0.0-alpha` AFTER `v1.0.0` unless `versionsort.suffix` is configured, which is
-          # the wrong way round for every pre-release and would silently pick the wrong baseline.
-          # `gh api` returns releases newest-first by creation, which is the order they deployed in.
+          # AND IT WAS LOAD-BEARING FOR THE CONCURRENCY PROPERTY, which is why deleting it is a
+          # simplification and not a loss. This workflow QUEUES rather than cancels, and GitHub
+          # keeps at most one waiting run per group and drops the rest; what made those dropped runs
+          # harmless was precisely that this job measured against the previous RELEASE rather than
+          # the previous RUN, so the survivor rebuilt everything they would have. Building
+          # everything makes that property trivially true instead of true-by-argument.
           #
-          # WITH NO PREVIOUS RELEASE - the first one ever, or the first alpha - everything is built.
-          # Over-building is slow; under-building ships an estate referencing an image that does not
-          # exist, and there is no version of this in which guessing small is the safe direction.
-          BEFORE_SHA=""
-          if [ "${{ inputs.prerelease }}" = "true" ]; then
-            BASELINE_FILTER='.[] | select(.draft == false and .prerelease == true)'
-            BASELINE_KIND="pre-release"
-          else
-            BASELINE_FILTER='.[] | select(.draft == false and .prerelease == false)'
-            BASELINE_KIND="stable release"
-          fi
+          # WHAT IS KEPT IS THE LIST AND THE DOCKERFILE MAP, because they exist nowhere else and
+          # `tests/compose-wiring.test.sh` reads the compose file for the other half of the same
+          # question.
+          # `any_changed` and `frontend_changed` are CONSTANTS now. They are kept rather than
+          # deleted because every gate on the production deploy reads them, and removing them
+          # means touching those gates - the same surgery as making production wait for the
+          # store arms. Those go together, in one change, or not at all.
 
-          CURRENT_TAG="v${{ inputs.version }}"
-          PREVIOUS_TAG="$(gh api "repos/${{ github.repository }}/releases?per_page=100" \
-            --jq "[${BASELINE_FILTER} | .tag_name] | map(select(. != \"${CURRENT_TAG}\")) | .[0] // empty")"
-
-          if [ -n "$PREVIOUS_TAG" ]; then
-            git fetch --force --tags origin "refs/tags/${PREVIOUS_TAG}:refs/tags/${PREVIOUS_TAG}" 2>/dev/null || true
-            if git rev-parse --verify -q "${PREVIOUS_TAG}^{commit}" >/dev/null; then
-              BEFORE_SHA="$(git rev-parse "${PREVIOUS_TAG}^{commit}")"
-              echo "Baseline: previous ${BASELINE_KIND} ${PREVIOUS_TAG} = ${BEFORE_SHA}"
-            else
-              echo "::warning::${PREVIOUS_TAG} names no commit in this checkout; building everything."
-            fi
-          else
-            echo "No previous ${BASELINE_KIND}; building everything."
-          fi
-
-          if [ -z "$BEFORE_SHA" ]; then
-            CHANGED_SERVICES=("${ALL_SERVICES[@]}")
-          else
-            CHANGED_FILES="$(git diff --name-only "$BEFORE_SHA" "$HEAD_SHA")"
-
-            echo "Changed files between $BEFORE_SHA and $HEAD_SHA:"
-            if [ -n "$CHANGED_FILES" ]; then
-              echo "$CHANGED_FILES"
-            else
-              echo "(none)"
-            fi
-
-            while IFS= read -r file; do
-              [ -z "$file" ] && continue
-
-              case "$file" in
-                apps/core-service/*|infrastructure/local/Dockerfile.core-service)
-                  add_service core-service
-                  ;;
-                apps/social-service/*|infrastructure/local/Dockerfile.social-service)
-                  add_service social-service
-                  ;;
-                apps/chat-gateway/*|libs/proto/*|infrastructure/local/Dockerfile.chat-gateway)
-                  add_service chat-gateway
-                  ;;
-                apps/call-service/*|infrastructure/local/Dockerfile.call-service)
-                  add_service call-service
-                  ;;
-                apps/chat-delivery-service/*|infrastructure/local/Dockerfile.chat-delivery-service)
-                  add_service chat-delivery-service
-                  ;;
-                frontend/*|infrastructure/local/Dockerfile.frontend|infrastructure/local/Dockerfile.frontend-ssr)
-                  add_service frontend
-                  add_service frontend-ssr
-                  ;;
-                apps/media-service/*|infrastructure/local/Dockerfile.media-service)
-                  add_service media-service
-                  ;;
-              esac
-            done <<< "$CHANGED_FILES"
-
-            # THE VERSION MOVED, ALWAYS - that is what a release IS - so these three are rebuilt
-            # unconditionally rather than by reading the diff. core-service is what `/api/version`
-            # answers with and what `minClientVersion` is compared against; the frontend EMBEDS its
-            # version at build time (`vite.config.js` defines VITE_APP_VERSION from the manifest),
-            # so an un-rebuilt bundle keeps announcing the previous release for ever. This used to
-            # be a "were the manifests the only change" test, which was true of a bump commit
-            # pushed on its own and is false of a diff that spans a whole release.
-            echo "A release always moves the version - forcing core-service and frontend rebuilds."
-            add_service core-service
-            add_service frontend
-            add_service frontend-ssr
-          fi
-
-          if [ ${#CHANGED_SERVICES[@]} -eq 0 ]; then
-            MATRIX='{"include":[]}'
-            SERVICES_CSV=""
-            SERVICES_ARGS=""
-            FRONTEND_CHANGED="false"
-            ANY_CHANGED="false"
-            echo "No image-producing service changes detected."
-          else
-            MATRIX_ITEMS=""
-            FRONTEND_CHANGED="false"
-            for service in "${CHANGED_SERVICES[@]}"; do
-              dockerfile="${SERVICE_DOCKERFILE[$service]}"
-              MATRIX_ITEMS+="{\"name\":\"$service\",\"context\":\".\",\"dockerfile\":\"$dockerfile\"},"
-              case "$service" in
-                frontend|frontend-ssr) FRONTEND_CHANGED="true" ;;
-              esac
-            done
-            MATRIX_ITEMS="${MATRIX_ITEMS%,}"
-            MATRIX="{\"include\":[${MATRIX_ITEMS}]}"
-            SERVICES_CSV="$(IFS=,; echo "${CHANGED_SERVICES[*]}")"
-            SERVICES_ARGS="$(IFS=' '; echo "${CHANGED_SERVICES[*]}")"
-            ANY_CHANGED="true"
-            echo "Services selected for image rebuild: ${SERVICES_ARGS}"
-          fi
+          MATRIX_ITEMS=""
+          FRONTEND_CHANGED="false"
+          for service in "${ALL_SERVICES[@]}"; do
+            dockerfile="${SERVICE_DOCKERFILE[$service]}"
+            MATRIX_ITEMS+="{\"name\":\"$service\",\"context\":\".\",\"dockerfile\":\"$dockerfile\"},"
+            case "$service" in
+              frontend|frontend-ssr) FRONTEND_CHANGED="true" ;;
+            esac
+          done
+          MATRIX_ITEMS="${MATRIX_ITEMS%,}"
+          MATRIX="{\"include\":[${MATRIX_ITEMS}]}"
+          SERVICES_CSV="$(IFS=,; echo "${ALL_SERVICES[*]}")"
+          SERVICES_ARGS="$(IFS=' '; echo "${ALL_SERVICES[*]}")"
+          ANY_CHANGED="true"
+          echo "Services selected for image rebuild: ${SERVICES_ARGS}"
 
           {
             echo "matrix=$MATRIX"
@@ -303,8 +197,8 @@ jobs:
   # production's image to dev would point dev's browser at production.
   build-frontend:
     name: Build Frontend
-    needs: detect-changed-services
-    if: needs.detect-changed-services.outputs.frontend_changed == 'true'
+    needs: enumerate-services
+    if: needs.enumerate-services.outputs.frontend_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -485,11 +379,11 @@ jobs:
   build-docker-images:
     name: Build & Push Docker Images
     runs-on: ubuntu-latest
-    needs: [detect-changed-services, build-frontend]
+    needs: [enumerate-services, build-frontend]
     if: |
       always() &&
-      needs.detect-changed-services.result == 'success' &&
-      needs.detect-changed-services.outputs.any_changed == 'true' &&
+      needs.enumerate-services.result == 'success' &&
+      needs.enumerate-services.outputs.any_changed == 'true' &&
       (needs.build-frontend.result == 'success' || needs.build-frontend.result == 'skipped')
     permissions:
       contents: read
@@ -501,7 +395,7 @@ jobs:
       # revisited it. `POST /api/media/touch` answered 404 in production for a day: the retention
       # clock the endpoint exists to extend was silently dead, on a service whose own build was fine.
       fail-fast: false
-      matrix: ${{ fromJSON(needs.detect-changed-services.outputs.matrix) }}
+      matrix: ${{ fromJSON(needs.enumerate-services.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -587,7 +481,7 @@ jobs:
   deploy-dev:
     name: Deploy to dev.canari-emse.fr
     runs-on: self-hosted
-    needs: [detect-changed-services, build-frontend, build-docker-images]
+    needs: [enumerate-services, build-frontend, build-docker-images]
     # `build-frontend` IS IN THIS LIST BECAUSE ITS FAILURE WAS LAUNDERED INTO A SKIP, measured
     # 2026-09-02. A `skipped` image job means "the frontend did not change, the existing images
     # stand" - but it ALSO means "the build that feeds me failed", because a job whose dependency
@@ -599,7 +493,7 @@ jobs:
       always() &&
       vars.DEV_ENVIRONMENT_ENABLED == 'true' &&
       inputs.prerelease == 'true' &&
-      needs.detect-changed-services.result == 'success' &&
+      needs.enumerate-services.result == 'success' &&
       (needs.build-frontend.result == 'success' || needs.build-frontend.result == 'skipped') &&
       (needs.build-docker-images.result == 'success' || needs.build-docker-images.result == 'skipped')
     permissions:
@@ -702,7 +596,7 @@ jobs:
           GHCR_USERNAME: ${{ github.actor }}
           GHCR_TOKEN: ${{ github.token }}
           FRONTEND_TAG: dev
-          CHANGED_SERVICES: ${{ needs.detect-changed-services.outputs.services_args }}
+          CHANGED_SERVICES: ${{ needs.enumerate-services.outputs.services_args }}
           FRONTEND_IMAGES_BUILT: ${{ needs.build-docker-images.result }}
         run: |
           set -euo pipefail
@@ -756,7 +650,7 @@ jobs:
   deploy-to-server:
     name: Deploy to Production Server
     runs-on: self-hosted
-    needs: [detect-changed-services, build-frontend, build-docker-images]
+    needs: [enumerate-services, build-frontend, build-docker-images]
     # A STABLE RELEASE, AND NOTHING ELSE, REACHES THIS JOB. `prerelease == 'false'` is the whole
     # gate: an alpha stops at `deploy-dev` above and a push to `main` no longer starts this workflow
     # at all. There is no CI condition left here either - CI runs on the pull request and again at
@@ -770,7 +664,7 @@ jobs:
     if: |
       always() &&
       inputs.prerelease == 'false' &&
-      needs.detect-changed-services.result == 'success' &&
+      needs.enumerate-services.result == 'success' &&
       (needs.build-frontend.result == 'success' || needs.build-frontend.result == 'skipped') &&
       (needs.build-docker-images.result == 'success' || needs.build-docker-images.result == 'skipped')
     permissions:
@@ -1185,7 +1079,7 @@ jobs:
         env:
           REGISTRY: ${{ env.REGISTRY }}
           IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}
-          CHANGED_SERVICES: ${{ needs.detect-changed-services.outputs.services_args }}
+          CHANGED_SERVICES: ${{ needs.enumerate-services.outputs.services_args }}
         run: |
           if [ -n "$CHANGED_SERVICES" ]; then
             echo "🔄 Pulling changed Docker images: $CHANGED_SERVICES"
