@@ -40,8 +40,15 @@ describe('VersionService', () => {
     const out = await service.getVersion();
 
     expect(out.build).toBe('dev.abc1234');
-    // The version must stay a bare semver: anything appended to it becomes a release tag downstream.
-    expect(out.version).toMatch(/^\d+\.\d+\.\d+$/);
+    // THE INVARIANT IS THAT `version` NAMES A RELEASE TAG THAT EXISTS, and a pre-release suffix
+    // satisfies it while BUILD METADATA does not. `releaseTag` turns this field into `vX.Y.Z`, so a
+    // `version` of `0.14.15+dev.abc1234` offered a download from `v0.14.15+dev.abc1234` - a 404,
+    // which is the defect this test was written against. `0.15.0-alpha.1` IS a real release, tagged
+    // by the deploy-at-bump chain, so `/^\d+\.\d+\.\d+$/` was the assertion being wider than its
+    // reason: it forbade the legitimate shape along with the broken one. What must never appear is
+    // the `+`.
+    expect(out.version).toMatch(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
+    expect(out.version).not.toContain('+');
     expect(out.version).not.toContain('dev');
   });
 
