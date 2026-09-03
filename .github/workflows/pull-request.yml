@@ -52,13 +52,12 @@ on:
   # tested the merged COMBINATION; the sweep is gone and every merge is now made by the App, whose
   # push does raise the event.
   workflow_dispatch:
-  workflow_call:
-    inputs:
-      git_ref:
-        description: 'Explicit ref to checkout (e.g. main after automated version bump)'
-        type: string
-        required: false
-        default: ''
+  # NO `workflow_call`, DELETED 2026-09-04 WITH ITS `git_ref` INPUT: nothing called it. It was the
+  # sweep's way of testing a merged combination its `GITHUB_TOKEN` merge had raised no `push` for,
+  # and every checkout below carried a `inputs.git_ref != '' && inputs.git_ref || github.sha` that
+  # resolved to `github.sha` on every real run this repository has ever had. A trigger nothing uses
+  # is a claim the file makes about itself that is not true, and six expressions were written around
+  # it.
 
 env:
   CARGO_TERM_COLOR: always
@@ -80,7 +79,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.git_ref != '' && inputs.git_ref || github.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Build test matrices
@@ -312,7 +311,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.git_ref != '' && inputs.git_ref || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Cache Cargo registry
         uses: actions/cache@v6
@@ -560,7 +559,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.git_ref != '' && inputs.git_ref || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -658,7 +657,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.git_ref != '' && inputs.git_ref || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -740,7 +739,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.git_ref != '' && inputs.git_ref || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
@@ -766,7 +765,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.git_ref != '' && inputs.git_ref || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Run CI script self-tests
         run: make test-ci-scripts
