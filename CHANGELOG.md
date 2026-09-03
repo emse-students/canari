@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-03
+
 _This section covers everything released since `0.14.0`, not only `0.15.0`'s own changes: the
 fourteen releases in between were published while `CHANGELOG.md` was the one release-bearing file
 the version bump never touched, so their entries accumulated here. The bump promotes this heading
