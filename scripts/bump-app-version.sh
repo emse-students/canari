@@ -278,12 +278,22 @@ promote_changelog() {
   fi
 
   # Does the section actually say anything? An empty one promoted to a version heading claims a
-  # release documented nothing, which reads as a fact rather than as the gap it is. Warn and leave
-  # it: a release with no entries is something a human should see, not something to tidy away.
+  # release documented nothing, which reads as a fact rather than as the gap it is. So it is not
+  # promoted - and it is not merely printed either.
+  #
+  # A LINE ON STDERR IN A RUNNER LOG IS NOT A REPORT. This arm is REACHED in the ordinary course of
+  # things: every release leaves `[Unreleased]` empty behind it, so the next release finds it empty
+  # unless somebody wrote an entry, and the only sign would be one line in a log nobody opens. It
+  # must not FAIL the release - a release is what ships a fix, and blocking one over a documentation
+  # gap is the wrong trade - so under GitHub Actions it emits a `::warning::`, which puts it on the
+  # run's summary page where the person who published the release will see it.
   local body
   body="$(awk '/^## \[Unreleased\]/ { inside = 1; next } inside && /^## \[/ { exit } inside { print }' "$file" | tr -d '[:space:]')"
   if [ -z "$body" ]; then
     echo "  CHANGELOG     [Unreleased] is EMPTY - not promoting it to [${version}]" >&2
+    if [ -n "${GITHUB_ACTIONS:-}" ]; then
+      echo "::warning file=CHANGELOG.md::Released ${version} with an EMPTY [Unreleased] section - this release documents nothing. Add the entries and the next release promotes them."
+    fi
     return
   fi
 

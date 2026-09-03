@@ -272,9 +272,16 @@ test in `.github/scripts/tests/bump-staging.test.sh`:
   follows days later publishing an empty one — the same drift, inverted.
 - **IDEMPOTENT**, because a re-run is ordinary — the workflow is hand-dispatchable and a release can
   be re-published. A heading for that version already present means the work is done.
-- **IT REFUSES TO PROMOTE AN EMPTY SECTION**, and says so on stderr rather than tidying it away. A
+- **IT REFUSES TO PROMOTE AN EMPTY SECTION, and emits a `::warning::` rather than a log line.** A
   version heading with nothing under it reads as a fact ("this release documented nothing") instead
-  of as the gap it is.
+  of as the gap it is. **This arm is reached in the ORDINARY course of things** - every release
+  leaves `[Unreleased]` empty behind it, so the next one finds it empty unless somebody wrote an
+  entry, and a line on stderr in a runner log is not a report. It must not FAIL the release either
+  (a release is what ships a fix; blocking one over a documentation gap is the wrong trade), so
+  under GitHub Actions it annotates the run summary where the person who published the release will
+  see it. Its own test found this: `v0.15.0` left `[Unreleased]` empty, three assertions written
+  against the repository's changelog started failing, and the mechanism was behaving exactly as
+  designed - which is why the suite now writes its own fixture and asserts BOTH arms.
 
 **It lives in the SCRIPT and not in the workflow**, so `git add -u` picks it up with everything else
 and the notes land in the bump's own commit. A workflow step doing it after the commit would need a
