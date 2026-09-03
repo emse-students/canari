@@ -890,13 +890,20 @@ jobs:
         run: |
           set -euo pipefail
 
-          # `--squash` because that is what the ruleset allows and what the history uses.
-          # `--delete-branch` IS A NO-OP HERE and is kept only as a statement of intent: `gh`
-          # performs the deletion itself after a merge IT made, and with `--auto` there is no merge
-          # to follow - it arms and exits. What actually deletes the branch is the repository's
-          # `delete_branch_on_merge`, set to true on 2026-09-03 after #329 and #330 both left their
-          # branches behind and the comment here claimed otherwise.
-          if gh pr merge "$PR" --auto --squash --delete-branch --repo "${{ github.repository }}"; then
+          # `--squash` EXPLICITLY, because the repository permits all three methods - the merge
+          # method is decided here rather than by whatever the settings happen to allow, which is
+          # why the history is uniform.
+          #
+          # THERE IS NO `--delete-branch`, AND THAT IS THE FIX RATHER THAN AN OMISSION. It was
+          # passed until 2026-09-03 and did nothing at all: `gh` performs the deletion itself after
+          # a merge IT made, and `--auto` makes no merge - it arms and exits. #329 and #330 both
+          # left their branches behind while the flag sat in this command appearing to remove them,
+          # which is the shape of a mechanism believed because it is written down. What deletes the
+          # branch is the repository's own `delete_branch_on_merge`, and `--auto` needs
+          # `allow_auto_merge` before any of this works at all - both are repository settings, both
+          # are invisible in this tree, and both are inventoried in `infrastructure/MIGRATION.md`
+          # section 3bis alongside the ruleset.
+          if gh pr merge "$PR" --auto --squash --repo "${{ github.repository }}"; then
             echo "Auto-merge armed. GitHub will squash-merge #$PR as soon as CI passed goes green."
             exit 0
           fi

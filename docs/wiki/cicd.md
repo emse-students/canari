@@ -30,8 +30,10 @@ on its OWN reading of "green" is a second opinion about which jobs matter. Measu
 for the ten minutes its suite took, and merged the moment `CI passed` concluded.
 
 **AND THEN STEP 6, WHICH IS WHY A RELEASE IS POSSIBLE AT ALL.** GitHub squash-merges, deletes the
-branch (`delete_branch_on_merge`, set true on 2026-09-03 - `--delete-branch` is a NO-OP alongside
-`--auto`, since `gh` performs the deletion after a merge IT made and there is none to follow), and
+branch (`delete_branch_on_merge`, set true on 2026-09-03; `--delete-branch` was passed until then
+and did nothing, `gh` performing the deletion after a merge IT made and `--auto` making none, so
+the flag is gone and the setting is inventoried in `infrastructure/MIGRATION.md` section 3bis with
+`allow_auto_merge`, without which nothing arms at all), and
 the merge raises a `push`, so this same file runs again on the merged `main`. That run is what puts
 the `CI passed` check ON the commit of `main`, and `release-preflight.sh`'s third gate reads exactly
 that check. An App token raises that event; `GITHUB_TOKEN` does not - so arming with the default

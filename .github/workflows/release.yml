@@ -125,6 +125,7 @@ jobs:
             # version is the only statement made. That is the pre-2026-09-03 behaviour, kept for
             # this path alone.
             EVENT_SAYS=''
+            AGREEMENT='not asked of a dispatch - it carries no checkbox, so the version is the only statement made'
           else
             RAW='${{ github.event.release.tag_name }}'
             REF="$RAW"
@@ -163,12 +164,14 @@ jobs:
                 echo "::error::This release is flagged PRE-RELEASE but its version is $VERSION, which has no pre-release suffix. The two must agree: either untick 'Set as a pre-release', or name it ${VERSION}-alpha.1."
                 exit 1
               fi
+              AGREEMENT="the checkbox says PRE-RELEASE and $VERSION carries a suffix - they agree"
               ;;
             released)
               if [ "$PRERELEASE" != 'false' ]; then
                 echo "::error::This release is NOT flagged as a pre-release but its version is $VERSION, whose suffix makes it one. The two must agree: either tick 'Set as a pre-release', or name it ${VERSION%%-*}."
                 exit 1
               fi
+              AGREEMENT="the checkbox is unticked and $VERSION carries no suffix - they agree"
               ;;
             *)
               echo "::error::Unknown release action '$EVENT_SAYS'. This workflow understands 'prereleased' and 'released' only, and must not guess which estate to deploy."
@@ -184,6 +187,7 @@ jobs:
             echo "target_sha=$TARGET_SHA"
           } >> "$GITHUB_OUTPUT"
           echo "Releasing $VERSION (prerelease=$PRERELEASE) from ${TARGET_SHA:0:8}"
+          echo "  ok      $AGREEMENT"
 
       - name: Run the gates
         env:

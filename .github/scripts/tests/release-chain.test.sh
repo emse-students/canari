@@ -269,6 +269,26 @@ for phrase in 'flagged PRE-RELEASE but its version' 'NOT flagged as a pre-releas
   fi
 done
 
+# A CORRECT CHECK THAT PRINTS NOTHING CANNOT BE TOLD FROM ONE THAT NEVER RAN. Measured on the
+# `v0.16.0-alpha.2` run: the preflight log carried an `ok` line for each of the five gates and
+# NOTHING for this cross-check, which refuses loudly and passed in silence - so a reader of a green
+# run had no way to tell the two statements had been compared rather than skipped by a fall-through.
+if grep -qE '^ +AGREEMENT=' "$RY" && grep -qE '^ +echo "  ok +.AGREEMENT"' "$RY"; then
+  pass 'the cross-check REPORTS its verdict, so a green run shows that it ran'
+else
+  fail 'the cross-check produces no output when it passes - indistinguishable from a check that was skipped, which is what the report rule exists to forbid'
+fi
+
+# AND EVERY PASSING ARM MUST SET IT. The report reads the variable under `set -u`, so an arm that
+# forgets it turns a perfectly good release into an unbound-variable failure on the step's last
+# line - after the version has been resolved and before anything has been built.
+AGREEMENT_ARMS="$(grep -cE '^ +AGREEMENT=' "$RY")"
+if [ "$AGREEMENT_ARMS" -eq 3 ]; then
+  pass 'all three passing arms set it - dispatch, prereleased, released'
+else
+  fail "$AGREEMENT_ARMS arm(s) set AGREEMENT, expected 3 - an arm that does not set it fails the step under set -u instead of releasing"
+fi
+
 printf '\nno step in an arm is gated on an event that can never happen there\n'
 # =================================================================================================
 # THE DEFECT THIS EXISTS FOR, AND IT WAS MINE. Collapsing the chain into one run made four steps

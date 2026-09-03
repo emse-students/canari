@@ -70,15 +70,38 @@ case "$KIND" in
 esac
 
 # -- 2 -------------------------------------------------------------------------------------------
-step 'the released commit is on main'
+step 'the released commit is on main, and the bump can still push'
 # base = the released commit, head = main. `identical` or `ahead` both mean main contains it.
 ON_MAIN="$(gh api "repos/$REPO/compare/$TARGET_SHA...main" --jq '.status' 2>/dev/null)" || ON_MAIN=""
 case "$ON_MAIN" in
-  identical)
-    ok 'it is main HEAD'
-    ;;
-  ahead)
-    ok 'main contains it'
+  identical|ahead)
+    # THE SECOND HALF OF THIS GATE, and it exists because the first half passing was not enough.
+    # `main` containing the commit is what "on main" means, but the bump pushes a commit built ON
+    # the released commit, and that push fast-forwards only while `main` has not moved. The
+    # released tree's own version tells the harmless no-op apart from the release that would die at
+    # its second job; the preflight has that tree checked out, so the fact is free.
+    TREE_VERSION="$(node -p "require('./frontend/package.json').version" 2>/dev/null)" || TREE_VERSION=''
+    case "$(classify_main_position "$ON_MAIN" "$TREE_VERSION" "$VERSION")" in
+      'pushable head')
+        ok 'it is main HEAD, so the bump commit fast-forwards'
+        ;;
+      'pushable noop')
+        ok "main has moved past it, but the tree already carries $VERSION - the bump writes nothing and pushes nothing"
+        ;;
+      'unpushable '*)
+        refuse "main has moved past ${TARGET_SHA:0:8}, and this release still has to bump $TREE_VERSION -> $VERSION"
+        hint 'The bump commits ON the released commit and pushes it to main, which is a fast-forward'
+        hint 'only while main still points there. Something merged after this commit, so the push'
+        hint 'would be rejected and the release would stop at its second job. Publish the release'
+        hint 'from the current main instead - or, for a stable, publish a pre-release at that commit'
+        hint 'first so dev serves it and the fourth gate is satisfied too.'
+        ;;
+      *)
+        refuse 'could not tell whether the bump would be able to push to main'
+        hint 'An undecidable answer is not permission. The released tree must state a version in'
+        hint 'frontend/package.json - it is the file that decides what kind of release this is.'
+        ;;
+    esac
     ;;
   behind|diverged)
     refuse "main does not contain ${TARGET_SHA:0:8} - the compare says $ON_MAIN"
