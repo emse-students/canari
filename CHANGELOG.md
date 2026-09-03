@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-09-03
+
 ### Changed
 
 - **The dependency ceiling is a CHECK on the pull request, so one mechanism now answers for every
