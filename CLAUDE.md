@@ -48,7 +48,7 @@
 - ASK EARLY: state assumptions explicitly. If uncertain about architecture or a bug, ASK during planning. No guessing.
 - SURGICAL EDITS: touch ONLY requested code. Map changes 1:1 to the prompt.
 - **WORK GOES THROUGH A PULL REQUEST, on a branch off `main` - since 2026-09-03, and this replaces "commit directly".** `main` carries a ruleset (id `22152902`, active): no direct push, no force-push, no delete, and one required check, `CI passed`. The loop is `git switch -c`, commit, `gh pr create`, let CI answer, `gh pr merge --squash --delete-branch`. **No approval is required** - a queue nobody drains is worse than the merge it prevented (user, 2026-08-31) - so this costs a minute and buys two things a direct push never gave: a diff somebody can read, and a CI run on the MERGED combination rather than on the branch. **Admin bypass exists and is the EMERGENCY path only**: taking it means production is broken right now, and it is written down in `CHANGELOG.md` when taken.
-- **NOTHING DEPLOYS ON A PUSH - deployment happens at the BUMP** (user, 2026-09-02: *"le deploiement de tout (production, android, ios...) se fait au bump. Pas au push sur main."*). A STABLE release `vX.Y.Z` deploys production and ships the stores; a PRE-RELEASE `vX.Y.Z-alpha.N` deploys `dev.canari-emse.fr` and feeds the store TESTER programmes; a merge to `main` deploys nothing at all and only runs CI. **So a merged fix is not a shipped fix**, and `frontend/package.json`'s version is what decides which kind a release is - a hyphen in it IS the definition of a pre-release, read that way by `cd.yml`'s `release-kind` job and by `scripts/bump-app-version.sh`. The whole model is on [workflow-migration](docs/wiki/workflow-migration.md) and [cicd](docs/wiki/cicd.md), the only copies.
+- **NOTHING DEPLOYS ON A PUSH - deployment happens at the BUMP** (user, 2026-09-02: *"le deploiement de tout (production, android, ios...) se fait au bump. Pas au push sur main."*). A STABLE release `vX.Y.Z` deploys production and ships the stores; a PRE-RELEASE `vX.Y.Z-alpha.N` deploys `dev.canari-emse.fr` and feeds the store TESTER programmes; a merge to `main` deploys nothing at all and only runs CI. **So a merged fix is not a shipped fix**, and `frontend/package.json`'s version is what decides which kind a release is - a hyphen in it IS the definition of a pre-release, read that way by `release_kind()` in `.github/scripts/lib/release-preconditions.sh` - the ONE implementation - and by `scripts/bump-app-version.sh`'s store band. **`release.yml` IS THE ONLY ENTRY POINT since 2026-09-03**: five gates, then the bump, then `deploy.yml`, `android.yml` and `ios.yml` as CALLED jobs of the same run, all building the commit the bump resolved. **A stable is refused unless dev has already served that commit, `CI passed` is green ON it, and `frontend/src-tauri/store/whats-new.txt` names that version** - production being ahead of dev is impossible, not reported. The whole model is on [workflow-migration](docs/wiki/workflow-migration.md) and [cicd](docs/wiki/cicd.md), the only copies.
 - NO FALLBACKS: never add a fallback path. Diagnose why the primary path failed and fix it there.
 - FIX, NEVER DEFER: a warning or failure you meet is yours, whether or not you caused it. "Pre-existing" is not a disposition.
 - FACE THE BLOCKAGE: fix the cause of a failing hook (`bun run format`), never stash or bypass it.
@@ -133,41 +133,52 @@ ships. **What only the USER can do is ONE table** -
 [backlog](docs/wiki/backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks), pointers
 only; never re-enumerate it here.
 
-### CANARI - THE WORKFLOW MIGRATION IS THE ACTIVE WORK (2026-09-02)
+### CANARI - THE WORKFLOW MIGRATION IS COMPLETE (WP-0 through WP-6, closed 2026-09-03)
 
-The user cancelled the two-branch model the same day it landed. **`main` is the only branch,
-production deploys at the BUMP and never at a push, work goes through pull requests, development and
-the whole test campaign move LOCAL, and `-alpha.N` pre-releases feed the store tester programmes.**
-Everything about it - the verbatim mandate, the twelve decisions that must not be relitigated, the
-measurements already taken, the single emergency path and the ordered checklist - is on
-[workflow-migration](docs/wiki/workflow-migration.md), the ONLY copy. **Read it before touching any
-workflow, hook, `.env` or campaign page**, and tick its boxes as the work lands.
+**`main` is the only branch; NOTHING deploys on a push; work goes through pull requests; a stable
+`vX.Y.Z` deploys production and ships the stores, a `-alpha.N` deploys `dev.canari-emse.fr` and
+feeds the store tester programmes; development and the whole test campaign are LOCAL.** The mandate,
+the twelve decisions that must not be relitigated, the measurements and the emergency path are on
+[workflow-migration](docs/wiki/workflow-migration.md), the ONLY copy - **read it before touching any
+workflow, hook, `.env` or campaign page.**
 
-**WP-0 THROUGH WP-4 ARE DONE (2026-09-03), AND THE FLOW NOW GOVERNS ITSELF.** A push to `main`
-deploys nothing; production and the dev estate are reached only by publishing a release, stable or
-`-alpha.N`; the whole local estate authenticates; `origin/dev` is deleted and the ruleset on `main`
-is active. **Everything from here goes through a pull request**, this chantier included - the
-exemption that let it commit directly existed only until it had built the thing that forbids it.
+**PROVEN END TO END, TWICE.** `0.15.0-alpha.1` exercised the chain against dev and the tester
+programmes; `0.15.0` then deployed PRODUCTION while dev stayed on the alpha, which is the half the
+alpha could not show - nothing leaks between the estates.
 
-**WP-6 IS DONE TOO (2026-09-03)**: the whole wiki, both READMEs, `MIGRATION.md`, the three campaign
-pages, `CHANGELOG.md` and the French user guide - which was rewritten whole rather than edited -
-now describe deploy-at-bump instead of the push model. **The one correction to carry: "a campaign
-run and a push to `main` are mutually exclusive" now names a RELEASE**, in all four places it
-appears; it becomes deletable only when WP-5 moves the rig LOCAL.
+**AND THEN THE CHAIN WAS REBUILT AS ONE RUN (2026-09-03), because publishing those two releases
+measured three defects no gate here could have found**: nothing was gated on the TESTS (the chain
+required the BUMP to succeed - a different statement - and `0.15.0` shipped on a RED run);
+production went THREE PULL REQUESTS AHEAD OF DEV, the two gestures landing on unrelated commits with
+nothing comparing them; and each arm resolved `main` for ITSELF. **`release.yml` is now the ONE
+entry point** - `preflight` -> `bump` -> `deploy` + `android` + `ios` as CALLED jobs of one run -
+and a stable is REFUSED unless dev has served that commit, `CI passed` is green ON it, and
+`whats-new.txt` names that version. `bump-version.yml` is gone; `cd.yml`/`android-release.yml`/
+`ios-release.yml` are `deploy.yml`/`android.yml`/`ios.yml`. **A green pull request now merges
+itself** (`auto-merge.yml`, App token - a `GITHUB_TOKEN` merge raises no `push`, which would then
+make gate 3 refuse every release). **iOS goes all the way to App Store REVIEW**
+([tools/app-store](tools/app-store/README.md)). Everything is on
+[cicd](docs/wiki/cicd.md) and [workflow-migration](docs/wiki/workflow-migration.md)'s closing
+section, the only copies - **and one decision on that page is SUPERSEDED and marked as such: the
+prerelease flag IS passed down now, so do not restore per-workflow manifest reading.**
 
-**WP-5 IS DONE EXCEPT FOR WHAT ONLY THE USER CAN DO (2026-09-03).** The board is reset and
-archived, the campaign pages and the rig wiring target LOCAL, and both standing rules are retired.
-**Three things are left, and none of them is a repository change:**
+**THE FIRST RELEASE FOUND WHAT NO GATE COULD HAVE:** WP-2's ruleset refuses the push WP-3 makes, so
+publishing a release deployed nothing at all - fail-safe, and silent unless somebody read the run.
+That fix and the two things the same audit turned up - a deploy that RECORDED one commit and BUILT
+another, and a `CHANGELOG.md` no release had ever touched (4098 lines under one heading, fifteen
+versions) - are on [cicd](docs/wiki/cicd.md), with the App-token side effect that a `push` event now
+fires on the bump commit. **The rule that generalises: a release-bearing file carrying no version
+NUMBER is invisible to every version check.** **The iOS build number is ANSWERED and must not be
+re-opened** - the shipped `.ipa` carries `CFBundleVersion 1500001`, and the bump writes the same
+number into `tauri.conf.json` and the plist, so a Tauri re-sync is idempotent.
 
-- **The test ACCOUNTS.** Local authenticates against the PRODUCTION Authentik (decision 8, no local
-  IdP), so "fresh test accounts" is a write to the identity provider. Everything downstream waits on
-  it: the rig root's `names.mjs` is deliberately NOT created with placeholder display names, a name
-  that looks real and matches nothing being the precise failure that file exists to prevent, and the
-  Chrome profiles ARE enrolments of those accounts.
-- **Publishing `0.15.0-alpha.1`** - a release only the USER performs, and the first real passage of
-  the whole deploy-at-bump chain.
-- **The iOS build number** - needs a macOS run to say whether `tauri ios build` clobbers
-  `CFBundleVersion`. If it does, the second alpha of a version is refused by TestFlight.
+**WHAT A STABLE RELEASE NOW OWES A HUMAN, and it is the only thing:**
+`frontend/src-tauri/store/whats-new.txt`, first line `version: X.Y.Z`. The preflight refuses in
+seconds otherwise, before anything moves. **The bump deliberately does not write that line** - a
+marker the machine maintains is only ever in step with itself.
+
+**The test ACCOUNTS exist**, rotated and verified, with `names.mjs` carrying their real display
+names - so the campaign is no longer blocked on an identity, only on a phone and two Chrome profiles.
 
 ### CANARI - THE QUEUE, IN ORDER
 
@@ -189,9 +200,10 @@ restated**. **Every defect story is in `CHANGELOG.md`, every rule one left is in
    [standing rules](docs/wiki/cross-client-campaign.md#standing-rules-for-every-check), decided with
    the user and not re-litigated; the restart order and what LOCAL costs a verdict are
    [cross-client-campaign-resume](docs/wiki/cross-client-campaign-resume.md), the only copy.
-   **BLOCKED ON THE USER, and on one thing only: the test ACCOUNTS.** Local authenticates against
-   the PRODUCTION Authentik by decision 8, so creating them is a write to the identity provider -
-   the attempt of 2026-09-02 was refused for that reason and the refusal was right.
+   **THE ACCOUNTS BLOCKER IS GONE (2026-09-03)**: both test accounts exist on the PRODUCTION
+   Authentik, rotated and verified, and `names.mjs` carries their real display names. **What is left
+   is HARDWARE and enrolment** - a phone, and the two Chrome profiles that ARE those accounts
+   enrolled as devices. Losing a profile costs a DEVICE, so create them once and keep them.
 
 2. **A PLACEHOLDER HELD A MEMBER'S PLACE IN A REAL CONVERSATION - the user's lost messages and the
    ghost are ONE P1. THE SERVER ESTATE IS GONE**, cleaned by hand on the owner's go-ahead 2026-08-30
@@ -344,7 +356,8 @@ waiting on credentials Lydia owes; one MLS client in a SharedWorker; and the SEC
 
 ### CANARI - release, store submission, iOS
 
-**The shipped version is `0.14.15`.** Whether Play has picked a build up is a MEASUREMENT
+**The shipped version is `0.15.0`, deployed to production 2026-09-03 and pushed to both store
+production channels by the same release.** Whether Play has picked a build up is a MEASUREMENT
 (`node tools/play-vitals/vitals.mjs`, and why every RATE is EMPTY rather than green is in
 [its README](tools/play-vitals/README.md)) and what CI did is `gh run list`; never infer either from
 a line here, which has been stale twice. **No HEAL-REVOKE verdict about a clean device may be taken

@@ -1,0 +1,265 @@
+# =================================================================================================
+# THE ONE ENTRY POINT FOR EVERY DEPLOYMENT
+#
+# THE MODEL, IN THE USER'S OWN TERMS (2026-09-03). Three human gestures, and nothing else moves:
+#
+#   1. OPEN A PULL REQUEST.  CI checks the merged combination; a green `CI passed` squash-merges it
+#      onto `main` by itself. A merge deploys NOTHING.
+#   2. PUBLISH A PRE-RELEASE `vX.Y.Z-alpha.N`.  Deploys `dev.canari-emse.fr` and feeds the store
+#      tester programmes - if the tests are green.
+#   3. PUBLISH A STABLE `vX.Y.Z`.  Deploys `canari-emse.fr` and both store production channels - if
+#      the tests are green, AND only from a commit the dev estate has already served.
+#
+# WHY THIS FILE EXISTS AT ALL. Until 2026-09-03 those two publications drove FOUR workflows chained
+# by `workflow_run`: the bump, then a deploy and two store builds each listening for its completion.
+# Three consequences, all measured on the day the chain first ran for real:
+#
+#   * NOTHING WAS GATED ON THE TESTS. The chain required the BUMP to succeed, which is a different
+#     statement. `v0.15.0` shipped with a RED CI run on the commit it released.
+#   * PRODUCTION WENT AHEAD OF DEV. The stable was published from `main`'s tip, three merged pull
+#     requests past the commit dev had been given, and the two releases had no relationship to each
+#     other at all - two gestures on two independent commits, with nothing comparing them.
+#   * EACH CHAIN RESOLVED `main` FOR ITSELF, so a merge landing mid-release could hand a store a
+#     different tree from production, and nothing anywhere would have said so.
+#
+# All three are the same defect: a decision taken more than once, and a precondition asserted
+# nowhere. So the release is now ONE RUN. It decides once, in `preflight`, and every arm below is a
+# called workflow that deploys the commit it is given, to the estate it is told.
+#
+# THE REFUSAL COSTS NOTHING TO BUILD, because the fail-safe already existed: every arm needs the
+# bump, so refusing before the bump refuses the whole chain. That property was discovered by
+# accident when the bump's push was rejected and everything downstream quietly declined to run.
+# =================================================================================================
+name: Release
+
+on:
+  release:
+    types: [published]
+  # The hand-dispatched path, kept for one reason: a release whose chain has to be re-run after an
+  # infrastructure fault, without deleting and re-publishing the release. It goes through the SAME
+  # preflight - a dispatch is not a bypass.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Semver without the v (0.16.0, or 0.16.0-alpha.1 for a tester build)'
+        required: true
+
+# TWO RELEASES MUST NOT OVERLAP. `deploy.yml` serialises the estates on its own account because it
+# reaches one machine; this group serialises the whole gesture, so an alpha and a stable published
+# minutes apart cannot interleave their bumps and push two versions over each other.
+# `cancel-in-progress: false` for the same reason it is false down there: a killed release leaves a
+# tree bumped and unpushed, or an estate half recreated.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # MAY THIS RELEASE START?
+  #
+  # Four questions, all of them in `.github/scripts/release-preflight.sh` so they can be tested on
+  # inputs the API will not produce on demand, and replayed against a release that already happened.
+  # The one that matters most is the fourth: a stable may only be published from a commit the dev
+  # estate has already served, which is what makes production being ahead of dev IMPOSSIBLE rather
+  # than merely reported.
+  preflight:
+    name: May this release start?
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: read
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      prerelease: ${{ steps.resolve.outputs.prerelease }}
+      target_sha: ${{ steps.resolve.outputs.target_sha }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # WHAT IS BEING RELEASED, AND FROM WHICH COMMIT - the only two facts the gates need.
+      #
+      # `github.event.release.target_commitish` is NOT the answer: it carries a branch NAME (`main`)
+      # rather than the commit the tag was placed on, and the two differ the moment anything merges.
+      # The tag is resolved to its commit instead, which is exactly the thing every gate below is
+      # about.
+      - name: What is being released, and from where
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # shellcheck source-path=SCRIPTDIR
+          # shellcheck source=/dev/null
+          source .github/scripts/lib/release-preconditions.sh
+
+          if [ "${{ github.event_name }}" = 'workflow_dispatch' ]; then
+            RAW='${{ inputs.version }}'
+            REF='main'
+          else
+            RAW='${{ github.event.release.tag_name }}'
+            REF="$RAW"
+          fi
+          VERSION="${RAW#v}"
+
+          # ONE IMPLEMENTATION OF "WHAT KIND OF RELEASE IS THIS", shared with the preflight script
+          # and with `bump-app-version.sh`'s store band. The hyphen IS the definition.
+          KIND_VERDICT="$(release_kind "$VERSION")"
+          case "${KIND_VERDICT%% *}" in
+            stable)     PRERELEASE=false ;;
+            prerelease) PRERELEASE=true ;;
+            *)
+              echo "::error::${KIND_VERDICT#invalid }"
+              exit 1 ;;
+          esac
+
+          TARGET_SHA="$(gh api "repos/${{ github.repository }}/commits/$REF" --jq '.sha')"
+
+          {
+            echo "version=$VERSION"
+            echo "prerelease=$PRERELEASE"
+            echo "target_sha=$TARGET_SHA"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing $VERSION (prerelease=$PRERELEASE) from ${TARGET_SHA:0:8}"
+
+      - name: Run the gates
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ steps.resolve.outputs.version }}
+          TARGET_SHA: ${{ steps.resolve.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+
+          # THE GATES READ THE RELEASED TREE, and this is what makes that literally true rather
+          # than true by coincidence. The checkout above lands on the event's SHA, which for a
+          # published release IS the tag's commit and for a dispatch is `main` at dispatch time -
+          # close enough to be right almost always, and the fifth gate reads a FILE out of the
+          # working tree, so "almost always" is not good enough: a dispatch minutes after a merge
+          # would judge the release notes of a commit it is not releasing.
+          git fetch --depth 1 origin "$TARGET_SHA"
+          git checkout --detach FETCH_HEAD
+
+          bash .github/scripts/release-preflight.sh
+
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # WRITE THE VERSION EVERYWHERE, IN ONE COMMIT
+  #
+  # 18 files: 17 manifests and `CHANGELOG.md`. `.github/scripts/tests/bump-staging.test.sh` asserts
+  # that the commit carries everything the script wrote, because a release whose components disagree
+  # surfaces at a store upload rather than in CI.
+  bump:
+    name: Write the version across the project
+    needs: preflight
+    runs-on: ubuntu-latest
+    outputs:
+      # THE COMMIT EVERY ARM BELOW BUILDS. Resolved here, once, and passed down - never re-derived
+      # from `main`, which moves: the bump's own push raises a `push` event, so CI runs on `main`
+      # while this workflow is still going, and a pull request merged in those minutes would land
+      # inside the run. Three chains each resolving `main` for themselves is how a store bundle gets
+      # built from a different tree than production, with no artefact carrying the commit to say so.
+      sha: ${{ steps.push.outputs.sha }}
+    steps:
+      # MINTED BEFORE THE CHECKOUT, because the checkout has to store THIS credential as the
+      # remote's - a later `git push` uses whatever token the checkout persisted, not the one in
+      # scope.
+      #
+      # AN APP AND NOT `GITHUB_TOKEN`. The push below is the one push to `main` that is not a pull
+      # request, and the branch ruleset refuses `github-actions[bot]`; the Actions app cannot be
+      # exempted from a repository ruleset at all (`422 Actor GitHub Actions integration must be
+      # part of the ruleset source or owner organization`). `canari-auto-merge` is an organisation
+      # installation, which GitHub does accept. The token is minted per run and expires in an hour,
+      # so there is no long-lived secret to rotate before it silently expires.
+      #
+      # `client-id` and NOT `app-id`: v3 deprecated the numeric id. They are different VALUES, not
+      # two names for one.
+      - name: Mint the identity the ruleset lets push to main
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.AUTOMERGE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AUTOMERGE_APP_PRIVATE_KEY }}
+
+      # The commit the preflight approved, not `main` - so what is bumped is what was checked.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.preflight.outputs.target_sha }}
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Bump every manifest, both store build numbers, and the changelog
+        run: bash scripts/bump-app-version.sh "${{ needs.preflight.outputs.version }}"
+
+      - name: Commit and push to main
+        id: push
+        run: |
+          set -euo pipefail
+          # The App is what the ruleset lets through, so the commit says so rather than claiming to
+          # be `github-actions[bot]`, the identity that is REFUSED here.
+          git config user.name "canari-auto-merge[bot]"
+          git config user.email "canari-auto-merge[bot]@users.noreply.github.com"
+
+          # `-u` STAGES WHAT THE SCRIPT ACTUALLY CHANGED, and it replaced an eleven-line enumeration
+          # of paths - a second, silent statement of which files carry a version, with nothing
+          # comparing it against the script. `-u` asks git instead of a human.
+          #
+          # `-u` AND NOT `-A`, deliberately: tracked modifications only, so an untracked artefact
+          # cannot ride along. `frontend/mls-core/Cargo.lock` is the live example - the script
+          # rewrites it, `.gitignore`'s `*.lock` means git does not track it, and it must stay out.
+          git add -u
+
+          if git diff --cached --quiet; then
+            echo "No version changes (already at ${{ needs.preflight.outputs.version }})"
+          else
+            echo "Staged for the bump to ${{ needs.preflight.outputs.version }}:"
+            git diff --cached --name-only | sed 's/^/  /'
+            git commit -m "chore: bump version to ${{ needs.preflight.outputs.version }}"
+            git push origin HEAD:main
+          fi
+
+          # EITHER WAY, the commit the arms below must build is this tree's HEAD. A no-op bump is an
+          # ordinary event - a re-published release, or a bump landed through a pull request first -
+          # and its HEAD is already the right commit.
+          SHA="$(git rev-parse HEAD)"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Every arm of this release builds ${SHA:0:8}"
+
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # THE THREE ARMS
+  #
+  # Called workflows, not `workflow_run` listeners, so they are JOBS OF THIS RUN: one page to read,
+  # real `needs:` ordering, and the same three inputs to all three - which is what stops them
+  # disagreeing about what is being released. Each decides only what is local to it (a Play track, a
+  # compose project); none of them decides what the release IS.
+  #
+  # `secrets: inherit` because each holds its own credentials - signing keys, store API keys, the
+  # deploy host. Naming them one by one here would be a fourth list to keep in step with three files.
+  deploy:
+    name: Estate
+    needs: [preflight, bump]
+    uses: ./.github/workflows/deploy.yml
+    with:
+      sha: ${{ needs.bump.outputs.sha }}
+      version: ${{ needs.preflight.outputs.version }}
+      prerelease: ${{ needs.preflight.outputs.prerelease }}
+    secrets: inherit
+
+  android:
+    name: Google Play
+    needs: [preflight, bump]
+    uses: ./.github/workflows/android.yml
+    with:
+      sha: ${{ needs.bump.outputs.sha }}
+      version: ${{ needs.preflight.outputs.version }}
+      prerelease: ${{ needs.preflight.outputs.prerelease }}
+    secrets: inherit
+
+  ios:
+    name: App Store
+    needs: [preflight, bump]
+    uses: ./.github/workflows/ios.yml
+    with:
+      sha: ${{ needs.bump.outputs.sha }}
+      version: ${{ needs.preflight.outputs.version }}
+      prerelease: ${{ needs.preflight.outputs.prerelease }}
+    secrets: inherit

@@ -67,7 +67,7 @@ not add a door - it makes the same door faster.
   deploy, it is an operation: `ssh canari` then `make update-services-prod`. No version moves,
   because nothing changed.
 
-**Consequence, and it is deliberate: `cd.yml` loses its `workflow_dispatch` as well as its `on:
+**Consequence, and it is deliberate: `deploy.yml` loses its `workflow_dispatch` as well as its `on:
 push`.** A manual dispatch would be the second door. Retrying a half-failed deploy is "Re-run failed
 jobs" on the run that already exists, not a new trigger.
 
@@ -90,7 +90,7 @@ All measured on 2026-09-02 on the current machine (`OXYGEN`) and against the rem
 - **iOS cannot carry the suffix in its short version**: `gen/apple/canari_iOS/Info.plist` sets
   `CFBundleShortVersionString` and `CFBundleVersion` to the same `0.14.15`, and Apple requires the
   short version to be numeric. The alpha counter belongs in `CFBundleVersion`.
-- **`android-release.yml` publishes straight to the `production` track**, and its own comment records
+- **`android.yml` publishes straight to the `production` track**, and its own comment records
   that a second track needs its own `versionCode`.
 - **`dependabot-auto-merge.yml` is wired to CD in two places** that both die with the
   push-triggered deploy: it triggers on `workflow_run` of `CD - Deploy to Production`, and it CALLS
@@ -402,7 +402,7 @@ have opened a hole for as long as it took to notice.
 The checklist below lists them separately and they cannot be committed separately. The coupling is
 mechanical, not stylistic:
 
-- production deploying "at the bump" needs no new trigger - `cd.yml` already has
+- production deploying "at the bump" needs no new trigger - `deploy.yml` already has
   `workflow_run: ['Bump version on release']`, and deleting `on: push` leaves exactly that. Fine.
 - **`deploy-dev` is triggered by a PUSH to a branch today.** Deleting `on: push` leaves it with no
   trigger at all.
@@ -423,6 +423,16 @@ itself, from the manifest, with nothing passed between workflows and nothing add
 release-triggered run but NOT for the `workflow_dispatch` path, where the head branch is `main`;
 the manifest is right in both.
 
+> **SUPERSEDED ON 2026-09-03, AND THIS IS THE ONE DECISION ON THIS PAGE THAT WAS.** The reasoning
+> above is correct *for a workflow woken by another workflow*, which is what they all were: the
+> manifest was the only honest source available. The chain then collapsed into ONE run, and a
+> CALLED workflow has a caller that knows - so the flag IS passed down now, as `inputs.prerelease`,
+> answered once by `release_kind()` in `.github/scripts/lib/release-preconditions.sh`. Four
+> workflows each re-deriving the same fact is what let production go ahead of dev without anything
+> noticing. **Do not "restore" per-workflow reading of the manifest**; the hyphen is still the
+> definition, but there is exactly one implementation of that sentence. See
+> [the collapse](#the-chain-collapsed-into-one-run-on-2026-09-03-and-what-that-changed-about-this-page).
+
 **The real blocker is one function.** `scripts/bump-app-version.sh` line 14, `normalize_version()`,
 matches `^[0-9]+\.[0-9]+\.[0-9]+$` and EXITS on anything else - so a release tagged
 `v0.15.0-alpha.1` fails on the first step, before any of this matters. That is where the merged
@@ -430,11 +440,11 @@ package starts.
 
 ### WP-2 - the branch, and deploy-at-bump (DONE 2026-09-03)
 
-- [x] `cd.yml`: `on: push` and `workflow_dispatch` removed (section 3 explains why the dispatch goes)
-- [x] `cd.yml`: `build-frontend-dev`, `build-frontend-images-dev`, `promote-dev-to-main` deleted -
+- [x] `deploy.yml`: `on: push` and `workflow_dispatch` removed (section 3 explains why the dispatch goes)
+- [x] `deploy.yml`: `build-frontend-dev`, `build-frontend-images-dev`, `promote-dev-to-main` deleted -
       and `run-ci` / `run-code-analysis` went with them, both being `if: event != workflow_run`,
       which is now never true. CI runs on the pull request and at merge on `main` instead
-- [x] `cd.yml`: `deploy-dev` kept, re-wired to fire on a PRERELEASE - read from the MANIFEST, by
+- [x] `deploy.yml`: `deploy-dev` kept, re-wired to fire on a PRERELEASE - read from the MANIFEST, by
       a new `release-kind` job, because `github.event.release.prerelease` does not exist in a
       `workflow_run` context and `head_branch` says `main` on the hand-dispatched path
 - [x] a CI that runs at merge on `main` (the user's ask), and which becomes the convergent trigger.
@@ -486,7 +496,7 @@ package starts.
       tag's own position. The re-point is not optional and comes FIRST: the change
       detector measures against that tag rather than the previous push, and that is the only reason
       a cancelled pending run is harmless (GitHub keeps one waiting run per group and cancels the
-      rest; the survivor rebuilds what the dropped ones would have). Twelve references in `cd.yml`
+      rest; the survivor rebuilds what the dropped ones would have). Twelve references in `deploy.yml`
       and four wiki pages move with it
 
 ### WP-3 - pre-releases
@@ -522,7 +532,7 @@ derivation (`major*1e6 + minor*1e3 + patch`, which produced 14015) leaves no roo
       committed `Info.plist` can carry it - but `tauri ios build` RE-SYNCS both version keys from
       `tauri.conf.json` during the build (that re-sync is why `bump_ios_app_infoplist` exists at
       all), which would put `0.15.0` back into both. Tauri 2.11.4 exposes no iOS version override.
-      `ios-release.yml` already patches the plist with `PlistBuddy` for the export-compliance code,
+      `ios.yml` already patches the plist with `PlistBuddy` for the export-compliance code,
       so the patch has a home; **what is unknown is whether that home is early enough**, and only a
       macOS run answers it. Do not write the fix against the guess
 - [x] **NOTHING carries a prerelease flag downstream, and that box is DELETED** (measured
@@ -532,11 +542,13 @@ derivation (`major*1e6 + minor*1e3 + patch`, which produced 14015) leaves no roo
       decides for itself with nothing passed between them and nothing added to `bump-version.yml`.
       The alternative, `workflow_run.head_branch`, is right for a release-triggered run and WRONG
       for the `workflow_dispatch` path, where the head branch is `main`. **`github.event.release.prerelease`
-      is invisible from a `workflow_run` context**, which is what made a flag look necessary
-- [x] `android-release.yml`: track `internal` when prerelease, `production` otherwise. **Two
+      is invisible from a `workflow_run` context**, which is what made a flag look necessary.
+      **SUPERSEDED 2026-09-03: the flag IS passed down now, because the arms are CALLED and the
+      caller knows** - see the note above and the closing section
+- [x] `android.yml`: track `internal` when prerelease, `production` otherwise. **Two
       tracks became reachable only because each alpha now carries its own `versionCode`** - the
       old comment there said internal testing "needs its own build cadence", and the band is it
-- [x] `ios-release.yml`: **there is no group to select, and that is the finding.**
+- [x] `ios.yml`: **there is no group to select, and that is the finding.**
       `altool --upload-app` hands the build to App Store Connect and every INTERNAL tester sees
       every processed build automatically - internal groups are not opt-in per build, unlike
       external ones, which is exactly why decision 9 chose them. On iOS the alpha/stable difference
@@ -544,7 +556,7 @@ derivation (`major*1e6 + minor*1e3 + patch`, which produced 14015) leaves no roo
 - [x] an alpha build carries the DEV `VITE_*` set, a stable build production's, and **the job FAILS
       when the tag's nature and the backend URL disagree** - this is the one place in the chantier
       where a mistake ships to phones, so it is an assertion and never a convention. Written into
-      FOUR workflows, not two: `cd.yml`, `android-release.yml`, `ios-release.yml` and
+      FOUR workflows, not two: `deploy.yml`, `android.yml`, `ios.yml` and
       `appimage-release.yml`, the last of which bakes an origin in exactly like the store bundles.
       **`appimage-release.yml` was deleted 2026-09-03** (no audience for a Linux desktop client), so
       the assertion lives in THREE workflows now - the box stays ticked because it records what was
@@ -679,7 +691,7 @@ survive a replug.
       both ways - the accident that voided COMM-12, COMM-22 and DEL-9 on 2026-08-27 (a
       DOCUMENTATION commit redeploying the frontend mid-run) is now impossible, and what replaced
       it is rarer, deliberate, and therefore easier to forget. `cross-client-campaign-resume.md`
-      also loses a hazard outright: the dependency sweep used to dispatch `cd.yml` itself, so
+      also loses a hazard outright: the dependency sweep used to dispatch `deploy.yml` itself, so
       production could be redeployed mid-run by a merge nobody performed, and there is no deploy
       left to dispatch. The `testing-methodology.md` HEADING is deliberately left naming the push,
       because that is what actually happened on 2026-08-27 and a rule reads as retired the moment
@@ -727,3 +739,48 @@ survive a replug.
   it a failing assertion, not a convention.
 - **`dev-environment.md` keeps its estate and loses its branch.** Half of that page is right and half
   is void from WP-2; a reader who trusts the wrong half will look for a branch that no longer exists.
+
+## The chain collapsed into ONE run on 2026-09-03, and what that changed about this page
+
+**THIS MIGRATION IS STILL CLOSED AND ITS MANDATE STILL HOLDS.** One branch, nothing deploying on a
+push, work arriving by pull request, a stable deploying production and a pre-release deploying dev -
+every one of those survived unchanged. What changed is the SHAPE of the thing that carries them out,
+and it changed because publishing the first two releases for real measured three defects no gate
+here could have found.
+
+**WHAT WAS MEASURED, on 2026-09-03:**
+
+| What happened | Why nothing here could have caught it |
+|---|---|
+| `v0.15.0` deployed production with a **RED** `CI passed` on the commit it released | the chain required the **BUMP** to succeed, which is a different statement. "If the tests are green" was written in no file |
+| production went **three merged pull requests ahead of dev** | the two gestures landed on two unrelated commits and nothing compared them. There was no mechanism to be wrong - there was no mechanism |
+| each of the three arms resolved `main` for **itself** | so a merge landing mid-release could hand a store a different tree from production, with no artefact carrying a commit to disagree |
+
+All three are one defect: **a decision taken more than once, and a precondition asserted nowhere.**
+
+**WHAT REPLACED IT.** `release.yml` is the only entry point, with five jobs: `preflight` -> `bump`
+-> `deploy` + `android` + `ios`. The three arms became `workflow_call` workflows invoked with
+`uses:`, so they are jobs of one run rather than four runs chained by `workflow_run` - one page to
+read, real `needs:` ordering, and the same inputs to all three. `bump-version.yml` is gone; the bump
+is a job. `cd.yml`, `android-release.yml` and `ios-release.yml` were renamed `deploy.yml`,
+`android.yml` and `ios.yml`, because a file that is called by name should read as what it does.
+
+**THE GATE THAT MATTERS MOST IS THE FOURTH** (user: *"Je ne veux pas un detecteur de retard, je ne
+veux pas que ca soit possible"*). A stable is refused unless the `dev-deployed` marker names that
+commit or a descendant of it. A lag DETECTOR was written first and deleted unshipped - the same
+measurement, turned into a refusal.
+
+**TWO TRAPS FOUND WHILE DOING IT, both silent and both green:**
+
+- **`github.event_name` in a called workflow is the CALLER's event.** Four steps gated on
+  `github.event_name == 'workflow_run'` went permanently false in one stroke - both release-asset
+  uploads, the TestFlight upload and the Play publish. Green run, no store receiving anything. The
+  fix carries the distinction as an INPUT (`publish`), from the one place that knows it.
+- **A job may only read `needs.<job>` for a job it declares, and the failure is an empty string.**
+  The three arms declared `needs: bump` and read `needs.preflight.outputs.prerelease`, so every arm
+  would have received `prerelease: ''` - accidentally right for a stable, and for an ALPHA a tester
+  build with the PRODUCTION origin baked in, passing its own estate assertion while doing it.
+
+Both are asserted in `.github/scripts/tests/release-chain.test.sh` now, and both belong to the same
+class: **a condition that cannot be true is as invisible as a required check that is always
+skipped.** Everything about the resulting pipeline is on [cicd](cicd.md), the only copy.

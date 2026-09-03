@@ -1,4 +1,4 @@
-name: CD - Deploy at the bump
+name: Deploy an estate
 
 # ONE TRIGGER, AND THAT IS THE WHOLE DESIGN (user, 2026-09-02: *"Le deploiement (production,
 # android, ios...) se fait au bump. Pas au push sur main."*).
@@ -20,10 +20,26 @@ name: CD - Deploy at the bump
 # `Dependabot auto-merge` is deliberately NOT listed: it completes on every sweep, including the
 # ones where it DECLINES to merge, and this workflow would then deploy for nothing. A dependency
 # update reaches production when the next release is published, like everything else.
+# CALLED BY `release.yml`, AND BY NOTHING ELSE. It used to listen for the bump run's completion on
+# its own, which is what made three separate workflows each re-derive the same three facts and each
+# resolve `main` for itself. The orchestrator now decides once and hands the answers down, so this
+# file is a library: it deploys the commit it is given, to the estate it is told.
 on:
-  workflow_run:
-    workflows: ['Bump version on release']
-    types: [completed]
+  workflow_call:
+    inputs:
+      sha:
+        description: 'The exact commit to build and deploy - resolved ONCE by the caller'
+        required: true
+        type: string
+      version:
+        description: 'The version the bump wrote into the manifests'
+        required: true
+        type: string
+      prerelease:
+        description: 'The string "true" or "false". A hyphen in the version IS the definition, and
+          the caller has already read it - this file never decides its own target.'
+        required: true
+        type: string
 
 # TWO DEPLOYS OF THE SAME ESTATE MUST NOT OVERLAP, and until 2026-09-02 nothing said so. Three runs
 # were in flight against `/home/canari/canari` at once, each able to `git reset --hard` and
@@ -58,79 +74,19 @@ env:
   # because that is what gives it its own network and its own volumes.
   DEV_DOMAIN: dev.canari-emse.fr
   DEV_DEPLOY_PATH: /home/canari/canari-dev
-  # ALWAYS `main`, and never the event's SHA. A `workflow_run` reports the commit the TRIGGERING run
-  # started from, which is the commit BEFORE the bump - so checking it out would build and deploy an
-  # estate whose manifests still name the previous version.
-  #
-  # ONLY `release-kind` MAY USE THIS, and it is the reason that job exists. `main` is a MOVING
-  # reference: five jobs resolving it independently can resolve five different commits, and the
-  # window is not theoretical - the bump's own push raises a `push` event, so CI is running on `main`
-  # while this workflow starts, and any pull request merged in those minutes lands inside it. What
-  # made it a correctness bug rather than a race nobody would notice is that the image tag and the
-  # `prod-released` / `dev-deployed` markers are written from `release-kind.outputs.sha`: a second
-  # commit would have been BUILT and the first one RECORDED, so the marker naming what production
-  # runs would have been wrong with nothing anywhere disagreeing. Every job below therefore checks
-  # out that resolved SHA, which is what makes the recorded provenance a measurement instead of an
-  # assumption.
-  CHECKOUT_REF: main
 
 jobs:
-  # WHICH ESTATE THIS RELEASE IS FOR, DECIDED ONCE AND READ EVERYWHERE ELSE.
+  # THE DECISION IS MADE ONCE, IN `release.yml`, AND HANDED DOWN.
   #
-  # THE ANSWER COMES FROM THE MANIFEST, NOT FROM THE EVENT, and that is not a stylistic choice.
-  # `github.event.release.prerelease` does not exist in a `workflow_run` context - the event here is
-  # the BUMP run's completion, not the release. `workflow_run.head_branch` carries the tag for a
-  # release-triggered bump but says `main` when the bump was dispatched by hand, which would silently
-  # send an alpha to production. After the bump, `frontend/package.json` carries the version itself,
-  # and a hyphen in a semver version IS the definition of a pre-release - so the file that shipped is
-  # the file that decides, and it is right on both paths.
-  release-kind:
-    name: Read the released version
-    if: github.event.workflow_run.conclusion == 'success'
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.read.outputs.version }}
-      prerelease: ${{ steps.read.outputs.prerelease }}
-      environment: ${{ steps.read.outputs.environment }}
-      sha: ${{ steps.read.outputs.sha }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ env.CHECKOUT_REF }}
-
-      - name: Read the version off the bumped manifest
-        id: read
-        run: |
-          set -euo pipefail
-
-          # `github.sha` IS THE WRONG COMMIT HERE and every image tag depends on getting it right.
-          # In a `workflow_run` it is the commit the TRIGGERING run started from - the one BEFORE
-          # the bump. Tagging images with it would push `core-service:<pre-bump sha>` while the
-          # deploy asks for the tip, and the pull would fail at the registry rather than at a gate.
-          SHA="$(git rev-parse HEAD)"
-          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-
-          VERSION="$(jq -r '.version' frontend/package.json)"
-          if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
-            echo "::error::frontend/package.json has no version - the bump did not land on main"
-            exit 1
-          fi
-
-          case "$VERSION" in
-            *-*) PRERELEASE=true; ENVIRONMENT=dev ;;
-            *)   PRERELEASE=false; ENVIRONMENT=production ;;
-          esac
-
-          {
-            echo "version=$VERSION"
-            echo "prerelease=$PRERELEASE"
-            echo "environment=$ENVIRONMENT"
-          } >> "$GITHUB_OUTPUT"
-          echo "Released $VERSION -> $ENVIRONMENT (prerelease=$PRERELEASE)"
+  # A `release-kind` job used to live here: it checked out `main`, read the version back off the
+  # bumped manifest and published it as outputs, because a `workflow_run` carries neither
+  # `release.prerelease` nor a usable branch. That reasoning was right and it is now the
+  # orchestrator's, one level up, where the bump that WROTE the manifest can read it without a
+  # second checkout - and where the two store chains read the same answer instead of each
+  # deriving its own. `inputs.sha` is therefore the one commit this whole run builds.
 
   detect-changed-services:
     name: Detect Changed Services
-    needs: release-kind
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.detect.outputs.matrix }}
@@ -141,7 +97,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.release-kind.outputs.sha }}
+          ref: ${{ inputs.sha }}
           fetch-depth: 0
 
       - name: Detect modified services
@@ -223,7 +179,7 @@ jobs:
           # Over-building is slow; under-building ships an estate referencing an image that does not
           # exist, and there is no version of this in which guessing small is the safe direction.
           BEFORE_SHA=""
-          if [ "${{ needs.release-kind.outputs.prerelease }}" = "true" ]; then
+          if [ "${{ inputs.prerelease }}" = "true" ]; then
             BASELINE_FILTER='.[] | select(.draft == false and .prerelease == true)'
             BASELINE_KIND="pre-release"
           else
@@ -231,7 +187,7 @@ jobs:
             BASELINE_KIND="stable release"
           fi
 
-          CURRENT_TAG="v${{ needs.release-kind.outputs.version }}"
+          CURRENT_TAG="v${{ inputs.version }}"
           PREVIOUS_TAG="$(gh api "repos/${{ github.repository }}/releases?per_page=100" \
             --jq "[${BASELINE_FILTER} | .tag_name] | map(select(. != \"${CURRENT_TAG}\")) | .[0] // empty")"
 
@@ -347,13 +303,13 @@ jobs:
   # production's image to dev would point dev's browser at production.
   build-frontend:
     name: Build Frontend
-    needs: [release-kind, detect-changed-services]
+    needs: detect-changed-services
     if: needs.detect-changed-services.outputs.frontend_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.release-kind.outputs.sha }}
+          ref: ${{ inputs.sha }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -398,7 +354,7 @@ jobs:
       # secret stops the release instead.
       - name: Validate the frontend build secrets
         env:
-          IS_PRERELEASE: ${{ needs.release-kind.outputs.prerelease }}
+          IS_PRERELEASE: ${{ inputs.prerelease }}
           BASE_URL: ${{ secrets.BASE_URL }}
           AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
           AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
@@ -423,7 +379,7 @@ jobs:
       - name: Create frontend .env
         working-directory: frontend
         env:
-          IS_PRERELEASE: ${{ needs.release-kind.outputs.prerelease }}
+          IS_PRERELEASE: ${{ inputs.prerelease }}
           BASE_URL: ${{ secrets.BASE_URL }}
           AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
           AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
@@ -529,7 +485,7 @@ jobs:
   build-docker-images:
     name: Build & Push Docker Images
     runs-on: ubuntu-latest
-    needs: [release-kind, detect-changed-services, build-frontend]
+    needs: [detect-changed-services, build-frontend]
     if: |
       always() &&
       needs.detect-changed-services.result == 'success' &&
@@ -549,7 +505,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.release-kind.outputs.sha }}
+          ref: ${{ inputs.sha }}
 
       - name: Download frontend build artifact
         # Both frontend images come from the one adapter-node artifact: nginx serves
@@ -588,10 +544,10 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.name }}
           tags: |
-            type=raw,value=${{ needs.release-kind.outputs.sha }}
-            type=raw,value=v${{ needs.release-kind.outputs.version }}
-            type=raw,value=latest,enable=${{ needs.release-kind.outputs.prerelease == 'false' }}
-            type=raw,value=dev,enable=${{ needs.release-kind.outputs.prerelease == 'true' }}
+            type=raw,value=${{ inputs.sha }}
+            type=raw,value=v${{ inputs.version }}
+            type=raw,value=latest,enable=${{ inputs.prerelease == 'false' }}
+            type=raw,value=dev,enable=${{ inputs.prerelease == 'true' }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v7
@@ -631,7 +587,7 @@ jobs:
   deploy-dev:
     name: Deploy to dev.canari-emse.fr
     runs-on: self-hosted
-    needs: [release-kind, detect-changed-services, build-frontend, build-docker-images]
+    needs: [detect-changed-services, build-frontend, build-docker-images]
     # `build-frontend` IS IN THIS LIST BECAUSE ITS FAILURE WAS LAUNDERED INTO A SKIP, measured
     # 2026-09-02. A `skipped` image job means "the frontend did not change, the existing images
     # stand" - but it ALSO means "the build that feeds me failed", because a job whose dependency
@@ -642,7 +598,7 @@ jobs:
     if: |
       always() &&
       vars.DEV_ENVIRONMENT_ENABLED == 'true' &&
-      needs.release-kind.outputs.prerelease == 'true' &&
+      inputs.prerelease == 'true' &&
       needs.detect-changed-services.result == 'success' &&
       (needs.build-frontend.result == 'success' || needs.build-frontend.result == 'skipped') &&
       (needs.build-docker-images.result == 'success' || needs.build-docker-images.result == 'skipped')
@@ -772,11 +728,11 @@ jobs:
         if: success()
         run: |
           set -euo pipefail
-          git -C "${{ env.DEV_DEPLOY_PATH }}" tag -f dev-deployed "${{ needs.release-kind.outputs.sha }}"
+          git -C "${{ env.DEV_DEPLOY_PATH }}" tag -f dev-deployed "${{ inputs.sha }}"
           git -C "${{ env.DEV_DEPLOY_PATH }}" push -f \
             "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" \
             refs/tags/dev-deployed
-          echo "dev-deployed -> ${{ needs.release-kind.outputs.sha }} (v${{ needs.release-kind.outputs.version }})"
+          echo "dev-deployed -> ${{ inputs.sha }} (v${{ inputs.version }})"
 
   # -----------------------------------------------------------------------------------------------
   # THE PROMOTION JOB IS GONE, AND SO IS THE BRANCH IT PROMOTED
@@ -800,7 +756,7 @@ jobs:
   deploy-to-server:
     name: Deploy to Production Server
     runs-on: self-hosted
-    needs: [release-kind, detect-changed-services, build-frontend, build-docker-images]
+    needs: [detect-changed-services, build-frontend, build-docker-images]
     # A STABLE RELEASE, AND NOTHING ELSE, REACHES THIS JOB. `prerelease == 'false'` is the whole
     # gate: an alpha stops at `deploy-dev` above and a push to `main` no longer starts this workflow
     # at all. There is no CI condition left here either - CI runs on the pull request and again at
@@ -813,7 +769,7 @@ jobs:
     # first day) must never hold a production release hostage.
     if: |
       always() &&
-      needs.release-kind.outputs.prerelease == 'false' &&
+      inputs.prerelease == 'false' &&
       needs.detect-changed-services.result == 'success' &&
       (needs.build-frontend.result == 'success' || needs.build-frontend.result == 'skipped') &&
       (needs.build-docker-images.result == 'success' || needs.build-docker-images.result == 'skipped')
@@ -827,7 +783,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.release-kind.outputs.sha }}
+          ref: ${{ inputs.sha }}
 
       - name: Log deployment start
         run: |
@@ -1512,7 +1468,7 @@ jobs:
         run: |
           echo "✅ Deployment completed successfully!"
           echo "🔗 Application URL: https://${{ env.DOMAIN }}"
-          echo "📦 Released v${{ needs.release-kind.outputs.version }} at ${{ needs.release-kind.outputs.sha }}"
+          echo "📦 Released v${{ inputs.version }} at ${{ inputs.sha }}"
 
       - name: Health Check
         run: |
@@ -1581,11 +1537,11 @@ jobs:
       - name: Record the released commit
         run: |
           set -euo pipefail
-          git -C "${{ env.DEPLOY_PATH }}" tag -f prod-released "${{ needs.release-kind.outputs.sha }}"
+          git -C "${{ env.DEPLOY_PATH }}" tag -f prod-released "${{ inputs.sha }}"
           git -C "${{ env.DEPLOY_PATH }}" push -f \
             "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" \
             refs/tags/prod-released
-          echo "📌 prod-released -> ${{ needs.release-kind.outputs.sha }} (v${{ needs.release-kind.outputs.version }})"
+          echo "📌 prod-released -> ${{ inputs.sha }} (v${{ inputs.version }})"
 
       - name: Notify deployment
         if: always()

@@ -3,7 +3,7 @@
 # Self-tests for infrastructure/deploy/render-env.sh and its manifest.
 #
 # THE ASSERTION THIS FILE EXISTS FOR is the first group: the expected key set is DERIVED from
-# `cd.yml`, which is the thing that has always written production's .env. A key added there and
+# `deploy.yml`, which is the thing that has always written production's .env. A key added there and
 # forgotten in the manifest would otherwise be written by nobody, and the service would read the
 # template default in silence - the exact shape of defect this repository keeps paying for. The
 # failure mode of a guard list is an ABSENCE, so the list may not be hand-written.
@@ -23,7 +23,7 @@ cd "$(dirname "$0")/../../.." || exit 1
 
 RENDER="infrastructure/deploy/render-env.sh"
 MANIFEST="infrastructure/deploy/env-manifest.tsv"
-CD="./.github/workflows/cd.yml"
+CD="./.github/workflows/deploy.yml"
 
 PASS=0
 FAIL=0
@@ -97,17 +97,17 @@ manifest_field() {
 }
 
 # ═════════════════════════════════════════════════════════════════════════════
-printf '\nthe manifest covers what cd.yml writes - DERIVED, so an omission cannot pass\n'
+printf '\nthe manifest covers what deploy.yml writes - DERIVED, so an omission cannot pass\n'
 # ═════════════════════════════════════════════════════════════════════════════
 
 if [ ! -f "$CD" ]; then
-  fail "cd.yml not found at $CD - the derivation below has no source"
+  fail "deploy.yml not found at $CD - the derivation below has no source"
 else
   cd_keys="$(grep -oE 'upsert_env_var "[A-Z_0-9]+"' "$CD" | sed 's/upsert_env_var "//; s/"//' | sort -u)"
   if [ -z "$cd_keys" ]; then
-    fail "no upsert_env_var calls found in cd.yml - if the deploy job was converted to render-env.sh, point this derivation at its manifest instead"
+    fail "no upsert_env_var calls found in deploy.yml - if the deploy job was converted to render-env.sh, point this derivation at its manifest instead"
   else
-    pass "cd.yml names $(printf '%s\n' "$cd_keys" | wc -l | tr -d ' ') keys to derive from"
+    pass "deploy.yml names $(printf '%s\n' "$cd_keys" | wc -l | tr -d ' ') keys to derive from"
     missing=""
     while read -r key; do
       [ -z "$key" ] && continue
@@ -116,22 +116,22 @@ else
       fi
     done <<<"$cd_keys"
     if [ -n "$missing" ]; then
-      fail "cd.yml writes these keys and the manifest does not carry them:$missing"
+      fail "deploy.yml writes these keys and the manifest does not carry them:$missing"
     else
-      pass "every key cd.yml writes has a manifest row"
+      pass "every key deploy.yml writes has a manifest row"
     fi
   fi
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-printf '\ncd.yml passes every dev secret the manifest asks for - also DERIVED\n'
+printf '\ndeploy.yml passes every dev secret the manifest asks for - also DERIVED\n'
 # ═════════════════════════════════════════════════════════════════════════════
 
 # The other direction of the same problem. `render-env.sh` reads `DEV_<NAME>` from its environment,
 # and GitHub only puts a secret there if the workflow names it - so a manifest row whose secret
-# `cd.yml` never passes resolves to EMPTY. For a `required` row that fails the deploy loudly, which
+# `deploy.yml` never passes resolves to EMPTY. For a `required` row that fails the deploy loudly, which
 # is the correct direction; for a `warn` row it degrades silently, which is not. Either way the fix
-# is one line in `cd.yml`, and this is what says so at CI time rather than at deploy time.
+# is one line in `deploy.yml`, and this is what says so at CI time rather than at deploy time.
 if [ -f "$CD" ]; then
   want_dev="$(manifest_rows | awk -F'\t' '$3 != "skip" && $4 ~ /^secret:/ { sub(/^secret:/, "", $4); print "DEV_" $4 }' | sort -u)"
   absent=""
@@ -140,16 +140,16 @@ if [ -f "$CD" ]; then
     grep -q "secrets\.${name} }}" "$CD" || absent="$absent $name"
   done <<<"$want_dev"
   if [ -n "$absent" ]; then
-    fail "cd.yml never passes these dev secrets, so render-env.sh resolves them to empty:$absent"
+    fail "deploy.yml never passes these dev secrets, so render-env.sh resolves them to empty:$absent"
   else
-    pass "cd.yml passes all $(printf '%s\n' "$want_dev" | wc -l | tr -d ' ') dev secrets the manifest names"
+    pass "deploy.yml passes all $(printf '%s\n' "$want_dev" | wc -l | tr -d ' ') dev secrets the manifest names"
   fi
 
   # And the reverse, which is the one that would leak: a bare production secret name inside the dev
   # deploy job. The whole isolation rests on dev's job seeing DEV_ names ONLY.
   dev_job="$(awk '/^  deploy-dev:/{f=1} f && /^  [a-z-]+:$/ && !/^  deploy-dev:/{f=0} f' "$CD")"
   if [ -z "$dev_job" ]; then
-    fail "could not locate the deploy-dev job in cd.yml to audit its secret references"
+    fail "could not locate the deploy-dev job in deploy.yml to audit its secret references"
   else
     bare="$(printf '%s' "$dev_job" | grep -oE 'secrets\.[A-Z_0-9]+' | sed 's/secrets\.//' |
       grep -vE '^(DEV_|GITHUB_TOKEN$)' | sort -u | tr '\n' ' ')"
@@ -168,7 +168,7 @@ printf '\nthe two estates never publish the same host port\n'
 # THIS SECTION USED TO ASSERT THE WRONG THING, AND THE BUG IT MISSED SHIPPED. It read the four files
 # that NAME the dev frontend port and confirmed they all said 3080. They did. The value that actually
 # reached dev's .env came from a fifth file none of them was compared against -
-# `infrastructure/.env.example`, which declares production's 8080 - because the override in cd.yml
+# `infrastructure/.env.example`, which declares production's 8080 - because the override in deploy.yml
 # was written `grep -q '^KEY=' .env || echo KEY=3080`, and the key is never absent from a file
 # rendered FROM that template. Four declarations agreeing is not the port the estate gets.
 #
@@ -268,7 +268,7 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-printf '\nproduction renders exactly what cd.yml rendered\n'
+printf '\nproduction renders exactly what deploy.yml rendered\n'
 # ═════════════════════════════════════════════════════════════════════════════
 
 out="$TMP/prod.env"
@@ -281,18 +281,18 @@ else
   pass "a complete production environment renders"
 
   got="$(grep '^ALLOW_ORIGIN=' "$out" | head -1)"
-  # The value cd.yml computed, with its one interpolation resolved the way env.DOMAIN resolves.
+  # The value deploy.yml computed, with its one interpolation resolved the way env.DOMAIN resolves.
   want_raw="$(grep -oE 'upsert_env_var "ALLOW_ORIGIN" "[^"]*"' "$CD" | sed 's/.*"ALLOW_ORIGIN" "//; s/"$//')"
   if [ -z "$want_raw" ]; then
-    fail "could not read cd.yml's ALLOW_ORIGIN to compare against"
+    fail "could not read deploy.yml's ALLOW_ORIGIN to compare against"
   else
     want="ALLOW_ORIGIN=$(printf '%s' "$want_raw" |
       sed 's|\${{ env.DOMAIN }}|canari-emse.fr|g; s|\$FRONTEND_URL|https://canari-emse.fr|g')"
     if [ "$got" = "$want" ]; then
-      pass "ALLOW_ORIGIN is byte-identical to the value cd.yml built"
+      pass "ALLOW_ORIGIN is byte-identical to the value deploy.yml built"
     else
       fail "ALLOW_ORIGIN changed"
-      printf '       cd.yml: %s\n       render: %s\n' "$want" "$got"
+      printf '       deploy.yml: %s\n       render: %s\n' "$want" "$got"
     fi
   fi
 
@@ -482,7 +482,7 @@ printf '\nnothing that touches the one machine may run twice at once\n'
 # would pass on the day somebody adds the third one, which is the failure mode this whole suite is
 # built against.
 #
-# It proved able to fail: on 2026-09-02 `cd.yml` had no `concurrency:` at all and three deploy runs
+# It proved able to fail: on 2026-09-02 `deploy.yml` had no `concurrency:` at all and three deploy runs
 # were in flight against `/home/canari/canari` simultaneously.
 for wf in .github/workflows/*.yml; do
   grep -q 'runs-on: self-hosted' "$wf" || continue
@@ -502,7 +502,7 @@ done
 if grep -A2 '^concurrency:' "$CD" | grep -q 'cancel-in-progress: false'; then
   pass "the deploy workflow queues behind a running deploy instead of killing it"
 else
-  fail "cd.yml does not declare 'cancel-in-progress: false' - a cancelled deploy leaves the estate in whatever state the kill found"
+  fail "deploy.yml does not declare 'cancel-in-progress: false' - a cancelled deploy leaves the estate in whatever state the kill found"
 fi
 
 printf '\n'

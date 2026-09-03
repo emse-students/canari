@@ -17,7 +17,7 @@ Runs on every pull request to `main`, and again on every push to `main`:
 | **Build** | the generated sources first - [`.github/actions/build-mls-wasm`](../../.github/actions/build-mls-wasm/action.yml) then `bun run proto:gen` - then `bun run build` |
 
 **The generated sources are not in git** (`frontend/src/lib/wasm/`, `src/lib/proto/canari.{js,d.ts}`),
-so EVERY pipeline that ships a client builds them: `cd.yml`, the three release workflows, and
+so EVERY pipeline that ships a client builds them: `deploy.yml`, the three release workflows, and
 `ci.yml` because the gates import them. One composite action, one pinned
 `wasm-pack`, one cache key over `mls-wasm/**` + `mls-core/**` + `rust-toolchain.toml` - the
 committed binary went a crypto fix stale precisely because only some pipelines rebuilt it
@@ -30,34 +30,45 @@ check cannot - an admin bypassing the ruleset for an emergency hotfix still gets
 what the bypass skipped. **Nothing here deploys**, so a red run on `main` is a statement about the
 repository and never about production, which is still serving the last release.
 
-### CD (`cd.yml`)
+### Deploy an estate (`deploy.yml`)
 
-**ONE TRIGGER: the completion of `Bump version on release`** (user, 2026-09-02: *"Le deploiement
-(production, android, ios...) se fait au bump. Pas au push sur main."*). A push to `main` deploys
-nothing, and there is no `workflow_dispatch` either - a dispatch would simply be a second door.
-Retrying a half-failed deploy is "Re-run failed jobs" on the run that already exists.
+**IT HAS NO TRIGGER AT ALL: it is `workflow_call` only, and `release.yml` is its one caller**
+(user, 2026-09-02: *"Le deploiement (production, android, ios...) se fait au bump. Pas au push sur
+main."*). A push to `main` deploys nothing, and there is no `workflow_dispatch` either - a dispatch
+would simply be a second door. Retrying a half-failed deploy is "Re-run failed jobs" on the release
+run that already exists.
 
-**WHICH ESTATE IS DECIDED BY THE RELEASE, NOT BY A BRANCH.** Publishing a GitHub Release runs the
-bump, which writes the version into every manifest and pushes it to `main`; CD then reads that
-version back out of `frontend/package.json`:
+**IT IS THEREFORE A JOB OF THE RELEASE RUN, WHICH HAS ONE CONSEQUENCE WORTH KNOWING:**
+`gh run list --workflow deploy.yml` returns NOTHING. A called workflow's jobs belong to the caller's
+run, so the run to read is the `Release` one, and the harness's `deploy.mjs` names `release.yml` for
+that reason.
+
+**WHICH ESTATE IS DECIDED BY THE RELEASE, NOT BY A BRANCH, AND NOT BY THIS FILE EITHER.** It is
+told, as three inputs - `sha`, `version`, `prerelease` - resolved ONCE by the caller's `preflight`
+job. Until 2026-09-03 it read `frontend/package.json` back off a checkout and decided for itself,
+which is how three chains came to each re-derive the same fact:
 
 | The release | What is deployed | Image tag it moves |
 | --- | --- | --- |
 | `v0.15.0-alpha.1` (pre-release) | `dev.canari-emse.fr`, plus the Play *internal* track and TestFlight | `:dev` |
 | `v0.15.0` (stable) | production | `:latest` |
 
-1. `release-kind` reads the version and answers dev-or-production
-2. `detect-changed-services` diffs against the previous release **of the same kind**
-3. Builds the frontend against that estate's `VITE_*` set, then only the changed images → GHCR
-4. Self-hosted runner: sync `.env`, `docker compose pull` + `up -d`
-5. Database migrations, then health checks
+1. `detect-changed-services` diffs against the previous release **of the same kind**
+2. Builds the frontend against that estate's `VITE_*` set, then only the changed images → GHCR
+3. Self-hosted runner: sync `.env`, `docker compose pull` + `up -d`
+4. Database migrations, then health checks
 
-**THE MANIFEST DECIDES, AND NOTHING ELSE CAN.** `github.event.release.prerelease` does not exist in
-a `workflow_run` context - the event is the bump run's completion, not the release - and
-`workflow_run.head_branch` carries the tag for a release-triggered bump but says `main` when the
-bump was dispatched by hand, which would silently send an alpha to production. A hyphen in a semver
-version IS the definition of a pre-release, so the file that shipped is the file that decides. The
-three bundle workflows read the same file for the same reason.
+**THE CALLER DECIDES, ONCE, AND A HYPHEN IS STILL THE DEFINITION.** The reason this used to be
+read out of the manifest here is worth keeping, because it explains what NOT to go back to:
+`github.event.release.prerelease` does not exist in a `workflow_run` context - the event was the
+bump run's completion, not the release - and `workflow_run.head_branch` carried the tag for a
+release-triggered bump but said `main` when the bump was dispatched by hand, which would silently
+have sent an alpha to production. So the manifest was the only honest source available *to a
+workflow woken by another workflow*. Now that all three arms are CALLED, the honest source is the
+caller: `release_kind()` in `.github/scripts/lib/release-preconditions.sh` answers stable-or-
+prerelease once, off the version being released, and the same answer reaches the estate, the Play
+track and the App Store channel. A hyphen in a semver version IS the definition, and there is now
+exactly one implementation of that sentence.
 
 `GITHUB_TOKEN` pushes from the version-bump workflow do **not** trigger `on: push`. CD is chained via `workflow_run` instead (no `branches:` filter — GitHub would silently drop release-triggered parents).
 
@@ -98,16 +109,17 @@ markers. A second commit arriving mid-run would have been BUILT while the first 
 so the marker naming what production runs would have been wrong, with nothing anywhere disagreeing.
 A recorded provenance that can be false is worse than none, because it stops the next person looking.
 
-`release-kind` still resolves `main` (that is what the job is for) and every job below it now checks
-out `${{ needs.release-kind.outputs.sha }}`. One release, one commit, and the marker is a measurement
-instead of an assumption.
+The commit is now resolved in the release's `bump` job and handed to every arm as `inputs.sha`.
+One release, one commit, and the marker is a measurement instead of an assumption.
 
-**`android-release.yml` and `ios-release.yml` still check out `main` directly**, and that is a
-smaller version of the same thing: they have no `release-kind` to inherit a SHA from, and they
-record none, so there is no marker they can contradict. What is left is a cross-chain question — a
-merge landing between the two runs would ship a store bundle built from a different tree than
-production — which is in [backlog](../backlog.md) rather than fixed here, because closing it means
-deciding where the release's SHA is resolved ONCE for all three chains.
+**AND THE CROSS-CHAIN HALF IS CLOSED TOO, since 2026-09-03.** `android.yml` and `ios.yml` used to
+check out `main` by name, which was a smaller version of the same defect: a merge landing between
+the two runs would ship a store bundle built from a different tree than production, and because
+those workflows recorded no marker there was nothing anywhere to contradict. The fix was the one the
+backlog said it needed - *deciding where the release's SHA is resolved ONCE for all three chains* -
+and the answer is `bump.outputs.sha`. `release-chain.test.sh` asserts that no arm checks out
+`ref: main` and that all three receive that output, because this is a wiring property and wiring is
+what a file can be read for.
 
 #### The dev estate is the PRE-RELEASE target, and the promotion is gone
 
@@ -156,15 +168,32 @@ moves once dev has exercised them. Everything about the estate itself is on
 `dev-refresh.yml` copies production's data into dev weekly (Mondays 04:00 UTC) and on demand, behind
 the same gate.
 
-### Mobile CD (`ios-release.yml`, `android-release.yml`)
+### The store arms (`ios.yml`, `android.yml`)
 
-Chained off the same bump run CD is, and each reads `frontend/package.json` for the same
-pre-release decision CD makes:
+Called by `release.yml` with the same three inputs `deploy.yml` gets, so the estate, the Play track
+and the App Store channel cannot disagree about what is being released:
 
 | Workflow | Output | Stable | Pre-release |
 |---|---|---|---|
-| `android-release.yml` | `.aab` for Google Play | `production` track | `internal` track |
-| `ios-release.yml` | `.ipa` via `altool` | TestFlight, App Store submission by hand | TestFlight |
+| `android.yml` | `.aab` for Google Play | `production` track | `internal` track |
+| `ios.yml` | `.ipa` via `altool`, then the App Store version created, the build attached and the whole thing **submitted for review** | App Store review | TestFlight |
+
+**iOS USED TO STOP AT TESTFLIGHT, AND THAT WAS THE LAST ASYMMETRY BETWEEN THE TWO STORES.**
+`altool --upload-app` hands Apple the binary and returns - exactly right for a pre-release, and one
+manual gesture short of shipped for a stable: somebody had to open App Store Connect, create the
+version, attach the build and press Submit. Nothing asked for that gesture and nothing reported its
+absence, while the same release put Android on the Play `production` track by itself. So a stable
+release was **half-shipped by construction**. `tools/app-store/submit.mjs` closes it; everything
+about how, including the release-notes file a human owes each stable and why its first line names
+its own version, is in [its README](../../tools/app-store/README.md), the only copy.
+
+**BOTH ARMS ARE ALSO HAND-DISPATCHABLE, AND THAT IS A CAPABILITY RATHER THAN A SECOND DOOR.** It is
+the only way to compile Swift, ObjC or Kotlin from the Windows workstation this project is developed
+on. What makes it safe is `publish`, an INPUT: `release.yml` takes the callable default `true`, a
+hand dispatch defaults to `false`, and every step that reaches a store or a release reads it. The
+version that reasoned about `github.event_name` instead is the defect described two sections down -
+in a called workflow that field is the CALLER's event, so the reasoning is not merely wrong, it is
+unanswerable.
 
 #### The Linux desktop build is SUSPENDED, not lost (2026-09-03)
 
@@ -215,20 +244,65 @@ wiped every Monday. Neither is visible in a green pipeline, so each workflow res
 FAILS on a mismatch. There is no fallback from the `DEV_*` secrets to the production ones - falling
 back is precisely how an alpha ends up talking to production.
 
-### Version bump (`bump-version.yml`)
+### Release (`release.yml`) - the one entry point
 
-Triggered on `release: published` (or manually). It stages `git add -u`, so whatever the bump script
-writes is what gets committed — see [Version bump](#version-bump) below for why that replaced a path
-list.
+**THREE HUMAN GESTURES, AND NOTHING ELSE MOVES** (user, 2026-09-03): open a pull request, which
+`auto-merge.yml` squash-merges onto `main` once `CI passed` is green and which deploys NOTHING;
+publish a pre-release `vX.Y.Z-alpha.N`, which deploys `dev.canari-emse.fr` and feeds the store
+tester programmes; publish a stable `vX.Y.Z`, which deploys production and both store production
+channels.
+
+`release.yml` is the only workflow either publication triggers, and it has five jobs:
+`preflight` -> `bump` -> `deploy` + `android` + `ios`. The three arms are `uses:` calls, not
+`workflow_run` listeners, so they are jobs of ONE run: one page to read, real `needs:` ordering,
+and the same inputs to all three.
+
+**WHY IT IS ONE FILE NOW.** Until 2026-09-03 the two publications drove FOUR workflows chained by
+`workflow_run`, and three things were measured wrong on the first day the chain ran for real:
+nothing was gated on the TESTS (the chain required the BUMP to succeed, which is a different
+statement, and `v0.15.0` shipped on a RED run); production went AHEAD of dev, the two gestures
+landing on two unrelated commits with nothing comparing them; and each chain resolved `main` for
+itself. All three are the same defect - a decision taken more than once, and a precondition
+asserted nowhere.
+
+#### The five gates, and the one that makes a lag impossible
+
+`.github/scripts/release-preflight.sh` runs before the bump, so a refusal refuses the deployment,
+both store uploads and the version bump itself:
+
+| # | Question | Why a refusal rather than a report |
+|---|---|---|
+| 1 | Is the version a version? | a typo must not reach a store band computation |
+| 2 | Is the released commit on `main`? | everything downstream reads the trunk |
+| 3 | Did `CI passed` conclude **success** on THAT commit? | "if the tests are green" was written nowhere at all, and an ABSENT check is not a passing one |
+| 4 | Has the dev estate already served it? (stable only) | **production cannot be ahead of dev** |
+| 5 | Do the App Store release notes name THIS version? | Apple refuses a submission without them, and refusing at the END of a release costs the whole release |
+
+**Gate 4 is why this file exists** (user, 2026-09-03: *"Je ne veux pas un detecteur de retard, je ne
+veux pas que ca soit possible"*). It compares the released commit against the `dev-deployed` marker
+the dev deploy writes: `identical` or dev `ahead` both mean the code went through dev, and dev
+`behind` is a refusal naming how many commits are missing and telling the reader to publish a
+pre-release at that commit first. A detector was written first and deleted unshipped - the same
+measurement, as a refusal instead of a report.
+
+**THERE IS NO BYPASS INPUT, deliberately.** A skip flag is a fallback path, and reaching one means
+the primary path failed - so the fix belongs there. The emergency path is unchanged and is not in
+software: a human with admin rights acting by other means, written into `CHANGELOG.md` when taken.
+Gate 4 costs one extra pre-release in a real emergency, which deploys dev in minutes.
+
+#### The bump job
+
+It stages `git add -u`, so whatever the bump script writes is what gets committed — see
+[Version bump](#version-bump) below for why that replaced a path list.
 
 #### The push this workflow makes is the ONE push to `main` that is not a pull request, and the ruleset refused it (measured 2026-09-03)
 
 **The first real release found this, and nothing before it could have.** `main` carries ruleset
-`22152902`: no direct push, `CI passed` required. `bump-version.yml` ends in
-`git push origin HEAD:main`, and with `GITHUB_TOKEN` that push is made by `github-actions[bot]`,
-which is not a bypass actor. So the push was refused, the run went red, and **nothing downstream
-started** — `cd.yml` and the two store workflows all require `conclusion == 'success'`. Fail-safe,
-and a chain that does not run.
+`22152902`: no direct push, `CI passed` required. The bump ends in `git push origin HEAD:main`, and
+with `GITHUB_TOKEN` that push is made by `github-actions[bot]`, which is not a bypass actor. So the
+push was refused, the run went red, and **nothing downstream started** — every arm needed the bump.
+Fail-safe, and a chain that does not run. **That accident is now the design**: the preflight sits in
+front of the bump precisely because everything already depended on the bump succeeding.
 
 **The Actions app cannot be exempted.** Adding it to `bypass_actors` returns
 `422 Actor GitHub Actions integration must be part of the ruleset source or owner organization`
@@ -236,16 +310,25 @@ for a repository-level ruleset. That was measured, and the ruleset read back unc
 
 **What works is the App that is already installed.** `canari-auto-merge` (app id `4791068`) is an
 organisation installation, so GitHub accepts it as a bypass actor — and
-`dependabot-auto-merge.yml` already mints installation tokens for it. `bump-version.yml` now does
-the same and checks out with that token, because a later `git push` uses whatever credential the
-checkout persisted. The token is minted per run and expires in an hour, which is why an App beats a
+`dependabot-auto-merge.yml` already mints installation tokens for it. The bump job now does the
+same and checks out with that token, because a later `git push` uses whatever credential the
+checkout persisted. **`auto-merge.yml` mints the same identity for the same asymmetry read the
+other way round** - see below. The token is minted per run and expires in an hour, which is why an App beats a
 long-lived PAT here: there is no secret to rotate before it silently expires.
 
 **One side effect, and why it is harmless HERE.** A push made with an App token *does* raise a
 `push` event, where a `GITHUB_TOKEN` push does not — `dependabot-auto-merge.yml` documents that
 asymmetry and depends on it. The consequence is that `ci.yml` runs once on the bump commit, which is
-useful rather than costly. **It does not double a deploy, only because WP-2 deleted `on: push` from
-`cd.yml`.** Anyone re-adding a `push` trigger to a deploy workflow has to read this paragraph first.
+useful rather than costly. **It does not double a deploy, only because `deploy.yml` has no trigger at all** - it is
+`workflow_call` only. Anyone giving a deploy workflow a `push` trigger has to read this paragraph
+first.
+
+**AND THE SAME ASYMMETRY IS LOAD-BEARING IN THE OTHER DIRECTION, WHICH IS WHY `auto-merge.yml` USES
+AN APP TOO.** Auto-merge merges as whoever armed it. Armed with `GITHUB_TOKEN`, the merge would
+raise no `push` event, `ci.yml` would never run on `main`, the merge commit would carry no
+`CI passed` check - and gate 3 above would then refuse EVERY release, on commits that had in fact
+been tested. Someone "simplifying" `auto-merge.yml` to the default token would break releasing from
+a file that has nothing to do with releasing, so `release-chain.test.sh` asserts it does not.
 
 **The first release, `v0.15.0-alpha.1`, sidestepped this rather than fixing it**: the bump was landed
 through an ordinary pull request BEFORE the tag, so the workflow re-ran the same script, found no
@@ -316,7 +399,7 @@ version a duplicate build TestFlight refuses. **The shipped `.ipa` carries
 `CFBundleShortVersionString 0.15.0` and `CFBundleVersion 1500001`, which is the band.** Whether
 Tauri rewrote the plist or left it alone is therefore moot: the script writes the same numbers into
 `tauri.conf.json` and into the plist, so a re-sync is idempotent, and Tauri 2.11.4 exposing no iOS
-build-number override costs nothing. `ios-release.yml` still patches that plist with `PlistBuddy`
+build-number override costs nothing. `ios.yml` still patches that plist with `PlistBuddy`
 for the export-compliance key; nothing needs to re-assert the build number there.
 
 `.github/scripts/tests/bump-version.test.sh` runs the script in a sandbox, reads every file back and
@@ -329,10 +412,10 @@ See [`infrastructure/MIGRATION.md`](../../infrastructure/MIGRATION.md) (section 
 
 **A credential is real in THREE places, not two.** The CD regenerates `infrastructure/.env` from the
 repo secrets, so a value set over SSH lasts until the next deploy. It must therefore be a GitHub
-secret AND named in `cd.yml` - and the third, just as mandatory and the easiest to forget, is the
+secret AND named in `deploy.yml` - and the third, just as mandatory and the easiest to forget, is the
 service's own `environment:` block in `infrastructure/docker-compose.prod.yml` (and `.dev.yml` for
 parity), spelt explicitly as `FOO: ${FOO:-}`. `.env` holding the value proves nothing about whether
-Compose passes it INTO the container: `GOOGLE_SAFE_BROWSING_API_KEY` shipped correctly in `cd.yml`
+Compose passes it INTO the container: `GOOGLE_SAFE_BROWSING_API_KEY` shipped correctly in `deploy.yml`
 and `.env.example` and was still absent from the running container (WP-SAFELINK-1), where the
 endpoint answered 200 with a silently fail-open verdict rather than an error.
 `docker exec <container> env | grep FOO` is the only way to catch it.
@@ -348,7 +431,7 @@ changing — but nothing schedules it either, which is why it is written down he
 1. Change the `JWT_SECRET` repository secret (`openssl rand -hex 32`).
 2. Re-run the CD workflow.
 
-`cd.yml` makes this safe by refusing every failure mode it can see:
+`deploy.yml` makes this safe by refusing every failure mode it can see:
 
 | Step | What it does |
 |---|---|
@@ -401,7 +484,7 @@ The `deploy-to-server` job runs on a self-hosted GitHub Actions runner (label `s
 
 ### There is one runner, so a workflow that asks for it must say what it may not overlap with
 
-`cd.yml` declares `concurrency: { group: cd-deploy, cancel-in-progress: false }`. Until 2026-09-02 it
+`deploy.yml` declares `concurrency: { group: cd-deploy, cancel-in-progress: false }`. Until 2026-09-02 it
 declared nothing, and three deploy runs were in flight against `/home/canari/canari` at once - each
 able to `git reset --hard` and `docker compose up` while another was mid-flight. Production came out
 of it answering normally, which is why the gap had gone unnamed: the race heals cleanly almost every
@@ -439,20 +522,40 @@ here rather than fixed silently.
 ## Release workflow
 
 ```
-1. Developer: gh release create vX.Y.Z --target $(git rev-parse HEAD)
-2. Mobile workflows build iOS/Android artifacts
-3. bump-version.yml commits "chore: bump version to X.Y.Z" on main
-4. CD (workflow_run) rebuilds core-service + frontend (no CI) and deploys
-5. iOS: altool upload to App Store Connect (manual TestFlight submission after)
-6. Android: upload to Google Play (automatic or manual depending on track)
+gh release create vX.Y.Z --target $(git rev-parse HEAD)      <- the human gesture, and the last one
+  |
+  '- Release (release.yml), ONE run
+       |
+       |- preflight   five gates; a refusal ends it here, having moved nothing
+       |- bump        writes the version into 18 files, commits, pushes to main, outputs the SHA
+       |
+       '- three arms, in parallel, each building THAT SHA
+            |- deploy.yml   production (stable) or dev.canari-emse.fr (pre-release)
+            |- android.yml  .aab -> Play `production` (stable) or `internal` (pre-release)
+            '- ios.yml      .ipa -> App Store Connect, then for a stable: version created,
+                            build attached, release notes written, SUBMITTED FOR REVIEW
 ```
+
+A pre-release stops at TestFlight and the Play `internal` track, which is what a tester programme
+is. A stable goes all the way on both stores. **Nothing here is reached by a push to `main`.**
 
 ## A manual workflow run is the only native compiler available off macOS
 
-`android-release.yml` and `ios-release.yml` both accept `workflow_dispatch`, and **every** publish
-step (GitHub Release, Google Play, TestFlight) is gated on `workflow_run`. A manual run is
-therefore a pure compile check that ships nothing — and it is the only way to compile Swift, ObjC
-or Kotlin from a Windows machine. Dispatch both before believing any native change.
+`android.yml` and `ios.yml` both accept `workflow_dispatch`, and **every** publish step (GitHub
+Release, Google Play, TestFlight, the App Store submission) is gated on the `publish` input, which a
+hand dispatch defaults to **false**. A manual run is therefore a pure compile check that ships
+nothing — and it is the only way to compile Swift, ObjC or Kotlin from a Windows machine. Dispatch
+both before believing any native change.
+
+**THE GATE USED TO BE `github.event_name == 'workflow_run'`, AND THAT BROKE THE DAY THE CHAIN
+COLLAPSED INTO ONE RUN.** In a `workflow_call` workflow `github.event_name` is the CALLER's event -
+`release` or `workflow_dispatch` - so the condition went permanently FALSE, and four steps died at
+once: both "Upload to Release" steps, the TestFlight upload and the Play publish. The build would
+have succeeded, the run would have been green, and **no store would have received anything**. It was
+caught by reading the files rather than by any gate, and the assertions that would have caught it
+are now in `release-chain.test.sh`. The rule it left: **a condition that cannot be true is the same
+class of defect as a required check that is always skipped** - invisible, green, and load-bearing.
+What replaced it carries the distinction as DATA, from the one place that knows it.
 
 This is not a formality. A Swift `guard` body that falls through, a Kotlin nested type declared in
 a companion object, a plugin command missing from its ACL: none of these are visible to
@@ -482,7 +585,7 @@ removal - there is nothing else to assert against.
 
 ### A raw `cargo build` for the static lib must ask for `custom-protocol` itself
 
-`ios-release.yml`'s "Prebuild Rust static lib (libapp.a)" step calls `cargo build --lib --release
+`ios.yml`'s "Prebuild Rust static lib (libapp.a)" step calls `cargo build --lib --release
 --target aarch64-apple-ios` directly rather than `tauri ios build`, because that CLI's export step
 cannot express the two-target (app + NSE) manual-signing profile map this project needs. But
 `tauri ios build` is also the thing that normally enables the `tauri` crate's `custom-protocol`
@@ -494,7 +597,7 @@ profile compiles as a **dev build anyway**: the webview loads from the Vite dev 
 launch with Tauri's own hardcoded string, `Failed to request https://127.0.0.1:1420/: ... did you
 grant local network permissions?` (`tauri-2.11.1/src/protocol/tauri.rs`) - this shipped once, to
 TestFlight, before the step was corrected to pass `--features tauri/custom-protocol` explicitly.
-Android does not carry this risk: `android-release.yml` builds through `bun tauri android build`,
+Android does not carry this risk: `android.yml` builds through `bun tauri android build`,
 the real CLI, which sets the feature itself.
 
 **Enabling the feature has a second consequence: `generate_context!()` now actually validates
@@ -511,7 +614,7 @@ Two **named** provisioning profiles must exist and match `PROVISIONING_PROFILE_S
 one for the `Canari` app, one for the `CanariNotifications` notification-service extension. Team is
 "Les Rootz" (`4CLNB8SR6L`); the profiles expire **2027-07-11**.
 
-`ios-release.yml` also patches `ITSEncryptionExportComplianceCode` into `Info.plist` at build time
+`ios.yml` also patches `ITSEncryptionExportComplianceCode` into `Info.plist` at build time
 from the `APP_STORE_CONNECT_EXPORT_COMPLIANCE_CODE` secret (App Store Connect's own compliance
 documentation code for this app - distinct from `ITSAppUsesNonExemptEncryption`, which is committed
 since it's not account-specific). Kept as a secret rather than committed: this is a public repo, and
@@ -567,7 +670,7 @@ generated file, delete it and rebuild** - that is the only proof the generator r
 
 **A generated file in git is a COPY of the truth, and a copy goes stale in silence.** The question is
 never "is it up to date", it is **which pipelines rebuild it and which ship the committed one**.
-`frontend/src/lib/wasm/` was committed and rebuilt by `cd.yml` alone, so the web ran the current
+`frontend/src/lib/wasm/` was committed and rebuilt by `deploy.yml` alone, so the web ran the current
 `mls-core` while the Android, iOS and AppImage releases shipped the binary from the last commit that
 thought to regenerate it - **two different cryptos in one fleet, with nothing comparing them**.
 Rebuilding the untouched sources produced a different binary, which is how it was proven rather than
@@ -750,7 +853,7 @@ than assumed, and three properties follow:
   #306 and #308 (`redis 8.10-alpine`) allowed, #307 (`adminer`, digest only) allowed.
 
 One operational consequence, learned twice on the day: **a fix applied to the box is erased by the
-next deploy.** `cd.yml` runs `git reset --hard origin/main`, so pinning the image back over SSH
+next deploy.** `deploy.yml` runs `git reset --hard origin/main`, so pinning the image back over SSH
 restores service in seconds and survives exactly until the next dispatch - which is what happened at
 13:29, when a deploy from an origin still carrying 18 took production down a second time. The manual
 repair buys time to write the real one; it is never the repair.

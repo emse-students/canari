@@ -197,7 +197,7 @@ listés dans la carte d'impact ci-dessus ; ils sont déjà inventoriés, pas bes
 - Rupture nette à la bascule (cohérent avec le style déjà adopté dans ce repo pour
   history-reconciliation) : migration DB, suppression du SDK Stripe et du code mort, mise à jour
   `infrastructure/MIGRATION.md`, `.env.example`, docker-compose (dev/prod/local), secrets CI
-  (`cd.yml`/`cd-dev.yml`, y compris le job de vérification d'empreinte des secrets), wiki
+  (`deploy.yml`/`cd-dev.yml`, y compris le job de vérification d'empreinte des secrets), wiki
   (`payments.md`, `cotisations.md`, `services/core-service.md`, `architecture.md`, `glossary.md`,
   `api-surface.md`), `CHANGELOG.md`.
 

@@ -30,7 +30,7 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../../.." && pwd)"
-WORKFLOW="$REPO/.github/workflows/bump-version.yml"
+WORKFLOW="$REPO/.github/workflows/release.yml"
 SCRIPT="$REPO/scripts/bump-app-version.sh"
 
 PASS=0

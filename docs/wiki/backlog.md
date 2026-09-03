@@ -342,7 +342,7 @@ reasons, and a procedure has to answer both:
    cluster in a major-version subdirectory beneath it; this repository mounts `postgres_data` at
    `/var/lib/postgresql/data`. So `docker-compose.prod.yml`, `docker-compose.dev.yml` and
    `infrastructure/local/docker-compose.yml` all change shape, not just a tag - and the `pg_isready`
-   / `psql` invocations in `cd.yml`'s migration step run inside that container.
+   / `psql` invocations in `deploy.yml`'s migration step run inside that container.
 
 **What retires this entry, and it is the same thing that lifts the refusal:** a test that starts the
 NEW major against a data directory written by the OLD one and proves the upgrade path carries it.
@@ -485,15 +485,15 @@ Two facts to carry into that decision, both measured during the manual run:
 
 ### P3 - the release's commit is resolved three times by three chains, and two of them record nothing (measured 2026-09-03)
 
-`cd.yml` was fixed on 2026-09-03: `release-kind` resolves `main` once and every job below it checks
+`deploy.yml` was fixed on 2026-09-03: `release-kind` resolves `main` once and every job below it checks
 out `${{ needs.release-kind.outputs.sha }}`, so the commit that gets built is the commit the image
-tag and the `prod-released` / `dev-deployed` markers name. **`android-release.yml` and
-`ios-release.yml` still check out `ref: main` themselves**, and `main` moves for the same reason it
-moved for `cd.yml`: the bump's push raises a `push` event, `ci.yml` runs on `main` while the release
+tag and the `prod-released` / `dev-deployed` markers name. **`android.yml` and
+`ios.yml` still check out `ref: main` themselves**, and `main` moves for the same reason it
+moved for `deploy.yml`: the bump's push raises a `push` event, `ci.yml` runs on `main` while the release
 chains start, and a pull request merged in those minutes lands between them.
 
-**WHY THIS IS P3 AND NOT THE P-LEVEL `cd.yml` HAD.** Neither store workflow records a SHA anywhere,
-so neither can contradict itself the way `cd.yml` could - there is no false marker, only an
+**WHY THIS IS P3 AND NOT THE P-LEVEL `deploy.yml` HAD.** Neither store workflow records a SHA anywhere,
+so neither can contradict itself the way `deploy.yml` could - there is no false marker, only an
 unmeasured one. What is left is a cross-chain question: a merge landing between the three runs would
 ship a store bundle built from a different tree than production, and **nothing would ever say so**,
 because each chain is internally consistent and no artefact carries the commit. `frontendDist:
@@ -515,11 +515,11 @@ that is a design choice rather than a patch:
 - **A `release-sha` marker the bump writes**, in its own commit or as an output every chain reads
   through `gh api`. One writer, three readers, immutable once written - but it adds a lookup to two
   workflows that currently need none.
-- **Fold the store builds into `cd.yml`** as jobs depending on `release-kind`, which is the only
+- **Fold the store builds into `deploy.yml`** as jobs depending on `release-kind`, which is the only
   option that removes the class rather than covering it. It also serialises them behind the deploy's
   concurrency group, which may or may not be wanted.
 
-Until then, `cicd.md` states the gap in the section next to the `cd.yml` fix, so nobody reads that
+Until then, `cicd.md` states the gap in the section next to the `deploy.yml` fix, so nobody reads that
 fix as covering all three chains.
 
 ## Security - blocked upstream
@@ -2980,7 +2980,7 @@ feature is therefore coherent with E2EE - it removes a password prompt, not a re
 ### P3 - the "pre-release" checkbox and the version number can disagree, and nothing notices until the release AFTER the mistake (measured 2026-09-03)
 
 Two things say whether a release is a pre-release, and only one of them is read by each consumer.
-**The VERSION decides where it deploys**: `cd.yml`'s `release-kind` job reads
+**The VERSION decides where it deploys**: `deploy.yml`'s `release-kind` job reads
 `frontend/package.json` after the bump and treats a hyphen as the definition. **GitHub's
 `prerelease` FLAG decides the change detector's baseline**: it filters
 `gh api .../releases?per_page=100` by `.prerelease` to find the previous release of the same kind.
@@ -3079,9 +3079,9 @@ three defects. All four are fixed. What is NOT yet proven is in the row below th
 
 | Repo | Its ceiling | Does an auto-merge deploy? | Can it drain a queue it did not watch open? |
 | --- | --- | --- | --- |
-| **Canari** | the at-rest trio, the protocol crates, `aes-gcm`, the SFU stack | yes, an explicit `workflow_dispatch` on `cd.yml` | a full sweep on every CD completion, plus an hourly cron at :17 |
+| **Canari** | the at-rest trio, the protocol crates, `aes-gcm`, the SFU stack | yes, an explicit `workflow_dispatch` on `deploy.yml` | a full sweep on every CD completion, plus an hourly cron at :17 |
 | **Sky** | EMPTY, measured - all three candidates closed by writing the test | yes, `deploy.yml` dispatched, its `verify` job re-running CI on the merged tree | a full sweep on every `CI (Bun)` completion, plus a cron at :17 |
-| **MiGallery** | `jspdf`/`jspdf-autotable`, `form-data`; `sharp` closed by `tests/face-crop.test.ts` | yes, `cd.yml` dispatched; its `run-ci` job already gated `build-image` | a full sweep on every CD completion, plus a cron at :23 |
+| **MiGallery** | `jspdf`/`jspdf-autotable`, `form-data`; `sharp` closed by `tests/face-crop.test.ts` | yes, `deploy.yml` dispatched; its `run-ci` job already gated `build-image` | a full sweep on every CD completion, plus a cron at :23 |
 | **Portail-etu** | EMPTY, measured - both candidates closed by writing the gate | yes, `deploy.yml` dispatched, with a new `verify` job so the dispatch is no longer ungated | a full sweep on every `Run Tests` completion, plus a cron at :41 |
 
 **THE CONVERGENT HALF WAS A CLOCK, AND THE CLOCK DOES NOT FIRE.** Measured 2026-08-31 17:00 UTC:
@@ -3444,7 +3444,7 @@ WITHOUT deploying production, because one trigger - a push to `main` - ran both 
 The workflow migration answered it from the other end. **A run deploys exactly one estate, and which
 one is decided by the RELEASE**: a `X.X.X-alpha.N` pre-release deploys dev and nothing else, a
 stable deploys production and nothing else, and a push deploys neither. Both shapes weighed here are
-gone rather than chosen - the `dev` branch existed for one day and was deleted, and `cd.yml` has no
+gone rather than chosen - the `dev` branch existed for one day and was deleted, and `deploy.yml` has no
 `workflow_dispatch` at all, a dispatch being a second door onto the one machine. **Kept because the
 distinction it was written to preserve still holds**: the capability was absent because nobody had
 asked for it, not because it had been considered and rejected, and it arrived the day somebody
@@ -3531,7 +3531,7 @@ blocks the prod deploy** - the most valuable gate this whole item buys, and it i
 migration against a copy of prod's data, so a migration that breaks there would have broken prod.
 Accepted cost: dev never pre-validates a commit, it is where things are tried afterwards.
 
-**CD shape: ONE `cd.yml` parameterised by environment**, not a second file - `cd-dev.yml` drifted to
+**CD shape: ONE `deploy.yml` parameterised by environment**, not a second file - `cd-dev.yml` drifted to
 734 unusable lines in four months precisely because it was separate. Dev builds its own images
 (the images embed the frontend and therefore the domain), roughly doubling build time, accepted.
 
@@ -3729,7 +3729,7 @@ above assumed.**
   so a dev Redis would have kept the shared message log in a container filesystem. Waking it up as it
   stood was how a test notification reaches a real phone, which is why the deletion was pulled forward
   ahead of the CD unification rather than bundled with it. It was no loss as a reference: the dev arm
-  will be written from `cd.yml`, which works, not from a file that never did.
+  will be written from `deploy.yml`, which works, not from a file that never did.
 - **The box has room, so capacity is not a reason to host dev elsewhere:** 70 GB free of 125 GB, and
   15 GiB of 16 GiB RAM available with the whole production estate running at ~800 MiB.
 

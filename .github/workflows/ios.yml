@@ -1,18 +1,77 @@
-name: iOS Release
+name: Ship to the App Store
 
 # Mirrors android-release.yml: runs after "Bump version on release" syncs
 # frontend/package.json on main, and attaches the signed .ipa to the GitHub Release.
 # Public repo => GitHub-hosted macOS runners are free.
+# CALLED BY `release.yml`, AND BY NOTHING ELSE. It used to listen for the bump run's completion
+# itself, which is what made three workflows each re-derive the same facts and each resolve `main`
+# for itself - so a merge landing mid-release could give a store a different tree from production,
+# with nothing anywhere to say so. The orchestrator resolves the commit once and hands it down.
+#
+# AND IT IS ALSO HAND-DISPATCHABLE AS A PURE COMPILE CHECK, which is a capability rather than a
+# second door. This is the ONLY way to compile Swift, ObjC or Kotlin from the Windows workstation
+# this project is developed on: none of a Swift `guard` body that falls through, a Kotlin nested
+# type in a companion object, or a plugin command missing from its ACL is visible to
+# `cargo clippy`, `bun run check` or any gate that runs locally. Collapsing the release chain into
+# one run removed the trigger for a commit, which would have taken that capability away silently.
+#
+# WHAT MAKES IT SAFE IS `publish`, CARRIED AS DATA. The old version reasoned about
+# `github.event_name` to tell a compile check from a release - and in a called workflow
+# `github.event_name` is the CALLER's event, so that reasoning is not merely wrong here, it is
+# unanswerable. A dispatch therefore declares `publish: false` and every step that reaches a store
+# or a release reads that input instead of guessing from an event.
 on:
-  workflow_run:
-    workflows: ['Bump version on release']
-    types: [completed]
+  workflow_call:
+    inputs:
+      sha:
+        description: 'The exact commit to build - resolved ONCE by the caller'
+        required: true
+        type: string
+      version:
+        description: 'The version the bump wrote into the manifests'
+        required: true
+        type: string
+      prerelease:
+        description: 'The string "true" or "false", already read off the version by the caller'
+        required: true
+        type: string
+
+      publish:
+        description: 'Whether this run may reach a store or a release. A release always may.'
+        required: false
+        default: true
+        type: boolean
+
+  # A COMPILE CHECK, and it ships nothing: `publish` defaults to false here and every publishing
+  # step is gated on it. `sha` may be left empty, in which case the branch this is dispatched from
+  # is what gets built - which is the whole point when the question is "does this native change
+  # compile at all".
   workflow_dispatch:
+    inputs:
+      sha:
+        description: 'Commit to build. Empty builds the branch this is dispatched from.'
+        required: false
+        default: ''
+        type: string
+      version:
+        description: 'Version to stamp. Only affects the artefact name on a compile check.'
+        required: false
+        default: '0.0.0-compilecheck'
+        type: string
+      prerelease:
+        description: 'The string "true" or "false". A compile check should stay "true".'
+        required: false
+        default: 'true'
+        type: string
+      publish:
+        description: 'Leave OFF. Turning it on makes a hand-dispatched run reach a real store.'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   build-ios:
     name: Build iOS IPA
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: macos-15 # Xcode 16.2+ (required for current iOS SDK / Tauri toolchain)
     permissions:
       contents: write
@@ -20,34 +79,23 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: main
+          # An empty `sha` is the compile-check case: build the ref this was dispatched from.
+          ref: ${{ inputs.sha != '' && inputs.sha || github.ref }}
 
-      # THE MANIFEST DECIDES WHETHER THIS IS AN ALPHA, for the same reason as everywhere else:
-      # `github.event.release.prerelease` does not exist in a `workflow_run` context, and
-      # `workflow_run.head_branch` says `main` on the hand-dispatched path. A hyphen in the semver
-      # version IS the definition of a pre-release.
-      #
-      # WHAT IT DOES *NOT* CHANGE HERE, and this is worth saying because the checklist expected it
-      # to: there is no TestFlight GROUP to select. `altool --upload-app` hands the build to App
-      # Store Connect and every INTERNAL tester sees every processed build automatically - internal
-      # groups are not opt-in per build, unlike external ones, which is exactly why decision 9 chose
-      # internal channels (no Beta App Review in the loop). The alpha/stable difference on iOS is
-      # therefore the BACKEND the bundle is built against, below, and nothing else. An App Store
-      # submission is still a manual act in App Store Connect.
-      - name: Resolve release tag
+      # THE CALLER HAS ALREADY DECIDED. This step used to read `frontend/package.json` back off the
+      # checkout, for a reason that was correct at the time: a `workflow_run` carries neither
+      # `release.prerelease` nor a usable branch. `release.yml` now reads the manifest the bump just
+      # WROTE and hands the same answer to all three chains, so the App Store channel, the Play
+      # track and the estate cannot disagree.
+      - name: Read the release under way
         id: release_tag
         run: |
           set -euo pipefail
-          VERSION="$(bash scripts/read-app-version.sh)"
-          case "$VERSION" in
-            *-*) PRERELEASE=true ;;
-            *)   PRERELEASE=false ;;
-          esac
           {
-            echo "version=${VERSION}"
-            echo "prerelease=${PRERELEASE}"
+            echo "version=${{ inputs.version }}"
+            echo "prerelease=${{ inputs.prerelease }}"
           } >> "$GITHUB_OUTPUT"
-          echo "Building Canari v${VERSION} (prerelease=${PRERELEASE})"
+          echo "Building Canari v${{ inputs.version }} (prerelease=${{ inputs.prerelease }})"
 
       - name: Select Xcode (>= 16.2)
         uses: maxim-lobanov/setup-xcode@v1
@@ -456,6 +504,21 @@ jobs:
           echo "ipa=frontend/src-tauri/gen/apple/$IPA" >> "$GITHUB_OUTPUT"
           echo "IPA: $IPA"
 
+          # THE BUILD NUMBER IS READ OFF THE ARCHIVE, never recomputed. The submission step below
+          # has to name the build it wants among everything in App Store Connect, and the only
+          # answer that cannot be wrong is the `CFBundleVersion` of the binary this job actually
+          # signed - a second implementation of the store band (`scripts/bump-app-version.sh`
+          # computes it as (major*1e6 + minor*1e3 + patch)*100 + rank) would be one more place for
+          # the two to disagree, and they would disagree silently: the submission would simply wait
+          # for a build number nobody uploaded until it timed out.
+          BUILD_NUMBER="$(/usr/libexec/PlistBuddy -c 'Print :ApplicationProperties:CFBundleVersion' "$ARCHIVE/Info.plist")"
+          if [ -z "$BUILD_NUMBER" ]; then
+            echo "::error::the archive carries no CFBundleVersion, so no submission could name its build"
+            exit 1
+          fi
+          echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "Build number: $BUILD_NUMBER"
+
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v7
         with:
@@ -464,7 +527,13 @@ jobs:
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v3
-        if: github.event_name == 'workflow_run'
+        # ONLY WHEN A PUBLISHED RELEASE IS WHAT STARTED THIS. `release.yml` also has a
+        # hand-dispatched path, for re-running a release whose chain died on an infrastructure
+        # fault; on that path a GitHub release for the version may not exist, and this action would
+        # CREATE one - which would publish a release, which would start `release.yml` again. Reading
+        # the caller's event is the precise question: attach the artefact to the release that
+        # triggered this run, and to nothing else.
+        if: inputs.publish && github.event_name == 'release'
         with:
           tag_name: v${{ steps.release_tag.outputs.version }}
           fail_on_unmatched_files: true
@@ -473,7 +542,19 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload to TestFlight / App Store Connect
-        if: github.event_name == 'workflow_run'
+        id: testflight
+        if: inputs.publish
+        # GATED ON `inputs.publish`, WHICH IS DATA, and never on an event again. This step used to
+        # read `github.event_name == 'workflow_run'`, meaning "a real release rather than a
+        # hand-dispatched compile check" - and in a `workflow_call` workflow `github.event_name` is
+        # the CALLER's event, so the condition became permanently FALSE when the chain collapsed
+        # into one run: the build would have succeeded, the run would have been green, and NO STORE
+        # WOULD HAVE RECEIVED ANYTHING.
+        #
+        # The distinction it was reaching for is real and still needed - a compile check must ship
+        # nothing - so it is carried explicitly by the caller instead of inferred from an event
+        # nobody here can see. `release.yml` passes nothing and takes the callable default, `true`;
+        # a hand dispatch of THIS workflow defaults it to `false`.
         env:
           ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
@@ -487,6 +568,7 @@ jobs:
           # the meantime.
           if [ -z "$ASC_KEY_ID" ] || [ -z "$ASC_ISSUER_ID" ] || [ -z "$ASC_API_KEY_P8" ]; then
             echo "::warning::App Store Connect API key secrets not set; skipping TestFlight upload"
+            echo "uploaded=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           # altool auto-discovers the key at ~/.appstoreconnect/private_keys/AuthKey_<KEYID>.p8
@@ -511,5 +593,34 @@ jobs:
             echo "::error::altool reported a failed upload - see log above"
             exit 1
           fi
+          echo "uploaded=true" >> "$GITHUB_OUTPUT"
           echo "✅ Uploaded to TestFlight"
 
+
+      # ═══════════════════════════════════════════════════════════════════════════════════════════
+      # AND THEN ACTUALLY SUBMIT IT - the half that was missing, and the only asymmetry left
+      # between the two stores.
+      #
+      # `altool --upload-app` above hands Apple the binary and stops. The binary lands in
+      # TestFlight, which is exactly right for a pre-release, and for a STABLE it left the release
+      # one manual gesture short of shipped: somebody had to open App Store Connect, create the
+      # version, attach the build and press Submit. Nothing asked for that gesture and nothing
+      # reminded anybody of it, while the same release put Android on the Play `production` track by
+      # itself. So a stable release was half-shipped by construction.
+      #
+      # ONLY FOR A STABLE, and not as a policy choice: `versionString` is a marketing version and
+      # Apple refuses `0.15.0-alpha.1` outright. A pre-release's destination IS TestFlight, which
+      # the upload above has already reached - there is nothing further to do for one.
+      - name: Create the App Store version, attach the build, and submit for review
+        if: inputs.publish && inputs.prerelease == 'false' && steps.testflight.outputs.uploaded == 'true'
+        env:
+          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          ASC_API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
+          APP_BUNDLE_ID: fr.emse.canari
+          MARKETING_VERSION: ${{ inputs.version }}
+          BUILD_NUMBER: ${{ steps.outputs.outputs.build_number }}
+        # `node` and not `bun`: this runs on a macOS runner where node is preinstalled, the script
+        # uses nothing but `node:crypto`, `node:fs` and global `fetch`, and setting bun up again
+        # after the archive would be a step for no gain.
+        run: node tools/app-store/submit.mjs

@@ -11,7 +11,7 @@
 [![NestJS](https://img.shields.io/badge/NestJS-E0234E?logo=nestjs)](https://nestjs.com/)
 
 [![CI](https://github.com/emse-students/canari/actions/workflows/ci.yml/badge.svg)](https://github.com/emse-students/canari/actions/workflows/ci.yml)
-[![CD](https://github.com/emse-students/canari/actions/workflows/cd.yml/badge.svg)](https://github.com/emse-students/canari/actions/workflows/cd.yml)
+[![Release](https://github.com/emse-students/canari/actions/workflows/release.yml/badge.svg)](https://github.com/emse-students/canari/actions/workflows/release.yml)
 [![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue.svg)](LICENSE)
 
 </div>
