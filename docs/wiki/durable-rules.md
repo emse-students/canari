@@ -865,6 +865,28 @@ before touching any login, cookie or rotation.
 Environment and tooling traps that belong to no one subsystem. Each cost a run.
 
 - **A SWITCH IS NOT A MECHANISM, AND AN ENABLED TIMER IS THE MOST CONVINCING WAY TO HAVE NEITHER.** On 2026-09-03 all four hosts answered `apt-daily-upgrade.timer: enabled` and not one had `unattended-upgrades` installed; `mitv` went further and carried `APT::Periodic::Unattended-Upgrade "1"` with the package absent - a configuration that reads as ON and does nothing at all. Anyone auditing that estate by listing timers would have concluded packages were current while one box was 113 behind. **So ask what RAN, never what is enabled**, which is the same rule this file already carries about GitHub's cron arriving late or not at all: a schedule is a request, and its failure mode is absence. Two corollaries, both measured the same day. **An APT configuration LIST accumulates across files rather than overriding**, so declaring `Unattended-Upgrade::Origins-Pattern` APPENDS to the package default - the resolved policy on the trixie boxes opened with `label=Debian`, the whole of stable, while the file said security; `#clear` first, then state it, and note that bookworm and trixie ship different defaults so a config verified on one is not verified on the other. **And a scope is worth verifying rather than arguing**: the fear priced in the backlog was that unattended upgrades would restart Docker and reproduce a 30-second `502`, and `--dry-run --debug` showed the Docker CE origin pinned `-32768`, *"Marking not allowed"* - the cost simply was not incurred. [host-updates](infrastructure/host-updates.md)
+- **AN ENUMERATION OF WHAT SOMETHING TOUCHES IS A SECOND, SILENT STATEMENT OF IT - ask the system
+  instead.** `bump-version.yml` staged an eleven-line `git add` list beside a script that writes
+  those same files: two statements, nothing comparing them, so a new manifest or a renamed directory
+  would be bumped on disk and left out of the commit - a release whose components disagree, surfacing
+  at a store upload rather than in CI. `git add -u` cannot drift because it asks git. The general
+  form: when a list must track a behaviour, prefer deriving it; when it cannot be derived, a TEST
+  must compare the two copies. And prefer the narrow derivation - `-u` (tracked modifications) over
+  `-A` (anything present) - because the wide one is a behaviour change wearing a simplification's
+  clothes. See [cicd](cicd.md#version-bump).
+
+- **A BOT'S PUSH OBEYS THE SAME RULESET A HUMAN'S DOES, AND THE ACTIONS APP CANNOT BE EXEMPTED FROM
+  A REPOSITORY RULESET.** `GITHUB_TOKEN` acts as `github-actions[bot]`, which is not a bypass actor
+  unless somebody made it one - and it cannot be made one: GitHub answers `422 Actor GitHub Actions
+  integration must be part of the ruleset source or owner organization`. So a workflow that pushes
+  to a protected default branch needs an App installed in the ORGANISATION, whose installation token
+  it mints per run. Two consequences to carry: an App-token push RAISES a `push` event where a
+  `GITHUB_TOKEN` push does not, so check what listens on `push` before switching; and the failure
+  mode of getting this wrong is silent in the reassuring direction - the run goes red and every
+  downstream `workflow_run` gated on `conclusion == 'success'` simply never starts, which looks like
+  "nothing happened" rather than like a fault. See
+  [cicd](cicd.md#the-push-this-workflow-makes-is-the-one-push-to-main-that-is-not-a-pull-request-and-the-ruleset-refused-it-measured-2026-09-03).
+
 - **CAPTURE A HOST'S FAILED UNITS BEFORE YOU CHANGE ITS STATE, or you cannot tell your damage
   from what was already broken.** Rebooting `mitv` on 2026-09-03 surfaced two failed units, and
   answering "were these mine?" took a trip through `journalctl --list-boots` and the previous boot's

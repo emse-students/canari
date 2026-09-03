@@ -190,7 +190,42 @@ back is precisely how an alpha ends up talking to production.
 
 ### Version bump (`bump-version.yml`)
 
-Triggered on `release: published` (or manually). Must stage the explicit file list — any new file the bump script patches must be added to the workflow.
+Triggered on `release: published` (or manually). It stages `git add -u`, so whatever the bump script
+writes is what gets committed — see [Version bump](#version-bump) below for why that replaced a path
+list.
+
+#### The push this workflow makes is the ONE push to `main` that is not a pull request, and the ruleset refused it (measured 2026-09-03)
+
+**The first real release found this, and nothing before it could have.** `main` carries ruleset
+`22152902`: no direct push, `CI passed` required. `bump-version.yml` ends in
+`git push origin HEAD:main`, and with `GITHUB_TOKEN` that push is made by `github-actions[bot]`,
+which is not a bypass actor. So the push was refused, the run went red, and **nothing downstream
+started** — `cd.yml` and the two store workflows all require `conclusion == 'success'`. Fail-safe,
+and a chain that does not run.
+
+**The Actions app cannot be exempted.** Adding it to `bypass_actors` returns
+`422 Actor GitHub Actions integration must be part of the ruleset source or owner organization`
+for a repository-level ruleset. That was measured, and the ruleset read back unchanged afterwards.
+
+**What works is the App that is already installed.** `canari-auto-merge` (app id `4791068`) is an
+organisation installation, so GitHub accepts it as a bypass actor — and
+`dependabot-auto-merge.yml` already mints installation tokens for it. `bump-version.yml` now does
+the same and checks out with that token, because a later `git push` uses whatever credential the
+checkout persisted. The token is minted per run and expires in an hour, which is why an App beats a
+long-lived PAT here: there is no secret to rotate before it silently expires.
+
+**One side effect, and why it is harmless HERE.** A push made with an App token *does* raise a
+`push` event, where a `GITHUB_TOKEN` push does not — `dependabot-auto-merge.yml` documents that
+asymmetry and depends on it. The consequence is that `ci.yml` runs once on the bump commit, which is
+useful rather than costly. **It does not double a deploy, only because WP-2 deleted `on: push` from
+`cd.yml`.** Anyone re-adding a `push` trigger to a deploy workflow has to read this paragraph first.
+
+**The first release, `v0.15.0-alpha.1`, sidestepped this rather than fixing it**: the bump was landed
+through an ordinary pull request BEFORE the tag, so the workflow re-ran the same script, found no
+diff, printed `No version changes` and exited 0 without ever reaching the push. That worked and
+proved the rest of the chain, but it made publishing a release a two-step manual dance. The App
+token is the fix; bump-before-tag stays available as the emergency path if the App is ever
+uninstalled.
 
 **ONE ARGUMENT BECOMES THREE DIFFERENT STRINGS**, and conflating any two of them breaks a store
 upload rather than a build. `scripts/bump-app-version.sh` is the only place that decides:
@@ -419,8 +454,19 @@ the secret is unset - `Info.plist` stays as committed, and the TestFlight upload
 
 `scripts/bump-app-version.sh` must patch the NSE's `MARKETING_VERSION` and
 `CURRENT_PROJECT_VERSION` alongside the app's — an NSE left behind on an older version is rejected
-at upload. `bump-version.yml` stages an **explicit `git add` list**, so any new file the script
-learns to patch has to be added there too, or the bump silently leaves it uncommitted.
+at upload.
+
+**`bump-version.yml` used to stage an explicit `git add` list, and that was a standing hazard this
+page carried as a warning: any new file the script learned to patch had to be added there too, or
+the bump silently left it uncommitted.** A warning is not a mechanism. Since 2026-09-03 the step
+stages **`git add -u`**, which asks git what changed instead of asking a human to remember — the
+list was a second, silent statement of which files carry a version, and nothing compared the two
+statements. `-u` and not `-A`, deliberately: it stages modifications to TRACKED files only, so an
+untracked artefact cannot ride along. `frontend/mls-core/Cargo.lock` is the live example — the
+script rewrites it, `.gitignore`'s `*.lock` means git does not track it, and it must stay out of the
+commit. `.github/scripts/tests/bump-staging.test.sh` asserts the whole shape in a detached
+worktree: 17 tracked files modified and all covered, no untracked file created, no manifest left on
+the previous version, and both store numbers carrying the band.
 
 A `Cargo.lock` pins the version of every LOCAL crate as well, and it does **not** live next to the
 crate it pins: `mls-core` is pinned in `frontend/src-tauri/Cargo.lock` **and** in
