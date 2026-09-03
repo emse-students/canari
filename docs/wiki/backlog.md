@@ -83,6 +83,69 @@ and its test are on [dev-environment](infrastructure/dev-environment.md).
 
 ## CI and the chain that runs unattended
 
+### P1 - NINE OF THE TEN BACKEND PULL-REQUEST SLOTS ARE HELD BY UPDATES THAT CAN NEVER GO GREEN, and the group written to prevent exactly that has never opened a pull request (measured 2026-09-03)
+
+**The four NestJS services share `open-pull-requests-limit: 10`, and nine of those ten slots are
+occupied by single-package NestJS 12 bumps that are red by construction.** So the whole backend half
+of the dependency chain has ONE free slot: the next security fix for `core-service`,
+`social-service`, `media-service` or `chat-delivery-service` is queued behind nine pull requests
+that cannot merge on any future day. This is the chain the user asked for
+(*"pour avoir un projet qui peut 'vivre tout seul'"*) blocked at 90% on the services that carry the
+API.
+
+| slot | PR | service | package |
+|---|---|---|---|
+| 1 | #282 | `social-service` | `@nestjs/typeorm` 12.0.1 |
+| 2 | #281 | `social-service` | `@nestjs/schematics` 12.0.0 |
+| 3 | #280 | `social-service` | `@nestjs/common` 12.0.1 |
+| 4 | #278 | `social-service` | `@nestjs/platform-express` 12.0.1 |
+| 5 | #277 | `social-service` | `@nestjs/core` 12.0.1 |
+| 6 | #267 | `core-service` | `@nestjs/testing` 12.0.1 |
+| 7 | #263 | `chat-delivery-service` | `@nestjs/common` 12.0.1 |
+| 8 | #259 | `chat-delivery-service` | `@nestjs/core` 12.0.1 |
+| 9 | #257 | `chat-delivery-service` | `@nestjs/testing` 12.0.1 |
+
+**Each is incoherent ALONE, which is the whole reason the `nestjs` group exists.** #263 carries
+`@nestjs/common@12.0.1` against `@nestjs/core@11.2.3` and **45 test suites die at import** on
+`Cannot find module '@nestjs/common/interfaces' from 'node_modules/@nestjs/core/injector/module.js'` -
+core 11 reaching for a subpath that ESM-only common 12 does not export. Bumping any one of the three
+alone produces that, in either direction.
+
+**The group cannot rescue them, because they predate it.** `dependabot.yml`'s `nestjs` group
+(*"A FRAMEWORK MOVES AS ONE PIECE OR IT DOES NOT MOVE"*) landed 2026-08-31, after all nine were
+open. Dependabot does not open a grouped pull request for a dependency that already has an open one,
+and it does not retroactively regroup - every branch is still named `.../nestjs/<package>-<version>`,
+one package each. **The group has therefore never produced a single pull request, on the exact case
+it was written for.** `@dependabot recreate` does not help either: it rebuilds the PR with its
+original single-package scope, which is what three of these got on 2026-09-03 and why only those
+three have checks at all.
+
+**Six of the nine report NO CHECKS AT ALL** (#282, #281, #280, #278, #277, #267). Since the `main`
+ruleset made `CI passed` a required check on 2026-09-03, a pull request with zero reported checks
+can never satisfy it - so those six are stuck twice over, and a recreate is the only thing that
+would give them a run.
+
+**What retires it:** close the nine, and let the group open ONE coherent pull request per service on
+Dependabot's next detection. **Two things must be settled before doing that, and neither is
+guessable:**
+
+1. **Whether closing records a suppression.** `@dependabot close` is documented as closing the PR
+   *and stopping Dependabot from recreating it*, which would exclude those versions from the grouped
+   pull request as well and make this worse. A plain `gh pr close` is believed not to record a
+   version ignore, but that is belief, not measurement. **Measure it on ONE** - #257, a dev
+   dependency on a service whose framework is held anyway - and read the result before touching the
+   other eight.
+2. **The detection interval is `weekly`, Monday.** So the experiment above resolves on
+   **2026-09-07** and not before; nothing here is verifiable the same day it is changed.
+
+**What it does NOT change:** the framework hold itself is correct and stays. `@nestjs/throttler`
+still publishes nothing accepting `^12.0.0`, so the grouped pull requests for `social-service` and
+`chat-delivery-service` will be RED when they open - and red for the right reason, which is
+`framework-boot.spec.ts` refusing the combination rather than 45 suites failing to import. That is
+the difference between a hold that expires when its reason does and nine branches that expire never.
+The mechanism is on [nestjs-framework](services/nestjs-framework.md), whose step 4 was WRONG until
+this was measured.
+
 ### P1 - two of the six cargo directories are invisible to Dependabot, and one of them is the app that ships to phones (measured 2026-09-02)
 
 **The Tauri app has had no automated dependency update since 2026-08-08, and its security alerts have
