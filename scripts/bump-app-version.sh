@@ -181,12 +181,13 @@ bump_ios_app_infoplist() {
   # upload of that short version, which is exactly what a pre-release counter needs. It takes the
   # same band Android's versionCode does, so ONE number identifies a build on both stores.
   #
-  # WHAT IS NOT SETTLED FROM A WINDOWS BOX: `tauri ios build` re-syncs both keys from
-  # tauri.conf.json during the build, and Tauri 2.11.4 exposes no iOS build-number override - so
-  # this committed value may be overwritten on the runner. `ios-release.yml` already patches this
-  # plist with PlistBuddy for the export-compliance code; if a TestFlight upload is ever refused as
-  # a duplicate build, that is where CFBundleVersion is re-asserted. Only a macOS run can say
-  # whether it has to be, so nothing is written against the guess.
+  # AND WHAT THE FIRST RELEASE SETTLED (v0.15.0-alpha.1, 2026-09-03). The open question was whether
+  # `tauri ios build` re-syncs both keys from tauri.conf.json during the build and so overwrites the
+  # committed CFBundleVersion, which would make the second alpha of a version a duplicate build
+  # TestFlight refuses. The shipped .ipa carries CFBundleShortVersionString 0.15.0 and CFBundleVersion
+  # 1500001 - the band. Whether Tauri rewrote the plist or left it alone is moot: this function and
+  # bump_tauri_conf write the SAME numbers, so a re-sync is idempotent. `ios-release.yml` still
+  # patches this plist for the export-compliance key; nothing has to re-assert the build number.
   local file="$1"
   local core="$2"
   local version_code="$3"
@@ -239,6 +240,70 @@ bump_cargo_lock_version() {
   ' "$file" > "$tmp"
   mv "$tmp" "$file"
   echo "  Cargo.lock    $file → $version"
+}
+
+promote_changelog() {
+  # THE ONE MODIFICATION A RELEASE NEEDS THAT NOTHING WAS MAKING. Every version-bearing manifest is
+  # rewritten above; `CHANGELOG.md` was not touched at all, so `## [Unreleased]` stayed `[Unreleased]`
+  # through every release and the next cycle wrote its entries into the same section. That is not a
+  # cosmetic drift: it is why 4500 lines sat under one heading covering fifteen shipped versions, with
+  # no way left to say which release a user got a given fix in. Doing it HERE rather than in the
+  # workflow is what makes `git add -u` pick it up with everything else, in the bump's own commit.
+  #
+  # STABLE ONLY, and that is the whole reason RANK is passed in. An `-alpha.N` is a tester build, not
+  # the release of these notes: promoting on it would close the section and leave the stable that
+  # follows days later publishing an empty one, which is worse than the drift being fixed.
+  #
+  # IDEMPOTENT, because a re-run is an ordinary event - the workflow is hand-dispatchable and a
+  # release can be re-published. A heading for this version already present means the work is done.
+  local file="$1"
+  local version="$2"
+  local rank="$3"
+
+  if [ "$rank" -ne 99 ]; then
+    echo "  CHANGELOG     skip (${version} is a pre-release; the notes belong to its stable)"
+    return
+  fi
+  if [ ! -f "$file" ]; then
+    echo "  skip (no CHANGELOG): $file" >&2
+    return
+  fi
+  if grep -qF "## [${version}]" "$file"; then
+    echo "  CHANGELOG     already carries a [${version}] section"
+    return
+  fi
+  if ! grep -qF '## [Unreleased]' "$file"; then
+    echo "  CHANGELOG     no [Unreleased] heading to promote - leaving it alone" >&2
+    return
+  fi
+
+  # Does the section actually say anything? An empty one promoted to a version heading claims a
+  # release documented nothing, which reads as a fact rather than as the gap it is. Warn and leave
+  # it: a release with no entries is something a human should see, not something to tidy away.
+  local body
+  body="$(awk '/^## \[Unreleased\]/ { inside = 1; next } inside && /^## \[/ { exit } inside { print }' "$file" | tr -d '[:space:]')"
+  if [ -z "$body" ]; then
+    echo "  CHANGELOG     [Unreleased] is EMPTY - not promoting it to [${version}]" >&2
+    return
+  fi
+
+  local today tmp
+  today="$(date -u +%Y-%m-%d)"
+  tmp="$(mktemp)"
+  # A fresh empty [Unreleased] stays on top for the next cycle, which is what Keep a Changelog asks
+  # for and what makes the promotion invisible to anyone adding an entry tomorrow.
+  awk -v ver="$version" -v today="$today" '
+    /^## \[Unreleased\]/ && !done {
+      print "## [Unreleased]"
+      print ""
+      print "## [" ver "] - " today
+      done = 1
+      next
+    }
+    { print }
+  ' "$file" > "$tmp"
+  mv "$tmp" "$file"
+  echo "  CHANGELOG     $file → [Unreleased] promoted to [${version}] - ${today}"
 }
 
 discover_package_json_files() {
@@ -306,5 +371,7 @@ done < <(discover_cargo_files)
 while IFS= read -r f; do
   bump_cargo_lock_version "$(dirname "$f")/Cargo.lock" "$VERSION" "$LOCAL_CRATES"
 done < <(discover_cargo_files)
+
+promote_changelog "$ROOT/CHANGELOG.md" "$VERSION" "$RANK"
 
 echo "Done."

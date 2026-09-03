@@ -483,6 +483,45 @@ Two facts to carry into that decision, both measured during the manual run:
 
 ---
 
+### P3 - the release's commit is resolved three times by three chains, and two of them record nothing (measured 2026-09-03)
+
+`cd.yml` was fixed on 2026-09-03: `release-kind` resolves `main` once and every job below it checks
+out `${{ needs.release-kind.outputs.sha }}`, so the commit that gets built is the commit the image
+tag and the `prod-released` / `dev-deployed` markers name. **`android-release.yml` and
+`ios-release.yml` still check out `ref: main` themselves**, and `main` moves for the same reason it
+moved for `cd.yml`: the bump's push raises a `push` event, `ci.yml` runs on `main` while the release
+chains start, and a pull request merged in those minutes lands between them.
+
+**WHY THIS IS P3 AND NOT THE P-LEVEL `cd.yml` HAD.** Neither store workflow records a SHA anywhere,
+so neither can contradict itself the way `cd.yml` could - there is no false marker, only an
+unmeasured one. What is left is a cross-chain question: a merge landing between the three runs would
+ship a store bundle built from a different tree than production, and **nothing would ever say so**,
+because each chain is internally consistent and no artefact carries the commit. `frontendDist:
+"../build"` means the app EMBEDS the frontend, so the divergence is real code and not a
+configuration difference.
+
+**THE WINDOW IS SMALL AND SHOULD BE MEASURED BEFORE IT IS CLOSED.** All three chains start from the
+same `workflow_run` completion, so they resolve `main` within seconds of each other; the ruleset
+means the intervening change must be a squash-merge of a green pull request, which takes minutes of
+human gesture. Measuring it is one query: for the last N releases, compare `main`'s SHA at each
+chain's checkout step. If it has never differed, the fix is worth having anyway but is not urgent.
+
+**CLOSING IT MEANS DECIDING WHERE THE RELEASE'S SHA IS RESOLVED ONCE FOR ALL THREE CHAINS**, and
+that is a design choice rather than a patch:
+
+- **The tag.** `refs/tags/vX.Y.Z` is immutable, but it points at the commit BEFORE the bump - the
+  whole reason `CHECKOUT_REF` is `main`. It only works if the bump moves the tag, which makes a
+  published release's tag mutable and is worse than the problem.
+- **A `release-sha` marker the bump writes**, in its own commit or as an output every chain reads
+  through `gh api`. One writer, three readers, immutable once written - but it adds a lookup to two
+  workflows that currently need none.
+- **Fold the store builds into `cd.yml`** as jobs depending on `release-kind`, which is the only
+  option that removes the class rather than covering it. It also serialises them behind the deploy's
+  concurrency group, which may or may not be wanted.
+
+Until then, `cicd.md` states the gap in the section next to the `cd.yml` fix, so nobody reads that
+fix as covering all three chains.
+
 ## Security - blocked upstream
 
 ### P3 - the two libcrux crates that ARE compiled are pinned by `openmls_rust_crypto 0.5.1`
