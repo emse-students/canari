@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-09-03
+
 ### Changed
 
 - **The pipeline is two packages, one per human gesture.** `pull-request.yml` is everything that
