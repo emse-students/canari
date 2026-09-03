@@ -59,6 +59,7 @@
 - [Authentik (OIDC)](infrastructure/authentik.md) — Identity provider, OIDC flow, deployment
 - [Databases](infrastructure/databases.md) — PostgreSQL, Redis, Garage
 - [Backup system](infrastructure/backup.md) — Daily cron, offsite rsync
+- [Host OS updates](infrastructure/host-updates.md) — the four boxes' security updates, the `#clear` without which the policy is decorative, the 30-second `502` this scope does NOT incur, and the daily run that fails on a finding
 - [Dev environment](infrastructure/dev-environment.md) — `dev.canari-emse.fr`: what keeps it apart from production, the full copy and its three strips, the declared version gap, and the one kind of evidence that lifts a merge ceiling
 - [Storage forecast](infrastructure/storage-forecast.md) — Measured unit costs, the model at 400 daily users, and why the backup scheme fails before the data does
 
