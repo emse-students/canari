@@ -1,8 +1,9 @@
-version: 0.15.0
-Messages manquants : des messages recus etaient bien telecharges puis abandonnes sans rien
-afficher. La synchronisation des conversations chiffrees a ete corrigee et une conversation qui n'a
-pas fini de se remettre a jour ne s'annonce plus comme securisee.
+version: 0.16.0
+Cette version ne change rien a l'application : elle est identique a la 0.15.0 du cote de ce que
+vous voyez.
 
-Sessions : la reconnexion automatique ne se perd plus selon la plateforme.
+Ce qui change est la facon dont elle est publiee. La 0.15.0 est partie alors que ses tests etaient
+en echec, sans que rien ne le signale. C'est desormais impossible : une version ne peut plus etre
+publiee si ses tests ne sont pas verts, ni sans avoir d'abord tourne sur l'environnement de test.
 
-Les appels audio et video restent desactives pour le moment.
+Autrement dit, c'est la premiere version dont la publication a ete verifiee.
