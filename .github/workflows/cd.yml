@@ -61,6 +61,17 @@ env:
   # ALWAYS `main`, and never the event's SHA. A `workflow_run` reports the commit the TRIGGERING run
   # started from, which is the commit BEFORE the bump - so checking it out would build and deploy an
   # estate whose manifests still name the previous version.
+  #
+  # ONLY `release-kind` MAY USE THIS, and it is the reason that job exists. `main` is a MOVING
+  # reference: five jobs resolving it independently can resolve five different commits, and the
+  # window is not theoretical - the bump's own push raises a `push` event, so CI is running on `main`
+  # while this workflow starts, and any pull request merged in those minutes lands inside it. What
+  # made it a correctness bug rather than a race nobody would notice is that the image tag and the
+  # `prod-released` / `dev-deployed` markers are written from `release-kind.outputs.sha`: a second
+  # commit would have been BUILT and the first one RECORDED, so the marker naming what production
+  # runs would have been wrong with nothing anywhere disagreeing. Every job below therefore checks
+  # out that resolved SHA, which is what makes the recorded provenance a measurement instead of an
+  # assumption.
   CHECKOUT_REF: main
 
 jobs:
@@ -130,7 +141,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ env.CHECKOUT_REF }}
+          ref: ${{ needs.release-kind.outputs.sha }}
           fetch-depth: 0
 
       - name: Detect modified services
@@ -342,7 +353,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ env.CHECKOUT_REF }}
+          ref: ${{ needs.release-kind.outputs.sha }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -538,7 +549,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ env.CHECKOUT_REF }}
+          ref: ${{ needs.release-kind.outputs.sha }}
 
       - name: Download frontend build artifact
         # Both frontend images come from the one adapter-node artifact: nginx serves
@@ -816,7 +827,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ env.CHECKOUT_REF }}
+          ref: ${{ needs.release-kind.outputs.sha }}
 
       - name: Log deployment start
         run: |

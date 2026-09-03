@@ -82,6 +82,33 @@ change detector's INPUT; the detector reads releases now, so the tag survives on
 user took that deletion knowing its cost: **after an emergency push straight to `main`, nothing says
 which commit production is running** until the next release.
 
+
+#### Every job checks out the SHA `release-kind` resolved, because `main` is a moving reference (2026-09-03)
+
+All five jobs used to check out `ref: main`, and the comment above `CHECKOUT_REF` explained why it
+is `main` and not the event's SHA — correctly, and only half the question. **`main` moves.** Five
+jobs resolving it independently can resolve five different commits, and the window is not
+theoretical: the bump's own push raises a `push` event (see the App-token side effect above), so
+`ci.yml` is running on `main` while this workflow starts, and any pull request merged in those
+minutes lands inside it.
+
+**What made it a correctness bug rather than a race nobody would notice** is that
+`release-kind.outputs.sha` is what tags the images and writes the `prod-released` / `dev-deployed`
+markers. A second commit arriving mid-run would have been BUILT while the first one was RECORDED —
+so the marker naming what production runs would have been wrong, with nothing anywhere disagreeing.
+A recorded provenance that can be false is worse than none, because it stops the next person looking.
+
+`release-kind` still resolves `main` (that is what the job is for) and every job below it now checks
+out `${{ needs.release-kind.outputs.sha }}`. One release, one commit, and the marker is a measurement
+instead of an assumption.
+
+**`android-release.yml` and `ios-release.yml` still check out `main` directly**, and that is a
+smaller version of the same thing: they have no `release-kind` to inherit a SHA from, and they
+record none, so there is no marker they can contradict. What is left is a cross-chain question — a
+merge landing between the two runs would ship a store bundle built from a different tree than
+production — which is in [backlog](../backlog.md) rather than fixed here, because closing it means
+deciding where the release's SHA is resolved ONCE for all three chains.
+
 #### The dev estate is the PRE-RELEASE target, and the promotion is gone
 
 | The release | Jobs that run |
@@ -227,6 +254,37 @@ proved the rest of the chain, but it made publishing a release a two-step manual
 token is the fix; bump-before-tag stays available as the emergency path if the App is ever
 uninstalled.
 
+
+#### The bump promotes the release notes, and that is the one modification nothing was making (2026-09-03)
+
+Every version-bearing manifest is rewritten by the script; `CHANGELOG.md` was not touched at all.
+So `## [Unreleased]` stayed `[Unreleased]` through every release, and the next cycle wrote its
+entries into the same section. **That is not cosmetic drift: it is why 4098 lines sat under one
+heading covering fifteen shipped versions, with no way left to say which release a user got a given
+fix in.** Nothing failed, which is exactly why it survived fifteen releases.
+
+`promote_changelog` in `scripts/bump-app-version.sh` now rewrites `## [Unreleased]` into a fresh
+empty `## [Unreleased]` followed by `## [X.Y.Z] - <date>`. Three properties matter, and each is a
+test in `.github/scripts/tests/bump-staging.test.sh`:
+
+- **STABLE ONLY**, which is the whole reason `RANK` is passed in. An `-alpha.N` is a tester build,
+  not the release of those notes: promoting on it would close the section and leave the stable that
+  follows days later publishing an empty one — the same drift, inverted.
+- **IDEMPOTENT**, because a re-run is ordinary — the workflow is hand-dispatchable and a release can
+  be re-published. A heading for that version already present means the work is done.
+- **IT REFUSES TO PROMOTE AN EMPTY SECTION**, and says so on stderr rather than tidying it away. A
+  version heading with nothing under it reads as a fact ("this release documented nothing") instead
+  of as the gap it is.
+
+**It lives in the SCRIPT and not in the workflow**, so `git add -u` picks it up with everything else
+and the notes land in the bump's own commit. A workflow step doing it after the commit would need a
+second commit and a second push, and the push is the part the ruleset scrutinises.
+
+`v0.15.0` is the first release promoted this way, and its section therefore spans everything since
+`0.14.0` rather than only its own changes — the fourteen releases in between were published while
+the drift was live. That is stated inside the section rather than corrected, because re-attributing
+4098 lines to fifteen tags after the fact would be a guess.
+
 **ONE ARGUMENT BECOMES THREE DIFFERENT STRINGS**, and conflating any two of them breaks a store
 upload rather than a build. `scripts/bump-app-version.sh` is the only place that decides:
 
@@ -244,11 +302,15 @@ derivation (`major*1e6 + minor*1e3 + patch`, which cannot see a suffix), so the 
 factor of 100 exactly once and stays monotonic; the ceiling `0.999.999` → 99999999 is well inside
 Play's 2100000000. `alpha.N` is capped at 98 for the same reason.
 
-**ONE THING IS NOT SETTLED, and it must not be guessed:** `tauri ios build` re-syncs both version
-keys from `tauri.conf.json` during the build and Tauri 2.11.4 exposes no iOS build-number override,
-so the committed `CFBundleVersion` may be overwritten on the runner. `ios-release.yml` already
-patches that plist with `PlistBuddy`; if a TestFlight upload is ever refused as a duplicate build,
-that is where it is re-asserted - and only a macOS run can say whether it has to be.
+**AND THE ONE THING THAT WAS NOT SETTLED NOW IS (measured on `v0.15.0-alpha.1`, 2026-09-03).** The
+open question was whether `tauri ios build` re-syncs both version keys from `tauri.conf.json` during
+the build and so overwrites the committed `CFBundleVersion` — which would make the second alpha of a
+version a duplicate build TestFlight refuses. **The shipped `.ipa` carries
+`CFBundleShortVersionString 0.15.0` and `CFBundleVersion 1500001`, which is the band.** Whether
+Tauri rewrote the plist or left it alone is therefore moot: the script writes the same numbers into
+`tauri.conf.json` and into the plist, so a re-sync is idempotent, and Tauri 2.11.4 exposing no iOS
+build-number override costs nothing. `ios-release.yml` still patches that plist with `PlistBuddy`
+for the export-compliance key; nothing needs to re-assert the build number there.
 
 `.github/scripts/tests/bump-version.test.sh` runs the script in a sandbox, reads every file back and
 asserts the ordering directly (31 assertions).

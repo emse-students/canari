@@ -11,6 +11,12 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+_This section covers everything released since `0.14.0`, not only `0.15.0`'s own changes: the
+fourteen releases in between were published while `CHANGELOG.md` was the one release-bearing file
+the version bump never touched, so their entries accumulated here. The bump promotes this heading
+from `0.15.0` onward, so no later section spans more than its own release. The full-length account
+of each entry is in [`docs/changelog-archive.md`](docs/changelog-archive.md)._
+
 ### Removed
 
 - **The Linux desktop build is gone**, on the owner's decision - there is no audience for it right
@@ -167,6 +173,29 @@ which is also where every release up to and including v0.13.1 now lives.
   the convergent trigger - so pull requests opened before the switch drain through the same sweep.
 
 ### Fixed
+
+- **Publishing a release did nothing at all, and it took publishing one to find out.** The workflow
+  that stamps a version across the project ends by pushing that stamp to the main branch, and the
+  protection added to that branch days earlier refuses a push from anything but a person with a
+  reviewed change - including the project's own automation. So the push was refused, the run went
+  red, and every deploy behind it declined to start, correctly: production, the tester estate and
+  both app stores all wait for that step to succeed. Nothing shipped and nothing was damaged. The
+  automation now identifies itself with the same credential already used to merge dependency
+  updates, which the protection does allow, so publishing a release is one gesture again instead of
+  a two-step manual dance
+- **A release could have recorded one version of the code and shipped a different one.** The five
+  stages of a deploy each looked up "the latest code on the main branch" independently, and the
+  branch moves: the version stamp itself now nudges it, so a change merged during the minutes a
+  deploy takes could land between two stages. The label written next to what production is running
+  came from the first lookup while the build came from a later one, which would have made that label
+  wrong with nothing anywhere to contradict it - worse than no label, because it stops the next
+  person looking. The exact commit is now resolved once, at the start, and every stage builds that
+- **Fifteen releases of notes ended up under one heading, and there is no way left to say which
+  release a given fix shipped in.** The changelog was the one file a release did not touch, because
+  it carries a heading rather than a version number, so nothing that checks versions could notice
+  and nothing ever failed. It is now rewritten with everything else, on a stable release only - a
+  tester build is not the release of those notes - and this section states the span it inherited
+  rather than pretending to be one release's worth
 
 - **Four production deploys in a row were red, the deploys all SUCCEEDED, and what failed was an
   `overrides` pin that had become the thing blocking its own fix.** `bun audit` refused all four TS
