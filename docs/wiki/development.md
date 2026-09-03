@@ -2,6 +2,21 @@
 
 **Source**: `Makefile`, `scripts/`, `infrastructure/local/`
 
+**THIS IS WHERE DEVELOPMENT HAPPENS, AND SINCE 2026-09-03 THERE IS NO ALTERNATIVE TO IT.** Nothing
+deploys at a push any more - production and `dev.canari-emse.fr` are both reached only by publishing
+a release - so there is no longer any way to see a change running by pushing it. The local estate is
+what replaced that, and it is complete rather than approximate: the four NestJS services, the two
+Rust services, Postgres, Redis, Garage, coturn, and **nginx as the single entry point exactly as in
+production**. It authenticates - a full OIDC login, two clients, an MLS message sent, received and
+decrypted, measured end to end on 2026-09-03 - which is the only claim worth making about a local
+stack, because a stack that compiles proves nothing.
+
+Two consequences worth stating once. **Bypassing nginx to hit a service directly tests nothing the
+application does**: nginx is the sole authenticator, it validates the token (`auth_request`) and sets
+`X-User-Id`, and every service reads only that header. And **`dev.canari-emse.fr` is no longer where
+a change is first tried** - it is the PRE-RELEASE target now, reached by publishing a
+`X.X.X-alpha.N`, which is a deliberate act rather than a side effect of working.
+
 ## Quick start
 
 ```bash
@@ -234,6 +249,11 @@ from the source.
 - Backend apps call bare `oxlint`/`oxfmt` from their local `node_modules/.bin` with repo-level
   configs (`-c ../../oxfmt.json`, `-c ../../.oxlintrc.nest.json`). A hook failing with
   `'oxlint' n'est pas reconnu` means `bun install` has not been run in that app directory.
+- **Work lands through a pull request; `main` is protected and refuses a direct push** (ruleset
+  `22152902`, since 2026-09-03). `git switch -c`, commit, `gh pr create`, wait for the one required
+  check - `CI passed` - then `gh pr merge --squash --delete-branch`. No approval is required, so the
+  whole loop costs a minute; what it buys is a readable diff and a CI run on the MERGED result
+  rather than on the branch alone. The admin role can bypass, and that is the emergency path only.
 - Before pushing: `rm -rf apps/*/dist`, then `git pull --rebase --autostash origin main`. A stale
   `dist/` makes the pre-push hook replay compiled specs.
 - Commit signing is on globally over SSH (`gpg.format ssh`,

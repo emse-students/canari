@@ -260,7 +260,7 @@ among the producers says nothing about the consumer.
 | Stripe / Lydia | no credentials, identifiers stripped | user, 2026-09-01: dev will not reach Stripe for now |
 | Push notifications | PERMITTED, no dev credentials yet | not a decision, just an absence: both halves are `warn`, so dev sends nothing until a credential is given. Nothing has to be CREATED for it - see below |
 | Mobile builds | phase 2 | a dev keystore and a dev bundle identifier are prerequisites, and they are the real blocker - not the push credentials |
-| A `dev` branch | none, by decision | dev deploys from `main`, so what is on dev is what is on `main` |
+| A `dev` branch | none - it existed for one day and was deleted 2026-09-03 | there is one branch. What reaches this estate is a `X.X.X-alpha.N` PRE-RELEASE published from it, and a run deploys exactly one estate - see the section on the pre-release target below |
 
 **Push is the one row that changed its mind, and the reason is worth keeping.** The three APNs values
 were first written `skip` alongside Stripe and Lydia, on the reading that a dev estate holding a copy

@@ -148,10 +148,16 @@ deploys nothing; production and the dev estate are reached only by publishing a 
 is active. **Everything from here goes through a pull request**, this chantier included - the
 exemption that let it commit directly existed only until it had built the thing that forbids it.
 
-What is left: **WP-5** (the campaign, from zero - a new rig root, fresh profiles and accounts, the
-board reset, target LOCAL) and **WP-6** (the documentation sweep - 26 files, the first of which is
-this one). Two boxes nothing here can tick: **publishing `0.15.0-alpha.1`**, which is a release only
-the USER performs, and **the iOS build number**, which needs a macOS run to say whether
+**WP-6 IS DONE TOO (2026-09-03)**: the whole wiki, both READMEs, `MIGRATION.md`, the three campaign
+pages, `CHANGELOG.md` and the French user guide - which was rewritten whole rather than edited -
+now describe deploy-at-bump instead of the push model. **The one correction to carry: "a campaign
+run and a push to `main` are mutually exclusive" now names a RELEASE**, in all four places it
+appears; it becomes deletable only when WP-5 moves the rig LOCAL.
+
+**WP-5 is what is left** - the campaign from zero: a new rig root, fresh Chrome profiles, fresh test
+accounts, target LOCAL, the board reset with the old verdicts archived as "rig LITHIUM, ledger
+lost". Plus two boxes nothing here can tick: **publishing `0.15.0-alpha.1`**, a release only the
+USER performs, and **the iOS build number**, which needs a macOS run to say whether
 `tauri ios build` clobbers `CFBundleVersion`.
 
 ### CANARI - THE QUEUE, IN ORDER
