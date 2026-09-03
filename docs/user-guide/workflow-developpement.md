@@ -195,7 +195,30 @@ logiciel - c'est un humain avec les droits admin, et ca s'ecrit dans `CHANGELOG.
 | le commit n'est pas sur `main` | passer par une pull request - rien ici ne deploie un commit que le tronc ne porte pas |
 | `CI passed` n'est pas vert **sur ce commit** | reparer les tests. Un check **absent** est refuse aussi : ce n'est pas un check qui passe |
 | **la prod serait en avance sur dev** (stables seulement) | publier d'abord une **pre-release sur ce meme commit**. Elle deploie dev en quelques minutes et deplace le repere que cette verification lit ; republier la stable ensuite |
-| les notes App Store ne nomment pas cette version | reecrire `store/whats-new.txt`, **premiere ligne `version: X.Y.Z`**, puis republier |
+| les notes de version ne nomment pas cette version | reecrire `store/whats-new.txt`, **premiere ligne `version: X.Y.Z`**, puis republier |
+
+### Le changelog : un seul texte, trois destinations
+
+`store/whats-new.txt` est le seul texte qu'une version stable te demande d'ecrire. Sa premiere ligne
+doit etre `version: X.Y.Z` - c'est ce qui empeche une release de publier en silence les notes de la
+precedente, et la cinquieme barriere refuse la release en quelques secondes si elle ne correspond
+pas.
+
+**Depuis le 2026-09-03 ce texte part aux trois endroits, et tu ne l'ecris qu'une fois :**
+
+| Destination | Ce qui s'y passe |
+| --- | --- |
+| App Store | ecrit dans **chaque** langue de la fiche, puis la version est envoyee en revue |
+| Google Play | ecrit pour `fr-FR` et `en-US`, les deux langues de la fiche - **Play ne recevait rien du tout avant** |
+| Release GitHub | ajoute au corps de la release, entre deux marqueurs |
+
+**Tu peux laisser la case "description" de la release GitHub VIDE** : elle est remplie pour toi. Si
+tu y ecris quelque chose, ce que tu as ecrit est garde et les notes viennent en dessous - rien de ce
+que tu tapes n'est ecrase, et republier n'ajoute pas une deuxieme copie.
+
+**Une pre-release ne porte pas ces notes**, et ce n'est pas un choix : le fichier nomme la version
+STABLE, donc il ne peut pas decrire une `alpha`. C'est la stable qui suit qui documente tout.
+
 
 Le quatrieme est la raison d'etre du fichier : *"Je ne veux pas un detecteur de retard, je ne veux
 pas que ca soit possible."* Il n'y a donc pas de rapport a lire - il y a un refus.

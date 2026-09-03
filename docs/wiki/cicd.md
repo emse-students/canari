@@ -1166,6 +1166,59 @@ on a release or a schedule. *A predicate that named the last incident is not the
 names the next one* - this one was written for #272, where `Boot the real AppModule` was genuinely a
 new job in `pull-request.yml`.
 
+### One changelog, three destinations, and the one that had never received it
+
+`store/whats-new.txt` is the one text a stable release owes a human (user, 2026-09-03: the changelog
+can be the same on every platform, and in the GitHub console at the version bump). Until that day it
+reached exactly ONE of the three:
+
+| Destination | Before | Now |
+| --- | --- | --- |
+| App Store | `whatsNew` on every version localization, then the version is submitted for review | unchanged |
+| Google Play | **nothing at all** | `whatsnew-fr-FR` and `whatsnew-en-US`, via `whatsNewDirectory` |
+| GitHub release | whatever a human typed, or nothing | the same notes, in a marker-delimited block |
+
+**PLAY'S SILENCE IS THE FINDING, AND IT IS THE ASYMMETRY THAT HID IT.** A *wrong* what's-new is
+refused by the API; a *missing* one is not - the field simply keeps whatever it held. So every
+release told iOS users what had changed and left Android users with the previous text, and no gate,
+log line or review would ever have said so. It was found by asking what read `store/whats-new.txt`:
+`submit.mjs`, and nothing else.
+
+**ONE IMPLEMENTATION OF THE NOTES RULE, THREE CALLERS.** `submit.mjs --check-notes` is the fifth
+preflight gate; `--print-notes` is what the Play arm and the notes job read the text through. The
+alternative was `tail -n +2` in two workflows, which is three opinions about the version marker, the
+trim and the length ceiling - drifting the day the format changes. `release-chain.test.sh` asserts
+that nothing else reads the file in code, and the predicate drops COMMENT lines, because the first
+draft accused three files that merely name it while explaining where the notes come from.
+
+**THE GITHUB RELEASE JOB RUNS BESIDE THE THREE ARMS AND NOTHING DEPENDS ON IT**, which is not
+tidiness: on `v0.16.0` a refused release update `skipped` TestFlight and the App Store submission
+behind it, so production and Play shipped and Apple got nothing. A release body is a convenience;
+the stores are the deliverable. A refusal here fails the run loudly and can skip none of them - and
+it would be a second instance of that unexplained 403 on a different endpoint, which is evidence
+the open P1 does not have yet.
+
+Its composition is `.github/scripts/release-notes-body.sh`, a pure function of two files, kept out
+of the YAML for the usual reason: its interesting inputs are ones a live release never produces - a
+body carrying a STALE block, a body with the markers and nothing between them, a body of pure
+whitespace. **Idempotence is the property that is silent when wrong**: a composer that appends
+rather than replaces grows the body by one copy of the notes per re-run, and a release is re-run
+exactly when something else already went wrong, so the damage reads as the other failure's
+consequence. Eleven assertions, and the mutation that makes the block-strip a no-op fails three.
+
+**TWO THINGS WERE MEASURED RATHER THAN ASSUMED, and both were about to become constants:**
+
+- **The Play listing's locales are `fr-FR` and `en-US`** - read through the Publishing API on
+  2026-09-03, in an edit that was deleted and never committed. A `whatsnew-<LOCALE>` file for a
+  locale the listing lacks is refused, and a missing one is silent, so guessing here fails in the
+  invisible direction.
+- **Play's release notes have no length limit that anybody can source.** The API reference states
+  none, and the widely repeated 500 is a Console UI figure. `PATCH` on a track accepted 400, 500,
+  501, 1000 and 5000 characters, measured the same way. So **no Play-specific ceiling is encoded**:
+  Apple's documented 4000 stays the only binding one, in `submit.mjs`. The caveat is stated because
+  it bounds the measurement: the edit was never COMMITTED, so commit-time validation is not
+  exercised.
+
 ### Who pushes the refresh decides whether it is a refresh at all
 
 Rebuilding a stale branch is the sweep's one write to somebody else's pull request, and **which

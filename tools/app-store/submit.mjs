@@ -344,6 +344,23 @@ async function main() {
     return;
   }
 
+  // THE SAME NOTES, FOR THE OTHER TWO DESTINATIONS. Google Play and the GitHub release need the
+  // TEXT, and the alternative was each of them re-parsing `store/whats-new.txt` in bash - three
+  // opinions about what the notes are, drifting the day the format changes. This mode prints the
+  // body on stdout and NOTHING else, so a shell can capture it, and it refuses on exactly the same
+  // verdict as `--check-notes`: a caller cannot get text this rejects.
+  if (process.argv.includes('--print-notes')) {
+    const version = need('MARKETING_VERSION');
+    const file = process.env.WHATS_NEW_FILE || 'store/whats-new.txt';
+    const verdict = readWhatsNew({ file, version });
+    if (!verdict.ok) {
+      process.stderr.write(`${verdict.why}\n`);
+      process.exit(1);
+    }
+    process.stdout.write(verdict.text);
+    return;
+  }
+
   const keyId = need('ASC_KEY_ID');
   const issuerId = need('ASC_ISSUER_ID');
   const bundleId = need('APP_BUNDLE_ID');

@@ -154,7 +154,10 @@ served it, and `store/whats-new.txt` names that version. No bypass input, by des
 printing an `ok`; the bump's push accepted by the ruleset; `dev.canari-emse.fr` serving the alpha
 while production stayed behind; production then serving `0.16.0` (probed, not read off a green
 job); Play `internal` then `production` committed; TestFlight uploaded. **What a stable owes a
-human is `store/whats-new.txt`, first line `version: X.Y.Z`, and nothing else** - the bump
+human is `store/whats-new.txt`, first line `version: X.Y.Z`, and nothing else** - and since
+2026-09-03 that ONE text reaches THREE destinations: the App Store, Google Play (which had never
+received release notes at all) and the GitHub release body. One implementation reads it,
+`submit.mjs`, called by the fifth gate, by the Play arm and by the notes job; the bump
 deliberately does not write that line, because a marker the machine maintains is only ever in step
 with itself. The store band is `(major*1e6 + minor*1e3 + patch)*100 + rank`, rank 99 for a stable.
 
